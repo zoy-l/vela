@@ -39,6 +39,7 @@ python -m tools.vl doctor
 python -m tools.vl config
 python -m tools.vl build
 python -m tools.vl clangd
+python -m tools.vl lint
 python -m tools.vl test
 python -m tools.vl bench
 ```
@@ -71,4 +72,5 @@ boundary and performance contract are documented in
 details are listed in [`compiler/README.md`](compiler/README.md). The benchmark
 command compiles once and reports first execution separately from steady-state
 repeated execution; `python -m tools.vl bench` builds the selected variant with
-the project-local toolchain before running all files under `benchmarks/`.
+the project-local toolchain before running all files under `benchmarks/`. The
+language feature checklist is in [`docs/roadmap.md`](docs/roadmap.md).

@@ -81,6 +81,10 @@ def toolchain_tools() -> dict[str, Path]:
             clang_bin / executable_name("clangd"),
             "project clangd executable",
         ),
+        "clang_tidy": _require_file(
+            clang_bin / executable_name("clang-tidy"),
+            "project clang-tidy executable",
+        ),
     }
 
 

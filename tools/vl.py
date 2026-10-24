@@ -14,6 +14,7 @@ COMMAND_MODULES = {
     "config": "tools.config",
     "doctor": "tools.doctor",
     "format": "tools.format",
+    "lint": "tools.lint",
     "test": "tools.test",
 }
 
@@ -28,6 +29,7 @@ def print_help() -> None:
     print("  config      Generate a GN output directory")
     print("  doctor      Check the project toolchain")
     print("  format      Format C++ and GN sources")
+    print("  lint        Run project clang-tidy checks")
     print("  test        Run environment tests")
 
 

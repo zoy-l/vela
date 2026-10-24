@@ -1,0 +1,13 @@
+Checks:
+  - '-*'
+  - 'bugprone-*'
+  - 'cert-*'
+  - 'cppcoreguidelines-*'
+  - 'modernize-*'
+  - 'performance-*'
+  - 'portability-*'
+  - 'readability-*'
+  # Vela uses #pragma once as its repository-wide header guard convention.
+  - '-portability-avoid-pragma-once'
+HeaderFilterRegex: '^(?!.*third_party/).*$'
+FormatStyle: file
