@@ -9,7 +9,7 @@
 namespace vela::frontend {
 namespace {
 
-TEST(FrontendTest, AcceptsNestedConstructorsAndContextualEnum) {
+TEST(FrontendTest, AcceptsNestedConstructorsAndQualifiedEnum) {
   constexpr std::string_view valid_source = R"(
 enum Brightness {
   light,
@@ -25,7 +25,7 @@ class App {
 }
 
 func build(): App {
-  return App(theme: Theme(brightness: .light));
+  return App(theme: Theme(brightness: Brightness.light));
 }
 )";
   const CheckResult result = CheckSource(valid_source);
@@ -47,7 +47,7 @@ class Theme {
 }
 
 func build(): Theme {
-  return Theme(brightness: .missing);
+  return Theme(brightness: Brightness.missing);
 }
 )";
   const CheckResult result = CheckSource(invalid_source);
@@ -107,10 +107,10 @@ TEST(FrontendTest, PreservesArrayRankAndContextualElements) {
 enum E { a, b }
 func f(input: E[][]): E[][] { return input; }
 func main(): int {
-  let values: E[][] = [[], [.a, .b]];
-  values[0] = [.b];
+  let values: E[][] = [[], [E.a, E.b]];
+  values[0] = [E.b];
   let enabled = false;
-  for (let copy: E[][] = f(values); enabled;) { copy[0][0] = .a; }
+  for (let copy: E[][] = f(values); enabled;) { copy[0][0] = E.a; }
   let exact: double[] = [1.5];
   return [1, 2][0];
 }

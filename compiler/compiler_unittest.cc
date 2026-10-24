@@ -22,6 +22,25 @@ using vela::runtime::Value;
 using vela::vm::ExecutionStatus;
 using vela::vm::VirtualMachine;
 
+TEST(CompilerTest, CompilesQualifiedEnumMemberWithoutExpectedType) {
+  constexpr std::string_view source = R"(
+enum Shade { light, dark }
+func main(): Shade {
+  const value = Shade.dark;
+  return value;
+}
+)";
+  Isolate isolate;
+  const auto compiled = CompileSource(source, isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto* function = compiled.program.FindFunction("main");
+  ASSERT_NE(function, nullptr);
+  const auto result = VirtualMachine(isolate).Execute(function->View());
+  ASSERT_TRUE(result.Succeeded());
+  ASSERT_TRUE(result.value.IsInteger());
+  EXPECT_EQ(result.value.AsInteger(), 1);
+}
+
 TEST(CompilerTest, CompilesIntegerFunction) {
   constexpr std::string_view source = R"(
 func main(): int {
@@ -257,7 +276,7 @@ class Store {
   }
 }
 func identity(input: int[][]): int[][] { return input; }
-func shades(): Shade[] { return [.light, .dark]; }
+func shades(): Shade[] { return [Shade.light, Shade.dark]; }
 func flag(input: bool[]): bool { return input[0]; }
 func main(): bool {
   let store: Store = Store(items: [[Item(value: 40)]], labels: ["old"],
@@ -265,7 +284,7 @@ func main(): bool {
   let alias: bool[] = store.flags;
   alias[0] = true;
   store.labels[0] = "new";
-  store.shades[0] = .dark;
+  store.shades[0] = Shade.dark;
   store.items[0][0].value = 42;
   let replaced: Item[] = store.replace([Item(value: 42)]);
   let matrix: int[][] = identity([[], [1, 2]]);

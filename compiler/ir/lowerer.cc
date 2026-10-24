@@ -215,8 +215,7 @@ void Lowerer::LowerStatement(const frontend::Statement& statement) {
         Emit({.opcode = Opcode::Return, .dst = result, .location = statement.location});
         break;
       }
-      const LoweredValue value =
-          LowerExpression(*statement.expression, &current_function_->return_type);
+      const LoweredValue value = LowerExpression(*statement.expression);
       Emit({.opcode = Opcode::Return, .dst = value.reg, .location = statement.location});
       break;
     }
@@ -266,8 +265,10 @@ void Lowerer::LowerBlock(const frontend::Statement& statement) {
   PopScope();
 }
 
-auto Lowerer::LowerExpression(const frontend::Expression& expression,
-                              const frontend::TypeDescriptor* expected) -> Lowerer::LoweredValue {
+auto Lowerer::LowerExpression(const frontend::Expression& expression) -> Lowerer::LoweredValue {
+  if (model_.builtin_calls.contains(&expression)) {
+    return LowerBuiltin(expression);
+  }
   switch (expression.kind) {
     case frontend::Expression::Kind::IntegerLiteral:
       return LowerIntegerLiteral(expression);
@@ -285,6 +286,8 @@ auto Lowerer::LowerExpression(const frontend::Expression& expression,
       return LowerDoubleLiteral(expression);
     case frontend::Expression::Kind::StringLiteral:
       return LowerStringLiteral(expression);
+    case frontend::Expression::Kind::StringInterpolation:
+      return LowerStringInterpolation(expression);
     case frontend::Expression::Kind::ArrayLiteral:
       return LowerArrayLiteral(expression);
     case frontend::Expression::Kind::Index:
@@ -297,14 +300,12 @@ auto Lowerer::LowerExpression(const frontend::Expression& expression,
       }
       return {.reg = local->reg, .type = local->type};
     }
-    case frontend::Expression::Kind::ShorthandMember:
-      return LowerShorthandMember(expression, expected);
     case frontend::Expression::Kind::Unary:
       return LowerUnary(expression);
     case frontend::Expression::Kind::Binary:
       return LowerBinary(expression);
     case frontend::Expression::Kind::Call:
-      return LowerCall(expression, expected);
+      return LowerCall(expression);
     case frontend::Expression::Kind::Member:
       return LowerMember(expression);
   }
@@ -320,7 +321,7 @@ auto Lowerer::LowerAssignment(const frontend::Expression& expression) -> Lowerer
       AddDiagnostic(left.location, "unknown local during assignment lowering");
       return {.reg = 0, .type = InvalidType()};
     }
-    const LoweredValue value = LowerExpression(right, &local->type);
+    const LoweredValue value = LowerExpression(right);
     Emit({.opcode = Opcode::Move, .dst = local->reg, .lhs = value.reg, .location = left.location});
     return {.reg = local->reg, .type = local->type};
   }
@@ -338,7 +339,7 @@ auto Lowerer::LowerAssignment(const frontend::Expression& expression) -> Lowerer
       return {.reg = 0, .type = InvalidType()};
     }
     const frontend::TypeDescriptor field_type = class_info->fields.at(left.text);
-    const LoweredValue value = LowerExpression(right, &field_type);
+    const LoweredValue value = LowerExpression(right);
     Emit({
         .opcode = Opcode::SetField,
         .dst = object.reg,
@@ -353,7 +354,7 @@ auto Lowerer::LowerAssignment(const frontend::Expression& expression) -> Lowerer
     const LoweredValue index = LowerExpression(*left.index);
     const auto& element_type =
         model_.types.at(array.type.name.substr(0, array.type.name.size() - 2));
-    const LoweredValue value = LowerExpression(right, &element_type);
+    const LoweredValue value = LowerExpression(right);
     Emit({
         .opcode = Opcode::SetIndex,
         .dst = array.reg,
@@ -405,9 +406,7 @@ auto Lowerer::LowerConstruction(const frontend::Expression& expression,
       continue;
     }
     assigned.at(field_index) = true;
-    const frontend::TypeDescriptor& field_type =
-        class_info->fields.at(class_info->field_order.at(field_index));
-    const LoweredValue value = LowerExpression(*argument.value, &field_type);
+    const LoweredValue value = LowerExpression(*argument.value);
     Emit({
         .opcode = Opcode::SetField,
         .dst = object,
@@ -423,7 +422,7 @@ auto Lowerer::LowerMember(const frontend::Expression& expression) -> Lowerer::Lo
   if (expression.object->kind == frontend::Expression::Kind::Name) {
     const auto type = model_.types.find(expression.object->text);
     if (type != model_.types.end() && type->second.kind == frontend::TypeDescriptor::Kind::Enum) {
-      return LowerShorthandMember(expression, &type->second);
+      return LowerEnumMember(expression, type->second);
     }
   }
   const LoweredValue object = LowerExpression(*expression.object);
@@ -449,8 +448,7 @@ auto Lowerer::LowerMember(const frontend::Expression& expression) -> Lowerer::Lo
   return {.reg = result, .type = class_info->fields.at(expression.text)};
 }
 
-auto Lowerer::LowerCall(const frontend::Expression& expression,
-                        const frontend::TypeDescriptor* expected) -> LoweredValue {
+auto Lowerer::LowerCall(const frontend::Expression& expression) -> LoweredValue {
   const auto& callee = *expression.callee;
   if (callee.kind == frontend::Expression::Kind::Name) {
     if (callee.text == "print") {
@@ -484,7 +482,7 @@ auto Lowerer::LowerCall(const frontend::Expression& expression,
     }
   }
   AddDiagnostic(expression.location, "function or method is not lowerable");
-  return {.reg = 0, .type = expected == nullptr ? InvalidType() : *expected};
+  return {.reg = 0, .type = InvalidType()};
 }
 
 auto Lowerer::LowerInvocation(const frontend::Expression& expression,
@@ -512,8 +510,7 @@ auto Lowerer::LowerInvocation(const frontend::Expression& expression,
       const auto parameter = std::ranges::find(function.parameter_order, argument.name);
       index = static_cast<std::size_t>(parameter - function.parameter_order.begin());
     }
-    const auto& type = function.parameters.at(function.parameter_order.at(index));
-    const auto value = LowerExpression(*argument.value, &type);
+    const auto value = LowerExpression(*argument.value);
     Emit({
         .opcode = Opcode::Move,
         .dst = static_cast<RegisterId>(base + receiver_count + index),
@@ -606,7 +603,7 @@ auto Lowerer::DeclareLocal(std::string_view name,
 void Lowerer::LowerVariableDeclaration(const frontend::Statement& statement) {
   const RegisterId local = AllocateRegister(statement.location);
   const auto& type = model_.local_types.at(&statement);
-  const auto initializer = LowerExpression(*statement.expression, &type);
+  const auto initializer = LowerExpression(*statement.expression);
   Emit({
       .opcode = Opcode::Move,
       .dst = local,
@@ -635,16 +632,13 @@ auto Lowerer::LowerIntegerLiteral(const frontend::Expression& expression) -> Low
 }
 
 auto Lowerer::LowerStringLiteral(const frontend::Expression& expression) -> Lowerer::LoweredValue {
-  std::string value = expression.text;
-  if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
-    value = value.substr(1, value.size() - 2);
-  }
+  const auto& value = expression.text;
   const auto found = std::ranges::find(program_.strings, value);
   const std::uint32_t index = found == program_.strings.end()
                                   ? static_cast<std::uint32_t>(program_.strings.size())
                                   : static_cast<std::uint32_t>(found - program_.strings.begin());
   if (found == program_.strings.end()) {
-    program_.strings.push_back(std::move(value));
+    program_.strings.push_back(value);
   }
   const RegisterId reg = AllocateTemporary(expression.location);
   Emit({.opcode = Opcode::LoadString, .dst = reg, .index = index, .location = expression.location});
@@ -654,21 +648,12 @@ auto Lowerer::LowerStringLiteral(const frontend::Expression& expression) -> Lowe
   };
 }
 
-auto Lowerer::LowerShorthandMember(const frontend::Expression& expression,
-                                   const frontend::TypeDescriptor* expected)
-    -> Lowerer::LoweredValue {
-  if (expected == nullptr || expected->kind != frontend::TypeDescriptor::Kind::Enum) {
-    AddDiagnostic(expression.location, "enum shorthand has no expected enum type");
-    return {.reg = 0, .type = InvalidType()};
-  }
-  const auto members = model_.enum_members.find(expected->name);
-  if (members == model_.enum_members.end()) {
-    return {.reg = 0, .type = InvalidType()};
-  }
+auto Lowerer::LowerEnumMember(const frontend::Expression& expression,
+                              const frontend::TypeDescriptor& type) -> Lowerer::LoweredValue {
   std::uint32_t ordinal = 0;
   bool found = false;
   for (const frontend::Enum& enumeration : source_.enums) {
-    if (enumeration.name != expected->name) {
+    if (enumeration.name != type.name) {
       continue;
     }
     for (std::size_t index = 0; index < enumeration.members.size(); ++index) {
@@ -690,7 +675,7 @@ auto Lowerer::LowerShorthandMember(const frontend::Expression& expression,
       .immediate = ordinal,
       .location = expression.location,
   });
-  return {.reg = reg, .type = *expected};
+  return {.reg = reg, .type = type};
 }
 
 auto Lowerer::LowerUnary(const frontend::Expression& expression) -> Lowerer::LoweredValue {
@@ -735,7 +720,7 @@ auto Lowerer::LowerBinary(const frontend::Expression& expression) -> Lowerer::Lo
     return LowerLogical(expression);
   }
   const LoweredValue left = LowerExpression(*expression.left);
-  const LoweredValue right = LowerExpression(*expression.right, &left.type);
+  const LoweredValue right = LowerExpression(*expression.right);
   if (left.type.kind == frontend::TypeDescriptor::Kind::Double) {
     return LowerDoubleBinary(expression, left, right);
   }

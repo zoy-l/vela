@@ -1,0 +1,14 @@
+func main(): int {
+  const a = "vela";
+  const b = "-";
+  const c = "string";
+  const d = ":";
+  const e = "42";
+  const f = "!";
+  let correct = 0;
+  for (let i = 0; i < 1000; i = i + 1) {
+    const text = "${a}${b}${c}${d}${e}${f}";
+    if (text == "vela-string:42!") { correct = correct + 1; }
+  }
+  return correct;
+}

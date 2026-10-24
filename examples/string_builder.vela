@@ -1,0 +1,11 @@
+func main(): string {
+  const builder = StringBuilder();
+  builder.append("rows:\n");
+  for (let i = 0; i < 5; i = i + 1) {
+    builder.append("  ${i.toString()}: 你好，Vela！\n");
+  }
+  const snapshot = builder.toString();
+  builder.append("done");
+  print(snapshot);
+  return builder.toString();
+}

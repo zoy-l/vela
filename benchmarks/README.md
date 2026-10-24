@@ -1,6 +1,6 @@
 # Vela benchmarks
 
-Google Benchmark runs ten Vela workloads through the production compiler
+Google Benchmark runs seventeen Vela workloads through the production compiler
 and VM. Versions are pinned in `DEPS`; `//benchmarks:vela_benchmarks` links the
 upstream `benchmark_main` and is separate from the language executable.
 Native benchmark sources use `*_benchmark.cc`. Generated symbol-table workloads
@@ -43,6 +43,10 @@ Each workload registers three cases:
 | `double_array` | 16000 |
 | `string_concat` | 1000 |
 | `string_growth` | 512 |
+| `string_parts_concat`, `string_interpolation`, `string_join` | 1000 |
+| `string_builder` | 512 |
+| `string_growth_large`, `string_builder_large` | 4096 |
+| `string_unicode` | 1000 |
 | `symbol_tables/32`, `symbol_tables/256`, `symbol_tables/1024` | 11 |
 
 `compile/symbol_tables/*` generates enums, classes, methods, functions, and long
@@ -66,6 +70,10 @@ against a string built by doubling. Both include automatic string GC. Steady
 cases report `retained_objects` and `retained_bytes` after a final collection
 outside timing, in addition to the heap counters sampled before collection.
 See [string GC measurements](../docs/string_gc_benchmark.md) for results.
+The added string workloads compare six-part `+`, interpolation, and `join`,
+compare builders against repeated `+` at 512 and 4096 appends, and exercise
+Unicode APIs. See [string performance](../docs/string_performance.md) for
+current results and measurement boundaries.
 
 Array results measured on 2026-10-24 with the pinned Windows Clang Release
 toolchain, `--benchmark_min_time=0.2s --benchmark_repetitions=5`, are below.

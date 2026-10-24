@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <span>
 
+#include "base/builtin.h"
 #include "gtest/gtest.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -48,6 +49,87 @@ TEST(VmTest, StringConcatSupportsAliasedDestinationsAcrossSafepoints) {
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsString()->value(), "xxxxxxxxxx");
 }
+
+TEST(VmTest, InterpolationAndBuilderAllowAliasedDestinationsAcrossSafepoints) {
+  Isolate isolate(1);
+  std::array<runtime::StringObject*, 1> constants{};
+  RootRange roots(isolate.heap(), constants);
+  constants.front() = isolate.heap().AllocateString("x");
+  constexpr auto kCode = std::to_array<Instruction>({
+      EncodeABC(OpCode::LoadString, 0, 0, 0),
+      EncodeABC(OpCode::LoadString, 1, 0, 0),
+      EncodeABC(OpCode::StringInterpolate, 0, 0, 2),
+      EncodeABC(OpCode::BuiltinCall, 2, static_cast<std::uint8_t>(Builtin::NewStringBuilder), 0),
+      EncodeABC(OpCode::Move, 3, 0, 0),
+      EncodeABC(OpCode::BuiltinCall, 4, static_cast<std::uint8_t>(Builtin::BuilderAppend), 2),
+      EncodeABC(OpCode::BuiltinCall, 2, static_cast<std::uint8_t>(Builtin::BuilderToString), 2),
+      EncodeABC(OpCode::Return, 2, 0, 0),
+  });
+  const Function function{
+      .code = kCode,
+      .classes = {},
+      .strings = constants,
+      .arrays = {},
+      .doubles = {},
+      .register_count = 5,
+  };
+  const auto result = VirtualMachine(isolate).Execute(function);
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsString()->value(), "xx");
+}
+
+TEST(VmTest, JoinAllowsDestinationToOverwriteRootedInputArray) {
+  Isolate isolate(1);
+  std::array<runtime::StringObject*, 1> constants{};
+  RootRange roots(isolate.heap(), constants);
+  constants.front() = isolate.heap().AllocateString("x");
+  const auto* layout = isolate.CreateArrayLayout({.element_kind = runtime::ValueKind::String});
+  const std::array<const runtime::ArrayLayout*, 1> arrays = {layout};
+  constexpr auto kCode = std::to_array<Instruction>({
+      EncodeABC(OpCode::NewArray, 0, 0, 2),
+      EncodeABC(OpCode::LoadString, 1, 0, 0),
+      EncodeAImm16(OpCode::LoadInt, 2, 0),
+      EncodeABC(OpCode::SetIndex, 0, 2, 1),
+      EncodeAImm16(OpCode::LoadInt, 2, 1),
+      EncodeABC(OpCode::SetIndex, 0, 2, 1),
+      EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::Join), 0),
+      EncodeABC(OpCode::Return, 0, 0, 0),
+  });
+  const Function function{
+      .code = kCode,
+      .classes = {},
+      .strings = constants,
+      .arrays = arrays,
+      .doubles = {},
+      .register_count = 3,
+  };
+  const auto result = VirtualMachine(isolate).Execute(function);
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsString()->value(), "xxx");
+}
+
+class StringBytecodeValidationTest : public testing::TestWithParam<Instruction> {};
+
+TEST_P(StringBytecodeValidationTest, RejectsInvalidBuiltinIdsAndArgumentRanges) {
+  Isolate isolate;
+  const std::array<Instruction, 2> code = {GetParam(), EncodeABC(OpCode::Return, 0, 0, 0)};
+  const Function function{
+      .code = code,
+      .classes = {},
+      .strings = {},
+      .arrays = {},
+      .doubles = {},
+      .register_count = 2,
+  };
+  EXPECT_EQ(VirtualMachine(isolate).Execute(function).status, ExecutionStatus::InvalidBytecode);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    InvalidCalls,
+    StringBytecodeValidationTest,
+    testing::Values(EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::Count), 0),
+                    EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::Join), 1),
+                    EncodeABC(OpCode::StringInterpolate, 0, 1, 2)));
 
 TEST(VmTest, IntegerExecution) {
   constexpr std::array<Instruction, 4> code = {

@@ -87,9 +87,9 @@ TEST(CompilerStringGcTest, ReturnedFieldsAndNestedArraysTraceDynamicStrings) {
   {
     constexpr std::string_view kSource = R"(
 class Store { label: string; rows: string[][]; }
-func join(left: string, right: string): string { return left + right; }
+func combine(left: string, right: string): string { return left + right; }
 func main(): Store {
-  return Store(label: join("a", "b"), rows: [[join("c", "d")]]);
+  return Store(label: combine("a", "b"), rows: [[combine("c", "d")]]);
 }
 )";
     const auto compiled = CompileSource(kSource, isolate);

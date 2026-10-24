@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -17,6 +18,9 @@ struct ParseResult final {
   Program program;
   Diagnostics diagnostics;
 };
+
+[[nodiscard]] auto ParseSource(std::string_view source) -> ParseResult;
+void AppendProgram(Program& destination, Program source);
 
 class Parser final {
  public:
@@ -65,6 +69,7 @@ class Parser final {
   auto ParsePostfix() -> std::unique_ptr<Expression>;
   auto ParsePrimary() -> std::unique_ptr<Expression>;
   auto ParseDoubleLiteral() -> std::unique_ptr<Expression>;
+  auto ParseString() -> std::unique_ptr<Expression>;
   auto ParseArguments() -> std::vector<CallArgument>;
   static auto MakeExpression(Expression::Kind kind, SourceLocation location)
       -> std::unique_ptr<Expression>;

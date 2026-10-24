@@ -1,16 +1,35 @@
 #include "compiler/frontend/parser.h"
 
+#include <algorithm>
 #include <charconv>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/lexer.h"
 #include "compiler/frontend/token.h"
 
 namespace vela::frontend {
+
+auto ParseSource(std::string_view source) -> ParseResult {
+  auto lexed = Lexer(source).Tokenize();
+  if (!lexed.diagnostics.empty()) {
+    return {.program = Program(), .diagnostics = std::move(lexed.diagnostics)};
+  }
+  return Parser(std::move(lexed.tokens)).Parse();
+}
+
+void AppendProgram(Program& destination, Program source) {
+  std::ranges::move(source.enums, std::back_inserter(destination.enums));
+  std::ranges::move(source.classes, std::back_inserter(destination.classes));
+  std::ranges::move(source.functions, std::back_inserter(destination.functions));
+  std::ranges::move(source.imports, std::back_inserter(destination.imports));
+}
 
 auto Parser::Parse() -> ParseResult {
   Program program;
@@ -58,11 +77,11 @@ auto Parser::ParseImport() -> std::optional<std::string> {
   if (!Expect(TokenKind::Semicolon, "expected ';' after import").has_value()) {
     return std::nullopt;
   }
-  std::string value = path.lexeme;
-  if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
-    value = value.substr(1, value.size() - 2);
+  if (path.lexeme.contains('\0')) {
+    AddDiagnostic(path.location, "import path cannot contain a null byte");
+    return std::nullopt;
   }
-  return value;
+  return path.lexeme;
 }
 
 auto Parser::Peek() const -> const Token& {
@@ -663,10 +682,8 @@ auto Parser::ParsePrimary() -> std::unique_ptr<Expression> {
   if (Match(TokenKind::DoubleLiteral)) {
     return ParseDoubleLiteral();
   }
-  if (Match(TokenKind::StringLiteral)) {
-    auto expression = MakeExpression(Expression::Kind::StringLiteral, Previous().location);
-    expression->text = Previous().lexeme;
-    return expression;
+  if (Check(TokenKind::StringLiteral) || Check(TokenKind::StringHead)) {
+    return ParseString();
   }
   if (Match(TokenKind::LeftBracket)) {
     auto expression = MakeExpression(Expression::Kind::ArrayLiteral, Previous().location);
@@ -695,16 +712,6 @@ auto Parser::ParsePrimary() -> std::unique_ptr<Expression> {
     expression->text = Previous().lexeme;
     return expression;
   }
-  if (Match(TokenKind::Dot)) {
-    const std::optional<Token> member =
-        Expect(TokenKind::Identifier, "expected member name after '.'");
-    if (!member.has_value()) {
-      return nullptr;
-    }
-    auto expression = MakeExpression(Expression::Kind::ShorthandMember, member->location);
-    expression->text = member->lexeme;
-    return expression;
-  }
   if (Match(TokenKind::LeftParen)) {
     std::unique_ptr<Expression> expression = ParseExpression();
     if (!Expect(TokenKind::RightParen, "expected ')' after expression").has_value()) {
@@ -715,6 +722,35 @@ auto Parser::ParsePrimary() -> std::unique_ptr<Expression> {
 
   AddDiagnostic(Peek().location, "expected expression");
   return nullptr;
+}
+
+auto Parser::ParseString() -> std::unique_ptr<Expression> {
+  if (Match(TokenKind::StringLiteral)) {
+    auto literal = MakeExpression(Expression::Kind::StringLiteral, Previous().location);
+    literal->text = Previous().lexeme;
+    return literal;
+  }
+  auto interpolation = MakeExpression(Expression::Kind::StringInterpolation, Peek().location);
+  ++current_;
+  while (true) {
+    auto literal = MakeExpression(Expression::Kind::StringLiteral, Previous().location);
+    literal->text = Previous().lexeme;
+    interpolation->elements.push_back(std::move(literal));
+    auto expression = ParseExpression();
+    if (!expression) {
+      return nullptr;
+    }
+    interpolation->elements.push_back(std::move(expression));
+    if (Match(TokenKind::StringTail)) {
+      auto tail = MakeExpression(Expression::Kind::StringLiteral, Previous().location);
+      tail->text = Previous().lexeme;
+      interpolation->elements.push_back(std::move(tail));
+      return interpolation;
+    }
+    if (!Expect(TokenKind::StringMiddle, "expected '}' after interpolation expression")) {
+      return nullptr;
+    }
+  }
 }
 
 auto Parser::ParseArguments() -> std::vector<CallArgument> {

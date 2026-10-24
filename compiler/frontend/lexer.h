@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "compiler/frontend/diagnostic.h"
@@ -32,6 +34,11 @@ class Lexer final {
   void ScanIdentifier();
   void ScanNumber();
   void ScanString();
+  void ScanStringRun(std::string& value);
+  auto ScanInterpolation() -> bool;
+  void ScanEscape(std::string& value);
+  void ScanUnicodeEscape(std::string& value, SourceLocation escape_location);
+  auto ReadHexDigits(std::size_t limit) -> std::pair<std::uint32_t, std::size_t>;
   void AddToken(TokenKind kind, std::size_t start);
   void AddDiagnostic(SourceLocation location, std::string message);
 

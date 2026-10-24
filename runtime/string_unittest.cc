@@ -1,19 +1,26 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <sstream>
 #include <string>
 #include <string_view>
 
 #include "gtest/gtest.h"
 
+#include "base/builtin.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "runtime/string.h"
+#include "runtime/string_operations.h"
 #include "runtime/value.h"
+#include "runtime/value_io.h"
 
 namespace vela::runtime {
 namespace {
+
+constexpr double kRoundTripValue = 1.2345678901234567;
 
 TEST(StringGcTest, StoresEmptyAndEmbeddedNullBytes) {
   Heap heap;
@@ -171,6 +178,86 @@ TEST(StringGcTest, RegistersNativeRootsAndAllocatesDuringSweep) {
   EXPECT_EQ(constants.front()->value(), "unswept");
   EXPECT_EQ(value.AsString()->value(), "new string");
 }
+
+TEST(StringGcTest, BuilderAccountsExternalStorageAndReleasesItOnCollection) {
+  Heap heap(1);
+  Value value = Value::Object(heap.AllocateStringBuilder());
+  RootRange root(heap, &value, 1);
+  ASSERT_NE(value.AsObject(), nullptr);
+  const auto initial = heap.allocated_bytes();
+  const std::string text(8192, 'x');
+  ASSERT_TRUE(heap.AppendString(*value.AsObject(), text));
+  EXPECT_EQ(heap.allocated_bytes(), initial + text.size());
+  auto* snapshot = heap.BuildString(*value.AsObject());
+  ASSERT_NE(snapshot, nullptr);
+  EXPECT_EQ(snapshot->value(), text);
+  heap.Collect();
+  EXPECT_EQ(heap.allocated_bytes(), initial + text.size());
+  value = Value::Null();
+  heap.Collect();
+  EXPECT_EQ(heap.allocated_bytes(), 0U);
+  EXPECT_EQ(heap.object_count(), 0U);
+  EXPECT_EQ(heap.committed_bytes(), initial);
+}
+
+TEST(StringGcTest, BuilderGrowthIsGeometricAndSnapshotsOwnIndependentStorage) {
+  Heap heap(1);
+  std::array<Value, 2> values = {Value::Object(heap.AllocateStringBuilder()), Value::Null()};
+  RootRange roots(heap, values.data(), values.size());
+  auto& builder = *values.front().AsObject();
+  constexpr std::size_t kAppends = 4096;
+  for (std::size_t index = 0; index < kAppends; ++index) {
+    ASSERT_TRUE(heap.AppendString(builder, "x"));
+  }
+  values.back() = Value::String(heap.BuildString(builder));
+  ASSERT_NE(values.back().AsString(), nullptr);
+  const auto before = heap.allocated_bytes();
+  ASSERT_TRUE(heap.AppendString(builder, values.back().AsString()->value()));
+  heap.Collect();
+  EXPECT_EQ(values.back().AsString()->value(), std::string(kAppends, 'x'));
+  EXPECT_EQ(heap.allocated_bytes(), before + kAppends);
+}
+
+TEST_P(StringBarrierTest, BuilderSurvivesIncrementalCollectionAndGrowth) {
+  Heap heap;
+  Value value = Value::Object(heap.AllocateStringBuilder());
+  RootRange root(heap, &value, 1);
+  ASSERT_TRUE(heap.AppendString(*value.AsObject(), "old"));
+  ASSERT_NE(heap.AllocateString("garbage"), nullptr);
+  heap.StartCollection();
+  heap.Step(GetParam());
+  const std::string suffix(8192, 'x');
+  ASSERT_TRUE(heap.AppendString(*value.AsObject(), suffix));
+  heap.FinishCollection();
+  auto* snapshot = heap.BuildString(*value.AsObject());
+  ASSERT_NE(snapshot, nullptr);
+  EXPECT_EQ(snapshot->value(), "old" + suffix);
+}
+
+class StringConversionTest : public testing::TestWithParam<Value> {};
+
+TEST_P(StringConversionTest, ExplicitConversionMatchesConsoleFormatting) {
+  Heap heap;
+  const auto value = GetParam();
+  const std::array<Value, 1> arguments = {value};
+  const auto converted = ExecuteStringBuiltin(Builtin::ScalarToString, arguments, heap);
+  ASSERT_TRUE(converted.has_value());
+  std::ostringstream output;
+  WriteValue(output, value);
+  EXPECT_EQ(converted->AsString()->value(), output.str());
+}
+
+INSTANTIATE_TEST_SUITE_P(PrimitiveValues,
+                         StringConversionTest,
+                         testing::Values(Value::Integer(std::numeric_limits<std::int64_t>::min()),
+                                         Value::Integer(std::numeric_limits<std::int64_t>::max()),
+                                         Value::Boolean(true),
+                                         Value::Boolean(false),
+                                         Value::Double(-0.0),
+                                         Value::Double(kRoundTripValue),
+                                         Value::Double(std::numeric_limits<double>::infinity()),
+                                         Value::Double(std::numeric_limits<double>::quiet_NaN()),
+                                         Value::Double(std::numeric_limits<double>::denorm_min())));
 
 }  // namespace
 }  // namespace vela::runtime

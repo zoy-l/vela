@@ -46,7 +46,7 @@ func main(): int {
   const counter = Counter(value: 1);
   const values = [1, 2];
   const empty: int[] = [];
-  const shade: Shade = .light;
+  const shade: Shade = Shade.light;
   const scale = 1.5;
   let count = 0;
   count = counter.add(read(values[0]));
@@ -57,6 +57,31 @@ func main(): int {
 )";
   EXPECT_TRUE(CheckSource(source).Succeeded());
 }
+
+class EnumMemberSyntaxTest : public testing::TestWithParam<std::string_view> {};
+
+TEST_P(EnumMemberSyntaxTest, RejectsUnqualifiedEnumMembers) {
+  const auto result = CheckSource(GetParam());
+  EXPECT_FALSE(result.Succeeded());
+  ASSERT_FALSE(result.diagnostics.empty());
+  EXPECT_EQ(result.diagnostics.front().message, "expected expression");
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ExplicitEnumTypes,
+    EnumMemberSyntaxTest,
+    testing::Values(
+        "enum Shade { light } class Theme { shade: Shade; } "
+        "func main(): Theme { return Theme(shade: .light); }",
+        "enum Shade { light } func main(): Shade { return .light; }",
+        "enum Shade { light } func main(): Shade { let value: Shade = .light; return value; }",
+        "enum Shade { light } func main(): Shade { const value = .light; return value; }",
+        "enum Shade { light } func main(): Shade[] { return [.light]; }",
+        "enum Shade { light } func main(): Shade[][] { return [[], [.light]]; }",
+        "enum Shade { light } func main(): Shade { "
+        "let value = Shade.light; value = .light; return value; }",
+        "enum Shade { light } func take(value: Shade): Shade { return value; } "
+        "func main(): Shade { return take(.light); }"));
 
 }  // namespace
 }  // namespace vela::frontend

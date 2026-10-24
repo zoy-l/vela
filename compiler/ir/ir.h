@@ -47,6 +47,8 @@ enum class Opcode : std::uint8_t {
   AndBool,
   OrBool,
   StringConcat,
+  StringInterpolate,
+  BuiltinCall,
   EqualString,
   NotEqualString,
   LoadString,

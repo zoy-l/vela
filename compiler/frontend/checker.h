@@ -15,5 +15,6 @@ struct CheckResult final {
 };
 
 [[nodiscard]] auto CheckSource(std::string_view source) -> CheckResult;
+[[nodiscard]] auto CheckFile(std::string_view path) -> CheckResult;
 
 }  // namespace vela::frontend

@@ -11,10 +11,12 @@
 #include <new>
 #include <span>
 #include <utility>
+#include "base/builtin.h"
 
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/string.h"
+#include "runtime/string_operations.h"
 #include "runtime/value.h"
 #include "runtime/value_io.h"
 #include "vm/bytecode.h"
@@ -91,6 +93,14 @@ auto IsValidInstruction(Instruction instruction,
              static_cast<std::size_t>(operand_c) +
                      functions.subspan(operand_b).front().parameter_count <=
                  function.register_count;
+    case OpCode::BuiltinCall:
+      return IsRegister(operand_a, function) &&
+             operand_b < static_cast<std::uint8_t>(Builtin::Count) &&
+             static_cast<std::size_t>(operand_c) + BuiltinArity(static_cast<Builtin>(operand_b)) <=
+                 function.register_count;
+    case OpCode::StringInterpolate:
+      return IsRegister(operand_a, function) &&
+             static_cast<std::size_t>(operand_b) + operand_c <= function.register_count;
     case OpCode::Jump:
       return true;
     case OpCode::JumpIfFalse:
@@ -300,6 +310,8 @@ class Execution final {
                       runtime::Value& destination,
                       runtime::Value left,
                       runtime::Value right) -> StepResult;
+  auto ExecuteBuiltin(ActiveFrame& active, Instruction instruction) -> StepResult;
+  auto Interpolate(ActiveFrame& active, Instruction instruction) -> StepResult;
   static auto Jump(ActiveFrame& active, std::int16_t offset) noexcept -> StepResult;
   void Call(ActiveFrame& active, Instruction instruction);
   void Return(ActiveFrame& active, runtime::Value value);
@@ -424,6 +436,10 @@ auto Execution::ExecuteObject(ActiveFrame& active, Instruction instruction) -> S
       values.subspan(operand_a).front() =
           runtime::Value::String(active.function->strings.subspan(operand_b).front());
       return {};
+    case OpCode::BuiltinCall:
+      return ExecuteBuiltin(active, instruction);
+    case OpCode::StringInterpolate:
+      return Interpolate(active, instruction);
     case OpCode::StringConcat:
     case OpCode::EqualString:
     case OpCode::NotEqualString:
@@ -503,6 +519,44 @@ auto Execution::ExecuteControl(ActiveFrame& active, Instruction instruction) -> 
     default:
       return std::unexpected(ExecutionStatus::InvalidBytecode);
   }
+}
+
+auto Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) -> StepResult {
+  const auto builtin = static_cast<Builtin>(DecodeB(instruction));
+  auto values = active.frame.registers();
+  const auto arguments = values.subspan(DecodeC(instruction), BuiltinArity(builtin));
+  const auto result = runtime::ExecuteStringBuiltin(builtin, arguments, isolate_.heap());
+  if (!result) {
+    switch (result.error()) {
+      case runtime::StringError::OutOfMemory:
+        return std::unexpected(ExecutionStatus::OutOfMemory);
+      case runtime::StringError::IndexOutOfBounds:
+        return std::unexpected(ExecutionStatus::IndexOutOfBounds);
+      case runtime::StringError::TypeError:
+        return std::unexpected(ExecutionStatus::TypeError);
+    }
+  }
+  values.subspan(DecodeA(instruction)).front() = *result;
+  return {};
+}
+
+auto Execution::Interpolate(ActiveFrame& active, Instruction instruction) -> StepResult {
+  auto values = active.frame.registers();
+  const auto arguments = values.subspan(DecodeB(instruction), DecodeC(instruction));
+  std::array<runtime::StringObject*, kMaxRegisters> parts{};
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    const auto value = arguments.subspan(index).front();
+    if (!value.IsString()) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    std::span(parts).subspan(index).front() = value.AsString();
+  }
+  auto* string = isolate_.heap().JoinStrings(std::span(parts).first(arguments.size()));
+  if (string == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  values.subspan(DecodeA(instruction)).front() = runtime::Value::String(string);
+  return {};
 }
 
 auto Execution::StringOperation(OpCode opcode,

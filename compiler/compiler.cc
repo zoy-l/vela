@@ -4,9 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <filesystem>
-#include <fstream>
-#include <ios>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -17,12 +14,12 @@
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
 
+#include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/lexer.h"
 #include "compiler/frontend/parser.h"
+#include "compiler/frontend/source_loader.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
@@ -177,6 +174,10 @@ auto EmitOpcode(ir::Opcode opcode) -> vm::OpCode {
       return vm::OpCode::OrBool;
     case ir::Opcode::StringConcat:
       return vm::OpCode::StringConcat;
+    case ir::Opcode::StringInterpolate:
+      return vm::OpCode::StringInterpolate;
+    case ir::Opcode::BuiltinCall:
+      return vm::OpCode::BuiltinCall;
     case ir::Opcode::EqualString:
       return vm::OpCode::EqualString;
     case ir::Opcode::NotEqualString:
@@ -276,6 +277,7 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
     case ir::Opcode::AndBool:
     case ir::Opcode::OrBool:
     case ir::Opcode::StringConcat:
+    case ir::Opcode::StringInterpolate:
     case ir::Opcode::EqualString:
     case ir::Opcode::NotEqualString:
     case ir::Opcode::GetIndex:
@@ -306,6 +308,15 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
                            static_cast<std::uint8_t>(instruction.index), 0);
     case ir::Opcode::Print:
       return vm::EncodeABC(opcode, 0, Byte(instruction.lhs), 0);
+    case ir::Opcode::BuiltinCall:
+      if (instruction.index >= static_cast<std::uint32_t>(Builtin::Count)) {
+        return std::unexpected(frontend::Diagnostic{
+            .location = instruction.location,
+            .message = "invalid builtin ID in IR",
+        });
+      }
+      return vm::EncodeABC(opcode, Byte(instruction.dst),
+                           static_cast<std::uint8_t>(instruction.index), Byte(instruction.lhs));
     case ir::Opcode::Call:
       if (instruction.index >= function_count) {
         return std::unexpected(frontend::Diagnostic{
@@ -398,6 +409,10 @@ auto CreateArrayLayouts(const ir::Program& program,
       case Kind::String:
         layout.element_kind = runtime::ValueKind::String;
         break;
+      case Kind::StringBuilder:
+        layout.element_kind = runtime::ValueKind::Object;
+        layout.element_object_kind = runtime::ObjectKind::StringBuilder;
+        break;
       case Kind::Class:
         layout.element_kind = runtime::ValueKind::Object;
         layout.element_class = classes_by_name.at(element.name);
@@ -429,6 +444,17 @@ auto FunctionViews(std::span<const CompiledFunction> functions) -> std::vector<v
   return views;
 }
 
+auto CompileParsed(frontend::ParseResult parsed, runtime::Isolate& isolate) -> CompileResult {
+  if (!parsed.diagnostics.empty()) {
+    return {.program = {}, .diagnostics = std::move(parsed.diagnostics)};
+  }
+  auto checked = frontend::TypeChecker().Check(parsed.program);
+  if (!checked.diagnostics.empty()) {
+    return {.program = {}, .diagnostics = std::move(checked.diagnostics)};
+  }
+  return CompileProgram(parsed.program, checked.model, isolate);
+}
+
 }  // namespace
 
 CompiledProgram::CompiledProgram(const CompiledProgram& other)
@@ -451,125 +477,27 @@ auto CompiledProgram::FindFunction(std::string_view name) const noexcept
 }
 
 auto CompileSource(std::string_view source, runtime::Isolate& isolate) -> CompileResult {
-  frontend::LexResult lexed = frontend::Lexer(source).Tokenize();
-  if (!lexed.diagnostics.empty()) {
-    CompileResult result;
-    result.diagnostics = std::move(lexed.diagnostics);
-    return result;
-  }
-
-  frontend::ParseResult parsed = frontend::Parser(std::move(lexed.tokens)).Parse();
-  if (!parsed.diagnostics.empty()) {
-    CompileResult result;
-    result.diagnostics = std::move(parsed.diagnostics);
-    return result;
-  }
-
-  frontend::TypeCheckResult checked = frontend::TypeChecker().Check(parsed.program);
-  if (!checked.diagnostics.empty()) {
-    CompileResult result;
-    result.diagnostics = std::move(checked.diagnostics);
-    return result;
-  }
-  return CompileProgram(parsed.program, checked.model, isolate);
+  return CompileParsed(frontend::ParseSource(source), isolate);
 }
 
 auto CompileSources(const std::vector<std::string_view>& sources, runtime::Isolate& isolate)
     -> CompileResult {
-  frontend::Program program;
-  frontend::Diagnostics diagnostics;
-  for (const std::string_view source : sources) {
-    frontend::LexResult lexed = frontend::Lexer(source).Tokenize();
-    diagnostics.insert(diagnostics.end(), std::make_move_iterator(lexed.diagnostics.begin()),
-                       std::make_move_iterator(lexed.diagnostics.end()));
-    if (!lexed.diagnostics.empty()) {
-      continue;
-    }
-    frontend::ParseResult parsed = frontend::Parser(std::move(lexed.tokens)).Parse();
-    diagnostics.insert(diagnostics.end(), std::make_move_iterator(parsed.diagnostics.begin()),
-                       std::make_move_iterator(parsed.diagnostics.end()));
+  frontend::ParseResult combined;
+  for (const auto source : sources) {
+    auto parsed = frontend::ParseSource(source);
     if (!parsed.diagnostics.empty()) {
-      continue;
-    }
-    for (auto& item : parsed.program.enums) {
-      program.enums.push_back(std::move(item));
-    }
-    for (auto& item : parsed.program.classes) {
-      program.classes.push_back(std::move(item));
-    }
-    for (auto& item : parsed.program.functions) {
-      program.functions.push_back(std::move(item));
-    }
-    for (auto& item : parsed.program.imports) {
-      program.imports.push_back(std::move(item));
+      combined.diagnostics.insert(combined.diagnostics.end(),
+                                  std::make_move_iterator(parsed.diagnostics.begin()),
+                                  std::make_move_iterator(parsed.diagnostics.end()));
+    } else {
+      frontend::AppendProgram(combined.program, std::move(parsed.program));
     }
   }
-  if (!diagnostics.empty()) {
-    return CompileResult{.program = CompiledProgram(), .diagnostics = std::move(diagnostics)};
-  }
-  frontend::TypeCheckResult checked = frontend::TypeChecker().Check(program);
-  if (!checked.diagnostics.empty()) {
-    return CompileResult{
-        .program = CompiledProgram(),
-        .diagnostics = std::move(checked.diagnostics),
-    };
-  }
-  return CompileProgram(program, checked.model, isolate);
+  return CompileParsed(std::move(combined), isolate);
 }
 
 auto CompileFile(std::string_view path, runtime::Isolate& isolate) -> CompileResult {
-  std::vector<std::string> contents;
-  absl::flat_hash_set<std::string> visiting;
-  absl::flat_hash_set<std::string> loaded;
-  frontend::Diagnostics diagnostics;
-  const auto load = [&](const auto& self, const std::filesystem::path& file) -> void {
-    const std::string key = std::filesystem::weakly_canonical(file).string();
-    if (!visiting.insert(key).second) {
-      diagnostics.push_back({
-          .location = frontend::SourceLocation(),
-          .message = "cyclic import involving '" + key + "'",
-      });
-      return;
-    }
-    if (loaded.contains(key)) {
-      visiting.erase(key);
-      return;
-    }
-    std::ifstream input(key, std::ios::binary);
-    if (!input) {
-      diagnostics.push_back({
-          .location = frontend::SourceLocation(),
-          .message = "cannot open imported source '" + key + "'",
-      });
-      visiting.erase(key);
-      return;
-    }
-    std::string source((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-    frontend::LexResult lexed = frontend::Lexer(source).Tokenize();
-    frontend::ParseResult parsed = frontend::Parser(std::move(lexed.tokens)).Parse();
-    diagnostics.insert(diagnostics.end(), std::make_move_iterator(lexed.diagnostics.begin()),
-                       std::make_move_iterator(lexed.diagnostics.end()));
-    diagnostics.insert(diagnostics.end(), std::make_move_iterator(parsed.diagnostics.begin()),
-                       std::make_move_iterator(parsed.diagnostics.end()));
-    if (lexed.diagnostics.empty() && parsed.diagnostics.empty()) {
-      for (const std::string& import : parsed.program.imports) {
-        self(self, std::filesystem::path(key).parent_path() / import);
-      }
-    }
-    contents.push_back(std::move(source));
-    loaded.insert(key);
-    visiting.erase(key);
-  };
-  load(load, std::filesystem::path(path));
-  if (!diagnostics.empty()) {
-    return CompileResult{.program = CompiledProgram(), .diagnostics = std::move(diagnostics)};
-  }
-  std::vector<std::string_view> views;
-  views.reserve(contents.size());
-  for (const std::string& source : contents) {
-    views.push_back(source);
-  }
-  return CompileSources(views, isolate);
+  return CompileParsed(frontend::LoadProgram(path), isolate);
 }
 
 auto CompileProgram(const frontend::Program& source,
@@ -594,7 +522,8 @@ auto CompileProgram(const frontend::Program& source,
       const auto kind = class_info.field_types.at(index).kind;
       if (kind == frontend::TypeDescriptor::Kind::Class ||
           kind == frontend::TypeDescriptor::Kind::Array ||
-          kind == frontend::TypeDescriptor::Kind::String) {
+          kind == frontend::TypeDescriptor::Kind::String ||
+          kind == frontend::TypeDescriptor::Kind::StringBuilder) {
         reference_fields.push_back(static_cast<std::uint32_t>(index));
       }
     }

@@ -29,6 +29,9 @@ auto Isolate::CreateClassLayout(std::uint32_t field_count,
 }
 
 auto Isolate::CreateArrayLayout(ArrayLayout layout) -> const ArrayLayout* {
+  if (layout.element_array != nullptr) {
+    layout.element_object_kind = ObjectKind::Array;
+  }
   auto stored = std::make_unique<ArrayLayout>(layout);
   const auto* result = stored.get();
   array_layouts_.push_back(std::move(stored));

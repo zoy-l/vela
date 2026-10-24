@@ -116,6 +116,10 @@ void SteadyExecution(benchmark::State& state, std::string_view filename, std::in
     state.SkipWithError("Warm-up execution failed or returned an unexpected result");
     return;
   }
+  auto& heap = isolate.heap();
+  // 固定记录一次执行后的状态，避免把计时迭代次数造成的 GC 相位差当作内存变化。
+  state.counters["first_allocated_bytes"] = static_cast<double>(heap.allocated_bytes());
+  state.counters["first_committed_bytes"] = static_cast<double>(heap.committed_bytes());
   for (auto iteration : state) {
     auto result = machine.Execute(program, entry_index);
     benchmark::DoNotOptimize(result);
@@ -124,10 +128,11 @@ void SteadyExecution(benchmark::State& state, std::string_view filename, std::in
       break;
     }
   }
-  auto& heap = isolate.heap();
   state.counters["heap_objects"] = static_cast<double>(heap.object_count());
   state.counters["allocated_bytes"] = static_cast<double>(heap.allocated_bytes());
   state.counters["committed_bytes"] = static_cast<double>(heap.committed_bytes());
+  // 先结束可能仍在运行的增量周期，再启动无 VM 帧的新周期，排除浮动垃圾。
+  heap.FinishCollection();
   heap.Collect();
   state.counters["retained_objects"] = static_cast<double>(heap.object_count());
   state.counters["retained_bytes"] = static_cast<double>(heap.allocated_bytes());
@@ -145,6 +150,17 @@ BENCHMARK_CAPTURE(Compile, DoubleLoop, "double_loop.vela")->Name("compile/double
 BENCHMARK_CAPTURE(Compile, DoubleArray, "double_array.vela")->Name("compile/double_array");
 BENCHMARK_CAPTURE(Compile, StringConcat, "string_concat.vela")->Name("compile/string_concat");
 BENCHMARK_CAPTURE(Compile, StringGrowth, "string_growth.vela")->Name("compile/string_growth");
+BENCHMARK_CAPTURE(Compile, StringPartsConcat, "string_parts_concat.vela")
+    ->Name("compile/string_parts_concat");
+BENCHMARK_CAPTURE(Compile, StringInterpolation, "string_interpolation.vela")
+    ->Name("compile/string_interpolation");
+BENCHMARK_CAPTURE(Compile, StringJoin, "string_join.vela")->Name("compile/string_join");
+BENCHMARK_CAPTURE(Compile, StringBuilder, "string_builder.vela")->Name("compile/string_builder");
+BENCHMARK_CAPTURE(Compile, StringBuilderLarge, "string_builder_large.vela")
+    ->Name("compile/string_builder_large");
+BENCHMARK_CAPTURE(Compile, StringGrowthLarge, "string_growth_large.vela")
+    ->Name("compile/string_growth_large");
+BENCHMARK_CAPTURE(Compile, StringUnicode, "string_unicode.vela")->Name("compile/string_unicode");
 
 BENCHMARK_CAPTURE(FirstExecution, IntegerLoop, "integer_loop.vela", 499500)
     ->Name("first_execute/integer_loop");
@@ -166,6 +182,20 @@ BENCHMARK_CAPTURE(FirstExecution, StringConcat, "string_concat.vela", 1000)
     ->Name("first_execute/string_concat");
 BENCHMARK_CAPTURE(FirstExecution, StringGrowth, "string_growth.vela", 512)
     ->Name("first_execute/string_growth");
+BENCHMARK_CAPTURE(FirstExecution, StringPartsConcat, "string_parts_concat.vela", 1000)
+    ->Name("first_execute/string_parts_concat");
+BENCHMARK_CAPTURE(FirstExecution, StringInterpolation, "string_interpolation.vela", 1000)
+    ->Name("first_execute/string_interpolation");
+BENCHMARK_CAPTURE(FirstExecution, StringJoin, "string_join.vela", 1000)
+    ->Name("first_execute/string_join");
+BENCHMARK_CAPTURE(FirstExecution, StringBuilder, "string_builder.vela", 512)
+    ->Name("first_execute/string_builder");
+BENCHMARK_CAPTURE(FirstExecution, StringBuilderLarge, "string_builder_large.vela", 4096)
+    ->Name("first_execute/string_builder_large");
+BENCHMARK_CAPTURE(FirstExecution, StringGrowthLarge, "string_growth_large.vela", 4096)
+    ->Name("first_execute/string_growth_large");
+BENCHMARK_CAPTURE(FirstExecution, StringUnicode, "string_unicode.vela", 1000)
+    ->Name("first_execute/string_unicode");
 
 BENCHMARK_CAPTURE(SteadyExecution, IntegerLoop, "integer_loop.vela", 499500)
     ->Name("vm/integer_loop");
@@ -185,6 +215,19 @@ BENCHMARK_CAPTURE(SteadyExecution, StringConcat, "string_concat.vela", 1000)
     ->Name("vm/string_concat");
 BENCHMARK_CAPTURE(SteadyExecution, StringGrowth, "string_growth.vela", 512)
     ->Name("vm/string_growth");
+BENCHMARK_CAPTURE(SteadyExecution, StringPartsConcat, "string_parts_concat.vela", 1000)
+    ->Name("vm/string_parts_concat");
+BENCHMARK_CAPTURE(SteadyExecution, StringInterpolation, "string_interpolation.vela", 1000)
+    ->Name("vm/string_interpolation");
+BENCHMARK_CAPTURE(SteadyExecution, StringJoin, "string_join.vela", 1000)->Name("vm/string_join");
+BENCHMARK_CAPTURE(SteadyExecution, StringBuilder, "string_builder.vela", 512)
+    ->Name("vm/string_builder");
+BENCHMARK_CAPTURE(SteadyExecution, StringBuilderLarge, "string_builder_large.vela", 4096)
+    ->Name("vm/string_builder_large");
+BENCHMARK_CAPTURE(SteadyExecution, StringGrowthLarge, "string_growth_large.vela", 4096)
+    ->Name("vm/string_growth_large");
+BENCHMARK_CAPTURE(SteadyExecution, StringUnicode, "string_unicode.vela", 1000)
+    ->Name("vm/string_unicode");
 
 }  // namespace
 }  // namespace vela::benchmarks

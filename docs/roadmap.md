@@ -15,7 +15,7 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 - [x] `if` and `while`
 - [x] Functions and direct function calls
 - [x] Classes, fixed fields, and aggregate construction
-- [x] Enums and `.member` shorthand
+- [x] Enums with explicitly qualified members (`Enum.member`)
 - [x] Static type checking
 - [x] Typed IR and fixed-width register bytecode
 - [x] Isolate-local precise incremental mark-sweep GC
@@ -37,8 +37,10 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 - [x] Implement IEEE 754 binary64 `double` values, operations, arrays, and output
 - [x] Implement `string`, comparison, and concatenation
 - [x] Collect strings with precise roots, field/array barriers, and accounted contiguous storage
-- [ ] Decode string escape sequences
-- [ ] Define string encoding, length, and indexing units (no separate `char` type)
+- [x] Decode string escapes and Unicode escapes with invalid-input diagnostics
+- [x] Define UTF-8 storage and code point length/index/slice units (no separate `char` type)
+- [x] Add strict string interpolation and explicit primitive `toString()`
+- [x] Add single-allocation `join`, string operations, and GC-owned `StringBuilder`
 - [ ] Add Unicode code point iteration and grapheme cluster APIs
 - [ ] Implement explicit numeric conversions (implicit conversions are forbidden)
 - [x] Implement invariant typed arrays, nested arrays, and compact contiguous storage
@@ -77,7 +79,8 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 - [ ] Add console input
 - [ ] Add file I/O
 - [ ] Add time, random, and math libraries
-- [ ] Add collection and string standard library APIs
+- [x] Add basic string standard library APIs ([contracts](strings.md))
+- [ ] Add collection standard library APIs
 - [ ] Define process exit codes
 
 ## P2: errors and host integration

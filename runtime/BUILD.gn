@@ -1,11 +1,15 @@
 source_set("runtime") {
+  public_deps = [ "//base" ]
   sources = [
     "heap.cc",
     "heap.h",
+    "heap_string.cc",
     "isolate.cc",
     "isolate.h",
     "object.h",
     "string.h",
+    "string_operations.cc",
+    "string_operations.h",
     "value.h",
     "value_io.cc",
     "value_io.h",

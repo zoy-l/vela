@@ -56,6 +56,8 @@ enum class ArrayAccessError : std::uint8_t {
   ElementTypeMismatch,
 };
 
+enum class StringBuilderError : std::uint8_t { NotBuilder, OutOfMemory };
+
 class Heap final {
  public:
   explicit Heap(std::size_t gc_threshold = kDefaultGcThreshold) noexcept;
@@ -71,9 +73,22 @@ class Heap final {
       -> HeapObject*;
   [[nodiscard]] auto AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept
       -> HeapObject*;
-  // 输入中的堆字符串必须由调用者保根，分配可触发 GC；两段内容只复制一次。
+  // 输入必须是合法 UTF-8；堆字符串须由调用者保根，分配可触发 GC。
   [[nodiscard]] auto AllocateString(std::string_view first, std::string_view second = {}) noexcept
       -> StringObject*;
+  // parts 不含空指针；所有输入及 separator 的堆存储须保根，最终结果只分配一次。
+  [[nodiscard]] auto JoinStrings(std::span<StringObject* const> parts,
+                                 std::string_view separator = {}) noexcept -> StringObject*;
+  // 返回视图借用数组的连续存储；跨分配使用时必须保持数组可达。
+  [[nodiscard]] static auto StringElements(const HeapObject& array) noexcept
+      -> std::expected<std::span<StringObject* const>, ArrayAccessError>;
+  [[nodiscard]] auto AllocateStringBuilder() noexcept -> HeapObject*;
+  // builder 与 text 的堆存储须在扩容期间保根；text 必须是合法 UTF-8。
+  [[nodiscard]] auto AppendString(HeapObject& builder, std::string_view text) noexcept
+      -> std::expected<void, StringBuilderError>;
+  // builder 必须来自本 Heap 的 AllocateStringBuilder，且调用期间保根。
+  [[nodiscard]] auto BuildString(const HeapObject& builder) noexcept -> StringObject*;
+  [[nodiscard]] static auto IsStringBuilder(const HeapObject& object) noexcept -> bool;
 
   [[nodiscard]] static auto GetField(HeapObject& object, std::uint32_t index) noexcept -> Value*;
   [[nodiscard]] static auto GetField(const HeapObject& object, std::uint32_t index) noexcept
@@ -129,6 +144,8 @@ class Heap final {
   void MaybeCollect(std::size_t next_size) noexcept;
   void FinishSweep() noexcept;
   void DestroyAll() noexcept;
+  [[nodiscard]] auto AllocateStringStorage(std::size_t length) noexcept -> StringObject*;
+  void ReleaseStringBuilder(HeapObject& object) noexcept;
 
   HeapObject* objects_ = nullptr;
   HeapObject* gray_ = nullptr;

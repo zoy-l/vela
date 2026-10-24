@@ -26,8 +26,8 @@ The initial class model is deliberately smaller than C++:
 - a class construction expression has no `new` keyword;
 - named construction arguments are resolved to field or constructor parameter
   IDs at compile time;
-- `.member` enum shorthand is accepted only when the expected type uniquely
-  identifies the enum or static member;
+- enum members always name their enum explicitly (`Brightness.light`), including
+  constructor arguments, declarations, returns, assignments, and array elements;
 - fields and methods are statically declared, so runtime member lookup is not a
   string-table operation on the hot path.
 
@@ -53,7 +53,7 @@ class CupertinoApp {
 
 func buildApp(): CupertinoApp {
     return CupertinoApp(
-        theme: CupertinoThemeData(brightness: .light),
+        theme: CupertinoThemeData(brightness: Brightness.light),
         home: ActionSheetExample(),
     );
 }
@@ -92,7 +92,7 @@ construction, and structured branches/loops through Typed IR into the bootstrap
 bytecode. `vela run` exercises this path for a zero-argument `main` function.
 Strings and typed arrays use the same IR and bytecode path. Array element types
 and rank remain exact across literals, fields, parameters, returns, indexing,
-and assignment. Context supplies the type of empty literals and enum shorthand;
+and assignment. Context supplies the type of empty array literals;
 there are no implicit conversions. Arrays have reference semantics and compact
 contiguous native storage. See [compiler details](../compiler/README.md) for
 current bytecode limits.
@@ -191,8 +191,10 @@ Roots are revisited before the collector enters sweep because VM registers
 can change between incremental steps. Root registration and reference stores
 also preserve references during sweep. The collector is single-threaded per
 isolate; a host thread must cross an isolate-owned root boundary before it can
-retain a script object. String encoding, escape decoding, and indexing units
-remain separate language work.
+retain a script object. Strings use valid UTF-8, with code point lengths,
+indices, and slice boundaries, plus a separate byte length. Interpolation,
+explicit conversions, join, and GC-owned builders use the same checked compiler
+and VM path. See [string contracts](strings.md) for APIs, costs, and rooting.
 
 Generational collection remains an optimization decision for the Release
 benchmarks. It can be added behind this object, root, and barrier contract

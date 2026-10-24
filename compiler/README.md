@@ -4,6 +4,8 @@ This directory contains the executable, typed IR lowering, and build identity
 for the bootstrap compiler. The language and runtime contracts are recorded in
 [`docs/language_architecture.md`](../docs/language_architecture.md); the
 bootstrap executable remains intentionally smaller than that target.
+`check` and `run` share UTF-8 path handling, import loading, and parsing; every
+dependency is parsed once, with missing files and cycles diagnosed before checking.
 
 The frontend, compiler, and VM stay under the same GN/Ninja target boundary so
 later optimizer and native backend work does not change the developer entry
@@ -40,12 +42,14 @@ class programs:
 `run` selects a zero-argument `main` function, lowers the checked AST through
 Typed IR, emits register bytecode, and executes it in the VM. Function calls,
 control-flow branches, loops, strings, and typed arrays are supported.
+String APIs, interpolation, conversions, and builder contracts are documented in
+[string contracts](../docs/strings.md).
 
 Array type names retain their element identity and rank (`int[]`, `Item[][]`).
 The checker interns these names and records each array literal's checked type
-against the AST. Lowering consumes those facts, propagates contextual element
-types (including enum shorthand), and assigns compact array-layout IDs. Nested
-element layouts precede their parent layouts. Bytecode `NewArray` encodes the
+against the AST. Lowering consumes those facts and assigns compact array-layout
+IDs. Enum members always use `Enum.member`. Nested element layouts precede their
+parent layouts. Bytecode `NewArray` encodes the
 destination register, layout ID, and length in three 8-bit operands; lengths or
 layout IDs above 255 produce a diagnostic. The existing per-function register
 limit can constrain large literals earlier.

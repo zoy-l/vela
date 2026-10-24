@@ -12,6 +12,8 @@ CLI prints the value returned by `main`; object-returning examples print
 .\out\debug\vela.exe run examples\typed_arrays.vela
 .\out\debug\vela.exe run examples\double.vela
 .\out\debug\vela.exe run examples\string_gc.vela
+.\out\debug\vela.exe run examples\strings.vela
+.\out\debug\vela.exe run examples\string_builder.vela
 .\out\debug\vela.exe run examples\imports\main.vela
 ```
 
@@ -31,6 +33,10 @@ then returns `14.5`. Integer and double operands cannot be mixed implicitly.
 
 `string_gc.vela` keeps strings in an object and array while creating temporary
 concatenations. It prints `Vela`, `Vela GC`, then returns `true`.
+
+`strings.vela` exercises escapes, interpolation, explicit conversions, Unicode
+APIs, `join`, and imports. `string_builder.vela` builds text in a loop and keeps
+an immutable snapshot. See [string contracts](../docs/strings.md).
 
 Use `check` when validating source without executing it:
 

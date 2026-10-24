@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <memory>
 #include <ostream>
+#include <span>
 #include <string_view>
 
 #include "runtime/string.h"
@@ -12,19 +13,21 @@
 
 namespace vela::runtime {
 
+auto FormatScalar(Value value, std::span<char, kScalarTextCapacity> buffer) -> std::string_view {
+  if (value.IsBoolean()) {
+    return value.AsBoolean() ? "true" : "false";
+  }
+  const auto converted =
+      value.IsInteger()
+          ? std::to_chars(buffer.data(), std::to_address(buffer.end()), value.AsInteger())
+          : std::to_chars(buffer.data(), std::to_address(buffer.end()), value.AsDouble());
+  return {buffer.data(), static_cast<std::size_t>(converted.ptr - buffer.data())};
+}
+
 void WriteValue(std::ostream& output, Value value) {
-  if (value.IsInteger()) {
-    output << value.AsInteger();
-  } else if (value.IsDouble()) {
-    // binary64 的最短往返文本含符号、17 位有效数字及十进制指数，32 字节足够。
-    constexpr std::size_t kDoubleTextCapacity = 32;
-    std::array<char, kDoubleTextCapacity> buffer{};
-    const auto converted =
-        std::to_chars(buffer.data(), std::to_address(buffer.end()), value.AsDouble());
-    output << std::string_view(buffer.data(),
-                               static_cast<std::size_t>(converted.ptr - buffer.data()));
-  } else if (value.IsBoolean()) {
-    output << (value.AsBoolean() ? "true" : "false");
+  if (value.IsInteger() || value.IsDouble() || value.IsBoolean()) {
+    std::array<char, kScalarTextCapacity> buffer{};
+    output << FormatScalar(value, buffer);
   } else if (value.IsString()) {
     output << value.AsString()->value();
   } else if (value.IsNull()) {

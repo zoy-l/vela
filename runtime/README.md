@@ -35,6 +35,11 @@ Immutable strings store their header and bytes in one accounted allocation and
 are reclaimed by the same collector. `AllocateString` copies one or two input
 views directly into that allocation; GC-backed inputs must remain rooted across
 the call. Strings expose byte views without requiring a trailing NUL byte.
+String inputs must be valid UTF-8; native input boundaries can validate with
+`InvalidUtf8Offset`. `JoinStrings` computes total size and copies all parts into
+one allocation. GC-owned string builders account for their growing native
+buffers and release them during sweeping. Their snapshots own independent
+immutable storage; see [string contracts](../docs/strings.md).
 
 `RootRange` accepts VM `Value` slots or a fixed native string-pointer span. Its
 storage and owning Isolate must outlive registration. Roots are rescanned before

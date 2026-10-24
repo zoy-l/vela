@@ -24,7 +24,6 @@ auto Lowerer::RegisterArrayType(const frontend::TypeDescriptor& type) -> std::ui
 
 auto Lowerer::LowerArrayLiteral(const frontend::Expression& expression) -> LoweredValue {
   const auto& type = model_.array_literals.at(&expression);
-  const auto& element_type = model_.types.at(type.name.substr(0, type.name.size() - 2));
   const RegisterId array = AllocateTemporary(expression.location);
   Emit({
       .opcode = Opcode::NewArray,
@@ -34,7 +33,7 @@ auto Lowerer::LowerArrayLiteral(const frontend::Expression& expression) -> Lower
       .location = expression.location,
   });
   for (std::size_t index = 0; index < expression.elements.size(); ++index) {
-    const LoweredValue element = LowerExpression(*expression.elements.at(index), &element_type);
+    const LoweredValue element = LowerExpression(*expression.elements.at(index));
     const RegisterId index_reg = AllocateTemporary(expression.location);
     Emit({
         .opcode = Opcode::LoadInt,

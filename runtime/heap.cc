@@ -8,7 +8,6 @@
 #include <memory>
 #include <new>
 #include <span>
-#include <string_view>
 #include <utility>
 #include <vector>
 #include "runtime/object.h"
@@ -183,37 +182,12 @@ auto Heap::AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept
   return object;
 }
 
-auto Heap::AllocateString(std::string_view first, std::string_view second) noexcept
-    -> StringObject* {
-  constexpr auto kMaximumLength = std::numeric_limits<std::uint32_t>::max() - sizeof(StringObject);
-  if (first.size() > kMaximumLength || second.size() > kMaximumLength - first.size()) {
-    return nullptr;
-  }
-  const auto length = first.size() + second.size();
-  const auto requested_size = sizeof(StringObject) + length;
-  MaybeCollect(requested_size);
-  const auto allocation = AllocateRaw(requested_size);
-  if (allocation.memory == nullptr) {
-    return nullptr;
-  }
-  auto* string = std::construct_at(static_cast<StringObject*>(allocation.memory),
-                                   StringObject::AllocationToken{});
-  auto& header = string->header_;
-  header.kind = ObjectKind::String;
-  header.length = static_cast<std::uint32_t>(length);
-  void* storage = std::span(string, 1).last(0).data();
-  const auto bytes = std::span(static_cast<char*>(storage), length);
-  std::ranges::copy(first, bytes.begin());
-  std::ranges::copy(second, bytes.subspan(first.size()).begin());
-  Publish(header, allocation.size);
-  return string;
-}
-
 void Heap::Publish(HeapObject& object, std::uint32_t allocation_size) noexcept {
   object.mark_bit = current_mark_bit_;
   object.allocation_size = allocation_size;
   object.next = objects_;
-  if (phase_ == GcPhase::Mark && object.kind != ObjectKind::String) {
+  if (phase_ == GcPhase::Mark && object.kind != ObjectKind::String &&
+      object.kind != ObjectKind::StringBuilder) {
     object.gray_next = gray_;
     gray_ = &object;
   } else if (phase_ == GcPhase::Sweep) {
@@ -307,11 +281,9 @@ auto Heap::SetElement(HeapObject& object, std::uint32_t index, Value value) noex
       break;
     case ValueKind::Object: {
       auto* child = value.AsObject();
-      if (child == nullptr ||
-          (layout.element_class != nullptr &&
-           (child->kind != ObjectKind::Instance || child->layout != layout.element_class)) ||
-          (layout.element_array != nullptr &&
-           (child->kind != ObjectKind::Array || child->array_layout != layout.element_array))) {
+      if (child == nullptr || child->kind != layout.element_object_kind ||
+          (layout.element_class != nullptr && child->layout != layout.element_class) ||
+          (layout.element_array != nullptr && child->array_layout != layout.element_array)) {
         return std::unexpected(ArrayAccessError::ElementTypeMismatch);
       }
       ArrayElements<HeapObject*>(object, length).subspan(index).front() = child;
@@ -460,7 +432,7 @@ void Heap::MarkObject(HeapObject& object) noexcept {
     return;
   }
   object.mark_bit = current_mark_bit_;
-  if (object.kind == ObjectKind::String) {
+  if (object.kind == ObjectKind::String || object.kind == ObjectKind::StringBuilder) {
     return;
   }
   object.gray_next = gray_;
@@ -539,6 +511,8 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
 
   if (object.kind == ObjectKind::Instance && object.layout != nullptr) {
     std::destroy_n(ObjectFields(&object), object.layout->field_count());
+  } else if (object.kind == ObjectKind::StringBuilder) {
+    ReleaseStringBuilder(object);
   }
   void* memory = &object;
   // StringObject 仅含可平凡析构的对象头；复用或释放存储即结束其生命周期。

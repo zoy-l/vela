@@ -10,6 +10,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
+#include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/control_flow.h"
 #include "compiler/frontend/diagnostic.h"
@@ -24,6 +25,7 @@ struct TypeDescriptor final {
     Int,
     Double,
     String,
+    StringBuilder,
     Array,
     Enum,
     Class,
@@ -50,9 +52,9 @@ struct SemanticModel final {
   absl::flat_hash_map<std::string, TypeDescriptor> types;
   // 借用受检 AST 的节点地址；模型只在该 AST 存活期间使用。
   absl::flat_hash_map<const Expression*, TypeDescriptor> array_literals;
+  absl::flat_hash_map<const Expression*, Builtin> builtin_calls;
   absl::flat_hash_map<const Statement*, TypeDescriptor> local_types;
   absl::flat_hash_map<const Statement*, StatementFlow> control_flow;
-  absl::flat_hash_map<std::string, absl::flat_hash_set<std::string>> enum_members;
   absl::flat_hash_map<std::string, ClassDescriptor> classes;
   absl::flat_hash_map<std::string, FunctionDescriptor> functions;
 };
@@ -122,20 +124,20 @@ class TypeChecker final {
   auto CheckIndex(const Expression& expression) -> Type;
   auto CheckArrayLiteral(const Expression& expression, const Type* expected) -> Type;
 
-  auto CheckShorthandMember(const Expression& expression, const Type* expected) -> Type;
-
   auto CheckUnary(const Expression& expression) -> Type;
 
   auto CheckBinary(const Expression& expression) -> Type;
 
   auto ResolveSignature(const Function& function) -> FunctionInfo;
   auto CheckMethodCall(const Expression& expression, const Type* expected) -> Type;
+  auto CheckBuiltinCall(const Expression& expression, Builtin builtin) -> Type;
   auto CheckAssignment(const Expression& expression) -> Type;
 
   Diagnostics diagnostics_;
   std::size_t function_count_ = 0;
   absl::flat_hash_map<std::string, Type> types_;
   absl::flat_hash_map<const Expression*, Type> array_literals_;
+  absl::flat_hash_map<const Expression*, Builtin> builtin_calls_;
   absl::flat_hash_map<const Statement*, Type> local_types_;
   absl::flat_hash_map<const Statement*, StatementFlow> control_flow_;
   absl::flat_hash_map<std::string, absl::flat_hash_set<std::string>> enum_members_;

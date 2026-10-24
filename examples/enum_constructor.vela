@@ -8,5 +8,5 @@ class Theme {
 }
 
 func main(): Theme {
-  return Theme(brightness: .light);
+  return Theme(brightness: Brightness.light);
 }

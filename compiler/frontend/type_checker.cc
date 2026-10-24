@@ -11,7 +11,9 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+#include "base/builtin.h"
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/builtins.h"
 #include "compiler/frontend/diagnostic.h"
 
 namespace vela::frontend {
@@ -25,6 +27,7 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
   function_count_ = program.functions.size();
   types_.clear();
   array_literals_.clear();
+  builtin_calls_.clear();
   local_types_.clear();
   control_flow_.clear();
   enum_members_.clear();
@@ -52,9 +55,9 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
   SemanticModel model;
   model.types = std::move(types_);
   model.array_literals = std::move(array_literals_);
+  model.builtin_calls = std::move(builtin_calls_);
   model.local_types = std::move(local_types_);
   model.control_flow = std::move(control_flow_);
-  model.enum_members = std::move(enum_members_);
   model.classes = std::move(classes_);
   model.functions = std::move(functions_);
   return {
@@ -74,11 +77,17 @@ void TypeChecker::CollectTypes(const Program& program) {
   types_.emplace("int", Type{.kind = Type::Kind::Int, .name = "int"});
   types_.emplace("double", Type{.kind = Type::Kind::Double, .name = "double"});
   types_.emplace("string", Type{.kind = Type::Kind::String, .name = "string"});
+  types_.emplace("StringBuilder", Type{.kind = Type::Kind::StringBuilder, .name = "StringBuilder"});
+  types_.emplace("string[]", Type{.kind = Type::Kind::Array, .name = "string[]"});
   types_.reserve(types_.size() + program.enums.size() + program.classes.size());
   enum_members_.reserve(program.enums.size());
   classes_.reserve(program.classes.size());
 
   for (const Enum& enumeration : program.enums) {
+    if (FindBuiltin(Type::Kind::Invalid, enumeration.name)) {
+      AddDiagnostic(enumeration.location, "type name is reserved for a builtin");
+      continue;
+    }
     const Type type{.kind = Type::Kind::Enum, .name = enumeration.name};
     if (!types_.emplace(enumeration.name, type).second) {
       AddDiagnostic(enumeration.location, "duplicate type '" + enumeration.name + "'");
@@ -94,6 +103,10 @@ void TypeChecker::CollectTypes(const Program& program) {
   }
 
   for (const Class& class_declaration : program.classes) {
+    if (FindBuiltin(Type::Kind::Invalid, class_declaration.name)) {
+      AddDiagnostic(class_declaration.location, "type name is reserved for a builtin");
+      continue;
+    }
     const Type type{.kind = Type::Kind::Class, .name = class_declaration.name};
     if (!types_.emplace(class_declaration.name, type).second) {
       AddDiagnostic(class_declaration.location, "duplicate type '" + class_declaration.name + "'");
@@ -134,6 +147,10 @@ void TypeChecker::ResolveDeclarations(const Program& program) {
 
   for (const Function& function : program.functions) {
     FunctionInfo function_info = ResolveSignature(function);
+    if (FindBuiltin(Type::Kind::Invalid, function.name)) {
+      AddDiagnostic(function.location, "function name is reserved for a builtin");
+      continue;
+    }
     if (!functions_.emplace(function.name, std::move(function_info)).second) {
       AddDiagnostic(function.location, "duplicate function '" + function.name + "'");
     }
@@ -203,6 +220,14 @@ auto TypeChecker::CheckExpression(const Expression& expression, const Type* expe
       return {.kind = Type::Kind::Double, .name = "double"};
     case Expression::Kind::StringLiteral:
       return {.kind = Type::Kind::String, .name = "string"};
+    case Expression::Kind::StringInterpolation:
+      for (const auto& part : expression.elements) {
+        const auto type = CheckExpression(*part, nullptr);
+        if (type.kind != Type::Kind::String && IsValid(type)) {
+          AddDiagnostic(part->location, "interpolation requires string; use explicit toString()");
+        }
+      }
+      return {.kind = Type::Kind::String, .name = "string"};
     case Expression::Kind::ArrayLiteral:
       return CheckArrayLiteral(expression, expected);
     case Expression::Kind::Index:
@@ -211,8 +236,6 @@ auto TypeChecker::CheckExpression(const Expression& expression, const Type* expe
       return {.kind = Type::Kind::Bool, .name = "bool"};
     case Expression::Kind::Name:
       return LookupName(expression);
-    case Expression::Kind::ShorthandMember:
-      return CheckShorthandMember(expression, expected);
     case Expression::Kind::Unary:
       return CheckUnary(expression);
     case Expression::Kind::Binary:
@@ -227,40 +250,42 @@ auto TypeChecker::CheckExpression(const Expression& expression, const Type* expe
 
 auto TypeChecker::CheckCall(const Expression& expression, const Type* expected)
     -> TypeChecker::Type {
-  if (expression.callee->kind == Expression::Kind::Name) {
-    if (expression.callee->text == "print") {
-      if (expression.arguments.size() != 1) {
-        AddDiagnostic(expression.location, "print expects one argument");
-      } else {
-        CheckExpression(*expression.arguments.front().value, nullptr);
-      }
-      return {.kind = Type::Kind::Void, .name = "void"};
-    }
-    const auto type = types_.find(expression.callee->text);
-    if (type != types_.end() && type->second.kind == Type::Kind::Class) {
-      const auto class_info = classes_.find(expression.callee->text);
-      if (class_info != classes_.end()) {
-        const Type result =
-            CheckClassConstruction(class_info->second, expression.arguments, expression.location);
-        if (expected != nullptr && IsValid(result) && !IsSameType(result, *expected)) {
-          AddDiagnostic(expression.location, "constructed type does not match expected type");
-        }
-        return result;
-      }
-    }
-    const auto function = functions_.find(expression.callee->text);
-    if (function != functions_.end()) {
-      const Type result =
-          CheckFunctionCall(function->second, expression.arguments, expression.location);
-      if (expected != nullptr && IsValid(result) && !IsSameType(result, *expected)) {
-        AddDiagnostic(expression.location, "function result does not match expected type");
-      }
-      return result;
-    }
-  }
-
-  if (expression.callee->kind == Expression::Kind::Member) {
+  const auto& callee = *expression.callee;
+  if (callee.kind == Expression::Kind::Member) {
     return CheckMethodCall(expression, expected);
+  }
+  if (callee.kind != Expression::Kind::Name) {
+    AddDiagnostic(expression.location, "expression is not callable");
+    return InvalidType();
+  }
+  if (const auto builtin = FindBuiltin(Type::Kind::Invalid, callee.text)) {
+    return CheckBuiltinCall(expression, *builtin);
+  }
+  if (callee.text == "print") {
+    if (expression.arguments.size() != 1) {
+      AddDiagnostic(expression.location, "print expects one argument");
+    } else {
+      CheckExpression(*expression.arguments.front().value, nullptr);
+    }
+    return {.kind = Type::Kind::Void, .name = "void"};
+  }
+  const auto class_info = classes_.find(callee.text);
+  if (class_info != classes_.end()) {
+    const Type result =
+        CheckClassConstruction(class_info->second, expression.arguments, expression.location);
+    if (expected != nullptr && IsValid(result) && !IsSameType(result, *expected)) {
+      AddDiagnostic(expression.location, "constructed type does not match expected type");
+    }
+    return result;
+  }
+  const auto function = functions_.find(callee.text);
+  if (function != functions_.end()) {
+    const Type result =
+        CheckFunctionCall(function->second, expression.arguments, expression.location);
+    if (expected != nullptr && IsValid(result) && !IsSameType(result, *expected)) {
+      AddDiagnostic(expression.location, "function result does not match expected type");
+    }
+    return result;
   }
 
   AddDiagnostic(expression.location, "expression is not callable");
@@ -269,6 +294,9 @@ auto TypeChecker::CheckCall(const Expression& expression, const Type* expected)
 
 auto TypeChecker::CheckMethodCall(const Expression& expression, const Type* expected) -> Type {
   const Type object = CheckExpression(*expression.callee->object, nullptr);
+  if (const auto builtin = FindBuiltin(object.kind, expression.callee->text)) {
+    return CheckBuiltinCall(expression, *builtin);
+  }
   if (object.kind == Type::Kind::Class) {
     const auto class_info = classes_.find(object.name);
     if (class_info != classes_.end()) {
@@ -286,6 +314,11 @@ auto TypeChecker::CheckMethodCall(const Expression& expression, const Type* expe
 
   AddDiagnostic(expression.location, "expression is not callable");
   return InvalidType();
+}
+
+auto TypeChecker::CheckBuiltinCall(const Expression& expression, Builtin builtin) -> Type {
+  builtin_calls_.insert_or_assign(&expression, builtin);
+  return CheckFunctionCall(BuiltinSignature(builtin), expression.arguments, expression.location);
 }
 
 auto TypeChecker::CheckFunctionCall(const FunctionInfo& function,
@@ -397,6 +430,13 @@ auto TypeChecker::CheckMemberAccess(const Expression& expression) -> TypeChecker
   }
 
   const Type object = CheckExpression(*expression.object, nullptr);
+  if (object.kind == Type::Kind::String &&
+      (expression.text == "length" || expression.text == "byteLength")) {
+    builtin_calls_.insert_or_assign(&expression, expression.text == "length"
+                                                     ? Builtin::StringLength
+                                                     : Builtin::StringByteLength);
+    return {.kind = Type::Kind::Int, .name = "int"};
+  }
   if (object.kind != Type::Kind::Class) {
     AddDiagnostic(expression.location, "member access requires a class object");
     return InvalidType();
@@ -543,13 +583,17 @@ auto TypeChecker::CheckIntegerLiteral(const Expression& expression) -> TypeCheck
 }
 
 auto TypeChecker::CheckIndex(const Expression& expression) -> TypeChecker::Type {
-  const Type object = CheckExpression(*expression.object, nullptr);
+  Type object = CheckExpression(*expression.object, nullptr);
   const Type index = CheckExpression(*expression.index, nullptr);
-  if (object.kind != Type::Kind::Array) {
-    AddDiagnostic(expression.location, "indexing requires an array");
+  if (object.kind != Type::Kind::Array && object.kind != Type::Kind::String) {
+    AddDiagnostic(expression.location, "indexing requires an array or string");
   }
   if (index.kind != Type::Kind::Int) {
-    AddDiagnostic(expression.index->location, "array index must be int");
+    AddDiagnostic(expression.index->location, "index must be int");
+  }
+  if (object.kind == Type::Kind::String) {
+    builtin_calls_.insert_or_assign(&expression, Builtin::StringIndex);
+    return object;
   }
   if (object.kind != Type::Kind::Array) {
     return InvalidType();
@@ -586,20 +630,6 @@ auto TypeChecker::CheckArrayLiteral(const Expression& expression, const Type* ex
   return result;
 }
 
-auto TypeChecker::CheckShorthandMember(const Expression& expression, const Type* expected)
-    -> TypeChecker::Type {
-  if (expected == nullptr || expected->kind != Type::Kind::Enum) {
-    AddDiagnostic(expression.location, "enum shorthand requires an expected enum type");
-    return InvalidType();
-  }
-  const auto members = enum_members_.find(expected->name);
-  if (members == enum_members_.end() || !members->second.contains(expression.text)) {
-    AddDiagnostic(expression.location, "unknown enum member '" + expression.text + "'");
-    return InvalidType();
-  }
-  return *expected;
-}
-
 auto TypeChecker::CheckUnary(const Expression& expression) -> TypeChecker::Type {
   Type operand = CheckExpression(*expression.operand, nullptr);
   if (expression.text == "!" && operand.kind != Type::Kind::Bool) {
@@ -623,8 +653,8 @@ auto TypeChecker::CheckBinary(const Expression& expression) -> TypeChecker::Type
     return InvalidType();
   }
   if (expression.text == "==" || expression.text == "!=") {
-    if (left.kind == Type::Kind::Array) {
-      AddDiagnostic(expression.location, "array equality is not defined");
+    if (left.kind == Type::Kind::Array || left.kind == Type::Kind::StringBuilder) {
+      AddDiagnostic(expression.location, "equality is not defined for this type");
       return InvalidType();
     }
     if (!IsSameType(left, right)) {
@@ -672,6 +702,9 @@ auto TypeChecker::CheckAssignment(const Expression& expression) -> Type {
     }
   }
   Type left = CheckExpression(*expression.left, nullptr);
+  if (builtin_calls_.contains(expression.left.get())) {
+    AddDiagnostic(expression.left->location, "string values are immutable");
+  }
   const Type right = CheckExpression(*expression.right, &left);
   if (IsValid(left) && IsValid(right) && !IsSameType(left, right)) {
     AddDiagnostic(expression.location, "assignment types do not match");

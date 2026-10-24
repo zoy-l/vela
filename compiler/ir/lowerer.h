@@ -63,16 +63,13 @@ class Lowerer final {
   void LowerStatement(const frontend::Statement& statement);
   void LowerBlock(const frontend::Statement& statement);
 
-  [[nodiscard]] auto LowerExpression(const frontend::Expression& expression,
-                                     const frontend::TypeDescriptor* expected = nullptr)
-      -> LoweredValue;
+  [[nodiscard]] auto LowerExpression(const frontend::Expression& expression) -> LoweredValue;
   [[nodiscard]] auto LowerAssignment(const frontend::Expression& expression) -> LoweredValue;
   [[nodiscard]] auto LowerConstruction(const frontend::Expression& expression,
                                        const frontend::TypeDescriptor& expected) -> LoweredValue;
   [[nodiscard]] auto LowerMember(const frontend::Expression& expression) -> LoweredValue;
   [[nodiscard]] auto LowerIndex(const frontend::Expression& expression) -> LoweredValue;
-  [[nodiscard]] auto LowerCall(const frontend::Expression& expression,
-                               const frontend::TypeDescriptor* expected) -> LoweredValue;
+  [[nodiscard]] auto LowerCall(const frontend::Expression& expression) -> LoweredValue;
 
   [[nodiscard]] auto FindClass(std::string_view name) const -> const frontend::ClassDescriptor*;
   [[nodiscard]] auto FindLocal(std::string_view name) const -> const Local*;
@@ -105,12 +102,14 @@ class Lowerer final {
                          const LoweredValue& right) -> LoweredValue;
 
   auto LowerStringLiteral(const frontend::Expression& expression) -> LoweredValue;
+  auto LowerStringInterpolation(const frontend::Expression& expression) -> LoweredValue;
+  auto LowerBuiltin(const frontend::Expression& expression) -> LoweredValue;
 
   auto LowerArrayLiteral(const frontend::Expression& expression) -> LoweredValue;
   auto RegisterArrayType(const frontend::TypeDescriptor& type) -> std::uint32_t;
 
-  auto LowerShorthandMember(const frontend::Expression& expression,
-                            const frontend::TypeDescriptor* expected) -> LoweredValue;
+  auto LowerEnumMember(const frontend::Expression& expression, const frontend::TypeDescriptor& type)
+      -> LoweredValue;
 
   auto LowerUnary(const frontend::Expression& expression) -> LoweredValue;
 

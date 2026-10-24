@@ -1,0 +1,8 @@
+func main(): int {
+  let expected = "x";
+  for (let i = 0; i < 12; i = i + 1) { expected = expected + expected; }
+  const builder = StringBuilder();
+  for (let i = 0; i < 4096; i = i + 1) { builder.append("x"); }
+  if (builder.toString() == expected) { return 4096; }
+  return 0;
+}

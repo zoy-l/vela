@@ -14,6 +14,9 @@ enum class TokenKind : std::uint8_t {
   IntegerLiteral,
   DoubleLiteral,
   StringLiteral,
+  StringHead,
+  StringMiddle,
+  StringTail,
   Class,
   Func,
   Let,
@@ -59,6 +62,7 @@ enum class TokenKind : std::uint8_t {
 
 struct Token final {
   TokenKind kind = TokenKind::EndOfFile;
+  // 字符串 token 保存已解码的 UTF-8 内容，其他 token 保存源码文本。
   std::string lexeme;
   SourceLocation location;
 };

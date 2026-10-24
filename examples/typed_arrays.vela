@@ -20,7 +20,7 @@ func main(): int {
     items: [Item(value: 20), Item(value: 22)],
     labels: ["first", "second"],
     enabled: [true, false],
-    shades: [.light, .dark],
+    shades: [Shade.light, Shade.dark],
   );
   let alias: bool[] = inventory.enabled;
   alias[1] = true;

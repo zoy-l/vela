@@ -1,8 +1,6 @@
 #include <cstddef>
 #include <cstdint>
-#include <fstream>
 #include <iostream>
-#include <iterator>
 #include <span>
 #include <string>
 #include <string_view>
@@ -34,36 +32,9 @@ void PrintDiagnostics(std::string_view path, const vela::frontend::Diagnostics& 
   }
 }
 
-auto ReadSource(std::string_view path_text, std::string* source) -> bool {
-  std::ifstream input(std::string(path_text), std::ios::binary);
-  if (!input) {
-    return false;
-  }
-  source->assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-  return true;
-}
-
-auto FindEntry(const vela::compiler::CompiledProgram& program, std::size_t* entry_function)
-    -> const vela::compiler::CompiledFunction* {
-  const vela::compiler::CompiledFunction* function = program.FindFunction("main");
-  if (function == nullptr && program.functions.size() == 1) {
-    function = &program.functions.front();
-  }
-  if (function == nullptr) {
-    return nullptr;
-  }
-  *entry_function = static_cast<std::size_t>(function - program.functions.data());
-  return function;
-}
-
 auto CheckFile(std::string_view path_text) -> int {
   const std::string path(path_text);
-  std::string source;
-  if (!ReadSource(path, &source)) {
-    std::cerr << "vela: cannot open source file '" << path << "'\n";
-    return 1;
-  }
-  const vela::frontend::CheckResult result = vela::frontend::CheckSource(source);
+  const vela::frontend::CheckResult result = vela::frontend::CheckFile(path);
   PrintDiagnostics(path, result.diagnostics);
   if (!result.Succeeded()) {
     return 1;
@@ -85,7 +56,7 @@ auto ExecutionStatusName(vela::vm::ExecutionStatus status) -> const char* {
     case vela::vm::ExecutionStatus::InvalidField:
       return "invalid field";
     case vela::vm::ExecutionStatus::IndexOutOfBounds:
-      return "array index out of bounds";
+      return "index or slice out of bounds";
     case vela::vm::ExecutionStatus::IntegerOverflow:
       return "integer overflow";
     case vela::vm::ExecutionStatus::DivisionByZero:
@@ -98,11 +69,6 @@ auto ExecutionStatusName(vela::vm::ExecutionStatus status) -> const char* {
 
 auto RunFile(std::string_view path_text) -> int {
   const std::string path(path_text);
-  std::string source;
-  if (!ReadSource(path, &source)) {
-    std::cerr << "vela: cannot open source file '" << path << "'\n";
-    return 1;
-  }
 
   vela::runtime::Isolate isolate;
   const vela::compiler::CompileResult compiled = vela::compiler::CompileFile(path, isolate);
@@ -111,8 +77,7 @@ auto RunFile(std::string_view path_text) -> int {
     return 1;
   }
 
-  std::size_t entry_function = 0;
-  const vela::compiler::CompiledFunction* function = FindEntry(compiled.program, &entry_function);
+  const auto* function = compiled.program.FindFunction("main");
   if (function == nullptr) {
     std::cerr << "vela: run requires a zero-argument main function\n";
     return 1;
@@ -123,7 +88,8 @@ auto RunFile(std::string_view path_text) -> int {
   }
 
   const vela::vm::ExecutionResult result = vela::vm::VirtualMachine(isolate).Execute(
-      compiled.program.View(), static_cast<std::uint32_t>(entry_function));
+      compiled.program.View(),
+      static_cast<std::uint32_t>(function - compiled.program.functions.data()));
   if (!result.Succeeded()) {
     std::cerr << "vela: " << ExecutionStatusName(result.status) << '\n';
     return 1;
