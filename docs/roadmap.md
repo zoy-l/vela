@@ -72,12 +72,12 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 
 - [x] Add `import`
 - [ ] Add `export`
-- [ ] Add namespaces
+- [ ] Add explicit `namespace` declaration blocks for grouping symbols
+  (C++/C#-style declarations, distinct from module isolation and import aliases)
 - [x] Compile multiple source files as one program
 - [ ] Define package and dependency metadata
 - [x] Add console output
 - [ ] Add console input
-- [ ] Add file I/O
 - [ ] Add time, random, and math libraries
 - [x] Add basic string standard library APIs ([contracts](strings.md))
 - [ ] Add collection standard library APIs
