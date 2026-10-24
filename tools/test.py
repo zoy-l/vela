@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the Vela bootstrap executable and its link test."""
+"""Run Vela GoogleTest suites; forward arguments after -- to GoogleTest."""
 
 from __future__ import annotations
 
@@ -8,38 +8,58 @@ import subprocess
 import sys
 
 from tools.build import build
-from tools.config import BUILD_VARIANTS, output_directory
+from tools.config import BUILD_VARIANTS, executable_name, output_directory
+
+
+TEST_EXECUTABLES = {
+    "environment": "vela_environment_tests",
+    "frontend": "vela_frontend_tests",
+    "compiler": "vela_compiler_tests",
+    "runtime": "runtime_tests",
+    "vm": "vm_tests",
+}
 
 
 def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("test_arguments", nargs="*", metavar="VARIANT_OR_SELECTION")
-    parsed = parser.parse_args(arguments)
+    values = list(sys.argv[1:] if arguments is None else arguments)
+    separator = values.index("--") if "--" in values else len(values)
+    parsed = parser.parse_args(values[:separator])
+    gtest_arguments = values[separator + 1:]
     values = list(parsed.test_arguments)
     variant = "debug"
     if values and values[0] in BUILD_VARIANTS:
         variant = values.pop(0)
     selection = values[0] if values else "all"
-    if len(values) > 1 or selection not in {"all", "list", "environment", "frontend"}:
-        parser.error("expected list, all, environment, or frontend after VARIANT")
-    return argparse.Namespace(variant=variant, selection=selection)
+    if len(values) > 1 or selection not in {"all", "list", *TEST_EXECUTABLES}:
+        parser.error("expected list, all, or a test name after VARIANT")
+    return argparse.Namespace(
+        variant=variant, selection=selection, gtest_arguments=gtest_arguments
+    )
 
 
-def run_tests(variant: str, selection: str) -> None:
+def run_tests(variant: str, selection: str, gtest_arguments: list[str]) -> None:
     build(variant, "default")
     build(variant, "tests")
     output = output_directory(variant)
 
-    if selection in {"all", "environment"}:
-        test_executable = output / "vela_environment_tests.exe"
-        subprocess.run([str(test_executable)], cwd=output, check=True)
+    failed: list[str] = []
+    for name, executable in TEST_EXECUTABLES.items():
+        if selection in {"all", name}:
+            result = subprocess.run(
+                [str(output / executable_name(executable)), *gtest_arguments],
+                cwd=output,
+                check=False,
+            )
+            if result.returncode != 0:
+                failed.append(name)
 
-    if selection in {"all", "frontend"}:
-        frontend_tests = output / "vela_frontend_tests.exe"
-        subprocess.run([str(frontend_tests)], cwd=output, check=True)
+    if failed:
+        raise RuntimeError(f"GoogleTest suites failed: {', '.join(failed)}")
 
     version = subprocess.run(
-        [str(output / "vela.exe"), "--version"],
+        [str(output / executable_name("vela")), "--version"],
         cwd=output,
         check=True,
         capture_output=True,
@@ -49,16 +69,15 @@ def run_tests(variant: str, selection: str) -> None:
         raise RuntimeError(
             f"Unexpected vela version output: {version.stdout!r}"
         )
-    print(f"tests passed ({variant})")
+    print(f"test command completed ({variant})")
 
 
 def main(arguments: list[str] | None = None) -> int:
     parsed = parse_arguments(arguments)
     if parsed.selection == "list":
-        print("environment")
-        print("frontend")
+        print("\n".join(TEST_EXECUTABLES))
         return 0
-    run_tests(parsed.variant, parsed.selection)
+    run_tests(parsed.variant, parsed.selection, parsed.gtest_arguments)
     return 0
 
 

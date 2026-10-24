@@ -10,13 +10,22 @@ if (current_cpu == "") {
 set_default_toolchain("//build/toolchain:clang")
 
 set_defaults("executable") {
-  configs = [ "//build/config:vela_defaults" ]
+  configs = [
+    "//build/config:vela_defaults",
+    "//build/config:vela_warnings",
+  ]
 }
 
 set_defaults("static_library") {
-  configs = [ "//build/config:vela_defaults" ]
+  configs = [
+    "//build/config:vela_defaults",
+    "//build/config:vela_warnings",
+  ]
 }
 
 set_defaults("source_set") {
-  configs = [ "//build/config:vela_defaults" ]
+  configs = [
+    "//build/config:vela_defaults",
+    "//build/config:vela_warnings",
+  ]
 }

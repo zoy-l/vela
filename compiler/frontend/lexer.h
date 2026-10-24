@@ -17,15 +17,16 @@ class Lexer final {
  public:
   explicit Lexer(std::string_view source) : source_(source) {}
 
-  [[nodiscard]] LexResult Tokenize();
+  [[nodiscard]] auto Tokenize() -> LexResult;
 
  private:
-  [[nodiscard]] bool IsAtEnd() const;
-  [[nodiscard]] char Peek() const;
-  [[nodiscard]] char PeekNext() const;
-  char Advance();
-  bool Match(char expected);
+  [[nodiscard]] auto IsAtEnd() const -> bool;
+  [[nodiscard]] auto Peek() const -> char;
+  [[nodiscard]] auto PeekNext() const -> char;
+  auto Advance() -> char;
+  auto Match(char expected) -> bool;
   void SkipWhitespaceAndComments();
+  void ScanToken(std::size_t start);
   void ScanIdentifier();
   void ScanNumber();
   void ScanString();

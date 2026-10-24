@@ -19,41 +19,50 @@ class Parser final {
  public:
   explicit Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {}
 
-  [[nodiscard]] ParseResult Parse();
+  [[nodiscard]] auto Parse() -> ParseResult;
 
  private:
-  [[nodiscard]] const Token& Peek() const;
-  [[nodiscard]] const Token& Previous() const;
-  [[nodiscard]] bool IsAtEnd() const;
-  [[nodiscard]] bool Check(TokenKind kind) const;
-  bool Match(TokenKind kind);
-  std::optional<Token> Expect(TokenKind kind, std::string message);
+  [[nodiscard]] auto Peek() const -> const Token&;
+  [[nodiscard]] auto Previous() const -> const Token&;
+  [[nodiscard]] auto IsAtEnd() const -> bool;
+  [[nodiscard]] auto Check(TokenKind kind) const -> bool;
+  auto Match(TokenKind kind) -> bool;
+  auto Expect(TokenKind kind, std::string message) -> std::optional<Token>;
   void AddDiagnostic(SourceLocation location, std::string message);
   void Synchronize();
 
-  std::optional<Enum> ParseEnum();
-  std::optional<Class> ParseClass();
-  std::optional<Function> ParseFunction();
-  std::optional<Parameter> ParseParameter();
-  std::optional<TypeName> ParseType();
-  std::unique_ptr<Statement> ParseBlock();
-  std::unique_ptr<Statement> ParseStatement();
-  std::unique_ptr<Statement> ParseVariableDeclaration();
-  std::unique_ptr<Statement> ParseReturnStatement();
-  std::unique_ptr<Statement> ParseExpressionStatement();
-  std::unique_ptr<Statement> ParseIfStatement();
-  std::unique_ptr<Statement> ParseWhileStatement();
+  auto ParseEnum() -> std::optional<Enum>;
+  auto ParseImport() -> std::optional<std::string>;
+  auto ParseClass() -> std::optional<Class>;
+  auto ParseFunction() -> std::optional<Function>;
+  auto ParseMethod(const TypeName& type, const Token& member) -> std::optional<Function>;
+  auto ParseParameter() -> std::optional<Parameter>;
+  auto ParseType() -> std::optional<TypeName>;
+  auto ParseBlock() -> std::unique_ptr<Statement>;
+  auto ParseStatement() -> std::unique_ptr<Statement>;
+  auto ParseVariableDeclaration() -> std::unique_ptr<Statement>;
+  auto ParseReturnStatement() -> std::unique_ptr<Statement>;
+  auto ParseExpressionStatement() -> std::unique_ptr<Statement>;
+  auto ParseIfStatement() -> std::unique_ptr<Statement>;
+  auto ParseWhileStatement() -> std::unique_ptr<Statement>;
+  auto ParseForStatement() -> std::unique_ptr<Statement>;
+  auto ParseBreakStatement() -> std::unique_ptr<Statement>;
+  auto ParseContinueStatement() -> std::unique_ptr<Statement>;
 
-  std::unique_ptr<Expression> ParseExpression();
-  std::unique_ptr<Expression> ParseAssignment();
-  std::unique_ptr<Expression> ParseEquality();
-  std::unique_ptr<Expression> ParseAdditive();
-  std::unique_ptr<Expression> ParseMultiplicative();
-  std::unique_ptr<Expression> ParseUnary();
-  std::unique_ptr<Expression> ParsePostfix();
-  std::unique_ptr<Expression> ParsePrimary();
-  std::vector<CallArgument> ParseArguments();
-  std::unique_ptr<Expression> MakeExpression(Expression::Kind kind, SourceLocation location);
+  auto ParseExpression() -> std::unique_ptr<Expression>;
+  auto ParseAssignment() -> std::unique_ptr<Expression>;
+  auto ParseEquality() -> std::unique_ptr<Expression>;
+  auto ParseLogicalOr() -> std::unique_ptr<Expression>;
+  auto ParseLogicalAnd() -> std::unique_ptr<Expression>;
+  auto ParseRelational() -> std::unique_ptr<Expression>;
+  auto ParseAdditive() -> std::unique_ptr<Expression>;
+  auto ParseMultiplicative() -> std::unique_ptr<Expression>;
+  auto ParseUnary() -> std::unique_ptr<Expression>;
+  auto ParsePostfix() -> std::unique_ptr<Expression>;
+  auto ParsePrimary() -> std::unique_ptr<Expression>;
+  auto ParseArguments() -> std::vector<CallArgument>;
+  static auto MakeExpression(Expression::Kind kind, SourceLocation location)
+      -> std::unique_ptr<Expression>;
 
   std::vector<Token> tokens_;
   std::size_t current_ = 0;

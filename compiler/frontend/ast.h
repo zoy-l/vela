@@ -24,7 +24,7 @@ struct CallArgument final {
 };
 
 struct Expression final {
-  enum class Kind {
+  enum class Kind : std::uint8_t {
     IntegerLiteral,
     FloatLiteral,
     StringLiteral,
@@ -35,6 +35,8 @@ struct Expression final {
     Binary,
     Call,
     Member,
+    ArrayLiteral,
+    Index,
   };
 
   Kind kind = Kind::IntegerLiteral;
@@ -48,6 +50,8 @@ struct Expression final {
   std::unique_ptr<Expression> operand;
   std::unique_ptr<Expression> callee;
   std::unique_ptr<Expression> object;
+  std::unique_ptr<Expression> index;
+  std::vector<std::unique_ptr<Expression>> elements;
   std::vector<CallArgument> arguments;
 };
 
@@ -64,13 +68,16 @@ struct Field final {
 };
 
 struct Statement final {
-  enum class Kind {
+  enum class Kind : std::uint8_t {
     VariableDeclaration,
     Return,
     Expression,
     Block,
     If,
     While,
+    For,
+    Break,
+    Continue,
   };
 
   Kind kind = Kind::Expression;
@@ -81,6 +88,8 @@ struct Statement final {
   std::unique_ptr<Expression> condition;
   std::unique_ptr<Statement> then_branch;
   std::unique_ptr<Statement> else_branch;
+  std::unique_ptr<Statement> initializer;
+  std::unique_ptr<Expression> increment;
   std::vector<std::unique_ptr<Statement>> statements;
 };
 
@@ -106,6 +115,7 @@ struct Class final {
 };
 
 struct Program final {
+  std::vector<std::string> imports;
   std::vector<Enum> enums;
   std::vector<Class> classes;
   std::vector<Function> functions;

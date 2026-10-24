@@ -28,6 +28,20 @@ enum class Opcode : std::uint8_t {
   NotEqualInt,
   EqualBool,
   NotEqualBool,
+  LessInt,
+  LessEqualInt,
+  GreaterInt,
+  GreaterEqualInt,
+  AndBool,
+  OrBool,
+  StringConcat,
+  EqualString,
+  NotEqualString,
+  LoadString,
+  NewArray,
+  GetIndex,
+  SetIndex,
+  Print,
   Call,
   Jump,
   JumpIfFalse,
@@ -55,6 +69,7 @@ struct Class final {
 
 struct Function final {
   std::string name;
+  std::string owner_class;
   frontend::TypeDescriptor return_type;
   std::uint16_t parameter_count = 0;
   std::uint16_t register_count = 0;
@@ -64,6 +79,7 @@ struct Function final {
 struct Program final {
   std::vector<Class> classes;
   std::vector<Function> functions;
+  std::vector<std::string> strings;
 };
 
 }  // namespace vela::ir

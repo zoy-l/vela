@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -13,8 +14,8 @@ class Isolate;
 
 class ClassLayout final {
  public:
-  [[nodiscard]] std::uint32_t field_count() const noexcept { return field_count_; }
-  [[nodiscard]] std::span<const std::uint32_t> reference_fields() const noexcept {
+  [[nodiscard]] auto field_count() const noexcept -> std::uint32_t { return field_count_; }
+  [[nodiscard]] auto reference_fields() const noexcept -> std::span<const std::uint32_t> {
     return reference_fields_;
   }
 
@@ -29,6 +30,7 @@ class ClassLayout final {
 
 enum class ObjectKind : std::uint8_t {
   Instance,
+  Array,
 };
 
 struct HeapObject final {
@@ -42,18 +44,14 @@ struct HeapObject final {
   ClassLayout* layout = nullptr;
   HeapObject* next = nullptr;
   HeapObject* gray_next = nullptr;
+  std::unique_ptr<std::vector<Value>> array_values;
 };
 
 static_assert(alignof(HeapObject) >= alignof(Value));
 
-[[nodiscard]] inline Value* ObjectFields(HeapObject* object) noexcept {
-  auto* bytes = reinterpret_cast<std::byte*>(object);
-  return reinterpret_cast<Value*>(bytes + sizeof(HeapObject));
-}
-
-[[nodiscard]] inline const Value* ObjectFields(const HeapObject* object) noexcept {
-  const auto* bytes = reinterpret_cast<const std::byte*>(object);
-  return reinterpret_cast<const Value*>(bytes + sizeof(HeapObject));
-}
+// 实例字段紧接对象头，二者在同一次分配中保持连续存储。
+static_assert(sizeof(HeapObject) % alignof(Value) == 0);
+[[nodiscard]] auto ObjectFields(HeapObject* object) noexcept -> Value*;
+[[nodiscard]] auto ObjectFields(const HeapObject* object) noexcept -> const Value*;
 
 }  // namespace vela::runtime

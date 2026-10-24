@@ -3,5 +3,16 @@ declare_args() {
   vela_cc = ""
   vela_cxx = ""
   vela_archiver = ""
+  vela_linker = ""
+  vela_linker_version = ""
+  vela_sysroot = ""
   vela_python = ""
 }
+
+assert(vela_build_config == "debug" || vela_build_config == "release",
+       "vela_build_config must be debug or release")
+assert(vela_cc != "" && vela_cxx != "" && vela_archiver != "" &&
+           vela_linker != "" && vela_python != "",
+       "vl config must provide the host tool paths")
+assert(target_os != "mac" || (vela_sysroot != "" && vela_linker_version != ""),
+       "vl config must provide the Xcode SDK and linker version")

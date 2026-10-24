@@ -16,6 +16,7 @@ def main() -> int:
         "cc",
         "cxx",
         "archiver",
+        "linker",
         "clang_format",
         "clangd",
         "clang_tidy",

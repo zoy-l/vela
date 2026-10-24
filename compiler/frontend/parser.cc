@@ -4,13 +4,20 @@
 
 namespace vela::frontend {
 
-ParseResult Parser::Parse() {
+auto Parser::Parse() -> ParseResult {
   Program program;
   while (!IsAtEnd()) {
     std::optional<Enum> enum_declaration;
     std::optional<Class> class_declaration;
     std::optional<Function> function_declaration;
-    if (Match(TokenKind::Enum)) {
+    bool handled_import = false;
+    if (Match(TokenKind::Import)) {
+      handled_import = true;
+      const std::optional<std::string> path = ParseImport();
+      if (path.has_value()) {
+        program.imports.push_back(*path);
+      }
+    } else if (Match(TokenKind::Enum)) {
       enum_declaration = ParseEnum();
       if (enum_declaration.has_value()) {
         program.enums.push_back(std::move(enum_declaration.value()));
@@ -26,31 +33,47 @@ ParseResult Parser::Parse() {
         program.functions.push_back(std::move(function_declaration.value()));
       }
     }
-    if (!enum_declaration.has_value() && !class_declaration.has_value() &&
+    if (!handled_import && !enum_declaration.has_value() && !class_declaration.has_value() &&
         !function_declaration.has_value()) {
       Synchronize();
     }
   }
-  return {std::move(program), std::move(diagnostics_)};
+  return {.program = std::move(program), .diagnostics = std::move(diagnostics_)};
 }
 
-const Token& Parser::Peek() const {
-  return tokens_[current_];
+auto Parser::ParseImport() -> std::optional<std::string> {
+  if (!Match(TokenKind::StringLiteral)) {
+    AddDiagnostic(Peek().location, "expected string path after import");
+    return std::nullopt;
+  }
+  const Token path = Previous();
+  if (!Expect(TokenKind::Semicolon, "expected ';' after import").has_value()) {
+    return std::nullopt;
+  }
+  std::string value = path.lexeme;
+  if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+    value = value.substr(1, value.size() - 2);
+  }
+  return value;
 }
 
-const Token& Parser::Previous() const {
-  return tokens_[current_ - 1];
+auto Parser::Peek() const -> const Token& {
+  return tokens_.at(current_);
 }
 
-bool Parser::IsAtEnd() const {
+auto Parser::Previous() const -> const Token& {
+  return tokens_.at(current_ - 1);
+}
+
+auto Parser::IsAtEnd() const -> bool {
   return Check(TokenKind::EndOfFile);
 }
 
-bool Parser::Check(TokenKind kind) const {
+auto Parser::Check(TokenKind kind) const -> bool {
   return Peek().kind == kind;
 }
 
-bool Parser::Match(TokenKind kind) {
+auto Parser::Match(TokenKind kind) -> bool {
   if (!Check(kind)) {
     return false;
   }
@@ -58,16 +81,16 @@ bool Parser::Match(TokenKind kind) {
   return true;
 }
 
-std::optional<Token> Parser::Expect(TokenKind kind, std::string message) {
+auto Parser::Expect(TokenKind kind, std::string message) -> std::optional<Token> {
   if (Check(kind)) {
-    return tokens_[current_++];
+    return tokens_.at(current_++);
   }
   AddDiagnostic(Peek().location, std::move(message));
   return std::nullopt;
 }
 
 void Parser::AddDiagnostic(SourceLocation location, std::string message) {
-  diagnostics_.push_back({location, std::move(message)});
+  diagnostics_.push_back({.location = location, .message = std::move(message)});
 }
 
 void Parser::Synchronize() {
@@ -84,7 +107,7 @@ void Parser::Synchronize() {
   }
 }
 
-std::optional<Enum> Parser::ParseEnum() {
+auto Parser::ParseEnum() -> std::optional<Enum> {
   const Token name = Peek();
   const std::optional<Token> name_token = Expect(TokenKind::Identifier, "expected enum name");
   if (!name_token.has_value()) {
@@ -113,7 +136,7 @@ std::optional<Enum> Parser::ParseEnum() {
   return declaration;
 }
 
-std::optional<Class> Parser::ParseClass() {
+auto Parser::ParseClass() -> std::optional<Class> {
   const std::optional<Token> name = Expect(TokenKind::Identifier, "expected class name");
   if (!name.has_value()) {
     return std::nullopt;
@@ -126,7 +149,6 @@ std::optional<Class> Parser::ParseClass() {
   declaration.name = name->lexeme;
   declaration.location = name->location;
   while (!Check(TokenKind::RightBrace) && !IsAtEnd()) {
-    const std::size_t member_start = current_;
     const std::optional<TypeName> type = ParseType();
     if (!type.has_value()) {
       return std::nullopt;
@@ -137,28 +159,11 @@ std::optional<Class> Parser::ParseClass() {
       return std::nullopt;
     }
     if (Match(TokenKind::LeftParen)) {
-      Function method;
-      method.name = member->lexeme;
-      method.return_type = type.value();
-      method.location = tokens_[member_start].location;
-      while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
-        const std::optional<Parameter> parameter = ParseParameter();
-        if (!parameter.has_value()) {
-          return std::nullopt;
-        }
-        method.parameters.push_back(parameter.value());
-        if (!Match(TokenKind::Comma)) {
-          break;
-        }
-      }
-      if (!Expect(TokenKind::RightParen, "expected ')' after method parameters").has_value()) {
+      auto method = ParseMethod(*type, *member);
+      if (!method) {
         return std::nullopt;
       }
-      method.body = ParseBlock();
-      if (!method.body) {
-        return std::nullopt;
-      }
-      declaration.methods.push_back(std::move(method));
+      declaration.methods.push_back(std::move(*method));
     } else {
       Field field;
       field.type = type.value();
@@ -176,7 +181,32 @@ std::optional<Class> Parser::ParseClass() {
   return declaration;
 }
 
-std::optional<Function> Parser::ParseFunction() {
+auto Parser::ParseMethod(const TypeName& type, const Token& member) -> std::optional<Function> {
+  Function method;
+  method.name = member.lexeme;
+  method.return_type = type;
+  method.location = member.location;
+  while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
+    const std::optional<Parameter> parameter = ParseParameter();
+    if (!parameter.has_value()) {
+      return std::nullopt;
+    }
+    method.parameters.push_back(parameter.value());
+    if (!Match(TokenKind::Comma)) {
+      break;
+    }
+  }
+  if (!Expect(TokenKind::RightParen, "expected ')' after method parameters").has_value()) {
+    return std::nullopt;
+  }
+  method.body = ParseBlock();
+  if (!method.body) {
+    return std::nullopt;
+  }
+  return method;
+}
+
+auto Parser::ParseFunction() -> std::optional<Function> {
   const std::optional<TypeName> return_type = ParseType();
   if (!return_type.has_value()) {
     return std::nullopt;
@@ -213,7 +243,7 @@ std::optional<Function> Parser::ParseFunction() {
   return function;
 }
 
-std::optional<Parameter> Parser::ParseParameter() {
+auto Parser::ParseParameter() -> std::optional<Parameter> {
   const std::optional<TypeName> type = ParseType();
   if (!type.has_value()) {
     return std::nullopt;
@@ -222,19 +252,26 @@ std::optional<Parameter> Parser::ParseParameter() {
   if (!name.has_value()) {
     return std::nullopt;
   }
-  return Parameter{type.value(), name->lexeme, name->location};
+  return Parameter{.type = type.value(), .name = name->lexeme, .location = name->location};
 }
 
-std::optional<TypeName> Parser::ParseType() {
+auto Parser::ParseType() -> std::optional<TypeName> {
   if (Check(TokenKind::Identifier) || Check(TokenKind::Void)) {
-    const Token token = tokens_[current_++];
-    return TypeName{token.kind == TokenKind::Void ? "void" : token.lexeme, token.location};
+    const Token token = tokens_.at(current_++);
+    std::string name = token.kind == TokenKind::Void ? "void" : token.lexeme;
+    if (Match(TokenKind::LeftBracket)) {
+      if (!Expect(TokenKind::RightBracket, "expected ']' in array type").has_value()) {
+        return std::nullopt;
+      }
+      name = "array";
+    }
+    return TypeName{.name = std::move(name), .location = token.location};
   }
   AddDiagnostic(Peek().location, "expected type name");
   return std::nullopt;
 }
 
-std::unique_ptr<Statement> Parser::ParseBlock() {
+auto Parser::ParseBlock() -> std::unique_ptr<Statement> {
   const std::optional<Token> left_brace = Expect(TokenKind::LeftBrace, "expected '{'");
   if (!left_brace.has_value()) {
     return nullptr;
@@ -256,7 +293,7 @@ std::unique_ptr<Statement> Parser::ParseBlock() {
   return block;
 }
 
-std::unique_ptr<Statement> Parser::ParseStatement() {
+auto Parser::ParseStatement() -> std::unique_ptr<Statement> {
   if (Check(TokenKind::LeftBrace)) {
     return ParseBlock();
   }
@@ -269,14 +306,92 @@ std::unique_ptr<Statement> Parser::ParseStatement() {
   if (Match(TokenKind::While)) {
     return ParseWhileStatement();
   }
+  if (Match(TokenKind::For)) {
+    return ParseForStatement();
+  }
+  if (Match(TokenKind::Break)) {
+    return ParseBreakStatement();
+  }
+  if (Match(TokenKind::Continue)) {
+    return ParseContinueStatement();
+  }
   if (Check(TokenKind::Identifier) && current_ + 1 < tokens_.size() &&
-      tokens_[current_ + 1].kind == TokenKind::Identifier) {
+      (tokens_.at(current_ + 1).kind == TokenKind::Identifier ||
+       (tokens_.at(current_ + 1).kind == TokenKind::LeftBracket && current_ + 3 < tokens_.size() &&
+        tokens_.at(current_ + 2).kind == TokenKind::RightBracket &&
+        tokens_.at(current_ + 3).kind == TokenKind::Identifier))) {
     return ParseVariableDeclaration();
   }
   return ParseExpressionStatement();
 }
 
-std::unique_ptr<Statement> Parser::ParseIfStatement() {
+auto Parser::ParseForStatement() -> std::unique_ptr<Statement> {
+  auto statement = std::make_unique<Statement>();
+  statement->kind = Statement::Kind::For;
+  statement->location = Previous().location;
+  if (!Expect(TokenKind::LeftParen, "expected '(' after for").has_value()) {
+    return nullptr;
+  }
+  if (!Check(TokenKind::Semicolon)) {
+    if (Check(TokenKind::Identifier) && current_ + 1 < tokens_.size() &&
+        (tokens_.at(current_ + 1).kind == TokenKind::Identifier ||
+         (tokens_.at(current_ + 1).kind == TokenKind::LeftBracket &&
+          current_ + 3 < tokens_.size() &&
+          tokens_.at(current_ + 2).kind == TokenKind::RightBracket &&
+          tokens_.at(current_ + 3).kind == TokenKind::Identifier))) {
+      statement->initializer = ParseVariableDeclaration();
+    } else {
+      statement->initializer = ParseExpressionStatement();
+    }
+    if (!statement->initializer) {
+      return nullptr;
+    }
+  } else {
+    ++current_;
+  }
+  if (!Check(TokenKind::Semicolon)) {
+    statement->condition = ParseExpression();
+    if (!statement->condition) {
+      return nullptr;
+    }
+  }
+  if (!Expect(TokenKind::Semicolon, "expected ';' after for condition").has_value()) {
+    return nullptr;
+  }
+  if (!Check(TokenKind::RightParen)) {
+    statement->increment = ParseExpression();
+    if (!statement->increment) {
+      return nullptr;
+    }
+  }
+  if (!Expect(TokenKind::RightParen, "expected ')' after for clauses").has_value()) {
+    return nullptr;
+  }
+  statement->then_branch = ParseStatement();
+  return statement->then_branch ? std::move(statement) : nullptr;
+}
+
+auto Parser::ParseBreakStatement() -> std::unique_ptr<Statement> {
+  auto statement = std::make_unique<Statement>();
+  statement->kind = Statement::Kind::Break;
+  statement->location = Previous().location;
+  if (!Expect(TokenKind::Semicolon, "expected ';' after break").has_value()) {
+    return nullptr;
+  }
+  return statement;
+}
+
+auto Parser::ParseContinueStatement() -> std::unique_ptr<Statement> {
+  auto statement = std::make_unique<Statement>();
+  statement->kind = Statement::Kind::Continue;
+  statement->location = Previous().location;
+  if (!Expect(TokenKind::Semicolon, "expected ';' after continue").has_value()) {
+    return nullptr;
+  }
+  return statement;
+}
+
+auto Parser::ParseIfStatement() -> std::unique_ptr<Statement> {
   auto statement = std::make_unique<Statement>();
   statement->kind = Statement::Kind::If;
   statement->location = Previous().location;
@@ -301,7 +416,7 @@ std::unique_ptr<Statement> Parser::ParseIfStatement() {
   return statement;
 }
 
-std::unique_ptr<Statement> Parser::ParseWhileStatement() {
+auto Parser::ParseWhileStatement() -> std::unique_ptr<Statement> {
   auto statement = std::make_unique<Statement>();
   statement->kind = Statement::Kind::While;
   statement->location = Previous().location;
@@ -317,7 +432,7 @@ std::unique_ptr<Statement> Parser::ParseWhileStatement() {
   return statement->then_branch ? std::move(statement) : nullptr;
 }
 
-std::unique_ptr<Statement> Parser::ParseVariableDeclaration() {
+auto Parser::ParseVariableDeclaration() -> std::unique_ptr<Statement> {
   const std::optional<TypeName> type = ParseType();
   if (!type.has_value()) {
     return nullptr;
@@ -343,7 +458,7 @@ std::unique_ptr<Statement> Parser::ParseVariableDeclaration() {
   return statement;
 }
 
-std::unique_ptr<Statement> Parser::ParseReturnStatement() {
+auto Parser::ParseReturnStatement() -> std::unique_ptr<Statement> {
   auto statement = std::make_unique<Statement>();
   statement->kind = Statement::Kind::Return;
   statement->location = Previous().location;
@@ -359,7 +474,7 @@ std::unique_ptr<Statement> Parser::ParseReturnStatement() {
   return statement;
 }
 
-std::unique_ptr<Statement> Parser::ParseExpressionStatement() {
+auto Parser::ParseExpressionStatement() -> std::unique_ptr<Statement> {
   auto statement = std::make_unique<Statement>();
   statement->kind = Statement::Kind::Expression;
   statement->location = Peek().location;
@@ -373,12 +488,12 @@ std::unique_ptr<Statement> Parser::ParseExpressionStatement() {
   return statement;
 }
 
-std::unique_ptr<Expression> Parser::ParseExpression() {
+auto Parser::ParseExpression() -> std::unique_ptr<Expression> {
   return ParseAssignment();
 }
 
-std::unique_ptr<Expression> Parser::ParseAssignment() {
-  std::unique_ptr<Expression> expression = ParseEquality();
+auto Parser::ParseAssignment() -> std::unique_ptr<Expression> {
+  std::unique_ptr<Expression> expression = ParseLogicalOr();
   if (Match(TokenKind::Equal)) {
     const SourceLocation location = Previous().location;
     std::unique_ptr<Expression> right = ParseAssignment();
@@ -394,11 +509,11 @@ std::unique_ptr<Expression> Parser::ParseAssignment() {
   return expression;
 }
 
-std::unique_ptr<Expression> Parser::ParseEquality() {
-  std::unique_ptr<Expression> expression = ParseAdditive();
-  while (Match(TokenKind::EqualEqual) || Match(TokenKind::BangEqual)) {
+auto Parser::ParseLogicalOr() -> std::unique_ptr<Expression> {
+  std::unique_ptr<Expression> expression = ParseLogicalAnd();
+  while (Match(TokenKind::OrOr)) {
     const Token operator_token = Previous();
-    std::unique_ptr<Expression> right = ParseAdditive();
+    auto right = ParseLogicalAnd();
     if (!right) {
       return nullptr;
     }
@@ -411,7 +526,59 @@ std::unique_ptr<Expression> Parser::ParseEquality() {
   return expression;
 }
 
-std::unique_ptr<Expression> Parser::ParseAdditive() {
+auto Parser::ParseLogicalAnd() -> std::unique_ptr<Expression> {
+  std::unique_ptr<Expression> expression = ParseEquality();
+  while (Match(TokenKind::AndAnd)) {
+    const Token operator_token = Previous();
+    auto right = ParseEquality();
+    if (!right) {
+      return nullptr;
+    }
+    auto binary = MakeExpression(Expression::Kind::Binary, operator_token.location);
+    binary->text = operator_token.lexeme;
+    binary->left = std::move(expression);
+    binary->right = std::move(right);
+    expression = std::move(binary);
+  }
+  return expression;
+}
+
+auto Parser::ParseEquality() -> std::unique_ptr<Expression> {
+  std::unique_ptr<Expression> expression = ParseRelational();
+  while (Match(TokenKind::EqualEqual) || Match(TokenKind::BangEqual)) {
+    const Token operator_token = Previous();
+    std::unique_ptr<Expression> right = ParseRelational();
+    if (!right) {
+      return nullptr;
+    }
+    auto binary = MakeExpression(Expression::Kind::Binary, operator_token.location);
+    binary->text = operator_token.lexeme;
+    binary->left = std::move(expression);
+    binary->right = std::move(right);
+    expression = std::move(binary);
+  }
+  return expression;
+}
+
+auto Parser::ParseRelational() -> std::unique_ptr<Expression> {
+  std::unique_ptr<Expression> expression = ParseAdditive();
+  while (Match(TokenKind::Less) || Match(TokenKind::LessEqual) || Match(TokenKind::Greater) ||
+         Match(TokenKind::GreaterEqual)) {
+    const Token operator_token = Previous();
+    auto right = ParseAdditive();
+    if (!right) {
+      return nullptr;
+    }
+    auto binary = MakeExpression(Expression::Kind::Binary, operator_token.location);
+    binary->text = operator_token.lexeme;
+    binary->left = std::move(expression);
+    binary->right = std::move(right);
+    expression = std::move(binary);
+  }
+  return expression;
+}
+
+auto Parser::ParseAdditive() -> std::unique_ptr<Expression> {
   std::unique_ptr<Expression> expression = ParseMultiplicative();
   while (Match(TokenKind::Plus) || Match(TokenKind::Minus)) {
     const Token operator_token = Previous();
@@ -428,7 +595,7 @@ std::unique_ptr<Expression> Parser::ParseAdditive() {
   return expression;
 }
 
-std::unique_ptr<Expression> Parser::ParseMultiplicative() {
+auto Parser::ParseMultiplicative() -> std::unique_ptr<Expression> {
   std::unique_ptr<Expression> expression = ParseUnary();
   while (Match(TokenKind::Star) || Match(TokenKind::Slash)) {
     const Token operator_token = Previous();
@@ -445,7 +612,7 @@ std::unique_ptr<Expression> Parser::ParseMultiplicative() {
   return expression;
 }
 
-std::unique_ptr<Expression> Parser::ParseUnary() {
+auto Parser::ParseUnary() -> std::unique_ptr<Expression> {
   if (Match(TokenKind::Bang) || Match(TokenKind::Minus)) {
     const Token operator_token = Previous();
     auto unary = MakeExpression(Expression::Kind::Unary, operator_token.location);
@@ -456,7 +623,7 @@ std::unique_ptr<Expression> Parser::ParseUnary() {
   return ParsePostfix();
 }
 
-std::unique_ptr<Expression> Parser::ParsePostfix() {
+auto Parser::ParsePostfix() -> std::unique_ptr<Expression> {
   std::unique_ptr<Expression> expression = ParsePrimary();
   if (!expression) {
     return nullptr;
@@ -480,6 +647,15 @@ std::unique_ptr<Expression> Parser::ParsePostfix() {
       access->object = std::move(expression);
       access->text = member->lexeme;
       expression = std::move(access);
+    } else if (Match(TokenKind::LeftBracket)) {
+      auto index = MakeExpression(Expression::Kind::Index, Previous().location);
+      index->object = std::move(expression);
+      index->index = ParseExpression();
+      if (!index->index ||
+          !Expect(TokenKind::RightBracket, "expected ']' after index").has_value()) {
+        return nullptr;
+      }
+      expression = std::move(index);
     } else {
       break;
     }
@@ -487,7 +663,7 @@ std::unique_ptr<Expression> Parser::ParsePostfix() {
   return expression;
 }
 
-std::unique_ptr<Expression> Parser::ParsePrimary() {
+auto Parser::ParsePrimary() -> std::unique_ptr<Expression> {
   if (Match(TokenKind::IntegerLiteral)) {
     auto expression = MakeExpression(Expression::Kind::IntegerLiteral, Previous().location);
     expression->text = Previous().lexeme;
@@ -503,12 +679,29 @@ std::unique_ptr<Expression> Parser::ParsePrimary() {
     expression->text = Previous().lexeme;
     return expression;
   }
+  if (Match(TokenKind::LeftBracket)) {
+    auto expression = MakeExpression(Expression::Kind::ArrayLiteral, Previous().location);
+    while (!Check(TokenKind::RightBracket) && !IsAtEnd()) {
+      auto element = ParseExpression();
+      if (!element) {
+        return nullptr;
+      }
+      expression->elements.push_back(std::move(element));
+      if (!Match(TokenKind::Comma)) {
+        break;
+      }
+    }
+    if (!Expect(TokenKind::RightBracket, "expected ']' after array literal").has_value()) {
+      return nullptr;
+    }
+    return expression;
+  }
   if (Match(TokenKind::True) || Match(TokenKind::False)) {
     auto expression = MakeExpression(Expression::Kind::BooleanLiteral, Previous().location);
     expression->boolean_value = Previous().kind == TokenKind::True;
     return expression;
   }
-  if (Match(TokenKind::Identifier)) {
+  if (Match(TokenKind::Identifier) || Match(TokenKind::Print)) {
     auto expression = MakeExpression(Expression::Kind::Name, Previous().location);
     expression->text = Previous().lexeme;
     return expression;
@@ -535,14 +728,14 @@ std::unique_ptr<Expression> Parser::ParsePrimary() {
   return nullptr;
 }
 
-std::vector<CallArgument> Parser::ParseArguments() {
+auto Parser::ParseArguments() -> std::vector<CallArgument> {
   std::vector<CallArgument> arguments;
   while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
     CallArgument argument;
     argument.location = Peek().location;
     if (Check(TokenKind::Identifier) && current_ + 1 < tokens_.size() &&
-        tokens_[current_ + 1].kind == TokenKind::Colon) {
-      argument.name = tokens_[current_++].lexeme;
+        tokens_.at(current_ + 1).kind == TokenKind::Colon) {
+      argument.name = tokens_.at(current_++).lexeme;
       ++current_;
     }
     argument.value = ParseExpression();
@@ -557,7 +750,8 @@ std::vector<CallArgument> Parser::ParseArguments() {
   return arguments;
 }
 
-std::unique_ptr<Expression> Parser::MakeExpression(Expression::Kind kind, SourceLocation location) {
+auto Parser::MakeExpression(Expression::Kind kind, SourceLocation location)
+    -> std::unique_ptr<Expression> {
   auto expression = std::make_unique<Expression>();
   expression->kind = kind;
   expression->location = location;

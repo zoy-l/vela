@@ -14,10 +14,11 @@ class Frame final {
     roots_.Attach(heap, registers.data(), registers.size());
   }
 
+  ~Frame() = default;
   Frame(const Frame&) = delete;
-  Frame& operator=(const Frame&) = delete;
+  auto operator=(const Frame&) -> Frame& = delete;
   Frame(Frame&&) = delete;
-  Frame& operator=(Frame&&) = delete;
+  auto operator=(Frame&&) -> Frame& = delete;
 
   void Attach(runtime::Heap& heap, std::span<runtime::Value> registers) noexcept {
     registers_ = registers;
@@ -29,9 +30,7 @@ class Frame final {
     registers_ = {};
   }
 
-  [[nodiscard]] runtime::Value* data() noexcept { return registers_.data(); }
-  [[nodiscard]] const runtime::Value* data() const noexcept { return registers_.data(); }
-  [[nodiscard]] std::size_t register_count() const noexcept { return registers_.size(); }
+  [[nodiscard]] auto registers() noexcept -> std::span<runtime::Value> { return registers_; }
 
  private:
   std::span<runtime::Value> registers_;

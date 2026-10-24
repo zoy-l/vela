@@ -18,7 +18,7 @@ struct LoweringResult final {
   Program program;
   frontend::Diagnostics diagnostics;
 
-  [[nodiscard]] bool Succeeded() const noexcept { return diagnostics.empty(); }
+  [[nodiscard]] auto Succeeded() const noexcept -> bool { return diagnostics.empty(); }
 };
 
 class Lowerer final {
@@ -26,7 +26,14 @@ class Lowerer final {
   Lowerer(const frontend::Program& source, const frontend::SemanticModel& model) noexcept
       : source_(source), model_(model) {}
 
-  [[nodiscard]] LoweringResult Lower();
+  // lowering 状态借用固定的 AST 和语义模型；执行上下文不允许复制或迁移。
+  ~Lowerer() = default;
+  Lowerer(const Lowerer&) = delete;
+  auto operator=(const Lowerer&) -> Lowerer& = delete;
+  Lowerer(Lowerer&&) = delete;
+  auto operator=(Lowerer&&) -> Lowerer& = delete;
+
+  [[nodiscard]] auto Lower() -> LoweringResult;
 
  private:
   struct Local final {
@@ -42,41 +49,73 @@ class Lowerer final {
   using ClassMap = std::unordered_map<std::string, ClassId>;
   using FunctionMap = std::unordered_map<std::string, std::uint32_t>;
   using LocalMap = std::unordered_map<std::string, Local>;
+  struct LoopTargets final {
+    std::vector<std::size_t> break_jumps;
+    std::vector<std::size_t> continue_jumps;
+  };
 
   void AddDiagnostic(frontend::SourceLocation location, std::string message);
   void BuildClassTable();
   void BuildFunctionTable();
-  void LowerFunction(const frontend::Function& source);
+  void LowerFunction(const frontend::Function& source, const frontend::Class* owner = nullptr);
   void LowerStatement(const frontend::Statement& statement);
   void LowerBlock(const frontend::Statement& statement);
 
-  [[nodiscard]] LoweredValue LowerExpression(const frontend::Expression& expression,
-                                             const frontend::TypeDescriptor* expected = nullptr);
-  [[nodiscard]] LoweredValue LowerAssignment(const frontend::Expression& left,
-                                             const frontend::Expression& right);
-  [[nodiscard]] LoweredValue LowerConstruction(const frontend::Expression& expression,
-                                               const frontend::TypeDescriptor& expected);
-  [[nodiscard]] LoweredValue LowerMember(const frontend::Expression& expression);
-  [[nodiscard]] LoweredValue LowerCall(const frontend::Expression& expression,
-                                       const frontend::TypeDescriptor* expected);
+  [[nodiscard]] auto LowerExpression(const frontend::Expression& expression,
+                                     const frontend::TypeDescriptor* expected = nullptr)
+      -> LoweredValue;
+  [[nodiscard]] auto LowerAssignment(const frontend::Expression& expression) -> LoweredValue;
+  [[nodiscard]] auto LowerConstruction(const frontend::Expression& expression,
+                                       const frontend::TypeDescriptor& expected) -> LoweredValue;
+  [[nodiscard]] auto LowerMember(const frontend::Expression& expression) -> LoweredValue;
+  [[nodiscard]] auto LowerIndex(const frontend::Expression& expression) -> LoweredValue;
+  [[nodiscard]] auto LowerCall(const frontend::Expression& expression,
+                               const frontend::TypeDescriptor* expected) -> LoweredValue;
 
-  [[nodiscard]] const frontend::ClassDescriptor* FindClass(std::string_view name) const;
-  [[nodiscard]] const Local* FindLocal(std::string_view name) const;
-  [[nodiscard]] RegisterId AllocateRegister(frontend::SourceLocation location);
-  [[nodiscard]] RegisterId AllocateTemporary(frontend::SourceLocation location);
-  [[nodiscard]] bool IsSameType(const frontend::TypeDescriptor& left,
-                                const frontend::TypeDescriptor& right) const;
-  [[nodiscard]] bool IsInteger(const frontend::TypeDescriptor& type) const;
-  [[nodiscard]] bool IsBoolean(const frontend::TypeDescriptor& type) const;
-  [[nodiscard]] std::optional<FieldId> FindField(const frontend::ClassDescriptor& class_info,
-                                                 std::string_view name) const;
+  [[nodiscard]] auto FindClass(std::string_view name) const -> const frontend::ClassDescriptor*;
+  [[nodiscard]] auto FindLocal(std::string_view name) const -> const Local*;
+  [[nodiscard]] auto AllocateRegister(frontend::SourceLocation location) -> RegisterId;
+  [[nodiscard]] auto AllocateTemporary(frontend::SourceLocation location) -> RegisterId;
+  [[nodiscard]] static auto IsSameType(const frontend::TypeDescriptor& left,
+                                       const frontend::TypeDescriptor& right) -> bool;
+  [[nodiscard]] static auto IsInteger(const frontend::TypeDescriptor& type) -> bool;
+  [[nodiscard]] static auto IsBoolean(const frontend::TypeDescriptor& type) -> bool;
+  [[nodiscard]] static auto FindField(const frontend::ClassDescriptor& class_info,
+                                      std::string_view name) -> std::optional<FieldId>;
   void Emit(Instruction instruction);
   void PushScope();
   void PopScope();
-  bool DeclareLocal(std::string_view name,
+  auto DeclareLocal(std::string_view name,
                     RegisterId reg,
                     frontend::TypeDescriptor type,
-                    frontend::SourceLocation location);
+                    frontend::SourceLocation location) -> bool;
+
+  void LowerVariableDeclaration(const frontend::Statement& statement);
+
+  void LowerIf(const frontend::Statement& statement);
+
+  void LowerWhile(const frontend::Statement& statement);
+
+  void LowerFor(const frontend::Statement& statement);
+
+  auto LowerIntegerLiteral(const frontend::Expression& expression) -> LoweredValue;
+
+  auto LowerStringLiteral(const frontend::Expression& expression) -> LoweredValue;
+
+  auto LowerArrayLiteral(const frontend::Expression& expression) -> LoweredValue;
+
+  auto LowerShorthandMember(const frontend::Expression& expression,
+                            const frontend::TypeDescriptor* expected) -> LoweredValue;
+
+  auto LowerUnary(const frontend::Expression& expression) -> LoweredValue;
+
+  auto LowerBinary(const frontend::Expression& expression) -> LoweredValue;
+
+  auto LowerInvocation(const frontend::Expression& expression,
+                       const frontend::FunctionDescriptor& function,
+                       std::uint32_t function_id,
+                       const LoweredValue* receiver) -> LoweredValue;
+  auto LowerLogical(const frontend::Expression& expression) -> LoweredValue;
 
   const frontend::Program& source_;
   const frontend::SemanticModel& model_;
@@ -86,6 +125,7 @@ class Lowerer final {
   FunctionMap function_ids_;
   Function* current_function_ = nullptr;
   std::vector<LocalMap> scopes_;
+  std::vector<LoopTargets> loops_;
   RegisterId next_register_ = 0;
 };
 

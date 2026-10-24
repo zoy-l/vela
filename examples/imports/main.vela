@@ -1,0 +1,5 @@
+import "math.vela";
+
+int main() {
+  return triple(14);
+}

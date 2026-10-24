@@ -10,7 +10,7 @@ import sys
 from tools.config import BUILD_VARIANTS, configure, toolchain_tools
 
 
-ROOT_TARGETS = {"default", "tests"}
+ROOT_TARGETS = {"default", "tests", "benchmarks"}
 
 
 def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:

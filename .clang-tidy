@@ -9,5 +9,6 @@ Checks:
   - 'readability-*'
   # Vela uses #pragma once as its repository-wide header guard convention.
   - '-portability-avoid-pragma-once'
-HeaderFilterRegex: '^(?!.*third_party/).*$'
+HeaderFilterRegex: '.*'
+ExcludeHeaderFilterRegex: '(^|[/\\])third_party[/\\]'
 FormatStyle: file

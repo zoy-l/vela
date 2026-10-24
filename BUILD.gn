@@ -20,3 +20,8 @@ group("tests") {
     "//vm:vm_tests",
   ]
 }
+
+group("benchmarks") {
+  testonly = true
+  deps = [ "//benchmarks:vela_benchmarks" ]
+}

@@ -10,6 +10,9 @@ source_set("vm") {
 
 executable("vm_tests") {
   testonly = true
-  sources = [ "vm_tests.cc" ]
-  deps = [ ":vm" ]
+  sources = [ "vm_unittest.cc" ]
+  deps = [
+    ":vm",
+    "//third_party:gtest_main",
+  ]
 }

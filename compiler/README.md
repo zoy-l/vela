@@ -47,12 +47,12 @@ aggregate construction with named arguments, functions, and static type
 checking. The checker feeds the typed IR and bytecode VM; it does not interpret
 source directly.
 
-The executable also has a repeatable VM benchmark mode:
+Benchmarks use a separate Google Benchmark executable:
 
 ```powershell
-.\out\release\vela.exe bench benchmarks\integer_loop.vela 1000
+python -m tools.vl bench -- --benchmark_filter=integer_loop
 ```
 
-For the complete benchmark set, use `python -m tools.vl bench`. Compilation is
-performed once per source file, then the first execution and the remaining
-steady-state executions are timed separately.
+For the complete set, use `python -m tools.vl bench`. Compilation, first execution,
+and steady-state VM execution have separate benchmark cases. See
+[`benchmarks/README.md`](../benchmarks/README.md) for measurement boundaries.

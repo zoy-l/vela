@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -13,13 +15,14 @@
 namespace vela::frontend {
 
 struct TypeDescriptor final {
-  enum class Kind {
+  enum class Kind : std::uint8_t {
     Invalid,
     Void,
     Bool,
     Int,
     Float,
     String,
+    Array,
     Enum,
     Class,
   };
@@ -56,39 +59,63 @@ struct TypeCheckResult final {
 
 class TypeChecker final {
  public:
-  [[nodiscard]] TypeCheckResult Check(const Program& program);
+  [[nodiscard]] auto Check(const Program& program) -> TypeCheckResult;
 
  private:
   using Type = TypeDescriptor;
   using FunctionInfo = FunctionDescriptor;
   using ClassInfo = ClassDescriptor;
 
-  [[nodiscard]] static Type InvalidType();
+  [[nodiscard]] static auto InvalidType() -> Type;
   void AddDiagnostic(SourceLocation location, std::string message);
   void CollectTypes(const Program& program);
   void ResolveDeclarations(const Program& program);
   void CheckFunction(const Function& function, const ClassInfo* owner);
-  void CheckStatement(const Statement& statement, Type return_type);
-  Type CheckExpression(const Expression& expression, const Type* expected);
-  Type CheckCall(const Expression& expression, const Type* expected);
-  Type CheckFunctionCall(const FunctionInfo& function,
+  void CheckStatement(const Statement& statement, const Type& return_type);
+  auto CheckExpression(const Expression& expression, const Type* expected) -> Type;
+  auto CheckCall(const Expression& expression, const Type* expected) -> Type;
+  auto CheckFunctionCall(const FunctionInfo& function,
                          const std::vector<CallArgument>& arguments,
-                         SourceLocation location);
-  Type CheckClassConstruction(const ClassInfo& class_info,
+                         SourceLocation location) -> Type;
+  auto CheckClassConstruction(const ClassInfo& class_info,
                               const std::vector<CallArgument>& arguments,
-                              SourceLocation location);
-  Type CheckMemberAccess(const Expression& expression);
-  Type ResolveType(const TypeName& type_name, bool allow_void);
-  Type LookupName(const Expression& expression);
-  Type LookupLocal(std::string_view name) const;
+                              SourceLocation location) -> Type;
+  auto CheckMemberAccess(const Expression& expression) -> Type;
+  auto ResolveType(const TypeName& type_name, bool allow_void) -> Type;
+  auto LookupName(const Expression& expression) -> Type;
+  [[nodiscard]] auto LookupLocal(std::string_view name) const -> Type;
   void BeginScope();
   void EndScope();
-  bool DeclareLocal(std::string_view name, Type type, SourceLocation location);
-  [[nodiscard]] bool IsAssignable(const Expression& expression) const;
-  [[nodiscard]] bool IsSameType(Type left, Type right) const;
-  [[nodiscard]] bool IsNumeric(Type type) const;
-  [[nodiscard]] bool IsValid(Type type) const;
-  [[nodiscard]] std::string TypeNameFor(Type type) const;
+  auto DeclareLocal(std::string_view name, const Type& type, SourceLocation location) -> bool;
+  [[nodiscard]] static auto IsAssignable(const Expression& expression) -> bool;
+  [[nodiscard]] static auto IsSameType(const Type& left, const Type& right) -> bool;
+  [[nodiscard]] static auto IsNumeric(const Type& type) -> bool;
+  [[nodiscard]] static auto IsValid(const Type& type) -> bool;
+  [[nodiscard]] static auto TypeNameFor(const Type& type) -> std::string;
+
+  void CheckVariableDeclaration(const Statement& statement);
+
+  void CheckReturn(const Statement& statement, const Type& return_type);
+
+  void CheckIf(const Statement& statement, const Type& return_type);
+
+  void CheckWhile(const Statement& statement, const Type& return_type);
+
+  void CheckFor(const Statement& statement, const Type& return_type);
+
+  auto CheckIntegerLiteral(const Expression& expression) -> Type;
+
+  auto CheckIndex(const Expression& expression) -> Type;
+
+  auto CheckShorthandMember(const Expression& expression, const Type* expected) -> Type;
+
+  auto CheckUnary(const Expression& expression) -> Type;
+
+  auto CheckBinary(const Expression& expression) -> Type;
+
+  auto ResolveSignature(const Function& function) -> FunctionInfo;
+  auto CheckMethodCall(const Expression& expression, const Type* expected) -> Type;
+  auto CheckAssignment(const Expression& expression) -> Type;
 
   Diagnostics diagnostics_;
   std::size_t function_count_ = 0;
@@ -97,6 +124,7 @@ class TypeChecker final {
   std::unordered_map<std::string, ClassInfo> classes_;
   std::unordered_map<std::string, FunctionInfo> functions_;
   std::vector<std::unordered_map<std::string, Type>> scopes_;
+  std::size_t loop_depth_ = 0;
 };
 
 }  // namespace vela::frontend

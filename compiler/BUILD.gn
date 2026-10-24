@@ -53,21 +53,28 @@ executable("vela") {
 
 executable("vela_environment_tests") {
   testonly = true
-  sources = [ "vela_environment_tests.cc" ]
-  deps = [ ":build_info" ]
+  sources = [ "environment_unittest.cc" ]
+  deps = [
+    ":build_info",
+    "//third_party:gtest_main",
+  ]
 }
 
 executable("vela_frontend_tests") {
   testonly = true
-  sources = [ "frontend_tests.cc" ]
-  deps = [ ":frontend" ]
+  sources = [ "frontend_unittest.cc" ]
+  deps = [
+    ":frontend",
+    "//third_party:gtest_main",
+  ]
 }
 
 executable("vela_compiler_tests") {
   testonly = true
-  sources = [ "compiler_tests.cc" ]
+  sources = [ "compiler_unittest.cc" ]
   deps = [
     ":compiler",
     "//runtime",
+    "//third_party:gtest_main",
   ]
 }

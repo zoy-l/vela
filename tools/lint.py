@@ -17,6 +17,7 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path, metavar="PATH")
     parser.add_argument("--variant", choices=BUILD_VARIANTS, default="debug")
+    parser.add_argument("--fix", action="store_true", help="Apply clang-tidy code fixes")
     return parser.parse_args(arguments)
 
 
@@ -36,7 +37,11 @@ def _database_sources() -> list[Path]:
             raise RuntimeError("compilation database contains an invalid source entry")
         directory = Path(entry.get("directory", ROOT))
         source = (directory / entry["file"]).resolve()
-        if source.suffix not in {".cc", ".cpp", ".cxx"} or source in seen:
+        if (
+            source.suffix not in {".cc", ".cpp", ".cxx"}
+            or source in seen
+            or ROOT / "third_party" in source.parents
+        ):
             continue
         seen.add(source)
         sources.append(source)
@@ -49,6 +54,8 @@ def _path_sources(paths: list[Path]) -> list[Path]:
         candidate = (path if path.is_absolute() else Path.cwd() / path).resolve()
         if not candidate.exists():
             raise RuntimeError(f"lint path does not exist: {candidate}")
+        if ROOT / "third_party" == candidate or ROOT / "third_party" in candidate.parents:
+            raise RuntimeError(f"lint only checks project-owned C++ sources: {candidate}")
         if candidate.is_file():
             if candidate.suffix not in {".cc", ".cpp", ".cxx"}:
                 raise RuntimeError(f"lint path is not a C++ source file: {candidate}")
@@ -57,7 +64,9 @@ def _path_sources(paths: list[Path]) -> list[Path]:
         sources.extend(
             source
             for source in sorted(candidate.rglob("*"))
-            if source.is_file() and source.suffix in {".cc", ".cpp", ".cxx"}
+            if source.is_file()
+            and source.suffix in {".cc", ".cpp", ".cxx"}
+            and ROOT / "third_party" not in source.parents
         )
     return sources
 
@@ -71,8 +80,14 @@ def run(parsed: argparse.Namespace) -> int:
 
     failed = 0
     for source in sources:
+        command = [
+            str(tools["clang_tidy"]), str(source), "-p", str(ROOT), "--quiet",
+            "--warnings-as-errors=*",
+        ]
+        if parsed.fix:
+            command.append("--fix")
         result = subprocess.run(
-            [str(tools["clang_tidy"]), str(source), "-p", str(ROOT), "--quiet"],
+            command,
             cwd=ROOT,
             check=False,
         )

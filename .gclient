@@ -1,5 +1,5 @@
 # This checkout is managed by the root DEPS file. gclient only materializes
-# the pinned host tools declared by this project.
+# the pinned tools and source dependencies declared by this project.
 solutions = [
   {
     "name": ".",

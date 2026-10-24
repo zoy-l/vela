@@ -10,9 +10,9 @@ struct CheckResult final {
   Diagnostics diagnostics;
   std::size_t function_count = 0;
 
-  [[nodiscard]] bool Succeeded() const { return diagnostics.empty(); }
+  [[nodiscard]] auto Succeeded() const -> bool { return diagnostics.empty(); }
 };
 
-[[nodiscard]] CheckResult CheckSource(std::string_view source);
+[[nodiscard]] auto CheckSource(std::string_view source) -> CheckResult;
 
 }  // namespace vela::frontend

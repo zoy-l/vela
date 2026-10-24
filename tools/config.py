@@ -54,25 +54,64 @@ def executable_name(name: str) -> str:
     return f"{name}.exe" if platform.system() == "Windows" else name
 
 
+def _xcode_path(arguments: list[str], description: str) -> Path:
+    result = subprocess.run(
+        ["/usr/bin/xcrun", "--sdk", "macosx", *arguments],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    value = result.stdout.strip()
+    path = Path(value)
+    if not value or not path.exists():
+        raise RuntimeError(f"Missing Xcode {description}: {value}; install Xcode")
+    return path.resolve()
+
+
+def _xcode_linker_version(linker: Path) -> str:
+    result = subprocess.run(
+        [str(linker), "-version_details"],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    try:
+        version = json.loads(result.stdout)["version"]
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        raise RuntimeError("Xcode linker did not report its version") from error
+    if not isinstance(version, str) or not all(part.isdecimal() for part in version.split(".")):
+        raise RuntimeError(f"Invalid Xcode linker version: {version!r}")
+    return version
+
+
 def toolchain_tools() -> dict[str, Path]:
     host = host_platform()
     clang_bin = BUILD_TOOLS_ROOT / "clang" / host / "bin"
     gn_path = BUILD_TOOLS_ROOT / "gn" / host / executable_name("gn")
     ninja_path = BUILD_TOOLS_ROOT / "ninja" / host / executable_name("ninja")
     if platform.system() == "Windows":
-        cc = clang_bin / "clang++.exe"
-        cxx = clang_bin / "clang++.exe"
+        cc = clang_bin / "clang-cl.exe"
+        cxx = cc
         archiver = clang_bin / "llvm-lib.exe"
+        linker = clang_bin / "lld-link.exe"
     else:
         cc = clang_bin / "clang"
         cxx = clang_bin / "clang++"
         archiver = clang_bin / "llvm-ar"
-    return {
+        linker = (
+            _xcode_path(["--find", "ld"], "linker")
+            if platform.system() == "Darwin"
+            else clang_bin / "ld.lld"
+        )
+    tools = {
         "gn": _require_file(gn_path, "project GN executable"),
         "ninja": _require_file(ninja_path, "project Ninja executable"),
         "cc": _require_file(cc, "project Clang executable"),
         "cxx": _require_file(cxx, "project Clang++ executable"),
         "archiver": _require_file(archiver, "project LLVM archiver"),
+        "linker": _require_file(linker, "host linker"),
         "clang_format": _require_file(
             clang_bin / executable_name("clang-format"),
             "project clang-format executable",
@@ -86,6 +125,9 @@ def toolchain_tools() -> dict[str, Path]:
             "project clang-tidy executable",
         ),
     }
+    if platform.system() == "Darwin":
+        tools["sysroot"] = _xcode_path(["--show-sdk-path"], "macOS SDK")
+    return tools
 
 
 def _gn_value(value: str) -> str:
@@ -102,8 +144,12 @@ def configure(variant: str) -> Path:
         "vela_build_config": variant,
         "vela_cc": tools["cc"].as_posix(),
         "vela_cxx": tools["cxx"].as_posix(),
+        "vela_linker": tools["linker"].as_posix(),
         "vela_python": Path(sys.executable).resolve().as_posix(),
     }
+    if platform.system() == "Darwin":
+        args["vela_sysroot"] = tools["sysroot"].as_posix()
+        args["vela_linker_version"] = _xcode_linker_version(tools["linker"])
     encoded_args = " ".join(
         f"{key}={_gn_value(value)}" for key, value in args.items()
     )

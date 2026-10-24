@@ -1,4 +1,6 @@
 vars = {
+  "benchmark_revision": "192ef10025eb2c4cdd392bc502f0c852196baa48",
+  "googletest_revision": "52eb8108c5bdec04579160ae17225d66034bd723",
   "clang_revision": "git_revision:80743bd43fd5b38fedc503308e7a652e23d3ec93",
   "gn_windows_amd64": "oSpjjlooOXrPOilIB3Jp8v8m7oWgj_1FzsBmUS0uyf4C",
   "gn_linux_amd64": "HGFL8feSRdxEbidQY0WQp34I18nDUSi0hBC_CpgshIEC",
@@ -9,6 +11,8 @@ vars = {
 }
 
 deps = {
+  "third_party/benchmark": "https://github.com/google/benchmark.git@" + Var("benchmark_revision"),
+  "third_party/googletest": "https://github.com/google/googletest.git@" + Var("googletest_revision"),
   "third_party/build_tools/clang/windows-amd64": {
     "packages": [{
       "package": "fuchsia/third_party/clang/windows-amd64",

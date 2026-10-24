@@ -1,10 +1,8 @@
-#include <charconv>
-#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <iterator>
-#include <limits>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -23,9 +21,7 @@ void PrintUsage(std::ostream& output) {
          << "  --help       Show this message\n"
          << "  --version    Show the compiler version\n"
          << "  check FILE   Parse and statically check a Vela source file\n"
-         << "  run FILE     Compile and run the zero-argument main function\n"
-         << "  bench FILE [ITERATIONS]\n"
-         << "               Compile once and measure repeated VM execution\n";
+         << "  run FILE     Compile and run the zero-argument main function\n";
 }
 
 void PrintDiagnostics(std::string_view path, const vela::frontend::Diagnostics& diagnostics) {
@@ -35,7 +31,7 @@ void PrintDiagnostics(std::string_view path, const vela::frontend::Diagnostics& 
   }
 }
 
-bool ReadSource(std::string_view path_text, std::string* source) {
+auto ReadSource(std::string_view path_text, std::string* source) -> bool {
   std::ifstream input(std::string(path_text), std::ios::binary);
   if (!input) {
     return false;
@@ -44,8 +40,8 @@ bool ReadSource(std::string_view path_text, std::string* source) {
   return true;
 }
 
-const vela::compiler::CompiledFunction* FindEntry(const vela::compiler::CompiledProgram& program,
-                                                  std::size_t* entry_function) {
+auto FindEntry(const vela::compiler::CompiledProgram& program, std::size_t* entry_function)
+    -> const vela::compiler::CompiledFunction* {
   const vela::compiler::CompiledFunction* function = program.FindFunction("main");
   if (function == nullptr && program.functions.size() == 1) {
     function = &program.functions.front();
@@ -64,12 +60,14 @@ void PrintValue(const vela::runtime::Value& value) {
     std::cout << (value.AsBoolean() ? "true" : "false");
   } else if (value.IsNull()) {
     std::cout << "null";
+  } else if (value.IsString()) {
+    std::cout << value.AsString()->value;
   } else {
     std::cout << "object";
   }
 }
 
-int CheckFile(std::string_view path_text) {
+auto CheckFile(std::string_view path_text) -> int {
   const std::string path(path_text);
   std::string source;
   if (!ReadSource(path, &source)) {
@@ -85,7 +83,7 @@ int CheckFile(std::string_view path_text) {
   return 0;
 }
 
-const char* ExecutionStatusName(vela::vm::ExecutionStatus status) {
+auto ExecutionStatusName(vela::vm::ExecutionStatus status) -> const char* {
   switch (status) {
     case vela::vm::ExecutionStatus::Returned:
       return "returned";
@@ -107,7 +105,7 @@ const char* ExecutionStatusName(vela::vm::ExecutionStatus status) {
   return "unknown runtime error";
 }
 
-int RunFile(std::string_view path_text) {
+auto RunFile(std::string_view path_text) -> int {
   const std::string path(path_text);
   std::string source;
   if (!ReadSource(path, &source)) {
@@ -116,7 +114,7 @@ int RunFile(std::string_view path_text) {
   }
 
   vela::runtime::Isolate isolate;
-  const vela::compiler::CompileResult compiled = vela::compiler::CompileSource(source, isolate);
+  const vela::compiler::CompileResult compiled = vela::compiler::CompileFile(path, isolate);
   PrintDiagnostics(path, compiled.diagnostics);
   if (!compiled.Succeeded()) {
     return 1;
@@ -144,136 +142,37 @@ int RunFile(std::string_view path_text) {
   return 0;
 }
 
-bool ParseIterations(std::string_view text, std::size_t* iterations) {
-  std::uint64_t value = 0;
-  const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
-  if (parsed.ec != std::errc() || parsed.ptr != text.data() + text.size() || value == 0 ||
-      value > std::numeric_limits<std::size_t>::max()) {
-    return false;
-  }
-  *iterations = static_cast<std::size_t>(value);
-  return true;
-}
-
-int BenchFile(std::string_view path_text, std::string_view iterations_text) {
-  const std::string path(path_text);
-  std::size_t iterations = 1000;
-  if (!iterations_text.empty() && !ParseIterations(iterations_text, &iterations)) {
-    std::cerr << "vela: benchmark iterations must be a positive integer\n";
-    return 2;
-  }
-
-  std::string source;
-  if (!ReadSource(path, &source)) {
-    std::cerr << "vela: cannot open source file '" << path << "'\n";
-    return 1;
-  }
-
-  vela::runtime::Isolate isolate;
-  const auto compile_start = std::chrono::steady_clock::now();
-  const vela::compiler::CompileResult compiled = vela::compiler::CompileSource(source, isolate);
-  const auto compile_end = std::chrono::steady_clock::now();
-  PrintDiagnostics(path, compiled.diagnostics);
-  if (!compiled.Succeeded()) {
-    return 1;
-  }
-
-  std::size_t entry_function = 0;
-  const vela::compiler::CompiledFunction* function = FindEntry(compiled.program, &entry_function);
-  if (function == nullptr || function->parameter_count != 0) {
-    std::cerr << "vela: benchmark requires a zero-argument main function\n";
-    return 1;
-  }
-
-  vela::vm::VirtualMachine vm(isolate);
-  const auto first_start = std::chrono::steady_clock::now();
-  const vela::vm::ExecutionResult first =
-      vm.Execute(compiled.program.View(), static_cast<std::uint32_t>(entry_function));
-  const auto first_end = std::chrono::steady_clock::now();
-  if (!first.Succeeded()) {
-    std::cerr << "vela: benchmark first execution failed: " << ExecutionStatusName(first.status)
-              << '\n';
-    return 1;
-  }
-
-  const std::size_t steady_iterations = iterations > 1 ? iterations - 1 : 0;
-  const auto steady_start = std::chrono::steady_clock::now();
-  vela::vm::ExecutionResult last = first;
-  for (std::size_t index = 0; index < steady_iterations; ++index) {
-    last = vm.Execute(compiled.program.View(), static_cast<std::uint32_t>(entry_function));
-    if (!last.Succeeded()) {
-      std::cerr << "vela: benchmark execution failed at iteration " << (index + 2) << ": "
-                << ExecutionStatusName(last.status) << '\n';
-      return 1;
-    }
-  }
-  const auto steady_end = std::chrono::steady_clock::now();
-
-  const auto milliseconds = [](auto duration) {
-    return std::chrono::duration<double, std::milli>(duration).count();
-  };
-  const auto nanoseconds = [](auto duration) {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
-  };
-  const auto steady_duration = steady_end - steady_start;
-  std::cout << "benchmark " << path << '\n'
-            << "iterations " << iterations << '\n'
-            << "compile_ms " << milliseconds(compile_end - compile_start) << '\n'
-            << "first_execute_ms " << milliseconds(first_end - first_start) << '\n'
-            << "steady_iterations " << steady_iterations << '\n'
-            << "steady_total_ms " << milliseconds(steady_duration) << '\n'
-            << "steady_average_ns "
-            << (steady_iterations == 0
-                    ? 0
-                    : nanoseconds(steady_duration) / static_cast<std::int64_t>(steady_iterations))
-            << '\n'
-            << "result ";
-  PrintValue(last.value);
-  std::cout << '\n'
-            << "heap_objects " << isolate.heap().object_count() << '\n'
-            << "allocated_bytes " << isolate.heap().allocated_bytes() << '\n'
-            << "committed_bytes " << isolate.heap().committed_bytes() << '\n';
-  return 0;
-}
-
 }  // namespace
 
-int main(int argc, char* argv[]) {
-  if (argc == 1 || std::string_view(argv[1]) == "--help" || std::string_view(argv[1]) == "-h") {
+auto main(int argc, char** argv) -> int {
+  const std::span<char*> arguments(argv, static_cast<std::size_t>(argc));
+  if (argc == 1 || std::string_view(arguments.subspan(1).front()) == "--help" ||
+      std::string_view(arguments.subspan(1).front()) == "-h") {
     PrintUsage(std::cout);
     return argc == 1 ? 2 : 0;
   }
 
-  if (std::string_view(argv[1]) == "--version") {
+  if (std::string_view(arguments.subspan(1).front()) == "--version") {
     std::cout << vela::kProductName << ' ' << vela::kVersion << '\n';
     return 0;
   }
 
-  if (std::string_view(argv[1]) == "check") {
+  if (std::string_view(arguments.subspan(1).front()) == "check") {
     if (argc != 3) {
       std::cerr << "vela: check requires exactly one source file\n";
       PrintUsage(std::cerr);
       return 2;
     }
-    return CheckFile(argv[2]);
+    return CheckFile(arguments.subspan(2).front());
   }
 
-  if (std::string_view(argv[1]) == "run") {
+  if (std::string_view(arguments.subspan(1).front()) == "run") {
     if (argc != 3) {
       std::cerr << "vela: run requires exactly one source file\n";
       PrintUsage(std::cerr);
       return 2;
     }
-    return RunFile(argv[2]);
-  }
-
-  if (std::string_view(argv[1]) == "bench") {
-    if (argc != 3 && argc != 4) {
-      std::cerr << "vela: bench requires a source file and optional iteration count\n";
-      PrintUsage(std::cerr);
-      return 2;
-    }
-    return BenchFile(argv[2], argc == 4 ? std::string_view(argv[3]) : std::string_view());
+    return RunFile(arguments.subspan(2).front());
   }
 
   std::cerr << "vela: unknown command\n";

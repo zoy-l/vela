@@ -1,0 +1,98 @@
+config("gtest_headers") {
+  gtest_include = rebase_path("googletest/googletest/include", root_build_dir)
+  if (target_os == "win") {
+    cflags = [ "/external:I$gtest_include" ]
+  } else {
+    cflags = [
+      "-isystem",
+      gtest_include,
+      "-pthread",
+    ]
+    ldflags = [ "-pthread" ]
+  }
+}
+
+static_library("gtest") {
+  testonly = true
+
+  # 自有代码额外启用警告，第三方保留默认诊断。
+  configs -= [ "//build/config:vela_warnings" ]
+  sources = [ "googletest/googletest/src/gtest-all.cc" ]
+  include_dirs = [ "googletest/googletest" ]
+  public_configs = [ ":gtest_headers" ]
+}
+
+static_library("gtest_main") {
+  testonly = true
+  configs -= [ "//build/config:vela_warnings" ]
+  sources = [ "googletest/googletest/src/gtest_main.cc" ]
+  public_deps = [ ":gtest" ]
+}
+
+config("benchmark_headers") {
+  benchmark_include = rebase_path("benchmark/include", root_build_dir)
+  defines = [ "BENCHMARK_STATIC_DEFINE" ]
+  if (target_os == "win") {
+    cflags = [ "/external:I$benchmark_include" ]
+  } else {
+    cflags = [
+      "-isystem",
+      benchmark_include,
+      "-pthread",
+    ]
+    ldflags = [ "-pthread" ]
+  }
+}
+
+config("benchmark_link") {
+  if (target_os == "win") {
+    libs = [ "shlwapi.lib" ]
+  }
+}
+
+static_library("benchmark") {
+  testonly = true
+  configs -= [ "//build/config:vela_warnings" ]
+  sources = [
+    "benchmark/src/benchmark.cc",
+    "benchmark/src/benchmark_api_internal.cc",
+    "benchmark/src/benchmark_name.cc",
+    "benchmark/src/benchmark_register.cc",
+    "benchmark/src/benchmark_runner.cc",
+    "benchmark/src/check.cc",
+    "benchmark/src/colorprint.cc",
+    "benchmark/src/commandlineflags.cc",
+    "benchmark/src/complexity.cc",
+    "benchmark/src/console_reporter.cc",
+    "benchmark/src/counter.cc",
+    "benchmark/src/csv_reporter.cc",
+    "benchmark/src/json_reporter.cc",
+    "benchmark/src/perf_counters.cc",
+    "benchmark/src/reporter.cc",
+    "benchmark/src/statistics.cc",
+    "benchmark/src/string_util.cc",
+    "benchmark/src/sysinfo.cc",
+    "benchmark/src/timers.cc",
+  ]
+  defines = [
+    "BENCHMARK_VERSION=\"1.9.5\"",
+    "HAVE_STD_REGEX",
+    "HAVE_STEADY_CLOCK",
+    "HAVE_THREAD_SAFETY_ATTRIBUTES",
+  ]
+  if (target_os == "win") {
+    # 与上游 CMake 一致，使用标准 CRT 接口。
+    defines += [ "_CRT_SECURE_NO_WARNINGS" ]
+  }
+  public_configs = [
+    ":benchmark_headers",
+    ":benchmark_link",
+  ]
+}
+
+static_library("benchmark_main") {
+  testonly = true
+  configs -= [ "//build/config:vela_warnings" ]
+  sources = [ "benchmark/src/benchmark_main.cc" ]
+  public_deps = [ ":benchmark" ]
+}

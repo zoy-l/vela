@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tools.config import BUILD_TOOLS_ROOT, ROOT, toolchain_tools
+from tools.config import ROOT, toolchain_tools
 
 
 def _clang_format(tools: dict[str, Path]) -> Path:
@@ -31,7 +31,10 @@ def _project_files(values: list[str]) -> list[Path]:
             if path.is_file()
             and path.suffix in {".cc", ".h", ".gn", ".gni"}
             and "out" not in path.parts
-            and BUILD_TOOLS_ROOT not in path.resolve().parents
+            and not (
+                ROOT / "third_party" in path.resolve().parents
+                and path.parent != ROOT / "third_party"
+            )
         )
     return sorted(files)
 

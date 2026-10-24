@@ -30,7 +30,7 @@ def print_help() -> None:
     print("  doctor      Check the project toolchain")
     print("  format      Format C++ and GN sources")
     print("  lint        Run project clang-tidy checks")
-    print("  test        Run environment tests")
+    print("  test        Run GoogleTest suites")
 
 
 def main() -> int:

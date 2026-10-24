@@ -1,19 +1,29 @@
 #include "runtime/heap.h"
 
 #include <algorithm>
-#include <cstdlib>
 #include <limits>
 #include <memory>
+#include <new>
 #include <utility>
 
 namespace vela::runtime {
 namespace {
 
-constexpr std::size_t AlignUp(std::size_t value, std::size_t alignment) noexcept {
+constexpr auto AlignUp(std::size_t value, std::size_t alignment) noexcept -> std::size_t {
   return (value + alignment - 1) & ~(alignment - 1);
 }
 
 }  // namespace
+
+auto ObjectFields(HeapObject* object) noexcept -> Value* {
+  void* storage = std::span(object, 1).last(0).data();
+  return static_cast<Value*>(storage);
+}
+
+auto ObjectFields(const HeapObject* object) noexcept -> const Value* {
+  const void* storage = std::span(object, 1).last(0).data();
+  return static_cast<const Value*>(storage);
+}
 
 ClassLayout::ClassLayout(std::uint32_t field_count, std::vector<std::uint32_t> reference_fields)
     : field_count_(field_count), reference_fields_(std::move(reference_fields)) {}
@@ -38,7 +48,7 @@ void RootRange::Detach() noexcept {
   if (heap_ == nullptr) {
     return;
   }
-  heap_->UnregisterRoot(*this);
+  vela::runtime::Heap::UnregisterRoot(*this);
   heap_ = nullptr;
   values_ = nullptr;
   count_ = 0;
@@ -54,14 +64,14 @@ Heap::~Heap() {
   DestroyAll();
 }
 
-HeapObject* Heap::AllocateInstance(ClassLayout& layout,
-                                   std::span<const Value> initial_fields) noexcept {
+auto Heap::AllocateInstance(ClassLayout& layout, std::span<const Value> initial_fields) noexcept
+    -> HeapObject* {
   if (initial_fields.size() > layout.field_count()) {
     return nullptr;
   }
 
   const std::size_t requested_size =
-      AlignUp(sizeof(HeapObject) + sizeof(Value) * layout.field_count(), alignof(Value));
+      AlignUp(sizeof(HeapObject) + (sizeof(Value) * layout.field_count()), alignof(Value));
   if (requested_size > std::numeric_limits<std::uint32_t>::max()) {
     return nullptr;
   }
@@ -78,7 +88,7 @@ HeapObject* Heap::AllocateInstance(ClassLayout& layout,
 
   Value* fields = ObjectFields(object);
   std::uninitialized_fill_n(fields, layout.field_count(), Value::Null());
-  std::copy(initial_fields.begin(), initial_fields.end(), fields);
+  std::ranges::copy(initial_fields, fields);
 
   if (phase_ != GcPhase::Idle) {
     object->mark_bit = current_mark_bit_;
@@ -89,7 +99,7 @@ HeapObject* Heap::AllocateInstance(ClassLayout& layout,
     } else {
       object->color = 1;
       for (std::uint32_t index : layout.reference_fields()) {
-        MarkValue(fields[index]);
+        MarkValue(std::span(fields, layout.field_count()).subspan(index).front());
       }
       DrainGray();
     }
@@ -100,26 +110,80 @@ HeapObject* Heap::AllocateInstance(ClassLayout& layout,
   return object;
 }
 
-Value* Heap::GetField(HeapObject& object, std::uint32_t index) noexcept {
+auto Heap::AllocateArray(std::size_t length) noexcept -> HeapObject* {
+  if (length > std::numeric_limits<std::uint32_t>::max()) {
+    return nullptr;
+  }
+  MaybeCollect(sizeof(HeapObject));
+  HeapObject* object = AllocateRaw(sizeof(HeapObject));
+  if (object == nullptr) {
+    return nullptr;
+  }
+  object->array_values = std::make_unique<std::vector<Value>>(length, Value::Null());
+  object->kind = ObjectKind::Array;
+  object->layout = nullptr;
+  object->gray_next = nullptr;
+  if (phase_ != GcPhase::Idle) {
+    object->mark_bit = current_mark_bit_;
+    if (phase_ == GcPhase::Mark) {
+      object->color = 0;
+      object->gray_next = gray_;
+      gray_ = object;
+    } else {
+      object->color = 1;
+    }
+  }
+  objects_ = object;
+  ++object_count_;
+  return object;
+}
+
+auto Heap::GetField(HeapObject& object, std::uint32_t index) noexcept -> Value* {
   if (object.layout == nullptr || index >= object.layout->field_count()) {
     return nullptr;
   }
-  return ObjectFields(&object) + index;
+  return std::span(ObjectFields(&object), object.layout->field_count()).subspan(index).data();
 }
 
-const Value* Heap::GetField(const HeapObject& object, std::uint32_t index) const noexcept {
+auto Heap::GetField(const HeapObject& object, std::uint32_t index) noexcept -> const Value* {
   if (object.layout == nullptr || index >= object.layout->field_count()) {
     return nullptr;
   }
-  return ObjectFields(&object) + index;
+  return std::span(ObjectFields(&object), object.layout->field_count()).subspan(index).data();
 }
 
-bool Heap::SetField(HeapObject& object, std::uint32_t index, Value value) noexcept {
+auto Heap::SetField(HeapObject& object, std::uint32_t index, Value value) noexcept -> bool {
   Value* field = GetField(object, index);
   if (field == nullptr) {
     return false;
   }
   *field = value;
+  WriteBarrier(object, value);
+  return true;
+}
+
+auto Heap::GetElement(HeapObject& object, std::uint32_t index) noexcept -> Value* {
+  if (object.kind != ObjectKind::Array || object.array_values == nullptr ||
+      index >= object.array_values->size()) {
+    return nullptr;
+  }
+  return std::span(*object.array_values).subspan(index).data();
+}
+
+auto Heap::GetElement(const HeapObject& object, std::uint32_t index) noexcept -> const Value* {
+  if (object.kind != ObjectKind::Array || object.array_values == nullptr ||
+      index >= object.array_values->size()) {
+    return nullptr;
+  }
+  return std::span(*object.array_values).subspan(index).data();
+}
+
+auto Heap::SetElement(HeapObject& object, std::uint32_t index, Value value) noexcept -> bool {
+  Value* element = GetElement(object, index);
+  if (element == nullptr) {
+    return false;
+  }
+  *element = value;
   WriteBarrier(object, value);
   return true;
 }
@@ -202,8 +266,8 @@ void Heap::RegisterRoot(RootRange& root) noexcept {
   }
   roots_ = &root;
   if (phase_ != GcPhase::Idle) {
-    for (std::size_t index = 0; index < root.count_; ++index) {
-      MarkValue(root.values_[index]);
+    for (const Value value : std::span(root.values_, root.count_)) {
+      MarkValue(value);
     }
     if (phase_ == GcPhase::Sweep) {
       DrainGray();
@@ -225,8 +289,8 @@ void Heap::UnregisterRoot(RootRange& root) noexcept {
 
 void Heap::MarkRoots() noexcept {
   for (RootRange* root = roots_; root != nullptr; root = root->next_) {
-    for (std::size_t index = 0; index < root->count_; ++index) {
-      MarkValue(root->values_[index]);
+    for (const Value value : std::span(root->values_, root->count_)) {
+      MarkValue(value);
     }
   }
 }
@@ -249,12 +313,18 @@ void Heap::MarkObject(HeapObject& object) noexcept {
 
 void Heap::ProcessGrayObject(HeapObject& object) noexcept {
   object.color = 1;
+  if (object.kind == ObjectKind::Array && object.array_values != nullptr) {
+    for (const Value value : *object.array_values) {
+      MarkValue(value);
+    }
+    return;
+  }
   if (object.layout == nullptr) {
     return;
   }
   const Value* fields = ObjectFields(&object);
   for (std::uint32_t index : object.layout->reference_fields()) {
-    MarkValue(fields[index]);
+    MarkValue(std::span(fields, object.layout->field_count()).subspan(index).front());
   }
 }
 
@@ -276,17 +346,18 @@ void Heap::WriteBarrier(HeapObject& source, Value value) noexcept {
   }
 }
 
-HeapObject* Heap::AllocateRaw(std::size_t requested_size) noexcept {
+auto Heap::AllocateRaw(std::size_t requested_size) noexcept -> HeapObject* {
   const std::size_t block_size = SelectBlockSize(requested_size);
   const std::size_t class_index = SizeClassIndex(block_size);
   void* memory = nullptr;
 
-  if (class_index < free_blocks_.size() && free_blocks_[class_index] != nullptr) {
-    FreeBlock* block = free_blocks_[class_index];
-    free_blocks_[class_index] = block->next;
+  if (class_index < free_blocks_.size() && free_blocks_.at(class_index) != nullptr) {
+    HeapObject* block = free_blocks_.at(class_index);
+    free_blocks_.at(class_index) = block->next;
     memory = block;
+    std::destroy_at(block);
   } else {
-    memory = std::malloc(block_size);
+    memory = ::operator new(block_size, std::nothrow);
     if (memory == nullptr) {
       return nullptr;
     }
@@ -295,6 +366,7 @@ HeapObject* Heap::AllocateRaw(std::size_t requested_size) noexcept {
 
   auto* object = static_cast<HeapObject*>(memory);
   std::construct_at(object);
+  object->mark_bit = current_mark_bit_;
   object->allocation_size = static_cast<std::uint32_t>(block_size);
   allocated_bytes_ += block_size;
   object->next = objects_;
@@ -305,22 +377,24 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   const std::size_t block_size = object.allocation_size;
   allocated_bytes_ -= block_size;
 
-  std::destroy_n(ObjectFields(&object), object.layout->field_count());
-  std::destroy_at(&object);
-
+  if (object.kind == ObjectKind::Array) {
+    object.array_values.reset();
+  } else if (object.layout != nullptr) {
+    std::destroy_n(ObjectFields(&object), object.layout->field_count());
+  }
   const std::size_t class_index = SizeClassIndex(block_size);
   if (class_index < free_blocks_.size()) {
-    auto* block = reinterpret_cast<FreeBlock*>(&object);
-    block->next = free_blocks_[class_index];
-    free_blocks_[class_index] = block;
+    object.next = free_blocks_.at(class_index);
+    free_blocks_.at(class_index) = &object;
     return;
   }
 
   committed_bytes_ -= block_size;
-  std::free(&object);
+  std::destroy_at(&object);
+  ::operator delete(&object);
 }
 
-std::size_t Heap::SelectBlockSize(std::size_t requested_size) const noexcept {
+auto Heap::SelectBlockSize(std::size_t requested_size) noexcept -> std::size_t {
   for (std::size_t block_size : kSizeClasses) {
     if (requested_size <= block_size) {
       return block_size;
@@ -329,16 +403,16 @@ std::size_t Heap::SelectBlockSize(std::size_t requested_size) const noexcept {
   return requested_size;
 }
 
-std::size_t Heap::SizeClassIndex(std::size_t block_size) const noexcept {
+auto Heap::SizeClassIndex(std::size_t block_size) noexcept -> std::size_t {
   for (std::size_t index = 0; index < kSizeClasses.size(); ++index) {
-    if (kSizeClasses[index] == block_size) {
+    if (kSizeClasses.at(index) == block_size) {
       return index;
     }
   }
   return kSizeClasses.size();
 }
 
-bool Heap::ShouldCollect(std::size_t next_size) const noexcept {
+auto Heap::ShouldCollect(std::size_t next_size) const noexcept -> bool {
   return next_size > gc_threshold_ || allocated_bytes_ > gc_threshold_ - next_size;
 }
 
@@ -358,7 +432,7 @@ void Heap::FinishSweep() noexcept {
       allocated_bytes_ > std::numeric_limits<std::size_t>::max() / 2
           ? std::numeric_limits<std::size_t>::max()
           : allocated_bytes_ * 2;
-  gc_threshold_ = std::max(minimum_gc_threshold_, std::max<std::size_t>(doubled_live_size, 1));
+  gc_threshold_ = std::max({minimum_gc_threshold_, doubled_live_size, std::size_t{1}});
 }
 
 void Heap::DestroyAll() noexcept {
@@ -370,11 +444,12 @@ void Heap::DestroyAll() noexcept {
   object_count_ = 0;
 
   for (std::size_t index = 0; index < free_blocks_.size(); ++index) {
-    FreeBlock*& block = free_blocks_[index];
+    HeapObject*& block = free_blocks_.at(index);
     while (block != nullptr) {
-      FreeBlock* next = block->next;
-      committed_bytes_ -= kSizeClasses[index];
-      std::free(block);
+      HeapObject* next = block->next;
+      committed_bytes_ -= kSizeClasses.at(index);
+      std::destroy_at(block);
+      ::operator delete(block);
       block = next;
     }
   }

@@ -14,22 +14,48 @@ toolchain("clang") {
     object_extension = "obj"
     archive_extension = ".lib"
     executable_extension = ".exe"
+    lib_switch = ""
+    lib_dir_switch = "/LIBPATH:"
   } else {
     object_extension = "o"
     archive_extension = ".a"
     executable_extension = ""
+    lib_switch = "-l"
+    lib_dir_switch = "-L"
   }
 
-  tool("cc") {
-    command = "\"$cc\" -c {{source}} -o {{output}} {{defines}} {{include_dirs}} {{cflags}} {{cflags_c}}"
-    description = "CC {{output}}"
-    outputs = [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.$object_extension" ]
-  }
+  if (target_os == "win") {
+    tool("cc") {
+      command = "\"$cc\" /nologo /showIncludes /c {{source}} /Fo{{output}} {{defines}} {{include_dirs}} {{cflags}} {{cflags_c}}"
+      depsformat = "msvc"
+      description = "CC {{output}}"
+      outputs = [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.$object_extension" ]
+    }
 
-  tool("cxx") {
-    command = "\"$cxx\" -c {{source}} -o {{output}} {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}}"
-    description = "CXX {{output}}"
-    outputs = [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.$object_extension" ]
+    tool("cxx") {
+      command = "\"$cxx\" /nologo /showIncludes /c {{source}} /Fo{{output}} /TP {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}}"
+      depsformat = "msvc"
+      description = "CXX {{output}}"
+      outputs = [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.$object_extension" ]
+    }
+  } else {
+    # Clang 输出 Make 格式依赖；-MD
+    # 同时跟踪第三方系统头，防止依赖更新后沿用旧 ABI。
+    tool("cc") {
+      depfile = "{{output}}.d"
+      depsformat = "gcc"
+      command = "\"$cc\" -MD -MF {{output}}.d -c {{source}} -o {{output}} {{defines}} {{include_dirs}} {{cflags}} {{cflags_c}}"
+      description = "CC {{output}}"
+      outputs = [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.$object_extension" ]
+    }
+
+    tool("cxx") {
+      depfile = "{{output}}.d"
+      depsformat = "gcc"
+      command = "\"$cxx\" -MD -MF {{output}}.d -c {{source}} -o {{output}} {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}}"
+      description = "CXX {{output}}"
+      outputs = [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.$object_extension" ]
+    }
   }
 
   tool("alink") {
@@ -43,7 +69,17 @@ toolchain("clang") {
   }
 
   tool("link") {
-    command = "\"$cxx\" -fuse-ld=lld @{{output}}.rsp -o \"{{output}}\""
+    if (target_os == "win") {
+      command = "\"$cxx\" /nologo -fuse-ld=lld @{{output}}.rsp /Fe{{output}}"
+    } else if (target_os == "mac") {
+      # Xcode 链接器及配套 LTO 匹配当前 SDK。
+      linker_directory = get_path_info(vela_linker, "dir")
+      lto_library = "$linker_directory/../lib/libLTO.dylib"
+      command = "\"$cxx\" -fuse-ld=\"$vela_linker\" -mlinker-version=$vela_linker_version -Wl,-lto_library,\"$lto_library\" @{{output}}.rsp -o \"{{output}}\""
+    } else {
+      command =
+          "\"$cxx\" -fuse-ld=\"$vela_linker\" @{{output}}.rsp -o \"{{output}}\""
+    }
     description = "LINK {{output}}"
     rspfile = "{{output}}.rsp"
     rspfile_content = "{{inputs}} {{solibs}} {{ldflags}} {{libs}}"

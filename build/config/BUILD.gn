@@ -1,32 +1,83 @@
 config("vela_defaults") {
   include_dirs = [ "//" ]
-  cflags_cc = [
-    "-std=c++23",
-    "-fno-exceptions",
-  ]
+  cflags = []
+  defines = []
+  ldflags = []
 
   if (target_os == "win") {
     defines = [
       "NOMINMAX",
       "UNICODE",
       "_UNICODE",
+      "_HAS_EXCEPTIONS=0",
     ]
+    cflags_cc = [ "/clang:-std=c++23" ]
+    if (vela_build_config == "debug") {
+      defines += [ "_DEBUG" ]
+      cflags = [
+        "/MDd",
+        "/Od",
+        "/Z7",
+      ]
+      ldflags = [
+        "/MDd",
+        "-Xlinker",
+        "/DEBUG",
+      ]
+    } else {
+      defines += [ "NDEBUG" ]
+      cflags = [
+        "/MD",
+        "/O2",
+      ]
+      ldflags = [ "/MD" ]
+    }
+  } else {
+    cflags_cc = [
+      "-std=c++23",
+      "-fno-exceptions",
+      "-stdlib=libc++",
+    ]
+    ldflags = [ "-stdlib=libc++" ]
+    if (target_os == "mac") {
+      cflags_cc += [
+        "-nostdinc++",
+        "-isystem",
+        "$vela_sysroot/usr/include/c++/v1",
+      ]
+      cflags += [
+        "-isysroot",
+        vela_sysroot,
+      ]
+      ldflags += [
+        "-isysroot",
+        vela_sysroot,
+      ]
+    }
+    if (vela_build_config == "debug") {
+      cflags += [
+        "-O0",
+        "-g",
+      ]
+    } else {
+      defines += [ "NDEBUG" ]
+      cflags += [ "-O3" ]
+    }
   }
+}
+
+config("vela_warnings") {
   cflags = [
-    "-Wall",
     "-Wconversion",
     "-Wextra",
-    "-Wpedantic",
     "-Wshadow",
   ]
-
-  if (vela_build_config == "debug") {
-    cflags += [
-      "-O0",
-      "-g",
-    ]
+  if (target_os == "win") {
+    cflags += [ "/W4" ]
   } else {
-    defines += [ "NDEBUG" ]
-    cflags += [ "-O3" ]
+    cflags += [
+      "-Wall",
+      "-Wpedantic",
+    ]
   }
 }

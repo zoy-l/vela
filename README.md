@@ -17,8 +17,20 @@ The project follows a small GN/Ninja layout:
   `DEPS`.
 
 The toolchain is repository managed. Build scripts resolve GN, Ninja, Clang,
-LLVM `lib`, and `clang-format` from `third_party/build_tools`; they do not
-read a system installation and do not modify `PATH`.
+LLVM archive tools, and analysis tools from `third_party/build_tools`, using the
+same pinned Clang revision as VerseGame. They do not modify `PATH` or use a
+system C/C++ compiler.
+
+On Windows, builds use `clang-cl`, `lld-link`, and `llvm-lib`, with Visual Studio
+C++ libraries and the Windows SDK. Debug uses `/MDd /Od /Z7`, `_DEBUG`, and PDB
+output; Release uses `/MD /O2` and `NDEBUG`. Both use C++23 and disable C++
+exceptions. Ninja tracks headers through `/showIncludes` and MSVC dependency
+format. Test and benchmark targets use the same compiler and CRT configuration.
+
+Linux uses project Clang, LLD, LLVM `ar`, and libc++. macOS uses project Clang
+and LLVM `ar`, with the Xcode SDK, libc++, and Xcode linker. On these platforms,
+Ninja's `gcc` dependency format describes Clang's Make-format dependency output;
+it does not invoke GCC. Dependencies include system and third-party headers.
 
 ## First checkout
 
@@ -29,8 +41,10 @@ launcher available on the machine:
 gclient sync --no-history
 ```
 
-The command materializes the pinned host tools declared in `DEPS`. No external
-engine checkout is required by the Vela build after synchronization.
+The command materializes the pinned host tools, GoogleTest, and Google Benchmark
+source declared in `DEPS`. No external engine checkout is required by the Vela
+build after synchronization. Dependency versions and licenses are documented in
+[`third_party/README.md`](third_party/README.md).
 
 ## Configure, build, and test
 
@@ -42,6 +56,24 @@ python -m tools.vl clangd
 python -m tools.vl lint
 python -m tools.vl test
 python -m tools.vl bench
+```
+
+`vl lint` reports warnings as failures. Use `vl lint --fix` to apply clang-tidy
+code fixes, then review and validate the result. The check configuration remains
+in `.clang-tidy`; project headers included by the selected translation units are
+checked as well, with third-party code excluded. Formatting also excludes vendored
+source trees. `vl test` executes the environment, frontend, compiler, runtime, and
+VM GoogleTest suites; use `vl test list` to list individual selections. Test source
+files use `*_unittest.cc` and link the upstream `gtest_main`. Each case reports its own
+result, with assertion locations and expected/actual values on failure. GoogleTest
+is only linked into test executables.
+
+Arguments after `--` go directly to GoogleTest:
+
+```powershell
+python -m tools.vl test debug compiler -- --gtest_list_tests
+python -m tools.vl test release compiler -- --gtest_filter=CompilerTest.CompilesIntegerFunction
+python -m tools.vl test debug runtime -- --gtest_repeat=10 --gtest_shuffle
 ```
 
 On Windows the same entry point is available as `bin/vl.cmd`, so the commands
@@ -63,14 +95,23 @@ checker:
 .\out\debug\vela.exe --help
 .\out\debug\vela.exe check path\to\source.vela
 .\out\debug\vela.exe run path\to\source.vela
-.\out\release\vela.exe bench benchmarks\integer_loop.vela 1000
 ```
 
 `run` currently executes a zero-argument `main` function. The current language
 boundary and performance contract are documented in
 [`docs/language_architecture.md`](docs/language_architecture.md); implementation
-details are listed in [`compiler/README.md`](compiler/README.md). The benchmark
-command compiles once and reports first execution separately from steady-state
-repeated execution; `python -m tools.vl bench` builds the selected variant with
-the project-local toolchain before running all files under `benchmarks/`. The
-language feature checklist is in [`docs/roadmap.md`](docs/roadmap.md).
+details are listed in [`compiler/README.md`](compiler/README.md).
+`python -m tools.vl bench` builds a separate Google Benchmark executable in
+Release mode. It measures compilation, first execution, and steady VM execution
+for the four workloads, using upstream iteration calibration and statistics.
+Arguments after `--` go directly to Google Benchmark:
+
+```powershell
+python -m tools.vl bench -- --benchmark_list_tests
+python -m tools.vl bench -- --benchmark_filter=^vm/ --benchmark_repetitions=5
+python -m tools.vl bench -- --benchmark_out=out/benchmark.json --benchmark_out_format=json
+```
+
+Measurement boundaries and expected results are documented in
+[`benchmarks/README.md`](benchmarks/README.md). The language feature checklist is
+in [`docs/roadmap.md`](docs/roadmap.md).

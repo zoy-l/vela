@@ -21,10 +21,10 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 
 ## P0: close the basic language loop
 
-- [ ] Add `<`, `<=`, `>`, and `>=`
-- [ ] Add `&&` and `||`
-- [ ] Add `for`
-- [ ] Add `break` and `continue`
+- [x] Add `<`, `<=`, `>`, and `>=`
+- [x] Add `&&` and `||`
+- [x] Add `for`
+- [x] Add `break` and `continue`
 - [ ] Add `switch` and `case`
 - [ ] Add a `null` literal and nullability checks
 - [ ] Add `const`/`final` declarations and immutable assignment checks
@@ -34,15 +34,15 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 ## P1: core values and object model
 
 - [ ] Implement `float`
-- [ ] Implement `string`, escapes, comparison, and concatenation
+- [x] Implement `string`, escapes, comparison, and concatenation
 - [ ] Implement `char`
 - [ ] Implement numeric conversions
-- [ ] Implement arrays with contiguous storage
+- [x] Implement arrays with contiguous storage
 - [ ] Implement tuples and fixed-size records
 - [ ] Implement `List<T>`
 - [ ] Implement `Map<K, V>`
-- [ ] Lower class methods to bytecode
-- [ ] Add `this` and `object.method()` calls
+- [x] Lower class methods to bytecode
+- [x] Add `this` and `object.method()` calls
 - [ ] Define field default values and constructor initialization
 - [ ] Add static fields and static methods
 - [ ] Add visibility rules for public/private members
@@ -64,11 +64,13 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 
 ## P2: modules and standard library
 
-- [ ] Add `import` and `export`
+- [x] Add `import`
+- [ ] Add `export`
 - [ ] Add namespaces
-- [ ] Compile multiple source files as one program
+- [x] Compile multiple source files as one program
 - [ ] Define package and dependency metadata
-- [ ] Add console output and input
+- [x] Add console output
+- [ ] Add console input
 - [ ] Add file I/O
 - [ ] Add time, random, and math libraries
 - [ ] Add collection and string standard library APIs
@@ -87,7 +89,7 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 
 - [ ] Add typed VM register slots for primitive values
 - [ ] Add a bytecode constant pool
-- [ ] Add constant folding
+- [x] Add constant folding
 - [ ] Add dead-code and unreachable-block elimination
 - [ ] Add jump threading and redundant-move elimination
 - [ ] Specialize direct calls and field offsets

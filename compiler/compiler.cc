@@ -1,7 +1,12 @@
 #include "compiler/compiler.h"
 
 #include <algorithm>
+#include <expected>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
+#include <unordered_set>
 #include <utility>
 
 #include "compiler/frontend/lexer.h"
@@ -15,19 +20,78 @@ namespace {
 void AddDiagnostic(frontend::Diagnostics& diagnostics,
                    frontend::SourceLocation location,
                    std::string message) {
-  diagnostics.push_back({location, std::move(message)});
+  diagnostics.push_back({.location = location, .message = std::move(message)});
 }
 
-bool FitsImmediate16(std::int64_t value) {
+auto FitsImmediate16(std::int64_t value) -> bool {
   return value >= std::numeric_limits<std::int16_t>::min() &&
          value <= std::numeric_limits<std::int16_t>::max();
 }
 
-std::uint8_t Byte(std::uint16_t value) {
+void FoldConstants(ir::Function& function) {
+  for (std::size_t index = 2; index < function.instructions.size(); ++index) {
+    ir::Instruction& instruction = function.instructions.at(index);
+    const ir::Instruction& left = function.instructions.at(index - 2);
+    const ir::Instruction& right = function.instructions.at(index - 1);
+    if (left.opcode != ir::Opcode::LoadInt || right.opcode != ir::Opcode::LoadInt ||
+        left.dst != instruction.lhs || right.dst != instruction.rhs) {
+      continue;
+    }
+    std::int64_t value = 0;
+    bool folded = true;
+    switch (instruction.opcode) {
+      case ir::Opcode::AddInt:
+        folded = !__builtin_add_overflow(left.immediate, right.immediate, &value);
+        break;
+      case ir::Opcode::SubInt:
+        folded = !__builtin_sub_overflow(left.immediate, right.immediate, &value);
+        break;
+      case ir::Opcode::MulInt:
+        folded = !__builtin_mul_overflow(left.immediate, right.immediate, &value);
+        break;
+      case ir::Opcode::DivInt:
+        folded =
+            right.immediate != 0 &&
+            (left.immediate != std::numeric_limits<std::int64_t>::min() || right.immediate != -1);
+        if (folded) {
+          value = left.immediate / right.immediate;
+        }
+        break;
+      case ir::Opcode::LessInt:
+        value = static_cast<std::int64_t>(left.immediate < right.immediate);
+        break;
+      case ir::Opcode::LessEqualInt:
+        value = static_cast<std::int64_t>(left.immediate <= right.immediate);
+        break;
+      case ir::Opcode::GreaterInt:
+        value = static_cast<std::int64_t>(left.immediate > right.immediate);
+        break;
+      case ir::Opcode::GreaterEqualInt:
+        value = static_cast<std::int64_t>(left.immediate >= right.immediate);
+        break;
+      default:
+        folded = false;
+        break;
+    }
+    if (folded) {
+      instruction.opcode = (instruction.opcode == ir::Opcode::LessInt ||
+                            instruction.opcode == ir::Opcode::LessEqualInt ||
+                            instruction.opcode == ir::Opcode::GreaterInt ||
+                            instruction.opcode == ir::Opcode::GreaterEqualInt)
+                               ? ir::Opcode::LoadBool
+                               : ir::Opcode::LoadInt;
+      instruction.immediate = value;
+      instruction.lhs = 0;
+      instruction.rhs = 0;
+    }
+  }
+}
+
+auto Byte(std::uint16_t value) -> std::uint8_t {
   return static_cast<std::uint8_t>(value);
 }
 
-vm::OpCode EmitOpcode(ir::Opcode opcode) {
+auto EmitOpcode(ir::Opcode opcode) -> vm::OpCode {
   switch (opcode) {
     case ir::Opcode::LoadNull:
       return vm::OpCode::LoadNull;
@@ -57,6 +121,34 @@ vm::OpCode EmitOpcode(ir::Opcode opcode) {
       return vm::OpCode::EqualBool;
     case ir::Opcode::NotEqualBool:
       return vm::OpCode::NotEqualBool;
+    case ir::Opcode::LessInt:
+      return vm::OpCode::LessInt;
+    case ir::Opcode::LessEqualInt:
+      return vm::OpCode::LessEqualInt;
+    case ir::Opcode::GreaterInt:
+      return vm::OpCode::GreaterInt;
+    case ir::Opcode::GreaterEqualInt:
+      return vm::OpCode::GreaterEqualInt;
+    case ir::Opcode::AndBool:
+      return vm::OpCode::AndBool;
+    case ir::Opcode::OrBool:
+      return vm::OpCode::OrBool;
+    case ir::Opcode::StringConcat:
+      return vm::OpCode::StringConcat;
+    case ir::Opcode::EqualString:
+      return vm::OpCode::EqualString;
+    case ir::Opcode::NotEqualString:
+      return vm::OpCode::NotEqualString;
+    case ir::Opcode::LoadString:
+      return vm::OpCode::LoadString;
+    case ir::Opcode::NewArray:
+      return vm::OpCode::NewArray;
+    case ir::Opcode::GetIndex:
+      return vm::OpCode::GetIndex;
+    case ir::Opcode::SetIndex:
+      return vm::OpCode::SetIndex;
+    case ir::Opcode::Print:
+      return vm::OpCode::Print;
     case ir::Opcode::Call:
       return vm::OpCode::Call;
     case ir::Opcode::Jump:
@@ -75,15 +167,147 @@ vm::OpCode EmitOpcode(ir::Opcode opcode) {
   return vm::OpCode::LoadNull;
 }
 
+struct EncodingContext final {
+  const ir::Function* function;
+  std::size_t code_size;
+  std::size_t function_count;
+  std::size_t class_count;
+};
+
+auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext& context)
+    -> std::expected<vm::Instruction, frontend::Diagnostic> {
+  const auto& function = *context.function;
+  const auto code_size = context.code_size;
+  const auto function_count = context.function_count;
+  const auto class_count = context.class_count;
+  const bool uses_wide_target =
+      instruction.opcode == ir::Opcode::Jump || instruction.opcode == ir::Opcode::JumpIfFalse;
+
+  if (instruction.dst > std::numeric_limits<std::uint8_t>::max() ||
+      instruction.lhs > std::numeric_limits<std::uint8_t>::max() ||
+      instruction.rhs > std::numeric_limits<std::uint8_t>::max() ||
+      (!uses_wide_target && instruction.index > std::numeric_limits<std::uint8_t>::max())) {
+    return std::unexpected(frontend::Diagnostic{
+        .location = instruction.location,
+        .message = "instruction operand exceeds VM encoding",
+    });
+  }
+  const vm::OpCode opcode = EmitOpcode(instruction.opcode);
+  switch (instruction.opcode) {
+    case ir::Opcode::LoadNull:
+      return vm::EncodeABC(opcode, Byte(instruction.dst), 0, 0);
+    case ir::Opcode::LoadBool:
+      return vm::EncodeABC(opcode, Byte(instruction.dst),
+                           static_cast<std::uint8_t>(instruction.immediate != 0), 0);
+    case ir::Opcode::LoadInt:
+      if (!FitsImmediate16(instruction.immediate)) {
+        return std::unexpected(frontend::Diagnostic{
+            .location = instruction.location,
+            .message = "integer literal exceeds bootstrap bytecode immediate range",
+        });
+      }
+      return vm::EncodeAImm16(opcode, Byte(instruction.dst),
+                              static_cast<std::int16_t>(instruction.immediate));
+    case ir::Opcode::Move:
+    case ir::Opcode::AddInt:
+    case ir::Opcode::SubInt:
+    case ir::Opcode::MulInt:
+    case ir::Opcode::DivInt:
+    case ir::Opcode::EqualInt:
+    case ir::Opcode::NotEqualInt:
+    case ir::Opcode::EqualBool:
+    case ir::Opcode::NotEqualBool:
+    case ir::Opcode::LessInt:
+    case ir::Opcode::LessEqualInt:
+    case ir::Opcode::GreaterInt:
+    case ir::Opcode::GreaterEqualInt:
+    case ir::Opcode::AndBool:
+    case ir::Opcode::OrBool:
+    case ir::Opcode::StringConcat:
+    case ir::Opcode::EqualString:
+    case ir::Opcode::NotEqualString:
+    case ir::Opcode::GetIndex:
+    case ir::Opcode::SetIndex:
+      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs),
+                           Byte(instruction.rhs));
+    case ir::Opcode::LoadString:
+    case ir::Opcode::NewArray:
+      if (instruction.index > std::numeric_limits<std::uint8_t>::max()) {
+        return std::unexpected(frontend::Diagnostic{
+            .location = instruction.location,
+            .message = "constant index exceeds bytecode encoding",
+        });
+      }
+      return vm::EncodeABC(opcode, Byte(instruction.dst),
+                           static_cast<std::uint8_t>(instruction.index), 0);
+    case ir::Opcode::Print:
+      return vm::EncodeABC(opcode, 0, Byte(instruction.lhs), 0);
+    case ir::Opcode::Call:
+      if (instruction.index >= function_count) {
+        return std::unexpected(frontend::Diagnostic{
+            .location = instruction.location,
+            .message = "unknown function ID in IR",
+        });
+      }
+      return vm::EncodeABC(opcode, Byte(instruction.dst),
+                           static_cast<std::uint8_t>(instruction.index), Byte(instruction.lhs));
+    case ir::Opcode::NegInt:
+    case ir::Opcode::NotBool:
+      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs), 0);
+    case ir::Opcode::NewInstance:
+      if (instruction.index >= class_count) {
+        return std::unexpected(frontend::Diagnostic{
+            .location = instruction.location,
+            .message = "unknown class ID in IR",
+        });
+      }
+      return vm::EncodeABC(opcode, Byte(instruction.dst),
+                           static_cast<std::uint8_t>(instruction.index), 0);
+    case ir::Opcode::SetField:
+      return vm::EncodeABC(opcode, Byte(instruction.dst),
+                           static_cast<std::uint8_t>(instruction.index), Byte(instruction.lhs));
+    case ir::Opcode::GetField:
+      return vm::EncodeABC(opcode, Byte(instruction.dst),
+                           static_cast<std::uint8_t>(instruction.lhs),
+                           static_cast<std::uint8_t>(instruction.index));
+    case ir::Opcode::Return:
+      return vm::EncodeABC(opcode, Byte(instruction.dst), 0, 0);
+    case ir::Opcode::Jump:
+    case ir::Opcode::JumpIfFalse: {
+      if (instruction.index > function.instructions.size()) {
+        return std::unexpected(frontend::Diagnostic{
+            .location = instruction.location,
+            .message = "invalid jump target in IR",
+        });
+      }
+      const std::int64_t offset =
+          static_cast<std::int64_t>(instruction.index) - static_cast<std::int64_t>(code_size + 1);
+      if (!FitsImmediate16(offset)) {
+        return std::unexpected(frontend::Diagnostic{
+            .location = instruction.location,
+            .message = "jump target exceeds bootstrap bytecode range",
+        });
+      }
+      const std::uint8_t condition =
+          instruction.opcode == ir::Opcode::JumpIfFalse ? Byte(instruction.lhs) : 0;
+      return vm::EncodeAImm16(opcode, condition, static_cast<std::int16_t>(offset));
+    }
+  }
+
+  return std::unexpected(
+      frontend::Diagnostic{.location = instruction.location, .message = "invalid IR opcode"});
+}
+
 }  // namespace
 
-const CompiledFunction* CompiledProgram::FindFunction(std::string_view name) const noexcept {
-  const auto found = std::find_if(functions.begin(), functions.end(),
-                                  [name](const auto& function) { return function.name == name; });
+auto CompiledProgram::FindFunction(std::string_view name) const noexcept
+    -> const CompiledFunction* {
+  const auto found = std::ranges::find_if(
+      functions, [name](const auto& function) -> auto { return function.name == name; });
   return found == functions.end() ? nullptr : &*found;
 }
 
-CompileResult CompileSource(std::string_view source, runtime::Isolate& isolate) {
+auto CompileSource(std::string_view source, runtime::Isolate& isolate) -> CompileResult {
   frontend::LexResult lexed = frontend::Lexer(source).Tokenize();
   if (!lexed.diagnostics.empty()) {
     CompileResult result;
@@ -107,14 +331,115 @@ CompileResult CompileSource(std::string_view source, runtime::Isolate& isolate) 
   return CompileProgram(parsed.program, checked.model, isolate);
 }
 
-CompileResult CompileProgram(const frontend::Program& source,
-                             const frontend::SemanticModel& model,
-                             runtime::Isolate& isolate) {
+auto CompileSources(const std::vector<std::string_view>& sources, runtime::Isolate& isolate)
+    -> CompileResult {
+  frontend::Program program;
+  frontend::Diagnostics diagnostics;
+  for (const std::string_view source : sources) {
+    frontend::LexResult lexed = frontend::Lexer(source).Tokenize();
+    diagnostics.insert(diagnostics.end(), std::make_move_iterator(lexed.diagnostics.begin()),
+                       std::make_move_iterator(lexed.diagnostics.end()));
+    if (!lexed.diagnostics.empty()) {
+      continue;
+    }
+    frontend::ParseResult parsed = frontend::Parser(std::move(lexed.tokens)).Parse();
+    diagnostics.insert(diagnostics.end(), std::make_move_iterator(parsed.diagnostics.begin()),
+                       std::make_move_iterator(parsed.diagnostics.end()));
+    if (!parsed.diagnostics.empty()) {
+      continue;
+    }
+    for (auto& item : parsed.program.enums) {
+      program.enums.push_back(std::move(item));
+    }
+    for (auto& item : parsed.program.classes) {
+      program.classes.push_back(std::move(item));
+    }
+    for (auto& item : parsed.program.functions) {
+      program.functions.push_back(std::move(item));
+    }
+    for (auto& item : parsed.program.imports) {
+      program.imports.push_back(std::move(item));
+    }
+  }
+  if (!diagnostics.empty()) {
+    return CompileResult{.program = CompiledProgram(), .diagnostics = std::move(diagnostics)};
+  }
+  frontend::TypeCheckResult checked = frontend::TypeChecker().Check(program);
+  if (!checked.diagnostics.empty()) {
+    return CompileResult{
+        .program = CompiledProgram(),
+        .diagnostics = std::move(checked.diagnostics),
+    };
+  }
+  return CompileProgram(program, checked.model, isolate);
+}
+
+auto CompileFile(std::string_view path, runtime::Isolate& isolate) -> CompileResult {
+  std::vector<std::string> contents;
+  std::unordered_set<std::string> visiting;
+  std::unordered_set<std::string> loaded;
+  frontend::Diagnostics diagnostics;
+  const auto load = [&](const auto& self, const std::filesystem::path& file) -> void {
+    const std::string key = std::filesystem::weakly_canonical(file).string();
+    if (!visiting.insert(key).second) {
+      diagnostics.push_back({
+          .location = frontend::SourceLocation(),
+          .message = "cyclic import involving '" + key + "'",
+      });
+      return;
+    }
+    if (loaded.contains(key)) {
+      visiting.erase(key);
+      return;
+    }
+    std::ifstream input(key, std::ios::binary);
+    if (!input) {
+      diagnostics.push_back({
+          .location = frontend::SourceLocation(),
+          .message = "cannot open imported source '" + key + "'",
+      });
+      visiting.erase(key);
+      return;
+    }
+    std::string source((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    frontend::LexResult lexed = frontend::Lexer(source).Tokenize();
+    frontend::ParseResult parsed = frontend::Parser(std::move(lexed.tokens)).Parse();
+    diagnostics.insert(diagnostics.end(), std::make_move_iterator(lexed.diagnostics.begin()),
+                       std::make_move_iterator(lexed.diagnostics.end()));
+    diagnostics.insert(diagnostics.end(), std::make_move_iterator(parsed.diagnostics.begin()),
+                       std::make_move_iterator(parsed.diagnostics.end()));
+    if (lexed.diagnostics.empty() && parsed.diagnostics.empty()) {
+      for (const std::string& import : parsed.program.imports) {
+        self(self, std::filesystem::path(key).parent_path() / import);
+      }
+    }
+    contents.push_back(std::move(source));
+    loaded.insert(key);
+    visiting.erase(key);
+  };
+  load(load, std::filesystem::path(path));
+  if (!diagnostics.empty()) {
+    return CompileResult{.program = CompiledProgram(), .diagnostics = std::move(diagnostics)};
+  }
+  std::vector<std::string_view> views;
+  views.reserve(contents.size());
+  for (const std::string& source : contents) {
+    views.push_back(source);
+  }
+  return CompileSources(views, isolate);
+}
+
+auto CompileProgram(const frontend::Program& source,
+                    const frontend::SemanticModel& model,
+                    runtime::Isolate& isolate) -> CompileResult {
   ir::LoweringResult lowered = ir::Lowerer(source, model).Lower();
   if (!lowered.Succeeded()) {
     CompileResult result;
     result.diagnostics = std::move(lowered.diagnostics);
     return result;
+  }
+  for (ir::Function& function : lowered.program.functions) {
+    FoldConstants(function);
   }
 
   CompileResult result;
@@ -123,124 +448,52 @@ CompileResult CompileProgram(const frontend::Program& source,
   for (const ir::Class& class_info : lowered.program.classes) {
     std::vector<std::uint32_t> reference_fields;
     for (std::size_t index = 0; index < class_info.field_types.size(); ++index) {
-      if (class_info.field_types[index].kind == frontend::TypeDescriptor::Kind::Class) {
+      if (class_info.field_types.at(index).kind == frontend::TypeDescriptor::Kind::Class) {
         reference_fields.push_back(static_cast<std::uint32_t>(index));
       }
     }
     runtime::ClassLayout* layout = isolate.CreateClassLayout(
         static_cast<std::uint32_t>(class_info.field_types.size()), reference_fields);
     if (layout == nullptr) {
-      AddDiagnostic(result.diagnostics, {}, "unable to allocate class layout");
+      AddDiagnostic(result.diagnostics, frontend::SourceLocation(),
+                    "unable to allocate class layout");
       return result;
     }
     class_layouts.push_back(layout);
   }
 
   result.program.functions.reserve(lowered.program.functions.size());
+  result.program.strings.reserve(lowered.program.strings.size());
+  for (const std::string& value : lowered.program.strings) {
+    result.program.strings.push_back(isolate.CreateString(value));
+  }
   for (const ir::Function& function : lowered.program.functions) {
-    if (function.register_count == 0 || function.register_count > 255) {
-      AddDiagnostic(result.diagnostics, {}, "function register count exceeds VM encoding");
+    if (function.register_count == 0 ||
+        function.register_count > std::numeric_limits<std::uint8_t>::max()) {
+      AddDiagnostic(result.diagnostics, frontend::SourceLocation(),
+                    "function register count exceeds VM encoding");
       return result;
     }
     CompiledFunction compiled;
     compiled.name = function.name;
     compiled.classes = class_layouts;
+    compiled.strings = result.program.strings;
     compiled.register_count = static_cast<std::uint8_t>(function.register_count);
     compiled.parameter_count = function.parameter_count;
     compiled.code.reserve(function.instructions.size());
     for (const ir::Instruction& instruction : function.instructions) {
-      if (instruction.dst > 255 || instruction.lhs > 255 || instruction.rhs > 255 ||
-          instruction.index > 255) {
-        AddDiagnostic(result.diagnostics, instruction.location,
-                      "instruction operand exceeds VM encoding");
+      auto encoded =
+          EncodeInstruction(instruction, EncodingContext{
+                                             .function = &function,
+                                             .code_size = compiled.code.size(),
+                                             .function_count = lowered.program.functions.size(),
+                                             .class_count = class_layouts.size(),
+                                         });
+      if (!encoded) {
+        result.diagnostics.push_back(std::move(encoded.error()));
         return result;
       }
-      const vm::OpCode opcode = EmitOpcode(instruction.opcode);
-      switch (instruction.opcode) {
-        case ir::Opcode::LoadNull:
-          compiled.code.push_back(vm::EncodeABC(opcode, Byte(instruction.dst), 0, 0));
-          break;
-        case ir::Opcode::LoadBool:
-          compiled.code.push_back(
-              vm::EncodeABC(opcode, Byte(instruction.dst),
-                            static_cast<std::uint8_t>(instruction.immediate != 0), 0));
-          break;
-        case ir::Opcode::LoadInt:
-          if (!FitsImmediate16(instruction.immediate)) {
-            AddDiagnostic(result.diagnostics, instruction.location,
-                          "integer literal exceeds bootstrap bytecode immediate range");
-            return result;
-          }
-          compiled.code.push_back(vm::EncodeAImm16(
-              opcode, Byte(instruction.dst), static_cast<std::int16_t>(instruction.immediate)));
-          break;
-        case ir::Opcode::Move:
-        case ir::Opcode::AddInt:
-        case ir::Opcode::SubInt:
-        case ir::Opcode::MulInt:
-        case ir::Opcode::DivInt:
-        case ir::Opcode::EqualInt:
-        case ir::Opcode::NotEqualInt:
-        case ir::Opcode::EqualBool:
-        case ir::Opcode::NotEqualBool:
-          compiled.code.push_back(vm::EncodeABC(opcode, Byte(instruction.dst),
-                                                Byte(instruction.lhs), Byte(instruction.rhs)));
-          break;
-        case ir::Opcode::Call:
-          if (instruction.index >= lowered.program.functions.size()) {
-            AddDiagnostic(result.diagnostics, instruction.location, "unknown function ID in IR");
-            return result;
-          }
-          compiled.code.push_back(vm::EncodeABC(opcode, Byte(instruction.dst),
-                                                static_cast<std::uint8_t>(instruction.index),
-                                                Byte(instruction.lhs)));
-          break;
-        case ir::Opcode::NegInt:
-        case ir::Opcode::NotBool:
-          compiled.code.push_back(
-              vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs), 0));
-          break;
-        case ir::Opcode::NewInstance:
-          if (instruction.index >= class_layouts.size()) {
-            AddDiagnostic(result.diagnostics, instruction.location, "unknown class ID in IR");
-            return result;
-          }
-          compiled.code.push_back(vm::EncodeABC(opcode, Byte(instruction.dst),
-                                                static_cast<std::uint8_t>(instruction.index), 0));
-          break;
-        case ir::Opcode::SetField:
-          compiled.code.push_back(vm::EncodeABC(opcode, Byte(instruction.dst),
-                                                static_cast<std::uint8_t>(instruction.index),
-                                                Byte(instruction.lhs)));
-          break;
-        case ir::Opcode::GetField:
-          compiled.code.push_back(vm::EncodeABC(opcode, Byte(instruction.dst),
-                                                static_cast<std::uint8_t>(instruction.lhs),
-                                                static_cast<std::uint8_t>(instruction.index)));
-          break;
-        case ir::Opcode::Return:
-          compiled.code.push_back(vm::EncodeABC(opcode, Byte(instruction.dst), 0, 0));
-          break;
-        case ir::Opcode::Jump:
-        case ir::Opcode::JumpIfFalse: {
-          if (instruction.index > function.instructions.size()) {
-            AddDiagnostic(result.diagnostics, instruction.location, "invalid jump target in IR");
-            return result;
-          }
-          const std::int64_t offset = static_cast<std::int64_t>(instruction.index) -
-                                      static_cast<std::int64_t>(compiled.code.size() + 1);
-          if (!FitsImmediate16(offset)) {
-            AddDiagnostic(result.diagnostics, instruction.location,
-                          "jump target exceeds bootstrap bytecode range");
-            return result;
-          }
-          const std::uint8_t condition =
-              instruction.opcode == ir::Opcode::JumpIfFalse ? Byte(instruction.lhs) : 0;
-          compiled.code.push_back(
-              vm::EncodeAImm16(opcode, condition, static_cast<std::int16_t>(offset)));
-          break;
-        }
-      }
+      compiled.code.push_back(*encoded);
     }
     result.program.functions.push_back(std::move(compiled));
   }

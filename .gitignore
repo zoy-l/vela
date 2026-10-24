@@ -1,6 +1,8 @@
 /out/
 /compile_commands.json
 /third_party/build_tools/
+/third_party/benchmark/
+/third_party/googletest/
 /.cipd/
 /.gclient_entries
 /.gclient_previous_sync_commits

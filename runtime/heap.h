@@ -17,9 +17,9 @@ class RootRange final {
   ~RootRange();
 
   RootRange(const RootRange&) = delete;
-  RootRange& operator=(const RootRange&) = delete;
+  auto operator=(const RootRange&) -> RootRange& = delete;
   RootRange(RootRange&&) = delete;
-  RootRange& operator=(RootRange&&) = delete;
+  auto operator=(RootRange&&) -> RootRange& = delete;
 
   void Attach(Heap& heap, Value* values, std::size_t count) noexcept;
   void Detach() noexcept;
@@ -40,20 +40,33 @@ enum class GcPhase : std::uint8_t {
   Sweep,
 };
 
+inline constexpr std::size_t kDefaultGcThreshold = 65536;
+
 class Heap final {
  public:
-  explicit Heap(std::size_t gc_threshold = 64 * 1024) noexcept;
+  explicit Heap(std::size_t gc_threshold = kDefaultGcThreshold) noexcept;
   ~Heap();
 
+  Heap(Heap&&) = delete;
+  auto operator=(Heap&&) -> Heap& = delete;
   Heap(const Heap&) = delete;
-  Heap& operator=(const Heap&) = delete;
+  auto operator=(const Heap&) -> Heap& = delete;
 
-  [[nodiscard]] HeapObject* AllocateInstance(ClassLayout& layout,
-                                             std::span<const Value> initial_fields = {}) noexcept;
+  [[nodiscard]] auto AllocateInstance(ClassLayout& layout,
+                                      std::span<const Value> initial_fields = {}) noexcept
+      -> HeapObject*;
+  [[nodiscard]] auto AllocateArray(std::size_t length) noexcept -> HeapObject*;
 
-  [[nodiscard]] Value* GetField(HeapObject& object, std::uint32_t index) noexcept;
-  [[nodiscard]] const Value* GetField(const HeapObject& object, std::uint32_t index) const noexcept;
-  [[nodiscard]] bool SetField(HeapObject& object, std::uint32_t index, Value value) noexcept;
+  [[nodiscard]] static auto GetField(HeapObject& object, std::uint32_t index) noexcept -> Value*;
+  [[nodiscard]] static auto GetField(const HeapObject& object, std::uint32_t index) noexcept
+      -> const Value*;
+  [[nodiscard]] auto SetField(HeapObject& object, std::uint32_t index, Value value) noexcept
+      -> bool;
+  [[nodiscard]] static auto GetElement(HeapObject& object, std::uint32_t index) noexcept -> Value*;
+  [[nodiscard]] static auto GetElement(const HeapObject& object, std::uint32_t index) noexcept
+      -> const Value*;
+  [[nodiscard]] auto SetElement(HeapObject& object, std::uint32_t index, Value value) noexcept
+      -> bool;
 
   void StartCollection() noexcept;
   void Step(std::size_t work_budget) noexcept;
@@ -62,25 +75,21 @@ class Heap final {
 
   void SetGcThreshold(std::size_t threshold) noexcept;
 
-  [[nodiscard]] GcPhase phase() const noexcept { return phase_; }
-  [[nodiscard]] bool IsCollecting() const noexcept { return phase_ != GcPhase::Idle; }
-  [[nodiscard]] std::size_t object_count() const noexcept { return object_count_; }
-  [[nodiscard]] std::size_t allocated_bytes() const noexcept { return allocated_bytes_; }
-  [[nodiscard]] std::size_t committed_bytes() const noexcept { return committed_bytes_; }
+  [[nodiscard]] auto phase() const noexcept -> GcPhase { return phase_; }
+  [[nodiscard]] auto IsCollecting() const noexcept -> bool { return phase_ != GcPhase::Idle; }
+  [[nodiscard]] auto object_count() const noexcept -> std::size_t { return object_count_; }
+  [[nodiscard]] auto allocated_bytes() const noexcept -> std::size_t { return allocated_bytes_; }
+  [[nodiscard]] auto committed_bytes() const noexcept -> std::size_t { return committed_bytes_; }
 
  private:
   friend class RootRange;
 
-  struct FreeBlock {
-    FreeBlock* next = nullptr;
-  };
-
-  static constexpr std::array<std::size_t, 8> kSizeClasses = {32,  64,   128,  256,
-                                                              512, 1024, 2048, 4096};
+  static constexpr auto kSizeClasses =
+      std::to_array<std::size_t>({32, 64, 128, 256, 512, 1024, 2048, 4096});
   static constexpr std::size_t kAutomaticWork = 16;
 
   void RegisterRoot(RootRange& root) noexcept;
-  void UnregisterRoot(RootRange& root) noexcept;
+  static void UnregisterRoot(RootRange& root) noexcept;
   void MarkRoots() noexcept;
   void MarkValue(Value value) noexcept;
   void MarkObject(HeapObject& object) noexcept;
@@ -88,11 +97,11 @@ class Heap final {
   void DrainGray() noexcept;
   void WriteBarrier(HeapObject& source, Value value) noexcept;
 
-  [[nodiscard]] HeapObject* AllocateRaw(std::size_t requested_size) noexcept;
+  [[nodiscard]] auto AllocateRaw(std::size_t requested_size) noexcept -> HeapObject*;
   void ReleaseRaw(HeapObject& object) noexcept;
-  [[nodiscard]] std::size_t SelectBlockSize(std::size_t requested_size) const noexcept;
-  [[nodiscard]] std::size_t SizeClassIndex(std::size_t block_size) const noexcept;
-  [[nodiscard]] bool ShouldCollect(std::size_t next_size) const noexcept;
+  [[nodiscard]] static auto SelectBlockSize(std::size_t requested_size) noexcept -> std::size_t;
+  [[nodiscard]] static auto SizeClassIndex(std::size_t block_size) noexcept -> std::size_t;
+  [[nodiscard]] auto ShouldCollect(std::size_t next_size) const noexcept -> bool;
   void MaybeCollect(std::size_t next_size) noexcept;
   void FinishSweep() noexcept;
   void DestroyAll() noexcept;
@@ -101,7 +110,7 @@ class Heap final {
   HeapObject* gray_ = nullptr;
   HeapObject** sweep_link_ = nullptr;
   RootRange* roots_ = nullptr;
-  std::array<FreeBlock*, kSizeClasses.size()> free_blocks_{};
+  std::array<HeapObject*, kSizeClasses.size()> free_blocks_{};
 
   std::size_t object_count_ = 0;
   std::size_t allocated_bytes_ = 0;

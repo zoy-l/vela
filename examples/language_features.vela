@@ -1,0 +1,25 @@
+class Counter {
+  int value;
+
+  int add(int amount) {
+    this.value = this.value + amount;
+    return this.value;
+  }
+}
+
+bool main() {
+  int sum = 0;
+  for (int i = 0; i < 5; i = i + 1) {
+    if (i == 2) continue;
+    if (i == 4) break;
+    sum = sum + i;
+  }
+
+  Counter counter = Counter(value: sum);
+  print(counter.add(3));
+  string greeting = "vela" + " language";
+  print(greeting);
+  int[] values = [1, 2, 3];
+  print(values[1]);
+  return (sum == 4) && (1 < 2) || false;
+}

@@ -8,7 +8,13 @@ CLI prints the value returned by `main`; object-returning examples print
 .\out\debug\vela.exe run examples\hello.vela
 .\out\debug\vela.exe run examples\loop.vela
 .\out\debug\vela.exe run examples\class_construction.vela
+.\out\debug\vela.exe run examples\language_features.vela
+.\out\debug\vela.exe run examples\imports\main.vela
 ```
+
+`language_features.vela` covers loops, strict comparisons and logic, strings,
+arrays, class methods, `this`, and console output. The imports example compiles
+relative source files as one program.
 
 Use `check` when validating source without executing it:
 

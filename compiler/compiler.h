@@ -17,36 +17,45 @@ struct CompiledFunction final {
   std::string name;
   std::vector<vm::Instruction> code;
   std::vector<runtime::ClassLayout*> classes;
+  std::vector<runtime::StringObject*> strings;
   std::uint8_t register_count = 0;
   std::uint16_t parameter_count = 0;
 
-  [[nodiscard]] vm::Function View() const noexcept {
-    return {.code = code,
-            .classes = classes,
-            .register_count = register_count,
-            .parameter_count = static_cast<std::uint8_t>(parameter_count)};
+  [[nodiscard]] auto View() const noexcept -> vm::Function {
+    return {
+        .code = code,
+        .classes = classes,
+        .strings = strings,
+        .register_count = register_count,
+        .parameter_count = static_cast<std::uint8_t>(parameter_count),
+    };
   }
 };
 
 struct CompiledProgram final {
   std::vector<CompiledFunction> functions;
   std::vector<vm::Function> views;
+  std::vector<runtime::StringObject*> strings;
 
-  [[nodiscard]] const CompiledFunction* FindFunction(std::string_view name) const noexcept;
-  [[nodiscard]] vm::Program View() const noexcept { return {.functions = views}; }
+  [[nodiscard]] auto FindFunction(std::string_view name) const noexcept -> const CompiledFunction*;
+  [[nodiscard]] auto View() const noexcept -> vm::Program { return {.functions = views}; }
 };
 
 struct CompileResult final {
   CompiledProgram program;
   frontend::Diagnostics diagnostics;
 
-  [[nodiscard]] bool Succeeded() const noexcept { return diagnostics.empty(); }
+  [[nodiscard]] auto Succeeded() const noexcept -> bool { return diagnostics.empty(); }
 };
 
-[[nodiscard]] CompileResult CompileSource(std::string_view source, runtime::Isolate& isolate);
+[[nodiscard]] auto CompileSource(std::string_view source, runtime::Isolate& isolate)
+    -> CompileResult;
+[[nodiscard]] auto CompileSources(const std::vector<std::string_view>& sources,
+                                  runtime::Isolate& isolate) -> CompileResult;
+[[nodiscard]] auto CompileFile(std::string_view path, runtime::Isolate& isolate) -> CompileResult;
 
-[[nodiscard]] CompileResult CompileProgram(const frontend::Program& source,
-                                           const frontend::SemanticModel& model,
-                                           runtime::Isolate& isolate);
+[[nodiscard]] auto CompileProgram(const frontend::Program& source,
+                                  const frontend::SemanticModel& model,
+                                  runtime::Isolate& isolate) -> CompileResult;
 
 }  // namespace vela::compiler

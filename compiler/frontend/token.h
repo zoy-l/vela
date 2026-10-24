@@ -1,18 +1,25 @@
 #pragma once
 
+#include <cstdint>
+
 #include <string>
 
 #include "compiler/frontend/diagnostic.h"
 
 namespace vela::frontend {
 
-enum class TokenKind {
+enum class TokenKind : std::uint8_t {
   EndOfFile,
   Identifier,
   IntegerLiteral,
   FloatLiteral,
   StringLiteral,
   Class,
+  Import,
+  Break,
+  Continue,
+  For,
+  Print,
   Else,
   Enum,
   False,
@@ -37,6 +44,14 @@ enum class TokenKind {
   Minus,
   Star,
   Slash,
+  Less,
+  LessEqual,
+  Greater,
+  GreaterEqual,
+  AndAnd,
+  OrOr,
+  LeftBracket,
+  RightBracket,
 };
 
 struct Token final {

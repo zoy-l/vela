@@ -5,12 +5,16 @@ source_set("runtime") {
     "isolate.cc",
     "isolate.h",
     "object.h",
+    "string.h",
     "value.h",
   ]
 }
 
 executable("runtime_tests") {
   testonly = true
-  sources = [ "runtime_tests.cc" ]
-  deps = [ ":runtime" ]
+  sources = [ "runtime_unittest.cc" ]
+  deps = [
+    ":runtime",
+    "//third_party:gtest_main",
+  ]
 }
