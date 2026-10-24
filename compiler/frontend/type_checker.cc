@@ -36,7 +36,12 @@ TypeCheckResult TypeChecker::Check(const Program& program) {
     }
   }
 
-  return {std::move(diagnostics_), function_count_};
+  SemanticModel model;
+  model.types = std::move(types_);
+  model.enum_members = std::move(enum_members_);
+  model.classes = std::move(classes_);
+  model.functions = std::move(functions_);
+  return {std::move(diagnostics_), function_count_, std::move(model)};
 }
 
 void TypeChecker::AddDiagnostic(SourceLocation location, std::string message) {
@@ -206,6 +211,25 @@ void TypeChecker::CheckStatement(const Statement& statement, Type return_type) {
       }
       EndScope();
       break;
+    case Statement::Kind::If: {
+      const Type condition = CheckExpression(*statement.condition, nullptr);
+      if (condition.kind != Type::Kind::Bool) {
+        AddDiagnostic(statement.condition->location, "if condition must be bool");
+      }
+      CheckStatement(*statement.then_branch, return_type);
+      if (statement.else_branch != nullptr) {
+        CheckStatement(*statement.else_branch, return_type);
+      }
+      break;
+    }
+    case Statement::Kind::While: {
+      const Type condition = CheckExpression(*statement.condition, nullptr);
+      if (condition.kind != Type::Kind::Bool) {
+        AddDiagnostic(statement.condition->location, "while condition must be bool");
+      }
+      CheckStatement(*statement.then_branch, return_type);
+      break;
+    }
   }
 }
 

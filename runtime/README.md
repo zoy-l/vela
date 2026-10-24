@@ -1,8 +1,8 @@
 # Vela runtime foundation
 
-The runtime currently provides the object and memory contract that the VM will
-use. Each `Isolate` owns one `Heap`; there is no process-global heap or locking
-on the allocation path.
+The runtime provides the object and memory contract used by the VM. Each
+`Isolate` owns one `Heap`; there is no process-global heap or locking on the
+allocation path.
 
 Instances have a fixed `ClassLayout`. The layout records the fields that hold
 references, so marking visits reference fields directly instead of inspecting
@@ -17,12 +17,12 @@ while a collection is running.
 
 Any object that must survive an allocation safepoint must already be reachable
 through a registered root range or another marked object. Raw `HeapObject*`
-values are deliberately not implicit roots; VM lowering will keep temporary
-values in registered frame slots before it calls the allocator.
+values are deliberately not implicit roots; the VM keeps temporary values in
+registered frame slots before it calls the allocator.
 
 Small objects use size-class free lists. `Value` is currently a general 16-byte
 tagged value for the bootstrap runtime; typed VM registers and primitive arrays
-will use narrower representations when the bytecode layer is added.
+can use narrower representations as those storage types are added.
 
 The heap is isolate-local and single-threaded. A future multi-threaded host API
 must register roots through an isolate boundary instead of accessing the heap

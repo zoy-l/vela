@@ -41,6 +41,8 @@ class Parser final {
   std::unique_ptr<Statement> ParseVariableDeclaration();
   std::unique_ptr<Statement> ParseReturnStatement();
   std::unique_ptr<Statement> ParseExpressionStatement();
+  std::unique_ptr<Statement> ParseIfStatement();
+  std::unique_ptr<Statement> ParseWhileStatement();
 
   std::unique_ptr<Expression> ParseExpression();
   std::unique_ptr<Expression> ParseAssignment();

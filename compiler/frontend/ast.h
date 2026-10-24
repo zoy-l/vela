@@ -69,6 +69,8 @@ struct Statement final {
     Return,
     Expression,
     Block,
+    If,
+    While,
   };
 
   Kind kind = Kind::Expression;
@@ -76,6 +78,9 @@ struct Statement final {
   TypeName type;
   std::string name;
   std::unique_ptr<Expression> expression;
+  std::unique_ptr<Expression> condition;
+  std::unique_ptr<Statement> then_branch;
+  std::unique_ptr<Statement> else_branch;
   std::vector<std::unique_ptr<Statement>> statements;
 };
 

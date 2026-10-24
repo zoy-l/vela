@@ -1,0 +1,12 @@
+enum Brightness {
+  light,
+  dark,
+}
+
+class Theme {
+  Brightness brightness;
+}
+
+Theme main() {
+  return Theme(brightness: .light);
+}

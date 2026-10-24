@@ -21,12 +21,33 @@ source_set("frontend") {
   ]
 }
 
+source_set("ir") {
+  sources = [
+    "ir/ir.h",
+    "ir/lowerer.cc",
+    "ir/lowerer.h",
+  ]
+  deps = [ ":frontend" ]
+}
+
+source_set("compiler") {
+  sources = [
+    "compiler.cc",
+    "compiler.h",
+  ]
+  public_deps = [
+    ":frontend",
+    ":ir",
+    "//runtime",
+    "//vm",
+  ]
+}
+
 executable("vela") {
   sources = [ "vela_main.cc" ]
   deps = [
     ":build_info",
-    ":frontend",
-    "//vm",
+    ":compiler",
   ]
 }
 
@@ -40,4 +61,13 @@ executable("vela_frontend_tests") {
   testonly = true
   sources = [ "frontend_tests.cc" ]
   deps = [ ":frontend" ]
+}
+
+executable("vela_compiler_tests") {
+  testonly = true
+  sources = [ "compiler_tests.cc" ]
+  deps = [
+    ":compiler",
+    "//runtime",
+  ]
 }

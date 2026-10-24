@@ -9,6 +9,7 @@ import sys
 
 COMMAND_MODULES = {
     "build": "tools.build",
+    "bench": "tools.bench",
     "clangd": "tools.clangd",
     "config": "tools.config",
     "doctor": "tools.doctor",
@@ -22,6 +23,7 @@ def print_help() -> None:
     print()
     print("Commands:")
     print("  build       Configure and build a target")
+    print("  bench       Build Release and run benchmark workloads")
     print("  clangd      Generate compile_commands.json")
     print("  config      Generate a GN output directory")
     print("  doctor      Check the project toolchain")

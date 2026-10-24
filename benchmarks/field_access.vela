@@ -1,0 +1,13 @@
+class Counter {
+  int value;
+}
+
+int main() {
+  Counter counter = Counter(value: 0);
+  int index = 0;
+  while (index != 1000) {
+    counter.value = counter.value + 1;
+    index = index + 1;
+  }
+  return counter.value;
+}

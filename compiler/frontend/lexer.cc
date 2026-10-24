@@ -7,8 +7,9 @@ namespace vela::frontend {
 namespace {
 
 const std::unordered_map<std::string_view, TokenKind> kKeywords = {
-    {"class", TokenKind::Class},   {"enum", TokenKind::Enum}, {"false", TokenKind::False},
-    {"return", TokenKind::Return}, {"true", TokenKind::True}, {"void", TokenKind::Void},
+    {"class", TokenKind::Class}, {"else", TokenKind::Else}, {"enum", TokenKind::Enum},
+    {"false", TokenKind::False}, {"if", TokenKind::If},     {"return", TokenKind::Return},
+    {"true", TokenKind::True},   {"void", TokenKind::Void}, {"while", TokenKind::While},
 };
 
 bool IsIdentifierStart(char character) {

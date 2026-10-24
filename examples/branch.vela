@@ -1,0 +1,13 @@
+bool choose(bool condition) {
+  if (condition) {
+    return true;
+  }
+  return false;
+}
+
+int main() {
+  if (choose(true)) {
+    return 1;
+  }
+  return 0;
+}

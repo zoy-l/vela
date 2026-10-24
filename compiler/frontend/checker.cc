@@ -18,7 +18,8 @@ CheckResult CheckSource(std::string_view source) {
   }
 
   TypeCheckResult checked = TypeChecker().Check(parsed.program);
-  return {std::move(checked.diagnostics), checked.function_count};
+  CheckResult result{std::move(checked.diagnostics), checked.function_count};
+  return result;
 }
 
 }  // namespace vela::frontend

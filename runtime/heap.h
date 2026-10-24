@@ -12,6 +12,7 @@ class Heap;
 
 class RootRange final {
  public:
+  RootRange() noexcept = default;
   RootRange(Heap& heap, Value* values, std::size_t count) noexcept;
   ~RootRange();
 
@@ -19,6 +20,9 @@ class RootRange final {
   RootRange& operator=(const RootRange&) = delete;
   RootRange(RootRange&&) = delete;
   RootRange& operator=(RootRange&&) = delete;
+
+  void Attach(Heap& heap, Value* values, std::size_t count) noexcept;
+  void Detach() noexcept;
 
  private:
   friend class Heap;

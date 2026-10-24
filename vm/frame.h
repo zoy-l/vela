@@ -9,13 +9,25 @@ namespace vela::vm {
 
 class Frame final {
  public:
-  Frame(runtime::Heap& heap, std::span<runtime::Value> registers) noexcept
-      : registers_(registers), roots_(heap, registers.data(), registers.size()) {}
+  Frame() noexcept = default;
+  Frame(runtime::Heap& heap, std::span<runtime::Value> registers) noexcept : registers_(registers) {
+    roots_.Attach(heap, registers.data(), registers.size());
+  }
 
   Frame(const Frame&) = delete;
   Frame& operator=(const Frame&) = delete;
   Frame(Frame&&) = delete;
   Frame& operator=(Frame&&) = delete;
+
+  void Attach(runtime::Heap& heap, std::span<runtime::Value> registers) noexcept {
+    registers_ = registers;
+    roots_.Attach(heap, registers.data(), registers.size());
+  }
+
+  void Detach() noexcept {
+    roots_.Detach();
+    registers_ = {};
+  }
 
   [[nodiscard]] runtime::Value* data() noexcept { return registers_.data(); }
   [[nodiscard]] const runtime::Value* data() const noexcept { return registers_.data(); }

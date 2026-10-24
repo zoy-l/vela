@@ -16,6 +16,18 @@ enum class OpCode : std::uint8_t {
   LoadInt,
   Move,
   AddInt,
+  SubInt,
+  MulInt,
+  DivInt,
+  NegInt,
+  NotBool,
+  EqualInt,
+  NotEqualInt,
+  EqualBool,
+  NotEqualBool,
+  Call,
+  Jump,
+  JumpIfFalse,
   NewInstance,
   SetField,
   GetField,
@@ -61,6 +73,11 @@ struct Function final {
   std::span<const Instruction> code;
   std::span<runtime::ClassLayout* const> classes;
   std::uint8_t register_count = 0;
+  std::uint8_t parameter_count = 0;
+};
+
+struct Program final {
+  std::span<const Function> functions;
 };
 
 }  // namespace vela::vm

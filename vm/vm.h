@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 
 #include "runtime/isolate.h"
 #include "runtime/value.h"
@@ -15,6 +16,8 @@ enum class ExecutionStatus : std::uint8_t {
   TypeError,
   InvalidField,
   IntegerOverflow,
+  DivisionByZero,
+  StackOverflow,
 };
 
 struct ExecutionResult final {
@@ -29,9 +32,12 @@ class VirtualMachine final {
   explicit VirtualMachine(runtime::Isolate& isolate) noexcept : isolate_(isolate) {}
 
   [[nodiscard]] ExecutionResult Execute(const Function& function) noexcept;
+  [[nodiscard]] ExecutionResult Execute(const Program& program,
+                                        std::uint32_t entry_function) noexcept;
 
  private:
-  [[nodiscard]] static bool Validate(const Function& function) noexcept;
+  [[nodiscard]] static bool Validate(const Function& function,
+                                     std::span<const Function> functions) noexcept;
 
   runtime::Isolate& isolate_;
 };

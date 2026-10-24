@@ -12,9 +12,46 @@
 
 namespace vela::frontend {
 
+struct TypeDescriptor final {
+  enum class Kind {
+    Invalid,
+    Void,
+    Bool,
+    Int,
+    Float,
+    String,
+    Enum,
+    Class,
+  };
+
+  Kind kind = Kind::Invalid;
+  std::string name;
+};
+
+struct FunctionDescriptor final {
+  TypeDescriptor return_type;
+  std::vector<std::string> parameter_order;
+  std::unordered_map<std::string, TypeDescriptor> parameters;
+};
+
+struct ClassDescriptor final {
+  TypeDescriptor type;
+  std::vector<std::string> field_order;
+  std::unordered_map<std::string, TypeDescriptor> fields;
+  std::unordered_map<std::string, FunctionDescriptor> methods;
+};
+
+struct SemanticModel final {
+  std::unordered_map<std::string, TypeDescriptor> types;
+  std::unordered_map<std::string, std::unordered_set<std::string>> enum_members;
+  std::unordered_map<std::string, ClassDescriptor> classes;
+  std::unordered_map<std::string, FunctionDescriptor> functions;
+};
+
 struct TypeCheckResult final {
   Diagnostics diagnostics;
   std::size_t function_count = 0;
+  SemanticModel model;
 };
 
 class TypeChecker final {
@@ -22,34 +59,9 @@ class TypeChecker final {
   [[nodiscard]] TypeCheckResult Check(const Program& program);
 
  private:
-  struct Type final {
-    enum class Kind {
-      Invalid,
-      Void,
-      Bool,
-      Int,
-      Float,
-      String,
-      Enum,
-      Class,
-    };
-
-    Kind kind = Kind::Invalid;
-    std::string name;
-  };
-
-  struct FunctionInfo final {
-    Type return_type;
-    std::vector<std::string> parameter_order;
-    std::unordered_map<std::string, Type> parameters;
-  };
-
-  struct ClassInfo final {
-    Type type;
-    std::vector<std::string> field_order;
-    std::unordered_map<std::string, Type> fields;
-    std::unordered_map<std::string, FunctionInfo> methods;
-  };
+  using Type = TypeDescriptor;
+  using FunctionInfo = FunctionDescriptor;
+  using ClassInfo = ClassDescriptor;
 
   [[nodiscard]] static Type InvalidType();
   void AddDiagnostic(SourceLocation location, std::string message);

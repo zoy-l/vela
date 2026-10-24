@@ -1,0 +1,11 @@
+class Theme {
+  int brightness;
+}
+
+class App {
+  Theme theme;
+}
+
+App main() {
+  return App(theme: Theme(brightness: 1));
+}

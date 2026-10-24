@@ -18,15 +18,32 @@ constexpr std::size_t AlignUp(std::size_t value, std::size_t alignment) noexcept
 ClassLayout::ClassLayout(std::uint32_t field_count, std::vector<std::uint32_t> reference_fields)
     : field_count_(field_count), reference_fields_(std::move(reference_fields)) {}
 
-RootRange::RootRange(Heap& heap, Value* values, std::size_t count) noexcept
-    : heap_(&heap), values_(values), count_(count) {
-  heap_->RegisterRoot(*this);
+RootRange::RootRange(Heap& heap, Value* values, std::size_t count) noexcept {
+  Attach(heap, values, count);
 }
 
 RootRange::~RootRange() {
-  if (heap_ != nullptr) {
-    heap_->UnregisterRoot(*this);
+  Detach();
+}
+
+void RootRange::Attach(Heap& heap, Value* values, std::size_t count) noexcept {
+  Detach();
+  heap_ = &heap;
+  values_ = values;
+  count_ = count;
+  heap_->RegisterRoot(*this);
+}
+
+void RootRange::Detach() noexcept {
+  if (heap_ == nullptr) {
+    return;
   }
+  heap_->UnregisterRoot(*this);
+  heap_ = nullptr;
+  values_ = nullptr;
+  count_ = 0;
+  next_ = nullptr;
+  previous_link_ = nullptr;
 }
 
 Heap::Heap(std::size_t gc_threshold) noexcept

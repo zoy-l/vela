@@ -78,6 +78,13 @@ register span is registered as a root range for the duration of execution.
 Register slots stay contiguous, and allocation instructions can trigger GC
 without copying or relocating frame values.
 
+The current compiler path lowers checked integer expressions, local variables,
+function calls, field access, assignments, enum ordinals, fixed-layout class
+construction, and structured branches/loops through Typed IR into the bootstrap
+bytecode. `vela run` exercises this path for a zero-argument `main` function.
+Arrays and strings will use the same IR and bytecode contracts after their
+typed storage representation is defined.
+
 The compiler must retain source locations through parsing, type checking, IR
 instructions, and bytecode ranges. This keeps diagnostics and future debugger
 mapping independent from the VM instruction encoding.

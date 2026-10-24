@@ -1,0 +1,5 @@
+int main() {
+  int base = 6;
+  int scale = 7;
+  return base * scale + 1;
+}

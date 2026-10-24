@@ -1,12 +1,16 @@
 # Vela
 
 Vela is a new statically typed scripting language workspace. The repository
-now contains the native build environment and the first static front-end slice;
-the bytecode runtime and later native backends are still being built.
+contains the native build environment, a static front end, and a bootstrap
+bytecode runtime; later native backends are still being built.
 
 The project follows a small GN/Ninja layout:
 
 - `compiler/` contains the bootstrap executable and its build identity.
+- `compiler/ir/` contains the typed register IR and source lowering path.
+- `vm/` contains the fixed-width register VM and frame root integration.
+- `examples/` contains runnable source examples for the supported language slice.
+- `benchmarks/` contains repeatable VM workloads and benchmark notes.
 - `build/` contains the GN configuration and project toolchain.
 - `tools/` contains the `vl` developer commands.
 - `third_party/build_tools/` is populated only by the versions pinned in
@@ -36,6 +40,7 @@ python -m tools.vl config
 python -m tools.vl build
 python -m tools.vl clangd
 python -m tools.vl test
+python -m tools.vl bench
 ```
 
 On Windows the same entry point is available as `bin/vl.cmd`, so the commands
@@ -56,8 +61,14 @@ checker:
 .\out\debug\vela.exe --version
 .\out\debug\vela.exe --help
 .\out\debug\vela.exe check path\to\source.vela
+.\out\debug\vela.exe run path\to\source.vela
+.\out\release\vela.exe bench benchmarks\integer_loop.vela 1000
 ```
 
-The current language boundary and performance contract are documented in
+`run` currently executes a zero-argument `main` function. The current language
+boundary and performance contract are documented in
 [`docs/language_architecture.md`](docs/language_architecture.md); implementation
-details are listed in [`compiler/README.md`](compiler/README.md).
+details are listed in [`compiler/README.md`](compiler/README.md). The benchmark
+command compiles once and reports first execution separately from steady-state
+repeated execution; `python -m tools.vl bench` builds the selected variant with
+the project-local toolchain before running all files under `benchmarks/`.

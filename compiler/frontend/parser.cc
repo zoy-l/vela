@@ -76,7 +76,8 @@ void Parser::Synchronize() {
   }
   while (!IsAtEnd()) {
     if (Previous().kind == TokenKind::Semicolon || Check(TokenKind::Class) ||
-        Check(TokenKind::Enum) || Check(TokenKind::Return)) {
+        Check(TokenKind::Enum) || Check(TokenKind::If) || Check(TokenKind::Return) ||
+        Check(TokenKind::While)) {
       return;
     }
     ++current_;
@@ -259,14 +260,61 @@ std::unique_ptr<Statement> Parser::ParseStatement() {
   if (Check(TokenKind::LeftBrace)) {
     return ParseBlock();
   }
+  if (Match(TokenKind::If)) {
+    return ParseIfStatement();
+  }
   if (Match(TokenKind::Return)) {
     return ParseReturnStatement();
+  }
+  if (Match(TokenKind::While)) {
+    return ParseWhileStatement();
   }
   if (Check(TokenKind::Identifier) && current_ + 1 < tokens_.size() &&
       tokens_[current_ + 1].kind == TokenKind::Identifier) {
     return ParseVariableDeclaration();
   }
   return ParseExpressionStatement();
+}
+
+std::unique_ptr<Statement> Parser::ParseIfStatement() {
+  auto statement = std::make_unique<Statement>();
+  statement->kind = Statement::Kind::If;
+  statement->location = Previous().location;
+  if (!Expect(TokenKind::LeftParen, "expected '(' after if").has_value()) {
+    return nullptr;
+  }
+  statement->condition = ParseExpression();
+  if (!statement->condition ||
+      !Expect(TokenKind::RightParen, "expected ')' after if condition").has_value()) {
+    return nullptr;
+  }
+  statement->then_branch = ParseStatement();
+  if (!statement->then_branch) {
+    return nullptr;
+  }
+  if (Match(TokenKind::Else)) {
+    statement->else_branch = ParseStatement();
+    if (!statement->else_branch) {
+      return nullptr;
+    }
+  }
+  return statement;
+}
+
+std::unique_ptr<Statement> Parser::ParseWhileStatement() {
+  auto statement = std::make_unique<Statement>();
+  statement->kind = Statement::Kind::While;
+  statement->location = Previous().location;
+  if (!Expect(TokenKind::LeftParen, "expected '(' after while").has_value()) {
+    return nullptr;
+  }
+  statement->condition = ParseExpression();
+  if (!statement->condition ||
+      !Expect(TokenKind::RightParen, "expected ')' after while condition").has_value()) {
+    return nullptr;
+  }
+  statement->then_branch = ParseStatement();
+  return statement->then_branch ? std::move(statement) : nullptr;
 }
 
 std::unique_ptr<Statement> Parser::ParseVariableDeclaration() {
