@@ -1,5 +1,6 @@
 #include "compiler/frontend/parser.h"
 
+#include <charconv>
 #include <utility>
 
 namespace vela::frontend {
@@ -259,11 +260,11 @@ auto Parser::ParseType() -> std::optional<TypeName> {
   if (Check(TokenKind::Identifier) || Check(TokenKind::Void)) {
     const Token token = tokens_.at(current_++);
     std::string name = token.kind == TokenKind::Void ? "void" : token.lexeme;
-    if (Match(TokenKind::LeftBracket)) {
+    while (Match(TokenKind::LeftBracket)) {
       if (!Expect(TokenKind::RightBracket, "expected ']' in array type").has_value()) {
         return std::nullopt;
       }
-      name = "array";
+      name += "[]";
     }
     return TypeName{.name = std::move(name), .location = token.location};
   }
@@ -293,6 +294,18 @@ auto Parser::ParseBlock() -> std::unique_ptr<Statement> {
   return block;
 }
 
+auto Parser::IsVariableDeclaration() const -> bool {
+  if (!Check(TokenKind::Identifier) && !Check(TokenKind::Void)) {
+    return false;
+  }
+  std::size_t next = current_ + 1;
+  while (next + 1 < tokens_.size() && tokens_.at(next).kind == TokenKind::LeftBracket &&
+         tokens_.at(next + 1).kind == TokenKind::RightBracket) {
+    next += 2;
+  }
+  return next < tokens_.size() && tokens_.at(next).kind == TokenKind::Identifier;
+}
+
 auto Parser::ParseStatement() -> std::unique_ptr<Statement> {
   if (Check(TokenKind::LeftBrace)) {
     return ParseBlock();
@@ -315,11 +328,7 @@ auto Parser::ParseStatement() -> std::unique_ptr<Statement> {
   if (Match(TokenKind::Continue)) {
     return ParseContinueStatement();
   }
-  if (Check(TokenKind::Identifier) && current_ + 1 < tokens_.size() &&
-      (tokens_.at(current_ + 1).kind == TokenKind::Identifier ||
-       (tokens_.at(current_ + 1).kind == TokenKind::LeftBracket && current_ + 3 < tokens_.size() &&
-        tokens_.at(current_ + 2).kind == TokenKind::RightBracket &&
-        tokens_.at(current_ + 3).kind == TokenKind::Identifier))) {
+  if (IsVariableDeclaration()) {
     return ParseVariableDeclaration();
   }
   return ParseExpressionStatement();
@@ -333,12 +342,7 @@ auto Parser::ParseForStatement() -> std::unique_ptr<Statement> {
     return nullptr;
   }
   if (!Check(TokenKind::Semicolon)) {
-    if (Check(TokenKind::Identifier) && current_ + 1 < tokens_.size() &&
-        (tokens_.at(current_ + 1).kind == TokenKind::Identifier ||
-         (tokens_.at(current_ + 1).kind == TokenKind::LeftBracket &&
-          current_ + 3 < tokens_.size() &&
-          tokens_.at(current_ + 2).kind == TokenKind::RightBracket &&
-          tokens_.at(current_ + 3).kind == TokenKind::Identifier))) {
+    if (IsVariableDeclaration()) {
       statement->initializer = ParseVariableDeclaration();
     } else {
       statement->initializer = ParseExpressionStatement();
@@ -663,16 +667,26 @@ auto Parser::ParsePostfix() -> std::unique_ptr<Expression> {
   return expression;
 }
 
+auto Parser::ParseDoubleLiteral() -> std::unique_ptr<Expression> {
+  auto expression = MakeExpression(Expression::Kind::DoubleLiteral, Previous().location);
+  const auto& text = Previous().lexeme;
+  const auto parsed =
+      std::from_chars(text.data(), std::to_address(text.end()), expression->double_value);
+  if (parsed.ec != std::errc()) {
+    AddDiagnostic(expression->location, "double literal is out of range");
+    return nullptr;
+  }
+  return expression;
+}
+
 auto Parser::ParsePrimary() -> std::unique_ptr<Expression> {
   if (Match(TokenKind::IntegerLiteral)) {
     auto expression = MakeExpression(Expression::Kind::IntegerLiteral, Previous().location);
     expression->text = Previous().lexeme;
     return expression;
   }
-  if (Match(TokenKind::FloatLiteral)) {
-    auto expression = MakeExpression(Expression::Kind::FloatLiteral, Previous().location);
-    expression->text = Previous().lexeme;
-    return expression;
+  if (Match(TokenKind::DoubleLiteral)) {
+    return ParseDoubleLiteral();
   }
   if (Match(TokenKind::StringLiteral)) {
     auto expression = MakeExpression(Expression::Kind::StringLiteral, Previous().location);

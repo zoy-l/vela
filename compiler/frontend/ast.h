@@ -26,7 +26,7 @@ struct CallArgument final {
 struct Expression final {
   enum class Kind : std::uint8_t {
     IntegerLiteral,
-    FloatLiteral,
+    DoubleLiteral,
     StringLiteral,
     BooleanLiteral,
     Name,
@@ -43,7 +43,7 @@ struct Expression final {
   SourceLocation location;
   std::string text;
   std::int64_t integer_value = 0;
-  double float_value = 0.0;
+  double double_value = 0.0;
   bool boolean_value = false;
   std::unique_ptr<Expression> left;
   std::unique_ptr<Expression> right;

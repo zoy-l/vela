@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 
 #include "runtime/object.h"
 
@@ -42,6 +43,12 @@ enum class GcPhase : std::uint8_t {
 
 inline constexpr std::size_t kDefaultGcThreshold = 65536;
 
+enum class ArrayAccessError : std::uint8_t {
+  NotArray,
+  OutOfBounds,
+  ElementTypeMismatch,
+};
+
 class Heap final {
  public:
   explicit Heap(std::size_t gc_threshold = kDefaultGcThreshold) noexcept;
@@ -55,18 +62,18 @@ class Heap final {
   [[nodiscard]] auto AllocateInstance(ClassLayout& layout,
                                       std::span<const Value> initial_fields = {}) noexcept
       -> HeapObject*;
-  [[nodiscard]] auto AllocateArray(std::size_t length) noexcept -> HeapObject*;
+  [[nodiscard]] auto AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept
+      -> HeapObject*;
 
   [[nodiscard]] static auto GetField(HeapObject& object, std::uint32_t index) noexcept -> Value*;
   [[nodiscard]] static auto GetField(const HeapObject& object, std::uint32_t index) noexcept
       -> const Value*;
   [[nodiscard]] auto SetField(HeapObject& object, std::uint32_t index, Value value) noexcept
       -> bool;
-  [[nodiscard]] static auto GetElement(HeapObject& object, std::uint32_t index) noexcept -> Value*;
   [[nodiscard]] static auto GetElement(const HeapObject& object, std::uint32_t index) noexcept
-      -> const Value*;
+      -> std::expected<Value, ArrayAccessError>;
   [[nodiscard]] auto SetElement(HeapObject& object, std::uint32_t index, Value value) noexcept
-      -> bool;
+      -> std::expected<void, ArrayAccessError>;
 
   void StartCollection() noexcept;
   void Step(std::size_t work_budget) noexcept;

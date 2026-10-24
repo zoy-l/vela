@@ -21,11 +21,23 @@ enum class OpCode : std::uint8_t {
   LoadNull,
   LoadBool,
   LoadInt,
+  LoadDouble,
   Move,
   AddInt,
   SubInt,
   MulInt,
   DivInt,
+  AddDouble,
+  SubDouble,
+  MulDouble,
+  DivDouble,
+  NegDouble,
+  EqualDouble,
+  NotEqualDouble,
+  LessDouble,
+  LessEqualDouble,
+  GreaterDouble,
+  GreaterEqualDouble,
   NegInt,
   NotBool,
   EqualInt,
@@ -97,6 +109,8 @@ struct Function final {
   std::span<const Instruction> code;
   std::span<runtime::ClassLayout* const> classes;
   std::span<runtime::StringObject* const> strings;
+  std::span<const runtime::ArrayLayout* const> arrays;
+  std::span<const double> doubles;
   std::uint8_t register_count = 0;
   std::uint8_t parameter_count = 0;
 };

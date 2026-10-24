@@ -18,6 +18,8 @@ struct CompiledFunction final {
   std::vector<vm::Instruction> code;
   std::vector<runtime::ClassLayout*> classes;
   std::vector<runtime::StringObject*> strings;
+  std::vector<const runtime::ArrayLayout*> arrays;
+  std::vector<double> doubles;
   std::uint8_t register_count = 0;
   std::uint16_t parameter_count = 0;
 
@@ -26,6 +28,8 @@ struct CompiledFunction final {
         .code = code,
         .classes = classes,
         .strings = strings,
+        .arrays = arrays,
+        .doubles = doubles,
         .register_count = register_count,
         .parameter_count = static_cast<std::uint8_t>(parameter_count),
     };

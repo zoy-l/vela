@@ -27,8 +27,7 @@ for C++ conventions.
 
 - Use the repository's `python -m tools.vl ...` commands for routine builds, tests, benchmarks,
   clangd compilation databases, and lint.
-- Do not depend on the VerseGame toolchain, modify the global `PATH`, or add system tools to the
-  environment as project dependencies.
+- Do not modify the global `PATH` or add system tools to the environment as project dependencies.
 - Regenerate the corresponding output directories after GN changes. Debug and Release outputs
   must not share object files or generated resources.
 - Add third-party dependencies through `DEPS`, GN configuration, and necessary license records.

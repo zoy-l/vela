@@ -20,8 +20,8 @@ take precedence over the root rules.
 ## Tooling and workspace constraints
 
 - Prefer the `vl` tools for builds, tests, GN configuration, formatting, and static analysis. Commands
-  are documented in [`README.md`](README.md) and [`tools/vl.py`](tools/vl.py). Do not depend on the
-  VerseGame toolchain or modify the global `PATH`.
+  are documented in [`README.md`](README.md) and [`tools/vl.py`](tools/vl.py). Do not modify the
+  global `PATH`.
 - Do not overwrite, revert, or format unrelated files or changes. Do not manually edit generated or
   cached directories such as `out/`, and do not use destructive Git commands.
 - Use the patch tool for manual edits. Use UTF-8, LF line endings, and a final newline.

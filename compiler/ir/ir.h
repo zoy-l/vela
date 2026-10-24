@@ -17,11 +17,23 @@ enum class Opcode : std::uint8_t {
   LoadNull,
   LoadBool,
   LoadInt,
+  LoadDouble,
   Move,
   AddInt,
   SubInt,
   MulInt,
   DivInt,
+  AddDouble,
+  SubDouble,
+  MulDouble,
+  DivDouble,
+  NegDouble,
+  EqualDouble,
+  NotEqualDouble,
+  LessDouble,
+  LessEqualDouble,
+  GreaterDouble,
+  GreaterEqualDouble,
   NegInt,
   NotBool,
   EqualInt,
@@ -74,12 +86,14 @@ struct Function final {
   std::uint16_t parameter_count = 0;
   std::uint16_t register_count = 0;
   std::vector<Instruction> instructions;
+  std::vector<double> doubles;
 };
 
 struct Program final {
   std::vector<Class> classes;
   std::vector<Function> functions;
   std::vector<std::string> strings;
+  std::vector<frontend::TypeDescriptor> array_types;
 };
 
 }  // namespace vela::ir

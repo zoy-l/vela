@@ -133,6 +133,11 @@ BENCHMARK_CAPTURE(Compile, IntegerLoop, "integer_loop.vela")->Name("compile/inte
 BENCHMARK_CAPTURE(Compile, FunctionCalls, "function_calls.vela")->Name("compile/function_calls");
 BENCHMARK_CAPTURE(Compile, FieldAccess, "field_access.vela")->Name("compile/field_access");
 BENCHMARK_CAPTURE(Compile, AllocationGc, "allocation_gc.vela")->Name("compile/allocation_gc");
+BENCHMARK_CAPTURE(Compile, ArrayTraversal, "array_traversal.vela")->Name("compile/array_traversal");
+BENCHMARK_CAPTURE(Compile, ArrayAllocation, "array_allocation.vela")
+    ->Name("compile/array_allocation");
+BENCHMARK_CAPTURE(Compile, DoubleLoop, "double_loop.vela")->Name("compile/double_loop");
+BENCHMARK_CAPTURE(Compile, DoubleArray, "double_array.vela")->Name("compile/double_array");
 
 BENCHMARK_CAPTURE(FirstExecution, IntegerLoop, "integer_loop.vela", 499500)
     ->Name("first_execute/integer_loop");
@@ -142,6 +147,14 @@ BENCHMARK_CAPTURE(FirstExecution, FieldAccess, "field_access.vela", 1000)
     ->Name("first_execute/field_access");
 BENCHMARK_CAPTURE(FirstExecution, AllocationGc, "allocation_gc.vela", 1000)
     ->Name("first_execute/allocation_gc");
+BENCHMARK_CAPTURE(FirstExecution, ArrayTraversal, "array_traversal.vela", 120000)
+    ->Name("first_execute/array_traversal");
+BENCHMARK_CAPTURE(FirstExecution, ArrayAllocation, "array_allocation.vela", 499500)
+    ->Name("first_execute/array_allocation");
+BENCHMARK_CAPTURE(FirstExecution, DoubleLoop, "double_loop.vela", 1000)
+    ->Name("first_execute/double_loop");
+BENCHMARK_CAPTURE(FirstExecution, DoubleArray, "double_array.vela", 16000)
+    ->Name("first_execute/double_array");
 
 BENCHMARK_CAPTURE(SteadyExecution, IntegerLoop, "integer_loop.vela", 499500)
     ->Name("vm/integer_loop");
@@ -150,6 +163,13 @@ BENCHMARK_CAPTURE(SteadyExecution, FunctionCalls, "function_calls.vela", 1000)
 BENCHMARK_CAPTURE(SteadyExecution, FieldAccess, "field_access.vela", 1000)->Name("vm/field_access");
 BENCHMARK_CAPTURE(SteadyExecution, AllocationGc, "allocation_gc.vela", 1000)
     ->Name("vm/allocation_gc");
+BENCHMARK_CAPTURE(SteadyExecution, ArrayTraversal, "array_traversal.vela", 120000)
+    ->Name("vm/array_traversal");
+BENCHMARK_CAPTURE(SteadyExecution, ArrayAllocation, "array_allocation.vela", 499500)
+    ->Name("vm/array_allocation");
+BENCHMARK_CAPTURE(SteadyExecution, DoubleLoop, "double_loop.vela", 1000)->Name("vm/double_loop");
+BENCHMARK_CAPTURE(SteadyExecution, DoubleArray, "double_array.vela", 16000)
+    ->Name("vm/double_array");
 
 }  // namespace
 }  // namespace vela::benchmarks

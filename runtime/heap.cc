@@ -13,6 +13,43 @@ constexpr auto AlignUp(std::size_t value, std::size_t alignment) noexcept -> std
   return (value + alignment - 1) & ~(alignment - 1);
 }
 
+template <typename T>
+auto ArrayElements(HeapObject& object, std::size_t length) noexcept -> std::span<T> {
+  void* storage = std::span(&object, 1).last(0).data();
+  return {static_cast<T*>(storage), length};
+}
+
+template <typename T>
+auto ArrayElements(const HeapObject& object, std::size_t length) noexcept -> std::span<const T> {
+  const void* storage = std::span(&object, 1).last(0).data();
+  return {static_cast<const T*>(storage), length};
+}
+
+void InitializeArray(HeapObject& object, ValueKind kind, std::size_t length) noexcept {
+  switch (kind) {
+    case ValueKind::Boolean:
+      std::uninitialized_value_construct_n(ArrayElements<bool>(object, length).data(), length);
+      break;
+    case ValueKind::Integer:
+      std::uninitialized_value_construct_n(ArrayElements<std::int64_t>(object, length).data(),
+                                           length);
+      break;
+    case ValueKind::Double:
+      std::uninitialized_value_construct_n(ArrayElements<double>(object, length).data(), length);
+      break;
+    case ValueKind::String:
+      std::uninitialized_value_construct_n(ArrayElements<StringObject*>(object, length).data(),
+                                           length);
+      break;
+    case ValueKind::Object:
+      std::uninitialized_value_construct_n(ArrayElements<HeapObject*>(object, length).data(),
+                                           length);
+      break;
+    case ValueKind::Null:
+      break;
+  }
+}
+
 }  // namespace
 
 auto ObjectFields(HeapObject* object) noexcept -> Value* {
@@ -27,6 +64,24 @@ auto ObjectFields(const HeapObject* object) noexcept -> const Value* {
 
 ClassLayout::ClassLayout(std::uint32_t field_count, std::vector<std::uint32_t> reference_fields)
     : field_count_(field_count), reference_fields_(std::move(reference_fields)) {}
+
+auto ArrayLayout::element_size() const noexcept -> std::size_t {
+  switch (element_kind) {
+    case ValueKind::Boolean:
+      return sizeof(bool);
+    case ValueKind::Integer:
+      return sizeof(std::int64_t);
+    case ValueKind::Double:
+      return sizeof(double);
+    case ValueKind::Object:
+      return sizeof(HeapObject*);
+    case ValueKind::String:
+      return sizeof(StringObject*);
+    case ValueKind::Null:
+      return 0;
+  }
+  return 0;
+}
 
 RootRange::RootRange(Heap& heap, Value* values, std::size_t count) noexcept {
   Attach(heap, values, count);
@@ -110,16 +165,22 @@ auto Heap::AllocateInstance(ClassLayout& layout, std::span<const Value> initial_
   return object;
 }
 
-auto Heap::AllocateArray(std::size_t length) noexcept -> HeapObject* {
-  if (length > std::numeric_limits<std::uint32_t>::max()) {
+auto Heap::AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept -> HeapObject* {
+  const std::size_t element_size = layout.element_size();
+  if (element_size == 0 ||
+      length > (std::numeric_limits<std::uint32_t>::max() - sizeof(HeapObject)) / element_size) {
     return nullptr;
   }
-  MaybeCollect(sizeof(HeapObject));
-  HeapObject* object = AllocateRaw(sizeof(HeapObject));
+  const std::size_t requested_size = sizeof(HeapObject) + (length * element_size);
+  MaybeCollect(requested_size);
+  HeapObject* object = AllocateRaw(requested_size);
   if (object == nullptr) {
     return nullptr;
   }
-  object->array_values = std::make_unique<std::vector<Value>>(length, Value::Null());
+  object->array_layout = &layout;
+  object->array_length = static_cast<std::uint32_t>(length);
+  // payload 与对象头单次分配；按原生元素类型建立对象生命周期。
+  InitializeArray(*object, layout.element_kind, length);
   object->kind = ObjectKind::Array;
   object->layout = nullptr;
   object->gray_next = nullptr;
@@ -162,30 +223,79 @@ auto Heap::SetField(HeapObject& object, std::uint32_t index, Value value) noexce
   return true;
 }
 
-auto Heap::GetElement(HeapObject& object, std::uint32_t index) noexcept -> Value* {
-  if (object.kind != ObjectKind::Array || object.array_values == nullptr ||
-      index >= object.array_values->size()) {
-    return nullptr;
+auto Heap::GetElement(const HeapObject& object, std::uint32_t index) noexcept
+    -> std::expected<Value, ArrayAccessError> {
+  if (object.kind != ObjectKind::Array) {
+    return std::unexpected(ArrayAccessError::NotArray);
   }
-  return std::span(*object.array_values).subspan(index).data();
+  const auto length = object.array_length;
+  if (index >= length) {
+    return std::unexpected(ArrayAccessError::OutOfBounds);
+  }
+  switch (object.array_layout->element_kind) {
+    case ValueKind::Boolean:
+      return Value::Boolean(ArrayElements<bool>(object, length).subspan(index).front());
+    case ValueKind::Integer:
+      return Value::Integer(ArrayElements<std::int64_t>(object, length).subspan(index).front());
+    case ValueKind::Double:
+      return Value::Double(ArrayElements<double>(object, length).subspan(index).front());
+    case ValueKind::String: {
+      auto* value = ArrayElements<StringObject*>(object, length).subspan(index).front();
+      return value == nullptr ? Value::Null() : Value::String(value);
+    }
+    case ValueKind::Object: {
+      auto* value = ArrayElements<HeapObject*>(object, length).subspan(index).front();
+      return value == nullptr ? Value::Null() : Value::Object(value);
+    }
+    case ValueKind::Null:
+      return std::unexpected(ArrayAccessError::ElementTypeMismatch);
+  }
+  return std::unexpected(ArrayAccessError::ElementTypeMismatch);
 }
 
-auto Heap::GetElement(const HeapObject& object, std::uint32_t index) noexcept -> const Value* {
-  if (object.kind != ObjectKind::Array || object.array_values == nullptr ||
-      index >= object.array_values->size()) {
-    return nullptr;
+auto Heap::SetElement(HeapObject& object, std::uint32_t index, Value value) noexcept
+    -> std::expected<void, ArrayAccessError> {
+  if (object.kind != ObjectKind::Array) {
+    return std::unexpected(ArrayAccessError::NotArray);
   }
-  return std::span(*object.array_values).subspan(index).data();
-}
-
-auto Heap::SetElement(HeapObject& object, std::uint32_t index, Value value) noexcept -> bool {
-  Value* element = GetElement(object, index);
-  if (element == nullptr) {
-    return false;
+  const auto length = object.array_length;
+  if (index >= length) {
+    return std::unexpected(ArrayAccessError::OutOfBounds);
   }
-  *element = value;
-  WriteBarrier(object, value);
-  return true;
+  const auto& layout = *object.array_layout;
+  if (value.kind() != layout.element_kind) {
+    return std::unexpected(ArrayAccessError::ElementTypeMismatch);
+  }
+  switch (layout.element_kind) {
+    case ValueKind::Boolean:
+      ArrayElements<bool>(object, length).subspan(index).front() = value.AsBoolean();
+      break;
+    case ValueKind::Integer:
+      ArrayElements<std::int64_t>(object, length).subspan(index).front() = value.AsInteger();
+      break;
+    case ValueKind::Double:
+      ArrayElements<double>(object, length).subspan(index).front() = value.AsDouble();
+      break;
+    case ValueKind::String:
+      ArrayElements<StringObject*>(object, length).subspan(index).front() = value.AsString();
+      break;
+    case ValueKind::Object: {
+      auto* child = value.AsObject();
+      if (child == nullptr ||
+          (layout.element_class != nullptr &&
+           (child->kind != ObjectKind::Instance || child->layout != layout.element_class)) ||
+          (layout.element_array != nullptr &&
+           (child->kind != ObjectKind::Array || child->array_layout != layout.element_array))) {
+        return std::unexpected(ArrayAccessError::ElementTypeMismatch);
+      }
+      ArrayElements<HeapObject*>(object, length).subspan(index).front() = child;
+      WriteBarrier(object, value);
+      break;
+    }
+    case ValueKind::Null:
+      return std::unexpected(ArrayAccessError::ElementTypeMismatch);
+  }
+  return {};
 }
 
 void Heap::StartCollection() noexcept {
@@ -313,9 +423,13 @@ void Heap::MarkObject(HeapObject& object) noexcept {
 
 void Heap::ProcessGrayObject(HeapObject& object) noexcept {
   object.color = 1;
-  if (object.kind == ObjectKind::Array && object.array_values != nullptr) {
-    for (const Value value : *object.array_values) {
-      MarkValue(value);
+  if (object.kind == ObjectKind::Array) {
+    if (object.array_layout->element_kind == ValueKind::Object) {
+      for (HeapObject* child : ArrayElements<HeapObject*>(object, object.array_length)) {
+        if (child != nullptr) {
+          MarkObject(*child);
+        }
+      }
     }
     return;
   }
@@ -377,9 +491,7 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   const std::size_t block_size = object.allocation_size;
   allocated_bytes_ -= block_size;
 
-  if (object.kind == ObjectKind::Array) {
-    object.array_values.reset();
-  } else if (object.layout != nullptr) {
+  if (object.kind == ObjectKind::Instance && object.layout != nullptr) {
     std::destroy_n(ObjectFields(&object), object.layout->field_count());
   }
   const std::size_t class_index = SizeClassIndex(block_size);

@@ -10,6 +10,7 @@
 #include "compiler/compiler.h"
 #include "compiler/frontend/checker.h"
 #include "runtime/isolate.h"
+#include "runtime/value_io.h"
 #include "vm/vm.h"
 
 namespace {
@@ -53,20 +54,6 @@ auto FindEntry(const vela::compiler::CompiledProgram& program, std::size_t* entr
   return function;
 }
 
-void PrintValue(const vela::runtime::Value& value) {
-  if (value.IsInteger()) {
-    std::cout << value.AsInteger();
-  } else if (value.IsBoolean()) {
-    std::cout << (value.AsBoolean() ? "true" : "false");
-  } else if (value.IsNull()) {
-    std::cout << "null";
-  } else if (value.IsString()) {
-    std::cout << value.AsString()->value;
-  } else {
-    std::cout << "object";
-  }
-}
-
 auto CheckFile(std::string_view path_text) -> int {
   const std::string path(path_text);
   std::string source;
@@ -95,6 +82,8 @@ auto ExecutionStatusName(vela::vm::ExecutionStatus status) -> const char* {
       return "runtime type error";
     case vela::vm::ExecutionStatus::InvalidField:
       return "invalid field";
+    case vela::vm::ExecutionStatus::IndexOutOfBounds:
+      return "array index out of bounds";
     case vela::vm::ExecutionStatus::IntegerOverflow:
       return "integer overflow";
     case vela::vm::ExecutionStatus::DivisionByZero:
@@ -137,7 +126,7 @@ auto RunFile(std::string_view path_text) -> int {
     std::cerr << "vela: " << ExecutionStatusName(result.status) << '\n';
     return 1;
   }
-  PrintValue(result.value);
+  vela::runtime::WriteValue(std::cout, result.value);
   std::cout << '\n';
   return 0;
 }

@@ -1,3 +1,4 @@
+#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -230,6 +231,111 @@ TEST(CompilerTest, PreservesSymbolsAndShadowingAcrossTableGrowth) {
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsInteger());
   EXPECT_EQ(result.value.AsInteger(), kExpectedResult);
+}
+
+TEST(CompilerTest, ExecutesTypedArraysAcrossCallsMethodsAndAssignments) {
+  constexpr std::string_view source = R"(
+enum Shade { light, dark }
+class Item {
+  int value;
+  int read() { return this.value; }
+}
+class Store {
+  Item[][] items;
+  string[] labels;
+  bool[] flags;
+  Shade[] shades;
+  int read() { return this.items[0][0].read(); }
+  Item[] replace(Item[] items) {
+    this.items[0] = items;
+    return this.items[0];
+  }
+}
+int[][] identity(int[][] input) { return input; }
+Shade[] shades() { return [.light, .dark]; }
+bool flag(bool[] input) { return input[0]; }
+bool main() {
+  Store store = Store(items: [[Item(value: 40)]], labels: ["old"],
+                      flags: [false], shades: shades());
+  bool[] alias = store.flags;
+  alias[0] = true;
+  store.labels[0] = "new";
+  store.shades[0] = .dark;
+  store.items[0][0].value = 42;
+  Item[] replaced = store.replace([Item(value: 42)]);
+  int[][] matrix = identity([[], [1, 2]]);
+  matrix[0] = [3];
+  int[] row = matrix[1] = [4, 5];
+  return store.read() == 42 && replaced[0].value == 42 && flag(store.flags) &&
+         store.labels[0] == "new" && store.shades[0] == Shade.dark &&
+         matrix[0][0] == 3 && row[1] == 5 &&
+         [Item(value: 7)][0].read() == 7 && [true, false][0] &&
+         ["a", "b"][1] == "b";
+}
+)";
+  Isolate isolate;
+  const auto compiled = CompileSource(source, isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto* entry = compiled.program.FindFunction("main");
+  ASSERT_NE(entry, nullptr);
+  const auto index = static_cast<std::uint32_t>(entry - compiled.program.functions.data());
+  const auto result = VirtualMachine(isolate).Execute(compiled.program.View(), index);
+  ASSERT_TRUE(result.Succeeded());
+  ASSERT_TRUE(result.value.IsBoolean());
+  EXPECT_TRUE(result.value.AsBoolean());
+}
+
+TEST(CompilerTest, ArrayFieldsAndNestedArraysRetainTheirObjects) {
+  constexpr std::string_view source = R"(
+class Item { int value; }
+class Store { Item[][] items; bool[] flags; string[] labels; }
+Store main() {
+  return Store(items: [[Item(value: 42)]], flags: [true], labels: ["alive"]);
+}
+)";
+  Isolate isolate(1);
+  const auto compiled = CompileSource(source, isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto* entry = compiled.program.FindFunction("main");
+  ASSERT_NE(entry, nullptr);
+  const auto result = VirtualMachine(isolate).Execute(entry->View());
+  ASSERT_TRUE(result.Succeeded());
+  Value root = result.value;
+  auto& heap = isolate.heap();
+  RootRange roots(heap, &root, 1);
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 6U);
+  const auto* items = runtime::Heap::GetField(*root.AsObject(), 0);
+  ASSERT_NE(items, nullptr);
+  const auto row = runtime::Heap::GetElement(*items->AsObject(), 0);
+  ASSERT_TRUE(row.has_value());
+  const auto item = runtime::Heap::GetElement(*row->AsObject(), 0);
+  ASSERT_TRUE(item.has_value());
+  EXPECT_EQ(runtime::Heap::GetField(*item->AsObject(), 0)->AsInteger(), kExpectedSum);
+  root = Value::Null();
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 0U);
+}
+
+TEST(CompilerTest, ReportsArrayBoundsErrors) {
+  constexpr auto kSources = std::to_array<std::string_view>({
+      "int main() { int[] a = []; return a[0]; }",
+      "int main() { int[] a = [1]; return a[-1]; }",
+      "int main() { int[] a = [1]; a[1] = 2; return 0; }",
+  });
+  for (const auto source : kSources) {
+    SCOPED_TRACE(source);
+    Isolate isolate;
+    const auto compiled = CompileSource(source, isolate);
+    ASSERT_TRUE(compiled.Succeeded());
+    const auto* entry = compiled.program.FindFunction("main");
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(VirtualMachine(isolate).Execute(entry->View()).status,
+              ExecutionStatus::IndexOutOfBounds);
+  }
 }
 
 }  // namespace

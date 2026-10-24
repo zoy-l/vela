@@ -78,6 +78,7 @@ auto Lowerer::Lower() -> LoweringResult {
   diagnostics_.clear();
   class_ids_.clear();
   function_ids_.clear();
+  array_type_ids_.clear();
   BuildClassTable();
   BuildFunctionTable();
   for (const frontend::Function& function : source_.functions) {
@@ -156,6 +157,7 @@ void Lowerer::LowerFunction(const frontend::Function& source, const frontend::Cl
       static_cast<std::uint16_t>(source.parameters.size() + ((owner != nullptr) ? 1 : 0));
   current_function_ = &function;
   next_register_ = 0;
+  double_constant_ids_.clear();
   scopes_.clear();
   loops_.clear();
   PushScope();
@@ -276,9 +278,8 @@ auto Lowerer::LowerExpression(const frontend::Expression& expression,
       });
       return {.reg = reg, .type = {.kind = frontend::TypeDescriptor::Kind::Bool, .name = "bool"}};
     }
-    case frontend::Expression::Kind::FloatLiteral:
-      AddDiagnostic(expression.location, "this value type is not supported by the bootstrap VM");
-      return {.reg = 0, .type = InvalidType()};
+    case frontend::Expression::Kind::DoubleLiteral:
+      return LowerDoubleLiteral(expression);
     case frontend::Expression::Kind::StringLiteral:
       return LowerStringLiteral(expression);
     case frontend::Expression::Kind::ArrayLiteral:
@@ -347,7 +348,9 @@ auto Lowerer::LowerAssignment(const frontend::Expression& expression) -> Lowerer
   if (left.kind == frontend::Expression::Kind::Index) {
     const LoweredValue array = LowerExpression(*left.object);
     const LoweredValue index = LowerExpression(*left.index);
-    const LoweredValue value = LowerExpression(right);
+    const auto& element_type =
+        model_.types.at(array.type.name.substr(0, array.type.name.size() - 2));
+    const LoweredValue value = LowerExpression(right, &element_type);
     Emit({
         .opcode = Opcode::SetIndex,
         .dst = array.reg,
@@ -355,7 +358,7 @@ auto Lowerer::LowerAssignment(const frontend::Expression& expression) -> Lowerer
         .rhs = value.reg,
         .location = left.location,
     });
-    return {.reg = value.reg, .type = {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"}};
+    return {.reg = value.reg, .type = element_type};
   }
   AddDiagnostic(left.location, "left side of assignment is not lowerable");
   return {.reg = 0, .type = InvalidType()};
@@ -414,6 +417,12 @@ auto Lowerer::LowerConstruction(const frontend::Expression& expression,
 }
 
 auto Lowerer::LowerMember(const frontend::Expression& expression) -> Lowerer::LoweredValue {
+  if (expression.object->kind == frontend::Expression::Kind::Name) {
+    const auto type = model_.types.find(expression.object->text);
+    if (type != model_.types.end() && type->second.kind == frontend::TypeDescriptor::Kind::Enum) {
+      return LowerShorthandMember(expression, &type->second);
+    }
+  }
   const LoweredValue object = LowerExpression(*expression.object);
   if (object.type.kind != frontend::TypeDescriptor::Kind::Class) {
     AddDiagnostic(expression.location, "member access requires a class value");
@@ -435,20 +444,6 @@ auto Lowerer::LowerMember(const frontend::Expression& expression) -> Lowerer::Lo
       .location = expression.location,
   });
   return {.reg = result, .type = class_info->fields.at(expression.text)};
-}
-
-auto Lowerer::LowerIndex(const frontend::Expression& expression) -> Lowerer::LoweredValue {
-  const LoweredValue array = LowerExpression(*expression.object);
-  const LoweredValue index = LowerExpression(*expression.index);
-  const RegisterId result = AllocateTemporary(expression.location);
-  Emit({
-      .opcode = Opcode::GetIndex,
-      .dst = result,
-      .lhs = array.reg,
-      .rhs = index.reg,
-      .location = expression.location,
-  });
-  return {.reg = result, .type = {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"}};
 }
 
 auto Lowerer::LowerCall(const frontend::Expression& expression,
@@ -755,37 +750,6 @@ auto Lowerer::LowerStringLiteral(const frontend::Expression& expression) -> Lowe
   };
 }
 
-auto Lowerer::LowerArrayLiteral(const frontend::Expression& expression) -> Lowerer::LoweredValue {
-  const RegisterId array = AllocateTemporary(expression.location);
-  Emit({
-      .opcode = Opcode::NewArray,
-      .dst = array,
-      .index = static_cast<std::uint32_t>(expression.elements.size()),
-      .location = expression.location,
-  });
-  for (std::size_t index = 0; index < expression.elements.size(); ++index) {
-    const LoweredValue element = LowerExpression(*expression.elements.at(index));
-    const RegisterId index_reg = AllocateTemporary(expression.location);
-    Emit({
-        .opcode = Opcode::LoadInt,
-        .dst = index_reg,
-        .immediate = static_cast<std::int64_t>(index),
-        .location = expression.location,
-    });
-    Emit({
-        .opcode = Opcode::SetIndex,
-        .dst = array,
-        .lhs = index_reg,
-        .rhs = element.reg,
-        .location = expression.location,
-    });
-  }
-  return {
-      .reg = array,
-      .type = {.kind = frontend::TypeDescriptor::Kind::Array, .name = "array"},
-  };
-}
-
 auto Lowerer::LowerShorthandMember(const frontend::Expression& expression,
                                    const frontend::TypeDescriptor* expected)
     -> Lowerer::LoweredValue {
@@ -828,6 +792,15 @@ auto Lowerer::LowerShorthandMember(const frontend::Expression& expression,
 auto Lowerer::LowerUnary(const frontend::Expression& expression) -> Lowerer::LoweredValue {
   const LoweredValue operand = LowerExpression(*expression.operand);
   const RegisterId result = AllocateTemporary(expression.location);
+  if (expression.text == "-" && operand.type.kind == frontend::TypeDescriptor::Kind::Double) {
+    Emit({
+        .opcode = Opcode::NegDouble,
+        .dst = result,
+        .lhs = operand.reg,
+        .location = expression.location,
+    });
+    return {.reg = result, .type = operand.type};
+  }
   if (expression.text == "-" && IsInteger(operand.type)) {
     Emit({
         .opcode = Opcode::NegInt,
@@ -859,6 +832,9 @@ auto Lowerer::LowerBinary(const frontend::Expression& expression) -> Lowerer::Lo
   }
   const LoweredValue left = LowerExpression(*expression.left);
   const LoweredValue right = LowerExpression(*expression.right, &left.type);
+  if (left.type.kind == frontend::TypeDescriptor::Kind::Double) {
+    return LowerDoubleBinary(expression, left, right);
+  }
   const RegisterId result = AllocateTemporary(expression.location);
   Opcode opcode = Opcode::AddInt;
   frontend::TypeDescriptor result_type = left.type;

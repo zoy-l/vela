@@ -100,10 +100,15 @@ class Lowerer final {
   void LowerFor(const frontend::Statement& statement);
 
   auto LowerIntegerLiteral(const frontend::Expression& expression) -> LoweredValue;
+  auto LowerDoubleLiteral(const frontend::Expression& expression) -> LoweredValue;
+  auto LowerDoubleBinary(const frontend::Expression& expression,
+                         const LoweredValue& left,
+                         const LoweredValue& right) -> LoweredValue;
 
   auto LowerStringLiteral(const frontend::Expression& expression) -> LoweredValue;
 
   auto LowerArrayLiteral(const frontend::Expression& expression) -> LoweredValue;
+  auto RegisterArrayType(const frontend::TypeDescriptor& type) -> std::uint32_t;
 
   auto LowerShorthandMember(const frontend::Expression& expression,
                             const frontend::TypeDescriptor* expected) -> LoweredValue;
@@ -124,6 +129,8 @@ class Lowerer final {
   frontend::Diagnostics diagnostics_;
   ClassMap class_ids_;
   FunctionMap function_ids_;
+  absl::flat_hash_map<std::string, std::uint32_t> array_type_ids_;
+  absl::flat_hash_map<std::uint64_t, std::uint32_t> double_constant_ids_;
   Function* current_function_ = nullptr;
   std::vector<LocalMap> scopes_;
   std::vector<LoopTargets> loops_;

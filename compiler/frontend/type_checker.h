@@ -21,7 +21,7 @@ struct TypeDescriptor final {
     Void,
     Bool,
     Int,
-    Float,
+    Double,
     String,
     Array,
     Enum,
@@ -47,6 +47,8 @@ struct ClassDescriptor final {
 
 struct SemanticModel final {
   absl::flat_hash_map<std::string, TypeDescriptor> types;
+  // 借用受检 AST 的表达式地址；模型只在该 AST 存活期间使用。
+  absl::flat_hash_map<const Expression*, TypeDescriptor> array_literals;
   absl::flat_hash_map<std::string, absl::flat_hash_set<std::string>> enum_members;
   absl::flat_hash_map<std::string, ClassDescriptor> classes;
   absl::flat_hash_map<std::string, FunctionDescriptor> functions;
@@ -107,6 +109,7 @@ class TypeChecker final {
   auto CheckIntegerLiteral(const Expression& expression) -> Type;
 
   auto CheckIndex(const Expression& expression) -> Type;
+  auto CheckArrayLiteral(const Expression& expression, const Type* expected) -> Type;
 
   auto CheckShorthandMember(const Expression& expression, const Type* expected) -> Type;
 
@@ -121,6 +124,7 @@ class TypeChecker final {
   Diagnostics diagnostics_;
   std::size_t function_count_ = 0;
   absl::flat_hash_map<std::string, Type> types_;
+  absl::flat_hash_map<const Expression*, Type> array_literals_;
   absl::flat_hash_map<std::string, absl::flat_hash_set<std::string>> enum_members_;
   absl::flat_hash_map<std::string, ClassInfo> classes_;
   absl::flat_hash_map<std::string, FunctionInfo> functions_;

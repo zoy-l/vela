@@ -1,6 +1,6 @@
 # Vela benchmarks
 
-Google Benchmark runs the four Vela workloads through the production compiler
+Google Benchmark runs eight Vela workloads through the production compiler
 and VM. Versions are pinned in `DEPS`; `//benchmarks:vela_benchmarks` links the
 upstream `benchmark_main` and is separate from the language executable.
 Native benchmark sources use `*_benchmark.cc`. Generated symbol-table workloads
@@ -37,6 +37,10 @@ Each workload registers three cases:
 | `function_calls` | 1000 |
 | `field_access` | 1000 |
 | `allocation_gc` | 1000 |
+| `array_traversal` | 120000 |
+| `array_allocation` | 499500 |
+| `double_loop` | 1000 |
+| `double_array` | 16000 |
 | `symbol_tables/32`, `symbol_tables/256`, `symbol_tables/1024` | 11 |
 
 `compile/symbol_tables/*` generates enums, classes, methods, functions, and long
@@ -44,6 +48,42 @@ identifier names before timing. It validates a compiled execution before the
 measurement loop, then times complete compilation and resource destruction.
 Each case reports source size in bytes. Calls target the first free function so
 the workload size does not exceed the current bytecode's 8-bit call operand.
+
+`array_traversal` reads a 16-element integer array over 1,000 rounds (16,000
+indexed reads). `array_allocation` creates 1,000 such arrays, overwrites element
+zero, and sums that element. Both use the normal checked access and GC paths;
+the latter includes array backing storage in GC allocation pressure.
+
+`double_loop` performs 1,000 double additions and verifies the result is `500.0`.
+`double_array` performs 16,000 reads and additions from native double array
+storage, verifies a sum of `120000.0`, and returns the number of indexed reads.
+
+Array results measured on 2026-10-24 with the pinned Windows Clang Release
+toolchain, `--benchmark_min_time=0.2s --benchmark_repetitions=5`, are below.
+Values are median wall times per complete workload, in microseconds; VM times
+include loop dispatch, checked element access, allocation, and collection.
+
+| Measurement | `array_traversal` | `array_allocation` |
+| --- | ---: | ---: |
+| Compile | 10.684 | 9.513 |
+| First execution | 405.753 | 202.045 |
+| Steady execution | 412.916 | 197.193 |
+
+The JSON report is `.cache/typed-arrays-benchmark.json`. All 21 benchmark cases
+completed without `error_occurred`; every execution case checked its result.
+
+Double results from the same Release toolchain and repetition settings on
+2026-10-24, in median wall-clock microseconds per workload:
+
+| Measurement | `double_loop` | `double_array` |
+| --- | ---: | ---: |
+| Compile | 10.636 | 21.114 |
+| First execution | 32.624 | 422.543 |
+| Steady execution | 24.155 | 420.799 |
+
+The report is `.cache/double-benchmark.json`; all 27 cases completed without
+errors. The double loop reports zero heap allocation. The array measurement
+includes normal checked indexing, loop dispatch, allocation, and collection.
 
 To compare compiler container changes with repetitions and a JSON report:
 

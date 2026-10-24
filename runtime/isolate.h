@@ -29,10 +29,12 @@ class Isolate final {
                                        std::span<const std::uint32_t> reference_fields)
       -> ClassLayout*;
   [[nodiscard]] auto CreateString(std::string value) -> StringObject*;
+  [[nodiscard]] auto CreateArrayLayout(ArrayLayout layout) -> const ArrayLayout*;
 
  private:
   std::vector<std::unique_ptr<ClassLayout>> class_layouts_;
   std::vector<std::unique_ptr<StringObject>> strings_;
+  std::vector<std::unique_ptr<ArrayLayout>> array_layouts_;
   Heap heap_;
 };
 

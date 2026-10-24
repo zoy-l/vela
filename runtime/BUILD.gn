@@ -7,6 +7,8 @@ source_set("runtime") {
     "object.h",
     "string.h",
     "value.h",
+    "value_io.cc",
+    "value_io.h",
   ]
 }
 

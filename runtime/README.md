@@ -21,8 +21,26 @@ values are deliberately not implicit roots; the VM keeps temporary values in
 registered frame slots before it calls the allocator.
 
 Small objects use size-class free lists. `Value` is currently a general 16-byte
-tagged value for the bootstrap runtime; typed VM registers and primitive arrays
-can use narrower representations as those storage types are added.
+tagged value for VM registers and class fields. Arrays use one allocation for
+the header and native contiguous elements: booleans occupy one byte; integers,
+doubles, and enum ordinals eight bytes; and reference elements one pointer. The full
+allocation contributes to heap accounting and collection thresholds.
+
+Each array has an Isolate-owned `ArrayLayout` that identifies its element kind
+and, for class or nested-array elements, the exact child layout. Element stores
+check bounds and storage type, and reference stores apply the GC write barrier.
+Marking visits only object-pointer arrays; primitive arrays require no element
+scan. Class reference-field metadata includes array fields. Strings retain the
+existing Isolate lifetime and are not reclaimed by the object collector.
+
+`Heap::GetElement` returns a boxed register value; `Heap::SetElement` stores its
+native payload. Both report distinct non-array, bounds, and type errors through
+`std::expected`. Raw pointers to element `Value` slots no longer exist.
+
+Double values retain their own `ValueKind::Double` tag; numeric operations and
+array stores never convert integer payloads implicitly. Double arithmetic does
+not allocate heap objects. `WriteValue` provides the common VM/CLI output path
+and uses shortest round-trip formatting for double values.
 
 The heap is isolate-local and single-threaded. A future multi-threaded host API
 must register roots through an isolate boundary instead of accessing the heap

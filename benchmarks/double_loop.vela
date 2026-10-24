@@ -1,0 +1,8 @@
+int main() {
+  double value = 0.0;
+  for (int index = 0; index < 1000; index = index + 1) {
+    value = value + 0.5;
+  }
+  if (value == 500.0) return 1000;
+  return 0;
+}

@@ -8,6 +8,7 @@
 #include <limits>
 #include <utility>
 
+#include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
 #include "compiler/frontend/lexer.h"
@@ -100,6 +101,30 @@ auto EmitOpcode(ir::Opcode opcode) -> vm::OpCode {
       return vm::OpCode::LoadBool;
     case ir::Opcode::LoadInt:
       return vm::OpCode::LoadInt;
+    case ir::Opcode::LoadDouble:
+      return vm::OpCode::LoadDouble;
+    case ir::Opcode::AddDouble:
+      return vm::OpCode::AddDouble;
+    case ir::Opcode::SubDouble:
+      return vm::OpCode::SubDouble;
+    case ir::Opcode::MulDouble:
+      return vm::OpCode::MulDouble;
+    case ir::Opcode::DivDouble:
+      return vm::OpCode::DivDouble;
+    case ir::Opcode::NegDouble:
+      return vm::OpCode::NegDouble;
+    case ir::Opcode::EqualDouble:
+      return vm::OpCode::EqualDouble;
+    case ir::Opcode::NotEqualDouble:
+      return vm::OpCode::NotEqualDouble;
+    case ir::Opcode::LessDouble:
+      return vm::OpCode::LessDouble;
+    case ir::Opcode::LessEqualDouble:
+      return vm::OpCode::LessEqualDouble;
+    case ir::Opcode::GreaterDouble:
+      return vm::OpCode::GreaterDouble;
+    case ir::Opcode::GreaterEqualDouble:
+      return vm::OpCode::GreaterEqualDouble;
     case ir::Opcode::Move:
       return vm::OpCode::Move;
     case ir::Opcode::AddInt:
@@ -211,6 +236,16 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
                               static_cast<std::int16_t>(instruction.immediate));
     case ir::Opcode::Move:
     case ir::Opcode::AddInt:
+    case ir::Opcode::AddDouble:
+    case ir::Opcode::SubDouble:
+    case ir::Opcode::MulDouble:
+    case ir::Opcode::DivDouble:
+    case ir::Opcode::EqualDouble:
+    case ir::Opcode::NotEqualDouble:
+    case ir::Opcode::LessDouble:
+    case ir::Opcode::LessEqualDouble:
+    case ir::Opcode::GreaterDouble:
+    case ir::Opcode::GreaterEqualDouble:
     case ir::Opcode::SubInt:
     case ir::Opcode::MulInt:
     case ir::Opcode::DivInt:
@@ -231,8 +266,20 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
     case ir::Opcode::SetIndex:
       return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs),
                            Byte(instruction.rhs));
-    case ir::Opcode::LoadString:
     case ir::Opcode::NewArray:
+      if (instruction.index > std::numeric_limits<std::uint8_t>::max() ||
+          instruction.immediate < 0 ||
+          std::cmp_greater(instruction.immediate, std::numeric_limits<std::uint8_t>::max())) {
+        return std::unexpected(frontend::Diagnostic{
+            .location = instruction.location,
+            .message = "array layout index or length exceeds bytecode encoding",
+        });
+      }
+      return vm::EncodeABC(opcode, Byte(instruction.dst),
+                           static_cast<std::uint8_t>(instruction.index),
+                           static_cast<std::uint8_t>(instruction.immediate));
+    case ir::Opcode::LoadString:
+    case ir::Opcode::LoadDouble:
       if (instruction.index > std::numeric_limits<std::uint8_t>::max()) {
         return std::unexpected(frontend::Diagnostic{
             .location = instruction.location,
@@ -254,6 +301,7 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
                            static_cast<std::uint8_t>(instruction.index), Byte(instruction.lhs));
     case ir::Opcode::NegInt:
     case ir::Opcode::NotBool:
+    case ir::Opcode::NegDouble:
       return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs), 0);
     case ir::Opcode::NewInstance:
       if (instruction.index >= class_count) {
@@ -297,6 +345,63 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
 
   return std::unexpected(
       frontend::Diagnostic{.location = instruction.location, .message = "invalid IR opcode"});
+}
+
+auto CreateArrayLayouts(const ir::Program& program,
+                        const frontend::SemanticModel& model,
+                        std::span<runtime::ClassLayout* const> class_layouts,
+                        runtime::Isolate& isolate)
+    -> std::expected<std::vector<const runtime::ArrayLayout*>, frontend::Diagnostic> {
+  if (program.array_types.empty()) {
+    return std::vector<const runtime::ArrayLayout*>();
+  }
+  absl::flat_hash_map<std::string, runtime::ClassLayout*> classes_by_name;
+  classes_by_name.reserve(program.classes.size());
+  for (std::size_t index = 0; index < program.classes.size(); ++index) {
+    classes_by_name.emplace(program.classes.at(index).name, class_layouts.subspan(index).front());
+  }
+  std::vector<const runtime::ArrayLayout*> layouts;
+  layouts.reserve(program.array_types.size());
+  absl::flat_hash_map<std::string, const runtime::ArrayLayout*> arrays_by_name;
+  arrays_by_name.reserve(program.array_types.size());
+  for (const auto& type : program.array_types) {
+    const auto& element = model.types.at(type.name.substr(0, type.name.size() - 2));
+    runtime::ArrayLayout layout;
+    using Kind = frontend::TypeDescriptor::Kind;
+    switch (element.kind) {
+      case Kind::Bool:
+        layout.element_kind = runtime::ValueKind::Boolean;
+        break;
+      case Kind::Int:
+      case Kind::Enum:
+        layout.element_kind = runtime::ValueKind::Integer;
+        break;
+      case Kind::Double:
+        layout.element_kind = runtime::ValueKind::Double;
+        break;
+      case Kind::String:
+        layout.element_kind = runtime::ValueKind::String;
+        break;
+      case Kind::Class:
+        layout.element_kind = runtime::ValueKind::Object;
+        layout.element_class = classes_by_name.at(element.name);
+        break;
+      case Kind::Array:
+        layout.element_kind = runtime::ValueKind::Object;
+        layout.element_array = arrays_by_name.at(element.name);
+        break;
+      case Kind::Invalid:
+      case Kind::Void:
+        return std::unexpected(frontend::Diagnostic{
+            .location = frontend::SourceLocation(),
+            .message = "invalid array element type",
+        });
+    }
+    const auto* stored = isolate.CreateArrayLayout(layout);
+    arrays_by_name.emplace(type.name, stored);
+    layouts.push_back(stored);
+  }
+  return layouts;
 }
 
 }  // namespace
@@ -449,18 +554,21 @@ auto CompileProgram(const frontend::Program& source,
   for (const ir::Class& class_info : lowered.program.classes) {
     std::vector<std::uint32_t> reference_fields;
     for (std::size_t index = 0; index < class_info.field_types.size(); ++index) {
-      if (class_info.field_types.at(index).kind == frontend::TypeDescriptor::Kind::Class) {
+      const auto kind = class_info.field_types.at(index).kind;
+      if (kind == frontend::TypeDescriptor::Kind::Class ||
+          kind == frontend::TypeDescriptor::Kind::Array) {
         reference_fields.push_back(static_cast<std::uint32_t>(index));
       }
     }
     runtime::ClassLayout* layout = isolate.CreateClassLayout(
         static_cast<std::uint32_t>(class_info.field_types.size()), reference_fields);
-    if (layout == nullptr) {
-      AddDiagnostic(result.diagnostics, frontend::SourceLocation(),
-                    "unable to allocate class layout");
-      return result;
-    }
     class_layouts.push_back(layout);
+  }
+
+  const auto array_layouts = CreateArrayLayouts(lowered.program, model, class_layouts, isolate);
+  if (!array_layouts) {
+    result.diagnostics.push_back(array_layouts.error());
+    return result;
   }
 
   result.program.functions.reserve(lowered.program.functions.size());
@@ -479,6 +587,8 @@ auto CompileProgram(const frontend::Program& source,
     compiled.name = function.name;
     compiled.classes = class_layouts;
     compiled.strings = result.program.strings;
+    compiled.arrays = *array_layouts;
+    compiled.doubles = function.doubles;
     compiled.register_count = static_cast<std::uint8_t>(function.register_count);
     compiled.parameter_count = function.parameter_count;
     compiled.code.reserve(function.instructions.size());

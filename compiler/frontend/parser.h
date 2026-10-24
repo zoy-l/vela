@@ -38,6 +38,7 @@ class Parser final {
   auto ParseMethod(const TypeName& type, const Token& member) -> std::optional<Function>;
   auto ParseParameter() -> std::optional<Parameter>;
   auto ParseType() -> std::optional<TypeName>;
+  [[nodiscard]] auto IsVariableDeclaration() const -> bool;
   auto ParseBlock() -> std::unique_ptr<Statement>;
   auto ParseStatement() -> std::unique_ptr<Statement>;
   auto ParseVariableDeclaration() -> std::unique_ptr<Statement>;
@@ -60,6 +61,7 @@ class Parser final {
   auto ParseUnary() -> std::unique_ptr<Expression>;
   auto ParsePostfix() -> std::unique_ptr<Expression>;
   auto ParsePrimary() -> std::unique_ptr<Expression>;
+  auto ParseDoubleLiteral() -> std::unique_ptr<Expression>;
   auto ParseArguments() -> std::vector<CallArgument>;
   static auto MakeExpression(Expression::Kind kind, SourceLocation location)
       -> std::unique_ptr<Expression>;

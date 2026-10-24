@@ -1,80 +1,94 @@
 # Vela
 
-Vela is a new statically typed scripting language workspace. The repository
-contains the native build environment, a static front end, and a bootstrap
-bytecode runtime; later native backends are still being built.
+[**English**](README.md) | [简体中文](README.zh-CN.md)
 
-The project follows a small GN/Ninja layout:
+Vela is a statically typed scripting language for native applications. The
+repository contains the language front end, a typed intermediate representation,
+a fixed-width register bytecode VM, and an isolate-local runtime. Native AOT
+backends are planned for a later stage.
 
-- `compiler/` contains the bootstrap executable and its build identity.
-- `compiler/ir/` contains the typed register IR and source lowering path.
-- `vm/` contains the fixed-width register VM and frame root integration.
-- `examples/` contains runnable source examples for the supported language slice.
-- `benchmarks/` contains repeatable VM workloads and benchmark notes.
-- `build/` contains the GN configuration and project toolchain.
-- `tools/` contains the `vl` developer commands.
-- `third_party/build_tools/` is populated only by the versions pinned in
-  `DEPS`.
+Vela is currently in an early stage of development, and its language and runtime
+interfaces are still evolving.
 
-The toolchain is repository managed. Build scripts resolve GN, Ninja, Clang,
-LLVM archive tools, and analysis tools from `third_party/build_tools`, using the
-same pinned Clang revision as VerseGame. They do not modify `PATH` or use a
-system C/C++ compiler.
+Vela's language and runtime design draws on implementation ideas from Luau,
+JavaScript, Dart, and other modern scripting languages.
 
-On Windows, builds use `clang-cl`, `lld-link`, and `llvm-lib`, with Visual Studio
-C++ libraries and the Windows SDK. Debug uses `/MDd /Od /Z7`, `_DEBUG`, and PDB
-output; Release uses `/MD /O2` and `NDEBUG`. Both use C++23 and disable C++
-exceptions. Ninja tracks headers through `/showIncludes` and MSVC dependency
-format. Test and benchmark targets use the same compiler and CRT configuration.
+## Usage
 
-Linux uses project Clang, LLD, LLVM `ar`, and libc++. macOS uses project Clang
-and LLVM `ar`, with the Xcode SDK, libc++, and Xcode linker. On these platforms,
-Ninja's `gcc` dependency format describes Clang's Make-format dependency output;
-it does not invoke GCC. Dependencies include system and third-party headers.
+The `vela` executable currently provides two source-level commands:
 
-## First checkout
+- `vela check <source.vela>` parses and statically checks a source file without
+  executing it.
+- `vela run <source.vela>` compiles the source through Typed IR and register
+  bytecode, then executes its zero-argument `main` function in the VM.
 
-Run the dependency sync from the Vela checkout with the depot-tools `gclient`
-launcher available on the machine:
+For example:
+
+```powershell
+.\out\debug\vela.exe check examples\function_call.vela
+.\out\debug\vela.exe run examples\hello.vela
+.\out\debug\vela.exe run examples\language_features.vela
+```
+
+The current language slice uses C/C++-style blocks and semicolons. It includes
+integers, doubles, booleans, strings, arrays, functions, direct calls, classes with
+fixed fields and methods, enums, control flow, console output, imports, and
+multi-file compilation. See [`examples/`](examples/) for runnable programs and
+[`docs/roadmap.md`](docs/roadmap.md) for the feature checklist.
+
+## Installation
+
+Vela is currently built from source. The repository manages its own compiler
+and build tools.
+
+From a fresh checkout, run dependency synchronization with the depot-tools
+`gclient` launcher available on the machine:
 
 ```powershell
 gclient sync --no-history
+python -m tools.vl doctor
 ```
 
-The command materializes the pinned host tools, Abseil, GoogleTest, and Google Benchmark
-source declared in `DEPS`. No external engine checkout is required by the Vela
-build after synchronization. Dependency versions and licenses are documented in
-[`third_party/README.md`](third_party/README.md).
+The sync command fetches the pinned host tools, Abseil, GoogleTest, and Google
+Benchmark sources declared in [`DEPS`](DEPS). Dependency versions and licenses
+are documented in [`third_party/README.md`](third_party/README.md).
 
-Compiler symbol tables, scope tables, keywords, and import tracking use Abseil
-`flat_hash_map` / `flat_hash_set`. String-keyed tables support lookup by
-`std::string_view` without constructing an owning string. Declaration tables are
-built before checking function bodies and stay immutable during lowering, so
-borrowed descriptors are not invalidated by table growth.
+## Building
 
-## Configure, build, and test
+The supported developer entry point is `python -m tools.vl`:
 
 ```powershell
-python -m tools.vl doctor
 python -m tools.vl config
 python -m tools.vl build
-python -m tools.vl clangd
-python -m tools.vl lint
-python -m tools.vl test
-python -m tools.vl bench
+python -m tools.vl build release
 ```
 
-`vl lint` reports warnings as failures. Use `vl lint --fix` to apply clang-tidy
-code fixes, then review and validate the result. The check configuration remains
-in `.clang-tidy`; project headers included by the selected translation units are
-checked as well, with third-party code excluded. Formatting also excludes vendored
-source trees. `vl test` executes the environment, frontend, compiler, runtime, and
-VM GoogleTest suites; use `vl test list` to list individual selections. Test source
-files use `*_unittest.cc` and link the upstream `gtest_main`. Each case reports its own
-result, with assertion locations and expected/actual values on failure. GoogleTest
-is only linked into test executables.
+On Windows, the same commands are available through `bin/vl.cmd`, for example:
 
-Arguments after `--` go directly to GoogleTest:
+```powershell
+.\bin\vl.cmd build
+```
+
+Debug and Release outputs are isolated from each other. Windows builds use the
+repository's `clang-cl`, `lld-link`, and `llvm-lib` with Visual Studio C++
+libraries and the Windows SDK. Linux and macOS builds use the repository's
+Clang and LLVM tools with the platform SDK and libc++.
+
+The project uses C++23 with C++ exceptions disabled. The build scripts resolve
+GN, Ninja, Clang, LLVM archive tools, and analysis tools from
+`third_party/build_tools` without modifying `PATH`.
+
+## Testing
+
+Vela's C++ tests use GoogleTest and cover the environment, frontend, compiler,
+runtime, and VM:
+
+```powershell
+python -m tools.vl test
+python -m tools.vl test list
+```
+
+Arguments after `--` are passed directly to GoogleTest:
 
 ```powershell
 python -m tools.vl test debug compiler -- --gtest_list_tests
@@ -82,43 +96,62 @@ python -m tools.vl test release compiler -- --gtest_filter=CompilerTest.Compiles
 python -m tools.vl test debug runtime -- --gtest_repeat=10 --gtest_shuffle
 ```
 
-On Windows the same entry point is available as `bin/vl.cmd`, so the commands
-can also be run as `./bin/vl.cmd doctor`, `./bin/vl.cmd build`,
-`./bin/vl.cmd clangd`, and `./bin/vl.cmd test` without installing a global
-command.
+`python -m tools.vl lint` runs the repository's clang-tidy checks. Use
+`python -m tools.vl lint --fix` to apply available fixes, then review the
+result before validating it.
 
-Release output uses an isolated directory:
+## Benchmarks
 
-```powershell
-python -m tools.vl build release
-```
-
-The executable currently exposes the bootstrap identity and the first static
-checker:
+The benchmark executable is built separately in Release mode:
 
 ```powershell
-.\out\debug\vela.exe --version
-.\out\debug\vela.exe --help
-.\out\debug\vela.exe check path\to\source.vela
-.\out\debug\vela.exe run path\to\source.vela
-```
-
-`run` currently executes a zero-argument `main` function. The current language
-boundary and performance contract are documented in
-[`docs/language_architecture.md`](docs/language_architecture.md); implementation
-details are listed in [`compiler/README.md`](compiler/README.md).
-`python -m tools.vl bench` builds a separate Google Benchmark executable in
-Release mode. It measures compilation, first execution, and steady VM execution
-for the four workloads, plus compilation of generated symbol-table workloads at
-three sizes, using upstream iteration calibration and statistics.
-Arguments after `--` go directly to Google Benchmark:
-
-```powershell
+python -m tools.vl bench
 python -m tools.vl bench -- --benchmark_list_tests
 python -m tools.vl bench -- --benchmark_filter=^vm/ --benchmark_repetitions=5
-python -m tools.vl bench -- --benchmark_out=out/benchmark.json --benchmark_out_format=json
 ```
 
-Measurement boundaries and expected results are documented in
-[`benchmarks/README.md`](benchmarks/README.md). The language feature checklist is
-in [`docs/roadmap.md`](docs/roadmap.md).
+Each workload measures compilation, first execution, and steady-state VM
+execution separately. The benchmark suite covers integer loops, function calls,
+field access, allocation and GC, and generated symbol-table workloads. See
+[`benchmarks/README.md`](benchmarks/README.md) for measurement boundaries and
+expected results.
+
+## Architecture
+
+```text
+source
+  -> lexer and parser
+  -> name resolution and static type checking
+  -> typed control-flow IR
+  -> register bytecode
+  -> Vela VM
+```
+
+Typed IR is the semantic boundary shared by the bytecode backend and future
+native backends. The VM uses contiguous register frames and fixed-width
+instructions for predictable decoding. Each `Isolate` owns its heap; the
+runtime uses a precise, non-moving, incremental mark-and-sweep collector, and
+VM frame slots are registered explicitly as GC root ranges.
+
+The module responsibilities are:
+
+- `compiler/frontend/`: lexer, parser, syntax tree, and static type checking.
+- `compiler/ir/`: lowering from the checked AST to Typed IR.
+- `compiler/`: bytecode encoding and the `vela` executable.
+- `vm/`: bytecode validation, register frames, and interpretation.
+- `runtime/`: values, strings, objects, class layouts, the heap, and Isolate.
+- `examples/` and `benchmarks/`: runnable programs and repeatable workloads.
+
+More detailed contracts are documented in
+[`docs/language_architecture.md`](docs/language_architecture.md) and
+[`compiler/README.md`](compiler/README.md).
+
+## Dependencies
+
+The build uses repository-pinned GN, Ninja, Clang, LLVM tools, Abseil,
+GoogleTest, and Google Benchmark. Third-party source and license information is
+listed in [`third_party/README.md`](third_party/README.md).
+
+## License
+
+Vela is distributed under the [MIT License](LICENSE).

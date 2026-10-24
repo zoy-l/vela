@@ -218,8 +218,22 @@ void Lexer::ScanNumber() {
 
   TokenKind kind = TokenKind::IntegerLiteral;
   if (Peek() == '.' && IsDigit(PeekNext())) {
-    kind = TokenKind::FloatLiteral;
+    kind = TokenKind::DoubleLiteral;
     Advance();
+    while (IsDigit(Peek())) {
+      Advance();
+    }
+  }
+  if (Peek() == 'e' || Peek() == 'E') {
+    kind = TokenKind::DoubleLiteral;
+    Advance();
+    if (Peek() == '+' || Peek() == '-') {
+      Advance();
+    }
+    if (!IsDigit(Peek())) {
+      AddDiagnostic(token_location_, "double exponent requires digits");
+      return;
+    }
     while (IsDigit(Peek())) {
       Advance();
     }

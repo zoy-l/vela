@@ -25,6 +25,8 @@ TEST(VmTest, IntegerExecution) {
       .code = code,
       .classes = std::span<vela::runtime::ClassLayout* const>(),
       .strings = std::span<vela::runtime::StringObject* const>(),
+      .arrays = {},
+      .doubles = {},
       .register_count = 3,
   };
 
@@ -51,6 +53,8 @@ TEST(VmTest, FrameRegistersStayRootedAcrossCollection) {
       .code = code,
       .classes = std::span<vela::runtime::ClassLayout* const>(classes.data(), classes.size()),
       .strings = std::span<vela::runtime::StringObject* const>(),
+      .arrays = {},
+      .doubles = {},
       .register_count = 4,
   };
 
@@ -78,6 +82,8 @@ TEST(VmTest, InvalidBytecodeIsRejected) {
       .code = code,
       .classes = std::span<vela::runtime::ClassLayout* const>(),
       .strings = std::span<vela::runtime::StringObject* const>(),
+      .arrays = {},
+      .doubles = {},
       .register_count = 1,
   };
 
@@ -95,10 +101,167 @@ TEST(VmTest, DivisionRejectsInvalidSourceRegister) {
       .code = code,
       .classes = std::span<vela::runtime::ClassLayout* const>(),
       .strings = std::span<vela::runtime::StringObject* const>(),
+      .arrays = {},
+      .doubles = {},
       .register_count = 1,
   };
   Isolate isolate;
   EXPECT_EQ(VirtualMachine(isolate).Execute(function).status, ExecutionStatus::InvalidBytecode);
+}
+
+TEST(VmTest, RejectsInvalidArrayLayoutIndices) {
+  runtime::Isolate isolate;
+  const auto* layout = isolate.CreateArrayLayout({.element_kind = runtime::ValueKind::Integer});
+  const std::array<const runtime::ArrayLayout*, 1> layouts = {layout};
+  const auto code = std::to_array<Instruction>({
+      EncodeABC(OpCode::NewArray, 0, 1, 1),
+      EncodeABC(OpCode::Return, 0, 0, 0),
+  });
+  Function function{
+      .code = code,
+      .classes = {},
+      .strings = {},
+      .arrays = layouts,
+      .doubles = {},
+      .register_count = 1,
+      .parameter_count = 0,
+  };
+  EXPECT_EQ(VirtualMachine(isolate).Execute(function).status, ExecutionStatus::InvalidBytecode);
+  const std::array<const runtime::ArrayLayout*, 1> null_layout = {nullptr};
+  const auto valid_code = std::to_array<Instruction>({
+      EncodeABC(OpCode::NewArray, 0, 0, 1),
+      EncodeABC(OpCode::Return, 0, 0, 0),
+  });
+  function.code = valid_code;
+  function.arrays = null_layout;
+  EXPECT_EQ(VirtualMachine(isolate).Execute(function).status, ExecutionStatus::InvalidBytecode);
+}
+
+TEST(VmTest, RejectsWrongArrayStoreAndNonArrayIndexing) {
+  runtime::Isolate isolate;
+  const auto* layout = isolate.CreateArrayLayout({.element_kind = runtime::ValueKind::Integer});
+  const std::array<const runtime::ArrayLayout*, 1> layouts = {layout};
+  const auto code = std::to_array<Instruction>({
+      EncodeABC(OpCode::NewArray, 0, 0, 1),
+      EncodeAImm16(OpCode::LoadInt, 1, 0),
+      EncodeABC(OpCode::LoadBool, 2, 1, 0),
+      EncodeABC(OpCode::SetIndex, 0, 1, 2),
+      EncodeABC(OpCode::Return, 0, 0, 0),
+  });
+  Function function{
+      .code = code,
+      .classes = {},
+      .strings = {},
+      .arrays = layouts,
+      .doubles = {},
+      .register_count = 3,
+      .parameter_count = 0,
+  };
+  EXPECT_EQ(VirtualMachine(isolate).Execute(function).status, ExecutionStatus::TypeError);
+  auto* record = isolate.CreateClassLayout(0, {});
+  const std::array<runtime::ClassLayout*, 1> classes = {record};
+  const auto invalid_access = std::to_array<Instruction>({
+      EncodeABC(OpCode::NewInstance, 0, 0, 0),
+      EncodeAImm16(OpCode::LoadInt, 1, 0),
+      EncodeABC(OpCode::GetIndex, 2, 0, 1),
+      EncodeABC(OpCode::Return, 2, 0, 0),
+  });
+  function.code = invalid_access;
+  function.classes = classes;
+  EXPECT_EQ(VirtualMachine(isolate).Execute(function).status, ExecutionStatus::TypeError);
+}
+
+TEST(VmTest, ValidatesDoubleConstantAndRegisterOperands) {
+  const std::array<double, 1> constants = {1.5};
+  auto code = std::to_array<Instruction>({
+      EncodeABC(OpCode::LoadDouble, 0, 1, 0),
+      EncodeABC(OpCode::Return, 0, 0, 0),
+  });
+  const Function function{
+      .code = code,
+      .classes = {},
+      .strings = {},
+      .arrays = {},
+      .doubles = constants,
+      .register_count = 1,
+      .parameter_count = 0,
+  };
+  Isolate isolate;
+  VirtualMachine machine(isolate);
+  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
+  code.front() = EncodeABC(OpCode::LoadDouble, 1, 0, 0);
+  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
+  code.front() = EncodeABC(OpCode::LoadDouble, 0, 0, 0);
+  const auto result = machine.Execute(function);
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_DOUBLE_EQ(result.value.AsDouble(), constants.front());
+}
+
+class VmDoubleOperationTest : public testing::TestWithParam<OpCode> {};
+
+TEST_P(VmDoubleOperationTest, RejectsIntegerValuesAndInvalidRegisters) {
+  const std::array<double, 1> constants = {1.5};
+  auto code = std::to_array<Instruction>({
+      EncodeABC(OpCode::LoadDouble, 0, 0, 0),
+      EncodeAImm16(OpCode::LoadInt, 1, 1),
+      EncodeABC(OpCode::AddDouble, 2, 0, 1),
+      EncodeABC(OpCode::Return, 2, 0, 0),
+  });
+  const Function function{
+      .code = code,
+      .classes = {},
+      .strings = {},
+      .arrays = {},
+      .doubles = constants,
+      .register_count = 3,
+      .parameter_count = 0,
+  };
+  Isolate isolate;
+  VirtualMachine machine(isolate);
+  const auto opcode = GetParam();
+  code.at(2) = EncodeABC(opcode, 2, 0, 1);
+  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::TypeError);
+  code.at(2) = EncodeABC(opcode, 2, 3, 0);
+  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
+  code.at(2) = EncodeABC(opcode, 2, 0, 3);
+  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
+  code.at(2) = EncodeABC(opcode, 3, 0, 0);
+  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
+}
+
+INSTANTIATE_TEST_SUITE_P(ArithmeticAndComparisons,
+                         VmDoubleOperationTest,
+                         testing::Values(OpCode::AddDouble,
+                                         OpCode::SubDouble,
+                                         OpCode::MulDouble,
+                                         OpCode::DivDouble,
+                                         OpCode::EqualDouble,
+                                         OpCode::NotEqualDouble,
+                                         OpCode::LessDouble,
+                                         OpCode::LessEqualDouble,
+                                         OpCode::GreaterDouble,
+                                         OpCode::GreaterEqualDouble));
+
+TEST(VmTest, DoubleNegationRejectsIntegerAndInvalidRegister) {
+  auto code = std::to_array<Instruction>({
+      EncodeAImm16(OpCode::LoadInt, 0, 1),
+      EncodeABC(OpCode::NegDouble, 1, 0, 0),
+      EncodeABC(OpCode::Return, 1, 0, 0),
+  });
+  const Function function{
+      .code = code,
+      .classes = {},
+      .strings = {},
+      .arrays = {},
+      .doubles = {},
+      .register_count = 2,
+      .parameter_count = 0,
+  };
+  Isolate isolate;
+  VirtualMachine machine(isolate);
+  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::TypeError);
+  code.at(1) = EncodeABC(OpCode::NegDouble, 1, 2, 0);
+  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
 }
 
 }  // namespace

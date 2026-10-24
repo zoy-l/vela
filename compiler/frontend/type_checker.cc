@@ -15,6 +15,7 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
   diagnostics_.clear();
   function_count_ = program.functions.size();
   types_.clear();
+  array_literals_.clear();
   enum_members_.clear();
   classes_.clear();
   functions_.clear();
@@ -39,6 +40,7 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
 
   SemanticModel model;
   model.types = std::move(types_);
+  model.array_literals = std::move(array_literals_);
   model.enum_members = std::move(enum_members_);
   model.classes = std::move(classes_);
   model.functions = std::move(functions_);
@@ -57,9 +59,8 @@ void TypeChecker::CollectTypes(const Program& program) {
   types_.emplace("void", Type{.kind = Type::Kind::Void, .name = "void"});
   types_.emplace("bool", Type{.kind = Type::Kind::Bool, .name = "bool"});
   types_.emplace("int", Type{.kind = Type::Kind::Int, .name = "int"});
-  types_.emplace("float", Type{.kind = Type::Kind::Float, .name = "float"});
+  types_.emplace("double", Type{.kind = Type::Kind::Double, .name = "double"});
   types_.emplace("string", Type{.kind = Type::Kind::String, .name = "string"});
-  types_.emplace("array", Type{.kind = Type::Kind::Array, .name = "array"});
   types_.reserve(types_.size() + program.enums.size() + program.classes.size());
   enum_members_.reserve(program.enums.size());
   classes_.reserve(program.classes.size());
@@ -219,16 +220,12 @@ auto TypeChecker::CheckExpression(const Expression& expression, const Type* expe
   switch (expression.kind) {
     case Expression::Kind::IntegerLiteral:
       return CheckIntegerLiteral(expression);
-    case Expression::Kind::FloatLiteral:
-      return {.kind = Type::Kind::Float, .name = "float"};
+    case Expression::Kind::DoubleLiteral:
+      return {.kind = Type::Kind::Double, .name = "double"};
     case Expression::Kind::StringLiteral:
       return {.kind = Type::Kind::String, .name = "string"};
-    case Expression::Kind::ArrayLiteral: {
-      for (const auto& element : expression.elements) {
-        CheckExpression(*element, nullptr);
-      }
-      return {.kind = Type::Kind::Array, .name = "array"};
-    }
+    case Expression::Kind::ArrayLiteral:
+      return CheckArrayLiteral(expression, expected);
     case Expression::Kind::Index:
       return CheckIndex(expression);
     case Expression::Kind::BooleanLiteral:
@@ -438,16 +435,26 @@ auto TypeChecker::CheckMemberAccess(const Expression& expression) -> TypeChecker
 }
 
 auto TypeChecker::ResolveType(const TypeName& type_name, bool allow_void) -> TypeChecker::Type {
-  const auto type = types_.find(type_name.name);
+  std::string_view base = type_name.name;
+  while (base.ends_with("[]")) {
+    base.remove_suffix(2);
+  }
+  const auto type = types_.find(base);
   if (type == types_.end()) {
     AddDiagnostic(type_name.location, "unknown type '" + type_name.name + "'");
     return InvalidType();
   }
-  if (!allow_void && type->second.kind == Type::Kind::Void) {
+  if ((!allow_void || base.size() != type_name.name.size()) &&
+      type->second.kind == Type::Kind::Void) {
     AddDiagnostic(type_name.location, "void is not a value type");
     return InvalidType();
   }
-  return type->second;
+  Type result = type->second;
+  for (std::size_t length = base.size(); length < type_name.name.size(); length += 2) {
+    result = {.kind = Type::Kind::Array, .name = result.name + "[]"};
+    types_.try_emplace(result.name, result);
+  }
+  return result;
 }
 
 auto TypeChecker::LookupName(const Expression& expression) -> TypeChecker::Type {
@@ -497,7 +504,7 @@ auto TypeChecker::IsSameType(const Type& left, const Type& right) -> bool {
 }
 
 auto TypeChecker::IsNumeric(const Type& type) -> bool {
-  return type.kind == Type::Kind::Int || type.kind == Type::Kind::Float;
+  return type.kind == Type::Kind::Int || type.kind == Type::Kind::Double;
 }
 
 auto TypeChecker::IsValid(const Type& type) -> bool {
@@ -600,7 +607,39 @@ auto TypeChecker::CheckIndex(const Expression& expression) -> TypeChecker::Type 
   if (index.kind != Type::Kind::Int) {
     AddDiagnostic(expression.index->location, "array index must be int");
   }
-  return {.kind = Type::Kind::Int, .name = "int"};
+  if (object.kind != Type::Kind::Array) {
+    return InvalidType();
+  }
+  return types_.at(object.name.substr(0, object.name.size() - 2));
+}
+
+auto TypeChecker::CheckArrayLiteral(const Expression& expression, const Type* expected) -> Type {
+  Type element_type;
+  if (expected != nullptr && expected->kind == Type::Kind::Array) {
+    element_type = types_.at(expected->name.substr(0, expected->name.size() - 2));
+  }
+  for (const auto& element : expression.elements) {
+    const Type actual = CheckExpression(*element, IsValid(element_type) ? &element_type : nullptr);
+    if (!IsValid(actual)) {
+      continue;
+    }
+    if (actual.kind == Type::Kind::Void) {
+      AddDiagnostic(element->location, "array elements must be values");
+    } else if (!IsValid(element_type)) {
+      element_type = actual;
+    } else if (!IsSameType(element_type, actual)) {
+      AddDiagnostic(element->location,
+                    "array element type does not match '" + TypeNameFor(element_type) + "'");
+    }
+  }
+  if (!IsValid(element_type)) {
+    AddDiagnostic(expression.location, "empty array requires an expected array type");
+    return InvalidType();
+  }
+  Type result{.kind = Type::Kind::Array, .name = element_type.name + "[]"};
+  types_.try_emplace(result.name, result);
+  array_literals_.insert_or_assign(&expression, result);
+  return result;
 }
 
 auto TypeChecker::CheckShorthandMember(const Expression& expression, const Type* expected)
@@ -640,6 +679,10 @@ auto TypeChecker::CheckBinary(const Expression& expression) -> TypeChecker::Type
     return InvalidType();
   }
   if (expression.text == "==" || expression.text == "!=") {
+    if (left.kind == Type::Kind::Array) {
+      AddDiagnostic(expression.location, "array equality is not defined");
+      return InvalidType();
+    }
     if (!IsSameType(left, right)) {
       AddDiagnostic(expression.location, "comparison operands must have the same type");
       return InvalidType();

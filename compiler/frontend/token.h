@@ -12,7 +12,7 @@ enum class TokenKind : std::uint8_t {
   EndOfFile,
   Identifier,
   IntegerLiteral,
-  FloatLiteral,
+  DoubleLiteral,
   StringLiteral,
   Class,
   Import,

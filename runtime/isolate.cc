@@ -31,4 +31,11 @@ auto Isolate::CreateString(std::string value) -> StringObject* {
   return result;
 }
 
+auto Isolate::CreateArrayLayout(ArrayLayout layout) -> const ArrayLayout* {
+  auto stored = std::make_unique<ArrayLayout>(layout);
+  const auto* result = stored.get();
+  array_layouts_.push_back(std::move(stored));
+  return result;
+}
+
 }  // namespace vela::runtime

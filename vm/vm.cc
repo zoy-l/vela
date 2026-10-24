@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "runtime/string.h"
+#include "runtime/value_io.h"
 #include "vm/frame.h"
 
 namespace vela::vm {
@@ -35,14 +36,29 @@ auto IsValidInstruction(Instruction instruction,
     case OpCode::LoadBool:
     case OpCode::LoadInt:
     case OpCode::Return:
-    case OpCode::NewArray:
       return IsRegister(operand_a, function);
+    case OpCode::NewArray:
+      return IsRegister(operand_a, function) && operand_b < function.arrays.size() &&
+             function.arrays.subspan(operand_b).front() != nullptr;
+    case OpCode::LoadDouble:
+      return IsRegister(operand_a, function) && operand_b < function.doubles.size();
     case OpCode::Move:
     case OpCode::NegInt:
+    case OpCode::NegDouble:
     case OpCode::NotBool:
     case OpCode::GetField:
       return IsRegister(operand_a, function) && IsRegister(operand_b, function);
     case OpCode::AddInt:
+    case OpCode::AddDouble:
+    case OpCode::SubDouble:
+    case OpCode::MulDouble:
+    case OpCode::DivDouble:
+    case OpCode::EqualDouble:
+    case OpCode::NotEqualDouble:
+    case OpCode::LessDouble:
+    case OpCode::LessEqualDouble:
+    case OpCode::GreaterDouble:
+    case OpCode::GreaterEqualDouble:
     case OpCode::SubInt:
     case OpCode::MulInt:
     case OpCode::DivInt:
@@ -157,6 +173,55 @@ auto IntegerOperation(OpCode opcode,
   return {};
 }
 
+auto DoubleOperation(OpCode opcode,
+                     runtime::Value& destination,
+                     runtime::Value left_value,
+                     runtime::Value right_value) noexcept -> StepResult {
+  if (!left_value.IsDouble() || !right_value.IsDouble()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const double left = left_value.AsDouble();
+  const double right = right_value.AsDouble();
+  switch (opcode) {
+    case OpCode::AddDouble:
+      destination = runtime::Value::Double(left + right);
+      break;
+    case OpCode::SubDouble:
+      destination = runtime::Value::Double(left - right);
+      break;
+    case OpCode::MulDouble:
+      destination = runtime::Value::Double(left * right);
+      break;
+    case OpCode::DivDouble:
+      if (right == 0.0) {
+        return std::unexpected(ExecutionStatus::DivisionByZero);
+      }
+      destination = runtime::Value::Double(left / right);
+      break;
+    case OpCode::EqualDouble:
+      destination = runtime::Value::Boolean(left == right);
+      break;
+    case OpCode::NotEqualDouble:
+      destination = runtime::Value::Boolean(left != right);
+      break;
+    case OpCode::LessDouble:
+      destination = runtime::Value::Boolean(left < right);
+      break;
+    case OpCode::LessEqualDouble:
+      destination = runtime::Value::Boolean(left <= right);
+      break;
+    case OpCode::GreaterDouble:
+      destination = runtime::Value::Boolean(left > right);
+      break;
+    case OpCode::GreaterEqualDouble:
+      destination = runtime::Value::Boolean(left >= right);
+      break;
+    default:
+      return std::unexpected(ExecutionStatus::InvalidBytecode);
+  }
+  return {};
+}
+
 auto BooleanOperation(OpCode opcode,
                       runtime::Value& destination,
                       runtime::Value left_value,
@@ -197,21 +262,6 @@ auto Negate(runtime::Value& destination, runtime::Value operand) noexcept -> Ste
   }
   destination = runtime::Value::Integer(-value);
   return {};
-}
-
-void PrintValue(runtime::Value value) {
-  if (value.IsInteger()) {
-    std::cout << value.AsInteger();
-  } else if (value.IsBoolean()) {
-    std::cout << (value.AsBoolean() ? "true" : "false");
-  } else if (value.IsString()) {
-    std::cout << value.AsString()->value;
-  } else if (value.IsNull()) {
-    std::cout << "null";
-  } else {
-    std::cout << "object";
-  }
-  std::cout << '\n';
 }
 
 class Execution final {
@@ -296,6 +346,30 @@ auto Execution::ExecuteInstruction(ActiveFrame& active, Instruction instruction)
     case OpCode::LoadInt:
       values.subspan(operand_a).front() = runtime::Value::Integer(DecodeImm16(instruction));
       return {};
+    case OpCode::LoadDouble:
+      values.subspan(operand_a).front() =
+          runtime::Value::Double(active.function->doubles.subspan(operand_b).front());
+      return {};
+    case OpCode::AddDouble:
+    case OpCode::SubDouble:
+    case OpCode::MulDouble:
+    case OpCode::DivDouble:
+    case OpCode::EqualDouble:
+    case OpCode::NotEqualDouble:
+    case OpCode::LessDouble:
+    case OpCode::LessEqualDouble:
+    case OpCode::GreaterDouble:
+    case OpCode::GreaterEqualDouble:
+      return DoubleOperation(opcode, values.subspan(operand_a).front(),
+                             values.subspan(operand_b).front(), values.subspan(operand_c).front());
+    case OpCode::NegDouble: {
+      const auto operand = values.subspan(operand_b).front();
+      if (!operand.IsDouble()) {
+        return std::unexpected(ExecutionStatus::TypeError);
+      }
+      values.subspan(operand_a).front() = runtime::Value::Double(-operand.AsDouble());
+      return {};
+    }
     case OpCode::Move:
       values.subspan(operand_a).front() = values.subspan(operand_b).front();
       return {};
@@ -352,7 +426,7 @@ auto Execution::ExecuteObject(ActiveFrame& active, Instruction instruction) -> S
     case OpCode::NewInstance: {
       auto* object =
           opcode == OpCode::NewArray
-              ? heap.AllocateArray(operand_b)
+              ? heap.AllocateArray(*active.function->arrays.subspan(operand_b).front(), operand_c)
               : heap.AllocateInstance(*active.function->classes.subspan(operand_b).front());
       if (object == nullptr) {
         return std::unexpected(ExecutionStatus::OutOfMemory);
@@ -407,7 +481,8 @@ auto Execution::ExecuteControl(ActiveFrame& active, Instruction instruction) -> 
       return {};
     }
     case OpCode::Print:
-      PrintValue(values.subspan(DecodeB(instruction)).front());
+      runtime::WriteValue(std::cout, values.subspan(DecodeB(instruction)).front());
+      std::cout << '\n';
       return {};
     case OpCode::Call:
       if (frame_count_ == kMaxFrames) {
@@ -453,18 +528,23 @@ auto Execution::ArrayOperation(OpCode opcode,
   const auto integer_index = index.AsInteger();
   if (integer_index < 0 ||
       std::cmp_greater(integer_index, std::numeric_limits<std::uint32_t>::max())) {
-    return std::unexpected(ExecutionStatus::InvalidField);
+    return std::unexpected(ExecutionStatus::IndexOutOfBounds);
   }
   const auto offset = static_cast<std::uint32_t>(integer_index);
   auto& heap = isolate_.heap();
   if (opcode == OpCode::SetIndex) {
-    if (!heap.SetElement(*object.AsObject(), offset, right)) {
-      return std::unexpected(ExecutionStatus::InvalidField);
+    const auto stored = heap.SetElement(*object.AsObject(), offset, right);
+    if (!stored) {
+      return std::unexpected(stored.error() == runtime::ArrayAccessError::OutOfBounds
+                                 ? ExecutionStatus::IndexOutOfBounds
+                                 : ExecutionStatus::TypeError);
     }
   } else {
-    const auto* element = runtime::Heap::GetElement(*object.AsObject(), offset);
-    if (element == nullptr) {
-      return std::unexpected(ExecutionStatus::InvalidField);
+    const auto element = runtime::Heap::GetElement(*object.AsObject(), offset);
+    if (!element) {
+      return std::unexpected(element.error() == runtime::ArrayAccessError::OutOfBounds
+                                 ? ExecutionStatus::IndexOutOfBounds
+                                 : ExecutionStatus::TypeError);
     }
     destination = *element;
   }

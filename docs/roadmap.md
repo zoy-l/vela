@@ -33,11 +33,12 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 
 ## P1: core values and object model
 
-- [ ] Implement `float`
-- [x] Implement `string`, escapes, comparison, and concatenation
+- [x] Implement IEEE 754 binary64 `double` values, operations, arrays, and output
+- [x] Implement `string`, comparison, and concatenation
+- [ ] Decode string escape sequences
 - [ ] Implement `char`
-- [ ] Implement numeric conversions
-- [x] Implement arrays with contiguous storage
+- [ ] Implement explicit numeric conversions (implicit conversions are forbidden)
+- [x] Implement invariant typed arrays, nested arrays, and compact contiguous storage
 - [ ] Implement tuples and fixed-size records
 - [ ] Implement `List<T>`
 - [ ] Implement `Map<K, V>`

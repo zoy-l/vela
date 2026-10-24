@@ -2,8 +2,8 @@
 
 `gclient sync --no-history` obtains source dependencies and host tools from the
 immutable revisions in the root `DEPS`. Vela's GN integration lives in
-`third_party/BUILD.gn`; upstream sources are not modified. No VerseGame checkout
-or tools are needed to build or run Vela.
+`third_party/BUILD.gn`; upstream sources are not modified. All required sources
+and host tools are obtained through this dependency configuration.
 
 GN, Ninja, and Clang are installed under `third_party/build_tools`. Build scripts
 resolve their repository-relative paths, use no system copies, and do not modify
@@ -20,8 +20,8 @@ standard library, and linker. See the root README for platform configuration.
 | [Google Benchmark 1.9.5](https://github.com/google/benchmark) | `192ef10025eb2c4cdd392bc502f0c852196baa48` | Apache-2.0; [upstream license](https://github.com/google/benchmark/blob/192ef10025eb2c4cdd392bc502f0c852196baa48/LICENSE) |
 
 GoogleTest and Google Benchmark are `testonly` GN dependencies. Abseil is a
-production dependency of the compiler. Its revision matches VerseGame, while
-Vela builds its own copy. `abseil_sources.gni` lists the upstream library source
+production dependency of the compiler, and Vela builds its own pinned copy.
+`abseil_sources.gni` lists the upstream library source
 closure for `flat_hash_map` and `flat_hash_set`, including their supporting hash,
 string, sampling, synchronization, and time libraries. It excludes unrelated
 flags, logging, status, and test implementations. Review this list against the

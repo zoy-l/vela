@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <span>
 #include <vector>
 
@@ -33,6 +32,15 @@ enum class ObjectKind : std::uint8_t {
   Array,
 };
 
+// layout 由 Isolate 持有，生命周期覆盖所有数组与编译结果。
+struct ArrayLayout final {
+  ValueKind element_kind = ValueKind::Integer;
+  ClassLayout* element_class = nullptr;
+  const ArrayLayout* element_array = nullptr;
+
+  [[nodiscard]] auto element_size() const noexcept -> std::size_t;
+};
+
 struct HeapObject final {
  private:
   friend class Heap;
@@ -44,7 +52,8 @@ struct HeapObject final {
   ClassLayout* layout = nullptr;
   HeapObject* next = nullptr;
   HeapObject* gray_next = nullptr;
-  std::unique_ptr<std::vector<Value>> array_values;
+  const ArrayLayout* array_layout = nullptr;
+  std::uint32_t array_length = 0;
 };
 
 static_assert(alignof(HeapObject) >= alignof(Value));

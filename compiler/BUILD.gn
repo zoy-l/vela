@@ -27,6 +27,8 @@ source_set("ir") {
     "ir/ir.h",
     "ir/lowerer.cc",
     "ir/lowerer.h",
+    "ir/lowerer_array.cc",
+    "ir/lowerer_double.cc",
   ]
   deps = [ ":frontend" ]
   public_deps = [ "//third_party:abseil" ]
@@ -74,7 +76,10 @@ executable("vela_frontend_tests") {
 
 executable("vela_compiler_tests") {
   testonly = true
-  sources = [ "compiler_unittest.cc" ]
+  sources = [
+    "compiler_unittest.cc",
+    "double_unittest.cc",
+  ]
   deps = [
     ":compiler",
     "//runtime",

@@ -82,8 +82,12 @@ The current compiler path lowers checked integer expressions, local variables,
 function calls, field access, assignments, enum ordinals, fixed-layout class
 construction, and structured branches/loops through Typed IR into the bootstrap
 bytecode. `vela run` exercises this path for a zero-argument `main` function.
-Arrays and strings will use the same IR and bytecode contracts after their
-typed storage representation is defined.
+Strings and typed arrays use the same IR and bytecode path. Array element types
+and rank remain exact across literals, fields, parameters, returns, indexing,
+and assignment. Context supplies the type of empty literals and enum shorthand;
+there are no implicit conversions. Arrays have reference semantics and compact
+contiguous native storage. See [compiler details](../compiler/README.md) for
+current bytecode limits.
 
 The compiler must retain source locations through parsing, type checking, IR
 instructions, and bytecode ranges. This keeps diagnostics and future debugger
@@ -101,7 +105,7 @@ fast without requiring assembly:
 - type-specific arithmetic and comparison operations after static checking;
 - direct function IDs for statically resolved calls;
 - field IDs or fixed layout offsets for class access;
-- no heap allocation for ordinary integer, float, boolean, or handle moves;
+- no heap allocation for ordinary integer, double, boolean, or handle moves;
 - constants and debug metadata stored outside the hot instruction stream.
 
 The interpreter keeps the program counter, frame base, constant table, and
@@ -148,10 +152,12 @@ as explicit root ranges. Field stores go through a write barrier while marking,
 and the gray work list is intrusive so collection does not allocate temporary
 work buffers.
 
-Small object allocations use size-class free lists. The bootstrap `Value`
-representation is deliberately general; Typed IR and the VM will keep
-primitive registers and typed arrays in narrower contiguous storage so ordinary
-numeric execution does not enter the heap. The collector is single-threaded per
+Small object allocations use size-class free lists. VM registers and instance
+fields use tagged `Value` slots; arrays already store native primitives or
+pointers directly after their header in a single accounted allocation. Array
+layouts tell the collector which arrays contain heap references, and array
+stores apply the reference write barrier. Strings currently live until their
+Isolate is destroyed. The collector is single-threaded per
 isolate; a host thread must cross an isolate-owned root boundary before it can
 retain a script object.
 

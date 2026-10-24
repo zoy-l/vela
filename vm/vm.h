@@ -15,6 +15,7 @@ enum class ExecutionStatus : std::uint8_t {
   OutOfMemory,
   TypeError,
   InvalidField,
+  IndexOutOfBounds,
   IntegerOverflow,
   DivisionByZero,
   StackOverflow,

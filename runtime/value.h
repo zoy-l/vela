@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <type_traits>
 #include <variant>
 
@@ -14,7 +15,7 @@ enum class ValueKind : std::uint8_t {
   Null,
   Boolean,
   Integer,
-  Float,
+  Double,
   Object,
   String,
 };
@@ -28,7 +29,7 @@ class Value final {
   [[nodiscard]] static constexpr auto Integer(std::int64_t value) noexcept -> Value {
     return {value};
   }
-  [[nodiscard]] static auto Float(double value) noexcept -> Value { return {value}; }
+  [[nodiscard]] static auto Double(double value) noexcept -> Value { return {value}; }
   [[nodiscard]] static auto Object(HeapObject* object) noexcept -> Value { return {object}; }
   [[nodiscard]] static auto String(StringObject* value) noexcept -> Value { return {value}; }
 
@@ -42,8 +43,8 @@ class Value final {
   [[nodiscard]] constexpr auto IsInteger() const noexcept -> bool {
     return kind() == ValueKind::Integer;
   }
-  [[nodiscard]] constexpr auto IsFloat() const noexcept -> bool {
-    return kind() == ValueKind::Float;
+  [[nodiscard]] constexpr auto IsDouble() const noexcept -> bool {
+    return kind() == ValueKind::Double;
   }
   [[nodiscard]] constexpr auto IsObject() const noexcept -> bool {
     return kind() == ValueKind::Object;
@@ -58,7 +59,7 @@ class Value final {
   [[nodiscard]] constexpr auto AsInteger() const noexcept -> std::int64_t {
     return std::get<std::int64_t>(payload_);
   }
-  [[nodiscard]] auto AsFloat() const noexcept -> double { return std::get<double>(payload_); }
+  [[nodiscard]] auto AsDouble() const noexcept -> double { return std::get<double>(payload_); }
   [[nodiscard]] auto AsObject() const noexcept -> HeapObject* {
     return std::get<HeapObject*>(payload_);
   }
@@ -77,5 +78,7 @@ class Value final {
 inline constexpr std::size_t kValueSlotBytes = 16;
 static_assert(std::is_trivially_copyable_v<Value>);
 static_assert(sizeof(Value) == kValueSlotBytes);
+static_assert(sizeof(double) == sizeof(std::uint64_t));
+static_assert(std::numeric_limits<double>::is_iec559);
 
 }  // namespace vela::runtime
