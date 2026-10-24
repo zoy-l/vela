@@ -1,0 +1,42 @@
+source_set("build_info") {
+  sources = [
+    "build_info.cc",
+    "build_info.h",
+  ]
+}
+
+source_set("frontend") {
+  sources = [
+    "frontend/ast.h",
+    "frontend/checker.cc",
+    "frontend/checker.h",
+    "frontend/diagnostic.h",
+    "frontend/lexer.cc",
+    "frontend/lexer.h",
+    "frontend/parser.cc",
+    "frontend/parser.h",
+    "frontend/token.h",
+    "frontend/type_checker.cc",
+    "frontend/type_checker.h",
+  ]
+}
+
+executable("vela") {
+  sources = [ "vela_main.cc" ]
+  deps = [
+    ":build_info",
+    ":frontend",
+  ]
+}
+
+executable("vela_environment_tests") {
+  testonly = true
+  sources = [ "vela_environment_tests.cc" ]
+  deps = [ ":build_info" ]
+}
+
+executable("vela_frontend_tests") {
+  testonly = true
+  sources = [ "frontend_tests.cc" ]
+  deps = [ ":frontend" ]
+}

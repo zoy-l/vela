@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Dispatch Vela developer commands."""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+
+
+COMMAND_MODULES = {
+    "build": "tools.build",
+    "clangd": "tools.clangd",
+    "config": "tools.config",
+    "doctor": "tools.doctor",
+    "format": "tools.format",
+    "test": "tools.test",
+}
+
+
+def print_help() -> None:
+    print("Usage: vl <command> [arguments]")
+    print()
+    print("Commands:")
+    print("  build       Configure and build a target")
+    print("  clangd      Generate compile_commands.json")
+    print("  config      Generate a GN output directory")
+    print("  doctor      Check the project toolchain")
+    print("  format      Format C++ and GN sources")
+    print("  test        Run environment tests")
+
+
+def main() -> int:
+    if len(sys.argv) == 1 or sys.argv[1] in {"help", "--help", "-h"}:
+        print_help()
+        return 0 if len(sys.argv) > 1 else 2
+    module = COMMAND_MODULES.get(sys.argv[1])
+    if module is None:
+        print(f"Unknown vl command: {sys.argv[1]}", file=sys.stderr)
+        print_help()
+        return 2
+    return subprocess.run(
+        [sys.executable, "-m", module, *sys.argv[2:]], check=False
+    ).returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

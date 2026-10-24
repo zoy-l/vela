@@ -1,0 +1,64 @@
+toolchain("clang") {
+  toolchain_args = {
+    current_cpu = target_cpu
+    current_os = target_os
+  }
+
+  helper = rebase_path("//build/scripts/gn_helper.py", root_build_dir)
+  cc = vela_cc
+  cxx = vela_cxx
+  archiver = vela_archiver
+  python = vela_python
+
+  if (target_os == "win") {
+    object_extension = "obj"
+    archive_extension = ".lib"
+    executable_extension = ".exe"
+  } else {
+    object_extension = "o"
+    archive_extension = ".a"
+    executable_extension = ""
+  }
+
+  tool("cc") {
+    command = "\"$cc\" -c {{source}} -o {{output}} {{defines}} {{include_dirs}} {{cflags}} {{cflags_c}}"
+    description = "CC {{output}}"
+    outputs = [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.$object_extension" ]
+  }
+
+  tool("cxx") {
+    command = "\"$cxx\" -c {{source}} -o {{output}} {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}}"
+    description = "CXX {{output}}"
+    outputs = [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.$object_extension" ]
+  }
+
+  tool("alink") {
+    command = "\"$python\" \"$helper\" archive --tool \"$archiver\" --output {{output}} --rspfile {{output}}.rsp"
+    description = "AR {{output}}"
+    rspfile = "{{output}}.rsp"
+    rspfile_content = "{{inputs_newline}}"
+    outputs = [ "{{output_dir}}/{{target_output_name}}{{output_extension}}" ]
+    default_output_dir = "{{target_out_dir}}"
+    default_output_extension = archive_extension
+  }
+
+  tool("link") {
+    command = "\"$cxx\" -fuse-ld=lld @{{output}}.rsp -o \"{{output}}\""
+    description = "LINK {{output}}"
+    rspfile = "{{output}}.rsp"
+    rspfile_content = "{{inputs}} {{solibs}} {{ldflags}} {{libs}}"
+    outputs = [ "{{output_dir}}/{{target_output_name}}{{output_extension}}" ]
+    default_output_dir = "{{root_out_dir}}"
+    default_output_extension = executable_extension
+  }
+
+  tool("stamp") {
+    command = "\"$python\" \"$helper\" touch \"{{output}}\""
+    description = "STAMP {{output}}"
+  }
+
+  tool("copy") {
+    command = "\"$python\" \"$helper\" copy \"{{source}}\" \"{{output}}\""
+    description = "COPY {{source}}"
+  }
+}

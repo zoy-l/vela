@@ -1,0 +1,15 @@
+pool("console") {
+  depth = 1
+}
+
+group("default") {
+  deps = [ "//compiler:vela" ]
+}
+
+group("tests") {
+  testonly = true
+  deps = [
+    "//compiler:vela_environment_tests",
+    "//compiler:vela_frontend_tests",
+  ]
+}

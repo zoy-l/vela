@@ -1,0 +1,12 @@
+{
+  "files.exclude": {
+    "**/.cache": true,
+    "**/.cipd": true,
+    "**/out": true
+  },
+  "search.exclude": {
+    "**/.cache": true,
+    "**/.cipd": true,
+    "**/out": true
+  }
+}

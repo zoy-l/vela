@@ -1,0 +1,6 @@
+BasedOnStyle: Chromium
+ColumnLimit: 100
+DerivePointerAlignment: false
+FixNamespaceComments: false
+PointerAlignment: Left
+SortIncludes: CaseSensitive

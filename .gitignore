@@ -1,0 +1,9 @@
+/out/
+/compile_commands.json
+/third_party/build_tools/
+/.cipd/
+/.gclient_entries
+/.gclient_previous_sync_commits
+__pycache__/
+*.pyc
+.cache/

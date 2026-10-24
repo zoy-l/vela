@@ -1,0 +1,7 @@
+declare_args() {
+  vela_build_config = "debug"
+  vela_cc = ""
+  vela_cxx = ""
+  vela_archiver = ""
+  vela_python = ""
+}

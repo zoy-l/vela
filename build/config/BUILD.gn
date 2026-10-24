@@ -1,0 +1,32 @@
+config("vela_defaults") {
+  include_dirs = [ "//" ]
+  cflags_cc = [
+    "-std=c++23",
+    "-fno-exceptions",
+  ]
+
+  if (target_os == "win") {
+    defines = [
+      "NOMINMAX",
+      "UNICODE",
+      "_UNICODE",
+    ]
+  }
+  cflags = [
+    "-Wall",
+    "-Wconversion",
+    "-Wextra",
+    "-Wpedantic",
+    "-Wshadow",
+  ]
+
+  if (vela_build_config == "debug") {
+    cflags += [
+      "-O0",
+      "-g",
+    ]
+  } else {
+    defines += [ "NDEBUG" ]
+    cflags += [ "-O3" ]
+  }
+}
