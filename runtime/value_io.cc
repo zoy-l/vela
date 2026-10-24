@@ -26,7 +26,7 @@ void WriteValue(std::ostream& output, Value value) {
   } else if (value.IsBoolean()) {
     output << (value.AsBoolean() ? "true" : "false");
   } else if (value.IsString()) {
-    output << value.AsString()->value;
+    output << value.AsString()->value();
   } else if (value.IsNull()) {
     output << "null";
   } else {

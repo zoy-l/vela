@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <expected>
 #include <span>
+#include <string_view>
 
 #include "runtime/object.h"
 #include "runtime/value.h"
@@ -17,6 +18,7 @@ class RootRange final {
  public:
   RootRange() noexcept = default;
   RootRange(Heap& heap, Value* values, std::size_t count) noexcept;
+  RootRange(Heap& heap, std::span<StringObject* const> strings) noexcept;
   ~RootRange();
 
   RootRange(const RootRange&) = delete;
@@ -30,11 +32,14 @@ class RootRange final {
  private:
   friend class Heap;
 
+  enum class Kind : std::uint8_t { Values, Strings };
+
   Heap* heap_ = nullptr;
-  Value* values_ = nullptr;
+  const void* data_ = nullptr;
   std::size_t count_ = 0;
   RootRange* next_ = nullptr;
   RootRange** previous_link_ = nullptr;
+  Kind kind_ = Kind::Values;
 };
 
 enum class GcPhase : std::uint8_t {
@@ -66,6 +71,9 @@ class Heap final {
       -> HeapObject*;
   [[nodiscard]] auto AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept
       -> HeapObject*;
+  // 输入中的堆字符串必须由调用者保根，分配可触发 GC；两段内容只复制一次。
+  [[nodiscard]] auto AllocateString(std::string_view first, std::string_view second = {}) noexcept
+      -> StringObject*;
 
   [[nodiscard]] static auto GetField(HeapObject& object, std::uint32_t index) noexcept -> Value*;
   [[nodiscard]] static auto GetField(const HeapObject& object, std::uint32_t index) noexcept
@@ -100,13 +108,20 @@ class Heap final {
   void RegisterRoot(RootRange& root) noexcept;
   static void UnregisterRoot(RootRange& root) noexcept;
   void MarkRoots() noexcept;
+  void MarkRoot(const RootRange& root) noexcept;
   void MarkValue(Value value) noexcept;
   void MarkObject(HeapObject& object) noexcept;
   void ProcessGrayObject(HeapObject& object) noexcept;
   void DrainGray() noexcept;
   void WriteBarrier(HeapObject& source, Value value) noexcept;
 
-  [[nodiscard]] auto AllocateRaw(std::size_t requested_size) noexcept -> HeapObject*;
+  struct Allocation final {
+    void* memory = nullptr;
+    std::uint32_t size = 0;
+  };
+
+  [[nodiscard]] auto AllocateRaw(std::size_t requested_size) noexcept -> Allocation;
+  void Publish(HeapObject& object, std::uint32_t allocation_size) noexcept;
   void ReleaseRaw(HeapObject& object) noexcept;
   [[nodiscard]] static auto SelectBlockSize(std::size_t requested_size) noexcept -> std::size_t;
   [[nodiscard]] static auto SizeClassIndex(std::size_t block_size) noexcept -> std::size_t;

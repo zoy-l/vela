@@ -312,7 +312,7 @@ func main(): Store {
   auto& heap = isolate.heap();
   RootRange roots(heap, &root, 1);
   heap.Collect();
-  EXPECT_EQ(heap.object_count(), 6U);
+  EXPECT_EQ(heap.object_count(), 7U);
   const auto* items = runtime::Heap::GetField(*root.AsObject(), 0);
   ASSERT_NE(items, nullptr);
   const auto row = runtime::Heap::GetElement(*items->AsObject(), 0);
@@ -322,7 +322,8 @@ func main(): Store {
   EXPECT_EQ(runtime::Heap::GetField(*item->AsObject(), 0)->AsInteger(), kExpectedSum);
   root = Value::Null();
   heap.Collect();
-  EXPECT_EQ(heap.object_count(), 0U);
+  // 编译结果仍持有 "alive" 常量，其余对象已回收。
+  EXPECT_EQ(heap.object_count(), 1U);
 }
 
 TEST(CompilerTest, ReportsArrayBoundsErrors) {

@@ -10,6 +10,7 @@
 #include "benchmark/benchmark.h"
 
 #include "compiler/compiler.h"
+#include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "vm/vm.h"
 
@@ -123,10 +124,13 @@ void SteadyExecution(benchmark::State& state, std::string_view filename, std::in
       break;
     }
   }
-  const auto& heap = isolate.heap();
+  auto& heap = isolate.heap();
   state.counters["heap_objects"] = static_cast<double>(heap.object_count());
   state.counters["allocated_bytes"] = static_cast<double>(heap.allocated_bytes());
   state.counters["committed_bytes"] = static_cast<double>(heap.committed_bytes());
+  heap.Collect();
+  state.counters["retained_objects"] = static_cast<double>(heap.object_count());
+  state.counters["retained_bytes"] = static_cast<double>(heap.allocated_bytes());
   state.counters["result"] = static_cast<double>(expected);
 }
 
@@ -139,6 +143,8 @@ BENCHMARK_CAPTURE(Compile, ArrayAllocation, "array_allocation.vela")
     ->Name("compile/array_allocation");
 BENCHMARK_CAPTURE(Compile, DoubleLoop, "double_loop.vela")->Name("compile/double_loop");
 BENCHMARK_CAPTURE(Compile, DoubleArray, "double_array.vela")->Name("compile/double_array");
+BENCHMARK_CAPTURE(Compile, StringConcat, "string_concat.vela")->Name("compile/string_concat");
+BENCHMARK_CAPTURE(Compile, StringGrowth, "string_growth.vela")->Name("compile/string_growth");
 
 BENCHMARK_CAPTURE(FirstExecution, IntegerLoop, "integer_loop.vela", 499500)
     ->Name("first_execute/integer_loop");
@@ -156,6 +162,10 @@ BENCHMARK_CAPTURE(FirstExecution, DoubleLoop, "double_loop.vela", 1000)
     ->Name("first_execute/double_loop");
 BENCHMARK_CAPTURE(FirstExecution, DoubleArray, "double_array.vela", 16000)
     ->Name("first_execute/double_array");
+BENCHMARK_CAPTURE(FirstExecution, StringConcat, "string_concat.vela", 1000)
+    ->Name("first_execute/string_concat");
+BENCHMARK_CAPTURE(FirstExecution, StringGrowth, "string_growth.vela", 512)
+    ->Name("first_execute/string_growth");
 
 BENCHMARK_CAPTURE(SteadyExecution, IntegerLoop, "integer_loop.vela", 499500)
     ->Name("vm/integer_loop");
@@ -171,6 +181,10 @@ BENCHMARK_CAPTURE(SteadyExecution, ArrayAllocation, "array_allocation.vela", 499
 BENCHMARK_CAPTURE(SteadyExecution, DoubleLoop, "double_loop.vela", 1000)->Name("vm/double_loop");
 BENCHMARK_CAPTURE(SteadyExecution, DoubleArray, "double_array.vela", 16000)
     ->Name("vm/double_array");
+BENCHMARK_CAPTURE(SteadyExecution, StringConcat, "string_concat.vela", 1000)
+    ->Name("vm/string_concat");
+BENCHMARK_CAPTURE(SteadyExecution, StringGrowth, "string_growth.vela", 512)
+    ->Name("vm/string_growth");
 
 }  // namespace
 }  // namespace vela::benchmarks

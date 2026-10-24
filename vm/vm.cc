@@ -512,10 +512,14 @@ auto Execution::StringOperation(OpCode opcode,
   if (!left.IsString() || !right.IsString()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto& left_text = left.AsString()->value;
-  const auto& right_text = right.AsString()->value;
+  const auto left_text = left.AsString()->value();
+  const auto right_text = right.AsString()->value();
   if (opcode == OpCode::StringConcat) {
-    destination = runtime::Value::String(isolate_.CreateString(left_text + right_text));
+    auto* string = isolate_.heap().AllocateString(left_text, right_text);
+    if (string == nullptr) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
+    }
+    destination = runtime::Value::String(string);
   } else {
     const bool equal = left_text == right_text;
     destination = runtime::Value::Boolean(opcode == OpCode::EqualString ? equal : !equal);

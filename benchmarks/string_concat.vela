@@ -1,0 +1,12 @@
+func join(left: string, right: string): string {
+  return left + right;
+}
+
+func main(): int {
+  let correct: int = 0;
+  for (let i: int = 0; i < 1000; i = i + 1) {
+    let text: string = join("vela", "gc");
+    if (text == "velagc") { correct = correct + 1; }
+  }
+  return correct;
+}

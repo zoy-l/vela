@@ -11,6 +11,7 @@ CLI prints the value returned by `main`; object-returning examples print
 .\out\debug\vela.exe run examples\language_features.vela
 .\out\debug\vela.exe run examples\typed_arrays.vela
 .\out\debug\vela.exe run examples\double.vela
+.\out\debug\vela.exe run examples\string_gc.vela
 .\out\debug\vela.exe run examples\imports\main.vela
 ```
 
@@ -27,6 +28,9 @@ are not supported.
 `double.vela` uses decimal and exponent literals, double parameters and returns,
 class fields and methods, and native double arrays. It prints `25`, `true`,
 then returns `14.5`. Integer and double operands cannot be mixed implicitly.
+
+`string_gc.vela` keeps strings in an object and array while creating temporary
+concatenations. It prints `Vela`, `Vela GC`, then returns `true`.
 
 Use `check` when validating source without executing it:
 

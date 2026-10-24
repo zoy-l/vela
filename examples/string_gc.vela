@@ -1,0 +1,19 @@
+class Message {
+  text: string;
+
+  append(suffix: string): void {
+    this.text = this.text + suffix;
+  }
+}
+
+func main(): bool {
+  const message = Message(text: "Vela");
+  const saved: string[] = [message.text];
+  message.append(" GC");
+  for (let i: int = 0; i < 10000; i = i + 1) {
+    let temporary: string = message.text + " temporary";
+  }
+  print(saved[0]);
+  print(message.text);
+  return saved[0] == "Vela" && message.text == "Vela GC";
+}

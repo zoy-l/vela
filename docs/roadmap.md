@@ -36,8 +36,10 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 
 - [x] Implement IEEE 754 binary64 `double` values, operations, arrays, and output
 - [x] Implement `string`, comparison, and concatenation
+- [x] Collect strings with precise roots, field/array barriers, and accounted contiguous storage
 - [ ] Decode string escape sequences
-- [ ] Implement `char`
+- [ ] Define string encoding, length, and indexing units (no separate `char` type)
+- [ ] Add Unicode code point iteration and grapheme cluster APIs
 - [ ] Implement explicit numeric conversions (implicit conversions are forbidden)
 - [x] Implement invariant typed arrays, nested arrays, and compact contiguous storage
 - [ ] Implement tuples and fixed-size records

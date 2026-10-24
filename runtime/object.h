@@ -30,6 +30,7 @@ class ClassLayout final {
 enum class ObjectKind : std::uint8_t {
   Instance,
   Array,
+  String,
 };
 
 // layout 由 Isolate 持有，生命周期覆盖所有数组与编译结果。
@@ -44,16 +45,16 @@ struct ArrayLayout final {
 struct HeapObject final {
  private:
   friend class Heap;
+  friend class StringObject;
 
   ObjectKind kind = ObjectKind::Instance;
   std::uint8_t mark_bit = 0;
-  std::uint8_t color = 0;
   std::uint32_t allocation_size = 0;
   ClassLayout* layout = nullptr;
   HeapObject* next = nullptr;
   HeapObject* gray_next = nullptr;
   const ArrayLayout* array_layout = nullptr;
-  std::uint32_t array_length = 0;
+  std::uint32_t length = 0;
 };
 
 static_assert(alignof(HeapObject) >= alignof(Value));

@@ -9,7 +9,7 @@
 namespace vela::runtime {
 
 struct HeapObject;
-struct StringObject;
+class StringObject;
 
 enum class ValueKind : std::uint8_t {
   Null,

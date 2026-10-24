@@ -172,10 +172,27 @@ Small object allocations use size-class free lists. VM registers and instance
 fields use tagged `Value` slots; arrays already store native primitives or
 pointers directly after their header in a single accounted allocation. Array
 layouts tell the collector which arrays contain heap references, and array
-stores apply the reference write barrier. Strings currently live until their
-Isolate is destroyed. The collector is single-threaded per
+stores apply the reference write barrier. Immutable strings use one allocation
+for the object header and bytes, participate in the same collector, and are
+marked as leaves. Concatenation allocates the result once and copies both
+operands directly; it remains linear in the total byte length. Class string
+fields and native string-pointer arrays are traced precisely.
+
+Compiled functions share a fixed-size, rooted native string constant pool.
+Its owner registers the pool before allocating literals and releases its root
+when the last owning compiled function is destroyed. Copying compiled programs
+rebuilds borrowed bytecode views; moving transfers the owned storage. A raw
+`vm::Function` or `vm::Program` borrows its code and metadata, so the compiled
+owner and its Isolate must outlive the view. Execution results are borrowed
+values: hosts must root returned objects or strings before another allocation
+or collection. `Isolate` must outlive all root ranges and compiled artifacts.
+
+Roots are revisited before the collector enters sweep because VM registers
+can change between incremental steps. Root registration and reference stores
+also preserve references during sweep. The collector is single-threaded per
 isolate; a host thread must cross an isolate-owned root boundary before it can
-retain a script object.
+retain a script object. String encoding, escape decoding, and indexing units
+remain separate language work.
 
 Generational collection remains an optimization decision for the Release
 benchmarks. It can be added behind this object, root, and barrier contract

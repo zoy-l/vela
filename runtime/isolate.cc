@@ -5,11 +5,9 @@
 #include <cstdint>
 #include <memory>
 #include <span>
-#include <string>
 #include <utility>
 #include <vector>
 #include "runtime/object.h"
-#include "runtime/string.h"
 
 namespace vela::runtime {
 
@@ -27,14 +25,6 @@ auto Isolate::CreateClassLayout(std::uint32_t field_count,
   std::unique_ptr<ClassLayout> layout(new ClassLayout(field_count, std::move(references)));
   ClassLayout* result = layout.get();
   class_layouts_.push_back(std::move(layout));
-  return result;
-}
-
-auto Isolate::CreateString(std::string value) -> StringObject* {
-  std::unique_ptr<StringObject> string =
-      std::make_unique<StringObject>(StringObject{std::move(value)});
-  StringObject* result = string.get();
-  strings_.push_back(std::move(string));
   return result;
 }
 

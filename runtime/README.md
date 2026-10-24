@@ -16,8 +16,8 @@ barrier while marking. The gray work list is intrusive and does not allocate
 while a collection is running.
 
 Any object that must survive an allocation safepoint must already be reachable
-through a registered root range or another marked object. Raw `HeapObject*`
-values are deliberately not implicit roots; the VM keeps temporary values in
+through a registered root range or another reachable object. Raw `HeapObject*`
+and `StringObject*` values are deliberately not implicit roots; the VM keeps temporary values in
 registered frame slots before it calls the allocator.
 
 Small objects use size-class free lists. `Value` is currently a general 16-byte
@@ -29,9 +29,19 @@ allocation contributes to heap accounting and collection thresholds.
 Each array has an Isolate-owned `ArrayLayout` that identifies its element kind
 and, for class or nested-array elements, the exact child layout. Element stores
 check bounds and storage type, and reference stores apply the GC write barrier.
-Marking visits only object-pointer arrays; primitive arrays require no element
-scan. Class reference-field metadata includes array fields. Strings retain the
-existing Isolate lifetime and are not reclaimed by the object collector.
+Marking visits object- and string-pointer arrays; primitive arrays require no
+element scan. Class reference-field metadata includes array and string fields.
+Immutable strings store their header and bytes in one accounted allocation and
+are reclaimed by the same collector. `AllocateString` copies one or two input
+views directly into that allocation; GC-backed inputs must remain rooted across
+the call. Strings expose byte views without requiring a trailing NUL byte.
+
+`RootRange` accepts VM `Value` slots or a fixed native string-pointer span. Its
+storage and owning Isolate must outlive registration. Roots are rescanned before
+sweep; registration and field/array stores preserve references during both mark
+and sweep. Hosts must root returned VM values before the next allocation or
+collection. Unreachable small blocks remain cached for reuse; `allocated_bytes`
+counts live allocations, while `committed_bytes` also includes cached blocks.
 
 `Heap::GetElement` returns a boxed register value; `Heap::SetElement` stores its
 native payload. Both report distinct non-array, bounds, and type errors through

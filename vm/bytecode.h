@@ -105,6 +105,7 @@ enum class OpCode : std::uint8_t {
   return static_cast<std::int16_t>((instruction >> kOperandBShift) & kImmediateMask);
 }
 
+// code 与元数据均为借用视图；字符串常量须由所有者持续保根。
 struct Function final {
   std::span<const Instruction> code;
   std::span<runtime::ClassLayout* const> classes;

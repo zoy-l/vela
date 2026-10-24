@@ -22,6 +22,33 @@ using vela::runtime::GcPhase;
 using vela::runtime::Isolate;
 using vela::runtime::RootRange;
 using vela::runtime::Value;
+
+TEST(VmTest, StringConcatSupportsAliasedDestinationsAcrossSafepoints) {
+  Isolate isolate(1);
+  std::array<runtime::StringObject*, 1> constants{};
+  RootRange constant_roots(isolate.heap(), constants);
+  constants.front() = isolate.heap().AllocateString("x");
+  constexpr auto kCode = std::to_array<Instruction>({
+      EncodeABC(OpCode::LoadString, 0, 0, 0),
+      EncodeABC(OpCode::StringConcat, 0, 0, 0),
+      EncodeABC(OpCode::StringConcat, 1, 0, 0),
+      EncodeABC(OpCode::StringConcat, 0, 1, 0),
+      EncodeABC(OpCode::StringConcat, 0, 0, 1),
+      EncodeABC(OpCode::Return, 0, 0, 0),
+  });
+  const Function function{
+      .code = kCode,
+      .classes = {},
+      .strings = constants,
+      .arrays = {},
+      .doubles = {},
+      .register_count = 2,
+  };
+  const auto result = VirtualMachine(isolate).Execute(function);
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsString()->value(), "xxxxxxxxxx");
+}
+
 TEST(VmTest, IntegerExecution) {
   constexpr std::array<Instruction, 4> code = {
       EncodeAImm16(OpCode::LoadInt, 0, 20),

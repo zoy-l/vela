@@ -87,6 +87,7 @@ executable("vela_compiler_tests") {
     "compiler_unittest.cc",
     "control_flow_unittest.cc",
     "double_unittest.cc",
+    "string_gc_unittest.cc",
   ]
   deps = [
     ":compiler",

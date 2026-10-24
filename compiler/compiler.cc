@@ -9,6 +9,7 @@
 #include <ios>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -25,6 +26,7 @@
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
+#include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
@@ -418,7 +420,28 @@ auto CreateArrayLayouts(const ir::Program& program,
   return layouts;
 }
 
+auto FunctionViews(std::span<const CompiledFunction> functions) -> std::vector<vm::Function> {
+  std::vector<vm::Function> views;
+  views.reserve(functions.size());
+  for (const auto& function : functions) {
+    views.push_back(function.View());
+  }
+  return views;
+}
+
 }  // namespace
+
+CompiledProgram::CompiledProgram(const CompiledProgram& other)
+    : functions(other.functions), views(FunctionViews(functions)) {}
+
+auto CompiledProgram::operator=(const CompiledProgram& other) -> CompiledProgram& {
+  if (this != &other) {
+    CompiledProgram copy(other);
+    functions.swap(copy.functions);
+    views.swap(copy.views);
+  }
+  return *this;
+}
 
 auto CompiledProgram::FindFunction(std::string_view name) const noexcept
     -> const CompiledFunction* {
@@ -570,7 +593,8 @@ auto CompileProgram(const frontend::Program& source,
     for (std::size_t index = 0; index < class_info.field_types.size(); ++index) {
       const auto kind = class_info.field_types.at(index).kind;
       if (kind == frontend::TypeDescriptor::Kind::Class ||
-          kind == frontend::TypeDescriptor::Kind::Array) {
+          kind == frontend::TypeDescriptor::Kind::Array ||
+          kind == frontend::TypeDescriptor::Kind::String) {
         reference_fields.push_back(static_cast<std::uint32_t>(index));
       }
     }
@@ -586,9 +610,19 @@ auto CompileProgram(const frontend::Program& source,
   }
 
   result.program.functions.reserve(lowered.program.functions.size());
-  result.program.strings.reserve(lowered.program.strings.size());
-  for (const std::string& value : lowered.program.strings) {
-    result.program.strings.push_back(isolate.CreateString(value));
+  std::shared_ptr<StringConstants> strings;
+  const auto& literals = lowered.program.strings;
+  if (!literals.empty()) {
+    strings = std::make_shared<StringConstants>(isolate.heap(), literals.size());
+    for (std::size_t index = 0; index < literals.size(); ++index) {
+      auto* string = isolate.heap().AllocateString(literals.at(index));
+      if (string == nullptr) {
+        AddDiagnostic(result.diagnostics, frontend::SourceLocation(),
+                      "out of memory allocating string constant");
+        return result;
+      }
+      strings->values.at(index) = string;
+    }
   }
   for (const ir::Function& function : lowered.program.functions) {
     if (function.register_count > std::numeric_limits<std::uint8_t>::max()) {
@@ -599,7 +633,7 @@ auto CompileProgram(const frontend::Program& source,
     CompiledFunction compiled;
     compiled.name = function.name;
     compiled.classes = class_layouts;
-    compiled.strings = result.program.strings;
+    compiled.strings = strings;
     compiled.arrays = *array_layouts;
     compiled.doubles = function.doubles;
     // 没有操作数的无限循环在 IR 中可使用零个寄存器；VM 帧仍保留一个槽位。
@@ -623,10 +657,7 @@ auto CompileProgram(const frontend::Program& source,
     }
     result.program.functions.push_back(std::move(compiled));
   }
-  result.program.views.reserve(result.program.functions.size());
-  for (const CompiledFunction& function : result.program.functions) {
-    result.program.views.push_back(function.View());
-  }
+  result.program.views = FunctionViews(result.program.functions);
   return result;
 }
 

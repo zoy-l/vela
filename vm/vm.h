@@ -22,6 +22,7 @@ enum class ExecutionStatus : std::uint8_t {
 };
 
 struct ExecutionResult final {
+  // 返回引用不自动保根；宿主须在下一次分配或 GC 前注册 RootRange。
   runtime::Value value;
   ExecutionStatus status = ExecutionStatus::InvalidBytecode;
 

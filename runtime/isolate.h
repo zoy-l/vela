@@ -4,12 +4,10 @@
 #include <cstdint>
 #include <memory>
 #include <span>
-#include <string>
 #include <vector>
 
 #include "runtime/heap.h"
 #include "runtime/object.h"
-#include "runtime/string.h"
 
 namespace vela::runtime {
 
@@ -29,12 +27,10 @@ class Isolate final {
   [[nodiscard]] auto CreateClassLayout(std::uint32_t field_count,
                                        std::span<const std::uint32_t> reference_fields)
       -> ClassLayout*;
-  [[nodiscard]] auto CreateString(std::string value) -> StringObject*;
   [[nodiscard]] auto CreateArrayLayout(ArrayLayout layout) -> const ArrayLayout*;
 
  private:
   std::vector<std::unique_ptr<ClassLayout>> class_layouts_;
-  std::vector<std::unique_ptr<StringObject>> strings_;
   std::vector<std::unique_ptr<ArrayLayout>> array_layouts_;
   Heap heap_;
 };
