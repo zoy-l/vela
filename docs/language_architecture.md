@@ -17,6 +17,10 @@ rebinding; mutation of an object's fields or array elements remains allowed.
 There are no implicit conversions or legacy prefix declarations. Function
 values, arrow functions, and closures remain later work.
 
+Control flow includes C/C++-style fallthrough switches. Explicit nullable types
+use `T?` and flow-sensitive non-null checks. Scope, declaration order, and
+source diagnostics are specified in [Basic language contracts](language_basics.md).
+
 The initial class model is deliberately smaller than C++:
 
 - `class` declares a nominal object layout with statically known fields and
@@ -180,12 +184,16 @@ fields and native string-pointer arrays are traced precisely.
 
 Compiled functions share a fixed-size, rooted native string constant pool.
 Its owner registers the pool before allocating literals and releases its root
-when the last owning compiled function is destroyed. Copying compiled programs
-rebuilds borrowed bytecode views; moving transfers the owned storage. A raw
-`vm::Function` or `vm::Program` borrows its code and metadata, so the compiled
-owner and its Isolate must outlive the view. Execution results are borrowed
-values: hosts must root returned objects or strings before another allocation
-or collection. `Isolate` must outlive all root ranges and compiled artifacts.
+when its last owner is destroyed. `vm::Program` owns immutable, validated
+function storage; copies share that storage. `vm::FunctionHandle` retains the
+program, including its code and rooted constants. Raw `vm::Function` views are
+borrowed loading inputs: `Program::Load` copies them, then validates the owned
+snapshot. Execution does not repeat program validation. Layouts remain owned
+by the Isolate, which must outlive all programs, handles, and root ranges.
+Program destruction and root operations remain on the Isolate's thread.
+Execution results are borrowed values: hosts must root returned objects or
+strings before another allocation or collection. See
+[VM execution contracts](vm_execution.md) for register allocation and limits.
 
 Roots are revisited before the collector enters sweep because VM registers
 can change between incremental steps. Root registration and reference stores

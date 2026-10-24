@@ -1,5 +1,4 @@
 #include <cmath>
-#include <cstdint>
 #include <limits>
 #include <string_view>
 
@@ -45,10 +44,10 @@ func main(): bool {
     ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
   }
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* entry = compiled.program.FindFunction("main");
-  ASSERT_NE(entry, nullptr);
-  const auto index = static_cast<std::uint32_t>(entry - compiled.program.functions.data());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.View(), index);
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  const auto index = entry.index();
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, index);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -59,11 +58,11 @@ TEST(DoubleTest, DeduplicatesConstantsAndReturnsDouble) {
   const auto compiled =
       CompileSource("func main(): double { return 42.5 + 42.5 + 42.5; }", isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* entry = compiled.program.FindFunction("main");
-  ASSERT_NE(entry, nullptr);
-  ASSERT_EQ(entry->doubles.size(), 1U);
-  EXPECT_DOUBLE_EQ(entry->doubles.front(), 42.5);
-  const auto result = vm::VirtualMachine(isolate).Execute(entry->View());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  ASSERT_EQ(entry.doubles().size(), 1U);
+  EXPECT_DOUBLE_EQ(entry.doubles().front(), 42.5);
+  const auto result = vm::VirtualMachine(isolate).Execute(entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsDouble());
   EXPECT_DOUBLE_EQ(result.value.AsDouble(), 127.5);
@@ -82,9 +81,9 @@ TEST_P(DoubleConstantTest, PreservesBinary64ConstantsAndSignedZero) {
   runtime::Isolate isolate;
   const auto compiled = CompileSource(parameter.source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* entry = compiled.program.FindFunction("main");
-  ASSERT_NE(entry, nullptr);
-  const auto result = vm::VirtualMachine(isolate).Execute(entry->View());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  const auto result = vm::VirtualMachine(isolate).Execute(entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsDouble());
   const double actual = result.value.AsDouble();
@@ -122,9 +121,9 @@ func main(): bool {
   runtime::Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* entry = compiled.program.FindFunction("main");
-  ASSERT_NE(entry, nullptr);
-  const auto result = vm::VirtualMachine(isolate).Execute(entry->View());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  const auto result = vm::VirtualMachine(isolate).Execute(entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -138,10 +137,9 @@ TEST_P(DoubleDivisionByZeroTest, ReportsDivisionByZero) {
   runtime::Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* entry = compiled.program.FindFunction("main");
-  ASSERT_NE(entry, nullptr);
-  EXPECT_EQ(vm::VirtualMachine(isolate).Execute(entry->View()).status,
-            vm::ExecutionStatus::DivisionByZero);
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  EXPECT_EQ(vm::VirtualMachine(isolate).Execute(entry).status, vm::ExecutionStatus::DivisionByZero);
 }
 
 INSTANTIATE_TEST_SUITE_P(SignedZero,

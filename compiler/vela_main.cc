@@ -1,5 +1,4 @@
 #include <cstddef>
-#include <cstdint>
 #include <iostream>
 #include <span>
 #include <string>
@@ -27,7 +26,8 @@ void PrintUsage(std::ostream& output) {
 
 void PrintDiagnostics(std::string_view path, const vela::frontend::Diagnostics& diagnostics) {
   for (const vela::frontend::Diagnostic& diagnostic : diagnostics) {
-    std::cerr << path << ':' << diagnostic.location.line << ':' << diagnostic.location.column
+    const std::string_view source = diagnostic.source_path.empty() ? path : diagnostic.source_path;
+    std::cerr << source << ':' << diagnostic.location.line << ':' << diagnostic.location.column
               << ": error: " << diagnostic.message << '\n';
   }
 }
@@ -47,8 +47,6 @@ auto ExecutionStatusName(vela::vm::ExecutionStatus status) -> const char* {
   switch (status) {
     case vela::vm::ExecutionStatus::Returned:
       return "returned";
-    case vela::vm::ExecutionStatus::InvalidBytecode:
-      return "invalid bytecode";
     case vela::vm::ExecutionStatus::OutOfMemory:
       return "out of memory";
     case vela::vm::ExecutionStatus::TypeError:
@@ -63,6 +61,10 @@ auto ExecutionStatusName(vela::vm::ExecutionStatus status) -> const char* {
       return "division by zero";
     case vela::vm::ExecutionStatus::StackOverflow:
       return "stack overflow";
+    case vela::vm::ExecutionStatus::InvalidEntry:
+      return "invalid entry function";
+    case vela::vm::ExecutionStatus::InvalidIsolate:
+      return "program belongs to a different isolate";
   }
   return "unknown runtime error";
 }
@@ -77,19 +79,18 @@ auto RunFile(std::string_view path_text) -> int {
     return 1;
   }
 
-  const auto* function = compiled.program.FindFunction("main");
-  if (function == nullptr) {
+  const auto function = compiled.program.FindFunction("main");
+  if (!function.IsValid()) {
     std::cerr << "vela: run requires a zero-argument main function\n";
     return 1;
   }
-  if (function->parameter_count != 0) {
+  if (function.parameter_count() != 0) {
     std::cerr << "vela: run does not accept main function parameters yet\n";
     return 1;
   }
 
-  const vela::vm::ExecutionResult result = vela::vm::VirtualMachine(isolate).Execute(
-      compiled.program.View(),
-      static_cast<std::uint32_t>(function - compiled.program.functions.data()));
+  const vela::vm::ExecutionResult result =
+      vela::vm::VirtualMachine(isolate).Execute(compiled.program, function.index());
   if (!result.Succeeded()) {
     std::cerr << "vela: " << ExecutionStatusName(result.status) << '\n';
     return 1;

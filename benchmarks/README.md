@@ -1,6 +1,6 @@
 # Vela benchmarks
 
-Google Benchmark runs seventeen Vela workloads through the production compiler
+Google Benchmark runs twenty Vela workloads through the production compiler
 and VM. Versions are pinned in `DEPS`; `//benchmarks:vela_benchmarks` links the
 upstream `benchmark_main` and is separate from the language executable.
 Native benchmark sources use `*_benchmark.cc`. Generated symbol-table workloads
@@ -21,7 +21,8 @@ separate samples controlled by `--benchmark_repetitions`.
 Each workload registers three cases:
 
 - `compile/*`: compiles already loaded source, including creation and destruction
-  of the Isolate and compiled program. Source file I/O is excluded.
+  of the Isolate and compiled program, IR optimization, physical register
+  allocation, and one-time bytecode validation. Source file I/O is excluded.
 - `first_execute/*`: runs bytecode once in a fresh Isolate on every iteration.
   Google Benchmark pauses timing for compilation, setup, verification, and
   destruction; timer pause/resume has overhead, so use this case for the first
@@ -31,9 +32,17 @@ Each workload registers three cases:
   inside the measurement. Execution status and integer result are checked on
   every iteration, and `DoNotOptimize` retains the result.
 
+Steady cases report `register_bytes`: native register capacity retained after
+warm-up, excluding fixed VM metadata and the GC heap. Register storage is reused
+by call depth; bytecode validation is included in compilation, not execution.
+See [execution measurements](../docs/vm_execution.md) for the current results.
+The array and double timing tables below predate that execution refactor.
+
 | Workload | Expected result |
 | --- | ---: |
 | `integer_loop` | 499500 |
+| `switch_dispatch`, `if_dispatch` | 3500 |
+| `nullable_calls` | 1000 |
 | `function_calls` | 1000 |
 | `field_access` | 1000 |
 | `allocation_gc` | 1000 |
@@ -59,6 +68,11 @@ the workload size does not exceed the current bytecode's 8-bit call operand.
 indexed reads). `array_allocation` creates 1,000 such arrays, overwrites element
 zero, and sums that element. Both use the normal checked access and GC paths;
 the latter includes array backing storage in GC allocation pressure.
+
+`switch_dispatch` and `if_dispatch` perform the same eight-way selection 1,000
+times. `nullable_calls` adds a nullable return and explicit guard to the same
+1,000 calls as `function_calls`. These cases measure production control flow;
+neither nullable integers nor their guards allocate GC objects.
 
 `double_loop` performs 1,000 double additions and verifies the result is `500.0`.
 `double_array` performs 16,000 reads and additions from native double array

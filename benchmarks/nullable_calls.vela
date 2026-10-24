@@ -1,0 +1,13 @@
+func increment(value: int): int? {
+  return value + 1;
+}
+
+func main(): int {
+  let index = 0;
+  while (index != 1000) {
+    const next = increment(index);
+    if (next == null) return 0;
+    index = next;
+  }
+  return index;
+}

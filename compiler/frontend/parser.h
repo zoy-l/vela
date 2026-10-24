@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -19,7 +20,7 @@ struct ParseResult final {
   Diagnostics diagnostics;
 };
 
-[[nodiscard]] auto ParseSource(std::string_view source) -> ParseResult;
+[[nodiscard]] auto ParseSource(std::string_view source, std::uint32_t source_id = 0) -> ParseResult;
 void AppendProgram(Program& destination, Program source);
 
 class Parser final {
@@ -39,7 +40,7 @@ class Parser final {
   void Synchronize();
 
   auto ParseEnum() -> std::optional<Enum>;
-  auto ParseImport() -> std::optional<std::string>;
+  auto ParseImport() -> std::optional<Program::Import>;
   auto ParseClass() -> std::optional<Class>;
   auto ParseFunction() -> std::optional<Function>;
   auto ParseFunctionBody(const Token& name) -> std::optional<Function>;
@@ -56,6 +57,7 @@ class Parser final {
   auto ParseForStatement() -> std::unique_ptr<Statement>;
   auto ParseBreakStatement() -> std::unique_ptr<Statement>;
   auto ParseContinueStatement() -> std::unique_ptr<Statement>;
+  auto ParseSwitchStatement() -> std::unique_ptr<Statement>;
 
   auto ParseExpression() -> std::unique_ptr<Expression>;
   auto ParseAssignment() -> std::unique_ptr<Expression>;

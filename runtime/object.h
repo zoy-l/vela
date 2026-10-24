@@ -40,6 +40,13 @@ struct ArrayLayout final {
   ClassLayout* element_class = nullptr;
   const ArrayLayout* element_array = nullptr;
   ObjectKind element_object_kind = ObjectKind::Instance;
+  // 可空基本类型使用 Value 槽位；引用元素仍以原生指针保存空值。
+  bool nullable_elements = false;
+
+  [[nodiscard]] auto HasTaggedElements() const noexcept -> bool {
+    return nullable_elements && element_kind != ValueKind::Object &&
+           element_kind != ValueKind::String;
+  }
 
   [[nodiscard]] auto element_size() const noexcept -> std::size_t;
 };

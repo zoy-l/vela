@@ -1,5 +1,4 @@
 #include <array>
-#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -27,13 +26,13 @@ class StringLanguageTest : public testing::Test {
       }
       return {};
     }
-    const auto* main = compiled_.program.FindFunction("main");
-    if (main == nullptr) {
+    const auto main = compiled_.program.FindFunction("main");
+    if (!main.IsValid()) {
       ADD_FAILURE() << "missing main";
       return {};
     }
-    const auto index = static_cast<std::uint32_t>(main - compiled_.program.functions.data());
-    return vm::VirtualMachine(isolate_).Execute(compiled_.program.View(), index);
+    const auto index = main.index();
+    return vm::VirtualMachine(isolate_).Execute(compiled_.program, index);
   }
 
   auto Text(std::string_view source) -> std::string {
@@ -206,7 +205,7 @@ TEST_F(StringLanguageTest, InterpolationAllocatesOnlyTheFinalString) {
   auto& heap = isolate.heap();
   heap.Collect();
   const auto before = heap.object_count();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.View(), 0);
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, 0);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(heap.object_count(), before + 1);
   EXPECT_EQ(result.value.AsString()->value(), "abcdefg");
@@ -220,7 +219,7 @@ TEST_F(StringLanguageTest, JoinAllocatesOnlyTheInputArrayAndFinalString) {
   auto& heap = isolate.heap();
   heap.Collect();
   const auto before = heap.object_count();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.View(), 0);
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, 0);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(heap.object_count(), before + 2);
 }

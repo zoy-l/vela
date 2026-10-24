@@ -14,6 +14,8 @@ CLI prints the value returned by `main`; object-returning examples print
 .\out\debug\vela.exe run examples\string_gc.vela
 .\out\debug\vela.exe run examples\strings.vela
 .\out\debug\vela.exe run examples\string_builder.vela
+.\out\debug\vela.exe run examples\switch.vela
+.\out\debug\vela.exe run examples\nullable.vela
 .\out\debug\vela.exe run examples\imports\main.vela
 ```
 
@@ -37,6 +39,11 @@ concatenations. It prints `Vela`, `Vela GC`, then returns `true`.
 `strings.vela` exercises escapes, interpolation, explicit conversions, Unicode
 APIs, `join`, and imports. `string_builder.vela` builds text in a loop and keeps
 an immutable snapshot. See [string contracts](../docs/strings.md).
+
+`switch.vela` demonstrates enum cases, fallthrough, and loop control; it prints
+`close` and returns `121`. `nullable.vela` demonstrates `T?`, guard checks,
+nullable fields and array elements; it prints `label: Vela`, `empty`, and returns
+`42`. See [basic language contracts](../docs/language_basics.md).
 
 Use `check` when validating source without executing it:
 

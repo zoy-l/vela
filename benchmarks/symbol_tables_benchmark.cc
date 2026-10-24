@@ -39,13 +39,13 @@ void CompileSymbolTables(benchmark::State& state) {
       state.SkipWithError("Symbol workload did not compile");
       return;
     }
-    const auto* entry = compiled.program.FindFunction("main");
-    if (entry == nullptr) {
+    const auto entry = compiled.program.FindFunction("main");
+    if (!entry.IsValid()) {
       state.SkipWithError("Symbol workload has no main function");
       return;
     }
-    const auto entry_index = static_cast<std::uint32_t>(entry - compiled.program.functions.data());
-    const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.View(), entry_index);
+    const auto entry_index = entry.index();
+    const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, entry_index);
     constexpr std::int64_t kExpectedResult = 11;
     if (!result.Succeeded() || !result.value.IsInteger() ||
         result.value.AsInteger() != kExpectedResult) {

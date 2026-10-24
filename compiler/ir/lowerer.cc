@@ -25,6 +25,29 @@ auto InvalidType() -> frontend::TypeDescriptor {
   return {};
 }
 
+auto HasAssignments(const frontend::Expression& expression) -> bool {
+  if (expression.kind == frontend::Expression::Kind::Binary && expression.text == "=") {
+    return true;
+  }
+  for (const auto* child : {
+           expression.left.get(),
+           expression.right.get(),
+           expression.operand.get(),
+           expression.callee.get(),
+           expression.object.get(),
+           expression.index.get(),
+       }) {
+    if (child != nullptr && HasAssignments(*child)) {
+      return true;
+    }
+  }
+  return std::ranges::any_of(expression.elements,
+                             [](const auto& child) -> bool { return HasAssignments(*child); }) ||
+         std::ranges::any_of(expression.arguments, [](const auto& argument) -> bool {
+           return HasAssignments(*argument.value);
+         });
+}
+
 auto SelectBinaryOpcode(std::string_view operation, const frontend::TypeDescriptor& type)
     -> std::optional<Opcode> {
   using Kind = frontend::TypeDescriptor::Kind;
@@ -104,7 +127,12 @@ auto Lowerer::Lower() -> LoweringResult {
 }
 
 void Lowerer::AddDiagnostic(frontend::SourceLocation location, std::string message) {
-  diagnostics_.push_back({.location = location, .message = std::move(message)});
+  diagnostics_.push_back({
+      .location = location,
+      .message = std::move(message),
+      .source_path = source_.source_paths.empty() ? std::string()
+                                                  : source_.source_paths.at(location.source_id),
+  });
 }
 
 void Lowerer::BuildClassTable() {
@@ -165,12 +193,12 @@ void Lowerer::LowerFunction(const frontend::Function& source, const frontend::Cl
   }
   function.return_type = function_info->return_type;
   function.parameter_count =
-      static_cast<std::uint16_t>(source.parameters.size() + ((owner != nullptr) ? 1 : 0));
+      static_cast<std::uint32_t>(source.parameters.size() + ((owner != nullptr) ? 1 : 0));
   current_function_ = &function;
   next_register_ = 0;
   double_constant_ids_.clear();
   scopes_.clear();
-  loops_.clear();
+  controls_.clear();
   PushScope();
 
   if (owner != nullptr) {
@@ -187,7 +215,9 @@ void Lowerer::LowerFunction(const frontend::Function& source, const frontend::Cl
   }
 
   if (source.body != nullptr) {
-    LowerBlock(*source.body);
+    for (const auto& child : source.body->statements) {
+      LowerStatement(*child);
+    }
   }
   PopScope();
 
@@ -236,22 +266,22 @@ void Lowerer::LowerStatement(const frontend::Statement& statement) {
     case frontend::Statement::Kind::For:
       LowerFor(statement);
       break;
+    case frontend::Statement::Kind::Switch:
+      LowerSwitch(statement);
+      break;
     case frontend::Statement::Kind::Break: {
-      if (loops_.empty()) {
-        break;
-      }
       const std::size_t jump = current_function_->instructions.size();
       Emit({.opcode = Opcode::Jump, .location = statement.location});
-      loops_.back().break_jumps.push_back(jump);
+      controls_.back().break_jumps.push_back(jump);
       break;
     }
     case frontend::Statement::Kind::Continue: {
-      if (loops_.empty()) {
-        break;
-      }
       const std::size_t jump = current_function_->instructions.size();
       Emit({.opcode = Opcode::Jump, .location = statement.location});
-      loops_.back().continue_jumps.push_back(jump);
+      const auto loop = std::ranges::find_if(
+          controls_ | std::views::reverse,
+          [](const auto& control) -> bool { return control.kind == ControlTargets::Kind::Loop; });
+      loop->continue_jumps.push_back(jump);
       break;
     }
   }
@@ -270,6 +300,11 @@ auto Lowerer::LowerExpression(const frontend::Expression& expression) -> Lowerer
     return LowerBuiltin(expression);
   }
   switch (expression.kind) {
+    case frontend::Expression::Kind::NullLiteral: {
+      const auto reg = AllocateTemporary(expression.location);
+      Emit({.opcode = Opcode::LoadNull, .dst = reg, .location = expression.location});
+      return {.reg = reg, .type = {.kind = frontend::TypeDescriptor::Kind::Null, .name = "null"}};
+    }
     case frontend::Expression::Kind::IntegerLiteral:
       return LowerIntegerLiteral(expression);
     case frontend::Expression::Kind::BooleanLiteral: {
@@ -298,7 +333,7 @@ auto Lowerer::LowerExpression(const frontend::Expression& expression) -> Lowerer
         AddDiagnostic(expression.location, "unknown local during lowering");
         return {.reg = 0, .type = InvalidType()};
       }
-      return {.reg = local->reg, .type = local->type};
+      return {.reg = local->reg, .type = model_.expression_types.at(&expression)};
     }
     case frontend::Expression::Kind::Unary:
       return LowerUnary(expression);
@@ -326,7 +361,7 @@ auto Lowerer::LowerAssignment(const frontend::Expression& expression) -> Lowerer
     return {.reg = local->reg, .type = local->type};
   }
   if (left.kind == frontend::Expression::Kind::Member) {
-    const LoweredValue object = LowerExpression(*left.object);
+    const LoweredValue object = SnapshotBefore(LowerExpression(*left.object), right);
     if (object.type.kind != frontend::TypeDescriptor::Kind::Class) {
       AddDiagnostic(left.location, "field assignment requires a class value");
       return {.reg = 0, .type = InvalidType()};
@@ -350,8 +385,9 @@ auto Lowerer::LowerAssignment(const frontend::Expression& expression) -> Lowerer
     return {.reg = value.reg, .type = field_type};
   }
   if (left.kind == frontend::Expression::Kind::Index) {
-    const LoweredValue array = LowerExpression(*left.object);
-    const LoweredValue index = LowerExpression(*left.index);
+    const auto array_before_index = SnapshotBefore(LowerExpression(*left.object), *left.index);
+    const auto array = SnapshotBefore(array_before_index, right);
+    const auto index = SnapshotBefore(LowerExpression(*left.index), right);
     const auto& element_type =
         model_.types.at(array.type.name.substr(0, array.type.name.size() - 2));
     const LoweredValue value = LowerExpression(right);
@@ -419,7 +455,8 @@ auto Lowerer::LowerConstruction(const frontend::Expression& expression,
 }
 
 auto Lowerer::LowerMember(const frontend::Expression& expression) -> Lowerer::LoweredValue {
-  if (expression.object->kind == frontend::Expression::Kind::Name) {
+  if (expression.object->kind == frontend::Expression::Kind::Name &&
+      FindLocal(expression.object->text) == nullptr) {
     const auto type = model_.types.find(expression.object->text);
     if (type != model_.types.end() && type->second.kind == frontend::TypeDescriptor::Kind::Enum) {
       return LowerEnumMember(expression, type->second);
@@ -650,24 +687,7 @@ auto Lowerer::LowerStringLiteral(const frontend::Expression& expression) -> Lowe
 
 auto Lowerer::LowerEnumMember(const frontend::Expression& expression,
                               const frontend::TypeDescriptor& type) -> Lowerer::LoweredValue {
-  std::uint32_t ordinal = 0;
-  bool found = false;
-  for (const frontend::Enum& enumeration : source_.enums) {
-    if (enumeration.name != type.name) {
-      continue;
-    }
-    for (std::size_t index = 0; index < enumeration.members.size(); ++index) {
-      if (enumeration.members.at(index) == expression.text) {
-        ordinal = static_cast<std::uint32_t>(index);
-        found = true;
-        break;
-      }
-    }
-  }
-  if (!found) {
-    AddDiagnostic(expression.location, "unknown enum member during lowering");
-    return {.reg = 0, .type = InvalidType()};
-  }
+  const auto ordinal = model_.enum_values.at(type.name + "." + expression.text);
   const RegisterId reg = AllocateTemporary(expression.location);
   Emit({
       .opcode = Opcode::LoadInt,
@@ -712,6 +732,16 @@ auto Lowerer::LowerUnary(const frontend::Expression& expression) -> Lowerer::Low
   return {.reg = result, .type = InvalidType()};
 }
 
+auto Lowerer::SnapshotBefore(LoweredValue value, const frontend::Expression& later)
+    -> LoweredValue {
+  if (HasAssignments(later)) {
+    const auto snapshot = AllocateTemporary(later.location);
+    Emit({.opcode = Opcode::Move, .dst = snapshot, .lhs = value.reg, .location = later.location});
+    value.reg = snapshot;
+  }
+  return value;
+}
+
 auto Lowerer::LowerBinary(const frontend::Expression& expression) -> Lowerer::LoweredValue {
   if (expression.text == "=") {
     return LowerAssignment(expression);
@@ -719,8 +749,22 @@ auto Lowerer::LowerBinary(const frontend::Expression& expression) -> Lowerer::Lo
   if (expression.text == "&&" || expression.text == "||") {
     return LowerLogical(expression);
   }
-  const LoweredValue left = LowerExpression(*expression.left);
+  const auto left = SnapshotBefore(LowerExpression(*expression.left), *expression.right);
   const LoweredValue right = LowerExpression(*expression.right);
+  using Kind = frontend::TypeDescriptor::Kind;
+  if ((expression.text == "==" || expression.text == "!=") &&
+      (left.type.nullable || right.type.nullable || left.type.kind == Kind::Null ||
+       right.type.kind == Kind::Null || left.type.kind == Kind::Class)) {
+    const auto result = AllocateTemporary(expression.location);
+    Emit({
+        .opcode = expression.text == "==" ? Opcode::EqualValue : Opcode::NotEqualValue,
+        .dst = result,
+        .lhs = left.reg,
+        .rhs = right.reg,
+        .location = expression.location,
+    });
+    return {.reg = result, .type = {.kind = Kind::Bool, .name = "bool"}};
+  }
   if (left.type.kind == frontend::TypeDescriptor::Kind::Double) {
     return LowerDoubleBinary(expression, left, right);
   }

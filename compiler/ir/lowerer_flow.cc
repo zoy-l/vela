@@ -11,21 +11,27 @@
 
 namespace vela::ir {
 
+void Lowerer::LowerScopedStatement(const frontend::Statement& statement) {
+  PushScope();
+  LowerStatement(statement);
+  PopScope();
+}
+
 void Lowerer::LowerIf(const frontend::Statement& statement) {
   const auto& flow = model_.control_flow.at(&statement);
   // 即使条件结果已知，也要保留条件表达式实际会执行的副作用。
   const auto condition = LowerExpression(*statement.condition);
   if (flow.condition != frontend::ConditionTruth::Unknown) {
     if (flow.condition == frontend::ConditionTruth::AlwaysTrue) {
-      LowerStatement(*statement.then_branch);
+      LowerScopedStatement(*statement.then_branch);
     } else if (statement.else_branch) {
-      LowerStatement(*statement.else_branch);
+      LowerScopedStatement(*statement.else_branch);
     }
     return;
   }
   const auto false_jump = current_function_->instructions.size();
   Emit({.opcode = Opcode::JumpIfFalse, .lhs = condition.reg, .location = statement.location});
-  LowerStatement(*statement.then_branch);
+  LowerScopedStatement(*statement.then_branch);
   std::optional<std::size_t> end_jump;
   if (statement.else_branch &&
       model_.control_flow.at(statement.then_branch.get()).can_fall_through) {
@@ -35,7 +41,7 @@ void Lowerer::LowerIf(const frontend::Statement& statement) {
   current_function_->instructions.at(false_jump).index =
       static_cast<std::uint32_t>(current_function_->instructions.size());
   if (statement.else_branch) {
-    LowerStatement(*statement.else_branch);
+    LowerScopedStatement(*statement.else_branch);
   }
   if (end_jump) {
     current_function_->instructions.at(*end_jump).index =
@@ -51,9 +57,9 @@ void Lowerer::LowerWhile(const frontend::Statement& statement) {
     exit_jump = current_function_->instructions.size();
     Emit({.opcode = Opcode::JumpIfFalse, .lhs = condition.reg, .location = statement.location});
   }
-  loops_.push_back({});
-  LowerStatement(*statement.then_branch);
-  for (const auto jump : loops_.back().continue_jumps) {
+  controls_.push_back({});
+  LowerScopedStatement(*statement.then_branch);
+  for (const auto jump : controls_.back().continue_jumps) {
     current_function_->instructions.at(jump).index = static_cast<std::uint32_t>(loop_start);
   }
   if (model_.control_flow.at(statement.then_branch.get()).can_fall_through) {
@@ -67,10 +73,10 @@ void Lowerer::LowerWhile(const frontend::Statement& statement) {
   if (exit_jump) {
     current_function_->instructions.at(*exit_jump).index = loop_end;
   }
-  for (const auto jump : loops_.back().break_jumps) {
+  for (const auto jump : controls_.back().break_jumps) {
     current_function_->instructions.at(jump).index = loop_end;
   }
-  loops_.pop_back();
+  controls_.pop_back();
 }
 
 void Lowerer::LowerFor(const frontend::Statement& statement) {
@@ -87,10 +93,10 @@ void Lowerer::LowerFor(const frontend::Statement& statement) {
       Emit({.opcode = Opcode::JumpIfFalse, .lhs = condition.reg, .location = statement.location});
     }
   }
-  loops_.push_back({});
-  LowerStatement(*statement.then_branch);
+  controls_.push_back({});
+  LowerScopedStatement(*statement.then_branch);
   const auto increment_target = static_cast<std::uint32_t>(current_function_->instructions.size());
-  for (const auto jump : loops_.back().continue_jumps) {
+  for (const auto jump : controls_.back().continue_jumps) {
     current_function_->instructions.at(jump).index = increment_target;
   }
   const auto& body = model_.control_flow.at(statement.then_branch.get());
@@ -108,10 +114,10 @@ void Lowerer::LowerFor(const frontend::Statement& statement) {
   if (exit_jump) {
     current_function_->instructions.at(*exit_jump).index = loop_end;
   }
-  for (const auto jump : loops_.back().break_jumps) {
+  for (const auto jump : controls_.back().break_jumps) {
     current_function_->instructions.at(jump).index = loop_end;
   }
-  loops_.pop_back();
+  controls_.pop_back();
   PopScope();
 }
 

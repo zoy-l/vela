@@ -26,11 +26,13 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 - [x] Add `&&` and `||`
 - [x] Add `for`
 - [x] Add `break` and `continue`
-- [ ] Add `switch` and `case`
-- [ ] Add a `null` literal and nullability checks
+- [x] Add `switch` and `case`
+- [x] Add a `null` literal and nullability checks
 - [x] Add `let`/`const` declarations and constant binding assignment checks
-- [ ] Define scope, shadowing, and declaration-before-use rules
-- [ ] Complete source locations and diagnostics for all parser and checker errors
+- [x] Define scope, shadowing, and declaration-before-use rules
+- [x] Complete source locations and diagnostics for all parser and checker errors
+
+P0 behavior is specified in [Basic language contracts](language_basics.md).
 
 ## P1: core values and object model
 
@@ -58,10 +60,11 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 ## P1: type system and pattern matching
 
 - [ ] Add enum payloads
-- [ ] Add enum `switch` and exhaustive matching
+- [x] Add enum `switch`
+- [ ] Add exhaustive matching
 - [ ] Add `match` expressions
 - [ ] Add type aliases
-- [ ] Add nullable types such as `T?`
+- [x] Add nullable types such as `T?`
 - [ ] Add generics such as `List<T>` and `Map<K, V>`
 - [ ] Add interfaces or traits
 - [ ] Add type tests and checked casts
@@ -72,8 +75,8 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 
 - [x] Add `import`
 - [ ] Add `export`
-- [ ] Add explicit `namespace` declaration blocks for grouping symbols
-  (C++/C#-style declarations, distinct from module isolation and import aliases)
+- [ ] Add module-level symbol isolation
+- [ ] Add import aliases for qualified access and name conflict resolution
 - [x] Compile multiple source files as one program
 - [ ] Define package and dependency metadata
 - [x] Add console output
@@ -97,8 +100,12 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 - [ ] Add typed VM register slots for primitive values
 - [ ] Add a bytecode constant pool
 - [x] Add constant folding
-- [ ] Add dead-code and unreachable-block elimination
-- [ ] Add jump threading and redundant-move elimination
+- [x] Add CFG liveness and physical register reuse with contiguous call arguments
+- [x] Validate immutable owned programs once at compilation/loading
+- [x] Reuse register storage sized to active functions by call depth
+- [x] Add dead-code and unreachable-block elimination
+- [x] Eliminate self-moves after register allocation
+- [ ] Add jump threading and general redundant-move elimination
 - [ ] Specialize direct calls and field offsets
 - [ ] Benchmark computed-goto dispatch before adopting it
 - [ ] Measure and tune generational GC only after representative benchmarks
@@ -107,6 +114,9 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 - [ ] Add formatter, LSP diagnostics, and syntax highlighting
 - [ ] Add a debugger and REPL
 - [ ] Add documentation generation
+
+Current bytecode limits and measured execution costs are documented in
+[VM execution contracts](vm_execution.md).
 
 ## Recommended implementation order
 

@@ -19,7 +19,9 @@ struct LexResult final {
 
 class Lexer final {
  public:
-  explicit Lexer(std::string_view source) : source_(source) {}
+  explicit Lexer(std::string_view source, std::uint32_t source_id = 0) : source_(source) {
+    location_.source_id = source_id;
+  }
 
   [[nodiscard]] auto Tokenize() -> LexResult;
 

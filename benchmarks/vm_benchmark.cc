@@ -71,16 +71,15 @@ void FirstExecution(benchmark::State& state, std::string_view filename, std::int
         ReportCompileFailure(state, compiled);
         return;
       }
-      const auto* entry = compiled.program.FindFunction("main");
-      if (entry == nullptr || entry->parameter_count != 0) {
+      const auto entry = compiled.program.FindFunction("main");
+      if (!entry.IsValid() || entry.parameter_count() != 0) {
         state.SkipWithError("Benchmark requires a zero-argument main function");
         return;
       }
-      const auto entry_index =
-          static_cast<std::uint32_t>(entry - compiled.program.functions.data());
+      const auto entry_index = entry.index();
       vm::VirtualMachine machine(isolate);
       state.ResumeTiming();
-      auto result = machine.Execute(compiled.program.View(), entry_index);
+      auto result = machine.Execute(compiled.program, entry_index);
       benchmark::DoNotOptimize(result);
       state.PauseTiming();
       if (!IsExpectedResult(result, expected)) {
@@ -103,13 +102,13 @@ void SteadyExecution(benchmark::State& state, std::string_view filename, std::in
     ReportCompileFailure(state, compiled);
     return;
   }
-  const auto* entry = compiled.program.FindFunction("main");
-  if (entry == nullptr || entry->parameter_count != 0) {
+  const auto entry = compiled.program.FindFunction("main");
+  if (!entry.IsValid() || entry.parameter_count() != 0) {
     state.SkipWithError("Benchmark requires a zero-argument main function");
     return;
   }
-  const auto entry_index = static_cast<std::uint32_t>(entry - compiled.program.functions.data());
-  const auto program = compiled.program.View();
+  const auto entry_index = entry.index();
+  const auto program = compiled.program;
   vm::VirtualMachine machine(isolate);
   const auto first = machine.Execute(program, entry_index);
   if (!IsExpectedResult(first, expected)) {
@@ -120,6 +119,7 @@ void SteadyExecution(benchmark::State& state, std::string_view filename, std::in
   // 固定记录一次执行后的状态，避免把计时迭代次数造成的 GC 相位差当作内存变化。
   state.counters["first_allocated_bytes"] = static_cast<double>(heap.allocated_bytes());
   state.counters["first_committed_bytes"] = static_cast<double>(heap.committed_bytes());
+  state.counters["register_bytes"] = static_cast<double>(machine.register_bytes());
   for (auto iteration : state) {
     auto result = machine.Execute(program, entry_index);
     benchmark::DoNotOptimize(result);
@@ -140,6 +140,20 @@ void SteadyExecution(benchmark::State& state, std::string_view filename, std::in
 }
 
 BENCHMARK_CAPTURE(Compile, IntegerLoop, "integer_loop.vela")->Name("compile/integer_loop");
+BENCHMARK_CAPTURE(Compile, SwitchDispatch, "switch_dispatch.vela")->Name("compile/switch_dispatch");
+BENCHMARK_CAPTURE(Compile, IfDispatch, "if_dispatch.vela")->Name("compile/if_dispatch");
+BENCHMARK_CAPTURE(Compile, NullableCalls, "nullable_calls.vela")->Name("compile/nullable_calls");
+BENCHMARK_CAPTURE(FirstExecution, SwitchDispatch, "switch_dispatch.vela", 3500)
+    ->Name("first_execute/switch_dispatch");
+BENCHMARK_CAPTURE(FirstExecution, IfDispatch, "if_dispatch.vela", 3500)
+    ->Name("first_execute/if_dispatch");
+BENCHMARK_CAPTURE(FirstExecution, NullableCalls, "nullable_calls.vela", 1000)
+    ->Name("first_execute/nullable_calls");
+BENCHMARK_CAPTURE(SteadyExecution, SwitchDispatch, "switch_dispatch.vela", 3500)
+    ->Name("vm/switch_dispatch");
+BENCHMARK_CAPTURE(SteadyExecution, IfDispatch, "if_dispatch.vela", 3500)->Name("vm/if_dispatch");
+BENCHMARK_CAPTURE(SteadyExecution, NullableCalls, "nullable_calls.vela", 1000)
+    ->Name("vm/nullable_calls");
 BENCHMARK_CAPTURE(Compile, FunctionCalls, "function_calls.vela")->Name("compile/function_calls");
 BENCHMARK_CAPTURE(Compile, FieldAccess, "field_access.vela")->Name("compile/field_access");
 BENCHMARK_CAPTURE(Compile, AllocationGc, "allocation_gc.vela")->Name("compile/allocation_gc");

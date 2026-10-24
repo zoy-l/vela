@@ -1,12 +1,12 @@
 #include "compiler/compiler.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -23,11 +23,14 @@
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
+#include "compiler/ir/optimizer.h"
+#include "compiler/register_allocator.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
 #include "vm/bytecode.h"
+#include "vm/program.h"
 
 namespace vela::compiler {
 namespace {
@@ -35,7 +38,7 @@ namespace {
 void AddDiagnostic(frontend::Diagnostics& diagnostics,
                    frontend::SourceLocation location,
                    std::string message) {
-  diagnostics.push_back({.location = location, .message = std::move(message)});
+  diagnostics.push_back({.location = location, .message = std::move(message), .source_path = {}});
 }
 
 auto FitsImmediate16(std::int64_t value) -> bool {
@@ -43,178 +46,16 @@ auto FitsImmediate16(std::int64_t value) -> bool {
          value <= std::numeric_limits<std::int16_t>::max();
 }
 
-void FoldConstants(ir::Function& function) {
-  for (std::size_t index = 2; index < function.instructions.size(); ++index) {
-    ir::Instruction& instruction = function.instructions.at(index);
-    const ir::Instruction& left = function.instructions.at(index - 2);
-    const ir::Instruction& right = function.instructions.at(index - 1);
-    if (left.opcode != ir::Opcode::LoadInt || right.opcode != ir::Opcode::LoadInt ||
-        left.dst != instruction.lhs || right.dst != instruction.rhs) {
-      continue;
-    }
-    std::int64_t value = 0;
-    bool folded = true;
-    switch (instruction.opcode) {
-      case ir::Opcode::AddInt:
-        folded = !__builtin_add_overflow(left.immediate, right.immediate, &value);
-        break;
-      case ir::Opcode::SubInt:
-        folded = !__builtin_sub_overflow(left.immediate, right.immediate, &value);
-        break;
-      case ir::Opcode::MulInt:
-        folded = !__builtin_mul_overflow(left.immediate, right.immediate, &value);
-        break;
-      case ir::Opcode::DivInt:
-        folded =
-            right.immediate != 0 &&
-            (left.immediate != std::numeric_limits<std::int64_t>::min() || right.immediate != -1);
-        if (folded) {
-          value = left.immediate / right.immediate;
-        }
-        break;
-      case ir::Opcode::LessInt:
-        value = static_cast<std::int64_t>(left.immediate < right.immediate);
-        break;
-      case ir::Opcode::LessEqualInt:
-        value = static_cast<std::int64_t>(left.immediate <= right.immediate);
-        break;
-      case ir::Opcode::GreaterInt:
-        value = static_cast<std::int64_t>(left.immediate > right.immediate);
-        break;
-      case ir::Opcode::GreaterEqualInt:
-        value = static_cast<std::int64_t>(left.immediate >= right.immediate);
-        break;
-      default:
-        folded = false;
-        break;
-    }
-    if (folded) {
-      instruction.opcode = (instruction.opcode == ir::Opcode::LessInt ||
-                            instruction.opcode == ir::Opcode::LessEqualInt ||
-                            instruction.opcode == ir::Opcode::GreaterInt ||
-                            instruction.opcode == ir::Opcode::GreaterEqualInt)
-                               ? ir::Opcode::LoadBool
-                               : ir::Opcode::LoadInt;
-      instruction.immediate = value;
-      instruction.lhs = 0;
-      instruction.rhs = 0;
-    }
-  }
-}
-
-auto Byte(std::uint16_t value) -> std::uint8_t {
+auto Byte(std::uint32_t value) -> std::uint8_t {
   return static_cast<std::uint8_t>(value);
 }
 
-auto EmitOpcode(ir::Opcode opcode) -> vm::OpCode {
-  switch (opcode) {
-    case ir::Opcode::LoadNull:
-      return vm::OpCode::LoadNull;
-    case ir::Opcode::LoadBool:
-      return vm::OpCode::LoadBool;
-    case ir::Opcode::LoadInt:
-      return vm::OpCode::LoadInt;
-    case ir::Opcode::LoadDouble:
-      return vm::OpCode::LoadDouble;
-    case ir::Opcode::AddDouble:
-      return vm::OpCode::AddDouble;
-    case ir::Opcode::SubDouble:
-      return vm::OpCode::SubDouble;
-    case ir::Opcode::MulDouble:
-      return vm::OpCode::MulDouble;
-    case ir::Opcode::DivDouble:
-      return vm::OpCode::DivDouble;
-    case ir::Opcode::NegDouble:
-      return vm::OpCode::NegDouble;
-    case ir::Opcode::EqualDouble:
-      return vm::OpCode::EqualDouble;
-    case ir::Opcode::NotEqualDouble:
-      return vm::OpCode::NotEqualDouble;
-    case ir::Opcode::LessDouble:
-      return vm::OpCode::LessDouble;
-    case ir::Opcode::LessEqualDouble:
-      return vm::OpCode::LessEqualDouble;
-    case ir::Opcode::GreaterDouble:
-      return vm::OpCode::GreaterDouble;
-    case ir::Opcode::GreaterEqualDouble:
-      return vm::OpCode::GreaterEqualDouble;
-    case ir::Opcode::Move:
-      return vm::OpCode::Move;
-    case ir::Opcode::AddInt:
-      return vm::OpCode::AddInt;
-    case ir::Opcode::SubInt:
-      return vm::OpCode::SubInt;
-    case ir::Opcode::MulInt:
-      return vm::OpCode::MulInt;
-    case ir::Opcode::DivInt:
-      return vm::OpCode::DivInt;
-    case ir::Opcode::NegInt:
-      return vm::OpCode::NegInt;
-    case ir::Opcode::NotBool:
-      return vm::OpCode::NotBool;
-    case ir::Opcode::EqualInt:
-      return vm::OpCode::EqualInt;
-    case ir::Opcode::NotEqualInt:
-      return vm::OpCode::NotEqualInt;
-    case ir::Opcode::EqualBool:
-      return vm::OpCode::EqualBool;
-    case ir::Opcode::NotEqualBool:
-      return vm::OpCode::NotEqualBool;
-    case ir::Opcode::LessInt:
-      return vm::OpCode::LessInt;
-    case ir::Opcode::LessEqualInt:
-      return vm::OpCode::LessEqualInt;
-    case ir::Opcode::GreaterInt:
-      return vm::OpCode::GreaterInt;
-    case ir::Opcode::GreaterEqualInt:
-      return vm::OpCode::GreaterEqualInt;
-    case ir::Opcode::AndBool:
-      return vm::OpCode::AndBool;
-    case ir::Opcode::OrBool:
-      return vm::OpCode::OrBool;
-    case ir::Opcode::StringConcat:
-      return vm::OpCode::StringConcat;
-    case ir::Opcode::StringInterpolate:
-      return vm::OpCode::StringInterpolate;
-    case ir::Opcode::BuiltinCall:
-      return vm::OpCode::BuiltinCall;
-    case ir::Opcode::EqualString:
-      return vm::OpCode::EqualString;
-    case ir::Opcode::NotEqualString:
-      return vm::OpCode::NotEqualString;
-    case ir::Opcode::LoadString:
-      return vm::OpCode::LoadString;
-    case ir::Opcode::NewArray:
-      return vm::OpCode::NewArray;
-    case ir::Opcode::GetIndex:
-      return vm::OpCode::GetIndex;
-    case ir::Opcode::SetIndex:
-      return vm::OpCode::SetIndex;
-    case ir::Opcode::Print:
-      return vm::OpCode::Print;
-    case ir::Opcode::Call:
-      return vm::OpCode::Call;
-    case ir::Opcode::Jump:
-      return vm::OpCode::Jump;
-    case ir::Opcode::JumpIfFalse:
-      return vm::OpCode::JumpIfFalse;
-    case ir::Opcode::NewInstance:
-      return vm::OpCode::NewInstance;
-    case ir::Opcode::SetField:
-      return vm::OpCode::SetField;
-    case ir::Opcode::GetField:
-      return vm::OpCode::GetField;
-    case ir::Opcode::Return:
-      return vm::OpCode::Return;
-  }
-  return vm::OpCode::LoadNull;
-}
-
 struct EncodingContext final {
-  const ir::Function* function;
-  std::size_t code_size;
-  std::size_t function_count;
-  std::size_t class_count;
+  const ir::Function* function = nullptr;
+  std::size_t code_size = 0;
+  std::size_t function_count = 0;
+  std::size_t class_count = 0;
+  std::span<const std::string> source_paths;
 };
 
 auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext& context)
@@ -223,6 +64,10 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
   const auto code_size = context.code_size;
   const auto function_count = context.function_count;
   const auto class_count = context.class_count;
+  const std::string_view source_path =
+      context.source_paths.empty()
+          ? std::string_view()
+          : context.source_paths.subspan(instruction.location.source_id).front();
   const bool uses_wide_target =
       instruction.opcode == ir::Opcode::Jump || instruction.opcode == ir::Opcode::JumpIfFalse;
 
@@ -233,9 +78,10 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
     return std::unexpected(frontend::Diagnostic{
         .location = instruction.location,
         .message = "instruction operand exceeds VM encoding",
+        .source_path = std::string(source_path),
     });
   }
-  const vm::OpCode opcode = EmitOpcode(instruction.opcode);
+  const vm::OpCode opcode = instruction.opcode;
   switch (instruction.opcode) {
     case ir::Opcode::LoadNull:
       return vm::EncodeABC(opcode, Byte(instruction.dst), 0, 0);
@@ -247,6 +93,7 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
         return std::unexpected(frontend::Diagnostic{
             .location = instruction.location,
             .message = "integer literal exceeds bootstrap bytecode immediate range",
+            .source_path = std::string(source_path),
         });
       }
       return vm::EncodeAImm16(opcode, Byte(instruction.dst),
@@ -270,6 +117,8 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
     case ir::Opcode::NotEqualInt:
     case ir::Opcode::EqualBool:
     case ir::Opcode::NotEqualBool:
+    case ir::Opcode::EqualValue:
+    case ir::Opcode::NotEqualValue:
     case ir::Opcode::LessInt:
     case ir::Opcode::LessEqualInt:
     case ir::Opcode::GreaterInt:
@@ -291,6 +140,7 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
         return std::unexpected(frontend::Diagnostic{
             .location = instruction.location,
             .message = "array layout index or length exceeds bytecode encoding",
+            .source_path = std::string(source_path),
         });
       }
       return vm::EncodeABC(opcode, Byte(instruction.dst),
@@ -302,6 +152,7 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
         return std::unexpected(frontend::Diagnostic{
             .location = instruction.location,
             .message = "constant index exceeds bytecode encoding",
+            .source_path = std::string(source_path),
         });
       }
       return vm::EncodeABC(opcode, Byte(instruction.dst),
@@ -313,6 +164,7 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
         return std::unexpected(frontend::Diagnostic{
             .location = instruction.location,
             .message = "invalid builtin ID in IR",
+            .source_path = std::string(source_path),
         });
       }
       return vm::EncodeABC(opcode, Byte(instruction.dst),
@@ -322,6 +174,7 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
         return std::unexpected(frontend::Diagnostic{
             .location = instruction.location,
             .message = "unknown function ID in IR",
+            .source_path = std::string(source_path),
         });
       }
       return vm::EncodeABC(opcode, Byte(instruction.dst),
@@ -335,6 +188,7 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
         return std::unexpected(frontend::Diagnostic{
             .location = instruction.location,
             .message = "unknown class ID in IR",
+            .source_path = std::string(source_path),
         });
       }
       return vm::EncodeABC(opcode, Byte(instruction.dst),
@@ -350,10 +204,11 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
       return vm::EncodeABC(opcode, Byte(instruction.dst), 0, 0);
     case ir::Opcode::Jump:
     case ir::Opcode::JumpIfFalse: {
-      if (instruction.index > function.instructions.size()) {
+      if (instruction.index >= function.instructions.size()) {
         return std::unexpected(frontend::Diagnostic{
             .location = instruction.location,
             .message = "invalid jump target in IR",
+            .source_path = std::string(source_path),
         });
       }
       const std::int64_t offset =
@@ -362,6 +217,7 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
         return std::unexpected(frontend::Diagnostic{
             .location = instruction.location,
             .message = "jump target exceeds bootstrap bytecode range",
+            .source_path = std::string(source_path),
         });
       }
       const std::uint8_t condition =
@@ -370,8 +226,11 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
     }
   }
 
-  return std::unexpected(
-      frontend::Diagnostic{.location = instruction.location, .message = "invalid IR opcode"});
+  return std::unexpected(frontend::Diagnostic{
+      .location = instruction.location,
+      .message = "invalid IR opcode",
+      .source_path = std::string(source_path),
+  });
 }
 
 auto CreateArrayLayouts(const ir::Program& program,
@@ -393,7 +252,10 @@ auto CreateArrayLayouts(const ir::Program& program,
   arrays_by_name.reserve(program.array_types.size());
   for (const auto& type : program.array_types) {
     const auto& element = model.types.at(type.name.substr(0, type.name.size() - 2));
+    const auto element_name =
+        element.nullable ? element.name.substr(0, element.name.size() - 1) : element.name;
     runtime::ArrayLayout layout;
+    layout.nullable_elements = element.nullable;
     using Kind = frontend::TypeDescriptor::Kind;
     switch (element.kind) {
       case Kind::Bool:
@@ -415,17 +277,19 @@ auto CreateArrayLayouts(const ir::Program& program,
         break;
       case Kind::Class:
         layout.element_kind = runtime::ValueKind::Object;
-        layout.element_class = classes_by_name.at(element.name);
+        layout.element_class = classes_by_name.at(element_name);
         break;
       case Kind::Array:
         layout.element_kind = runtime::ValueKind::Object;
-        layout.element_array = arrays_by_name.at(element.name);
+        layout.element_array = arrays_by_name.at(element_name);
         break;
       case Kind::Invalid:
+      case Kind::Null:
       case Kind::Void:
         return std::unexpected(frontend::Diagnostic{
             .location = frontend::SourceLocation(),
             .message = "invalid array element type",
+            .source_path = {},
         });
     }
     const auto* stored = isolate.CreateArrayLayout(layout);
@@ -435,13 +299,19 @@ auto CreateArrayLayouts(const ir::Program& program,
   return layouts;
 }
 
-auto FunctionViews(std::span<const CompiledFunction> functions) -> std::vector<vm::Function> {
-  std::vector<vm::Function> views;
-  views.reserve(functions.size());
-  for (const auto& function : functions) {
-    views.push_back(function.View());
+auto OptimizeAndAllocate(ir::Program& program, std::span<const std::string> source_paths)
+    -> std::optional<frontend::Diagnostic> {
+  for (auto& function : program.functions) {
+    ir::Optimize(function, program.functions);
+    auto failure = AllocateRegisters(function, program.functions);
+    if (failure) {
+      if (!source_paths.empty()) {
+        failure->source_path = source_paths.subspan(failure->location.source_id).front();
+      }
+      return failure;
+    }
   }
-  return views;
+  return std::nullopt;
 }
 
 auto CompileParsed(frontend::ParseResult parsed, runtime::Isolate& isolate) -> CompileResult {
@@ -457,25 +327,6 @@ auto CompileParsed(frontend::ParseResult parsed, runtime::Isolate& isolate) -> C
 
 }  // namespace
 
-CompiledProgram::CompiledProgram(const CompiledProgram& other)
-    : functions(other.functions), views(FunctionViews(functions)) {}
-
-auto CompiledProgram::operator=(const CompiledProgram& other) -> CompiledProgram& {
-  if (this != &other) {
-    CompiledProgram copy(other);
-    functions.swap(copy.functions);
-    views.swap(copy.views);
-  }
-  return *this;
-}
-
-auto CompiledProgram::FindFunction(std::string_view name) const noexcept
-    -> const CompiledFunction* {
-  const auto found = std::ranges::find_if(
-      functions, [name](const auto& function) -> auto { return function.name == name; });
-  return found == functions.end() ? nullptr : &*found;
-}
-
 auto CompileSource(std::string_view source, runtime::Isolate& isolate) -> CompileResult {
   return CompileParsed(frontend::ParseSource(source), isolate);
 }
@@ -484,8 +335,13 @@ auto CompileSources(const std::vector<std::string_view>& sources, runtime::Isola
     -> CompileResult {
   frontend::ParseResult combined;
   for (const auto source : sources) {
-    auto parsed = frontend::ParseSource(source);
+    const auto source_id = static_cast<std::uint32_t>(combined.program.source_paths.size());
+    combined.program.source_paths.push_back("<source:" + std::to_string(source_id + 1) + ">");
+    auto parsed = frontend::ParseSource(source, source_id);
     if (!parsed.diagnostics.empty()) {
+      for (auto& diagnostic : parsed.diagnostics) {
+        diagnostic.source_path = combined.program.source_paths.back();
+      }
       combined.diagnostics.insert(combined.diagnostics.end(),
                                   std::make_move_iterator(parsed.diagnostics.begin()),
                                   std::make_move_iterator(parsed.diagnostics.end()));
@@ -509,8 +365,9 @@ auto CompileProgram(const frontend::Program& source,
     result.diagnostics = std::move(lowered.diagnostics);
     return result;
   }
-  for (ir::Function& function : lowered.program.functions) {
-    FoldConstants(function);
+
+  if (auto failure = OptimizeAndAllocate(lowered.program, source.source_paths)) {
+    return {.program = {}, .diagnostics = {std::move(*failure)}};
   }
 
   CompileResult result;
@@ -538,11 +395,12 @@ auto CompileProgram(const frontend::Program& source,
     return result;
   }
 
-  result.program.functions.reserve(lowered.program.functions.size());
-  std::shared_ptr<StringConstants> strings;
+  std::vector<vm::FunctionStorage> functions;
+  functions.reserve(lowered.program.functions.size());
+  std::shared_ptr<vm::StringConstants> strings;
   const auto& literals = lowered.program.strings;
   if (!literals.empty()) {
-    strings = std::make_shared<StringConstants>(isolate.heap(), literals.size());
+    strings = std::make_shared<vm::StringConstants>(isolate.heap(), literals.size());
     for (std::size_t index = 0; index < literals.size(); ++index) {
       auto* string = isolate.heap().AllocateString(literals.at(index));
       if (string == nullptr) {
@@ -554,21 +412,14 @@ auto CompileProgram(const frontend::Program& source,
     }
   }
   for (const ir::Function& function : lowered.program.functions) {
-    if (function.register_count > std::numeric_limits<std::uint8_t>::max()) {
-      AddDiagnostic(result.diagnostics, frontend::SourceLocation(),
-                    "function register count exceeds VM encoding");
-      return result;
-    }
-    CompiledFunction compiled;
+    vm::FunctionStorage compiled;
     compiled.name = function.name;
     compiled.classes = class_layouts;
     compiled.strings = strings;
     compiled.arrays = *array_layouts;
     compiled.doubles = function.doubles;
-    // 没有操作数的无限循环在 IR 中可使用零个寄存器；VM 帧仍保留一个槽位。
-    compiled.register_count =
-        static_cast<std::uint8_t>(std::max(function.register_count, std::uint16_t{1}));
-    compiled.parameter_count = function.parameter_count;
+    compiled.register_count = static_cast<std::uint16_t>(function.register_count);
+    compiled.parameter_count = static_cast<std::uint16_t>(function.parameter_count);
     compiled.code.reserve(function.instructions.size());
     for (const ir::Instruction& instruction : function.instructions) {
       auto encoded =
@@ -577,6 +428,7 @@ auto CompileProgram(const frontend::Program& source,
                                              .code_size = compiled.code.size(),
                                              .function_count = lowered.program.functions.size(),
                                              .class_count = class_layouts.size(),
+                                             .source_paths = source.source_paths,
                                          });
       if (!encoded) {
         result.diagnostics.push_back(std::move(encoded.error()));
@@ -584,9 +436,17 @@ auto CompileProgram(const frontend::Program& source,
       }
       compiled.code.push_back(*encoded);
     }
-    result.program.functions.push_back(std::move(compiled));
+    functions.push_back(std::move(compiled));
   }
-  result.program.views = FunctionViews(result.program.functions);
+  auto prepared = vm::Program::Create(std::move(functions), isolate);
+  if (!prepared) {
+    const auto& error = prepared.error();
+    const auto location =
+        lowered.program.functions.at(error.function).instructions.at(error.instruction).location;
+    AddDiagnostic(result.diagnostics, location, error.message);
+    return result;
+  }
+  result.program = std::move(*prepared);
   return result;
 }
 

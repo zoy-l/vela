@@ -1,5 +1,4 @@
 #include <chrono>
-#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <ios>
@@ -53,13 +52,13 @@ class ImportTest : public testing::Test {
       ADD_FAILURE() << "module compilation failed";
       return {};
     }
-    const auto* main = compiled.program.FindFunction("main");
-    if (main == nullptr) {
+    const auto main = compiled.program.FindFunction("main");
+    if (!main.IsValid()) {
       ADD_FAILURE() << "missing main";
       return {};
     }
-    const auto index = static_cast<std::uint32_t>(main - compiled.program.functions.data());
-    const auto result = vm::VirtualMachine(isolate_).Execute(compiled.program.View(), index);
+    const auto index = main.index();
+    const auto result = vm::VirtualMachine(isolate_).Execute(compiled.program, index);
     if (!result.Succeeded() || !result.value.IsString()) {
       ADD_FAILURE() << "module execution failed";
       return {};
@@ -126,8 +125,35 @@ TEST_F(ImportTest, ImportedInvalidEscapesStopBothPathsBeforeExecution) {
   Write("invalid.vela", R"(func invalid(): string { return "\u{110000}"; })");
   const auto checked = Check();
   ASSERT_FALSE(checked.Succeeded());
-  EXPECT_TRUE(checked.diagnostics.front().message.contains("invalid.vela"));
+  EXPECT_TRUE(checked.diagnostics.front().source_path.ends_with("invalid.vela"));
   EXPECT_FALSE(Compile().Succeeded());
+}
+
+TEST_F(ImportTest, ImportedTypeErrorsKeepTheOriginalFileAndLocation) {
+  Write("main.vela", "import \"broken.vela\";\nfunc main(): int { return 1; }\n");
+  Write("broken.vela", "func broken(): int {\n  return missing;\n}\n");
+  const auto checked = Check();
+  const auto compiled = Compile();
+  ASSERT_FALSE(checked.Succeeded());
+  ASSERT_FALSE(compiled.Succeeded());
+  const auto& check_error = checked.diagnostics.front();
+  const auto& compile_error = compiled.diagnostics.front();
+  EXPECT_TRUE(check_error.source_path.ends_with("broken.vela"));
+  EXPECT_EQ(check_error.location.line, 2U);
+  EXPECT_EQ(check_error.location.column, 10U);
+  EXPECT_EQ(compile_error.source_path, check_error.source_path);
+  EXPECT_EQ(compile_error.location.line, check_error.location.line);
+  EXPECT_EQ(compile_error.location.column, check_error.location.column);
+}
+
+TEST_F(ImportTest, MissingImportsPointToTheImportingStringLiteral) {
+  Write("main.vela", "\nimport \"missing.vela\";\nfunc main(): int { return 1; }\n");
+  const auto checked = Check();
+  ASSERT_FALSE(checked.Succeeded());
+  const auto& diagnostic = checked.diagnostics.front();
+  EXPECT_TRUE(diagnostic.source_path.ends_with("main.vela"));
+  EXPECT_EQ(diagnostic.location.line, 2U);
+  EXPECT_EQ(diagnostic.location.column, 8U);
 }
 
 }  // namespace

@@ -23,7 +23,10 @@ source_set("frontend") {
     "frontend/token.h",
     "frontend/type_checker.cc",
     "frontend/type_checker.h",
+    "frontend/type_checker_constant.cc",
     "frontend/type_checker_flow.cc",
+    "frontend/type_checker_null.cc",
+    "frontend/type_checker_switch.cc",
   ]
   public_deps = [
     "//base",
@@ -33,6 +36,8 @@ source_set("frontend") {
 
 source_set("ir") {
   sources = [
+    "ir/analysis.cc",
+    "ir/analysis.h",
     "ir/ir.h",
     "ir/lowerer.cc",
     "ir/lowerer.h",
@@ -40,6 +45,9 @@ source_set("ir") {
     "ir/lowerer_double.cc",
     "ir/lowerer_flow.cc",
     "ir/lowerer_string.cc",
+    "ir/lowerer_switch.cc",
+    "ir/optimizer.cc",
+    "ir/optimizer.h",
   ]
   deps = [ ":frontend" ]
   public_deps = [ "//third_party:abseil" ]
@@ -49,6 +57,8 @@ source_set("compiler") {
   sources = [
     "compiler.cc",
     "compiler.h",
+    "register_allocator.cc",
+    "register_allocator.h",
   ]
   public_deps = [
     ":frontend",
@@ -81,6 +91,7 @@ executable("vela_frontend_tests") {
   sources = [
     "frontend/control_flow_unittest.cc",
     "frontend/declarations_unittest.cc",
+    "frontend/diagnostic_unittest.cc",
     "frontend_unittest.cc",
   ]
   deps = [
@@ -95,7 +106,10 @@ executable("vela_compiler_tests") {
     "compiler_unittest.cc",
     "control_flow_unittest.cc",
     "double_unittest.cc",
+    "encoding_unittest.cc",
     "import_unittest.cc",
+    "language_basics_unittest.cc",
+    "optimization_unittest.cc",
     "string_gc_unittest.cc",
     "string_unittest.cc",
   ]

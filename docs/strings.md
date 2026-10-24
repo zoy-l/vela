@@ -85,7 +85,8 @@ The lexer emits decoded literal segments and expression tokens. The parser
 builds an interpolation node; the checker validates every segment/expression and
 records builtin bindings. Typed IR retains an interpolation operation and
 statically selected builtin IDs, carried directly into register bytecode. The
-VM validates builtin IDs and register ranges before execution. Runtime calls
+program creation/loading boundary validates builtin IDs and register ranges
+once. Runtime calls
 return distinct type, bounds, and allocation errors.
 
 Interpolation saves its parts in contiguous rooted frame slots. It discards

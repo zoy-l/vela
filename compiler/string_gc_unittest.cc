@@ -10,6 +10,7 @@
 #include "runtime/isolate.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
+#include "vm/program.h"
 #include "vm/vm.h"
 
 namespace vela::compiler {
@@ -37,7 +38,7 @@ TEST(CompilerStringGcTest, RootsConstantsDuringCompilationAndBetweenExecutions) 
     ASSERT_TRUE(compiled.Succeeded());
     heap.Collect();
     EXPECT_EQ(heap.object_count(), kConstants);
-    const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.View(), kConstants);
+    const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, kConstants);
     ExpectStringResult(result, "literal0literal39");
     heap.Collect();
     EXPECT_EQ(heap.object_count(), kConstants);
@@ -48,8 +49,8 @@ TEST(CompilerStringGcTest, RootsConstantsDuringCompilationAndBetweenExecutions) 
 
 TEST(CompilerStringGcTest, CopiesAndMovesKeepOwnedPoolsAndViewsAlive) {
   runtime::Isolate isolate(1);
-  CompiledProgram copy;
-  CompiledFunction function;
+  vm::Program copy;
+  vm::FunctionHandle function;
   {
     const auto compiled = CompileSource(R"(
 func identity(value: string): string { return value; }
@@ -59,22 +60,22 @@ func single(): string { return "single"; }
                                         isolate);
     ASSERT_TRUE(compiled.Succeeded());
     copy = compiled.program;
-    function = *compiled.program.FindFunction("single");
+    function = compiled.program.FindFunction("single");
   }
-  CompiledProgram moved(std::move(copy));
-  CompiledProgram constructed(moved);
-  moved = CompiledProgram();
+  vm::Program moved(std::move(copy));
+  vm::Program constructed(moved);
+  moved = vm::Program();
   auto standalone = std::move(function);
   isolate.heap().Collect();
-  const auto result = vm::VirtualMachine(isolate).Execute(constructed.View(), 1);
+  const auto result = vm::VirtualMachine(isolate).Execute(constructed, 1);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsString()->value(), "vela");
-  constructed = CompiledProgram();
+  constructed = vm::Program();
   isolate.heap().Collect();
-  const auto single = vm::VirtualMachine(isolate).Execute(standalone.View());
+  const auto single = vm::VirtualMachine(isolate).Execute(standalone);
   ASSERT_TRUE(single.Succeeded());
   EXPECT_EQ(single.value.AsString()->value(), "single");
-  standalone = CompiledFunction();
+  standalone = vm::FunctionHandle();
   isolate.heap().Collect();
   EXPECT_EQ(isolate.heap().object_count(), 0U);
 }
@@ -94,7 +95,7 @@ func main(): Store {
 )";
     const auto compiled = CompileSource(kSource, isolate);
     ASSERT_TRUE(compiled.Succeeded());
-    const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.View(), 1);
+    const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, 1);
     ASSERT_TRUE(result.Succeeded());
     value = result.value;
   }
@@ -131,12 +132,12 @@ func main(): string {
   heap.Collect();
   const auto constant_bytes = heap.allocated_bytes();
   const std::string expected(128, 'x');
-  ExpectStringResult(vm::VirtualMachine(isolate).Execute(compiled.program.View(), 1), expected);
+  ExpectStringResult(vm::VirtualMachine(isolate).Execute(compiled.program, 1), expected);
   heap.Collect();
   const auto settled_committed = heap.committed_bytes();
   constexpr int kExecutions = 100;
   for (int iteration = 0; iteration < kExecutions; ++iteration) {
-    const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.View(), 1);
+    const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, 1);
     ExpectStringResult(result, expected);
     heap.Collect();
     EXPECT_EQ(heap.object_count(), 2U);

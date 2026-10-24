@@ -12,6 +12,7 @@
 #include "runtime/value.h"
 #include "vm/bytecode.h"
 
+#include "vm/program.h"
 #include "vm/vm.h"
 
 namespace vela::vm {
@@ -23,6 +24,16 @@ using vela::runtime::GcPhase;
 using vela::runtime::Isolate;
 using vela::runtime::RootRange;
 using vela::runtime::Value;
+
+auto LoadAndExecute(Isolate& isolate, const Function& function) -> ExecutionResult {
+  const std::array<Function, 1> functions = {function};
+  auto program = Program::Load(functions, isolate);
+  if (!program) {
+    ADD_FAILURE() << program.error().message;
+    return {};
+  }
+  return VirtualMachine(isolate).Execute(*program, 0);
+}
 
 TEST(VmTest, StringConcatSupportsAliasedDestinationsAcrossSafepoints) {
   Isolate isolate(1);
@@ -45,7 +56,7 @@ TEST(VmTest, StringConcatSupportsAliasedDestinationsAcrossSafepoints) {
       .doubles = {},
       .register_count = 2,
   };
-  const auto result = VirtualMachine(isolate).Execute(function);
+  const auto result = LoadAndExecute(isolate, function);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsString()->value(), "xxxxxxxxxx");
 }
@@ -73,7 +84,7 @@ TEST(VmTest, InterpolationAndBuilderAllowAliasedDestinationsAcrossSafepoints) {
       .doubles = {},
       .register_count = 5,
   };
-  const auto result = VirtualMachine(isolate).Execute(function);
+  const auto result = LoadAndExecute(isolate, function);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsString()->value(), "xx");
 }
@@ -103,7 +114,7 @@ TEST(VmTest, JoinAllowsDestinationToOverwriteRootedInputArray) {
       .doubles = {},
       .register_count = 3,
   };
-  const auto result = VirtualMachine(isolate).Execute(function);
+  const auto result = LoadAndExecute(isolate, function);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsString()->value(), "xxx");
 }
@@ -121,7 +132,7 @@ TEST_P(StringBytecodeValidationTest, RejectsInvalidBuiltinIdsAndArgumentRanges) 
       .doubles = {},
       .register_count = 2,
   };
-  EXPECT_EQ(VirtualMachine(isolate).Execute(function).status, ExecutionStatus::InvalidBytecode);
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -148,8 +159,7 @@ TEST(VmTest, IntegerExecution) {
   };
 
   Isolate isolate;
-  VirtualMachine machine(isolate);
-  const auto result = machine.Execute(function);
+  const auto result = LoadAndExecute(isolate, function);
   ASSERT_EQ(result.status, ExecutionStatus::Returned);
   ASSERT_TRUE(result.value.IsInteger());
   EXPECT_EQ(result.value.AsInteger(), kExpectedSum);
@@ -175,8 +185,7 @@ TEST(VmTest, FrameRegistersStayRootedAcrossCollection) {
       .register_count = 4,
   };
 
-  VirtualMachine machine(isolate);
-  const auto result = machine.Execute(function);
+  const auto result = LoadAndExecute(isolate, function);
   ASSERT_EQ(result.status, ExecutionStatus::Returned);
   ASSERT_TRUE(result.value.IsObject());
   ASSERT_NE(result.value.AsObject(), nullptr);
@@ -193,7 +202,7 @@ TEST(VmTest, FrameRegistersStayRootedAcrossCollection) {
   EXPECT_EQ(isolate.heap().object_count(), 0U);
 }
 
-TEST(VmTest, InvalidBytecodeIsRejected) {
+TEST(VmTest, RejectsUnknownOpcodeDuringLoading) {
   constexpr std::array<Instruction, 1> code = {EncodeABC(static_cast<OpCode>(0xff), 0, 0, 0)};
   const Function function{
       .code = code,
@@ -205,8 +214,7 @@ TEST(VmTest, InvalidBytecodeIsRejected) {
   };
 
   Isolate isolate;
-  VirtualMachine machine(isolate);
-  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
 }
 
 TEST(VmTest, DivisionRejectsInvalidSourceRegister) {
@@ -223,7 +231,7 @@ TEST(VmTest, DivisionRejectsInvalidSourceRegister) {
       .register_count = 1,
   };
   Isolate isolate;
-  EXPECT_EQ(VirtualMachine(isolate).Execute(function).status, ExecutionStatus::InvalidBytecode);
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
 }
 
 TEST(VmTest, RejectsInvalidArrayLayoutIndices) {
@@ -243,7 +251,7 @@ TEST(VmTest, RejectsInvalidArrayLayoutIndices) {
       .register_count = 1,
       .parameter_count = 0,
   };
-  EXPECT_EQ(VirtualMachine(isolate).Execute(function).status, ExecutionStatus::InvalidBytecode);
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
   const std::array<const runtime::ArrayLayout*, 1> null_layout = {nullptr};
   const auto valid_code = std::to_array<Instruction>({
       EncodeABC(OpCode::NewArray, 0, 0, 1),
@@ -251,7 +259,7 @@ TEST(VmTest, RejectsInvalidArrayLayoutIndices) {
   });
   function.code = valid_code;
   function.arrays = null_layout;
-  EXPECT_EQ(VirtualMachine(isolate).Execute(function).status, ExecutionStatus::InvalidBytecode);
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
 }
 
 TEST(VmTest, RejectsWrongArrayStoreAndNonArrayIndexing) {
@@ -274,7 +282,7 @@ TEST(VmTest, RejectsWrongArrayStoreAndNonArrayIndexing) {
       .register_count = 3,
       .parameter_count = 0,
   };
-  EXPECT_EQ(VirtualMachine(isolate).Execute(function).status, ExecutionStatus::TypeError);
+  EXPECT_EQ(LoadAndExecute(isolate, function).status, ExecutionStatus::TypeError);
   auto* record = isolate.CreateClassLayout(0, {});
   const std::array<runtime::ClassLayout*, 1> classes = {record};
   const auto invalid_access = std::to_array<Instruction>({
@@ -285,7 +293,7 @@ TEST(VmTest, RejectsWrongArrayStoreAndNonArrayIndexing) {
   });
   function.code = invalid_access;
   function.classes = classes;
-  EXPECT_EQ(VirtualMachine(isolate).Execute(function).status, ExecutionStatus::TypeError);
+  EXPECT_EQ(LoadAndExecute(isolate, function).status, ExecutionStatus::TypeError);
 }
 
 TEST(VmTest, ValidatesDoubleConstantAndRegisterOperands) {
@@ -304,12 +312,11 @@ TEST(VmTest, ValidatesDoubleConstantAndRegisterOperands) {
       .parameter_count = 0,
   };
   Isolate isolate;
-  VirtualMachine machine(isolate);
-  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
   code.front() = EncodeABC(OpCode::LoadDouble, 1, 0, 0);
-  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
   code.front() = EncodeABC(OpCode::LoadDouble, 0, 0, 0);
-  const auto result = machine.Execute(function);
+  const auto result = LoadAndExecute(isolate, function);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_DOUBLE_EQ(result.value.AsDouble(), constants.front());
 }
@@ -334,16 +341,15 @@ TEST_P(VmDoubleOperationTest, RejectsIntegerValuesAndInvalidRegisters) {
       .parameter_count = 0,
   };
   Isolate isolate;
-  VirtualMachine machine(isolate);
   const auto opcode = GetParam();
   code.at(2) = EncodeABC(opcode, 2, 0, 1);
-  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::TypeError);
+  EXPECT_EQ(LoadAndExecute(isolate, function).status, ExecutionStatus::TypeError);
   code.at(2) = EncodeABC(opcode, 2, 3, 0);
-  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
   code.at(2) = EncodeABC(opcode, 2, 0, 3);
-  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
   code.at(2) = EncodeABC(opcode, 3, 0, 0);
-  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
 }
 
 INSTANTIATE_TEST_SUITE_P(ArithmeticAndComparisons,
@@ -375,10 +381,9 @@ TEST(VmTest, DoubleNegationRejectsIntegerAndInvalidRegister) {
       .parameter_count = 0,
   };
   Isolate isolate;
-  VirtualMachine machine(isolate);
-  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::TypeError);
+  EXPECT_EQ(LoadAndExecute(isolate, function).status, ExecutionStatus::TypeError);
   code.at(1) = EncodeABC(OpCode::NegDouble, 1, 2, 0);
-  EXPECT_EQ(machine.Execute(function).status, ExecutionStatus::InvalidBytecode);
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
 }
 
 }  // namespace

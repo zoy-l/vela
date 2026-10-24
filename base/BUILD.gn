@@ -1,6 +1,8 @@
 source_set("base") {
   sources = [
     "builtin.h",
+    "execution_limits.h",
+    "opcode.h",
     "utf8.cc",
     "utf8.h",
   ]

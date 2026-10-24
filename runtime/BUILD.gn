@@ -19,6 +19,7 @@ source_set("runtime") {
 executable("runtime_tests") {
   testonly = true
   sources = [
+    "array_unittest.cc",
     "runtime_unittest.cc",
     "string_unittest.cc",
   ]

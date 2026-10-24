@@ -1,0 +1,31 @@
+enum Action { open, close }
+
+func describe(action: Action): string {
+  switch (action) {
+    case Action.open:
+      return "open";
+    case Action.close:
+      return "close";
+    default:
+      return "unknown";
+  }
+}
+
+func main(): int {
+  let result = 0;
+  for (let index = 0; index < 4; index = index + 1) {
+    switch (index) {
+      case 0:
+        continue;
+      case 1:
+        result = result + 1;
+      case 2:
+        result = result + 10;
+        break;
+      default:
+        result = result + 100;
+    }
+  }
+  print(describe(Action.close));
+  return result;
+}

@@ -72,10 +72,15 @@ auto TypeChecker::CheckStatement(const Statement& statement, const Type& return_
     case Statement::Kind::For:
       flow = CheckFor(statement, return_type);
       break;
+    case Statement::Kind::Switch:
+      flow = CheckSwitch(statement, return_type);
+      break;
     case Statement::Kind::Break:
     case Statement::Kind::Continue:
-      if (loop_depth_ == 0) {
-        AddDiagnostic(statement.location, "loop control statement must be inside a loop");
+      if (loop_depth_ == 0 && (statement.kind == Statement::Kind::Continue || switch_depth_ == 0)) {
+        AddDiagnostic(statement.location, statement.kind == Statement::Kind::Break
+                                              ? "break must be inside a loop or switch"
+                                              : "continue must be inside a loop");
       }
       flow.can_fall_through = false;
       flow.can_break = statement.kind == Statement::Kind::Break;
@@ -88,6 +93,21 @@ auto TypeChecker::CheckStatement(const Statement& statement, const Type& return_
 
 auto TypeChecker::CheckBlock(const Statement& statement, const Type& return_type) -> StatementFlow {
   BeginScope();
+  const auto flow = CheckSequence(statement, return_type);
+  EndScope();
+  return flow;
+}
+
+auto TypeChecker::CheckScopedStatement(const Statement& statement, const Type& return_type)
+    -> StatementFlow {
+  BeginScope();
+  const auto flow = CheckStatement(statement, return_type);
+  EndScope();
+  return flow;
+}
+
+auto TypeChecker::CheckSequence(const Statement& statement, const Type& return_type)
+    -> StatementFlow {
   StatementFlow flow;
   for (const auto& child : statement.statements) {
     const auto next = CheckStatement(*child, return_type);
@@ -99,43 +119,66 @@ auto TypeChecker::CheckBlock(const Statement& statement, const Type& return_type
     flow.can_break = flow.can_break || next.can_break;
     flow.can_continue = flow.can_continue || next.can_continue;
   }
-  EndScope();
   return flow;
 }
 
 auto TypeChecker::CheckIf(const Statement& statement, const Type& return_type) -> StatementFlow {
   const auto condition_type = CheckExpression(*statement.condition, nullptr);
-  if (condition_type.kind != Type::Kind::Bool) {
+  if (condition_type.kind != Type::Kind::Bool || condition_type.nullable) {
     AddDiagnostic(statement.condition->location, "if condition must be bool");
   }
-  const auto then_flow = CheckStatement(*statement.then_branch, return_type);
-  const auto else_flow =
-      statement.else_branch ? CheckStatement(*statement.else_branch, return_type) : StatementFlow();
+  const auto before = non_null_;
+  RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
+  const auto then_flow = CheckScopedStatement(*statement.then_branch, return_type);
+  const auto then_facts = non_null_;
+  non_null_ = before;
+  RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);
+  const auto else_flow = statement.else_branch
+                             ? CheckScopedStatement(*statement.else_branch, return_type)
+                             : StatementFlow();
+  const auto else_facts = non_null_;
   const auto condition = EvaluateCondition(*statement.condition);
   StatementFlow flow;
   if (condition == ConditionTruth::AlwaysTrue) {
+    non_null_ = then_facts;
     flow = then_flow;
     if (statement.else_branch) {
       AddDiagnostic(statement.else_branch->location, "unreachable statement");
     }
   } else if (condition == ConditionTruth::AlwaysFalse) {
+    non_null_ = else_facts;
     flow = else_flow;
     AddDiagnostic(statement.then_branch->location, "unreachable statement");
   } else {
     flow = MergeBranches(then_flow, else_flow);
+    if (!then_flow.can_fall_through) {
+      non_null_ = else_facts;
+    } else if (!else_flow.can_fall_through) {
+      non_null_ = then_facts;
+    } else {
+      non_null_ = IntersectFacts(then_facts, else_facts);
+    }
   }
   flow.condition = condition;
   return flow;
 }
 
 auto TypeChecker::CheckWhile(const Statement& statement, const Type& return_type) -> StatementFlow {
+  InvalidateAssignments(statement);
   const auto condition_type = CheckExpression(*statement.condition, nullptr);
-  if (condition_type.kind != Type::Kind::Bool) {
+  if (condition_type.kind != Type::Kind::Bool || condition_type.nullable) {
     AddDiagnostic(statement.condition->location, "while condition must be bool");
   }
   ++loop_depth_;
-  const auto body = CheckStatement(*statement.then_branch, return_type);
+  const auto before = non_null_;
+  RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
+  const auto body = CheckScopedStatement(*statement.then_branch, return_type);
   --loop_depth_;
+  non_null_ = before;
+  InvalidateAssignments(statement);
+  if (!body.can_break) {
+    RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);
+  }
   const auto condition = EvaluateCondition(*statement.condition);
   if (condition == ConditionTruth::AlwaysFalse) {
     AddDiagnostic(statement.then_branch->location, "unreachable statement");
@@ -151,20 +194,36 @@ auto TypeChecker::CheckFor(const Statement& statement, const Type& return_type) 
   if (statement.initializer) {
     CheckStatement(*statement.initializer, return_type);
   }
+  InvalidateAssignments(statement);
   auto condition = ConditionTruth::AlwaysTrue;
   if (statement.condition) {
     const auto condition_type = CheckExpression(*statement.condition, nullptr);
-    if (condition_type.kind != Type::Kind::Bool) {
+    if (condition_type.kind != Type::Kind::Bool || condition_type.nullable) {
       AddDiagnostic(statement.condition->location, "for condition must be bool");
     }
     condition = EvaluateCondition(*statement.condition);
   }
-  if (statement.increment) {
-    CheckExpression(*statement.increment, nullptr);
+  const auto before = non_null_;
+  if (statement.condition) {
+    RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
   }
   ++loop_depth_;
-  const auto body = CheckStatement(*statement.then_branch, return_type);
+  const auto body = CheckScopedStatement(*statement.then_branch, return_type);
   --loop_depth_;
+  // continue 可从分支直接到达增量表达式，不能沿用普通落点独有的非空事实。
+  if (statement.increment) {
+    non_null_ = before;
+    if (statement.condition) {
+      RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
+    }
+    InvalidateAssignments(*statement.then_branch);
+    CheckExpression(*statement.increment, nullptr);
+  }
+  non_null_ = before;
+  InvalidateAssignments(statement);
+  if (statement.condition && !body.can_break) {
+    RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);
+  }
   EndScope();
   if (condition == ConditionTruth::AlwaysFalse) {
     AddDiagnostic(statement.then_branch->location, "unreachable statement");

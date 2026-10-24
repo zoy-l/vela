@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdint>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -16,8 +17,8 @@
 
 namespace vela::frontend {
 
-auto ParseSource(std::string_view source) -> ParseResult {
-  auto lexed = Lexer(source).Tokenize();
+auto ParseSource(std::string_view source, std::uint32_t source_id) -> ParseResult {
+  auto lexed = Lexer(source, source_id).Tokenize();
   if (!lexed.diagnostics.empty()) {
     return {.program = Program(), .diagnostics = std::move(lexed.diagnostics)};
   }
@@ -40,7 +41,7 @@ auto Parser::Parse() -> ParseResult {
     bool handled_import = false;
     if (Match(TokenKind::Import)) {
       handled_import = true;
-      const std::optional<std::string> path = ParseImport();
+      const auto path = ParseImport();
       if (path.has_value()) {
         program.imports.push_back(*path);
       }
@@ -68,7 +69,7 @@ auto Parser::Parse() -> ParseResult {
   return {.program = std::move(program), .diagnostics = std::move(diagnostics_)};
 }
 
-auto Parser::ParseImport() -> std::optional<std::string> {
+auto Parser::ParseImport() -> std::optional<Program::Import> {
   if (!Match(TokenKind::StringLiteral)) {
     AddDiagnostic(Peek().location, "expected string path after import");
     return std::nullopt;
@@ -81,7 +82,7 @@ auto Parser::ParseImport() -> std::optional<std::string> {
     AddDiagnostic(path.location, "import path cannot contain a null byte");
     return std::nullopt;
   }
-  return path.lexeme;
+  return Program::Import{.path = path.lexeme, .location = path.location};
 }
 
 auto Parser::Peek() const -> const Token& {
@@ -117,10 +118,14 @@ auto Parser::Expect(TokenKind kind, std::string message) -> std::optional<Token>
 }
 
 void Parser::AddDiagnostic(SourceLocation location, std::string message) {
-  diagnostics_.push_back({.location = location, .message = std::move(message)});
+  diagnostics_.push_back({.location = location, .message = std::move(message), .source_path = {}});
 }
 
 void Parser::Synchronize() {
+  if (Check(TokenKind::Func) || Check(TokenKind::Class) || Check(TokenKind::Enum) ||
+      Check(TokenKind::Import)) {
+    return;
+  }
   if (!IsAtEnd()) {
     ++current_;
   }
@@ -153,7 +158,7 @@ auto Parser::ParseEnum() -> std::optional<Enum> {
     if (!member.has_value()) {
       return std::nullopt;
     }
-    declaration.members.push_back(member->lexeme);
+    declaration.members.push_back({.name = member->lexeme, .location = member->location});
     if (!Match(TokenKind::Comma)) {
       break;
     }
@@ -258,11 +263,17 @@ auto Parser::ParseType() -> std::optional<TypeName> {
   if (Check(TokenKind::Identifier) || Check(TokenKind::Void)) {
     const Token token = tokens_.at(current_++);
     std::string name = token.kind == TokenKind::Void ? "void" : token.lexeme;
-    while (Match(TokenKind::LeftBracket)) {
-      if (!Expect(TokenKind::RightBracket, "expected ']' in array type").has_value()) {
-        return std::nullopt;
+    while (true) {
+      if (Match(TokenKind::Question)) {
+        name += '?';
+      } else if (Match(TokenKind::LeftBracket)) {
+        if (!Expect(TokenKind::RightBracket, "expected ']' in array type")) {
+          return std::nullopt;
+        }
+        name += "[]";
+      } else {
+        break;
       }
-      name += "[]";
     }
     return TypeName{.name = std::move(name), .location = token.location};
   }
@@ -279,10 +290,16 @@ auto Parser::ParseBlock() -> std::unique_ptr<Statement> {
   block->kind = Statement::Kind::Block;
   block->location = left_brace->location;
   while (!Check(TokenKind::RightBrace) && !IsAtEnd()) {
+    if (Check(TokenKind::Func) || Check(TokenKind::Class) || Check(TokenKind::Enum) ||
+        Check(TokenKind::Import)) {
+      AddDiagnostic(Peek().location, "expected '}' before declaration");
+      return nullptr;
+    }
+    const auto start = current_;
     std::unique_ptr<Statement> statement = ParseStatement();
     if (statement) {
       block->statements.push_back(std::move(statement));
-    } else {
+    } else if (current_ == start || !Check(TokenKind::RightBrace)) {
       Synchronize();
     }
   }
@@ -311,6 +328,9 @@ auto Parser::ParseStatement() -> std::unique_ptr<Statement> {
   }
   if (Match(TokenKind::For)) {
     return ParseForStatement();
+  }
+  if (Match(TokenKind::Switch)) {
+    return ParseSwitchStatement();
   }
   if (Match(TokenKind::Break)) {
     return ParseBreakStatement();
@@ -363,6 +383,52 @@ auto Parser::ParseForStatement() -> std::unique_ptr<Statement> {
   }
   statement->then_branch = ParseStatement();
   return statement->then_branch ? std::move(statement) : nullptr;
+}
+
+auto Parser::ParseSwitchStatement() -> std::unique_ptr<Statement> {
+  auto statement = std::make_unique<Statement>();
+  statement->kind = Statement::Kind::Switch;
+  statement->location = Previous().location;
+  if (!Expect(TokenKind::LeftParen, "expected '(' after switch")) {
+    return nullptr;
+  }
+  statement->condition = ParseExpression();
+  if (!statement->condition || !Expect(TokenKind::RightParen, "expected ')' after switch value") ||
+      !Expect(TokenKind::LeftBrace, "expected '{' before switch cases")) {
+    return nullptr;
+  }
+  while (!Check(TokenKind::RightBrace) && !IsAtEnd()) {
+    Statement::Case branch;
+    branch.location = Peek().location;
+    if (Match(TokenKind::Case)) {
+      branch.label = ParseExpression();
+      if (!branch.label) {
+        return nullptr;
+      }
+    } else if (!Match(TokenKind::Default)) {
+      AddDiagnostic(Peek().location, "expected 'case' or 'default' in switch");
+      return nullptr;
+    }
+    if (!Expect(TokenKind::Colon, "expected ':' after switch label")) {
+      return nullptr;
+    }
+    branch.body = std::make_unique<Statement>();
+    branch.body->kind = Statement::Kind::Block;
+    branch.body->location = branch.location;
+    while (!Check(TokenKind::Case) && !Check(TokenKind::Default) && !Check(TokenKind::RightBrace) &&
+           !IsAtEnd()) {
+      auto child = ParseStatement();
+      if (!child) {
+        return nullptr;
+      }
+      branch.body->statements.push_back(std::move(child));
+    }
+    statement->cases.push_back(std::move(branch));
+  }
+  if (!Expect(TokenKind::RightBrace, "expected '}' after switch cases")) {
+    return nullptr;
+  }
+  return statement;
 }
 
 auto Parser::ParseBreakStatement() -> std::unique_ptr<Statement> {
@@ -674,6 +740,9 @@ auto Parser::ParseDoubleLiteral() -> std::unique_ptr<Expression> {
 }
 
 auto Parser::ParsePrimary() -> std::unique_ptr<Expression> {
+  if (Match(TokenKind::Null)) {
+    return MakeExpression(Expression::Kind::NullLiteral, Previous().location);
+  }
   if (Match(TokenKind::IntegerLiteral)) {
     auto expression = MakeExpression(Expression::Kind::IntegerLiteral, Previous().location);
     expression->text = Previous().lexeme;

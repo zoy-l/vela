@@ -17,12 +17,17 @@ constexpr std::uint32_t kHexLetterOffset = 10;
 constexpr std::size_t kBracedUnicodeDigits = 6;
 
 const absl::flat_hash_map<std::string_view, TokenKind> kKeywords = {
-    {"func", TokenKind::Func},     {"let", TokenKind::Let},     {"const", TokenKind::Const},
-    {"class", TokenKind::Class},   {"else", TokenKind::Else},   {"enum", TokenKind::Enum},
-    {"false", TokenKind::False},   {"if", TokenKind::If},       {"return", TokenKind::Return},
-    {"true", TokenKind::True},     {"void", TokenKind::Void},   {"while", TokenKind::While},
-    {"import", TokenKind::Import}, {"break", TokenKind::Break}, {"continue", TokenKind::Continue},
-    {"for", TokenKind::For},       {"print", TokenKind::Print},
+    {"func", TokenKind::Func},         {"let", TokenKind::Let},
+    {"const", TokenKind::Const},       {"class", TokenKind::Class},
+    {"else", TokenKind::Else},         {"enum", TokenKind::Enum},
+    {"false", TokenKind::False},       {"if", TokenKind::If},
+    {"return", TokenKind::Return},     {"true", TokenKind::True},
+    {"void", TokenKind::Void},         {"while", TokenKind::While},
+    {"import", TokenKind::Import},     {"break", TokenKind::Break},
+    {"continue", TokenKind::Continue}, {"for", TokenKind::For},
+    {"print", TokenKind::Print},       {"switch", TokenKind::Switch},
+    {"case", TokenKind::Case},         {"default", TokenKind::Default},
+    {"null", TokenKind::Null},
 };
 
 auto IsIdentifierStart(char character) -> bool {
@@ -87,6 +92,9 @@ void Lexer::ScanToken(std::size_t start) {
       break;
     case ':':
       AddToken(TokenKind::Colon, start);
+      break;
+    case '?':
+      AddToken(TokenKind::Question, start);
       break;
     case '.':
       AddToken(TokenKind::Dot, start);
@@ -189,6 +197,7 @@ void Lexer::SkipWhitespaceAndComments() {
       continue;
     }
     if (character == '/' && PeekNext() == '*') {
+      const auto opening = location_;
       Advance();
       Advance();
       bool closed = false;
@@ -202,7 +211,7 @@ void Lexer::SkipWhitespaceAndComments() {
         Advance();
       }
       if (!closed) {
-        AddDiagnostic(location_, "unterminated block comment");
+        AddDiagnostic(opening, "unterminated block comment");
       }
       continue;
     }
@@ -451,7 +460,7 @@ void Lexer::AddToken(TokenKind kind, std::size_t start) {
 }
 
 void Lexer::AddDiagnostic(SourceLocation location, std::string message) {
-  diagnostics_.push_back({.location = location, .message = std::move(message)});
+  diagnostics_.push_back({.location = location, .message = std::move(message), .source_path = {}});
 }
 
 }  // namespace vela::frontend

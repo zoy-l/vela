@@ -35,6 +35,7 @@ struct Expression final {
     StringLiteral,
     StringInterpolation,
     BooleanLiteral,
+    NullLiteral,
     Name,
     Unary,
     Binary,
@@ -83,6 +84,7 @@ struct Statement final {
     For,
     Break,
     Continue,
+    Switch,
   };
 
   Kind kind = Kind::Expression;
@@ -97,6 +99,13 @@ struct Statement final {
   std::unique_ptr<Statement> initializer;
   std::unique_ptr<Expression> increment;
   std::vector<std::unique_ptr<Statement>> statements;
+  // switch 使用有序分支，空分支代表与后续分支共享入口；空标签代表 default。
+  struct Case final {
+    SourceLocation location;
+    std::unique_ptr<Expression> label;
+    std::unique_ptr<Statement> body;
+  };
+  std::vector<Case> cases;
 };
 
 struct Function final {
@@ -109,7 +118,11 @@ struct Function final {
 
 struct Enum final {
   std::string name;
-  std::vector<std::string> members;
+  struct Member final {
+    std::string name;
+    SourceLocation location;
+  };
+  std::vector<Member> members;
   SourceLocation location;
 };
 
@@ -121,7 +134,12 @@ struct Class final {
 };
 
 struct Program final {
-  std::vector<std::string> imports;
+  struct Import final {
+    std::string path;
+    SourceLocation location;
+  };
+  std::vector<Import> imports;
+  std::vector<std::string> source_paths;
   std::vector<Enum> enums;
   std::vector<Class> classes;
   std::vector<Function> functions;

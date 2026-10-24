@@ -2,6 +2,10 @@ source_set("vm") {
   sources = [
     "bytecode.h",
     "frame.h",
+    "program.cc",
+    "program.h",
+    "register_file.cc",
+    "register_file.h",
     "vm.cc",
     "vm.h",
   ]
@@ -10,7 +14,10 @@ source_set("vm") {
 
 executable("vm_tests") {
   testonly = true
-  sources = [ "vm_unittest.cc" ]
+  sources = [
+    "program_unittest.cc",
+    "vm_unittest.cc",
+  ]
   deps = [
     ":vm",
     "//third_party:gtest_main",

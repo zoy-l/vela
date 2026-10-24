@@ -7,11 +7,12 @@
 #include <expected>
 #include <iostream>
 #include <limits>
-#include <memory>
-#include <new>
 #include <span>
 #include <utility>
 #include "base/builtin.h"
+#include "base/execution_limits.h"
+#include "vm/program.h"
+#include "vm/register_file.h"
 
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -25,96 +26,25 @@
 namespace vela::vm {
 namespace {
 
-constexpr std::size_t kMaxRegisters = 256;
-constexpr std::size_t kMaxFrames = 64;
 using StepResult = std::expected<void, ExecutionStatus>;
 
-auto IsRegister(std::uint8_t index, const Function& function) noexcept -> bool {
-  return index < function.register_count;
-}
-
-auto IsValidInstruction(Instruction instruction,
-                        const Function& function,
-                        std::span<const Function> functions) noexcept -> bool {
-  const OpCode opcode = DecodeOp(instruction);
-  const auto operand_a = DecodeA(instruction);
-  const auto operand_b = DecodeB(instruction);
-  const auto operand_c = DecodeC(instruction);
-  switch (opcode) {
-    case OpCode::LoadNull:
-    case OpCode::LoadBool:
-    case OpCode::LoadInt:
-    case OpCode::Return:
-      return IsRegister(operand_a, function);
-    case OpCode::NewArray:
-      return IsRegister(operand_a, function) && operand_b < function.arrays.size() &&
-             function.arrays.subspan(operand_b).front() != nullptr;
-    case OpCode::LoadDouble:
-      return IsRegister(operand_a, function) && operand_b < function.doubles.size();
-    case OpCode::Move:
-    case OpCode::NegInt:
-    case OpCode::NegDouble:
-    case OpCode::NotBool:
-    case OpCode::GetField:
-      return IsRegister(operand_a, function) && IsRegister(operand_b, function);
-    case OpCode::AddInt:
-    case OpCode::AddDouble:
-    case OpCode::SubDouble:
-    case OpCode::MulDouble:
-    case OpCode::DivDouble:
-    case OpCode::EqualDouble:
-    case OpCode::NotEqualDouble:
-    case OpCode::LessDouble:
-    case OpCode::LessEqualDouble:
-    case OpCode::GreaterDouble:
-    case OpCode::GreaterEqualDouble:
-    case OpCode::SubInt:
-    case OpCode::MulInt:
-    case OpCode::DivInt:
-    case OpCode::EqualInt:
-    case OpCode::NotEqualInt:
-    case OpCode::EqualBool:
-    case OpCode::NotEqualBool:
-    case OpCode::LessInt:
-    case OpCode::LessEqualInt:
-    case OpCode::GreaterInt:
-    case OpCode::GreaterEqualInt:
-    case OpCode::AndBool:
-    case OpCode::OrBool:
-    case OpCode::StringConcat:
-    case OpCode::EqualString:
-    case OpCode::NotEqualString:
-    case OpCode::GetIndex:
-    case OpCode::SetIndex:
-      return IsRegister(operand_a, function) && IsRegister(operand_b, function) &&
-             IsRegister(operand_c, function);
-    case OpCode::Call:
-      return IsRegister(operand_a, function) && operand_b < functions.size() &&
-             static_cast<std::size_t>(operand_c) +
-                     functions.subspan(operand_b).front().parameter_count <=
-                 function.register_count;
-    case OpCode::BuiltinCall:
-      return IsRegister(operand_a, function) &&
-             operand_b < static_cast<std::uint8_t>(Builtin::Count) &&
-             static_cast<std::size_t>(operand_c) + BuiltinArity(static_cast<Builtin>(operand_b)) <=
-                 function.register_count;
-    case OpCode::StringInterpolate:
-      return IsRegister(operand_a, function) &&
-             static_cast<std::size_t>(operand_b) + operand_c <= function.register_count;
-    case OpCode::Jump:
+auto IsEqualValue(runtime::Value left, runtime::Value right) noexcept -> bool {
+  if (left.kind() != right.kind()) {
+    return false;
+  }
+  switch (left.kind()) {
+    case runtime::ValueKind::Null:
       return true;
-    case OpCode::JumpIfFalse:
-      return IsRegister(operand_a, function);
-    case OpCode::NewInstance:
-      return IsRegister(operand_a, function) && operand_b < function.classes.size() &&
-             function.classes.subspan(operand_b).front() != nullptr;
-    case OpCode::LoadString:
-      return IsRegister(operand_a, function) && operand_b < function.strings.size() &&
-             function.strings.subspan(operand_b).front() != nullptr;
-    case OpCode::Print:
-      return IsRegister(operand_b, function);
-    case OpCode::SetField:
-      return IsRegister(operand_a, function) && IsRegister(operand_c, function);
+    case runtime::ValueKind::Boolean:
+      return left.AsBoolean() == right.AsBoolean();
+    case runtime::ValueKind::Integer:
+      return left.AsInteger() == right.AsInteger();
+    case runtime::ValueKind::Double:
+      return left.AsDouble() == right.AsDouble();
+    case runtime::ValueKind::String:
+      return left.AsString()->value() == right.AsString()->value();
+    case runtime::ValueKind::Object:
+      return left.AsObject() == right.AsObject();
   }
   return false;
 }
@@ -145,7 +75,7 @@ auto IntegerArithmetic(OpCode opcode,
       }
       break;
     default:
-      return std::unexpected(ExecutionStatus::InvalidBytecode);
+      std::unreachable();
   }
   if (overflow) {
     return std::unexpected(ExecutionStatus::IntegerOverflow);
@@ -234,7 +164,7 @@ auto DoubleOperation(OpCode opcode,
       destination = runtime::Value::Boolean(left >= right);
       break;
     default:
-      return std::unexpected(ExecutionStatus::InvalidBytecode);
+      std::unreachable();
   }
   return {};
 }
@@ -263,7 +193,7 @@ auto BooleanOperation(OpCode opcode,
       result = left || right;
       break;
     default:
-      return std::unexpected(ExecutionStatus::InvalidBytecode);
+      std::unreachable();
   }
   destination = runtime::Value::Boolean(result);
   return {};
@@ -283,22 +213,18 @@ auto Negate(runtime::Value& destination, runtime::Value operand) noexcept -> Ste
 
 class Execution final {
  public:
-  Execution(runtime::Isolate& isolate, const Program& program)
-      : isolate_(isolate), program_(program) {}
+  Execution(runtime::Isolate& isolate, const Program& program, std::span<RegisterFile> registers)
+      : isolate_(isolate), functions_(program.functions()), registers_(registers) {}
 
   auto Run(std::uint32_t entry_function) noexcept -> ExecutionResult;
 
  private:
   struct ActiveFrame final {
     Frame frame;
-    const Function* function = nullptr;
+    const FunctionStorage* function = nullptr;
     std::size_t program_counter = 0;
     std::uint8_t return_register = 0;
   };
-  struct Registers final {
-    std::array<runtime::Value, kMaxRegisters * kMaxFrames> values;
-  };
-
   auto ExecuteInstruction(ActiveFrame& active, Instruction instruction) -> StepResult;
   auto ExecuteControl(ActiveFrame& active, Instruction instruction) -> StepResult;
   auto ExecuteObject(ActiveFrame& active, Instruction instruction) -> StepResult;
@@ -312,34 +238,30 @@ class Execution final {
                       runtime::Value right) -> StepResult;
   auto ExecuteBuiltin(ActiveFrame& active, Instruction instruction) -> StepResult;
   auto Interpolate(ActiveFrame& active, Instruction instruction) -> StepResult;
-  static auto Jump(ActiveFrame& active, std::int16_t offset) noexcept -> StepResult;
-  void Call(ActiveFrame& active, Instruction instruction);
+  static void Jump(ActiveFrame& active, std::int16_t offset) noexcept;
+  auto Call(ActiveFrame& active, Instruction instruction) -> StepResult;
   void Return(ActiveFrame& active, runtime::Value value);
 
   runtime::Isolate& isolate_;
-  const Program& program_;
-  std::unique_ptr<Registers> registers_;
-  std::array<ActiveFrame, kMaxFrames> frames_;
+  std::span<const FunctionStorage> functions_;
+  std::span<RegisterFile> registers_;
+  std::array<ActiveFrame, kMaxCallFrames> frames_;
   std::size_t frame_count_ = 0;
   runtime::Value result_;
 };
 
 auto Execution::Run(std::uint32_t entry_function) noexcept -> ExecutionResult {
-  registers_ = std::unique_ptr<Registers>(new (std::nothrow) Registers());
-  if (registers_ == nullptr) {
+  auto& entry = frames_.front();
+  entry.function = &functions_.subspan(entry_function).front();
+  auto entry_values = registers_.front().Acquire(entry.function->register_count);
+  if (entry_values.empty()) {
     return {.value = runtime::Value::Null(), .status = ExecutionStatus::OutOfMemory};
   }
-  auto& entry = frames_.front();
-  entry.function = &program_.functions.subspan(entry_function).front();
-  entry.frame.Attach(isolate_.heap(),
-                     std::span(registers_->values).first(entry.function->register_count));
+  entry.frame.Attach(isolate_.heap(), entry_values);
   frame_count_ = 1;
   while (frame_count_ != 0) {
     auto& active = std::span(frames_).subspan(frame_count_ - 1).front();
-    const auto code = active.function->code;
-    if (active.program_counter >= code.size()) {
-      return {.value = runtime::Value::Null(), .status = ExecutionStatus::InvalidBytecode};
-    }
+    const auto code = std::span(active.function->code);
     const auto instruction = code.subspan(active.program_counter++).front();
     const auto step = ExecuteInstruction(active, instruction);
     if (!step) {
@@ -367,7 +289,7 @@ auto Execution::ExecuteInstruction(ActiveFrame& active, Instruction instruction)
       return {};
     case OpCode::LoadDouble:
       values.subspan(operand_a).front() =
-          runtime::Value::Double(active.function->doubles.subspan(operand_b).front());
+          runtime::Value::Double(std::span(active.function->doubles).subspan(operand_b).front());
       return {};
     case OpCode::AddDouble:
     case OpCode::SubDouble:
@@ -433,9 +355,17 @@ auto Execution::ExecuteObject(ActiveFrame& active, Instruction instruction) -> S
   auto& heap = isolate_.heap();
   switch (opcode) {
     case OpCode::LoadString:
-      values.subspan(operand_a).front() =
-          runtime::Value::String(active.function->strings.subspan(operand_b).front());
+      values.subspan(operand_a).front() = runtime::Value::String(
+          std::span(active.function->strings->values).subspan(operand_b).front());
       return {};
+    case OpCode::EqualValue:
+    case OpCode::NotEqualValue: {
+      const auto equal =
+          IsEqualValue(values.subspan(operand_b).front(), values.subspan(operand_c).front());
+      values.subspan(operand_a).front() =
+          runtime::Value::Boolean(opcode == OpCode::EqualValue ? equal : !equal);
+      return {};
+    }
     case OpCode::BuiltinCall:
       return ExecuteBuiltin(active, instruction);
     case OpCode::StringInterpolate:
@@ -449,8 +379,10 @@ auto Execution::ExecuteObject(ActiveFrame& active, Instruction instruction) -> S
     case OpCode::NewInstance: {
       auto* object =
           opcode == OpCode::NewArray
-              ? heap.AllocateArray(*active.function->arrays.subspan(operand_b).front(), operand_c)
-              : heap.AllocateInstance(*active.function->classes.subspan(operand_b).front());
+              ? heap.AllocateArray(*std::span(active.function->arrays).subspan(operand_b).front(),
+                                   operand_c)
+              : heap.AllocateInstance(
+                    *std::span(active.function->classes).subspan(operand_b).front());
       if (object == nullptr) {
         return std::unexpected(ExecutionStatus::OutOfMemory);
       }
@@ -492,14 +424,15 @@ auto Execution::ExecuteControl(ActiveFrame& active, Instruction instruction) -> 
   const auto values = active.frame.registers();
   switch (DecodeOp(instruction)) {
     case OpCode::Jump:
-      return Jump(active, DecodeImm16(instruction));
+      Jump(active, DecodeImm16(instruction));
+      return {};
     case OpCode::JumpIfFalse: {
       const auto condition = values.subspan(DecodeA(instruction)).front();
       if (!condition.IsBoolean()) {
         return std::unexpected(ExecutionStatus::TypeError);
       }
       if (!condition.AsBoolean()) {
-        return Jump(active, DecodeImm16(instruction));
+        Jump(active, DecodeImm16(instruction));
       }
       return {};
     }
@@ -508,16 +441,15 @@ auto Execution::ExecuteControl(ActiveFrame& active, Instruction instruction) -> 
       std::cout << '\n';
       return {};
     case OpCode::Call:
-      if (frame_count_ == kMaxFrames) {
+      if (frame_count_ == kMaxCallFrames) {
         return std::unexpected(ExecutionStatus::StackOverflow);
       }
-      Call(active, instruction);
-      return {};
+      return Call(active, instruction);
     case OpCode::Return:
       Return(active, values.subspan(DecodeA(instruction)).front());
       return {};
     default:
-      return std::unexpected(ExecutionStatus::InvalidBytecode);
+      std::unreachable();
   }
 }
 
@@ -543,7 +475,7 @@ auto Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) -> 
 auto Execution::Interpolate(ActiveFrame& active, Instruction instruction) -> StepResult {
   auto values = active.frame.registers();
   const auto arguments = values.subspan(DecodeB(instruction), DecodeC(instruction));
-  std::array<runtime::StringObject*, kMaxRegisters> parts{};
+  std::array<runtime::StringObject*, kMaxFrameRegisters> parts{};
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     const auto value = arguments.subspan(index).front();
     if (!value.IsString()) {
@@ -616,20 +548,18 @@ auto Execution::ArrayOperation(OpCode opcode,
   return {};
 }
 
-auto Execution::Jump(ActiveFrame& active, std::int16_t offset) noexcept -> StepResult {
+void Execution::Jump(ActiveFrame& active, std::int16_t offset) noexcept {
   const auto target = static_cast<std::int64_t>(active.program_counter) + offset;
-  if (target < 0 || std::cmp_greater(target, active.function->code.size())) {
-    return std::unexpected(ExecutionStatus::InvalidBytecode);
-  }
   active.program_counter = static_cast<std::size_t>(target);
-  return {};
 }
 
-void Execution::Call(ActiveFrame& active, Instruction instruction) {
-  const auto& callee = program_.functions.subspan(DecodeB(instruction)).front();
+auto Execution::Call(ActiveFrame& active, Instruction instruction) -> StepResult {
+  const auto& callee = functions_.subspan(DecodeB(instruction)).front();
+  auto callee_values = registers_.subspan(frame_count_).front().Acquire(callee.register_count);
+  if (callee_values.empty()) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
   auto& next = std::span(frames_).subspan(frame_count_).front();
-  auto callee_values =
-      std::span(registers_->values).subspan(frame_count_ * kMaxRegisters, callee.register_count);
   next.function = &callee;
   next.program_counter = 0;
   next.return_register = DecodeA(instruction);
@@ -637,6 +567,7 @@ void Execution::Call(ActiveFrame& active, Instruction instruction) {
   std::ranges::copy(active.frame.registers().subspan(DecodeC(instruction), callee.parameter_count),
                     callee_values.begin());
   ++frame_count_;
+  return {};
 }
 
 void Execution::Return(ActiveFrame& active, runtime::Value value) {
@@ -653,33 +584,29 @@ void Execution::Return(ActiveFrame& active, runtime::Value value) {
 
 }  // namespace
 
-auto VirtualMachine::Validate(const Function& function,
-                              std::span<const Function> functions) noexcept -> bool {
-  if (function.code.empty() || function.register_count == 0 ||
-      function.parameter_count > function.register_count) {
-    return false;
-  }
-  return std::ranges::all_of(function.code, [&](Instruction instruction) -> bool {
-    return IsValidInstruction(instruction, function, functions);
-  });
+auto VirtualMachine::Execute(const FunctionHandle& function) noexcept -> ExecutionResult {
+  return Execute(function.program(), function.index());
 }
 
-auto VirtualMachine::Execute(const Function& function) noexcept -> ExecutionResult {
-  const std::array<Function, 1> functions = {function};
-  return Execute(Program{.functions = functions}, 0);
+auto VirtualMachine::register_bytes() const noexcept -> std::size_t {
+  std::size_t bytes = 0;
+  for (const auto& registers : registers_) {
+    bytes += registers.capacity() * sizeof(runtime::Value);
+  }
+  return bytes;
 }
 
 auto VirtualMachine::Execute(const Program& program, std::uint32_t entry_function) noexcept
     -> ExecutionResult {
-  if (entry_function >= program.functions.size()) {
-    return {.value = runtime::Value::Null(), .status = ExecutionStatus::InvalidBytecode};
+  const auto functions = program.functions();
+  if (entry_function >= functions.size() ||
+      functions.subspan(entry_function).front().parameter_count != 0) {
+    return {.value = runtime::Value::Null(), .status = ExecutionStatus::InvalidEntry};
   }
-  for (const auto& function : program.functions) {
-    if (!Validate(function, program.functions)) {
-      return {.value = runtime::Value::Null(), .status = ExecutionStatus::InvalidBytecode};
-    }
+  if (!program.IsForIsolate(isolate_)) {
+    return {.value = runtime::Value::Null(), .status = ExecutionStatus::InvalidIsolate};
   }
-  return Execution(isolate_, program).Run(entry_function);
+  return Execution(isolate_, program, registers_).Run(entry_function);
 }
 
 }  // namespace vela::vm

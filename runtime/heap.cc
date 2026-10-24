@@ -74,6 +74,9 @@ ClassLayout::ClassLayout(std::uint32_t field_count, std::vector<std::uint32_t> r
     : field_count_(field_count), reference_fields_(std::move(reference_fields)) {}
 
 auto ArrayLayout::element_size() const noexcept -> std::size_t {
+  if (HasTaggedElements()) {
+    return sizeof(Value);
+  }
   switch (element_kind) {
     case ValueKind::Boolean:
       return sizeof(bool);
@@ -177,7 +180,11 @@ auto Heap::AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept
   object->array_layout = &layout;
   object->length = static_cast<std::uint32_t>(length);
   // payload 与对象头单次分配；按原生元素类型建立对象生命周期。
-  InitializeArray(*object, layout.element_kind, length);
+  if (layout.HasTaggedElements()) {
+    std::uninitialized_value_construct_n(ArrayElements<Value>(*object, length).data(), length);
+  } else {
+    InitializeArray(*object, layout.element_kind, length);
+  }
   Publish(*object, allocation.size);
   return object;
 }
@@ -231,6 +238,9 @@ auto Heap::GetElement(const HeapObject& object, std::uint32_t index) noexcept
   if (index >= length) {
     return std::unexpected(ArrayAccessError::OutOfBounds);
   }
+  if (object.array_layout->HasTaggedElements()) {
+    return ArrayElements<Value>(object, length).subspan(index).front();
+  }
   switch (object.array_layout->element_kind) {
     case ValueKind::Boolean:
       return Value::Boolean(ArrayElements<bool>(object, length).subspan(index).front());
@@ -262,8 +272,22 @@ auto Heap::SetElement(HeapObject& object, std::uint32_t index, Value value) noex
     return std::unexpected(ArrayAccessError::OutOfBounds);
   }
   const auto& layout = *object.array_layout;
+  if (layout.nullable_elements && value.IsNull()) {
+    if (layout.element_kind == ValueKind::Object) {
+      ArrayElements<HeapObject*>(object, length).subspan(index).front() = nullptr;
+    } else if (layout.element_kind == ValueKind::String) {
+      ArrayElements<StringObject*>(object, length).subspan(index).front() = nullptr;
+    } else {
+      ArrayElements<Value>(object, length).subspan(index).front() = value;
+    }
+    return {};
+  }
   if (value.kind() != layout.element_kind) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
+  }
+  if (layout.HasTaggedElements()) {
+    ArrayElements<Value>(object, length).subspan(index).front() = value;
+    return {};
   }
   switch (layout.element_kind) {
     case ValueKind::Boolean:

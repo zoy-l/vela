@@ -33,9 +33,9 @@ func main(): Shade {
   Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* function = compiled.program.FindFunction("main");
-  ASSERT_NE(function, nullptr);
-  const auto result = VirtualMachine(isolate).Execute(function->View());
+  const auto function = compiled.program.FindFunction("main");
+  ASSERT_TRUE(function.IsValid());
+  const auto result = VirtualMachine(isolate).Execute(function);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsInteger());
   EXPECT_EQ(result.value.AsInteger(), 1);
@@ -53,9 +53,9 @@ func main(): int {
   Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* function = compiled.program.FindFunction("main");
-  ASSERT_NE(function, nullptr);
-  const auto result = VirtualMachine(isolate).Execute(function->View());
+  const auto function = compiled.program.FindFunction("main");
+  ASSERT_TRUE(function.IsValid());
+  const auto result = VirtualMachine(isolate).Execute(function);
   ASSERT_EQ(result.status, ExecutionStatus::Returned);
   ASSERT_TRUE(result.value.IsInteger());
   EXPECT_EQ(result.value.AsInteger(), kExpectedSum);
@@ -79,9 +79,9 @@ func main(): App {
   Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* function = compiled.program.FindFunction("main");
-  ASSERT_NE(function, nullptr);
-  const auto result = VirtualMachine(isolate).Execute(function->View());
+  const auto function = compiled.program.FindFunction("main");
+  ASSERT_TRUE(function.IsValid());
+  const auto result = VirtualMachine(isolate).Execute(function);
   ASSERT_EQ(result.status, ExecutionStatus::Returned);
   ASSERT_TRUE(result.value.IsObject());
   ASSERT_NE(result.value.AsObject(), nullptr);
@@ -116,10 +116,10 @@ func main(): int {
   Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* function = compiled.program.FindFunction("main");
-  ASSERT_NE(function, nullptr);
-  const auto entry = static_cast<std::uint32_t>(function - compiled.program.functions.data());
-  const auto result = VirtualMachine(isolate).Execute(compiled.program.View(), entry);
+  const auto function = compiled.program.FindFunction("main");
+  ASSERT_TRUE(function.IsValid());
+  const auto entry = function.index();
+  const auto result = VirtualMachine(isolate).Execute(compiled.program, entry);
   ASSERT_EQ(result.status, ExecutionStatus::Returned);
   ASSERT_TRUE(result.value.IsInteger());
   EXPECT_EQ(result.value.AsInteger(), kExpectedSum);
@@ -142,9 +142,9 @@ func main(): int {
   Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* function = compiled.program.FindFunction("main");
-  ASSERT_NE(function, nullptr);
-  const auto result = VirtualMachine(isolate).Execute(function->View());
+  const auto function = compiled.program.FindFunction("main");
+  ASSERT_TRUE(function.IsValid());
+  const auto result = VirtualMachine(isolate).Execute(function);
   ASSERT_EQ(result.status, ExecutionStatus::Returned);
   ASSERT_TRUE(result.value.IsInteger());
   EXPECT_EQ(result.value.AsInteger(), kExpectedLoopSum);
@@ -180,11 +180,9 @@ func main(): bool {
   Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* function = compiled.program.FindFunction("main");
-  ASSERT_NE(function, nullptr);
-  const auto result = VirtualMachine(isolate).Execute(
-      compiled.program.View(),
-      static_cast<std::uint32_t>(function - compiled.program.functions.data()));
+  const auto function = compiled.program.FindFunction("main");
+  ASSERT_TRUE(function.IsValid());
+  const auto result = VirtualMachine(isolate).Execute(compiled.program, function.index());
   ASSERT_EQ(result.status, ExecutionStatus::Returned);
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -201,9 +199,9 @@ TEST(CompilerTest, ExecutesLoopWithWideJumpTarget) {
   Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* function = compiled.program.FindFunction("main");
-  ASSERT_NE(function, nullptr);
-  const auto result = VirtualMachine(isolate).Execute(function->View());
+  const auto function = compiled.program.FindFunction("main");
+  ASSERT_TRUE(function.IsValid());
+  const auto result = VirtualMachine(isolate).Execute(function);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsInteger());
   EXPECT_EQ(result.value.AsInteger(), kUpdateCount);
@@ -248,10 +246,10 @@ TEST(CompilerTest, PreservesSymbolsAndShadowingAcrossTableGrowth) {
     ADD_FAILURE() << diagnostic.message;
   }
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* entry = compiled.program.FindFunction("main");
-  ASSERT_NE(entry, nullptr);
-  const auto entry_index = static_cast<std::uint32_t>(entry - compiled.program.functions.data());
-  const auto result = VirtualMachine(isolate).Execute(compiled.program.View(), entry_index);
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  const auto entry_index = entry.index();
+  const auto result = VirtualMachine(isolate).Execute(compiled.program, entry_index);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsInteger());
   EXPECT_EQ(result.value.AsInteger(), kExpectedResult);
@@ -303,10 +301,10 @@ func main(): bool {
     ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
   }
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* entry = compiled.program.FindFunction("main");
-  ASSERT_NE(entry, nullptr);
-  const auto index = static_cast<std::uint32_t>(entry - compiled.program.functions.data());
-  const auto result = VirtualMachine(isolate).Execute(compiled.program.View(), index);
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  const auto index = entry.index();
+  const auto result = VirtualMachine(isolate).Execute(compiled.program, index);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -323,9 +321,9 @@ func main(): Store {
   Isolate isolate(1);
   const auto compiled = CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto* entry = compiled.program.FindFunction("main");
-  ASSERT_NE(entry, nullptr);
-  const auto result = VirtualMachine(isolate).Execute(entry->View());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  const auto result = VirtualMachine(isolate).Execute(entry);
   ASSERT_TRUE(result.Succeeded());
   Value root = result.value;
   auto& heap = isolate.heap();
@@ -356,10 +354,9 @@ TEST(CompilerTest, ReportsArrayBoundsErrors) {
     Isolate isolate;
     const auto compiled = CompileSource(source, isolate);
     ASSERT_TRUE(compiled.Succeeded());
-    const auto* entry = compiled.program.FindFunction("main");
-    ASSERT_NE(entry, nullptr);
-    EXPECT_EQ(VirtualMachine(isolate).Execute(entry->View()).status,
-              ExecutionStatus::IndexOutOfBounds);
+    const auto entry = compiled.program.FindFunction("main");
+    ASSERT_TRUE(entry.IsValid());
+    EXPECT_EQ(VirtualMachine(isolate).Execute(entry).status, ExecutionStatus::IndexOutOfBounds);
   }
 }
 

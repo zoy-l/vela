@@ -1,0 +1,19 @@
+func main(): int {
+  let total = 0;
+  let key = 0;
+  for (let index = 0; index < 1000; index = index + 1) {
+    switch (key) {
+      case 0: total = total + 0; break;
+      case 1: total = total + 1; break;
+      case 2: total = total + 2; break;
+      case 3: total = total + 3; break;
+      case 4: total = total + 4; break;
+      case 5: total = total + 5; break;
+      case 6: total = total + 6; break;
+      default: total = total + 7;
+    }
+    key = key + 1;
+    if (key == 8) key = 0;
+  }
+  return total;
+}

@@ -4,6 +4,7 @@
 #include <limits>
 #include <span>
 
+#include "base/opcode.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
 
@@ -17,57 +18,7 @@ inline constexpr unsigned kOperandCShift = 24;
 inline constexpr Instruction kByteMask = std::numeric_limits<std::uint8_t>::max();
 inline constexpr Instruction kImmediateMask = std::numeric_limits<std::uint16_t>::max();
 
-enum class OpCode : std::uint8_t {
-  LoadNull,
-  LoadBool,
-  LoadInt,
-  LoadDouble,
-  Move,
-  AddInt,
-  SubInt,
-  MulInt,
-  DivInt,
-  AddDouble,
-  SubDouble,
-  MulDouble,
-  DivDouble,
-  NegDouble,
-  EqualDouble,
-  NotEqualDouble,
-  LessDouble,
-  LessEqualDouble,
-  GreaterDouble,
-  GreaterEqualDouble,
-  NegInt,
-  NotBool,
-  EqualInt,
-  NotEqualInt,
-  EqualBool,
-  NotEqualBool,
-  LessInt,
-  LessEqualInt,
-  GreaterInt,
-  GreaterEqualInt,
-  AndBool,
-  OrBool,
-  StringConcat,
-  StringInterpolate,
-  BuiltinCall,
-  EqualString,
-  NotEqualString,
-  LoadString,
-  NewArray,
-  GetIndex,
-  SetIndex,
-  Print,
-  Call,
-  Jump,
-  JumpIfFalse,
-  NewInstance,
-  SetField,
-  GetField,
-  Return,
-};
+using OpCode = ::vela::Opcode;
 
 [[nodiscard]] constexpr auto EncodeABC(OpCode opcode,
                                        std::uint8_t operand_a,
@@ -114,12 +65,8 @@ struct Function final {
   std::span<runtime::StringObject* const> strings;
   std::span<const runtime::ArrayLayout* const> arrays;
   std::span<const double> doubles;
-  std::uint8_t register_count = 0;
-  std::uint8_t parameter_count = 0;
-};
-
-struct Program final {
-  std::span<const Function> functions;
+  std::uint16_t register_count = 0;
+  std::uint16_t parameter_count = 0;
 };
 
 }  // namespace vela::vm

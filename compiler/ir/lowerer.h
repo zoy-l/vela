@@ -51,7 +51,9 @@ class Lowerer final {
   using ClassMap = absl::flat_hash_map<std::string, ClassId>;
   using FunctionMap = absl::flat_hash_map<std::string, std::uint32_t>;
   using LocalMap = absl::flat_hash_map<std::string, Local>;
-  struct LoopTargets final {
+  struct ControlTargets final {
+    enum class Kind : std::uint8_t { Loop, Switch };
+    Kind kind = Kind::Loop;
     std::vector<std::size_t> break_jumps;
     std::vector<std::size_t> continue_jumps;
   };
@@ -62,8 +64,12 @@ class Lowerer final {
   void LowerFunction(const frontend::Function& source, const frontend::Class* owner = nullptr);
   void LowerStatement(const frontend::Statement& statement);
   void LowerBlock(const frontend::Statement& statement);
+  void LowerScopedStatement(const frontend::Statement& statement);
+  void LowerSwitch(const frontend::Statement& statement);
 
   [[nodiscard]] auto LowerExpression(const frontend::Expression& expression) -> LoweredValue;
+  [[nodiscard]] auto SnapshotBefore(LoweredValue value, const frontend::Expression& later)
+      -> LoweredValue;
   [[nodiscard]] auto LowerAssignment(const frontend::Expression& expression) -> LoweredValue;
   [[nodiscard]] auto LowerConstruction(const frontend::Expression& expression,
                                        const frontend::TypeDescriptor& expected) -> LoweredValue;
@@ -131,7 +137,7 @@ class Lowerer final {
   absl::flat_hash_map<std::uint64_t, std::uint32_t> double_constant_ids_;
   Function* current_function_ = nullptr;
   std::vector<LocalMap> scopes_;
-  std::vector<LoopTargets> loops_;
+  std::vector<ControlTargets> controls_;
   RegisterId next_register_ = 0;
 };
 

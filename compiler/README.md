@@ -40,10 +40,25 @@ class programs:
 ```
 
 `run` selects a zero-argument `main` function, lowers the checked AST through
-Typed IR, emits register bytecode, and executes it in the VM. Function calls,
+Typed IR, optimizes it, allocates physical registers, emits validated register
+bytecode, and executes it in the VM. Function calls,
 control-flow branches, loops, strings, and typed arrays are supported.
 String APIs, interpolation, conversions, and builder contracts are documented in
 [string contracts](../docs/strings.md).
+Fallthrough switches, nullable types, lexical scope, and source locations are
+specified in [basic language contracts](../docs/language_basics.md).
+
+The optimizer propagates integer, boolean, and null constants within basic
+blocks, folds known branches, and removes unreachable blocks and dead pure
+definitions using CFG liveness. It preserves potentially failing operations.
+The bytecode backend uses linear-scan allocation over conservative live
+intervals, preserving contiguous argument windows and parameter positions.
+Registers are reused after their last use; pressure exceeding 256 physical
+slots produces a source diagnostic. IR virtual register IDs are 32-bit.
+Encoding checks all 8-bit operands, signed 16-bit immediates, and relative jump
+offsets before narrowing. `vm::Program::Create` validates the owned output once;
+the compiler no longer exposes mutable bytecode views. See
+[execution contracts and measurements](../docs/vm_execution.md).
 
 Array type names retain their element identity and rank (`int[]`, `Item[][]`).
 The checker interns these names and records each array literal's checked type
@@ -68,7 +83,8 @@ double constants within its existing register limits. Dedicated double
 instructions implement arithmetic, negation, and comparisons. Integer
 instructions retain their existing overflow checks and truncating division.
 
-Both operands of arithmetic and comparisons must have exactly the same type.
+Numeric arithmetic and comparisons require the same numeric type; nullable
+operands require a non-null check before arithmetic or ordered comparison.
 `let x: double = 1`, `1 + 1.0`, and `1 == 1.0` are compilation errors. Write `1.0`
 or `1e0` for double literals; `num` and `float` are not built-in types. Double
 division by positive or negative zero returns `DivisionByZero`; other operations
