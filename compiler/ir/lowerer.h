@@ -78,8 +78,6 @@ class Lowerer final {
   [[nodiscard]] auto FindLocal(std::string_view name) const -> const Local*;
   [[nodiscard]] auto AllocateRegister(frontend::SourceLocation location) -> RegisterId;
   [[nodiscard]] auto AllocateTemporary(frontend::SourceLocation location) -> RegisterId;
-  [[nodiscard]] static auto IsSameType(const frontend::TypeDescriptor& left,
-                                       const frontend::TypeDescriptor& right) -> bool;
   [[nodiscard]] static auto IsInteger(const frontend::TypeDescriptor& type) -> bool;
   [[nodiscard]] static auto IsBoolean(const frontend::TypeDescriptor& type) -> bool;
   [[nodiscard]] static auto FindField(const frontend::ClassDescriptor& class_info,

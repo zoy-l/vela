@@ -1,5 +1,5 @@
-int main() {
-  int base = 6;
-  int scale = 7;
+func main(): int {
+  let base: int = 6;
+  let scale: int = 7;
   return base * scale + 1;
 }

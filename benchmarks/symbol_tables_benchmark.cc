@@ -17,15 +17,15 @@ auto BuildSymbolSource(std::int64_t count) -> std::string {
     const std::string class_name = "SymbolTableBenchmarkClass" + suffix;
     source += "enum SymbolTableBenchmarkEnum" + suffix + " { first, second }\n";
     source += "class " + class_name +
-              " { int value; "
-              "int increment(int amount) { return this.value + amount; } }\n";
-    source += "int symbol_table_benchmark_function_" + suffix +
-              "(int parameter_with_a_long_name) { "
-              "int local_with_a_long_name = parameter_with_a_long_name; "
+              " { value: int; "
+              "increment(amount: int): int { return this.value + amount; } }\n";
+    source += "func symbol_table_benchmark_function_" + suffix +
+              "(parameter_with_a_long_name: int): int { "
+              "let local_with_a_long_name: int = parameter_with_a_long_name; "
               "return local_with_a_long_name + 1; }\n";
   }
   // 只调用首个函数，使符号规模不受当前 Call 指令的 8 位函数编号限制。
-  source += "int main() { return symbol_table_benchmark_function_0(10); }\n";
+  source += "func main(): int { return symbol_table_benchmark_function_0(10); }\n";
   return source;
 }
 

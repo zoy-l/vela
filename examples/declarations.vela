@@ -1,0 +1,27 @@
+class Counter {
+  value: int;
+
+  add(step: int): int {
+    this.value = this.value + step;
+    return this.value;
+  }
+}
+
+func choose(flag: bool, left: int, right: int): int {
+  if (flag) {
+    return left;
+  } else {
+    return right;
+  }
+}
+
+func main(): int {
+  const counter = Counter(value: 20);
+  const values: int[] = [2, 3];
+  let total = counter.add(values[0]);
+  for (let index = 0; index < 2; index = index + 1) {
+    total = total + values[index];
+  }
+  print(total);
+  return choose(true, total, 0);
+}

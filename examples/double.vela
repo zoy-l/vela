@@ -1,13 +1,13 @@
 class Measurement {
-  double value;
-  double scale(double factor) { return this.value * factor; }
+  value: double;
+  scale(factor: double): double { return this.value * factor; }
 }
 
-double average(double left, double right) { return (left + right) / 2.0; }
+func average(left: double, right: double): double { return (left + right) / 2.0; }
 
-double main() {
-  Measurement measurement = Measurement(value: 1.25e1);
-  double[] values = [measurement.scale(2.0), 3.5];
+func main(): double {
+  let measurement: Measurement = Measurement(value: 1.25e1);
+  let values: double[] = [measurement.scale(2.0), 3.5];
   values[1] = values[1] + 0.5;
   print(values[0]);
   print(values[1] >= 4.0);

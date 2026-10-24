@@ -12,6 +12,7 @@ namespace vela::frontend {
 namespace {
 
 const absl::flat_hash_map<std::string_view, TokenKind> kKeywords = {
+    {"func", TokenKind::Func},     {"let", TokenKind::Let},     {"const", TokenKind::Const},
     {"class", TokenKind::Class},   {"else", TokenKind::Else},   {"enum", TokenKind::Enum},
     {"false", TokenKind::False},   {"if", TokenKind::If},       {"return", TokenKind::Return},
     {"true", TokenKind::True},     {"void", TokenKind::Void},   {"while", TokenKind::While},

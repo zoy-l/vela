@@ -38,7 +38,7 @@ class Parser final {
   auto ParseImport() -> std::optional<std::string>;
   auto ParseClass() -> std::optional<Class>;
   auto ParseFunction() -> std::optional<Function>;
-  auto ParseMethod(const TypeName& type, const Token& member) -> std::optional<Function>;
+  auto ParseFunctionBody(const Token& name) -> std::optional<Function>;
   auto ParseParameter() -> std::optional<Parameter>;
   auto ParseType() -> std::optional<TypeName>;
   [[nodiscard]] auto IsVariableDeclaration() const -> bool;

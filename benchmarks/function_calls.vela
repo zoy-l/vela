@@ -1,9 +1,9 @@
-int increment(int value) {
+func increment(value: int): int {
   return value + 1;
 }
 
-int main() {
-  int index = 0;
+func main(): int {
+  let index: int = 0;
   while (index != 1000) {
     index = increment(index);
   }

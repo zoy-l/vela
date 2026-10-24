@@ -9,6 +9,7 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 - [x] C/C++-style blocks and semicolons
 - [x] `int` and `bool` values
 - [x] Local declarations and assignment
+- [x] `func`, postfix types, and local type inference
 - [x] Integer arithmetic and equality comparison
 - [x] Logical negation
 - [x] `if` and `while`
@@ -27,7 +28,7 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 - [x] Add `break` and `continue`
 - [ ] Add `switch` and `case`
 - [ ] Add a `null` literal and nullability checks
-- [ ] Add `const`/`final` declarations and immutable assignment checks
+- [x] Add `let`/`const` declarations and constant binding assignment checks
 - [ ] Define scope, shadowing, and declaration-before-use rules
 - [ ] Complete source locations and diagnostics for all parser and checker errors
 
@@ -60,8 +61,8 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 - [ ] Add generics such as `List<T>` and `Map<K, V>`
 - [ ] Add interfaces or traits
 - [ ] Add type tests and checked casts
-- [ ] Diagnose unreachable code
-- [ ] Require complete returns on every control-flow path
+- [x] Diagnose unreachable statements
+- [x] Require complete returns on every finite control-flow path
 
 ## P2: modules and standard library
 

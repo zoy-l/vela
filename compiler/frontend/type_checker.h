@@ -11,6 +11,7 @@
 #include <absl/container/flat_hash_set.h>
 
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/control_flow.h"
 #include "compiler/frontend/diagnostic.h"
 
 namespace vela::frontend {
@@ -47,8 +48,10 @@ struct ClassDescriptor final {
 
 struct SemanticModel final {
   absl::flat_hash_map<std::string, TypeDescriptor> types;
-  // 借用受检 AST 的表达式地址；模型只在该 AST 存活期间使用。
+  // 借用受检 AST 的节点地址；模型只在该 AST 存活期间使用。
   absl::flat_hash_map<const Expression*, TypeDescriptor> array_literals;
+  absl::flat_hash_map<const Statement*, TypeDescriptor> local_types;
+  absl::flat_hash_map<const Statement*, StatementFlow> control_flow;
   absl::flat_hash_map<std::string, absl::flat_hash_set<std::string>> enum_members;
   absl::flat_hash_map<std::string, ClassDescriptor> classes;
   absl::flat_hash_map<std::string, FunctionDescriptor> functions;
@@ -68,13 +71,18 @@ class TypeChecker final {
   using Type = TypeDescriptor;
   using FunctionInfo = FunctionDescriptor;
   using ClassInfo = ClassDescriptor;
+  struct LocalBinding final {
+    Type type;
+    BindingKind kind = BindingKind::Mutable;
+  };
 
   [[nodiscard]] static auto InvalidType() -> Type;
   void AddDiagnostic(SourceLocation location, std::string message);
   void CollectTypes(const Program& program);
   void ResolveDeclarations(const Program& program);
   void CheckFunction(const Function& function, const ClassInfo* owner);
-  void CheckStatement(const Statement& statement, const Type& return_type);
+  auto CheckStatement(const Statement& statement, const Type& return_type) -> StatementFlow;
+  auto CheckBlock(const Statement& statement, const Type& return_type) -> StatementFlow;
   auto CheckExpression(const Expression& expression, const Type* expected) -> Type;
   auto CheckCall(const Expression& expression, const Type* expected) -> Type;
   auto CheckFunctionCall(const FunctionInfo& function,
@@ -86,10 +94,13 @@ class TypeChecker final {
   auto CheckMemberAccess(const Expression& expression) -> Type;
   auto ResolveType(const TypeName& type_name, bool allow_void) -> Type;
   auto LookupName(const Expression& expression) -> Type;
-  [[nodiscard]] auto LookupLocal(std::string_view name) const -> Type;
+  [[nodiscard]] auto LookupLocal(std::string_view name) const -> const LocalBinding*;
   void BeginScope();
   void EndScope();
-  auto DeclareLocal(std::string_view name, const Type& type, SourceLocation location) -> bool;
+  auto DeclareLocal(std::string_view name,
+                    const Type& type,
+                    SourceLocation location,
+                    BindingKind kind = BindingKind::Mutable) -> bool;
   [[nodiscard]] static auto IsAssignable(const Expression& expression) -> bool;
   [[nodiscard]] static auto IsSameType(const Type& left, const Type& right) -> bool;
   [[nodiscard]] static auto IsNumeric(const Type& type) -> bool;
@@ -100,11 +111,11 @@ class TypeChecker final {
 
   void CheckReturn(const Statement& statement, const Type& return_type);
 
-  void CheckIf(const Statement& statement, const Type& return_type);
+  auto CheckIf(const Statement& statement, const Type& return_type) -> StatementFlow;
 
-  void CheckWhile(const Statement& statement, const Type& return_type);
+  auto CheckWhile(const Statement& statement, const Type& return_type) -> StatementFlow;
 
-  void CheckFor(const Statement& statement, const Type& return_type);
+  auto CheckFor(const Statement& statement, const Type& return_type) -> StatementFlow;
 
   auto CheckIntegerLiteral(const Expression& expression) -> Type;
 
@@ -125,10 +136,12 @@ class TypeChecker final {
   std::size_t function_count_ = 0;
   absl::flat_hash_map<std::string, Type> types_;
   absl::flat_hash_map<const Expression*, Type> array_literals_;
+  absl::flat_hash_map<const Statement*, Type> local_types_;
+  absl::flat_hash_map<const Statement*, StatementFlow> control_flow_;
   absl::flat_hash_map<std::string, absl::flat_hash_set<std::string>> enum_members_;
   absl::flat_hash_map<std::string, ClassInfo> classes_;
   absl::flat_hash_map<std::string, FunctionInfo> functions_;
-  std::vector<absl::flat_hash_map<std::string, Type>> scopes_;
+  std::vector<absl::flat_hash_map<std::string, LocalBinding>> scopes_;
   std::size_t loop_depth_ = 0;
 };
 

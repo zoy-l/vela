@@ -1,30 +1,30 @@
 enum Shade { light, dark }
 
 class Item {
-  int value;
-  int read() { return this.value; }
+  value: int;
+  read(): int { return this.value; }
 }
 
 class Inventory {
-  Item[] items;
-  string[] labels;
-  bool[] enabled;
-  Shade[] shades;
-  int total() { return this.items[0].read() + this.items[1].read(); }
+  items: Item[];
+  labels: string[];
+  enabled: bool[];
+  shades: Shade[];
+  total(): int { return this.items[0].read() + this.items[1].read(); }
 }
 
-int[][] matrix() { return [[], [20, 22]]; }
+func matrix(): int[][] { return [[], [20, 22]]; }
 
-int main() {
-  Inventory inventory = Inventory(
+func main(): int {
+  let inventory: Inventory = Inventory(
     items: [Item(value: 20), Item(value: 22)],
     labels: ["first", "second"],
     enabled: [true, false],
     shades: [.light, .dark],
   );
-  bool[] alias = inventory.enabled;
+  let alias: bool[] = inventory.enabled;
   alias[1] = true;
-  int[][] rows = matrix();
+  let rows: int[][] = matrix();
   rows[0] = [inventory.total()];
   print(inventory.labels[1]);
   print(inventory.enabled[1]);

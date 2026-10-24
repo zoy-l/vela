@@ -1,10 +1,10 @@
 class Counter {
-  int value;
+  value: int;
 }
 
-int main() {
-  Counter counter = Counter(value: 0);
-  int index = 0;
+func main(): int {
+  let counter: Counter = Counter(value: 0);
+  let index: int = 0;
   while (index != 1000) {
     counter.value = counter.value + 1;
     index = index + 1;

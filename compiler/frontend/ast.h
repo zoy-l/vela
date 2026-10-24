@@ -17,6 +17,11 @@ struct TypeName final {
 struct Expression;
 struct Statement;
 
+enum class BindingKind : std::uint8_t {
+  Mutable,
+  Constant,
+};
+
 struct CallArgument final {
   std::string name;
   SourceLocation location;
@@ -83,6 +88,7 @@ struct Statement final {
   Kind kind = Kind::Expression;
   SourceLocation location;
   TypeName type;
+  BindingKind binding = BindingKind::Mutable;
   std::string name;
   std::unique_ptr<Expression> expression;
   std::unique_ptr<Expression> condition;

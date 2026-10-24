@@ -8,8 +8,16 @@ before a benchmark demonstrates that it is needed.
 
 ## Source model
 
-The source language uses C/C++-style blocks, semicolons, declarations, and
-operators. The initial class model is deliberately smaller than C++:
+The source language uses C-style blocks, semicolons, and operators, with postfix
+type annotations. Top-level functions use `func name(parameter: Type): Return`;
+class methods omit `func`, and fields use `name: Type`. Locals use `let` or
+`const`, require an initializer, and may infer their exact type from that value.
+Parameters, return types, and class fields require annotations. `const` prevents
+rebinding; mutation of an object's fields or array elements remains allowed.
+There are no implicit conversions or legacy prefix declarations. Function
+values, arrow functions, and closures remain later work.
+
+The initial class model is deliberately smaller than C++:
 
 - `class` declares a nominal object layout with statically known fields and
   methods;
@@ -32,18 +40,18 @@ enum Brightness {
 }
 
 class CupertinoThemeData {
-    Brightness brightness;
+    brightness: Brightness;
 }
 
 class ActionSheetExample {
 }
 
 class CupertinoApp {
-    CupertinoThemeData theme;
-    ActionSheetExample home;
+    theme: CupertinoThemeData;
+    home: ActionSheetExample;
 }
 
-CupertinoApp buildApp() {
+func buildApp(): CupertinoApp {
     return CupertinoApp(
         theme: CupertinoThemeData(brightness: .light),
         home: ActionSheetExample(),
@@ -92,6 +100,14 @@ current bytecode limits.
 The compiler must retain source locations through parsing, type checking, IR
 instructions, and bytecode ranges. This keeps diagnostics and future debugger
 mapping independent from the VM instruction encoding.
+
+Type checking also records whether each statement can fall through, break, or
+continue. Non-void functions cannot reach their closing brace; paths that loop
+forever need no return. Unreachable statements are compile errors. Boolean
+literals, `!`, `&&`, and `||` refine branch reachability; other conditions are
+conservative, without variable-value propagation. Lowering consumes these facts
+to place void returns and omit unreachable branch jumps, loop increments, and
+back edges. Condition side effects are preserved even when the result is known.
 
 ## VM execution contract
 

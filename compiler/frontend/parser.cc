@@ -1,7 +1,6 @@
 #include "compiler/frontend/parser.h"
 
 #include <charconv>
-#include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
@@ -109,7 +108,8 @@ void Parser::Synchronize() {
   while (!IsAtEnd()) {
     if (Previous().kind == TokenKind::Semicolon || Check(TokenKind::Class) ||
         Check(TokenKind::Enum) || Check(TokenKind::If) || Check(TokenKind::Return) ||
-        Check(TokenKind::While)) {
+        Check(TokenKind::While) || Check(TokenKind::Func) || Check(TokenKind::Let) ||
+        Check(TokenKind::Const)) {
       return;
     }
     ++current_;
@@ -146,122 +146,93 @@ auto Parser::ParseEnum() -> std::optional<Enum> {
 }
 
 auto Parser::ParseClass() -> std::optional<Class> {
-  const std::optional<Token> name = Expect(TokenKind::Identifier, "expected class name");
-  if (!name.has_value()) {
+  const auto name = Expect(TokenKind::Identifier, "expected class name");
+  if (!name || !Expect(TokenKind::LeftBrace, "expected '{' after class name")) {
     return std::nullopt;
   }
-  if (!Expect(TokenKind::LeftBrace, "expected '{' after class name").has_value()) {
-    return std::nullopt;
-  }
-
   Class declaration;
   declaration.name = name->lexeme;
   declaration.location = name->location;
   while (!Check(TokenKind::RightBrace) && !IsAtEnd()) {
-    const std::optional<TypeName> type = ParseType();
-    if (!type.has_value()) {
+    const auto member = Expect(TokenKind::Identifier, "expected field or method name");
+    if (!member) {
       return std::nullopt;
     }
-    const std::optional<Token> member =
-        Expect(TokenKind::Identifier, "expected field or method name");
-    if (!member.has_value()) {
-      return std::nullopt;
-    }
-    if (Match(TokenKind::LeftParen)) {
-      auto method = ParseMethod(*type, *member);
+    if (Check(TokenKind::LeftParen)) {
+      auto method = ParseFunctionBody(*member);
       if (!method) {
         return std::nullopt;
       }
       declaration.methods.push_back(std::move(*method));
     } else {
-      Field field;
-      field.type = type.value();
-      field.name = member->lexeme;
-      field.location = member->location;
-      if (!Expect(TokenKind::Semicolon, "expected ';' after field declaration").has_value()) {
+      if (!Expect(TokenKind::Colon, "expected ':' after field name")) {
         return std::nullopt;
       }
-      declaration.fields.push_back(std::move(field));
+      const auto type = ParseType();
+      if (!type || !Expect(TokenKind::Semicolon, "expected ';' after field declaration")) {
+        return std::nullopt;
+      }
+      declaration.fields.push_back({
+          .type = *type,
+          .name = member->lexeme,
+          .location = member->location,
+      });
     }
   }
-  if (!Expect(TokenKind::RightBrace, "expected '}' after class body").has_value()) {
+  if (!Expect(TokenKind::RightBrace, "expected '}' after class body")) {
     return std::nullopt;
   }
   return declaration;
 }
 
-auto Parser::ParseMethod(const TypeName& type, const Token& member) -> std::optional<Function> {
-  Function method;
-  method.name = member.lexeme;
-  method.return_type = type;
-  method.location = member.location;
-  while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
-    const std::optional<Parameter> parameter = ParseParameter();
-    if (!parameter.has_value()) {
-      return std::nullopt;
-    }
-    method.parameters.push_back(parameter.value());
-    if (!Match(TokenKind::Comma)) {
-      break;
-    }
-  }
-  if (!Expect(TokenKind::RightParen, "expected ')' after method parameters").has_value()) {
+auto Parser::ParseFunction() -> std::optional<Function> {
+  if (!Expect(TokenKind::Func, "expected 'func' before function declaration")) {
     return std::nullopt;
   }
-  method.body = ParseBlock();
-  if (!method.body) {
-    return std::nullopt;
-  }
-  return method;
+  const auto name = Expect(TokenKind::Identifier, "expected function name");
+  return name ? ParseFunctionBody(*name) : std::nullopt;
 }
 
-auto Parser::ParseFunction() -> std::optional<Function> {
-  const std::optional<TypeName> return_type = ParseType();
-  if (!return_type.has_value()) {
+auto Parser::ParseFunctionBody(const Token& name) -> std::optional<Function> {
+  if (!Expect(TokenKind::LeftParen, "expected '(' after function name")) {
     return std::nullopt;
   }
-  const std::optional<Token> name = Expect(TokenKind::Identifier, "expected function name");
-  if (!name.has_value()) {
-    return std::nullopt;
-  }
-  if (!Expect(TokenKind::LeftParen, "expected '(' after function name").has_value()) {
-    return std::nullopt;
-  }
-
   Function function;
-  function.name = name->lexeme;
-  function.return_type = return_type.value();
-  function.location = name->location;
+  function.name = name.lexeme;
+  function.location = name.location;
   while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
-    const std::optional<Parameter> parameter = ParseParameter();
-    if (!parameter.has_value()) {
+    const auto parameter = ParseParameter();
+    if (!parameter) {
       return std::nullopt;
     }
-    function.parameters.push_back(parameter.value());
+    function.parameters.push_back(*parameter);
     if (!Match(TokenKind::Comma)) {
       break;
     }
   }
-  if (!Expect(TokenKind::RightParen, "expected ')' after function parameters").has_value()) {
+  if (!Expect(TokenKind::RightParen, "expected ')' after parameters") ||
+      !Expect(TokenKind::Colon, "expected ':' before return type")) {
     return std::nullopt;
   }
+  const auto type = ParseType();
+  if (!type) {
+    return std::nullopt;
+  }
+  function.return_type = *type;
   function.body = ParseBlock();
-  if (!function.body) {
-    return std::nullopt;
-  }
-  return function;
+  return function.body ? std::optional<Function>(std::move(function)) : std::nullopt;
 }
 
 auto Parser::ParseParameter() -> std::optional<Parameter> {
-  const std::optional<TypeName> type = ParseType();
-  if (!type.has_value()) {
+  const auto name = Expect(TokenKind::Identifier, "expected parameter name");
+  if (!name || !Expect(TokenKind::Colon, "expected ':' after parameter name")) {
     return std::nullopt;
   }
-  const std::optional<Token> name = Expect(TokenKind::Identifier, "expected parameter name");
-  if (!name.has_value()) {
+  const auto type = ParseType();
+  if (!type) {
     return std::nullopt;
   }
-  return Parameter{.type = type.value(), .name = name->lexeme, .location = name->location};
+  return Parameter{.type = *type, .name = name->lexeme, .location = name->location};
 }
 
 auto Parser::ParseType() -> std::optional<TypeName> {
@@ -303,15 +274,7 @@ auto Parser::ParseBlock() -> std::unique_ptr<Statement> {
 }
 
 auto Parser::IsVariableDeclaration() const -> bool {
-  if (!Check(TokenKind::Identifier) && !Check(TokenKind::Void)) {
-    return false;
-  }
-  std::size_t next = current_ + 1;
-  while (next + 1 < tokens_.size() && tokens_.at(next).kind == TokenKind::LeftBracket &&
-         tokens_.at(next + 1).kind == TokenKind::RightBracket) {
-    next += 2;
-  }
-  return next < tokens_.size() && tokens_.at(next).kind == TokenKind::Identifier;
+  return Check(TokenKind::Let) || Check(TokenKind::Const);
 }
 
 auto Parser::ParseStatement() -> std::unique_ptr<Statement> {
@@ -445,26 +408,30 @@ auto Parser::ParseWhileStatement() -> std::unique_ptr<Statement> {
 }
 
 auto Parser::ParseVariableDeclaration() -> std::unique_ptr<Statement> {
-  const std::optional<TypeName> type = ParseType();
-  if (!type.has_value()) {
-    return nullptr;
-  }
-  const std::optional<Token> name = Expect(TokenKind::Identifier, "expected variable name");
-  if (!name.has_value()) {
+  const Token keyword = tokens_.at(current_++);
+  const auto name = Expect(TokenKind::Identifier, "expected variable name");
+  if (!name) {
     return nullptr;
   }
   auto statement = std::make_unique<Statement>();
   statement->kind = Statement::Kind::VariableDeclaration;
   statement->location = name->location;
-  statement->type = type.value();
   statement->name = name->lexeme;
-  if (Match(TokenKind::Equal)) {
-    statement->expression = ParseExpression();
-    if (!statement->expression) {
+  statement->binding =
+      keyword.kind == TokenKind::Const ? BindingKind::Constant : BindingKind::Mutable;
+  if (Match(TokenKind::Colon)) {
+    const auto type = ParseType();
+    if (!type) {
       return nullptr;
     }
+    statement->type = *type;
   }
-  if (!Expect(TokenKind::Semicolon, "expected ';' after variable declaration").has_value()) {
+  if (!Expect(TokenKind::Equal, "variable declarations require an initializer")) {
+    return nullptr;
+  }
+  statement->expression = ParseExpression();
+  if (!statement->expression ||
+      !Expect(TokenKind::Semicolon, "expected ';' after variable declaration")) {
     return nullptr;
   }
   return statement;

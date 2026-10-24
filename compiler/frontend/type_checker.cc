@@ -25,6 +25,8 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
   function_count_ = program.functions.size();
   types_.clear();
   array_literals_.clear();
+  local_types_.clear();
+  control_flow_.clear();
   enum_members_.clear();
   classes_.clear();
   functions_.clear();
@@ -50,6 +52,8 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
   SemanticModel model;
   model.types = std::move(types_);
   model.array_literals = std::move(array_literals_);
+  model.local_types = std::move(local_types_);
+  model.control_flow = std::move(control_flow_);
   model.enum_members = std::move(enum_members_);
   model.classes = std::move(classes_);
   model.functions = std::move(functions_);
@@ -172,7 +176,7 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
 
   BeginScope();
   if (owner != nullptr) {
-    DeclareLocal("this", owner->type, function.location);
+    DeclareLocal("this", owner->type, function.location, BindingKind::Constant);
   }
   for (const Parameter& parameter : function.parameters) {
     const auto parameter_type = function_info->parameters.find(parameter.name);
@@ -181,47 +185,13 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
     DeclareLocal(parameter.name, type, parameter.location);
   }
   if (function.body) {
-    CheckStatement(*function.body, return_type);
+    const auto flow = CheckStatement(*function.body, return_type);
+    if (return_type.kind != Type::Kind::Void && return_type.kind != Type::Kind::Invalid &&
+        flow.can_fall_through) {
+      AddDiagnostic(function.location, "non-void function may fall through without returning");
+    }
   }
   EndScope();
-}
-
-void TypeChecker::CheckStatement(const Statement& statement, const Type& return_type) {
-  switch (statement.kind) {
-    case Statement::Kind::VariableDeclaration:
-      CheckVariableDeclaration(statement);
-      break;
-    case Statement::Kind::Return:
-      CheckReturn(statement, return_type);
-      break;
-    case Statement::Kind::Expression:
-      if (statement.expression) {
-        CheckExpression(*statement.expression, nullptr);
-      }
-      break;
-    case Statement::Kind::Block:
-      BeginScope();
-      for (const std::unique_ptr<Statement>& child : statement.statements) {
-        CheckStatement(*child, return_type);
-      }
-      EndScope();
-      break;
-    case Statement::Kind::If:
-      CheckIf(statement, return_type);
-      break;
-    case Statement::Kind::While:
-      CheckWhile(statement, return_type);
-      break;
-    case Statement::Kind::For:
-      CheckFor(statement, return_type);
-      break;
-    case Statement::Kind::Break:
-    case Statement::Kind::Continue:
-      if (loop_depth_ == 0) {
-        AddDiagnostic(statement.location, "loop control statement must be inside a loop");
-      }
-      break;
-  }
 }
 
 auto TypeChecker::CheckExpression(const Expression& expression, const Type* expected)
@@ -467,22 +437,22 @@ auto TypeChecker::ResolveType(const TypeName& type_name, bool allow_void) -> Typ
 }
 
 auto TypeChecker::LookupName(const Expression& expression) -> TypeChecker::Type {
-  Type local = LookupLocal(expression.text);
-  if (IsValid(local)) {
-    return local;
+  const auto* local = LookupLocal(expression.text);
+  if (local != nullptr) {
+    return local->type;
   }
   AddDiagnostic(expression.location, "unknown name '" + expression.text + "'");
   return InvalidType();
 }
 
-auto TypeChecker::LookupLocal(std::string_view name) const -> TypeChecker::Type {
+auto TypeChecker::LookupLocal(std::string_view name) const -> const LocalBinding* {
   for (const auto& scope : std::views::reverse(scopes_)) {
     const auto value = scope.find(name);
     if (value != scope.end()) {
-      return value->second;
+      return &value->second;
     }
   }
-  return InvalidType();
+  return nullptr;
 }
 
 void TypeChecker::BeginScope() {
@@ -493,10 +463,12 @@ void TypeChecker::EndScope() {
   scopes_.pop_back();
 }
 
-auto TypeChecker::DeclareLocal(std::string_view name, const Type& type, SourceLocation location)
-    -> bool {
+auto TypeChecker::DeclareLocal(std::string_view name,
+                               const Type& type,
+                               SourceLocation location,
+                               BindingKind kind) -> bool {
   auto& scope = scopes_.back();
-  if (!scope.try_emplace(name, type).second) {
+  if (!scope.try_emplace(name, LocalBinding{.type = type, .kind = kind}).second) {
     AddDiagnostic(location, "duplicate local name '" + std::string(name) + "'");
     return false;
   }
@@ -525,17 +497,21 @@ auto TypeChecker::TypeNameFor(const Type& type) -> std::string {
 }
 
 void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
-  const Type type = ResolveType(statement.type, false);
-  if (!statement.expression) {
-    AddDiagnostic(statement.location, "variable declarations require an initializer");
-  } else {
-    const Type initializer = CheckExpression(*statement.expression, &type);
-    if (IsValid(initializer) && !IsSameType(type, initializer)) {
-      AddDiagnostic(statement.location, "cannot initialize '" + TypeNameFor(type) + "' with '" +
-                                            TypeNameFor(initializer) + "'");
-    }
+  const bool inferred = statement.type.name.empty();
+  Type type = inferred ? InvalidType() : ResolveType(statement.type, false);
+  const Type initializer = CheckExpression(*statement.expression, inferred ? nullptr : &type);
+  if (inferred) {
+    type = initializer;
   }
-  DeclareLocal(statement.name, type, statement.location);
+  if (type.kind == Type::Kind::Void) {
+    AddDiagnostic(statement.location, "void is not a value type");
+  }
+  if (IsValid(initializer) && !IsSameType(type, initializer)) {
+    AddDiagnostic(statement.location, "cannot initialize '" + TypeNameFor(type) + "' with '" +
+                                          TypeNameFor(initializer) + "'");
+  }
+  local_types_.insert_or_assign(&statement, type);
+  DeclareLocal(statement.name, type, statement.location, statement.binding);
 }
 
 void TypeChecker::CheckReturn(const Statement& statement, const Type& return_type) {
@@ -553,47 +529,6 @@ void TypeChecker::CheckReturn(const Statement& statement, const Type& return_typ
                                             TypeNameFor(return_type) + "'");
     }
   }
-}
-
-void TypeChecker::CheckIf(const Statement& statement, const Type& return_type) {
-  const Type condition = CheckExpression(*statement.condition, nullptr);
-  if (condition.kind != Type::Kind::Bool) {
-    AddDiagnostic(statement.condition->location, "if condition must be bool");
-  }
-  CheckStatement(*statement.then_branch, return_type);
-  if (statement.else_branch != nullptr) {
-    CheckStatement(*statement.else_branch, return_type);
-  }
-}
-
-void TypeChecker::CheckWhile(const Statement& statement, const Type& return_type) {
-  const Type condition = CheckExpression(*statement.condition, nullptr);
-  if (condition.kind != Type::Kind::Bool) {
-    AddDiagnostic(statement.condition->location, "while condition must be bool");
-  }
-  ++loop_depth_;
-  CheckStatement(*statement.then_branch, return_type);
-  --loop_depth_;
-}
-
-void TypeChecker::CheckFor(const Statement& statement, const Type& return_type) {
-  BeginScope();
-  if (statement.initializer) {
-    CheckStatement(*statement.initializer, return_type);
-  }
-  if (statement.condition) {
-    const Type condition = CheckExpression(*statement.condition, nullptr);
-    if (condition.kind != Type::Kind::Bool) {
-      AddDiagnostic(statement.condition->location, "for condition must be bool");
-    }
-  }
-  if (statement.increment) {
-    CheckExpression(*statement.increment, nullptr);
-  }
-  ++loop_depth_;
-  CheckStatement(*statement.then_branch, return_type);
-  --loop_depth_;
-  EndScope();
 }
 
 auto TypeChecker::CheckIntegerLiteral(const Expression& expression) -> TypeChecker::Type {
@@ -728,6 +663,13 @@ auto TypeChecker::CheckAssignment(const Expression& expression) -> Type {
   if (!IsAssignable(*expression.left)) {
     AddDiagnostic(expression.left->location, "left side of assignment is not assignable");
     return InvalidType();
+  }
+  if (expression.left->kind == Expression::Kind::Name) {
+    const auto* local = LookupLocal(expression.left->text);
+    if (local != nullptr && local->kind == BindingKind::Constant) {
+      AddDiagnostic(expression.left->location,
+                    "cannot assign to const binding '" + expression.left->text + "'");
+    }
   }
   Type left = CheckExpression(*expression.left, nullptr);
   const Type right = CheckExpression(*expression.right, &left);

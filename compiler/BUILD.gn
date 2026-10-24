@@ -10,6 +10,7 @@ source_set("frontend") {
     "frontend/ast.h",
     "frontend/checker.cc",
     "frontend/checker.h",
+    "frontend/control_flow.h",
     "frontend/diagnostic.h",
     "frontend/lexer.cc",
     "frontend/lexer.h",
@@ -18,6 +19,7 @@ source_set("frontend") {
     "frontend/token.h",
     "frontend/type_checker.cc",
     "frontend/type_checker.h",
+    "frontend/type_checker_flow.cc",
   ]
   public_deps = [ "//third_party:abseil" ]
 }
@@ -29,6 +31,7 @@ source_set("ir") {
     "ir/lowerer.h",
     "ir/lowerer_array.cc",
     "ir/lowerer_double.cc",
+    "ir/lowerer_flow.cc",
   ]
   deps = [ ":frontend" ]
   public_deps = [ "//third_party:abseil" ]
@@ -67,7 +70,11 @@ executable("vela_environment_tests") {
 
 executable("vela_frontend_tests") {
   testonly = true
-  sources = [ "frontend_unittest.cc" ]
+  sources = [
+    "frontend/control_flow_unittest.cc",
+    "frontend/declarations_unittest.cc",
+    "frontend_unittest.cc",
+  ]
   deps = [
     ":frontend",
     "//third_party:gtest_main",
@@ -78,6 +85,7 @@ executable("vela_compiler_tests") {
   testonly = true
   sources = [
     "compiler_unittest.cc",
+    "control_flow_unittest.cc",
     "double_unittest.cc",
   ]
   deps = [

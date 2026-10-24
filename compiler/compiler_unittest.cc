@@ -24,9 +24,9 @@ using vela::vm::VirtualMachine;
 
 TEST(CompilerTest, CompilesIntegerFunction) {
   constexpr std::string_view source = R"(
-int main() {
-  int x = 20;
-  int y = 22;
+func main(): int {
+  let x: int = 20;
+  let y: int = 22;
   return x + y;
 }
 )";
@@ -45,14 +45,14 @@ int main() {
 TEST(CompilerTest, CompilesNestedClassConstruction) {
   constexpr std::string_view source = R"(
 class Theme {
-  int brightness;
+  brightness: int;
 }
 
 class App {
-  Theme theme;
+  theme: Theme;
 }
 
-App main() {
+func main(): App {
   return App(theme: Theme(brightness: 1));
 }
 )";
@@ -85,11 +85,11 @@ App main() {
 
 TEST(CompilerTest, CompilesFunctionCall) {
   constexpr std::string_view source = R"(
-int add(int left, int right) {
+func add(left: int, right: int): int {
   return left + right;
 }
 
-int main() {
+func main(): int {
   return add(20, 22);
 }
 )";
@@ -109,9 +109,9 @@ int main() {
 TEST(CompilerTest, CompilesLoopControlFlow) {
   constexpr std::int64_t kExpectedLoopSum = 10;
   constexpr std::string_view source = R"(
-int main() {
-  int i = 0;
-  int sum = 0;
+func main(): int {
+  let i: int = 0;
+  let sum: int = 0;
   while (i != 5) {
     sum = sum + i;
     i = i + 1;
@@ -134,26 +134,26 @@ int main() {
 TEST(CompilerTest, ExecutesLanguageFeaturesAndNamedMethodArguments) {
   constexpr std::string_view source = R"(
 class Counter {
-  int value;
-  int add(int amount) {
+  value: int;
+  add(amount: int): int {
     this.value = this.value + amount;
     return this.value;
   }
-  int digits(int tens, int ones) {
+  digits(tens: int, ones: int): int {
     return tens * 10 + ones;
   }
 }
 
-bool main() {
-  int sum = 0;
-  for (int i = 0; i < 5; i = i + 1) {
+func main(): bool {
+  let sum: int = 0;
+  for (let i: int = 0; i < 5; i = i + 1) {
     if (i == 2) continue;
     if (i == 4) break;
     sum = sum + i;
   }
-  Counter counter = Counter(value: sum);
-  string text = "a" + "b";
-  int[] values = [1, 2, 3];
+  let counter: Counter = Counter(value: sum);
+  let text: string = "a" + "b";
+  let values: int[] = [1, 2, 3];
   return counter.add(values[1]) == 6 && text == "ab" &&
          counter.digits(ones: 2, tens: 3) == 32;
 }
@@ -173,7 +173,8 @@ bool main() {
 
 TEST(CompilerTest, ExecutesLoopWithWideJumpTarget) {
   constexpr std::int64_t kUpdateCount = 70;
-  std::string source = "int main() { int value = 0; int counter = 0; while (counter < 1) {";
+  std::string source =
+      "func main(): int { let value: int = 0; let counter: int = 0; while (counter < 1) {";
   for (std::int64_t index = 0; index < kUpdateCount; ++index) {
     source += "value = value + 1;";
   }
@@ -197,28 +198,29 @@ TEST(CompilerTest, PreservesSymbolsAndShadowingAcrossTableGrowth) {
   for (std::int64_t index = 0; index < kSymbolCount; ++index) {
     const std::string suffix = std::to_string(index);
     source += "enum SymbolEnum" + suffix + " { first, second }\n";
-    source += "class SymbolClass" + suffix + " { int value; int read() { return this.value; } }\n";
-    source += "int symbol_function_" + suffix + "(int value) { return value; }\n";
+    source +=
+        "class SymbolClass" + suffix + " { value: int; read(): int { return this.value; } }\n";
+    source += "func symbol_function_" + suffix + "(value: int): int { return value; }\n";
   }
-  source += "int main() { int sum = 0;\n";
+  source += "func main(): int { let sum: int = 0;\n";
   for (std::int64_t index = 0; index < kLocalCount; ++index) {
     const std::string suffix = std::to_string(index);
-    source.append("int local_variable_with_a_long_name_")
+    source.append("let local_variable_with_a_long_name_")
         .append(suffix)
-        .append(" = ")
+        .append(": int = ")
         .append(suffix)
         .append(";\n");
   }
   source += "{\n";
   for (std::int64_t index = 0; index < kLocalCount; ++index) {
-    source += "int local_variable_with_a_long_name_" + std::to_string(index) + " = " +
-              std::to_string(index + 1) + ";\n";
+    source += "let local_variable_with_a_long_name_" + std::to_string(index) +
+              ": int = " + std::to_string(index + 1) + ";\n";
   }
   const std::string last_local =
       "local_variable_with_a_long_name_" + std::to_string(kLocalCount - 1);
   source += "sum = " + last_local + "; } sum = sum + " + last_local + ";\n";
   const std::string last_class = "SymbolClass" + std::to_string(kSymbolCount - 1);
-  source += last_class + " instance = " + last_class + "(value: sum);\n";
+  source += "let instance: " + last_class + " = " + last_class + "(value: sum);\n";
   source += "return symbol_function_0(instance.read()); }\n";
 
   Isolate isolate;
@@ -240,35 +242,35 @@ TEST(CompilerTest, ExecutesTypedArraysAcrossCallsMethodsAndAssignments) {
   constexpr std::string_view source = R"(
 enum Shade { light, dark }
 class Item {
-  int value;
-  int read() { return this.value; }
+  value: int;
+  read(): int { return this.value; }
 }
 class Store {
-  Item[][] items;
-  string[] labels;
-  bool[] flags;
-  Shade[] shades;
-  int read() { return this.items[0][0].read(); }
-  Item[] replace(Item[] items) {
+  items: Item[][];
+  labels: string[];
+  flags: bool[];
+  shades: Shade[];
+  read(): int { return this.items[0][0].read(); }
+  replace(items: Item[]): Item[] {
     this.items[0] = items;
     return this.items[0];
   }
 }
-int[][] identity(int[][] input) { return input; }
-Shade[] shades() { return [.light, .dark]; }
-bool flag(bool[] input) { return input[0]; }
-bool main() {
-  Store store = Store(items: [[Item(value: 40)]], labels: ["old"],
+func identity(input: int[][]): int[][] { return input; }
+func shades(): Shade[] { return [.light, .dark]; }
+func flag(input: bool[]): bool { return input[0]; }
+func main(): bool {
+  let store: Store = Store(items: [[Item(value: 40)]], labels: ["old"],
                       flags: [false], shades: shades());
-  bool[] alias = store.flags;
+  let alias: bool[] = store.flags;
   alias[0] = true;
   store.labels[0] = "new";
   store.shades[0] = .dark;
   store.items[0][0].value = 42;
-  Item[] replaced = store.replace([Item(value: 42)]);
-  int[][] matrix = identity([[], [1, 2]]);
+  let replaced: Item[] = store.replace([Item(value: 42)]);
+  let matrix: int[][] = identity([[], [1, 2]]);
   matrix[0] = [3];
-  int[] row = matrix[1] = [4, 5];
+  let row: int[] = matrix[1] = [4, 5];
   return store.read() == 42 && replaced[0].value == 42 && flag(store.flags) &&
          store.labels[0] == "new" && store.shades[0] == Shade.dark &&
          matrix[0][0] == 3 && row[1] == 5 &&
@@ -293,9 +295,9 @@ bool main() {
 
 TEST(CompilerTest, ArrayFieldsAndNestedArraysRetainTheirObjects) {
   constexpr std::string_view source = R"(
-class Item { int value; }
-class Store { Item[][] items; bool[] flags; string[] labels; }
-Store main() {
+class Item { value: int; }
+class Store { items: Item[][]; flags: bool[]; labels: string[]; }
+func main(): Store {
   return Store(items: [[Item(value: 42)]], flags: [true], labels: ["alive"]);
 }
 )";
@@ -325,9 +327,9 @@ Store main() {
 
 TEST(CompilerTest, ReportsArrayBoundsErrors) {
   constexpr auto kSources = std::to_array<std::string_view>({
-      "int main() { int[] a = []; return a[0]; }",
-      "int main() { int[] a = [1]; return a[-1]; }",
-      "int main() { int[] a = [1]; a[1] = 2; return 0; }",
+      "func main(): int { let a: int[] = []; return a[0]; }",
+      "func main(): int { let a: int[] = [1]; return a[-1]; }",
+      "func main(): int { let a: int[] = [1]; a[1] = 2; return 0; }",
   });
   for (const auto source : kSources) {
     SCOPED_TRACE(source);

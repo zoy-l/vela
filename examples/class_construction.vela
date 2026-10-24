@@ -1,11 +1,11 @@
 class Theme {
-  int brightness;
+  brightness: int;
 }
 
 class App {
-  Theme theme;
+  theme: Theme;
 }
 
-App main() {
+func main(): App {
   return App(theme: Theme(brightness: 1));
 }

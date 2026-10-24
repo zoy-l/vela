@@ -1,13 +1,13 @@
 class Pair {
-  int left;
-  int right;
+  left: int;
+  right: int;
 }
 
-int main() {
-  int index = 0;
-  int sum = 0;
+func main(): int {
+  let index: int = 0;
+  let sum: int = 0;
   while (index != 1000) {
-    Pair pair = Pair(left: index, right: 1);
+    let pair: Pair = Pair(left: index, right: 1);
     sum = sum + pair.right;
     index = index + 1;
   }

@@ -1,11 +1,11 @@
-bool choose(bool condition) {
+func choose(condition: bool): bool {
   if (condition) {
     return true;
   }
   return false;
 }
 
-int main() {
+func main(): int {
   if (choose(true)) {
     return 1;
   }

@@ -1,8 +1,8 @@
-int main() {
-  int[] values = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-  int sum = 0;
-  for (int round = 0; round < 1000; round = round + 1) {
-    for (int index = 0; index < 16; index = index + 1) {
+func main(): int {
+  let values: int[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+  let sum: int = 0;
+  for (let round: int = 0; round < 1000; round = round + 1) {
+    for (let index: int = 0; index < 16; index = index + 1) {
       sum = sum + values[index];
     }
   }

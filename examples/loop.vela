@@ -1,6 +1,6 @@
-int main() {
-  int index = 0;
-  int sum = 0;
+func main(): int {
+  let index: int = 0;
+  let sum: int = 0;
   while (index != 100) {
     sum = sum + index;
     index = index + 1;

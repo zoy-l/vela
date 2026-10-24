@@ -65,7 +65,7 @@ instructions implement arithmetic, negation, and comparisons. Integer
 instructions retain their existing overflow checks and truncating division.
 
 Both operands of arithmetic and comparisons must have exactly the same type.
-`double x = 1`, `1 + 1.0`, and `1 == 1.0` are compilation errors. Write `1.0`
+`let x: double = 1`, `1 + 1.0`, and `1 == 1.0` are compilation errors. Write `1.0`
 or `1e0` for double literals; `num` and `float` are not built-in types. Double
 division by positive or negative zero returns `DivisionByZero`; other operations
 preserve IEEE infinity, NaN comparisons, subnormals, and signed zero. `print`

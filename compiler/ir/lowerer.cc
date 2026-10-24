@@ -192,20 +192,12 @@ void Lowerer::LowerFunction(const frontend::Function& source, const frontend::Cl
   PopScope();
 
   if (function.return_type.kind == frontend::TypeDescriptor::Kind::Void &&
-      (function.instructions.empty() || function.instructions.back().opcode != Opcode::Return)) {
+      model_.control_flow.at(source.body.get()).can_fall_through) {
     const RegisterId result = AllocateTemporary(source.location);
     Emit({.opcode = Opcode::LoadNull, .dst = result, .location = source.location});
     Emit({.opcode = Opcode::Return, .dst = result, .location = source.location});
   }
-  if (function.return_type.kind != frontend::TypeDescriptor::Kind::Void &&
-      (function.instructions.empty() || function.instructions.back().opcode != Opcode::Return)) {
-    AddDiagnostic(source.location, "non-void function may fall through without returning");
-  }
-
   function.register_count = next_register_;
-  if (function.register_count == 0) {
-    AddDiagnostic(source.location, "function requires at least one register");
-  }
 
   program_.functions.push_back(std::move(function));
   current_function_ = nullptr;
@@ -567,11 +559,6 @@ auto Lowerer::AllocateTemporary(frontend::SourceLocation location) -> RegisterId
   return AllocateRegister(location);
 }
 
-auto Lowerer::IsSameType(const frontend::TypeDescriptor& left,
-                         const frontend::TypeDescriptor& right) -> bool {
-  return left.kind == right.kind && left.name == right.name;
-}
-
 auto Lowerer::IsInteger(const frontend::TypeDescriptor& type) -> bool {
   return type.kind == frontend::TypeDescriptor::Kind::Int ||
          type.kind == frontend::TypeDescriptor::Kind::Enum;
@@ -618,109 +605,15 @@ auto Lowerer::DeclareLocal(std::string_view name,
 
 void Lowerer::LowerVariableDeclaration(const frontend::Statement& statement) {
   const RegisterId local = AllocateRegister(statement.location);
-  const frontend::TypeDescriptor type = model_.types.contains(statement.type.name)
-                                            ? model_.types.at(statement.type.name)
-                                            : InvalidType();
-  if (statement.expression != nullptr) {
-    const LoweredValue initializer = LowerExpression(*statement.expression, &type);
-    if (initializer.type.kind != frontend::TypeDescriptor::Kind::Invalid &&
-        !IsSameType(type, initializer.type)) {
-      AddDiagnostic(statement.location, "initializer type does not match local type");
-    }
-    Emit({
-        .opcode = Opcode::Move,
-        .dst = local,
-        .lhs = initializer.reg,
-        .location = statement.location,
-    });
-  }
+  const auto& type = model_.local_types.at(&statement);
+  const auto initializer = LowerExpression(*statement.expression, &type);
+  Emit({
+      .opcode = Opcode::Move,
+      .dst = local,
+      .lhs = initializer.reg,
+      .location = statement.location,
+  });
   DeclareLocal(statement.name, local, type, statement.location);
-}
-
-void Lowerer::LowerIf(const frontend::Statement& statement) {
-  const LoweredValue condition = LowerExpression(*statement.condition);
-  if (!IsBoolean(condition.type)) {
-    AddDiagnostic(statement.condition->location, "if condition must be bool");
-  }
-  const std::size_t false_jump = current_function_->instructions.size();
-  Emit({.opcode = Opcode::JumpIfFalse, .lhs = condition.reg, .location = statement.location});
-  LowerStatement(*statement.then_branch);
-  if (statement.else_branch != nullptr) {
-    const std::size_t end_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::Jump, .location = statement.location});
-    current_function_->instructions.at(false_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-    LowerStatement(*statement.else_branch);
-    current_function_->instructions.at(end_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-  } else {
-    current_function_->instructions.at(false_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-  }
-}
-
-void Lowerer::LowerWhile(const frontend::Statement& statement) {
-  const std::size_t loop_start = current_function_->instructions.size();
-  const LoweredValue condition = LowerExpression(*statement.condition);
-  if (!IsBoolean(condition.type)) {
-    AddDiagnostic(statement.condition->location, "while condition must be bool");
-  }
-  const std::size_t exit_jump = current_function_->instructions.size();
-  Emit({.opcode = Opcode::JumpIfFalse, .lhs = condition.reg, .location = statement.location});
-  loops_.push_back({});
-  LowerStatement(*statement.then_branch);
-  for (const std::size_t jump : loops_.back().continue_jumps) {
-    current_function_->instructions.at(jump).index = static_cast<std::uint32_t>(loop_start);
-  }
-  Emit({
-      .opcode = Opcode::Jump,
-      .index = static_cast<std::uint32_t>(loop_start),
-      .location = statement.location,
-  });
-  current_function_->instructions.at(exit_jump).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
-  for (const std::size_t jump : loops_.back().break_jumps) {
-    current_function_->instructions.at(jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-  }
-  loops_.pop_back();
-}
-
-void Lowerer::LowerFor(const frontend::Statement& statement) {
-  PushScope();
-  if (statement.initializer) {
-    LowerStatement(*statement.initializer);
-  }
-  const std::size_t loop_start = current_function_->instructions.size();
-  std::size_t exit_jump = current_function_->instructions.size();
-  if (statement.condition) {
-    const LoweredValue condition = LowerExpression(*statement.condition);
-    exit_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::JumpIfFalse, .lhs = condition.reg, .location = statement.location});
-  }
-  loops_.push_back({});
-  LowerStatement(*statement.then_branch);
-  const std::size_t increment_target = current_function_->instructions.size();
-  for (const std::size_t jump : loops_.back().continue_jumps) {
-    current_function_->instructions.at(jump).index = static_cast<std::uint32_t>(increment_target);
-  }
-  if (statement.increment) {
-    static_cast<void>(LowerExpression(*statement.increment));
-  }
-  Emit({
-      .opcode = Opcode::Jump,
-      .index = static_cast<std::uint32_t>(loop_start),
-      .location = statement.location,
-  });
-  const std::size_t loop_end = current_function_->instructions.size();
-  if (statement.condition) {
-    current_function_->instructions.at(exit_jump).index = static_cast<std::uint32_t>(loop_end);
-  }
-  for (const std::size_t jump : loops_.back().break_jumps) {
-    current_function_->instructions.at(jump).index = static_cast<std::uint32_t>(loop_end);
-  }
-  loops_.pop_back();
-  PopScope();
 }
 
 auto Lowerer::LowerIntegerLiteral(const frontend::Expression& expression) -> Lowerer::LoweredValue {

@@ -17,14 +17,14 @@ enum Brightness {
 }
 
 class Theme {
-  Brightness brightness;
+  brightness: Brightness;
 }
 
 class App {
-  Theme theme;
+  theme: Theme;
 }
 
-App build() {
+func build(): App {
   return App(theme: Theme(brightness: .light));
 }
 )";
@@ -43,10 +43,10 @@ enum Brightness {
 }
 
 class Theme {
-  Brightness brightness;
+  brightness: Brightness;
 }
 
-Theme build() {
+func build(): Theme {
   return Theme(brightness: .missing);
 }
 )";
@@ -64,9 +64,9 @@ TEST(FrontendTest, RejectsDuplicateEnumMember) {
 
 TEST(FrontendTest, RejectsDuplicateLocalName) {
   constexpr std::string_view source = R"(
-int main() {
-  int local_with_a_long_name = 1;
-  int local_with_a_long_name = 2;
+func main(): int {
+  let local_with_a_long_name: int = 1;
+  let local_with_a_long_name: int = 2;
   return local_with_a_long_name;
 }
 )";
@@ -78,23 +78,23 @@ int main() {
 
 TEST(FrontendTest, RejectsArrayTypeMismatchesWithoutConversions) {
   constexpr auto kInvalidSources = std::to_array<std::string_view>({
-      "int main() { int[] a = [1, true]; return 0; }",
-      "int main() { double[] a = [1]; return 0; }",
-      "int main() { int[] a = [1]; bool[] b = a; return 0; }",
-      "int main() { int[] a = [1]; a[0] = true; return 0; }",
-      "int main() { int[] a = [1]; return a[true]; }",
-      "int main() { int[][] a = [1]; return 0; }",
-      "int[] f() { return [true]; }",
-      "void f(bool[] a) {} int main() { f([1]); return 0; }",
-      "int main() { void[] a = []; return 0; }",
-      "int main() { Unknown[] a = []; return 0; }",
-      "int main() { []; return 0; }",
-      "int main() { int a = [1]; return 0; }",
-      "enum E { a } int main() { E[] a = [1]; return 0; }",
-      "class A {} class B {} int main() { A[] a = [B()]; return 0; }",
-      "int main() { int[] a = [1]; a = [false]; return 0; }",
-      "int main() { int[] a = [1]; bool equal = a == a; return 0; }",
-      "void f() {} int main() { [f()]; return 0; }",
+      "func main(): int { let a: int[] = [1, true]; return 0; }",
+      "func main(): int { let a: double[] = [1]; return 0; }",
+      "func main(): int { let a: int[] = [1]; let b: bool[] = a; return 0; }",
+      "func main(): int { let a: int[] = [1]; a[0] = true; return 0; }",
+      "func main(): int { let a: int[] = [1]; return a[true]; }",
+      "func main(): int { let a: int[][] = [1]; return 0; }",
+      "func f(): int[] { return [true]; }",
+      "func f(a: bool[]): void {} func main(): int { f([1]); return 0; }",
+      "func main(): int { let a: void[] = []; return 0; }",
+      "func main(): int { let a: Unknown[] = []; return 0; }",
+      "func main(): int { []; return 0; }",
+      "func main(): int { let a: int = [1]; return 0; }",
+      "enum E { a } func main(): int { let a: E[] = [1]; return 0; }",
+      "class A {} class B {} func main(): int { let a: A[] = [B()]; return 0; }",
+      "func main(): int { let a: int[] = [1]; a = [false]; return 0; }",
+      "func main(): int { let a: int[] = [1]; let equal: bool = a == a; return 0; }",
+      "func f(): void {} func main(): int { [f()]; return 0; }",
   });
   for (const auto source : kInvalidSources) {
     SCOPED_TRACE(source);
@@ -105,12 +105,13 @@ TEST(FrontendTest, RejectsArrayTypeMismatchesWithoutConversions) {
 TEST(FrontendTest, PreservesArrayRankAndContextualElements) {
   constexpr std::string_view source = R"(
 enum E { a, b }
-E[][] f(E[][] input) { return input; }
-int main() {
-  E[][] values = [[], [.a, .b]];
+func f(input: E[][]): E[][] { return input; }
+func main(): int {
+  let values: E[][] = [[], [.a, .b]];
   values[0] = [.b];
-  for (E[][] copy = f(values); false;) { copy[0][0] = .a; }
-  double[] exact = [1.5];
+  let enabled = false;
+  for (let copy: E[][] = f(values); enabled;) { copy[0][0] = .a; }
+  let exact: double[] = [1.5];
   return [1, 2][0];
 }
 )";
@@ -123,31 +124,31 @@ int main() {
 
 TEST(FrontendTest, RejectsImplicitDoubleConversionsAtEveryBoundary) {
   constexpr auto kInvalidSources = std::to_array<std::string_view>({
-      "double main() { return 1; }",
-      "int main() { return 1.0; }",
-      "int main() { double x = 1; return 0; }",
-      "int main() { int x = 1.0; return 0; }",
-      "int main() { double x = 1.0; x = 2; return 0; }",
-      "int main() { int x = 1; x = 2.0; return 0; }",
-      "double f(double x) { return x; } double main() { return f(1); }",
-      "class A { double x; } A main() { return A(x: 1); }",
-      "class A { double f(double x) { return x; } } double main() { return A().f(1); }",
-      "double main() { return 1 + 1.0; }",
-      "double main() { return 1.0 + 1; }",
-      "bool main() { return 1 == 1.0; }",
-      "bool main() { return 1.0 != 1; }",
-      "bool main() { return 1 < 1.0; }",
-      "bool main() { return 1.0 >= 1; }",
-      "int main() { double[] x = [1.0]; x[0] = 1; return 0; }",
-      "int main() { double[] x = [1.0]; return x[0.0]; }",
-      "int main() { double[] x = [1.0]; int[] y = x; return 0; }",
-      "int main() { double[] x = [1.0, 2]; return 0; }",
-      "int main() { if (1.0) return 1; return 0; }",
-      "int main() { double x = 1e309; return 0; }",
-      "int main() { double x = 1e-9999; return 0; }",
-      "int main() { double x = 1e+; return 0; }",
-      "int main() { num x = 1; return 0; }",
-      "int main() { float x = 1.0; return 0; }",
+      "func main(): double { return 1; }",
+      "func main(): int { return 1.0; }",
+      "func main(): int { let x: double = 1; return 0; }",
+      "func main(): int { let x: int = 1.0; return 0; }",
+      "func main(): int { let x: double = 1.0; x = 2; return 0; }",
+      "func main(): int { let x: int = 1; x = 2.0; return 0; }",
+      "func f(x: double): double { return x; } func main(): double { return f(1); }",
+      "class A { x: double; } func main(): A { return A(x: 1); }",
+      "class A { f(x: double): double { return x; } } func main(): double { return A().f(1); }",
+      "func main(): double { return 1 + 1.0; }",
+      "func main(): double { return 1.0 + 1; }",
+      "func main(): bool { return 1 == 1.0; }",
+      "func main(): bool { return 1.0 != 1; }",
+      "func main(): bool { return 1 < 1.0; }",
+      "func main(): bool { return 1.0 >= 1; }",
+      "func main(): int { let x: double[] = [1.0]; x[0] = 1; return 0; }",
+      "func main(): int { let x: double[] = [1.0]; return x[0.0]; }",
+      "func main(): int { let x: double[] = [1.0]; let y: int[] = x; return 0; }",
+      "func main(): int { let x: double[] = [1.0, 2]; return 0; }",
+      "func main(): int { if (1.0) return 1; return 0; }",
+      "func main(): int { let x: double = 1e309; return 0; }",
+      "func main(): int { let x: double = 1e-9999; return 0; }",
+      "func main(): int { let x: double = 1e+; return 0; }",
+      "func main(): int { let x: num = 1; return 0; }",
+      "func main(): int { let x: float = 1.0; return 0; }",
   });
   for (const auto source : kInvalidSources) {
     SCOPED_TRACE(source);

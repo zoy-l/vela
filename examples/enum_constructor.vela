@@ -4,9 +4,9 @@ enum Brightness {
 }
 
 class Theme {
-  Brightness brightness;
+  brightness: Brightness;
 }
 
-Theme main() {
+func main(): Theme {
   return Theme(brightness: .light);
 }

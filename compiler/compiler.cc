@@ -591,8 +591,7 @@ auto CompileProgram(const frontend::Program& source,
     result.program.strings.push_back(isolate.CreateString(value));
   }
   for (const ir::Function& function : lowered.program.functions) {
-    if (function.register_count == 0 ||
-        function.register_count > std::numeric_limits<std::uint8_t>::max()) {
+    if (function.register_count > std::numeric_limits<std::uint8_t>::max()) {
       AddDiagnostic(result.diagnostics, frontend::SourceLocation(),
                     "function register count exceeds VM encoding");
       return result;
@@ -603,7 +602,9 @@ auto CompileProgram(const frontend::Program& source,
     compiled.strings = result.program.strings;
     compiled.arrays = *array_layouts;
     compiled.doubles = function.doubles;
-    compiled.register_count = static_cast<std::uint8_t>(function.register_count);
+    // 没有操作数的无限循环在 IR 中可使用零个寄存器；VM 帧仍保留一个槽位。
+    compiled.register_count =
+        static_cast<std::uint8_t>(std::max(function.register_count, std::uint16_t{1}));
     compiled.parameter_count = function.parameter_count;
     compiled.code.reserve(function.instructions.size());
     for (const ir::Instruction& instruction : function.instructions) {
