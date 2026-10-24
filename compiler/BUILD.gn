@@ -19,6 +19,7 @@ source_set("frontend") {
     "frontend/type_checker.cc",
     "frontend/type_checker.h",
   ]
+  public_deps = [ "//third_party:abseil" ]
 }
 
 source_set("ir") {
@@ -28,6 +29,7 @@ source_set("ir") {
     "ir/lowerer.h",
   ]
   deps = [ ":frontend" ]
+  public_deps = [ "//third_party:abseil" ]
 }
 
 source_set("compiler") {
@@ -41,6 +43,7 @@ source_set("compiler") {
     "//runtime",
     "//vm",
   ]
+  deps = [ "//third_party:abseil" ]
 }
 
 executable("vela") {

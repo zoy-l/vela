@@ -53,5 +53,26 @@ Theme build() {
   EXPECT_FALSE(result.diagnostics.empty());
 }
 
+TEST(FrontendTest, RejectsDuplicateEnumMember) {
+  const CheckResult result = CheckSource("enum Colour { red, red }");
+  EXPECT_FALSE(result.Succeeded());
+  ASSERT_EQ(result.diagnostics.size(), 1U);
+  EXPECT_EQ(result.diagnostics.front().message, "duplicate enum member 'red'");
+}
+
+TEST(FrontendTest, RejectsDuplicateLocalName) {
+  constexpr std::string_view source = R"(
+int main() {
+  int local_with_a_long_name = 1;
+  int local_with_a_long_name = 2;
+  return local_with_a_long_name;
+}
+)";
+  const CheckResult result = CheckSource(source);
+  EXPECT_FALSE(result.Succeeded());
+  ASSERT_EQ(result.diagnostics.size(), 1U);
+  EXPECT_EQ(result.diagnostics.front().message, "duplicate local name 'local_with_a_long_name'");
+}
+
 }  // namespace
 }  // namespace vela::frontend

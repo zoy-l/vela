@@ -6,8 +6,9 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
-#include <unordered_set>
 #include <utility>
+
+#include <absl/container/flat_hash_set.h>
 
 #include "compiler/frontend/lexer.h"
 #include "compiler/frontend/parser.h"
@@ -376,8 +377,8 @@ auto CompileSources(const std::vector<std::string_view>& sources, runtime::Isola
 
 auto CompileFile(std::string_view path, runtime::Isolate& isolate) -> CompileResult {
   std::vector<std::string> contents;
-  std::unordered_set<std::string> visiting;
-  std::unordered_set<std::string> loaded;
+  absl::flat_hash_set<std::string> visiting;
+  absl::flat_hash_set<std::string> loaded;
   frontend::Diagnostics diagnostics;
   const auto load = [&](const auto& self, const std::filesystem::path& file) -> void {
     const std::string key = std::filesystem::weakly_canonical(file).string();

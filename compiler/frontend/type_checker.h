@@ -5,9 +5,10 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
@@ -34,21 +35,21 @@ struct TypeDescriptor final {
 struct FunctionDescriptor final {
   TypeDescriptor return_type;
   std::vector<std::string> parameter_order;
-  std::unordered_map<std::string, TypeDescriptor> parameters;
+  absl::flat_hash_map<std::string, TypeDescriptor> parameters;
 };
 
 struct ClassDescriptor final {
   TypeDescriptor type;
   std::vector<std::string> field_order;
-  std::unordered_map<std::string, TypeDescriptor> fields;
-  std::unordered_map<std::string, FunctionDescriptor> methods;
+  absl::flat_hash_map<std::string, TypeDescriptor> fields;
+  absl::flat_hash_map<std::string, FunctionDescriptor> methods;
 };
 
 struct SemanticModel final {
-  std::unordered_map<std::string, TypeDescriptor> types;
-  std::unordered_map<std::string, std::unordered_set<std::string>> enum_members;
-  std::unordered_map<std::string, ClassDescriptor> classes;
-  std::unordered_map<std::string, FunctionDescriptor> functions;
+  absl::flat_hash_map<std::string, TypeDescriptor> types;
+  absl::flat_hash_map<std::string, absl::flat_hash_set<std::string>> enum_members;
+  absl::flat_hash_map<std::string, ClassDescriptor> classes;
+  absl::flat_hash_map<std::string, FunctionDescriptor> functions;
 };
 
 struct TypeCheckResult final {
@@ -119,11 +120,11 @@ class TypeChecker final {
 
   Diagnostics diagnostics_;
   std::size_t function_count_ = 0;
-  std::unordered_map<std::string, Type> types_;
-  std::unordered_map<std::string, std::unordered_set<std::string>> enum_members_;
-  std::unordered_map<std::string, ClassInfo> classes_;
-  std::unordered_map<std::string, FunctionInfo> functions_;
-  std::vector<std::unordered_map<std::string, Type>> scopes_;
+  absl::flat_hash_map<std::string, Type> types_;
+  absl::flat_hash_map<std::string, absl::flat_hash_set<std::string>> enum_members_;
+  absl::flat_hash_map<std::string, ClassInfo> classes_;
+  absl::flat_hash_map<std::string, FunctionInfo> functions_;
+  std::vector<absl::flat_hash_map<std::string, Type>> scopes_;
   std::size_t loop_depth_ = 0;
 };
 

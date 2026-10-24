@@ -1,3 +1,52 @@
+import("abseil_sources.gni")
+
+config("abseil_headers") {
+  abseil_include = rebase_path("abseil-cpp", root_build_dir)
+  if (target_os == "win") {
+    cflags = [ "/external:I$abseil_include" ]
+  } else {
+    cflags = [
+      "-isystem",
+      abseil_include,
+    ]
+  }
+}
+
+config("abseil_link") {
+  if (target_os != "win") {
+    cflags = [ "-pthread" ]
+    ldflags = [ "-pthread" ]
+    if (target_os == "linux") {
+      libs = [
+        "dl",
+        "rt",
+      ]
+    } else if (target_os == "mac") {
+      ldflags += [
+        "-framework",
+        "CoreFoundation",
+      ]
+    }
+  }
+}
+
+static_library("abseil") {
+  configs -= [ "//build/config:vela_warnings" ]
+  sources = abseil_container_sources
+  if (target_os == "win") {
+    # 保持上游 absl/copts 的 Windows CRT 配置，仅作用于 Abseil
+    # 源文件。
+    defines = [
+      "_CRT_SECURE_NO_WARNINGS",
+      "_SCL_SECURE_NO_WARNINGS",
+    ]
+  }
+  public_configs = [
+    ":abseil_headers",
+    ":abseil_link",
+  ]
+}
+
 config("gtest_headers") {
   gtest_include = rebase_path("googletest/googletest/include", root_build_dir)
   if (target_os == "win") {

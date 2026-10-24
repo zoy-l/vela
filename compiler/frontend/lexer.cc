@@ -1,12 +1,13 @@
 #include "compiler/frontend/lexer.h"
 
 #include <cctype>
-#include <unordered_map>
+
+#include <absl/container/flat_hash_map.h>
 
 namespace vela::frontend {
 namespace {
 
-const std::unordered_map<std::string_view, TokenKind> kKeywords = {
+const absl::flat_hash_map<std::string_view, TokenKind> kKeywords = {
     {"class", TokenKind::Class},   {"else", TokenKind::Else},   {"enum", TokenKind::Enum},
     {"false", TokenKind::False},   {"if", TokenKind::If},       {"return", TokenKind::Return},
     {"true", TokenKind::True},     {"void", TokenKind::Void},   {"while", TokenKind::While},

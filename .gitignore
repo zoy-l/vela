@@ -1,6 +1,7 @@
 /out/
 /compile_commands.json
 /third_party/build_tools/
+/third_party/abseil-cpp/
 /third_party/benchmark/
 /third_party/googletest/
 /.cipd/

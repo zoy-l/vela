@@ -4,8 +4,6 @@
 #include <charconv>
 #include <ranges>
 #include <string_view>
-#include <unordered_map>
-#include <unordered_set>
 
 namespace vela::frontend {
 
@@ -25,6 +23,7 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
 
   CollectTypes(program);
   ResolveDeclarations(program);
+  // 描述表在检查函数体前完成构建；检查期间仅修改作用域表，借用的描述信息保持有效。
   for (const Function& function : program.functions) {
     CheckFunction(function, nullptr);
   }
@@ -61,6 +60,9 @@ void TypeChecker::CollectTypes(const Program& program) {
   types_.emplace("float", Type{.kind = Type::Kind::Float, .name = "float"});
   types_.emplace("string", Type{.kind = Type::Kind::String, .name = "string"});
   types_.emplace("array", Type{.kind = Type::Kind::Array, .name = "array"});
+  types_.reserve(types_.size() + program.enums.size() + program.classes.size());
+  enum_members_.reserve(program.enums.size());
+  classes_.reserve(program.classes.size());
 
   for (const Enum& enumeration : program.enums) {
     const Type type{.kind = Type::Kind::Enum, .name = enumeration.name};
@@ -68,13 +70,12 @@ void TypeChecker::CollectTypes(const Program& program) {
       AddDiagnostic(enumeration.location, "duplicate type '" + enumeration.name + "'");
       continue;
     }
-    std::unordered_set<std::string_view> members;
-    std::unordered_set<std::string>& stored_members = enum_members_[enumeration.name];
+    auto& stored_members = enum_members_.try_emplace(enumeration.name).first->second;
+    stored_members.reserve(enumeration.members.size());
     for (const std::string& member : enumeration.members) {
-      if (!members.emplace(member).second) {
+      if (!stored_members.insert(member).second) {
         AddDiagnostic(enumeration.location, "duplicate enum member '" + member + "'");
       }
-      stored_members.insert(member);
     }
   }
 
@@ -91,12 +92,16 @@ void TypeChecker::CollectTypes(const Program& program) {
 }
 
 void TypeChecker::ResolveDeclarations(const Program& program) {
+  functions_.reserve(program.functions.size());
   for (const Class& class_declaration : program.classes) {
     const auto class_info = classes_.find(class_declaration.name);
     if (class_info == classes_.end()) {
       continue;
     }
     ClassInfo& info = class_info->second;
+    info.fields.reserve(class_declaration.fields.size());
+    info.field_order.reserve(class_declaration.fields.size());
+    info.methods.reserve(class_declaration.methods.size());
     for (const Field& field : class_declaration.fields) {
       const Type type = ResolveType(field.type, false);
       if (!info.fields.emplace(field.name, type).second) {
@@ -124,6 +129,8 @@ void TypeChecker::ResolveDeclarations(const Program& program) {
 auto TypeChecker::ResolveSignature(const Function& function) -> FunctionInfo {
   FunctionInfo info;
   info.return_type = ResolveType(function.return_type, true);
+  info.parameters.reserve(function.parameters.size());
+  info.parameter_order.reserve(function.parameters.size());
   for (const auto& parameter : function.parameters) {
     const Type type = ResolveType(parameter.type, false);
     if (!info.parameters.emplace(parameter.name, type).second) {
@@ -454,7 +461,7 @@ auto TypeChecker::LookupName(const Expression& expression) -> TypeChecker::Type 
 
 auto TypeChecker::LookupLocal(std::string_view name) const -> TypeChecker::Type {
   for (const auto& scope : std::views::reverse(scopes_)) {
-    const auto value = scope.find(std::string(name));
+    const auto value = scope.find(name);
     if (value != scope.end()) {
       return value->second;
     }
@@ -473,7 +480,7 @@ void TypeChecker::EndScope() {
 auto TypeChecker::DeclareLocal(std::string_view name, const Type& type, SourceLocation location)
     -> bool {
   auto& scope = scopes_.back();
-  if (!scope.emplace(name, type).second) {
+  if (!scope.try_emplace(name, type).second) {
     AddDiagnostic(location, "duplicate local name '" + std::string(name) + "'");
     return false;
   }

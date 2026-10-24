@@ -3,7 +3,8 @@
 Google Benchmark runs the four Vela workloads through the production compiler
 and VM. Versions are pinned in `DEPS`; `//benchmarks:vela_benchmarks` links the
 upstream `benchmark_main` and is separate from the language executable.
-Native benchmark sources use `*_benchmark.cc`.
+Native benchmark sources use `*_benchmark.cc`. Generated symbol-table workloads
+also measure compilation at 32, 256, and 1024 declaration groups.
 
 ```powershell
 python -m tools.vl bench
@@ -36,6 +37,19 @@ Each workload registers three cases:
 | `function_calls` | 1000 |
 | `field_access` | 1000 |
 | `allocation_gc` | 1000 |
+| `symbol_tables/32`, `symbol_tables/256`, `symbol_tables/1024` | 11 |
+
+`compile/symbol_tables/*` generates enums, classes, methods, functions, and long
+identifier names before timing. It validates a compiled execution before the
+measurement loop, then times complete compilation and resource destruction.
+Each case reports source size in bytes. Calls target the first free function so
+the workload size does not exceed the current bytecode's 8-bit call operand.
+
+To compare compiler container changes with repetitions and a JSON report:
+
+```powershell
+python -m tools.vl bench -- --benchmark_filter=^compile/ --benchmark_min_time=0.2s --benchmark_repetitions=5 --benchmark_out=out/compile-benchmark.json --benchmark_out_format=json
+```
 
 Missing sources, compile errors, missing entry points, runtime errors, and
 incorrect results are reported with `SkipWithError`. Steady VM cases also report

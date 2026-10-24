@@ -535,13 +535,13 @@ auto Lowerer::LowerInvocation(const frontend::Expression& expression,
 }
 
 auto Lowerer::FindClass(std::string_view name) const -> const frontend::ClassDescriptor* {
-  const auto found = model_.classes.find(std::string(name));
+  const auto found = model_.classes.find(name);
   return found == model_.classes.end() ? nullptr : &found->second;
 }
 
 auto Lowerer::FindLocal(std::string_view name) const -> const Lowerer::Local* {
   for (const auto& scope : std::views::reverse(scopes_)) {
-    const auto found = scope.find(std::string(name));
+    const auto found = scope.find(name);
     if (found != scope.end()) {
       return &found->second;
     }
@@ -603,7 +603,7 @@ auto Lowerer::DeclareLocal(std::string_view name,
                            frontend::TypeDescriptor type,
                            frontend::SourceLocation location) -> bool {
   auto& scope = scopes_.back();
-  if (!scope.emplace(std::string(name), Local{.reg = reg, .type = std::move(type)}).second) {
+  if (!scope.try_emplace(name, Local{.reg = reg, .type = std::move(type)}).second) {
     AddDiagnostic(location, "duplicate local during lowering");
     return false;
   }

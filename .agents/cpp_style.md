@@ -27,6 +27,9 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
 - Place Vela-owned types in the `vela` namespace. Internal implementations may use `vela::internal`.
 - Prefer fixed-width integer types from `<cstdint>` for project-owned data and interfaces.
 - Maintain strict type boundaries. Do not rely on implicit conversions to resolve type mismatches.
+- Include Abseil headers with angle brackets, such as `#include <absl/container/flat_hash_map.h>`.
+  Prefer Abseil flat hash containers for hash-based lookup; account for pointer and reference
+  invalidation on rehash when choosing storage and lifetimes.
 
 ## APIs and expressions
 

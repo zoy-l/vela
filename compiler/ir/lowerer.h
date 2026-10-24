@@ -4,8 +4,9 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
+
+#include <absl/container/flat_hash_map.h>
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
@@ -46,9 +47,9 @@ class Lowerer final {
     frontend::TypeDescriptor type;
   };
 
-  using ClassMap = std::unordered_map<std::string, ClassId>;
-  using FunctionMap = std::unordered_map<std::string, std::uint32_t>;
-  using LocalMap = std::unordered_map<std::string, Local>;
+  using ClassMap = absl::flat_hash_map<std::string, ClassId>;
+  using FunctionMap = absl::flat_hash_map<std::string, std::uint32_t>;
+  using LocalMap = absl::flat_hash_map<std::string, Local>;
   struct LoopTargets final {
     std::vector<std::size_t> break_jumps;
     std::vector<std::size_t> continue_jumps;

@@ -41,10 +41,16 @@ launcher available on the machine:
 gclient sync --no-history
 ```
 
-The command materializes the pinned host tools, GoogleTest, and Google Benchmark
+The command materializes the pinned host tools, Abseil, GoogleTest, and Google Benchmark
 source declared in `DEPS`. No external engine checkout is required by the Vela
 build after synchronization. Dependency versions and licenses are documented in
 [`third_party/README.md`](third_party/README.md).
+
+Compiler symbol tables, scope tables, keywords, and import tracking use Abseil
+`flat_hash_map` / `flat_hash_set`. String-keyed tables support lookup by
+`std::string_view` without constructing an owning string. Declaration tables are
+built before checking function bodies and stay immutable during lowering, so
+borrowed descriptors are not invalidated by table growth.
 
 ## Configure, build, and test
 
@@ -103,7 +109,8 @@ boundary and performance contract are documented in
 details are listed in [`compiler/README.md`](compiler/README.md).
 `python -m tools.vl bench` builds a separate Google Benchmark executable in
 Release mode. It measures compilation, first execution, and steady VM execution
-for the four workloads, using upstream iteration calibration and statistics.
+for the four workloads, plus compilation of generated symbol-table workloads at
+three sizes, using upstream iteration calibration and statistics.
 Arguments after `--` go directly to Google Benchmark:
 
 ```powershell

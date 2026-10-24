@@ -1,6 +1,9 @@
 executable("vela_benchmarks") {
   testonly = true
-  sources = [ "vm_benchmark.cc" ]
+  sources = [
+    "symbol_tables_benchmark.cc",
+    "vm_benchmark.cc",
+  ]
   benchmark_source_dir = rebase_path("//benchmarks", "")
   defines = [ "VELA_BENCHMARK_SOURCE_DIR=\"$benchmark_source_dir\"" ]
   deps = [

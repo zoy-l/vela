@@ -185,5 +185,52 @@ TEST(CompilerTest, ExecutesLoopWithWideJumpTarget) {
   EXPECT_EQ(result.value.AsInteger(), kUpdateCount);
 }
 
+TEST(CompilerTest, PreservesSymbolsAndShadowingAcrossTableGrowth) {
+  constexpr std::int64_t kSymbolCount = 64;
+  constexpr std::int64_t kLocalCount = 32;
+  constexpr std::int64_t kExpectedResult = (kLocalCount * 2) - 1;
+  std::string source;
+  for (std::int64_t index = 0; index < kSymbolCount; ++index) {
+    const std::string suffix = std::to_string(index);
+    source += "enum SymbolEnum" + suffix + " { first, second }\n";
+    source += "class SymbolClass" + suffix + " { int value; int read() { return this.value; } }\n";
+    source += "int symbol_function_" + suffix + "(int value) { return value; }\n";
+  }
+  source += "int main() { int sum = 0;\n";
+  for (std::int64_t index = 0; index < kLocalCount; ++index) {
+    const std::string suffix = std::to_string(index);
+    source.append("int local_variable_with_a_long_name_")
+        .append(suffix)
+        .append(" = ")
+        .append(suffix)
+        .append(";\n");
+  }
+  source += "{\n";
+  for (std::int64_t index = 0; index < kLocalCount; ++index) {
+    source += "int local_variable_with_a_long_name_" + std::to_string(index) + " = " +
+              std::to_string(index + 1) + ";\n";
+  }
+  const std::string last_local =
+      "local_variable_with_a_long_name_" + std::to_string(kLocalCount - 1);
+  source += "sum = " + last_local + "; } sum = sum + " + last_local + ";\n";
+  const std::string last_class = "SymbolClass" + std::to_string(kSymbolCount - 1);
+  source += last_class + " instance = " + last_class + "(value: sum);\n";
+  source += "return symbol_function_0(instance.read()); }\n";
+
+  Isolate isolate;
+  const auto compiled = CompileSource(source, isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto* entry = compiled.program.FindFunction("main");
+  ASSERT_NE(entry, nullptr);
+  const auto entry_index = static_cast<std::uint32_t>(entry - compiled.program.functions.data());
+  const auto result = VirtualMachine(isolate).Execute(compiled.program.View(), entry_index);
+  ASSERT_TRUE(result.Succeeded());
+  ASSERT_TRUE(result.value.IsInteger());
+  EXPECT_EQ(result.value.AsInteger(), kExpectedResult);
+}
+
 }  // namespace
 }  // namespace vela::compiler
