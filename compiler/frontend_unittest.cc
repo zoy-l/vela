@@ -1,6 +1,7 @@
 #include <array>
 #include <string_view>
 
+#include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
 #include "compiler/frontend/checker.h"

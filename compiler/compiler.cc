@@ -1,20 +1,34 @@
 #include "compiler/compiler.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <iterator>
 #include <limits>
+#include <span>
+#include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
+#include "compiler/frontend/ast.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/lexer.h"
 #include "compiler/frontend/parser.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
+#include "runtime/isolate.h"
+#include "runtime/object.h"
+#include "runtime/value.h"
+#include "vm/bytecode.h"
 
 namespace vela::compiler {
 namespace {

@@ -1,10 +1,17 @@
 #include "runtime/heap.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <expected>
 #include <limits>
 #include <memory>
 #include <new>
+#include <span>
 #include <utility>
+#include <vector>
+#include "runtime/object.h"
+#include "runtime/value.h"
 
 namespace vela::runtime {
 namespace {

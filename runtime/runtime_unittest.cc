@@ -1,10 +1,15 @@
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <sstream>
 
 #include "gtest/gtest.h"
 
+#include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/object.h"
+#include "runtime/value.h"
 #include "runtime/value_io.h"
 
 namespace vela::runtime {

@@ -2,10 +2,21 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <ranges>
+#include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
+#include <vector>
+#include "compiler/frontend/ast.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/type_checker.h"
+#include "compiler/ir/ir.h"
 
 namespace vela::ir {
 namespace {

@@ -6,6 +6,8 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "runtime/isolate.h"
+#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {

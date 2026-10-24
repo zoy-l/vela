@@ -1,6 +1,10 @@
 #include "compiler/frontend/lexer.h"
 
 #include <cctype>
+#include <cstddef>
+#include <string_view>
+#include <utility>
+#include "compiler/frontend/token.h"
 
 #include <absl/container/flat_hash_map.h>
 

@@ -1,11 +1,11 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <span>
 
 #include "runtime/object.h"
+#include "runtime/value.h"
 
 namespace vela::vm {
 

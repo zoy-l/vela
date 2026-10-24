@@ -2,8 +2,17 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <ranges>
+#include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
+#include <vector>
+#include "compiler/frontend/ast.h"
+#include "compiler/frontend/diagnostic.h"
 
 namespace vela::frontend {
 

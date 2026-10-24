@@ -2,11 +2,13 @@
 
 #include <array>
 #include <charconv>
+#include <cstddef>
 #include <memory>
 #include <ostream>
 #include <string_view>
 
 #include "runtime/string.h"
+#include "runtime/value.h"
 
 namespace vela::runtime {
 

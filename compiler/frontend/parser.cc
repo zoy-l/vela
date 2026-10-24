@@ -1,7 +1,15 @@
 #include "compiler/frontend/parser.h"
 
 #include <charconv>
+#include <cstddef>
+#include <memory>
+#include <optional>
+#include <string>
+#include <system_error>
 #include <utility>
+#include <vector>
+#include "compiler/frontend/ast.h"
+#include "compiler/frontend/token.h"
 
 namespace vela::frontend {
 

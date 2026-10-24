@@ -9,7 +9,9 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_checker.h"
 #include "runtime/isolate.h"
-#include "vm/vm.h"
+#include "runtime/object.h"
+#include "runtime/string.h"
+#include "vm/bytecode.h"
 
 namespace vela::compiler {
 

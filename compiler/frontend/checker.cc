@@ -1,4 +1,6 @@
 #include "compiler/frontend/checker.h"
+#include <string_view>
+#include <utility>
 
 #include "compiler/frontend/lexer.h"
 #include "compiler/frontend/parser.h"

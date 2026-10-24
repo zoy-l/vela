@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the project-managed clang-tidy over Vela C++ sources."""
+"""Run the project-managed clang-tidy over Vela C++ sources and headers."""
 
 from __future__ import annotations
 
@@ -10,7 +10,10 @@ import sys
 from pathlib import Path
 
 from tools.clangd import generate as generate_compilation_database
-from tools.config import BUILD_VARIANTS, ROOT, toolchain_tools
+from tools.config import BUILD_VARIANTS, ROOT, output_directory, toolchain_tools
+
+
+CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"}
 
 
 def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
@@ -21,65 +24,63 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(arguments)
 
 
-def _database_sources() -> list[Path]:
-    database_path = ROOT / "compile_commands.json"
+def _is_project_file(path: Path) -> bool:
+    return (
+        path.is_relative_to(ROOT)
+        and not path.is_relative_to(ROOT / "third_party")
+        and path.suffix in CPP_SUFFIXES
+    )
+
+
+def _build_files(gn: Path, variant: str) -> list[Path]:
+    result = subprocess.run(
+        [str(gn), "desc", str(output_directory(variant)), "//*", "sources", "--format=json"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
     try:
-        entries = json.loads(database_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"cannot read compilation database: {database_path}") from error
-    if not isinstance(entries, list):
-        raise RuntimeError("compilation database root must be a list")
-
-    sources: list[Path] = []
-    seen: set[Path] = set()
-    for entry in entries:
-        if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
-            raise RuntimeError("compilation database contains an invalid source entry")
-        directory = Path(entry.get("directory", ROOT))
-        source = (directory / entry["file"]).resolve()
-        if (
-            source.suffix not in {".cc", ".cpp", ".cxx"}
-            or source in seen
-            or ROOT / "third_party" in source.parents
-        ):
-            continue
-        seen.add(source)
-        sources.append(source)
-    return sources
+        targets = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("GN produced an invalid source listing") from error
+    files: set[Path] = set()
+    for target in targets.values():
+        for source in target.get("sources", []):
+            path = (ROOT / source.removeprefix("//")).resolve()
+            if _is_project_file(path):
+                files.add(path)
+    return sorted(files)
 
 
-def _path_sources(paths: list[Path]) -> list[Path]:
-    sources: list[Path] = []
+def _path_files(paths: list[Path], build_files: list[Path]) -> list[Path]:
+    files: set[Path] = set()
     for path in paths:
         candidate = (path if path.is_absolute() else Path.cwd() / path).resolve()
         if not candidate.exists():
             raise RuntimeError(f"lint path does not exist: {candidate}")
-        if ROOT / "third_party" == candidate or ROOT / "third_party" in candidate.parents:
-            raise RuntimeError(f"lint only checks project-owned C++ sources: {candidate}")
+        if not candidate.is_relative_to(ROOT) or candidate.is_relative_to(ROOT / "third_party"):
+            raise RuntimeError(f"lint only checks project-owned C++ files: {candidate}")
         if candidate.is_file():
-            if candidate.suffix not in {".cc", ".cpp", ".cxx"}:
-                raise RuntimeError(f"lint path is not a C++ source file: {candidate}")
-            sources.append(candidate)
+            if candidate.suffix not in CPP_SUFFIXES:
+                raise RuntimeError(f"lint path is not a C++ source or header: {candidate}")
+            files.add(candidate)
             continue
-        sources.extend(
-            source
-            for source in sorted(candidate.rglob("*"))
-            if source.is_file()
-            and source.suffix in {".cc", ".cpp", ".cxx"}
-            and ROOT / "third_party" not in source.parents
-        )
-    return sources
+        files.update(source for source in build_files if source.is_relative_to(candidate))
+    return sorted(files)
 
 
 def run(parsed: argparse.Namespace) -> int:
     generate_compilation_database(parsed.variant)
     tools = toolchain_tools()
-    sources = _path_sources(parsed.paths) if parsed.paths else _database_sources()
-    if not sources:
-        raise RuntimeError("no C++ source files were selected for lint")
+    build_files = _build_files(tools["gn"], parsed.variant)
+    files = _path_files(parsed.paths, build_files) if parsed.paths else build_files
+    if not files:
+        raise RuntimeError("no C++ source files or headers were selected for lint")
 
     failed = 0
-    for source in sources:
+    for source in files:
         command = [
             str(tools["clang_tidy"]), str(source), "-p", str(ROOT), "--quiet",
             "--warnings-as-errors=*",
@@ -93,7 +94,7 @@ def run(parsed: argparse.Namespace) -> int:
         )
         if result.returncode != 0:
             failed += 1
-    print(f"linted {len(sources)} source file(s); failures: {failed}")
+    print(f"linted {len(files)} C++ file(s), including headers; failures: {failed}")
     return 1 if failed else 0
 
 

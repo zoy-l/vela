@@ -1,9 +1,9 @@
 #pragma once
 
-#include <cstddef>
 #include <span>
 
 #include "runtime/heap.h"
+#include "runtime/value.h"
 
 namespace vela::vm {
 

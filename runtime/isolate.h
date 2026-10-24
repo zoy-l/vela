@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "runtime/heap.h"
+#include "runtime/object.h"
 #include "runtime/string.h"
 
 namespace vela::runtime {

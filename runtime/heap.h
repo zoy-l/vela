@@ -4,8 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <span>
 
 #include "runtime/object.h"
+#include "runtime/value.h"
 
 namespace vela::runtime {
 

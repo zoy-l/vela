@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -9,6 +10,7 @@
 #include "compiler/build_info.h"
 #include "compiler/compiler.h"
 #include "compiler/frontend/checker.h"
+#include "compiler/frontend/diagnostic.h"
 #include "runtime/isolate.h"
 #include "runtime/value_io.h"
 #include "vm/vm.h"

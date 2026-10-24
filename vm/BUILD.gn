@@ -5,7 +5,7 @@ source_set("vm") {
     "vm.cc",
     "vm.h",
   ]
-  deps = [ "//runtime" ]
+  public_deps = [ "//runtime" ]
 }
 
 executable("vm_tests") {

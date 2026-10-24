@@ -1,3 +1,8 @@
+#include <cstddef>
+#include <cstdint>
+#include "compiler/frontend/ast.h"
+#include "compiler/frontend/type_checker.h"
+#include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 
 namespace vela::ir {

@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "compiler/frontend/ast.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_checker.h"
 
 namespace vela::ir {

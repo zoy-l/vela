@@ -2,15 +2,22 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <new>
+#include <span>
 #include <utility>
 
+#include "runtime/heap.h"
+#include "runtime/isolate.h"
 #include "runtime/string.h"
+#include "runtime/value.h"
 #include "runtime/value_io.h"
+#include "vm/bytecode.h"
 #include "vm/frame.h"
 
 namespace vela::vm {

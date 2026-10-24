@@ -7,6 +7,9 @@
 
 #include "compiler/compiler.h"
 #include "runtime/heap.h"
+#include "runtime/isolate.h"
+#include "runtime/value.h"
+#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
