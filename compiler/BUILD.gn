@@ -26,6 +26,7 @@ executable("vela") {
   deps = [
     ":build_info",
     ":frontend",
+    "//vm",
   ]
 }
 

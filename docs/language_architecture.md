@@ -52,8 +52,8 @@ CupertinoApp buildApp() {
 ```
 
 The surface syntax resembles a data constructor, but construction still has a
-precise runtime contract. The first runtime representation uses a VM-owned
-object handle and a class layout descriptor. A later `struct` feature can add
+precise runtime contract. The first runtime representation uses an opaque
+isolate-owned heap reference and a class layout descriptor. A later `struct` feature can add
 inline value semantics without changing the constructor grammar.
 
 ## Compilation pipeline
@@ -72,6 +72,11 @@ Typed IR is the semantic boundary shared by bytecode and future native
 backends. Bytecode is a separate execution representation optimized for dense
 decoding and predictable register access; it is not used as the compiler's
 general optimization graph.
+
+The VM bootstrap now consumes the runtime root contract directly: each frame
+register span is registered as a root range for the duration of execution.
+Register slots stay contiguous, and allocation instructions can trigger GC
+without copying or relocating frame values.
 
 The compiler must retain source locations through parsing, type checking, IR
 instructions, and bytecode ranges. This keeps diagnostics and future debugger
@@ -128,9 +133,24 @@ have stable handles and a fixed layout; field offsets are assigned once when a
 class is compiled. The runtime does not expose C++ object layout directly to
 scripts.
 
-The initial heap owner is a precise tracing collector with an isolate-local
-allocation path. The collector, write barriers, and host reference roots are
-part of the runtime contract before large object-heavy benchmarks are trusted.
+The runtime foundation uses a precise, non-moving, incremental mark-and-sweep
+collector with an isolate-local allocation path. Each class layout records its
+reference fields, so object marking can scan those fields directly without a
+dynamic map lookup. VM frame slots, globals, and host handles must be registered
+as explicit root ranges. Field stores go through a write barrier while marking,
+and the gray work list is intrusive so collection does not allocate temporary
+work buffers.
+
+Small object allocations use size-class free lists. The bootstrap `Value`
+representation is deliberately general; Typed IR and the VM will keep
+primitive registers and typed arrays in narrower contiguous storage so ordinary
+numeric execution does not enter the heap. The collector is single-threaded per
+isolate; a host thread must cross an isolate-owned root boundary before it can
+retain a script object.
+
+Generational collection remains an optimization decision for the Release
+benchmarks. It can be added behind this object, root, and barrier contract
+without changing source-level lifetime semantics.
 Generational collection and arena specialization are later implementation
 optimizations, not alternate ownership models.
 

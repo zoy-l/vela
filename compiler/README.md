@@ -11,9 +11,17 @@ does not change the GN/Ninja entry points:
 - `//compiler:vela` is the user-facing executable.
 - `//compiler:build_info` is the small shared build identity target.
 - `//compiler:frontend` contains the lexer, parser, and static checker.
+- `//runtime:runtime` contains the isolate-owned object heap and collector
+  contract used by the future VM.
+- `//vm:vm` contains the fixed-width register VM bootstrap and frame root
+  integration.
 - `//compiler:vela_environment_tests` validates that the target links and its
   build identity is available to consumers.
 - `//compiler:vela_frontend_tests` covers the first source-level contracts.
+- `//runtime:runtime_tests` covers object reachability, cycles, write barriers,
+  and size-class reuse.
+- `//vm:vm_tests` covers typed arithmetic, bytecode validation, and register
+  roots surviving collection.
 
 The first frontend slice is now available through:
 

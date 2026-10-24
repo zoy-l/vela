@@ -1,0 +1,16 @@
+source_set("runtime") {
+  sources = [
+    "heap.cc",
+    "heap.h",
+    "isolate.cc",
+    "isolate.h",
+    "object.h",
+    "value.h",
+  ]
+}
+
+executable("runtime_tests") {
+  testonly = true
+  sources = [ "runtime_tests.cc" ]
+  deps = [ ":runtime" ]
+}

@@ -1,0 +1,15 @@
+source_set("vm") {
+  sources = [
+    "bytecode.h",
+    "frame.h",
+    "vm.cc",
+    "vm.h",
+  ]
+  deps = [ "//runtime" ]
+}
+
+executable("vm_tests") {
+  testonly = true
+  sources = [ "vm_tests.cc" ]
+  deps = [ ":vm" ]
+}

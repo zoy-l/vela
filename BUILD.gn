@@ -3,7 +3,11 @@ pool("console") {
 }
 
 group("default") {
-  deps = [ "//compiler:vela" ]
+  deps = [
+    "//compiler:vela",
+    "//runtime",
+    "//vm",
+  ]
 }
 
 group("tests") {
@@ -11,5 +15,7 @@ group("tests") {
   deps = [
     "//compiler:vela_environment_tests",
     "//compiler:vela_frontend_tests",
+    "//runtime:runtime_tests",
+    "//vm:vm_tests",
   ]
 }
