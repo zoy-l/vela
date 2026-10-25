@@ -39,12 +39,12 @@ concatenations. It prints `Vela`, `Vela GC`, then returns `true`.
 
 `strings.vela` exercises escapes, interpolation, explicit conversions, Unicode
 APIs, array `.join(separator)`, primitive formatting, and imports. `string_builder.vela` builds text in a loop and keeps
-an immutable snapshot. See [string contracts](../docs/strings.md).
+an immutable snapshot. See [string contracts](../docs/en/strings.md).
 
 `switch.vela` demonstrates enum cases, fallthrough, and loop control; it prints
 `close` and returns `121`. `nullable.vela` demonstrates `T?`, guard checks,
 nullable fields and array elements; it prints `label: Vela`, `empty`, and returns
-`42`. See [basic language contracts](../docs/language_basics.md).
+`42`. See [basic language contracts](../docs/en/language_basics.md).
 
 `array_algorithms.vela` demonstrates array callbacks and ordered Set operations
 without standard-module imports. `standard_library.vela` uses default `Math`,

@@ -22,6 +22,6 @@ type, bounds, arithmetic, allocation, and stack-depth error handling. Entry
 validation rejects invalid handles, indexes, and mismatched Isolates. Returned
 heap values are borrowed; hosts must root them before further allocation or GC.
 
-See [execution contracts and measurements](../docs/vm_execution.md) for
+See [execution contracts and measurements](../docs/en/vm_execution.md) for
 allocation, optimization, encoding limits, and Release results. Dispatch or
 value-representation changes require representative measurements.

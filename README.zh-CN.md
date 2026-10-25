@@ -15,8 +15,8 @@ Vela 的语言和运行时设计参考了 Luau、JavaScript、Dart 等现代脚�
 - `vela check <source.vela>`：解析并静态检查源文件，但不执行。
 - `vela run <source.vela>`：将源代码经过 Typed IR 和寄存器字节码编译后，在虚拟机中执行无参数的 `main` 函数。
 
-`compile`/`exec` 管理[字节码镜像和缓存](docs/compilation_cache.md)；`fmt`、`doc` 和 `lsp` 提供[源码工具](docs/source_tooling.md)，[VS Code 扩展](editors/vscode/README.md)提供编辑器集成。
-`debug FILE` 和 `repl` 提供[调试器](docs/debugger.md)与[交互会话](docs/repl.md)。
+`compile`/`exec` 管理[字节码镜像和缓存](docs/zh-CN/compilation_cache.md)；`fmt`、`doc` 和 `lsp` 提供[源码工具](docs/zh-CN/source_tooling.md)，[VS Code 扩展](editors/vscode/README.md)提供编辑器集成。
+`debug FILE` 和 `repl` 提供[调试器](docs/zh-CN/debugger.md)与[交互会话](docs/zh-CN/repl.md)。
 
 例如：
 
@@ -26,7 +26,7 @@ Vela 的语言和运行时设计参考了 Luau、JavaScript、Dart 等现代脚�
 .\out\debug\vela.exe run examples\language_features.vela
 ```
 
-当前语言使用类似 C/C++ 的代码块和分号语法，支持整数、双精度浮点数、布尔值、字符串、数组、函数、直接调用、固定字段和方法的类、枚举、控制流、控制台输出、导入和多文件编译。整数与双精度浮点数之间不允许隐式转换。可运行示例见 [`examples/`](examples/)，功能清单见 [`docs/roadmap.md`](docs/roadmap.md)。
+当前语言使用类似 C/C++ 的代码块和分号语法，支持整数、双精度浮点数、布尔值、字符串、数组、函数、直接调用、固定字段和方法的类、枚举、控制流、控制台输出、导入和多文件编译。整数与双精度浮点数之间不允许隐式转换。可运行示例见 [`examples/`](examples/)，功能清单见 [`docs/zh-CN/roadmap.md`](docs/zh-CN/roadmap.md)。
 
 ## 安装
 
@@ -114,7 +114,7 @@ Typed IR 是字节码后端和未来原生后端共享的语义边界。VM 使�
 - `runtime/`：值、字符串、对象、类布局、堆和 Isolate。
 - `examples/` 与 `benchmarks/`：可运行程序和可重复的工作负载。
 
-更详细的契约见 [`docs/language_architecture.md`](docs/language_architecture.md) 和 [`compiler/README.md`](compiler/README.md)。
+更详细的契约见 [`docs/zh-CN/architecture.md`](docs/zh-CN/architecture.md) 和 [`compiler/README.md`](compiler/README.md)。
 
 ## 依赖
 

@@ -39,7 +39,7 @@ String inputs must be valid UTF-8; native input boundaries can validate with
 `InvalidUtf8Offset`. `JoinStrings` computes total size and copies all parts into
 one allocation. GC-owned string builders account for their growing native
 buffers and release them during sweeping. Their snapshots own independent
-immutable storage; see [string contracts](../docs/strings.md).
+immutable storage; see [string contracts](../docs/en/strings.md).
 
 `RootRange` accepts VM `Value` slots or a fixed native string-pointer span. Its
 storage and owning Isolate must outlive registration. Roots are rescanned before

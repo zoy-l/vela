@@ -2,12 +2,12 @@
 
 This directory contains the executable, typed IR lowering, and build identity
 for the bootstrap compiler. The language and runtime contracts are recorded in
-[`docs/language_architecture.md`](../docs/language_architecture.md); the
+[`docs/architecture.md`](../docs/en/architecture.md); the
 bootstrap executable remains intentionally smaller than that target.
 `check` and `run` share UTF-8 path handling, import loading, and parsing; every
 dependency is parsed once, then module scopes and export visibility are bound
 before specialization and checking. Function import cycles can link; lazy
-initialization cycles report a runtime failure. See [module contracts](../docs/modules.md).
+initialization cycles report a runtime failure. See [module contracts](../docs/en/modules.md).
 
 The frontend, compiler, and VM stay under the same GN/Ninja target boundary so
 later optimizer and native backend work does not change the developer entry
@@ -46,9 +46,9 @@ Typed IR, optimizes it, allocates physical registers, emits validated register
 bytecode, and executes it in the VM. Function calls,
 control-flow branches, loops, strings, and typed arrays are supported.
 String APIs, interpolation, conversions, and builder contracts are documented in
-[string contracts](../docs/strings.md).
+[string contracts](../docs/en/strings.md).
 Fallthrough switches, nullable types, lexical scope, and source locations are
-specified in [basic language contracts](../docs/language_basics.md).
+specified in [basic language contracts](../docs/en/language_basics.md).
 
 The optimizer propagates integer, boolean, and null constants within basic
 blocks, folds known branches, and removes unreachable blocks and dead pure
@@ -60,7 +60,7 @@ slots produces a source diagnostic. IR virtual register IDs are 32-bit.
 Encoding checks all 8-bit operands, signed 16-bit immediates, and relative jump
 offsets before narrowing. `vm::Program::Create` validates the owned output once;
 the compiler no longer exposes mutable bytecode views. See
-[execution contracts and measurements](../docs/vm_execution.md).
+[execution contracts and measurements](../docs/en/vm_execution.md).
 
 Type syntax is structural, including array elements, nullable types, function
 signatures, and generic arguments. The checker interns resolved types and records
@@ -98,7 +98,7 @@ Generic specialization precedes checking; aliases are transparent and concrete
 specializations preserve primitive storage. Classes use `param` fields or an
 explicit constructor. Function values, shared mutable captures, interfaces,
 Expected, match, and ordered collections pass through the same typed IR and
-validated bytecode paths. See [P1 contracts](../docs/p1_syntax_proposal.md).
+validated bytecode paths. See [core language specification](../docs/en/core_language.md).
 The checker does not interpret source directly.
 
 Benchmarks use a separate Google Benchmark executable:

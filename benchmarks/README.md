@@ -11,12 +11,12 @@ their union, intersection and difference through the native ordered hash tables.
 Native benchmark sources use `*_benchmark.cc`. Generated symbol-table workloads
 also measure compilation at 32, 256, and 1024 declaration groups.
 
-The [representative suite](../docs/representative_benchmarks.md) adds nine
+The representative suite adds nine
 algorithm/application workloads at two sizes, each with an optimized C++ pair.
 Run `python -m tools.vl bench --compare` to save raw samples, medians, VM/C++
 ratios, variation and Vela heap snapshots under `out/benchmarks/`.
 `array_growth` and `array_growth_reserved` compare typed push/read/pop workloads
-with geometric growth versus a single reserve; see [growable arrays](../docs/dynamic_arrays.md).
+with geometric growth versus a single reserve; see [typed arrays](../docs/en/arrays.md).
 
 ```powershell
 python -m tools.vl bench
@@ -47,7 +47,7 @@ The original small workloads use these timing boundaries:
 Steady cases report `register_bytes`: native register capacity retained after
 warm-up, excluding fixed VM metadata and the GC heap. Register storage is reused
 by call depth; bytecode validation is included in compilation, not execution.
-See [execution measurements](../docs/vm_execution.md) for the current results.
+See [execution measurements](../docs/en/vm_execution.md) for the current results.
 The array and double timing tables below predate that execution refactor.
 
 | Workload | Expected result |
@@ -99,21 +99,19 @@ calls. `string_growth` appends 512 bytes one at a time and verifies the result
 against a string built by doubling. Both include automatic string GC. Steady
 cases report `retained_objects` and `retained_bytes` after a final collection
 outside timing, in addition to the heap counters sampled before collection.
-See [string GC measurements](../docs/string_gc_benchmark.md) for results.
+See [string contracts](../docs/en/strings.md) and [garbage collection](../docs/en/garbage_collection.md).
 The added string workloads compare six-part `+`, interpolation, and `join`,
 compare builders against repeated `+` at 512 and 4096 appends, and exercise
-Unicode APIs. See [string performance](../docs/string_performance.md) for
-current results and measurement boundaries.
+Unicode APIs.
 
 `string_format` formats int/double/bool values directly in interpolation;
 `string_format_explicit` produces the same result with three explicit
 `toString()` calls per iteration. `number_join` joins six integers. Each checks
-1,000 results. See the string-context measurements in the same performance document.
+1,000 results.
 
-P1 adds explicit conversions, escaping closures, Expected allocation, interface
-dispatch, match, Unicode graphemes, and ordered Set/Map workloads. Final P1
-timings, memory counters, and changes against the preserved baseline are in
-[P1 performance](../docs/p1_performance.md).
+Core language features include explicit conversions, escaping closures, Expected allocation, interface
+dispatch, match, Unicode graphemes, and ordered Set/Map workloads; see the
+[core language specification](../docs/en/core_language.md).
 
 Array results measured on 2026-10-24 with the pinned Windows Clang Release
 toolchain, `--benchmark_min_time=0.2s --benchmark_repetitions=5`, are below.
@@ -158,5 +156,4 @@ The source directory is supplied by GN, so the benchmark executable can run
 from any working directory while the source checkout remains available. To add
 a small workload, place its `.vela` file here and register its applicable cases
 with an expected result in `vm_benchmark.cc`. Paired workloads belong in
-`workloads/`, with matching kernels and size/checksum records in the
-[representative suite](../docs/representative_benchmarks.md).
+`workloads/`, with matching kernels and size/checksum records.

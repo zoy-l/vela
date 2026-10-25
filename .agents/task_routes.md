@@ -8,7 +8,7 @@ documents for the task's scope.
 | Modify or add C++ | [`cpp_style.md`](cpp_style.md) |
 | Analyze implementations, review APIs, remove redundancy, or investigate performance | [`architecture.md`](architecture.md) |
 | Build, test, format, run static analysis, or benchmark | [`development_workflow.md`](development_workflow.md) |
-| Change the language roadmap or expand implementation scope | [`docs/roadmap.md`](../docs/roadmap.md) |
+| Change the language roadmap or expand implementation scope | [`docs/roadmap.md`](../docs/en/roadmap.md) |
 
 Topic rules must not maintain duplicate command references. The root README and `tools/vl.py`
 are the sole sources of commands and project facts.

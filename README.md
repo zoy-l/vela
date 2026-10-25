@@ -22,10 +22,10 @@ The main source commands are:
 - `vela run <source.vela>` compiles the source through Typed IR and register
   bytecode, then executes its zero-argument `main` function in the VM.
 
-`compile`/`exec` manage [bytecode images and caches](docs/compilation_cache.md).
-`fmt`, `doc`, and `lsp` provide [source tools](docs/source_tooling.md);
+`compile`/`exec` manage [bytecode images and caches](docs/en/compilation_cache.md).
+`fmt`, `doc`, and `lsp` provide [source tools](docs/en/source_tooling.md);
 the [VS Code extension](editors/vscode/README.md) adds editor integration.
-`debug FILE` and `repl` provide a [debugger](docs/debugger.md) and [interactive session](docs/repl.md).
+`debug FILE` and `repl` provide a [debugger](docs/en/debugger.md) and [interactive session](docs/en/repl.md).
 
 For example:
 
@@ -39,9 +39,9 @@ The current language slice uses C/C++-style blocks and semicolons. It includes
 integers, doubles, booleans, strings, arrays, functions, direct calls, classes with
 fixed fields and methods, enums, control flow, console output, imports, and
 multi-file compilation. See [`examples/`](examples/) for runnable programs and
-[`docs/roadmap.md`](docs/roadmap.md) for the feature checklist. Function values,
+[`docs/en/roadmap.md`](docs/en/roadmap.md) for the feature checklist. Function values,
 closures, generics, interfaces, `Expected`, `match`, and ordered collections
-are described in [P1 contracts](docs/p1_syntax_proposal.md).
+are described in [core language contracts](docs/en/core_language.md).
 
 ## Installation
 
@@ -151,7 +151,7 @@ The module responsibilities are:
 - `examples/` and `benchmarks/`: runnable programs and repeatable workloads.
 
 More detailed contracts are documented in
-[`docs/language_architecture.md`](docs/language_architecture.md) and
+[`docs/en/architecture.md`](docs/en/architecture.md) and
 [`compiler/README.md`](compiler/README.md).
 
 ## Dependencies
