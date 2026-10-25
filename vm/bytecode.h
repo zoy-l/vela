@@ -5,8 +5,11 @@
 #include <span>
 
 #include "base/opcode.h"
+#include "runtime/native_function.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
+#include "vm/debug_info.h"
+#include "vm/exception_handler.h"
 
 namespace vela::vm {
 
@@ -58,6 +61,18 @@ using OpCode = ::vela::Opcode;
   return static_cast<std::int16_t>((instruction >> kOperandBShift) & kImmediateMask);
 }
 
+[[nodiscard]] constexpr auto EncodeAUnsigned16(OpCode opcode,
+                                               std::uint8_t operand_a,
+                                               std::uint16_t index) noexcept -> Instruction {
+  return static_cast<Instruction>(opcode) |
+         (static_cast<Instruction>(operand_a) << kOperandAShift) |
+         (static_cast<Instruction>(index) << kOperandBShift);
+}
+
+[[nodiscard]] constexpr auto DecodeUnsigned16(Instruction instruction) noexcept -> std::uint16_t {
+  return static_cast<std::uint16_t>((instruction >> kOperandBShift) & kImmediateMask);
+}
+
 // code 与元数据均为借用视图；字符串常量须由所有者持续保根。
 struct Function final {
   std::span<const Instruction> code;
@@ -67,6 +82,12 @@ struct Function final {
   std::span<const double> doubles;
   std::uint16_t register_count = 0;
   std::uint16_t parameter_count = 0;
+  std::span<const runtime::TypeConstraint> types;
+  std::span<const runtime::CollectionLayout* const> collections;
+  DebugInfo debug;
+  const runtime::NativeFunction* native = nullptr;
+  std::span<const ExceptionHandler> handlers;
+  std::span<const std::int64_t> integers;
 };
 
 }  // namespace vela::vm

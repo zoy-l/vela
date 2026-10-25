@@ -5,6 +5,7 @@
 
 #include "gtest/gtest.h"
 
+#include "base/execution_status.h"
 #include "compiler/compiler.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -19,7 +20,6 @@ constexpr std::int64_t kExpectedSum = 42;
 using vela::runtime::Isolate;
 using vela::runtime::RootRange;
 using vela::runtime::Value;
-using vela::vm::ExecutionStatus;
 using vela::vm::VirtualMachine;
 
 TEST(CompilerTest, CompilesQualifiedEnumMemberWithoutExpectedType) {
@@ -64,11 +64,11 @@ func main(): int {
 TEST(CompilerTest, CompilesNestedClassConstruction) {
   constexpr std::string_view source = R"(
 class Theme {
-  brightness: int;
+  param brightness: int;
 }
 
 class App {
-  theme: Theme;
+  param theme: Theme;
 }
 
 func main(): App {
@@ -153,7 +153,7 @@ func main(): int {
 TEST(CompilerTest, ExecutesLanguageFeaturesAndNamedMethodArguments) {
   constexpr std::string_view source = R"(
 class Counter {
-  value: int;
+  param value: int;
   add(amount: int): int {
     this.value = this.value + amount;
     return this.value;
@@ -215,8 +215,8 @@ TEST(CompilerTest, PreservesSymbolsAndShadowingAcrossTableGrowth) {
   for (std::int64_t index = 0; index < kSymbolCount; ++index) {
     const std::string suffix = std::to_string(index);
     source += "enum SymbolEnum" + suffix + " { first, second }\n";
-    source +=
-        "class SymbolClass" + suffix + " { value: int; read(): int { return this.value; } }\n";
+    source += "class SymbolClass" + suffix +
+              " { param value: int; read(): int { return this.value; } }\n";
     source += "func symbol_function_" + suffix + "(value: int): int { return value; }\n";
   }
   source += "func main(): int { let sum: int = 0;\n";
@@ -259,14 +259,14 @@ TEST(CompilerTest, ExecutesTypedArraysAcrossCallsMethodsAndAssignments) {
   constexpr std::string_view source = R"(
 enum Shade { light, dark }
 class Item {
-  value: int;
+  param value: int;
   read(): int { return this.value; }
 }
 class Store {
-  items: Item[][];
-  labels: string[];
-  flags: bool[];
-  shades: Shade[];
+  param items: Item[][];
+  param labels: string[];
+  param flags: bool[];
+  param shades: Shade[];
   read(): int { return this.items[0][0].read(); }
   replace(items: Item[]): Item[] {
     this.items[0] = items;
@@ -312,8 +312,8 @@ func main(): bool {
 
 TEST(CompilerTest, ArrayFieldsAndNestedArraysRetainTheirObjects) {
   constexpr std::string_view source = R"(
-class Item { value: int; }
-class Store { items: Item[][]; flags: bool[]; labels: string[]; }
+class Item { param value: int; }
+class Store { param items: Item[][]; param flags: bool[]; param labels: string[]; }
 func main(): Store {
   return Store(items: [[Item(value: 42)]], flags: [true], labels: ["alive"]);
 }

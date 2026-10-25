@@ -1,6 +1,21 @@
 source_set("vm") {
+  deps = [ "//third_party:abseil" ]
   sources = [
     "bytecode.h",
+    "bytecode_image.h",
+    "bytecode_image_internal.h",
+    "bytecode_image_layouts.cc",
+    "bytecode_image_reader.cc",
+    "bytecode_image_writer.cc",
+    "debug_info.cc",
+    "debug_info.h",
+    "debugger.cc",
+    "debugger.h",
+    "diagnostic.cc",
+    "exception_handler.h",
+    "execution.h",
+    "execution_exception.cc",
+    "execution_status.h",
     "frame.h",
     "program.cc",
     "program.h",
@@ -15,7 +30,9 @@ source_set("vm") {
 executable("vm_tests") {
   testonly = true
   sources = [
+    "bytecode_image_unittest.cc",
     "program_unittest.cc",
+    "register_file_unittest.cc",
     "vm_unittest.cc",
   ]
   deps = [

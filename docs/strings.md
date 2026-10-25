@@ -11,7 +11,10 @@ For `"A中😀e\u0301"`, `length` is 5 and `byteLength` is 11. The final `e` and
 combining accent count separately. Vela does not normalize Unicode; equality
 compares the exact encoded content. Random code point indexing requires a
 scan. A loop that repeatedly indexes a long string can therefore take quadratic
-time; code point iterators and grapheme APIs remain future work.
+time. Use `codePoints()` to materialize a native `int[]` in linear time, then
+index that array in constant time. Grapheme APIs (`graphemes()`,
+`graphemeLength`, `graphemeSlice(start, end)`) use extended grapheme clusters;
+see [P1 Unicode contracts](p1_syntax_proposal.md#unicode-code-points-and-graphemes).
 
 ## Literals, escapes, and interpolation
 
@@ -39,7 +42,7 @@ inserts conversions. Unicode escapes that decode to `$` do not start
 interpolation. Import paths decode escapes but reject interpolation and NUL.
 File checking and compilation share a dependency loader, so escaped paths and
 Unicode filenames resolve consistently. Imports are parsed once in dependency
-order, with duplicate files skipped and cycles diagnosed.
+graphs, with duplicate files loaded once and explicit module exports.
 
 `int.toString()`, `double.toString()`, and `bool.toString()` allocate strings
 explicitly. Integer output is decimal; booleans are `true`/`false`. Doubles use

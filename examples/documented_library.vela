@@ -1,0 +1,43 @@
+/// A theme's brightness.
+export enum Brightness {
+  light,
+  dark,
+}
+
+/// Reads a counter without changing it.
+export interface Readable {
+  read(): int;
+}
+
+/// A counter with named construction parameters.
+export class Counter implements Readable {
+  /// The initial value.
+  public param value: int;
+  /// The amount added by next().
+  public param step: int = 1;
+
+  /// Returns the current value.
+  public read(): int {
+    return this.value;
+  }
+
+  /// Advances and returns the value.
+  public next(): int {
+    this.value = this.value + this.step;
+    return this.value;
+  }
+}
+
+/// A function operating on two integer values.
+export type Operation = (int, int) => int;
+
+/// Adds strict integer inputs.
+export func add(left: int, right: int): int {
+  return left + right;
+}
+
+func main(): int {
+  const counter = Counter(value: 40);
+  counter.next();
+  return counter.next();
+}

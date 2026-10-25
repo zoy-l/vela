@@ -1,0 +1,24 @@
+enum Brightness {
+  light,
+  dark,
+}
+
+func name(value: Brightness): string {
+  return match (value) {
+    Brightness.light => "light",
+    Brightness.dark => "dark",
+  };
+}
+
+func present(value: int?): int {
+  return match (value) {
+    null => 0,
+    let number => number,
+  };
+}
+
+func main(): void {
+  print(name(Brightness.light));
+  print(present(42));
+  print(present(null));
+}

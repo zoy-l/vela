@@ -1,0 +1,8 @@
+func main(): int {
+  const text = "Ae\u0301\u{1F1E8}\u{1F1F3}\u{1F469}\u200D\u{1F4BB}";
+  let total: int = 0;
+  for (let index: int = 0; index < 1000; index = index + 1) {
+    total = total + text.graphemes().length;
+  }
+  return total;
+}

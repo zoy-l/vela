@@ -12,14 +12,20 @@
 
 namespace vela::frontend {
 
+enum class CommentRetention : std::uint8_t { Discard, Preserve };
+
 struct LexResult final {
   std::vector<Token> tokens;
   Diagnostics diagnostics;
+  std::vector<SourceComment> comments;
 };
 
 class Lexer final {
  public:
-  explicit Lexer(std::string_view source, std::uint32_t source_id = 0) : source_(source) {
+  explicit Lexer(std::string_view source,
+                 std::uint32_t source_id = 0,
+                 CommentRetention comments = CommentRetention::Discard)
+      : source_(source), comment_retention_(comments) {
     location_.source_id = source_id;
   }
 
@@ -32,6 +38,8 @@ class Lexer final {
   auto Advance() -> char;
   auto Match(char expected) -> bool;
   void SkipWhitespaceAndComments();
+  void SkipBlockComment();
+  void RecordComment(SourceLocation location, std::size_t start);
   void ScanToken(std::size_t start);
   void ScanIdentifier();
   void ScanNumber();
@@ -50,6 +58,8 @@ class Lexer final {
   SourceLocation token_location_;
   std::vector<Token> tokens_;
   Diagnostics diagnostics_;
+  CommentRetention comment_retention_;
+  std::vector<SourceComment> comments_;
 };
 
 }  // namespace vela::frontend

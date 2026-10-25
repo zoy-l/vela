@@ -1,9 +1,9 @@
-func main(): int {
+func main(): void {
   let index: int = 0;
   let sum: int = 0;
   while (index != 100) {
     sum = sum + index;
     index = index + 1;
   }
-  return sum;
+  print(sum);
 }

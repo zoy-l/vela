@@ -1,0 +1,332 @@
+#include "compiler/repl_session.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <expected>
+#include <filesystem>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+
+#include "base/path.h"
+#include "compiler/compiler.h"
+#include "compiler/frontend/ast.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/lexer.h"
+#include "compiler/frontend/parser.h"
+#include "compiler/frontend/source_loader.h"
+#include "compiler/frontend/specialization.h"
+#include "compiler/frontend/token.h"
+#include "compiler/frontend/type_checker.h"
+#include "compiler/repl_identity.h"
+#include "runtime/heap.h"
+#include "runtime/isolate.h"
+#include "vm/program.h"
+#include "vm/vm.h"
+
+namespace vela::compiler {
+namespace {
+
+auto IsDeclaration(frontend::TokenKind kind) -> bool {
+  using Kind = frontend::TokenKind;
+  switch (kind) {
+    case Kind::Func:
+    case Kind::Class:
+    case Kind::Enum:
+    case Kind::Interface:
+    case Kind::Type:
+    case Kind::Import:
+    case Kind::Export:
+    case Kind::External:
+    case Kind::Let:
+    case Kind::Const:
+      return true;
+    default:
+      return false;
+  }
+}
+
+auto HasOpenDelimiter(const frontend::LexResult& lexed) -> bool {
+  using Kind = frontend::TokenKind;
+  std::int64_t braces = 0;
+  std::int64_t parentheses = 0;
+  std::int64_t brackets = 0;
+  for (const auto& token : lexed.tokens) {
+    switch (token.kind) {
+      case Kind::LeftBrace:
+        ++braces;
+        break;
+      case Kind::RightBrace:
+        --braces;
+        break;
+      case Kind::LeftParen:
+        ++parentheses;
+        break;
+      case Kind::RightParen:
+        --parentheses;
+        break;
+      case Kind::LeftBracket:
+        ++brackets;
+        break;
+      case Kind::RightBracket:
+        --brackets;
+        break;
+      default:
+        break;
+    }
+    if (braces < 0 || parentheses < 0 || brackets < 0) {
+      return false;
+    }
+  }
+  return braces > 0 || parentheses > 0 || brackets > 0;
+}
+
+auto SubmissionPath(std::uint32_t submission) -> std::string {
+  return "<repl:" + std::to_string(submission) + ">";
+}
+
+auto SubmissionFailure(SubmissionStatus status, frontend::Diagnostics diagnostics = {})
+    -> SubmissionResult {
+  SubmissionResult result;
+  result.status = status;
+  result.diagnostics = std::move(diagnostics);
+  return result;
+}
+
+struct InputBody final {
+  std::string text;
+  bool declaration = false;
+  bool terminated = false;
+};
+
+auto NormalizeBody(std::string_view source, const frontend::LexResult& lexed) -> InputBody {
+  using Token = frontend::TokenKind;
+  const auto first_kind = lexed.tokens.front().kind;
+  const auto last_kind =
+      lexed.tokens.size() > 1 ? lexed.tokens.at(lexed.tokens.size() - 2).kind : Token::EndOfFile;
+  InputBody body{
+      .text = std::string(source),
+      .declaration = IsDeclaration(first_kind),
+      .terminated = last_kind == Token::Semicolon,
+  };
+  const bool block_statement = first_kind == Token::LeftBrace || first_kind == Token::If ||
+                               first_kind == Token::While || first_kind == Token::For ||
+                               first_kind == Token::Switch || first_kind == Token::Try;
+  const bool needs_semicolon = !body.terminated && (last_kind != Token::RightBrace ||
+                                                    (!body.declaration && !block_statement));
+  if (needs_semicolon && lexed.tokens.size() > 1) {
+    const auto& last = lexed.tokens.at(lexed.tokens.size() - 2);
+    body.text.insert(last.offset + last.length, 1, ';');
+  }
+  return body;
+}
+
+}  // namespace
+
+ReplSession::ReplSession(const std::filesystem::path& directory)
+    : path_(directory / "__vela_repl__.vela") {
+  Reset();
+}
+
+void ReplSession::Reset() {
+  program_ = {};
+  machine_.reset();
+  isolate_ = std::make_unique<runtime::Isolate>();
+  machine_ = std::make_unique<vm::VirtualMachine>(*isolate_);
+  compilation_ = {};
+  modules_ = {};
+  history_.clear();
+  user_source_.clear();
+  entries_.clear();
+  next_line_ = 1;
+}
+
+auto ReplSession::Locate(std::uint32_t line, const Entry& current) const -> Entry {
+  if (line >= current.first_line || entries_.empty()) {
+    return current;
+  }
+  const auto found = std::ranges::upper_bound(entries_, line, {}, &Entry::first_line);
+  return found == entries_.begin() ? entries_.front() : *std::prev(found);
+}
+
+void ReplSession::Remap(frontend::Diagnostics& diagnostics, const Entry& current) const {
+  for (auto& diagnostic : diagnostics) {
+    if (diagnostic.location.source_id != 0) {
+      continue;
+    }
+    const auto& entry = Locate(diagnostic.location.line, current);
+    diagnostic.source_path = SubmissionPath(entry.submission);
+    diagnostic.location.line = diagnostic.location.line >= entry.first_line
+                                   ? diagnostic.location.line - entry.first_line + 1
+                                   : 1;
+  }
+}
+
+void ReplSession::Remap(vm::ExecutionResult& result, const Entry& current) const {
+  for (auto& frame : result.stack_trace) {
+    if (frame.location.source_id == 0) {
+      const auto& entry = Locate(frame.location.line, current);
+      frame.source_path = SubmissionPath(entry.submission);
+      frame.location.line =
+          frame.location.line >= entry.first_line ? frame.location.line - entry.first_line + 1 : 1;
+      if (frame.function.starts_with("$repl")) {
+        frame.function = "<submission>";
+      }
+    }
+  }
+}
+
+auto ReplSession::Prepare(std::string_view source) -> std::expected<Prepared, SubmissionResult> {
+  const auto lexed = frontend::Lexer(source).Tokenize();
+  if (lexed.diagnostics.empty() && lexed.tokens.size() == 1) {
+    return std::unexpected(SubmissionResult());
+  }
+  if (HasOpenDelimiter(lexed)) {
+    return std::unexpected(SubmissionFailure(SubmissionStatus::Incomplete));
+  }
+  const auto body = NormalizeBody(source, lexed);
+  std::string addition;
+  Entry current{
+      .header_line = next_line_,
+      .first_line = next_line_,
+      .last_line = 0,
+      .submission = static_cast<std::uint32_t>(entries_.size() + 1),
+      .wrapper = !body.declaration,
+  };
+  if (body.declaration) {
+    addition = body.text;
+    addition += "\nfunc replEntry(): void {\n}\n";
+    current.header_line += static_cast<std::uint32_t>(std::ranges::count(source, '\n')) + 1;
+  } else {
+    addition = "func replEntry(): void {\n";
+    addition += body.text;
+    addition += "\n}\n";
+    ++current.first_line;
+  }
+  current.last_line = next_line_ + static_cast<std::uint32_t>(std::ranges::count(addition, '\n'));
+  auto candidate = history_ + addition;
+  auto parsed = frontend::ParseSource(candidate);
+  if (!parsed.diagnostics.empty()) {
+    // EOF 缺少函数体、参数或表达式时允许继续输入，内部语法错误立即报告。
+    const auto eof_line = current.last_line - (body.declaration ? 2U : 1U);
+    const bool incomplete = std::ranges::all_of(
+        parsed.diagnostics,
+        [&](const auto& diagnostic) -> bool { return diagnostic.location.line >= eof_line; });
+    if (incomplete && !body.terminated) {
+      return std::unexpected(SubmissionFailure(SubmissionStatus::Incomplete));
+    }
+    Remap(parsed.diagnostics, current);
+    return std::unexpected(
+        SubmissionFailure(SubmissionStatus::Rejected, std::move(parsed.diagnostics)));
+  }
+  BindEntries(parsed.program, current, body.terminated ? Echo::Suppress : Echo::Display);
+  return Prepared{
+      .entry = current,
+      .source = std::move(candidate),
+      .program = std::move(parsed.program),
+  };
+}
+
+void ReplSession::BindEntries(frontend::Program& program, const Entry& current, Echo echo) const {
+  frontend::Function* active = nullptr;
+  for (auto& function : program.functions) {
+    const auto line = function.location.line;
+    const auto retired = std::ranges::lower_bound(entries_, line, {}, &Entry::header_line);
+    const bool historical = retired != entries_.end() && retired->header_line == line;
+    if (line == current.header_line || historical) {
+      const auto submission =
+          line == current.header_line ? current.submission : retired->submission;
+      function.name = "$repl" + std::to_string(submission);
+      function.role = line == current.header_line ? frontend::Function::Role::InteractiveEntry
+                                                  : frontend::Function::Role::RetiredEntry;
+      if (line == current.header_line) {
+        active = &function;
+      }
+    }
+  }
+  if (!current.wrapper) {
+    for (const auto& global : program.globals) {
+      if (global.location.line < next_line_) {
+        continue;
+      }
+      auto statement = std::make_unique<frontend::Statement>();
+      statement->location = global.location;
+      statement->expression = std::make_unique<frontend::Expression>();
+      auto& expression = *statement->expression;
+      expression.kind = frontend::Expression::Kind::Name;
+      expression.location = global.location;
+      expression.text = global.name;
+      active->body->statements.push_back(std::move(statement));
+    }
+  } else if (echo == Echo::Display && !active->body->statements.empty()) {
+    auto& last = *active->body->statements.back();
+    last.echo = last.kind == frontend::Statement::Kind::Expression;
+  }
+}
+
+auto ReplSession::Compile(Prepared& prepared,
+                          CompilationState& compilation,
+                          frontend::ModuleCache& modules) -> CompileResult {
+  auto loaded = frontend::LoadPreparedProgram(PathText(path_), std::move(prepared.program),
+                                              prepared.source, modules);
+  auto diagnostics = std::move(loaded.diagnostics);
+  if (diagnostics.empty()) {
+    diagnostics = frontend::SpecializeGenerics(loaded.program);
+  }
+  if (!diagnostics.empty()) {
+    return {
+        .program = {},
+        .diagnostics = std::move(diagnostics),
+    };
+  }
+  NameSessionLambdas(loaded.program);
+  auto checked = frontend::TypeChecker(&compilation.interfaces).Check(loaded.program);
+  if (!checked.diagnostics.empty()) {
+    return {
+        .program = {},
+        .diagnostics = std::move(checked.diagnostics),
+    };
+  }
+  return CompileProgram(loaded.program, checked.model, *isolate_, &compilation);
+}
+
+auto ReplSession::Submit(std::string_view source) -> SubmissionResult {
+  auto prepared = Prepare(source);
+  if (!prepared) {
+    return std::move(prepared.error());
+  }
+  const auto current = prepared->entry;
+  auto modules = modules_;
+  auto compilation = compilation_;
+  auto compiled = Compile(*prepared, compilation, modules);
+  if (!compiled.Succeeded()) {
+    Remap(compiled.diagnostics, current);
+    return SubmissionFailure(SubmissionStatus::Rejected, std::move(compiled.diagnostics));
+  }
+  auto* globals = compiled.program.globals();
+  if (const auto* previous = program_.globals(); previous != nullptr) {
+    std::ranges::copy(previous->values, globals->values.begin());
+    std::ranges::copy(previous->states, globals->states.begin());
+    // 注册复制后的根，覆盖当前增量标记周期；旧程序在注册期间仍保持存活。
+    runtime::RootRange copied_roots(isolate_->heap(), globals->values.data(),
+                                    globals->values.size());
+  }
+  program_ = std::move(compiled.program);
+  compilation_ = std::move(compilation);
+  modules_ = std::move(modules);
+  history_ = std::move(prepared->source);
+  user_source_ += source;
+  user_source_ += '\n';
+  const auto entry = program_.FindFunction("$repl" + std::to_string(current.submission));
+  auto execution = machine_->Execute(entry);
+  Remap(execution, current);
+  entries_.push_back(current);
+  next_line_ = current.last_line;
+  const auto status =
+      execution.Succeeded() ? SubmissionStatus::Executed : SubmissionStatus::RuntimeError;
+  return {.status = status, .diagnostics = {}, .execution = std::move(execution)};
+}
+
+}  // namespace vela::compiler

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 
@@ -12,6 +13,7 @@ from tools.config import BUILD_VARIANTS, executable_name, output_directory
 
 
 TEST_EXECUTABLES = {
+    "base": "base_tests",
     "environment": "vela_environment_tests",
     "frontend": "vela_frontend_tests",
     "compiler": "vela_compiler_tests",
@@ -32,7 +34,7 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     if values and values[0] in BUILD_VARIANTS:
         variant = values.pop(0)
     selection = values[0] if values else "all"
-    if len(values) > 1 or selection not in {"all", "list", *TEST_EXECUTABLES}:
+    if len(values) > 1 or selection not in {"all", "list", "tooling", *TEST_EXECUTABLES}:
         parser.error("expected list, all, or a test name after VARIANT")
     return argparse.Namespace(
         variant=variant, selection=selection, gtest_arguments=gtest_arguments
@@ -41,7 +43,8 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
 
 def run_tests(variant: str, selection: str, gtest_arguments: list[str]) -> None:
     build(variant, "default")
-    build(variant, "tests")
+    if selection != "tooling":
+        build(variant, "tests")
     output = output_directory(variant)
 
     failed: list[str] = []
@@ -57,6 +60,12 @@ def run_tests(variant: str, selection: str, gtest_arguments: list[str]) -> None:
 
     if failed:
         raise RuntimeError(f"GoogleTest suites failed: {', '.join(failed)}")
+
+    if selection in {"all", "tooling"}:
+        environment = os.environ.copy()
+        environment["VELA_TEST_EXECUTABLE"] = str(output / executable_name("vela"))
+        subprocess.run([sys.executable, "-m", "unittest", "tools.tooling_unittest", "tools.editor_unittest", "tools.command_unittest"],
+                       cwd=output.parent.parent, env=environment, check=True)
 
     version = subprocess.run(
         [str(output / executable_name("vela")), "--version"],
@@ -75,7 +84,7 @@ def run_tests(variant: str, selection: str, gtest_arguments: list[str]) -> None:
 def main(arguments: list[str] | None = None) -> int:
     parsed = parse_arguments(arguments)
     if parsed.selection == "list":
-        print("\n".join(TEST_EXECUTABLES))
+        print("\n".join((*TEST_EXECUTABLES, "tooling")))
         return 0
     run_tests(parsed.variant, parsed.selection, parsed.gtest_arguments)
     return 0

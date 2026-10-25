@@ -5,7 +5,9 @@ for the bootstrap compiler. The language and runtime contracts are recorded in
 [`docs/language_architecture.md`](../docs/language_architecture.md); the
 bootstrap executable remains intentionally smaller than that target.
 `check` and `run` share UTF-8 path handling, import loading, and parsing; every
-dependency is parsed once, with missing files and cycles diagnosed before checking.
+dependency is parsed once, then module scopes and export visibility are bound
+before specialization and checking. Function import cycles can link; lazy
+initialization cycles report a runtime failure. See [module contracts](../docs/modules.md).
 
 The frontend, compiler, and VM stay under the same GN/Ninja target boundary so
 later optimizer and native backend work does not change the developer entry
@@ -60,9 +62,9 @@ offsets before narrowing. `vm::Program::Create` validates the owned output once;
 the compiler no longer exposes mutable bytecode views. See
 [execution contracts and measurements](../docs/vm_execution.md).
 
-Array type names retain their element identity and rank (`int[]`, `Item[][]`).
-The checker interns these names and records each array literal's checked type
-against the AST. Lowering consumes those facts and assigns compact array-layout
+Type syntax is structural, including array elements, nullable types, function
+signatures, and generic arguments. The checker interns resolved types and records
+each expression's checked type against the AST. Lowering consumes those facts and assigns compact array-layout
 IDs. Enum members always use `Enum.member`. Nested element layouts precede their
 parent layouts. Bytecode `NewArray` encodes the
 destination register, layout ID, and length in three 8-bit operands; lengths or
@@ -78,7 +80,7 @@ There are no implicit conversions or array equality operators. The VM reports
 `double` uses IEEE 754 binary64. Decimal and exponent literals (`1.5`, `1e2`,
 `1.25e-1`) are parsed once, checked for representable range, and stored in a
 per-function constant pool deduplicated by bit pattern. `LoadDouble` selects
-the pool entry by an 8-bit index; a function can contain at most 256 distinct
+the pool entry by an unsigned 16-bit index; a function can contain at most 65536 distinct
 double constants within its existing register limits. Dedicated double
 instructions implement arithmetic, negation, and comparisons. Integer
 instructions retain their existing overflow checks and truncating division.
@@ -92,10 +94,12 @@ preserve IEEE infinity, NaN comparisons, subnormals, and signed zero. `print`
 and CLI results share the shortest round-trip double formatting. `double[]`
 elements occupy eight bytes and require no GC element scan.
 
-It covers the initial C-style block syntax, enum declarations, class fields,
-aggregate construction with named arguments, functions, and static type
-checking. The checker feeds the typed IR and bytecode VM; it does not interpret
-source directly.
+Generic specialization precedes checking; aliases are transparent and concrete
+specializations preserve primitive storage. Classes use `param` fields or an
+explicit constructor. Function values, shared mutable captures, interfaces,
+Expected, match, and ordered collections pass through the same typed IR and
+validated bytecode paths. See [P1 contracts](../docs/p1_syntax_proposal.md).
+The checker does not interpret source directly.
 
 Benchmarks use a separate Google Benchmark executable:
 

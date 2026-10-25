@@ -12,9 +12,13 @@
 
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/native_function.h"
 #include "runtime/object.h"
 #include "runtime/string.h"
+#include "runtime/value.h"
 #include "vm/bytecode.h"
+#include "vm/debug_info.h"
+#include "vm/exception_handler.h"
 
 namespace vela::vm {
 
@@ -27,16 +31,54 @@ struct StringConstants final {
   runtime::RootRange roots;
 };
 
+// 全程序布局只保存一份；构造后只允许借用，不复制到每个函数。
+class LayoutTables final {
+ public:
+  LayoutTables(std::vector<runtime::ClassLayout*> classes,
+               std::vector<const runtime::ArrayLayout*> arrays,
+               std::vector<const runtime::CollectionLayout*> collections,
+               std::vector<runtime::TypeConstraint> types);
+  LayoutTables(const LayoutTables&) = delete;
+  auto operator=(const LayoutTables&) -> LayoutTables& = delete;
+  LayoutTables(LayoutTables&&) = delete;
+  auto operator=(LayoutTables&&) -> LayoutTables& = delete;
+  ~LayoutTables() = default;
+
+  [[nodiscard]] auto classes() const noexcept -> std::span<runtime::ClassLayout* const> {
+    return classes_;
+  }
+  [[nodiscard]] auto arrays() const noexcept -> std::span<const runtime::ArrayLayout* const> {
+    return arrays_;
+  }
+  [[nodiscard]] auto collections() const noexcept
+      -> std::span<const runtime::CollectionLayout* const> {
+    return collections_;
+  }
+  [[nodiscard]] auto types() const noexcept -> std::span<const runtime::TypeConstraint> {
+    return types_;
+  }
+
+ private:
+  std::vector<runtime::ClassLayout*> classes_;
+  std::vector<const runtime::ArrayLayout*> arrays_;
+  std::vector<const runtime::CollectionLayout*> collections_;
+  std::vector<runtime::TypeConstraint> types_;
+};
+
 // 可变构建输入只在创建程序时使用，成功后所有权移入不可变共享存储。
 struct FunctionStorage final {
   std::string name;
   std::vector<Instruction> code;
-  std::vector<runtime::ClassLayout*> classes;
+  std::shared_ptr<const LayoutTables> layouts;
   std::shared_ptr<const StringConstants> strings;
-  std::vector<const runtime::ArrayLayout*> arrays;
   std::vector<double> doubles;
   std::uint16_t register_count = 0;
   std::uint16_t parameter_count = 0;
+  std::shared_ptr<const std::vector<std::string>> source_paths;
+  std::vector<SourceMapping> source_mappings;
+  std::shared_ptr<const runtime::NativeFunction> native;
+  std::vector<ExceptionHandler> handlers;
+  std::vector<std::int64_t> integers;
 
   [[nodiscard]] auto View() const noexcept -> Function;
 };
@@ -47,9 +89,25 @@ struct ValidationError final {
   std::string message;
 };
 
+enum class GlobalState : std::uint8_t { Uninitialized, Initializing, Ready };
+
+// 每个编译程序拥有一份惰性静态状态；槽位地址固定并随程序持续保根。
+struct GlobalStorage final {
+  GlobalStorage(runtime::Heap& heap, std::vector<std::uint32_t> functions)
+      : values(functions.size()),
+        states(functions.size(), GlobalState::Uninitialized),
+        initializers(std::move(functions)),
+        roots(heap, values.data(), values.size()) {}
+  std::vector<runtime::Value> values;
+  std::vector<GlobalState> states;
+  std::vector<std::uint32_t> initializers;
+  runtime::RootRange roots;
+};
+
 struct ProgramStorage final {
   std::vector<FunctionStorage> functions;
   const runtime::Isolate* isolate = nullptr;
+  std::shared_ptr<GlobalStorage> globals;
 };
 
 class FunctionHandle;
@@ -59,14 +117,18 @@ class Program final {
   Program() = default;
 
   [[nodiscard]] static auto Create(std::vector<FunctionStorage> functions,
-                                   const runtime::Isolate& isolate)
+                                   runtime::Isolate& isolate,
+                                   std::vector<std::uint32_t> global_initializers = {})
       -> std::expected<Program, ValidationError>;
-  [[nodiscard]] static auto Load(std::span<const Function> functions, runtime::Isolate& isolate)
+  [[nodiscard]] static auto Load(std::span<const Function> functions,
+                                 runtime::Isolate& isolate,
+                                 std::vector<std::uint32_t> global_initializers = {})
       -> std::expected<Program, ValidationError>;
 
   [[nodiscard]] auto functions() const noexcept -> std::span<const FunctionStorage>;
   [[nodiscard]] auto FindFunction(std::string_view name) const noexcept -> FunctionHandle;
   [[nodiscard]] auto IsForIsolate(const runtime::Isolate& isolate) const noexcept -> bool;
+  [[nodiscard]] auto globals() const noexcept -> GlobalStorage*;
 
  private:
   friend class FunctionHandle;

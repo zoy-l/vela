@@ -1,9 +1,53 @@
 source_set("base") {
   sources = [
+    "binary.cc",
+    "binary.h",
     "builtin.h",
+    "callable.h",
+    "diagnostic.cc",
+    "diagnostic.h",
     "execution_limits.h",
+    "execution_status.cc",
+    "execution_status.h",
+    "file.cc",
+    "file.h",
+    "file_publication.h",
+    "fingerprint.cc",
+    "fingerprint.h",
     "opcode.h",
+    "path.cc",
+    "path.h",
+    "source_location.h",
     "utf8.cc",
     "utf8.h",
+  ]
+  deps = [ "//third_party:xxhash" ]
+  if (target_os == "win") {
+    sources += [ "file_publication_win.cc" ]
+  } else {
+    sources += [ "file_publication_posix.cc" ]
+  }
+}
+
+source_set("json") {
+  sources = [
+    "json.cc",
+    "json.h",
+  ]
+  public_deps = [ "//third_party:yyjson" ]
+}
+
+executable("base_tests") {
+  testonly = true
+  sources = [
+    "binary_unittest.cc",
+    "file_unittest.cc",
+    "fingerprint_unittest.cc",
+    "json_unittest.cc",
+  ]
+  deps = [
+    ":base",
+    ":json",
+    "//third_party:gtest_main",
   ]
 }

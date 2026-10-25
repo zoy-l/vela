@@ -117,7 +117,7 @@ auto Heap::StringElements(const HeapObject& array) noexcept
   if (array.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }
-  if (array.array_layout->element_kind != ValueKind::String) {
+  if (array.array_layout()->element_kind != ValueKind::String) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
   const void* storage = std::span(&array, 1).last(0).data();

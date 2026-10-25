@@ -1,5 +1,60 @@
 import("abseil_sources.gni")
 
+config("xxhash_headers") {
+  xxhash_include = rebase_path("xxhash", root_build_dir)
+  if (target_os == "win") {
+    cflags = [ "/external:I$xxhash_include" ]
+  } else {
+    cflags = [
+      "-isystem",
+      xxhash_include,
+    ]
+  }
+}
+
+static_library("xxhash") {
+  configs -= [ "//build/config:vela_warnings" ]
+  sources = [ "xxhash/xxhash.c" ]
+  public_configs = [ ":xxhash_headers" ]
+}
+
+config("yyjson_headers") {
+  yyjson_include = rebase_path("yyjson/src", root_build_dir)
+  if (target_os == "win") {
+    cflags = [ "/external:I$yyjson_include" ]
+  } else {
+    cflags = [
+      "-isystem",
+      yyjson_include,
+    ]
+  }
+}
+
+static_library("yyjson") {
+  configs -= [ "//build/config:vela_warnings" ]
+  sources = [ "yyjson/src/yyjson.c" ]
+  public_configs = [ ":yyjson_headers" ]
+}
+
+config("utf8proc_headers") {
+  utf8proc_include = rebase_path("utf8proc", root_build_dir)
+  defines = [ "UTF8PROC_STATIC" ]
+  if (target_os == "win") {
+    cflags = [ "/external:I$utf8proc_include" ]
+  } else {
+    cflags = [
+      "-isystem",
+      utf8proc_include,
+    ]
+  }
+}
+
+static_library("utf8proc") {
+  configs -= [ "//build/config:vela_warnings" ]
+  sources = [ "utf8proc/utf8proc.c" ]
+  public_configs = [ ":utf8proc_headers" ]
+}
+
 config("abseil_headers") {
   abseil_include = rebase_path("abseil-cpp", root_build_dir)
   if (target_os == "win") {

@@ -1,0 +1,50 @@
+{
+  "name": "Vela",
+  "scopeName": "source.vela",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "name": "storage.type.function.vela", "match": "\\bfunc\\b" },
+    { "name": "keyword.control.vela", "match": "\\b(?:if|else|while|for|switch|case|default|break|continue|return|match|try|catch|finally|throw|import|export|as|is)\\b" },
+    { "name": "storage.modifier.vela", "match": "\\b(?:public|private|static|param|external|let|const)\\b" },
+    { "name": "storage.type.vela", "match": "\\b(?:class|interface|implements|enum|type|constructor)\\b" },
+    { "name": "support.type.vela", "match": "\\b(?:int|double|bool|string|void|StringBuilder|Set|Map|Expected)\\b" },
+    { "name": "constant.language.vela", "match": "\\b(?:true|false|null)\\b" },
+    { "name": "variable.language.vela", "match": "\\bthis\\b" },
+    { "name": "constant.numeric.vela", "match": "\\b[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\\b" },
+    { "name": "entity.name.function.vela", "match": "\\b[A-Za-z_][A-Za-z_0-9]*(?=\\s*\\()" },
+    { "name": "keyword.operator.vela", "match": "=>|==|!=|<=|>=|&&|\\|\\||[+*/!<>=?-]" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.documentation.vela", "begin": "///", "end": "$" },
+        { "name": "comment.line.double-slash.vela", "begin": "//", "end": "$" },
+        { "name": "comment.block.vela", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.vela",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "name": "constant.character.escape.vela", "match": "\\\\(?:u\\{[0-9A-Fa-f]{1,6}\\}|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}|[nrtbfv0\\\\\"'$])" },
+        { "include": "#interpolation" },
+        { "name": "invalid.illegal.escape.vela", "match": "\\\\." }
+      ]
+    },
+    "interpolation": {
+      "name": "meta.interpolation.vela",
+      "begin": "\\$\\{",
+      "end": "\\}",
+      "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.vela" } },
+      "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.vela" } },
+      "patterns": [{ "include": "#braced-expression" }, { "include": "$self" }]
+    },
+    "braced-expression": {
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [{ "include": "#braced-expression" }, { "include": "$self" }]
+    }
+  }
+}

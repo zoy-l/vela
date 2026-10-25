@@ -15,7 +15,14 @@ auto Lowerer::RegisterArrayType(const frontend::TypeDescriptor& type) -> std::ui
   if (found != array_type_ids_.end()) {
     return found->second;
   }
-  const auto& element = model_.types.at(type.name.substr(0, type.name.size() - 2));
+  const auto& element = model_.array_elements.at(type.name);
+  if (element.kind == frontend::TypeDescriptor::Kind::Set ||
+      element.kind == frontend::TypeDescriptor::Kind::Map) {
+    static_cast<void>(RegisterCollectionType(element));
+  }
+  if (element.kind == frontend::TypeDescriptor::Kind::Expected) {
+    static_cast<void>(RegisterExpectedType(element));
+  }
   if (element.kind == frontend::TypeDescriptor::Kind::Array) {
     static_cast<void>(RegisterArrayType(element));
   }
@@ -68,7 +75,7 @@ auto Lowerer::LowerIndex(const frontend::Expression& expression) -> LoweredValue
   });
   return {
       .reg = result,
-      .type = model_.types.at(array.type.name.substr(0, array.type.name.size() - 2)),
+      .type = model_.array_elements.at(array.type.name),
   };
 }
 

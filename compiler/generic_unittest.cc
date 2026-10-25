@@ -1,0 +1,104 @@
+#include <string>
+#include <string_view>
+
+#include "gtest/gtest.h"
+
+#include "compiler/compiler.h"
+#include "runtime/isolate.h"
+#include "vm/vm.h"
+
+namespace vela::compiler {
+namespace {
+
+TEST(GenericTest, SpecializesFunctionsClassesAliasesAndCapturedPrimitives) {
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(R"(
+type Id = int;
+type Callback<T> = (T) => T;
+type Values<T> = T[];
+func identity<T>(value: T): T { return value; }
+func repeat<T>(value: T, count: int): T {
+  if (count == 0) { return value; }
+  return repeat<T>(value, count - 1);
+}
+func capture<T>(value: T): () => T { return (): T => value; }
+class Box<T> {
+  param value: T;
+  get(): T { return this.value; }
+}
+func main(): int {
+  const operation: Callback<int> = identity<Id>;
+  const box: Box<Id> = Box<int>(value: operation(40));
+  const copy: Box<int> = box;
+  const values: Values<int> = [copy.get(), repeat<int>(2, 3)];
+  const getter: () => double = capture<double>(1.5);
+  if (getter() == identity<double>(1.5)) {
+    return values[0] + values[1];
+  }
+  return 0;
+}
+)",
+                                      isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  EXPECT_TRUE(compiled.program.FindFunction("identity<int>").IsValid());
+  EXPECT_FALSE(compiled.program.FindFunction("identity<Id>").IsValid());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+class GenericErrorTest : public testing::TestWithParam<std::string_view> {};
+
+TEST_P(GenericErrorTest, RejectsInvalidInstantiationAndExpandingRecursion) {
+  runtime::Isolate isolate;
+  EXPECT_FALSE(CompileSource(GetParam(), isolate).Succeeded());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    StaticArguments,
+    GenericErrorTest,
+    testing::Values(
+        "func id<T>(x: T): T { return x; } func main(): int { return id<int, double>(1); }",
+        "func id<T>(x: T): T { return x; } func main(): int { return id<int>(1.0); }",
+        "type Cycle<T> = Cycle<T>; func main(): void { let x: Cycle<int> = 1; }",
+        "func main(): void { let value: Unknown<int> = 1; }",
+        "func id<T>(x:T):T{return x;} func main():int { const id = (x:int):int => x; return "
+        "id<int>(42); }",
+        "func id<T,T>(x:T):T{return x;} func main():void {}",
+        "func expand<T>(x: T): int { return expand<T[]>([x]); } func main(): int { return "
+        "expand<int>(1); }"));
+
+TEST(GenericTest, ConstructsGenericAliasesAndKeepsTemplateBodiesInTheirDeclarationScope) {
+  runtime::Isolate isolate;
+  const auto compiled = CompileSource(R"(
+func identity<T>(value: T): T { return value; }
+func forward<T>(value: T): T { return identity<T>(value); }
+class Box<T> { public param value: T; }
+type Alias<T> = Box<T>;
+func main(): int {
+  const identity: int = 0;
+  return Alias<int>(value: forward<int>(42)).value;
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(GenericTest, DiagnosesDeepTypeSyntaxBeforeRecursiveDestructionCanOverflow) {
+  constexpr int kExcessiveNesting = 1000;
+  std::string type = "int";
+  for (int index = 0; index < kExcessiveNesting; ++index) {
+    type += "[]";
+  }
+  runtime::Isolate isolate;
+  EXPECT_FALSE(CompileSource("func main(value: " + type + "): void {}", isolate).Succeeded());
+}
+
+}  // namespace
+}  // namespace vela::compiler

@@ -172,8 +172,10 @@ void Rewrite(ir::Function& function,
     if (access.defines_value) {
       instruction.dst = mapping.at(original.dst);
     }
-    if (original.opcode == ir::Opcode::Call || original.opcode == ir::Opcode::BuiltinCall ||
-        original.opcode == ir::Opcode::StringInterpolate) {
+    if (original.opcode == ir::Opcode::Call || original.opcode == ir::Opcode::CallInterface ||
+        original.opcode == ir::Opcode::CallIndirect || original.opcode == ir::Opcode::BuiltinCall ||
+        original.opcode == ir::Opcode::StringInterpolate ||
+        original.opcode == ir::Opcode::NativeCall) {
       instruction.lhs = access.argument_count != 0 ? mapping.at(original.lhs) : 0;
     }
   }

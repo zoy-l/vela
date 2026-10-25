@@ -4,6 +4,9 @@
 /third_party/abseil-cpp/
 /third_party/benchmark/
 /third_party/googletest/
+/third_party/utf8proc/
+/third_party/yyjson/
+/third_party/xxhash/
 /.cipd/
 /.gclient_entries
 /.gclient_previous_sync_commits

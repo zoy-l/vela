@@ -18,23 +18,38 @@ auto AnalyzeRegisters(const Instruction& instruction, std::span<const Function> 
     case Opcode::LoadNull:
     case Opcode::LoadBool:
     case Opcode::LoadInt:
+    case Opcode::LoadIntConstant:
     case Opcode::LoadDouble:
     case Opcode::LoadString:
     case Opcode::NewArray:
+    case Opcode::NewCollection:
     case Opcode::NewInstance:
+    case Opcode::GetGlobal:
+    case Opcode::Catch:
       return {.defines_value = true};
     case Opcode::Move:
     case Opcode::NegInt:
     case Opcode::NegDouble:
     case Opcode::NotBool:
     case Opcode::GetField:
+    case Opcode::IsType:
+    case Opcode::CheckedCast:
+    case Opcode::NewOk:
+    case Opcode::NewErr:
+    case Opcode::ExpectedHasValue:
+    case Opcode::ExpectedValue:
+    case Opcode::NewDynamicArray:
+    case Opcode::ExceptionValue:
       return {.defines_value = true, .uses = {Field::Left}, .use_count = 1};
     case Opcode::SetField:
       return {.uses = {Field::Destination, Field::Left}, .use_count = 2};
     case Opcode::SetIndex:
       return {.uses = {Field::Destination, Field::Left, Field::Right}, .use_count = 3};
     case Opcode::Print:
+    case Opcode::SetGlobal:
     case Opcode::JumpIfFalse:
+    case Opcode::Throw:
+    case Opcode::Rethrow:
       return {.uses = {Field::Left}, .use_count = 1};
     case Opcode::Return:
       return {.uses = {Field::Destination}, .use_count = 1};
@@ -45,6 +60,18 @@ auto AnalyzeRegisters(const Instruction& instruction, std::span<const Function> 
           .defines_value = true,
           .argument_count = functions.subspan(instruction.index).front().parameter_count,
       };
+    case Opcode::CallIndirect:
+      return {
+          .defines_value = true,
+          .uses = {Field::Right},
+          .use_count = 1,
+          .argument_count = instruction.index,
+      };
+    case Opcode::CallInterface:
+      return {
+          .defines_value = true,
+          .argument_count = static_cast<std::uint32_t>(instruction.immediate),
+      };
     case Opcode::BuiltinCall:
       return {
           .defines_value = true,
@@ -53,6 +80,11 @@ auto AnalyzeRegisters(const Instruction& instruction, std::span<const Function> 
       };
     case Opcode::StringInterpolate:
       return {.defines_value = true, .argument_count = instruction.rhs};
+    case Opcode::NativeCall:
+      return {
+          .defines_value = true,
+          .argument_count = static_cast<std::uint32_t>(instruction.immediate),
+      };
     case Opcode::AddInt:
     case Opcode::SubInt:
     case Opcode::MulInt:
@@ -117,9 +149,15 @@ void WriteOperand(Instruction& instruction, Operand operand, RegisterId value) {
 
 namespace {
 
-auto FindBlockStarts(std::span<const Instruction> code) -> std::vector<std::uint8_t> {
+auto FindBlockStarts(const Function& function) -> std::vector<std::uint8_t> {
+  const auto code = std::span(function.instructions);
   std::vector<std::uint8_t> starts(code.size(), 0);
   starts.front() = 1;
+  for (const auto& handler : function.handlers) {
+    if (handler.target < code.size()) {
+      starts.at(handler.target) = 1;
+    }
+  }
   for (std::size_t index = 0; index < code.size(); ++index) {
     const auto& instruction = code.subspan(index).front();
     const auto opcode = instruction.opcode;
@@ -128,9 +166,14 @@ auto FindBlockStarts(std::span<const Instruction> code) -> std::vector<std::uint
         starts.at(instruction.index) = 1;
       }
     }
-    if ((opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse || opcode == Opcode::Return) &&
+    if ((opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse || opcode == Opcode::Return ||
+         opcode == Opcode::Throw || opcode == Opcode::Rethrow ||
+         (instruction.handler && MayThrow(opcode))) &&
         index + 1 < code.size()) {
       starts.at(index + 1) = 1;
+    }
+    if (index != 0 && instruction.handler != code.subspan(index - 1).front().handler) {
+      starts.at(index) = 1;
     }
   }
   return starts;
@@ -144,7 +187,7 @@ auto BuildFlowGraph(const Function& function) -> FlowGraph {
   if (code.empty()) {
     return graph;
   }
-  const auto starts = FindBlockStarts(code);
+  const auto starts = FindBlockStarts(function);
   graph.instruction_blocks.resize(code.size());
   for (std::size_t index = 0; index < code.size(); ++index) {
     if (starts.at(index) != 0) {
@@ -164,8 +207,13 @@ auto BuildFlowGraph(const Function& function) -> FlowGraph {
       block.successors.push_back(graph.instruction_blocks.at(last.index));
     }
     if (last.opcode != Opcode::Jump && last.opcode != Opcode::Return &&
+        last.opcode != Opcode::Throw && last.opcode != Opcode::Rethrow &&
         index + 1 < graph.blocks.size()) {
       block.successors.push_back(index + 1);
+    }
+    if (last.handler && MayThrow(last.opcode)) {
+      const auto target = function.handlers.at(*last.handler).target;
+      block.successors.push_back(graph.instruction_blocks.at(target));
     }
     for (const auto successor : block.successors) {
       graph.blocks.at(successor).predecessors.push_back(index);
@@ -245,6 +293,26 @@ void CompactInstructions(Function& function, std::span<const std::uint8_t> keep)
     code.at(destination++) = instruction;
   }
   code.resize(destination);
+  for (auto& handler : function.handlers) {
+    handler.target = remap.at(handler.target);
+  }
+}
+
+auto MayThrow(Opcode opcode) -> bool {
+  if (IsRemovableInstruction(opcode)) {
+    return false;
+  }
+  switch (opcode) {
+    case Opcode::Jump:
+    case Opcode::JumpIfFalse:
+    case Opcode::Return:
+    case Opcode::Print:
+    case Opcode::Catch:
+    case Opcode::ExceptionValue:
+      return false;
+    default:
+      return true;
+  }
 }
 
 auto IsRemovableInstruction(Opcode opcode) -> bool {
@@ -252,9 +320,11 @@ auto IsRemovableInstruction(Opcode opcode) -> bool {
     case Opcode::LoadNull:
     case Opcode::LoadBool:
     case Opcode::LoadInt:
+    case Opcode::LoadIntConstant:
     case Opcode::LoadDouble:
     case Opcode::LoadString:
     case Opcode::Move:
+    case Opcode::IsType:
     case Opcode::NotBool:
     case Opcode::NegDouble:
     case Opcode::EqualInt:

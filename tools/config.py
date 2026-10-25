@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import platform
 import subprocess
@@ -134,6 +135,25 @@ def _gn_value(value: str) -> str:
     return json.dumps(value.replace("\\", "/"))
 
 
+def compiler_build_identity() -> str:
+    """Invalidate compiled caches when compiler, runtime, ABI or pinned tools change."""
+    paths = {ROOT / "DEPS", ROOT / "BUILD.gn", ROOT / "tools" / "config.py"}
+    for directory in ("base", "compiler", "runtime", "vm", "build"):
+        paths.update(path for path in (ROOT / directory).rglob("*")
+                     if path.suffix in {".h", ".cc", ".gn", ".gni"}
+                     and not path.name.endswith("_unittest.cc"))
+    digest = hashlib.sha256()
+    digest.update(f"{target_os()}/{target_cpu()}".encode())
+    for path in sorted(paths):
+        name = path.relative_to(ROOT).as_posix().encode()
+        content = path.read_bytes()
+        digest.update(len(name).to_bytes(8, "little"))
+        digest.update(name)
+        digest.update(len(content).to_bytes(8, "little"))
+        digest.update(content)
+    return digest.hexdigest()
+
+
 def configure(variant: str) -> Path:
     tools = toolchain_tools()
     output = output_directory(variant)
@@ -142,6 +162,7 @@ def configure(variant: str) -> Path:
         "target_os": target_os(),
         "vela_archiver": tools["archiver"].as_posix(),
         "vela_build_config": variant,
+        "vela_build_identity": compiler_build_identity(),
         "vela_cc": tools["cc"].as_posix(),
         "vela_cxx": tools["cxx"].as_posix(),
         "vela_linker": tools["linker"].as_posix(),

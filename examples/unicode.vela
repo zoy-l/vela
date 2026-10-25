@@ -1,0 +1,13 @@
+func main(): void {
+  const text = "e\u0301\u{1F469}\u200D\u{1F4BB}";
+  const points = text.codePoints();
+  for (let index: int = 0; index < points.length; index = index + 1) {
+    print(points[index]);
+  }
+  const graphemes = text.graphemes();
+  for (let index: int = 0; index < graphemes.length; index = index + 1) {
+    print(graphemes[index]);
+  }
+  print(text.graphemeLength);
+  print(text.graphemeSlice(1, 2));
+}

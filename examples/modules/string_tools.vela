@@ -1,3 +1,3 @@
-func describe(text: string): string {
+export func describe(text: string): string {
   return "[${text}]";
 }

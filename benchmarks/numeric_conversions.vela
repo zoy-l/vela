@@ -1,0 +1,7 @@
+func main(): int {
+  let total: int = 0;
+  for (let index: int = 0; index < 1000; index = index + 1) {
+    total = total + index.toDouble().toInt();
+  }
+  return total;
+}

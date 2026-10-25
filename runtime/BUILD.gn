@@ -1,15 +1,42 @@
 source_set("runtime") {
-  public_deps = [ "//base" ]
+  deps = [ "//third_party:utf8proc" ]
+  public_deps = [
+    "//base",
+    "//third_party:abseil",
+  ]
   sources = [
+    "array_operations.cc",
+    "array_operations.h",
+    "builtins.cc",
+    "builtins.h",
+    "collection_operations.cc",
+    "collection_operations.h",
+    "element_storage.h",
+    "error.h",
+    "exception.h",
     "heap.cc",
     "heap.h",
+    "heap_array.cc",
+    "heap_collection.cc",
+    "heap_exception.cc",
     "heap_string.cc",
     "isolate.cc",
     "isolate.h",
+    "layout_transaction.cc",
+    "layout_transaction.h",
+    "native_function.cc",
+    "native_function.h",
     "object.h",
+    "random.cc",
+    "random.h",
+    "register_storage.h",
+    "rooted_value.cc",
+    "rooted_value.h",
+    "standard_library.cc",
+    "standard_library.h",
     "string.h",
-    "string_operations.cc",
-    "string_operations.h",
+    "unicode_operations.cc",
+    "unicode_operations.h",
     "value.h",
     "value_io.cc",
     "value_io.h",
@@ -20,6 +47,12 @@ executable("runtime_tests") {
   testonly = true
   sources = [
     "array_unittest.cc",
+    "collection_unittest.cc",
+    "exception_unittest.cc",
+    "layout_transaction_unittest.cc",
+    "numeric_conversion_unittest.cc",
+    "random_unittest.cc",
+    "rooted_value_unittest.cc",
     "runtime_unittest.cc",
     "string_unittest.cc",
   ]

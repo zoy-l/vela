@@ -79,7 +79,7 @@ class ImportTest : public testing::Test {
 
 TEST_F(ImportTest, ChecksAndRunsEscapedUnicodePathsAndStringApis) {
   Write(std::filesystem::path(u8"文本.vela"), R"(
-func decorate(text: string): string {
+export func decorate(text: string): string {
   const builder = StringBuilder();
   builder.append("[${text}]");
   return builder.toString();
@@ -96,9 +96,11 @@ func main(): string { return decorate("世界"); }
 }
 
 TEST_F(ImportTest, LoadsDiamondDependenciesOnceInDependencyOrder) {
-  Write("shared.vela", R"(func shared(): string { return "s"; })");
-  Write("left.vela", R"(import "shared.vela"; func left(): string { return "l${shared()}"; })");
-  Write("right.vela", R"(import "shared.vela"; func right(): string { return "r${shared()}"; })");
+  Write("shared.vela", R"(export func shared(): string { return "s"; })");
+  Write("left.vela",
+        R"(import "shared.vela"; export func left(): string { return "l${shared()}"; })");
+  Write("right.vela",
+        R"(import "shared.vela"; export func right(): string { return "r${shared()}"; })");
   Write("main.vela", R"(import "left.vela"; import "right.vela";
     func main(): string { return join([left(), right()], ":"); })");
   const auto checked = Check();
@@ -113,11 +115,13 @@ TEST_F(ImportTest, DiagnosesMissingImportsInCheckingAndCompilation) {
   EXPECT_FALSE(Compile().Succeeded());
 }
 
-TEST_F(ImportTest, DiagnosesCyclesInCheckingAndCompilation) {
-  Write("main.vela", R"(import "other.vela"; func main(): string { return ""; })");
-  Write("other.vela", R"(import "main.vela";)");
-  EXPECT_FALSE(Check().Succeeded());
-  EXPECT_FALSE(Compile().Succeeded());
+TEST_F(ImportTest, LinksFunctionCyclesWithoutRepeatingModuleLoading) {
+  Write("main.vela", R"(import "other.vela";
+    export func finish(): string { return "cycle"; }
+    func main(): string { return other(); })");
+  Write("other.vela", R"(import "main.vela"; export func other(): string { return finish(); })");
+  EXPECT_TRUE(Check().Succeeded());
+  EXPECT_EQ(RunText(), "cycle");
 }
 
 TEST_F(ImportTest, ImportedInvalidEscapesStopBothPathsBeforeExecution) {

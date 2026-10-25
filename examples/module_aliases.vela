@@ -1,0 +1,6 @@
+import "modules/counters.vela" as counter;
+
+func main(): int {
+  counter.next();
+  return counter.next();
+}

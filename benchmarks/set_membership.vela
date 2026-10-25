@@ -1,0 +1,11 @@
+func main(): int {
+  const values = Set<int>();
+  for (let index: int = 0; index < 1000; index = index + 1) {
+    values.add(index);
+  }
+  let total: int = 0;
+  for (let index: int = 0; index < 1000; index = index + 1) {
+    if (values.has(index)) { total = total + index; }
+  }
+  return total;
+}

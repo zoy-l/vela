@@ -1,0 +1,16 @@
+interface Counter {
+  next(): int;
+}
+
+class Increment implements Counter {
+  private count: int = 0;
+  public next(): int { this.count = this.count + 1; return this.count; }
+}
+
+func run(counter: Counter): int {
+  let value: int = 0;
+  for (let index: int = 0; index < 1000; index = index + 1) { value = counter.next(); }
+  return value;
+}
+
+func main(): int { return run(Increment()); }

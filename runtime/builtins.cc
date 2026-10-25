@@ -1,7 +1,8 @@
-#include "runtime/string_operations.h"
+#include "runtime/builtins.h"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -13,15 +14,18 @@
 
 #include "base/builtin.h"
 #include "base/utf8.h"
+#include "runtime/array_operations.h"
+#include "runtime/collection_operations.h"
 #include "runtime/heap.h"
 #include "runtime/string.h"
+#include "runtime/unicode_operations.h"
 #include "runtime/value.h"
 #include "runtime/value_io.h"
 
 namespace vela::runtime {
 namespace {
 
-using Result = std::expected<Value, StringError>;
+using Result = std::expected<Value, BuiltinError>;
 constexpr std::size_t kStackSearchLength = 64;
 
 struct PrefixDeleter final {
@@ -30,14 +34,14 @@ struct PrefixDeleter final {
 
 auto StringResult(StringObject* string) -> Result {
   if (string == nullptr) {
-    return std::unexpected(StringError::OutOfMemory);
+    return std::unexpected(BuiltinError::OutOfMemory);
   }
   return Value::String(string);
 }
 
 auto ScalarToString(Value value, Heap& heap) -> Result {
   if (!value.IsInteger() && !value.IsDouble() && !value.IsBoolean()) {
-    return std::unexpected(StringError::TypeError);
+    return std::unexpected(BuiltinError::TypeError);
   }
   std::array<char, kScalarTextCapacity> bytes{};
   return StringResult(heap.AllocateString(FormatScalar(value, bytes)));
@@ -47,11 +51,11 @@ auto Join(std::span<const Value> arguments, Heap& heap) -> Result {
   const auto array = arguments.subspan(0).front();
   const auto separator = arguments.subspan(1).front();
   if (!array.IsObject() || array.AsObject() == nullptr || !separator.IsString()) {
-    return std::unexpected(StringError::TypeError);
+    return std::unexpected(BuiltinError::TypeError);
   }
   const auto parts = Heap::StringElements(*array.AsObject());
   if (!parts || std::ranges::any_of(*parts, [](auto* part) -> bool { return part == nullptr; })) {
-    return std::unexpected(StringError::TypeError);
+    return std::unexpected(BuiltinError::TypeError);
   }
   return StringResult(heap.JoinStrings(*parts, separator.AsString()->value()));
 }
@@ -60,14 +64,14 @@ auto BuilderOperation(Builtin builtin, std::span<const Value> arguments, Heap& h
   if (builtin == Builtin::NewStringBuilder) {
     auto* builder = heap.AllocateStringBuilder();
     if (builder == nullptr) {
-      return std::unexpected(StringError::OutOfMemory);
+      return std::unexpected(BuiltinError::OutOfMemory);
     }
     return Value::Object(builder);
   }
   const auto value = arguments.front();
   if (!value.IsObject() || value.AsObject() == nullptr ||
       !Heap::IsStringBuilder(*value.AsObject())) {
-    return std::unexpected(StringError::TypeError);
+    return std::unexpected(BuiltinError::TypeError);
   }
   auto& builder = *value.AsObject();
   if (builtin == Builtin::BuilderToString) {
@@ -75,10 +79,10 @@ auto BuilderOperation(Builtin builtin, std::span<const Value> arguments, Heap& h
   }
   const auto text = arguments.subspan(1).front();
   if (!text.IsString()) {
-    return std::unexpected(StringError::TypeError);
+    return std::unexpected(BuiltinError::TypeError);
   }
   if (!heap.AppendString(builder, text.AsString()->value())) {
-    return std::unexpected(StringError::OutOfMemory);
+    return std::unexpected(BuiltinError::OutOfMemory);
   }
   return Value::Null();
 }
@@ -87,29 +91,29 @@ auto Slice(Builtin builtin, std::string_view text, std::span<const Value> argume
     -> Result {
   if (!arguments.subspan(1).front().IsInteger() ||
       (builtin == Builtin::StringSlice && !arguments.subspan(2).front().IsInteger())) {
-    return std::unexpected(StringError::TypeError);
+    return std::unexpected(BuiltinError::TypeError);
   }
   const auto start = arguments.subspan(1).front().AsInteger();
   const auto end =
       builtin == Builtin::StringIndex ? start : arguments.subspan(2).front().AsInteger();
   if (start < 0 || end < start || std::cmp_greater(end, text.size())) {
-    return std::unexpected(StringError::IndexOutOfBounds);
+    return std::unexpected(BuiltinError::IndexOutOfBounds);
   }
   const auto offset = Utf8Offset(text, static_cast<std::size_t>(start));
   if (!offset) {
-    return std::unexpected(StringError::IndexOutOfBounds);
+    return std::unexpected(BuiltinError::IndexOutOfBounds);
   }
   const auto suffix = text.substr(*offset);
   const auto count = builtin == Builtin::StringIndex ? 1 : static_cast<std::size_t>(end - start);
   const auto size = Utf8Offset(suffix, count);
   if (!size) {
-    return std::unexpected(StringError::IndexOutOfBounds);
+    return std::unexpected(BuiltinError::IndexOutOfBounds);
   }
   return StringResult(heap.AllocateString(suffix.substr(0, *size)));
 }
 
 auto Find(std::string_view text_view, std::string_view part_view)
-    -> std::expected<std::size_t, StringError> {
+    -> std::expected<std::size_t, BuiltinError> {
   if (part_view.size() <= 1 || part_view.size() > text_view.size()) {
     return text_view.find(part_view);
   }
@@ -122,7 +126,7 @@ auto Find(std::string_view text_view, std::string_view part_view)
   if (part.size() > local.size()) {
     storage.reset(::operator new(part.size() * sizeof(std::size_t), std::nothrow));
     if (storage == nullptr) {
-      return std::unexpected(StringError::OutOfMemory);
+      return std::unexpected(BuiltinError::OutOfMemory);
     }
     prefix = {static_cast<std::size_t*>(storage.get()), part.size()};
   }
@@ -152,8 +156,54 @@ auto Find(std::string_view text_view, std::string_view part_view)
 
 }  // namespace
 
-auto ExecuteStringBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) -> Result {
+auto ConvertNumber(NumericConversion conversion, Value value) -> Result {
+  if (!value.IsInteger() && !value.IsDouble()) {
+    return std::unexpected(BuiltinError::TypeError);
+  }
+  if (conversion == NumericConversion::ToDouble) {
+    return value.IsDouble() ? value : Value::Double(static_cast<double>(value.AsInteger()));
+  }
+  if (value.IsInteger()) {
+    return value;
+  }
+  const auto truncated = std::trunc(value.AsDouble());
+  // int64 上界转为 double 会舍入到 2^63，因此用精确的半开范围检查后再转换。
+  constexpr double kIntegerLower = -0x1p63;
+  constexpr double kIntegerUpper = 0x1p63;
+  if (!std::isfinite(truncated) || truncated < kIntegerLower || truncated >= kIntegerUpper) {
+    return std::unexpected(BuiltinError::InvalidNumericConversion);
+  }
+  return Value::Integer(static_cast<std::int64_t>(truncated));
+}
+
+auto ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) -> Result {
   switch (builtin) {
+    case Builtin::ArrayCopy:
+    case Builtin::ArraySlice:
+    case Builtin::ArrayFill:
+    case Builtin::ArrayReverse:
+      return ExecuteArrayBuiltin(builtin, arguments, heap);
+    case Builtin::CollectionLength:
+    case Builtin::SetAdd:
+    case Builtin::CollectionHas:
+    case Builtin::CollectionRemove:
+    case Builtin::CollectionClear:
+    case Builtin::MapGet:
+    case Builtin::MapSet:
+    case Builtin::CollectionKeys:
+    case Builtin::CollectionValues:
+      return ExecuteCollectionBuiltin(builtin, arguments, heap);
+    case Builtin::ArrayLength:
+    case Builtin::StringCodePoints:
+    case Builtin::StringGraphemes:
+    case Builtin::StringGraphemeLength:
+    case Builtin::StringGraphemeSlice:
+      return ExecuteUnicodeBuiltin(builtin, arguments, heap);
+    case Builtin::NumericToInt:
+    case Builtin::NumericToDouble:
+      return ConvertNumber(builtin == Builtin::NumericToDouble ? NumericConversion::ToDouble
+                                                               : NumericConversion::ToInt,
+                           arguments.front());
     case Builtin::ScalarToString:
       return ScalarToString(arguments.front(), heap);
     case Builtin::Join:
@@ -166,7 +216,7 @@ auto ExecuteStringBuiltin(Builtin builtin, std::span<const Value> arguments, Hea
       break;
   }
   if (!arguments.front().IsString()) {
-    return std::unexpected(StringError::TypeError);
+    return std::unexpected(BuiltinError::TypeError);
   }
   const auto text = arguments.front().AsString()->value();
   if (builtin == Builtin::StringLength || builtin == Builtin::StringByteLength) {
@@ -177,7 +227,7 @@ auto ExecuteStringBuiltin(Builtin builtin, std::span<const Value> arguments, Hea
     return Slice(builtin, text, arguments, heap);
   }
   if (!arguments.subspan(1).front().IsString()) {
-    return std::unexpected(StringError::TypeError);
+    return std::unexpected(BuiltinError::TypeError);
   }
   const auto part = arguments.subspan(1).front().AsString()->value();
   if (builtin == Builtin::StringStartsWith) {

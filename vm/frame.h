@@ -1,17 +1,15 @@
 #pragma once
 
-#include <span>
-
 #include "runtime/heap.h"
-#include "runtime/value.h"
+#include "runtime/register_storage.h"
 
 namespace vela::vm {
 
 class Frame final {
  public:
   Frame() noexcept = default;
-  Frame(runtime::Heap& heap, std::span<runtime::Value> registers) noexcept : registers_(registers) {
-    roots_.Attach(heap, registers.data(), registers.size());
+  Frame(runtime::Heap& heap, runtime::RegisterView registers) noexcept : registers_(registers) {
+    roots_.Attach(heap, registers);
   }
 
   ~Frame() = default;
@@ -20,9 +18,9 @@ class Frame final {
   Frame(Frame&&) = delete;
   auto operator=(Frame&&) -> Frame& = delete;
 
-  void Attach(runtime::Heap& heap, std::span<runtime::Value> registers) noexcept {
+  void Attach(runtime::Heap& heap, runtime::RegisterView registers) noexcept {
     registers_ = registers;
-    roots_.Attach(heap, registers.data(), registers.size());
+    roots_.Attach(heap, registers);
   }
 
   void Detach() noexcept {
@@ -30,10 +28,10 @@ class Frame final {
     registers_ = {};
   }
 
-  [[nodiscard]] auto registers() noexcept -> std::span<runtime::Value> { return registers_; }
+  [[nodiscard]] auto registers() const noexcept -> runtime::RegisterView { return registers_; }
 
  private:
-  std::span<runtime::Value> registers_;
+  runtime::RegisterView registers_;
   runtime::RootRange roots_;
 };
 

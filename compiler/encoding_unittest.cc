@@ -8,6 +8,7 @@
 
 #include "compiler/compiler.h"
 #include "runtime/isolate.h"
+#include "runtime/string.h"
 #include "vm/program.h"
 #include "vm/vm.h"
 
@@ -60,7 +61,7 @@ TEST(EncodingTest, RejectsClassIndex256) {
   EXPECT_TRUE(compiled.diagnostics.front().message.contains("encoding"));
 }
 
-TEST(EncodingTest, RejectsStringConstantIndex256) {
+TEST(EncodingTest, LoadsStringConstantIndex256WithoutTruncation) {
   std::string source;
   for (std::size_t index = 0; index < kBeyondByteIndex; ++index) {
     source += "func f" + std::to_string(index) + "(): string { return \"s" + std::to_string(index) +
@@ -68,11 +69,13 @@ TEST(EncodingTest, RejectsStringConstantIndex256) {
   }
   runtime::Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
-  ASSERT_FALSE(compiled.Succeeded());
-  EXPECT_TRUE(compiled.diagnostics.front().message.contains("encoding"));
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("f256"));
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsString()->value(), "s256");
 }
 
-TEST(EncodingTest, RejectsDoubleConstantIndex256) {
+TEST(EncodingTest, AcceptsDoubleConstantIndex256) {
   std::string source = "func main(): int {\n";
   for (std::size_t index = 0; index < kBeyondByteIndex; ++index) {
     source += "print(" + std::to_string(index) + ".5);\n";
@@ -80,16 +83,16 @@ TEST(EncodingTest, RejectsDoubleConstantIndex256) {
   source += "return 0; }";
   runtime::Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
-  ASSERT_FALSE(compiled.Succeeded());
-  EXPECT_TRUE(compiled.diagnostics.front().message.contains("encoding"));
+  ASSERT_TRUE(compiled.Succeeded());
+  EXPECT_EQ(compiled.program.functions().front().doubles.size(), kBeyondByteIndex);
 }
 
 TEST(EncodingTest, RejectsArrayLayoutIndex256) {
   std::string source;
-  std::string type = "int";
   for (std::size_t index = 0; index < kBeyondByteIndex; ++index) {
-    type += "[]";
-    source += "func f" + std::to_string(index) + "(): " + type + " { return []; }\n";
+    const auto type = "Element" + std::to_string(index);
+    source += "class " + type + " {}\n";
+    source += "func f" + std::to_string(index) + "(): " + type + "[] { return []; }\n";
   }
   runtime::Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
@@ -100,7 +103,7 @@ TEST(EncodingTest, RejectsArrayLayoutIndex256) {
 auto FieldsSource(std::size_t count) -> std::string {
   std::string source = "class Record {\n";
   for (std::size_t index = 0; index < count; ++index) {
-    source += "f" + std::to_string(index) + ": int;\n";
+    source += "param f" + std::to_string(index) + ": int;\n";
   }
   source += "}\nfunc main(): int { const record = Record(";
   for (std::size_t index = 0; index < count; ++index) {
@@ -136,7 +139,7 @@ TEST(EncodingTest, PreservesArithmeticResultsOutsideTheImmediateRange) {
   const auto result = vm::VirtualMachine(isolate).Execute(main);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsInteger(), 40000);
-  EXPECT_FALSE(CompileSource("func main(): int { return 32768; }", isolate).Succeeded());
+  EXPECT_TRUE(CompileSource("func main(): int { return 32768; }", isolate).Succeeded());
 }
 
 TEST(EncodingTest, DiagnosesJumpOffsetsOutsideInt16) {
@@ -153,7 +156,8 @@ TEST(EncodingTest, DiagnosesJumpOffsetsOutsideInt16) {
 
 TEST(EncodingTest, ReusesDeadTemporariesInLongFunctions) {
   std::string source =
-      "class Counter { value: int; next(): int { this.value=this.value+1; return this.value; } "
+      "class Counter { param value: int; next(): int { this.value=this.value+1; return this.value; "
+      "} "
       "}\nfunc main(): int { const counter=Counter(value: 0); let total=0;\n";
   for (std::size_t index = 0; index < kLongFunctionCalls; ++index) {
     source += "total=total+counter.next();\n";
@@ -171,7 +175,7 @@ TEST(EncodingTest, ReusesDeadTemporariesInLongFunctions) {
 }
 
 TEST(EncodingTest, ReportsLiveRegisterPressureInsteadOfTotalExpressionCount) {
-  std::string source = "class Box { value: int; } func main(): int {\n";
+  std::string source = "class Box { param value: int; } func main(): int {\n";
   for (std::size_t index = 0; index < kBeyondByteIndex; ++index) {
     source += "const b" + std::to_string(index) + "=Box(value: " + std::to_string(index) + ");\n";
   }

@@ -4,6 +4,7 @@
 #include "benchmark/benchmark.h"
 
 #include "compiler/compiler.h"
+#include "compiler/frontend/token.h"
 #include "runtime/isolate.h"
 #include "vm/vm.h"
 
@@ -17,7 +18,7 @@ auto BuildSymbolSource(std::int64_t count) -> std::string {
     const std::string class_name = "SymbolTableBenchmarkClass" + suffix;
     source += "enum SymbolTableBenchmarkEnum" + suffix + " { first, second }\n";
     source += "class " + class_name +
-              " { value: int; "
+              " { param value: int; "
               "increment(amount: int): int { return this.value + amount; } }\n";
     source += "func symbol_table_benchmark_function_" + suffix +
               "(parameter_with_a_long_name: int): int { "
@@ -63,6 +64,7 @@ void CompileSymbolTables(benchmark::State& state) {
     benchmark::DoNotOptimize(compiled);
   }
   state.counters["source_bytes"] = static_cast<double>(source.size());
+  state.counters["token_bytes"] = static_cast<double>(sizeof(frontend::Token));
 }
 
 BENCHMARK(CompileSymbolTables)->Name("compile/symbol_tables")->Arg(32)->Arg(256)->Arg(1024);

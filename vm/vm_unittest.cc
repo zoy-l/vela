@@ -12,6 +12,7 @@
 #include "runtime/value.h"
 #include "vm/bytecode.h"
 
+#include "vm/execution_status.h"
 #include "vm/program.h"
 #include "vm/vm.h"
 
@@ -48,14 +49,10 @@ TEST(VmTest, StringConcatSupportsAliasedDestinationsAcrossSafepoints) {
       EncodeABC(OpCode::StringConcat, 0, 0, 1),
       EncodeABC(OpCode::Return, 0, 0, 0),
   });
-  const Function function{
-      .code = kCode,
-      .classes = {},
-      .strings = constants,
-      .arrays = {},
-      .doubles = {},
-      .register_count = 2,
-  };
+  Function function;
+  function.code = kCode;
+  function.strings = constants;
+  function.register_count = 2;
   const auto result = LoadAndExecute(isolate, function);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsString()->value(), "xxxxxxxxxx");
@@ -76,14 +73,11 @@ TEST(VmTest, InterpolationAndBuilderAllowAliasedDestinationsAcrossSafepoints) {
       EncodeABC(OpCode::BuiltinCall, 2, static_cast<std::uint8_t>(Builtin::BuilderToString), 2),
       EncodeABC(OpCode::Return, 2, 0, 0),
   });
-  const Function function{
-      .code = kCode,
-      .classes = {},
-      .strings = constants,
-      .arrays = {},
-      .doubles = {},
-      .register_count = 5,
-  };
+  Function function;
+  function.code = kCode;
+  function.strings = constants;
+  constexpr std::uint16_t kRequiredRegisters = 5;
+  function.register_count = kRequiredRegisters;
   const auto result = LoadAndExecute(isolate, function);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsString()->value(), "xx");
@@ -106,14 +100,11 @@ TEST(VmTest, JoinAllowsDestinationToOverwriteRootedInputArray) {
       EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::Join), 0),
       EncodeABC(OpCode::Return, 0, 0, 0),
   });
-  const Function function{
-      .code = kCode,
-      .classes = {},
-      .strings = constants,
-      .arrays = arrays,
-      .doubles = {},
-      .register_count = 3,
-  };
+  Function function;
+  function.code = kCode;
+  function.strings = constants;
+  function.arrays = arrays;
+  function.register_count = 3;
   const auto result = LoadAndExecute(isolate, function);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsString()->value(), "xxx");
@@ -124,14 +115,9 @@ class StringBytecodeValidationTest : public testing::TestWithParam<Instruction> 
 TEST_P(StringBytecodeValidationTest, RejectsInvalidBuiltinIdsAndArgumentRanges) {
   Isolate isolate;
   const std::array<Instruction, 2> code = {GetParam(), EncodeABC(OpCode::Return, 0, 0, 0)};
-  const Function function{
-      .code = code,
-      .classes = {},
-      .strings = {},
-      .arrays = {},
-      .doubles = {},
-      .register_count = 2,
-  };
+  Function function;
+  function.code = code;
+  function.register_count = 2;
   EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
 }
 
@@ -149,14 +135,11 @@ TEST(VmTest, IntegerExecution) {
       EncodeABC(OpCode::AddInt, 2, 0, 1),
       EncodeABC(OpCode::Return, 2, 0, 0),
   };
-  const Function function{
-      .code = code,
-      .classes = std::span<vela::runtime::ClassLayout* const>(),
-      .strings = std::span<vela::runtime::StringObject* const>(),
-      .arrays = {},
-      .doubles = {},
-      .register_count = 3,
-  };
+  Function function;
+  function.code = code;
+  function.classes = std::span<vela::runtime::ClassLayout* const>();
+  function.strings = std::span<vela::runtime::StringObject* const>();
+  function.register_count = 3;
 
   Isolate isolate;
   const auto result = LoadAndExecute(isolate, function);
@@ -176,14 +159,11 @@ TEST(VmTest, FrameRegistersStayRootedAcrossCollection) {
       EncodeABC(OpCode::SetField, 0, 0, 1),    EncodeABC(OpCode::NewInstance, 2, 0, 0),
       EncodeABC(OpCode::GetField, 3, 0, 0),    EncodeABC(OpCode::Return, 3, 0, 0),
   };
-  const Function function{
-      .code = code,
-      .classes = std::span<vela::runtime::ClassLayout* const>(classes.data(), classes.size()),
-      .strings = std::span<vela::runtime::StringObject* const>(),
-      .arrays = {},
-      .doubles = {},
-      .register_count = 4,
-  };
+  Function function;
+  function.code = code;
+  function.classes = std::span<vela::runtime::ClassLayout* const>(classes.data(), classes.size());
+  function.strings = std::span<vela::runtime::StringObject* const>();
+  function.register_count = 4;
 
   const auto result = LoadAndExecute(isolate, function);
   ASSERT_EQ(result.status, ExecutionStatus::Returned);
@@ -204,14 +184,11 @@ TEST(VmTest, FrameRegistersStayRootedAcrossCollection) {
 
 TEST(VmTest, RejectsUnknownOpcodeDuringLoading) {
   constexpr std::array<Instruction, 1> code = {EncodeABC(static_cast<OpCode>(0xff), 0, 0, 0)};
-  const Function function{
-      .code = code,
-      .classes = std::span<vela::runtime::ClassLayout* const>(),
-      .strings = std::span<vela::runtime::StringObject* const>(),
-      .arrays = {},
-      .doubles = {},
-      .register_count = 1,
-  };
+  Function function;
+  function.code = code;
+  function.classes = std::span<vela::runtime::ClassLayout* const>();
+  function.strings = std::span<vela::runtime::StringObject* const>();
+  function.register_count = 1;
 
   Isolate isolate;
   EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
@@ -222,14 +199,11 @@ TEST(VmTest, DivisionRejectsInvalidSourceRegister) {
       EncodeABC(OpCode::DivInt, 0, 0, 1),
       EncodeABC(OpCode::Return, 0, 0, 0),
   };
-  const Function function{
-      .code = code,
-      .classes = std::span<vela::runtime::ClassLayout* const>(),
-      .strings = std::span<vela::runtime::StringObject* const>(),
-      .arrays = {},
-      .doubles = {},
-      .register_count = 1,
-  };
+  Function function;
+  function.code = code;
+  function.classes = std::span<vela::runtime::ClassLayout* const>();
+  function.strings = std::span<vela::runtime::StringObject* const>();
+  function.register_count = 1;
   Isolate isolate;
   EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
 }
@@ -242,15 +216,11 @@ TEST(VmTest, RejectsInvalidArrayLayoutIndices) {
       EncodeABC(OpCode::NewArray, 0, 1, 1),
       EncodeABC(OpCode::Return, 0, 0, 0),
   });
-  Function function{
-      .code = code,
-      .classes = {},
-      .strings = {},
-      .arrays = layouts,
-      .doubles = {},
-      .register_count = 1,
-      .parameter_count = 0,
-  };
+  Function function;
+  function.code = code;
+  function.arrays = layouts;
+  function.register_count = 1;
+  function.parameter_count = 0;
   EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
   const std::array<const runtime::ArrayLayout*, 1> null_layout = {nullptr};
   const auto valid_code = std::to_array<Instruction>({
@@ -273,15 +243,11 @@ TEST(VmTest, RejectsWrongArrayStoreAndNonArrayIndexing) {
       EncodeABC(OpCode::SetIndex, 0, 1, 2),
       EncodeABC(OpCode::Return, 0, 0, 0),
   });
-  Function function{
-      .code = code,
-      .classes = {},
-      .strings = {},
-      .arrays = layouts,
-      .doubles = {},
-      .register_count = 3,
-      .parameter_count = 0,
-  };
+  Function function;
+  function.code = code;
+  function.arrays = layouts;
+  function.register_count = 3;
+  function.parameter_count = 0;
   EXPECT_EQ(LoadAndExecute(isolate, function).status, ExecutionStatus::TypeError);
   auto* record = isolate.CreateClassLayout(0, {});
   const std::array<runtime::ClassLayout*, 1> classes = {record};
@@ -302,15 +268,11 @@ TEST(VmTest, ValidatesDoubleConstantAndRegisterOperands) {
       EncodeABC(OpCode::LoadDouble, 0, 1, 0),
       EncodeABC(OpCode::Return, 0, 0, 0),
   });
-  const Function function{
-      .code = code,
-      .classes = {},
-      .strings = {},
-      .arrays = {},
-      .doubles = constants,
-      .register_count = 1,
-      .parameter_count = 0,
-  };
+  Function function;
+  function.code = code;
+  function.doubles = constants;
+  function.register_count = 1;
+  function.parameter_count = 0;
   Isolate isolate;
   EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
   code.front() = EncodeABC(OpCode::LoadDouble, 1, 0, 0);
@@ -331,15 +293,11 @@ TEST_P(VmDoubleOperationTest, RejectsIntegerValuesAndInvalidRegisters) {
       EncodeABC(OpCode::AddDouble, 2, 0, 1),
       EncodeABC(OpCode::Return, 2, 0, 0),
   });
-  const Function function{
-      .code = code,
-      .classes = {},
-      .strings = {},
-      .arrays = {},
-      .doubles = constants,
-      .register_count = 3,
-      .parameter_count = 0,
-  };
+  Function function;
+  function.code = code;
+  function.doubles = constants;
+  function.register_count = 3;
+  function.parameter_count = 0;
   Isolate isolate;
   const auto opcode = GetParam();
   code.at(2) = EncodeABC(opcode, 2, 0, 1);
@@ -371,15 +329,10 @@ TEST(VmTest, DoubleNegationRejectsIntegerAndInvalidRegister) {
       EncodeABC(OpCode::NegDouble, 1, 0, 0),
       EncodeABC(OpCode::Return, 1, 0, 0),
   });
-  const Function function{
-      .code = code,
-      .classes = {},
-      .strings = {},
-      .arrays = {},
-      .doubles = {},
-      .register_count = 2,
-      .parameter_count = 0,
-  };
+  Function function;
+  function.code = code;
+  function.register_count = 2;
+  function.parameter_count = 0;
   Isolate isolate;
   EXPECT_EQ(LoadAndExecute(isolate, function).status, ExecutionStatus::TypeError);
   code.at(1) = EncodeABC(OpCode::NegDouble, 1, 2, 0);

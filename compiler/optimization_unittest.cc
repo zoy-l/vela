@@ -6,6 +6,7 @@
 #include "compiler/compiler.h"
 #include "runtime/isolate.h"
 #include "vm/bytecode.h"
+#include "vm/execution_status.h"
 #include "vm/program.h"
 #include "vm/vm.h"
 
@@ -25,6 +26,23 @@ TEST(OptimizationTest, FoldsConstantsThroughBindingsAndRemovesTheirDeadProducers
   EXPECT_EQ(vm::DecodeImm16(code.front()), 42);
   EXPECT_EQ(vm::DecodeOp(code.back()), vm::OpCode::Return);
   EXPECT_EQ(main.register_count(), 1U);
+}
+
+TEST(OptimizationTest, PropagatesCopiesWithoutReadingOverwrittenSourceBindings) {
+  runtime::Isolate isolate;
+  const auto compiled = CompileSource(R"(
+func compute(value: int): int {
+  let original = value; let copy = original; original = 0;
+  let second = copy; copy = 0;
+  return second + original + copy;
+}
+func main(): int { return compute(42); }
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsInteger(), 42);
 }
 
 struct OptimizedProgram final {
@@ -69,7 +87,7 @@ INSTANTIATE_TEST_SUITE_P(
           } return total;
         })",
                                      99},
-                    OptimizedProgram{R"(class Counter { value: int;
+                    OptimizedProgram{R"(class Counter { param value: int;
           next(): int { this.value=this.value+1; return this.value; }
         } func combine(first: int, second: int, third: int): int { return first*100+second*10+third; }
         func identity(value: int): int { return value; }
@@ -119,7 +137,7 @@ INSTANTIATE_TEST_SUITE_P(
 TEST(OptimizationTest, ReleasesFrameRootsAfterErrorsAndBeforeRegisterReuse) {
   runtime::Isolate isolate(1);
   const auto compiled = CompileSource(R"(
-class Box { value: int; }
+class Box { param value: int; }
 func fail(): int { const box=Box(value: 1); return box.value/0; }
 func main(): int { return fail(); }
 )",

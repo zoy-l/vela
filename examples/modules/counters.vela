@@ -1,0 +1,7 @@
+export const step: int = 1;
+let current: int = 40;
+
+export func next(): int {
+  current = current + step;
+  return current;
+}

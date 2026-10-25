@@ -1,9 +1,10 @@
 #include "compiler/compiler.h"
+#include "compiler/compilation_state.h"
+#include "runtime/layout_transaction.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -20,16 +21,21 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/parser.h"
 #include "compiler/frontend/source_loader.h"
+#include "compiler/frontend/specialization.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 #include "compiler/ir/optimizer.h"
+#include "compiler/native_linker.h"
 #include "compiler/register_allocator.h"
+#include "compiler/runtime_layouts.h"
+#include "compiler/type_constraints.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
-#include "runtime/value.h"
 #include "vm/bytecode.h"
+#include "vm/exception_handler.h"
 #include "vm/program.h"
 
 namespace vela::compiler {
@@ -58,6 +64,29 @@ struct EncodingContext final {
   std::span<const std::string> source_paths;
 };
 
+auto ValidateEncodingOperands(const ir::Instruction& instruction, std::string_view source_path)
+    -> std::optional<frontend::Diagnostic> {
+  const bool uses_wide_target =
+      instruction.opcode == ir::Opcode::Jump || instruction.opcode == ir::Opcode::JumpIfFalse;
+  const bool uses_wide_constant = instruction.opcode == ir::Opcode::LoadString ||
+                                  instruction.opcode == ir::Opcode::LoadDouble ||
+                                  instruction.opcode == ir::Opcode::LoadIntConstant;
+  const std::uint32_t index_limit = uses_wide_constant ? std::numeric_limits<std::uint16_t>::max()
+                                                       : std::numeric_limits<std::uint8_t>::max();
+
+  if (instruction.dst > std::numeric_limits<std::uint8_t>::max() ||
+      instruction.lhs > std::numeric_limits<std::uint8_t>::max() ||
+      instruction.rhs > std::numeric_limits<std::uint8_t>::max() ||
+      (!uses_wide_target && instruction.index > index_limit)) {
+    return frontend::Diagnostic{
+        .location = instruction.location,
+        .message = "instruction operand exceeds VM encoding",
+        .source_path = std::string(source_path),
+    };
+  }
+  return std::nullopt;
+}
+
 auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext& context)
     -> std::expected<vm::Instruction, frontend::Diagnostic> {
   const auto& function = *context.function;
@@ -68,37 +97,22 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
       context.source_paths.empty()
           ? std::string_view()
           : context.source_paths.subspan(instruction.location.source_id).front();
-  const bool uses_wide_target =
-      instruction.opcode == ir::Opcode::Jump || instruction.opcode == ir::Opcode::JumpIfFalse;
-
-  if (instruction.dst > std::numeric_limits<std::uint8_t>::max() ||
-      instruction.lhs > std::numeric_limits<std::uint8_t>::max() ||
-      instruction.rhs > std::numeric_limits<std::uint8_t>::max() ||
-      (!uses_wide_target && instruction.index > std::numeric_limits<std::uint8_t>::max())) {
-    return std::unexpected(frontend::Diagnostic{
-        .location = instruction.location,
-        .message = "instruction operand exceeds VM encoding",
-        .source_path = std::string(source_path),
-    });
+  if (auto diagnostic = ValidateEncodingOperands(instruction, source_path)) {
+    return std::unexpected(std::move(*diagnostic));
   }
   const vm::OpCode opcode = instruction.opcode;
   switch (instruction.opcode) {
     case ir::Opcode::LoadNull:
+    case ir::Opcode::Catch:
       return vm::EncodeABC(opcode, Byte(instruction.dst), 0, 0);
     case ir::Opcode::LoadBool:
       return vm::EncodeABC(opcode, Byte(instruction.dst),
                            static_cast<std::uint8_t>(instruction.immediate != 0), 0);
     case ir::Opcode::LoadInt:
-      if (!FitsImmediate16(instruction.immediate)) {
-        return std::unexpected(frontend::Diagnostic{
-            .location = instruction.location,
-            .message = "integer literal exceeds bootstrap bytecode immediate range",
-            .source_path = std::string(source_path),
-        });
-      }
       return vm::EncodeAImm16(opcode, Byte(instruction.dst),
                               static_cast<std::int16_t>(instruction.immediate));
     case ir::Opcode::Move:
+    case ir::Opcode::ExceptionValue:
     case ir::Opcode::AddInt:
     case ir::Opcode::AddDouble:
     case ir::Opcode::SubDouble:
@@ -134,8 +148,7 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
       return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs),
                            Byte(instruction.rhs));
     case ir::Opcode::NewArray:
-      if (instruction.index > std::numeric_limits<std::uint8_t>::max() ||
-          instruction.immediate < 0 ||
+      if (instruction.immediate < 0 ||
           std::cmp_greater(instruction.immediate, std::numeric_limits<std::uint8_t>::max())) {
         return std::unexpected(frontend::Diagnostic{
             .location = instruction.location,
@@ -146,18 +159,18 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
       return vm::EncodeABC(opcode, Byte(instruction.dst),
                            static_cast<std::uint8_t>(instruction.index),
                            static_cast<std::uint8_t>(instruction.immediate));
+    case ir::Opcode::NewDynamicArray:
+    case ir::Opcode::NewCollection:
+      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.index),
+                           Byte(instruction.lhs));
     case ir::Opcode::LoadString:
     case ir::Opcode::LoadDouble:
-      if (instruction.index > std::numeric_limits<std::uint8_t>::max()) {
-        return std::unexpected(frontend::Diagnostic{
-            .location = instruction.location,
-            .message = "constant index exceeds bytecode encoding",
-            .source_path = std::string(source_path),
-        });
-      }
-      return vm::EncodeABC(opcode, Byte(instruction.dst),
-                           static_cast<std::uint8_t>(instruction.index), 0);
+    case ir::Opcode::LoadIntConstant:
+      return vm::EncodeAUnsigned16(opcode, Byte(instruction.dst),
+                                   static_cast<std::uint16_t>(instruction.index));
     case ir::Opcode::Print:
+    case ir::Opcode::Throw:
+    case ir::Opcode::Rethrow:
       return vm::EncodeABC(opcode, 0, Byte(instruction.lhs), 0);
     case ir::Opcode::BuiltinCall:
       if (instruction.index >= static_cast<std::uint32_t>(Builtin::Count)) {
@@ -169,6 +182,45 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
       }
       return vm::EncodeABC(opcode, Byte(instruction.dst),
                            static_cast<std::uint8_t>(instruction.index), Byte(instruction.lhs));
+    case ir::Opcode::CallIndirect:
+      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.rhs),
+                           Byte(instruction.lhs));
+    case ir::Opcode::NativeCall:
+      if (instruction.immediate < 0 ||
+          std::cmp_greater(instruction.immediate, std::numeric_limits<std::uint8_t>::max())) {
+        return std::unexpected(frontend::Diagnostic{
+            .location = instruction.location,
+            .message = "native parameter count exceeds bytecode encoding",
+            .source_path = std::string(source_path),
+        });
+      }
+      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs),
+                           Byte(static_cast<std::uint32_t>(instruction.immediate)));
+    case ir::Opcode::CallInterface:
+      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.index),
+                           Byte(instruction.lhs));
+    case ir::Opcode::GetGlobal:
+      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.index), 0);
+    case ir::Opcode::IsType:
+    case ir::Opcode::CheckedCast:
+    case ir::Opcode::ExpectedValue:
+      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs),
+                           Byte(instruction.index));
+    case ir::Opcode::ExpectedHasValue:
+      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs), 0);
+    case ir::Opcode::NewOk:
+    case ir::Opcode::NewErr:
+      if (instruction.index >= class_count) {
+        return std::unexpected(frontend::Diagnostic{
+            .location = instruction.location,
+            .message = "unknown Expected layout",
+            .source_path = std::string(source_path),
+        });
+      }
+      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.index),
+                           Byte(instruction.lhs));
+    case ir::Opcode::SetGlobal:
+      return vm::EncodeABC(opcode, Byte(instruction.lhs), Byte(instruction.index), 0);
     case ir::Opcode::Call:
       if (instruction.index >= function_count) {
         return std::unexpected(frontend::Diagnostic{
@@ -233,70 +285,49 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
   });
 }
 
-auto CreateArrayLayouts(const ir::Program& program,
-                        const frontend::SemanticModel& model,
-                        std::span<runtime::ClassLayout* const> class_layouts,
-                        runtime::Isolate& isolate)
-    -> std::expected<std::vector<const runtime::ArrayLayout*>, frontend::Diagnostic> {
-  if (program.array_types.empty()) {
-    return std::vector<const runtime::ArrayLayout*>();
-  }
-  absl::flat_hash_map<std::string, runtime::ClassLayout*> classes_by_name;
-  classes_by_name.reserve(program.classes.size());
-  for (std::size_t index = 0; index < program.classes.size(); ++index) {
-    classes_by_name.emplace(program.classes.at(index).name, class_layouts.subspan(index).front());
-  }
-  std::vector<const runtime::ArrayLayout*> layouts;
-  layouts.reserve(program.array_types.size());
-  absl::flat_hash_map<std::string, const runtime::ArrayLayout*> arrays_by_name;
-  arrays_by_name.reserve(program.array_types.size());
-  for (const auto& type : program.array_types) {
-    const auto& element = model.types.at(type.name.substr(0, type.name.size() - 2));
-    const auto element_name =
-        element.nullable ? element.name.substr(0, element.name.size() - 1) : element.name;
-    runtime::ArrayLayout layout;
-    layout.nullable_elements = element.nullable;
-    using Kind = frontend::TypeDescriptor::Kind;
-    switch (element.kind) {
-      case Kind::Bool:
-        layout.element_kind = runtime::ValueKind::Boolean;
-        break;
-      case Kind::Int:
-      case Kind::Enum:
-        layout.element_kind = runtime::ValueKind::Integer;
-        break;
-      case Kind::Double:
-        layout.element_kind = runtime::ValueKind::Double;
-        break;
-      case Kind::String:
-        layout.element_kind = runtime::ValueKind::String;
-        break;
-      case Kind::StringBuilder:
-        layout.element_kind = runtime::ValueKind::Object;
-        layout.element_object_kind = runtime::ObjectKind::StringBuilder;
-        break;
-      case Kind::Class:
-        layout.element_kind = runtime::ValueKind::Object;
-        layout.element_class = classes_by_name.at(element_name);
-        break;
-      case Kind::Array:
-        layout.element_kind = runtime::ValueKind::Object;
-        layout.element_array = arrays_by_name.at(element_name);
-        break;
-      case Kind::Invalid:
-      case Kind::Null:
-      case Kind::Void:
-        return std::unexpected(frontend::Diagnostic{
-            .location = frontend::SourceLocation(),
-            .message = "invalid array element type",
-            .source_path = {},
-        });
+auto EncodeFunction(const ir::Function& function,
+                    EncodingContext context,
+                    vm::FunctionStorage compiled)
+    -> std::expected<vm::FunctionStorage, frontend::Diagnostic> {
+  compiled.code.reserve(function.instructions.size());
+  absl::flat_hash_map<std::int64_t, std::uint32_t> integer_ids;
+  for (auto instruction : function.instructions) {
+    if (instruction.opcode == ir::Opcode::LoadInt && !FitsImmediate16(instruction.immediate)) {
+      const auto next = static_cast<std::uint32_t>(compiled.integers.size());
+      const auto [entry, inserted] = integer_ids.try_emplace(instruction.immediate, next);
+      if (inserted) {
+        compiled.integers.push_back(instruction.immediate);
+      }
+      instruction.opcode = ir::Opcode::LoadIntConstant;
+      instruction.index = entry->second;
     }
-    const auto* stored = isolate.CreateArrayLayout(layout);
-    arrays_by_name.emplace(type.name, stored);
-    layouts.push_back(stored);
+    context.code_size = compiled.code.size();
+    const auto encoded = EncodeInstruction(instruction, context);
+    if (!encoded) {
+      return std::unexpected(encoded.error());
+    }
+    if (!context.source_paths.empty() &&
+        (compiled.source_mappings.empty() ||
+         compiled.source_mappings.back().location != instruction.location)) {
+      compiled.source_mappings.push_back({
+          .instruction = static_cast<std::uint32_t>(compiled.code.size()),
+          .location = instruction.location,
+      });
+    }
+    const auto begin = static_cast<std::uint32_t>(compiled.code.size());
+    compiled.code.push_back(*encoded);
+    if (!instruction.handler || !ir::MayThrow(instruction.opcode)) {
+      continue;
+    }
+    const auto target = function.handlers.at(*instruction.handler).target;
+    if (!compiled.handlers.empty() && compiled.handlers.back().end == begin &&
+        compiled.handlers.back().target == target) {
+      ++compiled.handlers.back().end;
+    } else {
+      compiled.handlers.push_back({.begin = begin, .end = begin + 1, .target = target});
+    }
   }
-  return layouts;
+  return compiled;
 }
 
 auto OptimizeAndAllocate(ir::Program& program, std::span<const std::string> source_paths)
@@ -314,9 +345,15 @@ auto OptimizeAndAllocate(ir::Program& program, std::span<const std::string> sour
   return std::nullopt;
 }
 
+}  // namespace
+
 auto CompileParsed(frontend::ParseResult parsed, runtime::Isolate& isolate) -> CompileResult {
   if (!parsed.diagnostics.empty()) {
     return {.program = {}, .diagnostics = std::move(parsed.diagnostics)};
+  }
+  auto specialized = frontend::SpecializeGenerics(parsed.program);
+  if (!specialized.empty()) {
+    return {.program = {}, .diagnostics = std::move(specialized)};
   }
   auto checked = frontend::TypeChecker().Check(parsed.program);
   if (!checked.diagnostics.empty()) {
@@ -325,31 +362,15 @@ auto CompileParsed(frontend::ParseResult parsed, runtime::Isolate& isolate) -> C
   return CompileProgram(parsed.program, checked.model, isolate);
 }
 
-}  // namespace
-
 auto CompileSource(std::string_view source, runtime::Isolate& isolate) -> CompileResult {
-  return CompileParsed(frontend::ParseSource(source), isolate);
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  return CompileParsed(frontend::LoadSources(std::span(&input, 1), input.path), isolate);
 }
 
-auto CompileSources(const std::vector<std::string_view>& sources, runtime::Isolate& isolate)
-    -> CompileResult {
-  frontend::ParseResult combined;
-  for (const auto source : sources) {
-    const auto source_id = static_cast<std::uint32_t>(combined.program.source_paths.size());
-    combined.program.source_paths.push_back("<source:" + std::to_string(source_id + 1) + ">");
-    auto parsed = frontend::ParseSource(source, source_id);
-    if (!parsed.diagnostics.empty()) {
-      for (auto& diagnostic : parsed.diagnostics) {
-        diagnostic.source_path = combined.program.source_paths.back();
-      }
-      combined.diagnostics.insert(combined.diagnostics.end(),
-                                  std::make_move_iterator(parsed.diagnostics.begin()),
-                                  std::make_move_iterator(parsed.diagnostics.end()));
-    } else {
-      frontend::AppendProgram(combined.program, std::move(parsed.program));
-    }
-  }
-  return CompileParsed(std::move(combined), isolate);
+auto CompileModules(std::span<const frontend::SourceInput> sources,
+                    std::string_view entry,
+                    runtime::Isolate& isolate) -> CompileResult {
+  return CompileParsed(frontend::LoadSources(sources, entry), isolate);
 }
 
 auto CompileFile(std::string_view path, runtime::Isolate& isolate) -> CompileResult {
@@ -358,45 +379,44 @@ auto CompileFile(std::string_view path, runtime::Isolate& isolate) -> CompileRes
 
 auto CompileProgram(const frontend::Program& source,
                     const frontend::SemanticModel& model,
-                    runtime::Isolate& isolate) -> CompileResult {
-  ir::LoweringResult lowered = ir::Lowerer(source, model).Lower();
+                    runtime::Isolate& isolate,
+                    CompilationState* state) -> CompileResult {
+  auto native_diagnostics = CheckNativeBindings(source, model, isolate);
+  if (!native_diagnostics.empty()) {
+    return {.program = {}, .diagnostics = std::move(native_diagnostics)};
+  }
+  ir::LoweringResult lowered =
+      ir::Lowerer(source, model, state == nullptr ? nullptr : &state->ids).Lower();
   if (!lowered.Succeeded()) {
     CompileResult result;
     result.diagnostics = std::move(lowered.diagnostics);
     return result;
   }
 
-  if (auto failure = OptimizeAndAllocate(lowered.program, source.source_paths)) {
+  std::vector<std::string> paths;
+  paths.reserve(source.sources.size());
+  for (const auto& file : source.sources) {
+    paths.push_back(file.path);
+  }
+  if (auto failure = OptimizeAndAllocate(lowered.program, paths)) {
     return {.program = {}, .diagnostics = {std::move(*failure)}};
   }
 
   CompileResult result;
-  std::vector<runtime::ClassLayout*> class_layouts;
-  class_layouts.reserve(lowered.program.classes.size());
-  for (const ir::Class& class_info : lowered.program.classes) {
-    std::vector<std::uint32_t> reference_fields;
-    for (std::size_t index = 0; index < class_info.field_types.size(); ++index) {
-      const auto kind = class_info.field_types.at(index).kind;
-      if (kind == frontend::TypeDescriptor::Kind::Class ||
-          kind == frontend::TypeDescriptor::Kind::Array ||
-          kind == frontend::TypeDescriptor::Kind::String ||
-          kind == frontend::TypeDescriptor::Kind::StringBuilder) {
-        reference_fields.push_back(static_cast<std::uint32_t>(index));
-      }
-    }
-    runtime::ClassLayout* layout = isolate.CreateClassLayout(
-        static_cast<std::uint32_t>(class_info.field_types.size()), reference_fields);
-    class_layouts.push_back(layout);
-  }
+  runtime::LayoutTransaction layout_transaction(isolate);
+  auto* cache = state == nullptr ? nullptr : &state->layouts;
+  auto class_layouts = CreateClassLayouts(lowered.program, isolate, cache);
 
-  const auto array_layouts = CreateArrayLayouts(lowered.program, model, class_layouts, isolate);
-  if (!array_layouts) {
-    result.diagnostics.push_back(array_layouts.error());
-    return result;
-  }
+  auto layouts = CreateRuntimeLayouts(lowered.program, model, class_layouts, isolate, cache);
 
   std::vector<vm::FunctionStorage> functions;
+  auto type_constraints = CreateTypeConstraints(lowered.program, model, class_layouts,
+                                                layouts.arrays, layouts.collections);
+  auto shared_layouts = std::make_shared<const vm::LayoutTables>(
+      std::move(class_layouts), std::move(layouts.arrays), std::move(layouts.collections),
+      std::move(type_constraints));
   functions.reserve(lowered.program.functions.size());
+  const auto source_paths = std::make_shared<const std::vector<std::string>>(std::move(paths));
   std::shared_ptr<vm::StringConstants> strings;
   const auto& literals = lowered.program.strings;
   if (!literals.empty()) {
@@ -414,31 +434,31 @@ auto CompileProgram(const frontend::Program& source,
   for (const ir::Function& function : lowered.program.functions) {
     vm::FunctionStorage compiled;
     compiled.name = function.name;
-    compiled.classes = class_layouts;
+    if (!function.native_symbol.empty()) {
+      compiled.native = isolate.FindNative(function.native_symbol);
+    }
+    compiled.layouts = shared_layouts;
     compiled.strings = strings;
-    compiled.arrays = *array_layouts;
     compiled.doubles = function.doubles;
     compiled.register_count = static_cast<std::uint16_t>(function.register_count);
     compiled.parameter_count = static_cast<std::uint16_t>(function.parameter_count);
-    compiled.code.reserve(function.instructions.size());
-    for (const ir::Instruction& instruction : function.instructions) {
-      auto encoded =
-          EncodeInstruction(instruction, EncodingContext{
-                                             .function = &function,
-                                             .code_size = compiled.code.size(),
-                                             .function_count = lowered.program.functions.size(),
-                                             .class_count = class_layouts.size(),
-                                             .source_paths = source.source_paths,
-                                         });
-      if (!encoded) {
-        result.diagnostics.push_back(std::move(encoded.error()));
-        return result;
-      }
-      compiled.code.push_back(*encoded);
+    compiled.source_paths = source_paths;
+    auto encoded = EncodeFunction(function,
+                                  EncodingContext{
+                                      .function = &function,
+                                      .function_count = lowered.program.functions.size(),
+                                      .class_count = shared_layouts->classes().size(),
+                                      .source_paths = *source_paths,
+                                  },
+                                  std::move(compiled));
+    if (!encoded) {
+      result.diagnostics.push_back(std::move(encoded.error()));
+      return result;
     }
-    functions.push_back(std::move(compiled));
+    functions.push_back(std::move(*encoded));
   }
-  auto prepared = vm::Program::Create(std::move(functions), isolate);
+  auto prepared = vm::Program::Create(std::move(functions), isolate,
+                                      std::move(lowered.program.global_initializers));
   if (!prepared) {
     const auto& error = prepared.error();
     const auto location =
@@ -447,6 +467,7 @@ auto CompileProgram(const frontend::Program& source,
     return result;
   }
   result.program = std::move(*prepared);
+  layout_transaction.Commit();
   return result;
 }
 

@@ -1,0 +1,39 @@
+{
+  "name": "vela-language",
+  "displayName": "Vela",
+  "description": "Vela syntax, diagnostics and formatting using the native Vela language server.",
+  "version": "0.1.0",
+  "publisher": "vela",
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages"],
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:vela"],
+  "contributes": {
+    "languages": [{
+      "id": "vela",
+      "aliases": ["Vela", "vela"],
+      "extensions": [".vela"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{ "language": "vela", "scopeName": "source.vela", "path": "./syntaxes/vela.tmLanguage.json" }],
+    "commands": [{ "command": "vela.showOutput", "title": "Vela: Show Language Server Output" }],
+    "configuration": {
+      "title": "Vela",
+      "properties": {
+        "vela.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Vela executable. Relative paths use the first workspace folder; the default is out/debug/vela (.exe on Windows)."
+        },
+        "vela.diagnosticsDelay": {
+          "type": "number",
+          "default": 150,
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Delay in milliseconds before sending changed document text to the server."
+        }
+      }
+    }
+  }
+}

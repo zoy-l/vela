@@ -1,0 +1,27 @@
+type Operation = (int, int) => int;
+
+func add(left: int, right: int): int {
+  return left + right;
+}
+
+func makeCounter(start: int): () => int {
+  let current: int = start;
+  return (): int => {
+    current = current + 1;
+    return current;
+  };
+}
+
+func apply(value: int, operation: (int) => int): int {
+  return operation(value);
+}
+
+func main(): void {
+  const operation: Operation = add;
+  print(operation(20, 22));
+  const twice: (int) => int = (value: int): int => value * 2;
+  print(apply(21, twice));
+  const counter: () => int = makeCounter(40);
+  print(counter());
+  print(counter());
+}

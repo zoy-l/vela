@@ -14,7 +14,7 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 - [x] Logical negation
 - [x] `if` and `while`
 - [x] Functions and direct function calls
-- [x] Classes, fixed fields, and aggregate construction
+- [x] Classes, fixed fields, and param/explicit construction
 - [x] Enums with explicitly qualified members (`Enum.member`)
 - [x] Static type checking
 - [x] Typed IR and fixed-width register bytecode
@@ -43,77 +43,78 @@ P0 behavior is specified in [Basic language contracts](language_basics.md).
 - [x] Define UTF-8 storage and code point length/index/slice units (no separate `char` type)
 - [x] Add strict string interpolation and explicit primitive `toString()`
 - [x] Add single-allocation `join`, string operations, and GC-owned `StringBuilder`
-- [ ] Add Unicode code point iteration and grapheme cluster APIs
-- [ ] Implement explicit numeric conversions (implicit conversions are forbidden)
+- [x] Add Unicode code point iteration and grapheme cluster APIs
+- [x] Implement explicit numeric conversions (implicit conversions are forbidden)
 - [x] Implement invariant typed arrays, nested arrays, and compact contiguous storage
-- [ ] Implement tuples and fixed-size records
-- [ ] Implement `List<T>`
-- [ ] Implement `Map<K, V>`
+- [x] Implement `Set<T>`
+- [x] Implement `Map<K, V>`
 - [x] Lower class methods to bytecode
 - [x] Add `this` and `object.method()` calls
-- [ ] Define field default values and constructor initialization
-- [ ] Add static fields and static methods
-- [ ] Add visibility rules for public/private members
-- [ ] Add recursive function support and recursion diagnostics
-- [ ] Complete function types and closures
+- [x] Define field default values and constructor initialization
+- [x] Add static fields and static methods
+- [x] Add visibility rules for public/private members
+- [x] Add recursive function support and recursion diagnostics
+- [x] Complete function types and closures
 
 ## P1: type system and pattern matching
 
-- [ ] Add enum payloads
+- [x] Implement `Expected<T, E>` results inspired by `std::expected`, with explicit `ok()` / `err()` construction
 - [x] Add enum `switch`
-- [ ] Add exhaustive matching
-- [ ] Add `match` expressions
-- [ ] Add type aliases
+- [x] Add exhaustive matching
+- [x] Add `match` expressions
+- [x] Add type aliases
 - [x] Add nullable types such as `T?`
-- [ ] Add generics such as `List<T>` and `Map<K, V>`
-- [ ] Add interfaces or traits
-- [ ] Add type tests and checked casts
+- [x] Add generics such as `Set<T>` and `Map<K, V>`
+- [x] Add explicit interface / implements contracts
+- [x] Add type tests and checked casts
 - [x] Diagnose unreachable statements
 - [x] Require complete returns on every finite control-flow path
+
+P1 contracts and measurements are recorded in [P1 syntax](p1_syntax_proposal.md)
+and [P1 performance](p1_performance.md).
 
 ## P2: modules and standard library
 
 - [x] Add `import`
-- [ ] Add `export`
-- [ ] Add module-level symbol isolation
-- [ ] Add import aliases for qualified access and name conflict resolution
+- [x] Add `export`
+- [x] Add module-level symbol isolation
+- [x] Add import aliases for qualified access and name conflict resolution
 - [x] Compile multiple source files as one program
-- [ ] Define package and dependency metadata
 - [x] Add console output
-- [ ] Add console input
-- [ ] Add time, random, and math libraries
+- [x] Add console input
+- [x] Add time, random, and math libraries
 - [x] Add basic string standard library APIs ([contracts](strings.md))
-- [ ] Add collection standard library APIs
-- [ ] Define process exit codes
+- [x] Add collection standard library APIs
+- [x] Define process exit codes
 
 ## P2: errors and host integration
 
-- [ ] Add `try`, `catch`, and `finally`
-- [ ] Add `throw` and typed error values
-- [ ] Preserve VM stack traces
-- [ ] Define compiler and runtime error formatting
-- [ ] Add typed native function bindings
-- [ ] Define host handle rooting and lifetime APIs
+- [x] Add `try`, `catch`, and `finally`
+- [x] Add `throw` and typed error values
+- [x] Preserve VM stack traces
+- [x] Define compiler and runtime error formatting
+- [x] Add typed native function bindings
+- [x] Define host handle rooting and lifetime APIs
 
 ## P2: performance and tooling
 
-- [ ] Add typed VM register slots for primitive values
-- [ ] Add a bytecode constant pool
+- [x] Add typed VM register slots for primitive values
+- [x] Add a bytecode constant pool
 - [x] Add constant folding
 - [x] Add CFG liveness and physical register reuse with contiguous call arguments
 - [x] Validate immutable owned programs once at compilation/loading
 - [x] Reuse register storage sized to active functions by call depth
 - [x] Add dead-code and unreachable-block elimination
 - [x] Eliminate self-moves after register allocation
-- [ ] Add jump threading and general redundant-move elimination
-- [ ] Specialize direct calls and field offsets
-- [ ] Benchmark computed-goto dispatch before adopting it
-- [ ] Measure and tune generational GC only after representative benchmarks
-- [ ] Add bytecode and compilation caches
-- [ ] Add debug symbols and source-level stack traces
-- [ ] Add formatter, LSP diagnostics, and syntax highlighting
-- [ ] Add a debugger and REPL
-- [ ] Add documentation generation
+- [x] Add jump threading and general redundant-move elimination
+- [x] Specialize direct calls and field offsets
+- [x] Benchmark computed-goto dispatch before adopting it ([decision](dispatch_measurements.md))
+- [x] Measure GC workloads and decide whether to introduce generations ([decision](gc_strategy.md))
+- [x] Add bytecode and compilation caches ([contracts](compilation_cache.md))
+- [x] Add debug symbols and source-level stack traces
+- [x] Add formatter, LSP diagnostics, and syntax highlighting ([tools](source_tooling.md))
+- [x] Add a debugger and REPL ([debugger](debugger.md), [REPL](repl.md))
+- [x] Add documentation generation
 
 Current bytecode limits and measured execution costs are documented in
 [VM execution contracts](vm_execution.md).
@@ -129,6 +130,6 @@ Current bytecode limits and measured execution costs are documented in
 7. Add errors, stack traces, and native bindings.
 8. Re-run Release benchmarks before changing VM dispatch or GC strategy.
 
-Features such as inheritance, virtual dispatch, async tasks, and JIT remain
+Class inheritance, method overriding, async tasks, and JIT remain
 outside the basic language milestone until the static object model and typed VM
 contracts are stable.

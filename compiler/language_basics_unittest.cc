@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -8,6 +9,7 @@
 #include "compiler/compiler.h"
 #include "compiler/frontend/checker.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/source_loader.h"
 #include "runtime/isolate.h"
 #include "vm/vm.h"
 
@@ -112,7 +114,7 @@ INSTANTIATE_TEST_SUITE_P(
           return 2;
         } func main(): int { return read(true) + read(null); })",
                              42},
-        BasicLanguageProgram{R"(class Box { value: int?;
+        BasicLanguageProgram{R"(class Box { param value: int?;
           read(): int { const value = this.value; if (value != null) return value; return 2; }
         } func main(): int { let box: Box? = Box(value: 40);
           if (box == null) return 0;
@@ -160,7 +162,7 @@ INSTANTIATE_TEST_SUITE_P(
           return 0;
         })",
                              42},
-        BasicLanguageProgram{R"(class Box { value: string?[]; }
+        BasicLanguageProgram{R"(class Box { param value: string?[]; }
         func main(): int {
           const boxes: Box?[] = [null, Box(value: [null, "ab"])];
           for (let i = 0; i < 100; i = i + 1) { const garbage = Box(value: ["x" + "y"]); }
@@ -191,7 +193,7 @@ INSTANTIATE_TEST_SUITE_P(
           const result = value + (value = 2); return result;
         })",
                              42},
-        BasicLanguageProgram{R"(class Box { value: Box?; }
+        BasicLanguageProgram{R"(class Box { param value: Box?; }
         func main(): int { let box: Box? = Box(value: null); const saved = box;
           if (box != null) { box.value = (box = null); }
           if (saved != null && saved.value == null && box == null) return 42;
@@ -285,8 +287,8 @@ INSTANTIATE_TEST_SUITE_P(
         BasicLanguageError{"func g(): int { return 1; } func f(): int { const g=1; return g(); }",
                            "not callable"},
         BasicLanguageError{"func f(): void { const this = 1; }", "reserved"},
-        BasicLanguageError{"class A { x: int; x(): int { return 1; } }", "already used"},
-        BasicLanguageError{"class A {} func A(): int { return 1; }", "reserved"},
+        BasicLanguageError{"class A { param x: int; x(): int { return 1; } }", "already used"},
+        BasicLanguageError{"class A {} func A(): int { return 1; }", "duplicate"},
         BasicLanguageError{"func v(): void {} func main(): bool { return v() == v(); }",
                            "value operands"},
         BasicLanguageError{"func v(): void {} func main(): void { print(v()); }",
@@ -304,11 +306,14 @@ TEST(DiagnosticLocationTest, ReportsTheDuplicateEnumMemberLocation) {
 
 TEST(DiagnosticLocationTest, TracksSourcesThroughMultiSourceCompilation) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSources(
-      {"func valid(): int { return 1; }", "func invalid(): int {\n  return missing;\n}"}, isolate);
+  const auto sources = std::to_array<frontend::SourceInput>({
+      {.path = "main.vela", .text = "import \"broken.vela\"; func valid(): int { return 1; }"},
+      {.path = "broken.vela", .text = "func invalid(): int {\n  return missing;\n}"},
+  });
+  const auto compiled = CompileModules(sources, "main.vela", isolate);
   ASSERT_FALSE(compiled.Succeeded());
   const auto& diagnostic = compiled.diagnostics.front();
-  EXPECT_EQ(diagnostic.source_path, "<source:2>");
+  EXPECT_EQ(diagnostic.source_path, "broken.vela");
   EXPECT_EQ(diagnostic.location.line, 2U);
   EXPECT_EQ(diagnostic.location.column, 10U);
 }

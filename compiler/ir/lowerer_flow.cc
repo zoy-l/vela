@@ -57,7 +57,8 @@ void Lowerer::LowerWhile(const frontend::Statement& statement) {
     exit_jump = current_function_->instructions.size();
     Emit({.opcode = Opcode::JumpIfFalse, .lhs = condition.reg, .location = statement.location});
   }
-  controls_.push_back({});
+  controls_.push_back(
+      {.break_jumps = {}, .continue_jumps = {}, .finally_depth = finalizers_.size()});
   LowerScopedStatement(*statement.then_branch);
   for (const auto jump : controls_.back().continue_jumps) {
     current_function_->instructions.at(jump).index = static_cast<std::uint32_t>(loop_start);
@@ -93,7 +94,8 @@ void Lowerer::LowerFor(const frontend::Statement& statement) {
       Emit({.opcode = Opcode::JumpIfFalse, .lhs = condition.reg, .location = statement.location});
     }
   }
-  controls_.push_back({});
+  controls_.push_back(
+      {.break_jumps = {}, .continue_jumps = {}, .finally_depth = finalizers_.size()});
   LowerScopedStatement(*statement.then_branch);
   const auto increment_target = static_cast<std::uint32_t>(current_function_->instructions.size());
   for (const auto jump : controls_.back().continue_jumps) {

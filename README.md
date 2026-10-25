@@ -15,12 +15,17 @@ JavaScript, Dart, and other modern scripting languages.
 
 ## Usage
 
-The `vela` executable currently provides two source-level commands:
+The main source commands are:
 
 - `vela check <source.vela>` parses and statically checks a source file without
   executing it.
 - `vela run <source.vela>` compiles the source through Typed IR and register
   bytecode, then executes its zero-argument `main` function in the VM.
+
+`compile`/`exec` manage [bytecode images and caches](docs/compilation_cache.md).
+`fmt`, `doc`, and `lsp` provide [source tools](docs/source_tooling.md);
+the [VS Code extension](editors/vscode/README.md) adds editor integration.
+`debug FILE` and `repl` provide a [debugger](docs/debugger.md) and [interactive session](docs/repl.md).
 
 For example:
 
@@ -34,7 +39,9 @@ The current language slice uses C/C++-style blocks and semicolons. It includes
 integers, doubles, booleans, strings, arrays, functions, direct calls, classes with
 fixed fields and methods, enums, control flow, console output, imports, and
 multi-file compilation. See [`examples/`](examples/) for runnable programs and
-[`docs/roadmap.md`](docs/roadmap.md) for the feature checklist.
+[`docs/roadmap.md`](docs/roadmap.md) for the feature checklist. Function values,
+closures, generics, interfaces, `Expected`, `match`, and ordered collections
+are described in [P1 contracts](docs/p1_syntax_proposal.md).
 
 ## Installation
 
@@ -49,8 +56,8 @@ gclient sync --no-history
 python -m tools.vl doctor
 ```
 
-The sync command fetches the pinned host tools, Abseil, GoogleTest, and Google
-Benchmark sources declared in [`DEPS`](DEPS). Dependency versions and licenses
+The sync command fetches the pinned host tools, Abseil, GoogleTest, Google
+Benchmark, and utf8proc sources declared in [`DEPS`](DEPS). Dependency versions and licenses
 are documented in [`third_party/README.md`](third_party/README.md).
 
 ## Building
@@ -149,7 +156,7 @@ More detailed contracts are documented in
 ## Dependencies
 
 The build uses repository-pinned GN, Ninja, Clang, LLVM tools, Abseil,
-GoogleTest, and Google Benchmark. Third-party source and license information is
+GoogleTest, Google Benchmark, and utf8proc. Third-party source and license information is
 listed in [`third_party/README.md`](third_party/README.md).
 
 ## License

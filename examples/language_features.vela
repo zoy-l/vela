@@ -1,25 +1,22 @@
 class Counter {
-  value: int;
-
+  param value: int;
   add(amount: int): int {
     this.value = this.value + amount;
     return this.value;
   }
 }
-
-func main(): bool {
+func main(): void {
   let sum: int = 0;
   for (let i: int = 0; i < 5; i = i + 1) {
     if (i == 2) continue;
     if (i == 4) break;
     sum = sum + i;
   }
-
   let counter: Counter = Counter(value: sum);
   print(counter.add(3));
   let greeting: string = "vela" + " language";
   print(greeting);
   let values: int[] = [1, 2, 3];
   print(values[1]);
-  return (sum == 4) && (1 < 2) || false;
+  print((sum == 4) && (1 < 2) || false);
 }

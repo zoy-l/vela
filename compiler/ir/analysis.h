@@ -67,5 +67,6 @@ enum class LivenessMode : std::uint8_t { AllInstructions, NecessaryInstructions 
     -> std::vector<BlockLiveness>;
 void CompactInstructions(Function& function, std::span<const std::uint8_t> keep);
 [[nodiscard]] auto IsRemovableInstruction(Opcode opcode) -> bool;
+[[nodiscard]] auto MayThrow(Opcode opcode) -> bool;
 
 }  // namespace vela::ir

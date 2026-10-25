@@ -1,12 +1,10 @@
 class Message {
-  text: string;
-
+  param text: string;
   append(suffix: string): void {
     this.text = this.text + suffix;
   }
 }
-
-func main(): bool {
+func main(): void {
   const message = Message(text: "Vela");
   const saved: string[] = [message.text];
   message.append(" GC");
@@ -15,5 +13,5 @@ func main(): bool {
   }
   print(saved[0]);
   print(message.text);
-  return saved[0] == "Vela" && message.text == "Vela GC";
+  print(saved[0] == "Vela" && message.text == "Vela GC");
 }

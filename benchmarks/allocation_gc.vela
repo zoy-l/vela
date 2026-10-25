@@ -1,6 +1,6 @@
 class Pair {
-  left: int;
-  right: int;
+  param left: int;
+  param right: int;
 }
 
 func main(): int {

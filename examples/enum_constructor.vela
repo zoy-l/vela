@@ -4,9 +4,14 @@ enum Brightness {
 }
 
 class Theme {
-  brightness: Brightness;
+  param brightness: Brightness;
 }
 
-func main(): Theme {
+func createTheme(): Theme {
   return Theme(brightness: Brightness.light);
+}
+
+func main(): void {
+  const theme = createTheme();
+  print(theme.brightness == Brightness.light);
 }

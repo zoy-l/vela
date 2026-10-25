@@ -57,6 +57,17 @@ auto TypeChecker::CheckStatement(const Statement& statement, const Type& return_
       CheckReturn(statement, return_type);
       flow.can_fall_through = false;
       break;
+    case Statement::Kind::Throw: {
+      const auto type = CheckExpression(*statement.expression, nullptr);
+      if ((type.kind != Type::Kind::Class && type.kind != Type::Kind::Interface) || type.nullable) {
+        AddDiagnostic(statement.location, "throw requires a non-null class or interface value");
+      }
+      flow.can_fall_through = false;
+      break;
+    }
+    case Statement::Kind::Try:
+      flow = CheckTry(statement, return_type);
+      break;
     case Statement::Kind::Expression:
       CheckExpression(*statement.expression, nullptr);
       break;
@@ -127,36 +138,36 @@ auto TypeChecker::CheckIf(const Statement& statement, const Type& return_type) -
   if (condition_type.kind != Type::Kind::Bool || condition_type.nullable) {
     AddDiagnostic(statement.condition->location, "if condition must be bool");
   }
-  const auto before = non_null_;
+  const auto before = refinements_;
   RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
   const auto then_flow = CheckScopedStatement(*statement.then_branch, return_type);
-  const auto then_facts = non_null_;
-  non_null_ = before;
+  const auto then_facts = refinements_;
+  refinements_ = before;
   RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);
   const auto else_flow = statement.else_branch
                              ? CheckScopedStatement(*statement.else_branch, return_type)
                              : StatementFlow();
-  const auto else_facts = non_null_;
+  const auto else_facts = refinements_;
   const auto condition = EvaluateCondition(*statement.condition);
   StatementFlow flow;
   if (condition == ConditionTruth::AlwaysTrue) {
-    non_null_ = then_facts;
+    refinements_ = then_facts;
     flow = then_flow;
     if (statement.else_branch) {
       AddDiagnostic(statement.else_branch->location, "unreachable statement");
     }
   } else if (condition == ConditionTruth::AlwaysFalse) {
-    non_null_ = else_facts;
+    refinements_ = else_facts;
     flow = else_flow;
     AddDiagnostic(statement.then_branch->location, "unreachable statement");
   } else {
     flow = MergeBranches(then_flow, else_flow);
     if (!then_flow.can_fall_through) {
-      non_null_ = else_facts;
+      refinements_ = else_facts;
     } else if (!else_flow.can_fall_through) {
-      non_null_ = then_facts;
+      refinements_ = then_facts;
     } else {
-      non_null_ = IntersectFacts(then_facts, else_facts);
+      refinements_ = IntersectFacts(then_facts, else_facts);
     }
   }
   flow.condition = condition;
@@ -170,11 +181,11 @@ auto TypeChecker::CheckWhile(const Statement& statement, const Type& return_type
     AddDiagnostic(statement.condition->location, "while condition must be bool");
   }
   ++loop_depth_;
-  const auto before = non_null_;
+  const auto before = refinements_;
   RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
   const auto body = CheckScopedStatement(*statement.then_branch, return_type);
   --loop_depth_;
-  non_null_ = before;
+  refinements_ = before;
   InvalidateAssignments(statement);
   if (!body.can_break) {
     RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);
@@ -203,7 +214,7 @@ auto TypeChecker::CheckFor(const Statement& statement, const Type& return_type) 
     }
     condition = EvaluateCondition(*statement.condition);
   }
-  const auto before = non_null_;
+  const auto before = refinements_;
   if (statement.condition) {
     RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
   }
@@ -212,14 +223,14 @@ auto TypeChecker::CheckFor(const Statement& statement, const Type& return_type) 
   --loop_depth_;
   // continue 可从分支直接到达增量表达式，不能沿用普通落点独有的非空事实。
   if (statement.increment) {
-    non_null_ = before;
+    refinements_ = before;
     if (statement.condition) {
       RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
     }
     InvalidateAssignments(*statement.then_branch);
     CheckExpression(*statement.increment, nullptr);
   }
-  non_null_ = before;
+  refinements_ = before;
   InvalidateAssignments(statement);
   if (statement.condition && !body.can_break) {
     RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);

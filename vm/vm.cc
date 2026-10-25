@@ -1,32 +1,41 @@
 #include "vm/vm.h"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <iostream>
 #include <limits>
+#include <optional>
 #include <span>
 #include <utility>
 #include "base/builtin.h"
+#include "base/callable.h"
 #include "base/execution_limits.h"
+#include "vm/debugger.h"
+#include "vm/execution.h"
+#include "vm/execution_status.h"
 #include "vm/program.h"
 #include "vm/register_file.h"
 
+#include "runtime/builtins.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/native_function.h"
+#include "runtime/register_storage.h"
 #include "runtime/string.h"
-#include "runtime/string_operations.h"
 #include "runtime/value.h"
 #include "runtime/value_io.h"
 #include "vm/bytecode.h"
 #include "vm/frame.h"
 
 namespace vela::vm {
+namespace internal {
 namespace {
 
-using StepResult = std::expected<void, ExecutionStatus>;
+struct BinaryOperands final {
+  runtime::RegisterReference left;
+  runtime::RegisterReference right;
+};
 
 auto IsEqualValue(runtime::Value left, runtime::Value right) noexcept -> bool {
   if (left.kind() != right.kind()) {
@@ -49,10 +58,10 @@ auto IsEqualValue(runtime::Value left, runtime::Value right) noexcept -> bool {
   return false;
 }
 
-auto IntegerArithmetic(OpCode opcode,
-                       runtime::Value& destination,
-                       std::int64_t left,
-                       std::int64_t right) noexcept -> StepResult {
+[[clang::always_inline]] auto IntegerArithmetic(OpCode opcode,
+                                                runtime::RegisterReference destination,
+                                                std::int64_t left,
+                                                std::int64_t right) noexcept -> StepResult {
   std::int64_t result = 0;
   bool overflow = false;
   switch (opcode) {
@@ -84,10 +93,10 @@ auto IntegerArithmetic(OpCode opcode,
   return {};
 }
 
-auto IntegerOperation(OpCode opcode,
-                      runtime::Value& destination,
-                      runtime::Value left_value,
-                      runtime::Value right_value) noexcept -> StepResult {
+[[clang::always_inline]] auto IntegerOperation(OpCode opcode,
+                                               runtime::RegisterReference destination,
+                                               BinaryOperands operands) noexcept -> StepResult {
+  const auto& [left_value, right_value] = operands;
   if (!left_value.IsInteger() || !right_value.IsInteger()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -120,10 +129,10 @@ auto IntegerOperation(OpCode opcode,
   return {};
 }
 
-auto DoubleOperation(OpCode opcode,
-                     runtime::Value& destination,
-                     runtime::Value left_value,
-                     runtime::Value right_value) noexcept -> StepResult {
+[[clang::always_inline]] auto DoubleOperation(OpCode opcode,
+                                              runtime::RegisterReference destination,
+                                              BinaryOperands operands) noexcept -> StepResult {
+  const auto& [left_value, right_value] = operands;
   if (!left_value.IsDouble() || !right_value.IsDouble()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -169,10 +178,10 @@ auto DoubleOperation(OpCode opcode,
   return {};
 }
 
-auto BooleanOperation(OpCode opcode,
-                      runtime::Value& destination,
-                      runtime::Value left_value,
-                      runtime::Value right_value) noexcept -> StepResult {
+[[clang::always_inline]] auto BooleanOperation(OpCode opcode,
+                                               runtime::RegisterReference destination,
+                                               BinaryOperands operands) noexcept -> StepResult {
+  const auto& [left_value, right_value] = operands;
   if (!left_value.IsBoolean() || !right_value.IsBoolean()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -199,76 +208,57 @@ auto BooleanOperation(OpCode opcode,
   return {};
 }
 
-auto Negate(runtime::Value& destination, runtime::Value operand) noexcept -> StepResult {
-  if (!operand.IsInteger()) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto value = operand.AsInteger();
-  if (value == std::numeric_limits<std::int64_t>::min()) {
-    return std::unexpected(ExecutionStatus::IntegerOverflow);
-  }
-  destination = runtime::Value::Integer(-value);
-  return {};
-}
+}  // namespace
 
-class Execution final {
- public:
-  Execution(runtime::Isolate& isolate, const Program& program, std::span<RegisterFile> registers)
-      : isolate_(isolate), functions_(program.functions()), registers_(registers) {}
-
-  auto Run(std::uint32_t entry_function) noexcept -> ExecutionResult;
-
- private:
-  struct ActiveFrame final {
-    Frame frame;
-    const FunctionStorage* function = nullptr;
-    std::size_t program_counter = 0;
-    std::uint8_t return_register = 0;
-  };
-  auto ExecuteInstruction(ActiveFrame& active, Instruction instruction) -> StepResult;
-  auto ExecuteControl(ActiveFrame& active, Instruction instruction) -> StepResult;
-  auto ExecuteObject(ActiveFrame& active, Instruction instruction) -> StepResult;
-  auto StringOperation(OpCode opcode,
-                       runtime::Value& destination,
-                       runtime::Value left,
-                       runtime::Value right) -> StepResult;
-  auto ArrayOperation(OpCode opcode,
-                      runtime::Value& destination,
-                      runtime::Value left,
-                      runtime::Value right) -> StepResult;
-  auto ExecuteBuiltin(ActiveFrame& active, Instruction instruction) -> StepResult;
-  auto Interpolate(ActiveFrame& active, Instruction instruction) -> StepResult;
-  static void Jump(ActiveFrame& active, std::int16_t offset) noexcept;
-  auto Call(ActiveFrame& active, Instruction instruction) -> StepResult;
-  void Return(ActiveFrame& active, runtime::Value value);
-
-  runtime::Isolate& isolate_;
-  std::span<const FunctionStorage> functions_;
-  std::span<RegisterFile> registers_;
-  std::array<ActiveFrame, kMaxCallFrames> frames_;
-  std::size_t frame_count_ = 0;
-  runtime::Value result_;
-};
-
-auto Execution::Run(std::uint32_t entry_function) noexcept -> ExecutionResult {
+template <bool Debugging>
+auto Execution::RunImpl(std::uint32_t entry_function, Debugger* debugger) noexcept
+    -> ExecutionResult {
   auto& entry = frames_.front();
   entry.function = &functions_.subspan(entry_function).front();
   auto entry_values = registers_.front().Acquire(entry.function->register_count);
-  if (entry_values.empty()) {
-    return {.value = runtime::Value::Null(), .status = ExecutionStatus::OutOfMemory};
+  if (entry_values.IsEmpty()) {
+    return {
+        .value = runtime::Value::Null(),
+        .status = ExecutionStatus::OutOfMemory,
+        .stack_trace = {},
+        .message = {},
+    };
   }
   entry.frame.Attach(isolate_.heap(), entry_values);
   frame_count_ = 1;
   while (frame_count_ != 0) {
+    if constexpr (Debugging) {
+      const DebugContext context(frames_.data(), frame_count_);
+      if (debugger->BeforeInstruction(context) == DebugAction::Stop) {
+        AbortInitializers();
+        return {
+            .value = runtime::Value::Null(),
+            .status = ExecutionStatus::DebuggerStopped,
+            .stack_trace = {},
+            .message = {},
+        };
+      }
+    }
     auto& active = std::span(frames_).subspan(frame_count_ - 1).front();
     const auto code = std::span(active.function->code);
     const auto instruction = code.subspan(active.program_counter++).front();
     const auto step = ExecuteInstruction(active, instruction);
     if (!step) {
-      return {.value = runtime::Value::Null(), .status = step.error()};
+      if (auto failure = HandleError(step.error())) {
+        return std::move(*failure);
+      }
     }
   }
-  return {.value = result_, .status = ExecutionStatus::Returned};
+  return {.value = result_, .status = ExecutionStatus::Returned, .stack_trace = {}, .message = {}};
+}
+
+auto Execution::Run(std::uint32_t entry_function) noexcept -> ExecutionResult {
+  return RunImpl<false>(entry_function, nullptr);
+}
+
+auto Execution::DebugRun(std::uint32_t entry_function, Debugger& debugger) noexcept
+    -> ExecutionResult {
+  return RunImpl<true>(entry_function, &debugger);
 }
 
 auto Execution::ExecuteInstruction(ActiveFrame& active, Instruction instruction) -> StepResult {
@@ -287,9 +277,13 @@ auto Execution::ExecuteInstruction(ActiveFrame& active, Instruction instruction)
     case OpCode::LoadInt:
       values.subspan(operand_a).front() = runtime::Value::Integer(DecodeImm16(instruction));
       return {};
+    case OpCode::LoadIntConstant:
+      values.subspan(operand_a).front() = runtime::Value::Integer(
+          std::span(active.function->integers).subspan(DecodeUnsigned16(instruction)).front());
+      return {};
     case OpCode::LoadDouble:
-      values.subspan(operand_a).front() =
-          runtime::Value::Double(std::span(active.function->doubles).subspan(operand_b).front());
+      values.subspan(operand_a).front() = runtime::Value::Double(
+          std::span(active.function->doubles).subspan(DecodeUnsigned16(instruction)).front());
       return {};
     case OpCode::AddDouble:
     case OpCode::SubDouble:
@@ -301,8 +295,9 @@ auto Execution::ExecuteInstruction(ActiveFrame& active, Instruction instruction)
     case OpCode::LessEqualDouble:
     case OpCode::GreaterDouble:
     case OpCode::GreaterEqualDouble:
-      return DoubleOperation(opcode, values.subspan(operand_a).front(),
-                             values.subspan(operand_b).front(), values.subspan(operand_c).front());
+      return DoubleOperation(
+          opcode, values.subspan(operand_a).front(),
+          {.left = values.subspan(operand_b).front(), .right = values.subspan(operand_c).front()});
     case OpCode::NegDouble: {
       const auto operand = values.subspan(operand_b).front();
       if (!operand.IsDouble()) {
@@ -324,10 +319,21 @@ auto Execution::ExecuteInstruction(ActiveFrame& active, Instruction instruction)
     case OpCode::LessEqualInt:
     case OpCode::GreaterInt:
     case OpCode::GreaterEqualInt:
-      return IntegerOperation(opcode, values.subspan(operand_a).front(),
-                              values.subspan(operand_b).front(), values.subspan(operand_c).front());
-    case OpCode::NegInt:
-      return Negate(values.subspan(operand_a).front(), values.subspan(operand_b).front());
+      return IntegerOperation(
+          opcode, values.subspan(operand_a).front(),
+          {.left = values.subspan(operand_b).front(), .right = values.subspan(operand_c).front()});
+    case OpCode::NegInt: {
+      const auto operand = values.subspan(operand_b).front();
+      if (!operand.IsInteger()) {
+        return std::unexpected(ExecutionStatus::TypeError);
+      }
+      const auto value = operand.AsInteger();
+      if (value == std::numeric_limits<std::int64_t>::min()) {
+        return std::unexpected(ExecutionStatus::IntegerOverflow);
+      }
+      values.subspan(operand_a).front() = runtime::Value::Integer(-value);
+      return {};
+    }
     case OpCode::NotBool:
       if (!values.subspan(operand_b).front().IsBoolean()) {
         return std::unexpected(ExecutionStatus::TypeError);
@@ -339,8 +345,9 @@ auto Execution::ExecuteInstruction(ActiveFrame& active, Instruction instruction)
     case OpCode::NotEqualBool:
     case OpCode::AndBool:
     case OpCode::OrBool:
-      return BooleanOperation(opcode, values.subspan(operand_a).front(),
-                              values.subspan(operand_b).front(), values.subspan(operand_c).front());
+      return BooleanOperation(
+          opcode, values.subspan(operand_a).front(),
+          {.left = values.subspan(operand_b).front(), .right = values.subspan(operand_c).front()});
     default:
       return ExecuteObject(active, instruction);
   }
@@ -354,9 +361,16 @@ auto Execution::ExecuteObject(ActiveFrame& active, Instruction instruction) -> S
   const auto operand_c = DecodeC(instruction);
   auto& heap = isolate_.heap();
   switch (opcode) {
+    case OpCode::NewOk:
+    case OpCode::NewErr:
+    case OpCode::ExpectedHasValue:
+    case OpCode::ExpectedValue:
+      return ExecuteExpected(active, instruction);
     case OpCode::LoadString:
-      values.subspan(operand_a).front() = runtime::Value::String(
-          std::span(active.function->strings->values).subspan(operand_b).front());
+      values.subspan(operand_a).front() =
+          runtime::Value::String(std::span(active.function->strings->values)
+                                     .subspan(DecodeUnsigned16(instruction))
+                                     .front());
       return {};
     case OpCode::EqualValue:
     case OpCode::NotEqualValue: {
@@ -376,19 +390,10 @@ auto Execution::ExecuteObject(ActiveFrame& active, Instruction instruction) -> S
       return StringOperation(opcode, values.subspan(operand_a).front(),
                              values.subspan(operand_b).front(), values.subspan(operand_c).front());
     case OpCode::NewArray:
-    case OpCode::NewInstance: {
-      auto* object =
-          opcode == OpCode::NewArray
-              ? heap.AllocateArray(*std::span(active.function->arrays).subspan(operand_b).front(),
-                                   operand_c)
-              : heap.AllocateInstance(
-                    *std::span(active.function->classes).subspan(operand_b).front());
-      if (object == nullptr) {
-        return std::unexpected(ExecutionStatus::OutOfMemory);
-      }
-      values.subspan(operand_a).front() = runtime::Value::Object(object);
-      return {};
-    }
+    case OpCode::NewDynamicArray:
+    case OpCode::NewInstance:
+    case OpCode::NewCollection:
+      return AllocateObject(active, instruction);
     case OpCode::GetIndex:
     case OpCode::SetIndex:
       return ArrayOperation(opcode, values.subspan(operand_a).front(),
@@ -415,8 +420,65 @@ auto Execution::ExecuteObject(ActiveFrame& active, Instruction instruction) -> S
       values.subspan(operand_a).front() = *field;
       return {};
     }
+    case OpCode::IsType:
+    case OpCode::CheckedCast: {
+      const auto value = values.subspan(operand_b).front();
+      const auto& type = active.function->layouts->types().subspan(operand_c).front();
+      const bool matches = runtime::Heap::IsValueOfType(value, type);
+      if (opcode == OpCode::CheckedCast && !matches) {
+        return std::unexpected(ExecutionStatus::InvalidCast);
+      }
+      values.subspan(operand_a).front() =
+          opcode == OpCode::IsType ? runtime::Value::Boolean(matches) : value;
+      return {};
+    }
     default:
       return ExecuteControl(active, instruction);
+  }
+}
+
+auto Execution::AllocateObject(ActiveFrame& active, Instruction instruction) -> StepResult {
+  const auto values = active.frame.registers();
+  const auto opcode = DecodeOp(instruction);
+  const auto operand_a = DecodeA(instruction);
+  const auto operand_b = DecodeB(instruction);
+  const auto operand_c = DecodeC(instruction);
+  auto& heap = isolate_.heap();
+  switch (opcode) {
+    case OpCode::NewArray:
+    case OpCode::NewDynamicArray:
+    case OpCode::NewInstance: {
+      std::size_t length = operand_c;
+      if (opcode == OpCode::NewDynamicArray) {
+        const auto size = values.subspan(operand_c).front();
+        if (!size.IsInteger() || size.AsInteger() < 0) {
+          return std::unexpected(ExecutionStatus::IndexOutOfBounds);
+        }
+        length = static_cast<std::size_t>(size.AsInteger());
+      }
+      auto* object =
+          opcode == OpCode::NewArray || opcode == OpCode::NewDynamicArray
+              ? heap.AllocateArray(*active.function->layouts->arrays().subspan(operand_b).front(),
+                                   length)
+              : heap.AllocateInstance(
+                    *active.function->layouts->classes().subspan(operand_b).front());
+      if (object == nullptr) {
+        return std::unexpected(ExecutionStatus::OutOfMemory);
+      }
+      values.subspan(operand_a).front() = runtime::Value::Object(object);
+      return {};
+    }
+    case OpCode::NewCollection: {
+      const auto& layout = *active.function->layouts->collections().subspan(operand_b).front();
+      auto* collection = heap.AllocateCollection(layout);
+      if (collection == nullptr) {
+        return std::unexpected(ExecutionStatus::OutOfMemory);
+      }
+      values.subspan(operand_a).front() = runtime::Value::Object(collection);
+      return {};
+    }
+    default:
+      std::unreachable();
   }
 }
 
@@ -437,14 +499,34 @@ auto Execution::ExecuteControl(ActiveFrame& active, Instruction instruction) -> 
       return {};
     }
     case OpCode::Print:
-      runtime::WriteValue(std::cout, values.subspan(DecodeB(instruction)).front());
-      std::cout << '\n';
+      runtime::WriteValue(isolate_.output(), values.subspan(DecodeB(instruction)).front());
+      isolate_.output() << '\n';
       return {};
+    case OpCode::NativeCall:
+      return ExecuteNative(active, instruction);
+    case OpCode::Catch:
+    case OpCode::ExceptionValue:
+    case OpCode::Throw:
+    case OpCode::Rethrow:
+      return ExecuteException(active, instruction);
     case OpCode::Call:
       if (frame_count_ == kMaxCallFrames) {
         return std::unexpected(ExecutionStatus::StackOverflow);
       }
       return Call(active, instruction);
+    case OpCode::CallIndirect:
+      if (frame_count_ == kMaxCallFrames) {
+        return std::unexpected(ExecutionStatus::StackOverflow);
+      }
+      return CallIndirect(active, instruction);
+    case OpCode::CallInterface:
+      if (frame_count_ == kMaxCallFrames) {
+        return std::unexpected(ExecutionStatus::StackOverflow);
+      }
+      return CallInterface(active, instruction);
+    case OpCode::GetGlobal:
+    case OpCode::SetGlobal:
+      return AccessGlobal(active, instruction);
     case OpCode::Return:
       Return(active, values.subspan(DecodeA(instruction)).front());
       return {};
@@ -457,16 +539,53 @@ auto Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) -> 
   const auto builtin = static_cast<Builtin>(DecodeB(instruction));
   auto values = active.frame.registers();
   const auto arguments = values.subspan(DecodeC(instruction), BuiltinArity(builtin));
-  const auto result = runtime::ExecuteStringBuiltin(builtin, arguments, isolate_.heap());
+  const auto result = [&]() -> std::expected<runtime::Value, runtime::BuiltinError> {
+    if (builtin == Builtin::NumericToInt || builtin == Builtin::NumericToDouble) {
+      return runtime::ConvertNumber(builtin == Builtin::NumericToInt
+                                        ? runtime::NumericConversion::ToInt
+                                        : runtime::NumericConversion::ToDouble,
+                                    arguments.front().Read());
+    }
+    constexpr std::size_t kMaxBuiltinArguments = 3;
+    std::array<runtime::Value, kMaxBuiltinArguments> materialized;
+    const auto input = std::span(materialized).first(arguments.size());
+    arguments.CopyTo(input);
+    return runtime::ExecuteBuiltin(builtin, input, isolate_.heap());
+  }();
   if (!result) {
     switch (result.error()) {
-      case runtime::StringError::OutOfMemory:
+      case runtime::BuiltinError::OutOfMemory:
         return std::unexpected(ExecutionStatus::OutOfMemory);
-      case runtime::StringError::IndexOutOfBounds:
+      case runtime::BuiltinError::IndexOutOfBounds:
         return std::unexpected(ExecutionStatus::IndexOutOfBounds);
-      case runtime::StringError::TypeError:
+      case runtime::BuiltinError::TypeError:
         return std::unexpected(ExecutionStatus::TypeError);
+      case runtime::BuiltinError::InvalidNumericConversion:
+        return std::unexpected(ExecutionStatus::InvalidNumericConversion);
     }
+  }
+  values.subspan(DecodeA(instruction)).front() = *result;
+  return {};
+}
+
+auto Execution::ExecuteNative(ActiveFrame& active, Instruction instruction) -> StepResult {
+  auto values = active.frame.registers();
+  // 缓冲由 VM 持有，仅遇到更大的调用窗口时增长；只物化实际实参，不注册未用尾部。
+  const auto count = DecodeC(instruction);
+  if (native_arguments_->size() < count) {
+    native_arguments_->resize(count);
+  }
+  const auto arguments = std::span(*native_arguments_).first(count);
+  const auto source = values.subspan(DecodeB(instruction), arguments.size());
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    arguments.subspan(index).front() = source.subspan(index).front().Read();
+  }
+  const auto result = active.function->native->Invoke(isolate_, arguments);
+  if (!result) {
+    error_message_ = result.error().message;
+    return std::unexpected(result.error().kind == runtime::NativeErrorKind::OutOfMemory
+                               ? ExecutionStatus::OutOfMemory
+                               : ExecutionStatus::NativeFailure);
   }
   values.subspan(DecodeA(instruction)).front() = *result;
   return {};
@@ -492,7 +611,7 @@ auto Execution::Interpolate(ActiveFrame& active, Instruction instruction) -> Ste
 }
 
 auto Execution::StringOperation(OpCode opcode,
-                                runtime::Value& destination,
+                                runtime::RegisterReference destination,
                                 runtime::Value left,
                                 runtime::Value right) -> StepResult {
   if (!left.IsString() || !right.IsString()) {
@@ -514,7 +633,7 @@ auto Execution::StringOperation(OpCode opcode,
 }
 
 auto Execution::ArrayOperation(OpCode opcode,
-                               runtime::Value& destination,
+                               runtime::RegisterReference destination,
                                runtime::Value left,
                                runtime::Value right) -> StepResult {
   const auto object = opcode == OpCode::GetIndex ? left : destination;
@@ -553,24 +672,183 @@ void Execution::Jump(ActiveFrame& active, std::int16_t offset) noexcept {
   active.program_counter = static_cast<std::size_t>(target);
 }
 
+auto Execution::ExecuteExpected(ActiveFrame& active, Instruction instruction) -> StepResult {
+  const auto values = active.frame.registers();
+  const auto opcode = DecodeOp(instruction);
+  auto destination = values.subspan(DecodeA(instruction)).front();
+  if (opcode == OpCode::NewOk || opcode == OpCode::NewErr) {
+    const auto payload = values.subspan(DecodeC(instruction)).front();
+    auto& layout = *active.function->layouts->classes().subspan(DecodeB(instruction)).front();
+    auto* object = isolate_.heap().AllocateExpected(layout, payload,
+                                                    opcode == OpCode::NewOk
+                                                        ? runtime::ExpectedAlternative::Ok
+                                                        : runtime::ExpectedAlternative::Err);
+    if (object == nullptr) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
+    }
+    destination = runtime::Value::Object(object);
+    return {};
+  }
+  const auto receiver = values.subspan(DecodeB(instruction)).front();
+  if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  if (opcode == OpCode::ExpectedHasValue) {
+    const auto alternative = runtime::Heap::ExpectedAlternativeOf(*receiver.AsObject());
+    if (!alternative) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    destination = runtime::Value::Boolean(*alternative == runtime::ExpectedAlternative::Ok);
+    return {};
+  }
+  const auto payload = runtime::Heap::ReadExpectedValue(
+      *receiver.AsObject(), static_cast<runtime::ExpectedAlternative>(DecodeC(instruction)));
+  if (!payload) {
+    return std::unexpected(payload.error() == runtime::ExpectedAccessError::InactiveAlternative
+                               ? ExecutionStatus::InactiveExpectedAlternative
+                               : ExecutionStatus::TypeError);
+  }
+  destination = *payload;
+  return {};
+}
+
 auto Execution::Call(ActiveFrame& active, Instruction instruction) -> StepResult {
-  const auto& callee = functions_.subspan(DecodeB(instruction)).front();
+  return EnterCall(DecodeB(instruction), active, instruction, std::nullopt);
+}
+
+auto Execution::AccessGlobal(ActiveFrame& active, Instruction instruction) -> StepResult {
+  const auto index = DecodeB(instruction);
+  auto& state = globals_->states.at(index);
+  auto& value = globals_->values.at(index);
+  auto slot = active.frame.registers().subspan(DecodeA(instruction)).front();
+  if (DecodeOp(instruction) == OpCode::SetGlobal) {
+    value = slot;
+    state = GlobalState::Ready;
+    return {};
+  }
+  switch (state) {
+    case GlobalState::Ready:
+      slot = value;
+      return {};
+    case GlobalState::Initializing:
+      return std::unexpected(ExecutionStatus::CyclicInitialization);
+    case GlobalState::Uninitialized:
+      break;
+  }
+  if (frame_count_ == kMaxCallFrames) {
+    return std::unexpected(ExecutionStatus::StackOverflow);
+  }
+  state = GlobalState::Initializing;
+  const auto entered =
+      EnterCall(globals_->initializers.at(index), active, instruction, std::nullopt);
+  if (entered) {
+    std::span(frames_).subspan(frame_count_ - 1).front().initialized_global = index;
+  }
+  return entered;
+}
+
+auto Execution::InterfaceTarget(runtime::Value receiver, std::uint32_t selector) const
+    -> std::expected<std::uint32_t, ExecutionStatus> {
+  if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto* layout = runtime::Heap::ClassOf(*receiver.AsObject());
+  if (layout == nullptr || selector >= layout->dispatch_targets().size()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto target = layout->dispatch_targets().subspan(selector).front();
+  if (target >= functions_.size()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  return target;
+}
+
+auto Execution::CallInterface(ActiveFrame& active, Instruction instruction) -> StepResult {
+  const auto base = DecodeC(instruction);
+  const auto values = active.frame.registers();
+  const auto target = InterfaceTarget(values.subspan(base).front(), DecodeB(instruction));
+  if (!target) {
+    return std::unexpected(target.error());
+  }
+  if (static_cast<std::size_t>(base) + functions_.subspan(*target).front().parameter_count >
+      values.size()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  return EnterCall(*target, active, instruction, std::nullopt);
+}
+
+auto Execution::CallIndirect(ActiveFrame& active, Instruction instruction) -> StepResult {
+  const auto value = active.frame.registers().subspan(DecodeB(instruction)).front();
+  if (!value.IsObject() || value.AsObject() == nullptr) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto* layout = runtime::Heap::ClassOf(*value.AsObject());
+  if (layout == nullptr || !layout->callable()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  auto target = *layout->callable();
+  if (target.mode != CallableMode::InterfaceMethod && target.function >= functions_.size()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  std::optional<runtime::Value> implicit;
+  if (target.mode == CallableMode::Closure) {
+    implicit = value.Read();
+  } else if (target.mode == CallableMode::BoundMethod ||
+             target.mode == CallableMode::InterfaceMethod) {
+    const auto* receiver = runtime::Heap::GetField(*value.AsObject(), 0);
+    if (receiver == nullptr) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    implicit = *receiver;
+    if (target.mode == CallableMode::InterfaceMethod) {
+      const auto method = InterfaceTarget(*receiver, target.function);
+      if (!method) {
+        return std::unexpected(method.error());
+      }
+      target.function = *method;
+    }
+  }
+  const auto count = functions_.subspan(target.function).front().parameter_count;
+  const auto hidden = implicit.has_value() ? 1U : 0U;
+  if (count < hidden || static_cast<std::size_t>(DecodeC(instruction)) + count - hidden >
+                            active.frame.registers().size()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  return EnterCall(target.function, active, instruction, implicit);
+}
+
+auto Execution::EnterCall(std::uint32_t target,
+                          ActiveFrame& active,
+                          Instruction instruction,
+                          std::optional<runtime::Value> implicit) -> StepResult {
+  const auto& callee = functions_.subspan(target).front();
   auto callee_values = registers_.subspan(frame_count_).front().Acquire(callee.register_count);
-  if (callee_values.empty()) {
+  if (callee_values.IsEmpty()) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   auto& next = std::span(frames_).subspan(frame_count_).front();
   next.function = &callee;
   next.program_counter = 0;
   next.return_register = DecodeA(instruction);
+  next.initialized_global.reset();
   next.frame.Attach(isolate_.heap(), callee_values);
-  std::ranges::copy(active.frame.registers().subspan(DecodeC(instruction), callee.parameter_count),
-                    callee_values.begin());
+  const std::size_t hidden = implicit.has_value() ? 1 : 0;
+  if (implicit) {
+    callee_values.front() = *implicit;
+  }
+  callee_values.subspan(hidden, callee.parameter_count - hidden)
+      .CopyFrom(
+          active.frame.registers().subspan(DecodeC(instruction), callee.parameter_count - hidden));
   ++frame_count_;
   return {};
 }
 
 void Execution::Return(ActiveFrame& active, runtime::Value value) {
+  if (active.initialized_global) {
+    const auto index = *active.initialized_global;
+    globals_->values.at(index) = value;
+    globals_->states.at(index) = GlobalState::Ready;
+  }
   const auto return_register = active.return_register;
   active.frame.Detach();
   --frame_count_;
@@ -591,22 +869,45 @@ auto VirtualMachine::Execute(const FunctionHandle& function) noexcept -> Executi
 auto VirtualMachine::register_bytes() const noexcept -> std::size_t {
   std::size_t bytes = 0;
   for (const auto& registers : registers_) {
-    bytes += registers.capacity() * sizeof(runtime::Value);
+    bytes += registers.capacity() * runtime::kRegisterSlotBytes;
   }
   return bytes;
 }
 
 auto VirtualMachine::Execute(const Program& program, std::uint32_t entry_function) noexcept
     -> ExecutionResult {
+  return ExecuteImpl(program, entry_function, nullptr);
+}
+
+auto VirtualMachine::Debug(const FunctionHandle& function, Debugger& debugger) noexcept
+    -> ExecutionResult {
+  return ExecuteImpl(function.program(), function.index(), &debugger);
+}
+
+auto VirtualMachine::ExecuteImpl(const Program& program,
+                                 std::uint32_t entry_function,
+                                 Debugger* debugger) noexcept -> ExecutionResult {
   const auto functions = program.functions();
   if (entry_function >= functions.size() ||
       functions.subspan(entry_function).front().parameter_count != 0) {
-    return {.value = runtime::Value::Null(), .status = ExecutionStatus::InvalidEntry};
+    return {
+        .value = runtime::Value::Null(),
+        .status = ExecutionStatus::InvalidEntry,
+        .stack_trace = {},
+        .message = {},
+    };
   }
   if (!program.IsForIsolate(isolate_)) {
-    return {.value = runtime::Value::Null(), .status = ExecutionStatus::InvalidIsolate};
+    return {
+        .value = runtime::Value::Null(),
+        .status = ExecutionStatus::InvalidIsolate,
+        .stack_trace = {},
+        .message = {},
+    };
   }
-  return Execution(isolate_, program, registers_).Run(entry_function);
+  internal::Execution execution(isolate_, program, registers_, native_arguments_);
+  return debugger != nullptr ? execution.DebugRun(entry_function, *debugger)
+                             : execution.Run(entry_function);
 }
 
 }  // namespace vela::vm

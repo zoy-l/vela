@@ -4,9 +4,9 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 #include "compiler/frontend/ast.h"
@@ -25,7 +25,8 @@ void AppendProgram(Program& destination, Program source);
 
 class Parser final {
  public:
-  explicit Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {}
+  // token 存储必须覆盖 Parse；语法角色直接标注到同一 token 流，供格式化等工具消费。
+  explicit Parser(std::span<Token> tokens) : tokens_(tokens) {}
 
   [[nodiscard]] auto Parse() -> ParseResult;
 
@@ -36,16 +37,40 @@ class Parser final {
   [[nodiscard]] auto Check(TokenKind kind) const -> bool;
   auto Match(TokenKind kind) -> bool;
   auto Expect(TokenKind kind, std::string message) -> std::optional<Token>;
+  void AnnotatePrevious(TokenRole role);
   void AddDiagnostic(SourceLocation location, std::string message);
   void Synchronize();
+  void ParseDeclaration(Program& program);
+
+  struct MemberModifiers final {
+    Visibility visibility = Visibility::Public;
+    MemberStorage storage = MemberStorage::Instance;
+    FieldRole role = FieldRole::Ordinary;
+  };
+  auto ParseMemberModifiers() -> MemberModifiers;
+  enum class MemberParseResult : std::uint8_t { Parsed, Failed };
+  auto ParseClassMember(Class& declaration) -> MemberParseResult;
+  auto ParseConstructor(Class& declaration, MemberModifiers modifiers) -> std::unique_ptr<Function>;
+  auto ParseField(const Token& name, MemberModifiers modifiers) -> std::optional<Field>;
 
   auto ParseEnum() -> std::optional<Enum>;
   auto ParseImport() -> std::optional<Program::Import>;
   auto ParseClass() -> std::optional<Class>;
+  auto ParseInterface() -> std::optional<Interface>;
   auto ParseFunction() -> std::optional<Function>;
-  auto ParseFunctionBody(const Token& name) -> std::optional<Function>;
+  auto ParseTry() -> std::unique_ptr<Statement>;
+  auto ParseThrow() -> std::unique_ptr<Statement>;
+  auto ParseFunctionBody(const Token& name, std::string native_symbol = {})
+      -> std::optional<Function>;
   auto ParseParameter() -> std::optional<Parameter>;
   auto ParseType() -> std::optional<TypeName>;
+  auto ParseTypeBody() -> std::optional<TypeName>;
+  auto ParseQualifiedTypeName() -> std::optional<std::string>;
+  auto ParseParenthesizedType() -> std::optional<TypeName>;
+  auto ParseTypeAlias() -> std::optional<Program::TypeAlias>;
+  auto ParseTypeParameters() -> std::vector<std::string>;
+  auto ParseTypeArguments() -> std::vector<TypeName>;
+  [[nodiscard]] auto IsTypeApplication() const -> bool;
   [[nodiscard]] auto IsVariableDeclaration() const -> bool;
   auto ParseBlock() -> std::unique_ptr<Statement>;
   auto ParseStatement() -> std::unique_ptr<Statement>;
@@ -70,15 +95,21 @@ class Parser final {
   auto ParseUnary() -> std::unique_ptr<Expression>;
   auto ParsePostfix() -> std::unique_ptr<Expression>;
   auto ParsePrimary() -> std::unique_ptr<Expression>;
+  auto ParseArrayLiteral() -> std::unique_ptr<Expression>;
+  auto ParseLambda() -> std::unique_ptr<Expression>;
+  auto ParseMatch() -> std::unique_ptr<Expression>;
   auto ParseDoubleLiteral() -> std::unique_ptr<Expression>;
   auto ParseString() -> std::unique_ptr<Expression>;
   auto ParseArguments() -> std::vector<CallArgument>;
   static auto MakeExpression(Expression::Kind kind, SourceLocation location)
       -> std::unique_ptr<Expression>;
 
-  std::vector<Token> tokens_;
+  std::span<Token> tokens_;
   std::size_t current_ = 0;
   Diagnostics diagnostics_;
+  std::size_t type_parse_depth_ = 0;
+  std::size_t last_type_depth_ = 0;
+  std::size_t last_type_arguments_depth_ = 0;
 };
 
 }  // namespace vela::frontend

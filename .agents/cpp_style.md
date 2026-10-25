@@ -44,6 +44,10 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   hide simple logic.
 - Public headers should expose only stable types and interfaces that callers need. Put complex
   implementation, allocation, I/O, and loops in `.cc` files.
+- In Windows source files that use Win32 SDK leaf headers, retain the prerequisite `<windows.h>`
+  include with `IWYU pragma: keep` when it initializes architecture macros and base types required
+  by those headers. Also include each SDK symbol's declaring header directly. This exception is
+  limited to the SDK prerequisite; it does not permit retaining other unused dependencies.
 - Do not use Pimpl. Declare actual private state directly and keep platform state within its
   platform boundary.
 

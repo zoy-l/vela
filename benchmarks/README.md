@@ -1,6 +1,6 @@
 # Vela benchmarks
 
-Google Benchmark runs twenty Vela workloads through the production compiler
+Google Benchmark runs twenty-eight Vela workloads through the production compiler
 and VM. Versions are pinned in `DEPS`; `//benchmarks:vela_benchmarks` links the
 upstream `benchmark_main` and is separate from the language executable.
 Native benchmark sources use `*_benchmark.cc`. Generated symbol-table workloads
@@ -56,6 +56,10 @@ The array and double timing tables below predate that execution refactor.
 | `string_builder` | 512 |
 | `string_growth_large`, `string_builder_large` | 4096 |
 | `string_unicode` | 1000 |
+| `numeric_conversions`, `expected_results`, `set_membership`, `map_lookup` | 499500 |
+| `closure_calls`, `interface_calls` | 1000 |
+| `match_dispatch` | 3500 |
+| `unicode_graphemes` | 4000 |
 | `symbol_tables/32`, `symbol_tables/256`, `symbol_tables/1024` | 11 |
 
 `compile/symbol_tables/*` generates enums, classes, methods, functions, and long
@@ -88,6 +92,11 @@ The added string workloads compare six-part `+`, interpolation, and `join`,
 compare builders against repeated `+` at 512 and 4096 appends, and exercise
 Unicode APIs. See [string performance](../docs/string_performance.md) for
 current results and measurement boundaries.
+
+P1 adds explicit conversions, escaping closures, Expected allocation, interface
+dispatch, match, Unicode graphemes, and ordered Set/Map workloads. Final P1
+timings, memory counters, and changes against the preserved baseline are in
+[P1 performance](../docs/p1_performance.md).
 
 Array results measured on 2026-10-24 with the pinned Windows Clang Release
 toolchain, `--benchmark_min_time=0.2s --benchmark_repetitions=5`, are below.

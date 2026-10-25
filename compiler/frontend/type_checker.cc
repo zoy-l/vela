@@ -1,6 +1,5 @@
 #include "compiler/frontend/type_checker.h"
 
-#include <algorithm>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -15,8 +14,10 @@
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
+#include "compiler/frontend/capture_analysis.h"
 #include "compiler/frontend/control_flow.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/initialization.h"
 
 namespace vela::frontend {
 
@@ -28,6 +29,17 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
   diagnostics_.clear();
   function_count_ = program.functions.size();
   types_.clear();
+  array_elements_.clear();
+  function_types_.clear();
+  aliases_.clear();
+  resolving_aliases_.clear();
+  lambdas_.clear();
+  lambda_indices_.clear();
+  lambda_scopes_.clear();
+  bindings_.clear();
+  captured_mutables_.clear();
+  captured_declarations_ = FindCapturedMutableDeclarations(program);
+  next_binding_id_ = 0;
   expression_types_.clear();
   case_values_.clear();
   enum_values_.clear();
@@ -36,13 +48,34 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
   control_flow_.clear();
   classes_.clear();
   functions_.clear();
+  static_members_.clear();
+  globals_.clear();
+  checking_globals_.clear();
+  checked_globals_.clear();
+  interfaces_.clear();
+  interface_members_.clear();
+  type_operands_.clear();
+  generic_arguments_.clear();
+  expected_calls_.clear();
+  match_bindings_.clear();
+  catch_types_.clear();
+  enum_sizes_.clear();
+  argument_order_.clear();
+  collection_constructions_.clear();
   scopes_.clear();
   loop_depth_ = 0;
   switch_depth_ = 0;
-  source_paths_ = program.source_paths;
+  sources_ = program.sources;
 
   CollectTypes(program);
+  ResolveInterfaces(program);
   ResolveDeclarations(program);
+  ResolveGlobals(program);
+  CheckImplementations(program);
+  for (const auto& alias : program.aliases) {
+    static_cast<void>(
+        ResolveType({.name = alias.name, .location = alias.location, .arguments = {}}, true));
+  }
   // 描述表在检查函数体前完成构建；检查期间仅修改作用域表，借用的描述信息保持有效。
   for (const Function& function : program.functions) {
     CheckFunction(function, nullptr);
@@ -52,13 +85,24 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
     if (class_info == classes_.end()) {
       continue;
     }
+    CheckFieldInitializers(class_declaration, class_info->second);
     for (const Function& method : class_declaration.methods) {
       CheckFunction(method, &class_info->second);
+    }
+    if (class_declaration.constructor) {
+      CheckFunction(*class_declaration.constructor, &class_info->second);
     }
   }
 
   SemanticModel model;
+  model.globals = std::move(globals_);
   model.types = std::move(types_);
+  model.array_elements = std::move(array_elements_);
+  model.function_types = std::move(function_types_);
+  model.lambdas = std::move(lambdas_);
+  model.lambda_indices = std::move(lambda_indices_);
+  model.bindings = std::move(bindings_);
+  model.captured_mutables = std::move(captured_mutables_);
   model.expression_types = std::move(expression_types_);
   model.case_values = std::move(case_values_);
   model.enum_values = std::move(enum_values_);
@@ -67,6 +111,24 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
   model.control_flow = std::move(control_flow_);
   model.classes = std::move(classes_);
   model.functions = std::move(functions_);
+  model.static_members = std::move(static_members_);
+  model.interfaces = std::move(interfaces_);
+  model.interface_members = std::move(interface_members_);
+  model.type_operands = std::move(type_operands_);
+  model.generic_arguments = std::move(generic_arguments_);
+  model.expected_calls = std::move(expected_calls_);
+  model.match_bindings = std::move(match_bindings_);
+  model.catch_types = std::move(catch_types_);
+  model.argument_order = std::move(argument_order_);
+  model.collection_constructions = std::move(collection_constructions_);
+  if (diagnostics_.empty()) {
+    for (const auto& owner : program.classes) {
+      const auto initialization = CheckConstructorInitialization(owner, model);
+      for (const auto& diagnostic : initialization) {
+        AddDiagnostic(diagnostic.location, diagnostic.message);
+      }
+    }
+  }
   return {
       .diagnostics = std::move(diagnostics_),
       .function_count = function_count_,
@@ -78,119 +140,36 @@ void TypeChecker::AddDiagnostic(SourceLocation location, std::string message) {
   diagnostics_.push_back({
       .location = location,
       .message = std::move(message),
-      .source_path = location.source_id < source_paths_.size()
-                         ? source_paths_.subspan(location.source_id).front()
+      .source_path = location.source_id < sources_.size()
+                         ? sources_.subspan(location.source_id).front().path
                          : std::string(),
   });
 }
 
-void TypeChecker::CollectTypes(const Program& program) {
-  types_.emplace("void", Type{.kind = Type::Kind::Void, .name = "void"});
-  types_.emplace("bool", Type{.kind = Type::Kind::Bool, .name = "bool"});
-  types_.emplace("int", Type{.kind = Type::Kind::Int, .name = "int"});
-  types_.emplace("double", Type{.kind = Type::Kind::Double, .name = "double"});
-  types_.emplace("string", Type{.kind = Type::Kind::String, .name = "string"});
-  types_.emplace("StringBuilder", Type{.kind = Type::Kind::StringBuilder, .name = "StringBuilder"});
-  types_.emplace("string[]", Type{.kind = Type::Kind::Array, .name = "string[]"});
-  types_.reserve(types_.size() + program.enums.size() + program.classes.size());
-  classes_.reserve(program.classes.size());
-
-  for (const Enum& enumeration : program.enums) {
-    if (FindBuiltin(Type::Kind::Invalid, enumeration.name)) {
-      AddDiagnostic(enumeration.location, "type name is reserved for a builtin");
-      continue;
-    }
-    const Type type{.kind = Type::Kind::Enum, .name = enumeration.name};
-    if (!types_.emplace(enumeration.name, type).second) {
-      AddDiagnostic(enumeration.location, "duplicate type '" + enumeration.name + "'");
-      continue;
-    }
-    std::int64_t ordinal = 0;
-    for (const auto& member : enumeration.members) {
-      if (!enum_values_.try_emplace(enumeration.name + "." + member.name, ordinal++).second) {
-        AddDiagnostic(member.location, "duplicate enum member '" + member.name + "'");
-      }
-    }
-  }
-
-  for (const Class& class_declaration : program.classes) {
-    if (FindBuiltin(Type::Kind::Invalid, class_declaration.name)) {
-      AddDiagnostic(class_declaration.location, "type name is reserved for a builtin");
-      continue;
-    }
-    const Type type{.kind = Type::Kind::Class, .name = class_declaration.name};
-    if (!types_.emplace(class_declaration.name, type).second) {
-      AddDiagnostic(class_declaration.location, "duplicate type '" + class_declaration.name + "'");
-      continue;
-    }
-    ClassInfo info;
-    info.type = type;
-    classes_.emplace(class_declaration.name, std::move(info));
-  }
-}
-
-void TypeChecker::ResolveDeclarations(const Program& program) {
-  functions_.reserve(program.functions.size());
-  for (const Class& class_declaration : program.classes) {
-    const auto class_info = classes_.find(class_declaration.name);
-    if (class_info == classes_.end()) {
-      continue;
-    }
-    ClassInfo& info = class_info->second;
-    info.fields.reserve(class_declaration.fields.size());
-    info.field_order.reserve(class_declaration.fields.size());
-    info.methods.reserve(class_declaration.methods.size());
-    for (const Field& field : class_declaration.fields) {
-      const Type type = ResolveType(field.type, false);
-      if (!info.fields.emplace(field.name, type).second) {
-        AddDiagnostic(field.location, "duplicate field '" + field.name + "'");
-      } else {
-        info.field_order.push_back(field.name);
-      }
-    }
-    for (const Function& method : class_declaration.methods) {
-      FunctionInfo method_info = ResolveSignature(method);
-      if (info.fields.contains(method.name)) {
-        AddDiagnostic(method.location, "member name is already used by a field");
-      }
-      if (!info.methods.emplace(method.name, std::move(method_info)).second) {
-        AddDiagnostic(method.location, "duplicate method '" + method.name + "'");
-      }
-    }
-  }
-
-  for (const Function& function : program.functions) {
-    FunctionInfo function_info = ResolveSignature(function);
-    if (FindBuiltin(Type::Kind::Invalid, function.name) || types_.contains(function.name)) {
-      AddDiagnostic(function.location, "function name is reserved for a type or builtin");
-      continue;
-    }
-    if (!functions_.emplace(function.name, std::move(function_info)).second) {
-      AddDiagnostic(function.location, "duplicate function '" + function.name + "'");
-    }
-  }
-}
-
 auto TypeChecker::ResolveSignature(const Function& function) -> FunctionInfo {
   FunctionInfo info;
+  info.visibility = function.visibility;
+  info.storage = function.storage;
   info.return_type = ResolveType(function.return_type, true);
   info.parameters.reserve(function.parameters.size());
-  info.parameter_order.reserve(function.parameters.size());
+  info.parameter_indices.reserve(function.parameters.size());
   for (const auto& parameter : function.parameters) {
     const Type type = ResolveType(parameter.type, false);
-    if (!info.parameters.emplace(parameter.name, type).second) {
+    if (!info.parameter_indices
+             .emplace(parameter.name, static_cast<std::uint32_t>(info.parameters.size()))
+             .second) {
       AddDiagnostic(parameter.location, "duplicate parameter '" + parameter.name + "'");
     } else {
-      info.parameter_order.push_back(parameter.name);
+      info.parameters.push_back({.name = parameter.name, .type = type});
     }
   }
   return info;
 }
 
 void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner) {
-  non_null_.clear();
+  owner_ = owner;
+  refinements_.clear();
   constant_bindings_.clear();
-  next_binding_id_ = 0;
   Type return_type;
   const FunctionInfo* function_info = nullptr;
   if (owner == nullptr) {
@@ -209,16 +188,20 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
   return_type = function_info->return_type;
 
   BeginScope();
-  if (owner != nullptr) {
-    scopes_.back().try_emplace(
-        "this",
-        LocalBinding{.type = owner->type, .kind = BindingKind::Constant, .id = next_binding_id_++});
+  if (owner != nullptr && function.storage == MemberStorage::Instance) {
+    scopes_.back().try_emplace("this", LocalBinding{
+                                           .type = owner->type,
+                                           .kind = BindingKind::Constant,
+                                           .id = next_binding_id_++,
+                                           .scope = scopes_.size() - 1,
+                                       });
+    bindings_.emplace(&function, LookupLocal("this")->id);
   }
   for (const Parameter& parameter : function.parameters) {
-    const auto parameter_type = function_info->parameters.find(parameter.name);
-    const Type type =
-        parameter_type == function_info->parameters.end() ? InvalidType() : parameter_type->second;
-    DeclareLocal(parameter.name, type, parameter.location);
+    const auto type =
+        function_info->parameters.at(function_info->parameter_indices.at(parameter.name)).type;
+    DeclareLocal(parameter.name, type, parameter.location, BindingKind::Mutable, &parameter);
+    bindings_.emplace(&parameter, LookupLocal(parameter.name)->id);
   }
   if (function.body) {
     const auto flow = CheckSequence(*function.body, return_type);
@@ -229,21 +212,28 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
     }
   }
   EndScope();
+  owner_ = nullptr;
 }
 
 auto TypeChecker::CheckExpression(const Expression& expression, const Type* expected)
     -> TypeChecker::Type {
   auto type = CheckExpressionType(expression, expected);
-  // 名称读取可能被非空分析收窄，数组字面量依赖期望类型；固定运算无需重复记录类型。
-  if (expression.kind == Expression::Kind::Name ||
-      expression.kind == Expression::Kind::ArrayLiteral) {
-    expression_types_.insert_or_assign(&expression, type);
+  if (expression.kind == Expression::Kind::Call) {
+    InvalidateCapturedRefinements();
   }
+  expression_types_.insert_or_assign(&expression, type);
   return type;
 }
 
 auto TypeChecker::CheckExpressionType(const Expression& expression, const Type* expected) -> Type {
   switch (expression.kind) {
+    case Expression::Kind::Match:
+      return CheckMatch(expression, expected);
+    case Expression::Kind::TypeTest:
+    case Expression::Kind::TypeCast:
+      return CheckTypeOperation(expression);
+    case Expression::Kind::Lambda:
+      return CheckLambda(expression);
     case Expression::Kind::NullLiteral:
       return {.kind = Type::Kind::Null, .name = "null"};
     case Expression::Kind::IntegerLiteral:
@@ -283,17 +273,45 @@ auto TypeChecker::CheckExpressionType(const Expression& expression, const Type* 
 auto TypeChecker::CheckCall(const Expression& expression, const Type* expected)
     -> TypeChecker::Type {
   const auto& callee = *expression.callee;
+  if (callee.kind == Expression::Kind::Name && LookupLocal(callee.text) == nullptr &&
+      (callee.text == "Set" || callee.text == "Map")) {
+    return CheckCollectionConstruction(expression, expected);
+  }
+  if (callee.kind == Expression::Kind::Name && LookupLocal(callee.text) == nullptr &&
+      (callee.text == "ok" || callee.text == "err")) {
+    return CheckExpectedFactory(expression, expected);
+  }
   if (callee.kind == Expression::Kind::Member) {
     return CheckMethodCall(expression, expected);
   }
-  if (callee.kind != Expression::Kind::Name) {
-    AddDiagnostic(expression.location, "expression is not callable");
+  if (callee.kind != Expression::Kind::Name || LookupLocal(callee.text) != nullptr) {
+    return CheckIndirectCall(expression, CheckExpression(callee, nullptr));
+  }
+  if (globals_.contains(callee.text)) {
+    return CheckIndirectCall(expression, CheckExpression(callee, nullptr));
+  }
+  return CheckNamedCall(expression, expected);
+}
+
+auto TypeChecker::CheckIndirectCall(const Expression& expression, const Type& type) -> Type {
+  const auto& callee = *expression.callee;
+  if (type.kind != Type::Kind::Function || type.nullable) {
+    AddDiagnostic(callee.location,
+                  "expression is not callable; nullable functions require a non-null check");
     return InvalidType();
   }
-  if (LookupLocal(callee.text) != nullptr) {
-    AddDiagnostic(callee.location, "local binding is not callable");
-    return InvalidType();
+  for (const auto& argument : expression.arguments) {
+    if (!argument.name.empty()) {
+      AddDiagnostic(argument.location, "function values accept positional arguments only");
+    }
   }
+  // 检查参数时可能解析新的函数类型，不能跨 rehash 借用描述表内的元素。
+  const auto signature = function_types_.at(type.name);
+  return CheckFunctionCall(signature, expression);
+}
+
+auto TypeChecker::CheckNamedCall(const Expression& expression, const Type* expected) -> Type {
+  const auto& callee = *expression.callee;
   if (const auto builtin = FindBuiltin(Type::Kind::Invalid, callee.text)) {
     return CheckBuiltinCall(expression, *builtin);
   }
@@ -308,10 +326,22 @@ auto TypeChecker::CheckCall(const Expression& expression, const Type* expected)
     }
     return {.kind = Type::Kind::Void, .name = "void"};
   }
-  const auto class_info = classes_.find(callee.text);
+  std::string constructor_name = callee.text;
+  if (aliases_.contains(callee.text)) {
+    const auto alias_type =
+        ResolveType({.name = callee.text, .location = callee.location, .arguments = {}}, false);
+    if (alias_type.nullable) {
+      AddDiagnostic(callee.location, "nullable type aliases are not constructible");
+      return InvalidType();
+    }
+    if (alias_type.kind == Type::Kind::Set || alias_type.kind == Type::Kind::Map) {
+      return CheckCollectionConstruction(expression, &alias_type);
+    }
+    constructor_name = alias_type.name;
+  }
+  const auto class_info = classes_.find(constructor_name);
   if (class_info != classes_.end()) {
-    const Type result =
-        CheckClassConstruction(class_info->second, expression.arguments, expression.location);
+    const Type result = CheckClassConstruction(class_info->second, expression);
     if (expected != nullptr && IsValid(result) && !CanAssign(*expected, result)) {
       AddDiagnostic(expression.location, "constructed type does not match expected type");
     }
@@ -319,8 +349,7 @@ auto TypeChecker::CheckCall(const Expression& expression, const Type* expected)
   }
   const auto function = functions_.find(callee.text);
   if (function != functions_.end()) {
-    const Type result =
-        CheckFunctionCall(function->second, expression.arguments, expression.location);
+    const Type result = CheckFunctionCall(function->second, expression);
     if (expected != nullptr && IsValid(result) && !CanAssign(*expected, result)) {
       AddDiagnostic(expression.location, "function result does not match expected type");
     }
@@ -332,62 +361,114 @@ auto TypeChecker::CheckCall(const Expression& expression, const Type* expected)
 }
 
 auto TypeChecker::CheckMethodCall(const Expression& expression, const Type* expected) -> Type {
+  if (const auto* owner = StaticOwner(*expression.callee)) {
+    return CheckStaticCall(expression, *owner);
+  }
   const Type object = CheckExpression(*expression.callee->object, nullptr);
   if (object.nullable) {
     AddDiagnostic(expression.callee->object->location,
                   "nullable receiver requires a non-null check");
     return InvalidType();
   }
+  if (object.kind == Type::Kind::Expected) {
+    return CheckExpectedMethod(expression, object);
+  }
+  if (object.kind == Type::Kind::Array) {
+    return CheckArrayMethod(expression, object);
+  }
+  if (object.kind == Type::Kind::Set || object.kind == Type::Kind::Map) {
+    return CheckCollectionMethod(expression, object);
+  }
   if (const auto builtin = FindBuiltin(object.kind, expression.callee->text)) {
     return CheckBuiltinCall(expression, *builtin);
   }
-  if (object.kind == Type::Kind::Class) {
-    const auto class_info = classes_.find(object.name);
-    if (class_info != classes_.end()) {
-      const auto method = class_info->second.methods.find(expression.callee->text);
-      if (method != class_info->second.methods.end()) {
-        const Type result =
-            CheckFunctionCall(method->second, expression.arguments, expression.location);
-        if (expected != nullptr && IsValid(result) && !CanAssign(*expected, result)) {
-          AddDiagnostic(expression.location, "method result does not match expected type");
-        }
-        return result;
-      }
+  if (object.kind == Type::Kind::Interface) {
+    const auto& owner = interfaces_.at(object.name);
+    const auto method = owner.methods.find(expression.callee->text);
+    if (method != owner.methods.end()) {
+      interface_members_.insert_or_assign(
+          &expression, MemberReference{.owner = object.name, .member = expression.callee->text});
+      return CheckFunctionCall(method->second, expression);
     }
+  }
+  if (object.kind == Type::Kind::Class) {
+    return CheckInstanceCall(expression, object, expected);
   }
 
   AddDiagnostic(expression.location, "expression is not callable");
   return InvalidType();
 }
 
-auto TypeChecker::CheckBuiltinCall(const Expression& expression, Builtin builtin) -> Type {
-  builtin_calls_.insert_or_assign(&expression, builtin);
-  return CheckFunctionCall(BuiltinSignature(builtin), expression.arguments, expression.location);
+auto TypeChecker::CheckStaticCall(const Expression& expression, const ClassInfo& owner) -> Type {
+  const auto method = owner.methods.find(expression.callee->text);
+  if (method != owner.methods.end() && method->second.storage == MemberStorage::Static) {
+    CheckAccess(method->second.visibility, owner.type.name, expression.location);
+    static_members_.insert_or_assign(
+        &expression, MemberReference{.owner = owner.type.name, .member = expression.callee->text});
+    return CheckFunctionCall(method->second, expression);
+  }
+  return CheckIndirectCall(expression, CheckExpression(*expression.callee, nullptr));
 }
 
-auto TypeChecker::CheckFunctionCall(const FunctionInfo& function,
-                                    const std::vector<CallArgument>& arguments,
-                                    SourceLocation location) -> TypeChecker::Type {
-  std::vector<bool> assigned(function.parameter_order.size(), false);
+auto TypeChecker::CheckInstanceCall(const Expression& expression,
+                                    const Type& object,
+                                    const Type* expected) -> Type {
+  const auto class_info = classes_.find(object.name);
+  if (class_info != classes_.end()) {
+    const auto method = class_info->second.methods.find(expression.callee->text);
+    if (method != class_info->second.methods.end()) {
+      CheckAccess(method->second.visibility, object.name, expression.location);
+      if (method->second.storage == MemberStorage::Static) {
+        AddDiagnostic(expression.location, "static method must be accessed through its class");
+      }
+      const Type result = CheckFunctionCall(method->second, expression);
+      if (expected != nullptr && IsValid(result) && !CanAssign(*expected, result)) {
+        AddDiagnostic(expression.location, "method result does not match expected type");
+      }
+      return result;
+    }
+    const auto field = class_info->second.fields.find(expression.callee->text);
+    if (field != class_info->second.fields.end() &&
+        field->second.type.kind == Type::Kind::Function && !field->second.type.nullable) {
+      CheckAccess(field->second.visibility, object.name, expression.location);
+      expression_types_.insert_or_assign(expression.callee.get(), field->second.type);
+      return CheckIndirectCall(expression, field->second.type);
+    }
+  }
+  AddDiagnostic(expression.location, "expression is not callable");
+  return InvalidType();
+}
+
+auto TypeChecker::CheckBuiltinCall(const Expression& expression, Builtin builtin) -> Type {
+  builtin_calls_.insert_or_assign(&expression, builtin);
+  return CheckFunctionCall(BuiltinSignature(builtin), expression);
+}
+
+auto TypeChecker::CheckFunctionCall(const FunctionInfo& function, const Expression& expression)
+    -> TypeChecker::Type {
+  const auto& arguments = expression.arguments;
+  const auto location = expression.location;
+  std::vector<bool> assigned(function.parameters.size(), false);
+  std::vector<std::uint32_t> order;
   std::size_t positional = 0;
   bool named = false;
   for (const CallArgument& argument : arguments) {
     std::size_t index = positional;
     if (!argument.name.empty()) {
       named = true;
-      const auto parameter = std::ranges::find(function.parameter_order, argument.name);
-      if (parameter == function.parameter_order.end()) {
+      const auto parameter = function.parameter_indices.find(argument.name);
+      if (parameter == function.parameter_indices.end()) {
         AddDiagnostic(argument.location, "unknown named argument '" + argument.name + "'");
         continue;
       }
-      index = static_cast<std::size_t>(parameter - function.parameter_order.begin());
+      index = parameter->second;
     } else {
       if (named) {
         AddDiagnostic(argument.location, "positional argument cannot follow a named argument");
       }
       ++positional;
     }
-    if (index >= function.parameter_order.size()) {
+    if (index >= function.parameters.size()) {
       AddDiagnostic(argument.location, "too many call arguments");
       continue;
     }
@@ -396,148 +477,35 @@ auto TypeChecker::CheckFunctionCall(const FunctionInfo& function,
       continue;
     }
     assigned.at(index) = true;
-    const auto expected_type = function.parameters.find(function.parameter_order.at(index));
-    const Type expected =
-        expected_type == function.parameters.end() ? InvalidType() : expected_type->second;
+    order.push_back(static_cast<std::uint32_t>(index));
+    const auto expected = function.parameters.at(index).type;
     const Type actual = CheckExpression(*argument.value, &expected);
     if (IsValid(actual) && !CanAssign(expected, actual)) {
       AddDiagnostic(argument.location, "call argument type does not match parameter type");
     }
   }
   for (std::size_t index = 0; index < assigned.size(); ++index) {
-    if (!assigned.at(index)) {
-      AddDiagnostic(location, "missing argument '" + function.parameter_order.at(index) + "'");
+    if (!assigned.at(index) &&
+        !function.optional_parameters.contains(function.parameters.at(index).name)) {
+      AddDiagnostic(location, "missing argument '" + function.parameters.at(index).name + "'");
     }
   }
+  argument_order_.insert_or_assign(&expression, std::move(order));
   return function.return_type;
-}
-
-auto TypeChecker::CheckClassConstruction(const ClassInfo& class_info,
-                                         const std::vector<CallArgument>& arguments,
-                                         SourceLocation location) -> TypeChecker::Type {
-  std::vector<bool> assigned(class_info.field_order.size(), false);
-  std::size_t positional = 0;
-  bool named = false;
-  for (const CallArgument& argument : arguments) {
-    std::size_t index = positional;
-    if (!argument.name.empty()) {
-      named = true;
-      const auto field = std::ranges::find(class_info.field_order, argument.name);
-      if (field == class_info.field_order.end()) {
-        AddDiagnostic(argument.location, "unknown constructor field '" + argument.name + "'");
-        continue;
-      }
-      index = static_cast<std::size_t>(field - class_info.field_order.begin());
-    } else {
-      if (named) {
-        AddDiagnostic(argument.location, "positional argument cannot follow a named argument");
-      }
-      ++positional;
-    }
-    if (index >= class_info.field_order.size()) {
-      AddDiagnostic(argument.location, "too many constructor arguments");
-      continue;
-    }
-    if (assigned.at(index)) {
-      AddDiagnostic(argument.location, "constructor field is specified more than once");
-      continue;
-    }
-    assigned.at(index) = true;
-    const auto expected_field = class_info.fields.find(class_info.field_order.at(index));
-    const Type expected =
-        expected_field == class_info.fields.end() ? InvalidType() : expected_field->second;
-    const Type actual = CheckExpression(*argument.value, &expected);
-    if (IsValid(actual) && !CanAssign(expected, actual)) {
-      AddDiagnostic(argument.location, "constructor argument type does not match field type");
-    }
-  }
-  for (std::size_t index = 0; index < assigned.size(); ++index) {
-    if (!assigned.at(index)) {
-      AddDiagnostic(location,
-                    "missing constructor field '" + class_info.field_order.at(index) + "'");
-    }
-  }
-  return class_info.type;
-}
-
-auto TypeChecker::CheckMemberAccess(const Expression& expression) -> TypeChecker::Type {
-  if (expression.object->kind == Expression::Kind::Name &&
-      LookupLocal(expression.object->text) == nullptr) {
-    const auto enumeration = types_.find(expression.object->text);
-    if (enumeration != types_.end() && enumeration->second.kind == Type::Kind::Enum) {
-      if (enum_values_.contains(expression.object->text + "." + expression.text)) {
-        return enumeration->second;
-      }
-      AddDiagnostic(expression.location, "unknown enum member '" + expression.text + "'");
-      return InvalidType();
-    }
-  }
-
-  const Type object = CheckExpression(*expression.object, nullptr);
-  if (object.nullable) {
-    AddDiagnostic(expression.object->location, "nullable receiver requires a non-null check");
-    return InvalidType();
-  }
-  if (object.kind == Type::Kind::String &&
-      (expression.text == "length" || expression.text == "byteLength")) {
-    builtin_calls_.insert_or_assign(&expression, expression.text == "length"
-                                                     ? Builtin::StringLength
-                                                     : Builtin::StringByteLength);
-    return {.kind = Type::Kind::Int, .name = "int"};
-  }
-  if (object.kind != Type::Kind::Class) {
-    AddDiagnostic(expression.location, "member access requires a class object");
-    return InvalidType();
-  }
-  const auto class_info = classes_.find(object.name);
-  if (class_info == classes_.end()) {
-    return InvalidType();
-  }
-  const auto field = class_info->second.fields.find(expression.text);
-  if (field == class_info->second.fields.end()) {
-    AddDiagnostic(expression.location, "unknown field '" + expression.text + "'");
-    return InvalidType();
-  }
-  return field->second;
-}
-
-auto TypeChecker::ResolveType(const TypeName& type_name, bool allow_void) -> TypeChecker::Type {
-  const auto suffix = type_name.name.find_first_of("[?");
-  const std::string_view base(type_name.name.data(),
-                              suffix == std::string::npos ? type_name.name.size() : suffix);
-  const auto type = types_.find(base);
-  if (type == types_.end()) {
-    AddDiagnostic(type_name.location, "unknown type '" + type_name.name + "'");
-    return InvalidType();
-  }
-  if ((!allow_void || base.size() != type_name.name.size()) &&
-      type->second.kind == Type::Kind::Void) {
-    AddDiagnostic(type_name.location, "void is not a value type");
-    return InvalidType();
-  }
-  Type result = type->second;
-  for (std::size_t length = base.size(); length < type_name.name.size();) {
-    if (type_name.name.at(length) == '?') {
-      if (result.nullable) {
-        AddDiagnostic(type_name.location, "type is already nullable");
-        return InvalidType();
-      }
-      result.nullable = true;
-      result.name += '?';
-      ++length;
-    } else {
-      result = {.kind = Type::Kind::Array, .name = result.name + "[]"};
-      length += 2;
-    }
-    types_.try_emplace(result.name, result);
-  }
-  return result;
 }
 
 auto TypeChecker::LookupName(const Expression& expression) -> TypeChecker::Type {
   const auto* local = LookupLocal(expression.text);
   if (local != nullptr) {
-    return non_null_.contains(local->id) ? NonNullable(local->type) : local->type;
+    CaptureLocal(expression, *local);
+    const auto refined = refinements_.find(local->id);
+    return refined != refinements_.end() ? refined->second : local->type;
+  }
+  if (globals_.contains(expression.text)) {
+    return ResolveGlobal(expression.text);
+  }
+  if (const auto function = functions_.find(expression.text); function != functions_.end()) {
+    return FunctionType(function->second);
   }
   AddDiagnostic(expression.location, "unknown name '" + expression.text + "'");
   return InvalidType();
@@ -559,7 +527,7 @@ void TypeChecker::BeginScope() {
 
 void TypeChecker::EndScope() {
   for (const auto& [name, binding] : scopes_.back()) {
-    non_null_.erase(binding.id);
+    refinements_.erase(binding.id);
   }
   scopes_.pop_back();
 }
@@ -567,16 +535,28 @@ void TypeChecker::EndScope() {
 auto TypeChecker::DeclareLocal(std::string_view name,
                                const Type& type,
                                SourceLocation location,
-                               BindingKind kind) -> bool {
+                               BindingKind kind,
+                               const void* declaration) -> bool {
   auto& scope = scopes_.back();
   if (name == "this") {
     AddDiagnostic(location, "'this' is reserved for the method receiver");
     return false;
   }
-  if (!scope.try_emplace(name, LocalBinding{.type = type, .kind = kind, .id = next_binding_id_++})
+  const auto binding_id = next_binding_id_++;
+  if (!scope
+           .try_emplace(name,
+                        LocalBinding{
+                            .type = type,
+                            .kind = kind,
+                            .id = binding_id,
+                            .scope = scopes_.size() - 1,
+                        })
            .second) {
     AddDiagnostic(location, "duplicate local name '" + std::string(name) + "'");
     return false;
+  }
+  if (captured_declarations_.contains(declaration)) {
+    captured_mutables_.insert(binding_id);
   }
   return true;
 }
@@ -584,35 +564,6 @@ auto TypeChecker::DeclareLocal(std::string_view name,
 auto TypeChecker::IsAssignable(const Expression& expression) -> bool {
   return expression.kind == Expression::Kind::Name || expression.kind == Expression::Kind::Member ||
          expression.kind == Expression::Kind::Index;
-}
-
-auto TypeChecker::IsSameType(const Type& left, const Type& right) -> bool {
-  return left.kind == right.kind && left.name == right.name && left.nullable == right.nullable;
-}
-
-auto TypeChecker::NonNullable(Type type) -> Type {
-  if (type.nullable) {
-    type.nullable = false;
-    type.name.pop_back();
-  }
-  return type;
-}
-
-auto TypeChecker::CanAssign(const Type& target, const Type& value) -> bool {
-  return IsSameType(target, value) || (target.nullable && (value.kind == Type::Kind::Null ||
-                                                           IsSameType(NonNullable(target), value)));
-}
-
-auto TypeChecker::IsNumeric(const Type& type) -> bool {
-  return !type.nullable && (type.kind == Type::Kind::Int || type.kind == Type::Kind::Double);
-}
-
-auto TypeChecker::IsValid(const Type& type) -> bool {
-  return type.kind != Type::Kind::Invalid;
-}
-
-auto TypeChecker::TypeNameFor(const Type& type) -> std::string {
-  return type.name.empty() ? "<invalid>" : type.name;
 }
 
 void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
@@ -637,7 +588,11 @@ void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
                             ? EvaluateConstant(*statement.expression)
                             : std::nullopt;
   local_types_.insert_or_assign(&statement, type);
-  const auto declared = DeclareLocal(statement.name, type, statement.location, statement.binding);
+  const auto declared =
+      DeclareLocal(statement.name, type, statement.location, statement.binding, &statement);
+  if (declared) {
+    bindings_.emplace(&statement, LookupLocal(statement.name)->id);
+  }
   if (statement.binding == BindingKind::Constant) {
     const auto* local = LookupLocal(statement.name);
     if (declared && constant && local != nullptr) {
@@ -649,7 +604,10 @@ void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
 void TypeChecker::CheckReturn(const Statement& statement, const Type& return_type) {
   if (return_type.kind == Type::Kind::Void) {
     if (statement.expression) {
-      AddDiagnostic(statement.location, "void function cannot return a value");
+      const auto value = CheckExpression(*statement.expression, &return_type);
+      if (IsValid(value) && value.kind != Type::Kind::Void) {
+        AddDiagnostic(statement.location, "void function cannot return a value");
+      }
     }
   } else if (!statement.expression) {
     AddDiagnostic(statement.location, "non-void function must return a value");
@@ -694,14 +652,14 @@ auto TypeChecker::CheckIndex(const Expression& expression) -> TypeChecker::Type 
   if (object.kind != Type::Kind::Array) {
     return InvalidType();
   }
-  return types_.at(object.name.substr(0, object.name.size() - 2));
+  return array_elements_.at(object.name);
 }
 
 auto TypeChecker::CheckArrayLiteral(const Expression& expression, const Type* expected) -> Type {
   Type element_type;
   if (expected != nullptr && expected->kind == Type::Kind::Array) {
     const auto array = NonNullable(*expected);
-    element_type = types_.at(array.name.substr(0, array.name.size() - 2));
+    element_type = array_elements_.at(array.name);
   }
   for (const auto& element : expression.elements) {
     const Type actual = CheckExpression(*element, IsValid(element_type) ? &element_type : nullptr);
@@ -725,9 +683,7 @@ auto TypeChecker::CheckArrayLiteral(const Expression& expression, const Type* ex
     }
     return InvalidType();
   }
-  Type result{.kind = Type::Kind::Array, .name = element_type.name + "[]"};
-  types_.try_emplace(result.name, result);
-  return result;
+  return ArrayType(element_type);
 }
 
 auto TypeChecker::CheckUnary(const Expression& expression) -> TypeChecker::Type {
@@ -748,7 +704,7 @@ auto TypeChecker::CheckBinary(const Expression& expression) -> TypeChecker::Type
     return CheckAssignment(expression);
   }
   Type left = CheckExpression(*expression.left, nullptr);
-  const auto after_left = non_null_;
+  const auto after_left = refinements_;
   const bool logical = expression.text == "&&" || expression.text == "||";
   if (logical) {
     RefineCondition(*expression.left, expression.text == "&&" ? ConditionTruth::AlwaysTrue
@@ -756,7 +712,7 @@ auto TypeChecker::CheckBinary(const Expression& expression) -> TypeChecker::Type
   }
   const Type right = CheckExpression(*expression.right, nullptr);
   if (logical) {
-    non_null_ = IntersectFacts(after_left, non_null_);
+    refinements_ = IntersectFacts(after_left, refinements_);
   }
   if (!IsValid(left) || !IsValid(right)) {
     return InvalidType();
@@ -774,7 +730,9 @@ auto TypeChecker::CheckEquality(const Expression& expression, const Type& left, 
   if (null_comparison) {
     return {.kind = Type::Kind::Bool, .name = "bool"};
   }
-  if (left.kind == Type::Kind::Array || left.kind == Type::Kind::StringBuilder) {
+  if (left.kind == Type::Kind::Array || left.kind == Type::Kind::StringBuilder ||
+      left.kind == Type::Kind::Function || left.kind == Type::Kind::Expected ||
+      left.kind == Type::Kind::Set || left.kind == Type::Kind::Map) {
     AddDiagnostic(expression.location, "equality is not defined for this type");
     return InvalidType();
   }
@@ -829,8 +787,18 @@ auto TypeChecker::CheckAssignment(const Expression& expression) -> Type {
       AddDiagnostic(expression.left->location,
                     "cannot assign to const binding '" + expression.left->text + "'");
     }
+    if (local == nullptr) {
+      const auto global = globals_.find(expression.left->text);
+      if (global == globals_.end() ||
+          global->second.declaration->binding == BindingKind::Constant) {
+        AddDiagnostic(expression.left->location, "cannot assign to an immutable global binding");
+      }
+    }
   }
   Type left = CheckExpression(*expression.left, nullptr);
+  if (expression.left->kind == Expression::Kind::Member) {
+    CheckMemberAssignment(*expression.left);
+  }
   const LocalBinding* binding = expression.left->kind == Expression::Kind::Name
                                     ? LookupLocal(expression.left->text)
                                     : nullptr;
@@ -838,13 +806,14 @@ auto TypeChecker::CheckAssignment(const Expression& expression) -> Type {
     left = binding->type;
   }
   if (builtin_calls_.contains(expression.left.get())) {
-    AddDiagnostic(expression.left->location, "string values are immutable");
+    AddDiagnostic(expression.left->location,
+                  "builtin properties and string elements are immutable");
   }
   const Type right = CheckExpression(*expression.right, &left);
   if (binding != nullptr) {
-    non_null_.erase(binding->id);
+    refinements_.erase(binding->id);
     if (IsValid(right) && right.kind != Type::Kind::Null && !right.nullable) {
-      non_null_.insert(binding->id);
+      refinements_.insert_or_assign(binding->id, NonNullable(left));
     }
   }
   if (IsValid(left) && IsValid(right) && !CanAssign(left, right)) {
@@ -852,6 +821,25 @@ auto TypeChecker::CheckAssignment(const Expression& expression) -> Type {
     return InvalidType();
   }
   return left;
+}
+
+void TypeChecker::CheckMemberAssignment(const Expression& member) {
+  bool read_only = interface_members_.contains(&member);
+  if (const auto found = static_members_.find(&member); found != static_members_.end()) {
+    read_only =
+        read_only || classes_.at(found->second.owner).methods.contains(found->second.member);
+  } else if (const auto object = expression_types_.find(member.object.get());
+             object != expression_types_.end() && object->second.kind == Type::Kind::Class) {
+    read_only =
+        read_only || classes_.at(NonNullable(object->second).name).methods.contains(member.text);
+  } else if (member.object->kind == Expression::Kind::Name &&
+             LookupLocal(member.object->text) == nullptr) {
+    const auto type = types_.find(member.object->text);
+    read_only = read_only || (type != types_.end() && type->second.kind == Type::Kind::Enum);
+  }
+  if (read_only) {
+    AddDiagnostic(member.location, "methods and enum members are immutable");
+  }
 }
 
 }  // namespace vela::frontend

@@ -1,13 +1,11 @@
 #include "compiler/ir/lowerer.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
-#include "compiler/frontend/builtins.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
 
@@ -51,7 +49,10 @@ auto Lowerer::LowerStringInterpolation(const frontend::Expression& expression) -
 
 auto Lowerer::LowerBuiltin(const frontend::Expression& expression) -> LoweredValue {
   const auto builtin = model_.builtin_calls.at(&expression);
-  const auto& signature = frontend::BuiltinSignature(builtin);
+  if (builtin == Builtin::StringCodePoints || builtin == Builtin::StringGraphemes ||
+      builtin == Builtin::CollectionKeys || builtin == Builtin::CollectionValues) {
+    return LowerSnapshotArray(expression);
+  }
   const auto base = next_register_;
   const auto arity = BuiltinArity(builtin);
   for (std::size_t index = 0; index < arity; ++index) {
@@ -77,13 +78,9 @@ auto Lowerer::LowerBuiltin(const frontend::Expression& expression) -> LoweredVal
         .location = expression.location,
     });
   } else {
-    std::size_t positional = 0;
-    for (const auto& argument : expression.arguments) {
-      std::size_t index = positional++;
-      if (!argument.name.empty()) {
-        const auto parameter = std::ranges::find(signature.parameter_order, argument.name);
-        index = static_cast<std::size_t>(parameter - signature.parameter_order.begin());
-      }
+    for (std::size_t source_index = 0; source_index < expression.arguments.size(); ++source_index) {
+      const auto& argument = expression.arguments.at(source_index);
+      const auto index = model_.argument_order.at(&expression).at(source_index);
       const auto value = LowerExpression(*argument.value);
       Emit({
           .opcode = Opcode::Move,
@@ -101,7 +98,46 @@ auto Lowerer::LowerBuiltin(const frontend::Expression& expression) -> LoweredVal
       .index = static_cast<std::uint32_t>(builtin),
       .location = expression.location,
   });
-  return {.reg = result, .type = signature.return_type};
+  return {.reg = result, .type = model_.expression_types.at(&expression)};
+}
+
+auto Lowerer::LowerSnapshotArray(const frontend::Expression& expression) -> LoweredValue {
+  const auto builtin = model_.builtin_calls.at(&expression);
+  const auto receiver = LowerExpression(*expression.callee->object);
+  const auto base = AllocateRegister(expression.location);
+  const auto array_slot = AllocateRegister(expression.location);
+  Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = expression.location});
+  const auto count = AllocateTemporary(expression.location);
+  auto count_builtin = Builtin::CollectionLength;
+  if (builtin == Builtin::StringCodePoints) {
+    count_builtin = Builtin::StringLength;
+  } else if (builtin == Builtin::StringGraphemes) {
+    count_builtin = Builtin::StringGraphemeLength;
+  }
+  Emit({
+      .opcode = Opcode::BuiltinCall,
+      .dst = count,
+      .lhs = base,
+      .index = static_cast<std::uint32_t>(count_builtin),
+      .location = expression.location,
+  });
+  const auto& type = model_.expression_types.at(&expression);
+  Emit({
+      .opcode = Opcode::NewDynamicArray,
+      .dst = array_slot,
+      .lhs = count,
+      .index = RegisterArrayType(type),
+      .location = expression.location,
+  });
+  const auto result = AllocateTemporary(expression.location);
+  Emit({
+      .opcode = Opcode::BuiltinCall,
+      .dst = result,
+      .lhs = base,
+      .index = static_cast<std::uint32_t>(builtin),
+      .location = expression.location,
+  });
+  return {.reg = result, .type = type};
 }
 
 }  // namespace vela::ir

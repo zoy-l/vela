@@ -1,0 +1,15 @@
+class Failure {
+  public param value: int;
+}
+
+func main(): int {
+  let sum = 0;
+  for (let index = 0; index < 1000; index = index + 1) {
+    try {
+      throw Failure(value: index);
+    } catch (error: Failure) {
+      sum = sum + error.value;
+    }
+  }
+  return sum;
+}

@@ -1,0 +1,13 @@
+import "std:console" as console;
+
+func main(): int {
+  console.write("Name: ");
+  console.flush();
+  const name = console.readLine();
+  if (name == null) {
+    print("End of input.");
+    return 0;
+  }
+  print("Hello, ${name}!");
+  return 0;
+}

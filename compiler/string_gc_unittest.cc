@@ -87,7 +87,7 @@ TEST(CompilerStringGcTest, ReturnedFieldsAndNestedArraysTraceDynamicStrings) {
   runtime::RootRange root(heap, &value, 1);
   {
     constexpr std::string_view kSource = R"(
-class Store { label: string; rows: string[][]; }
+class Store { param label: string; param rows: string[][]; }
 func combine(left: string, right: string): string { return left + right; }
 func main(): Store {
   return Store(label: combine("a", "b"), rows: [[combine("c", "d")]]);

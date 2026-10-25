@@ -1,0 +1,28 @@
+interface Measurable {
+  measure(): int;
+}
+
+class Rectangle implements Measurable {
+  public param width: int;
+  public param height: int;
+
+  public measure(): int {
+    return this.width * this.height;
+  }
+}
+
+func inspect(value: Measurable): int {
+  if (value is Rectangle) {
+    return value.width * value.height;
+  }
+  return value.measure();
+}
+
+func main(): void {
+  const rectangle = Rectangle(width: 6, height: 7);
+  const value: Measurable = rectangle;
+  print(inspect(value));
+  const method: () => int = value.measure;
+  print(method());
+  print((value as Rectangle).width);
+}

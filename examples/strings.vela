@@ -1,6 +1,5 @@
 import "modules/string\u005Ftools.vela";
-
-func main(): string {
+func main(): void {
   const name = "Vela";
   print("Hello, ${name}! 版本 ${1.toString()}");
   print("转义：\"引号\"、\\、\n换行、\${原样保留}");
@@ -8,6 +7,15 @@ func main(): string {
   print("码点 ${text.length.toString()}，字节 ${text.byteLength.toString()}");
   print("索引 ${text[2]}，切片 ${text.slice(start: 1, end: 3)}");
   print("查找位置 ${text.indexOf("e").toString()}");
-  print("包含 ${text.contains("中😀").toString()}，前缀 ${text.startsWith("A").toString()}，后缀 ${text.endsWith("\u0301").toString()}");
-  return describe(join(parts: [name, 42.toString(), true.toString()], separator: " / "));
+  print(
+    "包含 ${text.contains("中😀").toString()}，前缀 ${text.startsWith("A").toString()}，后缀 ${text.endsWith("\u0301").toString()}"
+  );
+  print(
+    describe(
+      join(
+        parts: [name, 42.toString(), true.toString()],
+        separator: " / "
+      )
+    )
+  );
 }

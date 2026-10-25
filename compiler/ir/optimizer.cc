@@ -19,6 +19,106 @@ namespace {
 using Constant = std::variant<std::monostate, bool, std::int64_t>;
 using Constants = absl::flat_hash_map<RegisterId, Constant>;
 
+void InvalidateRepresentative(RegisterId destination,
+                              const absl::flat_hash_map<RegisterId, std::size_t>& values,
+                              absl::flat_hash_map<std::size_t, RegisterId>& representatives) {
+  const auto previous = values.find(destination);
+  if (previous == values.end()) {
+    return;
+  }
+  const auto representative = representatives.find(previous->second);
+  if (representative != representatives.end() && representative->second == destination) {
+    representatives.erase(representative);
+  }
+}
+
+void PropagateCopies(Function& function, std::span<const Function> functions) {
+  const auto graph = BuildFlowGraph(function);
+  std::vector<std::uint8_t> keep(function.instructions.size(), 1);
+  for (const auto& block : graph.blocks) {
+    absl::flat_hash_map<RegisterId, std::size_t> values;
+    absl::flat_hash_map<std::size_t, RegisterId> representatives;
+    std::size_t next_value = 0;
+    const auto value_of = [&](RegisterId reg) -> std::size_t {
+      const auto [entry, inserted] = values.try_emplace(reg, next_value);
+      if (inserted) {
+        ++next_value;
+      }
+      return entry->second;
+    };
+    for (auto index = block.begin; index < block.end; ++index) {
+      auto& instruction = function.instructions.at(index);
+      const auto access = AnalyzeRegisters(instruction, functions);
+      for (const auto operand : std::span(access.uses).first(access.use_count)) {
+        const auto reg = ReadOperand(instruction, operand);
+        const auto value = value_of(reg);
+        const auto [representative, inserted] = representatives.try_emplace(value, reg);
+        static_cast<void>(inserted);
+        WriteOperand(instruction, operand, representative->second);
+      }
+      if (!access.defines_value) {
+        continue;
+      }
+      const auto destination = instruction.dst;
+      const auto source_value = instruction.opcode == Opcode::Move
+                                    ? std::optional(value_of(instruction.lhs))
+                                    : std::nullopt;
+      const auto previous = values.find(destination);
+      if (source_value && previous != values.end() && previous->second == *source_value) {
+        keep.at(index) = 0;
+        continue;
+      }
+      InvalidateRepresentative(destination, values, representatives);
+      const auto value = source_value ? *source_value : next_value++;
+      values.insert_or_assign(destination, value);
+      representatives.try_emplace(value, destination);
+    }
+  }
+  CompactInstructions(function, keep);
+}
+
+void ThreadJumps(Function& function) {
+  const auto count = function.instructions.size();
+  std::vector<std::uint8_t> states(count, 0);
+  std::vector<std::uint32_t> resolved(count);
+  std::vector<std::uint32_t> path;
+  for (std::size_t index = 0; index < count; ++index) {
+    if (function.instructions.at(index).opcode != Opcode::Jump || states.at(index) != 0) {
+      continue;
+    }
+    auto target = static_cast<std::uint32_t>(index);
+    path.clear();
+    while (target < count && function.instructions.at(target).opcode == Opcode::Jump &&
+           states.at(target) == 0) {
+      states.at(target) = 1;
+      path.push_back(target);
+      target = function.instructions.at(target).index;
+    }
+    if (target < count && states.at(target) == 2) {
+      target = resolved.at(target);
+    }
+    for (const auto jump : path) {
+      states.at(jump) = 2;
+      resolved.at(jump) = target;
+    }
+  }
+  std::vector<std::uint8_t> keep(count, 1);
+  for (std::size_t index = 0; index < count; ++index) {
+    auto& instruction = function.instructions.at(index);
+    if (instruction.opcode != Opcode::Jump && instruction.opcode != Opcode::JumpIfFalse) {
+      continue;
+    }
+    const auto target = instruction.index;
+    if (target < count && states.at(target) == 2) {
+      instruction.index = resolved.at(target);
+    }
+    if (instruction.opcode == Opcode::Jump && instruction.index == index + 1) {
+      keep.at(index) = 0;
+    }
+  }
+  CompactInstructions(function, keep);
+}
+
 auto EvaluateIntegers(Opcode opcode, std::int64_t left, std::int64_t right)
     -> std::optional<Constant> {
   std::int64_t value = 0;
@@ -129,11 +229,6 @@ auto Evaluate(const Instruction& instruction, const Constants& constants)
 
 void Materialize(Instruction& instruction, const Constant& value) {
   if (const auto* integer = std::get_if<std::int64_t>(&value)) {
-    // 当前整数常量编码为 int16；较大运算结果保留原运算，不能把有效程序折叠成编码错误。
-    if (*integer < std::numeric_limits<std::int16_t>::min() ||
-        *integer > std::numeric_limits<std::int16_t>::max()) {
-      return;
-    }
     instruction.opcode = Opcode::LoadInt;
     instruction.immediate = *integer;
   } else if (const auto* boolean = std::get_if<bool>(&value)) {
@@ -237,7 +332,9 @@ void RemoveUnusedValues(Function& function, std::span<const Function> functions)
 }  // namespace
 
 void Optimize(Function& function, std::span<const Function> functions) {
+  PropagateCopies(function, functions);
   FoldConstants(function, functions);
+  ThreadJumps(function);
   RemoveUnreachable(function);
   RemoveUnusedValues(function, functions);
 }

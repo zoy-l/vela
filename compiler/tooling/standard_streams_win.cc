@@ -1,0 +1,24 @@
+#include "compiler/tooling/standard_streams.h"
+
+#include <cerrno>
+#include <expected>
+#include <string>
+#include <system_error>
+
+#include <corecrt_io.h>
+#include <fcntl.h>
+
+namespace vela::tooling {
+
+auto SetBinaryStandardStreams() -> std::expected<void, std::string> {
+  constexpr int kStandardInputDescriptor = 0;
+  constexpr int kStandardOutputDescriptor = 1;
+  if (_setmode(kStandardInputDescriptor, _O_BINARY) == -1 ||
+      _setmode(kStandardOutputDescriptor, _O_BINARY) == -1) {
+    return std::unexpected("cannot configure binary stdio: " +
+                           std::generic_category().message(errno));
+  }
+  return {};
+}
+
+}  // namespace vela::tooling

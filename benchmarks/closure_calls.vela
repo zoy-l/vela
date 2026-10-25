@@ -1,0 +1,13 @@
+func makeCounter(): () => int {
+  let count: int = 0;
+  return (): int => { count = count + 1; return count; };
+}
+
+func main(): int {
+  const next = makeCounter();
+  let value: int = 0;
+  for (let index: int = 0; index < 1000; index = index + 1) {
+    value = next();
+  }
+  return value;
+}

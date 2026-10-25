@@ -10,11 +10,102 @@
 #include <span>
 #include <utility>
 #include <vector>
+#include "runtime/element_storage.h"
+#include "runtime/exception.h"
 #include "runtime/object.h"
+#include "runtime/register_storage.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
+namespace {
+
+template <typename T>
+auto Slots(std::span<std::byte> bytes) noexcept -> std::span<T> {
+  void* storage = bytes.data();
+  return {static_cast<T*>(storage), bytes.size() / sizeof(T)};
+}
+
+template <typename T>
+auto Slots(std::span<const std::byte> bytes) noexcept -> std::span<const T> {
+  const void* storage = bytes.data();
+  return {static_cast<const T*>(storage), bytes.size() / sizeof(T)};
+}
+
+}  // namespace
+
+auto ArrayLayout::element_type() const noexcept -> TypeConstraint {
+  return {
+      .kind = element_kind,
+      .object_kind = element_object_kind,
+      .instance = element_class,
+      .array = element_array,
+      .collection = element_collection,
+      .interface = element_interface,
+      .nullable = nullable_elements,
+      .callable = callable_elements,
+  };
+}
+
+auto LoadElementStorage(const ArrayLayout& layout,
+                        std::span<const std::byte> storage,
+                        std::size_t index) noexcept -> Value {
+  if (layout.HasTaggedElements()) {
+    return Slots<Value>(storage).subspan(index).front();
+  }
+  switch (layout.element_kind) {
+    case ValueKind::Boolean:
+      return Value::Boolean(Slots<bool>(storage).subspan(index).front());
+    case ValueKind::Integer:
+      return Value::Integer(Slots<std::int64_t>(storage).subspan(index).front());
+    case ValueKind::Double:
+      return Value::Double(Slots<double>(storage).subspan(index).front());
+    case ValueKind::String: {
+      auto* value = Slots<StringObject*>(storage).subspan(index).front();
+      return value == nullptr ? Value::Null() : Value::String(value);
+    }
+    case ValueKind::Object: {
+      auto* value = Slots<HeapObject*>(storage).subspan(index).front();
+      return value == nullptr ? Value::Null() : Value::Object(value);
+    }
+    case ValueKind::Null:
+      std::unreachable();
+  }
+  std::unreachable();
+}
+
+void StoreElementStorage(const ArrayLayout& layout,
+                         std::span<std::byte> storage,
+                         std::size_t index,
+                         Value value) noexcept {
+  if (layout.HasTaggedElements()) {
+    Slots<Value>(storage).subspan(index).front() = value;
+    return;
+  }
+  switch (layout.element_kind) {
+    case ValueKind::Boolean:
+      Slots<bool>(storage).subspan(index).front() = value.AsBoolean();
+      return;
+    case ValueKind::Integer:
+      Slots<std::int64_t>(storage).subspan(index).front() = value.AsInteger();
+      return;
+    case ValueKind::Double:
+      Slots<double>(storage).subspan(index).front() = value.AsDouble();
+      return;
+    case ValueKind::String:
+      Slots<StringObject*>(storage).subspan(index).front() =
+          value.IsNull() ? nullptr : value.AsString();
+      return;
+    case ValueKind::Object:
+      Slots<HeapObject*>(storage).subspan(index).front() =
+          value.IsNull() ? nullptr : value.AsObject();
+      return;
+    case ValueKind::Null:
+      std::unreachable();
+  }
+  std::unreachable();
+}
+
 namespace {
 
 constexpr auto AlignUp(std::size_t value, std::size_t alignment) noexcept -> std::size_t {
@@ -60,16 +151,6 @@ void InitializeArray(HeapObject& object, ValueKind kind, std::size_t length) noe
 
 }  // namespace
 
-auto ObjectFields(HeapObject* object) noexcept -> Value* {
-  void* storage = std::span(object, 1).last(0).data();
-  return static_cast<Value*>(storage);
-}
-
-auto ObjectFields(const HeapObject* object) noexcept -> const Value* {
-  const void* storage = std::span(object, 1).last(0).data();
-  return static_cast<const Value*>(storage);
-}
-
 ClassLayout::ClassLayout(std::uint32_t field_count, std::vector<std::uint32_t> reference_fields)
     : field_count_(field_count), reference_fields_(std::move(reference_fields)) {}
 
@@ -94,7 +175,7 @@ auto ArrayLayout::element_size() const noexcept -> std::size_t {
   return 0;
 }
 
-RootRange::RootRange(Heap& heap, Value* values, std::size_t count) noexcept {
+RootRange::RootRange(Heap& heap, const Value* values, std::size_t count) noexcept {
   Attach(heap, values, count);
 }
 
@@ -110,7 +191,7 @@ RootRange::~RootRange() {
   Detach();
 }
 
-void RootRange::Attach(Heap& heap, Value* values, std::size_t count) noexcept {
+void RootRange::Attach(Heap& heap, const Value* values, std::size_t count) noexcept {
   Detach();
   heap_ = &heap;
   data_ = values;
@@ -127,12 +208,54 @@ void RootRange::Detach() noexcept {
   heap_ = nullptr;
 }
 
+void RootRange::Attach(Heap& heap, RegisterView registers) noexcept {
+  Detach();
+  heap_ = &heap;
+  data_ = registers.payloads().data();
+  register_kinds_ = registers.kinds().data();
+  count_ = registers.size();
+  kind_ = Kind::Registers;
+  heap.RegisterRoot(*this);
+}
+
 Heap::Heap(std::size_t gc_threshold) noexcept
     : gc_threshold_(std::max<std::size_t>(gc_threshold, 1)),
       minimum_gc_threshold_(std::max<std::size_t>(gc_threshold, 1)) {}
 
 Heap::~Heap() {
   DestroyAll();
+}
+
+auto ClassLayout::IsImplementing(std::uint32_t interface) const noexcept -> bool {
+  return std::ranges::binary_search(interfaces_, interface);
+}
+
+auto Heap::ClassOf(const HeapObject& object) noexcept -> const ClassLayout* {
+  return object.kind == ObjectKind::Instance ? object.layout : nullptr;
+}
+
+auto Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept -> bool {
+  if (value.IsNull()) {
+    return type.nullable;
+  }
+  if (value.kind() != type.kind) {
+    return false;
+  }
+  if (!value.IsObject()) {
+    return true;
+  }
+  const auto* object = value.AsObject();
+  if (object == nullptr || object->kind != type.object_kind ||
+      (type.instance != nullptr && object->layout != type.instance) ||
+      (type.array != nullptr && object->array_layout() != type.array) ||
+      (type.collection != nullptr && object->collection_layout() != type.collection)) {
+    return false;
+  }
+  if (type.interface &&
+      (object->layout == nullptr || !object->layout->IsImplementing(*type.interface))) {
+    return false;
+  }
+  return !type.callable || (object->layout != nullptr && object->layout->callable().has_value());
 }
 
 auto Heap::AllocateInstance(ClassLayout& layout, std::span<const Value> initial_fields) noexcept
@@ -163,6 +286,37 @@ auto Heap::AllocateInstance(ClassLayout& layout, std::span<const Value> initial_
   return object;
 }
 
+auto Heap::AllocateExpected(ClassLayout& layout,
+                            Value payload,
+                            ExpectedAlternative alternative) noexcept -> HeapObject* {
+  auto* object = AllocateInstance(layout, std::span(&payload, 1));
+  if (object != nullptr) {
+    object->kind = ObjectKind::Expected;
+    object->length = static_cast<std::uint32_t>(alternative);
+  }
+  return object;
+}
+
+auto Heap::ExpectedAlternativeOf(const HeapObject& object) noexcept
+    -> std::expected<ExpectedAlternative, ExpectedAccessError> {
+  if (object.kind != ObjectKind::Expected) {
+    return std::unexpected(ExpectedAccessError::NotExpected);
+  }
+  return static_cast<ExpectedAlternative>(object.length);
+}
+
+auto Heap::ReadExpectedValue(const HeapObject& object, ExpectedAlternative alternative) noexcept
+    -> std::expected<Value, ExpectedAccessError> {
+  const auto active = ExpectedAlternativeOf(object);
+  if (!active) {
+    return std::unexpected(active.error());
+  }
+  if (*active != alternative) {
+    return std::unexpected(ExpectedAccessError::InactiveAlternative);
+  }
+  return *GetField(object, 0);
+}
+
 auto Heap::AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept -> HeapObject* {
   const std::size_t element_size = layout.element_size();
   if (element_size == 0 ||
@@ -177,7 +331,7 @@ auto Heap::AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept
   }
   auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
   object->kind = ObjectKind::Array;
-  object->array_layout = &layout;
+  object->indexed_layout = &layout;
   object->length = static_cast<std::uint32_t>(length);
   // payload 与对象头单次分配；按原生元素类型建立对象生命周期。
   if (layout.HasTaggedElements()) {
@@ -205,28 +359,21 @@ void Heap::Publish(HeapObject& object, std::uint32_t allocation_size) noexcept {
   ++object_count_;
 }
 
-auto Heap::GetField(HeapObject& object, std::uint32_t index) noexcept -> Value* {
-  if (object.layout == nullptr || index >= object.layout->field_count()) {
-    return nullptr;
+auto Heap::ArrayLength(const HeapObject& array) noexcept
+    -> std::expected<std::uint32_t, ArrayAccessError> {
+  if (array.kind != ObjectKind::Array) {
+    return std::unexpected(ArrayAccessError::NotArray);
   }
-  return std::span(ObjectFields(&object), object.layout->field_count()).subspan(index).data();
+  return array.length;
 }
 
-auto Heap::GetField(const HeapObject& object, std::uint32_t index) noexcept -> const Value* {
-  if (object.layout == nullptr || index >= object.layout->field_count()) {
-    return nullptr;
+auto Heap::IntegerElements(HeapObject& array) noexcept
+    -> std::expected<std::span<std::int64_t>, ArrayAccessError> {
+  if (array.kind != ObjectKind::Array || array.array_layout()->element_kind != ValueKind::Integer ||
+      array.array_layout()->HasTaggedElements()) {
+    return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
-  return std::span(ObjectFields(&object), object.layout->field_count()).subspan(index).data();
-}
-
-auto Heap::SetField(HeapObject& object, std::uint32_t index, Value value) noexcept -> bool {
-  Value* field = GetField(object, index);
-  if (field == nullptr) {
-    return false;
-  }
-  *field = value;
-  WriteBarrier(object, value);
-  return true;
+  return ArrayElements<std::int64_t>(array, array.length);
 }
 
 auto Heap::GetElement(const HeapObject& object, std::uint32_t index) noexcept
@@ -238,28 +385,11 @@ auto Heap::GetElement(const HeapObject& object, std::uint32_t index) noexcept
   if (index >= length) {
     return std::unexpected(ArrayAccessError::OutOfBounds);
   }
-  if (object.array_layout->HasTaggedElements()) {
-    return ArrayElements<Value>(object, length).subspan(index).front();
-  }
-  switch (object.array_layout->element_kind) {
-    case ValueKind::Boolean:
-      return Value::Boolean(ArrayElements<bool>(object, length).subspan(index).front());
-    case ValueKind::Integer:
-      return Value::Integer(ArrayElements<std::int64_t>(object, length).subspan(index).front());
-    case ValueKind::Double:
-      return Value::Double(ArrayElements<double>(object, length).subspan(index).front());
-    case ValueKind::String: {
-      auto* value = ArrayElements<StringObject*>(object, length).subspan(index).front();
-      return value == nullptr ? Value::Null() : Value::String(value);
-    }
-    case ValueKind::Object: {
-      auto* value = ArrayElements<HeapObject*>(object, length).subspan(index).front();
-      return value == nullptr ? Value::Null() : Value::Object(value);
-    }
-    case ValueKind::Null:
-      return std::unexpected(ArrayAccessError::ElementTypeMismatch);
-  }
-  return std::unexpected(ArrayAccessError::ElementTypeMismatch);
+  const auto& layout = *object.array_layout();
+  const void* data = std::span(&object, 1).last(0).data();
+  const auto bytes =
+      std::span(static_cast<const std::byte*>(data), object.allocation_size - sizeof(HeapObject));
+  return LoadElementStorage(layout, bytes, index);
 }
 
 auto Heap::SetElement(HeapObject& object, std::uint32_t index, Value value) noexcept
@@ -271,51 +401,16 @@ auto Heap::SetElement(HeapObject& object, std::uint32_t index, Value value) noex
   if (index >= length) {
     return std::unexpected(ArrayAccessError::OutOfBounds);
   }
-  const auto& layout = *object.array_layout;
-  if (layout.nullable_elements && value.IsNull()) {
-    if (layout.element_kind == ValueKind::Object) {
-      ArrayElements<HeapObject*>(object, length).subspan(index).front() = nullptr;
-    } else if (layout.element_kind == ValueKind::String) {
-      ArrayElements<StringObject*>(object, length).subspan(index).front() = nullptr;
-    } else {
-      ArrayElements<Value>(object, length).subspan(index).front() = value;
-    }
-    return {};
-  }
-  if (value.kind() != layout.element_kind) {
+  const auto& layout = *object.array_layout();
+  if (!IsValueOfType(value, layout.element_type())) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
-  if (layout.HasTaggedElements()) {
-    ArrayElements<Value>(object, length).subspan(index).front() = value;
-    return {};
-  }
-  switch (layout.element_kind) {
-    case ValueKind::Boolean:
-      ArrayElements<bool>(object, length).subspan(index).front() = value.AsBoolean();
-      break;
-    case ValueKind::Integer:
-      ArrayElements<std::int64_t>(object, length).subspan(index).front() = value.AsInteger();
-      break;
-    case ValueKind::Double:
-      ArrayElements<double>(object, length).subspan(index).front() = value.AsDouble();
-      break;
-    case ValueKind::String:
-      ArrayElements<StringObject*>(object, length).subspan(index).front() = value.AsString();
-      WriteBarrier(object, value);
-      break;
-    case ValueKind::Object: {
-      auto* child = value.AsObject();
-      if (child == nullptr || child->kind != layout.element_object_kind ||
-          (layout.element_class != nullptr && child->layout != layout.element_class) ||
-          (layout.element_array != nullptr && child->array_layout != layout.element_array)) {
-        return std::unexpected(ArrayAccessError::ElementTypeMismatch);
-      }
-      ArrayElements<HeapObject*>(object, length).subspan(index).front() = child;
-      WriteBarrier(object, value);
-      break;
-    }
-    case ValueKind::Null:
-      return std::unexpected(ArrayAccessError::ElementTypeMismatch);
+  void* data = std::span(&object, 1).last(0).data();
+  const auto bytes =
+      std::span(static_cast<std::byte*>(data), object.allocation_size - sizeof(HeapObject));
+  StoreElementStorage(layout, bytes, index, value);
+  if (value.IsObject() || value.IsString()) {
+    WriteBarrier(object, value);
   }
   return {};
 }
@@ -429,6 +524,24 @@ void Heap::MarkRoots() noexcept {
 }
 
 void Heap::MarkRoot(const RootRange& root) noexcept {
+  if (root.kind_ == RootRange::Kind::Registers) {
+    const auto payloads = std::span(static_cast<const RegisterPayload*>(root.data_), root.count_);
+    const auto kinds = std::span(root.register_kinds_, root.count_);
+    for (std::size_t index = 0; index < root.count_; ++index) {
+      const auto kind = kinds.subspan(index).front();
+      const auto& payload = payloads.subspan(index).front();
+      if (kind == ValueKind::Object) {
+        if (auto* object = payload.Read<HeapObject*>(); object != nullptr) {
+          MarkObject(*object);
+        }
+      } else if (kind == ValueKind::String) {
+        if (auto* string = payload.Read<StringObject*>(); string != nullptr) {
+          MarkObject(string->header_);
+        }
+      }
+    }
+    return;
+  }
   if (root.kind_ == RootRange::Kind::Values) {
     for (const Value value : std::span(static_cast<const Value*>(root.data_), root.count_)) {
       MarkValue(value);
@@ -464,14 +577,22 @@ void Heap::MarkObject(HeapObject& object) noexcept {
 }
 
 void Heap::ProcessGrayObject(HeapObject& object) noexcept {
+  if (object.kind == ObjectKind::Exception) {
+    MarkObject(*ExceptionData::From(object).payload);
+    return;
+  }
+  if (object.kind == ObjectKind::Collection) {
+    MarkCollection(object);
+    return;
+  }
   if (object.kind == ObjectKind::Array) {
-    if (object.array_layout->element_kind == ValueKind::Object) {
+    if (object.array_layout()->element_kind == ValueKind::Object) {
       for (HeapObject* child : ArrayElements<HeapObject*>(object, object.length)) {
         if (child != nullptr) {
           MarkObject(*child);
         }
       }
-    } else if (object.array_layout->element_kind == ValueKind::String) {
+    } else if (object.array_layout()->element_kind == ValueKind::String) {
       for (StringObject* string : ArrayElements<StringObject*>(object, object.length)) {
         if (string != nullptr) {
           MarkObject(string->header_);
@@ -533,10 +654,12 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   const std::size_t block_size = object.allocation_size;
   allocated_bytes_ -= block_size;
 
-  if (object.kind == ObjectKind::Instance && object.layout != nullptr) {
+  if (object.layout != nullptr) {
     std::destroy_n(ObjectFields(&object), object.layout->field_count());
   } else if (object.kind == ObjectKind::StringBuilder) {
     ReleaseStringBuilder(object);
+  } else if (object.kind == ObjectKind::Collection) {
+    ReleaseCollection(object);
   }
   void* memory = &object;
   // StringObject 仅含可平凡析构的对象头；复用或释放存储即结束其生命周期。

@@ -1,8 +1,6 @@
 #include "compiler/frontend/type_checker.h"
 
 #include <string>
-#include <type_traits>
-#include <variant>
 #include <vector>
 
 #include <absl/container/flat_hash_set.h>
@@ -24,16 +22,7 @@ void TypeChecker::CheckCaseLabel(const Expression& label,
     AddDiagnostic(label.location, "case label must be a compile-time constant");
     return;
   }
-  const auto key = std::visit(
-      [](const auto& value) -> std::string {
-        using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, std::string>) {
-          return value;
-        } else {
-          return std::to_string(value);
-        }
-      },
-      *constant);
+  const auto key = ConstantKey(*constant);
   if (!labels.insert(key).second) {
     AddDiagnostic(label.location, "duplicate case label");
   }
@@ -48,7 +37,7 @@ auto TypeChecker::CheckSwitch(const Statement& statement, const Type& return_typ
     AddDiagnostic(statement.condition->location, "switch requires int, bool, string, or enum");
   }
   InvalidateAssignments(statement);
-  const auto before = non_null_;
+  const auto before = refinements_;
   absl::flat_hash_set<std::string> labels;
   bool has_default = false;
   std::vector<StatementFlow> branches;
@@ -61,11 +50,11 @@ auto TypeChecker::CheckSwitch(const Statement& statement, const Type& return_typ
     } else {
       has_default = true;
     }
-    non_null_ = before;
+    refinements_ = before;
     branches.push_back(CheckStatement(*branch.body, return_type));
   }
   --switch_depth_;
-  non_null_ = before;
+  refinements_ = before;
   StatementFlow result{.can_fall_through = !has_default};
   bool tail_falls_through = true;
   for (auto branch = branches.rbegin(); branch != branches.rend(); ++branch) {

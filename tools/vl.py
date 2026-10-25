@@ -13,6 +13,7 @@ COMMAND_MODULES = {
     "clangd": "tools.clangd",
     "config": "tools.config",
     "doctor": "tools.doctor",
+    "editor": "tools.editor",
     "format": "tools.format",
     "lint": "tools.lint",
     "test": "tools.test",
@@ -28,6 +29,7 @@ def print_help() -> None:
     print("  clangd      Generate compile_commands.json")
     print("  config      Generate a GN output directory")
     print("  doctor      Check the project toolchain")
+    print("  editor      Package the VS Code extension")
     print("  format      Format C++ and GN sources")
     print("  lint        Run project clang-tidy checks")
     print("  test        Run GoogleTest suites")

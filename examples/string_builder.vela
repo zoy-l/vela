@@ -1,4 +1,4 @@
-func main(): string {
+func main(): void {
   const builder = StringBuilder();
   builder.append("rows:\n");
   for (let i = 0; i < 5; i = i + 1) {
@@ -7,5 +7,5 @@ func main(): string {
   const snapshot = builder.toString();
   builder.append("done");
   print(snapshot);
-  return builder.toString();
+  print(builder.toString());
 }

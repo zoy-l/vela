@@ -1,0 +1,19 @@
+class Counter {
+  public param value: int;
+  public param step: int = 1;
+  private count: int = 0;
+
+  constructor {
+    this.count = this.count + 1;
+  }
+
+  public next(): int {
+    this.value = this.value + this.step;
+    return this.value;
+  }
+}
+
+func main(): void {
+  const counter = Counter(value: 40, step: 2);
+  print(counter.next());
+}

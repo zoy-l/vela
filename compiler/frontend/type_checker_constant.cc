@@ -8,11 +8,26 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <variant>
 
 #include "compiler/frontend/ast.h"
 
 namespace vela::frontend {
+
+auto TypeChecker::ConstantKey(const ConstantValue& value) -> std::string {
+  return std::visit(
+      [](const auto& item) -> std::string {
+        using T = std::decay_t<decltype(item)>;
+        if constexpr (std::is_same_v<T, std::string>) {
+          return item;
+        } else {
+          return std::to_string(item);
+        }
+      },
+      value);
+}
+
 namespace {
 
 auto IntegerConstant(std::string_view operation, std::int64_t left, std::int64_t right)
@@ -128,7 +143,9 @@ auto TypeChecker::EvaluateConstant(const Expression& expression) const
     case Kind::Member:
       if (expression.object->kind == Kind::Name &&
           LookupLocal(expression.object->text) == nullptr) {
-        const auto found = enum_values_.find(expression.object->text + "." + expression.text);
+        const auto type = types_.find(expression.object->text);
+        const auto name = type == types_.end() ? expression.object->text : type->second.name;
+        const auto found = enum_values_.find(name + "." + expression.text);
         if (found != enum_values_.end()) {
           return found->second;
         }

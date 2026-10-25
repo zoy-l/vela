@@ -5,28 +5,67 @@ source_set("build_info") {
   ]
 }
 
+generated_file("cache_build_identity") {
+  outputs = [ "$target_gen_dir/cache_build_identity.h" ]
+  contents = [
+    "#pragma once",
+    "#include <string_view>",
+    "namespace vela::compiler {",
+    "inline constexpr std::string_view kCompilerBuildIdentity = \"$vela_build_identity\";",
+    "}",
+    "",
+  ]
+}
+
 source_set("frontend") {
   sources = [
     "frontend/ast.h",
     "frontend/builtins.cc",
     "frontend/builtins.h",
+    "frontend/capture_analysis.cc",
+    "frontend/capture_analysis.h",
     "frontend/checker.cc",
     "frontend/checker.h",
     "frontend/control_flow.h",
     "frontend/diagnostic.h",
+    "frontend/initialization.cc",
+    "frontend/initialization.h",
     "frontend/lexer.cc",
     "frontend/lexer.h",
+    "frontend/module_binding.cc",
+    "frontend/module_binding.h",
     "frontend/parser.cc",
     "frontend/parser.h",
+    "frontend/parser_declarations.cc",
+    "frontend/parser_exception.cc",
+    "frontend/parser_types.cc",
+    "frontend/source_file.h",
     "frontend/source_loader.cc",
     "frontend/source_loader.h",
+    "frontend/specialization.cc",
+    "frontend/specialization.h",
+    "frontend/standard_modules.cc",
+    "frontend/standard_modules.h",
+    "frontend/symbol_ids.h",
     "frontend/token.h",
     "frontend/type_checker.cc",
     "frontend/type_checker.h",
+    "frontend/type_checker_array.cc",
+    "frontend/type_checker_cast.cc",
+    "frontend/type_checker_classes.cc",
+    "frontend/type_checker_collections.cc",
     "frontend/type_checker_constant.cc",
+    "frontend/type_checker_exception.cc",
+    "frontend/type_checker_expected.cc",
     "frontend/type_checker_flow.cc",
+    "frontend/type_checker_functions.cc",
+    "frontend/type_checker_globals.cc",
+    "frontend/type_checker_interfaces.cc",
+    "frontend/type_checker_match.cc",
     "frontend/type_checker_null.cc",
     "frontend/type_checker_switch.cc",
+    "frontend/type_checker_types.cc",
+    "frontend/type_limits.h",
   ]
   public_deps = [
     "//base",
@@ -42,23 +81,88 @@ source_set("ir") {
     "ir/lowerer.cc",
     "ir/lowerer.h",
     "ir/lowerer_array.cc",
+    "ir/lowerer_class.cc",
+    "ir/lowerer_collections.cc",
     "ir/lowerer_double.cc",
+    "ir/lowerer_exception.cc",
+    "ir/lowerer_expected.cc",
     "ir/lowerer_flow.cc",
+    "ir/lowerer_functions.cc",
+    "ir/lowerer_match.cc",
     "ir/lowerer_string.cc",
     "ir/lowerer_switch.cc",
     "ir/optimizer.cc",
     "ir/optimizer.h",
+    "ir/persistent_ids.h",
   ]
   deps = [ ":frontend" ]
   public_deps = [ "//third_party:abseil" ]
 }
 
-source_set("compiler") {
+source_set("tooling") {
   sources = [
+    "tooling/documentation.cc",
+    "tooling/documentation.h",
+    "tooling/file_uri.cc",
+    "tooling/file_uri.h",
+    "tooling/formatter.cc",
+    "tooling/formatter.h",
+    "tooling/json_rpc.cc",
+    "tooling/json_rpc.h",
+    "tooling/language_server.cc",
+    "tooling/language_server.h",
+    "tooling/language_server_diagnostics.cc",
+    "tooling/language_server_documents.cc",
+    "tooling/language_server_internal.h",
+    "tooling/source_text.cc",
+    "tooling/source_text.h",
+    "tooling/standard_streams.h",
+  ]
+  public_deps = [
+    ":frontend",
+    "//base:json",
+  ]
+  deps = [ ":build_info" ]
+  if (target_os == "win") {
+    sources += [ "tooling/standard_streams_win.cc" ]
+  } else {
+    sources += [ "tooling/standard_streams_posix.cc" ]
+  }
+}
+
+source_set("interactive") {
+  sources = [
+    "tooling/debug_console.cc",
+    "tooling/debug_console.h",
+    "tooling/repl_console.cc",
+    "tooling/repl_console.h",
+  ]
+  public_deps = [ ":compiler" ]
+  deps = [ "//base:json" ]
+}
+
+source_set("compiler") {
+  include_dirs = [ "$root_gen_dir" ]
+  sources = [
+    "compilation_cache.cc",
+    "compilation_cache.h",
+    "compilation_state.h",
     "compiler.cc",
     "compiler.h",
+    "exit_code.cc",
+    "exit_code.h",
+    "native_linker.cc",
+    "native_linker.h",
     "register_allocator.cc",
     "register_allocator.h",
+    "repl_identity.cc",
+    "repl_identity.h",
+    "repl_session.cc",
+    "repl_session.h",
+    "runtime_layouts.cc",
+    "runtime_layouts.h",
+    "type_constraints.cc",
+    "type_constraints.h",
   ]
   public_deps = [
     ":frontend",
@@ -66,7 +170,10 @@ source_set("compiler") {
     "//runtime",
     "//vm",
   ]
-  deps = [ "//third_party:abseil" ]
+  deps = [
+    ":cache_build_identity",
+    "//third_party:abseil",
+  ]
 }
 
 executable("vela") {
@@ -74,6 +181,8 @@ executable("vela") {
   deps = [
     ":build_info",
     ":compiler",
+    ":interactive",
+    ":tooling",
   ]
 }
 
@@ -93,9 +202,15 @@ executable("vela_frontend_tests") {
     "frontend/declarations_unittest.cc",
     "frontend/diagnostic_unittest.cc",
     "frontend_unittest.cc",
+    "tooling/documentation_unittest.cc",
+    "tooling/file_uri_unittest.cc",
+    "tooling/formatter_unittest.cc",
+    "tooling/json_rpc_unittest.cc",
+    "tooling/source_text_unittest.cc",
   ]
   deps = [
     ":frontend",
+    ":tooling",
     "//third_party:gtest_main",
   ]
 }
@@ -103,15 +218,38 @@ executable("vela_frontend_tests") {
 executable("vela_compiler_tests") {
   testonly = true
   sources = [
+    "bytecode_image_unittest.cc",
+    "cast_unittest.cc",
+    "class_unittest.cc",
+    "collection_unittest.cc",
+    "compilation_cache_unittest.cc",
     "compiler_unittest.cc",
+    "constant_pool_unittest.cc",
     "control_flow_unittest.cc",
+    "debugger_unittest.cc",
     "double_unittest.cc",
     "encoding_unittest.cc",
+    "exception_unittest.cc",
+    "exit_code_unittest.cc",
+    "expected_unittest.cc",
+    "function_value_unittest.cc",
+    "generic_unittest.cc",
+    "global_unittest.cc",
     "import_unittest.cc",
+    "interface_unittest.cc",
     "language_basics_unittest.cc",
+    "match_unittest.cc",
+    "module_unittest.cc",
+    "native_binding_unittest.cc",
+    "numeric_conversion_unittest.cc",
     "optimization_unittest.cc",
+    "recursion_unittest.cc",
+    "repl_session_unittest.cc",
+    "stack_trace_unittest.cc",
+    "standard_library_unittest.cc",
     "string_gc_unittest.cc",
     "string_unittest.cc",
+    "unicode_unittest.cc",
   ]
   deps = [
     ":compiler",

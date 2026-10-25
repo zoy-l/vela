@@ -114,17 +114,18 @@ root visits, object tracing, and allocation costs still need measurement.
 | Parameters per function | At most 256, subject to slot/window allocation |
 | Direct call target | Function index 0–255 |
 | Entry point | 32-bit index; index 256 is tested and supported |
-| Class, string, array-layout, double, field indexes | 0–255 in encoded instructions |
+| Class, array-layout and field indexes | 0–255 in encoded instructions |
+| Integer, double and string constant indexes | 0–65535 in encoded instructions |
 | Array literal length and interpolation part count | At most 255 per instruction |
-| Integer literal immediate | Signed 16-bit; integer arithmetic remains checked int64 |
+| Integer literals | Signed 16-bit immediate or full int64 constant pool |
 | Relative branch | Signed 16-bit offset from the following instruction |
 | Active call depth | At most 64 frames; overflow returns `StackOverflow` |
 
 Unreferenced declarations do not require a blanket 256-function restriction.
 Programs with more functions can execute an entry beyond the call operand
 range, provided their encoded direct calls remain representable. Limits are
-diagnosed before narrowing; widening the instruction format and generalizing
-the integer constant pool remain future work.
+diagnosed before narrowing. Current P2 register/constant representation and
+intermediate performance measurements are documented in [VM storage](vm_storage.md).
 
 ## Validation evidence
 
@@ -194,8 +195,9 @@ speedup. Typed or unboxed slots need their own compiler, GC, and benchmark
 contracts before adoption. This change reduces actual slot counts and removes
 unnecessary allocation without changing numeric semantics.
 
-Frontend array identity currently uses interned names and recorded checked
-types; runtime `ArrayLayout` links describe physical element storage and GC
-scanning. Those runtime layouts remain necessary even with structural types.
-A structural `TypeId`/interner is a future evolution for generics and types such
-as `Task<T>`, not implemented here. No new compatibility type layer was added.
+P1 adds structural source type syntax and explicit semantic relationships for
+array elements, function signatures, and generic arguments; resolved type
+identities still use interned names. Runtime `ArrayLayout` links describe
+physical storage and GC scanning and remain necessary. Integer `TypeId`
+interning is a possible later representation change. See
+[P1 contracts](p1_syntax_proposal.md) for the implemented model.

@@ -1,0 +1,12 @@
+func main(): int {
+  const values = Map<int, int>();
+  for (let index: int = 0; index < 1000; index = index + 1) {
+    values.set(index, index);
+  }
+  let total: int = 0;
+  for (let index: int = 0; index < 1000; index = index + 1) {
+    const value = values.get(index);
+    if (value != null) { total = total + value; }
+  }
+  return total;
+}

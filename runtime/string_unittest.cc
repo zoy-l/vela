@@ -9,11 +9,11 @@
 #include "gtest/gtest.h"
 
 #include "base/builtin.h"
+#include "runtime/builtins.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "runtime/string.h"
-#include "runtime/string_operations.h"
 #include "runtime/value.h"
 #include "runtime/value_io.h"
 
@@ -240,7 +240,7 @@ TEST_P(StringConversionTest, ExplicitConversionMatchesConsoleFormatting) {
   Heap heap;
   const auto value = GetParam();
   const std::array<Value, 1> arguments = {value};
-  const auto converted = ExecuteStringBuiltin(Builtin::ScalarToString, arguments, heap);
+  const auto converted = ExecuteBuiltin(Builtin::ScalarToString, arguments, heap);
   ASSERT_TRUE(converted.has_value());
   std::ostringstream output;
   WriteValue(output, value);

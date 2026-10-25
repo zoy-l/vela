@@ -17,11 +17,11 @@ enum Brightness {
 }
 
 class Theme {
-  brightness: Brightness;
+  param brightness: Brightness;
 }
 
 class App {
-  theme: Theme;
+  param theme: Theme;
 }
 
 func build(): App {
@@ -43,7 +43,7 @@ enum Brightness {
 }
 
 class Theme {
-  brightness: Brightness;
+  param brightness: Brightness;
 }
 
 func build(): Theme {
@@ -131,7 +131,7 @@ TEST(FrontendTest, RejectsImplicitDoubleConversionsAtEveryBoundary) {
       "func main(): int { let x: double = 1.0; x = 2; return 0; }",
       "func main(): int { let x: int = 1; x = 2.0; return 0; }",
       "func f(x: double): double { return x; } func main(): double { return f(1); }",
-      "class A { x: double; } func main(): A { return A(x: 1); }",
+      "class A { param x: double; } func main(): A { return A(x: 1); }",
       "class A { f(x: double): double { return x; } } func main(): double { return A().f(1); }",
       "func main(): double { return 1 + 1.0; }",
       "func main(): double { return 1.0 + 1; }",

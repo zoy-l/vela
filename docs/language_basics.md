@@ -39,7 +39,8 @@ to share state between branches.
 
 Return analysis composes fallthrough branches from last to first, consumes
 switch breaks, and preserves loop continues. Without a default, an unmatched
-selector remains a fallthrough path. Enum exhaustiveness is later work.
+selector remains a fallthrough path. Exhaustive `match` expressions are a
+separate construct; see [P1 matching contracts](p1_syntax_proposal.md#normal-enums-and-exhaustive-match-expressions).
 
 The current lowering uses typed comparisons and jumps, with O(n) dispatch for
 n labels. Labels have no runtime evaluation or allocation. Jump tables and

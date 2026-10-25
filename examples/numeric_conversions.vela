@@ -1,0 +1,6 @@
+func main(): void {
+  const value: double = 42.9;
+  print(value.toInt());
+  print((-42.9).toInt());
+  print(42.toDouble());
+}

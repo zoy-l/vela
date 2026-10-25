@@ -10,10 +10,13 @@ Vela 的语言和运行时设计参考了 Luau、JavaScript、Dart 等现代脚�
 
 ## 使用
 
-当前 `vela` 可执行文件提供两个源代码级命令：
+主要的源代码命令：
 
 - `vela check <source.vela>`：解析并静态检查源文件，但不执行。
 - `vela run <source.vela>`：将源代码经过 Typed IR 和寄存器字节码编译后，在虚拟机中执行无参数的 `main` 函数。
+
+`compile`/`exec` 管理[字节码镜像和缓存](docs/compilation_cache.md)；`fmt`、`doc` 和 `lsp` 提供[源码工具](docs/source_tooling.md)，[VS Code 扩展](editors/vscode/README.md)提供编辑器集成。
+`debug FILE` 和 `repl` 提供[调试器](docs/debugger.md)与[交互会话](docs/repl.md)。
 
 例如：
 
@@ -36,7 +39,7 @@ gclient sync --no-history
 python -m tools.vl doctor
 ```
 
-该命令会根据 [`DEPS`](DEPS) 获取固定版本的主机构建工具、Abseil、GoogleTest 和 Google Benchmark 源码。依赖版本和许可证记录在 [`third_party/README.md`](third_party/README.md) 中。
+该命令会根据 [`DEPS`](DEPS) 获取固定版本的主机构建工具、Abseil、GoogleTest、Google Benchmark 和 utf8proc 源码。依赖版本和许可证记录在 [`third_party/README.md`](third_party/README.md) 中。
 
 ## 构建
 

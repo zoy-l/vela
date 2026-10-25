@@ -1,0 +1,13 @@
+class Failure {}
+
+func main(): int {
+  let sum = 0;
+  try {
+    for (let index = 0; index < 1000; index = index + 1) {
+      sum = sum + index;
+    }
+  } catch (error: Failure) {
+    return 0;
+  }
+  return sum;
+}

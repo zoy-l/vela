@@ -15,7 +15,10 @@ class methods omit `func`, and fields use `name: Type`. Locals use `let` or
 Parameters, return types, and class fields require annotations. `const` prevents
 rebinding; mutation of an object's fields or array elements remains allowed.
 There are no implicit conversions or legacy prefix declarations. Function
-values, arrow functions, and closures remain later work.
+types contain parameter types only, such as `(int, int) => int`; typed arrow
+functions support lexical captures with shared mutation of captured `let`
+bindings. [P1 contracts](p1_syntax_proposal.md) specify closures, construction,
+interfaces, generics, Expected, matching, and ordered collections.
 
 Control flow includes C/C++-style fallthrough switches. Explicit nullable types
 use `T?` and flow-sensitive non-null checks. Scope, declaration order, and
@@ -25,10 +28,10 @@ The initial class model is deliberately smaller than C++:
 
 - `class` declares a nominal object layout with statically known fields and
   methods;
-- classes are final in the first version; inheritance and virtual dispatch are
-  later language work;
+- classes are final; inheritance and class method overriding are later language
+  work, while explicit interfaces already support runtime dispatch;
 - a class construction expression has no `new` keyword;
-- named construction arguments are resolved to field or constructor parameter
+- named construction arguments are resolved to `param` fields or explicit constructor parameter
   IDs at compile time;
 - enum members always name their enum explicitly (`Brightness.light`), including
   constructor arguments, declarations, returns, assignments, and array elements;
@@ -44,15 +47,15 @@ enum Brightness {
 }
 
 class CupertinoThemeData {
-    brightness: Brightness;
+    param brightness: Brightness;
 }
 
 class ActionSheetExample {
 }
 
 class CupertinoApp {
-    theme: CupertinoThemeData;
-    home: ActionSheetExample;
+    param theme: CupertinoThemeData;
+    param home: ActionSheetExample;
 }
 
 func buildApp(): CupertinoApp {
@@ -100,6 +103,12 @@ and assignment. Context supplies the type of empty array literals;
 there are no implicit conversions. Arrays have reference semantics and compact
 contiguous native storage. See [compiler details](../compiler/README.md) for
 current bytecode limits.
+
+Generic expansion produces concrete declarations before static checking.
+Resolved types retain structural element/signature/argument relationships;
+lowering does not parse type-name suffixes to recover array elements. Interface
+selectors, field offsets, and argument bindings are resolved before execution.
+Validated layout tables are immutable and shared by all functions in a program.
 
 The compiler must retain source locations through parsing, type checking, IR
 instructions, and bytecode ranges. This keeps diagnostics and future debugger

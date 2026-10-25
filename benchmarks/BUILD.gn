@@ -1,6 +1,9 @@
 executable("vela_benchmarks") {
   testonly = true
   sources = [
+    "compilation_cache_benchmark.cc",
+    "gc_strategy_benchmark.cc",
+    "repl_benchmark.cc",
     "symbol_tables_benchmark.cc",
     "vm_benchmark.cc",
   ]

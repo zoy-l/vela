@@ -13,6 +13,33 @@
 
 namespace vela::ir {
 
+auto Lowerer::LowerConstantLabel(const frontend::Expression& source) -> RegisterId {
+  const auto& constant = model_.case_values.at(&source);
+  const auto label = AllocateTemporary(source.location);
+  if (const auto* integer = std::get_if<std::int64_t>(&constant)) {
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = label,
+        .immediate = *integer,
+        .location = source.location,
+    });
+  } else if (const auto* boolean = std::get_if<bool>(&constant)) {
+    Emit({
+        .opcode = Opcode::LoadBool,
+        .dst = label,
+        .immediate = *boolean ? 1 : 0,
+        .location = source.location,
+    });
+  } else {
+    frontend::Expression literal;
+    literal.kind = frontend::Expression::Kind::StringLiteral;
+    literal.location = source.location;
+    literal.text = std::get<std::string>(constant);
+    return LowerStringLiteral(literal).reg;
+  }
+  return label;
+}
+
 void Lowerer::LowerSwitch(const frontend::Statement& statement) {
   const auto value = LowerExpression(*statement.condition);
   std::vector<std::optional<std::size_t>> entries(statement.cases.size());
@@ -23,32 +50,7 @@ void Lowerer::LowerSwitch(const frontend::Statement& statement) {
       default_branch = index;
       continue;
     }
-    const auto& constant = model_.case_values.at(branch.label.get());
-    const auto label = AllocateTemporary(branch.location);
-    if (const auto* integer = std::get_if<std::int64_t>(&constant)) {
-      Emit({
-          .opcode = Opcode::LoadInt,
-          .dst = label,
-          .immediate = *integer,
-          .location = branch.location,
-      });
-    } else if (const auto* boolean = std::get_if<bool>(&constant)) {
-      Emit({
-          .opcode = Opcode::LoadBool,
-          .dst = label,
-          .immediate = *boolean ? 1 : 0,
-          .location = branch.location,
-      });
-    } else {
-      const auto string_id = static_cast<std::uint32_t>(program_.strings.size());
-      program_.strings.push_back(std::get<std::string>(constant));
-      Emit({
-          .opcode = Opcode::LoadString,
-          .dst = label,
-          .index = string_id,
-          .location = branch.location,
-      });
-    }
+    const auto label = LowerConstantLabel(*branch.label);
     const auto equal = AllocateTemporary(branch.location);
     const auto kind = value.type.kind;
     auto opcode = Opcode::EqualInt;
@@ -73,8 +75,12 @@ void Lowerer::LowerSwitch(const frontend::Statement& statement) {
   }
   const auto unmatched = current_function_->instructions.size();
   Emit({.opcode = Opcode::Jump, .location = statement.location});
-  controls_.push_back(
-      {.kind = ControlTargets::Kind::Switch, .break_jumps = {}, .continue_jumps = {}});
+  controls_.push_back({
+      .kind = ControlTargets::Kind::Switch,
+      .break_jumps = {},
+      .continue_jumps = {},
+      .finally_depth = finalizers_.size(),
+  });
   for (std::size_t index = 0; index < statement.cases.size(); ++index) {
     const auto target = static_cast<std::uint32_t>(current_function_->instructions.size());
     if (entries.at(index)) {

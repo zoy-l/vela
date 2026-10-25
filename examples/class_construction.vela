@@ -1,11 +1,13 @@
 class Theme {
-  brightness: int;
+  param brightness: int;
 }
-
 class App {
-  theme: Theme;
+  param theme: Theme;
 }
-
-func main(): App {
+func createApp(): App {
   return App(theme: Theme(brightness: 1));
+}
+func main(): void {
+  const app = createApp();
+  print(app.theme.brightness);
 }

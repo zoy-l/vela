@@ -1,0 +1,674 @@
+--- a/vm/vm.cc
++++ b/vm/vm.cc
+@@ -227,27 +227,648 @@
+   entry.frame.Attach(isolate_.heap(), entry_values);
+   frame_count_ = 1;
+-  while (frame_count_ != 0) {
+-    if constexpr (Debugging) {
+-      const DebugContext context(frames_.data(), frame_count_);
+-      if (debugger->BeforeInstruction(context) == DebugAction::Stop) {
+-        AbortInitializers();
+-        return {
+-            .value = runtime::Value::Null(),
+-            .status = ExecutionStatus::DebuggerStopped,
+-            .stack_trace = {},
+-            .message = {},
+-        };
+-      }
+-    }
+-    auto& active = std::span(frames_).subspan(frame_count_ - 1).front();
+-    const auto code = std::span(active.function->code);
+-    const auto instruction = code.subspan(active.program_counter++).front();
+-    const auto step = ExecuteInstruction(active, instruction);
+-    if (!step) {
+-      if (auto failure = HandleError(step.error())) {
+-        return std::move(*failure);
+-      }
+-    }
+-  }
++  static const void* const dispatch[] = {
++      &&DispatchLoadNull,
++      &&DispatchLoadBool,
++      &&DispatchLoadInt,
++      &&DispatchLoadIntConstant,
++      &&DispatchLoadDouble,
++      &&DispatchMove,
++      &&DispatchAddInt,
++      &&DispatchSubInt,
++      &&DispatchMulInt,
++      &&DispatchDivInt,
++      &&DispatchAddDouble,
++      &&DispatchSubDouble,
++      &&DispatchMulDouble,
++      &&DispatchDivDouble,
++      &&DispatchNegDouble,
++      &&DispatchEqualDouble,
++      &&DispatchNotEqualDouble,
++      &&DispatchLessDouble,
++      &&DispatchLessEqualDouble,
++      &&DispatchGreaterDouble,
++      &&DispatchGreaterEqualDouble,
++      &&DispatchNegInt,
++      &&DispatchNotBool,
++      &&DispatchEqualInt,
++      &&DispatchNotEqualInt,
++      &&DispatchEqualBool,
++      &&DispatchNotEqualBool,
++      &&DispatchEqualValue,
++      &&DispatchNotEqualValue,
++      &&DispatchLessInt,
++      &&DispatchLessEqualInt,
++      &&DispatchGreaterInt,
++      &&DispatchGreaterEqualInt,
++      &&DispatchAndBool,
++      &&DispatchOrBool,
++      &&DispatchStringConcat,
++      &&DispatchStringInterpolate,
++      &&DispatchBuiltinCall,
++      &&DispatchNativeCall,
++      &&DispatchCatch,
++      &&DispatchExceptionValue,
++      &&DispatchThrow,
++      &&DispatchRethrow,
++      &&DispatchEqualString,
++      &&DispatchNotEqualString,
++      &&DispatchLoadString,
++      &&DispatchNewArray,
++      &&DispatchNewDynamicArray,
++      &&DispatchNewCollection,
++      &&DispatchGetIndex,
++      &&DispatchSetIndex,
++      &&DispatchPrint,
++      &&DispatchCall,
++      &&DispatchCallIndirect,
++      &&DispatchCallInterface,
++      &&DispatchGetGlobal,
++      &&DispatchSetGlobal,
++      &&DispatchIsType,
++      &&DispatchCheckedCast,
++      &&DispatchNewOk,
++      &&DispatchNewErr,
++      &&DispatchExpectedHasValue,
++      &&DispatchExpectedValue,
++      &&DispatchJump,
++      &&DispatchJumpIfFalse,
++      &&DispatchNewInstance,
++      &&DispatchSetField,
++      &&DispatchGetField,
++      &&DispatchReturn,
++  };
++  ActiveFrame* active = nullptr;
++  Instruction instruction = 0;
++  constexpr Instruction kOpcodeMask = std::numeric_limits<std::uint8_t>::max();
++#define VELA_NEXT() \
++  do { \
++    if (frame_count_ == 0) { goto Completed; } \
++    if constexpr (Debugging) { \
++      const DebugContext context(frames_.data(), frame_count_); \
++      if (debugger->BeforeInstruction(context) == DebugAction::Stop) { \
++        AbortInitializers(); \
++        return {.value = runtime::Value::Null(), .status = ExecutionStatus::DebuggerStopped, \
++                .stack_trace = {}, .message = {}}; \
++      } \
++    } \
++    active = &std::span(frames_).subspan(frame_count_ - 1).front(); \
++    instruction = std::span(active->function->code).subspan(active->program_counter++).front(); \
++    goto *dispatch[static_cast<std::uint8_t>(DecodeOp(instruction))]; \
++  } while (false)
++  VELA_NEXT();
++DispatchLoadNull: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::LoadNull));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchLoadBool: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::LoadBool));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchLoadInt: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::LoadInt));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchLoadIntConstant: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::LoadIntConstant));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchLoadDouble: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::LoadDouble));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchMove: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::Move));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchAddInt: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::AddInt));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchSubInt: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::SubInt));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchMulInt: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::MulInt));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchDivInt: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::DivInt));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchAddDouble: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::AddDouble));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchSubDouble: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::SubDouble));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchMulDouble: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::MulDouble));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchDivDouble: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::DivDouble));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNegDouble: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NegDouble));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchEqualDouble: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::EqualDouble));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNotEqualDouble: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NotEqualDouble));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchLessDouble: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::LessDouble));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchLessEqualDouble: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::LessEqualDouble));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchGreaterDouble: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::GreaterDouble));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchGreaterEqualDouble: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::GreaterEqualDouble));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNegInt: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NegInt));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNotBool: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NotBool));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchEqualInt: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::EqualInt));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNotEqualInt: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NotEqualInt));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchEqualBool: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::EqualBool));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNotEqualBool: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NotEqualBool));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchEqualValue: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::EqualValue));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNotEqualValue: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NotEqualValue));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchLessInt: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::LessInt));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchLessEqualInt: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::LessEqualInt));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchGreaterInt: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::GreaterInt));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchGreaterEqualInt: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::GreaterEqualInt));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchAndBool: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::AndBool));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchOrBool: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::OrBool));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchStringConcat: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::StringConcat));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchStringInterpolate: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::StringInterpolate));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchBuiltinCall: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::BuiltinCall));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNativeCall: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NativeCall));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchCatch: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::Catch));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchExceptionValue: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::ExceptionValue));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchThrow: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::Throw));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchRethrow: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::Rethrow));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchEqualString: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::EqualString));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNotEqualString: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NotEqualString));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchLoadString: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::LoadString));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNewArray: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NewArray));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNewDynamicArray: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NewDynamicArray));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNewCollection: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NewCollection));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchGetIndex: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::GetIndex));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchSetIndex: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::SetIndex));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchPrint: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::Print));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchCall: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::Call));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchCallIndirect: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::CallIndirect));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchCallInterface: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::CallInterface));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchGetGlobal: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::GetGlobal));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchSetGlobal: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::SetGlobal));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchIsType: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::IsType));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchCheckedCast: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::CheckedCast));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNewOk: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NewOk));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNewErr: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NewErr));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchExpectedHasValue: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::ExpectedHasValue));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchExpectedValue: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::ExpectedValue));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchJump: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::Jump));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchJumpIfFalse: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::JumpIfFalse));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchNewInstance: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::NewInstance));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchSetField: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::SetField));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchGetField: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::GetField));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++DispatchReturn: {
++    const auto step = ExecuteInstruction(*active,
++        (instruction & ~kOpcodeMask) | static_cast<Instruction>(OpCode::Return));
++    if (!step) {
++      if (auto failure = HandleError(step.error())) { return std::move(*failure); }
++    }
++  }
++  VELA_NEXT();
++#undef VELA_NEXT
++Completed:
+   return {.value = result_, .status = ExecutionStatus::Returned, .stack_trace = {}, .message = {}};
+ }

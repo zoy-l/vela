@@ -1,16 +1,13 @@
 #pragma once
 
-#include <cstdint>
 #include <string>
 #include <vector>
 
+#include "base/source_location.h"
+
 namespace vela::frontend {
 
-struct SourceLocation final {
-  std::uint32_t line = 1;
-  std::uint32_t column = 1;
-  std::uint32_t source_id = 0;
-};
+using ::vela::SourceLocation;
 
 struct Diagnostic final {
   SourceLocation location;

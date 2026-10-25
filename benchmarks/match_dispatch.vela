@@ -1,0 +1,9 @@
+func main(): int {
+  let value: bool = false;
+  let total: int = 0;
+  for (let index: int = 0; index < 1000; index = index + 1) {
+    total = total + match (value) { false => 3, true => 4 };
+    value = !value;
+  }
+  return total;
+}

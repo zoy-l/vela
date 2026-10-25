@@ -17,16 +17,43 @@ constexpr std::uint32_t kHexLetterOffset = 10;
 constexpr std::size_t kBracedUnicodeDigits = 6;
 
 const absl::flat_hash_map<std::string_view, TokenKind> kKeywords = {
-    {"func", TokenKind::Func},         {"let", TokenKind::Let},
-    {"const", TokenKind::Const},       {"class", TokenKind::Class},
-    {"else", TokenKind::Else},         {"enum", TokenKind::Enum},
-    {"false", TokenKind::False},       {"if", TokenKind::If},
-    {"return", TokenKind::Return},     {"true", TokenKind::True},
-    {"void", TokenKind::Void},         {"while", TokenKind::While},
-    {"import", TokenKind::Import},     {"break", TokenKind::Break},
-    {"continue", TokenKind::Continue}, {"for", TokenKind::For},
-    {"print", TokenKind::Print},       {"switch", TokenKind::Switch},
-    {"case", TokenKind::Case},         {"default", TokenKind::Default},
+    {"type", TokenKind::Type},
+    {"public", TokenKind::Public},
+    {"private", TokenKind::Private},
+    {"static", TokenKind::Static},
+    {"param", TokenKind::Param},
+    {"constructor", TokenKind::Constructor},
+    {"interface", TokenKind::Interface},
+    {"implements", TokenKind::Implements},
+    {"is", TokenKind::Is},
+    {"as", TokenKind::As},
+    {"match", TokenKind::Match},
+    {"func", TokenKind::Func},
+    {"let", TokenKind::Let},
+    {"const", TokenKind::Const},
+    {"class", TokenKind::Class},
+    {"else", TokenKind::Else},
+    {"enum", TokenKind::Enum},
+    {"false", TokenKind::False},
+    {"if", TokenKind::If},
+    {"return", TokenKind::Return},
+    {"true", TokenKind::True},
+    {"void", TokenKind::Void},
+    {"while", TokenKind::While},
+    {"import", TokenKind::Import},
+    {"export", TokenKind::Export},
+    {"external", TokenKind::External},
+    {"try", TokenKind::Try},
+    {"catch", TokenKind::Catch},
+    {"finally", TokenKind::Finally},
+    {"throw", TokenKind::Throw},
+    {"break", TokenKind::Break},
+    {"continue", TokenKind::Continue},
+    {"for", TokenKind::For},
+    {"print", TokenKind::Print},
+    {"switch", TokenKind::Switch},
+    {"case", TokenKind::Case},
+    {"default", TokenKind::Default},
     {"null", TokenKind::Null},
 };
 
@@ -59,8 +86,18 @@ auto Lexer::Tokenize() -> LexResult {
     ScanToken(start);
   }
 
-  tokens_.push_back({.kind = TokenKind::EndOfFile, .lexeme = {}, .location = location_});
-  return {.tokens = std::move(tokens_), .diagnostics = std::move(diagnostics_)};
+  tokens_.push_back({
+      .lexeme = {},
+      .offset = current_,
+      .length = 0,
+      .location = location_,
+      .kind = TokenKind::EndOfFile,
+  });
+  return {
+      .tokens = std::move(tokens_),
+      .diagnostics = std::move(diagnostics_),
+      .comments = std::move(comments_),
+  };
 }
 
 void Lexer::ScanToken(std::size_t start) {
@@ -111,9 +148,16 @@ void Lexer::ScanToken(std::size_t start) {
     case '/':
       AddToken(TokenKind::Slash, start);
       break;
-    case '=':
-      AddToken(Match('=') ? TokenKind::EqualEqual : TokenKind::Equal, start);
+    case '=': {
+      auto kind = TokenKind::Equal;
+      if (Match('=')) {
+        kind = TokenKind::EqualEqual;
+      } else if (Match('>')) {
+        kind = TokenKind::Arrow;
+      }
+      AddToken(kind, start);
       break;
+    }
     case '!':
       AddToken(Match('=') ? TokenKind::BangEqual : TokenKind::Bang, start);
       break;
@@ -191,32 +235,44 @@ void Lexer::SkipWhitespaceAndComments() {
       continue;
     }
     if (character == '/' && PeekNext() == '/') {
+      const auto start = current_;
+      const auto opening = location_;
       while (!IsAtEnd() && Peek() != '\n') {
         Advance();
       }
+      RecordComment(opening, start);
       continue;
     }
     if (character == '/' && PeekNext() == '*') {
-      const auto opening = location_;
-      Advance();
-      Advance();
-      bool closed = false;
-      while (!IsAtEnd()) {
-        if (Peek() == '*' && PeekNext() == '/') {
-          Advance();
-          Advance();
-          closed = true;
-          break;
-        }
-        Advance();
-      }
-      if (!closed) {
-        AddDiagnostic(opening, "unterminated block comment");
-      }
+      SkipBlockComment();
       continue;
     }
     break;
   }
+}
+
+void Lexer::RecordComment(SourceLocation location, std::size_t start) {
+  if (comment_retention_ == CommentRetention::Preserve) {
+    comments_.push_back({.location = location, .offset = start, .length = current_ - start});
+  }
+}
+
+void Lexer::SkipBlockComment() {
+  const auto start = current_;
+  const auto opening = location_;
+  Advance();
+  Advance();
+  while (!IsAtEnd()) {
+    if (Peek() == '*' && PeekNext() == '/') {
+      Advance();
+      Advance();
+      RecordComment(opening, start);
+      return;
+    }
+    Advance();
+  }
+  AddDiagnostic(opening, "unterminated block comment");
+  RecordComment(opening, start);
 }
 
 void Lexer::ScanIdentifier() {
@@ -263,15 +319,18 @@ void Lexer::ScanNumber() {
 void Lexer::ScanString() {
   const auto opening = token_location_;
   auto segment_location = opening;
+  auto segment_start = current_ - 1;
   std::string value;
   bool interpolated = false;
   while (!IsAtEnd()) {
     if (Peek() == '"') {
       Advance();
       tokens_.push_back({
-          .kind = interpolated ? TokenKind::StringTail : TokenKind::StringLiteral,
           .lexeme = std::move(value),
+          .offset = segment_start,
+          .length = current_ - segment_start,
           .location = segment_location,
+          .kind = interpolated ? TokenKind::StringTail : TokenKind::StringLiteral,
       });
       return;
     }
@@ -286,9 +345,11 @@ void Lexer::ScanString() {
       Advance();
       Advance();
       tokens_.push_back({
-          .kind = interpolated ? TokenKind::StringMiddle : TokenKind::StringHead,
           .lexeme = std::move(value),
+          .offset = segment_start,
+          .length = current_ - segment_start,
           .location = segment_location,
+          .kind = interpolated ? TokenKind::StringMiddle : TokenKind::StringHead,
       });
       interpolated = true;
       value.clear();
@@ -296,6 +357,7 @@ void Lexer::ScanString() {
         return;
       }
       segment_location = location_;
+      segment_start = current_;
     } else {
       ScanStringRun(value);
     }
@@ -453,9 +515,11 @@ void Lexer::ScanUnicodeEscape(std::string& value, SourceLocation escape_location
 
 void Lexer::AddToken(TokenKind kind, std::size_t start) {
   tokens_.push_back({
-      .kind = kind,
       .lexeme = std::string(source_.substr(start, current_ - start)),
+      .offset = start,
+      .length = current_ - start,
       .location = token_location_,
+      .kind = kind,
   });
 }
 

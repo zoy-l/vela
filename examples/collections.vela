@@ -1,0 +1,17 @@
+func main(): void {
+  const names = Set<string>();
+  names.add("Vela");
+  names.add("Dart");
+  names.add("Vela");
+  const ordered = names.values();
+  for (let index: int = 0; index < ordered.length; index = index + 1) {
+    print(ordered[index]);
+  }
+
+  const scores = Map<string, int>();
+  scores.set("Vela", 42);
+  const score: int? = scores.get("Vela");
+  if (score != null) {
+    print(score);
+  }
+}
