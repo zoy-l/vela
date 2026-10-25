@@ -41,6 +41,8 @@ std::string_view ExecutionStatusName(ExecutionStatus status) noexcept {
       return "unhandled exception";
     case ExecutionStatus::DebuggerStopped:
       return "debugger stopped execution";
+    case ExecutionStatus::ConcurrentModification:
+      return "array structurally modified during callback";
   }
   std::unreachable();
 }

@@ -197,7 +197,46 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
           },
           {
               {Kind::Array, "length"},
-              "Returns the fixed array length as int in O(1) time. Read-only.",
+              "Returns the current number of elements as int in O(1) time. Read-only. Use push(), "
+              "pop(), insert(), removeAt() or clear() to change the length.",
+          },
+          {
+              {Kind::Array, "capacity"},
+              "Returns the number of elements that fit without reallocating storage. Read-only; "
+              "always at least length. reserve() may increase it; removals retain it.",
+          },
+          {
+              {Kind::Array, "push"},
+              "Appends one value of the array's element type and returns the new length. "
+              "Amortized O(1); geometric growth preserves the array's identity and all aliases. "
+              "No implicit numeric conversion or sparse holes.",
+          },
+          {
+              {Kind::Array, "pop"},
+              "Removes and returns the last element, or null if empty. Returns T? (without nested "
+              "nullable types). O(1); capacity is retained.",
+          },
+          {
+              {Kind::Array, "insert"},
+              "Inserts value before index and returns void. Requires 0 <= index <= length; "
+              "index == length appends. Shifts the suffix in O(n) time; invalid indices throw "
+              "Error.",
+          },
+          {
+              {Kind::Array, "removeAt"},
+              "Removes and returns the element at index. Requires 0 <= index < length. "
+              "Shifts the suffix in O(n) time and retains capacity; invalid indices throw Error.",
+          },
+          {
+              {Kind::Array, "clear"},
+              "Removes all elements and returns void in O(1) time. Retains capacity for reuse. "
+              "Removed references no longer keep objects alive during GC.",
+          },
+          {
+              {Kind::Array, "reserve"},
+              "Ensures capacity for at least capacity elements without changing length. "
+              "Negative capacities throw Error. O(n) when storage must grow, O(1) otherwise. "
+              "Does not initialize new elements or create holes.",
           },
           {
               {Kind::Array, "join"},
@@ -232,13 +271,14 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
               "compare(left, right) returns a negative int, zero or a positive int for less-than, "
               "equal or greater-than ordering. "
               "Worst-case O(n log n) comparisons and O(1) auxiliary array space. The sort is not "
-              "stable.\n\n"
+              "stable. Structurally modifying this array from compare throws Error.\n\n"
               "```vela\nvalues.sort((left, right) => left - right);\n```",
           },
           {
               {Kind::Array, "forEach"},
               "Calls operation for each element in index order and returns void. The callback must "
-              "return void; no result array is created.",
+              "return void; no result array is created. Structural changes to this array from "
+              "the callback throw Error.",
           },
           {
               {Kind::Array, "some"},
@@ -269,7 +309,7 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
               "the original array unchanged.\n\n"
               "Callback parameters are inferred from the element type; R is inferred from the "
               "callback result. Allocates the result array once. References are not "
-              "deep-copied.\n\n"
+              "deep-copied. Structural changes to the source from the callback throw Error.\n\n"
               "```vela\nvalues.map(value => value.toString());\n```",
           },
           {

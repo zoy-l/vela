@@ -102,7 +102,9 @@ Strings and typed arrays use the same IR and bytecode path. Array element types
 and rank remain exact across literals, fields, parameters, returns, indexing,
 and assignment. Context supplies the type of empty array literals;
 there are no implicit element conversions. Arrays have reference semantics and compact
-contiguous native storage. See [compiler details](../compiler/README.md) for
+contiguous native storage. Their length can grow or shrink through typed mutation
+APIs while aliases retain the same object identity; see [growable arrays](dynamic_arrays.md).
+See [compiler details](../compiler/README.md) for
 current bytecode limits.
 
 Generic expansion produces concrete declarations before static checking.
@@ -184,9 +186,11 @@ work buffers.
 
 Small object allocations use size-class free lists. VM registers and instance
 fields use tagged `Value` slots; arrays already store native primitives or
-pointers directly after their header in a single accounted allocation. Array
-layouts tell the collector which arrays contain heap references, and array
-stores apply the reference write barrier. Immutable strings use one allocation
+pointers in type-specific contiguous buffers. Small arrays use inline storage;
+larger arrays and growth use a separately accounted backing buffer while the GC
+object stays at its original address. Array layouts identify reference elements;
+marking scans only the live prefix, and reference writes apply the write barrier.
+Immutable strings use one allocation
 for the object header and bytes, participate in the same collector, and are
 marked as leaves. Concatenation allocates the result once and copies both
 operands directly; it remains linear in the total byte length. Class string

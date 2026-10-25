@@ -23,6 +23,7 @@ enum class ExecutionStatus : std::uint8_t {
   NativeFailure,
   Thrown,
   DebuggerStopped,
+  ConcurrentModification,
 };
 
 [[nodiscard]] std::string_view ExecutionStatusName(ExecutionStatus status) noexcept;

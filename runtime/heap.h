@@ -131,13 +131,29 @@ class Heap final {
   [[nodiscard]] std::expected<StringObject*, StringJoinError> JoinArray(
       const HeapObject& array,
       std::string_view separator) noexcept;
-  // 返回视图借用数组的连续存储；跨分配使用时必须保持数组可达。
+  // 返回视图借用连续存储；数组须可达，且视图不得跨越该数组的扩容或结构变更。
   [[nodiscard]] static std::expected<std::span<StringObject* const>, ArrayAccessError>
   StringElements(const HeapObject& array) noexcept;
   [[nodiscard]] static std::expected<std::span<std::int64_t>, ArrayAccessError> IntegerElements(
       HeapObject& array) noexcept;
   [[nodiscard]] static std::expected<std::uint32_t, ArrayAccessError> ArrayLength(
       const HeapObject& array) noexcept;
+  [[nodiscard]] static std::expected<std::uint32_t, ArrayAccessError> ArrayCapacity(
+      const HeapObject& array) noexcept;
+  [[nodiscard]] static std::expected<std::uint64_t, ArrayAccessError> ArrayMutation(
+      const HeapObject& array) noexcept;
+  [[nodiscard]] std::expected<void, ArrayAccessError> ReserveArray(HeapObject& array,
+                                                                   std::size_t capacity) noexcept;
+  [[nodiscard]] std::expected<std::uint32_t, ArrayAccessError> PushArray(HeapObject& array,
+                                                                         Value value) noexcept;
+  [[nodiscard]] static std::expected<Value, ArrayAccessError> PopArray(HeapObject& array) noexcept;
+  [[nodiscard]] std::expected<void, ArrayAccessError> InsertArray(HeapObject& array,
+                                                                  std::uint32_t index,
+                                                                  Value value) noexcept;
+  [[nodiscard]] static std::expected<Value, ArrayAccessError> RemoveArrayElement(
+      HeapObject& array,
+      std::uint32_t index) noexcept;
+  [[nodiscard]] static std::expected<void, ArrayAccessError> ClearArray(HeapObject& array) noexcept;
   [[nodiscard]] std::expected<HeapObject*, ArrayAccessError> SliceArray(HeapObject& array,
                                                                         std::uint32_t start,
                                                                         std::uint32_t end) noexcept;
@@ -185,9 +201,9 @@ class Heap final {
     return true;
   }
   [[nodiscard]] static std::expected<Value, ArrayAccessError> GetElement(
-      const HeapObject& object,
+      const HeapObject& array,
       std::uint32_t index) noexcept;
-  [[nodiscard]] std::expected<void, ArrayAccessError> SetElement(HeapObject& object,
+  [[nodiscard]] std::expected<void, ArrayAccessError> SetElement(HeapObject& array,
                                                                  std::uint32_t index,
                                                                  Value value) noexcept;
 
@@ -237,6 +253,9 @@ class Heap final {
   void DestroyAll() noexcept;
   [[nodiscard]] StringObject* AllocateStringStorage(std::size_t length) noexcept;
   void ReleaseMutableString(HeapObject& object) noexcept;
+  void MarkArray(HeapObject& array) noexcept;
+  void ReleaseArray(HeapObject& array) noexcept;
+  std::expected<void, ArrayAccessError> GrowArray(HeapObject& array, Value value) noexcept;
   void MarkCollection(HeapObject& object) noexcept;
   void ReleaseCollection(HeapObject& object) noexcept;
   std::expected<void, CollectionError> GrowCollection(HeapObject& object) noexcept;

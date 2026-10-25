@@ -1,0 +1,29 @@
+import 'input' as data;
+
+func run(): int {
+  const size = data.values.length;
+  const scale = 2.0 / size.toDouble();
+  let checksum = 0;
+  for (let y = 0; y < size; y = y + 1) {
+    const imaginary = y.toDouble() * scale - 1.0;
+    for (let x = 0; x < size; x = x + 1) {
+      const real = x.toDouble() * scale - 1.5;
+      let zr = 0.0;
+      let zi = 0.0;
+      let iterations = 0;
+      while (iterations < 50 && zr * zr + zi * zi <= 4.0) {
+        const next = zr * zr - zi * zi + real;
+        zi = 2.0 * zr * zi + imaginary;
+        zr = next;
+        iterations = iterations + 1;
+      }
+      checksum = checksum + iterations;
+    }
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(64);
+  print(run());
+}

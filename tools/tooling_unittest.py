@@ -544,6 +544,31 @@ class LanguageServerTest(unittest.TestCase):
         self.assertIn('(method) string[].join(separator: string): string',
                       self.reply(messages, 'hover')['result']['contents']['value'])
 
+    def test_dynamic_array_methods_share_typed_completion_hover_and_argument_names(self) -> None:
+        source = ("func main(): void { const values: int[] = []; values.reserve(100); "
+                  "values.push(42); values.insert(index: 0, value: 40); "
+                  "const item = values.pop(); print(values.capacity); }")
+        messages = self.session([
+            self.open(source),
+            self.symbol_query('completion', source, source.index('values.reserve') + len('values.'), 'methods'),
+            self.symbol_query('hover', source, source.index('push('), 'push'),
+            self.symbol_query('hover', source, source.index('pop('), 'pop'),
+            self.symbol_query('hover', source, source.index('values.capacity') + len('values.'), 'capacity'),
+            self.symbol_query('completion', source, source.index('index: 0'), 'arguments')])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        methods = {item['label']: item for item in self.reply(messages, 'methods')['result']}
+        for name in ('push', 'pop', 'insert', 'removeAt', 'clear', 'reserve', 'capacity'):
+            self.assertIn(name, methods)
+            self.assertTrue(methods[name].get('documentation'), name)
+        self.assertIn('(value: int): int', methods['push']['detail'])
+        self.assertIn('(): int?', methods['pop']['detail'])
+        self.assertIn('(method) int[].push(value: int): int', self.reply(messages, 'push')['result']['contents']['value'])
+        self.assertIn('Amortized O(1)', self.reply(messages, 'push')['result']['contents']['value'])
+        self.assertIn('(method) int[].pop(): int?', self.reply(messages, 'pop')['result']['contents']['value'])
+        self.assertIn('Read-only', self.reply(messages, 'capacity')['result']['contents']['value'])
+        arguments = {item['label'] for item in self.reply(messages, 'arguments')['result']}
+        self.assertIn('index:', arguments)
+
     def test_inferred_lambda_parameters_expose_hover_members_and_definitions(self) -> None:
         source = ("class Item { param value: int; }\n"
                   "func main(): void { const values = [Item(value: 42)];\n"

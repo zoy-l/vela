@@ -1,0 +1,57 @@
+import 'input' as data;
+
+class Particle {
+  param x: double;
+  param y: double;
+  param vx: double;
+  param vy: double;
+
+  update(): void {
+    this.x = this.x + this.vx;
+    this.y = this.y + this.vy;
+    if (this.x > 100.0) {
+      this.x = 200.0 - this.x;
+      this.vx = -this.vx;
+    }
+    if (this.x < 0.0) {
+      this.x = -this.x;
+      this.vx = -this.vx;
+    }
+    if (this.y > 100.0) {
+      this.y = 200.0 - this.y;
+      this.vy = -this.vy;
+    }
+    if (this.y < 0.0) {
+      this.y = -this.y;
+      this.vy = -this.vy;
+    }
+  }
+}
+
+func run(): int {
+  const particles = data.values.map(
+    index => Particle(
+      x: (index - index / 97 * 97).toDouble(),
+      y: (index - index / 37 * 37).toDouble(),
+      vx: 0.25,
+      vy: -0.125
+    )
+  );
+  const size = particles.length;
+  for (let frame = 0; frame < 64; frame = frame + 1) {
+    for (let index = 0; index < size; index = index + 1) {
+      particles[index].update();
+    }
+  }
+  let checksum = 0;
+  for (let index = 0; index < size; index = index + 1) {
+    const particle = particles[index];
+    checksum = checksum + (particle.x * 1000.0).toInt() + (particle.y * 1000.0).toInt();
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(128);
+  print(run());
+}

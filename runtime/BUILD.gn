@@ -7,6 +7,7 @@ source_set("runtime") {
   sources = [
     "array_operations.cc",
     "array_operations.h",
+    "array_storage.h",
     "builtins.cc",
     "builtins.h",
     "collection_operations.cc",

@@ -159,13 +159,15 @@ class Lowerer final {
 
   LoweredValue LowerArrayLiteral(const frontend::Expression& expression);
   LoweredValue LowerArrayAlgorithm(const frontend::Expression& expression);
-  RegisterId EmitCallback(RegisterId callback,
-                          std::span<const RegisterId> arguments,
-                          frontend::SourceLocation location);
+  RegisterId EmitArrayCallback(RegisterId callback,
+                               std::span<const RegisterId> arguments,
+                               RegisterId guard,
+                               frontend::SourceLocation location);
   struct ArrayAlgorithmRegisters final {
     RegisterId array;
     RegisterId callback;
     RegisterId length;
+    RegisterId guard;
   };
   void LowerArraySort(const ArrayAlgorithmRegisters& inputs, frontend::SourceLocation location);
   void LowerArraySiftDown(RegisterId root,

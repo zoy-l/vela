@@ -2,7 +2,6 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -89,31 +88,19 @@ TypeChecker::Type TypeChecker::CheckArrayMethod(const Expression& expression,
   if (const auto algorithm = FindArrayAlgorithm(name)) {
     return CheckArrayAlgorithm(expression, receiver, *algorithm);
   }
-  FunctionInfo signature;
-  signature.return_type = {.kind = Type::Kind::Void, .name = "void"};
-  const auto parameter = [&](std::string key, Type type) -> void {
-    signature.parameter_indices.emplace(key,
-                                        static_cast<std::uint32_t>(signature.parameters.size()));
-    signature.parameters.push_back({.name = std::move(key), .type = std::move(type)});
-  };
-  Builtin builtin = Builtin::ArrayReverse;
-  if (name == "copy") {
-    builtin = Builtin::ArrayCopy;
-    signature.return_type = receiver;
-  } else if (name == "slice") {
-    builtin = Builtin::ArraySlice;
-    signature.return_type = receiver;
-    parameter("start", {.kind = Type::Kind::Int, .name = "int"});
-    parameter("end", {.kind = Type::Kind::Int, .name = "int"});
-  } else if (name == "fill") {
-    builtin = Builtin::ArrayFill;
-    parameter("value", array_elements_.at(receiver.name));
-  } else if (name != "reverse") {
-    AddDiagnostic(expression.location, "unknown array method '" + name + "'");
-    return InvalidType();
+  const auto element = array_elements_.at(receiver.name);
+  for (const auto& [method, builtin] : ArrayMethods()) {
+    if (method == name) {
+      auto signature = ArrayMethodSignature(builtin, receiver, element);
+      if (builtin == Builtin::ArrayPop) {
+        signature.return_type = NullableType(element);
+      }
+      builtin_calls_.emplace(&expression, builtin);
+      return CheckFunctionCall(signature, expression);
+    }
   }
-  builtin_calls_.emplace(&expression, builtin);
-  return CheckFunctionCall(signature, expression);
+  AddDiagnostic(expression.location, "unknown array method '" + name + "'");
+  return InvalidType();
 }
 
 }  // namespace vela::frontend

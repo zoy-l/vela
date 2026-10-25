@@ -1,0 +1,20 @@
+func main(): void {
+  const values: int[] = [];
+  values.reserve(1000);
+  const alias = values;
+  for (let index = 0; index < 1000; index = index + 1) {
+    values.push(index);
+  }
+  print('length: ${alias.length}, capacity: ${alias.capacity}');
+
+  values.insert(0, 42);
+  print(values.removeAt(0));
+  const last = values.pop();
+  if (last != null) {
+    print(last);
+  }
+
+  values.clear();
+  print('empty: ${values.length}, retained capacity: ${values.capacity}');
+  print(values.pop());
+}

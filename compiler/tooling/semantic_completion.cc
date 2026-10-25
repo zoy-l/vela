@@ -91,13 +91,16 @@ void AddBuiltins(std::vector<Completion>& result, Kind kind) {
 }
 
 void AddArrayElementMethods(std::vector<Completion>& result,
+                            const frontend::TypeDescriptor& receiver,
                             const frontend::TypeDescriptor& element) {
-  result.push_back({
-      .label = "fill",
-      .detail = "(value: " + element.name + "): void",
-      .kind = CompletionKind::Method,
-      .documentation = {},
-  });
+  for (const auto& [name, builtin] : frontend::ArrayMethods()) {
+    result.push_back({
+        .label = std::string(name),
+        .detail = BuiltinDetail(frontend::ArrayMethodSignature(builtin, receiver, element)),
+        .kind = CompletionKind::Method,
+        .documentation = {},
+    });
+  }
   if (frontend::CanFormatString(element)) {
     result.push_back({
         .label = "join",
@@ -230,12 +233,10 @@ void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
     property("byteLength");
     property("graphemeLength");
   } else if (kind == Kind::Array) {
-    method("copy", "(): " + type.name);
-    method("slice", "(start: int, end: int): " + type.name);
-    method("reverse", "(): void");
+    property("capacity");
     const auto element = model_.array_elements.find(type.name);
     if (element != model_.array_elements.end()) {
-      AddArrayElementMethods(result, element->second);
+      AddArrayElementMethods(result, type, element->second);
     }
   } else if (kind == Kind::Set || kind == Kind::Map || kind == Kind::Expected) {
     const auto arguments = model_.generic_arguments.find(type.name);

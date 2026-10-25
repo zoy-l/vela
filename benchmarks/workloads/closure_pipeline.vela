@@ -1,0 +1,21 @@
+import 'input' as data;
+
+func accumulator(start: int): (int) => int {
+  let current = start;
+  return (value: int): int => {
+    const sum = current + value;
+    current = sum - sum / 65521 * 65521;
+    return current;
+  };
+}
+
+func run(): int {
+  const next = accumulator(7);
+  const mapped = data.values.map(value => next(value));
+  return mapped.reduce(0, (total, value) => total + value);
+}
+
+func main(): void {
+  data.prepare(1024);
+  print(run());
+}

@@ -1,0 +1,26 @@
+import 'input' as data;
+
+func run(): int {
+  const values: int[] = [];
+  const size = data.values.length;
+  for (let index = 0; index < size; index = index + 1) {
+    values.push(data.values[index]);
+  }
+  let checksum = 0;
+  for (let index = 0; index < size; index = index + 1) {
+    checksum = checksum + values[index];
+  }
+  for (let index = size; index > 0; index = index - 1) {
+    const value = values.pop();
+    if (value == null || value != index - 1) {
+      return -1;
+    }
+    checksum = checksum + value;
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(1024);
+  print(run());
+}

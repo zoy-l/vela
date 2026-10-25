@@ -43,6 +43,15 @@ enum class Builtin : std::uint8_t {
   SetUnion,
   SetIntersection,
   SetDifference,
+  ArrayCapacity,
+  ArrayPush,
+  ArrayPop,
+  ArrayInsert,
+  ArrayRemoveAt,
+  ArrayClear,
+  ArrayReserve,
+  ArrayMutation,
+  ArrayCheckMutation,
   Count,
 };
 
@@ -62,6 +71,10 @@ enum class Builtin : std::uint8_t {
     case Builtin::CollectionClear:
     case Builtin::ArrayCopy:
     case Builtin::ArrayReverse:
+    case Builtin::ArrayCapacity:
+    case Builtin::ArrayPop:
+    case Builtin::ArrayClear:
+    case Builtin::ArrayMutation:
       return 1;
     case Builtin::ArrayJoin:
     case Builtin::MutableStringAppend:
@@ -82,11 +95,16 @@ enum class Builtin : std::uint8_t {
     case Builtin::SetUnion:
     case Builtin::SetIntersection:
     case Builtin::SetDifference:
+    case Builtin::ArrayPush:
+    case Builtin::ArrayRemoveAt:
+    case Builtin::ArrayReserve:
+    case Builtin::ArrayCheckMutation:
       return 2;
     case Builtin::StringSlice:
     case Builtin::StringGraphemeSlice:
     case Builtin::MapSet:
     case Builtin::ArraySlice:
+    case Builtin::ArrayInsert:
       return 3;
     case Builtin::Count:
       return 0;

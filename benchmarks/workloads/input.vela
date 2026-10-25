@@ -1,0 +1,11 @@
+export let values: int[] = [];
+
+// The comparison harness prepares the same integer input outside execution timing.
+export func prepare(size: int): void {
+  const indices: int[] = [];
+  indices.reserve(size);
+  for (let index = 0; index < size; index = index + 1) {
+    indices.push(index);
+  }
+  values = indices;
+}

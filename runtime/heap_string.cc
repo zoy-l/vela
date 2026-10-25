@@ -11,6 +11,7 @@
 #include <span>
 #include <string_view>
 
+#include "runtime/array_storage.h"
 #include "runtime/element_storage.h"
 #include "runtime/object.h"
 #include "runtime/register_storage.h"
@@ -180,7 +181,7 @@ std::expected<std::span<StringObject* const>, ArrayAccessError> Heap::StringElem
   if (array.array_layout()->element_kind != ValueKind::String) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
-  const void* storage = std::span(&array, 1).last(0).data();
+  const void* storage = internal::ArrayBuffer(array).data;
   return std::span(static_cast<StringObject* const*>(storage), array.length);
 }
 
@@ -213,9 +214,7 @@ std::expected<StringObject*, StringJoinError> Heap::JoinArray(const HeapObject& 
       layout.element_kind != ValueKind::Double && layout.element_kind != ValueKind::Boolean) {
     return std::unexpected(StringJoinError::TypeMismatch);
   }
-  const void* data = std::span(&array, 1).last(0).data();
-  const std::span storage(static_cast<const std::byte*>(data),
-                          array.length * layout.element_size());
+  const auto storage = internal::ArrayBytes(array, layout);
   return JoinFormatted(
       array.length, separator,
       [&layout, storage](std::size_t index) -> Value {

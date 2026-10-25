@@ -11,6 +11,13 @@ their union, intersection and difference through the native ordered hash tables.
 Native benchmark sources use `*_benchmark.cc`. Generated symbol-table workloads
 also measure compilation at 32, 256, and 1024 declaration groups.
 
+The [representative suite](../docs/representative_benchmarks.md) adds nine
+algorithm/application workloads at two sizes, each with an optimized C++ pair.
+Run `python -m tools.vl bench --compare` to save raw samples, medians, VM/C++
+ratios, variation and Vela heap snapshots under `out/benchmarks/`.
+`array_growth` and `array_growth_reserved` compare typed push/read/pop workloads
+with geometric growth versus a single reserve; see [growable arrays](../docs/dynamic_arrays.md).
+
 ```powershell
 python -m tools.vl bench
 python -m tools.vl bench -- --benchmark_list_tests
@@ -23,7 +30,7 @@ calibration, timing, repetitions, aggregates, filtering, and JSON/CSV output.
 For a fixed execution count, use `--benchmark_min_time=3000x`; repetitions are
 separate samples controlled by `--benchmark_repetitions`.
 
-Each workload registers three cases:
+The original small workloads use these timing boundaries:
 
 - `compile/*`: compiles already loaded source, including creation and destruction
   of the Isolate and compiled program, IR optimization, physical register
@@ -149,5 +156,7 @@ default. Compare equivalent Release configurations and measurement boundaries.
 
 The source directory is supplied by GN, so the benchmark executable can run
 from any working directory while the source checkout remains available. To add
-a workload, place its `.vela` file here and register its three cases with an
-expected result in `vm_benchmark.cc`.
+a small workload, place its `.vela` file here and register its applicable cases
+with an expected result in `vm_benchmark.cc`. Paired workloads belong in
+`workloads/`, with matching kernels and size/checksum records in the
+[representative suite](../docs/representative_benchmarks.md).

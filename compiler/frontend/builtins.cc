@@ -112,6 +112,78 @@ std::optional<Builtin> FindSetOperation(std::string_view name) {
   return std::nullopt;
 }
 
+std::span<const std::pair<std::string_view, Builtin>> ArrayMethods() noexcept {
+  static constexpr auto kMethods = std::to_array<std::pair<std::string_view, Builtin>>({
+      {"copy", Builtin::ArrayCopy},
+      {"slice", Builtin::ArraySlice},
+      {"fill", Builtin::ArrayFill},
+      {"reverse", Builtin::ArrayReverse},
+      {"push", Builtin::ArrayPush},
+      {"pop", Builtin::ArrayPop},
+      {"insert", Builtin::ArrayInsert},
+      {"removeAt", Builtin::ArrayRemoveAt},
+      {"clear", Builtin::ArrayClear},
+      {"reserve", Builtin::ArrayReserve},
+  });
+  return kMethods;
+}
+
+FunctionDescriptor ArrayMethodSignature(Builtin builtin,
+                                        const TypeDescriptor& receiver,
+                                        const TypeDescriptor& element) {
+  FunctionDescriptor signature;
+  signature.return_type = {.kind = Kind::Void, .name = "void"};
+  const TypeDescriptor integer{.kind = Kind::Int, .name = "int"};
+  const auto parameter = [&signature](std::string_view name, const TypeDescriptor& type) -> void {
+    signature.parameter_indices.emplace(name,
+                                        static_cast<std::uint32_t>(signature.parameters.size()));
+    signature.parameters.push_back({.name = std::string(name), .type = type});
+  };
+  switch (builtin) {
+    case Builtin::ArrayCopy:
+      signature.return_type = receiver;
+      break;
+    case Builtin::ArraySlice:
+      signature.return_type = receiver;
+      parameter("start", integer);
+      parameter("end", integer);
+      break;
+    case Builtin::ArrayPush:
+      signature.return_type = integer;
+      parameter("value", element);
+      break;
+    case Builtin::ArrayPop:
+      signature.return_type = element;
+      if (!element.nullable) {
+        auto& result = signature.return_type;
+        result.nullable = true;
+        result.name =
+            element.kind == Kind::Function ? "(" + element.name + ")?" : element.name + '?';
+      }
+      break;
+    case Builtin::ArrayInsert:
+      parameter("index", integer);
+      parameter("value", element);
+      break;
+    case Builtin::ArrayRemoveAt:
+      signature.return_type = element;
+      parameter("index", integer);
+      break;
+    case Builtin::ArrayFill:
+      parameter("value", element);
+      break;
+    case Builtin::ArrayReserve:
+      parameter("capacity", integer);
+      break;
+    case Builtin::ArrayReverse:
+    case Builtin::ArrayClear:
+      break;
+    default:
+      std::unreachable();
+  }
+  return signature;
+}
+
 std::optional<ArrayAlgorithm> FindArrayAlgorithm(std::string_view name) {
   for (const auto& [label, algorithm] : ArrayAlgorithms()) {
     if (name == label) {
@@ -186,6 +258,30 @@ FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
 
 const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
   return kSignatures.at(static_cast<std::size_t>(builtin));
+}
+
+std::optional<Builtin> FindBuiltinProperty(Kind receiver, std::string_view name) {
+  if (receiver == Kind::Array) {
+    if (name == "length") {
+      return Builtin::ArrayLength;
+    }
+    if (name == "capacity") {
+      return Builtin::ArrayCapacity;
+    }
+  } else if (receiver == Kind::String) {
+    if (name == "length") {
+      return Builtin::StringLength;
+    }
+    if (name == "byteLength") {
+      return Builtin::StringByteLength;
+    }
+    if (name == "graphemeLength") {
+      return Builtin::StringGraphemeLength;
+    }
+  } else if ((receiver == Kind::Set || receiver == Kind::Map) && name == "size") {
+    return Builtin::CollectionSize;
+  }
+  return std::nullopt;
 }
 
 bool IsBuiltinName(std::string_view name) {

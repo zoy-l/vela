@@ -1,4 +1,6 @@
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 
 #include "gtest/gtest.h"
 
@@ -18,7 +20,9 @@ TEST(NullableArrayTest, StoresTaggedPrimitiveValuesWithoutConvertingThem) {
   constexpr std::size_t kLength = 1024;
   auto* array = heap.AllocateArray(*integers, kLength);
   ASSERT_NE(array, nullptr);
-  EXPECT_EQ(heap.allocated_bytes(), sizeof(HeapObject) + (kLength * sizeof(Value)));
+  const auto header_bytes = heap.allocated_bytes() - (kLength * sizeof(Value));
+  EXPECT_GE(header_bytes, sizeof(HeapObject));
+  EXPECT_LT(header_bytes, kLength);
   EXPECT_TRUE(Heap::GetElement(*array, 0)->IsNull());
   ASSERT_TRUE(heap.SetElement(*array, 0, Value::Integer(42)));
   EXPECT_EQ(Heap::GetElement(*array, 0)->AsInteger(), 42);
@@ -79,6 +83,154 @@ TEST(NullableArrayTest, RetainsStringElementsDuringIncrementalSweep) {
   ASSERT_TRUE(heap.SetElement(*root.AsObject(), 0, Value::Null()));
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 1U);
+}
+
+TEST(DynamicArrayTest, GrowsGeometricallyAndPreservesAliasedIdentity) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateArrayLayout({.element_kind = ValueKind::Integer});
+  Value root = Value::Object(heap.AllocateArray(*layout, 0));
+  RootRange roots(heap, &root, 1);
+  auto* array = root.AsObject();
+  constexpr std::uint32_t kCount = 4096;
+  std::uint32_t growths = 0;
+  auto capacity = *Heap::ArrayCapacity(*array);
+  for (std::uint32_t index = 0; index < kCount; ++index) {
+    ASSERT_EQ(heap.PushArray(*array, Value::Integer(index)), index + 1);
+    const auto next_capacity = *Heap::ArrayCapacity(*array);
+    if (next_capacity != capacity) {
+      ++growths;
+      capacity = next_capacity;
+    }
+  }
+  EXPECT_EQ(array, root.AsObject());
+  EXPECT_LT(growths, 16U);
+  EXPECT_EQ(Heap::ArrayLength(*array), kCount);
+  EXPECT_EQ(heap.object_count(), 1U);
+}
+
+TEST(DynamicArrayTest, NativeViewsObserveRelocatedCompactStorage) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateArrayLayout({.element_kind = ValueKind::Integer});
+  Value root = Value::Object(heap.AllocateArray(*layout, 0));
+  RootRange roots(heap, &root, 1);
+  auto* array = root.AsObject();
+  ASSERT_TRUE(heap.PushArray(*array, Value::Integer(42)));
+  ASSERT_TRUE(heap.ReserveArray(*array, 4096));
+  const auto elements = Heap::IntegerElements(*array);
+  ASSERT_TRUE(elements);
+  EXPECT_EQ(elements->size(), 1U);
+  EXPECT_EQ(elements->front(), 42);
+}
+
+TEST(DynamicArrayTest, ReserveAccountsStorageAndPreservesContentsAndMutationVersion) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateArrayLayout({.element_kind = ValueKind::Integer});
+  constexpr std::size_t kCount = 4096;
+  Value root = Value::Object(heap.AllocateArray(*layout, kCount));
+  RootRange roots(heap, &root, 1);
+  auto* array = root.AsObject();
+  const auto before = heap.allocated_bytes();
+  const auto mutation = Heap::ArrayMutation(*array);
+  ASSERT_TRUE(heap.ReserveArray(*array, kCount * 2));
+  EXPECT_EQ(Heap::ArrayMutation(*array), mutation);
+  EXPECT_EQ(heap.allocated_bytes() - before, kCount * sizeof(std::int64_t));
+  EXPECT_EQ(Heap::GetElement(*array, kCount - 1)->AsInteger(), 0);
+  EXPECT_EQ(Heap::GetElement(*array, kCount).error(), ArrayAccessError::OutOfBounds);
+  EXPECT_EQ(heap.ReserveArray(
+                    *array, static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1)
+                .error(),
+            ArrayAccessError::OutOfMemory);
+  EXPECT_EQ(Heap::ArrayLength(*array), kCount);
+}
+
+TEST(DynamicArrayTest, ShiftsTaggedValuesAndRejectsInvalidMutationsAtomically) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  const auto* layout =
+      isolate.CreateArrayLayout({.element_kind = ValueKind::Integer, .nullable_elements = true});
+  Value root = Value::Object(heap.AllocateArray(*layout, 0));
+  RootRange roots(heap, &root, 1);
+  auto& array = *root.AsObject();
+  ASSERT_TRUE(heap.PushArray(array, Value::Integer(40)));
+  ASSERT_TRUE(heap.PushArray(array, Value::Null()));
+  ASSERT_TRUE(heap.InsertArray(array, 1, Value::Integer(42)));
+  EXPECT_EQ(Heap::RemoveArrayElement(array, 0)->AsInteger(), 40);
+  EXPECT_EQ(Heap::GetElement(array, 0)->AsInteger(), 42);
+  EXPECT_TRUE(Heap::PopArray(array)->IsNull());
+  EXPECT_EQ(Heap::PopArray(array)->AsInteger(), 42);
+  EXPECT_TRUE(Heap::PopArray(array)->IsNull());
+  const auto mutation = Heap::ArrayMutation(array);
+  EXPECT_EQ(heap.InsertArray(array, 1, Value::Integer(1)).error(), ArrayAccessError::OutOfBounds);
+  EXPECT_EQ(heap.PushArray(array, Value::Double(1.0)).error(),
+            ArrayAccessError::ElementTypeMismatch);
+  EXPECT_EQ(Heap::RemoveArrayElement(array, 0).error(), ArrayAccessError::OutOfBounds);
+  EXPECT_EQ(Heap::ArrayMutation(array), mutation);
+  EXPECT_EQ(Heap::ArrayLength(array), 0U);
+}
+
+TEST(DynamicArrayTest, RootsPendingReferencesDuringGrowthAndDropsRemovedElements) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateArrayLayout({.element_kind = ValueKind::String});
+  Value root = Value::Object(heap.AllocateArray(*layout, 0));
+  RootRange roots(heap, &root, 1);
+  auto& array = *root.AsObject();
+  constexpr std::uint32_t kCount = 512;
+  for (std::uint32_t index = 0; index < kCount; ++index) {
+    auto* string = heap.AllocateString("pending string");
+    ASSERT_TRUE(heap.PushArray(array, Value::String(string)));
+  }
+  heap.FinishCollection();
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), kCount + 1);
+  ASSERT_TRUE(Heap::PopArray(array));
+  ASSERT_TRUE(Heap::RemoveArrayElement(array, 0));
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), kCount - 1);
+}
+
+TEST(DynamicArrayTest, ClearRetainsCapacityWithoutRetainingReferencesAndReleasesOwnedBuffers) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateArrayLayout({.element_kind = ValueKind::String});
+  Value root = Value::Object(heap.AllocateArray(*layout, 0));
+  RootRange roots(heap, &root, 1);
+  auto& array = *root.AsObject();
+  ASSERT_TRUE(heap.PushArray(array, Value::String(heap.AllocateString("removed"))));
+  constexpr std::size_t kCount = 512;
+  ASSERT_TRUE(heap.ReserveArray(array, kCount));
+  const auto capacity = Heap::ArrayCapacity(array);
+  ASSERT_TRUE(Heap::ClearArray(array));
+  EXPECT_EQ(Heap::ArrayCapacity(array), capacity);
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 1U);
+  const auto retained = heap.allocated_bytes();
+  EXPECT_GT(retained, kCount * sizeof(StringObject*));
+  root = Value::Null();
+  heap.Collect();
+  EXPECT_EQ(heap.allocated_bytes(), 0U);
+  EXPECT_EQ(heap.object_count(), 0U);
+}
+
+TEST(DynamicArrayTest, WriteBarrierRetainsInsertedObjectsDuringSweep) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  auto* record = isolate.CreateClassLayout(0, {});
+  const auto* layout =
+      isolate.CreateArrayLayout({.element_kind = ValueKind::Object, .element_class = record});
+  auto* child = heap.AllocateInstance(*record);
+  Value root = Value::Object(heap.AllocateArray(*layout, 0));
+  RootRange roots(heap, &root, 1);
+  heap.StartCollection();
+  heap.Step(2);
+  ASSERT_EQ(heap.phase(), GcPhase::Sweep);
+  ASSERT_TRUE(heap.InsertArray(*root.AsObject(), 0, Value::Object(child)));
+  heap.FinishCollection();
+  EXPECT_EQ(heap.object_count(), 2U);
+  EXPECT_EQ(Heap::GetElement(*root.AsObject(), 0)->AsObject(), child);
 }
 
 }  // namespace

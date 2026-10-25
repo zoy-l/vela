@@ -15,6 +15,7 @@ enum class BuiltinError : std::uint8_t {
   OutOfMemory,
   IndexOutOfBounds,
   InvalidNumericConversion,
+  ConcurrentModification,
 };
 
 enum class NumericConversion : std::uint8_t { ToInt, ToDouble };

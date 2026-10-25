@@ -3,7 +3,10 @@ executable("vela_benchmarks") {
   sources = [
     "compilation_cache_benchmark.cc",
     "gc_strategy_benchmark.cc",
+    "native_workloads.cc",
+    "native_workloads.h",
     "repl_benchmark.cc",
+    "representative_benchmark.cc",
     "symbol_tables_benchmark.cc",
     "vm_benchmark.cc",
   ]

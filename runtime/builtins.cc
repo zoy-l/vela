@@ -182,6 +182,15 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
     case Builtin::ArraySlice:
     case Builtin::ArrayFill:
     case Builtin::ArrayReverse:
+    case Builtin::ArrayCapacity:
+    case Builtin::ArrayPush:
+    case Builtin::ArrayPop:
+    case Builtin::ArrayInsert:
+    case Builtin::ArrayRemoveAt:
+    case Builtin::ArrayClear:
+    case Builtin::ArrayReserve:
+    case Builtin::ArrayMutation:
+    case Builtin::ArrayCheckMutation:
       return ExecuteArrayBuiltin(builtin, arguments, heap);
     case Builtin::CollectionSize:
     case Builtin::SetAdd:

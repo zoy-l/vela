@@ -560,6 +560,8 @@ StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instructio
         return std::unexpected(ExecutionStatus::TypeError);
       case runtime::BuiltinError::InvalidNumericConversion:
         return std::unexpected(ExecutionStatus::InvalidNumericConversion);
+      case runtime::BuiltinError::ConcurrentModification:
+        return std::unexpected(ExecutionStatus::ConcurrentModification);
     }
   }
   values.subspan(DecodeA(instruction)).front() = *result;

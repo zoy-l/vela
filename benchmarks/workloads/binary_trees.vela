@@ -1,0 +1,37 @@
+import 'input' as data;
+
+class Node {
+  param left: Node?;
+  param right: Node?;
+}
+
+func build(depth: int): Node {
+  if (depth == 0) {
+    return Node(left: null, right: null);
+  }
+  return Node(left: build(depth - 1), right: build(depth - 1));
+}
+
+func count(node: Node): int {
+  const left = node.left;
+  const right = node.right;
+  if (left == null || right == null) {
+    return 1;
+  }
+  return 1 + count(left) + count(right);
+}
+
+func run(): int {
+  const depth = data.values.length;
+  const retained = build(depth);
+  let checksum = 0;
+  for (let iteration = 0; iteration < 16; iteration = iteration + 1) {
+    checksum = checksum + count(build(depth));
+  }
+  return checksum + count(retained);
+}
+
+func main(): void {
+  data.prepare(6);
+  print(run());
+}

@@ -119,11 +119,14 @@ comparisons and O(1) auxiliary array storage; it is not stable. The comparator
 returns a negative/zero/positive int. Callbacks can throw and use normal VM
 unwinding through ordinary VM frames; no C++ reentrant VM callback is involved.
 Receiver and explicit arguments evaluate left to right once before traversal.
-Array length is fixed, traversal visits indices in order, and changes to later
-elements are visible to subsequent callbacks. Map/Set lookup, mutation and ordered snapshot APIs remain documented
+Traversal captures the initial length and visits indices in order. Changes to later
+elements are visible to subsequent callbacks. Structural changes to the receiver
+from a callback throw Error, even if its original length is restored. Reserving
+capacity is permitted. See [growable arrays](dynamic_arrays.md) for mutation APIs.
+Map/Set lookup, mutation and ordered snapshot APIs remain documented
 in [P1 contracts](p1_syntax_proposal.md#ordered-set-and-map).
 
-`map` allocates one result array at the receiver's fixed length, stores each
+`map` allocates one result array at the receiver's initial length, stores each
 callback result directly, and preserves the original array. Its element type
 is inferred from the callback result, including nullable, reference, and nested
 array types. `transform` is removed. Set/Map expose read-only `.size` and

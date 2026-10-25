@@ -238,6 +238,7 @@ executable("vela_compiler_tests") {
     "control_flow_unittest.cc",
     "debugger_unittest.cc",
     "double_unittest.cc",
+    "dynamic_array_unittest.cc",
     "encoding_unittest.cc",
     "exception_unittest.cc",
     "exit_code_unittest.cc",

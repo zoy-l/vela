@@ -1,0 +1,28 @@
+import 'input' as data;
+
+func run(): int {
+  const counts = Map<string, int>();
+  const size = data.values.length;
+  for (let index = 0; index < size; index = index + 1) {
+    const line = 'event_${index - index / 64 * 64}:ok';
+    const word = line.slice(0, line.indexOf(':'));
+    const previous = counts.get(word);
+    if (previous == null) {
+      counts.set(word, 1);
+    } else {
+      counts.set(word, previous + 1);
+    }
+  }
+  const frequencies = counts.values();
+  let checksum = counts.size;
+  for (let index = 0; index < frequencies.length; index = index + 1) {
+    const frequency = frequencies[index];
+    checksum = checksum + frequency * frequency;
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(256);
+  print(run());
+}

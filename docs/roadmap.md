@@ -46,6 +46,7 @@ P0 behavior is specified in [Basic language contracts](language_basics.md).
 - [x] Add Unicode code point iteration and grapheme cluster APIs
 - [x] Implement explicit numeric conversions (implicit conversions are forbidden)
 - [x] Implement invariant typed arrays, nested arrays, and compact contiguous storage
+- [x] Add growable `T[]`, geometric capacity growth, reserve and insertion/removal APIs
 - [x] Implement `Set<T>`
 - [x] Implement `Map<K, V>`
 - [x] Lower class methods to bytecode

@@ -1,0 +1,62 @@
+import 'input' as data;
+
+func sort(values: int[], low: int, high: int): void {
+  let first = low;
+  let last = high;
+  while (first < last) {
+    let left = first;
+    let right = last;
+    const pivot = values[(first + last) / 2];
+    while (left <= right) {
+      while (values[left] < pivot) {
+        left = left + 1;
+      }
+      while (values[right] > pivot) {
+        right = right - 1;
+      }
+      if (left <= right) {
+        const temporary = values[left];
+        values[left] = values[right];
+        values[right] = temporary;
+        left = left + 1;
+        right = right - 1;
+      }
+    }
+    // Recurse into the smaller partition: stack depth stays O(log n).
+    if (right - first < last - left) {
+      if (first < right) {
+        sort(values, first, right);
+      }
+      first = left;
+    } else {
+      if (left < last) {
+        sort(values, left, last);
+      }
+      last = right;
+    }
+  }
+}
+
+func run(): int {
+  const values = data.values.map(
+    value => {
+      const scaled = value * 73 + 19;
+      return scaled - scaled / 65521 * 65521;
+    }
+  );
+  const size = values.length;
+  sort(values, 0, size - 1);
+  let checksum = 0;
+  for (let index = 0; index < size; index = index + 1) {
+    if (index > 0 && values[index - 1] > values[index]) {
+      return -1;
+    }
+    checksum = checksum + values[index] * (index + 1);
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(1024);
+  print(run());
+}

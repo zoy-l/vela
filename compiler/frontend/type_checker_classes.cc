@@ -1,4 +1,3 @@
-#include "base/builtin.h"
 #include "compiler/frontend/type_checker.h"
 
 #include <cstdint>
@@ -229,24 +228,8 @@ TypeChecker::Type TypeChecker::CheckStaticMember(const Expression& expression,
 }
 
 TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression, const Type& object) {
-  if (object.kind == Type::Kind::Array && expression.text == "length") {
-    builtin_calls_.insert_or_assign(&expression, Builtin::ArrayLength);
-    return {.kind = Type::Kind::Int, .name = "int"};
-  }
-  if ((object.kind == Type::Kind::Set || object.kind == Type::Kind::Map) &&
-      expression.text == "size") {
-    builtin_calls_.insert_or_assign(&expression, Builtin::CollectionSize);
-    return {.kind = Type::Kind::Int, .name = "int"};
-  }
-  if (object.kind == Type::Kind::String && expression.text == "graphemeLength") {
-    builtin_calls_.insert_or_assign(&expression, Builtin::StringGraphemeLength);
-    return {.kind = Type::Kind::Int, .name = "int"};
-  }
-  if (object.kind == Type::Kind::String &&
-      (expression.text == "length" || expression.text == "byteLength")) {
-    builtin_calls_.insert_or_assign(&expression, expression.text == "length"
-                                                     ? Builtin::StringLength
-                                                     : Builtin::StringByteLength);
+  if (const auto builtin = FindBuiltinProperty(object.kind, expression.text)) {
+    builtin_calls_.insert_or_assign(&expression, *builtin);
     return {.kind = Type::Kind::Int, .name = "int"};
   }
   if (object.kind == Type::Kind::Interface) {

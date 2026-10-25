@@ -64,7 +64,7 @@ def run_tests(variant: str, selection: str, gtest_arguments: list[str]) -> None:
     if selection in {"all", "tooling"}:
         environment = os.environ.copy()
         environment["VELA_TEST_EXECUTABLE"] = str(output / executable_name("vela"))
-        subprocess.run([sys.executable, "-m", "unittest", "tools.tooling_unittest", "tools.editor_unittest", "tools.command_unittest"],
+        subprocess.run([sys.executable, "-m", "unittest", "tools.tooling_unittest", "tools.editor_unittest", "tools.command_unittest", "tools.bench_unittest"],
                        cwd=output.parent.parent, env=environment, check=True)
 
     version = subprocess.run(

@@ -318,6 +318,16 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindMemberCallParamet
   if (const auto builtin = frontend::FindBuiltin(receiver.type.kind, callee.text)) {
     return frontend::BuiltinSignature(*builtin);
   }
+  if (receiver.type.kind == frontend::TypeDescriptor::Kind::Array) {
+    const auto element = model_.array_elements.find(receiver.type.name);
+    if (element != model_.array_elements.end()) {
+      for (const auto& [name, builtin] : frontend::ArrayMethods()) {
+        if (name == callee.text) {
+          return frontend::ArrayMethodSignature(builtin, receiver.type, element->second);
+        }
+      }
+    }
+  }
   return std::nullopt;
 }
 

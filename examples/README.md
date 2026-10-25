@@ -10,6 +10,7 @@ CLI prints the value returned by `main`; object-returning examples print
 .\out\debug\vela.exe run examples\class_construction.vela
 .\out\debug\vela.exe run examples\language_features.vela
 .\out\debug\vela.exe run examples\typed_arrays.vela
+.\out\debug\vela.exe run examples\dynamic_arrays.vela
 .\out\debug\vela.exe run examples\double.vela
 .\out\debug\vela.exe run examples\string_gc.vela
 .\out\debug\vela.exe run examples\strings.vela

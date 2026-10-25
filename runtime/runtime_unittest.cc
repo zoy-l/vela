@@ -137,6 +137,7 @@ TEST(RuntimeTest, TypedArraysUseCompactAccountedStorage) {
   auto* array = heap.AllocateArray(*booleans, kLength);
   ASSERT_NE(array, nullptr);
   const auto boolean_bytes = heap.allocated_bytes();
+  const auto header_bytes = boolean_bytes - (kLength * sizeof(bool));
   EXPECT_GE(boolean_bytes, sizeof(HeapObject) + kLength);
   EXPECT_LT(boolean_bytes, kLength * sizeof(Value));
   ASSERT_TRUE(heap.SetElement(*array, 0, Value::Boolean(true)));
@@ -148,7 +149,7 @@ TEST(RuntimeTest, TypedArraysUseCompactAccountedStorage) {
   EXPECT_EQ(heap.allocated_bytes(), 0U);
   array = heap.AllocateArray(*integers, kLength);
   ASSERT_NE(array, nullptr);
-  EXPECT_EQ(heap.allocated_bytes(), sizeof(HeapObject) + (kLength * sizeof(std::int64_t)));
+  EXPECT_EQ(heap.allocated_bytes(), header_bytes + (kLength * sizeof(std::int64_t)));
   EXPECT_EQ(Heap::GetElement(*array, 0)->AsInteger(), 0);
   heap.Collect();
   array = heap.AllocateArray(*doubles, 1);
@@ -160,7 +161,7 @@ TEST(RuntimeTest, TypedArraysUseCompactAccountedStorage) {
   heap.Collect();
   array = heap.AllocateArray(*doubles, kLength);
   ASSERT_NE(array, nullptr);
-  EXPECT_EQ(heap.allocated_bytes(), sizeof(HeapObject) + (kLength * sizeof(double)));
+  EXPECT_EQ(heap.allocated_bytes(), header_bytes + (kLength * sizeof(double)));
 }
 
 TEST(RuntimeTest, NestedArrayWriteBarrierRetainsChildrenAndRejectsWrongLayouts) {

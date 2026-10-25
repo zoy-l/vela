@@ -1,0 +1,25 @@
+import 'input' as data;
+
+func run(): int {
+  const size = data.values.length;
+  const flags = data.values.map(value => 1);
+  for (let prime = 2; prime * prime < size; prime = prime + 1) {
+    if (flags[prime] == 1) {
+      for (
+        let multiple = prime * prime; multiple < size; multiple = multiple + prime
+      ) {
+        flags[multiple] = 0;
+      }
+    }
+  }
+  let count = 0;
+  for (let value = 2; value < size; value = value + 1) {
+    count = count + flags[value];
+  }
+  return count;
+}
+
+func main(): void {
+  data.prepare(10000);
+  print(run());
+}
