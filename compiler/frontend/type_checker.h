@@ -108,6 +108,15 @@ struct MemberReference final {
 };
 
 enum class ExpectedOperation : std::uint8_t { Ok, Err, HasValue, Value, Error };
+enum class ArrayAlgorithm : std::uint8_t {
+  Sort,
+  ForEach,
+  Any,
+  Every,
+  FindIndex,
+  Reduce,
+  Transform,
+};
 
 struct SemanticModel final {
   absl::flat_hash_map<std::string, GlobalDescriptor> globals;
@@ -123,6 +132,7 @@ struct SemanticModel final {
   absl::flat_hash_map<const Expression*, ConstantValue> case_values;
   absl::flat_hash_map<std::string, std::int64_t> enum_values;
   absl::flat_hash_map<const Expression*, Builtin> builtin_calls;
+  absl::flat_hash_map<const Expression*, ArrayAlgorithm> array_algorithms;
   absl::flat_hash_map<const Statement*, TypeDescriptor> local_types;
   absl::flat_hash_map<const Statement*, StatementFlow> control_flow;
   absl::flat_hash_map<std::string, ClassDescriptor> classes;
@@ -184,6 +194,9 @@ class TypeChecker final {
   auto CheckScopedStatement(const Statement& statement, const Type& return_type) -> StatementFlow;
   auto CheckTry(const Statement& statement, const Type& return_type) -> StatementFlow;
   auto CheckArrayMethod(const Expression& expression, const Type& receiver) -> Type;
+  auto CheckArrayAlgorithm(const Expression& expression,
+                           const Type& receiver,
+                           ArrayAlgorithm algorithm) -> Type;
   auto CheckExpression(const Expression& expression, const Type* expected) -> Type;
   auto CheckExpressionType(const Expression& expression, const Type* expected) -> Type;
   auto CheckLambda(const Expression& expression) -> Type;
@@ -215,7 +228,9 @@ class TypeChecker final {
   auto CheckInstanceCall(const Expression& expression, const Type& object, const Type* expected)
       -> Type;
   void CheckMemberAssignment(const Expression& member);
-  auto CheckFunctionCall(const FunctionInfo& function, const Expression& expression) -> Type;
+  auto CheckFunctionCall(const FunctionInfo& function,
+                         const Expression& expression,
+                         std::span<const Type> checked_arguments = {}) -> Type;
   auto CheckClassConstruction(const ClassInfo& class_info, const Expression& expression) -> Type;
   auto CheckMemberAccess(const Expression& expression) -> Type;
   auto CheckStaticMember(const Expression& expression, const ClassInfo& owner) -> Type;
@@ -304,6 +319,7 @@ class TypeChecker final {
   absl::flat_hash_map<std::uint32_t, ConstantValue> constant_bindings_;
   absl::flat_hash_map<std::string, std::int64_t> enum_values_;
   absl::flat_hash_map<const Expression*, Builtin> builtin_calls_;
+  absl::flat_hash_map<const Expression*, ArrayAlgorithm> array_algorithms_;
   absl::flat_hash_map<const Statement*, Type> local_types_;
   absl::flat_hash_map<const Statement*, StatementFlow> control_flow_;
   absl::flat_hash_map<std::string, ClassInfo> classes_;

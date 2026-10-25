@@ -223,6 +223,10 @@ BENCHMARK_CAPTURE(Compile, StringPartsConcat, "string_parts_concat.vela")
 BENCHMARK_CAPTURE(Compile, StringInterpolation, "string_interpolation.vela")
     ->Name("compile/string_interpolation");
 BENCHMARK_CAPTURE(Compile, StringJoin, "string_join.vela")->Name("compile/string_join");
+BENCHMARK_CAPTURE(Compile, StringFormat, "string_format.vela")->Name("compile/string_format");
+BENCHMARK_CAPTURE(Compile, StringFormatExplicit, "string_format_explicit.vela")
+    ->Name("compile/string_format_explicit");
+BENCHMARK_CAPTURE(Compile, NumberJoin, "number_join.vela")->Name("compile/number_join");
 BENCHMARK_CAPTURE(Compile, StringBuilder, "string_builder.vela")->Name("compile/string_builder");
 BENCHMARK_CAPTURE(Compile, StringBuilderLarge, "string_builder_large.vela")
     ->Name("compile/string_builder_large");
@@ -256,6 +260,12 @@ BENCHMARK_CAPTURE(FirstExecution, StringInterpolation, "string_interpolation.vel
     ->Name("first_execute/string_interpolation");
 BENCHMARK_CAPTURE(FirstExecution, StringJoin, "string_join.vela", 1000)
     ->Name("first_execute/string_join");
+BENCHMARK_CAPTURE(FirstExecution, StringFormat, "string_format.vela", 1000)
+    ->Name("first_execute/string_format");
+BENCHMARK_CAPTURE(FirstExecution, StringFormatExplicit, "string_format_explicit.vela", 1000)
+    ->Name("first_execute/string_format_explicit");
+BENCHMARK_CAPTURE(FirstExecution, NumberJoin, "number_join.vela", 1000)
+    ->Name("first_execute/number_join");
 BENCHMARK_CAPTURE(FirstExecution, StringBuilder, "string_builder.vela", 512)
     ->Name("first_execute/string_builder");
 BENCHMARK_CAPTURE(FirstExecution, StringBuilderLarge, "string_builder_large.vela", 4096)
@@ -267,6 +277,15 @@ BENCHMARK_CAPTURE(FirstExecution, StringUnicode, "string_unicode.vela", 1000)
 
 BENCHMARK_CAPTURE(SteadyExecution, IntegerLoop, "integer_loop.vela", 499500)
     ->Name("vm/integer_loop");
+BENCHMARK_CAPTURE(Compile, StandardApi, "library_linking.vela")->Name("compile/standard_api");
+BENCHMARK_CAPTURE(SteadyExecution, StandardApi, "library_linking.vela", 6)->Name("vm/standard_api");
+BENCHMARK_CAPTURE(Compile, ArrayAlgorithms, "array_algorithms.vela")
+    ->Name("compile/array_algorithms");
+BENCHMARK_CAPTURE(SteadyExecution, ArrayAlgorithms, "array_algorithms.vela", 499500)
+    ->Name("vm/array_algorithms");
+BENCHMARK_CAPTURE(Compile, SetOperations, "set_operations.vela")->Name("compile/set_operations");
+BENCHMARK_CAPTURE(SteadyExecution, SetOperations, "set_operations.vela", 640)
+    ->Name("vm/set_operations");
 BENCHMARK_CAPTURE(SteadyExecution, FunctionCalls, "function_calls.vela", 1000)
     ->Name("vm/function_calls");
 BENCHMARK_CAPTURE(SteadyExecution, FieldAccess, "field_access.vela", 1000)->Name("vm/field_access");
@@ -288,6 +307,11 @@ BENCHMARK_CAPTURE(SteadyExecution, StringPartsConcat, "string_parts_concat.vela"
 BENCHMARK_CAPTURE(SteadyExecution, StringInterpolation, "string_interpolation.vela", 1000)
     ->Name("vm/string_interpolation");
 BENCHMARK_CAPTURE(SteadyExecution, StringJoin, "string_join.vela", 1000)->Name("vm/string_join");
+BENCHMARK_CAPTURE(SteadyExecution, StringFormat, "string_format.vela", 1000)
+    ->Name("vm/string_format");
+BENCHMARK_CAPTURE(SteadyExecution, StringFormatExplicit, "string_format_explicit.vela", 1000)
+    ->Name("vm/string_format_explicit");
+BENCHMARK_CAPTURE(SteadyExecution, NumberJoin, "number_join.vela", 1000)->Name("vm/number_join");
 BENCHMARK_CAPTURE(SteadyExecution, StringBuilder, "string_builder.vela", 512)
     ->Name("vm/string_builder");
 BENCHMARK_CAPTURE(SteadyExecution, StringBuilderLarge, "string_builder_large.vela", 4096)

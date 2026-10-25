@@ -22,7 +22,7 @@
 #include "compiler/frontend/module_binding.h"
 #include "compiler/frontend/parser.h"
 #include "compiler/frontend/source_file.h"
-#include "compiler/frontend/standard_modules.h"
+#include "compiler/frontend/standard_environment.h"
 
 namespace vela::frontend {
 namespace {
@@ -31,12 +31,15 @@ enum class SourceOrigin : std::uint8_t { Files, Memory };
 
 class ModuleLoader final {
  public:
-  ModuleLoader(SourceOrigin origin, std::span<const SourceInput> inputs, ModuleCache& cache)
-      : origin_(origin), cache_(&cache) {
+  ModuleLoader(SourceOrigin origin,
+               std::span<const SourceInput> inputs,
+               ModuleCache& cache,
+               SourceLoadMode mode = SourceLoadMode::Compilation)
+      : origin_(origin), mode_(mode), cache_(&cache) {
     for (const auto& input : inputs) {
-      if (input.path.starts_with("std:")) {
+      if (input.path.starts_with(kStandardSourcePrefix)) {
         Error(SourceLocation(), std::string(input.path),
-              "standard module paths cannot be overridden");
+              "standard environment sources cannot be overridden");
         continue;
       }
       const auto path = Normalize(Utf8Path(input.path));
@@ -59,19 +62,19 @@ class ModuleLoader final {
   auto Load(const std::filesystem::path& file, SourceLocation location, const std::string& importer)
       -> std::optional<std::uint32_t>;
   void LoadDependencies(std::size_t index);
-  auto LoadStandard(const Program::Import& imported, const std::string& importer)
-      -> std::optional<std::uint32_t>;
   auto ParseModule(const std::string& key, std::string source) -> std::optional<std::uint32_t>;
   void Error(SourceLocation location, const std::string& path, std::string message);
   auto Finish() -> ParseResult;
 
   SourceOrigin origin_;
+  SourceLoadMode mode_;
   absl::flat_hash_map<std::string, std::string_view> overlays_;
   absl::flat_hash_map<std::string, std::uint32_t> ids_;
   std::vector<SourceModule> modules_;
   std::vector<SourceFile> sources_;
   absl::flat_hash_map<std::string, std::string> resolutions_;
   Diagnostics diagnostics_;
+  Diagnostics syntax_diagnostics_;
   ModuleCache* cache_;
 };
 
@@ -161,11 +164,14 @@ auto ModuleLoader::ParseModule(const std::string& key, std::string source)
   sources_.push_back({.path = key, .text = std::move(source)});
   auto parsed = ParseSource(sources_.back().text, source_id);
   if (!parsed.diagnostics.empty()) {
+    auto& diagnostics = mode_ == SourceLoadMode::Editor ? syntax_diagnostics_ : diagnostics_;
     for (auto& diagnostic : parsed.diagnostics) {
       diagnostic.source_path = key;
-      diagnostics_.push_back(std::move(diagnostic));
+      diagnostics.push_back(std::move(diagnostic));
     }
-    return std::nullopt;
+    if (mode_ == SourceLoadMode::Compilation) {
+      return std::nullopt;
+    }
   }
   ids_.emplace(key, source_id);
   const auto binding =
@@ -184,20 +190,13 @@ void ModuleLoader::LoadDependencies(std::size_t index) {
   auto imports = std::move(modules_.at(index).program.imports);
   std::vector<std::uint32_t> dependencies;
   for (const auto& imported : imports) {
-    if (imported.path.starts_with("std:")) {
-      const auto dependency = LoadStandard(imported, path);
-      if (!dependency) {
-        break;
-      }
-      dependencies.push_back(*dependency);
-      continue;
-    }
     const auto imported_path = Utf8Path(imported.path);
     if (imported.path.contains(':') && !imported_path.is_absolute()) {
       Error(imported.location, path, "unsupported module import scheme");
       break;
     }
-    const auto dependency = Load(importer.parent_path() / imported_path, imported.location, path);
+    const auto dependency =
+        Load(ResolveImportPath(importer, imported_path), imported.location, path);
     if (!dependency) {
       break;
     }
@@ -206,19 +205,6 @@ void ModuleLoader::LoadDependencies(std::size_t index) {
   // 加载会扩张模块向量；导入指令临时移出，避免跨扩容借用 AST 容器。
   modules_.at(index).program.imports = std::move(imports);
   modules_.at(index).dependencies = std::move(dependencies);
-}
-
-auto ModuleLoader::LoadStandard(const Program::Import& imported, const std::string& importer)
-    -> std::optional<std::uint32_t> {
-  const auto source = StandardModuleSource(imported.path);
-  if (!source) {
-    Error(imported.location, importer, "unknown standard module '" + imported.path + "'");
-    return std::nullopt;
-  }
-  if (const auto found = ids_.find(imported.path); found != ids_.end()) {
-    return found->second;
-  }
-  return ParseModule(imported.path, std::string(*source));
 }
 
 auto ModuleLoader::Run(std::string_view entry) -> ParseResult {
@@ -260,6 +246,10 @@ auto ModuleLoader::Finish() -> ParseResult {
     return {.program = std::move(failed), .diagnostics = std::move(diagnostics_)};
   }
   auto result = BindModules(std::move(modules_), std::move(sources_));
+  AddStandardEnvironment(result.program);
+  for (auto& diagnostic : syntax_diagnostics_) {
+    result.diagnostics.push_back(std::move(diagnostic));
+  }
   for (auto& [requested, canonical] : resolutions_) {
     result.program.file_resolutions.push_back(
         {.requested_path = requested, .canonical_path = std::move(canonical)});
@@ -269,9 +259,18 @@ auto ModuleLoader::Finish() -> ParseResult {
 
 }  // namespace
 
-auto LoadProgram(std::string_view path, std::span<const SourceInput> overlays) -> ParseResult {
+auto ResolveImportPath(const std::filesystem::path& importer, std::filesystem::path imported)
+    -> std::filesystem::path {
+  if (!imported.has_extension()) {
+    imported.replace_extension(".vela");
+  }
+  return (importer.parent_path() / imported).lexically_normal();
+}
+
+auto LoadProgram(std::string_view path, std::span<const SourceInput> overlays, SourceLoadMode mode)
+    -> ParseResult {
   ModuleCache cache;
-  return ModuleLoader(SourceOrigin::Files, overlays, cache).Run(path);
+  return ModuleLoader(SourceOrigin::Files, overlays, cache, mode).Run(path);
 }
 
 auto LoadSources(std::span<const SourceInput> sources, std::string_view entry) -> ParseResult {

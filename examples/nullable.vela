@@ -3,8 +3,8 @@ class Label {
 
   display(): string {
     const text = this.text;
-    if (text == null) return "empty";
-    return "label: ${text}";
+    if (text == null) return 'empty';
+    return 'label: ${text}';
   }
 }
 
@@ -15,7 +15,7 @@ func read(value: int?): int {
 
 func main(): int {
   const values: int?[] = [40, null, 2];
-  print(Label(text: "Vela").display());
+  print(Label(text: 'Vela').display());
   print(Label(text: null).display());
   return read(values[0]) + read(values[1]) + read(values[2]);
 }

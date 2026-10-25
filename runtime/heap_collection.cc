@@ -401,6 +401,57 @@ auto Heap::ClearCollection(HeapObject& object) noexcept -> std::expected<void, C
   return {};
 }
 
+auto Heap::CombineSets(const HeapObject& left,
+                       const HeapObject& right,
+                       SetOperation operation) noexcept
+    -> std::expected<HeapObject*, CollectionError> {
+  if (left.kind != ObjectKind::Collection || right.kind != ObjectKind::Collection) {
+    return std::unexpected(CollectionError::NotCollection);
+  }
+  const auto& layout = *left.collection_layout();
+  if (layout.values || left.collection_layout() != right.collection_layout()) {
+    return std::unexpected(CollectionError::TypeMismatch);
+  }
+  auto* result = AllocateCollection(layout);
+  if (result == nullptr) {
+    return std::unexpected(CollectionError::OutOfMemory);
+  }
+  const auto rooted = Value::Object(result);
+  RootRange root(*this, &rooted, 1);
+  const auto append = [&](const HeapObject& input) -> std::expected<void, CollectionError> {
+    const auto& storage = Storage(input);
+    if (storage.size == 0) {
+      return {};
+    }
+    const auto table = View(storage, layout);
+    for (auto entry = storage.head; entry != kEmpty; entry = table.next.subspan(entry).front()) {
+      const auto key = LoadElementStorage(layout.keys, table.keys, entry);
+      if (operation != SetOperation::Union) {
+        const auto found = HasCollectionKey(right, key).value();
+        if (found != (operation == SetOperation::Intersection)) {
+          continue;
+        }
+      }
+      const auto inserted = InsertCollection(*result, key);
+      if (!inserted) {
+        return std::unexpected(inserted.error());
+      }
+    }
+    return {};
+  };
+  const auto first = append(left);
+  if (!first) {
+    return std::unexpected(first.error());
+  }
+  if (operation == SetOperation::Union) {
+    const auto second = append(right);
+    if (!second) {
+      return std::unexpected(second.error());
+    }
+  }
+  return result;
+}
+
 auto Heap::CollectionLength(const HeapObject& object) noexcept
     -> std::expected<std::uint32_t, CollectionError> {
   if (object.kind != ObjectKind::Collection) {

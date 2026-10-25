@@ -2,7 +2,7 @@ func main(): int {
   const parts = ["vela", "-", "string", ":", "42", "!"];
   let correct = 0;
   for (let i = 0; i < 1000; i = i + 1) {
-    const text = join(parts, "");
+    const text = parts.join("");
     if (text == "vela-string:42!") { correct = correct + 1; }
   }
   return correct;

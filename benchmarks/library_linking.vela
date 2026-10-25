@@ -1,14 +1,9 @@
-import "std:math" as math;
-import "std:random" as random;
-import "std:time" as time;
-import "std:collections" as collections;
-
 func main(): int {
   const values: int[] = [3, 1, 2];
-  collections.sort<int>(values, (left: int, right: int): int => left - right);
-  const sum = collections.reduce<int, int>(values, 0, (total: int, value: int): int => total + value);
-  random.seed(42);
-  const available = time.monotonicMicros() >= 0 && math.isFinite(math.pi);
+  values.sort((left: int, right: int): int => left - right);
+  const sum = values.reduce(0, (total: int, value: int): int => total + value);
+  Random.seed(42);
+  const available = Time.monotonicMicros() >= 0 && Math.isFinite(Math.pi);
   if (available) {
     return sum;
   }

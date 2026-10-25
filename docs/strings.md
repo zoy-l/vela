@@ -18,7 +18,8 @@ see [P1 Unicode contracts](p1_syntax_proposal.md#unicode-code-points-and-graphem
 
 ## Literals, escapes, and interpolation
 
-Double-quoted literals support `\"`, `\'`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`,
+Single- and double-quoted literals have the same `string` type and interpolation
+rules. The formatter defaults to single quotes. Both styles support `\"`, `\'`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`,
 `\v`, `\0`, and `\$`. `\xHH` encodes the scalar U+00HH as UTF-8 (it does not
 inject a possibly invalid raw byte). Unicode escapes use `\uXXXX` or `\u{H...}` with
 one to six hexadecimal digits in braces. A fixed-width high surrogate must be
@@ -28,17 +29,23 @@ above U+10FFFF, missing digits, unknown escapes, invalid source UTF-8, raw
 newlines, and unfinished strings/interpolations produce compilation diagnostics.
 
 ```typescript
-const name = "Vela";
-const greeting = "Hello, ${name}! Count: ${42.toString()}";
-const literal = "\${this is literal text}";
-const emoji = "\u{1F600}";
+const name = 'Vela';
+const greeting = 'Hello, ${name}! Count: ${42}';
+const literal = '\${this is literal text}';
+const emoji = '\u{1F600}';
 ```
 
-`${expression}` accepts an arbitrary expression whose result is `string`.
+`${expression}` accepts `string`, `int`, `double`, `bool`, `null`, and nullable
+versions of those primitive types. Null formats as `null`.
 Nested strings and interpolation are allowed. Each expression runs once in
 source order, and its value is saved before the next expression runs. The
-compiler rejects `${42}`, `${true}`, and mixed string/numeric `+`; it never
-inserts conversions. Unicode escapes that decode to `$` do not start
+same formatting applies to `+` when at least one operand has string type,
+including nullable string. For example, `'count=' + 42` produces `count=42`.
+`+` remains left-associative: `1 + 2 + '3'` produces `33`; `'1' + 2 + 3`
+produces `123`. Objects and arrays require an explicit representation;
+there is no automatic object placeholder or user method invocation.
+Assignments, function arguments, numeric arithmetic, equality, and conditions
+retain their existing strict type rules. Unicode escapes that decode to `$` do not start
 interpolation. Import paths decode escapes but reject interpolation and NUL.
 File checking and compilation share a dependency loader, so escaped paths and
 Unicode filenames resolve consistently. Imports are parsed once in dependency
@@ -62,8 +69,8 @@ stream locale and numeric formatting flags.
 | `text.contains(text: string)` | `bool` | Whether the pattern occurs; empty pattern is contained |
 | `text.startsWith(prefix: string)` | `bool` | Exact prefix, including the empty prefix |
 | `text.endsWith(suffix: string)` | `bool` | Exact suffix, including the empty suffix |
-| `left + right` | `string` | Both operands must be strings; copies into one new flat string |
-| `join(parts: string[], separator: string)` | `string` | Joins the current array elements; empty array produces an empty string |
+| `left + right` | `string` | At least one operand has string type; formats primitive/null operands into one final string |
+| `parts.join(separator: string)` | `string` | Primitive arrays, including nullable elements; formats null as `null`; empty array produces an empty string |
 | `StringBuilder()` | `StringBuilder` | Creates an empty, GC-owned mutable builder |
 | `builder.append(text: string)` | `void` | Copies text into its buffer with geometric capacity growth |
 | `builder.toString()` | `string` | Creates an independent immutable snapshot |
@@ -74,7 +81,11 @@ Indices must satisfy `0 <= index < length`; slice bounds must satisfy
 `0 <= start <= end <= length`. Invalid ranges return the VM's recoverable
 `IndexOutOfBounds` status. There is no negative indexing, clamping, or implicit
 numeric conversion. Strings' indexed values and length properties cannot be
-assigned. `join` and `StringBuilder` are reserved builtin declaration names.
+assigned. `StringBuilder` is a reserved builtin declaration name. There is no
+global `join`; ordinary user declarations may use that name. The array receiver
+evaluates before the separator, each once. Array element types remain homogeneous:
+`[1, 2].join(',')` is valid; `[name, 42, true]` is not. Use
+`'${name} / ${42} / ${true}'` to format mixed values without creating an array.
 
 `indexOf` and `contains` use KMP for multi-byte patterns, guaranteeing linear
 search time for repeated-prefix inputs. Short pattern tables use stack storage;
@@ -94,8 +105,9 @@ return distinct type, bounds, and allocation errors.
 
 Interpolation saves its parts in contiguous rooted frame slots. It discards
 empty literal segments, computes the total byte count, allocates the final
-string once, and copies each part directly. `join` borrows the array's native
-string pointer span and follows the same allocation path, with separator space
+string once, and copies each part directly. Primitive formatting uses native
+scratch storage and never allocates intermediate GC strings. `parts.join(separator)`
+borrows native array storage and follows the same allocation path, with separator space
 included in overflow checks. Neither operation constructs intermediate
 concatenation strings. Allocations performed by the expressions themselves,
 such as an explicit `toString()`, are separate from the final allocation.

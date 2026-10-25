@@ -94,7 +94,7 @@ TEST_F(CompilationCacheTest, HitsInFreshIsolateWithoutPersistingRuntimeState) {
 }
 
 TEST_F(CompilationCacheTest, InvalidatesChangedDependencyEvenWithSameTimestampAndSize) {
-  Write("main.vela", "import \"lib.vela\"; func main(): int { return answer(); }");
+  Write("main.vela", "import 'lib'; func main(): int { return answer(); }");
   Write("lib.vela", "export func answer(): int { return 42; }");
   const auto first = Compile();
   ASSERT_TRUE(first);
@@ -166,9 +166,8 @@ TEST_F(CompilationCacheTest, LinksCurrentNativeRegistryAndRejectsSignatureChange
   EXPECT_EQ(original->status, CacheStatus::Hit);
 }
 
-TEST_F(CompilationCacheTest, StandardModulesAndUnicodePathsSurviveCacheHit) {
-  Write(Utf8Path("你好.vela"),
-        "import \"std:math\" as math; func main(): int { return math.sqrt(1764.0).toInt(); }");
+TEST_F(CompilationCacheTest, StandardEnvironmentAndUnicodePathsSurviveCacheHit) {
+  Write(Utf8Path("你好.vela"), "func main(): int { return Math.sqrt(1764.0).toInt(); }");
   const auto first = Compile("你好.vela");
   ASSERT_TRUE(first);
   ExpectRun(*first, kAnswer);

@@ -8,7 +8,7 @@
 
 namespace vela::tooling {
 
-// 只重排语法间空白；注释、字面量及插值原文保留。非法源码返回解析诊断。
+// 统一空白与单引号风格，保留字符串值和注释；非法源码返回解析诊断。
 [[nodiscard]] auto FormatSource(std::string_view source)
     -> std::expected<std::string, frontend::Diagnostics>;
 

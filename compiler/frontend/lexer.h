@@ -43,8 +43,8 @@ class Lexer final {
   void ScanToken(std::size_t start);
   void ScanIdentifier();
   void ScanNumber();
-  void ScanString();
-  void ScanStringRun(std::string& value);
+  void ScanString(char quote);
+  void ScanStringRun(std::string& value, char quote);
   auto ScanInterpolation() -> bool;
   void ScanEscape(std::string& value);
   void ScanUnicodeEscape(std::string& value, SourceLocation escape_location);

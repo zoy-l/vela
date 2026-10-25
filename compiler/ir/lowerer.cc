@@ -16,7 +16,7 @@
 #include "base/callable.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/standard_modules.h"
+#include "compiler/frontend/standard_environment.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
 
@@ -56,9 +56,6 @@ auto SelectBinaryOpcode(std::string_view operation, const frontend::TypeDescript
     -> std::optional<Opcode> {
   using Kind = frontend::TypeDescriptor::Kind;
   if (type.kind == Kind::String) {
-    if (operation == "+") {
-      return Opcode::StringConcat;
-    }
     if (operation == "==") {
       return Opcode::EqualString;
     }
@@ -216,7 +213,7 @@ void Lowerer::BuildClassTable() {
     Class output_class;
     output_class.name = source_class.name;
     if (!source_.sources.empty() &&
-        source_.sources.at(source_class.location.source_id).path == frontend::kErrorModuleName) {
+        source_.sources.at(source_class.location.source_id).path == frontend::kErrorSourceName) {
       output_class.kind = Class::Kind::RuntimeError;
     }
     if (!class_info->second.interfaces.empty()) {
@@ -477,6 +474,9 @@ void Lowerer::LowerBlock(const frontend::Statement& statement) {
 }
 
 auto Lowerer::LowerExpression(const frontend::Expression& expression) -> Lowerer::LoweredValue {
+  if (model_.array_algorithms.contains(&expression)) {
+    return LowerArrayAlgorithm(expression);
+  }
   if (model_.collection_constructions.contains(&expression)) {
     return LowerCollectionConstruction(expression);
   }
@@ -996,6 +996,17 @@ auto Lowerer::LowerBinary(const frontend::Expression& expression) -> Lowerer::Lo
   const auto left = SnapshotBefore(LowerExpression(*expression.left), *expression.right);
   const LoweredValue right = LowerExpression(*expression.right);
   using Kind = frontend::TypeDescriptor::Kind;
+  if (expression.text == "+" && model_.expression_types.at(&expression).kind == Kind::String) {
+    const auto result = AllocateTemporary(expression.location);
+    Emit({
+        .opcode = Opcode::StringConcat,
+        .dst = result,
+        .lhs = left.reg,
+        .rhs = right.reg,
+        .location = expression.location,
+    });
+    return {.reg = result, .type = {.kind = Kind::String, .name = "string"}};
+  }
   if ((expression.text == "==" || expression.text == "!=") &&
       (left.type.nullable || right.type.nullable || left.type.kind == Kind::Null ||
        right.type.kind == Kind::Null || left.type.kind == Kind::Class ||
@@ -1034,11 +1045,8 @@ auto Lowerer::LowerBinary(const frontend::Expression& expression) -> Lowerer::Lo
                                   right.type.kind == frontend::TypeDescriptor::Kind::String &&
                                   (expression.text == "==" || expression.text == "!=");
   const bool logical = expression.text == "&&" || expression.text == "||";
-  const bool string_concat = expression.text == "+" &&
-                             left.type.kind == frontend::TypeDescriptor::Kind::String &&
-                             right.type.kind == frontend::TypeDescriptor::Kind::String;
   if ((!IsInteger(left.type) || !IsInteger(right.type)) && !comparable_booleans &&
-      !comparable_strings && !logical && !string_concat) {
+      !comparable_strings && !logical) {
     AddDiagnostic(expression.location, "bootstrap VM arithmetic requires int operands");
     return {.reg = result, .type = InvalidType()};
   }

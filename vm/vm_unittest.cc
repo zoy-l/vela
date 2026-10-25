@@ -97,7 +97,7 @@ TEST(VmTest, JoinAllowsDestinationToOverwriteRootedInputArray) {
       EncodeABC(OpCode::SetIndex, 0, 2, 1),
       EncodeAImm16(OpCode::LoadInt, 2, 1),
       EncodeABC(OpCode::SetIndex, 0, 2, 1),
-      EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::Join), 0),
+      EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::ArrayJoin), 0),
       EncodeABC(OpCode::Return, 0, 0, 0),
   });
   Function function;
@@ -124,9 +124,10 @@ TEST_P(StringBytecodeValidationTest, RejectsInvalidBuiltinIdsAndArgumentRanges) 
 INSTANTIATE_TEST_SUITE_P(
     InvalidCalls,
     StringBytecodeValidationTest,
-    testing::Values(EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::Count), 0),
-                    EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::Join), 1),
-                    EncodeABC(OpCode::StringInterpolate, 0, 1, 2)));
+    testing::Values(
+        EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::Count), 0),
+        EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::ArrayJoin), 1),
+        EncodeABC(OpCode::StringInterpolate, 0, 1, 2)));
 
 TEST(VmTest, IntegerExecution) {
   constexpr std::array<Instruction, 4> code = {

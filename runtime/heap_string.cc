@@ -1,6 +1,7 @@
 #include "runtime/heap.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -10,9 +11,12 @@
 #include <span>
 #include <string_view>
 
+#include "runtime/element_storage.h"
 #include "runtime/object.h"
+#include "runtime/register_storage.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
+#include "runtime/value_io.h"
 
 namespace vela::runtime {
 namespace {
@@ -39,6 +43,62 @@ auto Buffer(const HeapObject& object) noexcept -> const BuilderBuffer& {
 auto StringStorage(StringObject& string, std::size_t length) noexcept -> std::span<char> {
   void* storage = std::span(&string, 1).last(0).data();
   return {static_cast<char*>(storage), length};
+}
+
+auto StringText(Value value, std::span<char, kScalarTextCapacity> buffer)
+    -> std::expected<std::string_view, StringJoinError> {
+  if (value.IsNull()) {
+    return "null";
+  }
+  if (value.IsString()) {
+    return value.AsString()->value();
+  }
+  if (value.IsInteger() || value.IsDouble() || value.IsBoolean()) {
+    return FormatScalar(value, buffer);
+  }
+  return std::unexpected(StringJoinError::TypeMismatch);
+}
+
+template <class Read, class Allocate>
+auto JoinFormatted(std::size_t count,
+                   std::string_view separator,
+                   const Read& read,
+                   const Allocate& allocate) -> std::expected<StringObject*, StringJoinError> {
+  std::size_t length = 0;
+  if (count > 1) {
+    const auto gaps = count - 1;
+    if (separator.size() > kMaximumStringLength / gaps) {
+      return std::unexpected(StringJoinError::OutOfMemory);
+    }
+    length = gaps * separator.size();
+  }
+  std::array<char, kScalarTextCapacity> buffer{};
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto text = StringText(read(index), buffer);
+    if (!text) {
+      return std::unexpected(text.error());
+    }
+    if (text->size() > kMaximumStringLength - length) {
+      return std::unexpected(StringJoinError::OutOfMemory);
+    }
+    length += text->size();
+  }
+  auto* string = allocate(length);
+  if (string == nullptr) {
+    return std::unexpected(StringJoinError::OutOfMemory);
+  }
+  auto remaining = StringStorage(*string, length);
+  for (std::size_t index = 0; index < count; ++index) {
+    if (index != 0) {
+      std::ranges::copy(separator, remaining.begin());
+      remaining = remaining.subspan(separator.size());
+    }
+    // read 只读取稳定值，不求值脚本表达式；分配前已检查所有值的可格式化性。
+    const auto text = *StringText(read(index), buffer);
+    std::ranges::copy(text, remaining.begin());
+    remaining = remaining.subspan(text.size());
+  }
+  return string;
 }
 
 }  // namespace
@@ -122,6 +182,54 @@ auto Heap::StringElements(const HeapObject& array) noexcept
   }
   const void* storage = std::span(&array, 1).last(0).data();
   return std::span(static_cast<StringObject* const*>(storage), array.length);
+}
+
+auto Heap::JoinValues(std::span<const Value> parts) noexcept
+    -> std::expected<StringObject*, StringJoinError> {
+  return JoinFormatted(
+      parts.size(), {},
+      [parts](std::size_t index) -> Value { return parts.subspan(index).front(); },
+      [this](std::size_t length) -> StringObject* { return AllocateStringStorage(length); });
+}
+
+auto Heap::JoinArray(const HeapObject& array, std::string_view separator) noexcept
+    -> std::expected<StringObject*, StringJoinError> {
+  if (array.kind != ObjectKind::Array) {
+    return std::unexpected(StringJoinError::TypeMismatch);
+  }
+  const auto& layout = *array.array_layout();
+  if (layout.element_kind == ValueKind::String && !layout.nullable_elements) {
+    const auto parts = *StringElements(array);
+    if (std::ranges::any_of(parts, [](auto* part) -> bool { return part == nullptr; })) {
+      return std::unexpected(StringJoinError::TypeMismatch);
+    }
+    auto* string = JoinStrings(parts, separator);
+    if (string == nullptr) {
+      return std::unexpected(StringJoinError::OutOfMemory);
+    }
+    return string;
+  }
+  if (layout.element_kind != ValueKind::String && layout.element_kind != ValueKind::Integer &&
+      layout.element_kind != ValueKind::Double && layout.element_kind != ValueKind::Boolean) {
+    return std::unexpected(StringJoinError::TypeMismatch);
+  }
+  const void* data = std::span(&array, 1).last(0).data();
+  const std::span storage(static_cast<const std::byte*>(data),
+                          array.length * layout.element_size());
+  return JoinFormatted(
+      array.length, separator,
+      [&layout, storage](std::size_t index) -> Value {
+        return LoadElementStorage(layout, storage, index);
+      },
+      [this](std::size_t length) -> StringObject* { return AllocateStringStorage(length); });
+}
+
+auto Heap::JoinValues(RegisterView parts) noexcept
+    -> std::expected<StringObject*, StringJoinError> {
+  return JoinFormatted(
+      parts.size(), {},
+      [parts](std::size_t index) -> Value { return parts.subspan(index).front().Read(); },
+      [this](std::size_t length) -> StringObject* { return AllocateStringStorage(length); });
 }
 
 auto Heap::AllocateStringBuilder() noexcept -> HeapObject* {

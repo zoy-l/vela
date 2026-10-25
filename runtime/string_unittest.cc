@@ -245,6 +245,9 @@ TEST_P(StringConversionTest, ExplicitConversionMatchesConsoleFormatting) {
   std::ostringstream output;
   WriteValue(output, value);
   EXPECT_EQ(converted->AsString()->value(), output.str());
+  const auto joined = heap.JoinValues(arguments);
+  ASSERT_TRUE(joined.has_value());
+  EXPECT_EQ((*joined)->value(), output.str());
 }
 
 INSTANTIATE_TEST_SUITE_P(PrimitiveValues,

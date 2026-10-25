@@ -1,9 +1,7 @@
-import "std:console" as console;
-
 func main(): int {
-  console.write("Name: ");
-  console.flush();
-  const name = console.readLine();
+  Console.write("Name: ");
+  Console.flush();
+  const name = Console.readLine();
   if (name == null) {
     print("End of input.");
     return 0;

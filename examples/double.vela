@@ -4,9 +4,11 @@ class Measurement {
     return this.value * factor;
   }
 }
+
 func average(left: double, right: double): double {
   return (left + right) / 2.0;
 }
+
 func main(): void {
   let measurement: Measurement = Measurement(value: 1.25e1);
   let values: double[] = [measurement.scale(2.0), 3.5];

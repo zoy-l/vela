@@ -146,6 +146,88 @@ class Connection {
 }
 
 let connection;
+
+function editorRange(range) {
+  return new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character);
+}
+
+function registerSymbolProviders(context, client, flush) {
+  const selector = { language: "vela", scheme: "file" };
+  const linksChanged = new vscode.EventEmitter();
+  context.subscriptions.push(
+    linksChanged,
+    vscode.languages.registerDocumentLinkProvider(selector, {
+      onDidChangeDocumentLinks: linksChanged.event,
+      async provideDocumentLinks(document, token) {
+        const version = document.version;
+        if (token.isCancellationRequested) return [];
+        await flush(document);
+        if (document.isClosed || token.isCancellationRequested) return [];
+        const links = await client.request("textDocument/documentLink", {
+          textDocument: { uri: document.uri.toString() }
+        }, token);
+        if (token.isCancellationRequested || document.version !== version) return [];
+        return links.map(item => {
+          const link = new vscode.DocumentLink(editorRange(item.range), vscode.Uri.parse(item.target));
+          link.tooltip = item.tooltip;
+          return link;
+        });
+      }
+    }),
+    vscode.languages.registerCompletionItemProvider(selector, {
+      async provideCompletionItems(document, position, token) {
+        const version = document.version;
+        if (token.isCancellationRequested) return [];
+        await flush(document);
+        if (document.isClosed || token.isCancellationRequested) return [];
+        const items = await client.request("textDocument/completion", {
+          textDocument: { uri: document.uri.toString() },
+          position: { line: position.line, character: position.character }
+        }, token);
+        if (token.isCancellationRequested || document.version !== version) return [];
+        return items.map(item => {
+          // LSP 的 kind 从 1 起，VS Code 的对应枚举从 0 起。
+          const completion = new vscode.CompletionItem(item.label, item.kind - 1);
+          completion.detail = item.detail;
+          completion.range = editorRange(item.textEdit.range);
+          completion.insertText = item.textEdit.newText;
+          return completion;
+        });
+      }
+    }, "."),
+    vscode.languages.registerHoverProvider(selector, {
+      async provideHover(document, position, token) {
+        const version = document.version;
+        if (token.isCancellationRequested) return null;
+        await flush(document);
+        if (document.isClosed || token.isCancellationRequested) return null;
+        const result = await client.request("textDocument/hover", {
+          textDocument: { uri: document.uri.toString() },
+          position: { line: position.line, character: position.character }
+        }, token);
+        if (token.isCancellationRequested || document.version !== version || !result) return null;
+        const contents = new vscode.MarkdownString(result.contents.value);
+        return new vscode.Hover(contents, editorRange(result.range));
+      }
+    }),
+    vscode.languages.registerDefinitionProvider(selector, {
+      async provideDefinition(document, position, token) {
+        const version = document.version;
+        if (token.isCancellationRequested) return null;
+        await flush(document);
+        if (document.isClosed || token.isCancellationRequested) return null;
+        const target = await client.request("textDocument/definition", {
+          textDocument: { uri: document.uri.toString() },
+          position: { line: position.line, character: position.character }
+        }, token);
+        if (token.isCancellationRequested || document.version !== version || !target) return null;
+        return new vscode.Location(vscode.Uri.parse(target.uri), editorRange(target.range));
+      }
+    })
+  );
+  return () => linksChanged.fire();
+}
+
 function activate(context) {
   const output = vscode.window.createOutputChannel("Vela");
   const diagnostics = vscode.languages.createDiagnosticCollection("vela");
@@ -160,7 +242,7 @@ function activate(context) {
   const root = folder || path.dirname(configured);
   const executable = configured ? path.resolve(root, configured) : path.join(root, "out", "debug", process.platform === "win32" ? "vela.exe" : "vela");
   connection = new Connection(executable, root, output, diagnostics);
-  const opened = new Set();
+  const opened = new Map();
   const timers = new Map();
   const isVela = document => document.languageId === "vela" && document.uri.scheme === "file";
   const report = error => output.appendLine(error.message);
@@ -170,7 +252,7 @@ function activate(context) {
     if (document.isClosed) return;
     const uri = document.uri.toString();
     if (opened.has(uri)) return;
-    opened.add(uri);
+    opened.set(uri, document.version);
     connection.notify("textDocument/didOpen", { textDocument: {
       uri, languageId: "vela", version: document.version, text: document.getText()
     }});
@@ -181,12 +263,17 @@ function activate(context) {
     timers.delete(uri);
     await open(document);
     if (document.isClosed || connection.closed) return;
+    if (opened.get(uri) === document.version) return;
+    opened.set(uri, document.version);
     connection.notify("textDocument/didChange", { textDocument: { uri, version: document.version },
       contentChanges: [{ text: document.getText() }] });
   };
+  const refreshLinks = registerSymbolProviders(context, connection, flush);
   for (const document of vscode.workspace.textDocuments) open(document).catch(report);
   context.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument(document => open(document).catch(report)),
+    vscode.workspace.onDidOpenTextDocument(document => {
+      if (isVela(document)) open(document).then(refreshLinks).catch(report);
+    }),
     vscode.workspace.onDidChangeTextDocument(event => {
       const document = event.document;
       if (!isVela(document)) return;
@@ -206,6 +293,7 @@ function activate(context) {
       timers.delete(uri);
       if (opened.delete(uri) && !connection.closed) connection.notify("textDocument/didClose", { textDocument: { uri } });
       diagnostics.delete(document.uri);
+      if (isVela(document)) refreshLinks();
     }),
     vscode.languages.registerDocumentFormattingEditProvider({ language: "vela", scheme: "file" }, {
       async provideDocumentFormattingEdits(document, options, token) {
@@ -216,17 +304,22 @@ function activate(context) {
           textDocument: { uri: document.uri.toString() }, options
         }, token);
         if (token.isCancellationRequested || document.version !== version) return [];
-        return edits.map(edit => new vscode.TextEdit(new vscode.Range(edit.range.start.line,
+        const result = edits.map(edit => new vscode.TextEdit(new vscode.Range(edit.range.start.line,
           edit.range.start.character, edit.range.end.line, edit.range.end.character), edit.newText));
+        if (document.eol !== vscode.EndOfLine.LF) result.push(vscode.TextEdit.setEndOfLine(vscode.EndOfLine.LF));
+        return result;
       }
     }),
     { dispose() { for (const timer of timers.values()) clearTimeout(timer); } }
   );
   const changed = uri => {
     if (opened.has(uri.toString())) return;
-    connection.ready.then(() => connection.notify("workspace/didChangeWatchedFiles", {
-      changes: [{ uri: uri.toString(), type: 2 }]
-    })).catch(report);
+    connection.ready.then(() => {
+      connection.notify("workspace/didChangeWatchedFiles", {
+        changes: [{ uri: uri.toString(), type: 2 }]
+      });
+      refreshLinks();
+    }).catch(report);
   };
   const watcher = vscode.workspace.createFileSystemWatcher("**/*.vela");
   context.subscriptions.push(watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed));

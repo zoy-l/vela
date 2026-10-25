@@ -24,7 +24,7 @@ namespace vela::runtime {
 auto Isolate::RegisterNative(NativeFunction function)
     -> std::expected<void, NativeRegistrationError> {
   const auto name = function.name();
-  if (name.empty() || name.contains('\0') || name.starts_with("std:") || InvalidUtf8Offset(name)) {
+  if (name.empty() || name.contains('\0') || InvalidUtf8Offset(name)) {
     return std::unexpected(NativeRegistrationError::InvalidName);
   }
   if (natives_.contains(name)) {
@@ -36,11 +36,8 @@ auto Isolate::RegisterNative(NativeFunction function)
 }
 
 auto Isolate::FindNative(std::string_view name) const -> std::shared_ptr<const NativeFunction> {
-  if (name.starts_with("std:")) {
-    return FindStandardNative(name);
-  }
   const auto found = natives_.find(name);
-  return found == natives_.end() ? nullptr : found->second;
+  return found == natives_.end() ? FindStandardNative(name) : found->second;
 }
 
 Isolate::Isolate(std::size_t gc_threshold) noexcept : heap_(gc_threshold) {

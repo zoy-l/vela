@@ -60,19 +60,20 @@ auto CheckNativeBindings(const frontend::Program& program,
                          const frontend::SemanticModel& model,
                          const runtime::Isolate& isolate) -> frontend::Diagnostics {
   frontend::Diagnostics diagnostics;
-  for (const auto& function : program.functions) {
+  const auto check = [&](const frontend::Function& function,
+                         const frontend::FunctionDescriptor& signature) -> void {
     if (function.native_symbol.empty()) {
-      continue;
+      return;
     }
     const auto binding = isolate.FindNative(function.native_symbol);
     std::string message;
     if (binding == nullptr) {
       message = "unregistered native function '" + function.native_symbol + "'";
-    } else if (!SignatureMatches(model.functions.at(function.name), *binding)) {
+    } else if (!SignatureMatches(signature, *binding)) {
       message = "external declaration does not match native signature for '" +
                 function.native_symbol + "'";
     } else {
-      continue;
+      return;
     }
     diagnostics.push_back({
         .location = function.location,
@@ -81,6 +82,15 @@ auto CheckNativeBindings(const frontend::Program& program,
                            ? std::string()
                            : program.sources.at(function.location.source_id).path,
     });
+  };
+  for (const auto& function : program.functions) {
+    check(function, model.functions.at(function.name));
+  }
+  for (const auto& owner : program.classes) {
+    const auto& methods = model.classes.at(owner.name).methods;
+    for (const auto& method : owner.methods) {
+      check(method, methods.at(method.name));
+    }
   }
   return diagnostics;
 }

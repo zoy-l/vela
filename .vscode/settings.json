@@ -1,4 +1,14 @@
 {
+  "[vela]": {
+    "editor.defaultFormatter": "vela.vela-language",
+    "editor.quickSuggestions": {
+      "other": "on",
+      "comments": "off",
+      "strings": "off"
+    },
+    "editor.suggestOnTriggerCharacters": true,
+    "editor.links": true
+  },
   "files.exclude": {
     "**/.cache": true,
     "**/.cipd": true,

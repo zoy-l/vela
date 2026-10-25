@@ -167,7 +167,6 @@ TEST(NativeBindingTest, HostFailureCanBeCaughtAsStandardError) {
   runtime::Isolate isolate(1);
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Fail>("fail")));
   const auto compiled = CompileSource(R"(
-import "std:error";
 external func fail(): void;
 func main(): string {
   try { fail(); } catch (error: Error) { return error.message; }

@@ -5,9 +5,11 @@
 #include <cstdint>
 #include <initializer_list>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/builtin.h"
 #include "compiler/frontend/type_checker.h"
@@ -43,7 +45,6 @@ const auto kSignatures = std::to_array<FunctionDescriptor>({
     Signature(Kind::String,
               "string",
               {
-                  {.name = "parts", .kind = Kind::Array, .type = "string[]"},
                   {.name = "separator", .kind = Kind::String, .type = "string"},
               }),
     Signature(Kind::StringBuilder, "StringBuilder", {}),
@@ -79,6 +80,107 @@ static_assert(kSignatures.size() == static_cast<std::size_t>(Builtin::Collection
 
 }  // namespace
 
+auto CanFormatString(const TypeDescriptor& type) noexcept -> bool {
+  return type.kind == Kind::String || type.kind == Kind::Int || type.kind == Kind::Double ||
+         type.kind == Kind::Bool || type.kind == Kind::Null;
+}
+
+auto ArrayAlgorithms() noexcept -> std::span<const std::pair<std::string_view, ArrayAlgorithm>> {
+  static constexpr auto kAlgorithms = std::to_array<std::pair<std::string_view, ArrayAlgorithm>>({
+      {"sort", ArrayAlgorithm::Sort},
+      {"forEach", ArrayAlgorithm::ForEach},
+      {"any", ArrayAlgorithm::Any},
+      {"every", ArrayAlgorithm::Every},
+      {"findIndex", ArrayAlgorithm::FindIndex},
+      {"reduce", ArrayAlgorithm::Reduce},
+      {"transform", ArrayAlgorithm::Transform},
+  });
+  return kAlgorithms;
+}
+
+auto FindSetOperation(std::string_view name) -> std::optional<Builtin> {
+  if (name == "union") {
+    return Builtin::SetUnion;
+  }
+  if (name == "intersection") {
+    return Builtin::SetIntersection;
+  }
+  if (name == "difference") {
+    return Builtin::SetDifference;
+  }
+  return std::nullopt;
+}
+
+auto FindArrayAlgorithm(std::string_view name) -> std::optional<ArrayAlgorithm> {
+  for (const auto& [label, algorithm] : ArrayAlgorithms()) {
+    if (name == label) {
+      return algorithm;
+    }
+  }
+  return std::nullopt;
+}
+
+auto ArrayCallbackSignature(ArrayAlgorithm algorithm,
+                            const TypeDescriptor& element,
+                            const TypeDescriptor& accumulator) -> FunctionDescriptor {
+  FunctionDescriptor callback;
+  callback.return_type = {.kind = Kind::Void, .name = "void"};
+  const auto parameter = [&callback](const TypeDescriptor& type) -> void {
+    const auto key = std::to_string(callback.parameters.size());
+    callback.parameter_indices.emplace(key, static_cast<std::uint32_t>(callback.parameters.size()));
+    callback.parameters.push_back({.name = key, .type = type});
+  };
+  if (algorithm == ArrayAlgorithm::Sort) {
+    parameter(element);
+    callback.return_type = {.kind = Kind::Int, .name = "int"};
+  } else if (algorithm == ArrayAlgorithm::Reduce) {
+    parameter(accumulator);
+    callback.return_type = accumulator;
+  } else if (algorithm == ArrayAlgorithm::Transform) {
+    callback.return_type = element;
+  } else if (algorithm != ArrayAlgorithm::ForEach) {
+    callback.return_type = {.kind = Kind::Bool, .name = "bool"};
+  }
+  parameter(element);
+  return callback;
+}
+
+auto ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
+                             const TypeDescriptor& element,
+                             const TypeDescriptor& accumulator) -> FunctionDescriptor {
+  const auto callback = ArrayCallbackSignature(algorithm, element, accumulator);
+  std::string name = "(";
+  for (const auto& parameter : callback.parameters) {
+    if (name.back() != '(') {
+      name += ", ";
+    }
+    name += parameter.type.name;
+  }
+  name += ") => " + callback.return_type.name;
+  FunctionDescriptor method;
+  method.return_type = {.kind = Kind::Void, .name = "void"};
+  if (algorithm == ArrayAlgorithm::Any || algorithm == ArrayAlgorithm::Every) {
+    method.return_type = {.kind = Kind::Bool, .name = "bool"};
+  } else if (algorithm == ArrayAlgorithm::FindIndex) {
+    method.return_type = {.kind = Kind::Int, .name = "int"};
+  } else if (algorithm == ArrayAlgorithm::Reduce) {
+    method.return_type = accumulator;
+    method.parameter_indices.emplace("initial", 0);
+    method.parameters.push_back({.name = "initial", .type = accumulator});
+  }
+  std::string parameter = "operation";
+  if (algorithm == ArrayAlgorithm::Sort) {
+    parameter = "compare";
+  } else if (algorithm == ArrayAlgorithm::Any || algorithm == ArrayAlgorithm::Every ||
+             algorithm == ArrayAlgorithm::FindIndex) {
+    parameter = "predicate";
+  }
+  method.parameter_indices.emplace(parameter, static_cast<std::uint32_t>(method.parameters.size()));
+  method.parameters.push_back(
+      {.name = parameter, .type = {.kind = Kind::Function, .name = std::move(name)}});
+  return method;
+}
+
 auto BuiltinSignature(Builtin builtin) -> const FunctionDescriptor& {
   return kSignatures.at(static_cast<std::size_t>(builtin));
 }
@@ -109,9 +211,6 @@ auto FindBuiltin(Kind receiver, std::string_view name) -> std::optional<Builtin>
     return std::nullopt;
   }
   if (receiver == Kind::Invalid) {
-    if (name == "join") {
-      return Builtin::Join;
-    }
     if (name == "StringBuilder") {
       return Builtin::NewStringBuilder;
     }

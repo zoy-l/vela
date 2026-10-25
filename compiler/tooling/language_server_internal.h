@@ -13,6 +13,7 @@
 
 #include "base/json.h"
 #include "compiler/tooling/language_server.h"
+#include "compiler/tooling/semantic_index.h"
 #include "compiler/tooling/source_text.h"
 
 namespace vela::tooling::internal {
@@ -33,6 +34,7 @@ inline constexpr std::string_view kEnd = "end";
 inline constexpr std::string_view kLine = "line";
 inline constexpr std::string_view kCharacter = "character";
 inline constexpr std::string_view kDiagnostics = "diagnostics";
+inline constexpr std::string_view kPosition = "position";
 inline constexpr std::string_view kMessage = "message";
 }  // namespace protocol
 
@@ -63,6 +65,7 @@ class LanguageServer final {
 
  private:
   enum class State : std::uint8_t { New, Initialized, Shutdown };
+  enum class SymbolQuery : std::uint8_t { Completion, Definition, Hover };
   void Dispatch(const yyjson_val* request);
   void Initialize(RpcCall call);
   void Request(std::string_view method, RpcCall call);
@@ -75,6 +78,9 @@ class LanguageServer final {
   [[nodiscard]] auto Change(const yyjson_val* params) -> std::expected<void, std::string>;
   [[nodiscard]] auto Close(const yyjson_val* params) -> std::expected<void, std::string>;
   void Format(RpcCall call);
+  void Query(RpcCall call, SymbolQuery query);
+  void DocumentLinks(RpcCall call);
+  auto IndexFor(std::string_view uri, const ServerDocument& opened) -> SemanticIndex&;
   void PublishDiagnostics();
   void ClearDiagnostics(std::string_view uri);
 
@@ -85,6 +91,7 @@ class LanguageServer final {
   PositionEncoding encoding_ = PositionEncoding::Utf16;
   absl::flat_hash_map<std::string, ServerDocument> documents_;
   absl::flat_hash_set<std::string> published_;
+  absl::flat_hash_map<std::string, SemanticIndex> semantic_indices_;
   std::optional<int> exit_code_;
   std::optional<std::string> output_error_;
 };

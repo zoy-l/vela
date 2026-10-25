@@ -140,6 +140,20 @@ auto Parser::ParseConstructor(Class& declaration, MemberModifiers modifiers)
 
 auto Parser::ParseClassMember(Class& declaration) -> MemberParseResult {
   const auto modifiers = ParseMemberModifiers();
+  if (Check(TokenKind::External)) {
+    auto method = ParseFunction();
+    if (!method) {
+      return MemberParseResult::Failed;
+    }
+    if (modifiers.role == FieldRole::Parameter || modifiers.storage != MemberStorage::Static) {
+      AddDiagnostic(method->location, "external methods must be static and cannot use param");
+      return MemberParseResult::Failed;
+    }
+    method->visibility = modifiers.visibility;
+    method->storage = modifiers.storage;
+    declaration.methods.push_back(std::move(*method));
+    return MemberParseResult::Parsed;
+  }
   if (Match(TokenKind::Constructor)) {
     auto constructor = ParseConstructor(declaration, modifiers);
     if (!constructor) {

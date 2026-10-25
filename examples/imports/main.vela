@@ -1,4 +1,4 @@
-import "math.vela";
+import 'math';
 
 func main(): int {
   return triple(14);

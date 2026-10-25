@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -18,6 +19,7 @@
 #include "compiler/frontend/control_flow.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/initialization.h"
+#include "compiler/frontend/standard_environment.h"
 
 namespace vela::frontend {
 
@@ -44,6 +46,7 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
   case_values_.clear();
   enum_values_.clear();
   builtin_calls_.clear();
+  array_algorithms_.clear();
   local_types_.clear();
   control_flow_.clear();
   classes_.clear();
@@ -107,6 +110,7 @@ auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
   model.case_values = std::move(case_values_);
   model.enum_values = std::move(enum_values_);
   model.builtin_calls = std::move(builtin_calls_);
+  model.array_algorithms = std::move(array_algorithms_);
   model.local_types = std::move(local_types_);
   model.control_flow = std::move(control_flow_);
   model.classes = std::move(classes_);
@@ -245,8 +249,9 @@ auto TypeChecker::CheckExpressionType(const Expression& expression, const Type* 
     case Expression::Kind::StringInterpolation:
       for (const auto& part : expression.elements) {
         const auto type = CheckExpression(*part, nullptr);
-        if ((type.kind != Type::Kind::String || type.nullable) && IsValid(type)) {
-          AddDiagnostic(part->location, "interpolation requires string; use explicit toString()");
+        if (!CanFormatString(type) && IsValid(type)) {
+          AddDiagnostic(part->location,
+                        "interpolation requires string, int, double, bool, or null");
         }
       }
       return {.kind = Type::Kind::String, .name = "string"};
@@ -364,7 +369,13 @@ auto TypeChecker::CheckMethodCall(const Expression& expression, const Type* expe
   if (const auto* owner = StaticOwner(*expression.callee)) {
     return CheckStaticCall(expression, *owner);
   }
-  const Type object = CheckExpression(*expression.callee->object, nullptr);
+  const auto& receiver = *expression.callee->object;
+  Type context;
+  if (receiver.kind == Expression::Kind::ArrayLiteral && receiver.elements.empty() &&
+      expression.callee->text == "join") {
+    context = ArrayType({.kind = Type::Kind::String, .name = "string"});
+  }
+  const Type object = CheckExpression(receiver, IsValid(context) ? &context : nullptr);
   if (object.nullable) {
     AddDiagnostic(expression.callee->object->location,
                   "nullable receiver requires a non-null check");
@@ -444,15 +455,17 @@ auto TypeChecker::CheckBuiltinCall(const Expression& expression, Builtin builtin
   return CheckFunctionCall(BuiltinSignature(builtin), expression);
 }
 
-auto TypeChecker::CheckFunctionCall(const FunctionInfo& function, const Expression& expression)
-    -> TypeChecker::Type {
+auto TypeChecker::CheckFunctionCall(const FunctionInfo& function,
+                                    const Expression& expression,
+                                    std::span<const Type> checked_arguments) -> TypeChecker::Type {
   const auto& arguments = expression.arguments;
   const auto location = expression.location;
   std::vector<bool> assigned(function.parameters.size(), false);
   std::vector<std::uint32_t> order;
   std::size_t positional = 0;
   bool named = false;
-  for (const CallArgument& argument : arguments) {
+  for (std::size_t source_index = 0; source_index < arguments.size(); ++source_index) {
+    const auto& argument = arguments.at(source_index);
     std::size_t index = positional;
     if (!argument.name.empty()) {
       named = true;
@@ -479,7 +492,8 @@ auto TypeChecker::CheckFunctionCall(const FunctionInfo& function, const Expressi
     assigned.at(index) = true;
     order.push_back(static_cast<std::uint32_t>(index));
     const auto expected = function.parameters.at(index).type;
-    const Type actual = CheckExpression(*argument.value, &expected);
+    const Type actual = checked_arguments.empty() ? CheckExpression(*argument.value, &expected)
+                                                  : checked_arguments.subspan(source_index).front();
     if (IsValid(actual) && !CanAssign(expected, actual)) {
       AddDiagnostic(argument.location, "call argument type does not match parameter type");
     }
@@ -765,9 +779,10 @@ auto TypeChecker::CheckBinaryTypes(const Expression& expression,
     }
     return {.kind = Type::Kind::Bool, .name = "bool"};
   }
-  if (expression.text == "+" && left.kind == Type::Kind::String &&
-      right.kind == Type::Kind::String && !left.nullable && !right.nullable) {
-    return left;
+  if (expression.text == "+" &&
+      (left.kind == Type::Kind::String || right.kind == Type::Kind::String) &&
+      CanFormatString(left) && CanFormatString(right)) {
+    return {.kind = Type::Kind::String, .name = "string"};
   }
   if (!IsNumeric(left) || !IsSameType(left, right)) {
     AddDiagnostic(expression.location, "arithmetic operands must have the same numeric type");
@@ -826,8 +841,11 @@ auto TypeChecker::CheckAssignment(const Expression& expression) -> Type {
 void TypeChecker::CheckMemberAssignment(const Expression& member) {
   bool read_only = interface_members_.contains(&member);
   if (const auto found = static_members_.find(&member); found != static_members_.end()) {
-    read_only =
-        read_only || classes_.at(found->second.owner).methods.contains(found->second.member);
+    const auto& owner = classes_.at(found->second.owner);
+    read_only = read_only || owner.methods.contains(found->second.member) ||
+                (!sources_.empty() && sources_.subspan(owner.declaration->location.source_id)
+                                          .front()
+                                          .path.starts_with(kStandardSourcePrefix));
   } else if (const auto object = expression_types_.find(member.object.get());
              object != expression_types_.end() && object->second.kind == Type::Kind::Class) {
     read_only =

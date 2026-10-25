@@ -1,6 +1,5 @@
 #include "runtime/builtins.h"
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -47,17 +46,19 @@ auto ScalarToString(Value value, Heap& heap) -> Result {
   return StringResult(heap.AllocateString(FormatScalar(value, bytes)));
 }
 
-auto Join(std::span<const Value> arguments, Heap& heap) -> Result {
+auto ArrayJoin(std::span<const Value> arguments, Heap& heap) -> Result {
   const auto array = arguments.subspan(0).front();
   const auto separator = arguments.subspan(1).front();
   if (!array.IsObject() || array.AsObject() == nullptr || !separator.IsString()) {
     return std::unexpected(BuiltinError::TypeError);
   }
-  const auto parts = Heap::StringElements(*array.AsObject());
-  if (!parts || std::ranges::any_of(*parts, [](auto* part) -> bool { return part == nullptr; })) {
-    return std::unexpected(BuiltinError::TypeError);
+  const auto joined = heap.JoinArray(*array.AsObject(), separator.AsString()->value());
+  if (!joined) {
+    return std::unexpected(joined.error() == StringJoinError::TypeMismatch
+                               ? BuiltinError::TypeError
+                               : BuiltinError::OutOfMemory);
   }
-  return StringResult(heap.JoinStrings(*parts, separator.AsString()->value()));
+  return Value::String(*joined);
 }
 
 auto BuilderOperation(Builtin builtin, std::span<const Value> arguments, Heap& heap) -> Result {
@@ -192,6 +193,9 @@ auto ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& hea
     case Builtin::MapSet:
     case Builtin::CollectionKeys:
     case Builtin::CollectionValues:
+    case Builtin::SetUnion:
+    case Builtin::SetIntersection:
+    case Builtin::SetDifference:
       return ExecuteCollectionBuiltin(builtin, arguments, heap);
     case Builtin::ArrayLength:
     case Builtin::StringCodePoints:
@@ -206,8 +210,8 @@ auto ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& hea
                            arguments.front());
     case Builtin::ScalarToString:
       return ScalarToString(arguments.front(), heap);
-    case Builtin::Join:
-      return Join(arguments, heap);
+    case Builtin::ArrayJoin:
+      return ArrayJoin(arguments, heap);
     case Builtin::NewStringBuilder:
     case Builtin::BuilderAppend:
     case Builtin::BuilderToString:

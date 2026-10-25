@@ -182,6 +182,7 @@ void LanguageServer::ClearDiagnostics(std::string_view uri) {
 }
 
 void LanguageServer::PublishDiagnostics() {
+  semantic_indices_.clear();
   DiagnosticCollection collected(encoding_);
   std::vector<std::string_view> entries;
   for (const auto& [uri, document] : documents_) {

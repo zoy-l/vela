@@ -87,7 +87,7 @@ func work(text: string): int {
   return values[1].length;
 }
 func main(): int {
-  const text = join(["a", "b"], "");
+  const text = ["a", "b"].join("");
   return work(text) + 39;
 }
 )",
@@ -168,7 +168,7 @@ func fail(): int { throw Failure(value: 42); }
 func main(): int {
   try { return fail(); }
   catch (error: Failure) { return error.value; }
-  finally { const text = join(["allocated", "here"], " "); }
+  finally { const text = ["allocated", "here"].join(" "); }
 }
 )",
                                       isolate);

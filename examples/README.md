@@ -37,13 +37,17 @@ then returns `14.5`. Integer and double operands cannot be mixed implicitly.
 concatenations. It prints `Vela`, `Vela GC`, then returns `true`.
 
 `strings.vela` exercises escapes, interpolation, explicit conversions, Unicode
-APIs, `join`, and imports. `string_builder.vela` builds text in a loop and keeps
+APIs, array `.join(separator)`, primitive formatting, and imports. `string_builder.vela` builds text in a loop and keeps
 an immutable snapshot. See [string contracts](../docs/strings.md).
 
 `switch.vela` demonstrates enum cases, fallthrough, and loop control; it prints
 `close` and returns `121`. `nullable.vela` demonstrates `T?`, guard checks,
 nullable fields and array elements; it prints `label: Vela`, `empty`, and returns
 `42`. See [basic language contracts](../docs/language_basics.md).
+
+`array_algorithms.vela` demonstrates array callbacks and ordered Set operations
+without standard-module imports. `standard_library.vela` uses default `Math`,
+`Random` and `Time` objects.
 
 Use `check` when validating source without executing it:
 

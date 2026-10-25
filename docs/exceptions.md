@@ -5,8 +5,6 @@ class identity or explicit interface implementation in source order. Values and
 numbers are never converted to error objects implicitly.
 
 ```typescript
-import "std:error";
-
 class ValidationError {
   public param message: string;
 }
@@ -36,13 +34,12 @@ Typed bindings require `catch (name: Type)`. Duplicate types and catch clauses
 after a catch-all are rejected. A try must have catch, finally, or both. Catch
 bindings follow ordinary lexical scope and mutable closure-capture rules.
 
-The built-in `std:error` module exports `Error(message: string, code: string)`;
+The default global `Error(message: string, code: string)` requires no import;
 `code` defaults to `"Error"`. This is an ordinary fixed-layout class. VM failures
 are materialized as this type: `message` contains the diagnostic, while `code`
 contains `ExecutionStatusName`, for example `"division by zero"` or
 `"native function failed"`. Custom error types require no inheritance or common
-base class. Error is available through an explicit import, including prefixed
-imports. Native failures and runtime checked operations use the same catch path.
+base class. Native failures and runtime checked operations use the same catch path.
 
 Finally executes on normal completion, return, break, continue, and exception
 propagation. Return expressions are evaluated once before finally; changing a

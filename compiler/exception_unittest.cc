@@ -43,7 +43,6 @@ func main(): int {
   catch (error: Second) { return error.value; }
 })",
                              R"(
-import "std:error";
 func main(): int {
   try { let zero = 0; return 1 / zero; }
   catch (error: Error) {

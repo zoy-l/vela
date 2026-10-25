@@ -1,0 +1,11 @@
+func main(): int {
+  const number = 42;
+  const fraction = 1.25;
+  const flag = true;
+  let correct = 0;
+  for (let i = 0; i < 1000; i = i + 1) {
+    const text = '${number}/${fraction}/${flag}';
+    if (text == '42/1.25/true') { correct = correct + 1; }
+  }
+  return correct;
+}

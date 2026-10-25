@@ -51,7 +51,9 @@ INSTANTIATE_TEST_SUITE_P(
         "func main(): int { return (4000000000 - 3999999958); }",
         "func main(): int { if (1.5 * 2.0 == 3.0) { return 42; } return 0; }",
         "func main(): int { const values: string[] = [\"你好\", \"hello\"]; "
-        "if (join(values, \" \") == \"你好 hello\") { return 42; } return 0; }",
+        "if (values.join(\" \") == \"你好 hello\") { return 42; } return 0; }",
+        "func main(): int { if ('answer=' + 42 == 'answer=42' && '${true}' == 'true' && "
+        "[1, 2].join(',') == '1,2') { return 42; } return 0; }",
         "class Box { param value: int; } func main(): int { return Box(value: 42).value; }",
         "func main(): int { const values: int?[][] = [[null], [42]]; "
         "const value=values[1][0]; if(value != null) { return value; } return 0; }",
@@ -67,15 +69,19 @@ INSTANTIATE_TEST_SUITE_P(
         "const set: Set<int> = Set<int>(); set.add(42); values.set(\"key\", set); "
         "const found = values.get(\"key\"); if (found != null) { return found.values()[0]; } "
         "return 0; }",
-        "import \"std:math\" as math; func main(): int { return math.sqrt(1764.0).toInt(); }",
-        "import \"std:error\"; func main(): int { try { let zero=0; return 1/zero; } "
+        "func main(): int { return Math.sqrt(1764.0).toInt(); }",
+        "func main(): int { try { let zero=0; return 1/zero; } "
         "catch (error: Error) { if (error.message == \"division by zero\") { return 42; } return "
         "0; } }",
         "class Failure { param value: int; } func main(): int { "
         "try { try { throw Failure(value: 42); } finally { const text = \"allocated\" + \" text\"; "
         "} } "
         "catch (error: Failure) { return error.value; } }",
-        "let value = 40; func main(): int { value=value+2; return value; }"));
+        "let value = 40; func main(): int { value=value+2; return value; }",
+        "func main(): int { const values = [2, 40]; values.sort((a: int, b: int): int => a - b); "
+        "return values.reduce(0, (total: int, value: int): int => total + value); }",
+        "func main(): int { const a = Set<int>(); const b = Set<int>(); a.add(40); b.add(2); "
+        "const values = a.union(b).values(); return values[0] + values[1]; }"));
 
 TEST(BytecodeImageTest, RejectsTruncationWithoutExecutingBytes) {
   runtime::Isolate isolate;

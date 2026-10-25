@@ -1,4 +1,4 @@
-import "modules/counters.vela" as counter;
+import 'modules/counters' as counter;
 
 func main(): int {
   counter.next();

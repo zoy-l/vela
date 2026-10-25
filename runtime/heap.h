@@ -63,12 +63,14 @@ enum class ArrayAccessError : std::uint8_t {
 };
 
 enum class StringBuilderError : std::uint8_t { NotBuilder, OutOfMemory };
+enum class StringJoinError : std::uint8_t { TypeMismatch, OutOfMemory };
 enum class ExpectedAlternative : std::uint8_t { Ok, Err };
 enum class ExpectedAccessError : std::uint8_t { NotExpected, InactiveAlternative };
 enum class CollectionError : std::uint8_t { NotCollection, TypeMismatch, OutOfMemory };
 enum class CollectionInsert : std::uint8_t { Inserted, Updated };
 enum class CollectionRemove : std::uint8_t { Removed, Missing };
 enum class CollectionProjection : std::uint8_t { Keys, Values };
+enum class SetOperation : std::uint8_t { Union, Intersection, Difference };
 
 class Heap final {
  public:
@@ -94,6 +96,11 @@ class Heap final {
                                               ExpectedAlternative alternative) noexcept
       -> std::expected<Value, ExpectedAccessError>;
   [[nodiscard]] auto AllocateCollection(const CollectionLayout& layout) noexcept -> HeapObject*;
+  // 输入在整个运算期间须保根；结果独立分配并保持插入顺序。
+  [[nodiscard]] auto CombineSets(const HeapObject& left,
+                                 const HeapObject& right,
+                                 SetOperation operation) noexcept
+      -> std::expected<HeapObject*, CollectionError>;
   // 扩容可能触发 GC；原生调用者须在调用期间保根 object、key 和 value。
   [[nodiscard]] auto InsertCollection(HeapObject& object,
                                       Value key,
@@ -119,6 +126,13 @@ class Heap final {
   // parts 不含空指针；所有输入及 separator 的堆存储须保根，最终结果只分配一次。
   [[nodiscard]] auto JoinStrings(std::span<StringObject* const> parts,
                                  std::string_view separator = {}) noexcept -> StringObject*;
+  // 输入须保根；只格式化 string/int/double/bool/null，不分配中间 GC 字符串。
+  [[nodiscard]] auto JoinValues(std::span<const Value> parts) noexcept
+      -> std::expected<StringObject*, StringJoinError>;
+  [[nodiscard]] auto JoinValues(RegisterView parts) noexcept
+      -> std::expected<StringObject*, StringJoinError>;
+  [[nodiscard]] auto JoinArray(const HeapObject& array, std::string_view separator) noexcept
+      -> std::expected<StringObject*, StringJoinError>;
   // 返回视图借用数组的连续存储；跨分配使用时必须保持数组可达。
   [[nodiscard]] static auto StringElements(const HeapObject& array) noexcept
       -> std::expected<std::span<StringObject* const>, ArrayAccessError>;

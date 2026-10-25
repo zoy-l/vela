@@ -140,6 +140,16 @@ void LanguageServer::Initialize(RpcCall call) {
                yyjson_mut_str(document, encoding_ == PositionEncoding::Utf8 ? "utf-8" : "utf-16"));
   AddJsonField(document, capabilities, "documentFormattingProvider",
                yyjson_mut_bool(document, true));
+  AddJsonField(document, capabilities, "definitionProvider", yyjson_mut_bool(document, true));
+  AddJsonField(document, capabilities, "hoverProvider", yyjson_mut_bool(document, true));
+  auto* links = yyjson_mut_obj(document);
+  AddJsonField(document, links, "resolveProvider", yyjson_mut_bool(document, false));
+  AddJsonField(document, capabilities, "documentLinkProvider", links);
+  auto* completion = yyjson_mut_obj(document);
+  auto* triggers = yyjson_mut_arr(document);
+  yyjson_mut_arr_add_str(document, triggers, ".");
+  AddJsonField(document, completion, "triggerCharacters", triggers);
+  AddJsonField(document, capabilities, "completionProvider", completion);
   AddJsonField(document, result, "capabilities", capabilities);
   auto* info = yyjson_mut_obj(document);
   AddJsonField(document, info, "name",
@@ -174,6 +184,14 @@ void LanguageServer::Request(std::string_view method, RpcCall call) {
     state_ = State::Shutdown;
   } else if (method == "textDocument/formatting") {
     Format(call);
+  } else if (method == "textDocument/completion") {
+    Query(call, SymbolQuery::Completion);
+  } else if (method == "textDocument/definition") {
+    Query(call, SymbolQuery::Definition);
+  } else if (method == "textDocument/hover") {
+    Query(call, SymbolQuery::Hover);
+  } else if (method == "textDocument/documentLink") {
+    DocumentLinks(call);
   } else {
     Error(request_id, kMethodNotFound, "method is not supported");
   }

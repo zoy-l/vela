@@ -88,8 +88,10 @@ invalid builtin IDs or argument ranges.
 
 The baseline `.cache/strings-before.json` was captured before the string changes
 with the same Release configuration, repetitions, duration, and workload
-boundaries. The short concatenation helper was renamed to avoid the new
-reserved `join` builtin; its operations and result are unchanged.
+boundaries. The short concatenation helper was renamed when the original global
+`join` builtin was introduced; its operations and result were unchanged. The
+current API is the array instance method `parts.join(separator)`; the global
+builtin and its reserved declaration name have been removed.
 
 | Steady workload | Before | Full batch after | Focused after | Focused change |
 | --- | ---: | ---: | ---: | ---: |
@@ -138,3 +140,52 @@ No lint rules or suppressions were added. All 17 examples were checked, and the
 tests for Unicode import paths, duplicate dependencies, missing files, cycles,
 and invalid imported escapes. Raw outputs are under `.cache/strings-*.log`; benchmark
 JSON is `.cache/strings-final-benchmark.json`.
+
+## String contexts and array join (2026-10-25)
+
+Global `join` has been removed in favor of `parts.join(separator)`. Interpolation,
+string `+`, and primitive array joins format int/double/bool/null directly, while
+array element types, numeric operations, assignments, and ordinary arguments
+remain strict. Formatting uses native scratch memory; it creates no intermediate
+GC strings. String-only concatenation/interpolation and string-array join retain
+specialized paths. Nullable primitive arrays use their existing tagged/pointer
+storage and format null as `null`.
+
+Windows x64 Release results below are median wall times in microseconds per
+1,000 iterations, with three repetitions. The saved pre-change sample used
+0.1 s minimum; the final sample used 0.5 s after builds and lint had finished.
+These were sequential samples, not interleaved A/B runs.
+
+| Existing workload | Before | After | Observed change |
+| --- | ---: | ---: | ---: |
+| Integer loop | 17.928 | 18.374 | +2.5% |
+| Short string concatenation | 63.859 | 68.417 | +7.1% |
+| Six-part string interpolation | 82.599 | 86.755 | +5.0% |
+| Six-part string array join | 80.987 | 87.329 | +7.8% |
+
+These increases are observed costs, not evidence of an unaffected hot path;
+the experiment does not separate scheduling, frequency, or code layout effects.
+Allocation, committed, retained, and register-byte counters for these existing
+workloads are unchanged. In particular, join's first-execution allocated and
+committed counters remain 64,640 bytes, its register storage is 54 bytes, and
+post-collection retained storage is 512 bytes across eight constants.
+
+| New workload | After | Retained bytes | Register bytes |
+| --- | ---: | ---: | ---: |
+| Direct int/double/bool interpolation | 191.683 | 128 | 99 |
+| Equivalent explicit `toString()` interpolation | 214.688 | 128 | 99 |
+| Six-integer array join | 178.861 | 128 | 54 |
+
+Direct formatting took 10.7% less time than explicit conversion in this sample.
+Compiler allocation-count tests verify that interpolation and each binary
+concatenation allocate only their final string. A literal-array join allocates
+the array plus the final string; joining an existing array allocates no converted
+element strings. Heap counters sampled mid-GC are not cumulative allocation or
+peak-memory measurements. Both formatting workloads retain the same two string
+constants after collection.
+
+Debug and Release each passed 797 C++ tests and 56 tooling tests. Relevant C++
+lint passed without suppressions; the string example executed successfully.
+Raw reports: `.cache/string-coercion-before.json`,
+`.cache/string-context-verified.json`, `.cache/string-context-debug-final.log`,
+and `.cache/string-context-release.log`.

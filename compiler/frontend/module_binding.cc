@@ -16,6 +16,7 @@
 #include "compiler/frontend/builtins.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/parser.h"
+#include "compiler/frontend/standard_environment.h"
 
 namespace vela::frontend {
 namespace {
@@ -77,7 +78,7 @@ void ModuleBinding::CollectDeclarations() {
   for (std::size_t index = 0; index < modules_.size(); ++index) {
     auto& scope = scopes_.at(index);
     const auto declare = [&](const auto& declaration) -> void {
-      if (IsBuiltinName(declaration.name)) {
+      if (IsBuiltinName(declaration.name) || IsStandardName(declaration.name)) {
         Error(declaration.location, "declaration name is reserved for a builtin");
       }
       const auto binding_id = modules_.at(index).binding_id;
@@ -118,7 +119,8 @@ void ModuleBinding::AddImport(const Program::Import& imported,
                               std::uint32_t dependency,
                               ModuleScope& scope) {
   if (!imported.alias.empty()) {
-    if (IsBuiltinName(imported.alias) || scope.names.contains(imported.alias) ||
+    if (IsBuiltinName(imported.alias) || IsStandardName(imported.alias) ||
+        scope.names.contains(imported.alias) ||
         !scope.prefixes.emplace(imported.alias, dependency).second) {
       Error(imported.location, "duplicate or reserved import prefix '" + imported.alias + "'");
     }
@@ -180,7 +182,7 @@ auto ModuleBinding::Resolve(const std::string& name, SourceLocation location) ->
   if (found != scope.names.end()) {
     return found->second;
   }
-  if (!IsBuiltinName(name) && name != "print" && name != "this") {
+  if (!IsBuiltinName(name) && !IsStandardName(name) && name != "print" && name != "this") {
     Error(location, "unknown module symbol '" + name + "'");
   }
   return name;
@@ -372,8 +374,10 @@ auto ModuleBinding::Run() -> ParseResult {
     BindImports();
   }
   Program combined;
+  const auto can_bind = diagnostics_.empty();
   for (auto& module : modules_) {
-    if (diagnostics_.empty()) {
+    // 声明与导入表已经建立；函数体中的未知名字不能阻止后续依赖绑定其声明身份。
+    if (can_bind) {
       BindProgram(module.program);
     }
     AppendProgram(combined, std::move(module.program));

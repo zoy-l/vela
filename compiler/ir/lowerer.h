@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -159,6 +160,20 @@ class Lowerer final {
   auto RegisterCollectionType(frontend::TypeDescriptor type) -> std::uint32_t;
 
   auto LowerArrayLiteral(const frontend::Expression& expression) -> LoweredValue;
+  auto LowerArrayAlgorithm(const frontend::Expression& expression) -> LoweredValue;
+  auto EmitCallback(RegisterId callback,
+                    std::span<const RegisterId> arguments,
+                    frontend::SourceLocation location) -> RegisterId;
+  struct ArrayAlgorithmRegisters final {
+    RegisterId array;
+    RegisterId callback;
+    RegisterId length;
+  };
+  void LowerArraySort(const ArrayAlgorithmRegisters& inputs, frontend::SourceLocation location);
+  void LowerArraySiftDown(RegisterId root,
+                          const ArrayAlgorithmRegisters& inputs,
+                          frontend::SourceLocation location);
+  auto EmitTemporary(Instruction instruction) -> RegisterId;
   auto RegisterArrayType(const frontend::TypeDescriptor& type) -> std::uint32_t;
 
   auto LowerEnumMember(const frontend::Expression& expression, const frontend::TypeDescriptor& type)

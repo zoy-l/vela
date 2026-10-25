@@ -17,6 +17,22 @@ auto BuiltinFailure(CollectionError error) -> BuiltinError {
                                                : BuiltinError::TypeError;
 }
 
+auto ExecuteSetOperation(Builtin builtin, HeapObject& receiver, Value other, Heap& heap)
+    -> std::expected<Value, BuiltinError> {
+  if (!other.IsObject() || other.AsObject() == nullptr) {
+    return std::unexpected(BuiltinError::TypeError);
+  }
+  auto operation = SetOperation::Difference;
+  if (builtin == Builtin::SetUnion) {
+    operation = SetOperation::Union;
+  } else if (builtin == Builtin::SetIntersection) {
+    operation = SetOperation::Intersection;
+  }
+  return heap.CombineSets(receiver, *other.AsObject(), operation)
+      .transform([](HeapObject* result) -> Value { return Value::Object(result); })
+      .transform_error(BuiltinFailure);
+}
+
 }  // namespace
 
 auto ExecuteCollectionBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap)
@@ -27,6 +43,10 @@ auto ExecuteCollectionBuiltin(Builtin builtin, std::span<const Value> arguments,
   }
   auto& object = *receiver.AsObject();
   switch (builtin) {
+    case Builtin::SetUnion:
+    case Builtin::SetIntersection:
+    case Builtin::SetDifference:
+      return ExecuteSetOperation(builtin, object, arguments.subspan(1).front(), heap);
     case Builtin::CollectionLength: {
       const auto length = Heap::CollectionLength(object);
       if (!length) {

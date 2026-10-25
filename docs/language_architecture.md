@@ -14,7 +14,8 @@ class methods omit `func`, and fields use `name: Type`. Locals use `let` or
 `const`, require an initializer, and may infer their exact type from that value.
 Parameters, return types, and class fields require annotations. `const` prevents
 rebinding; mutation of an object's fields or array elements remains allowed.
-There are no implicit conversions or legacy prefix declarations. Function
+String contexts format primitive values and null automatically; other type
+boundaries remain strict. There are no legacy prefix declarations. Function
 types contain parameter types only, such as `(int, int) => int`; typed arrow
 functions support lexical captures with shared mutation of captured `let`
 bindings. [P1 contracts](p1_syntax_proposal.md) specify closures, construction,
@@ -100,7 +101,7 @@ bytecode. `vela run` exercises this path for a zero-argument `main` function.
 Strings and typed arrays use the same IR and bytecode path. Array element types
 and rank remain exact across literals, fields, parameters, returns, indexing,
 and assignment. Context supplies the type of empty array literals;
-there are no implicit conversions. Arrays have reference semantics and compact
+there are no implicit element conversions. Arrays have reference semantics and compact
 contiguous native storage. See [compiler details](../compiler/README.md) for
 current bytecode limits.
 

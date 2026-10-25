@@ -13,7 +13,7 @@ file I/O, C++ namespace blocks, inheritance, async, or JIT is added by this goal
 Modules use explicit `export` visibility, following the
 [TypeScript module scope and export rules](https://www.typescriptlang.org/docs/handbook/2/modules.html).
 Import prefixes follow [Dart libraries](https://dart.dev/language/libraries):
-`import "math.vela" as math;`. An unprefixed import makes only the dependency's
+`import 'math' as math;`. An unprefixed import makes only the dependency's
 exports available. Imports are not re-exported automatically. Every source file
 has its own symbol table, even if it contains no import/export directives.
 Module names are resolved before generic specialization; runtime calls and
@@ -73,7 +73,7 @@ state the evidence and limits.
   26 compiler integration tests, malformed-image VM tests and atomic-file tests passed.
 - [x] Complete debug symbols and source mappings.
 - [x] Complete formatter, LSP diagnostics and syntax highlighting ([tools](source_tooling.md));
-  formatter CLI idempotence checked on 67 source files, 26 process/tool tests and
+  formatter CLI idempotence checked on 65 source files, 27 process/tool tests and
   three VS Code client tests passed. Extension packaged without npm dependencies.
 - [x] Complete debugger and persistent REPL.
   Source-stepping debugger, read-only VM observer, breakpoints and register/object
@@ -83,9 +83,9 @@ state the evidence and limits.
   transactional module snapshots, GC pressure, persistent identities and recovery.
 - [x] Complete documentation generation; exported API example actually generated.
 - [x] Run final Debug/Release regression and zero-warning lint without suppression:
-  762 C++ and 26 process/tool tests per variant; all lint findings resolved.
+  745 C++ and 27 process/tool tests per variant; all lint findings resolved.
 - [x] Actually execute examples and tooling integration scenarios:
-  36 examples checked, 32 entry points run, three VS Code client tests passed.
+  34 examples checked, 31 entry points run, three VS Code client tests passed.
 - [x] Run final Release benchmark, memory and baseline comparisons:
   109 cases and a 30-case final VM rerun passed; GC, REPL and process memory measured.
 - [x] Synchronize both roadmaps, contracts and performance report; check links/LF.

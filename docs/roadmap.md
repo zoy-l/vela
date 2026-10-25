@@ -41,8 +41,8 @@ P0 behavior is specified in [Basic language contracts](language_basics.md).
 - [x] Collect strings with precise roots, field/array barriers, and accounted contiguous storage
 - [x] Decode string escapes and Unicode escapes with invalid-input diagnostics
 - [x] Define UTF-8 storage and code point length/index/slice units (no separate `char` type)
-- [x] Add strict string interpolation and explicit primitive `toString()`
-- [x] Add single-allocation `join`, string operations, and GC-owned `StringBuilder`
+- [x] Add string-context primitive/null formatting and explicit primitive `toString()`
+- [x] Add single-allocation array `.join(separator)`, string operations, and GC-owned `StringBuilder`
 - [x] Add Unicode code point iteration and grapheme cluster APIs
 - [x] Implement explicit numeric conversions (implicit conversions are forbidden)
 - [x] Implement invariant typed arrays, nested arrays, and compact contiguous storage

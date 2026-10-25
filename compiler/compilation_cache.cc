@@ -21,7 +21,7 @@
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/source_file.h"
 #include "compiler/frontend/source_loader.h"
-#include "compiler/frontend/standard_modules.h"
+#include "compiler/frontend/standard_environment.h"
 #include "runtime/isolate.h"
 #include "vm/bytecode_image.h"
 
@@ -106,8 +106,9 @@ auto DecodeImage(std::span<const std::byte> bytes) -> std::expected<CacheImage, 
 }
 
 auto IsCurrent(const InputIdentity& input) -> bool {
-  if (input.path.starts_with("std:")) {
-    const auto source = frontend::StandardModuleSource(input.path);
+  if (input.path.starts_with(frontend::kStandardSourcePrefix)) {
+    const auto source = frontend::StandardDeclarationSource(
+        input.path.substr(frontend::kStandardSourcePrefix.size()));
     return source && ContentFingerprint(*source) == input.fingerprint;
   }
   const auto path = Utf8Path(input.path);

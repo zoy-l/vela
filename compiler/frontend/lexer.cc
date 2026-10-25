@@ -182,7 +182,8 @@ void Lexer::ScanToken(std::size_t start) {
       }
       break;
     case '"':
-      ScanString();
+    case '\'':
+      ScanString(character);
       break;
     default:
       if (IsIdentifierStart(character)) {
@@ -316,14 +317,14 @@ void Lexer::ScanNumber() {
   AddToken(kind, start);
 }
 
-void Lexer::ScanString() {
+void Lexer::ScanString(char quote) {
   const auto opening = token_location_;
   auto segment_location = opening;
   auto segment_start = current_ - 1;
   std::string value;
   bool interpolated = false;
   while (!IsAtEnd()) {
-    if (Peek() == '"') {
+    if (Peek() == quote) {
       Advance();
       tokens_.push_back({
           .lexeme = std::move(value),
@@ -359,18 +360,18 @@ void Lexer::ScanString() {
       segment_location = location_;
       segment_start = current_;
     } else {
-      ScanStringRun(value);
+      ScanStringRun(value, quote);
     }
   }
   AddDiagnostic(opening, "unterminated string literal");
 }
 
-void Lexer::ScanStringRun(std::string& value) {
+void Lexer::ScanStringRun(std::string& value, char quote) {
   const auto start = current_;
   const auto start_location = location_;
   while (!IsAtEnd()) {
     const char character = Peek();
-    if (character == '"' || character == '\\' || character == '\n' || character == '\r' ||
+    if (character == quote || character == '\\' || character == '\n' || character == '\r' ||
         (character == '$' && PeekNext() == '{')) {
       break;
     }

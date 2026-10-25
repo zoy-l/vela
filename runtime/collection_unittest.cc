@@ -1,6 +1,8 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <span>
+#include <string>
 
 #include "gtest/gtest.h"
 
@@ -146,6 +148,61 @@ TEST(CollectionTest, TracesLiveEntriesAndReclaimsRemovedCyclesAndBuffers) {
 }
 
 class CollectionBarrierTest : public testing::TestWithParam<GcPhase> {};
+
+class SetCombinationTest : public testing::TestWithParam<SetOperation> {};
+
+constexpr std::uint32_t kCombinationKeyCount = 64;
+void InsertOverlappingStringKeys(Heap& heap, std::span<Value> values) {
+  auto& left = *values.front().AsObject();
+  auto& right = *values.subspan(1).front().AsObject();
+  auto& key = values.subspan(2).front();
+  for (std::uint32_t index = 0; index < kCombinationKeyCount; ++index) {
+    key = Value::String(heap.AllocateString(std::to_string(index)));
+    ASSERT_TRUE(heap.InsertCollection(left, key));
+    key = Value::String(heap.AllocateString(std::to_string(index + (kCombinationKeyCount / 2))));
+    ASSERT_TRUE(heap.InsertCollection(right, key));
+  }
+}
+
+void DropInputSets(std::span<Value> values) {
+  for (auto& value : values.first(2)) {
+    ASSERT_TRUE(Heap::ClearCollection(*value.AsObject()));
+    value = Value::Null();
+  }
+  values.subspan(2).front() = Value::Null();
+}
+TEST_P(SetCombinationTest, KeepsReferenceKeysAliveAcrossGrowthAndReturnsIndependentStorage) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto* layout =
+      isolate.CreateCollectionLayout({.keys = {.element_kind = ValueKind::String}});
+  std::array<Value, 4> values;
+  RootRange roots(heap, values.data(), values.size());
+  values.at(0) = Value::Object(heap.AllocateCollection(*layout));
+  values.at(1) = Value::Object(heap.AllocateCollection(*layout));
+  InsertOverlappingStringKeys(heap, values);
+  const auto operation = GetParam();
+  const auto combined =
+      heap.CombineSets(*values.at(0).AsObject(), *values.at(1).AsObject(), operation);
+  ASSERT_TRUE(combined);
+  values.at(3) = Value::Object(*combined);
+  const auto length = operation == SetOperation::Union
+                          ? kCombinationKeyCount + (kCombinationKeyCount / 2)
+                          : kCombinationKeyCount / 2;
+  EXPECT_EQ(Heap::CollectionLength(**combined), length);
+  DropInputSets(values);
+  heap.FinishCollection();
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), length + 1);
+  values.at(2) =
+      Value::String(heap.AllocateString(operation == SetOperation::Intersection ? "32" : "0"));
+  EXPECT_EQ(Heap::HasCollectionKey(**combined, values.at(2)), true);
+}
+INSTANTIATE_TEST_SUITE_P(OrderedReferenceKeys,
+                         SetCombinationTest,
+                         testing::Values(SetOperation::Union,
+                                         SetOperation::Intersection,
+                                         SetOperation::Difference));
 
 TEST_P(CollectionBarrierTest, ProtectsNewEdgesDuringIncrementalCollection) {
   const auto phase = GetParam();

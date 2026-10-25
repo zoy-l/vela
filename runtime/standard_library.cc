@@ -143,34 +143,31 @@ auto MakeBindings() -> absl::flat_hash_map<std::string, std::shared_ptr<const Na
     const std::string name(function.name());
     bindings.emplace(name, std::make_shared<const NativeFunction>(std::move(function)));
   };
-  add(NativeFunction::Bind<ReadLine>("std:console.readLine"));
-  add(NativeFunction::Bind<Write>("std:console.write"));
-  add(NativeFunction::Bind<Flush>("std:console.flush"));
-  add(NativeFunction::Bind<MonotonicMicros>("std:time.monotonicMicros"));
-  add(NativeFunction::Bind<UnixMicros>("std:time.unixMicros"));
-  add(NativeFunction::Bind<Seed>("std:random.seed"));
-  add(NativeFunction::Bind<NextDouble>("std:random.nextDouble"));
-  add(NativeFunction::Bind<NextInt>("std:random.nextInt"));
-  add(NativeFunction::Bind<Sqrt>("std:math.sqrt"));
-  add(NativeFunction::Bind<Log>("std:math.log"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::sin)>>("std:math.sin"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::cos)>>("std:math.cos"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::tan)>>("std:math.tan"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::floor)>>("std:math.floor"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::ceil)>>("std:math.ceil"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::round)>>("std:math.round"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::trunc)>>("std:math.trunc"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::fabs)>>("std:math.abs"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::exp)>>("std:math.exp"));
-  add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::pow)>>(
-      "std:math.pow"));
-  add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::fmin)>>(
-      "std:math.min"));
-  add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::fmax)>>(
-      "std:math.max"));
-  add(NativeFunction::Bind<Clamp>("std:math.clamp"));
-  add(NativeFunction::Bind<IsFinite>("std:math.isFinite"));
-  add(NativeFunction::Bind<IsNaN>("std:math.isNaN"));
+  add(NativeFunction::Bind<ReadLine>("Console.readLine"));
+  add(NativeFunction::Bind<Write>("Console.write"));
+  add(NativeFunction::Bind<Flush>("Console.flush"));
+  add(NativeFunction::Bind<MonotonicMicros>("Time.monotonicMicros"));
+  add(NativeFunction::Bind<UnixMicros>("Time.unixMicros"));
+  add(NativeFunction::Bind<Seed>("Random.seed"));
+  add(NativeFunction::Bind<NextDouble>("Random.nextDouble"));
+  add(NativeFunction::Bind<NextInt>("Random.nextInt"));
+  add(NativeFunction::Bind<Sqrt>("Math.sqrt"));
+  add(NativeFunction::Bind<Log>("Math.log"));
+  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::sin)>>("Math.sin"));
+  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::cos)>>("Math.cos"));
+  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::tan)>>("Math.tan"));
+  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::floor)>>("Math.floor"));
+  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::ceil)>>("Math.ceil"));
+  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::round)>>("Math.round"));
+  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::trunc)>>("Math.trunc"));
+  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::fabs)>>("Math.abs"));
+  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::exp)>>("Math.exp"));
+  add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::pow)>>("Math.pow"));
+  add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::fmin)>>("Math.min"));
+  add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::fmax)>>("Math.max"));
+  add(NativeFunction::Bind<Clamp>("Math.clamp"));
+  add(NativeFunction::Bind<IsFinite>("Math.isFinite"));
+  add(NativeFunction::Bind<IsNaN>("Math.isNaN"));
   return bindings;
 }
 

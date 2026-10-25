@@ -8,7 +8,7 @@ namespace vela {
 // 编译器与 VM 共享的内建调用编号，不携带前端或运行时对象。
 enum class Builtin : std::uint8_t {
   ScalarToString,
-  Join,
+  ArrayJoin,
   NewStringBuilder,
   BuilderAppend,
   BuilderToString,
@@ -40,6 +40,9 @@ enum class Builtin : std::uint8_t {
   ArraySlice,
   ArrayFill,
   ArrayReverse,
+  SetUnion,
+  SetIntersection,
+  SetDifference,
   Count,
 };
 
@@ -60,7 +63,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayCopy:
     case Builtin::ArrayReverse:
       return 1;
-    case Builtin::Join:
+    case Builtin::ArrayJoin:
     case Builtin::BuilderAppend:
     case Builtin::StringIndexOf:
     case Builtin::StringContains:
@@ -76,6 +79,9 @@ enum class Builtin : std::uint8_t {
     case Builtin::CollectionKeys:
     case Builtin::CollectionValues:
     case Builtin::ArrayFill:
+    case Builtin::SetUnion:
+    case Builtin::SetIntersection:
+    case Builtin::SetDifference:
       return 2;
     case Builtin::StringSlice:
     case Builtin::StringGraphemeSlice:

@@ -1,8 +1,13 @@
 # Vela benchmarks
 
-Google Benchmark runs twenty-eight Vela workloads through the production compiler
+Google Benchmark runs Vela workloads through the production compiler
 and VM. Versions are pinned in `DEPS`; `//benchmarks:vela_benchmarks` links the
 upstream `benchmark_main` and is separate from the language executable.
+`vm/standard_api` covers default global APIs, sorting and reduction without imports.
+`vm/array_algorithms` covers sorting, repeated reduction and transformation; both
+use the normal compiler and VM and report the existing heap/register counters.
+`vm/set_operations` builds two overlapping sets of 256 integers, then computes
+their union, intersection and difference through the native ordered hash tables.
 Native benchmark sources use `*_benchmark.cc`. Generated symbol-table workloads
 also measure compilation at 32, 256, and 1024 declaration groups.
 
@@ -92,6 +97,11 @@ The added string workloads compare six-part `+`, interpolation, and `join`,
 compare builders against repeated `+` at 512 and 4096 appends, and exercise
 Unicode APIs. See [string performance](../docs/string_performance.md) for
 current results and measurement boundaries.
+
+`string_format` formats int/double/bool values directly in interpolation;
+`string_format_explicit` produces the same result with three explicit
+`toString()` calls per iteration. `number_join` joins six integers. Each checks
+1,000 results. See the string-context measurements in the same performance document.
 
 P1 adds explicit conversions, escaping closures, Expected allocation, interface
 dispatch, match, Unicode graphemes, and ordered Set/Map workloads. Final P1

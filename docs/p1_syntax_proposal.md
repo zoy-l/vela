@@ -208,7 +208,8 @@ Every possible value must be covered; missing enum variants are compile errors.
 from the existing permitted nullable widening. A selector covering all non-null
 values followed by a null arm, or vice versa, supports nullable narrowing.
 The catch-all `let present` above excludes null after the preceding null arm.
-No implicit string or numeric conversions are introduced. Traditional `switch`
+Matching does not add conversions; string formatting follows the
+[string context rules](strings.md). Traditional `switch`
 keeps its existing C/C++ fallthrough semantics.
 Constant patterns support integers, booleans, strings, and explicitly qualified
 enum members. Double literal patterns, destructuring, and guards are not

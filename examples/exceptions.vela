@@ -1,16 +1,12 @@
-import "std:error";
-
 class ValidationError {
   public param message: string;
 }
-
 func validate(value: int): int {
   if (value < 0) {
     throw ValidationError(message: "value must be nonnegative");
   }
   return value;
 }
-
 func main(): int {
   try {
     validate(-1);
@@ -19,7 +15,6 @@ func main(): int {
   } finally {
     print("validation finished");
   }
-
   try {
     let zero = 0;
     return 42 / zero;

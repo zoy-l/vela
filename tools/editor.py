@@ -1,4 +1,4 @@
-"""Package the dependency-free Vela VS Code extension."""
+"""Package or test the dependency-free Vela VS Code extension."""
 
 from __future__ import annotations
 
@@ -6,7 +6,10 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -70,11 +73,48 @@ def package_extension(destination: Path) -> Path:
     return destination
 
 
+def test_extension(code: Path) -> int:
+    profile = Path(tempfile.mkdtemp(prefix="vela-vscode-profile-"))
+    report = profile / "result.json"
+    environment = os.environ.copy()
+    environment["VELA_EDITOR_TEST_REPORT"] = str(report)
+    try:
+        result = subprocess.run([
+            str(code.resolve()),
+            f"--extensionDevelopmentPath={EDITOR}",
+            f"--extensionTestsPath={EDITOR / 'editor_unittest.cjs'}",
+            f"--user-data-dir={profile / 'user'}",
+            f"--extensions-dir={profile / 'extensions'}",
+            "--disable-extensions", "--skip-welcome", "--skip-release-notes",
+            "--disable-workspace-trust", "--wait", str(ROOT),
+        ], cwd=ROOT, env=environment, check=False)
+        if not report.is_file():
+            raise RuntimeError("VS Code exited without running the extension-host tests")
+        outcome = json.loads(report.read_text(encoding="utf-8"))
+        print(json.dumps(outcome, ensure_ascii=False, indent=2))
+        return result.returncode or (0 if outcome["passed"] else 1)
+    finally:
+        # Windows 上扩展测试退出通知早于 Electron 子进程释放字典映射的时刻。
+        for attempt in range(30):
+            try:
+                shutil.rmtree(profile)
+                break
+            except PermissionError:
+                if attempt == 29:
+                    raise
+                time.sleep(0.1)
+
+
 def main(arguments: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["package"])
+    parser.add_argument("command", choices=["package", "test"])
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--code", type=Path, help="VS Code launcher for real extension-host tests")
     parsed = parser.parse_args(arguments)
+    if parsed.command == "test":
+        if parsed.code is None or not parsed.code.is_file():
+            parser.error("editor test requires --code PATH to a VS Code launcher")
+        return test_extension(parsed.code)
     package = json.loads((EDITOR / "package.json").read_text(encoding="utf-8"))
     destination = parsed.output or ROOT / "out" / "editor" / f'{package["name"]}-{package["version"]}.vsix'
     print(package_extension(destination.resolve()))

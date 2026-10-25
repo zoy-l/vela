@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -28,7 +29,56 @@ struct FormatItem final {
   ItemKind item = ItemKind::Syntax;
   std::string_view text;
   std::size_t offset = 0;
+  std::optional<std::string> formatted = std::nullopt;
+
+  [[nodiscard]] auto spelling() const -> std::string_view {
+    return formatted ? std::string_view(*formatted) : text;
+  }
 };
+
+void AppendStringRun(std::string& output, std::string_view text) {
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    const auto character = text.at(index);
+    if (character == '\\') {
+      const auto escaped = text.at(++index);
+      if (escaped != '"') {
+        output += '\\';
+      }
+      output += escaped;
+    } else {
+      if (character == '\'') {
+        output += '\\';
+      }
+      output += character;
+    }
+  }
+}
+
+auto StringSpelling(std::string_view source, std::span<const frontend::Token> tokens)
+    -> std::string {
+  std::string output;
+  const auto start = tokens.front().offset;
+  auto copied = start;
+  for (const auto& token : tokens) {
+    const auto kind = token.kind;
+    if (kind != TokenKind::StringLiteral && kind != TokenKind::StringHead &&
+        kind != TokenKind::StringMiddle && kind != TokenKind::StringTail) {
+      continue;
+    }
+    output.append(source.substr(copied, token.offset - copied));
+    auto run = source.substr(token.offset, token.length);
+    if (kind == TokenKind::StringLiteral || kind == TokenKind::StringHead) {
+      output += '\'';
+      run.remove_prefix(1);
+    }
+    const auto interpolates = kind == TokenKind::StringHead || kind == TokenKind::StringMiddle;
+    run.remove_suffix(interpolates ? 2 : 1);
+    AppendStringRun(output, run);
+    output.append(interpolates ? "${" : "'");
+    copied = token.offset + token.length;
+  }
+  return output;
+}
 
 auto StringTailIndex(std::span<const frontend::Token> tokens, std::size_t head) -> std::size_t {
   std::size_t depth = 1;
@@ -50,6 +100,7 @@ auto Items(std::string_view source, const frontend::LexResult& lexed) -> std::ve
   const auto& comments = lexed.comments;
   const auto& tokens = lexed.tokens;
   for (std::size_t index = 0; index < tokens.size(); ++index) {
+    const auto first = index;
     const auto& token = tokens.at(index);
     while (comment < comments.size() && comments.at(comment).offset < token.offset) {
       const auto& trivia = comments.at(comment++);
@@ -77,6 +128,10 @@ auto Items(std::string_view source, const frontend::LexResult& lexed) -> std::ve
         .role = token.role,
         .text = source.substr(token.offset, end - token.offset),
         .offset = token.offset,
+        .formatted = token.kind == TokenKind::StringLiteral || token.kind == TokenKind::StringHead
+                         ? std::optional(StringSpelling(
+                               source, std::span(tokens).subspan(first, index - first + 1)))
+                         : std::nullopt,
     });
   }
   return items;
@@ -141,6 +196,9 @@ auto NeedsSpace(const FormatItem& left, const FormatItem& right) -> bool {
       (previous == TokenKind::Less && left.role == TokenRole::TypeDelimiter)) {
     return false;
   }
+  if (previous == TokenKind::Colon) {
+    return true;
+  }
   if (IsOperator(left) || IsOperator(right)) {
     return true;
   }
@@ -161,6 +219,24 @@ struct Scope final {
   bool case_indented = false;
 };
 
+auto IsDeclarationStart(TokenKind kind) -> bool {
+  switch (kind) {
+    case TokenKind::Import:
+    case TokenKind::Export:
+    case TokenKind::External:
+    case TokenKind::Func:
+    case TokenKind::Class:
+    case TokenKind::Interface:
+    case TokenKind::Enum:
+    case TokenKind::Type:
+    case TokenKind::Let:
+    case TokenKind::Const:
+      return true;
+    default:
+      return false;
+  }
+}
+
 class Formatter final {
  public:
   Formatter(std::string_view source, std::span<const FormatItem> items)
@@ -170,7 +246,7 @@ class Formatter final {
     constexpr std::size_t kContinuationWidth = 80;
     for (std::size_t index = 0; index < items.size(); ++index) {
       const auto& item = items.subspan(index).front();
-      widths.at(index + 1) = widths.at(index) + item.text.size() + 1;
+      widths.at(index + 1) = widths.at(index) + item.spelling().size() + 1;
       if (item.kind == TokenKind::LeftParen || item.kind == TokenKind::LeftBracket) {
         openers.push_back(index);
       } else if ((item.kind == TokenKind::RightParen || item.kind == TokenKind::RightBracket) &&
@@ -185,11 +261,13 @@ class Formatter final {
 
  private:
   void Newline();
+  void Blankline();
   void Space();
   void Text(std::string_view text);
   void Open(const FormatItem& item, std::size_t index);
   void Close(const FormatItem& item, TokenKind next);
   void Comment(const FormatItem& item, std::size_t index);
+  void Separate(std::size_t index);
   void Emit(std::size_t index);
 
   std::string_view source_;
@@ -199,6 +277,7 @@ class Formatter final {
   std::string output_;
   std::size_t indent_ = 0;
   bool case_label_ = false;
+  TokenKind top_level_kind_ = TokenKind::EndOfFile;
 };
 
 void Formatter::Newline() {
@@ -213,6 +292,13 @@ void Formatter::Newline() {
 void Formatter::Space() {
   if (!output_.empty() && output_.back() != '\n' && output_.back() != ' ') {
     output_.push_back(' ');
+  }
+}
+
+void Formatter::Blankline() {
+  Newline();
+  if (!output_.empty() && !output_.ends_with("\n\n")) {
+    output_ += '\n';
   }
 }
 
@@ -275,7 +361,12 @@ void Formatter::Comment(const FormatItem& item, std::size_t index) {
     const auto end = previous.offset + previous.text.size();
     const auto gap = source_.substr(end, item.offset - end);
     if (gap.contains('\n')) {
-      Newline();
+      if (scopes_.empty() && previous.item == ItemKind::Syntax &&
+          (previous.kind == TokenKind::Semicolon || previous.kind == TokenKind::RightBrace)) {
+        Blankline();
+      } else {
+        Newline();
+      }
     } else if (output_.ends_with('\n')) {
       output_.pop_back();
     }
@@ -296,12 +387,34 @@ void Formatter::Comment(const FormatItem& item, std::size_t index) {
   }
 }
 
+void Formatter::Separate(std::size_t index) {
+  const auto& item = items_.subspan(index).front();
+  const auto kind = item.kind;
+  if (index != 0 && output_.ends_with('\n') && !IsClosing(item)) {
+    const auto& previous = items_.subspan(index - 1).front();
+    const auto previous_end = previous.offset + previous.text.size();
+    const auto gap = source_.substr(previous_end, item.offset - previous_end);
+    if (gap.find('\n') != gap.rfind('\n')) {
+      Blankline();
+    }
+    if (scopes_.empty() && previous.item == ItemKind::Syntax && IsDeclarationStart(kind) &&
+        (previous.kind == TokenKind::Semicolon || previous.kind == TokenKind::RightBrace) &&
+        (kind != TokenKind::Import || top_level_kind_ != TokenKind::Import)) {
+      Blankline();
+    }
+  }
+  if (scopes_.empty() && IsDeclarationStart(kind)) {
+    top_level_kind_ = kind;
+  }
+}
+
 void Formatter::Emit(std::size_t index) {
   const auto& item = items_.subspan(index).front();
   if (item.item != ItemKind::Syntax) {
     Comment(item, index);
     return;
   }
+  Separate(index);
   const auto kind = item.kind;
   const auto next =
       index + 1 < items_.size() ? items_.subspan(index + 1).front().kind : TokenKind::EndOfFile;
@@ -325,7 +438,7 @@ void Formatter::Emit(std::size_t index) {
     Open(item, index);
     return;
   }
-  Text(item.text);
+  Text(item.spelling());
   if (kind == TokenKind::Colon && case_label_) {
     case_label_ = false;
     scopes_.back().case_indented = true;

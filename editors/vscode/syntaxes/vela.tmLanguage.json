@@ -8,12 +8,15 @@
     { "name": "keyword.control.vela", "match": "\\b(?:if|else|while|for|switch|case|default|break|continue|return|match|try|catch|finally|throw|import|export|as|is)\\b" },
     { "name": "storage.modifier.vela", "match": "\\b(?:public|private|static|param|external|let|const)\\b" },
     { "name": "storage.type.vela", "match": "\\b(?:class|interface|implements|enum|type|constructor)\\b" },
-    { "name": "support.type.vela", "match": "\\b(?:int|double|bool|string|void|StringBuilder|Set|Map|Expected)\\b" },
+    { "name": "support.type.vela", "match": "\\b(?:int|double|bool|string|void|StringBuilder|Set|Map|Expected|Math|Random|Time|Console|Error)\\b" },
     { "name": "constant.language.vela", "match": "\\b(?:true|false|null)\\b" },
     { "name": "variable.language.vela", "match": "\\bthis\\b" },
     { "name": "constant.numeric.vela", "match": "\\b[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\\b" },
     { "name": "entity.name.function.vela", "match": "\\b[A-Za-z_][A-Za-z_0-9]*(?=\\s*\\()" },
-    { "name": "keyword.operator.vela", "match": "=>|==|!=|<=|>=|&&|\\|\\||[+*/!<>=?-]" }
+    { "name": "variable.other.property.vela", "match": "(?<=\\.)[A-Za-z_][A-Za-z_0-9]*\\b" },
+    { "name": "variable.other.readwrite.vela", "match": "\\b[A-Za-z_][A-Za-z_0-9]*\\b" },
+    { "name": "keyword.operator.vela", "match": "=>|==|!=|<=|>=|&&|\\|\\||[+*/!<>=?-]" },
+    { "name": "punctuation.accessor.vela", "match": "\\." }
   ],
   "repository": {
     "comments": {
@@ -24,9 +27,12 @@
       ]
     },
     "strings": {
-      "name": "string.quoted.double.vela",
-      "begin": "\"",
-      "end": "\"",
+      "patterns": [
+        { "name": "string.quoted.single.vela", "begin": "'", "end": "'", "patterns": [{ "include": "#string-content" }] },
+        { "name": "string.quoted.double.vela", "begin": "\"", "end": "\"", "patterns": [{ "include": "#string-content" }] }
+      ]
+    },
+    "string-content": {
       "patterns": [
         { "name": "constant.character.escape.vela", "match": "\\\\(?:u\\{[0-9A-Fa-f]{1,6}\\}|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}|[nrtbfv0\\\\\"'$])" },
         { "include": "#interpolation" },
@@ -35,10 +41,11 @@
     },
     "interpolation": {
       "name": "meta.interpolation.vela",
+      "contentName": "meta.embedded.line.vela",
       "begin": "\\$\\{",
       "end": "\\}",
-      "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.vela" } },
-      "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.vela" } },
+      "beginCaptures": { "0": { "name": "punctuation.definition.template-expression.begin.vela" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.template-expression.end.vela" } },
       "patterns": [{ "include": "#braced-expression" }, { "include": "$self" }]
     },
     "braced-expression": {

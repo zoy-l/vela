@@ -2,12 +2,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/builtins.h"
 
 namespace vela::frontend {
 
@@ -96,6 +98,13 @@ auto TypeChecker::CheckCollectionMethod(const Expression& expression, const Type
                                         static_cast<std::uint32_t>(signature.parameters.size()));
     signature.parameters.push_back({.name = std::move(parameter), .type = std::move(type)});
   };
+  const auto operation = receiver.kind == Type::Kind::Set ? FindSetOperation(name) : std::nullopt;
+  if (operation) {
+    signature.return_type = receiver;
+    add("other", receiver);
+    builtin_calls_.insert_or_assign(&expression, *operation);
+    return CheckFunctionCall(signature, expression);
+  }
   Builtin builtin = Builtin::CollectionLength;
   if (name == "has" || name == "remove" || (name == "add" && receiver.kind == Type::Kind::Set)) {
     if (name == "has") {

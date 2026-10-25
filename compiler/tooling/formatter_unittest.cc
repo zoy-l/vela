@@ -30,15 +30,54 @@ TEST(FormatterTest, UsesParserRolesForGenericsAndPrefixOperators) {
   EXPECT_TRUE(result->contains("return -a.a;"));
 }
 
-TEST(FormatterTest, RetainsCommentPlacementAndLiteralSpellings) {
+TEST(FormatterTest, RetainsCommentPlacementAndEscapeSpellings) {
   constexpr std::string_view kSource =
       "// header\r\nfunc main():void{const text=\"你好\\u0041 ${\"x\" /*inside*/}\"; // tail\r\n"
       "/* next */print(text);}";
   const auto result = FormatSource(kSource);
   ASSERT_TRUE(result) << result.error().front().message;
-  EXPECT_TRUE(result->contains("\"你好\\u0041 ${\"x\" /*inside*/}\"; // tail\n"));
+  EXPECT_TRUE(result->contains("'你好\\u0041 ${'x' /*inside*/}'; // tail\n"));
   EXPECT_TRUE(result->contains("\n  /* next */ print(text);"));
   EXPECT_FALSE(result->contains('\r'));
+}
+
+TEST(FormatterTest, SpacesFunctionTypesNamedArgumentsAndOperators) {
+  const auto result = FormatSource(
+      "func apply(value:int,operation:(int)=>int):int{return operation(value);}"
+      "func make():()=>int{const values:int[]=[1,2];"
+      "return ():int=>values[0]+values[1];}");
+  ASSERT_TRUE(result) << result.error().front().message;
+  EXPECT_EQ(*result,
+            "func apply(value: int, operation: (int) => int): int {\n"
+            "  return operation(value);\n}\n\n"
+            "func make(): () => int {\n  const values: int[] = [1, 2];\n"
+            "  return (): int => values[0] + values[1];\n}\n");
+}
+
+TEST(FormatterTest, DefaultsToSingleQuotesWithoutChangingEscapedValues) {
+  constexpr std::string_view kSource = R"(func main(): void {
+    print("it's \"quoted\" \\ \n \u0041 \${literal}");
+    print('already \'single\' and "double"');
+    print("${"${'nested'}"}");
+  })";
+  const auto result = FormatSource(kSource);
+  ASSERT_TRUE(result) << result.error().front().message;
+  EXPECT_TRUE(result->contains(R"(print('it\'s "quoted" \\ \n \u0041 \${literal}');)"));
+  EXPECT_TRUE(result->contains(R"(print('already \'single\' and "double"');)"));
+  EXPECT_TRUE(result->contains(R"(print('${'${'nested'}'}');)"));
+  const auto repeated = FormatSource(*result);
+  ASSERT_TRUE(repeated);
+  EXPECT_EQ(*repeated, *result);
+}
+
+TEST(FormatterTest, SeparatesTopLevelDeclarationsAndPreservesAnInnerBlankLine) {
+  const auto result = FormatSource(
+      "import \"one.vela\";import \"two.vela\";"
+      "class A{param value:int;}func main():void{let value=1;\n\n\nprint(value);}");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(*result,
+            "import 'one.vela';\nimport 'two.vela';\n\nclass A {\n  param value: int;\n}\n\n"
+            "func main(): void {\n  let value = 1;\n\n  print(value);\n}\n");
 }
 
 class FormattingInvariantTest : public testing::TestWithParam<std::string_view> {};
@@ -76,7 +115,7 @@ INSTANTIATE_TEST_SUITE_P(
         "// comment only",
         "/* block only */",
         "enum Mode{light,dark,}",
-        "import \"std:math\" as math; export func root(value:double):double{return "
+        "import \"math.vela\" as math; export func root(value:double):double{return "
         "math.sqrt(value);}",
         "class Counter{public param value:int;private "
         "step:int=1;constructor{this.value=this.value+step;}"
@@ -90,6 +129,8 @@ INSTANTIATE_TEST_SUITE_P(
         "func main():int{const x:Expected<int,string> =ok(42);return match(x.value()){"
         "42=>42,_=>0,};}",
         "func main():void{const x:int?[][]=[[40,null],[2]];print(\"${(\"${\"nested\"}\")}\");}",
+        R"(func main():void{print("apostrophe ' and escaped \"quotes\"");print('${'${"nested"}'}');})",
+        R"(func main():void{print('\\\'\\\\\"\u{1F600}\${notInterpolation}');})",
         "func sum(a:int,b:int,c:int,d:int,e:int,f:int,g:int,h:int,i:int,j:int):int{return "
         "a+b+c+d+e+f+g+h+i+j;}"
         "func main():int{return sum(1,2,3,4,5,6,7,8,9,10);}"));

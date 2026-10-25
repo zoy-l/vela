@@ -102,7 +102,7 @@ TEST_F(ImportTest, LoadsDiamondDependenciesOnceInDependencyOrder) {
   Write("right.vela",
         R"(import "shared.vela"; export func right(): string { return "r${shared()}"; })");
   Write("main.vela", R"(import "left.vela"; import "right.vela";
-    func main(): string { return join([left(), right()], ":"); })");
+    func main(): string { return [left(), right()].join(":"); })");
   const auto checked = Check();
   EXPECT_TRUE(checked.Succeeded());
   EXPECT_EQ(checked.function_count, 4U);

@@ -78,7 +78,7 @@ class CommandTest(unittest.TestCase):
     def test_formatter_outputs_checks_and_writes_without_executing(self) -> None:
         self.write('func main():void{print("must not execute");}')
         formatted = self.command("fmt", self.entry).stdout
-        self.assertEqual(formatted, 'func main(): void {\n  print("must not execute");\n}\n')
+        self.assertEqual(formatted, "func main(): void {\n  print('must not execute');\n}\n")
         self.command("fmt", "--check", self.entry, expected=1)
         self.command("fmt", "--write", self.entry)
         self.assertEqual(self.entry.read_text(encoding="utf-8"), formatted)
@@ -86,6 +86,21 @@ class CommandTest(unittest.TestCase):
         self.write("func broken(")
         self.command("fmt", "--write", self.entry, expected=65)
         self.assertEqual(self.entry.read_text(encoding="utf-8"), "func broken(")
+
+    def test_single_quote_formatting_preserves_execution_and_nested_interpolation(self) -> None:
+        self.write(r'''class Item { public param text: string; }
+func main(): void {
+  print("it's \"quoted\" \u{1F600}");
+  print("${Item(text: "${"nested"}").text}");
+}''')
+        before = self.command("run", self.entry).stdout
+        self.assertEqual(before, 'it\'s "quoted" 😀\nnested\n')
+        self.command("fmt", "--write", self.entry)
+        formatted = self.entry.read_text(encoding="utf-8")
+        self.assertIn("print('it\\'s", formatted)
+        self.assertEqual(self.command("run", self.entry).stdout, before)
+        self.command("fmt", "--check", self.entry)
+        self.assertEqual(self.command("fmt", self.entry).stdout, formatted)
 
     def test_documentation_checks_modules_without_evaluating_initializers(self) -> None:
         self.write('/// A value.\nexport let value = fail();\n'

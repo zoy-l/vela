@@ -2,7 +2,7 @@
 
 Run `vela repl` from the directory used to resolve relative imports.
 The shell uses normal `func`, strict static types, globals, classes and imports.
-It never adds implicit numeric or string conversions.
+It uses the same string formatting and strict numeric rules as compiled scripts.
 
 ```text
 > let value = 40;

@@ -466,9 +466,9 @@ auto Parser::ParseExpressionStatement() -> std::unique_ptr<Statement> {
   if (!statement->expression) {
     return nullptr;
   }
-  if (!Expect(TokenKind::Semicolon, "expected ';' after expression").has_value()) {
-    return nullptr;
-  }
+  // 已解析的表达式可保留为完整 AST 节点；缺分号仍产生诊断，编译入口不会接纳它。
+  // 不在此同步，否则会吞掉光标下一行的完整语句，破坏编辑器的符号绑定。
+  static_cast<void>(Expect(TokenKind::Semicolon, "expected ';' after expression"));
   return statement;
 }
 

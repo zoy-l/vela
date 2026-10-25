@@ -22,6 +22,39 @@ TEST(ModuleTest, RejectsUnsupportedImportSchemes) {
   EXPECT_EQ(checked.diagnostics.front().message, "unsupported module import scheme");
 }
 
+TEST(ModuleTest, ResolvesExtensionlessImportsToVelaAndSharesIdentityWithExplicitImports) {
+  const auto sources = std::to_array<frontend::SourceInput>({
+      {
+          .path = "app/main.vela",
+          .text = "import './lib'; import './nested/../lib.vela' as lib; func main(): int { return "
+                  "next() + lib.next(); }",
+      },
+      {
+          .path = "app/lib.vela",
+          .text = "let value = 19; export func next(): int { value = value + 1; return value; }",
+      },
+      {.path = "app/lib", .text = "this is not a Vela module"},
+  });
+  runtime::Isolate isolate;
+  const auto compiled = CompileModules(sources, "app/main.vela", isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 41);
+}
+
+TEST(ModuleTest, DoesNotSearchForExtensionlessFilesOrDirectoryEntryPoints) {
+  const auto sources = std::to_array<frontend::SourceInput>({
+      {.path = "main.vela", .text = "import 'lib';"},
+      {.path = "lib", .text = "export const answer = 42;"},
+      {.path = "lib/index.vela", .text = "export const answer = 42;"},
+  });
+  EXPECT_FALSE(frontend::CheckModules(sources, "main.vela").Succeeded());
+}
+
 TEST(ModuleTest, PrefixesKeepSameNamesDistinctAcrossFunctionsClassesEnumsAndAliases) {
   const auto sources = std::to_array<frontend::SourceInput>({
       {

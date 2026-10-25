@@ -1,17 +1,12 @@
-import "std:math" as math;
-import "std:random" as random;
-import "std:time" as time;
-import "std:collections" as collections;
-
 func main(): int {
-  random.seed(42);
-  const started = time.monotonicMicros();
+  Random.seed(42);
+  const started = Time.monotonicMicros();
   const values: int[] = [3, 1, 2];
-  collections.sort<int>(values, (left: int, right: int): int => left - right);
-  const total = collections.reduce<int, int>(values, 0, (sum: int, value: int): int => sum + value);
-  print("total: ${total.toString()}");
-  print("sqrt(9): ${math.sqrt(9.0).toString()}");
-  print("seeded random: ${random.nextInt(100).toString()}");
-  print("elapsed us: ${(time.monotonicMicros() - started).toString()}");
+  values.sort((left: int, right: int): int => left - right);
+  const total = values.reduce(0, (sum: int, value: int): int => sum + value);
+  print('total: ${total}');
+  print('sqrt(9): ${Math.sqrt(9.0)}');
+  print('seeded random: ${Random.nextInt(100)}');
+  print('elapsed us: ${(Time.monotonicMicros() - started)}');
   return 0;
 }

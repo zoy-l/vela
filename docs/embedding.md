@@ -41,7 +41,7 @@ An explicitly nullable string return uses `std::optional<std::string>` (or an
 expected containing it), and the declaration must return `string?`. Other types
 are not promoted to satisfy that return contract. An optional explicit symbol
 supports namespaced host registries without language namespace syntax:
-`external func readLine(): string? = "std:console.readLine";`.
+`external func readLine(): string? = "Console.readLine";`.
 
 `external func` has no body or generic parameters. Its symbol is the declared
 name before module qualification. Declarations follow ordinary module visibility

@@ -17,7 +17,7 @@ export func next(): int {
 
 ```typescript
 // main.vela
-import "counters.vela" as counter;
+import 'counters' as counter;
 func main(): int {
   counter.next();
   return counter.next();
@@ -56,5 +56,10 @@ not silently read the disk. `CheckFile` accepts content overlays for unsaved
 editor buffers while retaining the file-backed dependency graph.
 
 Use source files as compiler entry points. Import paths resolve relative to the
-importing file; standard modules use the `std:` scheme.
+importing file. An extensionless specifier such as `import 'math';` resolves
+directly to `math.vela`; an explicit extension remains valid. Resolution does not
+probe an extensionless file or an `index.vela` directory entry. The loader,
+compilation cache, editor navigation and import links share the same resolution.
+Standard objects such as `Math` and `Error` are available without
+imports; `std:` imports are no longer supported.
 

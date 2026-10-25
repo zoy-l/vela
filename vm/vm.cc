@@ -595,18 +595,28 @@ auto Execution::Interpolate(ActiveFrame& active, Instruction instruction) -> Ste
   auto values = active.frame.registers();
   const auto arguments = values.subspan(DecodeB(instruction), DecodeC(instruction));
   std::array<runtime::StringObject*, kMaxFrameRegisters> parts{};
-  for (std::size_t index = 0; index < arguments.size(); ++index) {
+  std::size_t index = 0;
+  for (; index < arguments.size(); ++index) {
     const auto value = arguments.subspan(index).front();
     if (!value.IsString()) {
-      return std::unexpected(ExecutionStatus::TypeError);
+      break;
     }
     std::span(parts).subspan(index).front() = value.AsString();
   }
-  auto* string = isolate_.heap().JoinStrings(std::span(parts).first(arguments.size()));
-  if (string == nullptr) {
+  auto& heap = isolate_.heap();
+  const auto string = index == arguments.size()
+                          ? std::expected<runtime::StringObject*, runtime::StringJoinError>(
+                                heap.JoinStrings(std::span(parts).first(arguments.size())))
+                          : heap.JoinValues(arguments);
+  if (!string) {
+    return std::unexpected(string.error() == runtime::StringJoinError::TypeMismatch
+                               ? ExecutionStatus::TypeError
+                               : ExecutionStatus::OutOfMemory);
+  }
+  if (*string == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  values.subspan(DecodeA(instruction)).front() = runtime::Value::String(string);
+  values.subspan(DecodeA(instruction)).front() = runtime::Value::String(*string);
   return {};
 }
 
@@ -614,18 +624,30 @@ auto Execution::StringOperation(OpCode opcode,
                                 runtime::RegisterReference destination,
                                 runtime::Value left,
                                 runtime::Value right) -> StepResult {
-  if (!left.IsString() || !right.IsString()) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto left_text = left.AsString()->value();
-  const auto right_text = right.AsString()->value();
   if (opcode == OpCode::StringConcat) {
-    auto* string = isolate_.heap().AllocateString(left_text, right_text);
-    if (string == nullptr) {
-      return std::unexpected(ExecutionStatus::OutOfMemory);
+    if (left.IsString() && right.IsString()) {
+      auto* string =
+          isolate_.heap().AllocateString(left.AsString()->value(), right.AsString()->value());
+      if (string == nullptr) {
+        return std::unexpected(ExecutionStatus::OutOfMemory);
+      }
+      destination = runtime::Value::String(string);
+      return {};
     }
-    destination = runtime::Value::String(string);
+    const std::array parts = {left, right};
+    const auto string = isolate_.heap().JoinValues(parts);
+    if (!string) {
+      return std::unexpected(string.error() == runtime::StringJoinError::TypeMismatch
+                                 ? ExecutionStatus::TypeError
+                                 : ExecutionStatus::OutOfMemory);
+    }
+    destination = runtime::Value::String(*string);
   } else {
+    if (!left.IsString() || !right.IsString()) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    const auto left_text = left.AsString()->value();
+    const auto right_text = right.AsString()->value();
     const bool equal = left_text == right_text;
     destination = runtime::Value::Boolean(opcode == OpCode::EqualString ? equal : !equal);
   }

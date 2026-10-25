@@ -1,0 +1,12 @@
+func main(): int {
+  const left = Set<int>();
+  const right = Set<int>();
+  for (let value = 0; value < 256; value = value + 1) {
+    left.add(value);
+    right.add(value + 128);
+  }
+  const combined = left.union(right);
+  const common = left.intersection(right);
+  const different = left.difference(right);
+  return combined.length + common.length + different.length;
+}

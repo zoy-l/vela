@@ -1,4 +1,5 @@
 #include <array>
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -66,6 +67,14 @@ TEST_F(StringLanguageTest, EscapedInterpolationAndUnicodeDollarRemainLiteral) {
             "${missing}${alsoMissing} $plain");
 }
 
+TEST_F(StringLanguageTest, AcceptsSingleQuotesEscapesAndNestedInterpolation) {
+  EXPECT_EQ(Text(R"(func main(): string { return 'it\'s "quoted" \u{1F600}'; })"),
+            "it's \"quoted\" 😀");
+  EXPECT_EQ(Text(R"(func main(): string { return '${'${"nested"}'}'; })"), "nested");
+  EXPECT_EQ(Text(R"(func main(): string { return '\${missing}\u0024{alsoMissing}'; })"),
+            "${missing}${alsoMissing}");
+}
+
 TEST_F(StringLanguageTest, PreservesDecodedQuotesAndEmptyInterpolation) {
   EXPECT_EQ(Text(R"(func main(): string { return "\"quoted\""; })"), "\"quoted\"");
   EXPECT_EQ(Text(R"(func main(): string { return "${""}"; })"), "");
@@ -115,12 +124,99 @@ func main(): string {
 TEST_F(StringLanguageTest, JoinAcceptsEmptySingletonAndNamedArguments) {
   EXPECT_EQ(Text(R"(
 func main(): string {
-  return "${join([], ",")}|${join(["中"], "---")}|${join(separator: "😀", parts: ["a", "", "b"])}";
+  return "${[].join(",")}|${["中"].join("---")}|${["a", "", "b"].join(separator: "😀")}";
 })"),
             "|中|a😀😀b");
 }
 
-TEST_F(StringLanguageTest, BuiltinArgumentsEvaluateInSourceOrder) {
+TEST_F(StringLanguageTest, FormatsPrimitivesOnlyInStringContexts) {
+  EXPECT_EQ(Text(R"(
+func main(): string {
+  const count = 42;
+  return '${count}/${1.25}/${-0.0}/${true}/${false}|' + count + '|' +
+         (true + '!') + '|' + (1.5 + '!') + '|' + (1 + 2 + '3') + '|' + ('1' + 2 + 3);
+})"),
+            "42/1.25/-0/true/false|42|true!|1.5!|33|123");
+}
+
+TEST_F(StringLanguageTest, PrimitiveArrayJoinFormatsWithoutElementConversions) {
+  EXPECT_EQ(Text(R"(
+func main(): string {
+  const integers = [0 - 42, 0, 42];
+  const doubles = [1.25, -0.0, 2.0];
+  const booleans = [true, false];
+  const empty: int[] = [];
+  return '${integers.join(",")}|${doubles.join("/")}|${booleans.join(separator: ":")}|${empty.join("-")}';
+})"),
+            "-42,0,42|1.25/-0/2|true:false|");
+}
+
+TEST_F(StringLanguageTest, StringFormattingSnapshotsMutableValuesBeforeFollowingEffects) {
+  EXPECT_EQ(Text(R"(
+class Counter {
+  param value: int;
+  next(): int { this.value = this.value + 1; return this.value; }
+}
+func main(): string {
+  const counter = Counter(value: 0);
+  let value = 1;
+  const text = '${value}:${value = 2}:${counter.next()}:${counter.next()}';
+  const concat = value + (value = 3).toString();
+  return '${text}|${concat}|${counter.value}';
+})"),
+            "1:2:1:2|23|2");
+}
+
+TEST_F(StringLanguageTest, FormatsNullAndNullablePrimitivesWithoutChangingTheirTypes) {
+  EXPECT_EQ(Text(R"(
+func main(): string {
+  let value: int? = null;
+  const words: string?[] = ['a', null, 'b'];
+  const numbers: int?[] = [1, null, 2];
+  const flags: bool?[] = [true, null, false];
+  const doubles: double?[] = [1.5, null, -0.0];
+  return '${value}|${null}|' + value + '|' +
+         words.join(',') + '|' + numbers.join(',') + '|' + flags.join(',') + '|' + doubles.join(',');
+})"),
+            "null|null|null|a,null,b|1,null,2|true,null,false|1.5,null,-0");
+}
+
+TEST_F(StringLanguageTest, PrimitiveFormattingAllocatesOnlyTheFinalString) {
+  auto& isolate = this->isolate();
+  auto& compiled = compilation();
+  isolate.heap().SetGcThreshold(runtime::kDefaultGcThreshold);
+  struct Case final {
+    std::string_view source;
+    std::size_t allocations;
+  };
+  const auto cases = std::to_array<Case>({
+      {.source = R"(func main(): string { return '${42}:${1.25}:${true}'; })", .allocations = 1},
+      {.source = R"(func main(): string { return 'value=' + 42; })", .allocations = 1},
+      {.source = R"(func main(): string { return [42, 43].join(','); })", .allocations = 2},
+  });
+  for (const auto& test : cases) {
+    static_cast<void>(Text(test.source));
+    auto& heap = isolate.heap();
+    heap.Collect();
+    const auto before = heap.object_count();
+    const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, 0);
+    ASSERT_TRUE(result.Succeeded());
+    EXPECT_EQ(heap.object_count(), before + test.allocations);
+  }
+}
+
+TEST_F(StringLanguageTest, JoinIsAnOrdinaryUserDeclarationName) {
+  EXPECT_EQ(Text(R"(func join(): string { return 'user'; }
+                    func main(): string { return join() + ['a', 'b'].join('-'); })"),
+            "usera-b");
+  EXPECT_TRUE(
+      frontend::CheckSource("class join {} func main(): void { const x = join(); }").Succeeded());
+  EXPECT_TRUE(
+      frontend::CheckSource("enum join { value } func main(): void { const x = join.value; }")
+          .Succeeded());
+}
+
+TEST_F(StringLanguageTest, JoinEvaluatesReceiverThenSeparatorExactlyOnce) {
   EXPECT_EQ(Text(R"(
 class Source {
   param state: string;
@@ -129,10 +225,10 @@ class Source {
 }
 func main(): string {
   const source = Source(state: "");
-  const text = join(separator: source.separator(), parts: source.parts());
+  const text = source.parts().join(source.separator());
   return "${text}|${source.state}";
 })"),
-            "sp|sp");
+            "p|ps");
 }
 
 TEST_F(StringLanguageTest, BuilderSnapshotsStayImmutableAndCanBeAppendedAgain) {
@@ -216,7 +312,7 @@ TEST_F(StringLanguageTest, JoinAllocatesOnlyTheInputArrayAndFinalString) {
   auto& isolate = this->isolate();
   auto& compiled = compilation();
   isolate.heap().SetGcThreshold(runtime::kDefaultGcThreshold);
-  EXPECT_EQ(Text(R"(func main(): string { return join(["a", "b", "c", "d"], "-"); })"), "a-b-c-d");
+  EXPECT_EQ(Text(R"(func main(): string { return ["a", "b", "c", "d"].join("-"); })"), "a-b-c-d");
   auto& heap = isolate.heap();
   heap.Collect();
   const auto before = heap.object_count();
@@ -264,6 +360,9 @@ INSTANTIATE_TEST_SUITE_P(
     StrictStrings,
     StringDiagnosticTest,
     testing::Values(R"(func main(): string { return "\q"; })",
+                    R"(func main(): string { return '\q'; })",
+                    R"(func main(): string { return 'unterminated; })",
+                    R"(func main(): string { return '${'nested'; })",
                     R"(func main(): string { return "\x1"; })",
                     R"(func main(): string { return "\xGG"; })",
                     R"(func main(): string { return "\u12"; })",
@@ -275,14 +374,21 @@ INSTANTIATE_TEST_SUITE_P(
                     R"(func main(): string { return "\uDC00"; })",
                     R"(func main(): string { return "\uD800\u0041"; })",
                     R"(func main(): string { return "${}"; })",
-                    R"(func main(): string { return "${1}"; })",
-                    R"(func main(): string { return "${true}"; })",
-                    R"(func main(): string { return "${1.0}"; })",
                     R"(func main(): string { return "${"x"; })",
-                    R"(func main(): string { return "x" + 1; })",
-                    R"(func main(): string { return join([1], ","); })",
-                    R"(func main(): string { return join(["x"], 1); })",
-                    R"(func main(): string { return join(["x"]); })",
+                    R"(func main(): string { return join(["x"], ","); })",
+                    R"(func main(): string { return join(parts: ["x"], separator: ","); })",
+                    R"(func main(): string { return ["x"].join(1); })",
+                    R"(func main(): string { return ["x"].join(); })",
+                    R"(func main(): string { let x: string[]? = null; return x.join(","); })",
+                    R"(func main(): string { return [["x"]].join(","); })",
+                    R"(class Item {} func main(): string { return '${Item()}'; })",
+                    R"(func main(): string { return '${[1, 2]}'; })",
+                    R"(class Item {} func main(): string { return Item() + 'x'; })",
+                    R"(func main(): void { const x: string = 42; })",
+                    R"(func accept(x: string): void {} func main(): void { accept(42); })",
+                    R"(func main(): double { return 1 + 1.5; })",
+                    R"(func main(): void { if (1) {} })",
+                    R"(func main(): string { return [1, true].join(','); })",
                     R"(func main(): string { return "x".slice(0.0, 1); })",
                     R"(func main(): string { return "x"[false]; })",
                     R"(func main(): void { let text = "x"; text[0] = "y"; })",
@@ -292,10 +398,7 @@ INSTANTIATE_TEST_SUITE_P(
                     R"(func main(): bool { const b = StringBuilder(); return b == b; })",
                     R"(func main(): string { return true.toString(1); })",
                     R"(import "a\0b"; func main(): void {})",
-                    R"(import "${"path"}"; func main(): void {})",
-                    R"(class join {} func main(): void {})",
-                    R"(enum join { value } func main(): void {})",
-                    R"(func join(): void {} func main(): void {})"));
+                    R"(import "${"path"}"; func main(): void {})"));
 
 TEST(StringDiagnosticTest, RejectsMalformedUtf8InLiteral) {
   const std::array<std::string_view, 6> invalid = {
