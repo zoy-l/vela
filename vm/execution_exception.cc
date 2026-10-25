@@ -22,6 +22,7 @@
 #include "runtime/string.h"
 #include "runtime/value.h"
 #include "vm/bytecode.h"
+#include "vm/debug_info.h"
 #include "vm/exception_handler.h"
 #include "vm/execution_status.h"
 #include "vm/program.h"
@@ -65,7 +66,13 @@ std::vector<StackFrame> Execution::ResolveTrace(
   std::vector<StackFrame> trace;
   trace.reserve(positions.size());
   for (const auto position : positions) {
-    const auto debug = functions_.subspan(position.function).front().View().debug;
+    const auto& function = functions_.subspan(position.function).front();
+    const auto source_paths = function.source_paths != nullptr
+                                  ? std::span<const std::string>(*function.source_paths)
+                                  : std::span<const std::string>();
+    const DebugInfo debug{
+        .name = function.name, .source_paths = source_paths, .mappings = function.source_mappings,
+    };
     StackFrame frame{
         .function = std::string(debug.name),
         .source_path = {},
@@ -126,10 +133,16 @@ void Execution::AbortInitializers() noexcept {
   if (globals_ == nullptr) {
     return;
   }
-  for (const auto& active : std::span(frames_).first(frame_count_)) {
-    if (active.initialized_global) {
-      globals_->states.at(*active.initialized_global) = GlobalState::Uninitialized;
-    }
+  for (auto& active : std::span(frames_).first(frame_count_)) {
+    ResetInitializer(active);
+  }
+}
+
+void Execution::ResetInitializer(ActiveFrame& active) noexcept {
+  if (active.initialized_global) {
+    std::span(globals_->states).subspan(*active.initialized_global).front() =
+        GlobalState::Uninitialized;
+    active.initialized_global.reset();
   }
 }
 
@@ -155,9 +168,7 @@ std::optional<ExecutionResult> Execution::HandleError(ExecutionStatus status) {
       active.program_counter = handler->target;
       return std::nullopt;
     }
-    if (active.initialized_global) {
-      globals_->states.at(*active.initialized_global) = GlobalState::Uninitialized;
-    }
+    ResetInitializer(active);
     active.frame.Detach();
     --frame_count_;
   }

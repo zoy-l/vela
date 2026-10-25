@@ -61,8 +61,9 @@ TEST(DoubleTest, DeduplicatesConstantsAndReturnsDouble) {
   ASSERT_TRUE(compiled.Succeeded());
   const auto entry = compiled.program.FindFunction("main");
   ASSERT_TRUE(entry.IsValid());
-  ASSERT_EQ(entry.doubles().size(), 1U);
-  EXPECT_DOUBLE_EQ(entry.doubles().front(), 42.5);
+  const auto& function = entry.program().functions().subspan(entry.index()).front();
+  ASSERT_EQ(function.doubles.size(), 1U);
+  EXPECT_DOUBLE_EQ(function.doubles.front(), 42.5);
   const auto result = vm::VirtualMachine(isolate).Execute(entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsDouble());

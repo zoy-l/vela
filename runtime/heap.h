@@ -6,6 +6,7 @@
 #include <expected>
 #include <span>
 #include <string_view>
+#include <utility>
 
 #include "base/execution_status.h"
 #include "runtime/exception.h"
@@ -249,8 +250,8 @@ class Heap final {
   [[nodiscard]] Allocation AllocateRaw(std::size_t requested_size) noexcept;
   void Publish(HeapObject& object, std::uint32_t allocation_size) noexcept;
   void ReleaseRaw(HeapObject& object) noexcept;
-  [[nodiscard]] static std::size_t SelectBlockSize(std::size_t requested_size) noexcept;
-  [[nodiscard]] static std::size_t SizeClassIndex(std::size_t block_size) noexcept;
+  [[nodiscard]] static std::pair<std::size_t, std::size_t> SelectBlockClass(
+      std::size_t requested_size) noexcept;
   [[nodiscard]] bool ShouldCollect(std::size_t next_size) const noexcept;
   void MaybeCollect(std::size_t next_size) noexcept;
   void FinishSweep() noexcept;

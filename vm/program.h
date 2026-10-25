@@ -140,7 +140,6 @@ class FunctionHandle final {
   [[nodiscard]] std::uint16_t parameter_count() const noexcept;
   [[nodiscard]] std::uint16_t register_count() const noexcept;
   [[nodiscard]] std::span<const Instruction> code() const noexcept;
-  [[nodiscard]] std::span<const double> doubles() const noexcept;
 
  private:
   friend class Program;

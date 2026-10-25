@@ -8,9 +8,6 @@ namespace vela::vm {
 class Frame final {
  public:
   Frame() noexcept = default;
-  Frame(runtime::Heap& heap, runtime::RegisterView registers) noexcept : registers_(registers) {
-    roots_.Attach(heap, registers);
-  }
 
   ~Frame() = default;
   Frame(const Frame&) = delete;

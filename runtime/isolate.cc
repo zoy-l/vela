@@ -30,7 +30,7 @@ std::expected<void, NativeRegistrationError> Isolate::RegisterNative(NativeFunct
     return std::unexpected(NativeRegistrationError::DuplicateName);
   }
   std::string key(name);
-  natives_.emplace(std::move(key), std::make_shared<const NativeFunction>(std::move(function)));
+  natives_.emplace(std::move(key), std::make_unique<const NativeFunction>(std::move(function)));
   return {};
 }
 

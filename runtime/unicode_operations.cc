@@ -137,14 +137,6 @@ Result GraphemeSlice(std::string_view text, std::span<const Value> arguments, He
 
 Result ExecuteUnicodeBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   const auto receiver = arguments.front();
-  if (builtin == Builtin::ArrayLength) {
-    if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
-      return std::unexpected(BuiltinError::TypeError);
-    }
-    const auto length = Heap::ArrayLength(*receiver.AsObject());
-    return length ? Result(Value::Integer(*length))
-                  : Result(std::unexpected(BuiltinError::TypeError));
-  }
   if (!receiver.IsString()) {
     return std::unexpected(BuiltinError::TypeError);
   }

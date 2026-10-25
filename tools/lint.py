@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
+import os
 import subprocess
 import sys
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from tools.clangd import generate as generate_compilation_database
@@ -16,11 +20,24 @@ from tools.config import BUILD_VARIANTS, ROOT, output_directory, toolchain_tools
 CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"}
 
 
+@dataclass(frozen=True)
+class LintResult:
+    source: Path
+    return_code: int
+    output: str
+
+
 def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path, metavar="PATH")
     parser.add_argument("--variant", choices=BUILD_VARIANTS, default="debug")
     parser.add_argument("--fix", action="store_true", help="Apply clang-tidy code fixes")
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=6 if sys.platform == "darwin" else (os.cpu_count() or 1),
+        help="Maximum concurrent clang-tidy processes (default: 6 on macOS, logical CPU count elsewhere)",
+    )
     return parser.parse_args(arguments)
 
 
@@ -71,7 +88,38 @@ def _path_files(paths: list[Path], build_files: list[Path]) -> list[Path]:
     return sorted(files)
 
 
+def _check_source(clang_tidy: Path, source: Path, *, fix: bool) -> LintResult:
+    command = [
+        str(clang_tidy), str(source), "-p", str(ROOT), "--quiet", "--warnings-as-errors=*",
+    ]
+    if fix:
+        command.extend(["--fix", "--format-style=file"])
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return LintResult(source=source, return_code=result.returncode, output=result.stdout)
+
+
+def _report_failure(result: LintResult) -> None:
+    print(
+        f"clang-tidy failed for {result.source.relative_to(ROOT)} "
+        f"(exit {result.return_code})",
+        file=sys.stderr,
+    )
+    if result.output:
+        print(result.output.rstrip(), file=sys.stderr)
+
+
 def run(parsed: argparse.Namespace) -> int:
+    if parsed.jobs < 1:
+        raise RuntimeError("--jobs must be greater than zero")
     generate_compilation_database(parsed.variant)
     tools = toolchain_tools()
     build_files = _build_files(tools["gn"], parsed.variant)
@@ -79,23 +127,54 @@ def run(parsed: argparse.Namespace) -> int:
     if not files:
         raise RuntimeError("no C++ source files or headers were selected for lint")
 
-    failed = 0
-    for source in files:
-        command = [
-            str(tools["clang_tidy"]), str(source), "-p", str(ROOT), "--quiet",
-            "--warnings-as-errors=*",
-        ]
-        if parsed.fix:
-            command.append("--fix")
-        result = subprocess.run(
-            command,
-            cwd=ROOT,
-            check=False,
+    if parsed.fix:
+        # 不并行修复：多个翻译单元可能同时改写共享头文件。
+        results = [_check_source(tools["clang_tidy"], source, fix=True) for source in files]
+    else:
+        worker_count = min(parsed.jobs, len(files))
+        print(
+            f"clang-tidy: {len(files)} C++ files with {worker_count} jobs",
+            flush=True,
         )
-        if result.returncode != 0:
-            failed += 1
-    print(f"linted {len(files)} C++ file(s), including headers; failures: {failed}")
-    return 1 if failed else 0
+        started = time.monotonic()
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as pool:
+            pending = {
+                pool.submit(_check_source, tools["clang_tidy"], source, fix=False)
+                for source in files
+            }
+            completed = 0
+            while pending:
+                done, pending = concurrent.futures.wait(
+                    pending,
+                    timeout=5,
+                    return_when=concurrent.futures.FIRST_COMPLETED,
+                )
+                elapsed = time.monotonic() - started
+                if not done:
+                    print(
+                        f"clang-tidy: [{completed}/{len(files)}] "
+                        f"{completed / len(files):.0%}, {elapsed:.1f}s elapsed; "
+                        f"waiting for {len(pending)} remaining files",
+                        flush=True,
+                    )
+                for future in done:
+                    result = future.result()
+                    results.append(result)
+                    completed += 1
+                    print(
+                        f"clang-tidy: [{completed}/{len(files)}] "
+                        f"{completed / len(files):.0%}, {elapsed:.1f}s elapsed; "
+                        f"{'FAIL' if result.return_code else 'OK'} "
+                        f"{result.source.relative_to(ROOT).as_posix()}",
+                        flush=True,
+                    )
+
+    failures = [result for result in results if result.return_code != 0]
+    for result in failures:
+        _report_failure(result)
+    print(f"linted {len(files)} C++ file(s), including headers; failures: {len(failures)}")
+    return 1 if failures else 0
 
 
 def main(arguments: list[str] | None = None) -> int:

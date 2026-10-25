@@ -207,6 +207,8 @@ std::expected<Value, BuiltinError> ExecuteArrayBuiltin(Builtin builtin,
   };
   const auto identity = [](Value value) -> Value { return value; };
   switch (builtin) {
+    case Builtin::ArrayLength:
+      return Result(Heap::ArrayLength(array), integer);
     case Builtin::ArraySlice:
       return CopyArray(array, arguments, heap);
     case Builtin::ArrayFill: {

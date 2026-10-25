@@ -103,27 +103,28 @@ std::expected<T*, std::string> ResolvePointer(std::uint64_t index, std::span<T* 
   return values.subspan(static_cast<std::size_t>(index)).front();
 }
 
-class LayoutGraph final {
+class LayoutLoader final {
  public:
-  LayoutGraph(std::span<const ImageElement> arrays, std::span<const ImageCollection> collections)
-      : arrays_(arrays),
-        collections_(collections),
-        dependencies_(arrays.size() + collections.size()),
-        dependents_(dependencies_.size()) {}
-  std::expected<void, std::string> Build(runtime::Isolate& isolate, LoadedLayouts& output);
+  LayoutLoader(std::span<const ImageElement> arrays,
+               std::span<const ImageCollection> collections,
+               runtime::Isolate& isolate,
+               LoadedLayouts& output)
+      : arrays_(arrays), collections_(collections), isolate_(&isolate), output_(&output) {}
+  std::expected<void, std::string> Build();
 
  private:
-  std::expected<void, std::string> Link(const ImageElement& element, std::size_t node);
-  std::expected<void, std::string> Create(std::size_t node,
-                                          runtime::Isolate& isolate,
-                                          LoadedLayouts& output);
+  std::expected<void, std::string> BuildArray(std::size_t index);
+  std::expected<void, std::string> BuildCollection(std::size_t index);
+  std::expected<void, std::string> BuildElement(const ImageElement& element);
   std::span<const ImageElement> arrays_;
   std::span<const ImageCollection> collections_;
-  std::vector<std::size_t> dependencies_;
-  std::vector<std::vector<std::size_t>> dependents_;
+  runtime::Isolate* isolate_;
+  LoadedLayouts* output_;
+  std::vector<std::uint8_t> array_states_;
+  std::vector<std::uint8_t> collection_states_;
 };
 
-std::expected<void, std::string> LayoutGraph::Link(const ImageElement& element, std::size_t node) {
+std::expected<void, std::string> LayoutLoader::BuildElement(const ImageElement& element) {
   if (element.kind == static_cast<std::uint8_t>(runtime::ValueKind::Null)) {
     return std::unexpected("array/collection element type cannot be null-only");
   }
@@ -131,89 +132,88 @@ std::expected<void, std::string> LayoutGraph::Link(const ImageElement& element, 
     if (element.array >= arrays_.size()) {
       return std::unexpected("invalid array-layout reference");
     }
-    ++dependencies_.at(node);
-    dependents_.at(static_cast<std::size_t>(element.array)).push_back(node);
+    if (auto built = BuildArray(static_cast<std::size_t>(element.array)); !built) {
+      return built;
+    }
   }
   if (element.collection != kNoImageId) {
     if (element.collection >= collections_.size()) {
       return std::unexpected("invalid collection-layout reference");
     }
-    ++dependencies_.at(node);
-    dependents_.at(arrays_.size() + static_cast<std::size_t>(element.collection)).push_back(node);
+    if (auto built = BuildCollection(static_cast<std::size_t>(element.collection)); !built) {
+      return built;
+    }
   }
   return {};
 }
 
-std::expected<void, std::string> LayoutGraph::Create(std::size_t node,
-                                                     runtime::Isolate& isolate,
-                                                     LoadedLayouts& output) {
-  if (node < arrays_.size()) {
-    auto element = ResolveElement(arrays_.subspan(node).front(), output);
-    if (!element) {
-      return std::unexpected(element.error());
-    }
-    output.arrays.at(node) = isolate.CreateArrayLayout(*element);
+std::expected<void, std::string> LayoutLoader::BuildArray(std::size_t index) {
+  if (array_states_.at(index) == 2) {
     return {};
   }
-  const auto index = node - arrays_.size();
-  const auto& collection = collections_.subspan(index).front();
-  auto keys = ResolveElement(collection.keys, output);
+  if (array_states_.at(index) == 1) {
+    return std::unexpected("cyclic array/collection layouts");
+  }
+  array_states_.at(index) = 1;
+  const auto& input = arrays_.subspan(index).front();
+  if (auto built = BuildElement(input); !built) {
+    return built;
+  }
+  auto element = ResolveElement(input, *output_);
+  if (!element) {
+    return std::unexpected(element.error());
+  }
+  output_->arrays.at(index) = isolate_->CreateArrayLayout(*element);
+  array_states_.at(index) = 2;
+  return {};
+}
+
+std::expected<void, std::string> LayoutLoader::BuildCollection(std::size_t index) {
+  if (collection_states_.at(index) == 2) {
+    return {};
+  }
+  if (collection_states_.at(index) == 1) {
+    return std::unexpected("cyclic array/collection layouts");
+  }
+  collection_states_.at(index) = 1;
+  const auto& input = collections_.subspan(index).front();
+  if (auto built = BuildElement(input.keys); !built) {
+    return built;
+  }
+  if (input.values) {
+    if (auto built = BuildElement(*input.values); !built) {
+      return built;
+    }
+  }
+  auto keys = ResolveElement(input.keys, *output_);
   if (!keys) {
     return std::unexpected(keys.error());
   }
   runtime::CollectionLayout layout{.keys = *keys};
-  if (collection.values) {
-    auto values = ResolveElement(*collection.values, output);
+  if (input.values) {
+    auto values = ResolveElement(*input.values, *output_);
     if (!values) {
       return std::unexpected(values.error());
     }
     layout.values = *values;
   }
-  output.collections.at(index) = isolate.CreateCollectionLayout(layout);
+  output_->collections.at(index) = isolate_->CreateCollectionLayout(layout);
+  collection_states_.at(index) = 2;
   return {};
 }
 
-std::expected<void, std::string> LayoutGraph::Build(runtime::Isolate& isolate,
-                                                    LoadedLayouts& output) {
+std::expected<void, std::string> LayoutLoader::Build() {
+  array_states_.assign(arrays_.size(), 0);
+  collection_states_.assign(collections_.size(), 0);
   for (std::size_t index = 0; index < arrays_.size(); ++index) {
-    if (auto linked = Link(arrays_.subspan(index).front(), index); !linked) {
-      return linked;
+    if (auto built = BuildArray(index); !built) {
+      return built;
     }
   }
   for (std::size_t index = 0; index < collections_.size(); ++index) {
-    const auto& collection = collections_.subspan(index).front();
-    const auto node = arrays_.size() + index;
-    if (auto linked = Link(collection.keys, node); !linked) {
-      return linked;
+    if (auto built = BuildCollection(index); !built) {
+      return built;
     }
-    if (collection.values) {
-      if (auto linked = Link(*collection.values, node); !linked) {
-        return linked;
-      }
-    }
-  }
-  std::vector<std::size_t> ready;
-  for (std::size_t index = 0; index < dependencies_.size(); ++index) {
-    if (dependencies_.at(index) == 0) {
-      ready.push_back(index);
-    }
-  }
-  std::size_t completed = 0;
-  while (!ready.empty()) {
-    const auto node = ready.back();
-    ready.pop_back();
-    if (auto created = Create(node, isolate, output); !created) {
-      return created;
-    }
-    ++completed;
-    for (const auto dependent : dependents_.at(node)) {
-      if (--dependencies_.at(dependent) == 0) {
-        ready.push_back(dependent);
-      }
-    }
-  }
-  if (completed != dependencies_.size()) {
-    return std::unexpected("cyclic array/collection layouts");
   }
   return {};
 }
@@ -350,7 +350,7 @@ std::expected<LoadedLayouts, BinaryError> ReadLayouts(BinaryReader& reader,
   }
   layouts.arrays.resize(*arrays);
   layouts.collections.resize(*collections);
-  if (auto built = LayoutGraph(array_inputs, collection_inputs).Build(isolate, layouts); !built) {
+  if (auto built = LayoutLoader(array_inputs, collection_inputs, isolate, layouts).Build(); !built) {
     return std::unexpected(reader.Error(built.error()));
   }
   return layouts;

@@ -57,9 +57,17 @@ class Execution final {
   // 保持热分派与调用/返回在同一优化边界；Windows ABI 的寄存器视图实参传递曾导致明显回归。
   [[clang::always_inline]] StepResult ExecuteInstruction(ActiveFrame& active,
                                                          Instruction instruction);
-  [[clang::always_inline]] StepResult ExecuteControl(ActiveFrame& active, Instruction instruction);
-  [[clang::always_inline]] StepResult ExecuteObject(ActiveFrame& active, Instruction instruction);
-  StepResult AllocateObject(ActiveFrame& active, Instruction instruction);
+  [[clang::always_inline]] StepResult ExecuteObject(ActiveFrame& active,
+                                                    Instruction instruction,
+                                                    OpCode opcode,
+                                                    std::uint8_t operand_a,
+                                                    std::uint8_t operand_b,
+                                                    std::uint8_t operand_c);
+  StepResult AllocateObject(ActiveFrame& active,
+                            OpCode opcode,
+                            std::uint8_t operand_a,
+                            std::uint8_t operand_b,
+                            std::uint8_t operand_c);
   StepResult StringOperation(OpCode opcode,
                              runtime::RegisterReference destination,
                              runtime::Value left,
@@ -97,6 +105,7 @@ class Execution final {
                              std::string_view message);
   std::optional<ExecutionResult> HandleError(ExecutionStatus status);
   StepResult ExecuteException(ActiveFrame& active, Instruction instruction);
+  void ResetInitializer(ActiveFrame& active) noexcept;
   void AbortInitializers() noexcept;
 
   runtime::Isolate& isolate_;

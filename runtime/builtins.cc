@@ -193,6 +193,7 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
     case Builtin::ArrayReserve:
     case Builtin::ArrayMutation:
     case Builtin::ArrayCheckMutation:
+    case Builtin::ArrayLength:
       return ExecuteArrayBuiltin(builtin, arguments, heap);
     case Builtin::CollectionSize:
     case Builtin::SetAdd:
@@ -207,7 +208,6 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
     case Builtin::SetIntersection:
     case Builtin::SetDifference:
       return ExecuteCollectionBuiltin(builtin, arguments, heap);
-    case Builtin::ArrayLength:
     case Builtin::StringCodePoints:
     case Builtin::StringGraphemes:
     case Builtin::StringGraphemeLength:

@@ -56,6 +56,27 @@ class RegisterReference final {
     }
     return *this;
   }
+  void SetNull() noexcept { *kind_ = ValueKind::Null; }
+  void SetBoolean(bool value) noexcept {
+    payload_->Store(value);
+    *kind_ = ValueKind::Boolean;
+  }
+  void SetInteger(std::int64_t value) noexcept {
+    payload_->Store(value);
+    *kind_ = ValueKind::Integer;
+  }
+  void SetDouble(double value) noexcept {
+    payload_->Store(value);
+    *kind_ = ValueKind::Double;
+  }
+  void SetObject(HeapObject* value) noexcept {
+    payload_->Store(value);
+    *kind_ = ValueKind::Object;
+  }
+  void SetString(StringObject* value) noexcept {
+    payload_->Store(value);
+    *kind_ = ValueKind::String;
+  }
   RegisterReference& operator=(Value value) noexcept {
     const auto kind = value.kind();
     switch (kind) {

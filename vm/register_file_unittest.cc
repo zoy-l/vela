@@ -44,7 +44,8 @@ TEST(RegisterFileTest, MovesCopyTheValueAndReuseClearsTagsBeforeGcRootRegistrati
   values.front() = runtime::Value::String(isolate.heap().AllocateString("retained"));
   values.subspan(1).front() = values.front();
   values.front() = runtime::Value::Null();
-  Frame frame(isolate.heap(), values);
+  Frame frame;
+  frame.Attach(isolate.heap(), values);
   isolate.heap().Collect();
   EXPECT_EQ(values.subspan(1).front().AsString()->value(), "retained");
   frame.Detach();

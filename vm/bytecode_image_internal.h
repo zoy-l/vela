@@ -47,14 +47,20 @@ std::expected<std::vector<T>, BinaryError> ReadNumbers(BinaryReader& reader) {
   if (*count > reader.remaining() / sizeof(T)) {
     return std::unexpected(reader.Error("numeric pool length exceeds remaining input"));
   }
-  std::vector<T> result;
-  result.reserve(static_cast<std::size_t>(*count));
-  for (std::uint64_t index = 0; index < *count; ++index) {
-    const auto value = reader.Read<ImageUnsigned<T>>();
-    if (!value) {
-      return std::unexpected(value.error());
+  const auto bytes = reader.Take(static_cast<std::size_t>(*count) * sizeof(T));
+  if (!bytes) {
+    return std::unexpected(bytes.error());
+  }
+  std::vector<T> result(static_cast<std::size_t>(*count));
+  constexpr unsigned kByteBits = 8;
+  for (std::size_t index = 0; index < result.size(); ++index) {
+    ImageUnsigned<T> value = 0;
+    for (std::size_t byte = 0; byte < sizeof(T); ++byte) {
+      value |= static_cast<ImageUnsigned<T>>(std::to_integer<std::uint8_t>(
+                    bytes->subspan((index * sizeof(T)) + byte).front()))
+               << (byte * kByteBits);
     }
-    result.push_back(std::bit_cast<T>(*value));
+    result.at(index) = std::bit_cast<T>(value);
   }
   return result;
 }

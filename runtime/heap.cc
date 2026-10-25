@@ -499,16 +499,19 @@ void Heap::WriteBarrier(HeapObject& source, Value value) noexcept {
 }
 
 Heap::Allocation Heap::AllocateRaw(std::size_t requested_size) noexcept {
-  const std::size_t block_size = SelectBlockSize(requested_size);
-  const std::size_t class_index = SizeClassIndex(block_size);
+  const auto [block_size, class_index] = SelectBlockClass(requested_size);
   void* memory = nullptr;
 
-  if (class_index < free_blocks_.size() && free_blocks_.at(class_index) != nullptr) {
-    HeapObject* block = free_blocks_.at(class_index);
-    free_blocks_.at(class_index) = block->next;
-    memory = block;
-    std::destroy_at(block);
-  } else {
+  if (class_index < free_blocks_.size()) {
+    auto& free_block = std::span(free_blocks_).subspan(class_index).front();
+    if (free_block != nullptr) {
+      HeapObject* block = free_block;
+      free_block = block->next;
+      memory = block;
+      std::destroy_at(block);
+    }
+  }
+  if (memory == nullptr) {
     memory = ::operator new(block_size, std::nothrow);
     if (memory == nullptr) {
       return {};
@@ -536,11 +539,12 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   void* memory = &object;
   // StringObject 仅含可平凡析构的对象头；复用或释放存储即结束其生命周期。
   std::destroy_at(&object);
-  const std::size_t class_index = SizeClassIndex(block_size);
+  const auto class_index = SelectBlockClass(block_size).second;
   if (class_index < free_blocks_.size()) {
     auto* block = std::construct_at(static_cast<HeapObject*>(memory));
-    block->next = free_blocks_.at(class_index);
-    free_blocks_.at(class_index) = block;
+    auto& free_block = std::span(free_blocks_).subspan(class_index).front();
+    block->next = free_block;
+    free_block = block;
     return;
   }
 
@@ -548,22 +552,14 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   ::operator delete(memory);
 }
 
-std::size_t Heap::SelectBlockSize(std::size_t requested_size) noexcept {
-  for (std::size_t block_size : kSizeClasses) {
-    if (requested_size <= block_size) {
-      return block_size;
-    }
-  }
-  return requested_size;
-}
-
-std::size_t Heap::SizeClassIndex(std::size_t block_size) noexcept {
+std::pair<std::size_t, std::size_t> Heap::SelectBlockClass(std::size_t requested_size) noexcept {
   for (std::size_t index = 0; index < kSizeClasses.size(); ++index) {
-    if (kSizeClasses.at(index) == block_size) {
-      return index;
+    const auto block_size = std::span(kSizeClasses).subspan(index).front();
+    if (requested_size <= block_size) {
+      return {block_size, index};
     }
   }
-  return kSizeClasses.size();
+  return {requested_size, kSizeClasses.size()};
 }
 
 bool Heap::ShouldCollect(std::size_t next_size) const noexcept {
@@ -598,7 +594,7 @@ void Heap::DestroyAll() noexcept {
   object_count_ = 0;
 
   for (std::size_t index = 0; index < free_blocks_.size(); ++index) {
-    HeapObject*& block = free_blocks_.at(index);
+    HeapObject*& block = std::span(free_blocks_).subspan(index).front();
     while (block != nullptr) {
       HeapObject* next = block->next;
       committed_bytes_ -= kSizeClasses.at(index);
@@ -607,6 +603,8 @@ void Heap::DestroyAll() noexcept {
       block = next;
     }
   }
+  allocated_bytes_ = 0;
+  committed_bytes_ = 0;
 }
 
 }  // namespace vela::runtime

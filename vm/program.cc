@@ -381,7 +381,8 @@ std::expected<Program, ValidationError> Program::Create(
     return std::unexpected(valid.error());
   }
   for (const auto initializer : global_initializers) {
-    if (initializer >= functions.size() || functions.at(initializer).parameter_count != 0) {
+    if (initializer >= functions.size() ||
+        std::span(functions).subspan(initializer).front().parameter_count != 0) {
       return std::unexpected(ValidationError{
           .function = 0,
           .instruction = 0,
@@ -498,11 +499,6 @@ std::uint16_t FunctionHandle::register_count() const noexcept {
 std::span<const Instruction> FunctionHandle::code() const noexcept {
   const auto& function = program_.storage_->functions.at(index_);
   return function.code;
-}
-
-std::span<const double> FunctionHandle::doubles() const noexcept {
-  const auto& function = program_.storage_->functions.at(index_);
-  return function.doubles;
 }
 
 }  // namespace vela::vm

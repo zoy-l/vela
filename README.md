@@ -103,9 +103,10 @@ python -m tools.vl test release compiler -- --gtest_filter=CompilerTest.Compiles
 python -m tools.vl test debug runtime -- --gtest_repeat=10 --gtest_shuffle
 ```
 
-`python -m tools.vl lint` runs the repository's clang-tidy checks. Use
-`python -m tools.vl lint --fix` to apply available fixes, then review the
-result before validating it.
+`python -m tools.vl lint` runs the repository's clang-tidy checks in parallel.
+On macOS, pass `--jobs 6`; other systems use their logical CPU count when the
+option is omitted. Use `python -m tools.vl lint --fix` to apply available fixes.
+Review fixes before validating them.
 
 ## Benchmarks
 
