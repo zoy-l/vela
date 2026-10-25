@@ -49,7 +49,7 @@ async func main(): Future<int> {
 - `Future.microtask(computation)` 将计算函数加入微任务队列；`Future.delayed(milliseconds, computation)` 在 timer 到期后调用计算函数。`sleep(milliseconds)` 返回一个延迟完成为 `void` 的 Future。
 - `then(onValue, onError)`, `catchError(onError)` 和 `whenComplete(action)` 返回新的 Future。回调可返回普通值或 Future；回调抛出的异常会使新 Future 失败。回调始终异步通知，即使源 Future 已经完成。
 - `Future.wait<T>(values, eagerError: false, cleanUp: null)` 按输入顺序收集所有成功值；空输入立即成功并返回空数组。默认记录首个错误并观察到所有输入完成后再失败；`eagerError` 可让聚合结果在首个错误时立即失败。设置 `cleanUp` 时，聚合失败会清理已成功产生的非空值；其余输入仍会被观察。
-- `Future.any<T>(values)` 采用第一个成功或失败结果；空输入保持未完成，未获胜的输入不会被取消。
+- `Future.race<T>(values)` 采用第一个成功或失败结果；空输入保持未完成，未获胜的输入不会被取消。
 - `future.timeout(milliseconds, onTimeout)` 在时限内采用源 Future；超时后采用 `onTimeout` 返回的值或 Future，否则以 `TimeoutException` 失败。超时不会自动取消源操作，源 Future 仍会被观察。
 - `Completer<T>` 为事件回调和其它非 async 生产者创建并完成 Future。`complete` 可接收值或 Future，后者会被采用；`complete` / `completeError` 只能调用一次，错误值必须是 Vela 可抛出的对象。第二次完成是契约错误。完成通知始终异步执行，避免监听器重入生产者。
 
@@ -75,7 +75,7 @@ CLI 等待根 main Future 与所有仍存活的宿主事件源。单独一个没
 
 ## 宿主事件与 timer
 
-异步结果语义不依赖时钟；I/O 与 timer 属于宿主事件层。标准库提供 `sleep(milliseconds)`、`setTimeout` / `clearTimeout`、`setInterval` / `clearInterval`。timer callback 在 Isolate 线程运行；返回的 Future 不会阻塞后续 tick，其错误按普通未处理 Future 错误规则报告。
+异步结果语义不依赖时钟；I/O 与 timer 属于宿主事件层。标准库提供 `sleep(milliseconds)`、`Timer.after(milliseconds, callback)` 和 `Timer.periodic(milliseconds, callback)`。两个 Timer 工厂都返回 `Timer` 句柄，通过 `timer.cancel()` 取消；`Timer.after` 触发一次，`Timer.periodic` 定期触发。callback 在 Isolate 线程运行；返回的 Future 不会阻塞后续 tick，其错误按普通未处理 Future 错误规则报告。
 
 所有 timer 使用单调时钟。interval 不补发过期 tick，避免积累无界回调队列；同一 deadline 的事件按创建顺序处理。每个宿主事件完成后，先排空由其触发的微任务，再处理下一个事件。
 

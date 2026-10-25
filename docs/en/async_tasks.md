@@ -49,7 +49,7 @@ async func main(): Future<int> {
 - `Future.microtask(computation)` queues the computation on the microtask queue. `Future.delayed(milliseconds, computation)` invokes it after a timer; `sleep(milliseconds)` returns a Future that completes with `void` after the delay.
 - `then(onValue, onError)`, `catchError(onError)`, and `whenComplete(action)` return new Futures. Callbacks may return a value or Future; a thrown callback error fails the new Future. Callbacks are always notified asynchronously, even when the source Future is already complete.
 - `Future.wait<T>(values, eagerError: false, cleanUp: null)` collects successful values in input order; an empty input succeeds immediately with an empty array. By default it records the first error and waits for every input before failing; `eagerError` can fail the aggregate as soon as the first error arrives. With `cleanUp`, non-null values produced successfully are cleaned up when the aggregate fails; remaining inputs are still observed.
-- `Future.any<T>(values)` adopts the first success or failure; an empty input remains pending, and losing inputs are not cancelled.
+- `Future.race<T>(values)` adopts the first success or failure; an empty input remains pending, and losing inputs are not cancelled.
 - `future.timeout(milliseconds, onTimeout)` adopts the source Future if it completes in time. Otherwise it adopts the value or Future returned by `onTimeout`, or fails with `TimeoutException`. Timeout does not cancel the source operation, which continues to be observed.
 - `Completer<T>` creates and completes a Future for event callbacks and other non-async producers. `complete` accepts a value or Future, adopting the latter; `complete` / `completeError` may be called once, and an error must be a Vela-thrown object. A second completion violates the contract. Completion notifications are always asynchronous so listeners cannot reenter the producer.
 
@@ -75,7 +75,7 @@ The CLI waits for the root main Future and all live host event sources. A pendin
 
 ## Host Events and Timers
 
-Async result semantics do not depend on a clock; I/O and timers belong to the host event layer. The standard library provides `sleep(milliseconds)`, `setTimeout` / `clearTimeout`, and `setInterval` / `clearInterval`. Timer callbacks run on the Isolate thread. A Future returned by a timer callback does not block later ticks, and its error follows the normal unhandled Future error rules.
+Async result semantics do not depend on a clock; I/O and timers belong to the host event layer. The standard library provides `sleep(milliseconds)`, `Timer.after(milliseconds, callback)`, and `Timer.periodic(milliseconds, callback)`. Both Timer factories return a `Timer` handle canceled with `timer.cancel()`; `Timer.after` fires once and `Timer.periodic` fires repeatedly. Callbacks run on the Isolate thread. A Future returned by a timer callback does not block later ticks, and its error follows the normal unhandled Future error rules.
 
 Timers use a monotonic clock. Intervals do not replay missed ticks, avoiding an unbounded callback backlog; events with the same deadline run in creation order. After each host event, its microtasks are drained before the next event is processed.
 
