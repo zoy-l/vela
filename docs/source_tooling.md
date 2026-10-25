@@ -64,7 +64,8 @@ and formatter; it does not define an alternate language grammar.
 
 The server supports initialize/shutdown/exit, open/change/close/save,
 watched-file invalidation, versioned diagnostics, completion, hover, definition lookup, document links
-and document formatting.
+and document formatting. Full semantic tokens classify user types and built-in types,
+including constructors, annotations, import references and generic parameters.
 UTF-16 is the default protocol encoding; clients advertising UTF-8 can use
 byte positions. Incremental edits are applied in order and committed atomically;
 invalid edits leave text and version unchanged. Stale versions are ignored.
@@ -93,6 +94,14 @@ a missing semicolon no longer discards the next statement or the whole module
 graph. Compilation continues to reject these errors. Incomplete declarations
 that the parser cannot retain remain unavailable for semantic queries.
 
+Within a call, `textDocument/completion` also offers unsupplied named parameters
+from checked constructors, functions and methods. `(` and `,` trigger completion;
+selecting `value:` inserts `value: ` without duplicating an existing colon. Parameter
+candidates are sorted before ordinary symbols, while local values remain available.
+Types and defaults appear in completion details. Query snapshots repair incomplete
+argument slots without changing compiler diagnostics. Function values accept only
+positional arguments and do not offer parameter names.
+
 `textDocument/definition` resolves lexical binding identities, function/type/global
 names, members and named arguments to exact declaration ranges, including unsaved
 dependencies. Positions inside a name and immediately after its final character
@@ -120,6 +129,15 @@ the same loaded overlays as type checking. Unknown names, comments, literal text
 and whitespace have no hover. The VS Code client synchronizes unsaved text,
 discards cancelled or stale replies, and renders Markdown without trusted links
 or HTML.
+
+Built-in API documentation is in English; user `///` comments retain their original
+text. Hover formatting was checked against TypeScript 6.0.3's
+`getQuickInfoAtPosition`: enum and interface names retain nominal declaration
+headers with documentation, enum members show qualified names and numeric values,
+and type aliases show full definitions with generic parameters. Methods and
+properties include their containing type, and parameters carry an explicit role
+label. Function-type arrays and nullable function types retain their grouping.
+Vela additionally preserves constructor parameters and defaults in class hover.
 
 The [VS Code extension](../editors/vscode/README.md) contains TextMate highlighting
 and a dependency-free stdio client. `vl editor package` produces a VSIX under

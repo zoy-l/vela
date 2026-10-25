@@ -54,7 +54,7 @@ enum class ObjectKind : std::uint8_t {
   Instance,
   Array,
   String,
-  StringBuilder,
+  MutableString,
   Expected,
   Collection,
   Exception,

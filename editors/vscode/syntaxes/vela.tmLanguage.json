@@ -4,11 +4,18 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
+    {
+      "match": "\\b(class|interface|enum|type)(\\s+)([A-Za-z_][A-Za-z_0-9]*)",
+      "captures": {
+        "1": { "name": "storage.type.vela" },
+        "3": { "name": "entity.name.type.vela" }
+      }
+    },
     { "name": "storage.type.function.vela", "match": "\\bfunc\\b" },
     { "name": "keyword.control.vela", "match": "\\b(?:if|else|while|for|switch|case|default|break|continue|return|match|try|catch|finally|throw|import|export|as|is)\\b" },
     { "name": "storage.modifier.vela", "match": "\\b(?:public|private|static|param|external|let|const)\\b" },
     { "name": "storage.type.vela", "match": "\\b(?:class|interface|implements|enum|type|constructor)\\b" },
-    { "name": "support.type.vela", "match": "\\b(?:int|double|bool|string|void|StringBuilder|Set|Map|Expected|Math|Random|Date|Error)\\b" },
+    { "name": "support.type.vela", "match": "\\b(?:int|double|bool|string|void|String|Set|Map|Expected|Math|Random|Date|Error)\\b" },
     { "name": "support.variable.vela", "match": "\\bperformance\\b" },
     { "name": "constant.language.vela", "match": "\\b(?:true|false|null)\\b" },
     { "name": "variable.language.vela", "match": "\\bthis\\b" },

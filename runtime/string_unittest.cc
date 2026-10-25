@@ -181,7 +181,7 @@ TEST(StringGcTest, RegistersNativeRootsAndAllocatesDuringSweep) {
 
 TEST(StringGcTest, BuilderAccountsExternalStorageAndReleasesItOnCollection) {
   Heap heap(1);
-  Value value = Value::Object(heap.AllocateStringBuilder());
+  Value value = Value::Object(heap.AllocateMutableString());
   RootRange root(heap, &value, 1);
   ASSERT_NE(value.AsObject(), nullptr);
   const auto initial = heap.allocated_bytes();
@@ -202,7 +202,7 @@ TEST(StringGcTest, BuilderAccountsExternalStorageAndReleasesItOnCollection) {
 
 TEST(StringGcTest, BuilderGrowthIsGeometricAndSnapshotsOwnIndependentStorage) {
   Heap heap(1);
-  std::array<Value, 2> values = {Value::Object(heap.AllocateStringBuilder()), Value::Null()};
+  std::array<Value, 2> values = {Value::Object(heap.AllocateMutableString()), Value::Null()};
   RootRange roots(heap, values.data(), values.size());
   auto& builder = *values.front().AsObject();
   constexpr std::size_t kAppends = 4096;
@@ -220,7 +220,7 @@ TEST(StringGcTest, BuilderGrowthIsGeometricAndSnapshotsOwnIndependentStorage) {
 
 TEST_P(StringBarrierTest, BuilderSurvivesIncrementalCollectionAndGrowth) {
   Heap heap;
-  Value value = Value::Object(heap.AllocateStringBuilder());
+  Value value = Value::Object(heap.AllocateMutableString());
   RootRange root(heap, &value, 1);
   ASSERT_TRUE(heap.AppendString(*value.AsObject(), "old"));
   ASSERT_NE(heap.AllocateString("garbage"), nullptr);

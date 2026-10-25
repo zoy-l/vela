@@ -1,5 +1,6 @@
 #include "compiler/tooling/language_server_internal.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -31,6 +32,36 @@ yyjson_mut_val* JsonRange(yyjson_mut_doc* document, TextRange range) {
 bool IsIdentifierByte(char value) {
   return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
          (value >= '0' && value <= '9') || value == '_';
+}
+
+yyjson_mut_val* JsonCompletion(yyjson_mut_doc* document,
+                               const Completion& completion,
+                               TextRange range) {
+  auto* item = yyjson_mut_obj(document);
+  AddJsonField(document, item, "label",
+               yyjson_mut_strncpy(document, completion.label.data(), completion.label.size()));
+  AddJsonField(document, item, "detail",
+               yyjson_mut_strncpy(document, completion.detail.data(), completion.detail.size()));
+  AddJsonField(document, item, "kind",
+               yyjson_mut_uint(document, static_cast<std::uint8_t>(completion.kind)));
+  const auto& insertion = completion.insert_text ? *completion.insert_text : completion.label;
+  const auto sorting = (completion.insert_text ? "0" : "1") + completion.label;
+  AddJsonField(document, item, "sortText",
+               yyjson_mut_strncpy(document, sorting.data(), sorting.size()));
+  if (!completion.documentation.empty()) {
+    auto* documentation = yyjson_mut_obj(document);
+    AddJsonField(document, documentation, "kind", yyjson_mut_str(document, "markdown"));
+    AddJsonField(document, documentation, "value",
+                 yyjson_mut_strncpy(document, completion.documentation.data(),
+                                    completion.documentation.size()));
+    AddJsonField(document, item, "documentation", documentation);
+  }
+  auto* edit = yyjson_mut_obj(document);
+  AddJsonField(document, edit, protocol::kRange, JsonRange(document, range));
+  AddJsonField(document, edit, "newText",
+               yyjson_mut_strncpy(document, insertion.data(), insertion.size()));
+  AddJsonField(document, item, "textEdit", edit);
+  return item;
 }
 
 yyjson_mut_val* JsonHover(yyjson_mut_doc* document, const std::optional<Hover>& hover) {
@@ -94,6 +125,67 @@ void LanguageServer::DocumentLinks(RpcCall call) {
   Send(response);
 }
 
+std::vector<Completion> LanguageServer::CompletionsFor(std::string_view uri,
+                                                       const ServerDocument& opened,
+                                                       std::size_t offset) const {
+  const auto text = opened.source.text();
+  const auto arguments = PrepareArgumentCompletion(text, offset);
+  const auto completion_text = arguments ? arguments->source : CompletionSource(text, offset);
+  std::vector<frontend::SourceInput> overlays;
+  overlays.reserve(documents_.size());
+  for (const auto& [open_uri, opened_document] : documents_) {
+    overlays.push_back({
+        .path = opened_document.path,
+        .text = open_uri == uri ? completion_text : opened_document.source.text(),
+    });
+  }
+  const SemanticIndex index(opened.path, overlays);
+  auto completions = index.Complete(offset);
+  if (arguments) {
+    std::erase_if(completions, [&arguments](const Completion& item) -> bool {
+      return !item.label.starts_with(arguments->prefix);
+    });
+    for (auto& item : index.CompleteArguments(*arguments)) {
+      completions.push_back(std::move(item));
+    }
+  }
+  return completions;
+}
+
+void LanguageServer::SemanticTokens(RpcCall call) {
+  const auto uri =
+      JsonText(GetJsonField(GetJsonField(call.params, protocol::kTextDocument), protocol::kUri));
+  if (!uri) {
+    Error(call.identity, kInvalidParams, "semantic tokens require a document URI");
+    return;
+  }
+  const auto found = documents_.find(*uri);
+  if (found == documents_.end()) {
+    Error(call.identity, kInvalidParams, "document is not open");
+    return;
+  }
+  const auto tokens = IndexFor(*uri, found->second).SemanticTokens(encoding_);
+  auto response = Response(call.identity);
+  auto* document = response.document();
+  auto* result = yyjson_mut_obj(document);
+  auto* data = yyjson_mut_arr(document);
+  TextPosition previous;
+  for (const auto& token : tokens) {
+    const auto position = token.position;
+    yyjson_mut_arr_add_uint(document, data, position.line - previous.line);
+    yyjson_mut_arr_add_uint(document, data,
+                            position.line == previous.line ? position.character - previous.character
+                                                           : position.character);
+    yyjson_mut_arr_add_uint(document, data, token.length);
+    yyjson_mut_arr_add_uint(document, data, static_cast<std::uint8_t>(token.kind));
+    yyjson_mut_arr_add_uint(document, data, token.modifiers);
+    previous = position;
+  }
+  AddJsonField(document, result, "data", data);
+  AddJsonField(document, response.root(), protocol::kResult, result);
+  Send(response);
+}
+
 void LanguageServer::Query(RpcCall call, SymbolQuery query) {
   const auto uri =
       JsonText(GetJsonField(GetJsonField(call.params, protocol::kTextDocument), protocol::kUri));
@@ -118,16 +210,7 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
   auto* document = response.document();
   auto* result = yyjson_mut_null(document);
   if (query == SymbolQuery::Completion) {
-    const auto completion_text = CompletionSource(source.text(), *offset);
-    std::vector<frontend::SourceInput> overlays;
-    overlays.reserve(documents_.size());
-    for (const auto& [open_uri, opened_document] : documents_) {
-      overlays.push_back({
-          .path = opened_document.path,
-          .text = open_uri == *uri ? completion_text : opened_document.source.text(),
-      });
-    }
-    const auto completions = SemanticIndex(opened.path, overlays).Complete(*offset);
+    const auto completions = CompletionsFor(*uri, opened, *offset);
     auto begin = *offset;
     auto end = *offset;
     const auto text = source.text();
@@ -143,20 +226,7 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
     };
     result = yyjson_mut_arr(document);
     for (const auto& completion : completions) {
-      auto* item = yyjson_mut_obj(document);
-      AddJsonField(document, item, "label",
-                   yyjson_mut_strncpy(document, completion.label.data(), completion.label.size()));
-      AddJsonField(
-          document, item, "detail",
-          yyjson_mut_strncpy(document, completion.detail.data(), completion.detail.size()));
-      AddJsonField(document, item, "kind",
-                   yyjson_mut_uint(document, static_cast<std::uint8_t>(completion.kind)));
-      auto* edit = yyjson_mut_obj(document);
-      AddJsonField(document, edit, protocol::kRange, JsonRange(document, range));
-      AddJsonField(document, edit, "newText",
-                   yyjson_mut_strncpy(document, completion.label.data(), completion.label.size()));
-      AddJsonField(document, item, "textEdit", edit);
-      yyjson_mut_arr_add_val(result, item);
+      yyjson_mut_arr_add_val(result, JsonCompletion(document, completion, range));
     }
   } else {
     // 同版本的跳转与悬停复用 AST/语义索引；文档或磁盘依赖变化时统一失效。

@@ -80,7 +80,7 @@ class ImportTest : public testing::Test {
 TEST_F(ImportTest, ChecksAndRunsEscapedUnicodePathsAndStringApis) {
   Write(std::filesystem::path(u8"文本.vela"), R"(
 export func decorate(text: string): string {
-  const builder = StringBuilder();
+  const builder = String();
   builder.append("[${text}]");
   return builder.toString();
 })");

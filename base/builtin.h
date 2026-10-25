@@ -9,9 +9,9 @@ namespace vela {
 enum class Builtin : std::uint8_t {
   ScalarToString,
   ArrayJoin,
-  NewStringBuilder,
-  BuilderAppend,
-  BuilderToString,
+  NewMutableString,
+  MutableStringAppend,
+  MutableStringToString,
   StringLength,
   StringByteLength,
   StringSlice,
@@ -48,10 +48,10 @@ enum class Builtin : std::uint8_t {
 
 [[nodiscard]] constexpr std::size_t BuiltinArity(Builtin builtin) noexcept {
   switch (builtin) {
-    case Builtin::NewStringBuilder:
+    case Builtin::NewMutableString:
       return 0;
     case Builtin::ScalarToString:
-    case Builtin::BuilderToString:
+    case Builtin::MutableStringToString:
     case Builtin::StringLength:
     case Builtin::StringByteLength:
     case Builtin::NumericToInt:
@@ -64,7 +64,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayReverse:
       return 1;
     case Builtin::ArrayJoin:
-    case Builtin::BuilderAppend:
+    case Builtin::MutableStringAppend:
     case Builtin::StringIndexOf:
     case Builtin::StringIncludes:
     case Builtin::StringStartsWith:

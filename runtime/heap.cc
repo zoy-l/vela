@@ -349,7 +349,7 @@ void Heap::Publish(HeapObject& object, std::uint32_t allocation_size) noexcept {
   object.allocation_size = allocation_size;
   object.next = objects_;
   if (phase_ == GcPhase::Mark && object.kind != ObjectKind::String &&
-      object.kind != ObjectKind::StringBuilder) {
+      object.kind != ObjectKind::MutableString) {
     object.gray_next = gray_;
     gray_ = &object;
   } else if (phase_ == GcPhase::Sweep) {
@@ -570,7 +570,7 @@ void Heap::MarkObject(HeapObject& object) noexcept {
     return;
   }
   object.mark_bit = current_mark_bit_;
-  if (object.kind == ObjectKind::String || object.kind == ObjectKind::StringBuilder) {
+  if (object.kind == ObjectKind::String || object.kind == ObjectKind::MutableString) {
     return;
   }
   object.gray_next = gray_;
@@ -657,8 +657,8 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
 
   if (object.layout != nullptr) {
     std::destroy_n(ObjectFields(&object), object.layout->field_count());
-  } else if (object.kind == ObjectKind::StringBuilder) {
-    ReleaseStringBuilder(object);
+  } else if (object.kind == ObjectKind::MutableString) {
+    ReleaseMutableString(object);
   } else if (object.kind == ObjectKind::Collection) {
     ReleaseCollection(object);
   }

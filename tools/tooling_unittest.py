@@ -95,7 +95,12 @@ class LanguageServerTest(unittest.TestCase):
                 self.assertTrue(capabilities["definitionProvider"])
                 self.assertTrue(capabilities["hoverProvider"])
                 self.assertEqual(capabilities['documentLinkProvider'], {'resolveProvider': False})
-                self.assertEqual(capabilities["completionProvider"]["triggerCharacters"], ["."])
+                self.assertEqual(capabilities["completionProvider"]["triggerCharacters"], [".", "(", ","])
+                self.assertNotIn("signatureHelpProvider", capabilities)
+                self.assertEqual(capabilities['semanticTokensProvider']['legend'], {
+                    'tokenTypes': ['class', 'interface', 'enum', 'type', 'typeParameter'],
+                    'tokenModifiers': ['declaration', 'defaultLibrary']})
+                self.assertTrue(capabilities['semanticTokensProvider']['full'])
                 self.assertIsNone(self.reply(replies, 999)["result"])
 
     def test_hover_signatures_inferred_bindings_and_documentation(self) -> None:
@@ -104,7 +109,7 @@ class LanguageServerTest(unittest.TestCase):
                   "const base = 40;\n"
                   "func main(): int { const result = add(base, 2); return result; }")
         queries = [(source.index("add(base"), "func add(left: int, right: int): int"),
-                   (source.index("left +"), "left: int"),
+                   (source.index("left +"), "(parameter) left: int"),
                    (source.index("base, 2"), "const base: int"),
                    (source.index("return result") + 7, "const result: int")]
         messages = self.session([self.open(source), *[
@@ -129,15 +134,15 @@ class LanguageServerTest(unittest.TestCase):
                   "const mode: Mode = Mode.light; const count: Count = counter.read();\n"
                   "const text = 'hello'; const values = Set<int>();\n"
                   "print(text.slice(0, 1)); print(text.length); print(values.has(count)); }")
-        queries = [("Counter(value", "class Counter"),
-                   ("value: 42", "value: int"),
+        queries = [("Counter(value", "class Counter {\n  constructor(value: int);\n}"),
+                   ("value: 42", "(property) Counter.value: int"),
                    ("Mode.light", "enum Mode"),
-                   ("light;", "light: Mode"),
+                   ("light;", "(enum member) Mode.light = 0"),
                    ("Count = counter", "type Count = int"),
-                   ("read();", "func read(): int"),
-                   ("slice(0", "func slice(start: int, end: int): string"),
-                   ("length)", "length: int"),
-                   ("has(count", "func has(value: int): bool"),
+                   ("read();", "(method) Counter.read(): int"),
+                   ("slice(0", "(method) string.slice(start: int, end: int): string"),
+                   ("length)", "(property) string.length: int"),
+                   ("has(count", "(method) Set<int>.has(value: int): bool"),
                    ("print(text", "func print(value): void"),
                    ("Readable", "interface Readable")]
         messages = self.session([self.open(source), *[
@@ -166,8 +171,333 @@ class LanguageServerTest(unittest.TestCase):
         self.assertIn('sqrt', {item['label'] for item in self.reply(messages, 'math')['result']})
         self.assertNotIn('Console', {item['label'] for item in self.reply(messages, 'global')['result']})
         self.assertIn('union', {item['label'] for item in self.reply(messages, 'set')['result']})
-        self.assertIn('func sort(compare: (int, int) => int): void', self.reply(messages, 'sort')['result']['contents']['value'])
-        self.assertIn('func sqrt(value: double): double', self.reply(messages, 'sqrt')['result']['contents']['value'])
+        self.assertIn('(method) int[].sort(compare: (int, int) => int): void', self.reply(messages, 'sort')['result']['contents']['value'])
+        self.assertIn('(method) Math.sqrt(value: double): double', self.reply(messages, 'sqrt')['result']['contents']['value'])
+
+    def test_class_hover_displays_constructor_parameters_defaults_and_documentation(self) -> None:
+        source = ("/// A counter.\nclass Counter { param value: int; private param step: int = -1; "
+                  "param label: string = 'Vela'; static other: int = 0; hidden: bool = true; }\n"
+                  "class Pair { value: int; constructor(value: int) { this.value = value; } }\n"
+                  "func main(): void { Counter(value: 40); Pair(42); print(Error(message: 'bad')); }")
+        messages = self.session([self.open(source),
+            self.symbol_query('hover', source, source.index('Counter(value'), 'generated'),
+            self.symbol_query('hover', source, source.index('Pair(42)'), 'explicit'),
+            self.symbol_query('hover', source, source.index('Error(message'), 'error')])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        generated = self.reply(messages, 'generated')['result']['contents']['value']
+        self.assertIn("class Counter {\n  constructor(value: int, step: int = -1, label: string = 'Vela');\n}", generated)
+        self.assertIn('A counter.', generated)
+        self.assertNotIn('hidden:', generated)
+        self.assertNotIn('other:', generated)
+        self.assertIn('constructor(value: int);', self.reply(messages, 'explicit')['result']['contents']['value'])
+        error = self.reply(messages, 'error')['result']['contents']['value']
+        self.assertIn("constructor(message: string, code: string = 'Error');", error)
+        self.assertIn('caught', error)
+
+    def test_native_api_hover_and_completion_share_documentation(self) -> None:
+        source = ('func main(): void { print(Math.sqrt(9.0)); print(performance.now()); '
+                  'print(Date.now()); Random.seed(42); print(Math.PI); }')
+        messages = self.session([self.open(source),
+            self.symbol_query('hover', source, source.index('sqrt'), 'sqrt'),
+            self.symbol_query('hover', source, source.index('performance.now') + len('performance.'), 'monotonic'),
+            self.symbol_query('hover', source, source.index('Date.now') + len('Date.'), 'wall'),
+            self.symbol_query('hover', source, source.index('seed'), 'seed'),
+            self.symbol_query('hover', source, source.index('PI'), 'pi'),
+            self.symbol_query('completion', source, source.index('Math.sqrt') + len('Math.'), 'completion'),
+            self.symbol_query('completion', source, source.index('print('), 'global')])
+        sqrt = self.reply(messages, 'sqrt')['result']['contents']['value']
+        self.assertIn('(method) Math.sqrt(value: double): double', sqrt)
+        self.assertIn('square root', sqrt)
+        self.assertIn('Error', sqrt)
+        self.assertIn('milliseconds', self.reply(messages, 'monotonic')['result']['contents']['value'])
+        self.assertIn('1970', self.reply(messages, 'wall')['result']['contents']['value'])
+        self.assertIn('64 bits', self.reply(messages, 'seed')['result']['contents']['value'])
+        self.assertIn('Pi,', self.reply(messages, 'pi')['result']['contents']['value'])
+        completion = next(item for item in self.reply(messages, 'completion')['result'] if item['label'] == 'sqrt')
+        self.assertIn(completion['documentation']['value'], sqrt)
+        math = next(item for item in self.reply(messages, 'global')['result'] if item['label'] == 'Math')
+        self.assertIn('private constructor()', math['detail'])
+        self.assertIn('Mathematical', math['documentation']['value'])
+
+    def test_enum_interface_and_members_follow_typescript_hover_conventions(self) -> None:
+        source = ("/// Available brightness levels.\nenum Brightness {\n  light,\n"
+                  "  /// A dark appearance.\n  dark,\n}\n"
+                  "/// A readable value.\ninterface Readable {\n"
+                  "  /// Reads a scaled value.\n  read(scale: int): int;\n}\n"
+                  "func use(reader: Readable): int { const mode = Brightness.dark; return reader.read(2); }\n"
+                  "func main(): void {}")
+        markers = [('Brightness {', 'enum'), ('Brightness.dark', 'enum_use'),
+                   ('dark;', 'member'), ('Readable {', 'interface'), ('Readable):', 'interface_use'),
+                   ('read(2)', 'method'), ('scale:', 'parameter')]
+        messages = self.session([self.open(source), *[
+            self.symbol_query('hover', source, source.index(marker), identity) for marker, identity in markers]])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        for identity in ('enum', 'enum_use'):
+            hover = self.reply(messages, identity)['result']['contents']['value']
+            self.assertTrue(hover.startswith('```vela\nenum Brightness\n```'))
+            self.assertIn('Available brightness levels.', hover)
+        for identity in ('interface', 'interface_use'):
+            hover = self.reply(messages, identity)['result']['contents']['value']
+            self.assertTrue(hover.startswith('```vela\ninterface Readable\n```'))
+            self.assertIn('A readable value.', hover)
+        member = self.reply(messages, 'member')['result']['contents']['value']
+        self.assertIn('(enum member) Brightness.dark = 1', member)
+        self.assertIn('A dark appearance.', member)
+        method = self.reply(messages, 'method')['result']['contents']['value']
+        self.assertIn('(method) Readable.read(scale: int): int', method)
+        self.assertIn('Reads a scaled value.', method)
+        self.assertIn('(parameter) scale: int', self.reply(messages, 'parameter')['result']['contents']['value'])
+
+    def test_type_alias_hover_retains_generic_parameters_and_function_grouping(self) -> None:
+        source = ('/// Converts values to text.\ntype Handler<T> = (T) => string;\n'
+                  'type Maybe<T> = T?;\ntype Handlers = ((int) => string)[];\n'
+                  'type OptionalHandler = ((int) => string)?;\n'
+                  'func main(): void { const convert: Handler<int> = value => value.toString(); '
+                  'let maybe: Maybe<int> = null; const handlers: Handlers = []; '
+                  'let optional: OptionalHandler = null; }')
+        checks = [('Handler<T>', 'type Handler<T> = (T) => string'),
+                  ('Handler<int>', 'type Handler<T> = (T) => string'),
+                  ('Maybe<T>', 'type Maybe<T> = T?'), ('Maybe<int>', 'type Maybe<T> = T?'),
+                  ('Handlers =', 'type Handlers = ((int) => string)[]'),
+                  ('OptionalHandler =', 'type OptionalHandler = ((int) => string)?')]
+        messages = self.session([self.open(source), *[
+            self.symbol_query('hover', source, source.index(marker), str(index))
+            for index, (marker, _) in enumerate(checks)]])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        for index, (_, expected) in enumerate(checks):
+            self.assertIn(expected, self.reply(messages, str(index))['result']['contents']['value'])
+        self.assertIn('Converts values to text.', self.reply(messages, '1')['result']['contents']['value'])
+
+    def test_imported_member_hover_keeps_qualified_names_without_internal_prefixes(self) -> None:
+        library = self.directory / 'library.vela'
+        library.write_text('/// A readable value.\nexport interface Readable { read(scale: int): int; }\n'
+                           'export enum Mode { light, dark }\nexport type Callback<T> = (T) => string;\n', encoding='utf-8')
+        source = ("import 'library' as lib;\nfunc use(value: lib.Readable): int { "
+                  "print(lib.Mode.dark); return value.read(2); }\n"
+                  "func main(): void { const convert: lib.Callback<int> = value => value.toString(); }")
+        checks = [('Readable)', 'interface Readable'), ('dark)', '(enum member) Mode.dark = 1'),
+                  ('read(2)', '(method) Readable.read(scale: int): int'),
+                  ('Callback<int>', 'type Callback<T> = (T) => string')]
+        messages = self.session([self.open(source), *[
+            self.symbol_query('hover', source, source.index(marker), str(index))
+            for index, (marker, _) in enumerate(checks)]])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        for index, (_, expected) in enumerate(checks):
+            hover = self.reply(messages, str(index))['result']['contents']['value']
+            self.assertIn(expected, hover)
+            self.assertNotIn('$module', hover)
+
+    def test_intrinsic_hover_explains_units_returns_and_mutation(self) -> None:
+        source = ("func main(): void { const text = '你好'; const values = [1, 2]; "
+                  "const keys = Set<int>(); const lookup = Map<int, string>(); "
+                  "const builder = String(); print(text.slice(0, 1)); print(text.length); "
+                  "print(values.slice(0, 1)); print(values.length); print(values.map(value => value + 1)); "
+                  "print(lookup.get(1)); print(keys.add(1)); builder.append('x'); print(builder.toString()); }")
+        checks = [('text.slice', 'slice', 'Unicode code point'), ('text.length', 'length', 'O(UTF-8'),
+                  ('values.slice', 'slice', 'shallow copy'), ('values.length', 'length', 'O(1)'),
+                  ('values.map', 'map', 'original array unchanged'), ('lookup.get', 'get', 'null'),
+                  ('keys.add', 'add', 'false'), ('builder.append', 'append', 'amortized'),
+                  ('builder.toString', 'toString', 'immutable')]
+        messages = self.session([self.open(source), *[
+            self.symbol_query('hover', source, source.index(fragment) + fragment.index(name), str(index))
+            for index, (fragment, name, _) in enumerate(checks)]])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        for index, (_, _, expected) in enumerate(checks):
+            self.assertIn(expected, self.reply(messages, str(index))['result']['contents']['value'])
+
+    def test_every_intrinsic_completion_has_documentation(self) -> None:
+        source = ("func main(): void { const text = 'x'; const values = [1]; const keys = Set<int>(); "
+                  "const lookup = Map<int, string>(); const result: Expected<int, string> = ok(42); "
+                  "const builder = String(); const integer = 1; const decimal = 1.5; const flag = true; "
+                  "print(text.length); print(values.length); print(keys.size); print(lookup.size); "
+                  "print(result.hasValue()); print(builder.toString()); print(integer.toString()); "
+                  "print(decimal.toString()); print(flag.toString()); }")
+        queries = [self.open(source)]
+        for name, member in [('text', 'length'), ('values', 'length'), ('keys', 'size'), ('lookup', 'size'),
+                             ('result', 'hasValue'), ('builder', 'toString'), ('integer', 'toString'),
+                             ('decimal', 'toString'), ('flag', 'toString')]:
+            queries.append(self.symbol_query('completion', source, source.index(name + '.' + member) + len(name) + 1, name))
+        messages = self.session(queries)
+        for name in ('text', 'values', 'keys', 'lookup', 'result', 'builder', 'integer', 'decimal', 'flag'):
+            for item in self.reply(messages, name)['result']:
+                with self.subTest(receiver=name, method=item['label']):
+                    self.assertTrue(item.get('documentation', {}).get('value'), item)
+                    self.assertTrue(item['documentation']['value'].isascii(), item)
+
+    def test_mutable_string_name_is_shared_by_constructor_hover_completion_and_coloring(self) -> None:
+        source = ("func main(): void { const text: String = String(); text.append('value'); "
+                  "const snapshot: string = text.toString(); print(snapshot); }")
+        messages = self.session([self.open(source),
+            self.symbol_query('hover', source, source.index('String()'), 'constructor'),
+            self.symbol_query('hover', source, source.index('text.append') + len('text.'), 'append'),
+            self.symbol_query('hover', source, source.index('text.toString') + len('text.'), 'snapshot'),
+            self.symbol_query('completion', source, source.index('String()'), 'types'),
+            request('textDocument/semanticTokens/full', {'textDocument': {'uri': self.uri}}, 'tokens')])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        self.assertIn('class String {\n  constructor();\n}', self.reply(messages, 'constructor')['result']['contents']['value'])
+        self.assertIn('(method) String.append(text: string): void', self.reply(messages, 'append')['result']['contents']['value'])
+        self.assertIn('(method) String.toString(): string', self.reply(messages, 'snapshot')['result']['contents']['value'])
+        candidates = {item['label'] for item in self.reply(messages, 'types')['result']}
+        self.assertIn('String', candidates)
+        self.assertNotIn('StringBuilder', candidates)
+        for spelling in ('String =', 'String()'):
+            self.assertIn((0, source.index(spelling), len('String'), 'class', 2), self.semantic_tokens(messages))
+
+    def test_expected_factories_hover_with_contextual_payload_types_and_documentation(self) -> None:
+        source = ("func main(): void { const good: Expected<int, string> = ok(42); "
+                  "const bad: Expected<int, string> = err('failed'); }")
+        messages = self.session([self.open(source),
+            self.symbol_query('hover', source, source.index('ok(42)'), 'ok'),
+            self.symbol_query('hover', source, source.index("err('failed')"), 'err')])
+        self.assertIn('func ok(value: int): Expected<int, string>', self.reply(messages, 'ok')['result']['contents']['value'])
+        self.assertIn('func err(error: string): Expected<int, string>', self.reply(messages, 'err')['result']['contents']['value'])
+        self.assertIn('success alternative', self.reply(messages, 'ok')['result']['contents']['value'])
+        self.assertIn('does not automatically throw', self.reply(messages, 'err')['result']['contents']['value'])
+
+    def semantic_tokens(self, messages: list[dict], identity: str = 'tokens') -> list[tuple]:
+        legend = self.reply(messages, 1)['result']['capabilities']['semanticTokensProvider']['legend']
+        data = self.reply(messages, identity)['result']['data']
+        self.assertEqual(len(data) % 5, 0)
+        line = character = 0
+        result = []
+        for index in range(0, len(data), 5):
+            delta_line, delta_character, length, kind, modifiers = data[index:index + 5]
+            line += delta_line
+            character = character + delta_character if delta_line == 0 else delta_character
+            result.append((line, character, length, legend['tokenTypes'][kind], modifiers))
+        return result
+
+    def test_semantic_tokens_color_type_declarations_uses_and_generic_parameters(self) -> None:
+        source = ("class Box<T> { param value: T; }\ninterface Readable { read(): int; }\n"
+                  "enum Mode { light, dark }\ntype IntBox = Box<int>;\n"
+                  "func main(): void { const text = 'Box'; const value: IntBox = Box<int>(value: 42); "
+                  "const mode: Mode = Mode.light; print(Math.PI); { const Box = 1; print(Box); } }")
+        for encoding in ('utf-8', 'utf-16'):
+            with self.subTest(encoding=encoding):
+                messages = self.session([self.open(source), request('textDocument/semanticTokens/full',
+                    {'textDocument': {'uri': self.uri}}, 'tokens')], encoding)
+                self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+                tokens = self.semantic_tokens(messages)
+                self.assertIn((0, 6, 3, 'class', 1), tokens)
+                self.assertIn((0, 10, 1, 'typeParameter', 1), tokens)
+                self.assertIn((0, source.splitlines()[0].rindex('T;'), 1, 'typeParameter', 0), tokens)
+                self.assertIn((1, 10, 8, 'interface', 1), tokens)
+                self.assertIn((2, 5, 4, 'enum', 1), tokens)
+                self.assertIn((3, 5, 6, 'type', 1), tokens)
+                line = source.splitlines()[4]
+                self.assertIn((4, line.index('Box<int>'), 3, 'class', 0), tokens)
+                self.assertIn((4, line.index('Math.PI'), 4, 'class', 2), tokens)
+                self.assertFalse(any(token[0] == 4 and token[1] >= line.index('const Box') for token in tokens))
+                self.assertFalse(any(token[0] == 4 and token[1] == line.index("'Box'") + 1 for token in tokens))
+
+    def test_semantic_tokens_use_import_overlays_and_invalidate_on_changes(self) -> None:
+        library = self.directory / 'library.vela'
+        library.write_text('export class Item { param value: int; }', encoding='utf-8')
+        source = "import 'library' as lib; func main(): void { const text = '中😀'; lib.Item(value: 1); }"
+        for encoding in ('utf-8', 'utf-16'):
+            with self.subTest(encoding=encoding):
+                token_request = lambda identity: request('textDocument/semanticTokens/full', {'textDocument': {'uri': self.uri}}, identity)
+                messages = self.session([self.open(source), token_request('disk'),
+                    self.open('export func Item(value: int): int { return value; }', library.as_uri()),
+                    token_request('overlay')], encoding)
+                offset = source.index('Item(value:')
+                column = len(source[:offset].encode('utf-8')) if encoding == 'utf-8' else len(source[:offset].encode('utf-16-le')) // 2
+                self.assertIn((0, column, 4, 'class', 0), self.semantic_tokens(messages, 'disk'))
+                self.assertFalse(any(token[1] == column for token in self.semantic_tokens(messages, 'overlay')))
+
+    def argument_completions(self, marked_source: str, encoding: str = 'utf-16') -> list[dict]:
+        offset = marked_source.index('¦')
+        source = marked_source.replace('¦', '')
+        messages = self.session([self.open(source),
+            self.symbol_query('completion', source, offset, encoding=encoding)], encoding)
+        return self.reply(messages, 'query')['result']
+
+    def test_constructor_argument_completion_inserts_names_and_shows_types_and_defaults(self) -> None:
+        items = self.argument_completions(
+            'class Counter { public param value: int; private param step: int = 1; '
+            'static other: int = 0; unused: int = 0; constructor {} }\n'
+            'func main(): void { const initial = 40; Counter(¦); }')
+        parameters = {item['label']: item for item in items if item['label'].endswith(':')}
+        self.assertEqual(parameters.keys(), {'value:', 'step:'})
+        self.assertEqual(parameters['value:']['detail'], 'value: int')
+        self.assertEqual(parameters['step:']['detail'], 'step: int = …')
+        self.assertEqual(parameters['value:']['textEdit']['newText'], 'value: ')
+        self.assertEqual(parameters['value:']['kind'], 5)
+        initial = next(item for item in items if item['label'] == 'initial')
+        self.assertLess(parameters['value:']['sortText'], initial['sortText'])
+
+    def test_constructor_completes_unfinished_names_and_omits_supplied_arguments(self) -> None:
+        header = 'class Counter { param value: int; param step: int = 1; }\nfunc main(): void { '
+        for text, labels, insertion in (
+                ('Counter(¦', {'value:', 'step:'}, 'value: '),
+                ('Counter(¦); }', {'value:', 'step:'}, 'value: '),
+                ('Counter(¦ }', {'value:', 'step:'}, 'value: '),
+                ('Counter(va¦); }', {'value:'}, 'value: '),
+                ('Counter(value: 40, ¦); }', {'step:'}, 'step: '),
+                ('Counter(step: 1, va¦); }', {'value:'}, 'value: '),
+                ('Counter(va¦lue: 40); }', {'value:'}, 'value'),
+                ('Counter(¦value: 40, step: 1); }', {'value:'}, 'value')):
+            with self.subTest(text=text):
+                items = self.argument_completions(header + text)
+                parameters = {item['label']: item for item in items if item['label'].endswith(':')}
+                self.assertEqual(parameters.keys(), labels)
+                item = parameters['value:' if 'value:' in labels else 'step:']
+                self.assertEqual(item['textEdit']['newText'], insertion)
+                edit = item['textEdit']
+                line = text.replace('¦', '')
+                begin = edit['range']['start']['character'] - len('func main(): void { ')
+                end = edit['range']['end']['character'] - len('func main(): void { ')
+                self.assertNotIn('valuevalue', line[:begin] + edit['newText'] + line[end:])
+
+    def test_argument_completion_resolves_explicit_generic_imported_and_alias_constructors(self) -> None:
+        library = self.directory / 'library.vela'
+        library.write_text('export class Box<T> { param value: T; }\n'
+                           'export class Pair { first: int; second: string; '
+                           'constructor(first: int, second: string) { '
+                           'this.first = first; this.second = second; } }\n', encoding='utf-8')
+        header = "import 'library' as lib;\ntype IntBox = lib.Box<int>;\nfunc main(): void { "
+        for call, details in (('lib.Box<string>(¦)', {'value:': 'value: string'}),
+                              ('IntBox(¦)', {'value:': 'value: int'}),
+                              ('lib.Pair(40, ¦)', {'second:': 'second: string'})):
+            with self.subTest(call=call):
+                parameters = {item['label']: item['detail'] for item in self.argument_completions(header + call + '; }')
+                              if item['label'].endswith(':')}
+                self.assertEqual(parameters, details)
+
+    def test_named_argument_completion_preserves_function_value_and_lexical_semantics(self) -> None:
+        header = ('class Box { param value: int; add(left: int, right: int): int { return left + right; } }\n'
+                  'func sum(left: int, right: int): int { return left + right; }\n'
+                  'func main(): void { const box = Box(value: 1); const operation = sum; ')
+        for call, labels in (('sum(¦)', {'left:', 'right:'}), ('box.add(1, ¦)', {'right:'}),
+                             ('operation(¦)', set()), ('Math.pow(¦)', {'left:', 'right:'})):
+            with self.subTest(call=call):
+                items = self.argument_completions(header + call + '; }')
+                self.assertEqual({item['label'] for item in items if item['label'].endswith(':')}, labels)
+                self.assertIn('box', {item['label'] for item in items})
+
+    def test_argument_completion_ignores_nested_commas_and_respects_encoding(self) -> None:
+        header = ('class Box<T, U> { param value: T; }\n'
+                  'func pair(left: int, right: int): int { return left + right; }\n'
+                  'func run(values: int[], callback: (int, int) => int, value: Box<int, string>): void {}\n'
+                  "func main(): void { const label = '中文😀'; ")
+        for encoding in ('utf-8', 'utf-16'):
+            for call, labels in (
+                    ('run([pair(1, 2), 3], (a, b) => pair(a, b), ¦)', {'value:'}),
+                    ('pair(1, ¦)', {'right:'}), ('Box<int, string>(¦)', {'value:'})):
+                with self.subTest(encoding=encoding, call=call):
+                    items = self.argument_completions(header + call + '; }', encoding)
+                    self.assertEqual({item['label'] for item in items if item['label'].endswith(':')}, labels)
+
+    def test_argument_names_are_not_suggested_in_values_comments_or_shadowed_calls(self) -> None:
+        for source in (
+                "class Box { param value: string; } func main(): void { Box(value: 'hel¦lo'); }",
+                'class Box { param value: int; } func main(): void { const Box = 42; Box(¦); }',
+                'class Box { param value: int; } func main(): void { Box(value: ¦); }',
+                'class Box { param value: int[]; } func main(): void { Box(value: [¦]); }',
+                'class Box { param value: int; } func main(): void { // Box(¦\n}'):
+            with self.subTest(source=source):
+                items = self.argument_completions(source)
+                self.assertFalse(any(item['label'].endswith(':') for item in items))
 
     def test_js_api_names_and_map_results_use_production_types(self) -> None:
         source = ("func main(): void { const numbers = [1, 2]; "
@@ -191,8 +521,8 @@ class LanguageServerTest(unittest.TestCase):
         self.assertFalse({'length', 'remove'} & sets)
         self.assertIn('random', {item['label'] for item in self.reply(messages, 'math')['result']})
         self.assertIn('const mapped: string[]', self.reply(messages, 'mapped')['result']['contents']['value'])
-        self.assertIn('func now(): double', self.reply(messages, 'monotonic')['result']['contents']['value'])
-        self.assertIn('func now(): int', self.reply(messages, 'wall')['result']['contents']['value'])
+        self.assertIn('(method) performance.now(): double', self.reply(messages, 'monotonic')['result']['contents']['value'])
+        self.assertIn('(method) Date.now(): int', self.reply(messages, 'wall')['result']['contents']['value'])
 
     def test_array_join_completion_and_hover_replace_global_builtin(self) -> None:
         source = ("func main(): void { const words = ['a', 'b']; const numbers = [1, 2]; "
@@ -211,7 +541,7 @@ class LanguageServerTest(unittest.TestCase):
             self.assertIn('join', {item['label'] for item in self.reply(messages, name)['result']})
         self.assertNotIn('join', {item['label'] for item in self.reply(messages, 'global')['result']})
         self.assertNotIn('join', {item['label'] for item in self.reply(messages, 'nested')['result']})
-        self.assertIn('func join(separator: string): string',
+        self.assertIn('(method) string[].join(separator: string): string',
                       self.reply(messages, 'hover')['result']['contents']['value'])
 
     def test_inferred_lambda_parameters_expose_hover_members_and_definitions(self) -> None:
@@ -261,7 +591,7 @@ class LanguageServerTest(unittest.TestCase):
         queries = [("values.length", "values: int?[]"),
                    ("operation(identity", "const operation: (int) => int"),
                    ("identity<int>", "func identity<T>(value: T): T"),
-                   ("sqrt(9.0)", "func sqrt(")]
+                   ("sqrt(9.0)", "(method) Math.sqrt(")]
         messages = self.session([self.open(source), *[
             self.symbol_query("hover", source, source.index(needle), str(index))
             for index, (needle, _) in enumerate(queries)]])

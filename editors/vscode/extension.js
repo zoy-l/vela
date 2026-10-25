@@ -154,8 +154,26 @@ function editorRange(range) {
 function registerSymbolProviders(context, client, flush) {
   const selector = { language: "vela", scheme: "file" };
   const linksChanged = new vscode.EventEmitter();
+  const tokensChanged = new vscode.EventEmitter();
+  const tokenLegend = new vscode.SemanticTokensLegend(
+    ["class", "interface", "enum", "type", "typeParameter"], ["declaration", "defaultLibrary"]);
   context.subscriptions.push(
     linksChanged,
+    tokensChanged,
+    vscode.languages.registerDocumentSemanticTokensProvider(selector, {
+      onDidChangeSemanticTokens: tokensChanged.event,
+      async provideDocumentSemanticTokens(document, token) {
+        const version = document.version;
+        if (token.isCancellationRequested) return null;
+        await flush(document);
+        if (document.isClosed || token.isCancellationRequested) return null;
+        const result = await client.request("textDocument/semanticTokens/full", {
+          textDocument: { uri: document.uri.toString() }
+        }, token);
+        if (token.isCancellationRequested || document.version !== version) return null;
+        return new vscode.SemanticTokens(Uint32Array.from(result.data));
+      }
+    }, tokenLegend),
     vscode.languages.registerDocumentLinkProvider(selector, {
       onDidChangeDocumentLinks: linksChanged.event,
       async provideDocumentLinks(document, token) {
@@ -191,10 +209,12 @@ function registerSymbolProviders(context, client, flush) {
           completion.detail = item.detail;
           completion.range = editorRange(item.textEdit.range);
           completion.insertText = item.textEdit.newText;
+          completion.sortText = item.sortText;
+          if (item.documentation) completion.documentation = new vscode.MarkdownString(item.documentation.value);
           return completion;
         });
       }
-    }, "."),
+    }, ".", "(", ","),
     vscode.languages.registerHoverProvider(selector, {
       async provideHover(document, position, token) {
         const version = document.version;
@@ -225,7 +245,7 @@ function registerSymbolProviders(context, client, flush) {
       }
     })
   );
-  return () => linksChanged.fire();
+  return () => { linksChanged.fire(); tokensChanged.fire(); };
 }
 
 function activate(context) {
@@ -280,7 +300,7 @@ function activate(context) {
       const uri = document.uri.toString();
       clearTimeout(timers.get(uri));
       const delay = vscode.workspace.getConfiguration("vela", document.uri).get("diagnosticsDelay", 150);
-      timers.set(uri, setTimeout(() => flush(document).catch(report), delay));
+      timers.set(uri, setTimeout(() => flush(document).then(refreshLinks).catch(report), delay));
     }),
     vscode.workspace.onDidSaveTextDocument(document => {
       if (isVela(document)) flush(document).then(() => connection.notify("textDocument/didSave", {

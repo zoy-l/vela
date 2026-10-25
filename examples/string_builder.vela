@@ -1,5 +1,5 @@
 func main(): void {
-  const builder = StringBuilder();
+  const builder = String();
   builder.append("rows:\n");
   for (let i = 0; i < 5; i = i + 1) {
     builder.append("  ${i.toString()}: 你好，Vela！\n");

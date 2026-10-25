@@ -15,6 +15,7 @@
 #include "compiler/build_info.h"
 #include "compiler/tooling/json_rpc.h"
 #include "compiler/tooling/language_server_internal.h"
+#include "compiler/tooling/semantic_index.h"
 #include "compiler/tooling/source_text.h"
 
 namespace vela::tooling::internal {
@@ -148,8 +149,25 @@ void LanguageServer::Initialize(RpcCall call) {
   auto* completion = yyjson_mut_obj(document);
   auto* triggers = yyjson_mut_arr(document);
   yyjson_mut_arr_add_str(document, triggers, ".");
+  yyjson_mut_arr_add_str(document, triggers, "(");
+  yyjson_mut_arr_add_str(document, triggers, ",");
   AddJsonField(document, completion, "triggerCharacters", triggers);
   AddJsonField(document, capabilities, "completionProvider", completion);
+  auto* semantic = yyjson_mut_obj(document);
+  auto* legend = yyjson_mut_obj(document);
+  auto* types = yyjson_mut_arr(document);
+  for (const auto type : kSemanticTokenTypes) {
+    yyjson_mut_arr_add_strncpy(document, types, type.data(), type.size());
+  }
+  auto* modifiers = yyjson_mut_arr(document);
+  for (const auto modifier : kSemanticTokenModifiers) {
+    yyjson_mut_arr_add_strncpy(document, modifiers, modifier.data(), modifier.size());
+  }
+  AddJsonField(document, legend, "tokenTypes", types);
+  AddJsonField(document, legend, "tokenModifiers", modifiers);
+  AddJsonField(document, semantic, "legend", legend);
+  AddJsonField(document, semantic, "full", yyjson_mut_bool(document, true));
+  AddJsonField(document, capabilities, "semanticTokensProvider", semantic);
   AddJsonField(document, result, "capabilities", capabilities);
   auto* info = yyjson_mut_obj(document);
   AddJsonField(document, info, "name",
@@ -192,6 +210,8 @@ void LanguageServer::Request(std::string_view method, RpcCall call) {
     Query(call, SymbolQuery::Hover);
   } else if (method == "textDocument/documentLink") {
     DocumentLinks(call);
+  } else if (method == "textDocument/semanticTokens/full") {
+    SemanticTokens(call);
   } else {
     Error(request_id, kMethodNotFound, "method is not supported");
   }

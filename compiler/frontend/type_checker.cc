@@ -766,7 +766,7 @@ TypeChecker::Type TypeChecker::CheckEquality(const Expression& expression,
   if (null_comparison) {
     return {.kind = Type::Kind::Bool, .name = "bool"};
   }
-  if (left.kind == Type::Kind::Array || left.kind == Type::Kind::StringBuilder ||
+  if (left.kind == Type::Kind::Array || left.kind == Type::Kind::MutableString ||
       left.kind == Type::Kind::Function || left.kind == Type::Kind::Expected ||
       left.kind == Type::Kind::Set || left.kind == Type::Kind::Map) {
     AddDiagnostic(expression.location, "equality is not defined for this type");

@@ -234,7 +234,7 @@ func main(): string {
 TEST_F(StringLanguageTest, BuilderSnapshotsStayImmutableAndCanBeAppendedAgain) {
   EXPECT_EQ(Text(R"(
 func main(): string {
-  const builder = StringBuilder();
+  const builder = String();
   const empty = builder.toString();
   builder.append("");
   builder.append(text: "中");
@@ -250,12 +250,12 @@ TEST_F(StringLanguageTest, BuilderSurvivesFieldsArraysAliasesAndCollection) {
   auto& isolate = this->isolate();
   auto& compiled = compilation();
   const auto result = Run(R"(
-class Store { param builder: StringBuilder; param builders: StringBuilder[][]; }
-func grow(builder: StringBuilder): void {
+class Store { param builder: String; param builders: String[][]; }
+func grow(builder: String): void {
   for (let i = 0; i < 1000; i = i + 1) { builder.append("${i.toString()}中"); }
 }
 func main(): Store {
-  const builder = StringBuilder();
+  const builder = String();
   grow(builder);
   return Store(builder: builder, builders: [[builder]]);
 })");
@@ -393,9 +393,12 @@ INSTANTIATE_TEST_SUITE_P(
                     R"(func main(): string { return "x"[false]; })",
                     R"(func main(): void { let text = "x"; text[0] = "y"; })",
                     R"(func main(): void { let text = "x"; text.length = 0; })",
-                    R"(func main(): void { StringBuilder().append(1); })",
-                    R"(func main(): string { return StringBuilder().append("x"); })",
-                    R"(func main(): bool { const b = StringBuilder(); return b == b; })",
+                    R"(func main(): void { String().append(1); })",
+                    R"(func main(): void { StringBuilder(); })",
+                    R"(func main(): void { const value: string = String(); })",
+                    R"(func main(): void { const value: String = "immutable"; })",
+                    R"(func main(): string { return String().append("x"); })",
+                    R"(func main(): bool { const b = String(); return b == b; })",
                     R"(func main(): string { return true.toString(1); })",
                     R"(import "a\0b"; func main(): void {})",
                     R"(import "${"path"}"; func main(): void {})"));

@@ -2,7 +2,7 @@
   "name": "vela-language",
   "displayName": "Vela",
   "description": "Vela syntax, completion, hover, import links, go to definition, diagnostics and formatting using the native language server.",
-  "version": "0.1.10",
+  "version": "0.1.17",
   "publisher": "vela",
   "license": "MIT",
   "engines": { "vscode": "^1.143.0" },
@@ -10,11 +10,23 @@
   "main": "./extension.js",
   "activationEvents": [],
   "contributes": {
+    "configurationDefaults": { "[vela]": { "editor.semanticHighlighting.enabled": true } },
+    "semanticTokenScopes": [{
+      "language": "vela",
+      "scopes": {
+        "class": ["entity.name.type.class.vela"],
+        "interface": ["entity.name.type.interface.vela"],
+        "enum": ["entity.name.type.enum.vela"],
+        "type": ["entity.name.type.vela"],
+        "typeParameter": ["entity.name.type.parameter.vela"]
+      }
+    }],
     "languages": [{
       "id": "vela",
       "aliases": ["Vela", "vela"],
       "extensions": [".vela"],
-      "configuration": "./language-configuration.json"
+      "configuration": "./language-configuration.json",
+      "icon": { "light": "./icons/vela-light.svg", "dark": "./icons/vela-dark.svg" }
     }],
     "grammars": [{ "language": "vela", "scopeName": "source.vela", "path": "./syntaxes/vela.tmLanguage.json" }],
     "commands": [{ "command": "vela.showOutput", "title": "Vela: Show Language Server Output" }],

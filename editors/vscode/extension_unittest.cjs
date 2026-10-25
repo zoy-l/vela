@@ -17,6 +17,8 @@ const mock = {
   Location: class { constructor(uri, range) { Object.assign(this, { uri, range }); } },
   MarkdownString: class { constructor(value) { this.value = value; this.isTrusted = false; } },
   Hover: class { constructor(contents, range) { Object.assign(this, { contents, range }); } },
+  SemanticTokensLegend: class { constructor(tokenTypes, tokenModifiers) { Object.assign(this, { tokenTypes, tokenModifiers }); } },
+  SemanticTokens: class { constructor(data) { this.data = data; } },
   DocumentLink: class { constructor(range, target) { Object.assign(this, { range, target }); } },
   EventEmitter: class {
     constructor() { this.listeners = []; this.event = listener => {
@@ -107,14 +109,21 @@ test("extension connection initializes, formats, publishes diagnostics and shuts
 test("VS Code symbol providers synchronize text, map protocol results and discard stale replies", async () => {
   const providers = {};
   mock.languages = {
+    registerDocumentSemanticTokensProvider(selector, provider, legend) {
+      assert.equal(selector.language, "vela");
+      assert.deepEqual(Array.from(legend.tokenTypes), ["class", "interface", "enum", "type", "typeParameter"]);
+      assert.deepEqual(Array.from(legend.tokenModifiers), ["declaration", "defaultLibrary"]);
+      providers.semantic = provider;
+      return { dispose() {} };
+    },
     registerDocumentLinkProvider(selector, provider) {
       assert.equal(selector.language, "vela");
       providers.links = provider;
       return { dispose() {} };
     },
-    registerCompletionItemProvider(selector, provider, trigger) {
+    registerCompletionItemProvider(selector, provider, ...triggers) {
       assert.equal(selector.language, "vela");
-      assert.equal(trigger, ".");
+      assert.deepEqual(triggers, [".", "(", ","]);
       providers.completion = provider;
       return { dispose() {} };
     },
@@ -139,6 +148,10 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
     events.push(method);
     assert.equal(cancellation, token);
     if (stale) document.version++;
+    if (method.endsWith("semanticTokens/full")) {
+      assert.equal(params.textDocument.uri, "file:///test.vela");
+      return { data: [0, 0, 4, 0, 1] };
+    }
     if (method.endsWith("documentLink")) {
       assert.equal(params.textDocument.uri, "file:///test.vela");
       assert.equal(params.position, undefined);
@@ -148,16 +161,19 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
     assert.equal(params.position.character, 5);
     if (method.endsWith("hover")) return { contents: { kind: "markdown", value: "```vela\nvalue: int\n```" }, range };
     return method.endsWith("completion")
-      ? [{ label: "value", kind: 5, detail: "int", textEdit: { range, newText: "value" } }]
+      ? [{ label: "value:", kind: 5, detail: "value: int", sortText: "0value:",
+          documentation: { kind: "markdown", value: "The initial value." }, textEdit: { range, newText: "value: " } }]
       : { uri: "file:///library.vela", range };
   }};
   const context = { subscriptions: [] };
   const refreshLinks = registerSymbolProviders(context, client, async () => { events.push("flush"); });
-  assert.equal(context.subscriptions.length, 5);
+  assert.equal(context.subscriptions.length, 7);
   const completions = await providers.completion.provideCompletionItems(document, position, token);
-  assert.equal(completions[0].label, "value");
+  assert.equal(completions[0].label, "value:");
   assert.equal(completions[0].kind, 4);
-  assert.equal(completions[0].insertText, "value");
+  assert.equal(completions[0].insertText, "value: ");
+  assert.equal(completions[0].sortText, "0value:");
+  assert.equal(completions[0].documentation.value, "The initial value.");
   assert.deepEqual(completions[0].range.values, [2, 3, 2, 7]);
   const target = await providers.definition.provideDefinition(document, position, token);
   assert.equal(target.uri.toString(), "file:///library.vela");
@@ -166,23 +182,30 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
   assert.equal(hover.contents.value, "```vela\nvalue: int\n```");
   assert.equal(hover.contents.isTrusted, false);
   assert.deepEqual(hover.range.values, [2, 3, 2, 7]);
+  const semantic = await providers.semantic.provideDocumentSemanticTokens(document, token);
+  assert.deepEqual(Array.from(semantic.data), [0, 0, 4, 0, 1]);
   const links = await providers.links.provideDocumentLinks(document, token);
   assert.equal(links[0].target.toString(), "file:///library.vela");
   assert.equal(links[0].tooltip, "Open imported Vela module");
   assert.deepEqual(links[0].range.values, [2, 3, 2, 7]);
   let invalidations = 0;
   providers.links.onDidChangeDocumentLinks(() => invalidations++);
+  let semanticInvalidations = 0;
+  providers.semantic.onDidChangeSemanticTokens(() => semanticInvalidations++);
   refreshLinks();
   assert.equal(invalidations, 1);
+  assert.equal(semanticInvalidations, 1);
   stale = true;
   assert.equal((await providers.completion.provideCompletionItems(document, position, token)).length, 0);
   assert.equal(await providers.definition.provideDefinition(document, position, token), null);
   assert.equal(await providers.hover.provideHover(document, position, token), null);
+  assert.equal(await providers.semantic.provideDocumentSemanticTokens(document, token), null);
   assert.equal((await providers.links.provideDocumentLinks(document, token)).length, 0);
   token.isCancellationRequested = true;
   const count = events.length;
   assert.equal((await providers.links.provideDocumentLinks(document, token)).length, 0);
   assert.equal((await providers.completion.provideCompletionItems(document, position, token)).length, 0);
   assert.equal(await providers.hover.provideHover(document, position, token), null);
+  assert.equal(await providers.semantic.provideDocumentSemanticTokens(document, token), null);
   assert.equal(events.length, count);
 });

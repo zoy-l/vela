@@ -23,21 +23,21 @@ namespace {
 
 constexpr std::size_t kMaximumStringLength =
     std::numeric_limits<std::uint32_t>::max() - sizeof(StringObject);
-constexpr std::size_t kInitialBuilderCapacity = 64;
+constexpr std::size_t kInitialMutableStringCapacity = 64;
 
-struct BuilderBuffer final {
+struct MutableStringBuffer final {
   char* data = nullptr;
   std::size_t capacity = 0;
 };
 
-BuilderBuffer& Buffer(HeapObject& object) noexcept {
+MutableStringBuffer& Buffer(HeapObject& object) noexcept {
   void* storage = std::span(&object, 1).last(0).data();
-  return *static_cast<BuilderBuffer*>(storage);
+  return *static_cast<MutableStringBuffer*>(storage);
 }
 
-const BuilderBuffer& Buffer(const HeapObject& object) noexcept {
+const MutableStringBuffer& Buffer(const HeapObject& object) noexcept {
   const void* storage = std::span(&object, 1).last(0).data();
-  return *static_cast<const BuilderBuffer*>(storage);
+  return *static_cast<const MutableStringBuffer*>(storage);
 }
 
 std::span<char> StringStorage(StringObject& string, std::size_t length) noexcept {
@@ -231,43 +231,46 @@ std::expected<StringObject*, StringJoinError> Heap::JoinValues(RegisterView part
       [this](std::size_t length) -> StringObject* { return AllocateStringStorage(length); });
 }
 
-HeapObject* Heap::AllocateStringBuilder() noexcept {
-  const auto size = sizeof(HeapObject) + sizeof(BuilderBuffer);
+HeapObject* Heap::AllocateMutableString() noexcept {
+  const auto size = sizeof(HeapObject) + sizeof(MutableStringBuffer);
   MaybeCollect(size);
   const auto allocation = AllocateRaw(size);
   if (allocation.memory == nullptr) {
     return nullptr;
   }
   auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
-  object->kind = ObjectKind::StringBuilder;
+  object->kind = ObjectKind::MutableString;
   void* storage = std::span(object, 1).last(0).data();
-  std::construct_at(static_cast<BuilderBuffer*>(storage));
+  std::construct_at(static_cast<MutableStringBuffer*>(storage));
   Publish(*object, allocation.size);
   return object;
 }
 
-bool Heap::IsStringBuilder(const HeapObject& object) noexcept {
-  return object.kind == ObjectKind::StringBuilder;
+bool Heap::IsMutableString(const HeapObject& object) noexcept {
+  return object.kind == ObjectKind::MutableString;
 }
 
-std::expected<void, StringBuilderError> Heap::AppendString(HeapObject& builder,
+std::expected<void, MutableStringError> Heap::AppendString(HeapObject& builder,
                                                            std::string_view text) noexcept {
-  if (!IsStringBuilder(builder)) {
-    return std::unexpected(StringBuilderError::NotBuilder);
+  if (!IsMutableString(builder)) {
+    return std::unexpected(MutableStringError::NotMutableString);
   }
   const auto length = builder.length;
   if (text.size() > kMaximumStringLength - length) {
-    return std::unexpected(StringBuilderError::OutOfMemory);
+    return std::unexpected(MutableStringError::OutOfMemory);
   }
   const auto new_length = length + text.size();
   auto& buffer = Buffer(builder);
   if (new_length > buffer.capacity) {
-    const auto capacity = std::max(
-        {new_length, kInitialBuilderCapacity, std::min(kMaximumStringLength, buffer.capacity * 2)});
+    const auto capacity = std::max({
+        new_length,
+        kInitialMutableStringCapacity,
+        std::min(kMaximumStringLength, buffer.capacity * 2),
+    });
     MaybeCollect(capacity);
     auto* memory = static_cast<char*>(::operator new(capacity, std::nothrow));
     if (memory == nullptr) {
-      return std::unexpected(StringBuilderError::OutOfMemory);
+      return std::unexpected(MutableStringError::OutOfMemory);
     }
     std::ranges::copy(std::span(buffer.data, length), memory);
     const auto old_capacity = buffer.capacity;
@@ -288,7 +291,7 @@ StringObject* Heap::BuildString(const HeapObject& builder) noexcept {
   return AllocateString(std::string_view(buffer.data, builder.length));
 }
 
-void Heap::ReleaseStringBuilder(HeapObject& object) noexcept {
+void Heap::ReleaseMutableString(HeapObject& object) noexcept {
   auto& buffer = Buffer(object);
   allocated_bytes_ -= buffer.capacity;
   committed_bytes_ -= buffer.capacity;

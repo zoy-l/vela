@@ -18,7 +18,7 @@ void TypeChecker::CollectTypes(const Program& program) {
   types_.emplace("int", Type{.kind = Type::Kind::Int, .name = "int"});
   types_.emplace("double", Type{.kind = Type::Kind::Double, .name = "double"});
   types_.emplace("string", Type{.kind = Type::Kind::String, .name = "string"});
-  types_.emplace("StringBuilder", Type{.kind = Type::Kind::StringBuilder, .name = "StringBuilder"});
+  types_.emplace("String", Type{.kind = Type::Kind::MutableString, .name = "String"});
   static_cast<void>(ArrayType(types_.at("string")));
   static_cast<void>(ArrayType(types_.at("int")));
   types_.reserve(types_.size() + program.enums.size() + program.classes.size());

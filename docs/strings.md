@@ -71,9 +71,12 @@ stream locale and numeric formatting flags.
 | `text.endsWith(suffix: string)` | `bool` | Exact suffix, including the empty suffix |
 | `left + right` | `string` | At least one operand has string type; formats primitive/null operands into one final string |
 | `parts.join(separator: string)` | `string` | Primitive arrays, including nullable elements; formats null as `null`; empty array produces an empty string |
-| `StringBuilder()` | `StringBuilder` | Creates an empty, GC-owned mutable builder |
+| `String()` | `String` | Creates an empty, GC-owned mutable builder |
 | `builder.append(text: string)` | `void` | Copies text into its buffer with geometric capacity growth |
 | `builder.toString()` | `string` | Creates an independent immutable snapshot |
+
+`String` is the mutable construction type; lowercase `string` is the immutable
+UTF-8 value type. Use `toString()` to create an immutable snapshot.
 
 All listed parameters are required. Arguments may be positional or named and
 are evaluated in source order even when named arguments reorder parameters.
@@ -81,7 +84,7 @@ Indices must satisfy `0 <= index < length`; slice bounds must satisfy
 `0 <= start <= end <= length`. Invalid ranges return the VM's recoverable
 `IndexOutOfBounds` status. There is no negative indexing, clamping, or implicit
 numeric conversion. Strings' indexed values and length properties cannot be
-assigned. `StringBuilder` is a reserved builtin declaration name. There is no
+assigned. `String` is a reserved builtin declaration name. There is no
 global `join`; ordinary user declarations may use that name. The array receiver
 evaluates before the separator, each once. Array element types remain homogeneous:
 `[1, 2].join(',')` is valid; `[name, 42, true]` is not. Use

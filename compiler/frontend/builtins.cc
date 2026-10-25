@@ -48,7 +48,7 @@ const auto kSignatures = std::to_array<FunctionDescriptor>({
               {
                   {.name = "separator", .kind = Kind::String, .type = "string"},
               }),
-    Signature(Kind::StringBuilder, "StringBuilder", {}),
+    Signature(Kind::MutableString, "String", {}),
     Signature(Kind::Void, "void", {{.name = "text", .kind = Kind::String, .type = "string"}}),
     Signature(Kind::String, "string", {}),
     Signature(Kind::Int, "int", {}),
@@ -214,8 +214,8 @@ std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {
     return std::nullopt;
   }
   if (receiver == Kind::Invalid) {
-    if (name == "StringBuilder") {
-      return Builtin::NewStringBuilder;
+    if (name == "String") {
+      return Builtin::NewMutableString;
     }
   } else if ((receiver == Kind::Int || receiver == Kind::Double) && name == "toInt") {
     return Builtin::NumericToInt;
@@ -224,12 +224,12 @@ std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {
   } else if ((receiver == Kind::Int || receiver == Kind::Double || receiver == Kind::Bool) &&
              name == "toString") {
     return Builtin::ScalarToString;
-  } else if (receiver == Kind::StringBuilder) {
+  } else if (receiver == Kind::MutableString) {
     if (name == "append") {
-      return Builtin::BuilderAppend;
+      return Builtin::MutableStringAppend;
     }
     if (name == "toString") {
-      return Builtin::BuilderToString;
+      return Builtin::MutableStringToString;
     }
   }
   return std::nullopt;

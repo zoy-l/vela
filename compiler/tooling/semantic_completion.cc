@@ -17,6 +17,7 @@
 #include "compiler/frontend/builtins.h"
 #include "compiler/frontend/token.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/tooling/builtin_documentation.h"
 
 namespace vela::tooling {
 namespace {
@@ -36,11 +37,27 @@ std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
 
 void AddBuiltins(std::vector<Completion>& result, Kind kind) {
   if (kind == Kind::Invalid) {
-    result.push_back(
-        {.label = "print", .detail = "(value): void", .kind = CompletionKind::Function});
+    result.push_back({
+        .label = "print",
+        .detail = "(value): void",
+        .kind = CompletionKind::Function,
+        .documentation = std::string(BuiltinDocumentation(kind, "print")),
+    });
+    result.push_back({
+        .label = "ok",
+        .detail = "(value: T): Expected<T, E>",
+        .kind = CompletionKind::Function,
+        .documentation = std::string(BuiltinDocumentation(kind, "ok")),
+    });
+    result.push_back({
+        .label = "err",
+        .detail = "(error: E): Expected<T, E>",
+        .kind = CompletionKind::Function,
+        .documentation = std::string(BuiltinDocumentation(kind, "err")),
+    });
   }
   constexpr auto kNames = std::to_array<std::string_view>({
-      "StringBuilder",
+      "String",
       "toString",
       "toInt",
       "toDouble",
@@ -56,10 +73,18 @@ void AddBuiltins(std::vector<Completion>& result, Kind kind) {
   });
   for (const auto name : kNames) {
     if (const auto builtin = frontend::FindBuiltin(kind, name)) {
+      auto completion_kind =
+          kind == Kind::Invalid ? CompletionKind::Function : CompletionKind::Method;
+      if (*builtin == Builtin::NewMutableString) {
+        completion_kind = CompletionKind::Class;
+      }
       result.push_back({
           .label = std::string(name),
-          .detail = BuiltinDetail(frontend::BuiltinSignature(*builtin)),
-          .kind = kind == Kind::Invalid ? CompletionKind::Function : CompletionKind::Method,
+          .detail = *builtin == Builtin::NewMutableString
+                        ? std::string(BuiltinTypeDetail(name))
+                        : BuiltinDetail(frontend::BuiltinSignature(*builtin)),
+          .kind = completion_kind,
+          .documentation = std::string(BuiltinDocumentation(kind, name)),
       });
     }
   }
@@ -71,12 +96,14 @@ void AddArrayElementMethods(std::vector<Completion>& result,
       .label = "fill",
       .detail = "(value: " + element.name + "): void",
       .kind = CompletionKind::Method,
+      .documentation = {},
   });
   if (frontend::CanFormatString(element)) {
     result.push_back({
         .label = "join",
         .detail = BuiltinDetail(frontend::BuiltinSignature(Builtin::ArrayJoin)),
         .kind = CompletionKind::Method,
+        .documentation = {},
     });
   }
   for (const auto& [name, algorithm] : frontend::ArrayAlgorithms()) {
@@ -89,6 +116,7 @@ void AddArrayElementMethods(std::vector<Completion>& result,
         .label = std::string(name),
         .detail = BuiltinDetail(frontend::ArrayAlgorithmSignature(algorithm, element, accumulator)),
         .kind = CompletionKind::Method,
+        .documentation = {},
     });
   }
 }
@@ -105,10 +133,46 @@ std::optional<Completion> SemanticIndex::BuiltinCompletion(const frontend::Token
     if (index > 0 && tokens.at(index - 1).kind == frontend::TokenKind::Dot) {
       return std::nullopt;
     }
+    if (const auto detail = BuiltinTypeDetail(token.lexeme); !detail.empty()) {
+      return Completion{
+          .label = token.lexeme,
+          .detail = std::string(detail),
+          .kind = detail.starts_with("class ") ? CompletionKind::Class : CompletionKind::Type,
+          .documentation = std::string(BuiltinDocumentation(Kind::Invalid, token.lexeme)),
+      };
+    }
+    if (const auto expected = ExpectedFactoryCompletion(token)) {
+      return expected;
+    }
     AddBuiltins(candidates, Kind::Invalid);
   }
   const auto found = std::ranges::find(candidates, token.lexeme, &Completion::label);
   return found == candidates.end() ? std::nullopt : std::optional(*found);
+}
+
+std::optional<Completion> SemanticIndex::ExpectedFactoryCompletion(
+    const frontend::Token& token) const {
+  if (token.lexeme != "ok" && token.lexeme != "err") {
+    return std::nullopt;
+  }
+  const auto call = calls_.find(Key{0, token.offset});
+  if (call == calls_.end()) {
+    return std::nullopt;
+  }
+  const auto type = model_.expression_types.find(call->second);
+  if (type == model_.expression_types.end() || type->second.kind != Kind::Expected) {
+    return std::nullopt;
+  }
+  const auto& arguments = model_.generic_arguments.at(type->second.name);
+  const auto& payload = token.lexeme == "ok" ? arguments.front() : arguments.back();
+  const auto* const name = token.lexeme == "ok" ? "value: " : "error: ";
+  return Completion{
+      .label = token.lexeme,
+      .detail = "(" + (payload.kind == Kind::Void ? std::string{} : name + payload.name) +
+                "): " + type->second.name,
+      .kind = CompletionKind::Function,
+      .documentation = std::string(BuiltinDocumentation(Kind::Invalid, token.lexeme)),
+  };
 }
 
 std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receiver) const {
@@ -131,6 +195,11 @@ std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receive
     return result;
   }
   AddContainerCompletions(result, receiver.type);
+  for (auto& completion : result) {
+    if (completion.documentation.empty()) {
+      completion.documentation = BuiltinDocumentation(receiver.type.kind, completion.label);
+    }
+  }
   return result;
 }
 
@@ -139,12 +208,20 @@ void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
   const auto kind = type.kind;
   AddBuiltins(result, kind);
   const auto property = [&result](std::string_view name) -> void {
-    result.push_back(
-        {.label = std::string(name), .detail = "int", .kind = CompletionKind::Property});
+    result.push_back({
+        .label = std::string(name),
+        .detail = "int",
+        .kind = CompletionKind::Property,
+        .documentation = {},
+    });
   };
   const auto method = [&result](std::string_view name, std::string detail) -> void {
-    result.push_back(
-        {.label = std::string(name), .detail = std::move(detail), .kind = CompletionKind::Method});
+    result.push_back({
+        .label = std::string(name),
+        .detail = std::move(detail),
+        .kind = CompletionKind::Method,
+        .documentation = {},
+    });
   };
   if (kind == Kind::Array || kind == Kind::String) {
     property("length");
@@ -271,8 +348,12 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
       selected.try_emplace(completion.label, completion);
     }
     for (const auto& [name, source_id] : prefixes_) {
-      selected.try_emplace(
-          name, Completion{.label = name, .detail = "module", .kind = CompletionKind::Module});
+      selected.try_emplace(name, Completion{
+                                     .label = name,
+                                     .detail = "module",
+                                     .kind = CompletionKind::Module,
+                                     .documentation = {},
+                                 });
     }
     AddBuiltins(result, Kind::Invalid);
     constexpr auto kKeywords = std::to_array<std::string_view>({
@@ -284,8 +365,12 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
         "external",   "is",       "as",      "true",   "false",   "null",
     });
     for (const auto keyword : kKeywords) {
-      result.push_back(
-          {.label = std::string(keyword), .detail = "keyword", .kind = CompletionKind::Keyword});
+      result.push_back({
+          .label = std::string(keyword),
+          .detail = "keyword",
+          .kind = CompletionKind::Keyword,
+          .documentation = {},
+      });
     }
     constexpr auto kTypes = std::to_array<std::string_view>({
         "int",
@@ -303,8 +388,14 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
         "Error",
     });
     for (const auto type : kTypes) {
-      result.push_back(
-          {.label = std::string(type), .detail = "type", .kind = CompletionKind::Type});
+      selected.try_emplace(
+          std::string(type),
+          Completion{
+              .label = std::string(type),
+              .detail = "type",
+              .kind = CompletionKind::Type,
+              .documentation = std::string(BuiltinDocumentation(Kind::Invalid, type)),
+          });
     }
     for (auto& [name, completion] : selected) {
       result.push_back(std::move(completion));

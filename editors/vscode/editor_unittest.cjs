@@ -11,6 +11,11 @@ async function runEditorTests() {
   const extension = vscode.extensions.getExtension("vela.vela-language");
   assert.ok(extension, "Vela extension must be available in the real extension host");
   await extension.activate();
+  const language = extension.packageJSON.contributes.languages.find(item => item.id === "vela");
+  for (const variant of ["light", "dark"]) {
+    const svg = await fs.readFile(path.join(extension.extensionPath, language.icon[variant]), "utf8");
+    assert.ok(svg.includes('viewBox="0 0 16 16"'), "language file icons must be bundled for both themes");
+  }
   const root = path.resolve(__dirname, "../..");
   const configurationUri = vscode.Uri.file(path.join(__dirname, "language-configuration.json"));
   await vscode.workspace.openTextDocument(configurationUri);
@@ -64,7 +69,90 @@ async function runEditorTests() {
     const arrayHover = await vscode.commands.executeCommand("vscode.executeHoverProvider", standardUri,
       standardDocument.positionAt(standardText.indexOf("sort(")));
     assert.ok(arrayHover[0].contents.some(content => content.value.includes("sort(compare: (int, int) => int)")));
+    assert.ok(arrayHover[0].contents.some(content => content.value.includes("Sorts in place")));
+    const mathHover = await vscode.commands.executeCommand("vscode.executeHoverProvider", standardUri,
+      standardDocument.positionAt(standardText.indexOf("sqrt(")));
+    assert.ok(mathHover[0].contents.some(content => content.value.includes("square root")));
+    const sqrtCompletion = standardCompletion.items.find(item => item.label === "sqrt");
+    assert.ok(sqrtCompletion.documentation.value.includes("square root"));
     console.log("PASS: default standard objects and array algorithm signatures work without imports");
+    const typeHoverUri = vscode.Uri.file(path.join(directory, "type-hover.vela"));
+    const typeHoverText = "/// Brightness levels.\nenum Brightness { light, dark }\n" +
+      "/// A readable value.\ninterface Readable { read(scale: int): int; }\n" +
+      "type Callback<T> = (T) => string;\n" +
+      "func use(value: Readable): int { return value.read(2); }\n" +
+      "func main(): void { const convert: Callback<int> = value => value.toString(); print(Brightness.dark); }\n";
+    await fs.writeFile(typeHoverUri.fsPath, typeHoverText);
+    const typeHoverDocument = await vscode.workspace.openTextDocument(typeHoverUri);
+    temporaryDocuments.push(typeHoverDocument);
+    for (const [marker, expected] of [
+      ["Brightness {", "enum Brightness\n```\n\nBrightness levels."],
+      ["dark);", "(enum member) Brightness.dark = 1"],
+      ["Readable {", "interface Readable\n```\n\nA readable value."],
+      ["read(2)", "(method) Readable.read(scale: int): int"],
+      ["Callback<int>", "type Callback<T> = (T) => string"]
+    ]) {
+      const typeHover = await vscode.commands.executeCommand("vscode.executeHoverProvider", typeHoverUri,
+        typeHoverDocument.positionAt(typeHoverText.indexOf(marker)));
+      assert.ok(typeHover[0].contents.some(content => content.value.includes(expected)), expected);
+    }
+    console.log("PASS: enum, interface, member and generic alias hovers follow TypeScript conventions");
+    const mutableStringUri = vscode.Uri.file(path.join(directory, "mutable-string.vela"));
+    const mutableStringText = "func main(): void { const text: String = String(); text.append('x'); print(text.toString()); }\n";
+    await fs.writeFile(mutableStringUri.fsPath, mutableStringText);
+    const mutableStringDocument = await vscode.workspace.openTextDocument(mutableStringUri);
+    temporaryDocuments.push(mutableStringDocument);
+    const mutableStringHover = await vscode.commands.executeCommand("vscode.executeHoverProvider", mutableStringUri,
+      mutableStringDocument.positionAt(mutableStringText.indexOf("String()")));
+    assert.ok(mutableStringHover[0].contents.some(content => content.value.includes("class String {\n  constructor();\n}")));
+    const mutableStringCompletion = await vscode.commands.executeCommand("vscode.executeCompletionItemProvider", mutableStringUri,
+      mutableStringDocument.positionAt(mutableStringText.indexOf("text.append") + "text.".length));
+    assert.ok(mutableStringCompletion.items.some(item => item.label === "append"));
+    assert.ok(mutableStringCompletion.items.some(item => item.label === "toString"));
+    console.log("PASS: String constructor hover and mutable string member completion use the renamed API");
+    const argumentUri = vscode.Uri.file(path.join(directory, "arguments.vela"));
+    const argumentText = "class Counter { public param value: int; param step: int = 1; }\nfunc main(): void { Counter(); }\n";
+    await fs.writeFile(argumentUri.fsPath, argumentText);
+    const argumentDocument = await vscode.workspace.openTextDocument(argumentUri);
+    temporaryDocuments.push(argumentDocument);
+    const argumentOffset = argumentText.lastIndexOf("Counter(") + "Counter(".length;
+    const classHover = await vscode.commands.executeCommand("vscode.executeHoverProvider",
+      argumentUri, argumentDocument.positionAt(argumentOffset - "Counter(".length));
+    assert.ok(classHover[0].contents.some(content => content.value.includes("constructor(value: int, step: int = 1)")));
+    const semanticLegend = await vscode.commands.executeCommand("vscode.provideDocumentSemanticTokensLegend", argumentUri);
+    const semanticTokens = await vscode.commands.executeCommand("vscode.provideDocumentSemanticTokens", argumentUri);
+    assert.ok(semanticTokens && semanticTokens.data.length, "user classes must have semantic highlighting in the real editor");
+    const classKind = semanticLegend.tokenTypes.indexOf("class");
+    let semanticLine = 0, semanticCharacter = 0;
+    let classUses = 0;
+    for (let index = 0; index < semanticTokens.data.length; index += 5) {
+      const [deltaLine, deltaCharacter, length, kind] = semanticTokens.data.slice(index, index + 4);
+      semanticLine += deltaLine;
+      semanticCharacter = deltaLine ? deltaCharacter : semanticCharacter + deltaCharacter;
+      const spelling = argumentDocument.getText(new vscode.Range(semanticLine, semanticCharacter,
+        semanticLine, semanticCharacter + length));
+      if (kind === classKind && spelling === "Counter") classUses++;
+    }
+    assert.equal(classUses, 2, "class declaration and constructor use must both receive class coloring");
+    const argumentsList = await vscode.commands.executeCommand("vscode.executeCompletionItemProvider",
+      argumentUri, argumentDocument.positionAt(argumentOffset), "(");
+    const valueArgument = argumentsList.items.find(item => item.label === "value:");
+    assert.ok(valueArgument, "constructors must offer actual named-argument code completion");
+    assert.equal(valueArgument.insertText, "value: ");
+    assert.equal(valueArgument.detail, "value: int");
+    assert.ok(argumentsList.items.some(item => item.label === "step:" && item.detail.includes("= …")));
+    const argumentEdit = new vscode.WorkspaceEdit();
+    argumentEdit.replace(argumentUri, valueArgument.range, valueArgument.insertText + "40, ");
+    assert.equal(await vscode.workspace.applyEdit(argumentEdit), true);
+    assert.ok(argumentDocument.getText().includes("Counter(value: 40, )"));
+    const secondArguments = await vscode.commands.executeCommand("vscode.executeCompletionItemProvider",
+      argumentUri, argumentDocument.positionAt(argumentDocument.getText().indexOf("40, ") + 4), ",");
+    assert.ok(secondArguments.items.some(item => item.label === "step:"));
+    assert.ok(!secondArguments.items.some(item => item.label === "value:"), "filled parameters must be excluded");
+    const signature = await vscode.commands.executeCommand("vscode.executeSignatureHelpProvider",
+      argumentUri, argumentDocument.positionAt(argumentOffset));
+    assert.ok(!signature || signature.signatures.length === 0, "parameter tooltips must be removed");
+    console.log("PASS: constructor code completion inserts named arguments and removes filled parameters");
     const importedUri = vscode.Uri.file(path.join(directory, "imported.vela"));
     const importingUri = vscode.Uri.file(path.join(directory, "imports.vela"));
     const importingSource = "import './imported';\nfunc main(): int { return answer(); }\n";

@@ -27,14 +27,8 @@
 #include "compiler/tooling/source_text.h"
 
 namespace vela::tooling {
-namespace {
 
-using frontend::Expression;
-using frontend::Statement;
-using frontend::TokenKind;
-using frontend::TypeName;
-
-std::string DisplayName(std::string_view name) {
+std::string DisplaySymbolName(std::string_view name) {
   std::string text(name);
   for (auto begin = text.find("$module"); begin != std::string::npos;
        begin = text.find("$module", begin)) {
@@ -47,16 +41,28 @@ std::string DisplayName(std::string_view name) {
   return text;
 }
 
+namespace {
+
+using frontend::Expression;
+using frontend::Statement;
+using frontend::TokenKind;
+using frontend::TypeName;
+
 std::string TypeText(const TypeName& type) {
   switch (type.kind) {
     case TypeName::Kind::Named:
-      return DisplayName(type.name);
+      return DisplaySymbolName(type.name);
     case TypeName::Kind::Array:
-      return TypeText(type.arguments.front()) + "[]";
-    case TypeName::Kind::Nullable:
-      return TypeText(type.arguments.front()) + "?";
+    case TypeName::Kind::Nullable: {
+      const auto& element = type.arguments.front();
+      auto text = TypeText(element);
+      if (element.kind == TypeName::Kind::Function) {
+        text = '(' + text + ')';
+      }
+      return text + (type.kind == TypeName::Kind::Array ? "[]" : "?");
+    }
     case TypeName::Kind::Generic: {
-      auto text = DisplayName(type.name) + '<';
+      auto text = DisplaySymbolName(type.name) + '<';
       for (const auto& argument : type.arguments) {
         if (text.back() != '<') {
           text += ", ";
@@ -89,6 +95,18 @@ std::string Signature(const frontend::Function& function) {
     text += parameter.name + ": " + TypeText(parameter.type);
   }
   return text + "): " + TypeText(function.return_type);
+}
+
+std::string GenericName(std::string_view source_name, std::span<const std::string> parameters) {
+  auto name = DisplaySymbolName(source_name);
+  if (!parameters.empty()) {
+    name += '<';
+    for (const auto& parameter : parameters) {
+      name += (name.back() == '<' ? "" : ", ") + parameter;
+    }
+    name += '>';
+  }
+  return name;
 }
 
 std::optional<TokenKind> Closing(TokenKind kind) {
@@ -307,9 +325,10 @@ std::size_t SemanticIndex::AddSymbol(SourceLocation location, Completion complet
   const auto [found, inserted] = declarations_.try_emplace(key, symbols_.size());
   if (inserted) {
     completion.label = name.lexeme;
+    completion.documentation = DocumentationAt(location);
     symbols_.push_back({
         .completion = std::move(completion),
-        .documentation = DocumentationAt(location),
+        .owner = {},
         .key = key,
         .length = name.length,
     });
@@ -321,17 +340,22 @@ std::size_t SemanticIndex::AddSymbol(SourceLocation location, Completion complet
 void SemanticIndex::CollectDeclarations() {
   const auto declare = [this](const auto& declaration, CompletionKind kind,
                               const std::string& detail) -> std::size_t {
-    const auto symbol_id = AddSymbol(declaration.location,
-                                     {.label = declaration.name, .detail = detail, .kind = kind});
+    const auto symbol_id =
+        AddSymbol(declaration.location,
+                  {.label = declaration.name, .detail = detail, .kind = kind, .documentation = {}});
     symbols_.at(symbol_id).export_kind = declaration.export_kind;
     names_.insert_or_assign(declaration.name, symbol_id);
     return symbol_id;
   };
   const auto member = [this](std::string_view owner, const auto& declaration, CompletionKind kind,
                              const std::string& detail) -> std::size_t {
-    const auto symbol_id = AddSymbol(declaration.location,
-                                     {.label = declaration.name, .detail = detail, .kind = kind});
+    const auto symbol_id =
+        AddSymbol(declaration.location,
+                  {.label = declaration.name, .detail = detail, .kind = kind, .documentation = {}});
     auto& symbol = symbols_.at(symbol_id);
+    if (symbol.owner.empty()) {
+      symbol.owner = DisplaySymbolName(owner);
+    }
     symbol.visibility = declaration.visibility;
     symbol.storage = declaration.storage;
     members_.try_emplace(owner).first->second.insert_or_assign(declaration.name, symbol_id);
@@ -349,14 +373,16 @@ void SemanticIndex::CollectDeclarations() {
             TypeText(declaration.type));
     if (checked != model_.globals.end()) {
       symbols_.at(names_.at(declaration.name)).completion.detail =
-          DisplayName(checked->second.type.name);
+          DisplaySymbolName(checked->second.type.name);
     }
   }
   for (const auto& declaration : program_.aliases) {
-    declare(declaration, CompletionKind::Type, TypeText(declaration.target));
+    declare(declaration, CompletionKind::Type,
+            "type " + GenericName(declaration.name, declaration.type_parameters) + " = " +
+                TypeText(declaration.target));
   }
   for (const auto& declaration : program_.classes) {
-    const auto class_symbol = declare(declaration, CompletionKind::Class, "class");
+    const auto class_symbol = declare(declaration, CompletionKind::Class, ClassDetail(declaration));
     for (const auto& field : declaration.fields) {
       const auto field_symbol =
           member(declaration.name, field, CompletionKind::Field, TypeText(field.type));
@@ -386,16 +412,24 @@ void SemanticIndex::CollectDeclarations() {
   }
   for (const auto& declaration : program_.enums) {
     declare(declaration, CompletionKind::Enum, "enum");
-    auto& members = members_.try_emplace(declaration.name).first->second;
-    for (const auto& value : declaration.members) {
-      const auto symbol_id = AddSymbol(value.location, {
-                                                           .label = value.name,
-                                                           .detail = DisplayName(declaration.name),
-                                                           .kind = CompletionKind::EnumMember,
-                                                       });
-      symbols_.at(symbol_id).storage = frontend::MemberStorage::Static;
-      members.insert_or_assign(value.name, symbol_id);
-    }
+    CollectEnumMembers(declaration);
+  }
+}
+
+void SemanticIndex::CollectEnumMembers(const frontend::Enum& declaration) {
+  auto& members = members_.try_emplace(declaration.name).first->second;
+  const auto owner = DisplaySymbolName(declaration.name);
+  std::size_t ordinal = 0;
+  for (const auto& value : declaration.members) {
+    const auto symbol_id = AddSymbol(
+        value.location, {
+                            .label = value.name,
+                            .detail = owner + '.' + value.name + " = " + std::to_string(ordinal++),
+                            .kind = CompletionKind::EnumMember,
+                            .documentation = {},
+                        });
+    symbols_.at(symbol_id).storage = frontend::MemberStorage::Static;
+    members.insert_or_assign(value.name, symbol_id);
   }
 }
 
@@ -406,8 +440,10 @@ void SemanticIndex::CollectParameters(std::size_t symbol, const frontend::Functi
                                                                 .label = parameter.name,
                                                                 .detail = TypeText(parameter.type),
                                                                 .kind = CompletionKind::Variable,
+                                                                .documentation = {},
                                                             });
     declared.insert_or_assign(parameter.name, parameter_id);
+    symbols_.at(parameter_id).role = Symbol::Role::Parameter;
   }
 }
 
@@ -422,6 +458,9 @@ void SemanticIndex::AddReference(SourceLocation location, std::string_view name)
 void SemanticIndex::VisitType(const TypeName& type) {
   if (type.name.empty()) {
     return;
+  }
+  if (context_type_parameters_.contains(type.name)) {
+    type_parameters_.try_emplace(KeyAt(type.location), 0U);
   }
   if (type.kind == TypeName::Kind::Named || type.kind == TypeName::Kind::Generic) {
     auto token = TokenAt(type.location);
@@ -447,9 +486,12 @@ void SemanticIndex::DeclareLocal(const void* node,
   if (phase_ == IndexPhase::SourceTypes) {
     return;
   }
-  const auto symbol = AddSymbol(
-      location,
-      {.label = std::string(name), .detail = std::move(detail), .kind = CompletionKind::Variable});
+  const auto symbol = AddSymbol(location, {
+                                              .label = std::string(name),
+                                              .detail = std::move(detail),
+                                              .kind = CompletionKind::Variable,
+                                              .documentation = {},
+                                          });
   locals_.push_back({.symbol = symbol, .scope = scope, .available = available});
   if (const auto binding = model_.bindings.find(node); binding != model_.bindings.end()) {
     bindings_.insert_or_assign(binding->second, symbol);
@@ -459,6 +501,8 @@ void SemanticIndex::DeclareLocal(const void* node,
 void SemanticIndex::VisitFunction(const frontend::Function& function,
                                   const Scope& scope,
                                   const frontend::FunctionDescriptor* signature) {
+  auto previous_parameters = context_type_parameters_;
+  MarkTypeParameters(function.location, function.type_parameters);
   VisitType(function.return_type);
   auto body = function.body ? Extent(*function.body) : scope;
   body.depth = scope.depth + 1;
@@ -469,14 +513,18 @@ void SemanticIndex::VisitFunction(const frontend::Function& function,
       if (signature != nullptr) {
         const auto parameter_index = signature->parameter_indices.find(parameter.name);
         if (parameter_index != signature->parameter_indices.end()) {
-          detail = DisplayName(signature->parameters.at(parameter_index->second).type.name);
+          detail = DisplaySymbolName(signature->parameters.at(parameter_index->second).type.name);
         }
       }
       DeclareLocal(&parameter, parameter.location, parameter.name, std::move(detail), body,
                    body.begin);
+      if (phase_ == IndexPhase::Checked) {
+        symbols_.at(declarations_.at(KeyAt(parameter.location))).role = Symbol::Role::Parameter;
+      }
     }
   }
   VisitStatement(function.body.get(), body);
+  context_type_parameters_ = std::move(previous_parameters);
 }
 
 void SemanticIndex::VisitStatement(const Statement* statement, Scope scope) {
@@ -494,7 +542,7 @@ void SemanticIndex::VisitStatement(const Statement* statement, Scope scope) {
   if (statement->kind == Statement::Kind::VariableDeclaration) {
     const auto type = model_.local_types.find(statement);
     const auto detail = type == model_.local_types.end() ? TypeText(statement->type)
-                                                         : DisplayName(type->second.name);
+                                                         : DisplaySymbolName(type->second.name);
     DeclareLocal(statement, statement->location, statement->name, detail, scope,
                  Extent(*statement).end);
     if (phase_ == IndexPhase::Checked && statement->binding == frontend::BindingKind::Constant) {
@@ -600,6 +648,9 @@ void SemanticIndex::VisitExpression(const Expression* expression, const Scope& s
   }
   const auto target = expression->callee ? references_.find(KeyAt(expression->callee->location))
                                          : references_.end();
+  if (phase_ == IndexPhase::Checked && expression->kind == Expression::Kind::Call) {
+    calls_.insert_or_assign(KeyAt(expression->callee->location), expression);
+  }
   const auto parameters =
       target != references_.end() ? parameters_.find(target->second) : parameters_.end();
   for (const auto& argument : expression->arguments) {
@@ -644,6 +695,7 @@ void SemanticIndex::VisitProgram() {
   }
   for (const auto& declaration : program_.classes) {
     context_class_ = declaration.name;
+    MarkTypeParameters(declaration.location, declaration.type_parameters);
     for (const auto& type : declaration.interfaces) {
       VisitType(type);
     }
@@ -658,6 +710,7 @@ void SemanticIndex::VisitProgram() {
       VisitFunction(*declaration.constructor, root);
     }
     context_class_.clear();
+    context_type_parameters_.clear();
   }
   for (const auto& declaration : program_.interfaces) {
     for (const auto& method : declaration.methods) {
@@ -665,7 +718,9 @@ void SemanticIndex::VisitProgram() {
     }
   }
   for (const auto& alias : program_.aliases) {
+    MarkTypeParameters(alias.location, alias.type_parameters);
     VisitType(alias.target);
+    context_type_parameters_.clear();
   }
   for (const auto& global : program_.globals) {
     VisitType(global.type);
@@ -840,55 +895,91 @@ std::string SemanticIndex::DocumentationAt(SourceLocation location) const {
   return result;
 }
 
-std::optional<Hover> SemanticIndex::FindHover(std::size_t offset, PositionEncoding encoding) const {
-  const auto* token = QueryToken(offset);
-  if (token == nullptr ||
-      (token->kind != TokenKind::Identifier && token->kind != TokenKind::Print)) {
-    return std::nullopt;
-  }
-  Completion completion;
-  std::string documentation;
-  const auto symbol = references_.find(Key{0, token->offset});
-  if (symbol != references_.end()) {
-    const auto& declaration = symbols_.at(symbol->second);
-    completion = declaration.completion;
-    documentation = declaration.documentation;
-  } else if (const auto builtin = BuiltinCompletion(*token)) {
-    completion = *builtin;
-  } else {
-    return std::nullopt;
-  }
-  auto signature = completion.label;
-  switch (completion.kind) {
-    case CompletionKind::Function:
-    case CompletionKind::Method:
-      signature = "func " + signature + completion.detail;
-      break;
-    case CompletionKind::Class:
-    case CompletionKind::Interface:
-    case CompletionKind::Enum:
-      signature = completion.detail + ' ' + signature;
-      break;
-    case CompletionKind::Type:
-      signature = "type " + signature + " = " + completion.detail;
-      break;
-    case CompletionKind::Constant:
-      signature = "const " + signature + ": " + completion.detail;
-      break;
+std::string SemanticIndex::DefaultValue(const Expression& expression) const {
+  const auto& source = sources_.at(expression.location.source_id);
+  const auto& token = source.tokens.at(TokenAt(expression.location));
+  switch (expression.kind) {
+    case Expression::Kind::IntegerLiteral:
+      return expression.text;
+    case Expression::Kind::DoubleLiteral:
+    case Expression::Kind::BooleanLiteral:
+    case Expression::Kind::StringLiteral:
+    case Expression::Kind::NullLiteral:
+      return std::string(source.text.text().substr(token.offset, token.length));
+    case Expression::Kind::Unary:
+      return token.lexeme + DefaultValue(*expression.operand);
     default:
-      signature += ": " + completion.detail;
-      break;
+      return "…";
   }
-  const auto& source = sources_.front().text;
-  return Hover{
-      .signature = std::move(signature),
-      .documentation = std::move(documentation),
-      .range =
-          {
-              .start = source.PositionAt(token->offset, encoding),
-              .end = source.PositionAt(token->offset + token->length, encoding),
-          },
-  };
+}
+
+std::string SemanticIndex::ClassDetail(const frontend::Class& declaration) const {
+  auto text = "class " + GenericName(declaration.name, declaration.type_parameters) + " {\n  ";
+  if (declaration.constructor &&
+      declaration.constructor->visibility == frontend::Visibility::Private) {
+    text += "private ";
+  }
+  text += "constructor(";
+  if (declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
+    for (const auto& parameter : declaration.constructor->parameters) {
+      text += (text.back() == '(' ? "" : ", ") + parameter.name + ": " + TypeText(parameter.type);
+    }
+  } else {
+    for (const auto& field : declaration.fields) {
+      if (field.role != frontend::FieldRole::Parameter) {
+        continue;
+      }
+      text += (text.back() == '(' ? "" : ", ") + field.name + ": " + TypeText(field.type);
+      if (field.initializer) {
+        text += " = " + DefaultValue(*field.initializer);
+      }
+    }
+  }
+  return text + ");\n}";
+}
+
+void SemanticIndex::MarkTypeParameters(SourceLocation location,
+                                       std::span<const std::string> parameters) {
+  if (parameters.empty()) {
+    return;
+  }
+  context_type_parameters_.insert(parameters.begin(), parameters.end());
+  const auto& tokens = sources_.at(location.source_id).tokens;
+  auto index = TokenAt(location) + 2;
+  for (std::size_t parameter = 0; parameter < parameters.size(); ++parameter) {
+    const auto& token = tokens.at(index);
+    type_parameters_.insert_or_assign(Key{location.source_id, token.offset}, kSemanticDeclaration);
+    index += 2;
+  }
+}
+
+std::vector<Completion> SemanticIndex::CompleteArguments(
+    const ArgumentCompletionQuery& query) const {
+  std::vector<Completion> result;
+  const auto signature = FindCallParameters(query.callee_offset);
+  if (!signature) {
+    return result;
+  }
+  const auto& parameters = signature->parameters;
+  for (std::size_t index = query.positional_arguments; index < parameters.size(); ++index) {
+    const auto& parameter = parameters.at(index);
+    if (query.supplied_names.contains(parameter.name) ||
+        !parameter.name.starts_with(query.prefix)) {
+      continue;
+    }
+    auto detail = parameter.name + ": " + DisplaySymbolName(parameter.type.name);
+    if (signature->optional_parameters.contains(parameter.name)) {
+      detail += " = …";
+    }
+    result.push_back({
+        .label = parameter.name + ':',
+        .detail = std::move(detail),
+        .kind = CompletionKind::Field,
+        .insert_text = parameter.name + (query.has_colon ? "" : ": "),
+        .documentation = {},
+    });
+  }
+  return result;
 }
 
 }  // namespace vela::tooling

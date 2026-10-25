@@ -61,9 +61,9 @@ Result ArrayJoin(std::span<const Value> arguments, Heap& heap) {
   return Value::String(*joined);
 }
 
-Result BuilderOperation(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
-  if (builtin == Builtin::NewStringBuilder) {
-    auto* builder = heap.AllocateStringBuilder();
+Result MutableStringOperation(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
+  if (builtin == Builtin::NewMutableString) {
+    auto* builder = heap.AllocateMutableString();
     if (builder == nullptr) {
       return std::unexpected(BuiltinError::OutOfMemory);
     }
@@ -71,11 +71,11 @@ Result BuilderOperation(Builtin builtin, std::span<const Value> arguments, Heap&
   }
   const auto value = arguments.front();
   if (!value.IsObject() || value.AsObject() == nullptr ||
-      !Heap::IsStringBuilder(*value.AsObject())) {
+      !Heap::IsMutableString(*value.AsObject())) {
     return std::unexpected(BuiltinError::TypeError);
   }
   auto& builder = *value.AsObject();
-  if (builtin == Builtin::BuilderToString) {
+  if (builtin == Builtin::MutableStringToString) {
     return StringResult(heap.BuildString(builder));
   }
   const auto text = arguments.subspan(1).front();
@@ -211,10 +211,10 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
       return ScalarToString(arguments.front(), heap);
     case Builtin::ArrayJoin:
       return ArrayJoin(arguments, heap);
-    case Builtin::NewStringBuilder:
-    case Builtin::BuilderAppend:
-    case Builtin::BuilderToString:
-      return BuilderOperation(builtin, arguments, heap);
+    case Builtin::NewMutableString:
+    case Builtin::MutableStringAppend:
+    case Builtin::MutableStringToString:
+      return MutableStringOperation(builtin, arguments, heap);
     default:
       break;
   }

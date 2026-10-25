@@ -156,7 +156,7 @@ INSTANTIATE_TEST_SUITE_P(
         })",
                              42},
         BasicLanguageProgram{R"(func main(): int {
-          const values: StringBuilder?[] = [null, StringBuilder()];
+          const values: String?[] = [null, String()];
           const builder = values[1];
           if (builder != null) { builder.append("ok"); return builder.toString().length + 40; }
           return 0;

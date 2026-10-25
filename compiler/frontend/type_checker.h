@@ -33,7 +33,7 @@ struct TypeDescriptor final {
     Int,
     Double,
     String,
-    StringBuilder,
+    MutableString,
     Array,
     Function,
     Enum,

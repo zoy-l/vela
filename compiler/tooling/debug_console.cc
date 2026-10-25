@@ -181,8 +181,8 @@ void WriteDebugValue(std::ostream& output, runtime::Value value) {
       output << "array(length=" << *length << ')';
     } else if (const auto collection_size = runtime::Heap::CollectionLength(object)) {
       output << "collection(size=" << *collection_size << ')';
-    } else if (runtime::Heap::IsStringBuilder(object)) {
-      output << "StringBuilder";
+    } else if (runtime::Heap::IsMutableString(object)) {
+      output << "String";
     } else {
       output << "object";
     }

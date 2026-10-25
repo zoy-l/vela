@@ -227,8 +227,8 @@ BENCHMARK_CAPTURE(Compile, StringFormat, "string_format.vela")->Name("compile/st
 BENCHMARK_CAPTURE(Compile, StringFormatExplicit, "string_format_explicit.vela")
     ->Name("compile/string_format_explicit");
 BENCHMARK_CAPTURE(Compile, NumberJoin, "number_join.vela")->Name("compile/number_join");
-BENCHMARK_CAPTURE(Compile, StringBuilder, "string_builder.vela")->Name("compile/string_builder");
-BENCHMARK_CAPTURE(Compile, StringBuilderLarge, "string_builder_large.vela")
+BENCHMARK_CAPTURE(Compile, MutableString, "string_builder.vela")->Name("compile/string_builder");
+BENCHMARK_CAPTURE(Compile, MutableStringLarge, "string_builder_large.vela")
     ->Name("compile/string_builder_large");
 BENCHMARK_CAPTURE(Compile, StringGrowthLarge, "string_growth_large.vela")
     ->Name("compile/string_growth_large");
@@ -266,9 +266,9 @@ BENCHMARK_CAPTURE(FirstExecution, StringFormatExplicit, "string_format_explicit.
     ->Name("first_execute/string_format_explicit");
 BENCHMARK_CAPTURE(FirstExecution, NumberJoin, "number_join.vela", 1000)
     ->Name("first_execute/number_join");
-BENCHMARK_CAPTURE(FirstExecution, StringBuilder, "string_builder.vela", 512)
+BENCHMARK_CAPTURE(FirstExecution, MutableString, "string_builder.vela", 512)
     ->Name("first_execute/string_builder");
-BENCHMARK_CAPTURE(FirstExecution, StringBuilderLarge, "string_builder_large.vela", 4096)
+BENCHMARK_CAPTURE(FirstExecution, MutableStringLarge, "string_builder_large.vela", 4096)
     ->Name("first_execute/string_builder_large");
 BENCHMARK_CAPTURE(FirstExecution, StringGrowthLarge, "string_growth_large.vela", 4096)
     ->Name("first_execute/string_growth_large");
@@ -312,9 +312,9 @@ BENCHMARK_CAPTURE(SteadyExecution, StringFormat, "string_format.vela", 1000)
 BENCHMARK_CAPTURE(SteadyExecution, StringFormatExplicit, "string_format_explicit.vela", 1000)
     ->Name("vm/string_format_explicit");
 BENCHMARK_CAPTURE(SteadyExecution, NumberJoin, "number_join.vela", 1000)->Name("vm/number_join");
-BENCHMARK_CAPTURE(SteadyExecution, StringBuilder, "string_builder.vela", 512)
+BENCHMARK_CAPTURE(SteadyExecution, MutableString, "string_builder.vela", 512)
     ->Name("vm/string_builder");
-BENCHMARK_CAPTURE(SteadyExecution, StringBuilderLarge, "string_builder_large.vela", 4096)
+BENCHMARK_CAPTURE(SteadyExecution, MutableStringLarge, "string_builder_large.vela", 4096)
     ->Name("vm/string_builder_large");
 BENCHMARK_CAPTURE(SteadyExecution, StringGrowthLarge, "string_growth_large.vela", 4096)
     ->Name("vm/string_growth_large");

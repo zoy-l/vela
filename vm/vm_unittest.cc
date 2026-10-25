@@ -67,10 +67,11 @@ TEST(VmTest, InterpolationAndBuilderAllowAliasedDestinationsAcrossSafepoints) {
       EncodeABC(OpCode::LoadString, 0, 0, 0),
       EncodeABC(OpCode::LoadString, 1, 0, 0),
       EncodeABC(OpCode::StringInterpolate, 0, 0, 2),
-      EncodeABC(OpCode::BuiltinCall, 2, static_cast<std::uint8_t>(Builtin::NewStringBuilder), 0),
+      EncodeABC(OpCode::BuiltinCall, 2, static_cast<std::uint8_t>(Builtin::NewMutableString), 0),
       EncodeABC(OpCode::Move, 3, 0, 0),
-      EncodeABC(OpCode::BuiltinCall, 4, static_cast<std::uint8_t>(Builtin::BuilderAppend), 2),
-      EncodeABC(OpCode::BuiltinCall, 2, static_cast<std::uint8_t>(Builtin::BuilderToString), 2),
+      EncodeABC(OpCode::BuiltinCall, 4, static_cast<std::uint8_t>(Builtin::MutableStringAppend), 2),
+      EncodeABC(OpCode::BuiltinCall, 2, static_cast<std::uint8_t>(Builtin::MutableStringToString),
+                2),
       EncodeABC(OpCode::Return, 2, 0, 0),
   });
   Function function;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -10,6 +11,7 @@
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 
 #include "base/source_location.h"
 #include "compiler/frontend/ast.h"
@@ -41,6 +43,8 @@ struct Completion final {
   std::string label;
   std::string detail;
   CompletionKind kind = CompletionKind::Variable;
+  std::optional<std::string> insert_text = std::nullopt;
+  std::string documentation;
 };
 
 struct Definition final {
@@ -59,8 +63,38 @@ struct Hover final {
   TextRange range;
 };
 
+enum class SemanticTokenKind : std::uint8_t { Class, Interface, Enum, Type, TypeParameter };
+inline constexpr auto kSemanticTokenTypes =
+    std::to_array<std::string_view>({"class", "interface", "enum", "type", "typeParameter"});
+inline constexpr auto kSemanticTokenModifiers =
+    std::to_array<std::string_view>({"declaration", "defaultLibrary"});
+inline constexpr std::uint32_t kSemanticDeclaration = 1U;
+inline constexpr std::uint32_t kSemanticDefaultLibrary = 2U;
+
+struct SemanticToken final {
+  TextPosition position;
+  std::size_t length = 0;
+  SemanticTokenKind kind = SemanticTokenKind::Type;
+  std::uint32_t modifiers = 0;
+};
+
+struct ArgumentCompletionQuery final {
+  std::string source;
+  std::size_t callee_offset = 0;
+  std::string prefix;
+  bool has_colon = false;
+  std::size_t positional_arguments = 0;
+  absl::flat_hash_set<std::string> supplied_names;
+};
+
+// 使用生产 lexer 定位当前调用，并仅修复查询快照中的实参和末尾分隔符。
+[[nodiscard]] std::optional<ArgumentCompletionQuery> PrepareArgumentCompletion(
+    std::string_view source,
+    std::size_t offset);
+
 // 只补齐光标处的标识符和缺失的末尾分隔符，生成查询用快照；不修改文档或编译语法。
 [[nodiscard]] std::string CompletionSource(std::string_view source, std::size_t offset);
+[[nodiscard]] std::string DisplaySymbolName(std::string_view name);
 
 // 索引拥有 AST 与 checker 模型；模型中的节点借用始终由同一个索引覆盖。
 class SemanticIndex final {
@@ -71,6 +105,9 @@ class SemanticIndex final {
                                                          PositionEncoding encoding) const;
   [[nodiscard]] std::optional<Hover> FindHover(std::size_t offset, PositionEncoding encoding) const;
   [[nodiscard]] std::vector<ImportLink> ImportLinks(PositionEncoding encoding) const;
+  [[nodiscard]] std::vector<SemanticToken> SemanticTokens(PositionEncoding encoding) const;
+  [[nodiscard]] std::vector<Completion> CompleteArguments(
+      const ArgumentCompletionQuery& query) const;
 
  private:
   using Key = std::pair<std::uint32_t, std::size_t>;
@@ -89,8 +126,10 @@ class SemanticIndex final {
     std::size_t depth = 0;
   };
   struct Symbol final {
+    enum class Role : std::uint8_t { Ordinary, Parameter };
     Completion completion;
-    std::string documentation;
+    std::string owner;
+    Role role = Role::Ordinary;
     Key key;
     std::size_t length = 0;
     frontend::ExportKind export_kind = frontend::ExportKind::Local;
@@ -110,12 +149,18 @@ class SemanticIndex final {
   [[nodiscard]] std::size_t TokenAt(SourceLocation location) const;
   [[nodiscard]] const frontend::Token* QueryToken(std::size_t offset) const;
   [[nodiscard]] std::string DocumentationAt(SourceLocation location) const;
+  [[nodiscard]] std::string ClassDetail(const frontend::Class& declaration) const;
+  [[nodiscard]] std::string DefaultValue(const frontend::Expression& expression) const;
+  void MarkTypeParameters(SourceLocation location, std::span<const std::string> parameters);
   [[nodiscard]] std::optional<Completion> BuiltinCompletion(const frontend::Token& token) const;
+  [[nodiscard]] std::optional<Completion> ExpectedFactoryCompletion(
+      const frontend::Token& token) const;
   [[nodiscard]] Key KeyAt(SourceLocation location) const;
   [[nodiscard]] Scope Extent(const frontend::Statement& statement) const;
   std::size_t AddSymbol(SourceLocation location, Completion completion);
   void AddReference(SourceLocation location, std::string_view name);
   void CollectDeclarations();
+  void CollectEnumMembers(const frontend::Enum& declaration);
   void CollectParameters(std::size_t symbol, const frontend::Function& function);
   void CollectImports();
   void VisitType(const frontend::TypeName& type);
@@ -141,6 +186,10 @@ class SemanticIndex final {
       std::size_t token,
       const absl::flat_hash_map<std::string, Completion>& locals) const;
   void IndexExpression(const frontend::Expression& expression);
+  [[nodiscard]] std::optional<frontend::FunctionDescriptor> FindCallParameters(
+      std::size_t callee_offset) const;
+  [[nodiscard]] std::optional<frontend::FunctionDescriptor> FindMemberCallParameters(
+      const frontend::Expression& call) const;
   [[nodiscard]] std::optional<std::uint32_t> ImportSource(
       const frontend::Program::Import& imported) const;
 
@@ -157,6 +206,9 @@ class SemanticIndex final {
   absl::flat_hash_map<std::size_t, absl::flat_hash_map<std::string, std::size_t>> parameters_;
   absl::flat_hash_map<std::uint32_t, std::size_t> bindings_;
   absl::flat_hash_map<Key, Receiver> receivers_;
+  absl::flat_hash_map<Key, const frontend::Expression*> calls_;
+  absl::flat_hash_map<Key, std::uint32_t> type_parameters_;
+  absl::flat_hash_set<std::string> context_type_parameters_;
   absl::flat_hash_map<std::size_t, std::uint32_t> import_targets_;
   absl::flat_hash_map<std::string, std::uint32_t> prefixes_;
   std::vector<std::vector<std::size_t>> exports_;

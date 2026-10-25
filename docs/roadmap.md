@@ -42,7 +42,7 @@ P0 behavior is specified in [Basic language contracts](language_basics.md).
 - [x] Decode string escapes and Unicode escapes with invalid-input diagnostics
 - [x] Define UTF-8 storage and code point length/index/slice units (no separate `char` type)
 - [x] Add string-context primitive/null formatting and explicit primitive `toString()`
-- [x] Add single-allocation array `.join(separator)`, string operations, and GC-owned `StringBuilder`
+- [x] Add single-allocation array `.join(separator)`, string operations, and GC-owned `String`
 - [x] Add Unicode code point iteration and grapheme cluster APIs
 - [x] Implement explicit numeric conversions (implicit conversions are forbidden)
 - [x] Implement invariant typed arrays, nested arrays, and compact contiguous storage

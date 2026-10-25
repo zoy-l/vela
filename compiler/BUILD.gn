@@ -102,6 +102,8 @@ source_set("ir") {
 
 source_set("tooling") {
   sources = [
+    "tooling/builtin_documentation.cc",
+    "tooling/builtin_documentation.h",
     "tooling/documentation.cc",
     "tooling/documentation.h",
     "tooling/file_uri.cc",
@@ -116,9 +118,12 @@ source_set("tooling") {
     "tooling/language_server_documents.cc",
     "tooling/language_server_internal.h",
     "tooling/language_server_queries.cc",
+    "tooling/semantic_arguments.cc",
     "tooling/semantic_completion.cc",
+    "tooling/semantic_hover.cc",
     "tooling/semantic_index.cc",
     "tooling/semantic_index.h",
+    "tooling/semantic_tokens.cc",
     "tooling/source_text.cc",
     "tooling/source_text.h",
     "tooling/standard_streams.h",

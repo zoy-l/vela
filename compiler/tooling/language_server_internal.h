@@ -1,11 +1,13 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <iosfwd>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
@@ -78,7 +80,11 @@ class LanguageServer final {
   [[nodiscard]] std::expected<void, std::string> Close(const yyjson_val* params);
   void Format(RpcCall call);
   void Query(RpcCall call, SymbolQuery query);
+  [[nodiscard]] std::vector<Completion> CompletionsFor(std::string_view uri,
+                                                       const ServerDocument& opened,
+                                                       std::size_t offset) const;
   void DocumentLinks(RpcCall call);
+  void SemanticTokens(RpcCall call);
   SemanticIndex& IndexFor(std::string_view uri, const ServerDocument& opened);
   void PublishDiagnostics();
   void ClearDiagnostics(std::string_view uri);

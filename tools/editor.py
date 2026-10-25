@@ -48,6 +48,7 @@ def content_types() -> bytes:
     ET.register_namespace("", CONTENT_NAMESPACE)
     root = ET.Element(f"{{{CONTENT_NAMESPACE}}}Types")
     for extension, mime in (("json", "application/json"), ("js", "application/javascript"),
+                            ("svg", "image/svg+xml"),
                             ("md", "text/markdown"), ("vsixmanifest", "text/xml")):
         ET.SubElement(root, "Default", {"Extension": extension, "ContentType": mime})
     ET.SubElement(root, "Override", {"PartName": "/extension/LICENSE", "ContentType": "text/plain"})
@@ -64,7 +65,8 @@ def package_extension(destination: Path) -> Path:
         with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("extension.vsixmanifest", vsix_manifest(package))
             archive.writestr("[Content_Types].xml", content_types())
-            for name in ("package.json", "extension.js", "language-configuration.json", "README.md", "syntaxes/vela.tmLanguage.json"):
+            for name in ("package.json", "extension.js", "language-configuration.json", "README.md",
+                         "syntaxes/vela.tmLanguage.json", "icons/vela-light.svg", "icons/vela-dark.svg"):
                 archive.write(EDITOR / name, f"extension/{name}")
             archive.write(ROOT / "LICENSE", "extension/LICENSE")
         os.replace(temporary, destination)

@@ -71,9 +71,9 @@ std::vector<runtime::TypeConstraint> CreateTypeConstraints(
         target.object_kind = runtime::ObjectKind::Array;
         target.array = array_layouts.at(name);
         break;
-      case Kind::StringBuilder:
+      case Kind::MutableString:
         target.kind = runtime::ValueKind::Object;
-        target.object_kind = runtime::ObjectKind::StringBuilder;
+        target.object_kind = runtime::ObjectKind::MutableString;
         break;
       case Kind::Function:
         target.kind = runtime::ValueKind::Object;

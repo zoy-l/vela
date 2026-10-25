@@ -62,7 +62,7 @@ enum class ArrayAccessError : std::uint8_t {
   OutOfMemory,
 };
 
-enum class StringBuilderError : std::uint8_t { NotBuilder, OutOfMemory };
+enum class MutableStringError : std::uint8_t { NotMutableString, OutOfMemory };
 enum class StringJoinError : std::uint8_t { TypeMismatch, OutOfMemory };
 enum class ExpectedAlternative : std::uint8_t { Ok, Err };
 enum class ExpectedAccessError : std::uint8_t { NotExpected, InactiveAlternative };
@@ -145,18 +145,18 @@ class Heap final {
                                                                 Value value) noexcept;
   [[nodiscard]] static std::expected<void, ArrayAccessError> ReverseArray(
       HeapObject& array) noexcept;
-  [[nodiscard]] HeapObject* AllocateStringBuilder() noexcept;
+  [[nodiscard]] HeapObject* AllocateMutableString() noexcept;
   [[nodiscard]] HeapObject* AllocateException(HeapObject& payload,
                                               ExecutionStatus status,
                                               std::span<const TracePosition> trace,
                                               std::string_view message) noexcept;
   // builder 与 text 的堆存储须在扩容期间保根；text 必须是合法 UTF-8。
-  [[nodiscard]] std::expected<void, StringBuilderError> AppendString(
+  [[nodiscard]] std::expected<void, MutableStringError> AppendString(
       HeapObject& builder,
       std::string_view text) noexcept;
-  // builder 必须来自本 Heap 的 AllocateStringBuilder，且调用期间保根。
+  // builder 必须来自本 Heap 的 AllocateMutableString，且调用期间保根。
   [[nodiscard]] StringObject* BuildString(const HeapObject& builder) noexcept;
-  [[nodiscard]] static bool IsStringBuilder(const HeapObject& object) noexcept;
+  [[nodiscard]] static bool IsMutableString(const HeapObject& object) noexcept;
 
   [[nodiscard]] static Value* GetField(HeapObject& object, std::uint32_t index) noexcept {
     if (object.layout == nullptr || index >= object.layout->field_count()) {
@@ -236,7 +236,7 @@ class Heap final {
   void FinishSweep() noexcept;
   void DestroyAll() noexcept;
   [[nodiscard]] StringObject* AllocateStringStorage(std::size_t length) noexcept;
-  void ReleaseStringBuilder(HeapObject& object) noexcept;
+  void ReleaseMutableString(HeapObject& object) noexcept;
   void MarkCollection(HeapObject& object) noexcept;
   void ReleaseCollection(HeapObject& object) noexcept;
   std::expected<void, CollectionError> GrowCollection(HeapObject& object) noexcept;
