@@ -68,7 +68,7 @@ async function runEditorTests() {
     assert.ok(standardCompletion.items.some(item => item.label === "sqrt"));
     const arrayHover = await vscode.commands.executeCommand("vscode.executeHoverProvider", standardUri,
       standardDocument.positionAt(standardText.indexOf("sort(")));
-    assert.ok(arrayHover[0].contents.some(content => content.value.includes("sort(compare: (int, int) => int)")));
+    assert.ok(arrayHover[0].contents.some(content => content.value.includes("sort(compareFn?: (int, int) => int)")));
     assert.ok(arrayHover[0].contents.some(content => content.value.includes("Sorts in place")));
     const mathHover = await vscode.commands.executeCommand("vscode.executeHoverProvider", standardUri,
       standardDocument.positionAt(standardText.indexOf("sqrt(")));

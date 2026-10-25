@@ -1,6 +1,8 @@
 #include "runtime/heap.h"
 
 #include <algorithm>
+#include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -270,35 +272,66 @@ std::expected<Value, ArrayAccessError> Heap::PopArray(HeapObject& array) noexcep
   return RemoveArrayElement(array, array.length - 1);
 }
 
-std::expected<void, ArrayAccessError> Heap::InsertArray(HeapObject& array,
-                                                        std::uint32_t index,
-                                                        Value value) noexcept {
-  if (array.kind != ObjectKind::Array) {
+std::expected<void, ArrayAccessError> Heap::ReplaceArrayRange(HeapObject& array,
+                                                              std::uint32_t start,
+                                                              std::uint32_t count,
+                                                              HeapObject& items) noexcept {
+  if (array.kind != ObjectKind::Array || items.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }
-  if (index > array.length) {
+  if (start > array.length || count > array.length - start) {
     return std::unexpected(ArrayAccessError::OutOfBounds);
   }
+  assert(&array != &items);
   const auto& layout = *array.array_layout();
-  if (!IsValueOfType(value, layout.element_type())) {
+  if (!IsValueOfType(
+          Value::Object(&items),
+          {.kind = ValueKind::Object, .object_kind = ObjectKind::Array, .array = &layout})) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
-  const auto grown = GrowArray(array, value);
-  if (!grown) {
-    return std::unexpected(grown.error());
+  const auto length = array.length;
+  const auto inserted = items.length;
+  if (count == 0 && inserted == 0) {
+    return {};
+  }
+  constexpr auto kMaximum = std::numeric_limits<std::uint32_t>::max();
+  if (inserted > kMaximum - (length - count)) {
+    return std::unexpected(ArrayAccessError::OutOfMemory);
+  }
+  const auto next_length = length - count + inserted;
+  const auto values = std::to_array({Value::Object(&array), Value::Object(&items)});
+  RootRange roots(*this, values.data(), values.size());
+  const auto capacity = internal::ArrayBuffer(array).capacity;
+  if (next_length > capacity) {
+    const auto next_capacity = std::max<std::size_t>(
+        next_length, std::min<std::size_t>(kMaximum, static_cast<std::size_t>(capacity) * 2));
+    if (auto grown = ReserveArray(array, next_capacity); !grown) {
+      return grown;
+    }
   }
   const auto element_size = layout.element_size();
   const auto storage = internal::ArrayBytes(array, layout);
-  const auto tail = static_cast<std::size_t>(array.length - index) * element_size;
-  if (tail != 0) {
-    std::memmove(storage.subspan((static_cast<std::size_t>(index) + 1) * element_size).data(),
-                 storage.subspan(index * element_size).data(), tail);
+  const auto tail = static_cast<std::size_t>(length - start - count) * element_size;
+  if (tail != 0 && count != inserted) {
+    std::memmove(storage.subspan(static_cast<std::size_t>(start + inserted) * element_size).data(),
+                 storage.subspan(static_cast<std::size_t>(start + count) * element_size).data(),
+                 tail);
   }
-  StoreElementStorage(layout, storage, index, value);
-  ++array.length;
+  if (inserted != 0) {
+    const auto input = Storage(items, layout, inserted);
+    std::memcpy(storage.subspan(static_cast<std::size_t>(start) * element_size).data(),
+                input.data(), input.size());
+  }
+  if (next_length < length) {
+    std::memset(storage.subspan(static_cast<std::size_t>(next_length) * element_size).data(), 0,
+                static_cast<std::size_t>(length - next_length) * element_size);
+  }
+  array.length = next_length;
   ++internal::ArrayBuffer(array).mutation;
-  if (value.IsObject() || value.IsString()) {
-    WriteBarrier(array, value);
+  if (layout.element_kind == ValueKind::Object || layout.element_kind == ValueKind::String) {
+    for (std::uint32_t index = 0; index < inserted; ++index) {
+      WriteBarrier(array, LoadElementStorage(layout, storage, start + index));
+    }
   }
   return {};
 }
@@ -396,7 +429,10 @@ std::expected<HeapObject*, ArrayAccessError> Heap::SliceArray(HeapObject& array,
   return copy;
 }
 
-std::expected<void, ArrayAccessError> Heap::FillArray(HeapObject& array, Value value) noexcept {
+std::expected<void, ArrayAccessError> Heap::FillArray(HeapObject& array,
+                                                      Value value,
+                                                      std::uint32_t start,
+                                                      std::uint32_t end) noexcept {
   if (array.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }
@@ -404,7 +440,13 @@ std::expected<void, ArrayAccessError> Heap::FillArray(HeapObject& array, Value v
   if (!IsValueOfType(value, layout.element_type())) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
-  const auto storage = Storage(array, layout, array.length);
+  if (start > end || end > array.length) {
+    return std::unexpected(ArrayAccessError::OutOfBounds);
+  }
+  const auto size = layout.element_size();
+  const auto storage = Storage(array, layout, array.length)
+                           .subspan(static_cast<std::size_t>(start) * size,
+                                    static_cast<std::size_t>(end - start) * size);
   VisitStorage(layout, storage, [value]<class T>(std::span<T> elements) -> void {
     std::ranges::fill(elements, ElementValue<T>(value));
   });

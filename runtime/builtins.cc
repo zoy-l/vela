@@ -178,15 +178,17 @@ Result ConvertNumber(NumericConversion conversion, Value value) {
 
 Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   switch (builtin) {
-    case Builtin::ArrayCopy:
     case Builtin::ArraySlice:
     case Builtin::ArrayFill:
     case Builtin::ArrayReverse:
     case Builtin::ArrayCapacity:
     case Builtin::ArrayPush:
     case Builtin::ArrayPop:
-    case Builtin::ArrayInsert:
-    case Builtin::ArrayRemoveAt:
+    case Builtin::ArrayPushMany:
+    case Builtin::ArrayShift:
+    case Builtin::ArrayUnshift:
+    case Builtin::ArraySplice:
+    case Builtin::ArrayDefaultCompare:
     case Builtin::ArrayClear:
     case Builtin::ArrayReserve:
     case Builtin::ArrayMutation:

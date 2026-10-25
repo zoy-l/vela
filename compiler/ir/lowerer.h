@@ -6,6 +6,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
@@ -158,6 +159,7 @@ class Lowerer final {
   std::uint32_t RegisterCollectionType(frontend::TypeDescriptor type);
 
   LoweredValue LowerArrayLiteral(const frontend::Expression& expression);
+  LoweredValue LowerArrayMutation(const frontend::Expression& expression);
   LoweredValue LowerArrayAlgorithm(const frontend::Expression& expression);
   RegisterId EmitArrayCallback(RegisterId callback,
                                std::span<const RegisterId> arguments,
@@ -168,7 +170,14 @@ class Lowerer final {
     RegisterId callback;
     RegisterId length;
     RegisterId guard;
+    RegisterId positions;
+    std::size_t callback_arity;
+    enum class Comparison : std::uint8_t { Default, Integer, Double };
+    Comparison comparison;
   };
+  RegisterId EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
+                           std::pair<RegisterId, RegisterId> indices,
+                           frontend::SourceLocation location);
   void LowerArraySort(const ArrayAlgorithmRegisters& inputs, frontend::SourceLocation location);
   void LowerArraySiftDown(RegisterId root,
                           const ArrayAlgorithmRegisters& inputs,

@@ -31,7 +31,7 @@ func main(): void {
   const values = [3, 1, 2];
   values.sort((left, right) => left - right);
   values.forEach(value => { print(value); });
-  print(values.reduce(0, (sum, value) => sum + value));
+  print(values.reduce((sum, value) => sum + value, 0));
 }
 ```
 
@@ -63,18 +63,21 @@ remain unchanged.
 Array algorithms supply ordinary function signatures to the same checker; no
 special lambda typing rule belongs to `sort` or `some`. `map` supplies its
 input parameter type and infers the result array element type from the callback.
-For `reduce`, `initial` first supplies the accumulator type, which can differ
+For `reduce`, `initialValue` supplies the accumulator type, which can differ
 from the element type. Direct lambda bodies are checked with that completed
-signature even when named arguments list the callback before `initial`.
+signature even though the callback precedes `initialValue`. The initial value is
+required; omitting it is a compile-time error.
 Runtime argument evaluation remains once in source order.
 
 This follows TypeScript's contextual callback inference. TypeScript 6.0.3's
 `lib.es5.d.ts` declares a separate accumulator type `U` for
 `reduce<U>(callbackfn: (previousValue: U, currentValue: T, ...) => U, initialValue: U): U`.
 Strict-mode checks infer number/number parameters for numeric accumulation and
-string/number for string accumulation over the same `number[]`. Vela keeps its
-existing `initial`-first argument order and exact callback arity; this change
-adopts inference rather than the entire JavaScript array API.
+string/number for string accumulation over the same `number[]`. Vela uses
+callback-first argument order. Array callbacks may omit unused trailing parameters;
+the compiler checks their declared prefix and passes exactly that many arguments.
+Ordinary function calls retain their exact arity contract. The remaining intentional
+JavaScript differences are documented in [growable arrays](dynamic_arrays.md).
 
 ## Typed IR and editor contracts
 

@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
 #include "compiler/frontend/lexer.h"
@@ -21,6 +22,29 @@ namespace {
 using frontend::Token;
 using frontend::TokenKind;
 using frontend::TokenRole;
+
+std::optional<frontend::FunctionDescriptor> ArrayCallParameters(
+    std::string_view name,
+    const frontend::TypeDescriptor& receiver,
+    const frontend::TypeDescriptor& element) {
+  if (name == "join") {
+    return frontend::BuiltinSignature(Builtin::ArrayJoin);
+  }
+  if (const auto algorithm = frontend::FindArrayAlgorithm(name)) {
+    auto accumulator = element;
+    if (*algorithm == frontend::ArrayAlgorithm::Map ||
+        *algorithm == frontend::ArrayAlgorithm::Reduce) {
+      accumulator.name = "R";
+    }
+    return frontend::ArrayAlgorithmSignature(*algorithm, element, accumulator);
+  }
+  for (const auto& [method, builtin] : frontend::ArrayMethods()) {
+    if (method == name) {
+      return frontend::ArrayMethodSignature(builtin, receiver, element);
+    }
+  }
+  return std::nullopt;
+}
 
 std::optional<TokenKind> ArgumentClosing(const Token& token) {
   switch (token.kind) {
@@ -321,11 +345,7 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindMemberCallParamet
   if (receiver.type.kind == frontend::TypeDescriptor::Kind::Array) {
     const auto element = model_.array_elements.find(receiver.type.name);
     if (element != model_.array_elements.end()) {
-      for (const auto& [name, builtin] : frontend::ArrayMethods()) {
-        if (name == callee.text) {
-          return frontend::ArrayMethodSignature(builtin, receiver.type, element->second);
-        }
-      }
+      return ArrayCallParameters(callee.text, receiver.type, element->second);
     }
   }
   return std::nullopt;

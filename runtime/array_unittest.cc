@@ -156,14 +156,18 @@ TEST(DynamicArrayTest, ShiftsTaggedValuesAndRejectsInvalidMutationsAtomically) {
   auto& array = *root.AsObject();
   ASSERT_TRUE(heap.PushArray(array, Value::Integer(40)));
   ASSERT_TRUE(heap.PushArray(array, Value::Null()));
-  ASSERT_TRUE(heap.InsertArray(array, 1, Value::Integer(42)));
+  Value input = Value::Object(heap.AllocateArray(*layout, 1));
+  RootRange input_roots(heap, &input, 1);
+  ASSERT_TRUE(heap.SetElement(*input.AsObject(), 0, Value::Integer(42)));
+  ASSERT_TRUE(heap.ReplaceArrayRange(array, 1, 0, *input.AsObject()));
   EXPECT_EQ(Heap::RemoveArrayElement(array, 0)->AsInteger(), 40);
   EXPECT_EQ(Heap::GetElement(array, 0)->AsInteger(), 42);
   EXPECT_TRUE(Heap::PopArray(array)->IsNull());
   EXPECT_EQ(Heap::PopArray(array)->AsInteger(), 42);
   EXPECT_TRUE(Heap::PopArray(array)->IsNull());
   const auto mutation = Heap::ArrayMutation(array);
-  EXPECT_EQ(heap.InsertArray(array, 1, Value::Integer(1)).error(), ArrayAccessError::OutOfBounds);
+  EXPECT_EQ(heap.ReplaceArrayRange(array, 1, 0, *input.AsObject()).error(),
+            ArrayAccessError::OutOfBounds);
   EXPECT_EQ(heap.PushArray(array, Value::Double(1.0)).error(),
             ArrayAccessError::ElementTypeMismatch);
   EXPECT_EQ(Heap::RemoveArrayElement(array, 0).error(), ArrayAccessError::OutOfBounds);
@@ -215,7 +219,7 @@ TEST(DynamicArrayTest, ClearRetainsCapacityWithoutRetainingReferencesAndReleases
   EXPECT_EQ(heap.object_count(), 0U);
 }
 
-TEST(DynamicArrayTest, WriteBarrierRetainsInsertedObjectsDuringSweep) {
+TEST(DynamicArrayTest, ReplacesReferenceRangesDuringSweep) {
   Isolate isolate;
   auto& heap = isolate.heap();
   auto* record = isolate.CreateClassLayout(0, {});
@@ -224,12 +228,16 @@ TEST(DynamicArrayTest, WriteBarrierRetainsInsertedObjectsDuringSweep) {
   auto* child = heap.AllocateInstance(*record);
   Value root = Value::Object(heap.AllocateArray(*layout, 0));
   RootRange roots(heap, &root, 1);
+  Value input = Value::Object(heap.AllocateArray(*layout, 1));
+  RootRange input_roots(heap, &input, 1);
+  ASSERT_TRUE(heap.SetElement(*input.AsObject(), 0, Value::Object(child)));
   heap.StartCollection();
-  heap.Step(2);
+  // 标记两个数组及其共享元素，再推进一步进入 Sweep。
+  heap.Step(heap.object_count() + 1);
   ASSERT_EQ(heap.phase(), GcPhase::Sweep);
-  ASSERT_TRUE(heap.InsertArray(*root.AsObject(), 0, Value::Object(child)));
+  ASSERT_TRUE(heap.ReplaceArrayRange(*root.AsObject(), 0, 0, *input.AsObject()));
   heap.FinishCollection();
-  EXPECT_EQ(heap.object_count(), 2U);
+  EXPECT_EQ(heap.object_count(), 3U);
   EXPECT_EQ(Heap::GetElement(*root.AsObject(), 0)->AsObject(), child);
 }
 

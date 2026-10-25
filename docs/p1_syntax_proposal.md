@@ -370,8 +370,8 @@ and insertion-order links. Lookup/update is expected amortized O(1); snapshots,
 clearing and live-entry tracing are O(size). String-key hashing additionally
 costs O(key byte length). Capacity growth and compaction
 occasionally cost O(size). Backing allocations count toward heap pressure and
-are released by GC. Arrays remain fixed-length `T[]`; no duplicate `List<T>`
-container is introduced.
+are released by GC. Arrays are growable `T[]`; no duplicate `List<T>` container
+is introduced. See [growable arrays](dynamic_arrays.md).
 
 ## Unicode code points and graphemes
 

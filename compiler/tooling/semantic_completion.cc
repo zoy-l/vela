@@ -30,7 +30,14 @@ std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
     if (text.back() != '(') {
       text += ", ";
     }
-    text += parameter.name + ": " + parameter.type.name;
+    text += parameter.rest ? "..." : "";
+    text += parameter.name;
+    if (signature.optional_parameters.contains(parameter.name)) {
+      text += '?';
+    }
+    const auto type_name =
+        parameter.rest ? frontend::MakeArrayType(parameter.type).name : parameter.type.name;
+    text += ": " + type_name;
   }
   return text + "): " + signature.return_type.name;
 }

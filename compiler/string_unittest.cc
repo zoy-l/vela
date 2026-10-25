@@ -148,7 +148,7 @@ func main(): string {
   const empty: int[] = [];
   return '${integers.join(",")}|${doubles.join("/")}|${booleans.join(separator: ":")}|${empty.join("-")}';
 })"),
-            "-42,0,42|1.25/-0/2|true:false|");
+            "-42,0,42|1.25/0/2|true:false|");
 }
 
 TEST_F(StringLanguageTest, StringFormattingSnapshotsMutableValuesBeforeFollowingEffects) {
@@ -178,7 +178,7 @@ func main(): string {
   return '${value}|${null}|' + value + '|' +
          words.join(',') + '|' + numbers.join(',') + '|' + flags.join(',') + '|' + doubles.join(',');
 })"),
-            "null|null|null|a,null,b|1,null,2|true,null,false|1.5,null,-0");
+            "null|null|null|a,,b|1,,2|true,,false|1.5,,0");
 }
 
 TEST_F(StringLanguageTest, PrimitiveFormattingAllocatesOnlyTheFinalString) {
@@ -378,7 +378,6 @@ INSTANTIATE_TEST_SUITE_P(
                     R"(func main(): string { return join(["x"], ","); })",
                     R"(func main(): string { return join(parts: ["x"], separator: ","); })",
                     R"(func main(): string { return ["x"].join(1); })",
-                    R"(func main(): string { return ["x"].join(); })",
                     R"(func main(): string { let x: string[]? = null; return x.join(","); })",
                     R"(func main(): string { return [["x"]].join(","); })",
                     R"(class Item {} func main(): string { return '${Item()}'; })",

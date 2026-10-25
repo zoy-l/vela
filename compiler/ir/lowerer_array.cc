@@ -1,11 +1,93 @@
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <vector>
+#include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 
 namespace vela::ir {
+
+Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& expression) {
+  auto builtin = model_.builtin_calls.at(&expression);
+  const auto location = expression.location;
+  const auto base = next_register_;
+  const bool splice = builtin == Builtin::ArraySplice;
+  const auto arity = BuiltinArity(builtin);
+  for (std::size_t index = 0; index < arity; ++index) {
+    static_cast<void>(AllocateRegister(location));
+  }
+  const auto receiver = LowerExpression(*expression.callee->object);
+  Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = location});
+  if (!splice && expression.arguments.empty()) {
+    const auto result = EmitTemporary({
+        .opcode = Opcode::BuiltinCall,
+        .lhs = base,
+        .index = static_cast<std::uint32_t>(Builtin::ArrayLength),
+        .location = location,
+    });
+    return {.reg = result, .type = model_.expression_types.at(&expression)};
+  }
+  if (splice) {
+    Emit({.opcode = Opcode::LoadInt, .dst = base + 1, .location = location});
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = base + 2,
+        .immediate = expression.arguments.empty() ? 0 : std::numeric_limits<std::int64_t>::max(),
+        .location = location,
+    });
+  }
+  const auto& order = model_.argument_order.at(&expression);
+  std::vector<RegisterId> items;
+  for (std::size_t index = 0; index < expression.arguments.size(); ++index) {
+    const auto value = LowerExpression(*expression.arguments.at(index).value);
+    if (splice && order.at(index) < 2) {
+      Emit({
+          .opcode = Opcode::Move,
+          .dst = base + 1 + order.at(index),
+          .lhs = value.reg,
+          .location = location,
+      });
+    } else {
+      items.push_back(
+          EmitTemporary({.opcode = Opcode::Move, .lhs = value.reg, .location = location}));
+    }
+  }
+  const auto packed = base + (splice ? 3 : 1);
+  Emit({
+      .opcode = Opcode::NewArray,
+      .dst = packed,
+      .immediate = static_cast<std::int64_t>(items.size()),
+      .index = RegisterArrayType(receiver.type),
+      .location = location,
+  });
+  for (std::size_t index = 0; index < items.size(); ++index) {
+    const auto position = EmitTemporary({
+        .opcode = Opcode::LoadInt,
+        .immediate = static_cast<std::int64_t>(index),
+        .location = location,
+    });
+    Emit({
+        .opcode = Opcode::SetIndex,
+        .dst = packed,
+        .lhs = position,
+        .rhs = items.at(index),
+        .location = location,
+    });
+  }
+  if (builtin == Builtin::ArrayPush) {
+    builtin = Builtin::ArrayPushMany;
+  }
+  const auto result = EmitTemporary({
+      .opcode = Opcode::BuiltinCall,
+      .lhs = base,
+      .index = static_cast<std::uint32_t>(builtin),
+      .location = location,
+  });
+  return {.reg = result, .type = model_.expression_types.at(&expression)};
+}
 
 std::uint32_t Lowerer::RegisterArrayType(const frontend::TypeDescriptor& type) {
   if (type.nullable) {

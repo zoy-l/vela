@@ -198,7 +198,7 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
           {
               {Kind::Array, "length"},
               "Returns the current number of elements as int in O(1) time. Read-only. Use push(), "
-              "pop(), insert(), removeAt() or clear() to change the length.",
+              "pop(), shift(), unshift(), splice() or clear() to change the length.",
           },
           {
               {Kind::Array, "capacity"},
@@ -207,8 +207,8 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
           },
           {
               {Kind::Array, "push"},
-              "Appends one value of the array's element type and returns the new length. "
-              "Amortized O(1); geometric growth preserves the array's identity and all aliases. "
+              "Appends zero or more items of the array's element type and returns the new length. "
+              "Amortized O(1) per item; growth preserves the array's identity and all aliases. "
               "No implicit numeric conversion or sparse holes.",
           },
           {
@@ -217,15 +217,21 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
               "nullable types). O(1); capacity is retained.",
           },
           {
-              {Kind::Array, "insert"},
-              "Inserts value before index and returns void. Requires 0 <= index <= length; "
-              "index == length appends. Shifts the suffix in O(n) time; invalid indices throw "
-              "Error.",
+              {Kind::Array, "unshift"},
+              "Prepends zero or more items in argument order and returns the new length. "
+              "Moves the suffix once in O(n + item count) time.",
           },
           {
-              {Kind::Array, "removeAt"},
-              "Removes and returns the element at index. Requires 0 <= index < length. "
-              "Shifts the suffix in O(n) time and retains capacity; invalid indices throw Error.",
+              {Kind::Array, "shift"},
+              "Removes and returns the first element, or null when empty. O(n) time; retains "
+              "capacity.",
+          },
+          {
+              {Kind::Array, "splice"},
+              "Removes deleteCount elements starting at start, inserts items in their place and "
+              "returns the removed elements as an independent T[]. Negative start counts from the "
+              "end; bounds are clamped. Omitted deleteCount removes through the end; splice() "
+              "changes nothing. O(n + item count) time.",
           },
           {
               {Kind::Array, "clear"},
@@ -241,43 +247,48 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
           {
               {Kind::Array, "join"},
               "Joins elements with separator and returns string. An empty array returns an empty "
-              "string.\n\n"
-              "Supports string, int, double, bool and nullable elements; null formats as 'null'. "
+              "string. The separator defaults to a comma.\n\n"
+              "Supports string, int, double, bool and nullable elements; null contributes empty "
+              "text. "
               "Calculates total length before allocating the final string once.",
-          },
-          {
-              {Kind::Array, "copy"},
-              "Returns a new T[] with independent storage in O(n) time. This is a shallow copy: "
-              "reference elements still share their objects.",
           },
           {
               {Kind::Array, "slice"},
               "Returns a shallow copy of the half-open element range [start, end) as a new T[].\n\n"
-              "Requires 0 <= start <= end <= length. Leaves the original array unchanged.",
+              "Start defaults to zero and end to length. Negative indices count from the end; "
+              "bounds are clamped. A reversed range produces an empty array. slice() copies all "
+              "elements.",
           },
           {
               {Kind::Array, "fill"},
-              "Fills every element in place with value. Returns void. value must match the element "
-              "type. Length is unchanged; O(n) time.",
+              "Fills [start, end) in place and returns this array. Start defaults to zero and end "
+              "to length; negative indices count from the end and bounds are clamped. "
+              "value must match the element type. Length is unchanged; O(n) time.",
           },
           {
               {Kind::Array, "reverse"},
-              "Reverses elements in place and returns void. O(n) time without allocating another "
+              "Reverses elements in place and returns this array. O(n) time without allocating "
+              "another "
               "array.",
           },
           {
               {Kind::Array, "sort"},
-              "Sorts in place using compare and returns void.\n\n"
-              "compare(left, right) returns a negative int, zero or a positive int for less-than, "
-              "equal or greater-than ordering. "
-              "Worst-case O(n log n) comparisons and O(1) auxiliary array space. The sort is not "
-              "stable. Structurally modifying this array from compare throws Error.\n\n"
+              "Sorts in place and returns this array. Sorting is stable.\n\n"
+              "compareFn(left, right) returns a negative, zero or positive int/double; NaN means "
+              "equal. "
+              "Without a comparator, primitive elements sort by their UTF-16 string "
+              "representations. "
+              "Worst-case O(n log n) comparisons and O(n) auxiliary array space. Comparisons read "
+              "a "
+              "snapshot. Structurally modifying the receiver from compareFn throws Error.\n\n"
               "```vela\nvalues.sort((left, right) => left - right);\n```",
           },
           {
               {Kind::Array, "forEach"},
-              "Calls operation for each element in index order and returns void. The callback must "
-              "return void; no result array is created. Structural changes to this array from "
+              "Calls callbackFn(value, index, array) in index order and returns void. Unused "
+              "trailing "
+              "parameters may be omitted; callback results are ignored. Structural changes to this "
+              "array from "
               "the callback throw Error.",
           },
           {
@@ -297,17 +308,17 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
           },
           {
               {Kind::Array, "reduce"},
-              "Calls operation(accumulator, value) in index order, starting with initial, and "
-              "returns the final accumulator R.\n\n"
-              "initial is required and determines the accumulator type. An empty array returns "
-              "initial.\n\n"
-              "```vela\nvalues.reduce(0, (sum, value) => sum + value);\n```",
+              "Calls callbackFn(accumulator, value, index, array) in index order. Unused trailing "
+              "parameters may be omitted. initialValue is required and determines R. Traversal "
+              "starts at index zero; an empty array returns initialValue without calling callbackFn.\n\n"
+              "```vela\nvalues.reduce((sum, value) => sum + value, 0);\n```",
           },
           {
               {Kind::Array, "map"},
               "Transforms elements in index order into a new R[] with independent storage. Leaves "
               "the original array unchanged.\n\n"
-              "Callback parameters are inferred from the element type; R is inferred from the "
+              "callbackFn(value, index, array) may omit unused trailing parameters. R is inferred "
+              "from the "
               "callback result. Allocates the result array once. References are not "
               "deep-copied. Structural changes to the source from the callback throw Error.\n\n"
               "```vela\nvalues.map(value => value.toString());\n```",

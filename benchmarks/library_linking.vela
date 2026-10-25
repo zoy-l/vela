@@ -1,7 +1,7 @@
 func main(): int {
   const values: int[] = [3, 1, 2];
-  values.sort((left: int, right: int): int => left - right);
-  const sum = values.reduce(0, (total: int, value: int): int => total + value);
+  values.sort((left, right) => left - right);
+  const sum = values.reduce((total, value) => total + value, 0);
   Random.seed(42);
   const available = performance.now() >= 0.0 && Math.isFinite(Math.PI);
   if (available) {

@@ -469,6 +469,33 @@ TypeChecker::Type TypeChecker::CheckBuiltinCall(const Expression& expression, Bu
   return CheckFunctionCall(BuiltinSignature(builtin), expression);
 }
 
+std::optional<std::size_t> TypeChecker::CallParameterIndex(const FunctionInfo& function,
+                                                           const CallArgument& argument,
+                                                           std::size_t positional) {
+  const auto& parameters = function.parameters;
+  if (!argument.name.empty()) {
+    const auto found = function.parameter_indices.find(argument.name);
+    if (found == function.parameter_indices.end()) {
+      AddDiagnostic(argument.location, "unknown named argument '" + argument.name + "'");
+      return std::nullopt;
+    }
+    const auto index = found->second;
+    if (parameters.at(index).rest) {
+      AddDiagnostic(argument.location, "rest arguments must be positional");
+      return std::nullopt;
+    }
+    return index;
+  }
+  if (positional < parameters.size()) {
+    return positional;
+  }
+  if (!parameters.empty() && parameters.back().rest) {
+    return parameters.size() - 1;
+  }
+  AddDiagnostic(argument.location, "too many call arguments");
+  return std::nullopt;
+}
+
 TypeChecker::Type TypeChecker::CheckFunctionCall(
     const FunctionInfo& function,
     const Expression& expression,
@@ -481,32 +508,27 @@ TypeChecker::Type TypeChecker::CheckFunctionCall(
   bool named = false;
   for (std::size_t source_index = 0; source_index < arguments.size(); ++source_index) {
     const auto& argument = arguments.at(source_index);
-    std::size_t index = positional;
+    const auto parameter_index = CallParameterIndex(function, argument, positional);
     if (!argument.name.empty()) {
       named = true;
-      const auto parameter = function.parameter_indices.find(argument.name);
-      if (parameter == function.parameter_indices.end()) {
-        AddDiagnostic(argument.location, "unknown named argument '" + argument.name + "'");
-        continue;
-      }
-      index = parameter->second;
     } else {
       if (named) {
         AddDiagnostic(argument.location, "positional argument cannot follow a named argument");
       }
       ++positional;
     }
-    if (index >= function.parameters.size()) {
-      AddDiagnostic(argument.location, "too many call arguments");
+    if (!parameter_index) {
       continue;
     }
-    if (assigned.at(index)) {
+    const auto index = *parameter_index;
+    const auto& parameter = function.parameters.at(index);
+    if (assigned.at(index) && !parameter.rest) {
       AddDiagnostic(argument.location, "call argument is specified more than once");
       continue;
     }
     assigned.at(index) = true;
     order.push_back(static_cast<std::uint32_t>(index));
-    const auto expected = function.parameters.at(index).type;
+    const auto expected = parameter.type;
     const auto checked =
         checked_arguments.empty() ? std::nullopt : checked_arguments.subspan(source_index).front();
     const Type actual = checked ? *checked : CheckExpression(*argument.value, &expected);
@@ -515,9 +537,10 @@ TypeChecker::Type TypeChecker::CheckFunctionCall(
     }
   }
   for (std::size_t index = 0; index < assigned.size(); ++index) {
-    if (!assigned.at(index) &&
-        !function.optional_parameters.contains(function.parameters.at(index).name)) {
-      AddDiagnostic(location, "missing argument '" + function.parameters.at(index).name + "'");
+    const auto& parameter = function.parameters.at(index);
+    if (!assigned.at(index) && !parameter.rest &&
+        !function.optional_parameters.contains(parameter.name)) {
+      AddDiagnostic(location, "missing argument '" + parameter.name + "'");
     }
   }
   argument_order_.insert_or_assign(&expression, std::move(order));

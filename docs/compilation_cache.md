@@ -41,7 +41,7 @@ This guarantees atomic visibility, not crash durability of all directory metadat
 
 ## Image format and ownership
 
-Version 1 starts with `VELABC01`, a little-endian uint32 version and an XXH3-128
+Version 2 starts with `VELABC01`, a little-endian uint32 version and an XXH3-128
 payload checksum. Counts, text lengths and graph identities use uint64. No raw
 pointers, native C++ object layouts, heap snapshots or runtime global state are
 serialized. Integers preserve all 64 bits; doubles preserve their bit patterns.

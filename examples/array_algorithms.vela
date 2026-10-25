@@ -3,7 +3,7 @@ func main(): void {
   values.sort((left, right) => left - right);
   values.forEach(value => { print(value); });
 
-  const sum = values.reduce(0, (total, value) => total + value);
+  const sum = values.reduce((total, value) => total + value, 0);
   print('sum: ${sum}');
   print(values.some(value => value == 2));
   print(values.every(value => value > 0));

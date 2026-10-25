@@ -544,7 +544,7 @@ StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instructio
                                         : runtime::NumericConversion::ToDouble,
                                     arguments.front().Read());
     }
-    constexpr std::size_t kMaxBuiltinArguments = 3;
+    constexpr std::size_t kMaxBuiltinArguments = 4;
     std::array<runtime::Value, kMaxBuiltinArguments> materialized;
     const auto input = std::span(materialized).first(arguments.size());
     arguments.CopyTo(input);

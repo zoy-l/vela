@@ -15,7 +15,7 @@ host bindings.
 const result = Math.sqrt(9.0);
 const values: int[] = [3, 1, 2];
 values.sort((left, right) => left - right);
-const sum = values.reduce(0, (total, value) => total + value);
+const sum = values.reduce((total, value) => total + value, 0);
 ```
 
 ## Output
@@ -78,13 +78,17 @@ static signature.
 
 ## Collections
 
-Arrays remain fixed-length typed `T[]` with continuous primitive or reference
+Arrays are growable typed `T[]` with contiguous primitive or reference
 storage. These methods preserve the element type and nullable contract:
 
-- `copy(): T[]` creates an independent shallow copy.
-- `slice(start: int, end: int): T[]` copies `[start, end)`; invalid bounds fail.
-- `fill(value: T): void` fills in place.
-- `reverse(): void` reverses in place.
+- `slice(start?: int, end?: int): T[]` shallow-copies `[start, end)`; defaults to the whole array.
+- `fill(value: T, start?: int, end?: int): T[]` fills a range and returns the receiver.
+- `reverse(): T[]` reverses in place and returns the receiver.
+
+Range endpoints count from the end when negative and are clamped to `[0, length]`.
+An end before start selects an empty range. Mutation methods are documented in
+[growable arrays](dynamic_arrays.md). `copy`, `insert` and `removeAt` are removed;
+use `slice()`, `splice()`, `shift()` and `unshift()`.
 
 Copies use one final allocation and contiguous copying; fill/reverse select
 the storage type once and run typed loops. Rooting and write barriers cover
@@ -94,19 +98,24 @@ owning separate array storage. Zero-length operations are valid.
 Array algorithms are instance methods. The element type comes from the receiver;
 `reduce` infers its accumulator type from the required initial value:
 
-- `forEach(operation: (T) => void): void`
-- `some(predicate: (T) => bool): bool`
-- `every(predicate: (T) => bool): bool`
-- `findIndex(predicate: (T) => bool): int`, returning -1 if absent.
-- `reduce(initial: R, operation: (R, T) => R): R`
-- `map(operation: (T) => R): R[]`, allocating an independent result array.
-- `sort(compare: (T, T) => int): void`, modifying in place.
+- `forEach(callbackFn: (T, int, T[]) => R): void`, ignoring callback results.
+- `some(callbackFn: (T, int, T[]) => bool): bool`
+- `every(callbackFn: (T, int, T[]) => bool): bool`
+- `findIndex(callbackFn: (T, int, T[]) => bool): int`, returning -1 if absent.
+- `reduce(callbackFn: (R, T, int, T[]) => R, initialValue: R): R`
+- `map(callbackFn: (T, int, T[]) => R): R[]`, allocating an independent result array.
+- `sort(compareFn?): T[]`, modifying in place and returning the receiver.
+
+Callbacks can omit unused trailing parameters. The index is zero-based and the
+array parameter is the original receiver. Unlike JavaScript, reduce always
+requires an initial value and traverses from index zero. An empty receiver returns
+that value without invoking the callback.
 
 Callbacks use the same [contextual typing](type_inference.md) as ordinary function
 arguments: `values.sort((left, right) => left - right)`,
-`values.some(value => value > 0)`, and `values.reduce(0, (sum, value) => sum + value)`
-need no repeated annotations. Reduction derives its accumulator type from `initial`,
-including when named arguments put the callback first.
+`values.some(value => value > 0)`, and `values.reduce((sum, value) => sum + value, 0)`
+need no repeated annotations. Reduction derives its accumulator type from `initialValue`,
+including when named arguments reorder the arguments.
 
 `Set<T>.union(other: Set<T>)`, `intersection(other: Set<T>)` and
 `difference(other: Set<T>)` return an independent new `Set<T>` in left-side
@@ -114,9 +123,12 @@ insertion order, followed by unseen right elements for union. They traverse
 the hash tables directly without allocating temporary key arrays.
 
 Callbacks are evaluated in traversal order; some/every/findIndex stop as soon as
-the result is known. Sorting uses in-place heapsort with worst-case O(n log n)
-comparisons and O(1) auxiliary array storage; it is not stable. The comparator
-returns a negative/zero/positive int. Callbacks can throw and use normal VM
+the result is known. Sorting is stable, with worst-case O(n log n) comparisons
+and O(n) auxiliary storage. It sorts a snapshot with original positions as
+tie-breakers, then writes back to the receiver. The comparator returns a
+negative/zero/positive int or double; NaN compares equal. Without a comparator,
+primitive elements are ordered by their string representations using UTF-16 code
+units. Object and nested-array elements require a comparator. Callbacks can throw and use normal VM
 unwinding through ordinary VM frames; no C++ reentrant VM callback is involved.
 Receiver and explicit arguments evaluate left to right once before traversal.
 Traversal captures the initial length and visits indices in order. Changes to later

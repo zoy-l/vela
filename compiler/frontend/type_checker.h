@@ -55,6 +55,7 @@ struct FunctionDescriptor final {
   struct Parameter final {
     std::string name;
     TypeDescriptor type;
+    bool rest = false;
   };
   TypeDescriptor return_type;
   std::vector<Parameter> parameters;
@@ -199,7 +200,11 @@ class TypeChecker final {
   Type CheckArrayAlgorithm(const Expression& expression,
                            const Type& receiver,
                            ArrayAlgorithm algorithm);
-  Type CheckArrayMap(const Expression& expression, const Type& receiver);
+  Type CheckArrayCallback(const Expression& expression, const FunctionInfo& expected);
+  Type CheckArrayAlgorithmResult(ArrayAlgorithm algorithm,
+                                 const Type& result,
+                                 const FunctionInfo& method,
+                                 SourceLocation location);
   Type CheckExpression(const Expression& expression, const Type* expected);
   Type CheckExpressionType(const Expression& expression, const Type* expected);
   Type CheckLambda(const Expression& expression, const Type* expected);
@@ -232,6 +237,9 @@ class TypeChecker final {
   Type CheckFunctionCall(const FunctionInfo& function,
                          const Expression& expression,
                          std::span<const std::optional<Type>> checked_arguments = {});
+  std::optional<std::size_t> CallParameterIndex(const FunctionInfo& function,
+                                                const CallArgument& argument,
+                                                std::size_t positional);
   Type CheckClassConstruction(const ClassInfo& class_info, const Expression& expression);
   Type CheckMemberAccess(const Expression& expression);
   Type CheckStaticMember(const Expression& expression, const ClassInfo& owner);

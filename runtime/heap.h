@@ -147,9 +147,11 @@ class Heap final {
   [[nodiscard]] std::expected<std::uint32_t, ArrayAccessError> PushArray(HeapObject& array,
                                                                          Value value) noexcept;
   [[nodiscard]] static std::expected<Value, ArrayAccessError> PopArray(HeapObject& array) noexcept;
-  [[nodiscard]] std::expected<void, ArrayAccessError> InsertArray(HeapObject& array,
-                                                                  std::uint32_t index,
-                                                                  Value value) noexcept;
+  // items 是独立的同类型数组；先完成全部分配，再一次性移动后缀并发布新长度。
+  [[nodiscard]] std::expected<void, ArrayAccessError> ReplaceArrayRange(HeapObject& array,
+                                                                        std::uint32_t start,
+                                                                        std::uint32_t count,
+                                                                        HeapObject& items) noexcept;
   [[nodiscard]] static std::expected<Value, ArrayAccessError> RemoveArrayElement(
       HeapObject& array,
       std::uint32_t index) noexcept;
@@ -158,7 +160,9 @@ class Heap final {
                                                                         std::uint32_t start,
                                                                         std::uint32_t end) noexcept;
   [[nodiscard]] std::expected<void, ArrayAccessError> FillArray(HeapObject& array,
-                                                                Value value) noexcept;
+                                                                Value value,
+                                                                std::uint32_t start,
+                                                                std::uint32_t end) noexcept;
   [[nodiscard]] static std::expected<void, ArrayAccessError> ReverseArray(
       HeapObject& array) noexcept;
   [[nodiscard]] HeapObject* AllocateMutableString() noexcept;

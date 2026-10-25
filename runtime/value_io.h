@@ -13,6 +13,9 @@ namespace vela::runtime {
 inline constexpr std::size_t kScalarTextCapacity = 32;
 [[nodiscard]] std::string_view FormatScalar(Value value,
                                             std::span<char, kScalarTextCapacity> buffer);
+// Array join 与默认 sort 采用 JS 的数值文本约定，不改变普通插值/输出格式。
+[[nodiscard]] std::string_view FormatArrayScalar(Value value,
+                                                 std::span<char, kScalarTextCapacity> buffer);
 
 void WriteValue(std::ostream& output, Value value);
 

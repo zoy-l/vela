@@ -70,7 +70,7 @@ stream locale and numeric formatting flags.
 | `text.startsWith(prefix: string)` | `bool` | Exact prefix, including the empty prefix |
 | `text.endsWith(suffix: string)` | `bool` | Exact suffix, including the empty suffix |
 | `left + right` | `string` | At least one operand has string type; formats primitive/null operands into one final string |
-| `parts.join(separator: string)` | `string` | Primitive arrays, including nullable elements; formats null as `null`; empty array produces an empty string |
+| `parts.join(separator?: string)` | `string` | Separator defaults to comma; null contributes empty text; primitive arrays, including nullable elements; empty array produces an empty string |
 | `String()` | `String` | Creates an empty, GC-owned mutable builder |
 | `builder.append(text: string)` | `void` | Copies text into its buffer with geometric capacity growth |
 | `builder.toString()` | `string` | Creates an independent immutable snapshot |

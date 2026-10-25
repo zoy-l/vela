@@ -171,7 +171,7 @@ class LanguageServerTest(unittest.TestCase):
         self.assertIn('sqrt', {item['label'] for item in self.reply(messages, 'math')['result']})
         self.assertNotIn('Console', {item['label'] for item in self.reply(messages, 'global')['result']})
         self.assertIn('union', {item['label'] for item in self.reply(messages, 'set')['result']})
-        self.assertIn('(method) int[].sort(compare: (int, int) => int): void', self.reply(messages, 'sort')['result']['contents']['value'])
+        self.assertIn('(method) int[].sort(compareFn?: (int, int) => int): int[]', self.reply(messages, 'sort')['result']['contents']['value'])
         self.assertIn('(method) Math.sqrt(value: double): double', self.reply(messages, 'sqrt')['result']['contents']['value'])
 
     def test_class_hover_displays_constructor_parameters_defaults_and_documentation(self) -> None:
@@ -541,33 +541,46 @@ class LanguageServerTest(unittest.TestCase):
             self.assertIn('join', {item['label'] for item in self.reply(messages, name)['result']})
         self.assertNotIn('join', {item['label'] for item in self.reply(messages, 'global')['result']})
         self.assertNotIn('join', {item['label'] for item in self.reply(messages, 'nested')['result']})
-        self.assertIn('(method) string[].join(separator: string): string',
+        self.assertIn('(method) string[].join(separator?: string): string',
                       self.reply(messages, 'hover')['result']['contents']['value'])
 
     def test_dynamic_array_methods_share_typed_completion_hover_and_argument_names(self) -> None:
         source = ("func main(): void { const values: int[] = []; values.reserve(100); "
-                  "values.push(42); values.insert(index: 0, value: 40); "
+                  "values.push(42, 40); values.splice(start: 0, deleteCount: 1); "
+                  "const total = values.reduce((sum, value) => sum + value, 0); "
+                  "const callbacks: ((int) => int)[] = []; callbacks.push(x => x); "
                   "const item = values.pop(); print(values.capacity); }")
         messages = self.session([
             self.open(source),
             self.symbol_query('completion', source, source.index('values.reserve') + len('values.'), 'methods'),
             self.symbol_query('hover', source, source.index('push('), 'push'),
             self.symbol_query('hover', source, source.index('pop('), 'pop'),
+            self.symbol_query('hover', source, source.index('reduce('), 'reduce'),
+            self.symbol_query('hover', source, source.index('callbacks.push') + len('callbacks.'), 'callback_push'),
             self.symbol_query('hover', source, source.index('values.capacity') + len('values.'), 'capacity'),
-            self.symbol_query('completion', source, source.index('index: 0'), 'arguments')])
+            self.symbol_query('completion', source, source.index('start: 0'), 'arguments')])
         self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
         methods = {item['label']: item for item in self.reply(messages, 'methods')['result']}
-        for name in ('push', 'pop', 'insert', 'removeAt', 'clear', 'reserve', 'capacity'):
+        for name in ('push', 'pop', 'shift', 'unshift', 'splice', 'clear', 'reserve', 'capacity'):
             self.assertIn(name, methods)
             self.assertTrue(methods[name].get('documentation'), name)
-        self.assertIn('(value: int): int', methods['push']['detail'])
+        for name in ('insert', 'removeAt', 'copy'):
+            self.assertNotIn(name, methods)
+        self.assertIn('(...items: int[]): int', methods['push']['detail'])
         self.assertIn('(): int?', methods['pop']['detail'])
-        self.assertIn('(method) int[].push(value: int): int', self.reply(messages, 'push')['result']['contents']['value'])
+        self.assertIn('(method) int[].push(...items: int[]): int', self.reply(messages, 'push')['result']['contents']['value'])
         self.assertIn('Amortized O(1)', self.reply(messages, 'push')['result']['contents']['value'])
         self.assertIn('(method) int[].pop(): int?', self.reply(messages, 'pop')['result']['contents']['value'])
+        self.assertIn('push(...items: ((int) => int)[]): int',
+                      self.reply(messages, 'callback_push')['result']['contents']['value'])
+        reduction = self.reply(messages, 'reduce')['result']['contents']['value']
+        self.assertIn('initialValue: R', reduction)
+        self.assertNotIn('initialValue?', reduction)
+        self.assertLess(reduction.index('callbackFn:'), reduction.index('initialValue:'))
         self.assertIn('Read-only', self.reply(messages, 'capacity')['result']['contents']['value'])
         arguments = {item['label'] for item in self.reply(messages, 'arguments')['result']}
-        self.assertIn('index:', arguments)
+        self.assertIn('start:', arguments)
+        self.assertNotIn('items:', arguments)
 
     def test_inferred_lambda_parameters_expose_hover_members_and_definitions(self) -> None:
         source = ("class Item { param value: int; }\n"
@@ -821,7 +834,7 @@ class LanguageServerTest(unittest.TestCase):
     def test_completes_builtin_members_and_respects_null_refinement(self) -> None:
         for declaration, expected in (
                 ('const value = "text";', {"slice", "length", "byteLength", "includes", "graphemes"}),
-                ("const value: int[] = [1];", {"copy", "slice", "fill", "reverse", "length"}),
+                ("const value: int[] = [1];", {"slice", "splice", "fill", "reverse", "length"}),
                 ("const value = Set<int>();", {"add", "has", "delete", "clear", "values", "size"}),
                 ("const value = Map<string, int>();", {"get", "set", "keys", "values", "size"}),
                 ("const value: Expected<int, string> = ok(42);", {"hasValue", "value", "error"}),

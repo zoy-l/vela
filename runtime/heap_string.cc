@@ -25,6 +25,7 @@ namespace {
 constexpr std::size_t kMaximumStringLength =
     std::numeric_limits<std::uint32_t>::max() - sizeof(StringObject);
 constexpr std::size_t kInitialMutableStringCapacity = 64;
+enum class TextContext : std::uint8_t { Interpolation, ArrayElement };
 
 struct MutableStringBuffer final {
   char* data = nullptr;
@@ -46,17 +47,17 @@ std::span<char> StringStorage(StringObject& string, std::size_t length) noexcept
   return {static_cast<char*>(storage), length};
 }
 
-std::expected<std::string_view, StringJoinError> StringText(
-    Value value,
-    std::span<char, kScalarTextCapacity> buffer) {
+std::expected<std::string_view, StringJoinError>
+StringText(Value value, std::span<char, kScalarTextCapacity> buffer, TextContext context) {
   if (value.IsNull()) {
-    return "null";
+    return context == TextContext::ArrayElement ? "" : "null";
   }
   if (value.IsString()) {
     return value.AsString()->value();
   }
   if (value.IsInteger() || value.IsDouble() || value.IsBoolean()) {
-    return FormatScalar(value, buffer);
+    return context == TextContext::ArrayElement ? FormatArrayScalar(value, buffer)
+                                                : FormatScalar(value, buffer);
   }
   return std::unexpected(StringJoinError::TypeMismatch);
 }
@@ -64,6 +65,7 @@ std::expected<std::string_view, StringJoinError> StringText(
 template <class Read, class Allocate>
 std::expected<StringObject*, StringJoinError> JoinFormatted(std::size_t count,
                                                             std::string_view separator,
+                                                            TextContext context,
                                                             const Read& read,
                                                             const Allocate& allocate) {
   std::size_t length = 0;
@@ -76,7 +78,7 @@ std::expected<StringObject*, StringJoinError> JoinFormatted(std::size_t count,
   }
   std::array<char, kScalarTextCapacity> buffer{};
   for (std::size_t index = 0; index < count; ++index) {
-    const auto text = StringText(read(index), buffer);
+    const auto text = StringText(read(index), buffer, context);
     if (!text) {
       return std::unexpected(text.error());
     }
@@ -96,7 +98,7 @@ std::expected<StringObject*, StringJoinError> JoinFormatted(std::size_t count,
       remaining = remaining.subspan(separator.size());
     }
     // read 只读取稳定值，不求值脚本表达式；分配前已检查所有值的可格式化性。
-    const auto text = *StringText(read(index), buffer);
+    const auto text = *StringText(read(index), buffer, context);
     std::ranges::copy(text, remaining.begin());
     remaining = remaining.subspan(text.size());
   }
@@ -188,7 +190,7 @@ std::expected<std::span<StringObject* const>, ArrayAccessError> Heap::StringElem
 std::expected<StringObject*, StringJoinError> Heap::JoinValues(
     std::span<const Value> parts) noexcept {
   return JoinFormatted(
-      parts.size(), {},
+      parts.size(), {}, TextContext::Interpolation,
       [parts](std::size_t index) -> Value { return parts.subspan(index).front(); },
       [this](std::size_t length) -> StringObject* { return AllocateStringStorage(length); });
 }
@@ -216,7 +218,7 @@ std::expected<StringObject*, StringJoinError> Heap::JoinArray(const HeapObject& 
   }
   const auto storage = internal::ArrayBytes(array, layout);
   return JoinFormatted(
-      array.length, separator,
+      array.length, separator, TextContext::ArrayElement,
       [&layout, storage](std::size_t index) -> Value {
         return LoadElementStorage(layout, storage, index);
       },
@@ -225,7 +227,7 @@ std::expected<StringObject*, StringJoinError> Heap::JoinArray(const HeapObject& 
 
 std::expected<StringObject*, StringJoinError> Heap::JoinValues(RegisterView parts) noexcept {
   return JoinFormatted(
-      parts.size(), {},
+      parts.size(), {}, TextContext::Interpolation,
       [parts](std::size_t index) -> Value { return parts.subspan(index).front().Read(); },
       [this](std::size_t length) -> StringObject* { return AllocateStringStorage(length); });
 }

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "base/builtin.h"
@@ -49,6 +50,10 @@ Lowerer::LoweredValue Lowerer::LowerStringInterpolation(const frontend::Expressi
 
 Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expression) {
   const auto builtin = model_.builtin_calls.at(&expression);
+  if (builtin == Builtin::ArrayUnshift || builtin == Builtin::ArraySplice ||
+      (builtin == Builtin::ArrayPush && expression.arguments.size() != 1)) {
+    return LowerArrayMutation(expression);
+  }
   if (builtin == Builtin::StringCodePoints || builtin == Builtin::StringGraphemes ||
       builtin == Builtin::CollectionKeys || builtin == Builtin::CollectionValues) {
     return LowerSnapshotArray(expression);
@@ -68,6 +73,27 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
     const auto& object = method ? *expression.callee->object : *expression.object;
     const auto receiver = LowerExpression(object);
     Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = object.location});
+  }
+  if (builtin == Builtin::ArrayJoin && expression.arguments.empty()) {
+    frontend::Expression separator;
+    separator.text = ",";
+    separator.location = expression.location;
+    const auto value = LowerStringLiteral(separator);
+    Emit({
+        .opcode = Opcode::Move,
+        .dst = base + 1,
+        .lhs = value.reg,
+        .location = expression.location,
+    });
+  } else if (builtin == Builtin::ArraySlice || builtin == Builtin::ArrayFill) {
+    const auto start = base + (builtin == Builtin::ArraySlice ? 1 : 2);
+    Emit({.opcode = Opcode::LoadInt, .dst = start, .location = expression.location});
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = start + 1,
+        .immediate = std::numeric_limits<std::int64_t>::max(),
+        .location = expression.location,
+    });
   }
   if (indexed) {
     const auto index = LowerExpression(*expression.index);

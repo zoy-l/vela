@@ -7,8 +7,8 @@ func main(): void {
   }
   print('length: ${alias.length}, capacity: ${alias.capacity}');
 
-  values.insert(0, 42);
-  print(values.removeAt(0));
+  values.unshift(42);
+  print(values.shift());
   const last = values.pop();
   if (last != null) {
     print(last);

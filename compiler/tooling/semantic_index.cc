@@ -963,7 +963,7 @@ std::vector<Completion> SemanticIndex::CompleteArguments(
   const auto& parameters = signature->parameters;
   for (std::size_t index = query.positional_arguments; index < parameters.size(); ++index) {
     const auto& parameter = parameters.at(index);
-    if (query.supplied_names.contains(parameter.name) ||
+    if (parameter.rest || query.supplied_names.contains(parameter.name) ||
         !parameter.name.starts_with(query.prefix)) {
       continue;
     }

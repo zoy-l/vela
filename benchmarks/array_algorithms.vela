@@ -3,7 +3,7 @@ func main(): int {
   values.sort((left, right) => left - right);
   let total = 0;
   for (let index = 0; index < 100; index = index + 1) {
-    total = total + values.reduce(0, (sum, value) => sum + value);
+    total = total + values.reduce((sum, value) => sum + value, 0);
   }
   // Mapping produces one independent typed array.
   const mapped = values.map(value => value + 1);

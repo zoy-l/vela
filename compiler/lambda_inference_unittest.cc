@@ -91,16 +91,16 @@ INSTANTIATE_TEST_SUITE_P(
              if (!values.some(value => value == 2) || !values.every(value => value > 0) ||
                  values.findIndex(value => value == 3) != 2) { return 0; }
              const mapped = values.map(value => value * 2);
-             return mapped.reduce(24, (sum, value) => sum + value) + total;
+             return mapped.reduce((sum, value) => sum + value, 24) + total;
            })",
         R"(func main(): int {
              const values = [1, 2, 3];
-             const text = values.reduce(operation: (text, value) => text + value, initial: '');
+             const text = values.reduce(callbackFn: (text, value) => text + value, initialValue: '');
              if (text == '123') { return 42; } return 0;
            })",
         R"(func main(): int {
              const values = [1, 2];
-             const f = values.reduce(() => 42, (operation, value) => operation);
+             const f = values.reduce((operation, value) => operation, () => 42);
              return f();
            })",
         R"(func main(): int {
@@ -145,14 +145,14 @@ func main(): int {
   const values = [3, 1, 2]; let total = 0;
   values.sort((left: int, right: int): int => left - right);
   values.forEach((value: int): void => { total = total + value; });
-  return values.reduce(36, (sum: int, value: int): int => sum + value);
+  return values.reduce((sum: int, value: int): int => sum + value, 36);
 })";
   constexpr std::string_view kInferred = R"(
 func main(): int {
   const values = [3, 1, 2]; let total = 0;
   values.sort((left, right) => left - right);
   values.forEach(value => { total = total + value; });
-  return values.reduce(36, (sum, value) => sum + value);
+  return values.reduce((sum, value) => sum + value, 36);
 })";
   runtime::Isolate isolate;
   const auto annotated = CompileSource(kExplicit, isolate);

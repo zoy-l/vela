@@ -41,42 +41,43 @@ FunctionDescriptor Signature(Kind kind,
   return function;
 }
 
-const auto kSignatures = std::to_array<FunctionDescriptor>({
-    Signature(Kind::String, "string", {}),
-    Signature(Kind::String,
-              "string",
-              {
-                  {.name = "separator", .kind = Kind::String, .type = "string"},
-              }),
-    Signature(Kind::MutableString, "String", {}),
-    Signature(Kind::Void, "void", {{.name = "text", .kind = Kind::String, .type = "string"}}),
-    Signature(Kind::String, "string", {}),
-    Signature(Kind::Int, "int", {}),
-    Signature(Kind::Int, "int", {}),
-    Signature(Kind::String,
-              "string",
-              {
-                  {.name = "start", .kind = Kind::Int, .type = "int"},
-                  {.name = "end", .kind = Kind::Int, .type = "int"},
-              }),
-    Signature(Kind::Int, "int", {{.name = "text", .kind = Kind::String, .type = "string"}}),
-    Signature(Kind::Bool, "bool", {{.name = "text", .kind = Kind::String, .type = "string"}}),
-    Signature(Kind::Bool, "bool", {{.name = "prefix", .kind = Kind::String, .type = "string"}}),
-    Signature(Kind::Bool, "bool", {{.name = "suffix", .kind = Kind::String, .type = "string"}}),
-    Signature(Kind::String, "string", {{.name = "index", .kind = Kind::Int, .type = "int"}}),
-    Signature(Kind::Int, "int", {}),
-    Signature(Kind::Double, "double", {}),
-    Signature(Kind::Int, "int", {}),
-    Signature(Kind::Array, "int[]", {}),
-    Signature(Kind::Array, "string[]", {}),
-    Signature(Kind::Int, "int", {}),
-    Signature(Kind::String,
-              "string",
-              {
-                  {.name = "start", .kind = Kind::Int, .type = "int"},
-                  {.name = "end", .kind = Kind::Int, .type = "int"},
-              }),
-});
+const auto kSignatures = [] {
+  auto signatures = std::to_array<FunctionDescriptor>({
+      Signature(Kind::String, "string", {}),
+      Signature(Kind::String, "string",
+                {
+                    {.name = "separator", .kind = Kind::String, .type = "string"},
+                }),
+      Signature(Kind::MutableString, "String", {}),
+      Signature(Kind::Void, "void", {{.name = "text", .kind = Kind::String, .type = "string"}}),
+      Signature(Kind::String, "string", {}),
+      Signature(Kind::Int, "int", {}),
+      Signature(Kind::Int, "int", {}),
+      Signature(Kind::String, "string",
+                {
+                    {.name = "start", .kind = Kind::Int, .type = "int"},
+                    {.name = "end", .kind = Kind::Int, .type = "int"},
+                }),
+      Signature(Kind::Int, "int", {{.name = "text", .kind = Kind::String, .type = "string"}}),
+      Signature(Kind::Bool, "bool", {{.name = "text", .kind = Kind::String, .type = "string"}}),
+      Signature(Kind::Bool, "bool", {{.name = "prefix", .kind = Kind::String, .type = "string"}}),
+      Signature(Kind::Bool, "bool", {{.name = "suffix", .kind = Kind::String, .type = "string"}}),
+      Signature(Kind::String, "string", {{.name = "index", .kind = Kind::Int, .type = "int"}}),
+      Signature(Kind::Int, "int", {}),
+      Signature(Kind::Double, "double", {}),
+      Signature(Kind::Int, "int", {}),
+      Signature(Kind::Array, "int[]", {}),
+      Signature(Kind::Array, "string[]", {}),
+      Signature(Kind::Int, "int", {}),
+      Signature(Kind::String, "string",
+                {
+                    {.name = "start", .kind = Kind::Int, .type = "int"},
+                    {.name = "end", .kind = Kind::Int, .type = "int"},
+                }),
+  });
+  signatures.at(static_cast<std::size_t>(Builtin::ArrayJoin)).optional_parameters = {"separator"};
+  return signatures;
+}();
 static_assert(kSignatures.size() == static_cast<std::size_t>(Builtin::CollectionSize));
 
 }  // namespace
@@ -114,14 +115,14 @@ std::optional<Builtin> FindSetOperation(std::string_view name) {
 
 std::span<const std::pair<std::string_view, Builtin>> ArrayMethods() noexcept {
   static constexpr auto kMethods = std::to_array<std::pair<std::string_view, Builtin>>({
-      {"copy", Builtin::ArrayCopy},
       {"slice", Builtin::ArraySlice},
       {"fill", Builtin::ArrayFill},
       {"reverse", Builtin::ArrayReverse},
       {"push", Builtin::ArrayPush},
       {"pop", Builtin::ArrayPop},
-      {"insert", Builtin::ArrayInsert},
-      {"removeAt", Builtin::ArrayRemoveAt},
+      {"shift", Builtin::ArrayShift},
+      {"unshift", Builtin::ArrayUnshift},
+      {"splice", Builtin::ArraySplice},
       {"clear", Builtin::ArrayClear},
       {"reserve", Builtin::ArrayReserve},
   });
@@ -140,19 +141,20 @@ FunctionDescriptor ArrayMethodSignature(Builtin builtin,
     signature.parameters.push_back({.name = std::string(name), .type = type});
   };
   switch (builtin) {
-    case Builtin::ArrayCopy:
-      signature.return_type = receiver;
-      break;
     case Builtin::ArraySlice:
       signature.return_type = receiver;
       parameter("start", integer);
       parameter("end", integer);
+      signature.optional_parameters = {"start", "end"};
       break;
     case Builtin::ArrayPush:
+    case Builtin::ArrayUnshift:
       signature.return_type = integer;
-      parameter("value", element);
+      parameter("items", element);
+      signature.parameters.back().rest = true;
       break;
     case Builtin::ArrayPop:
+    case Builtin::ArrayShift:
       signature.return_type = element;
       if (!element.nullable) {
         auto& result = signature.return_type;
@@ -161,21 +163,27 @@ FunctionDescriptor ArrayMethodSignature(Builtin builtin,
             element.kind == Kind::Function ? "(" + element.name + ")?" : element.name + '?';
       }
       break;
-    case Builtin::ArrayInsert:
-      parameter("index", integer);
-      parameter("value", element);
-      break;
-    case Builtin::ArrayRemoveAt:
-      signature.return_type = element;
-      parameter("index", integer);
+    case Builtin::ArraySplice:
+      signature.return_type = receiver;
+      parameter("start", integer);
+      parameter("deleteCount", integer);
+      parameter("items", element);
+      signature.parameters.back().rest = true;
+      signature.optional_parameters = {"start", "deleteCount"};
       break;
     case Builtin::ArrayFill:
+      signature.return_type = receiver;
       parameter("value", element);
+      parameter("start", integer);
+      parameter("end", integer);
+      signature.optional_parameters = {"start", "end"};
       break;
     case Builtin::ArrayReserve:
       parameter("capacity", integer);
       break;
     case Builtin::ArrayReverse:
+      signature.return_type = receiver;
+      break;
     case Builtin::ArrayClear:
       break;
     default:
@@ -215,6 +223,10 @@ FunctionDescriptor ArrayCallbackSignature(ArrayAlgorithm algorithm,
     callback.return_type = {.kind = Kind::Bool, .name = "bool"};
   }
   parameter(element);
+  if (algorithm != ArrayAlgorithm::Sort) {
+    parameter({.kind = Kind::Int, .name = "int"});
+    parameter(MakeArrayType(element));
+  }
   return callback;
 }
 
@@ -240,19 +252,21 @@ FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
     method.return_type = MakeArrayType(accumulator);
   } else if (algorithm == ArrayAlgorithm::Reduce) {
     method.return_type = accumulator;
-    method.parameter_indices.emplace("initial", 0);
-    method.parameters.push_back({.name = "initial", .type = accumulator});
+  } else if (algorithm == ArrayAlgorithm::Sort) {
+    method.return_type = MakeArrayType(element);
+    method.optional_parameters.insert("compareFn");
   }
-  std::string parameter = "operation";
+  std::string parameter = "callbackFn";
   if (algorithm == ArrayAlgorithm::Sort) {
-    parameter = "compare";
-  } else if (algorithm == ArrayAlgorithm::Some || algorithm == ArrayAlgorithm::Every ||
-             algorithm == ArrayAlgorithm::FindIndex) {
-    parameter = "predicate";
+    parameter = "compareFn";
   }
   method.parameter_indices.emplace(parameter, static_cast<std::uint32_t>(method.parameters.size()));
   method.parameters.push_back(
       {.name = parameter, .type = {.kind = Kind::Function, .name = std::move(name)}});
+  if (algorithm == ArrayAlgorithm::Reduce) {
+    method.parameter_indices.emplace("initialValue", 1);
+    method.parameters.push_back({.name = "initialValue", .type = accumulator});
+  }
   return method;
 }
 
