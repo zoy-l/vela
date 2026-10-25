@@ -38,6 +38,9 @@ details in `.agents/cpp_style.md`. Define each rule only in its owning file and 
 New rules must state their scope, required action, and necessary exceptions. Check relative links
 and conflicting provisions whenever rules change.
 
+Documentation editing restrictions for the project-root README files and temporary execution
+documents are defined in [Documentation Changes](.agents/documentation_changes.md).
+
 ## Change discipline
 
 - After every change, clean up obsolete code, stale comments, duplicate helpers, APIs without

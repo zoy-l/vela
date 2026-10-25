@@ -2,7 +2,8 @@
 
 The root `README.md` and `tools/vl.py` are authoritative for project facts and commands. See
 [Architecture and Contracts](architecture.md) for architecture and [C++ Code Rules](cpp_style.md)
-for C++ conventions.
+for C++ conventions. See [Documentation Changes](documentation_changes.md) for documentation-editing
+constraints.
 
 ## Before starting
 
@@ -39,6 +40,7 @@ for C++ conventions.
   Once the implementation is complete, run the relevant builds, regression tests, and static checks.
 - Validate behavior and performance separately. Performance conclusions require measurements from
   a Release build; compilation or static reasoning cannot replace benchmarks.
+- Retain benchmark evidence according to [Benchmark Result Retention](benchmark_results.md).
 - For changes limited to rules or documentation, check content, references, encoding, and diffs.
   Do not trigger unrelated full builds.
 - Before completion, check `git diff --check`, UTF-8/LF formatting, workspace changes, and obsolete
