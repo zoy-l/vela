@@ -39,7 +39,7 @@ void WriteNumbers(BinaryWriter& writer, std::span<const T> values) {
 }
 
 template <class T>
-auto ReadNumbers(BinaryReader& reader) -> std::expected<std::vector<T>, BinaryError> {
+std::expected<std::vector<T>, BinaryError> ReadNumbers(BinaryReader& reader) {
   const auto count = reader.Read<std::uint64_t>();
   if (!count) {
     return std::unexpected(count.error());
@@ -84,14 +84,15 @@ inline constexpr std::uint8_t kNullableImageFlag = 1;
 inline constexpr std::uint8_t kCallableImageFlag = 2;
 inline constexpr std::uint8_t kInterfaceImageFlag = 4;
 
-[[nodiscard]] auto ReadElement(BinaryReader& reader) -> std::expected<ImageElement, BinaryError>;
-[[nodiscard]] auto ReadTexts(BinaryReader& reader)
-    -> std::expected<std::vector<std::string>, BinaryError>;
-[[nodiscard]] auto ReadLayouts(BinaryReader& reader, runtime::Isolate& isolate)
-    -> std::expected<LoadedLayouts, BinaryError>;
-[[nodiscard]] auto ResolveElement(const ImageElement& input, const LoadedLayouts& layouts)
-    -> std::expected<runtime::ArrayLayout, std::string>;
-[[nodiscard]] auto ResolveType(const ImageElement& input, const LoadedLayouts& layouts)
-    -> std::expected<runtime::TypeConstraint, std::string>;
+[[nodiscard]] std::expected<ImageElement, BinaryError> ReadElement(BinaryReader& reader);
+[[nodiscard]] std::expected<std::vector<std::string>, BinaryError> ReadTexts(BinaryReader& reader);
+[[nodiscard]] std::expected<LoadedLayouts, BinaryError> ReadLayouts(BinaryReader& reader,
+                                                                    runtime::Isolate& isolate);
+[[nodiscard]] std::expected<runtime::ArrayLayout, std::string> ResolveElement(
+    const ImageElement& input,
+    const LoadedLayouts& layouts);
+[[nodiscard]] std::expected<runtime::TypeConstraint, std::string> ResolveType(
+    const ImageElement& input,
+    const LoadedLayouts& layouts);
 
 }  // namespace vela::vm::internal

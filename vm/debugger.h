@@ -22,12 +22,11 @@ struct DebugLocation final {
 // 只读视图仅在 BeforeInstruction 回调内有效；对象仍由暂停的真实帧精确保根。
 class DebugFrame final {
  public:
-  [[nodiscard]] auto name() const noexcept -> std::string_view;
-  [[nodiscard]] auto instruction() const noexcept -> std::size_t { return instruction_; }
-  [[nodiscard]] auto location() const noexcept -> std::optional<DebugLocation>;
-  [[nodiscard]] auto register_count() const noexcept -> std::size_t;
-  [[nodiscard]] auto ReadRegister(std::size_t index) const noexcept
-      -> std::optional<runtime::Value>;
+  [[nodiscard]] std::string_view name() const noexcept;
+  [[nodiscard]] std::size_t instruction() const noexcept { return instruction_; }
+  [[nodiscard]] std::optional<DebugLocation> location() const noexcept;
+  [[nodiscard]] std::size_t register_count() const noexcept;
+  [[nodiscard]] std::optional<runtime::Value> ReadRegister(std::size_t index) const noexcept;
 
  private:
   friend class DebugContext;
@@ -39,10 +38,10 @@ class DebugFrame final {
 
 class DebugContext final {
  public:
-  [[nodiscard]] auto frame_count() const noexcept -> std::size_t { return frame_count_; }
-  [[nodiscard]] auto current_frame() const noexcept -> DebugFrame;
+  [[nodiscard]] std::size_t frame_count() const noexcept { return frame_count_; }
+  [[nodiscard]] DebugFrame current_frame() const noexcept;
   // depth 0 为当前帧；调用者的位置指向调用指令而不是返回后的下一条指令。
-  [[nodiscard]] auto Frame(std::size_t depth) const noexcept -> std::optional<DebugFrame>;
+  [[nodiscard]] std::optional<DebugFrame> Frame(std::size_t depth) const noexcept;
 
  private:
   friend class internal::Execution;
@@ -60,10 +59,10 @@ class Debugger {
   Debugger() = default;
   virtual ~Debugger() = default;
   Debugger(const Debugger&) = delete;
-  auto operator=(const Debugger&) -> Debugger& = delete;
+  Debugger& operator=(const Debugger&) = delete;
   Debugger(Debugger&&) = delete;
-  auto operator=(Debugger&&) -> Debugger& = delete;
-  virtual auto BeforeInstruction(const DebugContext& context) noexcept -> DebugAction = 0;
+  Debugger& operator=(Debugger&&) = delete;
+  virtual DebugAction BeforeInstruction(const DebugContext& context) noexcept = 0;
 };
 
 }  // namespace vela::vm

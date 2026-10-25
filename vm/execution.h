@@ -48,55 +48,55 @@ class Execution final {
         globals_(program.globals()),
         native_arguments_(&native_arguments) {}
 
-  auto Run(std::uint32_t entry_function) noexcept -> ExecutionResult;
-  auto DebugRun(std::uint32_t entry_function, Debugger& debugger) noexcept -> ExecutionResult;
+  ExecutionResult Run(std::uint32_t entry_function) noexcept;
+  ExecutionResult DebugRun(std::uint32_t entry_function, Debugger& debugger) noexcept;
 
  private:
   template <bool Debugging>
-  auto RunImpl(std::uint32_t entry_function, Debugger* debugger) noexcept -> ExecutionResult;
+  ExecutionResult RunImpl(std::uint32_t entry_function, Debugger* debugger) noexcept;
   // 保持热分派与调用/返回在同一优化边界；Windows ABI 的寄存器视图实参传递曾导致明显回归。
-  [[clang::always_inline]] auto ExecuteInstruction(ActiveFrame& active, Instruction instruction)
-      -> StepResult;
-  [[clang::always_inline]] auto ExecuteControl(ActiveFrame& active, Instruction instruction)
-      -> StepResult;
-  [[clang::always_inline]] auto ExecuteObject(ActiveFrame& active, Instruction instruction)
-      -> StepResult;
-  auto AllocateObject(ActiveFrame& active, Instruction instruction) -> StepResult;
-  auto StringOperation(OpCode opcode,
-                       runtime::RegisterReference destination,
-                       runtime::Value left,
-                       runtime::Value right) -> StepResult;
-  auto ArrayOperation(OpCode opcode,
-                      runtime::RegisterReference destination,
-                      runtime::Value left,
-                      runtime::Value right) -> StepResult;
-  auto ExecuteBuiltin(ActiveFrame& active, Instruction instruction) -> StepResult;
-  auto ExecuteNative(ActiveFrame& active, Instruction instruction) -> StepResult;
-  auto Interpolate(ActiveFrame& active, Instruction instruction) -> StepResult;
+  [[clang::always_inline]] StepResult ExecuteInstruction(ActiveFrame& active,
+                                                         Instruction instruction);
+  [[clang::always_inline]] StepResult ExecuteControl(ActiveFrame& active, Instruction instruction);
+  [[clang::always_inline]] StepResult ExecuteObject(ActiveFrame& active, Instruction instruction);
+  StepResult AllocateObject(ActiveFrame& active, Instruction instruction);
+  StepResult StringOperation(OpCode opcode,
+                             runtime::RegisterReference destination,
+                             runtime::Value left,
+                             runtime::Value right);
+  StepResult ArrayOperation(OpCode opcode,
+                            runtime::RegisterReference destination,
+                            runtime::Value left,
+                            runtime::Value right);
+  StepResult ExecuteBuiltin(ActiveFrame& active, Instruction instruction);
+  StepResult ExecuteNative(ActiveFrame& active, Instruction instruction);
+  StepResult Interpolate(ActiveFrame& active, Instruction instruction);
   static void Jump(ActiveFrame& active, std::int16_t offset) noexcept;
-  [[clang::always_inline]] auto Call(ActiveFrame& active, Instruction instruction) -> StepResult;
-  auto CallIndirect(ActiveFrame& active, Instruction instruction) -> StepResult;
-  auto CallInterface(ActiveFrame& active, Instruction instruction) -> StepResult;
-  [[nodiscard]] auto InterfaceTarget(runtime::Value receiver, std::uint32_t selector) const
-      -> std::expected<std::uint32_t, ExecutionStatus>;
-  [[clang::always_inline]] auto EnterCall(std::uint32_t target,
-                                          ActiveFrame& active,
-                                          Instruction instruction,
-                                          std::optional<runtime::Value> implicit) -> StepResult;
-  auto AccessGlobal(ActiveFrame& active, Instruction instruction) -> StepResult;
-  auto ExecuteExpected(ActiveFrame& active, Instruction instruction) -> StepResult;
+  [[clang::always_inline]] StepResult Call(ActiveFrame& active, Instruction instruction);
+  StepResult CallIndirect(ActiveFrame& active, Instruction instruction);
+  StepResult CallInterface(ActiveFrame& active, Instruction instruction);
+  [[nodiscard]] std::expected<std::uint32_t, ExecutionStatus> InterfaceTarget(
+      runtime::Value receiver,
+      std::uint32_t selector) const;
+  [[clang::always_inline]] StepResult EnterCall(std::uint32_t target,
+                                                ActiveFrame& active,
+                                                Instruction instruction,
+                                                std::optional<runtime::Value> implicit);
+  StepResult AccessGlobal(ActiveFrame& active, Instruction instruction);
+  StepResult ExecuteExpected(ActiveFrame& active, Instruction instruction);
   [[clang::always_inline]] void Return(ActiveFrame& active, runtime::Value value);
-  [[nodiscard]] auto CaptureStack() const -> std::vector<StackFrame>;
-  [[nodiscard]] auto ResolveTrace(std::span<const runtime::TracePosition> positions) const
-      -> std::vector<StackFrame>;
-  [[nodiscard]] auto CapturePositions(std::span<runtime::TracePosition> storage) const
-      -> std::span<const runtime::TracePosition>;
-  auto RuntimeError(ExecutionStatus status, std::string_view message)
-      -> std::expected<runtime::Value, ExecutionStatus>;
-  auto CreateException(runtime::Value payload, ExecutionStatus status, std::string_view message)
-      -> StepResult;
-  auto HandleError(ExecutionStatus status) -> std::optional<ExecutionResult>;
-  auto ExecuteException(ActiveFrame& active, Instruction instruction) -> StepResult;
+  [[nodiscard]] std::vector<StackFrame> CaptureStack() const;
+  [[nodiscard]] std::vector<StackFrame> ResolveTrace(
+      std::span<const runtime::TracePosition> positions) const;
+  [[nodiscard]] std::span<const runtime::TracePosition> CapturePositions(
+      std::span<runtime::TracePosition> storage) const;
+  std::expected<runtime::Value, ExecutionStatus> RuntimeError(ExecutionStatus status,
+                                                              std::string_view message);
+  StepResult CreateException(runtime::Value payload,
+                             ExecutionStatus status,
+                             std::string_view message);
+  std::optional<ExecutionResult> HandleError(ExecutionStatus status);
+  StepResult ExecuteException(ActiveFrame& active, Instruction instruction);
   void AbortInitializers() noexcept;
 
   runtime::Isolate& isolate_;

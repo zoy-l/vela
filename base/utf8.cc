@@ -25,7 +25,7 @@ constexpr std::uint32_t kContinuationPayload = 0x3F;
 constexpr unsigned kContinuationBits = 6;
 }  // namespace
 
-auto InvalidUtf8Offset(std::string_view text) noexcept -> std::optional<std::size_t> {
+std::optional<std::size_t> InvalidUtf8Offset(std::string_view text) noexcept {
   for (std::size_t index = 0; index < text.size();) {
     const auto start = index;
     const auto first = static_cast<unsigned char>(text.substr(index++).front());
@@ -86,7 +86,7 @@ void AppendUtf8(std::uint32_t point, std::string& text) {
   }
 }
 
-auto Utf8Length(std::string_view text) noexcept -> std::size_t {
+std::size_t Utf8Length(std::string_view text) noexcept {
   std::size_t length = 0;
   for (const auto byte : text) {
     length += static_cast<std::size_t>((static_cast<unsigned char>(byte) & kContinuationMask) !=
@@ -95,7 +95,7 @@ auto Utf8Length(std::string_view text) noexcept -> std::size_t {
   return length;
 }
 
-auto Utf8Offset(std::string_view text, std::size_t index) noexcept -> std::optional<std::size_t> {
+std::optional<std::size_t> Utf8Offset(std::string_view text, std::size_t index) noexcept {
   std::size_t offset = 0;
   while (index != 0 && offset < text.size()) {
     const auto first = static_cast<unsigned char>(text.substr(offset).front());

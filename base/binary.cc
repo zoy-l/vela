@@ -21,8 +21,7 @@ void BinaryWriter::Write(std::string_view text) {
   Write(std::as_bytes(std::span(text.data(), text.size())));
 }
 
-auto BinaryReader::Take(std::size_t count)
-    -> std::expected<std::span<const std::byte>, BinaryError> {
+std::expected<std::span<const std::byte>, BinaryError> BinaryReader::Take(std::size_t count) {
   if (count > remaining()) {
     return std::unexpected(Error("truncated binary input"));
   }
@@ -31,7 +30,7 @@ auto BinaryReader::Take(std::size_t count)
   return result;
 }
 
-auto BinaryReader::Text() -> std::expected<std::string, BinaryError> {
+std::expected<std::string, BinaryError> BinaryReader::Text() {
   const auto length = Read<std::uint64_t>();
   if (!length) {
     return std::unexpected(length.error());
@@ -51,8 +50,7 @@ auto BinaryReader::Text() -> std::expected<std::string, BinaryError> {
   return std::string(text);
 }
 
-auto BinaryReader::Count(std::size_t minimum_element_bytes)
-    -> std::expected<std::size_t, BinaryError> {
+std::expected<std::size_t, BinaryError> BinaryReader::Count(std::size_t minimum_element_bytes) {
   const auto count = Read<std::uint64_t>();
   if (!count) {
     return std::unexpected(count.error());
@@ -63,7 +61,7 @@ auto BinaryReader::Count(std::size_t minimum_element_bytes)
   return static_cast<std::size_t>(*count);
 }
 
-auto BinaryReader::Error(std::string message) const -> BinaryError {
+BinaryError BinaryReader::Error(std::string message) const {
   return {.offset = offset_, .message = std::move(message)};
 }
 

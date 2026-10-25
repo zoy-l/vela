@@ -47,7 +47,7 @@ nullable fields and array elements; it prints `label: Vela`, `empty`, and return
 
 `array_algorithms.vela` demonstrates array callbacks and ordered Set operations
 without standard-module imports. `standard_library.vela` uses default `Math`,
-`Random` and `Time` objects.
+`Random`, `performance` and `Date` objects.
 
 Use `check` when validating source without executing it:
 

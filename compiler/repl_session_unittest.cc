@@ -19,7 +19,7 @@ namespace {
 class ReplSessionTest : public testing::Test {
  protected:
   ReplSessionTest() : session_(std::filesystem::path(".")) {
-    session_.isolate().SetConsole(input_, output_);
+    session_.isolate().SetOutput(output_);
   }
 
   void Execute(std::string_view text) {
@@ -31,12 +31,10 @@ class ReplSessionTest : public testing::Test {
     EXPECT_EQ(result.status, SubmissionStatus::Executed) << result.execution.message;
   }
 
-  auto session() -> ReplSession& { return session_; }
-  auto output() -> std::ostringstream& { return output_; }
-  auto input() -> std::istringstream& { return input_; }
+  ReplSession& session() { return session_; }
+  std::ostringstream& output() { return output_; }
 
  private:
-  std::istringstream input_;
   std::ostringstream output_;
   ReplSession session_;
 };
@@ -157,7 +155,7 @@ TEST_F(ReplSessionTest, IncompleteInputAndResetHaveNoEffects) {
   EXPECT_TRUE(session().source().empty());
   Execute("const value = 42;");
   session().Reset();
-  session().isolate().SetConsole(input(), output());
+  session().isolate().SetOutput(output());
   EXPECT_EQ(session().Submit("value").status, SubmissionStatus::Rejected);
   Execute("const value = 3;");
   Execute("value");
@@ -199,7 +197,7 @@ class ReplModuleSessionTest : public testing::Test {
   static void Execute(ReplSession& session, std::string_view text) {
     EXPECT_EQ(session.Submit(text).status, SubmissionStatus::Executed);
   }
-  [[nodiscard]] auto directory() const -> const std::filesystem::path& { return directory_; }
+  [[nodiscard]] const std::filesystem::path& directory() const { return directory_; }
 
  private:
   std::filesystem::path directory_;
@@ -217,9 +215,8 @@ TEST_F(ReplModuleSessionTest, PinsAcceptedModulesAndKeepsBindingsWhenNewImportsC
   Write("added.vela", "export func get(): int { return 2; }");
   {
     ReplSession session(directory());
-    std::istringstream input;
     std::ostringstream output;
-    session.isolate().SetConsole(input, output);
+    session.isolate().SetOutput(output);
     Execute(session, "import \"parent.vela\" as parent;");
     Execute(session, "const saved = parent.capture();");
     Write("leaf.vela", "export func read(): int { return 100; }");
@@ -227,7 +224,7 @@ TEST_F(ReplModuleSessionTest, PinsAcceptedModulesAndKeepsBindingsWhenNewImportsC
     Execute(session, "saved() + added.get()");
     EXPECT_EQ(output.str(), "42\n");
     session.Reset();
-    session.isolate().SetConsole(input, output);
+    session.isolate().SetOutput(output);
     Execute(session, "import \"parent.vela\" as parent;");
     Execute(session, "parent.get()");
     EXPECT_EQ(output.str(), "42\n100\n");

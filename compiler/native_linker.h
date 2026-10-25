@@ -7,8 +7,8 @@
 
 namespace vela::compiler {
 
-[[nodiscard]] auto CheckNativeBindings(const frontend::Program& program,
-                                       const frontend::SemanticModel& model,
-                                       const runtime::Isolate& isolate) -> frontend::Diagnostics;
+[[nodiscard]] frontend::Diagnostics CheckNativeBindings(const frontend::Program& program,
+                                                        const frontend::SemanticModel& model,
+                                                        const runtime::Isolate& isolate);
 
 }  // namespace vela::compiler

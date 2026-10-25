@@ -12,11 +12,11 @@
 
 namespace vela::vm {
 
-auto DebugFrame::name() const noexcept -> std::string_view {
+std::string_view DebugFrame::name() const noexcept {
   return frame_->function->name;
 }
 
-auto DebugFrame::location() const noexcept -> std::optional<DebugLocation> {
+std::optional<DebugLocation> DebugFrame::location() const noexcept {
   const auto debug = frame_->function->View().debug;
   const auto* mapping = debug.Locate(instruction_);
   if (mapping == nullptr) {
@@ -29,11 +29,11 @@ auto DebugFrame::location() const noexcept -> std::optional<DebugLocation> {
   };
 }
 
-auto DebugFrame::register_count() const noexcept -> std::size_t {
+std::size_t DebugFrame::register_count() const noexcept {
   return frame_->function->register_count;
 }
 
-auto DebugFrame::ReadRegister(std::size_t index) const noexcept -> std::optional<runtime::Value> {
+std::optional<runtime::Value> DebugFrame::ReadRegister(std::size_t index) const noexcept {
   const auto registers = frame_->frame.registers();
   if (index >= registers.size()) {
     return std::nullopt;
@@ -41,7 +41,7 @@ auto DebugFrame::ReadRegister(std::size_t index) const noexcept -> std::optional
   return registers.subspan(index).front().Read();
 }
 
-auto DebugContext::Frame(std::size_t depth) const noexcept -> std::optional<DebugFrame> {
+std::optional<DebugFrame> DebugContext::Frame(std::size_t depth) const noexcept {
   if (depth >= frame_count_) {
     return std::nullopt;
   }
@@ -51,7 +51,7 @@ auto DebugContext::Frame(std::size_t depth) const noexcept -> std::optional<Debu
   return DebugFrame(frame, instruction);
 }
 
-auto DebugContext::current_frame() const noexcept -> DebugFrame {
+DebugFrame DebugContext::current_frame() const noexcept {
   const auto& frame = std::span(frames_, frame_count_).back();
   return {frame, frame.program_counter};
 }

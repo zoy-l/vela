@@ -9,7 +9,7 @@ func main(): void {
   print('索引 ${text[2]}，切片 ${text.slice(start: 1, end: 3)}');
   print('查找位置 ${text.indexOf('e')}');
   print(
-    '包含 ${text.contains('中😀')}，前缀 ${text.startsWith('A')}，后缀 ${text.endsWith('\u0301')}'
+    '包含 ${text.includes('中😀')}，前缀 ${text.startsWith('A')}，后缀 ${text.endsWith('\u0301')}'
   );
   print(describe('${name} / ${42} / ${true}'));
   print(['Vela', 'strings'].join(' / '));

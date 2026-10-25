@@ -6,7 +6,7 @@
 
 namespace vela {
 
-[[nodiscard]] auto Utf8Path(std::string_view text) -> std::filesystem::path;
-[[nodiscard]] auto PathText(const std::filesystem::path& path) -> std::string;
+[[nodiscard]] std::filesystem::path Utf8Path(std::string_view text);
+[[nodiscard]] std::string PathText(const std::filesystem::path& path);
 
 }  // namespace vela

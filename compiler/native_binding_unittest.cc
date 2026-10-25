@@ -28,33 +28,32 @@ constexpr double kScaleFactor = 2.0;
 constexpr unsigned char kInvalidUtf8Byte = 0xff;
 constexpr std::int64_t kHostAnswer = 42;
 
-auto Add(NativeContext& /*unused*/, std::int64_t left, std::int64_t right) noexcept
-    -> std::int64_t {
+std::int64_t Add(NativeContext& /*unused*/, std::int64_t left, std::int64_t right) noexcept {
   return left + right;
 }
 
-auto Scale(NativeContext& /*unused*/, double value) noexcept -> double {
+double Scale(NativeContext& /*unused*/, double value) noexcept {
   return value * kScaleFactor;
 }
 
-auto Invert(NativeContext& /*unused*/, bool value) noexcept -> bool {
+bool Invert(NativeContext& /*unused*/, bool value) noexcept {
   return !value;
 }
 
-auto CopyWithCollection(NativeContext& context, std::string_view text) noexcept -> std::string {
+std::string CopyWithCollection(NativeContext& context, std::string_view text) noexcept {
   context.isolate().heap().Collect();
   return std::string(text);
 }
 
-auto Fail(NativeContext& /*unused*/) noexcept -> std::expected<void, NativeError> {
+std::expected<void, NativeError> Fail(NativeContext& /*unused*/) noexcept {
   return std::unexpected(NativeError{.message = "host rejected request"});
 }
 
-auto InvalidString(NativeContext& /*unused*/) noexcept -> std::string {
+std::string InvalidString(NativeContext& /*unused*/) noexcept {
   return {1, static_cast<char>(kInvalidUtf8Byte)};
 }
 
-auto Answer(NativeContext& /*unused*/) noexcept -> std::expected<std::int64_t, NativeError> {
+std::expected<std::int64_t, NativeError> Answer(NativeContext& /*unused*/) noexcept {
   return kHostAnswer;
 }
 

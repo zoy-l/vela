@@ -23,11 +23,11 @@
 
 namespace vela::frontend {
 
-auto TypeChecker::InvalidType() -> TypeChecker::Type {
+TypeChecker::Type TypeChecker::InvalidType() {
   return {};
 }
 
-auto TypeChecker::Check(const Program& program) -> TypeCheckResult {
+TypeCheckResult TypeChecker::Check(const Program& program) {
   diagnostics_.clear();
   function_count_ = program.functions.size();
   types_.clear();
@@ -150,15 +150,29 @@ void TypeChecker::AddDiagnostic(SourceLocation location, std::string message) {
   });
 }
 
-auto TypeChecker::ResolveSignature(const Function& function) -> FunctionInfo {
+TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function,
+                                                        const FunctionInfo* context) {
   FunctionInfo info;
   info.visibility = function.visibility;
   info.storage = function.storage;
-  info.return_type = ResolveType(function.return_type, true);
+  if (!function.return_type.name.empty()) {
+    info.return_type = ResolveType(function.return_type, true);
+  } else if (context != nullptr) {
+    info.return_type = context->return_type;
+  }
   info.parameters.reserve(function.parameters.size());
   info.parameter_indices.reserve(function.parameters.size());
-  for (const auto& parameter : function.parameters) {
-    const Type type = ResolveType(parameter.type, false);
+  for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+    const auto& parameter = function.parameters.at(index);
+    Type type;
+    if (!parameter.type.name.empty()) {
+      type = ResolveType(parameter.type, false);
+    } else if (context != nullptr && index < context->parameters.size()) {
+      type = context->parameters.at(index).type;
+    } else {
+      AddDiagnostic(parameter.location, "cannot infer lambda parameter '" + parameter.name +
+                                            "'; add a type annotation or function type context");
+    }
     if (!info.parameter_indices
              .emplace(parameter.name, static_cast<std::uint32_t>(info.parameters.size()))
              .second) {
@@ -219,8 +233,7 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
   owner_ = nullptr;
 }
 
-auto TypeChecker::CheckExpression(const Expression& expression, const Type* expected)
-    -> TypeChecker::Type {
+TypeChecker::Type TypeChecker::CheckExpression(const Expression& expression, const Type* expected) {
   auto type = CheckExpressionType(expression, expected);
   if (expression.kind == Expression::Kind::Call) {
     InvalidateCapturedRefinements();
@@ -229,7 +242,8 @@ auto TypeChecker::CheckExpression(const Expression& expression, const Type* expe
   return type;
 }
 
-auto TypeChecker::CheckExpressionType(const Expression& expression, const Type* expected) -> Type {
+TypeChecker::Type TypeChecker::CheckExpressionType(const Expression& expression,
+                                                   const Type* expected) {
   switch (expression.kind) {
     case Expression::Kind::Match:
       return CheckMatch(expression, expected);
@@ -237,7 +251,7 @@ auto TypeChecker::CheckExpressionType(const Expression& expression, const Type* 
     case Expression::Kind::TypeCast:
       return CheckTypeOperation(expression);
     case Expression::Kind::Lambda:
-      return CheckLambda(expression);
+      return CheckLambda(expression, expected);
     case Expression::Kind::NullLiteral:
       return {.kind = Type::Kind::Null, .name = "null"};
     case Expression::Kind::IntegerLiteral:
@@ -275,8 +289,7 @@ auto TypeChecker::CheckExpressionType(const Expression& expression, const Type* 
   return InvalidType();
 }
 
-auto TypeChecker::CheckCall(const Expression& expression, const Type* expected)
-    -> TypeChecker::Type {
+TypeChecker::Type TypeChecker::CheckCall(const Expression& expression, const Type* expected) {
   const auto& callee = *expression.callee;
   if (callee.kind == Expression::Kind::Name && LookupLocal(callee.text) == nullptr &&
       (callee.text == "Set" || callee.text == "Map")) {
@@ -298,7 +311,7 @@ auto TypeChecker::CheckCall(const Expression& expression, const Type* expected)
   return CheckNamedCall(expression, expected);
 }
 
-auto TypeChecker::CheckIndirectCall(const Expression& expression, const Type& type) -> Type {
+TypeChecker::Type TypeChecker::CheckIndirectCall(const Expression& expression, const Type& type) {
   const auto& callee = *expression.callee;
   if (type.kind != Type::Kind::Function || type.nullable) {
     AddDiagnostic(callee.location,
@@ -315,7 +328,7 @@ auto TypeChecker::CheckIndirectCall(const Expression& expression, const Type& ty
   return CheckFunctionCall(signature, expression);
 }
 
-auto TypeChecker::CheckNamedCall(const Expression& expression, const Type* expected) -> Type {
+TypeChecker::Type TypeChecker::CheckNamedCall(const Expression& expression, const Type* expected) {
   const auto& callee = *expression.callee;
   if (const auto builtin = FindBuiltin(Type::Kind::Invalid, callee.text)) {
     return CheckBuiltinCall(expression, *builtin);
@@ -365,7 +378,7 @@ auto TypeChecker::CheckNamedCall(const Expression& expression, const Type* expec
   return InvalidType();
 }
 
-auto TypeChecker::CheckMethodCall(const Expression& expression, const Type* expected) -> Type {
+TypeChecker::Type TypeChecker::CheckMethodCall(const Expression& expression, const Type* expected) {
   if (const auto* owner = StaticOwner(*expression.callee)) {
     return CheckStaticCall(expression, *owner);
   }
@@ -410,7 +423,8 @@ auto TypeChecker::CheckMethodCall(const Expression& expression, const Type* expe
   return InvalidType();
 }
 
-auto TypeChecker::CheckStaticCall(const Expression& expression, const ClassInfo& owner) -> Type {
+TypeChecker::Type TypeChecker::CheckStaticCall(const Expression& expression,
+                                               const ClassInfo& owner) {
   const auto method = owner.methods.find(expression.callee->text);
   if (method != owner.methods.end() && method->second.storage == MemberStorage::Static) {
     CheckAccess(method->second.visibility, owner.type.name, expression.location);
@@ -421,9 +435,9 @@ auto TypeChecker::CheckStaticCall(const Expression& expression, const ClassInfo&
   return CheckIndirectCall(expression, CheckExpression(*expression.callee, nullptr));
 }
 
-auto TypeChecker::CheckInstanceCall(const Expression& expression,
-                                    const Type& object,
-                                    const Type* expected) -> Type {
+TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression,
+                                                 const Type& object,
+                                                 const Type* expected) {
   const auto class_info = classes_.find(object.name);
   if (class_info != classes_.end()) {
     const auto method = class_info->second.methods.find(expression.callee->text);
@@ -450,14 +464,15 @@ auto TypeChecker::CheckInstanceCall(const Expression& expression,
   return InvalidType();
 }
 
-auto TypeChecker::CheckBuiltinCall(const Expression& expression, Builtin builtin) -> Type {
+TypeChecker::Type TypeChecker::CheckBuiltinCall(const Expression& expression, Builtin builtin) {
   builtin_calls_.insert_or_assign(&expression, builtin);
   return CheckFunctionCall(BuiltinSignature(builtin), expression);
 }
 
-auto TypeChecker::CheckFunctionCall(const FunctionInfo& function,
-                                    const Expression& expression,
-                                    std::span<const Type> checked_arguments) -> TypeChecker::Type {
+TypeChecker::Type TypeChecker::CheckFunctionCall(
+    const FunctionInfo& function,
+    const Expression& expression,
+    std::span<const std::optional<Type>> checked_arguments) {
   const auto& arguments = expression.arguments;
   const auto location = expression.location;
   std::vector<bool> assigned(function.parameters.size(), false);
@@ -492,8 +507,9 @@ auto TypeChecker::CheckFunctionCall(const FunctionInfo& function,
     assigned.at(index) = true;
     order.push_back(static_cast<std::uint32_t>(index));
     const auto expected = function.parameters.at(index).type;
-    const Type actual = checked_arguments.empty() ? CheckExpression(*argument.value, &expected)
-                                                  : checked_arguments.subspan(source_index).front();
+    const auto checked =
+        checked_arguments.empty() ? std::nullopt : checked_arguments.subspan(source_index).front();
+    const Type actual = checked ? *checked : CheckExpression(*argument.value, &expected);
     if (IsValid(actual) && !CanAssign(expected, actual)) {
       AddDiagnostic(argument.location, "call argument type does not match parameter type");
     }
@@ -508,7 +524,7 @@ auto TypeChecker::CheckFunctionCall(const FunctionInfo& function,
   return function.return_type;
 }
 
-auto TypeChecker::LookupName(const Expression& expression) -> TypeChecker::Type {
+TypeChecker::Type TypeChecker::LookupName(const Expression& expression) {
   const auto* local = LookupLocal(expression.text);
   if (local != nullptr) {
     CaptureLocal(expression, *local);
@@ -525,7 +541,7 @@ auto TypeChecker::LookupName(const Expression& expression) -> TypeChecker::Type 
   return InvalidType();
 }
 
-auto TypeChecker::LookupLocal(std::string_view name) const -> const LocalBinding* {
+const TypeChecker::LocalBinding* TypeChecker::LookupLocal(std::string_view name) const {
   for (const auto& scope : std::views::reverse(scopes_)) {
     const auto value = scope.find(name);
     if (value != scope.end()) {
@@ -546,11 +562,11 @@ void TypeChecker::EndScope() {
   scopes_.pop_back();
 }
 
-auto TypeChecker::DeclareLocal(std::string_view name,
+bool TypeChecker::DeclareLocal(std::string_view name,
                                const Type& type,
                                SourceLocation location,
                                BindingKind kind,
-                               const void* declaration) -> bool {
+                               const void* declaration) {
   auto& scope = scopes_.back();
   if (name == "this") {
     AddDiagnostic(location, "'this' is reserved for the method receiver");
@@ -575,7 +591,7 @@ auto TypeChecker::DeclareLocal(std::string_view name,
   return true;
 }
 
-auto TypeChecker::IsAssignable(const Expression& expression) -> bool {
+bool TypeChecker::IsAssignable(const Expression& expression) {
   return expression.kind == Expression::Kind::Name || expression.kind == Expression::Kind::Member ||
          expression.kind == Expression::Kind::Index;
 }
@@ -616,6 +632,10 @@ void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
 }
 
 void TypeChecker::CheckReturn(const Statement& statement, const Type& return_type) {
+  if (!IsValid(return_type) && !lambda_scopes_.empty()) {
+    InferLambdaReturn(statement);
+    return;
+  }
   if (return_type.kind == Type::Kind::Void) {
     if (statement.expression) {
       const auto value = CheckExpression(*statement.expression, &return_type);
@@ -635,7 +655,7 @@ void TypeChecker::CheckReturn(const Statement& statement, const Type& return_typ
   }
 }
 
-auto TypeChecker::CheckIntegerLiteral(const Expression& expression) -> TypeChecker::Type {
+TypeChecker::Type TypeChecker::CheckIntegerLiteral(const Expression& expression) {
   std::int64_t value = 0;
   const auto result =
       std::from_chars(expression.text.data(), std::to_address(expression.text.end()), value);
@@ -646,7 +666,7 @@ auto TypeChecker::CheckIntegerLiteral(const Expression& expression) -> TypeCheck
   return {.kind = Type::Kind::Int, .name = "int"};
 }
 
-auto TypeChecker::CheckIndex(const Expression& expression) -> TypeChecker::Type {
+TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
   Type object = CheckExpression(*expression.object, nullptr);
   const Type index = CheckExpression(*expression.index, nullptr);
   if (object.nullable) {
@@ -669,7 +689,8 @@ auto TypeChecker::CheckIndex(const Expression& expression) -> TypeChecker::Type 
   return array_elements_.at(object.name);
 }
 
-auto TypeChecker::CheckArrayLiteral(const Expression& expression, const Type* expected) -> Type {
+TypeChecker::Type TypeChecker::CheckArrayLiteral(const Expression& expression,
+                                                 const Type* expected) {
   Type element_type;
   if (expected != nullptr && expected->kind == Type::Kind::Array) {
     const auto array = NonNullable(*expected);
@@ -700,7 +721,7 @@ auto TypeChecker::CheckArrayLiteral(const Expression& expression, const Type* ex
   return ArrayType(element_type);
 }
 
-auto TypeChecker::CheckUnary(const Expression& expression) -> TypeChecker::Type {
+TypeChecker::Type TypeChecker::CheckUnary(const Expression& expression) {
   Type operand = CheckExpression(*expression.operand, nullptr);
   if (expression.text == "!" && (operand.kind != Type::Kind::Bool || operand.nullable)) {
     AddDiagnostic(expression.location, "'!' requires a bool operand");
@@ -713,7 +734,7 @@ auto TypeChecker::CheckUnary(const Expression& expression) -> TypeChecker::Type 
   return operand;
 }
 
-auto TypeChecker::CheckBinary(const Expression& expression) -> TypeChecker::Type {
+TypeChecker::Type TypeChecker::CheckBinary(const Expression& expression) {
   if (expression.text == "=") {
     return CheckAssignment(expression);
   }
@@ -734,8 +755,9 @@ auto TypeChecker::CheckBinary(const Expression& expression) -> TypeChecker::Type
   return CheckBinaryTypes(expression, left, right);
 }
 
-auto TypeChecker::CheckEquality(const Expression& expression, const Type& left, const Type& right)
-    -> Type {
+TypeChecker::Type TypeChecker::CheckEquality(const Expression& expression,
+                                             const Type& left,
+                                             const Type& right) {
   if (left.kind == Type::Kind::Void || right.kind == Type::Kind::Void) {
     AddDiagnostic(expression.location, "equality requires value operands");
     return InvalidType();
@@ -757,9 +779,9 @@ auto TypeChecker::CheckEquality(const Expression& expression, const Type& left, 
   return {.kind = Type::Kind::Bool, .name = "bool"};
 }
 
-auto TypeChecker::CheckBinaryTypes(const Expression& expression,
-                                   const Type& left,
-                                   const Type& right) -> Type {
+TypeChecker::Type TypeChecker::CheckBinaryTypes(const Expression& expression,
+                                                const Type& left,
+                                                const Type& right) {
   if (expression.text == "==" || expression.text == "!=") {
     return CheckEquality(expression, left, right);
   }
@@ -791,7 +813,7 @@ auto TypeChecker::CheckBinaryTypes(const Expression& expression,
   return left;
 }
 
-auto TypeChecker::CheckAssignment(const Expression& expression) -> Type {
+TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
   if (!IsAssignable(*expression.left)) {
     AddDiagnostic(expression.left->location, "left side of assignment is not assignable");
     return InvalidType();

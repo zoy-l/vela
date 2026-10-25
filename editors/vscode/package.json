@@ -2,7 +2,7 @@
   "name": "vela-language",
   "displayName": "Vela",
   "description": "Vela syntax, completion, hover, import links, go to definition, diagnostics and formatting using the native language server.",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "publisher": "vela",
   "license": "MIT",
   "engines": { "vscode": "^1.143.0" },

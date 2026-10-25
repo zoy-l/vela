@@ -49,6 +49,8 @@ struct TypeDescriptor final {
   bool nullable = false;
 };
 
+[[nodiscard]] TypeDescriptor MakeArrayType(const TypeDescriptor& element);
+
 struct FunctionDescriptor final {
   struct Parameter final {
     std::string name;
@@ -111,11 +113,11 @@ enum class ExpectedOperation : std::uint8_t { Ok, Err, HasValue, Value, Error };
 enum class ArrayAlgorithm : std::uint8_t {
   Sort,
   ForEach,
-  Any,
+  Some,
   Every,
   FindIndex,
   Reduce,
-  Transform,
+  Map,
 };
 
 struct SemanticModel final {
@@ -158,7 +160,7 @@ struct TypeCheckResult final {
 class TypeChecker final {
  public:
   explicit TypeChecker(SymbolIds* interface_ids = nullptr) : interface_ids_(interface_ids) {}
-  [[nodiscard]] auto Check(const Program& program) -> TypeCheckResult;
+  [[nodiscard]] TypeCheckResult Check(const Program& program);
 
  private:
   SymbolIds* interface_ids_;
@@ -173,13 +175,13 @@ class TypeChecker final {
   };
   using Refinements = absl::flat_hash_map<std::uint32_t, Type>;
 
-  [[nodiscard]] static auto InvalidType() -> Type;
+  [[nodiscard]] static Type InvalidType();
   void AddDiagnostic(SourceLocation location, std::string message);
   void CollectTypes(const Program& program);
   void ResolveDeclarations(const Program& program);
   void ResolveGlobals(const Program& program);
-  auto ResolveGlobal(const std::string& name) -> Type;
-  auto CheckGlobalInitializer(const Global& declaration, const Type* expected) -> Type;
+  Type ResolveGlobal(const std::string& name);
+  Type CheckGlobalInitializer(const Global& declaration, const Type* expected);
   void ResolveClass(const Class& declaration, ClassInfo& info);
   void ResolveField(const Field& field, const Class& declaration, ClassInfo& info);
   void ResolveInterfaces(const Program& program);
@@ -187,115 +189,113 @@ class TypeChecker final {
   void CheckFunction(const Function& function, const ClassInfo* owner);
   void CheckFieldInitializers(const Class& owner, const ClassInfo& info);
   void CheckAccess(Visibility visibility, std::string_view owner, SourceLocation location);
-  [[nodiscard]] auto StaticOwner(const Expression& member) const -> const ClassInfo*;
-  auto CheckStatement(const Statement& statement, const Type& return_type) -> StatementFlow;
-  auto CheckBlock(const Statement& statement, const Type& return_type) -> StatementFlow;
-  auto CheckSequence(const Statement& statement, const Type& return_type) -> StatementFlow;
-  auto CheckScopedStatement(const Statement& statement, const Type& return_type) -> StatementFlow;
-  auto CheckTry(const Statement& statement, const Type& return_type) -> StatementFlow;
-  auto CheckArrayMethod(const Expression& expression, const Type& receiver) -> Type;
-  auto CheckArrayAlgorithm(const Expression& expression,
+  [[nodiscard]] const ClassInfo* StaticOwner(const Expression& member) const;
+  StatementFlow CheckStatement(const Statement& statement, const Type& return_type);
+  StatementFlow CheckBlock(const Statement& statement, const Type& return_type);
+  StatementFlow CheckSequence(const Statement& statement, const Type& return_type);
+  StatementFlow CheckScopedStatement(const Statement& statement, const Type& return_type);
+  StatementFlow CheckTry(const Statement& statement, const Type& return_type);
+  Type CheckArrayMethod(const Expression& expression, const Type& receiver);
+  Type CheckArrayAlgorithm(const Expression& expression,
                            const Type& receiver,
-                           ArrayAlgorithm algorithm) -> Type;
-  auto CheckExpression(const Expression& expression, const Type* expected) -> Type;
-  auto CheckExpressionType(const Expression& expression, const Type* expected) -> Type;
-  auto CheckLambda(const Expression& expression) -> Type;
-  auto CheckTypeOperation(const Expression& expression) -> Type;
-  auto CheckExpectedFactory(const Expression& expression, const Type* expected) -> Type;
-  auto CheckExpectedMethod(const Expression& expression, const Type& receiver) -> Type;
-  auto CheckMatch(const Expression& expression, const Type* expected) -> Type;
+                           ArrayAlgorithm algorithm);
+  Type CheckArrayMap(const Expression& expression, const Type& receiver);
+  Type CheckExpression(const Expression& expression, const Type* expected);
+  Type CheckExpressionType(const Expression& expression, const Type* expected);
+  Type CheckLambda(const Expression& expression, const Type* expected);
+  void InferLambdaReturn(const Statement& statement);
+  Type CheckTypeOperation(const Expression& expression);
+  Type CheckExpectedFactory(const Expression& expression, const Type* expected);
+  Type CheckExpectedMethod(const Expression& expression, const Type& receiver);
+  Type CheckMatch(const Expression& expression, const Type* expected);
   struct MatchCoverage final {
     absl::flat_hash_set<std::string> labels;
     bool null = false;
     bool values = false;
   };
-  [[nodiscard]] static auto IsMatchComplete(const Type& selector, const MatchCoverage& coverage)
-      -> bool;
-  auto CheckMatchPattern(const MatchArm& arm, const Type& selector, MatchCoverage& coverage)
-      -> Type;
+  [[nodiscard]] static bool IsMatchComplete(const Type& selector, const MatchCoverage& coverage);
+  Type CheckMatchPattern(const MatchArm& arm, const Type& selector, MatchCoverage& coverage);
   void CheckMatchConstant(const MatchArm& arm, const Type& base, MatchCoverage& coverage);
   void CheckMatchResult(const Expression& expression, const Type* expected, Type& result);
-  auto CheckCollectionConstruction(const Expression& expression, const Type* expected) -> Type;
-  auto CheckCollectionMethod(const Expression& expression, const Type& receiver) -> Type;
-  auto ResolveGenericType(const TypeName& source) -> Type;
-  auto NullableType(Type type) -> Type;
-  auto FunctionType(const FunctionInfo& signature) -> Type;
+  Type CheckCollectionConstruction(const Expression& expression, const Type* expected);
+  Type CheckCollectionMethod(const Expression& expression, const Type& receiver);
+  Type ResolveGenericType(const TypeName& source);
+  Type NullableType(Type type);
+  Type FunctionType(const FunctionInfo& signature);
   void CaptureLocal(const Expression& expression, const LocalBinding& binding);
-  auto CheckCall(const Expression& expression, const Type* expected) -> Type;
-  auto CheckNamedCall(const Expression& expression, const Type* expected) -> Type;
-  auto CheckIndirectCall(const Expression& expression, const Type& type) -> Type;
-  auto CheckStaticCall(const Expression& expression, const ClassInfo& owner) -> Type;
-  auto CheckInstanceCall(const Expression& expression, const Type& object, const Type* expected)
-      -> Type;
+  Type CheckCall(const Expression& expression, const Type* expected);
+  Type CheckNamedCall(const Expression& expression, const Type* expected);
+  Type CheckIndirectCall(const Expression& expression, const Type& type);
+  Type CheckStaticCall(const Expression& expression, const ClassInfo& owner);
+  Type CheckInstanceCall(const Expression& expression, const Type& object, const Type* expected);
   void CheckMemberAssignment(const Expression& member);
-  auto CheckFunctionCall(const FunctionInfo& function,
+  Type CheckFunctionCall(const FunctionInfo& function,
                          const Expression& expression,
-                         std::span<const Type> checked_arguments = {}) -> Type;
-  auto CheckClassConstruction(const ClassInfo& class_info, const Expression& expression) -> Type;
-  auto CheckMemberAccess(const Expression& expression) -> Type;
-  auto CheckStaticMember(const Expression& expression, const ClassInfo& owner) -> Type;
-  auto CheckObjectMember(const Expression& expression, const Type& object) -> Type;
-  auto ResolveType(const TypeName& type_name, bool allow_void) -> Type;
-  auto ArrayType(const Type& element) -> Type;
-  auto LookupName(const Expression& expression) -> Type;
-  [[nodiscard]] auto LookupLocal(std::string_view name) const -> const LocalBinding*;
+                         std::span<const std::optional<Type>> checked_arguments = {});
+  Type CheckClassConstruction(const ClassInfo& class_info, const Expression& expression);
+  Type CheckMemberAccess(const Expression& expression);
+  Type CheckStaticMember(const Expression& expression, const ClassInfo& owner);
+  Type CheckObjectMember(const Expression& expression, const Type& object);
+  Type ResolveType(const TypeName& type_name, bool allow_void);
+  Type ArrayType(const Type& element);
+  Type LookupName(const Expression& expression);
+  [[nodiscard]] const LocalBinding* LookupLocal(std::string_view name) const;
   void BeginScope();
   void EndScope();
-  auto DeclareLocal(std::string_view name,
+  bool DeclareLocal(std::string_view name,
                     const Type& type,
                     SourceLocation location,
                     BindingKind kind = BindingKind::Mutable,
-                    const void* declaration = nullptr) -> bool;
-  [[nodiscard]] static auto IsAssignable(const Expression& expression) -> bool;
-  [[nodiscard]] static auto IsSameType(const Type& left, const Type& right) -> bool;
-  [[nodiscard]] auto CanAssign(const Type& target, const Type& value) const -> bool;
-  [[nodiscard]] static auto NonNullable(Type type) -> Type;
+                    const void* declaration = nullptr);
+  [[nodiscard]] static bool IsAssignable(const Expression& expression);
+  [[nodiscard]] static bool IsSameType(const Type& left, const Type& right);
+  [[nodiscard]] bool CanAssign(const Type& target, const Type& value) const;
+  [[nodiscard]] static Type NonNullable(Type type);
   void RefineCondition(const Expression& condition, ConditionTruth outcome);
   void InvalidateAssignments(const Statement& statement);
   void InvalidateAssignments(const Expression& expression);
   void InvalidateCapturedRefinements();
-  [[nodiscard]] static auto IntersectFacts(const Refinements& left, const Refinements& right)
-      -> Refinements;
-  [[nodiscard]] static auto IsNumeric(const Type& type) -> bool;
-  [[nodiscard]] static auto IsValid(const Type& type) -> bool;
-  [[nodiscard]] static auto TypeNameFor(const Type& type) -> std::string;
+  [[nodiscard]] static Refinements IntersectFacts(const Refinements& left,
+                                                  const Refinements& right);
+  [[nodiscard]] static bool IsNumeric(const Type& type);
+  [[nodiscard]] static bool IsValid(const Type& type);
+  [[nodiscard]] static std::string TypeNameFor(const Type& type);
 
   void CheckVariableDeclaration(const Statement& statement);
 
   void CheckReturn(const Statement& statement, const Type& return_type);
 
-  auto CheckIf(const Statement& statement, const Type& return_type) -> StatementFlow;
+  StatementFlow CheckIf(const Statement& statement, const Type& return_type);
 
-  auto CheckWhile(const Statement& statement, const Type& return_type) -> StatementFlow;
+  StatementFlow CheckWhile(const Statement& statement, const Type& return_type);
 
-  auto CheckFor(const Statement& statement, const Type& return_type) -> StatementFlow;
-  auto CheckSwitch(const Statement& statement, const Type& return_type) -> StatementFlow;
-  [[nodiscard]] auto EvaluateConstant(const Expression& expression) const
-      -> std::optional<ConstantValue>;
-  [[nodiscard]] auto EvaluateUnaryConstant(const Expression& expression) const
-      -> std::optional<ConstantValue>;
-  [[nodiscard]] auto EvaluateBinaryConstant(const Expression& expression) const
-      -> std::optional<ConstantValue>;
-  [[nodiscard]] static auto ConstantKey(const ConstantValue& value) -> std::string;
+  StatementFlow CheckFor(const Statement& statement, const Type& return_type);
+  StatementFlow CheckSwitch(const Statement& statement, const Type& return_type);
+  [[nodiscard]] std::optional<ConstantValue> EvaluateConstant(const Expression& expression) const;
+  [[nodiscard]] std::optional<ConstantValue> EvaluateUnaryConstant(
+      const Expression& expression) const;
+  [[nodiscard]] std::optional<ConstantValue> EvaluateBinaryConstant(
+      const Expression& expression) const;
+  [[nodiscard]] static std::string ConstantKey(const ConstantValue& value);
   void CheckCaseLabel(const Expression& label,
                       const Type& selector_type,
                       absl::flat_hash_set<std::string>& labels);
 
-  auto CheckIntegerLiteral(const Expression& expression) -> Type;
+  Type CheckIntegerLiteral(const Expression& expression);
 
-  auto CheckIndex(const Expression& expression) -> Type;
-  auto CheckArrayLiteral(const Expression& expression, const Type* expected) -> Type;
+  Type CheckIndex(const Expression& expression);
+  Type CheckArrayLiteral(const Expression& expression, const Type* expected);
 
-  auto CheckUnary(const Expression& expression) -> Type;
+  Type CheckUnary(const Expression& expression);
 
-  auto CheckBinary(const Expression& expression) -> Type;
-  auto CheckBinaryTypes(const Expression& expression, const Type& left, const Type& right) -> Type;
-  auto CheckEquality(const Expression& expression, const Type& left, const Type& right) -> Type;
+  Type CheckBinary(const Expression& expression);
+  Type CheckBinaryTypes(const Expression& expression, const Type& left, const Type& right);
+  Type CheckEquality(const Expression& expression, const Type& left, const Type& right);
 
-  auto ResolveSignature(const Function& function) -> FunctionInfo;
-  auto CheckMethodCall(const Expression& expression, const Type* expected) -> Type;
-  auto CheckBuiltinCall(const Expression& expression, Builtin builtin) -> Type;
-  auto CheckAssignment(const Expression& expression) -> Type;
+  FunctionInfo ResolveSignature(const Function& function, const FunctionInfo* context = nullptr);
+  Type CheckMethodCall(const Expression& expression, const Type* expected);
+  Type CheckBuiltinCall(const Expression& expression, Builtin builtin);
+  Type CheckAssignment(const Expression& expression);
 
   Diagnostics diagnostics_;
   std::size_t function_count_ = 0;
@@ -309,6 +309,7 @@ class TypeChecker final {
   struct LambdaScope final {
     std::size_t index = 0;
     std::size_t scope = 0;
+    std::optional<Type> inferred_return = std::nullopt;
   };
   std::vector<LambdaScope> lambda_scopes_;
   absl::flat_hash_map<const void*, std::uint32_t> bindings_;

@@ -12,6 +12,6 @@ struct LanguageServerStreams final {
 };
 
 // stdio 调用方须先启用 binary 模式；所有协议输出只写 output，日志只写 errors。
-[[nodiscard]] auto RunLanguageServer(LanguageServerStreams streams) -> int;
+[[nodiscard]] int RunLanguageServer(LanguageServerStreams streams);
 
 }  // namespace vela::tooling

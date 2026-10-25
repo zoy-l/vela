@@ -21,7 +21,7 @@ struct DebugInfo final {
   std::span<const std::string> source_paths;
   std::span<const SourceMapping> mappings;
 
-  [[nodiscard]] auto Locate(std::size_t instruction) const noexcept -> const SourceMapping*;
+  [[nodiscard]] const SourceMapping* Locate(std::size_t instruction) const noexcept;
 };
 
 }  // namespace vela::vm

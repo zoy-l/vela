@@ -28,7 +28,7 @@ class CallbackDebugger final : public vm::Debugger {
  public:
   explicit CallbackDebugger(std::function<vm::DebugAction(const vm::DebugContext&)> callback)
       : callback_(std::move(callback)) {}
-  auto BeforeInstruction(const vm::DebugContext& context) noexcept -> vm::DebugAction override {
+  vm::DebugAction BeforeInstruction(const vm::DebugContext& context) noexcept override {
     return callback_(context);
   }
 
@@ -67,7 +67,7 @@ void ExpectChildStack(const vm::DebugContext& context) {
   ExpectCallerLocation(*caller);
 }
 
-auto StopBeforeInitialize(const vm::DebugContext& context) -> vm::DebugAction {
+vm::DebugAction StopBeforeInitialize(const vm::DebugContext& context) {
   return context.current_frame().name() == "initialize" ? vm::DebugAction::Stop
                                                         : vm::DebugAction::Continue;
 }
@@ -137,9 +137,8 @@ func main(): int {
 
 TEST(DebuggerTest, StoppingAnInitializerDetachesRootsAndResetsItsInitializingState) {
   runtime::Isolate isolate(1);
-  std::istringstream input;
   std::ostringstream output;
-  isolate.SetConsole(input, output);
+  isolate.SetOutput(output);
   const auto compiled = CompileSource(R"(
 func initialize(): int { print("once"); return 42; }
 let value = initialize();

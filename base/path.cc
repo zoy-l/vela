@@ -6,11 +6,11 @@
 
 namespace vela {
 
-auto Utf8Path(std::string_view text) -> std::filesystem::path {
+std::filesystem::path Utf8Path(std::string_view text) {
   return {std::u8string(text.begin(), text.end())};
 }
 
-auto PathText(const std::filesystem::path& path) -> std::string {
+std::string PathText(const std::filesystem::path& path) {
   const auto encoded = path.generic_u8string();
   return {encoded.begin(), encoded.end()};
 }

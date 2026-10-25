@@ -11,12 +11,12 @@ class RegisterFile final {
   RegisterFile() = default;
   ~RegisterFile();
   RegisterFile(const RegisterFile&) = delete;
-  auto operator=(const RegisterFile&) -> RegisterFile& = delete;
+  RegisterFile& operator=(const RegisterFile&) = delete;
   RegisterFile(RegisterFile&&) = delete;
-  auto operator=(RegisterFile&&) -> RegisterFile& = delete;
+  RegisterFile& operator=(RegisterFile&&) = delete;
   // 仅在对应调用深度无活跃帧时获取；返回区间在本帧期间保持地址稳定。
-  [[nodiscard]] auto Acquire(std::size_t count) noexcept -> runtime::RegisterView;
-  [[nodiscard]] auto capacity() const noexcept -> std::size_t { return capacity_; }
+  [[nodiscard]] runtime::RegisterView Acquire(std::size_t count) noexcept;
+  [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
 
  private:
   runtime::RegisterPayload* values_ = nullptr;

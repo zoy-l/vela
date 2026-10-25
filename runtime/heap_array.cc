@@ -15,14 +15,13 @@
 namespace vela::runtime {
 namespace {
 
-auto Storage(HeapObject& array, const ArrayLayout& layout, std::size_t length)
-    -> std::span<std::byte> {
+std::span<std::byte> Storage(HeapObject& array, const ArrayLayout& layout, std::size_t length) {
   void* bytes = std::span(&array, 1).last(0).data();
   return {static_cast<std::byte*>(bytes), layout.element_size() * length};
 }
 
 template <class T>
-auto Elements(std::span<std::byte> storage) -> std::span<T> {
+std::span<T> Elements(std::span<std::byte> storage) {
   void* bytes = storage.data();
   return {static_cast<T*>(bytes), storage.size() / sizeof(T)};
 }
@@ -56,7 +55,7 @@ void VisitStorage(const ArrayLayout& layout, std::span<std::byte> storage, const
 }
 
 template <class T>
-auto ElementValue(Value value) -> T {
+T ElementValue(Value value) {
   if constexpr (std::is_same_v<T, Value>) {
     return value;
   } else if constexpr (std::is_same_v<T, bool>) {
@@ -74,8 +73,9 @@ auto ElementValue(Value value) -> T {
 
 }  // namespace
 
-auto Heap::SliceArray(HeapObject& array, std::uint32_t start, std::uint32_t end) noexcept
-    -> std::expected<HeapObject*, ArrayAccessError> {
+std::expected<HeapObject*, ArrayAccessError> Heap::SliceArray(HeapObject& array,
+                                                              std::uint32_t start,
+                                                              std::uint32_t end) noexcept {
   if (array.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }
@@ -102,8 +102,7 @@ auto Heap::SliceArray(HeapObject& array, std::uint32_t start, std::uint32_t end)
   return copy;
 }
 
-auto Heap::FillArray(HeapObject& array, Value value) noexcept
-    -> std::expected<void, ArrayAccessError> {
+std::expected<void, ArrayAccessError> Heap::FillArray(HeapObject& array, Value value) noexcept {
   if (array.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }
@@ -119,7 +118,7 @@ auto Heap::FillArray(HeapObject& array, Value value) noexcept
   return {};
 }
 
-auto Heap::ReverseArray(HeapObject& array) noexcept -> std::expected<void, ArrayAccessError> {
+std::expected<void, ArrayAccessError> Heap::ReverseArray(HeapObject& array) noexcept {
   if (array.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }

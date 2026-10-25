@@ -21,8 +21,7 @@
 
 namespace vela::runtime {
 
-auto Isolate::RegisterNative(NativeFunction function)
-    -> std::expected<void, NativeRegistrationError> {
+std::expected<void, NativeRegistrationError> Isolate::RegisterNative(NativeFunction function) {
   const auto name = function.name();
   if (name.empty() || name.contains('\0') || InvalidUtf8Offset(name)) {
     return std::unexpected(NativeRegistrationError::InvalidName);
@@ -35,7 +34,7 @@ auto Isolate::RegisterNative(NativeFunction function)
   return {};
 }
 
-auto Isolate::FindNative(std::string_view name) const -> std::shared_ptr<const NativeFunction> {
+std::shared_ptr<const NativeFunction> Isolate::FindNative(std::string_view name) const {
   const auto found = natives_.find(name);
   return found == natives_.end() ? FindStandardNative(name) : found->second;
 }
@@ -45,22 +44,17 @@ Isolate::Isolate(std::size_t gc_threshold) noexcept : heap_(gc_threshold) {
   error_layout_ = CreateClassLayout(kErrorFieldCount, references);
 }
 
-auto Isolate::input() noexcept -> std::istream& {
-  return input_ != nullptr ? *input_ : std::cin;
-}
-
-auto Isolate::output() noexcept -> std::ostream& {
+std::ostream& Isolate::output() noexcept {
   return output_ != nullptr ? *output_ : std::cout;
 }
 
-void Isolate::SetConsole(std::istream& input, std::ostream& output) noexcept {
-  input_ = &input;
+void Isolate::SetOutput(std::ostream& output) noexcept {
   output_ = &output;
 }
 
-auto Isolate::CreateClassLayout(std::uint32_t field_count,
-                                std::span<const std::uint32_t> reference_fields,
-                                ClassLayoutOptions options) -> ClassLayout* {
+ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
+                                        std::span<const std::uint32_t> reference_fields,
+                                        ClassLayoutOptions options) {
   std::vector<std::uint32_t> references(reference_fields.begin(), reference_fields.end());
   std::ranges::sort(references);
   const auto duplicates = std::ranges::unique(references);
@@ -78,7 +72,7 @@ auto Isolate::CreateClassLayout(std::uint32_t field_count,
   return result;
 }
 
-auto Isolate::CreateArrayLayout(ArrayLayout layout) -> const ArrayLayout* {
+const ArrayLayout* Isolate::CreateArrayLayout(ArrayLayout layout) {
   if (layout.element_array != nullptr) {
     layout.element_object_kind = ObjectKind::Array;
   }
@@ -88,14 +82,14 @@ auto Isolate::CreateArrayLayout(ArrayLayout layout) -> const ArrayLayout* {
   return result;
 }
 
-auto Isolate::CreateCollectionLayout(CollectionLayout layout) -> const CollectionLayout* {
+const CollectionLayout* Isolate::CreateCollectionLayout(CollectionLayout layout) {
   auto stored = std::make_unique<CollectionLayout>(layout);
   const auto* result = stored.get();
   collection_layouts_.push_back(std::move(stored));
   return result;
 }
 
-auto Isolate::layout_counts() const noexcept -> LayoutCounts {
+LayoutCounts Isolate::layout_counts() const noexcept {
   return {
       .classes = class_layouts_.size(),
       .arrays = array_layouts_.size(),

@@ -16,7 +16,7 @@ struct SourceModule final {
   std::uint32_t binding_id = 0;
 };
 
-[[nodiscard]] auto BindModules(std::vector<SourceModule> modules, std::vector<SourceFile> sources)
-    -> ParseResult;
+[[nodiscard]] ParseResult BindModules(std::vector<SourceModule> modules,
+                                      std::vector<SourceFile> sources);
 
 }  // namespace vela::frontend

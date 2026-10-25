@@ -31,8 +31,8 @@
 
 namespace vela {
 
-auto ReadBinaryFile(const std::filesystem::path& path)
-    -> std::expected<std::vector<std::byte>, std::string> {
+std::expected<std::vector<std::byte>, std::string> ReadBinaryFile(
+    const std::filesystem::path& path) {
   auto* const file = CreateFileW(path.c_str(), GENERIC_READ,
                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -76,7 +76,7 @@ auto ReadBinaryFile(const std::filesystem::path& path)
 
 namespace vela::internal {
 
-auto PublishFile(FilePublication publication) -> std::error_code {
+std::error_code PublishFile(FilePublication publication) {
   std::error_code error;
   const auto destination = std::filesystem::absolute(publication.destination.get(), error);
   if (error) {

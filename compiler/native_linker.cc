@@ -13,7 +13,7 @@
 namespace vela::compiler {
 namespace {
 
-auto MatchesNativeType(const frontend::TypeDescriptor& type, runtime::NativeType native) -> bool {
+bool MatchesNativeType(const frontend::TypeDescriptor& type, runtime::NativeType native) {
   using Kind = frontend::TypeDescriptor::Kind;
   if (native == runtime::NativeType::NullableString) {
     return type.kind == Kind::String && type.nullable;
@@ -38,8 +38,8 @@ auto MatchesNativeType(const frontend::TypeDescriptor& type, runtime::NativeType
   std::unreachable();
 }
 
-auto SignatureMatches(const frontend::FunctionDescriptor& signature,
-                      const runtime::NativeFunction& native) -> bool {
+bool SignatureMatches(const frontend::FunctionDescriptor& signature,
+                      const runtime::NativeFunction& native) {
   const auto parameters = native.parameters();
   if (signature.parameters.size() != parameters.size() ||
       !MatchesNativeType(signature.return_type, native.result_type())) {
@@ -56,9 +56,9 @@ auto SignatureMatches(const frontend::FunctionDescriptor& signature,
 
 }  // namespace
 
-auto CheckNativeBindings(const frontend::Program& program,
-                         const frontend::SemanticModel& model,
-                         const runtime::Isolate& isolate) -> frontend::Diagnostics {
+frontend::Diagnostics CheckNativeBindings(const frontend::Program& program,
+                                          const frontend::SemanticModel& model,
+                                          const runtime::Isolate& isolate) {
   frontend::Diagnostics diagnostics;
   const auto check = [&](const frontend::Function& function,
                          const frontend::FunctionDescriptor& signature) -> void {

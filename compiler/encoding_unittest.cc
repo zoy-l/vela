@@ -19,7 +19,7 @@ constexpr std::size_t kBeyondByteIndex = kMaxFrameRegisters + 1;
 constexpr std::size_t kLongBranchStatements = 17000;
 constexpr std::size_t kLongFunctionCalls = 1000;
 
-auto FunctionSource(std::size_t count) -> std::string {
+std::string FunctionSource(std::size_t count) {
   std::string source;
   for (std::size_t index = 0; index < count; ++index) {
     source +=
@@ -100,7 +100,7 @@ TEST(EncodingTest, RejectsArrayLayoutIndex256) {
   EXPECT_TRUE(compiled.diagnostics.front().message.contains("encoding"));
 }
 
-auto FieldsSource(std::size_t count) -> std::string {
+std::string FieldsSource(std::size_t count) {
   std::string source = "class Record {\n";
   for (std::size_t index = 0; index < count; ++index) {
     source += "param f" + std::to_string(index) + ": int;\n";
@@ -193,7 +193,7 @@ TEST(EncodingTest, ReportsLiveRegisterPressureInsteadOfTotalExpressionCount) {
   EXPECT_TRUE(compiled.diagnostics.front().message.contains("register slots"));
 }
 
-auto ParametersSource(std::size_t count) -> std::string {
+std::string ParametersSource(std::size_t count) {
   std::string source = "func pick(";
   for (std::size_t index = 0; index < count; ++index) {
     if (index != 0) {

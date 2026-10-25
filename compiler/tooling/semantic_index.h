@@ -60,18 +60,17 @@ struct Hover final {
 };
 
 // 只补齐光标处的标识符和缺失的末尾分隔符，生成查询用快照；不修改文档或编译语法。
-[[nodiscard]] auto CompletionSource(std::string_view source, std::size_t offset) -> std::string;
+[[nodiscard]] std::string CompletionSource(std::string_view source, std::size_t offset);
 
 // 索引拥有 AST 与 checker 模型；模型中的节点借用始终由同一个索引覆盖。
 class SemanticIndex final {
  public:
   SemanticIndex(std::string_view path, std::span<const frontend::SourceInput> overlays);
-  [[nodiscard]] auto Complete(std::size_t offset) const -> std::vector<Completion>;
-  [[nodiscard]] auto FindDefinition(std::size_t offset, PositionEncoding encoding) const
-      -> std::optional<Definition>;
-  [[nodiscard]] auto FindHover(std::size_t offset, PositionEncoding encoding) const
-      -> std::optional<Hover>;
-  [[nodiscard]] auto ImportLinks(PositionEncoding encoding) const -> std::vector<ImportLink>;
+  [[nodiscard]] std::vector<Completion> Complete(std::size_t offset) const;
+  [[nodiscard]] std::optional<Definition> FindDefinition(std::size_t offset,
+                                                         PositionEncoding encoding) const;
+  [[nodiscard]] std::optional<Hover> FindHover(std::size_t offset, PositionEncoding encoding) const;
+  [[nodiscard]] std::vector<ImportLink> ImportLinks(PositionEncoding encoding) const;
 
  private:
   using Key = std::pair<std::uint32_t, std::size_t>;
@@ -108,20 +107,21 @@ class SemanticIndex final {
     frontend::MemberStorage storage = frontend::MemberStorage::Instance;
     std::string context_class;
   };
-  [[nodiscard]] auto TokenAt(SourceLocation location) const -> std::size_t;
-  [[nodiscard]] auto QueryToken(std::size_t offset) const -> const frontend::Token*;
-  [[nodiscard]] auto DocumentationAt(SourceLocation location) const -> std::string;
-  [[nodiscard]] auto BuiltinCompletion(const frontend::Token& token) const
-      -> std::optional<Completion>;
-  [[nodiscard]] auto KeyAt(SourceLocation location) const -> Key;
-  [[nodiscard]] auto Extent(const frontend::Statement& statement) const -> Scope;
-  auto AddSymbol(SourceLocation location, Completion completion) -> std::size_t;
+  [[nodiscard]] std::size_t TokenAt(SourceLocation location) const;
+  [[nodiscard]] const frontend::Token* QueryToken(std::size_t offset) const;
+  [[nodiscard]] std::string DocumentationAt(SourceLocation location) const;
+  [[nodiscard]] std::optional<Completion> BuiltinCompletion(const frontend::Token& token) const;
+  [[nodiscard]] Key KeyAt(SourceLocation location) const;
+  [[nodiscard]] Scope Extent(const frontend::Statement& statement) const;
+  std::size_t AddSymbol(SourceLocation location, Completion completion);
   void AddReference(SourceLocation location, std::string_view name);
   void CollectDeclarations();
   void CollectParameters(std::size_t symbol, const frontend::Function& function);
   void CollectImports();
   void VisitType(const frontend::TypeName& type);
-  void VisitFunction(const frontend::Function& function, const Scope& scope);
+  void VisitFunction(const frontend::Function& function,
+                     const Scope& scope,
+                     const frontend::FunctionDescriptor* signature = nullptr);
   void VisitStatement(const frontend::Statement* statement, Scope scope);
   void VisitExpression(const frontend::Expression* expression, const Scope& scope);
   void VisitProgram();
@@ -131,18 +131,18 @@ class SemanticIndex final {
                     std::string detail,
                     Scope scope,
                     std::size_t available);
-  [[nodiscard]] auto ReceiverFor(const frontend::Expression& expression) const -> Receiver;
-  [[nodiscard]] auto MemberCompletions(const Receiver& receiver) const -> std::vector<Completion>;
+  [[nodiscard]] Receiver ReceiverFor(const frontend::Expression& expression) const;
+  [[nodiscard]] std::vector<Completion> MemberCompletions(const Receiver& receiver) const;
   void AddContainerCompletions(std::vector<Completion>& result,
                                const frontend::TypeDescriptor& type) const;
-  [[nodiscard]] auto VisibleLocals(std::size_t offset) const
-      -> absl::flat_hash_map<std::string, Completion>;
-  [[nodiscard]] auto QualifiedCompletions(
+  [[nodiscard]] absl::flat_hash_map<std::string, Completion> VisibleLocals(
+      std::size_t offset) const;
+  [[nodiscard]] std::vector<Completion> QualifiedCompletions(
       std::size_t token,
-      const absl::flat_hash_map<std::string, Completion>& locals) const -> std::vector<Completion>;
+      const absl::flat_hash_map<std::string, Completion>& locals) const;
   void IndexExpression(const frontend::Expression& expression);
-  [[nodiscard]] auto ImportSource(const frontend::Program::Import& imported) const
-      -> std::optional<std::uint32_t>;
+  [[nodiscard]] std::optional<std::uint32_t> ImportSource(
+      const frontend::Program::Import& imported) const;
 
   frontend::Program program_;
   frontend::SemanticModel model_;

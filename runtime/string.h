@@ -16,11 +16,11 @@ class StringObject final {
   explicit StringObject([[maybe_unused]] AllocationToken token) noexcept {}
   ~StringObject() = default;
   StringObject(const StringObject&) = delete;
-  auto operator=(const StringObject&) -> StringObject& = delete;
+  StringObject& operator=(const StringObject&) = delete;
   StringObject(StringObject&&) = delete;
-  auto operator=(StringObject&&) -> StringObject& = delete;
+  StringObject& operator=(StringObject&&) = delete;
 
-  [[nodiscard]] auto value() const noexcept -> std::string_view {
+  [[nodiscard]] std::string_view value() const noexcept {
     const void* bytes = std::span(this, 1).last(0).data();
     return {static_cast<const char*>(bytes), header_.length};
   }

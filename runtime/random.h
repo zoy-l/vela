@@ -13,10 +13,9 @@ class Random final {
  public:
   explicit Random(std::uint64_t seed = 0) noexcept;
   void Seed(std::uint64_t seed) noexcept;
-  [[nodiscard]] auto Next() noexcept -> std::uint64_t;
-  [[nodiscard]] auto NextDouble() noexcept -> double;
-  [[nodiscard]] auto NextInt(std::int64_t bound) noexcept
-      -> std::expected<std::int64_t, RandomError>;
+  [[nodiscard]] std::uint64_t Next() noexcept;
+  [[nodiscard]] double NextDouble() noexcept;
+  [[nodiscard]] std::expected<std::int64_t, RandomError> NextInt(std::int64_t bound) noexcept;
 
  private:
   std::array<std::uint64_t, 2> state_{};

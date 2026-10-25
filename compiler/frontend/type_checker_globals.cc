@@ -27,7 +27,7 @@ void TypeChecker::ResolveGlobals(const Program& program) {
   }
 }
 
-auto TypeChecker::ResolveGlobal(const std::string& name) -> Type {
+TypeChecker::Type TypeChecker::ResolveGlobal(const std::string& name) {
   auto& global = globals_.at(name);
   const auto& declaration = *global.declaration;
   if (checked_globals_.contains(name)) {
@@ -60,7 +60,8 @@ auto TypeChecker::ResolveGlobal(const std::string& name) -> Type {
   return global.type;
 }
 
-auto TypeChecker::CheckGlobalInitializer(const Global& declaration, const Type* expected) -> Type {
+TypeChecker::Type TypeChecker::CheckGlobalInitializer(const Global& declaration,
+                                                      const Type* expected) {
   // 递归推导另一个全局声明时不能捕获当前 lambda 的局部变量或控制流事实。
   auto saved_scopes = std::move(scopes_);
   auto saved_lambdas = std::move(lambda_scopes_);

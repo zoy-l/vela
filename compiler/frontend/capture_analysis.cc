@@ -15,7 +15,7 @@ namespace {
 
 class CaptureAnalysis final {
  public:
-  auto Run(const Program& program) -> absl::flat_hash_set<const void*>;
+  absl::flat_hash_set<const void*> Run(const Program& program);
 
  private:
   struct Declaration final {
@@ -143,7 +143,7 @@ void CaptureAnalysis::Walk(const Statement* statement) {
   }
 }
 
-auto CaptureAnalysis::Run(const Program& program) -> absl::flat_hash_set<const void*> {
+absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Program& program) {
   for (const auto& global : program.globals) {
     Walk(global.initializer.get());
   }
@@ -166,7 +166,7 @@ auto CaptureAnalysis::Run(const Program& program) -> absl::flat_hash_set<const v
 
 }  // namespace
 
-auto FindCapturedMutableDeclarations(const Program& program) -> absl::flat_hash_set<const void*> {
+absl::flat_hash_set<const void*> FindCapturedMutableDeclarations(const Program& program) {
   return CaptureAnalysis().Run(program);
 }
 

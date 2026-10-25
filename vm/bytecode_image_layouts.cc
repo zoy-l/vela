@@ -22,7 +22,7 @@
 namespace vela::vm::internal {
 namespace {
 
-auto ReadFlag(BinaryReader& reader) -> std::expected<bool, BinaryError> {
+std::expected<bool, BinaryError> ReadFlag(BinaryReader& reader) {
   const auto flag = reader.Read<std::uint8_t>();
   if (!flag) {
     return std::unexpected(flag.error());
@@ -33,8 +33,8 @@ auto ReadFlag(BinaryReader& reader) -> std::expected<bool, BinaryError> {
   return *flag != 0;
 }
 
-auto ReadClass(BinaryReader& reader, runtime::Isolate& isolate)
-    -> std::expected<runtime::ClassLayout*, BinaryError> {
+std::expected<runtime::ClassLayout*, BinaryError> ReadClass(BinaryReader& reader,
+                                                            runtime::Isolate& isolate) {
   const auto standard_error = ReadFlag(reader);
   const auto fields = reader.Read<std::uint32_t>();
   if (!standard_error) {
@@ -92,8 +92,7 @@ auto ReadClass(BinaryReader& reader, runtime::Isolate& isolate)
 }
 
 template <class T>
-auto ResolvePointer(std::uint64_t index, std::span<T* const> values)
-    -> std::expected<T*, std::string> {
+std::expected<T*, std::string> ResolvePointer(std::uint64_t index, std::span<T* const> values) {
   if (index == kNoImageId) {
     return nullptr;
   }
@@ -111,20 +110,20 @@ class LayoutGraph final {
         collections_(collections),
         dependencies_(arrays.size() + collections.size()),
         dependents_(dependencies_.size()) {}
-  auto Build(runtime::Isolate& isolate, LoadedLayouts& output) -> std::expected<void, std::string>;
+  std::expected<void, std::string> Build(runtime::Isolate& isolate, LoadedLayouts& output);
 
  private:
-  auto Link(const ImageElement& element, std::size_t node) -> std::expected<void, std::string>;
-  auto Create(std::size_t node, runtime::Isolate& isolate, LoadedLayouts& output)
-      -> std::expected<void, std::string>;
+  std::expected<void, std::string> Link(const ImageElement& element, std::size_t node);
+  std::expected<void, std::string> Create(std::size_t node,
+                                          runtime::Isolate& isolate,
+                                          LoadedLayouts& output);
   std::span<const ImageElement> arrays_;
   std::span<const ImageCollection> collections_;
   std::vector<std::size_t> dependencies_;
   std::vector<std::vector<std::size_t>> dependents_;
 };
 
-auto LayoutGraph::Link(const ImageElement& element, std::size_t node)
-    -> std::expected<void, std::string> {
+std::expected<void, std::string> LayoutGraph::Link(const ImageElement& element, std::size_t node) {
   if (element.kind == static_cast<std::uint8_t>(runtime::ValueKind::Null)) {
     return std::unexpected("array/collection element type cannot be null-only");
   }
@@ -145,8 +144,9 @@ auto LayoutGraph::Link(const ImageElement& element, std::size_t node)
   return {};
 }
 
-auto LayoutGraph::Create(std::size_t node, runtime::Isolate& isolate, LoadedLayouts& output)
-    -> std::expected<void, std::string> {
+std::expected<void, std::string> LayoutGraph::Create(std::size_t node,
+                                                     runtime::Isolate& isolate,
+                                                     LoadedLayouts& output) {
   if (node < arrays_.size()) {
     auto element = ResolveElement(arrays_.subspan(node).front(), output);
     if (!element) {
@@ -173,8 +173,8 @@ auto LayoutGraph::Create(std::size_t node, runtime::Isolate& isolate, LoadedLayo
   return {};
 }
 
-auto LayoutGraph::Build(runtime::Isolate& isolate, LoadedLayouts& output)
-    -> std::expected<void, std::string> {
+std::expected<void, std::string> LayoutGraph::Build(runtime::Isolate& isolate,
+                                                    LoadedLayouts& output) {
   for (std::size_t index = 0; index < arrays_.size(); ++index) {
     if (auto linked = Link(arrays_.subspan(index).front(), index); !linked) {
       return linked;
@@ -220,7 +220,7 @@ auto LayoutGraph::Build(runtime::Isolate& isolate, LoadedLayouts& output)
 
 }  // namespace
 
-auto ReadTexts(BinaryReader& reader) -> std::expected<std::vector<std::string>, BinaryError> {
+std::expected<std::vector<std::string>, BinaryError> ReadTexts(BinaryReader& reader) {
   const auto count = reader.Count(sizeof(std::uint64_t));
   if (!count) {
     return std::unexpected(count.error());
@@ -237,7 +237,7 @@ auto ReadTexts(BinaryReader& reader) -> std::expected<std::vector<std::string>, 
   return texts;
 }
 
-auto ReadElement(BinaryReader& reader) -> std::expected<ImageElement, BinaryError> {
+std::expected<ImageElement, BinaryError> ReadElement(BinaryReader& reader) {
   const auto record = reader.Record<std::uint8_t, std::uint8_t, std::uint8_t, std::uint32_t,
                                     std::uint64_t, std::uint64_t, std::uint64_t>();
   if (!record) {
@@ -261,8 +261,8 @@ auto ReadElement(BinaryReader& reader) -> std::expected<ImageElement, BinaryErro
   };
 }
 
-auto ResolveElement(const ImageElement& input, const LoadedLayouts& layouts)
-    -> std::expected<runtime::ArrayLayout, std::string> {
+std::expected<runtime::ArrayLayout, std::string> ResolveElement(const ImageElement& input,
+                                                                const LoadedLayouts& layouts) {
   const auto instance = ResolvePointer(input.instance, std::span(layouts.classes));
   const auto array = ResolvePointer(input.array, std::span(layouts.arrays));
   const auto collection = ResolvePointer(input.collection, std::span(layouts.collections));
@@ -288,8 +288,8 @@ auto ResolveElement(const ImageElement& input, const LoadedLayouts& layouts)
   };
 }
 
-auto ResolveType(const ImageElement& input, const LoadedLayouts& layouts)
-    -> std::expected<runtime::TypeConstraint, std::string> {
+std::expected<runtime::TypeConstraint, std::string> ResolveType(const ImageElement& input,
+                                                                const LoadedLayouts& layouts) {
   const auto element = ResolveElement(input, layouts);
   if (!element) {
     return std::unexpected(element.error());
@@ -297,8 +297,8 @@ auto ResolveType(const ImageElement& input, const LoadedLayouts& layouts)
   return element->element_type();
 }
 
-auto ReadLayouts(BinaryReader& reader, runtime::Isolate& isolate)
-    -> std::expected<LoadedLayouts, BinaryError> {
+std::expected<LoadedLayouts, BinaryError> ReadLayouts(BinaryReader& reader,
+                                                      runtime::Isolate& isolate) {
   LoadedLayouts layouts;
   const auto classes = reader.Count((3 * sizeof(std::uint64_t)) + sizeof(std::uint32_t) + 2);
   if (!classes) {

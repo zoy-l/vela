@@ -6,7 +6,7 @@
 
 namespace vela::frontend {
 
-[[nodiscard]] auto CheckConstructorInitialization(const Class& owner, const SemanticModel& model)
-    -> Diagnostics;
+[[nodiscard]] Diagnostics CheckConstructorInitialization(const Class& owner,
+                                                         const SemanticModel& model);
 
 }  // namespace vela::frontend

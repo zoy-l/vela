@@ -9,7 +9,7 @@ namespace vela::runtime {
 RootedValue::RootedValue(Isolate& isolate, Value value)
     : storage_(std::make_shared<Storage>(isolate.heap(), value)) {}
 
-auto RootedValue::value() const noexcept -> Value {
+Value RootedValue::value() const noexcept {
   return storage_->value;
 }
 

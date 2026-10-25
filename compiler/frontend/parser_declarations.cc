@@ -11,7 +11,7 @@
 
 namespace vela::frontend {
 
-auto Parser::ParseEnum() -> std::optional<Enum> {
+std::optional<Enum> Parser::ParseEnum() {
   const Token name = Peek();
   const std::optional<Token> name_token = Expect(TokenKind::Identifier, "expected enum name");
   if (!name_token.has_value()) {
@@ -40,7 +40,7 @@ auto Parser::ParseEnum() -> std::optional<Enum> {
   return declaration;
 }
 
-auto Parser::ParseClass() -> std::optional<Class> {
+std::optional<Class> Parser::ParseClass() {
   const auto name = Expect(TokenKind::Identifier, "expected class name");
   if (!name) {
     return std::nullopt;
@@ -75,7 +75,7 @@ auto Parser::ParseClass() -> std::optional<Class> {
   return declaration;
 }
 
-auto Parser::ParseMemberModifiers() -> MemberModifiers {
+Parser::MemberModifiers Parser::ParseMemberModifiers() {
   MemberModifiers modifiers;
   bool has_visibility = false;
   bool has_storage = false;
@@ -105,8 +105,7 @@ auto Parser::ParseMemberModifiers() -> MemberModifiers {
   return modifiers;
 }
 
-auto Parser::ParseConstructor(Class& declaration, MemberModifiers modifiers)
-    -> std::unique_ptr<Function> {
+std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberModifiers modifiers) {
   const auto [visibility, storage, role] = modifiers;
   if (declaration.constructor || storage == MemberStorage::Static || role == FieldRole::Parameter) {
     AddDiagnostic(Previous().location, "invalid or duplicate constructor declaration");
@@ -138,7 +137,7 @@ auto Parser::ParseConstructor(Class& declaration, MemberModifiers modifiers)
   return constructor->body ? std::move(constructor) : nullptr;
 }
 
-auto Parser::ParseClassMember(Class& declaration) -> MemberParseResult {
+Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
   const auto modifiers = ParseMemberModifiers();
   if (Check(TokenKind::External)) {
     auto method = ParseFunction();
@@ -187,7 +186,7 @@ auto Parser::ParseClassMember(Class& declaration) -> MemberParseResult {
   return MemberParseResult::Parsed;
 }
 
-auto Parser::ParseField(const Token& name, MemberModifiers modifiers) -> std::optional<Field> {
+std::optional<Field> Parser::ParseField(const Token& name, MemberModifiers modifiers) {
   if (!Expect(TokenKind::Colon, "expected ':' after field name")) {
     return std::nullopt;
   }
@@ -216,7 +215,7 @@ auto Parser::ParseField(const Token& name, MemberModifiers modifiers) -> std::op
   };
 }
 
-auto Parser::ParseInterface() -> std::optional<Interface> {
+std::optional<Interface> Parser::ParseInterface() {
   const auto name = Expect(TokenKind::Identifier, "expected interface name");
   if (!name || !Expect(TokenKind::LeftBrace, "expected '{' after interface name")) {
     return std::nullopt;
@@ -259,7 +258,7 @@ auto Parser::ParseInterface() -> std::optional<Interface> {
   return declaration;
 }
 
-auto Parser::ParseFunction() -> std::optional<Function> {
+std::optional<Function> Parser::ParseFunction() {
   const bool external = Match(TokenKind::External);
   if (!Expect(TokenKind::Func, "expected 'func' before function declaration")) {
     return std::nullopt;
@@ -268,8 +267,7 @@ auto Parser::ParseFunction() -> std::optional<Function> {
   return name ? ParseFunctionBody(*name, external ? name->lexeme : std::string()) : std::nullopt;
 }
 
-auto Parser::ParseFunctionBody(const Token& name, std::string native_symbol)
-    -> std::optional<Function> {
+std::optional<Function> Parser::ParseFunctionBody(const Token& name, std::string native_symbol) {
   auto type_parameters = ParseTypeParameters();
   if (!Expect(TokenKind::LeftParen, "expected '(' after function name")) {
     return std::nullopt;
@@ -319,10 +317,21 @@ auto Parser::ParseFunctionBody(const Token& name, std::string native_symbol)
   return function.body ? std::optional<Function>(std::move(function)) : std::nullopt;
 }
 
-auto Parser::ParseParameter() -> std::optional<Parameter> {
+std::optional<Parameter> Parser::ParseParameter(ParameterTyping typing) {
   const auto name = Expect(TokenKind::Identifier, "expected parameter name");
-  if (!name || !Expect(TokenKind::Colon, "expected ':' after parameter name")) {
+  if (!name) {
     return std::nullopt;
+  }
+  if (!Match(TokenKind::Colon)) {
+    if (typing == ParameterTyping::Required) {
+      AddDiagnostic(Peek().location, "expected ':' after parameter name");
+      return std::nullopt;
+    }
+    return Parameter{
+        .type = {.name = {}, .location = name->location, .arguments = {}},
+        .name = name->lexeme,
+        .location = name->location,
+    };
   }
   const auto type = ParseType();
   if (!type) {

@@ -31,14 +31,14 @@ struct PrefixDeleter final {
   void operator()(void* memory) const noexcept { ::operator delete(memory); }
 };
 
-auto StringResult(StringObject* string) -> Result {
+Result StringResult(StringObject* string) {
   if (string == nullptr) {
     return std::unexpected(BuiltinError::OutOfMemory);
   }
   return Value::String(string);
 }
 
-auto ScalarToString(Value value, Heap& heap) -> Result {
+Result ScalarToString(Value value, Heap& heap) {
   if (!value.IsInteger() && !value.IsDouble() && !value.IsBoolean()) {
     return std::unexpected(BuiltinError::TypeError);
   }
@@ -46,7 +46,7 @@ auto ScalarToString(Value value, Heap& heap) -> Result {
   return StringResult(heap.AllocateString(FormatScalar(value, bytes)));
 }
 
-auto ArrayJoin(std::span<const Value> arguments, Heap& heap) -> Result {
+Result ArrayJoin(std::span<const Value> arguments, Heap& heap) {
   const auto array = arguments.subspan(0).front();
   const auto separator = arguments.subspan(1).front();
   if (!array.IsObject() || array.AsObject() == nullptr || !separator.IsString()) {
@@ -61,7 +61,7 @@ auto ArrayJoin(std::span<const Value> arguments, Heap& heap) -> Result {
   return Value::String(*joined);
 }
 
-auto BuilderOperation(Builtin builtin, std::span<const Value> arguments, Heap& heap) -> Result {
+Result BuilderOperation(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   if (builtin == Builtin::NewStringBuilder) {
     auto* builder = heap.AllocateStringBuilder();
     if (builder == nullptr) {
@@ -88,8 +88,7 @@ auto BuilderOperation(Builtin builtin, std::span<const Value> arguments, Heap& h
   return Value::Null();
 }
 
-auto Slice(Builtin builtin, std::string_view text, std::span<const Value> arguments, Heap& heap)
-    -> Result {
+Result Slice(Builtin builtin, std::string_view text, std::span<const Value> arguments, Heap& heap) {
   if (!arguments.subspan(1).front().IsInteger() ||
       (builtin == Builtin::StringSlice && !arguments.subspan(2).front().IsInteger())) {
     return std::unexpected(BuiltinError::TypeError);
@@ -113,8 +112,8 @@ auto Slice(Builtin builtin, std::string_view text, std::span<const Value> argume
   return StringResult(heap.AllocateString(suffix.substr(0, *size)));
 }
 
-auto Find(std::string_view text_view, std::string_view part_view)
-    -> std::expected<std::size_t, BuiltinError> {
+std::expected<std::size_t, BuiltinError> Find(std::string_view text_view,
+                                              std::string_view part_view) {
   if (part_view.size() <= 1 || part_view.size() > text_view.size()) {
     return text_view.find(part_view);
   }
@@ -157,7 +156,7 @@ auto Find(std::string_view text_view, std::string_view part_view)
 
 }  // namespace
 
-auto ConvertNumber(NumericConversion conversion, Value value) -> Result {
+Result ConvertNumber(NumericConversion conversion, Value value) {
   if (!value.IsInteger() && !value.IsDouble()) {
     return std::unexpected(BuiltinError::TypeError);
   }
@@ -177,17 +176,17 @@ auto ConvertNumber(NumericConversion conversion, Value value) -> Result {
   return Value::Integer(static_cast<std::int64_t>(truncated));
 }
 
-auto ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) -> Result {
+Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   switch (builtin) {
     case Builtin::ArrayCopy:
     case Builtin::ArraySlice:
     case Builtin::ArrayFill:
     case Builtin::ArrayReverse:
       return ExecuteArrayBuiltin(builtin, arguments, heap);
-    case Builtin::CollectionLength:
+    case Builtin::CollectionSize:
     case Builtin::SetAdd:
     case Builtin::CollectionHas:
-    case Builtin::CollectionRemove:
+    case Builtin::CollectionDelete:
     case Builtin::CollectionClear:
     case Builtin::MapGet:
     case Builtin::MapSet:
@@ -244,7 +243,7 @@ auto ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& hea
   if (!found) {
     return std::unexpected(found.error());
   }
-  if (builtin == Builtin::StringContains) {
+  if (builtin == Builtin::StringIncludes) {
     return Value::Boolean(*found != std::string_view::npos);
   }
   return Value::Integer(*found == std::string_view::npos

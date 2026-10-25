@@ -35,17 +35,15 @@ class ReplSession final {
   explicit ReplSession(const std::filesystem::path& directory);
   ~ReplSession() = default;
   ReplSession(const ReplSession&) = delete;
-  auto operator=(const ReplSession&) -> ReplSession& = delete;
+  ReplSession& operator=(const ReplSession&) = delete;
   ReplSession(ReplSession&&) = delete;
-  auto operator=(ReplSession&&) -> ReplSession& = delete;
+  ReplSession& operator=(ReplSession&&) = delete;
 
-  [[nodiscard]] auto Submit(std::string_view source) -> SubmissionResult;
+  [[nodiscard]] SubmissionResult Submit(std::string_view source);
   void Reset();
-  [[nodiscard]] auto isolate() noexcept -> runtime::Isolate& { return *isolate_; }
-  [[nodiscard]] auto source() const noexcept -> std::string_view { return user_source_; }
-  [[nodiscard]] auto function_count() const noexcept -> std::size_t {
-    return program_.functions().size();
-  }
+  [[nodiscard]] runtime::Isolate& isolate() noexcept { return *isolate_; }
+  [[nodiscard]] std::string_view source() const noexcept { return user_source_; }
+  [[nodiscard]] std::size_t function_count() const noexcept { return program_.functions().size(); }
 
  private:
   struct Entry final {
@@ -61,14 +59,14 @@ class ReplSession final {
     frontend::Program program;
   };
   enum class Echo : std::uint8_t { Display, Suppress };
-  [[nodiscard]] auto Prepare(std::string_view source) -> std::expected<Prepared, SubmissionResult>;
+  [[nodiscard]] std::expected<Prepared, SubmissionResult> Prepare(std::string_view source);
   void BindEntries(frontend::Program& program, const Entry& current, Echo echo) const;
-  [[nodiscard]] auto Compile(Prepared& prepared,
-                             CompilationState& compilation,
-                             frontend::ModuleCache& modules) -> CompileResult;
+  [[nodiscard]] CompileResult Compile(Prepared& prepared,
+                                      CompilationState& compilation,
+                                      frontend::ModuleCache& modules);
   void Remap(frontend::Diagnostics& diagnostics, const Entry& current) const;
   void Remap(vm::ExecutionResult& result, const Entry& current) const;
-  [[nodiscard]] auto Locate(std::uint32_t line, const Entry& current) const -> Entry;
+  [[nodiscard]] Entry Locate(std::uint32_t line, const Entry& current) const;
 
   std::filesystem::path path_;
   std::unique_ptr<runtime::Isolate> isolate_;

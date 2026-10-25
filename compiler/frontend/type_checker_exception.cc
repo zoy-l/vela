@@ -9,7 +9,7 @@
 
 namespace vela::frontend {
 
-auto TypeChecker::CheckTry(const Statement& statement, const Type& return_type) -> StatementFlow {
+StatementFlow TypeChecker::CheckTry(const Statement& statement, const Type& return_type) {
   auto flow = CheckScopedStatement(*statement.then_branch, return_type);
   absl::flat_hash_set<std::string> caught;
   for (const auto& clause : statement.catches) {

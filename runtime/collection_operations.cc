@@ -12,13 +12,15 @@
 namespace vela::runtime {
 namespace {
 
-auto BuiltinFailure(CollectionError error) -> BuiltinError {
+BuiltinError BuiltinFailure(CollectionError error) {
   return error == CollectionError::OutOfMemory ? BuiltinError::OutOfMemory
                                                : BuiltinError::TypeError;
 }
 
-auto ExecuteSetOperation(Builtin builtin, HeapObject& receiver, Value other, Heap& heap)
-    -> std::expected<Value, BuiltinError> {
+std::expected<Value, BuiltinError> ExecuteSetOperation(Builtin builtin,
+                                                       HeapObject& receiver,
+                                                       Value other,
+                                                       Heap& heap) {
   if (!other.IsObject() || other.AsObject() == nullptr) {
     return std::unexpected(BuiltinError::TypeError);
   }
@@ -35,8 +37,9 @@ auto ExecuteSetOperation(Builtin builtin, HeapObject& receiver, Value other, Hea
 
 }  // namespace
 
-auto ExecuteCollectionBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap)
-    -> std::expected<Value, BuiltinError> {
+std::expected<Value, BuiltinError> ExecuteCollectionBuiltin(Builtin builtin,
+                                                            std::span<const Value> arguments,
+                                                            Heap& heap) {
   const auto receiver = arguments.front();
   if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
     return std::unexpected(BuiltinError::TypeError);
@@ -47,7 +50,7 @@ auto ExecuteCollectionBuiltin(Builtin builtin, std::span<const Value> arguments,
     case Builtin::SetIntersection:
     case Builtin::SetDifference:
       return ExecuteSetOperation(builtin, object, arguments.subspan(1).front(), heap);
-    case Builtin::CollectionLength: {
+    case Builtin::CollectionSize: {
       const auto length = Heap::CollectionLength(object);
       if (!length) {
         return std::unexpected(BuiltinFailure(length.error()));
@@ -83,7 +86,7 @@ auto ExecuteCollectionBuiltin(Builtin builtin, std::span<const Value> arguments,
       return Heap::GetCollectionValue(object, arguments.subspan(1).front())
           .transform_error(BuiltinFailure);
     }
-    case Builtin::CollectionRemove: {
+    case Builtin::CollectionDelete: {
       const auto removed = Heap::RemoveCollection(object, arguments.subspan(1).front());
       if (!removed) {
         return std::unexpected(BuiltinFailure(removed.error()));

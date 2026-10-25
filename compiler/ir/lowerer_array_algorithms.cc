@@ -15,16 +15,16 @@
 
 namespace vela::ir {
 
-auto Lowerer::EmitTemporary(Instruction instruction) -> RegisterId {
+RegisterId Lowerer::EmitTemporary(Instruction instruction) {
   const auto result = AllocateTemporary(instruction.location);
   instruction.dst = result;
   Emit(instruction);
   return result;
 }
 
-auto Lowerer::EmitCallback(RegisterId callback,
-                           std::span<const RegisterId> arguments,
-                           frontend::SourceLocation location) -> RegisterId {
+RegisterId Lowerer::EmitCallback(RegisterId callback,
+                                 std::span<const RegisterId> arguments,
+                                 frontend::SourceLocation location) {
   const auto base = next_register_;
   for (const auto argument : arguments) {
     const auto slot = AllocateRegister(location);
@@ -39,7 +39,7 @@ auto Lowerer::EmitCallback(RegisterId callback,
   });
 }
 
-auto Lowerer::LowerArrayAlgorithm(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& expression) {
   using Algorithm = frontend::ArrayAlgorithm;
   const auto algorithm = model_.array_algorithms.at(&expression);
   const auto location = expression.location;
@@ -82,10 +82,14 @@ auto Lowerer::LowerArrayAlgorithm(const frontend::Expression& expression) -> Low
   if (algorithm == Algorithm::Reduce) {
     initial.opcode = Opcode::Move;
     initial.lhs = base + 1;
+  } else if (algorithm == Algorithm::Map) {
+    initial.opcode = Opcode::NewDynamicArray;
+    initial.lhs = length;
+    initial.index = RegisterArrayType(model_.expression_types.at(&expression));
   } else if (algorithm == Algorithm::FindIndex) {
     initial.opcode = Opcode::LoadInt;
     initial.immediate = -1;
-  } else if (algorithm == Algorithm::Any || algorithm == Algorithm::Every) {
+  } else if (algorithm == Algorithm::Some || algorithm == Algorithm::Every) {
     initial.opcode = Opcode::LoadBool;
     initial.immediate = algorithm == Algorithm::Every ? 1 : 0;
   }
@@ -103,10 +107,10 @@ auto Lowerer::LowerArrayAlgorithm(const frontend::Expression& expression) -> Low
   std::optional<std::size_t> short_exit;
   if (algorithm == Algorithm::Reduce) {
     Emit({.opcode = Opcode::Move, .dst = result, .lhs = value, .location = location});
-  } else if (algorithm == Algorithm::Transform) {
+  } else if (algorithm == Algorithm::Map) {
     Emit({
         .opcode = Opcode::SetIndex,
-        .dst = base,
+        .dst = result,
         .lhs = index,
         .rhs = value,
         .location = location,

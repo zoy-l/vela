@@ -25,9 +25,9 @@ class RootRange final {
   ~RootRange();
 
   RootRange(const RootRange&) = delete;
-  auto operator=(const RootRange&) -> RootRange& = delete;
+  RootRange& operator=(const RootRange&) = delete;
   RootRange(RootRange&&) = delete;
-  auto operator=(RootRange&&) -> RootRange& = delete;
+  RootRange& operator=(RootRange&&) = delete;
 
   void Attach(Heap& heap, const Value* values, std::size_t count) noexcept;
   void Attach(Heap& heap, RegisterView registers) noexcept;
@@ -78,103 +78,102 @@ class Heap final {
   ~Heap();
 
   Heap(Heap&&) = delete;
-  auto operator=(Heap&&) -> Heap& = delete;
+  Heap& operator=(Heap&&) = delete;
   Heap(const Heap&) = delete;
-  auto operator=(const Heap&) -> Heap& = delete;
+  Heap& operator=(const Heap&) = delete;
 
-  [[nodiscard]] auto AllocateInstance(ClassLayout& layout,
-                                      std::span<const Value> initial_fields = {}) noexcept
-      -> HeapObject*;
-  [[nodiscard]] auto AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept
-      -> HeapObject*;
-  [[nodiscard]] auto AllocateExpected(ClassLayout& layout,
-                                      Value payload,
-                                      ExpectedAlternative alternative) noexcept -> HeapObject*;
-  [[nodiscard]] static auto ExpectedAlternativeOf(const HeapObject& object) noexcept
-      -> std::expected<ExpectedAlternative, ExpectedAccessError>;
-  [[nodiscard]] static auto ReadExpectedValue(const HeapObject& object,
-                                              ExpectedAlternative alternative) noexcept
-      -> std::expected<Value, ExpectedAccessError>;
-  [[nodiscard]] auto AllocateCollection(const CollectionLayout& layout) noexcept -> HeapObject*;
+  [[nodiscard]] HeapObject* AllocateInstance(ClassLayout& layout,
+                                             std::span<const Value> initial_fields = {}) noexcept;
+  [[nodiscard]] HeapObject* AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept;
+  [[nodiscard]] HeapObject* AllocateExpected(ClassLayout& layout,
+                                             Value payload,
+                                             ExpectedAlternative alternative) noexcept;
+  [[nodiscard]] static std::expected<ExpectedAlternative, ExpectedAccessError>
+  ExpectedAlternativeOf(const HeapObject& object) noexcept;
+  [[nodiscard]] static std::expected<Value, ExpectedAccessError> ReadExpectedValue(
+      const HeapObject& object,
+      ExpectedAlternative alternative) noexcept;
+  [[nodiscard]] HeapObject* AllocateCollection(const CollectionLayout& layout) noexcept;
   // 输入在整个运算期间须保根；结果独立分配并保持插入顺序。
-  [[nodiscard]] auto CombineSets(const HeapObject& left,
-                                 const HeapObject& right,
-                                 SetOperation operation) noexcept
-      -> std::expected<HeapObject*, CollectionError>;
+  [[nodiscard]] std::expected<HeapObject*, CollectionError>
+  CombineSets(const HeapObject& left, const HeapObject& right, SetOperation operation) noexcept;
   // 扩容可能触发 GC；原生调用者须在调用期间保根 object、key 和 value。
-  [[nodiscard]] auto InsertCollection(HeapObject& object,
-                                      Value key,
-                                      Value value = Value::Null()) noexcept
-      -> std::expected<CollectionInsert, CollectionError>;
-  [[nodiscard]] static auto HasCollectionKey(const HeapObject& object, Value key) noexcept
-      -> std::expected<bool, CollectionError>;
-  [[nodiscard]] static auto GetCollectionValue(const HeapObject& object, Value key) noexcept
-      -> std::expected<Value, CollectionError>;
-  [[nodiscard]] static auto RemoveCollection(HeapObject& object, Value key) noexcept
-      -> std::expected<CollectionRemove, CollectionError>;
-  [[nodiscard]] static auto ClearCollection(HeapObject& object) noexcept
-      -> std::expected<void, CollectionError>;
-  [[nodiscard]] static auto CollectionLength(const HeapObject& object) noexcept
-      -> std::expected<std::uint32_t, CollectionError>;
-  [[nodiscard]] auto CopyCollection(const HeapObject& object,
-                                    HeapObject& array,
-                                    CollectionProjection projection) noexcept
-      -> std::expected<void, CollectionError>;
+  [[nodiscard]] std::expected<CollectionInsert, CollectionError>
+  InsertCollection(HeapObject& object, Value key, Value value = Value::Null()) noexcept;
+  [[nodiscard]] static std::expected<bool, CollectionError> HasCollectionKey(
+      const HeapObject& object,
+      Value key) noexcept;
+  [[nodiscard]] static std::expected<Value, CollectionError> GetCollectionValue(
+      const HeapObject& object,
+      Value key) noexcept;
+  [[nodiscard]] static std::expected<CollectionRemove, CollectionError> RemoveCollection(
+      HeapObject& object,
+      Value key) noexcept;
+  [[nodiscard]] static std::expected<void, CollectionError> ClearCollection(
+      HeapObject& object) noexcept;
+  [[nodiscard]] static std::expected<std::uint32_t, CollectionError> CollectionLength(
+      const HeapObject& object) noexcept;
+  [[nodiscard]] std::expected<void, CollectionError> CopyCollection(
+      const HeapObject& object,
+      HeapObject& array,
+      CollectionProjection projection) noexcept;
   // 输入必须是合法 UTF-8；堆字符串须由调用者保根，分配可触发 GC。
-  [[nodiscard]] auto AllocateString(std::string_view first, std::string_view second = {}) noexcept
-      -> StringObject*;
+  [[nodiscard]] StringObject* AllocateString(std::string_view first,
+                                             std::string_view second = {}) noexcept;
   // parts 不含空指针；所有输入及 separator 的堆存储须保根，最终结果只分配一次。
-  [[nodiscard]] auto JoinStrings(std::span<StringObject* const> parts,
-                                 std::string_view separator = {}) noexcept -> StringObject*;
+  [[nodiscard]] StringObject* JoinStrings(std::span<StringObject* const> parts,
+                                          std::string_view separator = {}) noexcept;
   // 输入须保根；只格式化 string/int/double/bool/null，不分配中间 GC 字符串。
-  [[nodiscard]] auto JoinValues(std::span<const Value> parts) noexcept
-      -> std::expected<StringObject*, StringJoinError>;
-  [[nodiscard]] auto JoinValues(RegisterView parts) noexcept
-      -> std::expected<StringObject*, StringJoinError>;
-  [[nodiscard]] auto JoinArray(const HeapObject& array, std::string_view separator) noexcept
-      -> std::expected<StringObject*, StringJoinError>;
+  [[nodiscard]] std::expected<StringObject*, StringJoinError> JoinValues(
+      std::span<const Value> parts) noexcept;
+  [[nodiscard]] std::expected<StringObject*, StringJoinError> JoinValues(
+      RegisterView parts) noexcept;
+  [[nodiscard]] std::expected<StringObject*, StringJoinError> JoinArray(
+      const HeapObject& array,
+      std::string_view separator) noexcept;
   // 返回视图借用数组的连续存储；跨分配使用时必须保持数组可达。
-  [[nodiscard]] static auto StringElements(const HeapObject& array) noexcept
-      -> std::expected<std::span<StringObject* const>, ArrayAccessError>;
-  [[nodiscard]] static auto IntegerElements(HeapObject& array) noexcept
-      -> std::expected<std::span<std::int64_t>, ArrayAccessError>;
-  [[nodiscard]] static auto ArrayLength(const HeapObject& array) noexcept
-      -> std::expected<std::uint32_t, ArrayAccessError>;
-  [[nodiscard]] auto SliceArray(HeapObject& array, std::uint32_t start, std::uint32_t end) noexcept
-      -> std::expected<HeapObject*, ArrayAccessError>;
-  [[nodiscard]] auto FillArray(HeapObject& array, Value value) noexcept
-      -> std::expected<void, ArrayAccessError>;
-  [[nodiscard]] static auto ReverseArray(HeapObject& array) noexcept
-      -> std::expected<void, ArrayAccessError>;
-  [[nodiscard]] auto AllocateStringBuilder() noexcept -> HeapObject*;
-  [[nodiscard]] auto AllocateException(HeapObject& payload,
-                                       ExecutionStatus status,
-                                       std::span<const TracePosition> trace,
-                                       std::string_view message) noexcept -> HeapObject*;
+  [[nodiscard]] static std::expected<std::span<StringObject* const>, ArrayAccessError>
+  StringElements(const HeapObject& array) noexcept;
+  [[nodiscard]] static std::expected<std::span<std::int64_t>, ArrayAccessError> IntegerElements(
+      HeapObject& array) noexcept;
+  [[nodiscard]] static std::expected<std::uint32_t, ArrayAccessError> ArrayLength(
+      const HeapObject& array) noexcept;
+  [[nodiscard]] std::expected<HeapObject*, ArrayAccessError> SliceArray(HeapObject& array,
+                                                                        std::uint32_t start,
+                                                                        std::uint32_t end) noexcept;
+  [[nodiscard]] std::expected<void, ArrayAccessError> FillArray(HeapObject& array,
+                                                                Value value) noexcept;
+  [[nodiscard]] static std::expected<void, ArrayAccessError> ReverseArray(
+      HeapObject& array) noexcept;
+  [[nodiscard]] HeapObject* AllocateStringBuilder() noexcept;
+  [[nodiscard]] HeapObject* AllocateException(HeapObject& payload,
+                                              ExecutionStatus status,
+                                              std::span<const TracePosition> trace,
+                                              std::string_view message) noexcept;
   // builder 与 text 的堆存储须在扩容期间保根；text 必须是合法 UTF-8。
-  [[nodiscard]] auto AppendString(HeapObject& builder, std::string_view text) noexcept
-      -> std::expected<void, StringBuilderError>;
+  [[nodiscard]] std::expected<void, StringBuilderError> AppendString(
+      HeapObject& builder,
+      std::string_view text) noexcept;
   // builder 必须来自本 Heap 的 AllocateStringBuilder，且调用期间保根。
-  [[nodiscard]] auto BuildString(const HeapObject& builder) noexcept -> StringObject*;
-  [[nodiscard]] static auto IsStringBuilder(const HeapObject& object) noexcept -> bool;
+  [[nodiscard]] StringObject* BuildString(const HeapObject& builder) noexcept;
+  [[nodiscard]] static bool IsStringBuilder(const HeapObject& object) noexcept;
 
-  [[nodiscard]] static auto GetField(HeapObject& object, std::uint32_t index) noexcept -> Value* {
+  [[nodiscard]] static Value* GetField(HeapObject& object, std::uint32_t index) noexcept {
     if (object.layout == nullptr || index >= object.layout->field_count()) {
       return nullptr;
     }
     return std::span(ObjectFields(&object), object.layout->field_count()).subspan(index).data();
   }
-  [[nodiscard]] static auto ClassOf(const HeapObject& object) noexcept -> const ClassLayout*;
-  [[nodiscard]] static auto IsValueOfType(Value value, const TypeConstraint& type) noexcept -> bool;
-  [[nodiscard]] static auto GetField(const HeapObject& object, std::uint32_t index) noexcept
-      -> const Value* {
+  [[nodiscard]] static const ClassLayout* ClassOf(const HeapObject& object) noexcept;
+  [[nodiscard]] static bool IsValueOfType(Value value, const TypeConstraint& type) noexcept;
+  [[nodiscard]] static const Value* GetField(const HeapObject& object,
+                                             std::uint32_t index) noexcept {
     if (object.layout == nullptr || index >= object.layout->field_count()) {
       return nullptr;
     }
     return std::span(ObjectFields(&object), object.layout->field_count()).subspan(index).data();
   }
-  [[nodiscard]] auto SetField(HeapObject& object, std::uint32_t index, Value value) noexcept
-      -> bool {
+  [[nodiscard]] bool SetField(HeapObject& object, std::uint32_t index, Value value) noexcept {
     auto* field = GetField(object, index);
     if (field == nullptr) {
       return false;
@@ -185,10 +184,12 @@ class Heap final {
     }
     return true;
   }
-  [[nodiscard]] static auto GetElement(const HeapObject& object, std::uint32_t index) noexcept
-      -> std::expected<Value, ArrayAccessError>;
-  [[nodiscard]] auto SetElement(HeapObject& object, std::uint32_t index, Value value) noexcept
-      -> std::expected<void, ArrayAccessError>;
+  [[nodiscard]] static std::expected<Value, ArrayAccessError> GetElement(
+      const HeapObject& object,
+      std::uint32_t index) noexcept;
+  [[nodiscard]] std::expected<void, ArrayAccessError> SetElement(HeapObject& object,
+                                                                 std::uint32_t index,
+                                                                 Value value) noexcept;
 
   void StartCollection() noexcept;
   void Step(std::size_t work_budget) noexcept;
@@ -197,11 +198,11 @@ class Heap final {
 
   void SetGcThreshold(std::size_t threshold) noexcept;
 
-  [[nodiscard]] auto phase() const noexcept -> GcPhase { return phase_; }
-  [[nodiscard]] auto IsCollecting() const noexcept -> bool { return phase_ != GcPhase::Idle; }
-  [[nodiscard]] auto object_count() const noexcept -> std::size_t { return object_count_; }
-  [[nodiscard]] auto allocated_bytes() const noexcept -> std::size_t { return allocated_bytes_; }
-  [[nodiscard]] auto committed_bytes() const noexcept -> std::size_t { return committed_bytes_; }
+  [[nodiscard]] GcPhase phase() const noexcept { return phase_; }
+  [[nodiscard]] bool IsCollecting() const noexcept { return phase_ != GcPhase::Idle; }
+  [[nodiscard]] std::size_t object_count() const noexcept { return object_count_; }
+  [[nodiscard]] std::size_t allocated_bytes() const noexcept { return allocated_bytes_; }
+  [[nodiscard]] std::size_t committed_bytes() const noexcept { return committed_bytes_; }
 
  private:
   friend class RootRange;
@@ -225,20 +226,20 @@ class Heap final {
     std::uint32_t size = 0;
   };
 
-  [[nodiscard]] auto AllocateRaw(std::size_t requested_size) noexcept -> Allocation;
+  [[nodiscard]] Allocation AllocateRaw(std::size_t requested_size) noexcept;
   void Publish(HeapObject& object, std::uint32_t allocation_size) noexcept;
   void ReleaseRaw(HeapObject& object) noexcept;
-  [[nodiscard]] static auto SelectBlockSize(std::size_t requested_size) noexcept -> std::size_t;
-  [[nodiscard]] static auto SizeClassIndex(std::size_t block_size) noexcept -> std::size_t;
-  [[nodiscard]] auto ShouldCollect(std::size_t next_size) const noexcept -> bool;
+  [[nodiscard]] static std::size_t SelectBlockSize(std::size_t requested_size) noexcept;
+  [[nodiscard]] static std::size_t SizeClassIndex(std::size_t block_size) noexcept;
+  [[nodiscard]] bool ShouldCollect(std::size_t next_size) const noexcept;
   void MaybeCollect(std::size_t next_size) noexcept;
   void FinishSweep() noexcept;
   void DestroyAll() noexcept;
-  [[nodiscard]] auto AllocateStringStorage(std::size_t length) noexcept -> StringObject*;
+  [[nodiscard]] StringObject* AllocateStringStorage(std::size_t length) noexcept;
   void ReleaseStringBuilder(HeapObject& object) noexcept;
   void MarkCollection(HeapObject& object) noexcept;
   void ReleaseCollection(HeapObject& object) noexcept;
-  auto GrowCollection(HeapObject& object) noexcept -> std::expected<void, CollectionError>;
+  std::expected<void, CollectionError> GrowCollection(HeapObject& object) noexcept;
 
   HeapObject* objects_ = nullptr;
   HeapObject* gray_ = nullptr;

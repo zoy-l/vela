@@ -25,6 +25,6 @@ enum class ExecutionStatus : std::uint8_t {
   DebuggerStopped,
 };
 
-[[nodiscard]] auto ExecutionStatusName(ExecutionStatus status) noexcept -> std::string_view;
+[[nodiscard]] std::string_view ExecutionStatusName(ExecutionStatus status) noexcept;
 
 }  // namespace vela

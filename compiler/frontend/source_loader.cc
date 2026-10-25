@@ -51,20 +51,21 @@ class ModuleLoader final {
     }
   }
 
-  auto Run(std::string_view entry) -> ParseResult;
-  auto RunPrepared(std::string_view entry, Program root, std::string source) -> ParseResult;
+  ParseResult Run(std::string_view entry);
+  ParseResult RunPrepared(std::string_view entry, Program root, std::string source);
 
  private:
-  [[nodiscard]] auto Normalize(const std::filesystem::path& path) const
-      -> std::expected<std::filesystem::path, std::string>;
-  auto Read(const std::filesystem::path& path, const std::string& key) const
-      -> std::expected<std::string, std::string>;
-  auto Load(const std::filesystem::path& file, SourceLocation location, const std::string& importer)
-      -> std::optional<std::uint32_t>;
+  [[nodiscard]] std::expected<std::filesystem::path, std::string> Normalize(
+      const std::filesystem::path& path) const;
+  std::expected<std::string, std::string> Read(const std::filesystem::path& path,
+                                               const std::string& key) const;
+  std::optional<std::uint32_t> Load(const std::filesystem::path& file,
+                                    SourceLocation location,
+                                    const std::string& importer);
   void LoadDependencies(std::size_t index);
-  auto ParseModule(const std::string& key, std::string source) -> std::optional<std::uint32_t>;
+  std::optional<std::uint32_t> ParseModule(const std::string& key, std::string source);
   void Error(SourceLocation location, const std::string& path, std::string message);
-  auto Finish() -> ParseResult;
+  ParseResult Finish();
 
   SourceOrigin origin_;
   SourceLoadMode mode_;
@@ -83,8 +84,8 @@ void ModuleLoader::Error(SourceLocation location, const std::string& path, std::
       {.location = location, .message = std::move(message), .source_path = path});
 }
 
-auto ModuleLoader::Normalize(const std::filesystem::path& path) const
-    -> std::expected<std::filesystem::path, std::string> {
+std::expected<std::filesystem::path, std::string> ModuleLoader::Normalize(
+    const std::filesystem::path& path) const {
   if (origin_ == SourceOrigin::Memory) {
     return path.lexically_normal();
   }
@@ -106,8 +107,8 @@ auto ModuleLoader::Normalize(const std::filesystem::path& path) const
   return canonical;
 }
 
-auto ModuleLoader::Read(const std::filesystem::path& path, const std::string& key) const
-    -> std::expected<std::string, std::string> {
+std::expected<std::string, std::string> ModuleLoader::Read(const std::filesystem::path& path,
+                                                           const std::string& key) const {
   const auto overlay = overlays_.find(key);
   if (overlay != overlays_.end()) {
     return std::string(overlay->second);
@@ -128,9 +129,9 @@ auto ModuleLoader::Read(const std::filesystem::path& path, const std::string& ke
   return source;
 }
 
-auto ModuleLoader::Load(const std::filesystem::path& file,
-                        SourceLocation location,
-                        const std::string& importer) -> std::optional<std::uint32_t> {
+std::optional<std::uint32_t> ModuleLoader::Load(const std::filesystem::path& file,
+                                                SourceLocation location,
+                                                const std::string& importer) {
   const auto canonical = Normalize(file);
   if (!canonical) {
     Error(location, importer, canonical.error());
@@ -158,8 +159,7 @@ auto ModuleLoader::Load(const std::filesystem::path& file,
   return ParseModule(key, std::move(*source));
 }
 
-auto ModuleLoader::ParseModule(const std::string& key, std::string source)
-    -> std::optional<std::uint32_t> {
+std::optional<std::uint32_t> ModuleLoader::ParseModule(const std::string& key, std::string source) {
   const auto source_id = static_cast<std::uint32_t>(modules_.size());
   sources_.push_back({.path = key, .text = std::move(source)});
   auto parsed = ParseSource(sources_.back().text, source_id);
@@ -207,7 +207,7 @@ void ModuleLoader::LoadDependencies(std::size_t index) {
   modules_.at(index).dependencies = std::move(dependencies);
 }
 
-auto ModuleLoader::Run(std::string_view entry) -> ParseResult {
+ParseResult ModuleLoader::Run(std::string_view entry) {
   if (diagnostics_.empty()) {
     const auto path = Utf8Path(entry);
     std::error_code error;
@@ -221,8 +221,7 @@ auto ModuleLoader::Run(std::string_view entry) -> ParseResult {
   return Finish();
 }
 
-auto ModuleLoader::RunPrepared(std::string_view entry, Program root, std::string source)
-    -> ParseResult {
+ParseResult ModuleLoader::RunPrepared(std::string_view entry, Program root, std::string source) {
   const auto path = Normalize(Utf8Path(entry));
   if (!path) {
     Error(SourceLocation(), std::string(entry), path.error());
@@ -236,7 +235,7 @@ auto ModuleLoader::RunPrepared(std::string_view entry, Program root, std::string
   return Finish();
 }
 
-auto ModuleLoader::Finish() -> ParseResult {
+ParseResult ModuleLoader::Finish() {
   for (std::size_t index = 0; index < modules_.size() && diagnostics_.empty(); ++index) {
     LoadDependencies(index);
   }
@@ -259,29 +258,30 @@ auto ModuleLoader::Finish() -> ParseResult {
 
 }  // namespace
 
-auto ResolveImportPath(const std::filesystem::path& importer, std::filesystem::path imported)
-    -> std::filesystem::path {
+std::filesystem::path ResolveImportPath(const std::filesystem::path& importer,
+                                        std::filesystem::path imported) {
   if (!imported.has_extension()) {
     imported.replace_extension(".vela");
   }
   return (importer.parent_path() / imported).lexically_normal();
 }
 
-auto LoadProgram(std::string_view path, std::span<const SourceInput> overlays, SourceLoadMode mode)
-    -> ParseResult {
+ParseResult LoadProgram(std::string_view path,
+                        std::span<const SourceInput> overlays,
+                        SourceLoadMode mode) {
   ModuleCache cache;
   return ModuleLoader(SourceOrigin::Files, overlays, cache, mode).Run(path);
 }
 
-auto LoadSources(std::span<const SourceInput> sources, std::string_view entry) -> ParseResult {
+ParseResult LoadSources(std::span<const SourceInput> sources, std::string_view entry) {
   ModuleCache cache;
   return ModuleLoader(SourceOrigin::Memory, sources, cache).Run(entry);
 }
 
-auto LoadPreparedProgram(std::string_view path,
-                         Program root,
-                         std::string source,
-                         ModuleCache& cache) -> ParseResult {
+ParseResult LoadPreparedProgram(std::string_view path,
+                                Program root,
+                                std::string source,
+                                ModuleCache& cache) {
   return ModuleLoader(SourceOrigin::Files, {}, cache)
       .RunPrepared(path, std::move(root), std::move(source));
 }

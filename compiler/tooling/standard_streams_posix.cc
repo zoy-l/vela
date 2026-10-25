@@ -5,7 +5,7 @@
 
 namespace vela::tooling {
 
-auto SetBinaryStandardStreams() -> std::expected<void, std::string> {
+std::expected<void, std::string> SetBinaryStandardStreams() {
   return {};
 }
 

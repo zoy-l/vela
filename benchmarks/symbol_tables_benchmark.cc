@@ -11,7 +11,7 @@
 namespace vela::benchmarks {
 namespace {
 
-auto BuildSymbolSource(std::int64_t count) -> std::string {
+std::string BuildSymbolSource(std::int64_t count) {
   std::string source;
   for (std::int64_t index = 0; index < count; ++index) {
     const std::string suffix = std::to_string(index);

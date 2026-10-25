@@ -34,7 +34,7 @@ using frontend::Statement;
 using frontend::TokenKind;
 using frontend::TypeName;
 
-auto DisplayName(std::string_view name) -> std::string {
+std::string DisplayName(std::string_view name) {
   std::string text(name);
   for (auto begin = text.find("$module"); begin != std::string::npos;
        begin = text.find("$module", begin)) {
@@ -47,7 +47,7 @@ auto DisplayName(std::string_view name) -> std::string {
   return text;
 }
 
-auto TypeText(const TypeName& type) -> std::string {
+std::string TypeText(const TypeName& type) {
   switch (type.kind) {
     case TypeName::Kind::Named:
       return DisplayName(type.name);
@@ -76,7 +76,7 @@ auto TypeText(const TypeName& type) -> std::string {
   std::unreachable();
 }
 
-auto Signature(const frontend::Function& function) -> std::string {
+std::string Signature(const frontend::Function& function) {
   std::string text;
   for (const auto& parameter : function.type_parameters) {
     text += (text.empty() ? "<" : ", ") + parameter;
@@ -91,7 +91,7 @@ auto Signature(const frontend::Function& function) -> std::string {
   return text + "): " + TypeText(function.return_type);
 }
 
-auto Closing(TokenKind kind) -> std::optional<TokenKind> {
+std::optional<TokenKind> Closing(TokenKind kind) {
   switch (kind) {
     case TokenKind::LeftBrace:
       return TokenKind::RightBrace;
@@ -104,7 +104,7 @@ auto Closing(TokenKind kind) -> std::optional<TokenKind> {
   }
 }
 
-auto IsIdentifierByte(char value) -> bool {
+bool IsIdentifierByte(char value) {
   return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
          (value >= '0' && value <= '9') || value == '_';
 }
@@ -137,7 +137,7 @@ void CloseCompletionDelimiters(std::string& text, std::span<const frontend::Toke
 
 }  // namespace
 
-auto CompletionSource(std::string_view source, std::size_t offset) -> std::string {
+std::string CompletionSource(std::string_view source, std::size_t offset) {
   auto lexed = frontend::Lexer(source, 0, frontend::CommentRetention::Preserve).Tokenize();
   // 注释与字面量中不制造表达式；插值内部的表达式仍由生产 lexer 分别标记。
   for (const auto& comment : lexed.comments) {
@@ -222,7 +222,7 @@ SemanticIndex::SemanticIndex(std::string_view path,
   CollectImports();
 }
 
-auto SemanticIndex::TokenAt(SourceLocation location) const -> std::size_t {
+std::size_t SemanticIndex::TokenAt(SourceLocation location) const {
   const auto& source = sources_.at(location.source_id);
   const auto offset = source.text
                           .OffsetAt({.line = location.line - 1, .character = location.column - 1},
@@ -233,12 +233,12 @@ auto SemanticIndex::TokenAt(SourceLocation location) const -> std::size_t {
   return static_cast<std::size_t>(found - tokens.begin());
 }
 
-auto SemanticIndex::KeyAt(SourceLocation location) const -> Key {
+SemanticIndex::Key SemanticIndex::KeyAt(SourceLocation location) const {
   const auto& source = sources_.at(location.source_id);
   return {location.source_id, source.tokens.at(TokenAt(location)).offset};
 }
 
-auto SemanticIndex::Extent(const Statement& statement) const -> Scope {
+SemanticIndex::Scope SemanticIndex::Extent(const Statement& statement) const {
   const auto source_id = statement.location.source_id;
   const auto& source = sources_.at(source_id);
   const auto start = TokenAt(statement.location);
@@ -293,7 +293,7 @@ auto SemanticIndex::Extent(const Statement& statement) const -> Scope {
   };
 }
 
-auto SemanticIndex::AddSymbol(SourceLocation location, Completion completion) -> std::size_t {
+std::size_t SemanticIndex::AddSymbol(SourceLocation location, Completion completion) {
   const auto& source = sources_.at(location.source_id);
   auto token = TokenAt(location);
   // match 绑定的位置指向 let，catch 指向关键字；普通声明已经指向名称。
@@ -420,6 +420,9 @@ void SemanticIndex::AddReference(SourceLocation location, std::string_view name)
 }
 
 void SemanticIndex::VisitType(const TypeName& type) {
+  if (type.name.empty()) {
+    return;
+  }
   if (type.kind == TypeName::Kind::Named || type.kind == TypeName::Kind::Generic) {
     auto token = TokenAt(type.location);
     const auto& tokens = sources_.at(type.location.source_id).tokens;
@@ -453,14 +456,23 @@ void SemanticIndex::DeclareLocal(const void* node,
   }
 }
 
-void SemanticIndex::VisitFunction(const frontend::Function& function, const Scope& scope) {
+void SemanticIndex::VisitFunction(const frontend::Function& function,
+                                  const Scope& scope,
+                                  const frontend::FunctionDescriptor* signature) {
   VisitType(function.return_type);
   auto body = function.body ? Extent(*function.body) : scope;
   body.depth = scope.depth + 1;
   for (const auto& parameter : function.parameters) {
     VisitType(parameter.type);
     if (function.body) {
-      DeclareLocal(&parameter, parameter.location, parameter.name, TypeText(parameter.type), body,
+      auto detail = TypeText(parameter.type);
+      if (signature != nullptr) {
+        const auto parameter_index = signature->parameter_indices.find(parameter.name);
+        if (parameter_index != signature->parameter_indices.end()) {
+          detail = DisplayName(signature->parameters.at(parameter_index->second).type.name);
+        }
+      }
+      DeclareLocal(&parameter, parameter.location, parameter.name, std::move(detail), body,
                    body.begin);
     }
   }
@@ -522,7 +534,7 @@ void SemanticIndex::VisitStatement(const Statement* statement, Scope scope) {
   }
 }
 
-auto SemanticIndex::ReceiverFor(const Expression& expression) const -> Receiver {
+SemanticIndex::Receiver SemanticIndex::ReceiverFor(const Expression& expression) const {
   Receiver receiver;
   receiver.context_class = context_class_;
   const auto type = model_.expression_types.find(&expression);
@@ -617,7 +629,11 @@ void SemanticIndex::VisitExpression(const Expression* expression, const Scope& s
     VisitExpression(arm.value.get(), nested);
   }
   if (expression->function) {
-    VisitFunction(*expression->function, scope);
+    const auto lambda = model_.lambda_indices.find(expression);
+    const auto* signature = lambda == model_.lambda_indices.end()
+                                ? nullptr
+                                : &model_.lambdas.at(lambda->second).signature;
+    VisitFunction(*expression->function, scope, signature);
   }
 }
 
@@ -657,8 +673,8 @@ void SemanticIndex::VisitProgram() {
   }
 }
 
-auto SemanticIndex::ImportSource(const frontend::Program::Import& imported) const
-    -> std::optional<std::uint32_t> {
+std::optional<std::uint32_t> SemanticIndex::ImportSource(
+    const frontend::Program::Import& imported) const {
   auto path = PathText(
       frontend::ResolveImportPath(Utf8Path(sources_.front().path), Utf8Path(imported.path)));
   if (const auto resolution = resolutions_.find(path); resolution != resolutions_.end()) {
@@ -700,7 +716,7 @@ void SemanticIndex::CollectImports() {
   }
 }
 
-auto SemanticIndex::ImportLinks(PositionEncoding encoding) const -> std::vector<ImportLink> {
+std::vector<ImportLink> SemanticIndex::ImportLinks(PositionEncoding encoding) const {
   std::vector<ImportLink> result;
   if (sources_.empty()) {
     return result;
@@ -725,7 +741,7 @@ auto SemanticIndex::ImportLinks(PositionEncoding encoding) const -> std::vector<
   return result;
 }
 
-auto SemanticIndex::QueryToken(std::size_t offset) const -> const frontend::Token* {
+const frontend::Token* SemanticIndex::QueryToken(std::size_t offset) const {
   if (sources_.empty()) {
     return nullptr;
   }
@@ -751,8 +767,8 @@ auto SemanticIndex::QueryToken(std::size_t offset) const -> const frontend::Toke
   return &token;
 }
 
-auto SemanticIndex::FindDefinition(std::size_t offset, PositionEncoding encoding) const
-    -> std::optional<Definition> {
+std::optional<Definition> SemanticIndex::FindDefinition(std::size_t offset,
+                                                        PositionEncoding encoding) const {
   const auto* selected = QueryToken(offset);
   if (selected == nullptr) {
     return std::nullopt;
@@ -784,7 +800,7 @@ auto SemanticIndex::FindDefinition(std::size_t offset, PositionEncoding encoding
   };
 }
 
-auto SemanticIndex::DocumentationAt(SourceLocation location) const -> std::string {
+std::string SemanticIndex::DocumentationAt(SourceLocation location) const {
   const auto& source = sources_.at(location.source_id);
   const auto& comments = source.comments;
   const auto text = source.text.text();
@@ -824,8 +840,7 @@ auto SemanticIndex::DocumentationAt(SourceLocation location) const -> std::strin
   return result;
 }
 
-auto SemanticIndex::FindHover(std::size_t offset, PositionEncoding encoding) const
-    -> std::optional<Hover> {
+std::optional<Hover> SemanticIndex::FindHover(std::size_t offset, PositionEncoding encoding) const {
   const auto* token = QueryToken(offset);
   if (token == nullptr ||
       (token->kind != TokenKind::Identifier && token->kind != TokenKind::Print)) {

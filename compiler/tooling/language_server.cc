@@ -30,7 +30,7 @@ void WriteServerFailure(std::ostream& output, std::string_view message) {
   output << "vela lsp: " << message << '\n';
 }
 
-auto IsUtf8Supported(const yyjson_val* params) -> bool {
+bool IsUtf8Supported(const yyjson_val* params) {
   const auto* capabilities = GetJsonField(params, "capabilities");
   const auto* general = GetJsonField(capabilities, "general");
   const auto* encodings = GetJsonField(general, "positionEncodings");
@@ -44,14 +44,14 @@ auto IsUtf8Supported(const yyjson_val* params) -> bool {
 
 }  // namespace
 
-auto JsonText(const yyjson_val* value) -> std::optional<std::string_view> {
+std::optional<std::string_view> JsonText(const yyjson_val* value) {
   if (!yyjson_is_str(value)) {
     return std::nullopt;
   }
   return std::string_view(yyjson_get_str(value), yyjson_get_len(value));
 }
 
-auto JsonInteger(const yyjson_val* value) -> std::optional<std::int64_t> {
+std::optional<std::int64_t> JsonInteger(const yyjson_val* value) {
   if (yyjson_is_sint(value)) {
     return yyjson_get_sint(value);
   }
@@ -63,7 +63,7 @@ auto JsonInteger(const yyjson_val* value) -> std::optional<std::int64_t> {
   return std::nullopt;
 }
 
-auto LanguageServer::Response(const yyjson_val* request_id) -> JsonOutput {
+JsonOutput LanguageServer::Response(const yyjson_val* request_id) {
   JsonOutput response;
   auto* document = response.document();
   auto* root = response.root();
@@ -239,7 +239,7 @@ void LanguageServer::Dispatch(const yyjson_val* request) {
   }
 }
 
-auto LanguageServer::Run() -> int {
+int LanguageServer::Run() {
   while (!exit_code_ && !output_error_) {
     auto message = ReadRpcMessage(*input_);
     if (!message) {
@@ -266,7 +266,7 @@ auto LanguageServer::Run() -> int {
 }  // namespace vela::tooling::internal
 
 namespace vela::tooling {
-auto RunLanguageServer(LanguageServerStreams streams) -> int {
+int RunLanguageServer(LanguageServerStreams streams) {
   return internal::LanguageServer(streams).Run();
 }
 }  // namespace vela::tooling

@@ -13,7 +13,7 @@
 namespace vela::runtime {
 namespace {
 
-auto Error(ArrayAccessError error) -> BuiltinError {
+BuiltinError Error(ArrayAccessError error) {
   switch (error) {
     case ArrayAccessError::NotArray:
     case ArrayAccessError::ElementTypeMismatch:
@@ -28,8 +28,9 @@ auto Error(ArrayAccessError error) -> BuiltinError {
 
 }  // namespace
 
-auto ExecuteArrayBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap)
-    -> std::expected<Value, BuiltinError> {
+std::expected<Value, BuiltinError> ExecuteArrayBuiltin(Builtin builtin,
+                                                       std::span<const Value> arguments,
+                                                       Heap& heap) {
   const auto receiver = arguments.front();
   if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
     return std::unexpected(BuiltinError::TypeError);

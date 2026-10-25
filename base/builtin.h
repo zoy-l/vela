@@ -16,7 +16,7 @@ enum class Builtin : std::uint8_t {
   StringByteLength,
   StringSlice,
   StringIndexOf,
-  StringContains,
+  StringIncludes,
   StringStartsWith,
   StringEndsWith,
   StringIndex,
@@ -27,10 +27,10 @@ enum class Builtin : std::uint8_t {
   StringGraphemes,
   StringGraphemeLength,
   StringGraphemeSlice,
-  CollectionLength,
+  CollectionSize,
   SetAdd,
   CollectionHas,
-  CollectionRemove,
+  CollectionDelete,
   CollectionClear,
   MapGet,
   MapSet,
@@ -46,7 +46,7 @@ enum class Builtin : std::uint8_t {
   Count,
 };
 
-[[nodiscard]] constexpr auto BuiltinArity(Builtin builtin) noexcept -> std::size_t {
+[[nodiscard]] constexpr std::size_t BuiltinArity(Builtin builtin) noexcept {
   switch (builtin) {
     case Builtin::NewStringBuilder:
       return 0;
@@ -58,7 +58,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::NumericToDouble:
     case Builtin::ArrayLength:
     case Builtin::StringGraphemeLength:
-    case Builtin::CollectionLength:
+    case Builtin::CollectionSize:
     case Builtin::CollectionClear:
     case Builtin::ArrayCopy:
     case Builtin::ArrayReverse:
@@ -66,7 +66,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayJoin:
     case Builtin::BuilderAppend:
     case Builtin::StringIndexOf:
-    case Builtin::StringContains:
+    case Builtin::StringIncludes:
     case Builtin::StringStartsWith:
     case Builtin::StringEndsWith:
     case Builtin::StringIndex:
@@ -74,7 +74,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::StringGraphemes:
     case Builtin::SetAdd:
     case Builtin::CollectionHas:
-    case Builtin::CollectionRemove:
+    case Builtin::CollectionDelete:
     case Builtin::MapGet:
     case Builtin::CollectionKeys:
     case Builtin::CollectionValues:

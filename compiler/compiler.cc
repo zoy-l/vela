@@ -47,12 +47,12 @@ void AddDiagnostic(frontend::Diagnostics& diagnostics,
   diagnostics.push_back({.location = location, .message = std::move(message), .source_path = {}});
 }
 
-auto FitsImmediate16(std::int64_t value) -> bool {
+bool FitsImmediate16(std::int64_t value) {
   return value >= std::numeric_limits<std::int16_t>::min() &&
          value <= std::numeric_limits<std::int16_t>::max();
 }
 
-auto Byte(std::uint32_t value) -> std::uint8_t {
+std::uint8_t Byte(std::uint32_t value) {
   return static_cast<std::uint8_t>(value);
 }
 
@@ -64,8 +64,8 @@ struct EncodingContext final {
   std::span<const std::string> source_paths;
 };
 
-auto ValidateEncodingOperands(const ir::Instruction& instruction, std::string_view source_path)
-    -> std::optional<frontend::Diagnostic> {
+std::optional<frontend::Diagnostic> ValidateEncodingOperands(const ir::Instruction& instruction,
+                                                             std::string_view source_path) {
   const bool uses_wide_target =
       instruction.opcode == ir::Opcode::Jump || instruction.opcode == ir::Opcode::JumpIfFalse;
   const bool uses_wide_constant = instruction.opcode == ir::Opcode::LoadString ||
@@ -87,8 +87,9 @@ auto ValidateEncodingOperands(const ir::Instruction& instruction, std::string_vi
   return std::nullopt;
 }
 
-auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext& context)
-    -> std::expected<vm::Instruction, frontend::Diagnostic> {
+std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
+    const ir::Instruction& instruction,
+    const EncodingContext& context) {
   const auto& function = *context.function;
   const auto code_size = context.code_size;
   const auto function_count = context.function_count;
@@ -285,10 +286,10 @@ auto EncodeInstruction(const ir::Instruction& instruction, const EncodingContext
   });
 }
 
-auto EncodeFunction(const ir::Function& function,
-                    EncodingContext context,
-                    vm::FunctionStorage compiled)
-    -> std::expected<vm::FunctionStorage, frontend::Diagnostic> {
+std::expected<vm::FunctionStorage, frontend::Diagnostic> EncodeFunction(
+    const ir::Function& function,
+    EncodingContext context,
+    vm::FunctionStorage compiled) {
   compiled.code.reserve(function.instructions.size());
   absl::flat_hash_map<std::int64_t, std::uint32_t> integer_ids;
   for (auto instruction : function.instructions) {
@@ -330,8 +331,8 @@ auto EncodeFunction(const ir::Function& function,
   return compiled;
 }
 
-auto OptimizeAndAllocate(ir::Program& program, std::span<const std::string> source_paths)
-    -> std::optional<frontend::Diagnostic> {
+std::optional<frontend::Diagnostic> OptimizeAndAllocate(ir::Program& program,
+                                                        std::span<const std::string> source_paths) {
   for (auto& function : program.functions) {
     ir::Optimize(function, program.functions);
     auto failure = AllocateRegisters(function, program.functions);
@@ -347,7 +348,7 @@ auto OptimizeAndAllocate(ir::Program& program, std::span<const std::string> sour
 
 }  // namespace
 
-auto CompileParsed(frontend::ParseResult parsed, runtime::Isolate& isolate) -> CompileResult {
+CompileResult CompileParsed(frontend::ParseResult parsed, runtime::Isolate& isolate) {
   if (!parsed.diagnostics.empty()) {
     return {.program = {}, .diagnostics = std::move(parsed.diagnostics)};
   }
@@ -362,25 +363,25 @@ auto CompileParsed(frontend::ParseResult parsed, runtime::Isolate& isolate) -> C
   return CompileProgram(parsed.program, checked.model, isolate);
 }
 
-auto CompileSource(std::string_view source, runtime::Isolate& isolate) -> CompileResult {
+CompileResult CompileSource(std::string_view source, runtime::Isolate& isolate) {
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   return CompileParsed(frontend::LoadSources(std::span(&input, 1), input.path), isolate);
 }
 
-auto CompileModules(std::span<const frontend::SourceInput> sources,
-                    std::string_view entry,
-                    runtime::Isolate& isolate) -> CompileResult {
+CompileResult CompileModules(std::span<const frontend::SourceInput> sources,
+                             std::string_view entry,
+                             runtime::Isolate& isolate) {
   return CompileParsed(frontend::LoadSources(sources, entry), isolate);
 }
 
-auto CompileFile(std::string_view path, runtime::Isolate& isolate) -> CompileResult {
+CompileResult CompileFile(std::string_view path, runtime::Isolate& isolate) {
   return CompileParsed(frontend::LoadProgram(path), isolate);
 }
 
-auto CompileProgram(const frontend::Program& source,
-                    const frontend::SemanticModel& model,
-                    runtime::Isolate& isolate,
-                    CompilationState* state) -> CompileResult {
+CompileResult CompileProgram(const frontend::Program& source,
+                             const frontend::SemanticModel& model,
+                             runtime::Isolate& isolate,
+                             CompilationState* state) {
   auto native_diagnostics = CheckNativeBindings(source, model, isolate);
   if (!native_diagnostics.empty()) {
     return {.program = {}, .diagnostics = std::move(native_diagnostics)};

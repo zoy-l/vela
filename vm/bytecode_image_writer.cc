@@ -32,7 +32,7 @@ template <class T>
 struct ImageTable final {
   std::vector<const T*> values;
   absl::flat_hash_map<const T*, std::uint64_t> ids;
-  auto Add(const T* value) -> std::uint64_t {
+  std::uint64_t Add(const T* value) {
     if (value == nullptr) {
       return kNoImageId;
     }
@@ -43,7 +43,7 @@ struct ImageTable final {
     }
     return entry->second;
   }
-  auto Index(const T* value) const -> std::uint64_t {
+  std::uint64_t Index(const T* value) const {
     return value == nullptr ? kNoImageId : ids.at(value);
   }
 };
@@ -243,8 +243,8 @@ void ImageWriter::WriteFunction(const FunctionStorage& function) {
 
 }  // namespace
 
-auto SaveBytecode(const Program& program, const runtime::Isolate& isolate)
-    -> std::expected<std::vector<std::byte>, BinaryError> {
+std::expected<std::vector<std::byte>, BinaryError> SaveBytecode(const Program& program,
+                                                                const runtime::Isolate& isolate) {
   if (!program.IsForIsolate(isolate)) {
     return std::unexpected(
         BinaryError{.message = "cannot save a program from a different isolate"});

@@ -14,7 +14,7 @@ class RootedValue final {
  public:
   RootedValue(Isolate& isolate, Value value);
 
-  [[nodiscard]] auto value() const noexcept -> Value;
+  [[nodiscard]] Value value() const noexcept;
 
  private:
   struct Storage final {

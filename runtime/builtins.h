@@ -19,11 +19,12 @@ enum class BuiltinError : std::uint8_t {
 
 enum class NumericConversion : std::uint8_t { ToInt, ToDouble };
 
-[[nodiscard]] auto ConvertNumber(NumericConversion conversion, Value value)
-    -> std::expected<Value, BuiltinError>;
+[[nodiscard]] std::expected<Value, BuiltinError> ConvertNumber(NumericConversion conversion,
+                                                               Value value);
 
 // 参数数量由字节码加载验证；引用参数借用已保根槽位，结果立即存入目标槽位。
-[[nodiscard]] auto ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap)
-    -> std::expected<Value, BuiltinError>;
+[[nodiscard]] std::expected<Value, BuiltinError> ExecuteBuiltin(Builtin builtin,
+                                                                std::span<const Value> arguments,
+                                                                Heap& heap);
 
 }  // namespace vela::runtime

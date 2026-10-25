@@ -21,7 +21,7 @@ namespace {
 using Initialized = absl::flat_hash_set<std::string>;
 using Path = std::optional<Initialized>;
 
-auto Merge(Path left, const Path& right) -> Path {
+Path Merge(Path left, const Path& right) {
   if (!left) {
     return right;
   }
@@ -31,7 +31,7 @@ auto Merge(Path left, const Path& right) -> Path {
   return left;
 }
 
-auto IsThis(const Expression& expression) -> bool {
+bool IsThis(const Expression& expression) {
   return expression.kind == Expression::Kind::Name && expression.text == "this";
 }
 
@@ -40,10 +40,10 @@ class Initialization final {
   Initialization(const Class& owner, const SemanticModel& model) : owner_(owner), model_(model) {}
   ~Initialization() = default;
   Initialization(const Initialization&) = delete;
-  auto operator=(const Initialization&) -> Initialization& = delete;
+  Initialization& operator=(const Initialization&) = delete;
   Initialization(Initialization&&) = delete;
-  auto operator=(Initialization&&) -> Initialization& = delete;
-  auto Run() -> Diagnostics;
+  Initialization& operator=(Initialization&&) = delete;
+  Diagnostics Run();
 
  private:
   struct Control final {
@@ -60,11 +60,11 @@ class Initialization final {
   void RequireComplete(const Initialized& initialized, SourceLocation location);
   void Error(SourceLocation location, std::string message);
   void Walk(const Expression* expression, Initialized& initialized);
-  auto Walk(const Statement& statement, Initialized initialized) -> Path;
-  auto Loop(const Statement& statement, Initialized initialized) -> Path;
-  auto Switch(const Statement& statement, Initialized initialized) -> Path;
-  auto Try(const Statement& statement, const Initialized& initialized) -> Path;
-  auto ApplyFinalizers(Initialized initialized, std::size_t depth) -> Path;
+  Path Walk(const Statement& statement, Initialized initialized);
+  Path Loop(const Statement& statement, Initialized initialized);
+  Path Switch(const Statement& statement, Initialized initialized);
+  Path Try(const Statement& statement, const Initialized& initialized);
+  Path ApplyFinalizers(Initialized initialized, std::size_t depth);
 
   const Class& owner_;
   const SemanticModel& model_;
@@ -158,7 +158,7 @@ void Initialization::Walk(const Expression* expression, Initialized& initialized
   }
 }
 
-auto Initialization::Loop(const Statement& statement, Initialized initialized) -> Path {
+Path Initialization::Loop(const Statement& statement, Initialized initialized) {
   if (statement.initializer) {
     auto after = Walk(*statement.initializer, std::move(initialized));
     if (!after) {
@@ -185,7 +185,7 @@ auto Initialization::Loop(const Statement& statement, Initialized initialized) -
   return always ? exits : Merge(std::move(exits), initialized);
 }
 
-auto Initialization::Switch(const Statement& statement, Initialized initialized) -> Path {
+Path Initialization::Switch(const Statement& statement, Initialized initialized) {
   Walk(statement.condition.get(), initialized);
   const auto control = controls_.size();
   controls_.push_back({
@@ -205,7 +205,7 @@ auto Initialization::Switch(const Statement& statement, Initialized initialized)
   return has_default ? exits : Merge(std::move(exits), initialized);
 }
 
-auto Initialization::Walk(const Statement& statement, Initialized initialized) -> Path {
+Path Initialization::Walk(const Statement& statement, Initialized initialized) {
   switch (statement.kind) {
     case Statement::Kind::Block: {
       Path current = std::move(initialized);
@@ -275,7 +275,7 @@ auto Initialization::Walk(const Statement& statement, Initialized initialized) -
   std::unreachable();
 }
 
-auto Initialization::ApplyFinalizers(Initialized initialized, std::size_t depth) -> Path {
+Path Initialization::ApplyFinalizers(Initialized initialized, std::size_t depth) {
   if (depth == finalizers_.size()) {
     return initialized;
   }
@@ -297,7 +297,7 @@ auto Initialization::ApplyFinalizers(Initialized initialized, std::size_t depth)
   return current;
 }
 
-auto Initialization::Try(const Statement& statement, const Initialized& initialized) -> Path {
+Path Initialization::Try(const Statement& statement, const Initialized& initialized) {
   if (statement.finally_branch) {
     finalizers_.push_back(
         {.body = statement.finally_branch.get(), .control_depth = controls_.size()});
@@ -317,7 +317,7 @@ auto Initialization::Try(const Statement& statement, const Initialized& initiali
   return after;
 }
 
-auto Initialization::Run() -> Diagnostics {
+Diagnostics Initialization::Run() {
   Initialized initialized;
   for (const auto& field : owner_.fields) {
     if (field.storage == MemberStorage::Instance) {
@@ -338,7 +338,7 @@ auto Initialization::Run() -> Diagnostics {
 
 }  // namespace
 
-auto CheckConstructorInitialization(const Class& owner, const SemanticModel& model) -> Diagnostics {
+Diagnostics CheckConstructorInitialization(const Class& owner, const SemanticModel& model) {
   return Initialization(owner, model).Run();
 }
 

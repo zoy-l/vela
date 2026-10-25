@@ -8,9 +8,9 @@
 
 namespace vela::tooling {
 
-[[nodiscard]] auto RunDebugConsole(const vm::FunctionHandle& function,
-                                   runtime::Isolate& isolate,
-                                   std::istream& input,
-                                   std::ostream& output) -> vm::ExecutionResult;
+[[nodiscard]] vm::ExecutionResult RunDebugConsole(const vm::FunctionHandle& function,
+                                                  runtime::Isolate& isolate,
+                                                  std::istream& input,
+                                                  std::ostream& output);
 
 }  // namespace vela::tooling

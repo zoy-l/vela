@@ -24,15 +24,14 @@ struct LayoutCache final {
   absl::flat_hash_map<std::string, const runtime::CollectionLayout*> collections;
 };
 
-[[nodiscard]] auto CreateClassLayouts(const ir::Program& program,
-                                      runtime::Isolate& isolate,
-                                      LayoutCache* cache = nullptr)
-    -> std::vector<runtime::ClassLayout*>;
+[[nodiscard]] std::vector<runtime::ClassLayout*> CreateClassLayouts(const ir::Program& program,
+                                                                    runtime::Isolate& isolate,
+                                                                    LayoutCache* cache = nullptr);
 
-[[nodiscard]] auto CreateRuntimeLayouts(const ir::Program& program,
-                                        const frontend::SemanticModel& model,
-                                        std::span<runtime::ClassLayout* const> classes,
-                                        runtime::Isolate& isolate,
-                                        LayoutCache* cache = nullptr) -> RuntimeLayouts;
+[[nodiscard]] RuntimeLayouts CreateRuntimeLayouts(const ir::Program& program,
+                                                  const frontend::SemanticModel& model,
+                                                  std::span<runtime::ClassLayout* const> classes,
+                                                  runtime::Isolate& isolate,
+                                                  LayoutCache* cache = nullptr);
 
 }  // namespace vela::compiler

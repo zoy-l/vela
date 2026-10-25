@@ -29,14 +29,14 @@ class Lexer final {
     location_.source_id = source_id;
   }
 
-  [[nodiscard]] auto Tokenize() -> LexResult;
+  [[nodiscard]] LexResult Tokenize();
 
  private:
-  [[nodiscard]] auto IsAtEnd() const -> bool;
-  [[nodiscard]] auto Peek() const -> char;
-  [[nodiscard]] auto PeekNext() const -> char;
-  auto Advance() -> char;
-  auto Match(char expected) -> bool;
+  [[nodiscard]] bool IsAtEnd() const;
+  [[nodiscard]] char Peek() const;
+  [[nodiscard]] char PeekNext() const;
+  char Advance();
+  bool Match(char expected);
   void SkipWhitespaceAndComments();
   void SkipBlockComment();
   void RecordComment(SourceLocation location, std::size_t start);
@@ -45,10 +45,10 @@ class Lexer final {
   void ScanNumber();
   void ScanString(char quote);
   void ScanStringRun(std::string& value, char quote);
-  auto ScanInterpolation() -> bool;
+  bool ScanInterpolation();
   void ScanEscape(std::string& value);
   void ScanUnicodeEscape(std::string& value, SourceLocation escape_location);
-  auto ReadHexDigits(std::size_t limit) -> std::pair<std::uint32_t, std::size_t>;
+  std::pair<std::uint32_t, std::size_t> ReadHexDigits(std::size_t limit);
   void AddToken(TokenKind kind, std::size_t start);
   void AddDiagnostic(SourceLocation location, std::string message);
 

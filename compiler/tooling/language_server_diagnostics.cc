@@ -42,12 +42,10 @@ struct DiagnosticSource final {
       }
     }
   }
-  [[nodiscard]] auto Position(SourceLocation location, PositionEncoding encoding) const
-      -> TextPosition;
+  [[nodiscard]] TextPosition Position(SourceLocation location, PositionEncoding encoding) const;
 };
 
-auto DiagnosticSource::Position(SourceLocation location, PositionEncoding encoding) const
-    -> TextPosition {
+TextPosition DiagnosticSource::Position(SourceLocation location, PositionEncoding encoding) const {
   const auto line = std::min(static_cast<std::size_t>(location.line - 1), lines.size() - 1);
   const auto begin = lines.at(line);
   const auto end = line + 1 < lines.size() ? lines.at(line + 1) - 1 : text.size();
@@ -88,7 +86,7 @@ auto DiagnosticSource::Position(SourceLocation location, PositionEncoding encodi
   return {.line = line, .character = character};
 }
 
-auto DiagnosticNotification(std::string_view uri) -> JsonOutput {
+JsonOutput DiagnosticNotification(std::string_view uri) {
   JsonOutput output;
   auto* document = output.document();
   auto* root = output.root();
@@ -103,8 +101,7 @@ auto DiagnosticNotification(std::string_view uri) -> JsonOutput {
   return output;
 }
 
-auto JsonDiagnostic(yyjson_mut_doc* document, const EditorDiagnostic& diagnostic)
-    -> yyjson_mut_val* {
+yyjson_mut_val* JsonDiagnostic(yyjson_mut_doc* document, const EditorDiagnostic& diagnostic) {
   auto* diagnostic_object = yyjson_mut_obj(document);
   auto* range = yyjson_mut_obj(document);
   AddJsonField(document, range, protocol::kStart, JsonPosition(document, diagnostic.position));
@@ -131,7 +128,7 @@ class DiagnosticCollection final {
   }
   void EnsureUri(std::string_view uri) { buckets_.try_emplace(uri); }
   void Collect(std::string_view path);
-  [[nodiscard]] auto buckets() const -> const DiagnosticBuckets& { return buckets_; }
+  [[nodiscard]] const DiagnosticBuckets& buckets() const { return buckets_; }
 
  private:
   PositionEncoding encoding_;

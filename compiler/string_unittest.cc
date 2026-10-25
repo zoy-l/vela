@@ -19,7 +19,7 @@ namespace {
 
 class StringLanguageTest : public testing::Test {
  protected:
-  auto Run(std::string_view source) -> vm::ExecutionResult {
+  vm::ExecutionResult Run(std::string_view source) {
     compiled_ = CompileSource(source, isolate_);
     if (!compiled_.Succeeded()) {
       for (const auto& diagnostic : compiled_.diagnostics) {
@@ -37,7 +37,7 @@ class StringLanguageTest : public testing::Test {
     return vm::VirtualMachine(isolate_).Execute(compiled_.program, index);
   }
 
-  auto Text(std::string_view source) -> std::string {
+  std::string Text(std::string_view source) {
     const auto result = Run(source);
     if (!result.Succeeded() || !result.value.IsString()) {
       ADD_FAILURE() << "string execution failed: " << static_cast<int>(result.status);
@@ -46,8 +46,8 @@ class StringLanguageTest : public testing::Test {
     return std::string(result.value.AsString()->value());
   }
 
-  auto isolate() -> runtime::Isolate& { return isolate_; }
-  auto compilation() -> CompileResult& { return compiled_; }
+  runtime::Isolate& isolate() { return isolate_; }
+  CompileResult& compilation() { return compiled_; }
 
  private:
   runtime::Isolate isolate_{1};
@@ -279,7 +279,7 @@ TEST_F(StringLanguageTest, UnicodeApisUseCodePointsAndPreserveUtf8Boundaries) {
   EXPECT_EQ(Text(R"(
 func main(): string {
   const text = "A中😀e\u0301";
-  return "${text.length.toString()}/${text.byteLength.toString()}/${text[2]}/${text.slice(1, 3)}/${text.indexOf("e").toString()}/${text.contains("中😀").toString()}/${text.startsWith("A中").toString()}/${text.endsWith("\u0301").toString()}";
+  return "${text.length.toString()}/${text.byteLength.toString()}/${text[2]}/${text.slice(1, 3)}/${text.indexOf("e").toString()}/${text.includes("中😀").toString()}/${text.startsWith("A中").toString()}/${text.endsWith("\u0301").toString()}";
 })"),
             "5/11/😀/中😀/3/true/true/true");
 }
@@ -289,7 +289,7 @@ TEST_F(StringLanguageTest, EmptyAndMissingSearchAndSliceEdges) {
 func main(): string {
   const empty = "";
   const text = "中😀";
-  return "${empty.length.toString()},${empty.slice(0, 0)},${text.slice(2, 2)},${text.indexOf("").toString()},${text.indexOf("x").toString()},${text.contains("").toString()},${empty.startsWith("").toString()},${empty.endsWith("").toString()}";
+  return "${empty.length.toString()},${empty.slice(0, 0)},${text.slice(2, 2)},${text.indexOf("").toString()},${text.indexOf("x").toString()},${text.includes("").toString()},${empty.startsWith("").toString()},${empty.endsWith("").toString()}";
 })"),
             "0,,,0,-1,true,true,true");
 }
@@ -326,7 +326,7 @@ TEST_F(StringLanguageTest, SearchHandlesLongRepeatedPrefixesInLinearTime) {
   const std::string text(4096, 'a');
   const auto source = "func main(): string { const text = \"" + text +
                       R"(b"; return "${text.indexOf(")" + prefix +
-                      "b\").toString()},${text.contains(\"" + prefix + "c\").toString()}\"; }";
+                      "b\").toString()},${text.includes(\"" + prefix + "c\").toString()}\"; }";
   EXPECT_EQ(Text(source), "3968,false");
 }
 

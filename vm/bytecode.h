@@ -23,53 +23,53 @@ inline constexpr Instruction kImmediateMask = std::numeric_limits<std::uint16_t>
 
 using OpCode = ::vela::Opcode;
 
-[[nodiscard]] constexpr auto EncodeABC(OpCode opcode,
-                                       std::uint8_t operand_a,
-                                       std::uint8_t operand_b,
-                                       std::uint8_t operand_c) noexcept -> Instruction {
+[[nodiscard]] constexpr Instruction EncodeABC(OpCode opcode,
+                                              std::uint8_t operand_a,
+                                              std::uint8_t operand_b,
+                                              std::uint8_t operand_c) noexcept {
   return static_cast<Instruction>(opcode) |
          (static_cast<Instruction>(operand_a) << kOperandAShift) |
          (static_cast<Instruction>(operand_b) << kOperandBShift) |
          (static_cast<Instruction>(operand_c) << kOperandCShift);
 }
 
-[[nodiscard]] constexpr auto EncodeAImm16(OpCode opcode,
-                                          std::uint8_t operand_a,
-                                          std::int16_t immediate) noexcept -> Instruction {
+[[nodiscard]] constexpr Instruction EncodeAImm16(OpCode opcode,
+                                                 std::uint8_t operand_a,
+                                                 std::int16_t immediate) noexcept {
   return static_cast<Instruction>(opcode) |
          (static_cast<Instruction>(operand_a) << kOperandAShift) |
          (static_cast<Instruction>(static_cast<std::uint16_t>(immediate)) << kOperandBShift);
 }
 
-[[nodiscard]] constexpr auto DecodeOp(Instruction instruction) noexcept -> OpCode {
+[[nodiscard]] constexpr OpCode DecodeOp(Instruction instruction) noexcept {
   return static_cast<OpCode>(instruction & kByteMask);
 }
 
-[[nodiscard]] constexpr auto DecodeA(Instruction instruction) noexcept -> std::uint8_t {
+[[nodiscard]] constexpr std::uint8_t DecodeA(Instruction instruction) noexcept {
   return static_cast<std::uint8_t>((instruction >> kOperandAShift) & kByteMask);
 }
 
-[[nodiscard]] constexpr auto DecodeB(Instruction instruction) noexcept -> std::uint8_t {
+[[nodiscard]] constexpr std::uint8_t DecodeB(Instruction instruction) noexcept {
   return static_cast<std::uint8_t>((instruction >> kOperandBShift) & kByteMask);
 }
 
-[[nodiscard]] constexpr auto DecodeC(Instruction instruction) noexcept -> std::uint8_t {
+[[nodiscard]] constexpr std::uint8_t DecodeC(Instruction instruction) noexcept {
   return static_cast<std::uint8_t>((instruction >> kOperandCShift) & kByteMask);
 }
 
-[[nodiscard]] constexpr auto DecodeImm16(Instruction instruction) noexcept -> std::int16_t {
+[[nodiscard]] constexpr std::int16_t DecodeImm16(Instruction instruction) noexcept {
   return static_cast<std::int16_t>((instruction >> kOperandBShift) & kImmediateMask);
 }
 
-[[nodiscard]] constexpr auto EncodeAUnsigned16(OpCode opcode,
-                                               std::uint8_t operand_a,
-                                               std::uint16_t index) noexcept -> Instruction {
+[[nodiscard]] constexpr Instruction EncodeAUnsigned16(OpCode opcode,
+                                                      std::uint8_t operand_a,
+                                                      std::uint16_t index) noexcept {
   return static_cast<Instruction>(opcode) |
          (static_cast<Instruction>(operand_a) << kOperandAShift) |
          (static_cast<Instruction>(index) << kOperandBShift);
 }
 
-[[nodiscard]] constexpr auto DecodeUnsigned16(Instruction instruction) noexcept -> std::uint16_t {
+[[nodiscard]] constexpr std::uint16_t DecodeUnsigned16(Instruction instruction) noexcept {
   return static_cast<std::uint16_t>((instruction >> kOperandBShift) & kImmediateMask);
 }
 

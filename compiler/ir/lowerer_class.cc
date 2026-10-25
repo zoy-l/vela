@@ -13,7 +13,7 @@
 
 namespace vela::ir {
 
-auto Lowerer::RegisterRuntimeType(const frontend::TypeDescriptor& type) -> std::uint32_t {
+std::uint32_t Lowerer::RegisterRuntimeType(const frontend::TypeDescriptor& type) {
   auto found = runtime_type_ids_.find(type.name);
   std::uint32_t index = 0;
   if (found == runtime_type_ids_.end()) {
@@ -36,7 +36,7 @@ auto Lowerer::RegisterRuntimeType(const frontend::TypeDescriptor& type) -> std::
   return index;
 }
 
-auto Lowerer::LowerTypeOperation(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerTypeOperation(const frontend::Expression& expression) {
   const auto index = RegisterRuntimeType(model_.type_operands.at(&expression));
   const auto value = LowerExpression(*expression.operand);
   const auto result = AllocateTemporary(expression.location);
@@ -73,8 +73,8 @@ void Lowerer::LowerInitializer(std::string name,
   current_function_ = nullptr;
 }
 
-auto Lowerer::LowerConstruction(const frontend::Expression& expression,
-                                const frontend::TypeDescriptor& expected) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerConstruction(const frontend::Expression& expression,
+                                                 const frontend::TypeDescriptor& expected) {
   const auto& info = model_.classes.at(expected.name);
   const auto& source = *info.declaration;
   const auto& signature = info.constructor;

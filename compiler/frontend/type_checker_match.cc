@@ -8,7 +8,7 @@
 
 namespace vela::frontend {
 
-auto TypeChecker::IsMatchComplete(const Type& selector, const MatchCoverage& coverage) -> bool {
+bool TypeChecker::IsMatchComplete(const Type& selector, const MatchCoverage& coverage) {
   if (selector.kind == Type::Kind::Null) {
     return coverage.null;
   }
@@ -38,9 +38,9 @@ void TypeChecker::CheckMatchConstant(const MatchArm& arm,
   }
 }
 
-auto TypeChecker::CheckMatchPattern(const MatchArm& arm,
-                                    const Type& selector,
-                                    MatchCoverage& coverage) -> Type {
+TypeChecker::Type TypeChecker::CheckMatchPattern(const MatchArm& arm,
+                                                 const Type& selector,
+                                                 MatchCoverage& coverage) {
   auto base = NonNullable(selector);
   if (arm.kind == MatchArm::Kind::Constant) {
     if (arm.pattern->kind != Expression::Kind::NullLiteral) {
@@ -87,7 +87,7 @@ void TypeChecker::CheckMatchResult(const Expression& expression,
   }
 }
 
-auto TypeChecker::CheckMatch(const Expression& expression, const Type* expected) -> Type {
+TypeChecker::Type TypeChecker::CheckMatch(const Expression& expression, const Type* expected) {
   const auto selector = CheckExpression(*expression.operand, nullptr);
   const auto before = refinements_;
   std::optional<Refinements> exits;

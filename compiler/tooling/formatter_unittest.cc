@@ -41,6 +41,19 @@ TEST(FormatterTest, RetainsCommentPlacementAndEscapeSpellings) {
   EXPECT_FALSE(result->contains('\r'));
 }
 
+TEST(FormatterTest, FormatsContextualAndInferredLambdasWithoutAddingAnnotations) {
+  const auto result = FormatSource(
+      "func main():void{const values=[2,1];values.sort((left,right)=>left-right);"
+      "values.forEach(value=>{print(value);});const twice=(value:int)=>value*2;}");
+  ASSERT_TRUE(result) << result.error().front().message;
+  EXPECT_TRUE(result->contains("values.sort((left, right) => left - right);"));
+  EXPECT_TRUE(result->contains("values.forEach(value => {"));
+  EXPECT_TRUE(result->contains("const twice = (value: int) => value * 2;"));
+  const auto second = FormatSource(*result);
+  ASSERT_TRUE(second);
+  EXPECT_EQ(*result, *second);
+}
+
 TEST(FormatterTest, SpacesFunctionTypesNamedArgumentsAndOperators) {
   const auto result = FormatSource(
       "func apply(value:int,operation:(int)=>int):int{return operation(value);}"

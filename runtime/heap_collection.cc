@@ -37,17 +37,17 @@ struct CollectionStorage final {
   std::uint32_t tail = kEmpty;
 };
 
-auto Storage(HeapObject& object) noexcept -> CollectionStorage& {
+CollectionStorage& Storage(HeapObject& object) noexcept {
   void* data = std::span(&object, 1).last(0).data();
   return *static_cast<CollectionStorage*>(data);
 }
 
-auto Storage(const HeapObject& object) noexcept -> const CollectionStorage& {
+const CollectionStorage& Storage(const HeapObject& object) noexcept {
   const void* data = std::span(&object, 1).last(0).data();
   return *static_cast<const CollectionStorage*>(data);
 }
 
-constexpr auto Align(std::size_t offset, std::size_t alignment) noexcept -> std::size_t {
+constexpr std::size_t Align(std::size_t offset, std::size_t alignment) noexcept {
   return (offset + alignment - 1) & ~(alignment - 1);
 }
 
@@ -62,7 +62,7 @@ struct BufferLayout final {
   std::size_t bytes = 0;
 };
 
-auto LayoutFor(const CollectionLayout& type, std::size_t capacity) noexcept -> BufferLayout {
+BufferLayout LayoutFor(const CollectionLayout& type, std::size_t capacity) noexcept {
   BufferLayout layout;
   layout.key_bytes = capacity * type.keys.element_size();
   layout.value_offset = Align(layout.key_bytes, alignof(Value));
@@ -85,13 +85,12 @@ struct Table final {
 };
 
 template <typename T>
-auto Section(std::span<std::byte> bytes, std::size_t offset, std::size_t count) noexcept
-    -> std::span<T> {
+std::span<T> Section(std::span<std::byte> bytes, std::size_t offset, std::size_t count) noexcept {
   void* data = bytes.subspan(offset, count * sizeof(T)).data();
   return {static_cast<T*>(data), count};
 }
 
-auto View(const CollectionStorage& storage, const CollectionLayout& type) noexcept -> Table {
+Table View(const CollectionStorage& storage, const CollectionLayout& type) noexcept {
   const auto layout = LayoutFor(type, storage.capacity);
   const auto bytes = std::span(storage.data, storage.bytes);
   const auto capacity = static_cast<std::size_t>(storage.capacity);
@@ -105,7 +104,7 @@ auto View(const CollectionStorage& storage, const CollectionLayout& type) noexce
   };
 }
 
-auto HashKey(Value value) noexcept -> std::size_t {
+std::size_t HashKey(Value value) noexcept {
   switch (value.kind()) {
     case ValueKind::Null:
       return absl::HashOf(value.kind());
@@ -131,7 +130,7 @@ auto HashKey(Value value) noexcept -> std::size_t {
   std::unreachable();
 }
 
-auto IsSameKey(Value left, Value right) noexcept -> bool {
+bool IsSameKey(Value left, Value right) noexcept {
   if (left.kind() != right.kind()) {
     return false;
   }
@@ -161,10 +160,10 @@ struct Slot final {
   bool found = false;
 };
 
-auto FindSlot(const Table& table,
+Slot FindSlot(const Table& table,
               const CollectionLayout& layout,
               Value key,
-              std::size_t hash) noexcept -> Slot {
+              std::size_t hash) noexcept {
   const auto mask = static_cast<std::uint32_t>(table.buckets.size() - 1);
   auto bucket = static_cast<std::uint32_t>(hash) & mask;
   auto deleted = kEmpty;
@@ -199,7 +198,7 @@ void LinkTail(CollectionStorage& storage, const Table& table, std::uint32_t entr
 
 }  // namespace
 
-auto Heap::AllocateCollection(const CollectionLayout& layout) noexcept -> HeapObject* {
+HeapObject* Heap::AllocateCollection(const CollectionLayout& layout) noexcept {
   const auto size = sizeof(HeapObject) + sizeof(CollectionStorage);
   MaybeCollect(size);
   const auto allocation = AllocateRaw(size);
@@ -215,7 +214,7 @@ auto Heap::AllocateCollection(const CollectionLayout& layout) noexcept -> HeapOb
   return object;
 }
 
-auto Heap::GrowCollection(HeapObject& object) noexcept -> std::expected<void, CollectionError> {
+std::expected<void, CollectionError> Heap::GrowCollection(HeapObject& object) noexcept {
   auto& current = Storage(object);
   const auto& layout = *object.collection_layout();
   auto capacity = current.capacity;
@@ -265,8 +264,9 @@ auto Heap::GrowCollection(HeapObject& object) noexcept -> std::expected<void, Co
   return {};
 }
 
-auto Heap::InsertCollection(HeapObject& object, Value key, Value value) noexcept
-    -> std::expected<CollectionInsert, CollectionError> {
+std::expected<CollectionInsert, CollectionError> Heap::InsertCollection(HeapObject& object,
+                                                                        Value key,
+                                                                        Value value) noexcept {
   if (object.kind != ObjectKind::Collection) {
     return std::unexpected(CollectionError::NotCollection);
   }
@@ -316,8 +316,8 @@ auto Heap::InsertCollection(HeapObject& object, Value key, Value value) noexcept
   return CollectionInsert::Inserted;
 }
 
-auto Heap::HasCollectionKey(const HeapObject& object, Value key) noexcept
-    -> std::expected<bool, CollectionError> {
+std::expected<bool, CollectionError> Heap::HasCollectionKey(const HeapObject& object,
+                                                            Value key) noexcept {
   if (object.kind != ObjectKind::Collection) {
     return std::unexpected(CollectionError::NotCollection);
   }
@@ -329,8 +329,8 @@ auto Heap::HasCollectionKey(const HeapObject& object, Value key) noexcept
   return storage.size != 0 && FindSlot(View(storage, layout), layout, key, HashKey(key)).found;
 }
 
-auto Heap::GetCollectionValue(const HeapObject& object, Value key) noexcept
-    -> std::expected<Value, CollectionError> {
+std::expected<Value, CollectionError> Heap::GetCollectionValue(const HeapObject& object,
+                                                               Value key) noexcept {
   if (object.kind != ObjectKind::Collection) {
     return std::unexpected(CollectionError::NotCollection);
   }
@@ -347,8 +347,8 @@ auto Heap::GetCollectionValue(const HeapObject& object, Value key) noexcept
   return slot.found ? LoadElementStorage(*layout.values, table.values, slot.entry) : Value::Null();
 }
 
-auto Heap::RemoveCollection(HeapObject& object, Value key) noexcept
-    -> std::expected<CollectionRemove, CollectionError> {
+std::expected<CollectionRemove, CollectionError> Heap::RemoveCollection(HeapObject& object,
+                                                                        Value key) noexcept {
   if (object.kind != ObjectKind::Collection) {
     return std::unexpected(CollectionError::NotCollection);
   }
@@ -386,7 +386,7 @@ auto Heap::RemoveCollection(HeapObject& object, Value key) noexcept
   return CollectionRemove::Removed;
 }
 
-auto Heap::ClearCollection(HeapObject& object) noexcept -> std::expected<void, CollectionError> {
+std::expected<void, CollectionError> Heap::ClearCollection(HeapObject& object) noexcept {
   if (object.kind != ObjectKind::Collection) {
     return std::unexpected(CollectionError::NotCollection);
   }
@@ -401,10 +401,9 @@ auto Heap::ClearCollection(HeapObject& object) noexcept -> std::expected<void, C
   return {};
 }
 
-auto Heap::CombineSets(const HeapObject& left,
-                       const HeapObject& right,
-                       SetOperation operation) noexcept
-    -> std::expected<HeapObject*, CollectionError> {
+std::expected<HeapObject*, CollectionError> Heap::CombineSets(const HeapObject& left,
+                                                              const HeapObject& right,
+                                                              SetOperation operation) noexcept {
   if (left.kind != ObjectKind::Collection || right.kind != ObjectKind::Collection) {
     return std::unexpected(CollectionError::NotCollection);
   }
@@ -452,18 +451,18 @@ auto Heap::CombineSets(const HeapObject& left,
   return result;
 }
 
-auto Heap::CollectionLength(const HeapObject& object) noexcept
-    -> std::expected<std::uint32_t, CollectionError> {
+std::expected<std::uint32_t, CollectionError> Heap::CollectionLength(
+    const HeapObject& object) noexcept {
   if (object.kind != ObjectKind::Collection) {
     return std::unexpected(CollectionError::NotCollection);
   }
   return Storage(object).size;
 }
 
-auto Heap::CopyCollection(const HeapObject& object,
-                          HeapObject& array,
-                          CollectionProjection projection) noexcept
-    -> std::expected<void, CollectionError> {
+std::expected<void, CollectionError> Heap::CopyCollection(
+    const HeapObject& object,
+    HeapObject& array,
+    CollectionProjection projection) noexcept {
   if (object.kind != ObjectKind::Collection) {
     return std::unexpected(CollectionError::NotCollection);
   }

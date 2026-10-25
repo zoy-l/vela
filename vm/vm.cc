@@ -37,7 +37,7 @@ struct BinaryOperands final {
   runtime::RegisterReference right;
 };
 
-auto IsEqualValue(runtime::Value left, runtime::Value right) noexcept -> bool {
+bool IsEqualValue(runtime::Value left, runtime::Value right) noexcept {
   if (left.kind() != right.kind()) {
     return false;
   }
@@ -58,10 +58,10 @@ auto IsEqualValue(runtime::Value left, runtime::Value right) noexcept -> bool {
   return false;
 }
 
-[[clang::always_inline]] auto IntegerArithmetic(OpCode opcode,
-                                                runtime::RegisterReference destination,
-                                                std::int64_t left,
-                                                std::int64_t right) noexcept -> StepResult {
+[[clang::always_inline]] StepResult IntegerArithmetic(OpCode opcode,
+                                                      runtime::RegisterReference destination,
+                                                      std::int64_t left,
+                                                      std::int64_t right) noexcept {
   std::int64_t result = 0;
   bool overflow = false;
   switch (opcode) {
@@ -93,9 +93,9 @@ auto IsEqualValue(runtime::Value left, runtime::Value right) noexcept -> bool {
   return {};
 }
 
-[[clang::always_inline]] auto IntegerOperation(OpCode opcode,
-                                               runtime::RegisterReference destination,
-                                               BinaryOperands operands) noexcept -> StepResult {
+[[clang::always_inline]] StepResult IntegerOperation(OpCode opcode,
+                                                     runtime::RegisterReference destination,
+                                                     BinaryOperands operands) noexcept {
   const auto& [left_value, right_value] = operands;
   if (!left_value.IsInteger() || !right_value.IsInteger()) {
     return std::unexpected(ExecutionStatus::TypeError);
@@ -129,9 +129,9 @@ auto IsEqualValue(runtime::Value left, runtime::Value right) noexcept -> bool {
   return {};
 }
 
-[[clang::always_inline]] auto DoubleOperation(OpCode opcode,
-                                              runtime::RegisterReference destination,
-                                              BinaryOperands operands) noexcept -> StepResult {
+[[clang::always_inline]] StepResult DoubleOperation(OpCode opcode,
+                                                    runtime::RegisterReference destination,
+                                                    BinaryOperands operands) noexcept {
   const auto& [left_value, right_value] = operands;
   if (!left_value.IsDouble() || !right_value.IsDouble()) {
     return std::unexpected(ExecutionStatus::TypeError);
@@ -178,9 +178,9 @@ auto IsEqualValue(runtime::Value left, runtime::Value right) noexcept -> bool {
   return {};
 }
 
-[[clang::always_inline]] auto BooleanOperation(OpCode opcode,
-                                               runtime::RegisterReference destination,
-                                               BinaryOperands operands) noexcept -> StepResult {
+[[clang::always_inline]] StepResult BooleanOperation(OpCode opcode,
+                                                     runtime::RegisterReference destination,
+                                                     BinaryOperands operands) noexcept {
   const auto& [left_value, right_value] = operands;
   if (!left_value.IsBoolean() || !right_value.IsBoolean()) {
     return std::unexpected(ExecutionStatus::TypeError);
@@ -211,8 +211,7 @@ auto IsEqualValue(runtime::Value left, runtime::Value right) noexcept -> bool {
 }  // namespace
 
 template <bool Debugging>
-auto Execution::RunImpl(std::uint32_t entry_function, Debugger* debugger) noexcept
-    -> ExecutionResult {
+ExecutionResult Execution::RunImpl(std::uint32_t entry_function, Debugger* debugger) noexcept {
   auto& entry = frames_.front();
   entry.function = &functions_.subspan(entry_function).front();
   auto entry_values = registers_.front().Acquire(entry.function->register_count);
@@ -252,16 +251,15 @@ auto Execution::RunImpl(std::uint32_t entry_function, Debugger* debugger) noexce
   return {.value = result_, .status = ExecutionStatus::Returned, .stack_trace = {}, .message = {}};
 }
 
-auto Execution::Run(std::uint32_t entry_function) noexcept -> ExecutionResult {
+ExecutionResult Execution::Run(std::uint32_t entry_function) noexcept {
   return RunImpl<false>(entry_function, nullptr);
 }
 
-auto Execution::DebugRun(std::uint32_t entry_function, Debugger& debugger) noexcept
-    -> ExecutionResult {
+ExecutionResult Execution::DebugRun(std::uint32_t entry_function, Debugger& debugger) noexcept {
   return RunImpl<true>(entry_function, &debugger);
 }
 
-auto Execution::ExecuteInstruction(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::ExecuteInstruction(ActiveFrame& active, Instruction instruction) {
   auto values = active.frame.registers();
   const auto opcode = DecodeOp(instruction);
   const auto operand_a = DecodeA(instruction);
@@ -353,7 +351,7 @@ auto Execution::ExecuteInstruction(ActiveFrame& active, Instruction instruction)
   }
 }
 
-auto Execution::ExecuteObject(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::ExecuteObject(ActiveFrame& active, Instruction instruction) {
   auto values = active.frame.registers();
   const auto opcode = DecodeOp(instruction);
   const auto operand_a = DecodeA(instruction);
@@ -437,7 +435,7 @@ auto Execution::ExecuteObject(ActiveFrame& active, Instruction instruction) -> S
   }
 }
 
-auto Execution::AllocateObject(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::AllocateObject(ActiveFrame& active, Instruction instruction) {
   const auto values = active.frame.registers();
   const auto opcode = DecodeOp(instruction);
   const auto operand_a = DecodeA(instruction);
@@ -482,7 +480,7 @@ auto Execution::AllocateObject(ActiveFrame& active, Instruction instruction) -> 
   }
 }
 
-auto Execution::ExecuteControl(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::ExecuteControl(ActiveFrame& active, Instruction instruction) {
   const auto values = active.frame.registers();
   switch (DecodeOp(instruction)) {
     case OpCode::Jump:
@@ -535,7 +533,7 @@ auto Execution::ExecuteControl(ActiveFrame& active, Instruction instruction) -> 
   }
 }
 
-auto Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) {
   const auto builtin = static_cast<Builtin>(DecodeB(instruction));
   auto values = active.frame.registers();
   const auto arguments = values.subspan(DecodeC(instruction), BuiltinArity(builtin));
@@ -568,7 +566,7 @@ auto Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) -> 
   return {};
 }
 
-auto Execution::ExecuteNative(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::ExecuteNative(ActiveFrame& active, Instruction instruction) {
   auto values = active.frame.registers();
   // 缓冲由 VM 持有，仅遇到更大的调用窗口时增长；只物化实际实参，不注册未用尾部。
   const auto count = DecodeC(instruction);
@@ -591,7 +589,7 @@ auto Execution::ExecuteNative(ActiveFrame& active, Instruction instruction) -> S
   return {};
 }
 
-auto Execution::Interpolate(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::Interpolate(ActiveFrame& active, Instruction instruction) {
   auto values = active.frame.registers();
   const auto arguments = values.subspan(DecodeB(instruction), DecodeC(instruction));
   std::array<runtime::StringObject*, kMaxFrameRegisters> parts{};
@@ -620,10 +618,10 @@ auto Execution::Interpolate(ActiveFrame& active, Instruction instruction) -> Ste
   return {};
 }
 
-auto Execution::StringOperation(OpCode opcode,
-                                runtime::RegisterReference destination,
-                                runtime::Value left,
-                                runtime::Value right) -> StepResult {
+StepResult Execution::StringOperation(OpCode opcode,
+                                      runtime::RegisterReference destination,
+                                      runtime::Value left,
+                                      runtime::Value right) {
   if (opcode == OpCode::StringConcat) {
     if (left.IsString() && right.IsString()) {
       auto* string =
@@ -654,10 +652,10 @@ auto Execution::StringOperation(OpCode opcode,
   return {};
 }
 
-auto Execution::ArrayOperation(OpCode opcode,
-                               runtime::RegisterReference destination,
-                               runtime::Value left,
-                               runtime::Value right) -> StepResult {
+StepResult Execution::ArrayOperation(OpCode opcode,
+                                     runtime::RegisterReference destination,
+                                     runtime::Value left,
+                                     runtime::Value right) {
   const auto object = opcode == OpCode::GetIndex ? left : destination;
   const auto index = opcode == OpCode::GetIndex ? right : left;
   if (!object.IsObject() || object.AsObject() == nullptr || !index.IsInteger()) {
@@ -694,7 +692,7 @@ void Execution::Jump(ActiveFrame& active, std::int16_t offset) noexcept {
   active.program_counter = static_cast<std::size_t>(target);
 }
 
-auto Execution::ExecuteExpected(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::ExecuteExpected(ActiveFrame& active, Instruction instruction) {
   const auto values = active.frame.registers();
   const auto opcode = DecodeOp(instruction);
   auto destination = values.subspan(DecodeA(instruction)).front();
@@ -734,11 +732,11 @@ auto Execution::ExecuteExpected(ActiveFrame& active, Instruction instruction) ->
   return {};
 }
 
-auto Execution::Call(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::Call(ActiveFrame& active, Instruction instruction) {
   return EnterCall(DecodeB(instruction), active, instruction, std::nullopt);
 }
 
-auto Execution::AccessGlobal(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::AccessGlobal(ActiveFrame& active, Instruction instruction) {
   const auto index = DecodeB(instruction);
   auto& state = globals_->states.at(index);
   auto& value = globals_->values.at(index);
@@ -769,8 +767,9 @@ auto Execution::AccessGlobal(ActiveFrame& active, Instruction instruction) -> St
   return entered;
 }
 
-auto Execution::InterfaceTarget(runtime::Value receiver, std::uint32_t selector) const
-    -> std::expected<std::uint32_t, ExecutionStatus> {
+std::expected<std::uint32_t, ExecutionStatus> Execution::InterfaceTarget(
+    runtime::Value receiver,
+    std::uint32_t selector) const {
   if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -785,7 +784,7 @@ auto Execution::InterfaceTarget(runtime::Value receiver, std::uint32_t selector)
   return target;
 }
 
-auto Execution::CallInterface(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::CallInterface(ActiveFrame& active, Instruction instruction) {
   const auto base = DecodeC(instruction);
   const auto values = active.frame.registers();
   const auto target = InterfaceTarget(values.subspan(base).front(), DecodeB(instruction));
@@ -799,7 +798,7 @@ auto Execution::CallInterface(ActiveFrame& active, Instruction instruction) -> S
   return EnterCall(*target, active, instruction, std::nullopt);
 }
 
-auto Execution::CallIndirect(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::CallIndirect(ActiveFrame& active, Instruction instruction) {
   const auto value = active.frame.registers().subspan(DecodeB(instruction)).front();
   if (!value.IsObject() || value.AsObject() == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
@@ -839,10 +838,10 @@ auto Execution::CallIndirect(ActiveFrame& active, Instruction instruction) -> St
   return EnterCall(target.function, active, instruction, implicit);
 }
 
-auto Execution::EnterCall(std::uint32_t target,
-                          ActiveFrame& active,
-                          Instruction instruction,
-                          std::optional<runtime::Value> implicit) -> StepResult {
+StepResult Execution::EnterCall(std::uint32_t target,
+                                ActiveFrame& active,
+                                Instruction instruction,
+                                std::optional<runtime::Value> implicit) {
   const auto& callee = functions_.subspan(target).front();
   auto callee_values = registers_.subspan(frame_count_).front().Acquire(callee.register_count);
   if (callee_values.IsEmpty()) {
@@ -884,11 +883,11 @@ void Execution::Return(ActiveFrame& active, runtime::Value value) {
 
 }  // namespace
 
-auto VirtualMachine::Execute(const FunctionHandle& function) noexcept -> ExecutionResult {
+ExecutionResult VirtualMachine::Execute(const FunctionHandle& function) noexcept {
   return Execute(function.program(), function.index());
 }
 
-auto VirtualMachine::register_bytes() const noexcept -> std::size_t {
+std::size_t VirtualMachine::register_bytes() const noexcept {
   std::size_t bytes = 0;
   for (const auto& registers : registers_) {
     bytes += registers.capacity() * runtime::kRegisterSlotBytes;
@@ -896,19 +895,18 @@ auto VirtualMachine::register_bytes() const noexcept -> std::size_t {
   return bytes;
 }
 
-auto VirtualMachine::Execute(const Program& program, std::uint32_t entry_function) noexcept
-    -> ExecutionResult {
+ExecutionResult VirtualMachine::Execute(const Program& program,
+                                        std::uint32_t entry_function) noexcept {
   return ExecuteImpl(program, entry_function, nullptr);
 }
 
-auto VirtualMachine::Debug(const FunctionHandle& function, Debugger& debugger) noexcept
-    -> ExecutionResult {
+ExecutionResult VirtualMachine::Debug(const FunctionHandle& function, Debugger& debugger) noexcept {
   return ExecuteImpl(function.program(), function.index(), &debugger);
 }
 
-auto VirtualMachine::ExecuteImpl(const Program& program,
-                                 std::uint32_t entry_function,
-                                 Debugger* debugger) noexcept -> ExecutionResult {
+ExecutionResult VirtualMachine::ExecuteImpl(const Program& program,
+                                            std::uint32_t entry_function,
+                                            Debugger* debugger) noexcept {
   const auto functions = program.functions();
   if (entry_function >= functions.size() ||
       functions.subspan(entry_function).front().parameter_count != 0) {

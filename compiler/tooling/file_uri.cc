@@ -16,16 +16,16 @@ namespace {
 
 constexpr int kHexLetterOffset = 10;
 
-auto AsciiLower(char character) -> char {
+char AsciiLower(char character) {
   return character >= 'A' && character <= 'Z' ? static_cast<char>(character - 'A' + 'a')
                                               : character;
 }
 
-auto IsSameAscii(std::string_view left, std::string_view right) -> bool {
+bool IsSameAscii(std::string_view left, std::string_view right) {
   return std::ranges::equal(left, right, {}, AsciiLower, AsciiLower);
 }
 
-auto HexDigit(char character) -> int {
+int HexDigit(char character) {
   if (character >= '0' && character <= '9') {
     return character - '0';
   }
@@ -38,7 +38,7 @@ auto HexDigit(char character) -> int {
   return -1;
 }
 
-auto Decode(std::string_view text) -> std::expected<std::string, std::string> {
+std::expected<std::string, std::string> Decode(std::string_view text) {
   std::string decoded;
   decoded.reserve(text.size());
   for (std::size_t index = 0; index < text.size(); ++index) {
@@ -65,7 +65,7 @@ auto Decode(std::string_view text) -> std::expected<std::string, std::string> {
   return decoded;
 }
 
-auto IsUriPathCharacter(unsigned char character) -> bool {
+bool IsUriPathCharacter(unsigned char character) {
   return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
          (character >= '0' && character <= '9') || character == '-' || character == '_' ||
          character == '.' || character == '~' || character == '/' || character == ':';
@@ -73,7 +73,7 @@ auto IsUriPathCharacter(unsigned char character) -> bool {
 
 }  // namespace
 
-auto FileUriPath(std::string_view uri) -> std::expected<std::filesystem::path, std::string> {
+std::expected<std::filesystem::path, std::string> FileUriPath(std::string_view uri) {
   constexpr std::string_view kScheme = "file://";
   if (!IsSameAscii(uri.substr(0, kScheme.size()), kScheme)) {
     return std::unexpected("only absolute file:// document URIs are supported");
@@ -118,7 +118,7 @@ auto FileUriPath(std::string_view uri) -> std::expected<std::filesystem::path, s
   return path.lexically_normal();
 }
 
-auto FileUri(const std::filesystem::path& path) -> std::string {
+std::string FileUri(const std::filesystem::path& path) {
   const auto text = PathText(path);
   std::string uri = "file:///";
   if (text.starts_with("//")) {

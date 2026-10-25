@@ -30,8 +30,8 @@
 namespace vela::vm::internal {
 namespace {
 
-auto FindHandler(std::span<const ExceptionHandler> handlers, std::size_t instruction)
-    -> const ExceptionHandler* {
+const ExceptionHandler* FindHandler(std::span<const ExceptionHandler> handlers,
+                                    std::size_t instruction) {
   const auto next = std::ranges::upper_bound(handlers, instruction, {}, &ExceptionHandler::begin);
   if (next == handlers.begin()) {
     return nullptr;
@@ -40,15 +40,15 @@ auto FindHandler(std::span<const ExceptionHandler> handlers, std::size_t instruc
   return instruction < handler.end ? &handler : nullptr;
 }
 
-auto IsException(runtime::Value value) -> bool {
+bool IsException(runtime::Value value) {
   return runtime::Heap::IsValueOfType(
       value, {.kind = runtime::ValueKind::Object, .object_kind = runtime::ObjectKind::Exception});
 }
 
 }  // namespace
 
-auto Execution::CapturePositions(std::span<runtime::TracePosition> storage) const
-    -> std::span<const runtime::TracePosition> {
+std::span<const runtime::TracePosition> Execution::CapturePositions(
+    std::span<runtime::TracePosition> storage) const {
   std::size_t count = 0;
   for (auto depth = frame_count_; depth != 0; --depth) {
     const auto& active = std::span(frames_).subspan(depth - 1).front();
@@ -60,8 +60,8 @@ auto Execution::CapturePositions(std::span<runtime::TracePosition> storage) cons
   return storage.first(count);
 }
 
-auto Execution::ResolveTrace(std::span<const runtime::TracePosition> positions) const
-    -> std::vector<StackFrame> {
+std::vector<StackFrame> Execution::ResolveTrace(
+    std::span<const runtime::TracePosition> positions) const {
   std::vector<StackFrame> trace;
   trace.reserve(positions.size());
   for (const auto position : positions) {
@@ -81,14 +81,14 @@ auto Execution::ResolveTrace(std::span<const runtime::TracePosition> positions) 
   return trace;
 }
 
-auto Execution::CaptureStack() const -> std::vector<StackFrame> {
+std::vector<StackFrame> Execution::CaptureStack() const {
   std::array<runtime::TracePosition, kMaxCallFrames> positions;
   return ResolveTrace(CapturePositions(positions));
 }
 
-auto Execution::CreateException(runtime::Value payload,
-                                ExecutionStatus status,
-                                std::string_view message) -> StepResult {
+StepResult Execution::CreateException(runtime::Value payload,
+                                      ExecutionStatus status,
+                                      std::string_view message) {
   std::array<runtime::TracePosition, kMaxCallFrames> positions;
   auto* exception = isolate_.heap().AllocateException(*payload.AsObject(), status,
                                                       CapturePositions(positions), message);
@@ -100,8 +100,8 @@ auto Execution::CreateException(runtime::Value payload,
   return {};
 }
 
-auto Execution::RuntimeError(ExecutionStatus status, std::string_view message)
-    -> std::expected<runtime::Value, ExecutionStatus> {
+std::expected<runtime::Value, ExecutionStatus> Execution::RuntimeError(ExecutionStatus status,
+                                                                       std::string_view message) {
   auto& heap = isolate_.heap();
   std::array<runtime::Value, runtime::kErrorFieldCount> fields;
   runtime::RootRange roots(heap, fields.data(), fields.size());
@@ -133,7 +133,7 @@ void Execution::AbortInitializers() noexcept {
   }
 }
 
-auto Execution::HandleError(ExecutionStatus status) -> std::optional<ExecutionResult> {
+std::optional<ExecutionResult> Execution::HandleError(ExecutionStatus status) {
   if (pending_exception_.IsNull()) {
     const auto message =
         error_message_.empty() ? ExecutionStatusName(status) : std::string_view(error_message_);
@@ -170,7 +170,7 @@ auto Execution::HandleError(ExecutionStatus status) -> std::optional<ExecutionRe
   };
 }
 
-auto Execution::ExecuteException(ActiveFrame& active, Instruction instruction) -> StepResult {
+StepResult Execution::ExecuteException(ActiveFrame& active, Instruction instruction) {
   auto values = active.frame.registers();
   const auto opcode = DecodeOp(instruction);
   if (opcode == OpCode::Catch) {

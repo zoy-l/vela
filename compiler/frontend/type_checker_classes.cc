@@ -172,8 +172,8 @@ void TypeChecker::ResolveField(const Field& field,
   }
 }
 
-auto TypeChecker::CheckClassConstruction(const ClassInfo& class_info, const Expression& expression)
-    -> TypeChecker::Type {
+TypeChecker::Type TypeChecker::CheckClassConstruction(const ClassInfo& class_info,
+                                                      const Expression& expression) {
   CheckAccess(class_info.constructor.visibility, class_info.type.name, expression.location);
   for (const CallArgument& argument : expression.arguments) {
     if (class_info.declaration->constructor_kind == ConstructorKind::Generated &&
@@ -184,7 +184,7 @@ auto TypeChecker::CheckClassConstruction(const ClassInfo& class_info, const Expr
   return CheckFunctionCall(class_info.constructor, expression);
 }
 
-auto TypeChecker::CheckMemberAccess(const Expression& expression) -> TypeChecker::Type {
+TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression) {
   if (const auto* owner = StaticOwner(expression)) {
     return CheckStaticMember(expression, *owner);
   }
@@ -208,7 +208,8 @@ auto TypeChecker::CheckMemberAccess(const Expression& expression) -> TypeChecker
   return CheckObjectMember(expression, object);
 }
 
-auto TypeChecker::CheckStaticMember(const Expression& expression, const ClassInfo& owner) -> Type {
+TypeChecker::Type TypeChecker::CheckStaticMember(const Expression& expression,
+                                                 const ClassInfo& owner) {
   const auto field = owner.static_fields.find(expression.text);
   if (field != owner.static_fields.end()) {
     CheckAccess(field->second.visibility, owner.type.name, expression.location);
@@ -227,14 +228,14 @@ auto TypeChecker::CheckStaticMember(const Expression& expression, const ClassInf
   return InvalidType();
 }
 
-auto TypeChecker::CheckObjectMember(const Expression& expression, const Type& object) -> Type {
+TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression, const Type& object) {
   if (object.kind == Type::Kind::Array && expression.text == "length") {
     builtin_calls_.insert_or_assign(&expression, Builtin::ArrayLength);
     return {.kind = Type::Kind::Int, .name = "int"};
   }
   if ((object.kind == Type::Kind::Set || object.kind == Type::Kind::Map) &&
-      expression.text == "length") {
-    builtin_calls_.insert_or_assign(&expression, Builtin::CollectionLength);
+      expression.text == "size") {
+    builtin_calls_.insert_or_assign(&expression, Builtin::CollectionSize);
     return {.kind = Type::Kind::Int, .name = "int"};
   }
   if (object.kind == Type::Kind::String && expression.text == "graphemeLength") {
@@ -291,7 +292,7 @@ void TypeChecker::CheckAccess(Visibility visibility,
   }
 }
 
-auto TypeChecker::StaticOwner(const Expression& member) const -> const ClassInfo* {
+const TypeChecker::ClassInfo* TypeChecker::StaticOwner(const Expression& member) const {
   const auto& object = *member.object;
   if (object.kind != Expression::Kind::Name || LookupLocal(object.text) != nullptr) {
     return nullptr;

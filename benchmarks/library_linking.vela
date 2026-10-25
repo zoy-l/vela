@@ -3,7 +3,7 @@ func main(): int {
   values.sort((left: int, right: int): int => left - right);
   const sum = values.reduce(0, (total: int, value: int): int => total + value);
   Random.seed(42);
-  const available = Time.monotonicMicros() >= 0 && Math.isFinite(Math.pi);
+  const available = performance.now() >= 0.0 && Math.isFinite(Math.PI);
   if (available) {
     return sum;
   }

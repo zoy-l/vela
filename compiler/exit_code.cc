@@ -7,7 +7,7 @@
 
 namespace vela::compiler {
 
-auto ProcessExitCode(runtime::Value value) noexcept -> std::expected<int, std::string_view> {
+std::expected<int, std::string_view> ProcessExitCode(runtime::Value value) noexcept {
   if (value.IsNull()) {
     return 0;
   }

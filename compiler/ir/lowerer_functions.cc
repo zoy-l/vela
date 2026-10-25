@@ -15,7 +15,7 @@
 
 namespace vela::ir {
 
-auto Lowerer::ReadLocal(const Local& local, frontend::SourceLocation location) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::ReadLocal(const Local& local, frontend::SourceLocation location) {
   if (!local.cell) {
     return {.reg = local.reg, .type = local.type};
   }
@@ -24,9 +24,9 @@ auto Lowerer::ReadLocal(const Local& local, frontend::SourceLocation location) -
   return {.reg = value, .type = local.type};
 }
 
-auto Lowerer::CallableClass(std::uint32_t function_id,
-                            CallableMode mode,
-                            const std::vector<frontend::Capture>& captures) -> ClassId {
+ClassId Lowerer::CallableClass(std::uint32_t function_id,
+                               CallableMode mode,
+                               const std::vector<frontend::Capture>& captures) {
   const auto key = (static_cast<std::uint64_t>(mode) << 32U) | function_id;
   const auto existing = callable_classes_.find(key);
   if (existing != callable_classes_.end()) {
@@ -49,7 +49,7 @@ auto Lowerer::CallableClass(std::uint32_t function_id,
   return layout_id;
 }
 
-auto Lowerer::LowerFunctionValue(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& expression) {
   const bool lambda = expression.kind == frontend::Expression::Kind::Lambda;
   const auto interface = model_.interface_members.find(&expression);
   const auto static_member = model_.static_members.find(&expression);
@@ -108,7 +108,7 @@ auto Lowerer::LowerFunctionValue(const frontend::Expression& expression) -> Lowe
   return {.reg = object, .type = model_.expression_types.at(&expression)};
 }
 
-auto Lowerer::LowerIndirectCall(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerIndirectCall(const frontend::Expression& expression) {
   const auto callee = LowerExpression(*expression.callee);
   // callee 也可能是可重写的局部变量，必须在求值实参前保存。
   const auto callable = AllocateTemporary(expression.location);
@@ -145,7 +145,7 @@ auto Lowerer::LowerIndirectCall(const frontend::Expression& expression) -> Lower
   return {.reg = result, .type = model_.expression_types.at(&expression)};
 }
 
-auto Lowerer::LowerInterfaceCall(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerInterfaceCall(const frontend::Expression& expression) {
   const auto& member = model_.interface_members.at(&expression);
   const auto receiver = LowerExpression(*expression.callee->object);
   const auto& signature = model_.interfaces.at(member.owner).methods.at(member.member);

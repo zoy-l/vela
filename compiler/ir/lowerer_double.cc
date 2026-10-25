@@ -11,7 +11,7 @@
 namespace vela::ir {
 namespace {
 
-auto SelectDoubleOpcode(std::string_view operation) -> std::optional<Opcode> {
+std::optional<Opcode> SelectDoubleOpcode(std::string_view operation) {
   if (operation == "+") {
     return Opcode::AddDouble;
   }
@@ -47,7 +47,7 @@ auto SelectDoubleOpcode(std::string_view operation) -> std::optional<Opcode> {
 
 }  // namespace
 
-auto Lowerer::LowerDoubleLiteral(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerDoubleLiteral(const frontend::Expression& expression) {
   const auto bits = std::bit_cast<std::uint64_t>(expression.double_value);
   const auto next = static_cast<std::uint32_t>(current_function_->doubles.size());
   const auto [entry, inserted] = double_constant_ids_.try_emplace(bits, next);
@@ -64,9 +64,9 @@ auto Lowerer::LowerDoubleLiteral(const frontend::Expression& expression) -> Lowe
   return {.reg = reg, .type = {.kind = frontend::TypeDescriptor::Kind::Double, .name = "double"}};
 }
 
-auto Lowerer::LowerDoubleBinary(const frontend::Expression& expression,
-                                const LoweredValue& left,
-                                const LoweredValue& right) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerDoubleBinary(const frontend::Expression& expression,
+                                                 const LoweredValue& left,
+                                                 const LoweredValue& right) {
   const auto opcode = SelectDoubleOpcode(expression.text);
   if (!opcode) {
     AddDiagnostic(expression.location, "unsupported double operation");

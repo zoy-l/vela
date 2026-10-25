@@ -5,7 +5,7 @@
 
 namespace vela {
 
-auto ExecutionStatusName(ExecutionStatus status) noexcept -> std::string_view {
+std::string_view ExecutionStatusName(ExecutionStatus status) noexcept {
   switch (status) {
     case ExecutionStatus::Returned:
       return "returned";

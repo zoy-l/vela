@@ -21,7 +21,7 @@ namespace {
 using Result = std::expected<Value, BuiltinError>;
 using Step = std::expected<void, BuiltinError>;
 
-auto Decode(std::string_view text, utf8proc_int32_t& point) -> std::size_t {
+std::size_t Decode(std::string_view text, utf8proc_int32_t& point) {
   // 字符串在输入边界已验证；这里读取非空 UTF-8 后缀，不重复做全串验证。
   const void* storage = text.data();
   const auto* bytes = static_cast<const utf8proc_uint8_t*>(storage);
@@ -30,8 +30,8 @@ auto Decode(std::string_view text, utf8proc_int32_t& point) -> std::size_t {
 }
 
 template <typename Visitor>
-auto WalkGraphemes(std::string_view text, const Visitor& visitor)
-    -> std::expected<std::size_t, BuiltinError> {
+std::expected<std::size_t, BuiltinError> WalkGraphemes(std::string_view text,
+                                                       const Visitor& visitor) {
   std::size_t offset = 0;
   std::size_t begin = 0;
   std::size_t count = 0;
@@ -59,7 +59,7 @@ auto WalkGraphemes(std::string_view text, const Visitor& visitor)
   return count;
 }
 
-auto FillCodePoints(std::string_view text, HeapObject& array) -> Result {
+Result FillCodePoints(std::string_view text, HeapObject& array) {
   const auto numbers = Heap::IntegerElements(array);
   if (!numbers) {
     return std::unexpected(BuiltinError::TypeError);
@@ -77,7 +77,7 @@ auto FillCodePoints(std::string_view text, HeapObject& array) -> Result {
   return Value::Object(&array);
 }
 
-auto FillGraphemes(std::string_view text, HeapObject& array, Heap& heap) -> Result {
+Result FillGraphemes(std::string_view text, HeapObject& array, Heap& heap) {
   const auto count =
       WalkGraphemes(text, [&](std::size_t index, std::size_t begin, std::size_t end) -> Step {
         auto* segment = heap.AllocateString(text.substr(begin, end - begin));
@@ -99,7 +99,7 @@ auto FillGraphemes(std::string_view text, HeapObject& array, Heap& heap) -> Resu
   return Value::Object(&array);
 }
 
-auto GraphemeSlice(std::string_view text, std::span<const Value> arguments, Heap& heap) -> Result {
+Result GraphemeSlice(std::string_view text, std::span<const Value> arguments, Heap& heap) {
   const auto start_value = arguments.subspan(1).front();
   const auto end_value = arguments.subspan(2).front();
   if (!start_value.IsInteger() || !end_value.IsInteger()) {
@@ -135,8 +135,7 @@ auto GraphemeSlice(std::string_view text, std::span<const Value> arguments, Heap
 
 }  // namespace
 
-auto ExecuteUnicodeBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap)
-    -> Result {
+Result ExecuteUnicodeBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   const auto receiver = arguments.front();
   if (builtin == Builtin::ArrayLength) {
     if (!receiver.IsObject() || receiver.AsObject() == nullptr) {

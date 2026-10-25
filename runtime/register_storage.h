@@ -21,7 +21,7 @@ class alignas(std::uint64_t) RegisterPayload final {
     std::memcpy(bytes_.data(), static_cast<const void*>(&value), sizeof(T));
   }
   template <typename T>
-  [[nodiscard]] auto Read() const noexcept -> T {
+  [[nodiscard]] T Read() const noexcept {
     static_assert(std::is_trivially_copyable_v<T> && sizeof(T) <= sizeof(bytes_));
     T value;
     std::memcpy(static_cast<void*>(&value), bytes_.data(), sizeof(T));
@@ -45,18 +45,18 @@ class RegisterReference final {
   RegisterReference(const RegisterReference&) noexcept = default;
   RegisterReference(RegisterReference&&) noexcept = default;
   ~RegisterReference() = default;
-  auto operator=(RegisterReference&& value) noexcept -> RegisterReference& {
+  RegisterReference& operator=(RegisterReference&& value) noexcept {
     operator=(static_cast<const RegisterReference&>(value));
     return *this;
   }
-  auto operator=(const RegisterReference& value) noexcept -> RegisterReference& {
+  RegisterReference& operator=(const RegisterReference& value) noexcept {
     if (this != &value) {
       *payload_ = *value.payload_;
       *kind_ = *value.kind_;
     }
     return *this;
   }
-  auto operator=(Value value) noexcept -> RegisterReference& {
+  RegisterReference& operator=(Value value) noexcept {
     const auto kind = value.kind();
     switch (kind) {
       case ValueKind::Null:
@@ -80,25 +80,19 @@ class RegisterReference final {
     *kind_ = kind;
     return *this;
   }
-  [[nodiscard]] auto kind() const noexcept -> ValueKind { return *kind_; }
-  [[nodiscard]] auto IsNull() const noexcept -> bool { return *kind_ == ValueKind::Null; }
-  [[nodiscard]] auto IsBoolean() const noexcept -> bool { return *kind_ == ValueKind::Boolean; }
-  [[nodiscard]] auto IsInteger() const noexcept -> bool { return *kind_ == ValueKind::Integer; }
-  [[nodiscard]] auto IsDouble() const noexcept -> bool { return *kind_ == ValueKind::Double; }
-  [[nodiscard]] auto IsObject() const noexcept -> bool { return *kind_ == ValueKind::Object; }
-  [[nodiscard]] auto IsString() const noexcept -> bool { return *kind_ == ValueKind::String; }
-  [[nodiscard]] auto AsBoolean() const noexcept -> bool { return payload_->Read<bool>(); }
-  [[nodiscard]] auto AsInteger() const noexcept -> std::int64_t {
-    return payload_->Read<std::int64_t>();
-  }
-  [[nodiscard]] auto AsDouble() const noexcept -> double { return payload_->Read<double>(); }
-  [[nodiscard]] auto AsObject() const noexcept -> HeapObject* {
-    return payload_->Read<HeapObject*>();
-  }
-  [[nodiscard]] auto AsString() const noexcept -> StringObject* {
-    return payload_->Read<StringObject*>();
-  }
-  [[nodiscard]] auto Read() const noexcept -> Value {
+  [[nodiscard]] ValueKind kind() const noexcept { return *kind_; }
+  [[nodiscard]] bool IsNull() const noexcept { return *kind_ == ValueKind::Null; }
+  [[nodiscard]] bool IsBoolean() const noexcept { return *kind_ == ValueKind::Boolean; }
+  [[nodiscard]] bool IsInteger() const noexcept { return *kind_ == ValueKind::Integer; }
+  [[nodiscard]] bool IsDouble() const noexcept { return *kind_ == ValueKind::Double; }
+  [[nodiscard]] bool IsObject() const noexcept { return *kind_ == ValueKind::Object; }
+  [[nodiscard]] bool IsString() const noexcept { return *kind_ == ValueKind::String; }
+  [[nodiscard]] bool AsBoolean() const noexcept { return payload_->Read<bool>(); }
+  [[nodiscard]] std::int64_t AsInteger() const noexcept { return payload_->Read<std::int64_t>(); }
+  [[nodiscard]] double AsDouble() const noexcept { return payload_->Read<double>(); }
+  [[nodiscard]] HeapObject* AsObject() const noexcept { return payload_->Read<HeapObject*>(); }
+  [[nodiscard]] StringObject* AsString() const noexcept { return payload_->Read<StringObject*>(); }
+  [[nodiscard]] Value Read() const noexcept {
     switch (*kind_) {
       case ValueKind::Null:
         return Value::Null();
@@ -127,16 +121,15 @@ class RegisterView final {
   RegisterView() = default;
   RegisterView(std::span<RegisterPayload> payloads, std::span<ValueKind> kinds) noexcept
       : payloads_(payloads), kinds_(kinds) {}
-  [[nodiscard]] auto IsEmpty() const noexcept -> bool { return payloads_.empty(); }
-  [[nodiscard]] auto size() const noexcept -> std::size_t { return payloads_.size(); }
-  [[nodiscard]] auto payloads() const noexcept -> std::span<RegisterPayload> { return payloads_; }
-  [[nodiscard]] auto kinds() const noexcept -> std::span<ValueKind> { return kinds_; }
-  [[nodiscard]] auto front() const noexcept -> RegisterReference {
+  [[nodiscard]] bool IsEmpty() const noexcept { return payloads_.empty(); }
+  [[nodiscard]] std::size_t size() const noexcept { return payloads_.size(); }
+  [[nodiscard]] std::span<RegisterPayload> payloads() const noexcept { return payloads_; }
+  [[nodiscard]] std::span<ValueKind> kinds() const noexcept { return kinds_; }
+  [[nodiscard]] RegisterReference front() const noexcept {
     return {payloads_.front(), kinds_.front()};
   }
-  [[nodiscard]] auto subspan(std::size_t first,
-                             std::size_t count = std::dynamic_extent) const noexcept
-      -> RegisterView {
+  [[nodiscard]] RegisterView subspan(std::size_t first,
+                                     std::size_t count = std::dynamic_extent) const noexcept {
     return {payloads_.subspan(first, count), kinds_.subspan(first, count)};
   }
   void CopyFrom(RegisterView source) const noexcept {

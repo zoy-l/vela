@@ -7,7 +7,7 @@
 
 namespace vela::ir {
 
-auto Lowerer::RegisterArrayType(const frontend::TypeDescriptor& type) -> std::uint32_t {
+std::uint32_t Lowerer::RegisterArrayType(const frontend::TypeDescriptor& type) {
   if (type.nullable) {
     return RegisterArrayType(model_.types.at(type.name.substr(0, type.name.size() - 1)));
   }
@@ -32,7 +32,7 @@ auto Lowerer::RegisterArrayType(const frontend::TypeDescriptor& type) -> std::ui
   return index;
 }
 
-auto Lowerer::LowerArrayLiteral(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerArrayLiteral(const frontend::Expression& expression) {
   const auto& type = model_.expression_types.at(&expression);
   const RegisterId array = AllocateTemporary(expression.location);
   Emit({
@@ -62,7 +62,7 @@ auto Lowerer::LowerArrayLiteral(const frontend::Expression& expression) -> Lower
   return {.reg = array, .type = type};
 }
 
-auto Lowerer::LowerIndex(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerIndex(const frontend::Expression& expression) {
   const LoweredValue array = SnapshotBefore(LowerExpression(*expression.object), *expression.index);
   const LoweredValue index = LowerExpression(*expression.index);
   const RegisterId result = AllocateTemporary(expression.location);

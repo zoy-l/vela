@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -10,7 +11,7 @@
 
 namespace vela::frontend {
 
-auto TypeChecker::FunctionType(const FunctionInfo& signature) -> Type {
+TypeChecker::Type TypeChecker::FunctionType(const FunctionInfo& signature) {
   std::string name = "(";
   FunctionInfo positional;
   positional.return_type = signature.return_type;
@@ -48,13 +49,21 @@ void TypeChecker::CaptureLocal(const Expression& expression, const LocalBinding&
   }
 }
 
-auto TypeChecker::CheckLambda(const Expression& expression) -> Type {
+TypeChecker::Type TypeChecker::CheckLambda(const Expression& expression, const Type* expected) {
   if (const auto found = lambda_indices_.find(&expression); found != lambda_indices_.end()) {
     return FunctionType(lambdas_.at(found->second).signature);
   }
   const auto& function = *expression.function;
-  const auto signature = ResolveSignature(function);
-  const auto result = FunctionType(signature);
+  std::optional<FunctionInfo> context;
+  if (expected != nullptr && expected->kind == Type::Kind::Function) {
+    // 函数体检查会扩展 function_types_；持有签名副本，避免 flat_hash_map 重排使引用失效。
+    context = function_types_.at(NonNullable(*expected).name);
+    if (context->parameters.size() != function.parameters.size()) {
+      AddDiagnostic(function.location,
+                    "lambda parameter count does not match its function type context");
+    }
+  }
+  auto signature = ResolveSignature(function, context ? &*context : nullptr);
   const auto index = lambdas_.size();
   lambda_indices_.emplace(&expression, index);
   lambdas_.push_back({.expression = &expression, .signature = signature, .captures = {}});
@@ -73,6 +82,14 @@ auto TypeChecker::CheckLambda(const Expression& expression) -> Type {
   }
   const auto flow = CheckSequence(*function.body, signature.return_type);
   control_flow_.insert_or_assign(function.body.get(), flow);
+  if (!IsValid(signature.return_type)) {
+    signature.return_type = lambda_scopes_.back().inferred_return.value_or(
+        Type{.kind = Type::Kind::Void, .name = "void"});
+    if (signature.return_type.kind == Type::Kind::Null) {
+      AddDiagnostic(function.location,
+                    "null-only lambda requires an explicit nullable return type");
+    }
+  }
   if (signature.return_type.kind != Type::Kind::Void && flow.can_fall_through) {
     AddDiagnostic(function.location, "non-void lambda may fall through without returning");
   }
@@ -81,7 +98,28 @@ auto TypeChecker::CheckLambda(const Expression& expression) -> Type {
   switch_depth_ = previous_switch;
   refinements_ = std::move(previous_facts);
   lambda_scopes_.pop_back();
-  return result;
+  lambdas_.at(index).signature = signature;
+  return FunctionType(signature);
+}
+
+void TypeChecker::InferLambdaReturn(const Statement& statement) {
+  const auto value = statement.expression ? CheckExpression(*statement.expression, nullptr)
+                                          : Type{.kind = Type::Kind::Void, .name = "void"};
+  if (!IsValid(value)) {
+    return;
+  }
+  auto& inferred = lambda_scopes_.back().inferred_return;
+  if (!inferred || IsSameType(*inferred, value)) {
+    inferred = value;
+  } else if (value.kind == Type::Kind::Null && inferred->kind != Type::Kind::Void) {
+    inferred = NullableType(*inferred);
+  } else if ((inferred->kind == Type::Kind::Null && value.kind != Type::Kind::Void) ||
+             IsSameType(NonNullable(*inferred), NonNullable(value))) {
+    inferred = NullableType(value);
+  } else {
+    AddDiagnostic(statement.location,
+                  "lambda return types do not match; add an explicit return type");
+  }
 }
 
 }  // namespace vela::frontend

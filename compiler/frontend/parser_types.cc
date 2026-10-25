@@ -14,7 +14,7 @@
 
 namespace vela::frontend {
 
-auto Parser::ParseTypeAlias() -> std::optional<Program::TypeAlias> {
+std::optional<Program::TypeAlias> Parser::ParseTypeAlias() {
   const auto name = Expect(TokenKind::Identifier, "expected type alias name");
   if (!name) {
     return std::nullopt;
@@ -35,7 +35,7 @@ auto Parser::ParseTypeAlias() -> std::optional<Program::TypeAlias> {
   };
 }
 
-auto Parser::ParseTypeParameters() -> std::vector<std::string> {
+std::vector<std::string> Parser::ParseTypeParameters() {
   std::vector<std::string> parameters;
   if (!Match(TokenKind::Less)) {
     return parameters;
@@ -57,7 +57,7 @@ auto Parser::ParseTypeParameters() -> std::vector<std::string> {
   return parameters;
 }
 
-auto Parser::ParseTypeArguments() -> std::vector<TypeName> {
+std::vector<TypeName> Parser::ParseTypeArguments() {
   std::vector<TypeName> arguments;
   std::size_t depth = 1;
   if (!Expect(TokenKind::Less, "expected '<' before type arguments")) {
@@ -82,7 +82,7 @@ auto Parser::ParseTypeArguments() -> std::vector<TypeName> {
   return arguments;
 }
 
-auto Parser::ParseType() -> std::optional<TypeName> {
+std::optional<TypeName> Parser::ParseType() {
   if (type_parse_depth_ >= kMaxTypeNesting) {
     AddDiagnostic(Peek().location, "type nesting exceeds the limit of 128");
     return std::nullopt;
@@ -93,7 +93,7 @@ auto Parser::ParseType() -> std::optional<TypeName> {
   return result;
 }
 
-auto Parser::ParseTypeBody() -> std::optional<TypeName> {
+std::optional<TypeName> Parser::ParseTypeBody() {
   TypeName result;
   std::size_t depth = 1;
   result.location = Peek().location;
@@ -148,7 +148,7 @@ auto Parser::ParseTypeBody() -> std::optional<TypeName> {
   return result;
 }
 
-auto Parser::ParseQualifiedTypeName() -> std::optional<std::string> {
+std::optional<std::string> Parser::ParseQualifiedTypeName() {
   auto name = tokens_.subspan(current_++).front().lexeme;
   while (Match(TokenKind::Dot)) {
     const auto member = Expect(TokenKind::Identifier, "expected qualified type name after '.'");
@@ -160,7 +160,7 @@ auto Parser::ParseQualifiedTypeName() -> std::optional<std::string> {
   return name;
 }
 
-auto Parser::ParseParenthesizedType() -> std::optional<TypeName> {
+std::optional<TypeName> Parser::ParseParenthesizedType() {
   TypeName result;
   result.location = Previous().location;
   std::size_t depth = 1;
@@ -204,7 +204,7 @@ auto Parser::ParseParenthesizedType() -> std::optional<TypeName> {
   return result;
 }
 
-auto Parser::IsTypeApplication() const -> bool {
+bool Parser::IsTypeApplication() const {
   if (!Check(TokenKind::Less)) {
     return false;
   }

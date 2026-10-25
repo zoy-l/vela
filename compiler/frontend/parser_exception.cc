@@ -8,7 +8,7 @@
 
 namespace vela::frontend {
 
-auto Parser::ParseTry() -> std::unique_ptr<Statement> {
+std::unique_ptr<Statement> Parser::ParseTry() {
   auto statement = std::make_unique<Statement>();
   statement->kind = Statement::Kind::Try;
   statement->location = Previous().location;
@@ -53,7 +53,7 @@ auto Parser::ParseTry() -> std::unique_ptr<Statement> {
   return statement;
 }
 
-auto Parser::ParseThrow() -> std::unique_ptr<Statement> {
+std::unique_ptr<Statement> Parser::ParseThrow() {
   auto statement = std::make_unique<Statement>();
   statement->kind = Statement::Kind::Throw;
   statement->location = Previous().location;

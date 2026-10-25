@@ -24,8 +24,9 @@ struct FileVersions final {
   std::vector<std::byte> second;
 };
 
-auto ReadVersions(const std::filesystem::path& path, const FileVersions& versions, int count)
-    -> std::expected<void, std::string> {
+std::expected<void, std::string> ReadVersions(const std::filesystem::path& path,
+                                              const FileVersions& versions,
+                                              int count) {
   for (int index = 0; index < count; ++index) {
     const auto result = ReadBinaryFile(path);
     if (!result) {
@@ -57,7 +58,7 @@ class FileTest : public testing::Test {
       EXPECT_FALSE(error);
     }
   }
-  [[nodiscard]] auto directory() const -> const std::filesystem::path& { return directory_; }
+  [[nodiscard]] const std::filesystem::path& directory() const { return directory_; }
   void ExpectFileCount(std::size_t count) {
     std::error_code error;
     const std::filesystem::directory_iterator entries(directory_, error);

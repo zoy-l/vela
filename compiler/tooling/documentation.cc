@@ -24,7 +24,7 @@ namespace {
 
 using frontend::TypeName;
 
-auto TypeText(const TypeName& type) -> std::string {
+std::string TypeText(const TypeName& type) {
   switch (type.kind) {
     case TypeName::Kind::Named:
       return type.name;
@@ -123,7 +123,7 @@ class Documentation final {
       start = newline + 1;
     }
   }
-  auto Generate() -> std::string;
+  std::string Generate();
 
  private:
   void Comment(SourceLocation location);
@@ -315,7 +315,7 @@ void Documentation::Emit(Declaration declaration) {
   output_ << "```\n\n";
 }
 
-auto Documentation::Generate() -> std::string {
+std::string Documentation::Generate() {
   std::vector<Declaration> declarations;
   const auto& program = *program_;
   AddDeclarations(declarations, program.functions, Declaration::Kind::Function);
@@ -340,8 +340,8 @@ auto Documentation::Generate() -> std::string {
 
 }  // namespace
 
-auto GenerateModuleDocumentation(std::string_view source)
-    -> std::expected<std::string, frontend::Diagnostics> {
+std::expected<std::string, frontend::Diagnostics> GenerateModuleDocumentation(
+    std::string_view source) {
   const auto parsed = frontend::ParseSource(source);
   if (!parsed.diagnostics.empty()) {
     return std::unexpected(parsed.diagnostics);
@@ -349,8 +349,7 @@ auto GenerateModuleDocumentation(std::string_view source)
   return Documentation(parsed.program, source).Generate();
 }
 
-auto GenerateDocumentation(std::string_view entry)
-    -> std::expected<std::string, frontend::Diagnostics> {
+std::expected<std::string, frontend::Diagnostics> GenerateDocumentation(std::string_view entry) {
   auto loaded = frontend::LoadProgram(entry);
   if (!loaded.diagnostics.empty()) {
     return std::unexpected(std::move(loaded.diagnostics));

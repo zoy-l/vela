@@ -153,19 +153,46 @@ class LanguageServerTest(unittest.TestCase):
     def test_standard_globals_and_collection_methods_complete_and_hover_without_imports(self) -> None:
         source = ("func main(): void { const values = [3, 1, 2]; const keys = Set<int>();\n"
                   "values.sort((a: int, b: int): int => a - b);\n"
-                  "print(Math.sqrt(9.0)); print(keys.union(keys).length); }")
+                  "print(Math.sqrt(9.0)); print(keys.union(keys).size); }")
         messages = self.session([self.open(source),
             self.symbol_query('completion', source, source.index('values.sort') + len('values.'), 'array'),
             self.symbol_query('completion', source, source.index('Math.sqrt') + len('Math.'), 'math'),
+            self.symbol_query('completion', source, source.index('print(Math.sqrt'), 'global'),
             self.symbol_query('completion', source, source.index('keys.union') + len('keys.'), 'set'),
             self.symbol_query('hover', source, source.index('sort('), 'sort'),
             self.symbol_query('hover', source, source.index('sqrt('), 'sqrt')])
         self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
         self.assertIn('sort', {item['label'] for item in self.reply(messages, 'array')['result']})
         self.assertIn('sqrt', {item['label'] for item in self.reply(messages, 'math')['result']})
+        self.assertNotIn('Console', {item['label'] for item in self.reply(messages, 'global')['result']})
         self.assertIn('union', {item['label'] for item in self.reply(messages, 'set')['result']})
         self.assertIn('func sort(compare: (int, int) => int): void', self.reply(messages, 'sort')['result']['contents']['value'])
         self.assertIn('func sqrt(value: double): double', self.reply(messages, 'sqrt')['result']['contents']['value'])
+
+    def test_js_api_names_and_map_results_use_production_types(self) -> None:
+        source = ("func main(): void { const numbers = [1, 2]; "
+                  "const mapped = numbers.map(value => value.toString()); const keys = Set<int>(); "
+                  "keys.add(1); print(keys.size); print(keys.delete(1)); print(mapped.join(',')); "
+                  "print('x'.includes('x')); print(performance.now()); print(Date.now()); print(Math.random()); }")
+        messages = self.session([
+            self.open(source),
+            self.symbol_query('completion', source, source.index('numbers.map') + len('numbers.'), 'array'),
+            self.symbol_query('completion', source, source.index('keys.add') + len('keys.'), 'set'),
+            self.symbol_query('completion', source, source.index('Math.random') + len('Math.'), 'math'),
+            self.symbol_query('hover', source, source.index('mapped.join'), 'mapped'),
+            self.symbol_query('hover', source, source.index('performance.now') + len('performance.'), 'monotonic'),
+            self.symbol_query('hover', source, source.index('Date.now') + len('Date.'), 'wall')])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        arrays = {item['label'] for item in self.reply(messages, 'array')['result']}
+        self.assertTrue({'some', 'map'} <= arrays)
+        self.assertFalse({'any', 'transform'} & arrays)
+        sets = {item['label'] for item in self.reply(messages, 'set')['result']}
+        self.assertTrue({'size', 'delete'} <= sets)
+        self.assertFalse({'length', 'remove'} & sets)
+        self.assertIn('random', {item['label'] for item in self.reply(messages, 'math')['result']})
+        self.assertIn('const mapped: string[]', self.reply(messages, 'mapped')['result']['contents']['value'])
+        self.assertIn('func now(): double', self.reply(messages, 'monotonic')['result']['contents']['value'])
+        self.assertIn('func now(): int', self.reply(messages, 'wall')['result']['contents']['value'])
 
     def test_array_join_completion_and_hover_replace_global_builtin(self) -> None:
         source = ("func main(): void { const words = ['a', 'b']; const numbers = [1, 2]; "
@@ -186,6 +213,26 @@ class LanguageServerTest(unittest.TestCase):
         self.assertNotIn('join', {item['label'] for item in self.reply(messages, 'nested')['result']})
         self.assertIn('func join(separator: string): string',
                       self.reply(messages, 'hover')['result']['contents']['value'])
+
+    def test_inferred_lambda_parameters_expose_hover_members_and_definitions(self) -> None:
+        source = ("class Item { param value: int; }\n"
+                  "func main(): void { const values = [Item(value: 42)];\n"
+                  "values.forEach(item => { print(item.value); });\n"
+                  "const add: (int, int) => int = (left, right) => left + right; print(add(20, 22)); }")
+        item = source.index('item.value')
+        left = source.index('left + right')
+        messages = self.session([
+            self.open(source),
+            self.symbol_query('hover', source, item, 'item'),
+            self.symbol_query('hover', source, left, 'left'),
+            self.symbol_query('completion', source, item + len('item.'), 'members'),
+            self.symbol_query('definition', source, item, 'definition')])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        self.assertIn('item: Item', self.reply(messages, 'item')['result']['contents']['value'])
+        self.assertIn('left: int', self.reply(messages, 'left')['result']['contents']['value'])
+        self.assertIn('value', {entry['label'] for entry in self.reply(messages, 'members')['result']})
+        definition = self.reply(messages, 'definition')['result']
+        self.assertEqual(definition['range']['start'], {'line': 2, 'character': len('values.forEach(')})
 
     def test_hover_uses_unsaved_imports_and_invalidates_cached_snapshot(self) -> None:
         library = self.directory / "library.vela"
@@ -418,10 +465,10 @@ class LanguageServerTest(unittest.TestCase):
 
     def test_completes_builtin_members_and_respects_null_refinement(self) -> None:
         for declaration, expected in (
-                ('const value = "text";', {"slice", "length", "byteLength", "contains", "graphemes"}),
+                ('const value = "text";', {"slice", "length", "byteLength", "includes", "graphemes"}),
                 ("const value: int[] = [1];", {"copy", "slice", "fill", "reverse", "length"}),
-                ("const value = Set<int>();", {"add", "has", "remove", "clear", "values", "length"}),
-                ("const value = Map<string, int>();", {"get", "set", "keys", "values", "length"}),
+                ("const value = Set<int>();", {"add", "has", "delete", "clear", "values", "size"}),
+                ("const value = Map<string, int>();", {"get", "set", "keys", "values", "size"}),
                 ("const value: Expected<int, string> = ok(42);", {"hasValue", "value", "error"}),
                 ("const value = 1;", {"toString", "toInt", "toDouble"})):
             with self.subTest(declaration=declaration):
@@ -430,7 +477,7 @@ class LanguageServerTest(unittest.TestCase):
                 messages = self.session([self.open(source), self.symbol_query("completion", source, offset)])
                 labels = {item["label"] for item in self.reply(messages, "query")["result"]}
                 self.assertTrue(expected <= labels, labels)
-        for guard, expected in (("", set()), ("if (value != null)", {"length", "contains"})):
+        for guard, expected in (("", set()), ("if (value != null)", {"length", "includes"})):
             source = 'func main(value: string?): void { ' + guard + ' { value.; } }'
             offset = source.index("value.;") + len("value.")
             messages = self.session([self.open(source), self.symbol_query("completion", source, offset)])

@@ -34,8 +34,8 @@ INSTANTIATE_TEST_SUITE_P(OrderedStorage,
                              R"(
 func main(): int {
   const values = Set<int>();
-  values.add(40); values.add(1); values.add(2); values.remove(1); values.add(1);
-  if (!values.add(40) && values.has(1) && values.length == 3) {
+  values.add(40); values.add(1); values.add(2); values.delete(1); values.add(1);
+  if (!values.add(40) && values.has(1) && values.size == 3) {
     const ordered = values.values();
     return ordered[0] + ordered[1];
   }
@@ -48,7 +48,7 @@ func main(): int {
   values.set(key: "a" + "b", value: 40);
   values.set("next", 2);
   values.set("ab", 41);
-  if (values.length != 2 || !values.has("ab")) { return 0; }
+  if (values.size != 2 || !values.has("ab")) { return 0; }
   const first = values.get("ab");
   const missing = values.get("missing");
   const ordered = values.keys();
@@ -85,7 +85,7 @@ func main(): int {
   if (!values.has(null) || values.get(null) != null) { return 0; }
   const result = values.get(40);
   values.clear();
-  if (result != null && values.length == 0) { return result; }
+  if (result != null && values.size == 0) { return result; }
   return 0;
 }
 )",
@@ -95,7 +95,7 @@ func main(): int {
   const nan: double = infinity - infinity;
   const values = Set<double>();
   values.add(0.0); values.add(-0.0); values.add(nan); values.add(-nan);
-  if (values.has(nan) && values.length == 2) { return 42; }
+  if (values.has(nan) && values.size == 2) { return 42; }
   return 0;
 }
 )",

@@ -13,7 +13,7 @@
 namespace vela::frontend {
 namespace {
 
-auto CheckParsed(ParseResult parsed) -> CheckResult {
+CheckResult CheckParsed(ParseResult parsed) {
   if (!parsed.diagnostics.empty()) {
     return {.diagnostics = std::move(parsed.diagnostics), .function_count = 0};
   }
@@ -22,7 +22,7 @@ auto CheckParsed(ParseResult parsed) -> CheckResult {
 
 }  // namespace
 
-auto CheckProgram(Program& program) -> CheckResult {
+CheckResult CheckProgram(Program& program) {
   auto specialized = SpecializeGenerics(program);
   if (!specialized.empty()) {
     return {.diagnostics = std::move(specialized), .function_count = 0};
@@ -31,15 +31,15 @@ auto CheckProgram(Program& program) -> CheckResult {
   return {.diagnostics = std::move(checked.diagnostics), .function_count = checked.function_count};
 }
 
-auto CheckSource(std::string_view source) -> CheckResult {
+CheckResult CheckSource(std::string_view source) {
   const SourceInput input{.path = "main.vela", .text = source};
   return CheckParsed(LoadSources(std::span(&input, 1), input.path));
 }
-auto CheckFile(std::string_view path, std::span<const SourceInput> overlays) -> CheckResult {
+CheckResult CheckFile(std::string_view path, std::span<const SourceInput> overlays) {
   return CheckParsed(LoadProgram(path, overlays));
 }
 
-auto CheckModules(std::span<const SourceInput> sources, std::string_view entry) -> CheckResult {
+CheckResult CheckModules(std::span<const SourceInput> sources, std::string_view entry) {
   return CheckParsed(LoadSources(sources, entry));
 }
 

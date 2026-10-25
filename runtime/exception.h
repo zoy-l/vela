@@ -23,9 +23,9 @@ struct ExceptionData final {
   std::uint32_t trace_count = 0;
   std::uint32_t message_length = 0;
 
-  [[nodiscard]] auto trace() const noexcept -> std::span<const TracePosition>;
-  [[nodiscard]] auto message() const noexcept -> std::string_view;
-  [[nodiscard]] static auto From(HeapObject& object) noexcept -> ExceptionData&;
+  [[nodiscard]] std::span<const TracePosition> trace() const noexcept;
+  [[nodiscard]] std::string_view message() const noexcept;
+  [[nodiscard]] static ExceptionData& From(HeapObject& object) noexcept;
 };
 
 }  // namespace vela::runtime

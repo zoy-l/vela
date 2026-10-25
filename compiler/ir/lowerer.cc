@@ -23,11 +23,11 @@
 namespace vela::ir {
 namespace {
 
-auto InvalidType() -> frontend::TypeDescriptor {
+frontend::TypeDescriptor InvalidType() {
   return {};
 }
 
-auto HasAssignments(const frontend::Expression& expression) -> bool {
+bool HasAssignments(const frontend::Expression& expression) {
   if (expression.kind == frontend::Expression::Kind::Binary && expression.text == "=") {
     return true;
   }
@@ -52,8 +52,8 @@ auto HasAssignments(const frontend::Expression& expression) -> bool {
          });
 }
 
-auto SelectBinaryOpcode(std::string_view operation, const frontend::TypeDescriptor& type)
-    -> std::optional<Opcode> {
+std::optional<Opcode> SelectBinaryOpcode(std::string_view operation,
+                                         const frontend::TypeDescriptor& type) {
   using Kind = frontend::TypeDescriptor::Kind;
   if (type.kind == Kind::String) {
     if (operation == "==") {
@@ -108,7 +108,7 @@ auto SelectBinaryOpcode(std::string_view operation, const frontend::TypeDescript
 
 }  // namespace
 
-auto Lowerer::Lower() -> LoweringResult {
+LoweringResult Lowerer::Lower() {
   program_ = {};
   diagnostics_.clear();
   class_ids_.clear();
@@ -244,8 +244,7 @@ void Lowerer::BuildClassTable() {
   }
 }
 
-auto Lowerer::AddFunctionId(const std::string& name, frontend::Function::Role role)
-    -> std::uint32_t {
+std::uint32_t Lowerer::AddFunctionId(const std::string& name, frontend::Function::Role role) {
   const auto& identity = role == frontend::Function::Role::InteractiveEntry ? "$entry" : name;
   const auto target = persistent_ == nullptr ? static_cast<std::uint32_t>(function_ids_.size())
                                              : persistent_->functions.Get(identity);
@@ -473,7 +472,7 @@ void Lowerer::LowerBlock(const frontend::Statement& statement) {
   PopScope();
 }
 
-auto Lowerer::LowerExpression(const frontend::Expression& expression) -> Lowerer::LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerExpression(const frontend::Expression& expression) {
   if (model_.array_algorithms.contains(&expression)) {
     return LowerArrayAlgorithm(expression);
   }
@@ -552,7 +551,7 @@ auto Lowerer::LowerExpression(const frontend::Expression& expression) -> Lowerer
   return {.reg = 0, .type = InvalidType()};
 }
 
-auto Lowerer::LowerAssignment(const frontend::Expression& expression) -> Lowerer::LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerAssignment(const frontend::Expression& expression) {
   const auto& left = *expression.left;
   const auto& right = *expression.right;
   if (left.kind == frontend::Expression::Kind::Name) {
@@ -634,7 +633,7 @@ auto Lowerer::LowerAssignment(const frontend::Expression& expression) -> Lowerer
   return {.reg = 0, .type = InvalidType()};
 }
 
-auto Lowerer::LowerMember(const frontend::Expression& expression) -> Lowerer::LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerMember(const frontend::Expression& expression) {
   if (model_.interface_members.contains(&expression)) {
     return LowerFunctionValue(expression);
   }
@@ -691,7 +690,7 @@ auto Lowerer::LowerMember(const frontend::Expression& expression) -> Lowerer::Lo
   return {.reg = result, .type = class_info->fields.at(expression.text).type};
 }
 
-auto Lowerer::LowerCall(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerCall(const frontend::Expression& expression) {
   if (model_.interface_members.contains(&expression)) {
     return LowerInterfaceCall(expression);
   }
@@ -748,11 +747,11 @@ auto Lowerer::LowerCall(const frontend::Expression& expression) -> LoweredValue 
   return {.reg = 0, .type = InvalidType()};
 }
 
-auto Lowerer::LowerInvocation(const frontend::Expression& expression,
-                              const frontend::FunctionDescriptor& function,
-                              std::uint32_t function_id,
-                              const LoweredValue* receiver,
-                              Opcode opcode) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expression,
+                                               const frontend::FunctionDescriptor& function,
+                                               std::uint32_t function_id,
+                                               const LoweredValue* receiver,
+                                               Opcode opcode) {
   const RegisterId base = next_register_;
   const std::size_t receiver_count = receiver == nullptr ? 0 : 1;
   const std::size_t count = receiver_count + function.parameters.size();
@@ -791,12 +790,12 @@ auto Lowerer::LowerInvocation(const frontend::Expression& expression,
   return {.reg = result, .type = function.return_type};
 }
 
-auto Lowerer::FindClass(std::string_view name) const -> const frontend::ClassDescriptor* {
+const frontend::ClassDescriptor* Lowerer::FindClass(std::string_view name) const {
   const auto found = model_.classes.find(name);
   return found == model_.classes.end() ? nullptr : &found->second;
 }
 
-auto Lowerer::FindLocal(std::string_view name) const -> const Lowerer::Local* {
+const Lowerer::Local* Lowerer::FindLocal(std::string_view name) const {
   for (const auto& scope : std::views::reverse(scopes_)) {
     const auto found = scope.find(name);
     if (found != scope.end()) {
@@ -806,7 +805,7 @@ auto Lowerer::FindLocal(std::string_view name) const -> const Lowerer::Local* {
   return nullptr;
 }
 
-auto Lowerer::AllocateRegister(frontend::SourceLocation location) -> RegisterId {
+RegisterId Lowerer::AllocateRegister(frontend::SourceLocation location) {
   if (next_register_ == std::numeric_limits<RegisterId>::max()) {
     AddDiagnostic(location, "function uses too many registers");
     return next_register_;
@@ -814,21 +813,21 @@ auto Lowerer::AllocateRegister(frontend::SourceLocation location) -> RegisterId 
   return next_register_++;
 }
 
-auto Lowerer::AllocateTemporary(frontend::SourceLocation location) -> RegisterId {
+RegisterId Lowerer::AllocateTemporary(frontend::SourceLocation location) {
   return AllocateRegister(location);
 }
 
-auto Lowerer::IsInteger(const frontend::TypeDescriptor& type) -> bool {
+bool Lowerer::IsInteger(const frontend::TypeDescriptor& type) {
   return type.kind == frontend::TypeDescriptor::Kind::Int ||
          type.kind == frontend::TypeDescriptor::Kind::Enum;
 }
 
-auto Lowerer::IsBoolean(const frontend::TypeDescriptor& type) -> bool {
+bool Lowerer::IsBoolean(const frontend::TypeDescriptor& type) {
   return type.kind == frontend::TypeDescriptor::Kind::Bool;
 }
 
-auto Lowerer::FindField(const frontend::ClassDescriptor& class_info, std::string_view name)
-    -> std::optional<FieldId> {
+std::optional<FieldId> Lowerer::FindField(const frontend::ClassDescriptor& class_info,
+                                          std::string_view name) {
   const auto field = class_info.fields.find(name);
   if (field == class_info.fields.end()) {
     return std::nullopt;
@@ -851,11 +850,11 @@ void Lowerer::PopScope() {
   scopes_.pop_back();
 }
 
-auto Lowerer::DeclareLocal(std::string_view name,
+bool Lowerer::DeclareLocal(std::string_view name,
                            RegisterId reg,
                            frontend::TypeDescriptor type,
                            frontend::SourceLocation location,
-                           const void* declaration) -> bool {
+                           const void* declaration) {
   const auto binding = model_.bindings.find(declaration);
   const auto binding_id = binding == model_.bindings.end() ? 0 : binding->second;
   const bool cell =
@@ -895,7 +894,7 @@ void Lowerer::LowerVariableDeclaration(const frontend::Statement& statement) {
   DeclareLocal(statement.name, local, type, statement.location, &statement);
 }
 
-auto Lowerer::LowerIntegerLiteral(const frontend::Expression& expression) -> Lowerer::LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerIntegerLiteral(const frontend::Expression& expression) {
   std::int64_t value = 0;
   const auto result =
       std::from_chars(expression.text.data(), std::to_address(expression.text.end()), value);
@@ -913,7 +912,7 @@ auto Lowerer::LowerIntegerLiteral(const frontend::Expression& expression) -> Low
   return {.reg = reg, .type = {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"}};
 }
 
-auto Lowerer::LowerStringLiteral(const frontend::Expression& expression) -> Lowerer::LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerStringLiteral(const frontend::Expression& expression) {
   const auto& value = expression.text;
   const auto [found, inserted] =
       string_constant_ids_.try_emplace(value, static_cast<std::uint32_t>(program_.strings.size()));
@@ -929,8 +928,8 @@ auto Lowerer::LowerStringLiteral(const frontend::Expression& expression) -> Lowe
   };
 }
 
-auto Lowerer::LowerEnumMember(const frontend::Expression& expression,
-                              const frontend::TypeDescriptor& type) -> Lowerer::LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerEnumMember(const frontend::Expression& expression,
+                                               const frontend::TypeDescriptor& type) {
   const auto ordinal = model_.enum_values.at(type.name + "." + expression.text);
   const RegisterId reg = AllocateTemporary(expression.location);
   Emit({
@@ -942,7 +941,7 @@ auto Lowerer::LowerEnumMember(const frontend::Expression& expression,
   return {.reg = reg, .type = type};
 }
 
-auto Lowerer::LowerUnary(const frontend::Expression& expression) -> Lowerer::LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerUnary(const frontend::Expression& expression) {
   const LoweredValue operand = LowerExpression(*expression.operand);
   const RegisterId result = AllocateTemporary(expression.location);
   if (expression.text == "-" && operand.type.kind == frontend::TypeDescriptor::Kind::Double) {
@@ -976,8 +975,8 @@ auto Lowerer::LowerUnary(const frontend::Expression& expression) -> Lowerer::Low
   return {.reg = result, .type = InvalidType()};
 }
 
-auto Lowerer::SnapshotBefore(LoweredValue value, const frontend::Expression& later)
-    -> LoweredValue {
+Lowerer::LoweredValue Lowerer::SnapshotBefore(LoweredValue value,
+                                              const frontend::Expression& later) {
   if (HasAssignments(later)) {
     const auto snapshot = AllocateTemporary(later.location);
     Emit({.opcode = Opcode::Move, .dst = snapshot, .lhs = value.reg, .location = later.location});
@@ -986,7 +985,7 @@ auto Lowerer::SnapshotBefore(LoweredValue value, const frontend::Expression& lat
   return value;
 }
 
-auto Lowerer::LowerBinary(const frontend::Expression& expression) -> Lowerer::LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerBinary(const frontend::Expression& expression) {
   if (expression.text == "=") {
     return LowerAssignment(expression);
   }
@@ -1060,7 +1059,7 @@ auto Lowerer::LowerBinary(const frontend::Expression& expression) -> Lowerer::Lo
   return {.reg = result, .type = result_type};
 }
 
-auto Lowerer::LowerLogical(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerLogical(const frontend::Expression& expression) {
   const LoweredValue left = LowerExpression(*expression.left);
   const RegisterId result = AllocateTemporary(expression.location);
   const std::size_t conditional_jump = current_function_->instructions.size();

@@ -30,23 +30,24 @@ struct BuilderBuffer final {
   std::size_t capacity = 0;
 };
 
-auto Buffer(HeapObject& object) noexcept -> BuilderBuffer& {
+BuilderBuffer& Buffer(HeapObject& object) noexcept {
   void* storage = std::span(&object, 1).last(0).data();
   return *static_cast<BuilderBuffer*>(storage);
 }
 
-auto Buffer(const HeapObject& object) noexcept -> const BuilderBuffer& {
+const BuilderBuffer& Buffer(const HeapObject& object) noexcept {
   const void* storage = std::span(&object, 1).last(0).data();
   return *static_cast<const BuilderBuffer*>(storage);
 }
 
-auto StringStorage(StringObject& string, std::size_t length) noexcept -> std::span<char> {
+std::span<char> StringStorage(StringObject& string, std::size_t length) noexcept {
   void* storage = std::span(&string, 1).last(0).data();
   return {static_cast<char*>(storage), length};
 }
 
-auto StringText(Value value, std::span<char, kScalarTextCapacity> buffer)
-    -> std::expected<std::string_view, StringJoinError> {
+std::expected<std::string_view, StringJoinError> StringText(
+    Value value,
+    std::span<char, kScalarTextCapacity> buffer) {
   if (value.IsNull()) {
     return "null";
   }
@@ -60,10 +61,10 @@ auto StringText(Value value, std::span<char, kScalarTextCapacity> buffer)
 }
 
 template <class Read, class Allocate>
-auto JoinFormatted(std::size_t count,
-                   std::string_view separator,
-                   const Read& read,
-                   const Allocate& allocate) -> std::expected<StringObject*, StringJoinError> {
+std::expected<StringObject*, StringJoinError> JoinFormatted(std::size_t count,
+                                                            std::string_view separator,
+                                                            const Read& read,
+                                                            const Allocate& allocate) {
   std::size_t length = 0;
   if (count > 1) {
     const auto gaps = count - 1;
@@ -103,7 +104,7 @@ auto JoinFormatted(std::size_t count,
 
 }  // namespace
 
-auto Heap::AllocateStringStorage(std::size_t length) noexcept -> StringObject* {
+StringObject* Heap::AllocateStringStorage(std::size_t length) noexcept {
   if (length > kMaximumStringLength) {
     return nullptr;
   }
@@ -122,8 +123,7 @@ auto Heap::AllocateStringStorage(std::size_t length) noexcept -> StringObject* {
   return string;
 }
 
-auto Heap::AllocateString(std::string_view first, std::string_view second) noexcept
-    -> StringObject* {
+StringObject* Heap::AllocateString(std::string_view first, std::string_view second) noexcept {
   if (first.size() > kMaximumStringLength || second.size() > kMaximumStringLength - first.size()) {
     return nullptr;
   }
@@ -138,8 +138,8 @@ auto Heap::AllocateString(std::string_view first, std::string_view second) noexc
   return string;
 }
 
-auto Heap::JoinStrings(std::span<StringObject* const> parts, std::string_view separator) noexcept
-    -> StringObject* {
+StringObject* Heap::JoinStrings(std::span<StringObject* const> parts,
+                                std::string_view separator) noexcept {
   std::size_t length = 0;
   if (parts.size() > 1) {
     const auto gaps = parts.size() - 1;
@@ -172,8 +172,8 @@ auto Heap::JoinStrings(std::span<StringObject* const> parts, std::string_view se
   return string;
 }
 
-auto Heap::StringElements(const HeapObject& array) noexcept
-    -> std::expected<std::span<StringObject* const>, ArrayAccessError> {
+std::expected<std::span<StringObject* const>, ArrayAccessError> Heap::StringElements(
+    const HeapObject& array) noexcept {
   if (array.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }
@@ -184,16 +184,16 @@ auto Heap::StringElements(const HeapObject& array) noexcept
   return std::span(static_cast<StringObject* const*>(storage), array.length);
 }
 
-auto Heap::JoinValues(std::span<const Value> parts) noexcept
-    -> std::expected<StringObject*, StringJoinError> {
+std::expected<StringObject*, StringJoinError> Heap::JoinValues(
+    std::span<const Value> parts) noexcept {
   return JoinFormatted(
       parts.size(), {},
       [parts](std::size_t index) -> Value { return parts.subspan(index).front(); },
       [this](std::size_t length) -> StringObject* { return AllocateStringStorage(length); });
 }
 
-auto Heap::JoinArray(const HeapObject& array, std::string_view separator) noexcept
-    -> std::expected<StringObject*, StringJoinError> {
+std::expected<StringObject*, StringJoinError> Heap::JoinArray(const HeapObject& array,
+                                                              std::string_view separator) noexcept {
   if (array.kind != ObjectKind::Array) {
     return std::unexpected(StringJoinError::TypeMismatch);
   }
@@ -224,15 +224,14 @@ auto Heap::JoinArray(const HeapObject& array, std::string_view separator) noexce
       [this](std::size_t length) -> StringObject* { return AllocateStringStorage(length); });
 }
 
-auto Heap::JoinValues(RegisterView parts) noexcept
-    -> std::expected<StringObject*, StringJoinError> {
+std::expected<StringObject*, StringJoinError> Heap::JoinValues(RegisterView parts) noexcept {
   return JoinFormatted(
       parts.size(), {},
       [parts](std::size_t index) -> Value { return parts.subspan(index).front().Read(); },
       [this](std::size_t length) -> StringObject* { return AllocateStringStorage(length); });
 }
 
-auto Heap::AllocateStringBuilder() noexcept -> HeapObject* {
+HeapObject* Heap::AllocateStringBuilder() noexcept {
   const auto size = sizeof(HeapObject) + sizeof(BuilderBuffer);
   MaybeCollect(size);
   const auto allocation = AllocateRaw(size);
@@ -247,12 +246,12 @@ auto Heap::AllocateStringBuilder() noexcept -> HeapObject* {
   return object;
 }
 
-auto Heap::IsStringBuilder(const HeapObject& object) noexcept -> bool {
+bool Heap::IsStringBuilder(const HeapObject& object) noexcept {
   return object.kind == ObjectKind::StringBuilder;
 }
 
-auto Heap::AppendString(HeapObject& builder, std::string_view text) noexcept
-    -> std::expected<void, StringBuilderError> {
+std::expected<void, StringBuilderError> Heap::AppendString(HeapObject& builder,
+                                                           std::string_view text) noexcept {
   if (!IsStringBuilder(builder)) {
     return std::unexpected(StringBuilderError::NotBuilder);
   }
@@ -284,7 +283,7 @@ auto Heap::AppendString(HeapObject& builder, std::string_view text) noexcept
   return {};
 }
 
-auto Heap::BuildString(const HeapObject& builder) noexcept -> StringObject* {
+StringObject* Heap::BuildString(const HeapObject& builder) noexcept {
   const auto& buffer = Buffer(builder);
   return AllocateString(std::string_view(buffer.data, builder.length));
 }

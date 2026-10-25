@@ -60,7 +60,7 @@ void PrintDiagnostics(std::string_view path, const vela::frontend::Diagnostics& 
   }
 }
 
-auto CheckFile(std::string_view path_text) -> int {
+int CheckFile(std::string_view path_text) {
   const std::string path(path_text);
   const vela::frontend::CheckResult result = vela::frontend::CheckFile(path);
   PrintDiagnostics(path, result.diagnostics);
@@ -73,9 +73,9 @@ auto CheckFile(std::string_view path_text) -> int {
 
 enum class ExecutionMode : std::uint8_t { Run, Debug };
 
-auto Execute(const vela::vm::Program& program,
-             vela::runtime::Isolate& isolate,
-             ExecutionMode mode = ExecutionMode::Run) -> int {
+int Execute(const vela::vm::Program& program,
+            vela::runtime::Isolate& isolate,
+            ExecutionMode mode = ExecutionMode::Run) {
   const auto function = program.FindFunction("main");
   if (!function.IsValid()) {
     std::cerr << "vela: run requires a zero-argument main function\n";
@@ -105,7 +105,7 @@ auto Execute(const vela::vm::Program& program,
   return *exit_code;
 }
 
-auto RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) -> int {
+int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
   vela::runtime::Isolate isolate;
   const auto cached = vela::compiler::CompileFileCached(path, ".cache/vela", isolate);
   if (!cached) {
@@ -117,7 +117,7 @@ auto RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) -> 
   return compiled.Succeeded() ? Execute(compiled.program, isolate, mode) : kSourceErrorExitCode;
 }
 
-auto CompileFile(std::string_view path, const std::filesystem::path& output) -> int {
+int CompileFile(std::string_view path, const std::filesystem::path& output) {
   vela::runtime::Isolate isolate;
   const auto compiled = vela::compiler::CompileFile(path, isolate);
   PrintDiagnostics(path, compiled.diagnostics);
@@ -137,7 +137,7 @@ auto CompileFile(std::string_view path, const std::filesystem::path& output) -> 
   return 0;
 }
 
-auto ExecuteImage(std::string_view path) -> int {
+int ExecuteImage(std::string_view path) {
   const auto bytes = vela::ReadBinaryFile(vela::Utf8Path(path));
   if (!bytes) {
     vela::WriteError(std::cerr, path, vela::SourceLocation(), bytes.error());
@@ -154,7 +154,7 @@ auto ExecuteImage(std::string_view path) -> int {
 
 enum class FormatMode : std::uint8_t { Output, Write, Check };
 
-auto DocumentFile(std::string_view path, const std::filesystem::path& output) -> int {
+int DocumentFile(std::string_view path, const std::filesystem::path& output) {
   const auto documentation = vela::tooling::GenerateDocumentation(path);
   if (!documentation) {
     PrintDiagnostics(path, documentation.error());
@@ -168,7 +168,7 @@ auto DocumentFile(std::string_view path, const std::filesystem::path& output) ->
   return 0;
 }
 
-auto FormatFile(std::string_view path, FormatMode mode) -> int {
+int FormatFile(std::string_view path, FormatMode mode) {
   const auto file = vela::Utf8Path(path);
   const auto bytes = vela::ReadBinaryFile(file);
   if (!bytes) {
@@ -200,7 +200,7 @@ auto FormatFile(std::string_view path, FormatMode mode) -> int {
   return 0;
 }
 
-auto FormatCommand(std::span<char*> arguments) -> int {
+int FormatCommand(std::span<char*> arguments) {
   if (arguments.size() == 1) {
     return FormatFile(arguments.front(), FormatMode::Output);
   }
@@ -215,7 +215,7 @@ auto FormatCommand(std::span<char*> arguments) -> int {
   return kUsageExitCode;
 }
 
-auto ReplCommand(std::span<char*> arguments) -> int {
+int ReplCommand(std::span<char*> arguments) {
   if (!arguments.empty()) {
     std::cerr << "vela: repl takes no arguments\n";
     return kUsageExitCode;
@@ -230,7 +230,7 @@ auto ReplCommand(std::span<char*> arguments) -> int {
                                 {.input = std::cin, .output = std::cout, .errors = std::cerr});
 }
 
-auto LanguageServerCommand(std::span<char*> arguments) -> int {
+int LanguageServerCommand(std::span<char*> arguments) {
   if (!arguments.empty()) {
     std::cerr << "vela: lsp takes no arguments\n";
     return kUsageExitCode;
@@ -246,7 +246,7 @@ auto LanguageServerCommand(std::span<char*> arguments) -> int {
 
 }  // namespace
 
-auto main(int argc, char** argv) -> int {
+int main(int argc, char** argv) {
   const std::span<char*> arguments(argv, static_cast<std::size_t>(argc));
   if (argc == 1) {
     PrintUsage(std::cout);

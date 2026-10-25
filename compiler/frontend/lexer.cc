@@ -57,24 +57,24 @@ const absl::flat_hash_map<std::string_view, TokenKind> kKeywords = {
     {"null", TokenKind::Null},
 };
 
-auto IsIdentifierStart(char character) -> bool {
+bool IsIdentifierStart(char character) {
   const auto value = static_cast<unsigned char>(character);
   return std::isalpha(value) != 0 || character == '_';
 }
 
-auto IsIdentifierPart(char character) -> bool {
+bool IsIdentifierPart(char character) {
   const auto value = static_cast<unsigned char>(character);
   return std::isalnum(value) != 0 || character == '_';
 }
 
-auto IsDigit(char character) -> bool {
+bool IsDigit(char character) {
   const auto value = static_cast<unsigned char>(character);
   return std::isdigit(value) != 0;
 }
 
 }  // namespace
 
-auto Lexer::Tokenize() -> LexResult {
+LexResult Lexer::Tokenize() {
   while (!IsAtEnd()) {
     SkipWhitespaceAndComments();
     if (IsAtEnd()) {
@@ -197,19 +197,19 @@ void Lexer::ScanToken(std::size_t start) {
   }
 }
 
-auto Lexer::IsAtEnd() const -> bool {
+bool Lexer::IsAtEnd() const {
   return current_ >= source_.size();
 }
 
-auto Lexer::Peek() const -> char {
+char Lexer::Peek() const {
   return IsAtEnd() ? '\0' : source_.at(current_);
 }
 
-auto Lexer::PeekNext() const -> char {
+char Lexer::PeekNext() const {
   return current_ + 1 >= source_.size() ? '\0' : source_.at(current_ + 1);
 }
 
-auto Lexer::Advance() -> char {
+char Lexer::Advance() {
   const char character = source_.at(current_++);
   if (character == '\n') {
     ++location_.line;
@@ -220,7 +220,7 @@ auto Lexer::Advance() -> char {
   return character;
 }
 
-auto Lexer::Match(char expected) -> bool {
+bool Lexer::Match(char expected) {
   if (Peek() != expected) {
     return false;
   }
@@ -387,7 +387,7 @@ void Lexer::ScanStringRun(std::string& value, char quote) {
   }
 }
 
-auto Lexer::ScanInterpolation() -> bool {
+bool Lexer::ScanInterpolation() {
   const auto opening = location_;
   std::size_t depth = 0;
   while (!IsAtEnd()) {
@@ -469,7 +469,7 @@ void Lexer::ScanEscape(std::string& value) {
   ScanUnicodeEscape(value, escape_location);
 }
 
-auto Lexer::ReadHexDigits(std::size_t limit) -> std::pair<std::uint32_t, std::size_t> {
+std::pair<std::uint32_t, std::size_t> Lexer::ReadHexDigits(std::size_t limit) {
   std::uint32_t point = 0;
   std::size_t digits = 0;
   while (!IsAtEnd() && digits < limit) {

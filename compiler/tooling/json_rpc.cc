@@ -20,7 +20,7 @@ namespace {
 
 constexpr std::size_t kMaximumHeaderBytes = 8192;
 
-auto HeaderLine(std::istream& input) -> std::expected<std::string, RpcError> {
+std::expected<std::string, RpcError> HeaderLine(std::istream& input) {
   std::string line;
   char character = 0;
   while (input.get(character)) {
@@ -39,7 +39,7 @@ auto HeaderLine(std::istream& input) -> std::expected<std::string, RpcError> {
   return std::unexpected(RpcError{.message = "truncated RPC header"});
 }
 
-auto ReadLength(std::istream& input) -> std::expected<std::size_t, RpcError> {
+std::expected<std::size_t, RpcError> ReadLength(std::istream& input) {
   std::optional<std::size_t> length;
   std::size_t header_bytes = 0;
   while (true) {
@@ -95,7 +95,7 @@ auto ReadLength(std::istream& input) -> std::expected<std::size_t, RpcError> {
 
 }  // namespace
 
-auto ReadRpcMessage(std::istream& input) -> std::expected<std::optional<JsonDocument>, RpcError> {
+std::expected<std::optional<JsonDocument>, RpcError> ReadRpcMessage(std::istream& input) {
   if (input.peek() == std::char_traits<char>::eof() && input.eof()) {
     return std::nullopt;
   }
@@ -114,8 +114,7 @@ auto ReadRpcMessage(std::istream& input) -> std::expected<std::optional<JsonDocu
   return std::optional<JsonDocument>(std::move(*parsed));
 }
 
-auto WriteRpcMessage(std::ostream& output, std::string_view text)
-    -> std::expected<void, std::string> {
+std::expected<void, std::string> WriteRpcMessage(std::ostream& output, std::string_view text) {
   if (text.size() > kMaximumRpcMessageBytes) {
     return std::unexpected("RPC output is too large");
   }

@@ -11,11 +11,11 @@
 
 namespace vela {
 
-auto GetJsonField(const yyjson_val* object, std::string_view key) noexcept -> const yyjson_val* {
+const yyjson_val* GetJsonField(const yyjson_val* object, std::string_view key) noexcept {
   return yyjson_obj_getn(object, key.data(), key.size());
 }
 
-auto GetMutableJsonField(yyjson_mut_val* object, std::string_view key) noexcept -> yyjson_mut_val* {
+yyjson_mut_val* GetMutableJsonField(yyjson_mut_val* object, std::string_view key) noexcept {
   return yyjson_mut_obj_getn(object, key.data(), key.size());
 }
 
@@ -34,11 +34,11 @@ JsonOutput::JsonOutput() : document_(yyjson_mut_doc_new(nullptr)) {
   yyjson_mut_doc_set_root(document_.get(), yyjson_mut_obj(document_.get()));
 }
 
-auto JsonOutput::root() const noexcept -> yyjson_mut_val* {
+yyjson_mut_val* JsonOutput::root() const noexcept {
   return yyjson_mut_doc_get_root(document_.get());
 }
 
-auto JsonOutput::Serialize() const -> std::expected<std::string, JsonError> {
+std::expected<std::string, JsonError> JsonOutput::Serialize() const {
   std::size_t length = 0;
   const std::unique_ptr<char, decltype(&std::free)> bytes(
       yyjson_mut_write(document_.get(), 0, &length), &std::free);
@@ -52,7 +52,7 @@ void JsonDeleter::operator()(yyjson_doc* document) const noexcept {
   yyjson_doc_free(document);
 }
 
-auto JsonDocument::Parse(std::string_view text) -> std::expected<JsonDocument, JsonError> {
+std::expected<JsonDocument, JsonError> JsonDocument::Parse(std::string_view text) {
   JsonDocument result;
   result.storage_.assign(text.begin(), text.end());
   result.storage_.resize(text.size() + YYJSON_PADDING_SIZE);
@@ -65,7 +65,7 @@ auto JsonDocument::Parse(std::string_view text) -> std::expected<JsonDocument, J
   return result;
 }
 
-auto JsonDocument::root() const noexcept -> const yyjson_val* {
+const yyjson_val* JsonDocument::root() const noexcept {
   return yyjson_doc_get_root(document_.get());
 }
 

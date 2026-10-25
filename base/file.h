@@ -9,11 +9,11 @@
 
 namespace vela {
 
-[[nodiscard]] auto ReadBinaryFile(const std::filesystem::path& path)
-    -> std::expected<std::vector<std::byte>, std::string>;
+[[nodiscard]] std::expected<std::vector<std::byte>, std::string> ReadBinaryFile(
+    const std::filesystem::path& path);
 // 临时文件位于目标目录；成功替换是原子的，失败时原目标不受影响。
-[[nodiscard]] auto WriteFileAtomically(const std::filesystem::path& path,
-                                       std::span<const std::byte> bytes)
-    -> std::expected<void, std::string>;
+[[nodiscard]] std::expected<void, std::string> WriteFileAtomically(
+    const std::filesystem::path& path,
+    std::span<const std::byte> bytes);
 
 }  // namespace vela

@@ -32,22 +32,22 @@ struct LayoutKey final {
   std::array<const void*, 4> addresses;
   std::array<std::size_t, 4> sizes;
 
-  auto operator==(const LayoutKey&) const -> bool = default;
+  bool operator==(const LayoutKey&) const = default;
 
   template <typename H>
-  friend auto AbslHashValue(H hash, const LayoutKey& key) -> H {
+  friend H AbslHashValue(H hash, const LayoutKey& key) {
     return H::combine(std::move(hash), key.addresses, key.sizes);
   }
 };
 
-auto IsRegister(std::uint8_t index, const Function& function) noexcept -> bool {
+bool IsRegister(std::uint8_t index, const Function& function) noexcept {
   return index < function.register_count;
 }
 
-auto IsValidInstruction(Instruction instruction,
+bool IsValidInstruction(Instruction instruction,
                         const Function& function,
                         std::span<const FunctionStorage> functions,
-                        std::size_t global_count) noexcept -> bool {
+                        std::size_t global_count) noexcept {
   const OpCode opcode = DecodeOp(instruction);
   const auto operand_a = DecodeA(instruction);
   const auto operand_b = DecodeB(instruction);
@@ -177,9 +177,9 @@ auto IsValidInstruction(Instruction instruction,
   return false;
 }
 
-auto ValidateClassLayout(const runtime::ClassLayout* layout,
-                         std::span<const FunctionStorage> storage,
-                         std::size_t index) -> std::expected<void, ValidationError> {
+std::expected<void, ValidationError> ValidateClassLayout(const runtime::ClassLayout* layout,
+                                                         std::span<const FunctionStorage> storage,
+                                                         std::size_t index) {
   for (const auto target : layout->dispatch_targets()) {
     if (target != kInvalidFunctionTarget &&
         (target >= storage.size() || storage.subspan(target).front().parameter_count == 0)) {
@@ -218,10 +218,10 @@ auto ValidateClassLayout(const runtime::ClassLayout* layout,
   return {};
 }
 
-auto ValidateFunctionCode(std::size_t index,
-                          const Function& function,
-                          std::span<const FunctionStorage> storage,
-                          std::size_t global_count) -> std::expected<void, ValidationError> {
+std::expected<void, ValidationError> ValidateFunctionCode(std::size_t index,
+                                                          const Function& function,
+                                                          std::span<const FunctionStorage> storage,
+                                                          std::size_t global_count) {
   std::uint32_t previous_end = 0;
   for (const auto& handler : function.handlers) {
     if (handler.begin < previous_end || handler.begin >= handler.end ||
@@ -282,9 +282,9 @@ auto ValidateFunctionCode(std::size_t index,
   return {};
 }
 
-auto ValidateFunctions(std::span<const FunctionStorage> storage,
-                       std::span<const std::uint32_t> initializers)
-    -> std::expected<void, ValidationError> {
+std::expected<void, ValidationError> ValidateFunctions(
+    std::span<const FunctionStorage> storage,
+    std::span<const std::uint32_t> initializers) {
   absl::flat_hash_set<const runtime::ClassLayout*> validated_layouts;
   absl::flat_hash_set<const LayoutTables*> validated_tables;
   absl::flat_hash_set<const std::vector<std::string>*> validated_paths;
@@ -345,7 +345,7 @@ LayoutTables::LayoutTables(std::vector<runtime::ClassLayout*> classes,
       collections_(std::move(collections)),
       types_(std::move(types)) {}
 
-auto FunctionStorage::View() const noexcept -> Function {
+Function FunctionStorage::View() const noexcept {
   return {
       .code = code,
       .classes = layouts != nullptr ? layouts->classes() : std::span<runtime::ClassLayout* const>(),
@@ -372,10 +372,10 @@ auto FunctionStorage::View() const noexcept -> Function {
   };
 }
 
-auto Program::Create(std::vector<FunctionStorage> functions,
-                     runtime::Isolate& isolate,
-                     std::vector<std::uint32_t> global_initializers)
-    -> std::expected<Program, ValidationError> {
+std::expected<Program, ValidationError> Program::Create(
+    std::vector<FunctionStorage> functions,
+    runtime::Isolate& isolate,
+    std::vector<std::uint32_t> global_initializers) {
   const auto valid = ValidateFunctions(functions, global_initializers);
   if (!valid) {
     return std::unexpected(valid.error());
@@ -399,10 +399,10 @@ auto Program::Create(std::vector<FunctionStorage> functions,
   }));
 }
 
-auto Program::Load(std::span<const Function> functions,
-                   runtime::Isolate& isolate,
-                   std::vector<std::uint32_t> global_initializers)
-    -> std::expected<Program, ValidationError> {
+std::expected<Program, ValidationError> Program::Load(
+    std::span<const Function> functions,
+    runtime::Isolate& isolate,
+    std::vector<std::uint32_t> global_initializers) {
   std::vector<FunctionStorage> copied;
   absl::flat_hash_map<LayoutKey, std::shared_ptr<const LayoutTables>> layouts;
   copied.reserve(functions.size());
@@ -460,16 +460,16 @@ auto Program::Load(std::span<const Function> functions,
   return Create(std::move(copied), isolate, std::move(global_initializers));
 }
 
-auto Program::globals() const noexcept -> GlobalStorage* {
+GlobalStorage* Program::globals() const noexcept {
   return storage_ != nullptr ? storage_->globals.get() : nullptr;
 }
 
-auto Program::functions() const noexcept -> std::span<const FunctionStorage> {
+std::span<const FunctionStorage> Program::functions() const noexcept {
   return storage_ != nullptr ? std::span<const FunctionStorage>(storage_->functions)
                              : std::span<const FunctionStorage>();
 }
 
-auto Program::FindFunction(std::string_view name) const noexcept -> FunctionHandle {
+FunctionHandle Program::FindFunction(std::string_view name) const noexcept {
   const auto stored = functions();
   const auto found = std::ranges::find_if(
       stored, [name](const auto& function) -> bool { return function.name == name; });
@@ -479,28 +479,28 @@ auto Program::FindFunction(std::string_view name) const noexcept -> FunctionHand
   return {*this, static_cast<std::uint32_t>(found - stored.begin())};
 }
 
-auto FunctionHandle::IsValid() const noexcept -> bool {
+bool FunctionHandle::IsValid() const noexcept {
   return program_.storage_ != nullptr;
 }
 
-auto Program::IsForIsolate(const runtime::Isolate& isolate) const noexcept -> bool {
+bool Program::IsForIsolate(const runtime::Isolate& isolate) const noexcept {
   return storage_ != nullptr && storage_->isolate == &isolate;
 }
 
-auto FunctionHandle::parameter_count() const noexcept -> std::uint16_t {
+std::uint16_t FunctionHandle::parameter_count() const noexcept {
   return program_.functions().subspan(index_).front().parameter_count;
 }
 
-auto FunctionHandle::register_count() const noexcept -> std::uint16_t {
+std::uint16_t FunctionHandle::register_count() const noexcept {
   return program_.functions().subspan(index_).front().register_count;
 }
 
-auto FunctionHandle::code() const noexcept -> std::span<const Instruction> {
+std::span<const Instruction> FunctionHandle::code() const noexcept {
   const auto& function = program_.storage_->functions.at(index_);
   return function.code;
 }
 
-auto FunctionHandle::doubles() const noexcept -> std::span<const double> {
+std::span<const double> FunctionHandle::doubles() const noexcept {
   const auto& function = program_.storage_->functions.at(index_);
   return function.doubles;
 }

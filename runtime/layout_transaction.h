@@ -11,9 +11,9 @@ class LayoutTransaction final {
       : isolate_(&isolate), initial_(isolate.layout_counts()) {}
   ~LayoutTransaction();
   LayoutTransaction(const LayoutTransaction&) = delete;
-  auto operator=(const LayoutTransaction&) -> LayoutTransaction& = delete;
+  LayoutTransaction& operator=(const LayoutTransaction&) = delete;
   LayoutTransaction(LayoutTransaction&&) = delete;
-  auto operator=(LayoutTransaction&&) -> LayoutTransaction& = delete;
+  LayoutTransaction& operator=(LayoutTransaction&&) = delete;
   void Commit() noexcept { committed_ = true; }
 
  private:

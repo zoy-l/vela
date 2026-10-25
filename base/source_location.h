@@ -9,7 +9,7 @@ struct SourceLocation final {
   std::uint32_t column = 1;
   std::uint32_t source_id = 0;
 
-  auto operator==(const SourceLocation&) const -> bool = default;
+  bool operator==(const SourceLocation&) const = default;
 };
 
 }  // namespace vela

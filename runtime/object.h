@@ -22,23 +22,19 @@ struct ClassLayoutOptions final {
 class ClassLayout final {
  public:
   ClassLayout(const ClassLayout&) = delete;
-  auto operator=(const ClassLayout&) -> ClassLayout& = delete;
+  ClassLayout& operator=(const ClassLayout&) = delete;
   ClassLayout(ClassLayout&&) = delete;
-  auto operator=(ClassLayout&&) -> ClassLayout& = delete;
+  ClassLayout& operator=(ClassLayout&&) = delete;
   ~ClassLayout() = default;
 
-  [[nodiscard]] auto field_count() const noexcept -> std::uint32_t { return field_count_; }
-  [[nodiscard]] auto callable() const noexcept -> const std::optional<CallableTarget>& {
-    return callable_;
-  }
-  [[nodiscard]] auto interfaces() const noexcept -> std::span<const std::uint32_t> {
-    return interfaces_;
-  }
-  [[nodiscard]] auto dispatch_targets() const noexcept -> std::span<const std::uint32_t> {
+  [[nodiscard]] std::uint32_t field_count() const noexcept { return field_count_; }
+  [[nodiscard]] const std::optional<CallableTarget>& callable() const noexcept { return callable_; }
+  [[nodiscard]] std::span<const std::uint32_t> interfaces() const noexcept { return interfaces_; }
+  [[nodiscard]] std::span<const std::uint32_t> dispatch_targets() const noexcept {
     return dispatch_targets_;
   }
-  [[nodiscard]] auto IsImplementing(std::uint32_t interface) const noexcept -> bool;
-  [[nodiscard]] auto reference_fields() const noexcept -> std::span<const std::uint32_t> {
+  [[nodiscard]] bool IsImplementing(std::uint32_t interface) const noexcept;
+  [[nodiscard]] std::span<const std::uint32_t> reference_fields() const noexcept {
     return reference_fields_;
   }
 
@@ -79,13 +75,13 @@ struct ArrayLayout final {
   // 可空基本类型使用 Value 槽位；引用元素仍以原生指针保存空值。
   bool nullable_elements = false;
 
-  [[nodiscard]] auto HasTaggedElements() const noexcept -> bool {
+  [[nodiscard]] bool HasTaggedElements() const noexcept {
     return nullable_elements && element_kind != ValueKind::Object &&
            element_kind != ValueKind::String;
   }
 
-  [[nodiscard]] auto element_size() const noexcept -> std::size_t;
-  [[nodiscard]] auto element_type() const noexcept -> TypeConstraint;
+  [[nodiscard]] std::size_t element_size() const noexcept;
+  [[nodiscard]] TypeConstraint element_type() const noexcept;
 };
 
 struct CollectionLayout final {
@@ -106,10 +102,10 @@ struct HeapObject final {
   HeapObject* gray_next = nullptr;
   // kind 已区分数组与集合；单一布局指针避免为互斥布局增加对象头开销。
   const void* indexed_layout = nullptr;
-  [[nodiscard]] auto array_layout() const noexcept -> const ArrayLayout* {
+  [[nodiscard]] const ArrayLayout* array_layout() const noexcept {
     return static_cast<const ArrayLayout*>(indexed_layout);
   }
-  [[nodiscard]] auto collection_layout() const noexcept -> const CollectionLayout* {
+  [[nodiscard]] const CollectionLayout* collection_layout() const noexcept {
     return static_cast<const CollectionLayout*>(indexed_layout);
   }
   std::uint32_t length = 0;
@@ -130,11 +126,11 @@ static_assert(alignof(HeapObject) >= alignof(Value));
 
 // 实例字段紧接对象头，二者在同一次分配中保持连续存储。
 static_assert(sizeof(HeapObject) % alignof(Value) == 0);
-[[nodiscard]] inline auto ObjectFields(HeapObject* object) noexcept -> Value* {
+[[nodiscard]] inline Value* ObjectFields(HeapObject* object) noexcept {
   void* storage = std::span(object, 1).last(0).data();
   return static_cast<Value*>(storage);
 }
-[[nodiscard]] inline auto ObjectFields(const HeapObject* object) noexcept -> const Value* {
+[[nodiscard]] inline const Value* ObjectFields(const HeapObject* object) noexcept {
   const void* storage = std::span(object, 1).last(0).data();
   return static_cast<const Value*>(storage);
 }

@@ -24,7 +24,7 @@ can be retried. Duplicate declarations remain errors, as in ordinary source file
 Expressions without a trailing semicolon echo their non-void result once. A semicolon
 suppresses echo. Unfinished blocks, parentheses and brackets prompt for continuation.
 EOF with unfinished input reports an error. Prompts and diagnostics use stderr;
-script output uses stdout. `readLine` consumes the same input stream as the shell.
+script output uses stdout.
 
 `.help` lists commands, `.source` prints accepted input, `.reset` discards the entire
 isolate and history, and `.quit` exits. Source diagnostics and runtime frames identify

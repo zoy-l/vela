@@ -8,8 +8,8 @@ Vela uses explicit VM frames and recoverable error results. C++ exceptions,
 Register functions on the owning isolate before compilation:
 
 ```cpp
-auto Add(vela::runtime::NativeContext&, std::int64_t left,
-         std::int64_t right) noexcept -> std::int64_t {
+std::int64_t Add(vela::runtime::NativeContext&, std::int64_t left,
+                 std::int64_t right) noexcept {
   return left + right;
 }
 
@@ -41,7 +41,7 @@ An explicitly nullable string return uses `std::optional<std::string>` (or an
 expected containing it), and the declaration must return `string?`. Other types
 are not promoted to satisfy that return contract. An optional explicit symbol
 supports namespaced host registries without language namespace syntax:
-`external func readLine(): string? = "Console.readLine";`.
+`external func readLabel(): string? = "app.readLabel";`.
 
 `external func` has no body or generic parameters. Its symbol is the declared
 name before module qualification. Declarations follow ordinary module visibility

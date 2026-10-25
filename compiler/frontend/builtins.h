@@ -10,21 +10,21 @@
 
 namespace vela::frontend {
 
-[[nodiscard]] auto FindBuiltin(TypeDescriptor::Kind receiver, std::string_view name)
-    -> std::optional<Builtin>;
+[[nodiscard]] std::optional<Builtin> FindBuiltin(TypeDescriptor::Kind receiver,
+                                                 std::string_view name);
 // 签名只描述显式参数；receiver 由检查与 lowering 独立传递。
-[[nodiscard]] auto BuiltinSignature(Builtin builtin) -> const FunctionDescriptor&;
-[[nodiscard]] auto IsBuiltinName(std::string_view name) -> bool;
-[[nodiscard]] auto CanFormatString(const TypeDescriptor& type) noexcept -> bool;
-[[nodiscard]] auto FindArrayAlgorithm(std::string_view name) -> std::optional<ArrayAlgorithm>;
-[[nodiscard]] auto ArrayAlgorithms() noexcept
-    -> std::span<const std::pair<std::string_view, ArrayAlgorithm>>;
-[[nodiscard]] auto FindSetOperation(std::string_view name) -> std::optional<Builtin>;
-[[nodiscard]] auto ArrayCallbackSignature(ArrayAlgorithm algorithm,
-                                          const TypeDescriptor& element,
-                                          const TypeDescriptor& accumulator) -> FunctionDescriptor;
-[[nodiscard]] auto ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
-                                           const TypeDescriptor& element,
-                                           const TypeDescriptor& accumulator) -> FunctionDescriptor;
+[[nodiscard]] const FunctionDescriptor& BuiltinSignature(Builtin builtin);
+[[nodiscard]] bool IsBuiltinName(std::string_view name);
+[[nodiscard]] bool CanFormatString(const TypeDescriptor& type) noexcept;
+[[nodiscard]] std::optional<ArrayAlgorithm> FindArrayAlgorithm(std::string_view name);
+[[nodiscard]] std::span<const std::pair<std::string_view, ArrayAlgorithm>>
+ArrayAlgorithms() noexcept;
+[[nodiscard]] std::optional<Builtin> FindSetOperation(std::string_view name);
+[[nodiscard]] FunctionDescriptor ArrayCallbackSignature(ArrayAlgorithm algorithm,
+                                                        const TypeDescriptor& element,
+                                                        const TypeDescriptor& accumulator);
+[[nodiscard]] FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
+                                                         const TypeDescriptor& element,
+                                                         const TypeDescriptor& accumulator);
 
 }  // namespace vela::frontend

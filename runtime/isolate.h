@@ -23,7 +23,7 @@ struct LayoutCounts final {
   std::size_t classes = 0;
   std::size_t arrays = 0;
   std::size_t collections = 0;
-  auto operator==(const LayoutCounts&) const -> bool = default;
+  bool operator==(const LayoutCounts&) const = default;
 };
 
 class Isolate final {
@@ -32,29 +32,27 @@ class Isolate final {
   ~Isolate() = default;
 
   Isolate(Isolate&&) = delete;
-  auto operator=(Isolate&&) -> Isolate& = delete;
+  Isolate& operator=(Isolate&&) = delete;
   Isolate(const Isolate&) = delete;
-  auto operator=(const Isolate&) -> Isolate& = delete;
+  Isolate& operator=(const Isolate&) = delete;
 
-  [[nodiscard]] auto heap() noexcept -> Heap& { return heap_; }
-  [[nodiscard]] auto heap() const noexcept -> const Heap& { return heap_; }
-  [[nodiscard]] auto error_layout() noexcept -> ClassLayout& { return *error_layout_; }
-  [[nodiscard]] auto error_layout() const noexcept -> const ClassLayout& { return *error_layout_; }
-  [[nodiscard]] auto random() noexcept -> Random& { return random_; }
-  [[nodiscard]] auto input() noexcept -> std::istream&;
-  [[nodiscard]] auto output() noexcept -> std::ostream&;
-  void SetConsole(std::istream& input, std::ostream& output) noexcept;
+  [[nodiscard]] Heap& heap() noexcept { return heap_; }
+  [[nodiscard]] const Heap& heap() const noexcept { return heap_; }
+  [[nodiscard]] ClassLayout& error_layout() noexcept { return *error_layout_; }
+  [[nodiscard]] const ClassLayout& error_layout() const noexcept { return *error_layout_; }
+  [[nodiscard]] Random& random() noexcept { return random_; }
+  [[nodiscard]] std::ostream& output() noexcept;
+  void SetOutput(std::ostream& output) noexcept;
 
-  [[nodiscard]] auto CreateClassLayout(std::uint32_t field_count,
-                                       std::span<const std::uint32_t> reference_fields,
-                                       ClassLayoutOptions options = {}) -> ClassLayout*;
-  [[nodiscard]] auto CreateArrayLayout(ArrayLayout layout) -> const ArrayLayout*;
-  [[nodiscard]] auto CreateCollectionLayout(CollectionLayout layout) -> const CollectionLayout*;
-  [[nodiscard]] auto RegisterNative(NativeFunction function)
-      -> std::expected<void, NativeRegistrationError>;
-  [[nodiscard]] auto FindNative(std::string_view name) const
-      -> std::shared_ptr<const NativeFunction>;
-  [[nodiscard]] auto layout_counts() const noexcept -> LayoutCounts;
+  [[nodiscard]] ClassLayout* CreateClassLayout(std::uint32_t field_count,
+                                               std::span<const std::uint32_t> reference_fields,
+                                               ClassLayoutOptions options = {});
+  [[nodiscard]] const ArrayLayout* CreateArrayLayout(ArrayLayout layout);
+  [[nodiscard]] const CollectionLayout* CreateCollectionLayout(CollectionLayout layout);
+  [[nodiscard]] std::expected<void, NativeRegistrationError> RegisterNative(
+      NativeFunction function);
+  [[nodiscard]] std::shared_ptr<const NativeFunction> FindNative(std::string_view name) const;
+  [[nodiscard]] LayoutCounts layout_counts() const noexcept;
 
  private:
   friend class LayoutTransaction;
@@ -64,7 +62,6 @@ class Isolate final {
   absl::flat_hash_map<std::string, std::shared_ptr<const NativeFunction>> natives_;
   ClassLayout* error_layout_ = nullptr;
   Random random_;
-  std::istream* input_ = nullptr;
   std::ostream* output_ = nullptr;
   Heap heap_;
 };

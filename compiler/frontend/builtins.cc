@@ -25,8 +25,9 @@ struct ParameterSpec final {
   std::string_view type;
 };
 
-auto Signature(Kind kind, std::string_view type, std::initializer_list<ParameterSpec> parameters)
-    -> FunctionDescriptor {
+FunctionDescriptor Signature(Kind kind,
+                             std::string_view type,
+                             std::initializer_list<ParameterSpec> parameters) {
   FunctionDescriptor function;
   function.return_type = {.kind = kind, .name = std::string(type)};
   for (const auto& parameter : parameters) {
@@ -76,29 +77,29 @@ const auto kSignatures = std::to_array<FunctionDescriptor>({
                   {.name = "end", .kind = Kind::Int, .type = "int"},
               }),
 });
-static_assert(kSignatures.size() == static_cast<std::size_t>(Builtin::CollectionLength));
+static_assert(kSignatures.size() == static_cast<std::size_t>(Builtin::CollectionSize));
 
 }  // namespace
 
-auto CanFormatString(const TypeDescriptor& type) noexcept -> bool {
+bool CanFormatString(const TypeDescriptor& type) noexcept {
   return type.kind == Kind::String || type.kind == Kind::Int || type.kind == Kind::Double ||
          type.kind == Kind::Bool || type.kind == Kind::Null;
 }
 
-auto ArrayAlgorithms() noexcept -> std::span<const std::pair<std::string_view, ArrayAlgorithm>> {
+std::span<const std::pair<std::string_view, ArrayAlgorithm>> ArrayAlgorithms() noexcept {
   static constexpr auto kAlgorithms = std::to_array<std::pair<std::string_view, ArrayAlgorithm>>({
       {"sort", ArrayAlgorithm::Sort},
       {"forEach", ArrayAlgorithm::ForEach},
-      {"any", ArrayAlgorithm::Any},
+      {"some", ArrayAlgorithm::Some},
       {"every", ArrayAlgorithm::Every},
       {"findIndex", ArrayAlgorithm::FindIndex},
       {"reduce", ArrayAlgorithm::Reduce},
-      {"transform", ArrayAlgorithm::Transform},
+      {"map", ArrayAlgorithm::Map},
   });
   return kAlgorithms;
 }
 
-auto FindSetOperation(std::string_view name) -> std::optional<Builtin> {
+std::optional<Builtin> FindSetOperation(std::string_view name) {
   if (name == "union") {
     return Builtin::SetUnion;
   }
@@ -111,7 +112,7 @@ auto FindSetOperation(std::string_view name) -> std::optional<Builtin> {
   return std::nullopt;
 }
 
-auto FindArrayAlgorithm(std::string_view name) -> std::optional<ArrayAlgorithm> {
+std::optional<ArrayAlgorithm> FindArrayAlgorithm(std::string_view name) {
   for (const auto& [label, algorithm] : ArrayAlgorithms()) {
     if (name == label) {
       return algorithm;
@@ -120,9 +121,9 @@ auto FindArrayAlgorithm(std::string_view name) -> std::optional<ArrayAlgorithm> 
   return std::nullopt;
 }
 
-auto ArrayCallbackSignature(ArrayAlgorithm algorithm,
-                            const TypeDescriptor& element,
-                            const TypeDescriptor& accumulator) -> FunctionDescriptor {
+FunctionDescriptor ArrayCallbackSignature(ArrayAlgorithm algorithm,
+                                          const TypeDescriptor& element,
+                                          const TypeDescriptor& accumulator) {
   FunctionDescriptor callback;
   callback.return_type = {.kind = Kind::Void, .name = "void"};
   const auto parameter = [&callback](const TypeDescriptor& type) -> void {
@@ -136,8 +137,8 @@ auto ArrayCallbackSignature(ArrayAlgorithm algorithm,
   } else if (algorithm == ArrayAlgorithm::Reduce) {
     parameter(accumulator);
     callback.return_type = accumulator;
-  } else if (algorithm == ArrayAlgorithm::Transform) {
-    callback.return_type = element;
+  } else if (algorithm == ArrayAlgorithm::Map) {
+    callback.return_type = accumulator;
   } else if (algorithm != ArrayAlgorithm::ForEach) {
     callback.return_type = {.kind = Kind::Bool, .name = "bool"};
   }
@@ -145,9 +146,9 @@ auto ArrayCallbackSignature(ArrayAlgorithm algorithm,
   return callback;
 }
 
-auto ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
-                             const TypeDescriptor& element,
-                             const TypeDescriptor& accumulator) -> FunctionDescriptor {
+FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
+                                           const TypeDescriptor& element,
+                                           const TypeDescriptor& accumulator) {
   const auto callback = ArrayCallbackSignature(algorithm, element, accumulator);
   std::string name = "(";
   for (const auto& parameter : callback.parameters) {
@@ -159,10 +160,12 @@ auto ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
   name += ") => " + callback.return_type.name;
   FunctionDescriptor method;
   method.return_type = {.kind = Kind::Void, .name = "void"};
-  if (algorithm == ArrayAlgorithm::Any || algorithm == ArrayAlgorithm::Every) {
+  if (algorithm == ArrayAlgorithm::Some || algorithm == ArrayAlgorithm::Every) {
     method.return_type = {.kind = Kind::Bool, .name = "bool"};
   } else if (algorithm == ArrayAlgorithm::FindIndex) {
     method.return_type = {.kind = Kind::Int, .name = "int"};
+  } else if (algorithm == ArrayAlgorithm::Map) {
+    method.return_type = MakeArrayType(accumulator);
   } else if (algorithm == ArrayAlgorithm::Reduce) {
     method.return_type = accumulator;
     method.parameter_indices.emplace("initial", 0);
@@ -171,7 +174,7 @@ auto ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
   std::string parameter = "operation";
   if (algorithm == ArrayAlgorithm::Sort) {
     parameter = "compare";
-  } else if (algorithm == ArrayAlgorithm::Any || algorithm == ArrayAlgorithm::Every ||
+  } else if (algorithm == ArrayAlgorithm::Some || algorithm == ArrayAlgorithm::Every ||
              algorithm == ArrayAlgorithm::FindIndex) {
     parameter = "predicate";
   }
@@ -181,17 +184,17 @@ auto ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
   return method;
 }
 
-auto BuiltinSignature(Builtin builtin) -> const FunctionDescriptor& {
+const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
   return kSignatures.at(static_cast<std::size_t>(builtin));
 }
 
-auto IsBuiltinName(std::string_view name) -> bool {
+bool IsBuiltinName(std::string_view name) {
   return name == "int" || name == "double" || name == "bool" || name == "string" ||
          name == "void" || name == "ok" || name == "err" || name == "Expected" || name == "Set" ||
          name == "Map" || FindBuiltin(Kind::Invalid, name).has_value();
 }
 
-auto FindBuiltin(Kind receiver, std::string_view name) -> std::optional<Builtin> {
+std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {
   if (receiver == Kind::String) {
     constexpr auto methods = std::to_array<std::pair<std::string_view, Builtin>>({
         {"codePoints", Builtin::StringCodePoints},
@@ -199,7 +202,7 @@ auto FindBuiltin(Kind receiver, std::string_view name) -> std::optional<Builtin>
         {"graphemeSlice", Builtin::StringGraphemeSlice},
         {"slice", Builtin::StringSlice},
         {"indexOf", Builtin::StringIndexOf},
-        {"contains", Builtin::StringContains},
+        {"includes", Builtin::StringIncludes},
         {"startsWith", Builtin::StringStartsWith},
         {"endsWith", Builtin::StringEndsWith},
     });

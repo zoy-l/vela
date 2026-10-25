@@ -11,6 +11,6 @@ struct FilePublication final {
   std::reference_wrapper<const std::filesystem::path> destination;
 };
 
-[[nodiscard]] auto PublishFile(FilePublication publication) -> std::error_code;
+[[nodiscard]] std::error_code PublishFile(FilePublication publication);
 
 }  // namespace vela::internal

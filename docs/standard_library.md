@@ -1,6 +1,6 @@
 # Standard library and command-line exits
 
-`Math`, `Random`, `Time`, `Console` and `Error` are default global declarations;
+`Math`, `Random`, `performance`, `Date` and `Error` are default global declarations;
 they require no import. Native calls remain statically checked and linked.
 Only referenced standard objects contribute declarations and native functions;
 ordinary scripts do not load the entire standard environment. These global
@@ -8,46 +8,42 @@ names are reserved, while local bindings can shadow them. Internal declaration
 sources participate in compilation-cache fingerprints and cannot be supplied
 by source overlays. User imports resolve local files; the old `std:` scheme is
 removed. Hosts can supply application APIs through the typed native registry;
-the CLI clock, console and isolate-local random implementations are its default
+the CLI clock and isolate-local random implementations are its default
 host bindings.
 
 ```typescript
 const result = Math.sqrt(9.0);
 const values: int[] = [3, 1, 2];
-values.sort((left: int, right: int): int => left - right);
-const sum = values.reduce(0, (total: int, value: int): int => total + value);
+values.sort((left, right) => left - right);
+const sum = values.reduce(0, (total, value) => total + value);
 ```
 
-## Console
+## Output
 
-`Console.readLine(): string?` reads validated UTF-8. It removes LF and an optional
-preceding CR, preserves empty lines as `""`, and returns null at EOF. Invalid
-UTF-8 and stream failures are catchable standard `Error` values. The last line
-does not require a newline. `Console.write(text: string): void` writes without
-adding a newline; `Console.flush(): void` flushes explicitly. Existing `print`
-uses the same isolate output stream and adds a newline. Interpolation formats
-primitive values and null automatically; `Console.write` takes a string, so
-use `Console.write('${value}')` when formatting a number.
+Output uses `print(value)`, which writes to the
+isolate output stream and adds a newline. Interpolation formats primitive values
+and null automatically. No built-in `Console` object or input API is provided.
 
-Hosts can call `isolate.SetConsole(input, output)` with borrowed C++ streams;
-both streams must outlive isolate execution. Defaults are `std::cin/std::cout`.
-These synchronous calls block on input. They do not introduce language file I/O,
-an event loop, or asynchronous timers.
+Hosts can call `isolate.SetOutput(output)` with a borrowed C++ output stream,
+which must outlive isolate execution. The default is `std::cout`.
 
 ## Time
 
-`Time.monotonicMicros(): int` reads the platform monotonic clock in microseconds;
-subtract two readings for elapsed time. Its origin is unspecified. Clock
-resolution can be coarser than a microsecond and equal consecutive readings are
-valid. `Time.unixMicros(): int` reads wall-clock microseconds since the Unix
-epoch; wall time may jump when the system clock is adjusted. There is no implicit
-int/double conversion. These distinctions follow mature clock APIs such as
-[Python monotonic](https://docs.python.org/3/library/time.html#time.monotonic).
+`performance.now(): double` reads the monotonic clock in milliseconds, retaining
+fractional milliseconds. Subtract two readings for elapsed time; its origin is
+unspecified and equal consecutive readings are valid. `Date.now(): int` reads
+integer milliseconds since the Unix epoch; wall time may jump when the system
+clock is adjusted. These names and units follow JavaScript's
+[performance.now](https://developer.mozilla.org/en-US/docs/Web/API/Performance/now)
+and [Date.now](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/now).
+Vela does not expose the full Date or Performance browser interfaces.
+The old `Time` object and microsecond APIs are removed. Numeric types remain exact:
+use `0.0` in a comparison with `performance.now()`, or explicit numeric conversion.
 
 ## Random
 
 `Random.seed(value: int): void`, `Random.nextInt(bound: int): int`, and
-`Random.nextDouble(): double` use isolate-local xoroshiro128++ 1.0 with SplitMix64
+`Math.random(): double` use isolate-local xoroshiro128++ 1.0 with SplitMix64
 seeding. Every isolate starts with seed zero, and identical seeds and sequences
 of calls reproduce results. All 64 seed bits are retained, including negative
 int bit patterns. Hosts can seed `isolate.random()` independently. This is a
@@ -59,13 +55,13 @@ David Blackman and Sebastiano Vigna and
 [SplitMix64 reference](https://prng.di.unimi.it/splitmix64.c) by Sebastiano Vigna.
 It keeps 16 bytes of state and uses unsigned arithmetic and rotations.
 `nextInt` samples `[0, bound)` with rejection to avoid modulo bias, and rejects
-nonpositive bounds. `nextDouble` uses 53 random bits and returns `[0, 1)`.
+nonpositive bounds. `Math.random` uses 53 random bits and returns `[0, 1)`.
 Tests verify independent reference vectors, reseeding and extreme bounds.
 
 ## Math
 
 All math inputs and numeric results are `double`; use explicit `toDouble()` or
-`toInt()` where needed. Static members of `Math` are `pi`, `e`, `sqrt`, `log`, `exp`, `sin`, `cos`,
+`toInt()` where needed. Static members of `Math` are `PI`, `E`, `random`, `sqrt`, `log`, `exp`, `sin`, `cos`,
 `tan`, `floor`, `ceil`, `round`, `trunc`, `abs`, `pow`, `min`, `max`, `clamp`,
 `isFinite` and `isNaN`. Binary functions take two arguments; clamp takes
 `(value, lower, upper)`. `round` rounds halfway cases away from zero. Basic
@@ -75,7 +71,7 @@ Negative sqrt, nonpositive log, and unordered/NaN clamp bounds raise catchable
 errors. Other domain/overflow results retain IEEE NaN/infinity, allowing explicit
 `isNaN`/`isFinite` checks. min/max and clamp use fmin/fmax semantics; if exactly
 one operand is NaN, the numeric operand wins. No hidden numeric promotions occur.
-`Math`, `Random`, `Time` and `Console` expose static APIs and cannot be constructed;
+`Math`, `Random`, `performance` and `Date` expose static APIs and cannot be constructed;
 the math constants cannot be assigned by scripts. A host's explicit native
 registration takes precedence over a default binding and must match its declared
 static signature.
@@ -99,19 +95,25 @@ Array algorithms are instance methods. The element type comes from the receiver;
 `reduce` infers its accumulator type from the required initial value:
 
 - `forEach(operation: (T) => void): void`
-- `any(predicate: (T) => bool): bool`
+- `some(predicate: (T) => bool): bool`
 - `every(predicate: (T) => bool): bool`
 - `findIndex(predicate: (T) => bool): int`, returning -1 if absent.
 - `reduce(initial: R, operation: (R, T) => R): R`
-- `transform(operation: (T) => T): void`, modifying in place.
+- `map(operation: (T) => R): R[]`, allocating an independent result array.
 - `sort(compare: (T, T) => int): void`, modifying in place.
+
+Callbacks use the same [contextual typing](type_inference.md) as ordinary function
+arguments: `values.sort((left, right) => left - right)`,
+`values.some(value => value > 0)`, and `values.reduce(0, (sum, value) => sum + value)`
+need no repeated annotations. Reduction derives its accumulator type from `initial`,
+including when named arguments put the callback first.
 
 `Set<T>.union(other: Set<T>)`, `intersection(other: Set<T>)` and
 `difference(other: Set<T>)` return an independent new `Set<T>` in left-side
 insertion order, followed by unseen right elements for union. They traverse
 the hash tables directly without allocating temporary key arrays.
 
-Callbacks are evaluated in traversal order; any/every/findIndex stop as soon as
+Callbacks are evaluated in traversal order; some/every/findIndex stop as soon as
 the result is known. Sorting uses in-place heapsort with worst-case O(n log n)
 comparisons and O(1) auxiliary array storage; it is not stable. The comparator
 returns a negative/zero/positive int. Callbacks can throw and use normal VM
@@ -121,7 +123,17 @@ Array length is fixed, traversal visits indices in order, and changes to later
 elements are visible to subsequent callbacks. Map/Set lookup, mutation and ordered snapshot APIs remain documented
 in [P1 contracts](p1_syntax_proposal.md#ordered-set-and-map).
 
+`map` allocates one result array at the receiver's fixed length, stores each
+callback result directly, and preserves the original array. Its element type
+is inferred from the callback result, including nullable, reference, and nested
+array types. `transform` is removed. Set/Map expose read-only `.size` and
+`.delete(key)`/`.delete(value)`; arrays and strings retain `.length`.
+Strings use `.includes(text)`.
+
 ## Release measurements for the default API migration
+
+The measurements in this section predate the JS naming migration below and
+use the former in-place array transformation workload.
 
 Measured on Windows with the repository's Clang Release build. Values below are
 wall-time medians of three Google Benchmark repetitions. The new runs use
@@ -155,6 +167,55 @@ Reproduce the current workloads with:
 ```powershell
 python -m tools.vl bench -- --benchmark_filter='(integer_loop|standard_api|array_algorithms|set_operations|cache/library_file_compile)' --benchmark_min_time=0.2s --benchmark_repetitions=3
 ```
+
+## API naming migration (2026-10-25)
+
+The current names follow JavaScript where the operations have matching roles:
+
+| Previous API | Current API | Contract |
+| --- | --- | --- |
+| `Time.monotonicMicros()` | `performance.now()` | `double` milliseconds, monotonic |
+| `Time.unixMicros()` | `Date.now()` | `int` Unix milliseconds |
+| `Math.pi`, `Math.e` | `Math.PI`, `Math.E` | Read-only double constants |
+| `Random.nextDouble()` | `Math.random()` | Seeded isolate-local double in `[0, 1)` |
+| `array.any(predicate)` | `array.some(predicate)` | Stops at the first true result |
+| `text.contains(pattern)` | `text.includes(pattern)` | UTF-8 substring test |
+| `set.remove(value)`, `map.remove(key)` | `set.delete(value)`, `map.delete(key)` | Returns whether an entry was deleted |
+| `set.length`, `map.length` | `set.size`, `map.size` | Read-only entry count |
+| `array.transform(operation)` | `array.map(operation)` | Returns a new `R[]`; infers R from the callback |
+| `Console.write`, `Console.flush` | `print(value)` | Output adds a newline |
+| `Console.readLine()` | Removed | No built-in input API |
+
+The `Console` object is removed. `Random.seed()` and
+`Random.nextInt()` remain explicit seeded-generator extensions. Old API aliases
+are not registered. Mapping creates independent array storage; callback-returned
+object references are stored directly, without deep copying.
+
+Debug and Release passed 859 C++ tests and 58 tooling tests. Map coverage includes
+type-changing callbacks, nullable elements, nested arrays, returned closures,
+argument evaluation order, exception unwinding, and collection pressure. A
+dedicated allocation check counts only the original array, callback closure, and
+one final result array. Clock tests check native millisecond units and exact
+int/double representations. Editor protocol tests verify new names and signatures;
+real VS Code extension-host tests also passed.
+
+The Windows x64 Clang Release run used three repetitions with a 0.2 s minimum:
+
+| Workload | Compile median | VM median | Bytes after first execution | Bytes retained after GC |
+| --- | ---: | ---: | ---: | ---: |
+| Standard APIs, sort and reduction | 610.361 us | 2.072 us | 256 | 0 |
+| Sort, 100 reductions, map | 321.010 us | 65.263 us | 6,784 | 0 |
+| Ordered Set operations | 82.345 us | 132.303 us | 41,600 | 0 |
+| Ordinary function calls (control) | 43.972 us | 52.802 us | 0 | 0 |
+
+The system was busy: the unchanged function-call VM control had previously
+measured 29.073 us, and the new run's wall-time variation ranged up to 46.6%.
+These samples establish executed workloads, not a reliable speed comparison.
+The map workload adds exactly 128 allocated bytes for its six-element result
+array relative to the former 6,656-byte in-place workload; VM register storage
+remains 189 bytes. The Set workload's register storage remains 54 bytes.
+Raw output is `.cache/js-api-bench.json`; regression logs are
+`.cache/js-api-{debug,release}.log`.
 
 ## Process exits
 

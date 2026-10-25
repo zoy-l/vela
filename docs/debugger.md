@@ -38,7 +38,7 @@ location, and register inspection displays physical slots and temporaries rather
 than source-local variable names. It does not evaluate arbitrary expressions,
 modify variables, pause inside native C++ functions or interrupt a running continue
 command asynchronously. Native calls are atomic from the instruction observer's
-perspective. Console-input scripts share stdin with debugger commands.
+perspective.
 
 ## VM interface and lifetime
 

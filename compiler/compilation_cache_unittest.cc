@@ -51,8 +51,7 @@ class CompilationCacheTest : public testing::Test {
     ASSERT_FALSE(error);
     ASSERT_TRUE(WriteFileAtomically(path, std::as_bytes(std::span(text))));
   }
-  auto Compile(std::string_view entry = "main.vela")
-      -> std::expected<CachedCompileResult, std::string> {
+  std::expected<CachedCompileResult, std::string> Compile(std::string_view entry = "main.vela") {
     return CompileFileCached(PathText(directory_ / Utf8Path(entry)), directory_ / "cache",
                              isolate_);
   }
@@ -66,8 +65,8 @@ class CompilationCacheTest : public testing::Test {
     ASSERT_TRUE(executed.Succeeded()) << executed.message;
     EXPECT_EQ(executed.value.AsInteger(), expected);
   }
-  [[nodiscard]] auto directory() const -> const std::filesystem::path& { return directory_; }
-  auto isolate() -> runtime::Isolate& { return isolate_; }
+  [[nodiscard]] const std::filesystem::path& directory() const { return directory_; }
+  runtime::Isolate& isolate() { return isolate_; }
 
  private:
   std::filesystem::path directory_;
@@ -141,10 +140,10 @@ TEST_F(CompilationCacheTest, RebuildsCorruptCacheAndReportsUnwritableCacheDirect
       CompileFileCached(PathText(directory() / "main.vela"), directory() / "blocked", isolate()));
 }
 
-auto NativeAnswer(runtime::NativeContext& /*unused*/) noexcept -> std::int64_t {
+std::int64_t NativeAnswer(runtime::NativeContext& /*unused*/) noexcept {
   return kAnswer;
 }
-auto WrongAnswer(runtime::NativeContext& /*unused*/) noexcept -> double {
+double WrongAnswer(runtime::NativeContext& /*unused*/) noexcept {
   return kDoubleAnswer;
 }
 

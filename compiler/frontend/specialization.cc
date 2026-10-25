@@ -22,11 +22,11 @@ namespace {
 
 // 特化数量有界，既防止递增递归泛型无限展开，也对应当前字节码的索引容量。
 
-auto CloneFunction(const Function& source) -> Function;
+Function CloneFunction(const Function& source);
 
-auto CloneStatement(const Statement* source) -> std::unique_ptr<Statement>;
+std::unique_ptr<Statement> CloneStatement(const Statement* source);
 
-auto CloneExpression(const Expression* source) -> std::unique_ptr<Expression> {
+std::unique_ptr<Expression> CloneExpression(const Expression* source) {
   if (source == nullptr) {
     return nullptr;
   }
@@ -70,7 +70,7 @@ auto CloneExpression(const Expression* source) -> std::unique_ptr<Expression> {
   return result;
 }
 
-auto CloneStatement(const Statement* source) -> std::unique_ptr<Statement> {
+std::unique_ptr<Statement> CloneStatement(const Statement* source) {
   if (source == nullptr) {
     return nullptr;
   }
@@ -109,7 +109,7 @@ auto CloneStatement(const Statement* source) -> std::unique_ptr<Statement> {
   return result;
 }
 
-auto CloneFunction(const Function& source) -> Function {
+Function CloneFunction(const Function& source) {
   Function result;
   result.name = source.name;
   result.return_type = source.return_type;
@@ -125,7 +125,7 @@ auto CloneFunction(const Function& source) -> Function {
   return result;
 }
 
-auto CloneField(const Field& source) -> Field {
+Field CloneField(const Field& source) {
   return {
       .type = source.type,
       .name = source.name,
@@ -137,9 +137,9 @@ auto CloneField(const Field& source) -> Field {
   };
 }
 
-auto TypeKey(const TypeName& type) -> std::string;
+std::string TypeKey(const TypeName& type);
 
-auto IsTypeWithinLimit(const TypeName& type, std::size_t depth = 1) -> bool {
+bool IsTypeWithinLimit(const TypeName& type, std::size_t depth = 1) {
   if (depth > kMaxTypeNesting) {
     return false;
   }
@@ -148,8 +148,7 @@ auto IsTypeWithinLimit(const TypeName& type, std::size_t depth = 1) -> bool {
   });
 }
 
-auto SpecializationName(const std::string& base, const std::vector<TypeName>& arguments)
-    -> std::string {
+std::string SpecializationName(const std::string& base, const std::vector<TypeName>& arguments) {
   std::string result = base + '<';
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     if (index != 0) {
@@ -160,7 +159,7 @@ auto SpecializationName(const std::string& base, const std::vector<TypeName>& ar
   return result + '>';
 }
 
-auto TypeKey(const TypeName& type) -> std::string {
+std::string TypeKey(const TypeName& type) {
   if (type.kind == TypeName::Kind::Generic) {
     return SpecializationName(type.name, type.arguments);
   }
@@ -185,20 +184,20 @@ class Specializer final {
   explicit Specializer(Program& program) : program_(program) {}
   ~Specializer() = default;
   Specializer(const Specializer&) = delete;
-  auto operator=(const Specializer&) -> Specializer& = delete;
+  Specializer& operator=(const Specializer&) = delete;
   Specializer(Specializer&&) = delete;
-  auto operator=(Specializer&&) -> Specializer& = delete;
+  Specializer& operator=(Specializer&&) = delete;
 
-  auto Run() -> Diagnostics;
+  Diagnostics Run();
 
  private:
   using Substitutions = absl::flat_hash_map<std::string, TypeName>;
   void CollectDeclarations();
   void CollectTemplates();
   void Error(SourceLocation location, std::string message);
-  auto Bind(const std::vector<std::string>& parameters,
-            const std::vector<TypeName>& arguments,
-            SourceLocation location) -> Substitutions;
+  Substitutions Bind(const std::vector<std::string>& parameters,
+                     const std::vector<TypeName>& arguments,
+                     SourceLocation location);
   void Normalize(TypeName& type, const Substitutions& substitutions);
   void NormalizeType(TypeName& type, const Substitutions& substitutions);
   void Normalize(Expression* expression, const Substitutions& substitutions);
@@ -206,10 +205,10 @@ class Specializer final {
   void Normalize(Function& function, const Substitutions& substitutions);
   void Normalize(Class& owner, const Substitutions& substitutions);
   void NormalizeScoped(Statement* statement, const Substitutions& substitutions);
-  [[nodiscard]] auto IsShadowed(const std::string& name) const -> bool;
-  auto Instantiate(const std::string& name,
-                   const std::vector<TypeName>& arguments,
-                   SourceLocation location) -> std::string;
+  [[nodiscard]] bool IsShadowed(const std::string& name) const;
+  std::string Instantiate(const std::string& name,
+                          const std::vector<TypeName>& arguments,
+                          SourceLocation location);
 
   Program& program_;
   Diagnostics diagnostics_;
@@ -236,9 +235,9 @@ void Specializer::Error(SourceLocation location, std::string message) {
   });
 }
 
-auto Specializer::Bind(const std::vector<std::string>& parameters,
-                       const std::vector<TypeName>& arguments,
-                       SourceLocation location) -> Substitutions {
+Specializer::Substitutions Specializer::Bind(const std::vector<std::string>& parameters,
+                                             const std::vector<TypeName>& arguments,
+                                             SourceLocation location) {
   Substitutions result;
   if (parameters.size() != arguments.size()) {
     Error(location, "generic argument count does not match type parameter count");
@@ -252,9 +251,9 @@ auto Specializer::Bind(const std::vector<std::string>& parameters,
   return result;
 }
 
-auto Specializer::Instantiate(const std::string& name,
-                              const std::vector<TypeName>& arguments,
-                              SourceLocation location) -> std::string {
+std::string Specializer::Instantiate(const std::string& name,
+                                     const std::vector<TypeName>& arguments,
+                                     SourceLocation location) {
   const auto key = SpecializationName(name, arguments);
   if (instantiated_.contains(key)) {
     return key;
@@ -297,7 +296,7 @@ auto Specializer::Instantiate(const std::string& name,
   return key;
 }
 
-auto Specializer::IsShadowed(const std::string& name) const -> bool {
+bool Specializer::IsShadowed(const std::string& name) const {
   return std::ranges::any_of(scopes_ | std::views::reverse,
                              [&](const auto& scope) -> bool { return scope.contains(name); });
 }
@@ -574,7 +573,7 @@ void Specializer::CollectTemplates() {
   program_.classes.clear();
 }
 
-auto Specializer::Run() -> Diagnostics {
+Diagnostics Specializer::Run() {
   CollectDeclarations();
   CollectTemplates();
   std::erase_if(program_.aliases,
@@ -616,7 +615,7 @@ auto Specializer::Run() -> Diagnostics {
 
 }  // namespace
 
-auto SpecializeGenerics(Program& program) -> Diagnostics {
+Diagnostics SpecializeGenerics(Program& program) {
   return Specializer(program).Run();
 }
 

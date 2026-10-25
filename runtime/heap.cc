@@ -21,20 +21,20 @@ namespace vela::runtime {
 namespace {
 
 template <typename T>
-auto Slots(std::span<std::byte> bytes) noexcept -> std::span<T> {
+std::span<T> Slots(std::span<std::byte> bytes) noexcept {
   void* storage = bytes.data();
   return {static_cast<T*>(storage), bytes.size() / sizeof(T)};
 }
 
 template <typename T>
-auto Slots(std::span<const std::byte> bytes) noexcept -> std::span<const T> {
+std::span<const T> Slots(std::span<const std::byte> bytes) noexcept {
   const void* storage = bytes.data();
   return {static_cast<const T*>(storage), bytes.size() / sizeof(T)};
 }
 
 }  // namespace
 
-auto ArrayLayout::element_type() const noexcept -> TypeConstraint {
+TypeConstraint ArrayLayout::element_type() const noexcept {
   return {
       .kind = element_kind,
       .object_kind = element_object_kind,
@@ -47,9 +47,9 @@ auto ArrayLayout::element_type() const noexcept -> TypeConstraint {
   };
 }
 
-auto LoadElementStorage(const ArrayLayout& layout,
-                        std::span<const std::byte> storage,
-                        std::size_t index) noexcept -> Value {
+Value LoadElementStorage(const ArrayLayout& layout,
+                         std::span<const std::byte> storage,
+                         std::size_t index) noexcept {
   if (layout.HasTaggedElements()) {
     return Slots<Value>(storage).subspan(index).front();
   }
@@ -108,18 +108,18 @@ void StoreElementStorage(const ArrayLayout& layout,
 
 namespace {
 
-constexpr auto AlignUp(std::size_t value, std::size_t alignment) noexcept -> std::size_t {
+constexpr std::size_t AlignUp(std::size_t value, std::size_t alignment) noexcept {
   return (value + alignment - 1) & ~(alignment - 1);
 }
 
 template <typename T>
-auto ArrayElements(HeapObject& object, std::size_t length) noexcept -> std::span<T> {
+std::span<T> ArrayElements(HeapObject& object, std::size_t length) noexcept {
   void* storage = std::span(&object, 1).last(0).data();
   return {static_cast<T*>(storage), length};
 }
 
 template <typename T>
-auto ArrayElements(const HeapObject& object, std::size_t length) noexcept -> std::span<const T> {
+std::span<const T> ArrayElements(const HeapObject& object, std::size_t length) noexcept {
   const void* storage = std::span(&object, 1).last(0).data();
   return {static_cast<const T*>(storage), length};
 }
@@ -154,7 +154,7 @@ void InitializeArray(HeapObject& object, ValueKind kind, std::size_t length) noe
 ClassLayout::ClassLayout(std::uint32_t field_count, std::vector<std::uint32_t> reference_fields)
     : field_count_(field_count), reference_fields_(std::move(reference_fields)) {}
 
-auto ArrayLayout::element_size() const noexcept -> std::size_t {
+std::size_t ArrayLayout::element_size() const noexcept {
   if (HasTaggedElements()) {
     return sizeof(Value);
   }
@@ -226,15 +226,15 @@ Heap::~Heap() {
   DestroyAll();
 }
 
-auto ClassLayout::IsImplementing(std::uint32_t interface) const noexcept -> bool {
+bool ClassLayout::IsImplementing(std::uint32_t interface) const noexcept {
   return std::ranges::binary_search(interfaces_, interface);
 }
 
-auto Heap::ClassOf(const HeapObject& object) noexcept -> const ClassLayout* {
+const ClassLayout* Heap::ClassOf(const HeapObject& object) noexcept {
   return object.kind == ObjectKind::Instance ? object.layout : nullptr;
 }
 
-auto Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept -> bool {
+bool Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept {
   if (value.IsNull()) {
     return type.nullable;
   }
@@ -258,8 +258,8 @@ auto Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept -> bo
   return !type.callable || (object->layout != nullptr && object->layout->callable().has_value());
 }
 
-auto Heap::AllocateInstance(ClassLayout& layout, std::span<const Value> initial_fields) noexcept
-    -> HeapObject* {
+HeapObject* Heap::AllocateInstance(ClassLayout& layout,
+                                   std::span<const Value> initial_fields) noexcept {
   if (initial_fields.size() > layout.field_count()) {
     return nullptr;
   }
@@ -286,9 +286,9 @@ auto Heap::AllocateInstance(ClassLayout& layout, std::span<const Value> initial_
   return object;
 }
 
-auto Heap::AllocateExpected(ClassLayout& layout,
-                            Value payload,
-                            ExpectedAlternative alternative) noexcept -> HeapObject* {
+HeapObject* Heap::AllocateExpected(ClassLayout& layout,
+                                   Value payload,
+                                   ExpectedAlternative alternative) noexcept {
   auto* object = AllocateInstance(layout, std::span(&payload, 1));
   if (object != nullptr) {
     object->kind = ObjectKind::Expected;
@@ -297,16 +297,17 @@ auto Heap::AllocateExpected(ClassLayout& layout,
   return object;
 }
 
-auto Heap::ExpectedAlternativeOf(const HeapObject& object) noexcept
-    -> std::expected<ExpectedAlternative, ExpectedAccessError> {
+std::expected<ExpectedAlternative, ExpectedAccessError> Heap::ExpectedAlternativeOf(
+    const HeapObject& object) noexcept {
   if (object.kind != ObjectKind::Expected) {
     return std::unexpected(ExpectedAccessError::NotExpected);
   }
   return static_cast<ExpectedAlternative>(object.length);
 }
 
-auto Heap::ReadExpectedValue(const HeapObject& object, ExpectedAlternative alternative) noexcept
-    -> std::expected<Value, ExpectedAccessError> {
+std::expected<Value, ExpectedAccessError> Heap::ReadExpectedValue(
+    const HeapObject& object,
+    ExpectedAlternative alternative) noexcept {
   const auto active = ExpectedAlternativeOf(object);
   if (!active) {
     return std::unexpected(active.error());
@@ -317,7 +318,7 @@ auto Heap::ReadExpectedValue(const HeapObject& object, ExpectedAlternative alter
   return *GetField(object, 0);
 }
 
-auto Heap::AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept -> HeapObject* {
+HeapObject* Heap::AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept {
   const std::size_t element_size = layout.element_size();
   if (element_size == 0 ||
       length > (std::numeric_limits<std::uint32_t>::max() - sizeof(HeapObject)) / element_size) {
@@ -359,16 +360,15 @@ void Heap::Publish(HeapObject& object, std::uint32_t allocation_size) noexcept {
   ++object_count_;
 }
 
-auto Heap::ArrayLength(const HeapObject& array) noexcept
-    -> std::expected<std::uint32_t, ArrayAccessError> {
+std::expected<std::uint32_t, ArrayAccessError> Heap::ArrayLength(const HeapObject& array) noexcept {
   if (array.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }
   return array.length;
 }
 
-auto Heap::IntegerElements(HeapObject& array) noexcept
-    -> std::expected<std::span<std::int64_t>, ArrayAccessError> {
+std::expected<std::span<std::int64_t>, ArrayAccessError> Heap::IntegerElements(
+    HeapObject& array) noexcept {
   if (array.kind != ObjectKind::Array || array.array_layout()->element_kind != ValueKind::Integer ||
       array.array_layout()->HasTaggedElements()) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
@@ -376,8 +376,8 @@ auto Heap::IntegerElements(HeapObject& array) noexcept
   return ArrayElements<std::int64_t>(array, array.length);
 }
 
-auto Heap::GetElement(const HeapObject& object, std::uint32_t index) noexcept
-    -> std::expected<Value, ArrayAccessError> {
+std::expected<Value, ArrayAccessError> Heap::GetElement(const HeapObject& object,
+                                                        std::uint32_t index) noexcept {
   if (object.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }
@@ -392,8 +392,9 @@ auto Heap::GetElement(const HeapObject& object, std::uint32_t index) noexcept
   return LoadElementStorage(layout, bytes, index);
 }
 
-auto Heap::SetElement(HeapObject& object, std::uint32_t index, Value value) noexcept
-    -> std::expected<void, ArrayAccessError> {
+std::expected<void, ArrayAccessError> Heap::SetElement(HeapObject& object,
+                                                       std::uint32_t index,
+                                                       Value value) noexcept {
   if (object.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }
@@ -628,7 +629,7 @@ void Heap::WriteBarrier(HeapObject& source, Value value) noexcept {
   }
 }
 
-auto Heap::AllocateRaw(std::size_t requested_size) noexcept -> Allocation {
+Heap::Allocation Heap::AllocateRaw(std::size_t requested_size) noexcept {
   const std::size_t block_size = SelectBlockSize(requested_size);
   const std::size_t class_index = SizeClassIndex(block_size);
   void* memory = nullptr;
@@ -676,7 +677,7 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   ::operator delete(memory);
 }
 
-auto Heap::SelectBlockSize(std::size_t requested_size) noexcept -> std::size_t {
+std::size_t Heap::SelectBlockSize(std::size_t requested_size) noexcept {
   for (std::size_t block_size : kSizeClasses) {
     if (requested_size <= block_size) {
       return block_size;
@@ -685,7 +686,7 @@ auto Heap::SelectBlockSize(std::size_t requested_size) noexcept -> std::size_t {
   return requested_size;
 }
 
-auto Heap::SizeClassIndex(std::size_t block_size) noexcept -> std::size_t {
+std::size_t Heap::SizeClassIndex(std::size_t block_size) noexcept {
   for (std::size_t index = 0; index < kSizeClasses.size(); ++index) {
     if (kSizeClasses.at(index) == block_size) {
       return index;
@@ -694,7 +695,7 @@ auto Heap::SizeClassIndex(std::size_t block_size) noexcept -> std::size_t {
   return kSizeClasses.size();
 }
 
-auto Heap::ShouldCollect(std::size_t next_size) const noexcept -> bool {
+bool Heap::ShouldCollect(std::size_t next_size) const noexcept {
   return next_size > gc_threshold_ || allocated_bytes_ > gc_threshold_ - next_size;
 }
 

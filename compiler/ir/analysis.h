@@ -21,9 +21,9 @@ struct RegisterAccess final {
   std::uint32_t argument_count = 0;
 };
 
-[[nodiscard]] auto AnalyzeRegisters(const Instruction& instruction,
-                                    std::span<const Function> functions) -> RegisterAccess;
-[[nodiscard]] auto ReadOperand(const Instruction& instruction, Operand operand) -> RegisterId;
+[[nodiscard]] RegisterAccess AnalyzeRegisters(const Instruction& instruction,
+                                              std::span<const Function> functions);
+[[nodiscard]] RegisterId ReadOperand(const Instruction& instruction, Operand operand);
 void WriteOperand(Instruction& instruction, Operand operand, RegisterId value);
 
 template <typename Visitor>
@@ -59,14 +59,14 @@ struct BlockLiveness final {
 
 enum class LivenessMode : std::uint8_t { AllInstructions, NecessaryInstructions };
 
-[[nodiscard]] auto BuildFlowGraph(const Function& function) -> FlowGraph;
-[[nodiscard]] auto AnalyzeLiveness(const Function& function,
-                                   const FlowGraph& graph,
-                                   std::span<const Function> functions,
-                                   LivenessMode mode = LivenessMode::AllInstructions)
-    -> std::vector<BlockLiveness>;
+[[nodiscard]] FlowGraph BuildFlowGraph(const Function& function);
+[[nodiscard]] std::vector<BlockLiveness> AnalyzeLiveness(
+    const Function& function,
+    const FlowGraph& graph,
+    std::span<const Function> functions,
+    LivenessMode mode = LivenessMode::AllInstructions);
 void CompactInstructions(Function& function, std::span<const std::uint8_t> keep);
-[[nodiscard]] auto IsRemovableInstruction(Opcode opcode) -> bool;
-[[nodiscard]] auto MayThrow(Opcode opcode) -> bool;
+[[nodiscard]] bool IsRemovableInstruction(Opcode opcode);
+[[nodiscard]] bool MayThrow(Opcode opcode);
 
 }  // namespace vela::ir

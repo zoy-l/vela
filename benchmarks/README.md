@@ -4,7 +4,7 @@ Google Benchmark runs Vela workloads through the production compiler
 and VM. Versions are pinned in `DEPS`; `//benchmarks:vela_benchmarks` links the
 upstream `benchmark_main` and is separate from the language executable.
 `vm/standard_api` covers default global APIs, sorting and reduction without imports.
-`vm/array_algorithms` covers sorting, repeated reduction and transformation; both
+`vm/array_algorithms` covers sorting, repeated reduction and mapping; both
 use the normal compiler and VM and report the existing heap/register counters.
 `vm/set_operations` builds two overlapping sets of 256 integers, then computes
 their union, intersection and difference through the native ordered hash tables.

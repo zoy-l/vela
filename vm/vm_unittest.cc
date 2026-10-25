@@ -26,7 +26,7 @@ using vela::runtime::Isolate;
 using vela::runtime::RootRange;
 using vela::runtime::Value;
 
-auto LoadAndExecute(Isolate& isolate, const Function& function) -> ExecutionResult {
+ExecutionResult LoadAndExecute(Isolate& isolate, const Function& function) {
   const std::array<Function, 1> functions = {function};
   auto program = Program::Load(functions, isolate);
   if (!program) {

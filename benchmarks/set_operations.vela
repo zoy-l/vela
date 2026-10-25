@@ -8,5 +8,5 @@ func main(): int {
   const combined = left.union(right);
   const common = left.intersection(right);
   const different = left.difference(right);
-  return combined.length + common.length + different.length;
+  return combined.size + common.size + different.size;
 }

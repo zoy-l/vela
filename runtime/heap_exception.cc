@@ -17,7 +17,7 @@
 namespace vela::runtime {
 namespace {
 
-auto TraceStorage(ExceptionData& exception) -> std::span<TracePosition> {
+std::span<TracePosition> TraceStorage(ExceptionData& exception) {
   void* storage = std::span(&exception, 1).last(0).data();
   return {static_cast<TracePosition*>(storage), exception.trace_count};
 }
@@ -29,25 +29,25 @@ static_assert(std::is_trivially_destructible_v<ExceptionData>);
 static_assert(sizeof(HeapObject) % alignof(ExceptionData) == 0);
 static_assert(sizeof(ExceptionData) % alignof(TracePosition) == 0);
 
-auto ExceptionData::trace() const noexcept -> std::span<const TracePosition> {
+std::span<const TracePosition> ExceptionData::trace() const noexcept {
   const void* storage = std::span(this, 1).last(0).data();
   return {static_cast<const TracePosition*>(storage), trace_count};
 }
 
-auto ExceptionData::message() const noexcept -> std::string_view {
+std::string_view ExceptionData::message() const noexcept {
   const void* storage = trace().last(0).data();
   return {static_cast<const char*>(storage), message_length};
 }
 
-auto ExceptionData::From(HeapObject& object) noexcept -> ExceptionData& {
+ExceptionData& ExceptionData::From(HeapObject& object) noexcept {
   void* storage = std::span(&object, 1).last(0).data();
   return *static_cast<ExceptionData*>(storage);
 }
 
-auto Heap::AllocateException(HeapObject& payload,
-                             ExecutionStatus status,
-                             std::span<const TracePosition> trace,
-                             std::string_view message) noexcept -> HeapObject* {
+HeapObject* Heap::AllocateException(HeapObject& payload,
+                                    ExecutionStatus status,
+                                    std::span<const TracePosition> trace,
+                                    std::string_view message) noexcept {
   const auto size =
       sizeof(HeapObject) + sizeof(ExceptionData) + trace.size_bytes() + message.size();
   if (size > std::numeric_limits<std::uint32_t>::max()) {

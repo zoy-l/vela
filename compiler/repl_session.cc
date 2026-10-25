@@ -29,7 +29,7 @@
 namespace vela::compiler {
 namespace {
 
-auto IsDeclaration(frontend::TokenKind kind) -> bool {
+bool IsDeclaration(frontend::TokenKind kind) {
   using Kind = frontend::TokenKind;
   switch (kind) {
     case Kind::Func:
@@ -48,7 +48,7 @@ auto IsDeclaration(frontend::TokenKind kind) -> bool {
   }
 }
 
-auto HasOpenDelimiter(const frontend::LexResult& lexed) -> bool {
+bool HasOpenDelimiter(const frontend::LexResult& lexed) {
   using Kind = frontend::TokenKind;
   std::int64_t braces = 0;
   std::int64_t parentheses = 0;
@@ -83,12 +83,12 @@ auto HasOpenDelimiter(const frontend::LexResult& lexed) -> bool {
   return braces > 0 || parentheses > 0 || brackets > 0;
 }
 
-auto SubmissionPath(std::uint32_t submission) -> std::string {
+std::string SubmissionPath(std::uint32_t submission) {
   return "<repl:" + std::to_string(submission) + ">";
 }
 
-auto SubmissionFailure(SubmissionStatus status, frontend::Diagnostics diagnostics = {})
-    -> SubmissionResult {
+SubmissionResult SubmissionFailure(SubmissionStatus status,
+                                   frontend::Diagnostics diagnostics = {}) {
   SubmissionResult result;
   result.status = status;
   result.diagnostics = std::move(diagnostics);
@@ -101,7 +101,7 @@ struct InputBody final {
   bool terminated = false;
 };
 
-auto NormalizeBody(std::string_view source, const frontend::LexResult& lexed) -> InputBody {
+InputBody NormalizeBody(std::string_view source, const frontend::LexResult& lexed) {
   using Token = frontend::TokenKind;
   const auto first_kind = lexed.tokens.front().kind;
   const auto last_kind =
@@ -143,7 +143,7 @@ void ReplSession::Reset() {
   next_line_ = 1;
 }
 
-auto ReplSession::Locate(std::uint32_t line, const Entry& current) const -> Entry {
+ReplSession::Entry ReplSession::Locate(std::uint32_t line, const Entry& current) const {
   if (line >= current.first_line || entries_.empty()) {
     return current;
   }
@@ -178,7 +178,8 @@ void ReplSession::Remap(vm::ExecutionResult& result, const Entry& current) const
   }
 }
 
-auto ReplSession::Prepare(std::string_view source) -> std::expected<Prepared, SubmissionResult> {
+std::expected<ReplSession::Prepared, SubmissionResult> ReplSession::Prepare(
+    std::string_view source) {
   const auto lexed = frontend::Lexer(source).Tokenize();
   if (lexed.diagnostics.empty() && lexed.tokens.size() == 1) {
     return std::unexpected(SubmissionResult());
@@ -266,9 +267,9 @@ void ReplSession::BindEntries(frontend::Program& program, const Entry& current, 
   }
 }
 
-auto ReplSession::Compile(Prepared& prepared,
-                          CompilationState& compilation,
-                          frontend::ModuleCache& modules) -> CompileResult {
+CompileResult ReplSession::Compile(Prepared& prepared,
+                                   CompilationState& compilation,
+                                   frontend::ModuleCache& modules) {
   auto loaded = frontend::LoadPreparedProgram(PathText(path_), std::move(prepared.program),
                                               prepared.source, modules);
   auto diagnostics = std::move(loaded.diagnostics);
@@ -292,7 +293,7 @@ auto ReplSession::Compile(Prepared& prepared,
   return CompileProgram(loaded.program, checked.model, *isolate_, &compilation);
 }
 
-auto ReplSession::Submit(std::string_view source) -> SubmissionResult {
+SubmissionResult ReplSession::Submit(std::string_view source) {
   auto prepared = Prepare(source);
   if (!prepared) {
     return std::move(prepared.error());

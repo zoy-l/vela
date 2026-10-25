@@ -24,7 +24,7 @@ struct ImageFunction final {
   std::uint64_t pool;
 };
 
-auto Image(std::span<const std::byte> payload) -> std::vector<std::byte> {
+std::vector<std::byte> Image(std::span<const std::byte> payload) {
   BinaryWriter writer;
   constexpr std::string_view kMagic = "VELABC01";
   writer.Write(std::as_bytes(std::span(kMagic)));
@@ -36,7 +36,7 @@ auto Image(std::span<const std::byte> payload) -> std::vector<std::byte> {
   return std::move(writer).Take();
 }
 
-auto FunctionImage(ImageFunction input) -> std::vector<std::byte> {
+std::vector<std::byte> FunctionImage(ImageFunction input) {
   BinaryWriter body;
   constexpr std::size_t kSharedTableCount = 6;
   constexpr std::size_t kEmptyFunctionTailCount = 6;

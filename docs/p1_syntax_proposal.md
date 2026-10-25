@@ -32,7 +32,7 @@ func functionDemo(): void {
   const operation: (int, int) => int = add;
   print(operation(20, 22));             // 42
 
-  const twice: (int) => int = (value: int): int => value * 2;
+  const twice: (int) => int = value => value * 2;
   print(apply(21, twice));              // 42
 
   const counter: () => int = makeCounter(40);
@@ -43,8 +43,11 @@ func functionDemo(): void {
 
 Function types list parameter types in order without parameter names, such as
 `(int, int) => int`. Calls through these types use positional arguments.
-Function declarations and lambdas still declare named parameters, such as
-`(value: int): int => value * 2`.
+Function declarations and lambdas still declare named parameters. Lambda
+annotations can be inferred from their expected function type, such as
+`const twice: (int) => int = value => value * 2`. Without parameter context,
+`(value: int) => value * 2` infers its return type from the body. See
+[type inference](type_inference.md) for the shared rules and diagnostics.
 Lambdas use `=>`; both expression and
 block bodies are supported. Parameters and return types remain explicit in
 function declarations. Captures use lexical bindings: mutation of a captured `let` is
@@ -341,9 +344,9 @@ conversion. `is` and `as` do not perform numeric conversion.
 const names: Set<string> = Set<string>();
 names.add("Vela");                  // bool: true when inserted
 names.has("Vela");                  // bool
-names.remove("Vela");               // bool: true when removed
+names.delete("Vela");               // bool: true when removed
 names.clear();                       // void
-const count: int = names.length;
+const count: int = names.size;
 const items: string[] = names.values();
 
 const scores: Map<string, int> = Map<string, int>();
@@ -356,7 +359,7 @@ const values: int[] = scores.values();
 An annotated destination also permits `Set()` or `Map()` with contextual type
 arguments. Types are invariant; null keys/values require nullable parameters.
 `get()` returns null for a missing key; `has()` distinguishes missing entries
-from a stored null. Maps also expose `has`, `remove`, `clear`, and `length`.
+from a stored null. Maps also expose `has`, `delete`, `clear`, and `size`.
 Snapshot arrays preserve insertion order. Updating an existing key retains its
 position; removal and reinsertion place it last. Strings compare by contents,
 reference values by identity, all NaNs are the same key, and +0/-0 are the same

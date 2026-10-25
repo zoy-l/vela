@@ -17,7 +17,7 @@
 namespace vela::benchmarks {
 namespace {
 
-auto LoadSource(benchmark::State& state, std::string_view filename) -> std::optional<std::string> {
+std::optional<std::string> LoadSource(benchmark::State& state, std::string_view filename) {
   const auto path = std::filesystem::path(VELA_BENCHMARK_SOURCE_DIR) / filename;
   std::ifstream input(path, std::ios::binary);
   if (!input) {
@@ -36,7 +36,7 @@ void ReportCompileFailure(benchmark::State& state, const compiler::CompileResult
   state.SkipWithError(message);
 }
 
-auto IsExpectedResult(const vm::ExecutionResult& result, std::int64_t expected) -> bool {
+bool IsExpectedResult(const vm::ExecutionResult& result, std::int64_t expected) {
   return result.Succeeded() && result.value.IsInteger() && result.value.AsInteger() == expected;
 }
 

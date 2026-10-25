@@ -13,7 +13,7 @@
 
 namespace vela::runtime {
 
-auto FormatScalar(Value value, std::span<char, kScalarTextCapacity> buffer) -> std::string_view {
+std::string_view FormatScalar(Value value, std::span<char, kScalarTextCapacity> buffer) {
   if (value.IsBoolean()) {
     return value.AsBoolean() ? "true" : "false";
   }

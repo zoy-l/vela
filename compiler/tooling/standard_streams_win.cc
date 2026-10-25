@@ -10,7 +10,7 @@
 
 namespace vela::tooling {
 
-auto SetBinaryStandardStreams() -> std::expected<void, std::string> {
+std::expected<void, std::string> SetBinaryStandardStreams() {
   constexpr int kStandardInputDescriptor = 0;
   constexpr int kStandardOutputDescriptor = 1;
   if (_setmode(kStandardInputDescriptor, _O_BINARY) == -1 ||

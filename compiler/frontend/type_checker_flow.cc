@@ -6,7 +6,7 @@
 namespace vela::frontend {
 namespace {
 
-auto EvaluateCondition(const Expression& expression) -> ConditionTruth {
+ConditionTruth EvaluateCondition(const Expression& expression) {
   using Truth = ConditionTruth;
   if (expression.kind == Expression::Kind::BooleanLiteral) {
     return expression.boolean_value ? Truth::AlwaysTrue : Truth::AlwaysFalse;
@@ -36,7 +36,7 @@ auto EvaluateCondition(const Expression& expression) -> ConditionTruth {
   return left == Truth::AlwaysFalse ? right : Truth::Unknown;
 }
 
-auto MergeBranches(StatementFlow left, StatementFlow right) -> StatementFlow {
+StatementFlow MergeBranches(StatementFlow left, StatementFlow right) {
   return {
       .can_fall_through = left.can_fall_through || right.can_fall_through,
       .can_break = left.can_break || right.can_break,
@@ -46,8 +46,7 @@ auto MergeBranches(StatementFlow left, StatementFlow right) -> StatementFlow {
 
 }  // namespace
 
-auto TypeChecker::CheckStatement(const Statement& statement, const Type& return_type)
-    -> StatementFlow {
+StatementFlow TypeChecker::CheckStatement(const Statement& statement, const Type& return_type) {
   StatementFlow flow;
   switch (statement.kind) {
     case Statement::Kind::VariableDeclaration:
@@ -102,23 +101,22 @@ auto TypeChecker::CheckStatement(const Statement& statement, const Type& return_
   return flow;
 }
 
-auto TypeChecker::CheckBlock(const Statement& statement, const Type& return_type) -> StatementFlow {
+StatementFlow TypeChecker::CheckBlock(const Statement& statement, const Type& return_type) {
   BeginScope();
   const auto flow = CheckSequence(statement, return_type);
   EndScope();
   return flow;
 }
 
-auto TypeChecker::CheckScopedStatement(const Statement& statement, const Type& return_type)
-    -> StatementFlow {
+StatementFlow TypeChecker::CheckScopedStatement(const Statement& statement,
+                                                const Type& return_type) {
   BeginScope();
   const auto flow = CheckStatement(statement, return_type);
   EndScope();
   return flow;
 }
 
-auto TypeChecker::CheckSequence(const Statement& statement, const Type& return_type)
-    -> StatementFlow {
+StatementFlow TypeChecker::CheckSequence(const Statement& statement, const Type& return_type) {
   StatementFlow flow;
   for (const auto& child : statement.statements) {
     const auto next = CheckStatement(*child, return_type);
@@ -133,7 +131,7 @@ auto TypeChecker::CheckSequence(const Statement& statement, const Type& return_t
   return flow;
 }
 
-auto TypeChecker::CheckIf(const Statement& statement, const Type& return_type) -> StatementFlow {
+StatementFlow TypeChecker::CheckIf(const Statement& statement, const Type& return_type) {
   const auto condition_type = CheckExpression(*statement.condition, nullptr);
   if (condition_type.kind != Type::Kind::Bool || condition_type.nullable) {
     AddDiagnostic(statement.condition->location, "if condition must be bool");
@@ -174,7 +172,7 @@ auto TypeChecker::CheckIf(const Statement& statement, const Type& return_type) -
   return flow;
 }
 
-auto TypeChecker::CheckWhile(const Statement& statement, const Type& return_type) -> StatementFlow {
+StatementFlow TypeChecker::CheckWhile(const Statement& statement, const Type& return_type) {
   InvalidateAssignments(statement);
   const auto condition_type = CheckExpression(*statement.condition, nullptr);
   if (condition_type.kind != Type::Kind::Bool || condition_type.nullable) {
@@ -200,7 +198,7 @@ auto TypeChecker::CheckWhile(const Statement& statement, const Type& return_type
   };
 }
 
-auto TypeChecker::CheckFor(const Statement& statement, const Type& return_type) -> StatementFlow {
+StatementFlow TypeChecker::CheckFor(const Statement& statement, const Type& return_type) {
   BeginScope();
   if (statement.initializer) {
     CheckStatement(*statement.initializer, return_type);

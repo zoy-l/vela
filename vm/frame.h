@@ -14,9 +14,9 @@ class Frame final {
 
   ~Frame() = default;
   Frame(const Frame&) = delete;
-  auto operator=(const Frame&) -> Frame& = delete;
+  Frame& operator=(const Frame&) = delete;
   Frame(Frame&&) = delete;
-  auto operator=(Frame&&) -> Frame& = delete;
+  Frame& operator=(Frame&&) = delete;
 
   void Attach(runtime::Heap& heap, runtime::RegisterView registers) noexcept {
     registers_ = registers;
@@ -28,7 +28,7 @@ class Frame final {
     registers_ = {};
   }
 
-  [[nodiscard]] auto registers() const noexcept -> runtime::RegisterView { return registers_; }
+  [[nodiscard]] runtime::RegisterView registers() const noexcept { return registers_; }
 
  private:
   runtime::RegisterView registers_;

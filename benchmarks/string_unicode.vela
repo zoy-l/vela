@@ -3,7 +3,7 @@ func main(): int {
   let correct = 0;
   for (let i = 0; i < 1000; i = i + 1) {
     if (text.length == 10 && text[7] == "😀" && text.slice(6, 8) == "中😀" &&
-        text.indexOf("e\u0301") == 8 && text.contains("中😀")) { correct = correct + 1; }
+        text.indexOf("e\u0301") == 8 && text.includes("中😀")) { correct = correct + 1; }
   }
   return correct;
 }

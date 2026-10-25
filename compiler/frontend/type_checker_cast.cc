@@ -4,7 +4,7 @@
 
 namespace vela::frontend {
 
-auto TypeChecker::CheckTypeOperation(const Expression& expression) -> Type {
+TypeChecker::Type TypeChecker::CheckTypeOperation(const Expression& expression) {
   const auto source = CheckExpression(*expression.operand, nullptr);
   const auto target = ResolveType(expression.type, false);
   type_operands_.insert_or_assign(&expression, target);

@@ -6,7 +6,8 @@
 
 namespace vela::frontend {
 
-auto TypeChecker::IntersectFacts(const Refinements& left, const Refinements& right) -> Refinements {
+TypeChecker::Refinements TypeChecker::IntersectFacts(const Refinements& left,
+                                                     const Refinements& right) {
   if (left.size() > right.size()) {
     return IntersectFacts(right, left);
   }

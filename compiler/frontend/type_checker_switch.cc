@@ -29,8 +29,7 @@ void TypeChecker::CheckCaseLabel(const Expression& label,
   case_values_.insert_or_assign(&label, *constant);
 }
 
-auto TypeChecker::CheckSwitch(const Statement& statement, const Type& return_type)
-    -> StatementFlow {
+StatementFlow TypeChecker::CheckSwitch(const Statement& statement, const Type& return_type) {
   const auto type = CheckExpression(*statement.condition, nullptr);
   if (type.nullable || (type.kind != Type::Kind::Int && type.kind != Type::Kind::Bool &&
                         type.kind != Type::Kind::String && type.kind != Type::Kind::Enum)) {

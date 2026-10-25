@@ -8,7 +8,7 @@
 
 namespace vela::ir {
 
-auto Lowerer::RegisterExpectedType(frontend::TypeDescriptor type) -> ClassId {
+ClassId Lowerer::RegisterExpectedType(frontend::TypeDescriptor type) {
   if (type.nullable) {
     type = model_.types.at(type.name.substr(0, type.name.size() - 1));
   }
@@ -26,7 +26,7 @@ auto Lowerer::RegisterExpectedType(frontend::TypeDescriptor type) -> ClassId {
   return layout_id;
 }
 
-auto Lowerer::LowerExpected(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerExpected(const frontend::Expression& expression) {
   const auto operation = model_.expected_calls.at(&expression);
   const auto result = AllocateTemporary(expression.location);
   if (operation == frontend::ExpectedOperation::Ok ||

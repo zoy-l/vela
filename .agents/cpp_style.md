@@ -9,6 +9,10 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
 - Follow the Google C++ Style Guide by default. The repository's `.clang-format`, `.clang-tidy`, and
   `vl lint` provide executable formatting and static-analysis rules.
 - Use the project's fixed C++23 standard. Do not upgrade it independently.
+- Use leading return types for ordinary function declarations and definitions, such as
+  `bool IsLambda() const;`, and traditional return types in function-pointer aliases.
+  Retain trailing return types only where C++ syntax requires them, such as explicit lambda
+  results or deduction guides. Local variable type inference remains allowed.
 - Use `#pragma once` in headers; do not use include guards.
 - Use the repository's `.clang-format` for mechanical formatting, with a 100-column line limit.
 - Use `snake_case` for file names, `PascalCase` for types, and CamelCase beginning with an uppercase

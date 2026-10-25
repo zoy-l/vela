@@ -21,19 +21,19 @@ namespace {
 
 constexpr std::int64_t kInvalidParams = -32602;
 
-auto JsonRange(yyjson_mut_doc* document, TextRange range) -> yyjson_mut_val* {
+yyjson_mut_val* JsonRange(yyjson_mut_doc* document, TextRange range) {
   auto* value = yyjson_mut_obj(document);
   AddJsonField(document, value, protocol::kStart, JsonPosition(document, range.start));
   AddJsonField(document, value, protocol::kEnd, JsonPosition(document, range.end));
   return value;
 }
 
-auto IsIdentifierByte(char value) -> bool {
+bool IsIdentifierByte(char value) {
   return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
          (value >= '0' && value <= '9') || value == '_';
 }
 
-auto JsonHover(yyjson_mut_doc* document, const std::optional<Hover>& hover) -> yyjson_mut_val* {
+yyjson_mut_val* JsonHover(yyjson_mut_doc* document, const std::optional<Hover>& hover) {
   if (!hover) {
     return yyjson_mut_null(document);
   }
@@ -53,8 +53,7 @@ auto JsonHover(yyjson_mut_doc* document, const std::optional<Hover>& hover) -> y
 
 }  // namespace
 
-auto LanguageServer::IndexFor(std::string_view uri, const ServerDocument& opened)
-    -> SemanticIndex& {
+SemanticIndex& LanguageServer::IndexFor(std::string_view uri, const ServerDocument& opened) {
   if (const auto found = semantic_indices_.find(uri); found != semantic_indices_.end()) {
     return found->second;
   }

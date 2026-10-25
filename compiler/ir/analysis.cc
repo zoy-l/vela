@@ -11,8 +11,8 @@
 
 namespace vela::ir {
 
-auto AnalyzeRegisters(const Instruction& instruction, std::span<const Function> functions)
-    -> RegisterAccess {
+RegisterAccess AnalyzeRegisters(const Instruction& instruction,
+                                std::span<const Function> functions) {
   using Field = Operand;
   switch (instruction.opcode) {
     case Opcode::LoadNull:
@@ -120,7 +120,7 @@ auto AnalyzeRegisters(const Instruction& instruction, std::span<const Function> 
   std::unreachable();
 }
 
-auto ReadOperand(const Instruction& instruction, Operand operand) -> RegisterId {
+RegisterId ReadOperand(const Instruction& instruction, Operand operand) {
   switch (operand) {
     case Operand::Destination:
       return instruction.dst;
@@ -149,7 +149,7 @@ void WriteOperand(Instruction& instruction, Operand operand, RegisterId value) {
 
 namespace {
 
-auto FindBlockStarts(const Function& function) -> std::vector<std::uint8_t> {
+std::vector<std::uint8_t> FindBlockStarts(const Function& function) {
   const auto code = std::span(function.instructions);
   std::vector<std::uint8_t> starts(code.size(), 0);
   starts.front() = 1;
@@ -181,7 +181,7 @@ auto FindBlockStarts(const Function& function) -> std::vector<std::uint8_t> {
 
 }  // namespace
 
-auto BuildFlowGraph(const Function& function) -> FlowGraph {
+FlowGraph BuildFlowGraph(const Function& function) {
   FlowGraph graph;
   const auto& code = function.instructions;
   if (code.empty()) {
@@ -222,10 +222,10 @@ auto BuildFlowGraph(const Function& function) -> FlowGraph {
   return graph;
 }
 
-auto AnalyzeLiveness(const Function& function,
-                     const FlowGraph& graph,
-                     std::span<const Function> functions,
-                     LivenessMode mode) -> std::vector<BlockLiveness> {
+std::vector<BlockLiveness> AnalyzeLiveness(const Function& function,
+                                           const FlowGraph& graph,
+                                           std::span<const Function> functions,
+                                           LivenessMode mode) {
   std::vector<BlockLiveness> live(graph.blocks.size());
   std::vector<std::size_t> work;
   work.reserve(graph.blocks.size());
@@ -298,7 +298,7 @@ void CompactInstructions(Function& function, std::span<const std::uint8_t> keep)
   }
 }
 
-auto MayThrow(Opcode opcode) -> bool {
+bool MayThrow(Opcode opcode) {
   if (IsRemovableInstruction(opcode)) {
     return false;
   }
@@ -315,7 +315,7 @@ auto MayThrow(Opcode opcode) -> bool {
   }
 }
 
-auto IsRemovableInstruction(Opcode opcode) -> bool {
+bool IsRemovableInstruction(Opcode opcode) {
   switch (opcode) {
     case Opcode::LoadNull:
     case Opcode::LoadBool:

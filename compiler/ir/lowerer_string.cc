@@ -11,7 +11,7 @@
 
 namespace vela::ir {
 
-auto Lowerer::LowerStringInterpolation(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerStringInterpolation(const frontend::Expression& expression) {
   std::vector<const frontend::Expression*> parts;
   parts.reserve(expression.elements.size());
   for (const auto& element : expression.elements) {
@@ -47,7 +47,7 @@ auto Lowerer::LowerStringInterpolation(const frontend::Expression& expression) -
   };
 }
 
-auto Lowerer::LowerBuiltin(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expression) {
   const auto builtin = model_.builtin_calls.at(&expression);
   if (builtin == Builtin::StringCodePoints || builtin == Builtin::StringGraphemes ||
       builtin == Builtin::CollectionKeys || builtin == Builtin::CollectionValues) {
@@ -101,14 +101,14 @@ auto Lowerer::LowerBuiltin(const frontend::Expression& expression) -> LoweredVal
   return {.reg = result, .type = model_.expression_types.at(&expression)};
 }
 
-auto Lowerer::LowerSnapshotArray(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerSnapshotArray(const frontend::Expression& expression) {
   const auto builtin = model_.builtin_calls.at(&expression);
   const auto receiver = LowerExpression(*expression.callee->object);
   const auto base = AllocateRegister(expression.location);
   const auto array_slot = AllocateRegister(expression.location);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = expression.location});
   const auto count = AllocateTemporary(expression.location);
-  auto count_builtin = Builtin::CollectionLength;
+  auto count_builtin = Builtin::CollectionSize;
   if (builtin == Builtin::StringCodePoints) {
     count_builtin = Builtin::StringLength;
   } else if (builtin == Builtin::StringGraphemes) {

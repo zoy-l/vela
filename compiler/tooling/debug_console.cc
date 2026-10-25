@@ -90,7 +90,7 @@ struct Breakpoint final {
   std::string function;
 };
 
-auto Trim(std::string_view text) -> std::string_view {
+std::string_view Trim(std::string_view text) {
   const auto first = text.find_first_not_of(" \t\r\n");
   if (first == std::string_view::npos) {
     return {};
@@ -98,7 +98,7 @@ auto Trim(std::string_view text) -> std::string_view {
   return text.substr(first, text.find_last_not_of(" \t\r\n") - first + 1);
 }
 
-auto Unquote(std::string_view text) -> std::string_view {
+std::string_view Unquote(std::string_view text) {
   text = Trim(text);
   if (text.size() >= 2 && text.front() == '"' && text.back() == '"') {
     text.remove_prefix(1);
@@ -107,7 +107,7 @@ auto Unquote(std::string_view text) -> std::string_view {
   return text;
 }
 
-auto Words(std::string_view text) -> std::pair<std::string_view, std::string_view> {
+std::pair<std::string_view, std::string_view> Words(std::string_view text) {
   text = Trim(text);
   const auto separator = text.find_first_of(" \t");
   if (separator == std::string_view::npos) {
@@ -116,7 +116,7 @@ auto Words(std::string_view text) -> std::pair<std::string_view, std::string_vie
   return {text.substr(0, separator), Trim(text.substr(separator + 1))};
 }
 
-auto Index(std::string_view text) -> std::optional<std::uint32_t> {
+std::optional<std::uint32_t> Index(std::string_view text) {
   if (text.empty()) {
     return std::nullopt;
   }
@@ -130,13 +130,13 @@ auto Index(std::string_view text) -> std::optional<std::uint32_t> {
   return index;
 }
 
-auto IsNewLine(const Point& current, const Point& previous) -> bool {
+bool IsNewLine(const Point& current, const Point& previous) {
   return current.function != previous.function || current.path != previous.path ||
          current.line != previous.line || current.depth != previous.depth ||
          current.instruction <= previous.instruction;
 }
 
-auto CurrentPoint(const vm::DebugFrame& frame, std::size_t depth) -> Point {
+Point CurrentPoint(const vm::DebugFrame& frame, std::size_t depth) {
   Point point{
       .path = std::string_view(),
       .function = frame.name(),
@@ -210,17 +210,17 @@ class ConsoleDebugger final : public vm::Debugger {
       source_names_.try_emplace(PathText(Utf8Path(path).filename())).first->second.push_back(path);
     }
   }
-  auto BeforeInstruction(const vm::DebugContext& context) noexcept -> vm::DebugAction override;
+  vm::DebugAction BeforeInstruction(const vm::DebugContext& context) noexcept override;
 
  private:
-  [[nodiscard]] auto ShouldStop(const Point& point) const -> bool;
-  [[nodiscard]] auto IsBreakpoint(const Point& point) const -> bool;
-  auto Prompt(const vm::DebugContext& context) -> vm::DebugAction;
-  auto ExecuteCommand(Command command,
-                      std::string_view arguments,
-                      const vm::DebugContext& context,
-                      vm::DebugFrame& selected) -> ConsoleAction;
-  auto ResolveSource(std::string_view text) const -> std::expected<std::string, std::string>;
+  [[nodiscard]] bool ShouldStop(const Point& point) const;
+  [[nodiscard]] bool IsBreakpoint(const Point& point) const;
+  vm::DebugAction Prompt(const vm::DebugContext& context);
+  ConsoleAction ExecuteCommand(Command command,
+                               std::string_view arguments,
+                               const vm::DebugContext& context,
+                               vm::DebugFrame& selected);
+  std::expected<std::string, std::string> ResolveSource(std::string_view text) const;
   void AddBreakpoint(std::string_view text, const vm::DebugFrame& frame);
   void AddSourceBreakpoint(std::string_view path, std::uint32_t line);
   void DeleteBreakpoint(std::string_view text);
@@ -248,7 +248,7 @@ class ConsoleDebugger final : public vm::Debugger {
   absl::flat_hash_set<std::string> function_breakpoints_;
 };
 
-auto ConsoleDebugger::ShouldStop(const Point& point) const -> bool {
+bool ConsoleDebugger::ShouldStop(const Point& point) const {
   switch (mode_) {
     case Mode::Entry:
     case Mode::Instruction:
@@ -265,7 +265,7 @@ auto ConsoleDebugger::ShouldStop(const Point& point) const -> bool {
   std::unreachable();
 }
 
-auto ConsoleDebugger::IsBreakpoint(const Point& point) const -> bool {
+bool ConsoleDebugger::IsBreakpoint(const Point& point) const {
   if (point.instruction == 0 && function_breakpoints_.contains(point.function)) {
     return true;
   }
@@ -273,8 +273,7 @@ auto ConsoleDebugger::IsBreakpoint(const Point& point) const -> bool {
   return found != source_breakpoints_.end() && found->second.contains(point.line);
 }
 
-auto ConsoleDebugger::BeforeInstruction(const vm::DebugContext& context) noexcept
-    -> vm::DebugAction {
+vm::DebugAction ConsoleDebugger::BeforeInstruction(const vm::DebugContext& context) noexcept {
   if (mode_ == Mode::Continue && breakpoints_.empty()) {
     return vm::DebugAction::Continue;
   }
@@ -298,7 +297,7 @@ void ConsoleDebugger::Help() const {
            << "field rN INDEX; element rN INDEX; help (h)\n";
 }
 
-auto ConsoleDebugger::Prompt(const vm::DebugContext& context) -> vm::DebugAction {
+vm::DebugAction ConsoleDebugger::Prompt(const vm::DebugContext& context) {
   auto selected = context.current_frame();
   while (true) {
     *output_ << "debug> " << std::flush;
@@ -322,10 +321,10 @@ auto ConsoleDebugger::Prompt(const vm::DebugContext& context) -> vm::DebugAction
   }
 }
 
-auto ConsoleDebugger::ExecuteCommand(Command command,
-                                     std::string_view arguments,
-                                     const vm::DebugContext& context,
-                                     vm::DebugFrame& selected) -> ConsoleAction {
+ConsoleAction ConsoleDebugger::ExecuteCommand(Command command,
+                                              std::string_view arguments,
+                                              const vm::DebugContext& context,
+                                              vm::DebugFrame& selected) {
   switch (command) {
     case Command::Continue:
       mode_ = Mode::Continue;
@@ -377,8 +376,8 @@ auto ConsoleDebugger::ExecuteCommand(Command command,
   return ConsoleAction::Prompt;
 }
 
-auto ConsoleDebugger::ResolveSource(std::string_view text) const
-    -> std::expected<std::string, std::string> {
+std::expected<std::string, std::string> ConsoleDebugger::ResolveSource(
+    std::string_view text) const {
   text = Unquote(text);
   if (source_lines_.contains(text)) {
     return std::string(text);
@@ -602,10 +601,10 @@ void ConsoleDebugger::Inspect(Command command,
 
 }  // namespace
 
-auto RunDebugConsole(const vm::FunctionHandle& function,
-                     runtime::Isolate& isolate,
-                     std::istream& input,
-                     std::ostream& output) -> vm::ExecutionResult {
+vm::ExecutionResult RunDebugConsole(const vm::FunctionHandle& function,
+                                    runtime::Isolate& isolate,
+                                    std::istream& input,
+                                    std::ostream& output) {
   ConsoleDebugger debugger(function.program(), input, output);
   return vm::VirtualMachine(isolate).Debug(function, debugger);
 }

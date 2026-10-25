@@ -37,7 +37,7 @@ class ModuleBinding final {
   ModuleBinding(std::vector<SourceModule> modules, std::vector<SourceFile> sources)
       : modules_(std::move(modules)), sources_(std::move(sources)), scopes_(modules_.size()) {}
 
-  auto Run() -> ParseResult;
+  ParseResult Run();
 
  private:
   void Error(SourceLocation location, std::string message);
@@ -51,11 +51,12 @@ class ModuleBinding final {
   void BindExpression(Expression* expression);
   void BindStatement(Statement* statement);
   void BindScoped(Statement* statement);
-  [[nodiscard]] auto IsLocal(const std::string& name) const -> bool;
-  [[nodiscard]] auto IsTypeParameter(const std::string& name) const -> bool;
-  auto Resolve(const std::string& name, SourceLocation location) -> std::string;
-  auto ExportedName(std::uint32_t dependency, const std::string& name, SourceLocation location)
-      -> std::string;
+  [[nodiscard]] bool IsLocal(const std::string& name) const;
+  [[nodiscard]] bool IsTypeParameter(const std::string& name) const;
+  std::string Resolve(const std::string& name, SourceLocation location);
+  std::string ExportedName(std::uint32_t dependency,
+                           const std::string& name,
+                           SourceLocation location);
 
   std::vector<SourceModule> modules_;
   std::vector<SourceFile> sources_;
@@ -147,19 +148,19 @@ void ModuleBinding::BindImports() {
   }
 }
 
-auto ModuleBinding::IsLocal(const std::string& name) const -> bool {
+bool ModuleBinding::IsLocal(const std::string& name) const {
   return std::ranges::any_of(locals_,
                              [&name](const auto& scope) -> bool { return scope.contains(name); });
 }
 
-auto ModuleBinding::IsTypeParameter(const std::string& name) const -> bool {
+bool ModuleBinding::IsTypeParameter(const std::string& name) const {
   return std::ranges::any_of(type_parameters_,
                              [&name](const auto& scope) -> bool { return scope.contains(name); });
 }
 
-auto ModuleBinding::ExportedName(std::uint32_t dependency,
-                                 const std::string& name,
-                                 SourceLocation location) -> std::string {
+std::string ModuleBinding::ExportedName(std::uint32_t dependency,
+                                        const std::string& name,
+                                        SourceLocation location) {
   const auto& declarations = scopes_.at(dependency).declarations;
   const auto found = declarations.find(name);
   if (found == declarations.end() || found->second.export_kind != ExportKind::Exported) {
@@ -169,7 +170,7 @@ auto ModuleBinding::ExportedName(std::uint32_t dependency,
   return found->second.target;
 }
 
-auto ModuleBinding::Resolve(const std::string& name, SourceLocation location) -> std::string {
+std::string ModuleBinding::Resolve(const std::string& name, SourceLocation location) {
   const auto& scope = scopes_.at(current_);
   const auto separator = name.find('.');
   if (separator != std::string::npos) {
@@ -368,7 +369,7 @@ void ModuleBinding::BindProgram(Program& program) {
   }
 }
 
-auto ModuleBinding::Run() -> ParseResult {
+ParseResult ModuleBinding::Run() {
   CollectDeclarations();
   if (diagnostics_.empty()) {
     BindImports();
@@ -390,8 +391,7 @@ auto ModuleBinding::Run() -> ParseResult {
 
 }  // namespace
 
-auto BindModules(std::vector<SourceModule> modules, std::vector<SourceFile> sources)
-    -> ParseResult {
+ParseResult BindModules(std::vector<SourceModule> modules, std::vector<SourceFile> sources) {
   if (modules.size() == 1 && modules.front().program.imports.empty()) {
     auto program = std::move(modules.front().program);
     program.sources = std::move(sources);

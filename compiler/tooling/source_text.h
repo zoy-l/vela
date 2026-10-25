@@ -14,7 +14,7 @@ enum class PositionEncoding : std::uint8_t { Utf8, Utf16 };
 struct TextPosition final {
   std::size_t line = 0;
   std::size_t character = 0;
-  auto operator==(const TextPosition&) const -> bool = default;
+  bool operator==(const TextPosition&) const = default;
 };
 
 struct TextRange final {
@@ -26,19 +26,19 @@ struct TextRange final {
 class SourceText final {
  public:
   SourceText() = default;
-  [[nodiscard]] static auto Create(std::string text) -> std::expected<SourceText, std::string>;
-  [[nodiscard]] auto text() const noexcept -> std::string_view { return text_; }
-  [[nodiscard]] auto line_count() const noexcept -> std::size_t { return lines_.size(); }
-  [[nodiscard]] auto OffsetAt(TextPosition position, PositionEncoding encoding) const
-      -> std::expected<std::size_t, std::string>;
-  [[nodiscard]] auto PositionAt(std::size_t offset, PositionEncoding encoding) const
-      -> TextPosition;
-  [[nodiscard]] auto Replace(TextRange range, std::string_view text, PositionEncoding encoding)
-      -> std::expected<void, std::string>;
+  [[nodiscard]] static std::expected<SourceText, std::string> Create(std::string text);
+  [[nodiscard]] std::string_view text() const noexcept { return text_; }
+  [[nodiscard]] std::size_t line_count() const noexcept { return lines_.size(); }
+  [[nodiscard]] std::expected<std::size_t, std::string> OffsetAt(TextPosition position,
+                                                                 PositionEncoding encoding) const;
+  [[nodiscard]] TextPosition PositionAt(std::size_t offset, PositionEncoding encoding) const;
+  [[nodiscard]] std::expected<void, std::string> Replace(TextRange range,
+                                                         std::string_view text,
+                                                         PositionEncoding encoding);
 
  private:
   void IndexLines();
-  [[nodiscard]] auto LineEnd(std::size_t line) const -> std::size_t;
+  [[nodiscard]] std::size_t LineEnd(std::size_t line) const;
   std::string text_;
   std::vector<std::size_t> lines_{0};
 };

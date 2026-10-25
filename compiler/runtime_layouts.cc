@@ -17,8 +17,9 @@
 
 namespace vela::compiler {
 
-auto CreateClassLayouts(const ir::Program& program, runtime::Isolate& isolate, LayoutCache* cache)
-    -> std::vector<runtime::ClassLayout*> {
+std::vector<runtime::ClassLayout*> CreateClassLayouts(const ir::Program& program,
+                                                      runtime::Isolate& isolate,
+                                                      LayoutCache* cache) {
   std::vector<runtime::ClassLayout*> class_layouts;
   class_layouts.reserve(program.classes.size());
   for (const ir::Class& class_info : program.classes) {
@@ -69,7 +70,7 @@ auto CreateClassLayouts(const ir::Program& program, runtime::Isolate& isolate, L
 
 namespace {
 
-auto TypeKey(const frontend::TypeDescriptor& type) -> std::string {
+std::string TypeKey(const frontend::TypeDescriptor& type) {
   return type.nullable ? type.name.substr(0, type.name.size() - 1) : type.name;
 }
 
@@ -87,16 +88,16 @@ class LayoutBuilder final {
   }
   ~LayoutBuilder() = default;
   LayoutBuilder(const LayoutBuilder&) = delete;
-  auto operator=(const LayoutBuilder&) -> LayoutBuilder& = delete;
+  LayoutBuilder& operator=(const LayoutBuilder&) = delete;
   LayoutBuilder(LayoutBuilder&&) = delete;
-  auto operator=(LayoutBuilder&&) -> LayoutBuilder& = delete;
+  LayoutBuilder& operator=(LayoutBuilder&&) = delete;
 
-  auto Build() -> RuntimeLayouts;
+  RuntimeLayouts Build();
 
  private:
-  auto Element(const frontend::TypeDescriptor& type) -> runtime::ArrayLayout;
-  auto Array(const frontend::TypeDescriptor& type) -> const runtime::ArrayLayout*;
-  auto Collection(const frontend::TypeDescriptor& type) -> const runtime::CollectionLayout*;
+  runtime::ArrayLayout Element(const frontend::TypeDescriptor& type);
+  const runtime::ArrayLayout* Array(const frontend::TypeDescriptor& type);
+  const runtime::CollectionLayout* Collection(const frontend::TypeDescriptor& type);
 
   const ir::Program& program_;
   const frontend::SemanticModel& model_;
@@ -105,7 +106,7 @@ class LayoutBuilder final {
   LayoutCache& cache_;
 };
 
-auto LayoutBuilder::Element(const frontend::TypeDescriptor& type) -> runtime::ArrayLayout {
+runtime::ArrayLayout LayoutBuilder::Element(const frontend::TypeDescriptor& type) {
   runtime::ArrayLayout layout;
   layout.nullable_elements = type.nullable;
   using Kind = frontend::TypeDescriptor::Kind;
@@ -162,7 +163,7 @@ auto LayoutBuilder::Element(const frontend::TypeDescriptor& type) -> runtime::Ar
   return layout;
 }
 
-auto LayoutBuilder::Array(const frontend::TypeDescriptor& type) -> const runtime::ArrayLayout* {
+const runtime::ArrayLayout* LayoutBuilder::Array(const frontend::TypeDescriptor& type) {
   const auto key = TypeKey(type);
   if (const auto found = cache_.arrays.find(key); found != cache_.arrays.end()) {
     return found->second;
@@ -173,8 +174,7 @@ auto LayoutBuilder::Array(const frontend::TypeDescriptor& type) -> const runtime
   return stored;
 }
 
-auto LayoutBuilder::Collection(const frontend::TypeDescriptor& type)
-    -> const runtime::CollectionLayout* {
+const runtime::CollectionLayout* LayoutBuilder::Collection(const frontend::TypeDescriptor& type) {
   const auto key = TypeKey(type);
   if (const auto found = cache_.collections.find(key); found != cache_.collections.end()) {
     return found->second;
@@ -190,7 +190,7 @@ auto LayoutBuilder::Collection(const frontend::TypeDescriptor& type)
   return stored;
 }
 
-auto LayoutBuilder::Build() -> RuntimeLayouts {
+RuntimeLayouts LayoutBuilder::Build() {
   RuntimeLayouts result;
   for (const auto& type : program_.array_types) {
     result.arrays.push_back(Array(type));
@@ -203,11 +203,11 @@ auto LayoutBuilder::Build() -> RuntimeLayouts {
 
 }  // namespace
 
-auto CreateRuntimeLayouts(const ir::Program& program,
-                          const frontend::SemanticModel& model,
-                          std::span<runtime::ClassLayout* const> classes,
-                          runtime::Isolate& isolate,
-                          LayoutCache* cache) -> RuntimeLayouts {
+RuntimeLayouts CreateRuntimeLayouts(const ir::Program& program,
+                                    const frontend::SemanticModel& model,
+                                    std::span<runtime::ClassLayout* const> classes,
+                                    runtime::Isolate& isolate,
+                                    LayoutCache* cache) {
   LayoutCache local;
   return LayoutBuilder(program, model, classes, isolate, cache == nullptr ? local : *cache).Build();
 }

@@ -23,7 +23,7 @@ namespace {
 
 using Kind = frontend::TypeDescriptor::Kind;
 
-auto BuiltinDetail(const frontend::FunctionDescriptor& signature) -> std::string {
+std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
   std::string text = "(";
   for (const auto& parameter : signature.parameters) {
     if (text.back() != '(') {
@@ -47,7 +47,7 @@ void AddBuiltins(std::vector<Completion>& result, Kind kind) {
       "append",
       "slice",
       "indexOf",
-      "contains",
+      "includes",
       "startsWith",
       "endsWith",
       "codePoints",
@@ -81,7 +81,8 @@ void AddArrayElementMethods(std::vector<Completion>& result,
   }
   for (const auto& [name, algorithm] : frontend::ArrayAlgorithms()) {
     auto accumulator = element;
-    if (algorithm == frontend::ArrayAlgorithm::Reduce) {
+    if (algorithm == frontend::ArrayAlgorithm::Reduce ||
+        algorithm == frontend::ArrayAlgorithm::Map) {
       accumulator.name = "R";
     }
     result.push_back({
@@ -94,8 +95,7 @@ void AddArrayElementMethods(std::vector<Completion>& result,
 
 }  // namespace
 
-auto SemanticIndex::BuiltinCompletion(const frontend::Token& token) const
-    -> std::optional<Completion> {
+std::optional<Completion> SemanticIndex::BuiltinCompletion(const frontend::Token& token) const {
   std::vector<Completion> candidates;
   if (const auto receiver = receivers_.find(Key{0, token.offset}); receiver != receivers_.end()) {
     candidates = MemberCompletions(receiver->second);
@@ -111,7 +111,7 @@ auto SemanticIndex::BuiltinCompletion(const frontend::Token& token) const
   return found == candidates.end() ? std::nullopt : std::optional(*found);
 }
 
-auto SemanticIndex::MemberCompletions(const Receiver& receiver) const -> std::vector<Completion> {
+std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receiver) const {
   std::vector<Completion> result;
   if (receiver.type.nullable || receiver.type.kind == Kind::Invalid) {
     return result;
@@ -146,7 +146,7 @@ void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
     result.push_back(
         {.label = std::string(name), .detail = std::move(detail), .kind = CompletionKind::Method});
   };
-  if (kind == Kind::Array || kind == Kind::String || kind == Kind::Set || kind == Kind::Map) {
+  if (kind == Kind::Array || kind == Kind::String) {
     property("length");
   }
   if (kind == Kind::String) {
@@ -171,9 +171,10 @@ void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
       method("value", "(): " + types.front().name);
       method("error", "(): " + types.back().name);
     } else {
+      property("size");
       const std::string_view parameter = kind == Kind::Set ? "value: " : "key: ";
       method("has", "(" + std::string(parameter) + types.front().name + "): bool");
-      method("remove", "(" + std::string(parameter) + types.front().name + "): bool");
+      method("delete", "(" + std::string(parameter) + types.front().name + "): bool");
       method("clear", "(): void");
       method("values", "(): " + types.back().name + "[]");
       if (kind == Kind::Set) {
@@ -191,8 +192,8 @@ void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
   }
 }
 
-auto SemanticIndex::VisibleLocals(std::size_t offset) const
-    -> absl::flat_hash_map<std::string, Completion> {
+absl::flat_hash_map<std::string, Completion> SemanticIndex::VisibleLocals(
+    std::size_t offset) const {
   std::vector<const Local*> locals;
   for (const auto& local : locals_) {
     const auto& scope = local.scope;
@@ -212,9 +213,9 @@ auto SemanticIndex::VisibleLocals(std::size_t offset) const
   return selected;
 }
 
-auto SemanticIndex::QualifiedCompletions(
+std::vector<Completion> SemanticIndex::QualifiedCompletions(
     std::size_t token_index,
-    const absl::flat_hash_map<std::string, Completion>& locals) const -> std::vector<Completion> {
+    const absl::flat_hash_map<std::string, Completion>& locals) const {
   const auto& tokens = sources_.front().tokens;
   const auto& token = tokens.at(token_index);
   if (const auto receiver = receivers_.find(Key{0, token.offset}); receiver != receivers_.end()) {
@@ -235,7 +236,7 @@ auto SemanticIndex::QualifiedCompletions(
   return result;
 }
 
-auto SemanticIndex::Complete(std::size_t offset) const -> std::vector<Completion> {
+std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
   if (sources_.empty()) {
     return {};
   }
@@ -297,8 +298,8 @@ auto SemanticIndex::Complete(std::size_t offset) const -> std::vector<Completion
         "Expected",
         "Math",
         "Random",
-        "Time",
-        "Console",
+        "performance",
+        "Date",
         "Error",
     });
     for (const auto type : kTypes) {

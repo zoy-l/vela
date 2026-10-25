@@ -28,8 +28,8 @@ class OrderedCollectionTest : public testing::Test {
     ASSERT_NE(values_.at(0).AsObject(), nullptr);
   }
 
-  auto map() -> HeapObject& { return *values_.at(0).AsObject(); }
-  auto heap() -> Heap& { return isolate_.heap(); }
+  HeapObject& map() { return *values_.at(0).AsObject(); }
+  Heap& heap() { return isolate_.heap(); }
 
   void InsertEntries(EntryPass pass) {
     const std::uint32_t stride = pass == EntryPass::Initial ? 1 : 2;

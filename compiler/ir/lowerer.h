@@ -23,7 +23,7 @@ struct LoweringResult final {
   Program program;
   frontend::Diagnostics diagnostics;
 
-  [[nodiscard]] auto Succeeded() const noexcept -> bool { return diagnostics.empty(); }
+  [[nodiscard]] bool Succeeded() const noexcept { return diagnostics.empty(); }
 };
 
 class Lowerer final {
@@ -36,11 +36,11 @@ class Lowerer final {
   // lowering 状态借用固定的 AST 和语义模型；执行上下文不允许复制或迁移。
   ~Lowerer() = default;
   Lowerer(const Lowerer&) = delete;
-  auto operator=(const Lowerer&) -> Lowerer& = delete;
+  Lowerer& operator=(const Lowerer&) = delete;
   Lowerer(Lowerer&&) = delete;
-  auto operator=(Lowerer&&) -> Lowerer& = delete;
+  Lowerer& operator=(Lowerer&&) = delete;
 
-  [[nodiscard]] auto Lower() -> LoweringResult;
+  [[nodiscard]] LoweringResult Lower();
 
  private:
   struct Local final {
@@ -76,9 +76,8 @@ class Lowerer final {
   void BuildClassTable();
   void BuildInterfaceSelectors();
   void BuildFunctionTable();
-  auto AddFunctionId(const std::string& name,
-                     frontend::Function::Role role = frontend::Function::Role::Ordinary)
-      -> std::uint32_t;
+  std::uint32_t AddFunctionId(const std::string& name,
+                              frontend::Function::Role role = frontend::Function::Role::Ordinary);
   enum class GlobalKind : std::uint8_t { Module, StaticField };
   void AddGlobalId(const std::string& name, GlobalKind kind);
   void StoreFunction(Function function);
@@ -96,47 +95,46 @@ class Lowerer final {
   void LowerTry(const frontend::Statement& statement);
   void LowerReturn(const frontend::Statement& statement);
   void LowerControlExit(const frontend::Statement& statement);
-  auto LowerFinalizers(std::size_t depth) -> Completion;
-  auto LowerConstantLabel(const frontend::Expression& source) -> RegisterId;
-  auto LowerMatch(const frontend::Expression& expression) -> LoweredValue;
+  Completion LowerFinalizers(std::size_t depth);
+  RegisterId LowerConstantLabel(const frontend::Expression& source);
+  LoweredValue LowerMatch(const frontend::Expression& expression);
 
-  [[nodiscard]] auto LowerExpression(const frontend::Expression& expression) -> LoweredValue;
-  [[nodiscard]] auto SnapshotBefore(LoweredValue value, const frontend::Expression& later)
-      -> LoweredValue;
-  [[nodiscard]] auto LowerAssignment(const frontend::Expression& expression) -> LoweredValue;
-  [[nodiscard]] auto LowerConstruction(const frontend::Expression& expression,
-                                       const frontend::TypeDescriptor& expected) -> LoweredValue;
-  [[nodiscard]] auto LowerMember(const frontend::Expression& expression) -> LoweredValue;
-  [[nodiscard]] auto LowerIndex(const frontend::Expression& expression) -> LoweredValue;
-  [[nodiscard]] auto LowerCall(const frontend::Expression& expression) -> LoweredValue;
-  auto LowerFunctionValue(const frontend::Expression& expression) -> LoweredValue;
-  auto LowerIndirectCall(const frontend::Expression& expression) -> LoweredValue;
-  auto LowerInterfaceCall(const frontend::Expression& expression) -> LoweredValue;
-  auto LowerTypeOperation(const frontend::Expression& expression) -> LoweredValue;
-  auto RegisterRuntimeType(const frontend::TypeDescriptor& type) -> std::uint32_t;
-  auto LowerExpected(const frontend::Expression& expression) -> LoweredValue;
-  auto RegisterExpectedType(frontend::TypeDescriptor type) -> ClassId;
-  auto ReadLocal(const Local& local, frontend::SourceLocation location) -> LoweredValue;
-  auto CallableClass(std::uint32_t function_id,
-                     CallableMode mode,
-                     const std::vector<frontend::Capture>& captures) -> ClassId;
+  [[nodiscard]] LoweredValue LowerExpression(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue SnapshotBefore(LoweredValue value, const frontend::Expression& later);
+  [[nodiscard]] LoweredValue LowerAssignment(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerConstruction(const frontend::Expression& expression,
+                                               const frontend::TypeDescriptor& expected);
+  [[nodiscard]] LoweredValue LowerMember(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerIndex(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerCall(const frontend::Expression& expression);
+  LoweredValue LowerFunctionValue(const frontend::Expression& expression);
+  LoweredValue LowerIndirectCall(const frontend::Expression& expression);
+  LoweredValue LowerInterfaceCall(const frontend::Expression& expression);
+  LoweredValue LowerTypeOperation(const frontend::Expression& expression);
+  std::uint32_t RegisterRuntimeType(const frontend::TypeDescriptor& type);
+  LoweredValue LowerExpected(const frontend::Expression& expression);
+  ClassId RegisterExpectedType(frontend::TypeDescriptor type);
+  LoweredValue ReadLocal(const Local& local, frontend::SourceLocation location);
+  ClassId CallableClass(std::uint32_t function_id,
+                        CallableMode mode,
+                        const std::vector<frontend::Capture>& captures);
 
-  [[nodiscard]] auto FindClass(std::string_view name) const -> const frontend::ClassDescriptor*;
-  [[nodiscard]] auto FindLocal(std::string_view name) const -> const Local*;
-  [[nodiscard]] auto AllocateRegister(frontend::SourceLocation location) -> RegisterId;
-  [[nodiscard]] auto AllocateTemporary(frontend::SourceLocation location) -> RegisterId;
-  [[nodiscard]] static auto IsInteger(const frontend::TypeDescriptor& type) -> bool;
-  [[nodiscard]] static auto IsBoolean(const frontend::TypeDescriptor& type) -> bool;
-  [[nodiscard]] static auto FindField(const frontend::ClassDescriptor& class_info,
-                                      std::string_view name) -> std::optional<FieldId>;
+  [[nodiscard]] const frontend::ClassDescriptor* FindClass(std::string_view name) const;
+  [[nodiscard]] const Local* FindLocal(std::string_view name) const;
+  [[nodiscard]] RegisterId AllocateRegister(frontend::SourceLocation location);
+  [[nodiscard]] RegisterId AllocateTemporary(frontend::SourceLocation location);
+  [[nodiscard]] static bool IsInteger(const frontend::TypeDescriptor& type);
+  [[nodiscard]] static bool IsBoolean(const frontend::TypeDescriptor& type);
+  [[nodiscard]] static std::optional<FieldId> FindField(const frontend::ClassDescriptor& class_info,
+                                                        std::string_view name);
   void Emit(Instruction instruction);
   void PushScope();
   void PopScope();
-  auto DeclareLocal(std::string_view name,
+  bool DeclareLocal(std::string_view name,
                     RegisterId reg,
                     frontend::TypeDescriptor type,
                     frontend::SourceLocation location,
-                    const void* declaration = nullptr) -> bool;
+                    const void* declaration = nullptr);
 
   void LowerVariableDeclaration(const frontend::Statement& statement);
 
@@ -146,24 +144,24 @@ class Lowerer final {
 
   void LowerFor(const frontend::Statement& statement);
 
-  auto LowerIntegerLiteral(const frontend::Expression& expression) -> LoweredValue;
-  auto LowerDoubleLiteral(const frontend::Expression& expression) -> LoweredValue;
-  auto LowerDoubleBinary(const frontend::Expression& expression,
-                         const LoweredValue& left,
-                         const LoweredValue& right) -> LoweredValue;
+  LoweredValue LowerIntegerLiteral(const frontend::Expression& expression);
+  LoweredValue LowerDoubleLiteral(const frontend::Expression& expression);
+  LoweredValue LowerDoubleBinary(const frontend::Expression& expression,
+                                 const LoweredValue& left,
+                                 const LoweredValue& right);
 
-  auto LowerStringLiteral(const frontend::Expression& expression) -> LoweredValue;
-  auto LowerStringInterpolation(const frontend::Expression& expression) -> LoweredValue;
-  auto LowerBuiltin(const frontend::Expression& expression) -> LoweredValue;
-  auto LowerSnapshotArray(const frontend::Expression& expression) -> LoweredValue;
-  auto LowerCollectionConstruction(const frontend::Expression& expression) -> LoweredValue;
-  auto RegisterCollectionType(frontend::TypeDescriptor type) -> std::uint32_t;
+  LoweredValue LowerStringLiteral(const frontend::Expression& expression);
+  LoweredValue LowerStringInterpolation(const frontend::Expression& expression);
+  LoweredValue LowerBuiltin(const frontend::Expression& expression);
+  LoweredValue LowerSnapshotArray(const frontend::Expression& expression);
+  LoweredValue LowerCollectionConstruction(const frontend::Expression& expression);
+  std::uint32_t RegisterCollectionType(frontend::TypeDescriptor type);
 
-  auto LowerArrayLiteral(const frontend::Expression& expression) -> LoweredValue;
-  auto LowerArrayAlgorithm(const frontend::Expression& expression) -> LoweredValue;
-  auto EmitCallback(RegisterId callback,
-                    std::span<const RegisterId> arguments,
-                    frontend::SourceLocation location) -> RegisterId;
+  LoweredValue LowerArrayLiteral(const frontend::Expression& expression);
+  LoweredValue LowerArrayAlgorithm(const frontend::Expression& expression);
+  RegisterId EmitCallback(RegisterId callback,
+                          std::span<const RegisterId> arguments,
+                          frontend::SourceLocation location);
   struct ArrayAlgorithmRegisters final {
     RegisterId array;
     RegisterId callback;
@@ -173,22 +171,22 @@ class Lowerer final {
   void LowerArraySiftDown(RegisterId root,
                           const ArrayAlgorithmRegisters& inputs,
                           frontend::SourceLocation location);
-  auto EmitTemporary(Instruction instruction) -> RegisterId;
-  auto RegisterArrayType(const frontend::TypeDescriptor& type) -> std::uint32_t;
+  RegisterId EmitTemporary(Instruction instruction);
+  std::uint32_t RegisterArrayType(const frontend::TypeDescriptor& type);
 
-  auto LowerEnumMember(const frontend::Expression& expression, const frontend::TypeDescriptor& type)
-      -> LoweredValue;
+  LoweredValue LowerEnumMember(const frontend::Expression& expression,
+                               const frontend::TypeDescriptor& type);
 
-  auto LowerUnary(const frontend::Expression& expression) -> LoweredValue;
+  LoweredValue LowerUnary(const frontend::Expression& expression);
 
-  auto LowerBinary(const frontend::Expression& expression) -> LoweredValue;
+  LoweredValue LowerBinary(const frontend::Expression& expression);
 
-  auto LowerInvocation(const frontend::Expression& expression,
-                       const frontend::FunctionDescriptor& function,
-                       std::uint32_t function_id,
-                       const LoweredValue* receiver,
-                       Opcode opcode = Opcode::Call) -> LoweredValue;
-  auto LowerLogical(const frontend::Expression& expression) -> LoweredValue;
+  LoweredValue LowerInvocation(const frontend::Expression& expression,
+                               const frontend::FunctionDescriptor& function,
+                               std::uint32_t function_id,
+                               const LoweredValue* receiver,
+                               Opcode opcode = Opcode::Call);
+  LoweredValue LowerLogical(const frontend::Expression& expression);
 
   const frontend::Program& source_;
   const frontend::SemanticModel& model_;

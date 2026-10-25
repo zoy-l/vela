@@ -16,10 +16,10 @@ struct JsonError final {
   std::string message;
 };
 
-[[nodiscard]] auto GetJsonField(const yyjson_val* object, std::string_view key) noexcept
-    -> const yyjson_val*;
-[[nodiscard]] auto GetMutableJsonField(yyjson_mut_val* object, std::string_view key) noexcept
-    -> yyjson_mut_val*;
+[[nodiscard]] const yyjson_val* GetJsonField(const yyjson_val* object,
+                                             std::string_view key) noexcept;
+[[nodiscard]] yyjson_mut_val* GetMutableJsonField(yyjson_mut_val* object,
+                                                  std::string_view key) noexcept;
 // key 复制到 arena，调用方可传临时文本；读取接口始终按长度查找。
 void AddJsonField(yyjson_mut_doc* document,
                   yyjson_mut_val* object,
@@ -38,9 +38,9 @@ struct MutableJsonDeleter final {
 class JsonOutput final {
  public:
   JsonOutput();
-  [[nodiscard]] auto document() const noexcept -> yyjson_mut_doc* { return document_.get(); }
-  [[nodiscard]] auto root() const noexcept -> yyjson_mut_val*;
-  [[nodiscard]] auto Serialize() const -> std::expected<std::string, JsonError>;
+  [[nodiscard]] yyjson_mut_doc* document() const noexcept { return document_.get(); }
+  [[nodiscard]] yyjson_mut_val* root() const noexcept;
+  [[nodiscard]] std::expected<std::string, JsonError> Serialize() const;
 
  private:
   std::unique_ptr<yyjson_mut_doc, MutableJsonDeleter> document_;
@@ -49,14 +49,14 @@ class JsonOutput final {
 // in-situ 字符串视图借用 storage_；移动转移堆缓冲，不使 yyjson 节点中的指针失效。
 class JsonDocument final {
  public:
-  [[nodiscard]] static auto Parse(std::string_view text) -> std::expected<JsonDocument, JsonError>;
+  [[nodiscard]] static std::expected<JsonDocument, JsonError> Parse(std::string_view text);
   JsonDocument(const JsonDocument&) = delete;
-  auto operator=(const JsonDocument&) -> JsonDocument& = delete;
+  JsonDocument& operator=(const JsonDocument&) = delete;
   JsonDocument(JsonDocument&&) noexcept = default;
-  auto operator=(JsonDocument&&) noexcept -> JsonDocument& = default;
+  JsonDocument& operator=(JsonDocument&&) noexcept = default;
   ~JsonDocument() = default;
 
-  [[nodiscard]] auto root() const noexcept -> const yyjson_val*;
+  [[nodiscard]] const yyjson_val* root() const noexcept;
 
  private:
   JsonDocument() = default;

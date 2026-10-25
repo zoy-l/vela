@@ -15,7 +15,7 @@
 namespace vela::runtime {
 namespace {
 
-auto MatchesType(Value value, NativeType type) -> bool {
+bool MatchesType(Value value, NativeType type) {
   switch (type) {
     case NativeType::Void:
       return value.IsNull();
@@ -35,7 +35,7 @@ auto MatchesType(Value value, NativeType type) -> bool {
 
 }  // namespace
 
-auto NativeContext::String(std::string_view text) const -> NativeResult {
+NativeResult NativeContext::String(std::string_view text) const {
   if (InvalidUtf8Offset(text)) {
     return std::unexpected(NativeError{
         .kind = NativeErrorKind::InvalidUtf8,
@@ -52,12 +52,11 @@ auto NativeContext::String(std::string_view text) const -> NativeResult {
   return Value::String(string);
 }
 
-auto internal::NativeCodec<std::string_view>::Decode(Value value) -> std::string_view {
+std::string_view internal::NativeCodec<std::string_view>::Decode(Value value) {
   return value.AsString()->value();
 }
 
-auto NativeFunction::Invoke(Isolate& isolate, std::span<const Value> arguments) const
-    -> NativeResult {
+NativeResult NativeFunction::Invoke(Isolate& isolate, std::span<const Value> arguments) const {
   if (arguments.size() != parameters_.size()) {
     return std::unexpected(NativeError{
         .kind = NativeErrorKind::TypeMismatch,
@@ -85,7 +84,7 @@ auto NativeFunction::Invoke(Isolate& isolate, std::span<const Value> arguments) 
   return result;
 }
 
-auto NativeTypeName(NativeType type) noexcept -> std::string_view {
+std::string_view NativeTypeName(NativeType type) noexcept {
   switch (type) {
     case NativeType::Void:
       return "void";

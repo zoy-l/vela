@@ -19,14 +19,14 @@
 namespace vela::frontend {
 namespace {
 constexpr auto kNames =
-    std::to_array<std::string_view>({"Math", "Random", "Time", "Console", "Error"});
+    std::to_array<std::string_view>({"Math", "Random", "performance", "Date", "Error"});
 }
 
-auto IsStandardName(std::string_view name) noexcept -> bool {
+bool IsStandardName(std::string_view name) noexcept {
   return std::ranges::find(kNames, name) != kNames.end();
 }
 
-auto StandardDeclarationSource(std::string_view name) noexcept -> std::optional<std::string_view> {
+std::optional<std::string_view> StandardDeclarationSource(std::string_view name) noexcept {
   if (name == "Error") {
     return R"(class Error {
   public param message: string;
@@ -34,20 +34,17 @@ auto StandardDeclarationSource(std::string_view name) noexcept -> std::optional<
 }
 )";
   }
-  if (name == "Console") {
-    return R"(class Console {
+  if (name == "performance") {
+    return R"(class performance {
   private constructor() {}
-  static external func readLine(): string? = 'Console.readLine';
-  static external func write(text: string): void = 'Console.write';
-  static external func flush(): void = 'Console.flush';
+  static external func now(): double = 'performance.now';
 }
 )";
   }
-  if (name == "Time") {
-    return R"(class Time {
+  if (name == "Date") {
+    return R"(class Date {
   private constructor() {}
-  static external func monotonicMicros(): int = 'Time.monotonicMicros';
-  static external func unixMicros(): int = 'Time.unixMicros';
+  static external func now(): int = 'Date.now';
 }
 )";
   }
@@ -56,15 +53,15 @@ auto StandardDeclarationSource(std::string_view name) noexcept -> std::optional<
   private constructor() {}
   static external func seed(value: int): void = 'Random.seed';
   static external func nextInt(bound: int): int = 'Random.nextInt';
-  static external func nextDouble(): double = 'Random.nextDouble';
 }
 )";
   }
   if (name == "Math") {
     return R"(class Math {
   private constructor() {}
-  static pi: double = 3.141592653589793;
-  static e: double = 2.718281828459045;
+  static PI: double = 3.141592653589793;
+  static E: double = 2.718281828459045;
+  static external func random(): double = 'Math.random';
   static external func sqrt(value: double): double = 'Math.sqrt';
   static external func log(value: double): double = 'Math.log';
   static external func exp(value: double): double = 'Math.exp';

@@ -31,7 +31,7 @@ struct FormatItem final {
   std::size_t offset = 0;
   std::optional<std::string> formatted = std::nullopt;
 
-  [[nodiscard]] auto spelling() const -> std::string_view {
+  [[nodiscard]] std::string_view spelling() const {
     return formatted ? std::string_view(*formatted) : text;
   }
 };
@@ -54,8 +54,7 @@ void AppendStringRun(std::string& output, std::string_view text) {
   }
 }
 
-auto StringSpelling(std::string_view source, std::span<const frontend::Token> tokens)
-    -> std::string {
+std::string StringSpelling(std::string_view source, std::span<const frontend::Token> tokens) {
   std::string output;
   const auto start = tokens.front().offset;
   auto copied = start;
@@ -80,7 +79,7 @@ auto StringSpelling(std::string_view source, std::span<const frontend::Token> to
   return output;
 }
 
-auto StringTailIndex(std::span<const frontend::Token> tokens, std::size_t head) -> std::size_t {
+std::size_t StringTailIndex(std::span<const frontend::Token> tokens, std::size_t head) {
   std::size_t depth = 1;
   while (depth != 0) {
     const auto kind = tokens.subspan(++head).front().kind;
@@ -94,7 +93,7 @@ auto StringTailIndex(std::span<const frontend::Token> tokens, std::size_t head) 
   return head;
 }
 
-auto Items(std::string_view source, const frontend::LexResult& lexed) -> std::vector<FormatItem> {
+std::vector<FormatItem> Items(std::string_view source, const frontend::LexResult& lexed) {
   std::vector<FormatItem> items;
   std::size_t comment = 0;
   const auto& comments = lexed.comments;
@@ -137,24 +136,24 @@ auto Items(std::string_view source, const frontend::LexResult& lexed) -> std::ve
   return items;
 }
 
-auto IsControlParenthesis(TokenKind kind) -> bool {
+bool IsControlParenthesis(TokenKind kind) {
   return kind == TokenKind::If || kind == TokenKind::While || kind == TokenKind::For ||
          kind == TokenKind::Switch || kind == TokenKind::Match || kind == TokenKind::Catch;
 }
 
-auto IsOpening(const FormatItem& item) -> bool {
+bool IsOpening(const FormatItem& item) {
   return item.kind == TokenKind::LeftBrace || item.kind == TokenKind::LeftParen ||
          item.kind == TokenKind::LeftBracket ||
          (item.kind == TokenKind::Less && item.role == TokenRole::TypeDelimiter);
 }
 
-auto IsClosing(const FormatItem& item) -> bool {
+bool IsClosing(const FormatItem& item) {
   return item.kind == TokenKind::RightBrace || item.kind == TokenKind::RightParen ||
          item.kind == TokenKind::RightBracket ||
          (item.kind == TokenKind::Greater && item.role == TokenRole::TypeDelimiter);
 }
 
-auto IsOperator(const FormatItem& item) -> bool {
+bool IsOperator(const FormatItem& item) {
   if (item.role != TokenRole::Ordinary) {
     return false;
   }
@@ -179,7 +178,7 @@ auto IsOperator(const FormatItem& item) -> bool {
   }
 }
 
-auto NeedsSpace(const FormatItem& left, const FormatItem& right) -> bool {
+bool NeedsSpace(const FormatItem& left, const FormatItem& right) {
   const auto previous = left.kind;
   const auto current = right.kind;
   if (current == TokenKind::Dot || current == TokenKind::Comma || current == TokenKind::Semicolon ||
@@ -219,7 +218,7 @@ struct Scope final {
   bool case_indented = false;
 };
 
-auto IsDeclarationStart(TokenKind kind) -> bool {
+bool IsDeclarationStart(TokenKind kind) {
   switch (kind) {
     case TokenKind::Import:
     case TokenKind::Export:
@@ -257,7 +256,7 @@ class Formatter final {
       }
     }
   }
-  auto Run() -> std::string;
+  std::string Run();
 
  private:
   void Newline();
@@ -459,7 +458,7 @@ void Formatter::Emit(std::size_t index) {
   }
 }
 
-auto Formatter::Run() -> std::string {
+std::string Formatter::Run() {
   for (std::size_t index = 0; index < items_.size(); ++index) {
     Emit(index);
   }
@@ -469,7 +468,7 @@ auto Formatter::Run() -> std::string {
 
 }  // namespace
 
-auto FormatSource(std::string_view source) -> std::expected<std::string, frontend::Diagnostics> {
+std::expected<std::string, frontend::Diagnostics> FormatSource(std::string_view source) {
   auto lexed = frontend::Lexer(source, 0, frontend::CommentRetention::Preserve).Tokenize();
   if (!lexed.diagnostics.empty()) {
     return std::unexpected(std::move(lexed.diagnostics));

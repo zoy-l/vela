@@ -8,8 +8,8 @@
 
 namespace vela::compiler {
 
-[[nodiscard]] auto AllocateRegisters(ir::Function& function,
-                                     std::span<const ir::Function> functions)
-    -> std::optional<frontend::Diagnostic>;
+[[nodiscard]] std::optional<frontend::Diagnostic> AllocateRegisters(
+    ir::Function& function,
+    std::span<const ir::Function> functions);
 
 }  // namespace vela::compiler

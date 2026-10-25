@@ -12,7 +12,7 @@ python -m tools.vl editor package
 ```
 
 In VS Code, run **Extensions: Install from VSIX...** and select the generated
-`out/editor/vela-language-0.1.8.vsix`. Open the Vela workspace. The default server
+`out/editor/vela-language-0.1.10.vsix`. Open the Vela workspace. The default server
 is `out/debug/vela.exe` on Windows or `out/debug/vela` elsewhere. Set
 `vela.serverPath` to use another build or an installed executable; it must expose
 the `lsp` command. No global PATH changes are needed.

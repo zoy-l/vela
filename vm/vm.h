@@ -33,9 +33,7 @@ struct ExecutionResult final {
   std::vector<StackFrame> stack_trace;
   std::string message;
 
-  [[nodiscard]] auto Succeeded() const noexcept -> bool {
-    return status == ExecutionStatus::Returned;
-  }
+  [[nodiscard]] bool Succeeded() const noexcept { return status == ExecutionStatus::Returned; }
 };
 
 void WriteRuntimeError(std::ostream& output, const ExecutionResult& result);
@@ -46,21 +44,20 @@ class VirtualMachine final {
 
   ~VirtualMachine() = default;
   VirtualMachine(const VirtualMachine&) = delete;
-  auto operator=(const VirtualMachine&) -> VirtualMachine& = delete;
+  VirtualMachine& operator=(const VirtualMachine&) = delete;
   VirtualMachine(VirtualMachine&&) = delete;
-  auto operator=(VirtualMachine&&) -> VirtualMachine& = delete;
+  VirtualMachine& operator=(VirtualMachine&&) = delete;
 
-  [[nodiscard]] auto Execute(const FunctionHandle& function) noexcept -> ExecutionResult;
-  [[nodiscard]] auto Execute(const Program& program, std::uint32_t entry_function) noexcept
-      -> ExecutionResult;
-  [[nodiscard]] auto Debug(const FunctionHandle& function, Debugger& debugger) noexcept
-      -> ExecutionResult;
-  [[nodiscard]] auto register_bytes() const noexcept -> std::size_t;
+  [[nodiscard]] ExecutionResult Execute(const FunctionHandle& function) noexcept;
+  [[nodiscard]] ExecutionResult Execute(const Program& program,
+                                        std::uint32_t entry_function) noexcept;
+  [[nodiscard]] ExecutionResult Debug(const FunctionHandle& function, Debugger& debugger) noexcept;
+  [[nodiscard]] std::size_t register_bytes() const noexcept;
 
  private:
-  [[clang::always_inline]] auto ExecuteImpl(const Program& program,
-                                            std::uint32_t entry_function,
-                                            Debugger* debugger) noexcept -> ExecutionResult;
+  [[clang::always_inline]] ExecutionResult ExecuteImpl(const Program& program,
+                                                       std::uint32_t entry_function,
+                                                       Debugger* debugger) noexcept;
   runtime::Isolate& isolate_;
   std::array<RegisterFile, kMaxCallFrames> registers_;
   std::vector<runtime::Value> native_arguments_;

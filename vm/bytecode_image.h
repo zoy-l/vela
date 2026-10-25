@@ -14,9 +14,10 @@ namespace vela::vm {
 
 inline constexpr std::uint32_t kBytecodeImageVersion = 1;
 
-[[nodiscard]] auto SaveBytecode(const Program& program, const runtime::Isolate& isolate)
-    -> std::expected<std::vector<std::byte>, BinaryError>;
-[[nodiscard]] auto LoadBytecode(std::span<const std::byte> bytes, runtime::Isolate& isolate)
-    -> std::expected<Program, BinaryError>;
+[[nodiscard]] std::expected<std::vector<std::byte>, BinaryError> SaveBytecode(
+    const Program& program,
+    const runtime::Isolate& isolate);
+[[nodiscard]] std::expected<Program, BinaryError> LoadBytecode(std::span<const std::byte> bytes,
+                                                               runtime::Isolate& isolate);
 
 }  // namespace vela::vm

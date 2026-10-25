@@ -35,8 +35,8 @@ void Touch(Interval& interval, std::size_t position) {
   interval.end = std::max(interval.end, position);
 }
 
-auto LiveIntervals(const ir::Function& function, std::span<const ir::Function> functions)
-    -> std::vector<Interval> {
+std::vector<Interval> LiveIntervals(const ir::Function& function,
+                                    std::span<const ir::Function> functions) {
   std::vector<Interval> intervals(function.register_count);
   for (std::uint32_t parameter = 0; parameter < function.parameter_count; ++parameter) {
     Touch(intervals.at(parameter), 0);
@@ -66,9 +66,9 @@ auto LiveIntervals(const ir::Function& function, std::span<const ir::Function> f
   return intervals;
 }
 
-auto BuildAllocations(const ir::Function& function,
-                      std::span<const ir::Function> functions,
-                      std::span<const Interval> intervals) -> std::vector<Allocation> {
+std::vector<Allocation> BuildAllocations(const ir::Function& function,
+                                         std::span<const ir::Function> functions,
+                                         std::span<const Interval> intervals) {
   std::vector<Allocation> windows;
   for (const auto& instruction : function.instructions) {
     const auto access = ir::AnalyzeRegisters(instruction, functions);
@@ -113,8 +113,8 @@ auto BuildAllocations(const ir::Function& function,
   return allocations;
 }
 
-auto FindWindow(std::span<const std::uint8_t> occupied, std::uint32_t count)
-    -> std::optional<ir::RegisterId> {
+std::optional<ir::RegisterId> FindWindow(std::span<const std::uint8_t> occupied,
+                                         std::uint32_t count) {
   std::uint32_t run = 0;
   for (std::uint32_t index = 0; index < occupied.size(); ++index) {
     run = occupied.subspan(index).front() == 0 ? run + 1 : 0;
@@ -125,8 +125,8 @@ auto FindWindow(std::span<const std::uint8_t> occupied, std::uint32_t count)
   return std::nullopt;
 }
 
-auto AssignWindows(std::span<Allocation> allocations, std::uint32_t parameter_count)
-    -> std::optional<std::size_t> {
+std::optional<std::size_t> AssignWindows(std::span<Allocation> allocations,
+                                         std::uint32_t parameter_count) {
   std::vector<std::uint8_t> occupied(kMaxFrameRegisters, 0);
   std::vector<std::size_t> active;
   for (std::size_t index = 0; index < allocations.size(); ++index) {
@@ -195,8 +195,8 @@ void RemoveSelfMoves(ir::Function& function) {
 
 }  // namespace
 
-auto AllocateRegisters(ir::Function& function, std::span<const ir::Function> functions)
-    -> std::optional<frontend::Diagnostic> {
+std::optional<frontend::Diagnostic> AllocateRegisters(ir::Function& function,
+                                                      std::span<const ir::Function> functions) {
   if (function.parameter_count > kMaxFrameRegisters) {
     return frontend::Diagnostic{
         .location = function.instructions.front().location,

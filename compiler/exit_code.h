@@ -14,7 +14,6 @@ inline constexpr int kRuntimeErrorExitCode = 70;
 inline constexpr int kIoErrorExitCode = 74;
 inline constexpr int kMaximumExitCode = 255;
 
-[[nodiscard]] auto ProcessExitCode(runtime::Value value) noexcept
-    -> std::expected<int, std::string_view>;
+[[nodiscard]] std::expected<int, std::string_view> ProcessExitCode(runtime::Value value) noexcept;
 
 }  // namespace vela::compiler

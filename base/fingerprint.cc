@@ -10,16 +10,16 @@
 
 namespace vela {
 
-auto ContentFingerprint(std::span<const std::byte> bytes) noexcept -> Fingerprint {
+Fingerprint ContentFingerprint(std::span<const std::byte> bytes) noexcept {
   const auto hash = XXH3_128bits(bytes.data(), bytes.size());
   return {.low = hash.low64, .high = hash.high64};
 }
 
-auto ContentFingerprint(std::string_view text) noexcept -> Fingerprint {
+Fingerprint ContentFingerprint(std::string_view text) noexcept {
   return ContentFingerprint(std::as_bytes(std::span(text.data(), text.size())));
 }
 
-auto Fingerprint::Hex() const -> std::string {
+std::string Fingerprint::Hex() const {
   constexpr std::string_view kDigits = "0123456789abcdef";
   constexpr unsigned kNibbleBits = 4;
   constexpr std::uint8_t kNibbleMask = 0xf;

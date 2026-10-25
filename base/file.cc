@@ -19,8 +19,8 @@
 
 namespace vela {
 
-auto WriteFileAtomically(const std::filesystem::path& path, std::span<const std::byte> bytes)
-    -> std::expected<void, std::string> {
+std::expected<void, std::string> WriteFileAtomically(const std::filesystem::path& path,
+                                                     std::span<const std::byte> bytes) {
   if (std::cmp_greater(bytes.size(), std::numeric_limits<std::streamsize>::max())) {
     return std::unexpected("output exceeds stream size limit");
   }

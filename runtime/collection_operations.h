@@ -10,8 +10,7 @@
 
 namespace vela::runtime {
 
-[[nodiscard]] auto ExecuteCollectionBuiltin(Builtin builtin,
-                                            std::span<const Value> arguments,
-                                            Heap& heap) -> std::expected<Value, BuiltinError>;
+[[nodiscard]] std::expected<Value, BuiltinError>
+ExecuteCollectionBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap);
 
 }  // namespace vela::runtime

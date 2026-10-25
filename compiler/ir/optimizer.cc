@@ -119,8 +119,7 @@ void ThreadJumps(Function& function) {
   CompactInstructions(function, keep);
 }
 
-auto EvaluateIntegers(Opcode opcode, std::int64_t left, std::int64_t right)
-    -> std::optional<Constant> {
+std::optional<Constant> EvaluateIntegers(Opcode opcode, std::int64_t left, std::int64_t right) {
   std::int64_t value = 0;
   switch (opcode) {
     case Opcode::AddInt:
@@ -154,8 +153,7 @@ auto EvaluateIntegers(Opcode opcode, std::int64_t left, std::int64_t right)
   }
 }
 
-auto EvaluateUnary(const Instruction& instruction, const Constant& operand)
-    -> std::optional<Constant> {
+std::optional<Constant> EvaluateUnary(const Instruction& instruction, const Constant& operand) {
   if (instruction.opcode == Opcode::Move) {
     return operand;
   }
@@ -171,8 +169,9 @@ auto EvaluateUnary(const Instruction& instruction, const Constant& operand)
   return std::nullopt;
 }
 
-auto EvaluateBinary(const Instruction& instruction, const Constant& left, const Constant& right)
-    -> std::optional<Constant> {
+std::optional<Constant> EvaluateBinary(const Instruction& instruction,
+                                       const Constant& left,
+                                       const Constant& right) {
   const auto opcode = instruction.opcode;
   if (opcode == Opcode::EqualValue) {
     return left == right;
@@ -202,8 +201,7 @@ auto EvaluateBinary(const Instruction& instruction, const Constant& left, const 
   }
 }
 
-auto Evaluate(const Instruction& instruction, const Constants& constants)
-    -> std::optional<Constant> {
+std::optional<Constant> Evaluate(const Instruction& instruction, const Constants& constants) {
   switch (instruction.opcode) {
     case Opcode::LoadNull:
       return Constant();

@@ -17,8 +17,7 @@ namespace {
 
 enum class CommandResult : std::uint8_t { Continue, Quit };
 
-auto Command(std::string_view line, compiler::ReplSession& session, ReplStreams streams)
-    -> CommandResult {
+CommandResult Command(std::string_view line, compiler::ReplSession& session, ReplStreams streams) {
   auto& errors = streams.errors.get();
   if (line == ".quit") {
     return CommandResult::Quit;
@@ -30,7 +29,7 @@ auto Command(std::string_view line, compiler::ReplSession& session, ReplStreams 
     streams.output.get() << session.source();
   } else if (line == ".reset") {
     session.Reset();
-    session.isolate().SetConsole(streams.input.get(), streams.output.get());
+    session.isolate().SetOutput(streams.output.get());
   } else {
     errors << "vela: unknown REPL command; use .help\n";
   }
@@ -39,12 +38,12 @@ auto Command(std::string_view line, compiler::ReplSession& session, ReplStreams 
 
 }  // namespace
 
-auto RunRepl(const std::filesystem::path& directory, ReplStreams streams) -> int {
+int RunRepl(const std::filesystem::path& directory, ReplStreams streams) {
   auto& input = streams.input.get();
   auto& output = streams.output.get();
   auto& errors = streams.errors.get();
   compiler::ReplSession session(directory);
-  session.isolate().SetConsole(input, output);
+  session.isolate().SetOutput(output);
   errors << "Vela REPL (.help for commands)\n";
   std::string pending;
   std::string line;

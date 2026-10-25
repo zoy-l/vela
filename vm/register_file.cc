@@ -18,7 +18,7 @@ RegisterFile::~RegisterFile() {
   ::operator delete(values_);
 }
 
-auto RegisterFile::Acquire(std::size_t count) noexcept -> runtime::RegisterView {
+runtime::RegisterView RegisterFile::Acquire(std::size_t count) noexcept {
   if (count > capacity_) {
     auto* values = static_cast<runtime::RegisterPayload*>(
         ::operator new(count * runtime::kRegisterSlotBytes, std::nothrow));

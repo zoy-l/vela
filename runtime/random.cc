@@ -21,7 +21,7 @@ constexpr int kMantissaBits = 53;
 constexpr int kDiscardedBits = 64 - kMantissaBits;
 constexpr double kUnitScale = 0x1.0p-53;
 
-auto SplitMix(std::uint64_t& seed) noexcept -> std::uint64_t {
+std::uint64_t SplitMix(std::uint64_t& seed) noexcept {
   auto value = (seed += kSeedIncrement);
   value = (value ^ (value >> kSeedShiftFirst)) * kSeedMultiplierFirst;
   value = (value ^ (value >> kSeedShiftSecond)) * kSeedMultiplierSecond;
@@ -39,7 +39,7 @@ void Random::Seed(std::uint64_t seed) noexcept {
   state_.back() = SplitMix(seed);
 }
 
-auto Random::Next() noexcept -> std::uint64_t {
+std::uint64_t Random::Next() noexcept {
   const auto first = state_.front();
   auto second = state_.back();
   const auto result = std::rotl(first + second, kOutputRotation) + first;
@@ -49,11 +49,11 @@ auto Random::Next() noexcept -> std::uint64_t {
   return result;
 }
 
-auto Random::NextDouble() noexcept -> double {
+double Random::NextDouble() noexcept {
   return static_cast<double>(Next() >> kDiscardedBits) * kUnitScale;
 }
 
-auto Random::NextInt(std::int64_t bound) noexcept -> std::expected<std::int64_t, RandomError> {
+std::expected<std::int64_t, RandomError> Random::NextInt(std::int64_t bound) noexcept {
   if (bound <= 0) {
     return std::unexpected(RandomError::NonPositiveBound);
   }

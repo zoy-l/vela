@@ -66,7 +66,7 @@ stream locale and numeric formatting flags.
 | `text[index]` | `string` | One code point; scans to the index and allocates 1–4 bytes of content |
 | `text.slice(start: int, end: int)` | `string` | Half-open code point range; scans boundaries once and copies the result |
 | `text.indexOf(text: string)` | `int` | First matching code point offset, or -1; empty pattern matches at 0 |
-| `text.contains(text: string)` | `bool` | Whether the pattern occurs; empty pattern is contained |
+| `text.includes(text: string)` | `bool` | Whether the pattern occurs; empty pattern is contained |
 | `text.startsWith(prefix: string)` | `bool` | Exact prefix, including the empty prefix |
 | `text.endsWith(suffix: string)` | `bool` | Exact suffix, including the empty suffix |
 | `left + right` | `string` | At least one operand has string type; formats primitive/null operands into one final string |
@@ -87,7 +87,7 @@ evaluates before the separator, each once. Array element types remain homogeneou
 `[1, 2].join(',')` is valid; `[name, 42, true]` is not. Use
 `'${name} / ${42} / ${true}'` to format mixed values without creating an array.
 
-`indexOf` and `contains` use KMP for multi-byte patterns, guaranteeing linear
+`indexOf` and `includes` use KMP for multi-byte patterns, guaranteeing linear
 search time for repeated-prefix inputs. Short pattern tables use stack storage;
 patterns longer than 64 bytes allocate a temporary native prefix table and
 report allocation failure explicitly. Prefix/suffix tests compare bytes

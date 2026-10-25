@@ -7,8 +7,7 @@
 
 namespace vela::tooling {
 
-[[nodiscard]] auto FileUriPath(std::string_view uri)
-    -> std::expected<std::filesystem::path, std::string>;
-[[nodiscard]] auto FileUri(const std::filesystem::path& path) -> std::string;
+[[nodiscard]] std::expected<std::filesystem::path, std::string> FileUriPath(std::string_view uri);
+[[nodiscard]] std::string FileUri(const std::filesystem::path& path);
 
 }  // namespace vela::tooling

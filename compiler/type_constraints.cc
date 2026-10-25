@@ -15,12 +15,12 @@
 
 namespace vela::compiler {
 
-auto CreateTypeConstraints(const ir::Program& program,
-                           const frontend::SemanticModel& model,
-                           std::span<runtime::ClassLayout* const> classes,
-                           std::span<const runtime::ArrayLayout* const> arrays,
-                           std::span<const runtime::CollectionLayout* const> collections)
-    -> std::vector<runtime::TypeConstraint> {
+std::vector<runtime::TypeConstraint> CreateTypeConstraints(
+    const ir::Program& program,
+    const frontend::SemanticModel& model,
+    std::span<runtime::ClassLayout* const> classes,
+    std::span<const runtime::ArrayLayout* const> arrays,
+    std::span<const runtime::CollectionLayout* const> collections) {
   absl::flat_hash_map<std::string, const runtime::ClassLayout*> class_layouts;
   for (std::size_t index = 0; index < program.classes.size(); ++index) {
     class_layouts.emplace(program.classes.at(index).name, classes.subspan(index).front());

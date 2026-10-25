@@ -38,11 +38,10 @@ inline constexpr std::string_view kPosition = "position";
 inline constexpr std::string_view kMessage = "message";
 }  // namespace protocol
 
-[[nodiscard]] auto JsonText(const yyjson_val* value) -> std::optional<std::string_view>;
-[[nodiscard]] auto JsonInteger(const yyjson_val* value) -> std::optional<std::int64_t>;
-[[nodiscard]] auto ReadTextPosition(const yyjson_val* value)
-    -> std::expected<TextPosition, std::string>;
-[[nodiscard]] auto JsonPosition(yyjson_mut_doc* document, TextPosition position) -> yyjson_mut_val*;
+[[nodiscard]] std::optional<std::string_view> JsonText(const yyjson_val* value);
+[[nodiscard]] std::optional<std::int64_t> JsonInteger(const yyjson_val* value);
+[[nodiscard]] std::expected<TextPosition, std::string> ReadTextPosition(const yyjson_val* value);
+[[nodiscard]] yyjson_mut_val* JsonPosition(yyjson_mut_doc* document, TextPosition position);
 
 struct ServerDocument final {
   std::string path;
@@ -61,7 +60,7 @@ class LanguageServer final {
       : input_(&streams.input.get()),
         output_(&streams.output.get()),
         errors_(&streams.errors.get()) {}
-  auto Run() -> int;
+  int Run();
 
  private:
   enum class State : std::uint8_t { New, Initialized, Shutdown };
@@ -70,17 +69,17 @@ class LanguageServer final {
   void Initialize(RpcCall call);
   void Request(std::string_view method, RpcCall call);
   void Notification(std::string_view method, const yyjson_val* params);
-  [[nodiscard]] static auto Response(const yyjson_val* request_id) -> JsonOutput;
+  [[nodiscard]] static JsonOutput Response(const yyjson_val* request_id);
   void Error(const yyjson_val* request_id, std::int64_t code, std::string_view message);
   void Log(std::string_view message);
   void Send(const JsonOutput& message);
-  [[nodiscard]] auto Open(const yyjson_val* params) -> std::expected<void, std::string>;
-  [[nodiscard]] auto Change(const yyjson_val* params) -> std::expected<void, std::string>;
-  [[nodiscard]] auto Close(const yyjson_val* params) -> std::expected<void, std::string>;
+  [[nodiscard]] std::expected<void, std::string> Open(const yyjson_val* params);
+  [[nodiscard]] std::expected<void, std::string> Change(const yyjson_val* params);
+  [[nodiscard]] std::expected<void, std::string> Close(const yyjson_val* params);
   void Format(RpcCall call);
   void Query(RpcCall call, SymbolQuery query);
   void DocumentLinks(RpcCall call);
-  auto IndexFor(std::string_view uri, const ServerDocument& opened) -> SemanticIndex&;
+  SemanticIndex& IndexFor(std::string_view uri, const ServerDocument& opened);
   void PublishDiagnostics();
   void ClearDiagnostics(std::string_view uri);
 

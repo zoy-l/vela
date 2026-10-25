@@ -19,9 +19,8 @@ void SessionSubmission(benchmark::State& state) {
     state.PauseTiming();
     {
       compiler::ReplSession session(std::filesystem::path("."));
-      std::istringstream input;
       std::ostringstream output;
-      session.isolate().SetConsole(input, output);
+      session.isolate().SetOutput(output);
       if (session.Submit("let value = 0;").status != compiler::SubmissionStatus::Executed) {
         state.SkipWithError("cannot create session global");
         break;

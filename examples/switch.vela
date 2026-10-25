@@ -1,13 +1,16 @@
-enum Action { open, close }
+enum Action {
+  open,
+  close
+}
 
 func describe(action: Action): string {
   switch (action) {
     case Action.open:
-      return "open";
+      return 'open';
     case Action.close:
-      return "close";
+      return 'close';
     default:
-      return "unknown";
+      return 'unknown';
   }
 }
 

@@ -4,6 +4,8 @@ Checks:
   - 'cert-*'
   - 'cppcoreguidelines-*'
   - 'modernize-*'
+  # Ordinary functions use leading return types; lambdas retain required C++ syntax.
+  - '-modernize-use-trailing-return-type'
   - 'misc-include-cleaner'
   - 'performance-*'
   - 'portability-*'

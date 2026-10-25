@@ -15,7 +15,7 @@
 
 namespace vela::frontend {
 
-auto TypeChecker::ConstantKey(const ConstantValue& value) -> std::string {
+std::string TypeChecker::ConstantKey(const ConstantValue& value) {
   return std::visit(
       [](const auto& item) -> std::string {
         using T = std::decay_t<decltype(item)>;
@@ -30,8 +30,9 @@ auto TypeChecker::ConstantKey(const ConstantValue& value) -> std::string {
 
 namespace {
 
-auto IntegerConstant(std::string_view operation, std::int64_t left, std::int64_t right)
-    -> std::optional<ConstantValue> {
+std::optional<ConstantValue> IntegerConstant(std::string_view operation,
+                                             std::int64_t left,
+                                             std::int64_t right) {
   std::int64_t result = 0;
   if (operation == "+" && !__builtin_add_overflow(left, right, &result)) {
     return result;
@@ -63,8 +64,8 @@ auto IntegerConstant(std::string_view operation, std::int64_t left, std::int64_t
 
 }  // namespace
 
-auto TypeChecker::EvaluateUnaryConstant(const Expression& expression) const
-    -> std::optional<ConstantValue> {
+std::optional<ConstantValue> TypeChecker::EvaluateUnaryConstant(
+    const Expression& expression) const {
   const auto operand = EvaluateConstant(*expression.operand);
   if (!operand) {
     return std::nullopt;
@@ -81,8 +82,8 @@ auto TypeChecker::EvaluateUnaryConstant(const Expression& expression) const
   return std::nullopt;
 }
 
-auto TypeChecker::EvaluateBinaryConstant(const Expression& expression) const
-    -> std::optional<ConstantValue> {
+std::optional<ConstantValue> TypeChecker::EvaluateBinaryConstant(
+    const Expression& expression) const {
   const auto left = EvaluateConstant(*expression.left);
   const auto right = EvaluateConstant(*expression.right);
   if (!left || !right || left->index() != right->index()) {
@@ -112,8 +113,7 @@ auto TypeChecker::EvaluateBinaryConstant(const Expression& expression) const
   return std::nullopt;
 }
 
-auto TypeChecker::EvaluateConstant(const Expression& expression) const
-    -> std::optional<ConstantValue> {
+std::optional<ConstantValue> TypeChecker::EvaluateConstant(const Expression& expression) const {
   using Kind = Expression::Kind;
   switch (expression.kind) {
     case Kind::IntegerLiteral: {

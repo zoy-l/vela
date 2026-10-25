@@ -9,7 +9,7 @@
 
 namespace vela::frontend {
 
-auto TypeChecker::ResolveType(const TypeName& type_name, bool allow_void) -> TypeChecker::Type {
+TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, bool allow_void) {
   if (type_name.kind == TypeName::Kind::Generic) {
     return ResolveGenericType(type_name);
   }
@@ -69,22 +69,27 @@ auto TypeChecker::ResolveType(const TypeName& type_name, bool allow_void) -> Typ
   return result;
 }
 
-auto TypeChecker::ArrayType(const Type& element) -> Type {
-  Type result{
-      .kind = Type::Kind::Array,
-      .name =
-          (element.kind == Type::Kind::Function ? "(" + element.name + ")" : element.name) + "[]",
+TypeDescriptor MakeArrayType(const TypeDescriptor& element) {
+  return {
+      .kind = TypeDescriptor::Kind::Array,
+      .name = (element.kind == TypeDescriptor::Kind::Function ? "(" + element.name + ")"
+                                                              : element.name) +
+              "[]",
   };
+}
+
+TypeChecker::Type TypeChecker::ArrayType(const Type& element) {
+  const auto result = MakeArrayType(element);
   array_elements_.try_emplace(result.name, element);
   types_.try_emplace(result.name, result);
   return result;
 }
 
-auto TypeChecker::IsSameType(const Type& left, const Type& right) -> bool {
+bool TypeChecker::IsSameType(const Type& left, const Type& right) {
   return left.kind == right.kind && left.name == right.name && left.nullable == right.nullable;
 }
 
-auto TypeChecker::NonNullable(Type type) -> Type {
+TypeChecker::Type TypeChecker::NonNullable(Type type) {
   if (type.nullable) {
     type.nullable = false;
     type.name.pop_back();
@@ -95,7 +100,7 @@ auto TypeChecker::NonNullable(Type type) -> Type {
   return type;
 }
 
-auto TypeChecker::CanAssign(const Type& target, const Type& value) const -> bool {
+bool TypeChecker::CanAssign(const Type& target, const Type& value) const {
   if (IsSameType(target, value) || (target.nullable && (value.kind == Type::Kind::Null ||
                                                         IsSameType(NonNullable(target), value)))) {
     return true;
@@ -108,15 +113,15 @@ auto TypeChecker::CanAssign(const Type& target, const Type& value) const -> bool
   return false;
 }
 
-auto TypeChecker::IsNumeric(const Type& type) -> bool {
+bool TypeChecker::IsNumeric(const Type& type) {
   return !type.nullable && (type.kind == Type::Kind::Int || type.kind == Type::Kind::Double);
 }
 
-auto TypeChecker::IsValid(const Type& type) -> bool {
+bool TypeChecker::IsValid(const Type& type) {
   return type.kind != Type::Kind::Invalid;
 }
 
-auto TypeChecker::TypeNameFor(const Type& type) -> std::string {
+std::string TypeChecker::TypeNameFor(const Type& type) {
   return type.name.empty() ? "<invalid>" : type.name;
 }
 

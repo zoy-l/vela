@@ -11,7 +11,7 @@
 
 namespace vela::ir {
 
-auto Lowerer::LowerMatch(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerMatch(const frontend::Expression& expression) {
   const auto original = LowerExpression(*expression.operand);
   const auto selector = AllocateTemporary(expression.location);
   Emit({

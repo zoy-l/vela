@@ -44,9 +44,9 @@ class ImportTest : public testing::Test {
     ASSERT_TRUE(output.good());
   }
 
-  auto Check() -> frontend::CheckResult { return frontend::CheckFile(EntryPath()); }
-  auto Compile() -> CompileResult { return CompileFile(EntryPath(), isolate_); }
-  auto RunText() -> std::string {
+  frontend::CheckResult Check() { return frontend::CheckFile(EntryPath()); }
+  CompileResult Compile() { return CompileFile(EntryPath(), isolate_); }
+  std::string RunText() {
     const auto compiled = Compile();
     if (!compiled.Succeeded()) {
       ADD_FAILURE() << "module compilation failed";
@@ -67,7 +67,7 @@ class ImportTest : public testing::Test {
   }
 
  private:
-  [[nodiscard]] auto EntryPath() const -> std::string {
+  [[nodiscard]] std::string EntryPath() const {
     const auto encoded = (directory_ / "main.vela").generic_u8string();
     return {encoded.begin(), encoded.end()};
   }

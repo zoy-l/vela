@@ -8,7 +8,7 @@
 
 namespace vela::ir {
 
-auto Lowerer::RegisterCollectionType(frontend::TypeDescriptor type) -> std::uint32_t {
+std::uint32_t Lowerer::RegisterCollectionType(frontend::TypeDescriptor type) {
   if (type.nullable) {
     type = model_.types.at(type.name.substr(0, type.name.size() - 1));
   }
@@ -29,7 +29,7 @@ auto Lowerer::RegisterCollectionType(frontend::TypeDescriptor type) -> std::uint
   return index;
 }
 
-auto Lowerer::LowerCollectionConstruction(const frontend::Expression& expression) -> LoweredValue {
+Lowerer::LoweredValue Lowerer::LowerCollectionConstruction(const frontend::Expression& expression) {
   const auto& type = model_.expression_types.at(&expression);
   const auto layout = RegisterCollectionType(type);
   const auto result = AllocateTemporary(expression.location);

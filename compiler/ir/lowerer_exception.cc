@@ -12,7 +12,7 @@
 
 namespace vela::ir {
 
-auto Lowerer::LowerFinalizers(std::size_t depth) -> Completion {
+Lowerer::Completion Lowerer::LowerFinalizers(std::size_t depth) {
   if (depth == finalizers_.size()) {
     return Completion::Continue;
   }

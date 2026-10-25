@@ -17,7 +17,7 @@ constexpr unsigned char kAsciiLimit = 0x80;
 constexpr unsigned char kThreeByteFirst = 0xe0;
 constexpr unsigned char kFourByteFirst = 0xf0;
 
-auto Utf8Width(char character) -> std::size_t {
+std::size_t Utf8Width(char character) {
   const auto byte = static_cast<unsigned char>(character);
   if (byte < kAsciiLimit) {
     return 1;
@@ -31,7 +31,7 @@ auto Utf8Width(char character) -> std::size_t {
   return 4;
 }
 
-auto PositionWidth(std::size_t bytes, PositionEncoding encoding) -> std::size_t {
+std::size_t PositionWidth(std::size_t bytes, PositionEncoding encoding) {
   if (encoding == PositionEncoding::Utf8) {
     return bytes;
   }
@@ -40,7 +40,7 @@ auto PositionWidth(std::size_t bytes, PositionEncoding encoding) -> std::size_t 
 
 }  // namespace
 
-auto SourceText::Create(std::string text) -> std::expected<SourceText, std::string> {
+std::expected<SourceText, std::string> SourceText::Create(std::string text) {
   if (const auto invalid = InvalidUtf8Offset(text)) {
     return std::unexpected("document contains invalid UTF-8 at byte " + std::to_string(*invalid));
   }
@@ -59,7 +59,7 @@ void SourceText::IndexLines() {
   }
 }
 
-auto SourceText::LineEnd(std::size_t line) const -> std::size_t {
+std::size_t SourceText::LineEnd(std::size_t line) const {
   if (line + 1 == lines_.size()) {
     return text_.size();
   }
@@ -70,8 +70,8 @@ auto SourceText::LineEnd(std::size_t line) const -> std::size_t {
   return end;
 }
 
-auto SourceText::OffsetAt(TextPosition position, PositionEncoding encoding) const
-    -> std::expected<std::size_t, std::string> {
+std::expected<std::size_t, std::string> SourceText::OffsetAt(TextPosition position,
+                                                             PositionEncoding encoding) const {
   if (position.line >= lines_.size()) {
     return std::unexpected("document line is out of range");
   }
@@ -91,7 +91,7 @@ auto SourceText::OffsetAt(TextPosition position, PositionEncoding encoding) cons
   return offset;
 }
 
-auto SourceText::PositionAt(std::size_t offset, PositionEncoding encoding) const -> TextPosition {
+TextPosition SourceText::PositionAt(std::size_t offset, PositionEncoding encoding) const {
   offset = std::min(offset, text_.size());
   const auto next = std::ranges::upper_bound(lines_, offset);
   const auto line = static_cast<std::size_t>(std::distance(lines_.begin(), next) - 1);
@@ -108,8 +108,9 @@ auto SourceText::PositionAt(std::size_t offset, PositionEncoding encoding) const
   return {.line = line, .character = character};
 }
 
-auto SourceText::Replace(TextRange range, std::string_view text, PositionEncoding encoding)
-    -> std::expected<void, std::string> {
+std::expected<void, std::string> SourceText::Replace(TextRange range,
+                                                     std::string_view text,
+                                                     PositionEncoding encoding) {
   const auto start = OffsetAt(range.start, encoding);
   const auto end = OffsetAt(range.end, encoding);
   if (!start || !end) {

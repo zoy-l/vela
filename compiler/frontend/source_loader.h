@@ -29,20 +29,19 @@ struct ModuleCache final {
 };
 
 // 无扩展名的导入直接映射到 .vela 文件，不探测无后缀文件或目录入口。
-[[nodiscard]] auto ResolveImportPath(const std::filesystem::path& importer,
-                                     std::filesystem::path imported) -> std::filesystem::path;
+[[nodiscard]] std::filesystem::path ResolveImportPath(const std::filesystem::path& importer,
+                                                      std::filesystem::path imported);
 
-[[nodiscard]] auto LoadPreparedProgram(std::string_view path,
-                                       Program root,
-                                       std::string source,
-                                       ModuleCache& cache) -> ParseResult;
+[[nodiscard]] ParseResult LoadPreparedProgram(std::string_view path,
+                                              Program root,
+                                              std::string source,
+                                              ModuleCache& cache);
 
 // 路径使用 UTF-8；覆盖内容只在加载期间借用，可用于编辑器未保存的模块。
-[[nodiscard]] auto LoadProgram(std::string_view path,
-                               std::span<const SourceInput> overlays = {},
-                               SourceLoadMode mode = SourceLoadMode::Compilation) -> ParseResult;
+[[nodiscard]] ParseResult LoadProgram(std::string_view path,
+                                      std::span<const SourceInput> overlays = {},
+                                      SourceLoadMode mode = SourceLoadMode::Compilation);
 // 内存模块只从给定输入解析依赖，不隐式读取磁盘；entry 的模块编号为零。
-[[nodiscard]] auto LoadSources(std::span<const SourceInput> sources, std::string_view entry)
-    -> ParseResult;
+[[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources, std::string_view entry);
 
 }  // namespace vela::frontend

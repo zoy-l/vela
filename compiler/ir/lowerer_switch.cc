@@ -13,7 +13,7 @@
 
 namespace vela::ir {
 
-auto Lowerer::LowerConstantLabel(const frontend::Expression& source) -> RegisterId {
+RegisterId Lowerer::LowerConstantLabel(const frontend::Expression& source) {
   const auto& constant = model_.case_values.at(&source);
   const auto label = AllocateTemporary(source.location);
   if (const auto* integer = std::get_if<std::int64_t>(&constant)) {

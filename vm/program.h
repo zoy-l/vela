@@ -39,24 +39,19 @@ class LayoutTables final {
                std::vector<const runtime::CollectionLayout*> collections,
                std::vector<runtime::TypeConstraint> types);
   LayoutTables(const LayoutTables&) = delete;
-  auto operator=(const LayoutTables&) -> LayoutTables& = delete;
+  LayoutTables& operator=(const LayoutTables&) = delete;
   LayoutTables(LayoutTables&&) = delete;
-  auto operator=(LayoutTables&&) -> LayoutTables& = delete;
+  LayoutTables& operator=(LayoutTables&&) = delete;
   ~LayoutTables() = default;
 
-  [[nodiscard]] auto classes() const noexcept -> std::span<runtime::ClassLayout* const> {
-    return classes_;
-  }
-  [[nodiscard]] auto arrays() const noexcept -> std::span<const runtime::ArrayLayout* const> {
+  [[nodiscard]] std::span<runtime::ClassLayout* const> classes() const noexcept { return classes_; }
+  [[nodiscard]] std::span<const runtime::ArrayLayout* const> arrays() const noexcept {
     return arrays_;
   }
-  [[nodiscard]] auto collections() const noexcept
-      -> std::span<const runtime::CollectionLayout* const> {
+  [[nodiscard]] std::span<const runtime::CollectionLayout* const> collections() const noexcept {
     return collections_;
   }
-  [[nodiscard]] auto types() const noexcept -> std::span<const runtime::TypeConstraint> {
-    return types_;
-  }
+  [[nodiscard]] std::span<const runtime::TypeConstraint> types() const noexcept { return types_; }
 
  private:
   std::vector<runtime::ClassLayout*> classes_;
@@ -80,7 +75,7 @@ struct FunctionStorage final {
   std::vector<ExceptionHandler> handlers;
   std::vector<std::int64_t> integers;
 
-  [[nodiscard]] auto View() const noexcept -> Function;
+  [[nodiscard]] Function View() const noexcept;
 };
 
 struct ValidationError final {
@@ -116,19 +111,19 @@ class Program final {
  public:
   Program() = default;
 
-  [[nodiscard]] static auto Create(std::vector<FunctionStorage> functions,
-                                   runtime::Isolate& isolate,
-                                   std::vector<std::uint32_t> global_initializers = {})
-      -> std::expected<Program, ValidationError>;
-  [[nodiscard]] static auto Load(std::span<const Function> functions,
-                                 runtime::Isolate& isolate,
-                                 std::vector<std::uint32_t> global_initializers = {})
-      -> std::expected<Program, ValidationError>;
+  [[nodiscard]] static std::expected<Program, ValidationError> Create(
+      std::vector<FunctionStorage> functions,
+      runtime::Isolate& isolate,
+      std::vector<std::uint32_t> global_initializers = {});
+  [[nodiscard]] static std::expected<Program, ValidationError> Load(
+      std::span<const Function> functions,
+      runtime::Isolate& isolate,
+      std::vector<std::uint32_t> global_initializers = {});
 
-  [[nodiscard]] auto functions() const noexcept -> std::span<const FunctionStorage>;
-  [[nodiscard]] auto FindFunction(std::string_view name) const noexcept -> FunctionHandle;
-  [[nodiscard]] auto IsForIsolate(const runtime::Isolate& isolate) const noexcept -> bool;
-  [[nodiscard]] auto globals() const noexcept -> GlobalStorage*;
+  [[nodiscard]] std::span<const FunctionStorage> functions() const noexcept;
+  [[nodiscard]] FunctionHandle FindFunction(std::string_view name) const noexcept;
+  [[nodiscard]] bool IsForIsolate(const runtime::Isolate& isolate) const noexcept;
+  [[nodiscard]] GlobalStorage* globals() const noexcept;
 
  private:
   friend class FunctionHandle;
@@ -139,13 +134,13 @@ class Program final {
 class FunctionHandle final {
  public:
   FunctionHandle() = default;
-  [[nodiscard]] auto IsValid() const noexcept -> bool;
-  [[nodiscard]] auto program() const noexcept -> const Program& { return program_; }
-  [[nodiscard]] auto index() const noexcept -> std::uint32_t { return index_; }
-  [[nodiscard]] auto parameter_count() const noexcept -> std::uint16_t;
-  [[nodiscard]] auto register_count() const noexcept -> std::uint16_t;
-  [[nodiscard]] auto code() const noexcept -> std::span<const Instruction>;
-  [[nodiscard]] auto doubles() const noexcept -> std::span<const double>;
+  [[nodiscard]] bool IsValid() const noexcept;
+  [[nodiscard]] const Program& program() const noexcept { return program_; }
+  [[nodiscard]] std::uint32_t index() const noexcept { return index_; }
+  [[nodiscard]] std::uint16_t parameter_count() const noexcept;
+  [[nodiscard]] std::uint16_t register_count() const noexcept;
+  [[nodiscard]] std::span<const Instruction> code() const noexcept;
+  [[nodiscard]] std::span<const double> doubles() const noexcept;
 
  private:
   friend class Program;

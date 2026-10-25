@@ -16,8 +16,8 @@
 
 namespace vela {
 
-auto ReadBinaryFile(const std::filesystem::path& path)
-    -> std::expected<std::vector<std::byte>, std::string> {
+std::expected<std::vector<std::byte>, std::string> ReadBinaryFile(
+    const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary | std::ios::ate);
   if (!input) {
     return std::unexpected("cannot open file '" + PathText(path) + "'");
@@ -44,7 +44,7 @@ auto ReadBinaryFile(const std::filesystem::path& path)
 
 namespace vela::internal {
 
-auto PublishFile(FilePublication publication) -> std::error_code {
+std::error_code PublishFile(FilePublication publication) {
   std::error_code error;
   std::filesystem::rename(publication.temporary.get(), publication.destination.get(), error);
   return error;

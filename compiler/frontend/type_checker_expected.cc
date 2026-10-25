@@ -6,7 +6,8 @@
 
 namespace vela::frontend {
 
-auto TypeChecker::CheckExpectedFactory(const Expression& expression, const Type* expected) -> Type {
+TypeChecker::Type TypeChecker::CheckExpectedFactory(const Expression& expression,
+                                                    const Type* expected) {
   if (expected == nullptr || expected->kind != Type::Kind::Expected) {
     AddDiagnostic(expression.location, "ok/err requires an expected Expected<T, E> type");
     return InvalidType();
@@ -27,7 +28,8 @@ auto TypeChecker::CheckExpectedFactory(const Expression& expression, const Type*
   return CheckFunctionCall(signature, expression);
 }
 
-auto TypeChecker::CheckExpectedMethod(const Expression& expression, const Type& receiver) -> Type {
+TypeChecker::Type TypeChecker::CheckExpectedMethod(const Expression& expression,
+                                                   const Type& receiver) {
   const auto& name = expression.callee->text;
   const auto arguments = generic_arguments_.at(receiver.name);
   Type result;

@@ -30,8 +30,8 @@ using NativeResult = std::expected<Value, NativeError>;
 class NativeContext final {
  public:
   explicit NativeContext(Isolate& isolate) noexcept : isolate_(&isolate) {}
-  [[nodiscard]] auto isolate() const noexcept -> Isolate& { return *isolate_; }
-  [[nodiscard]] auto String(std::string_view text) const -> NativeResult;
+  [[nodiscard]] Isolate& isolate() const noexcept { return *isolate_; }
+  [[nodiscard]] NativeResult String(std::string_view text) const;
 
  private:
   Isolate* isolate_;
@@ -45,8 +45,8 @@ struct NativeCodec;
 template <>
 struct NativeCodec<std::int64_t> final {
   static constexpr auto kType = NativeType::Integer;
-  static auto Decode(Value value) -> std::int64_t { return value.AsInteger(); }
-  static auto Encode(NativeContext& /*unused*/, std::int64_t value) -> NativeResult {
+  static std::int64_t Decode(Value value) { return value.AsInteger(); }
+  static NativeResult Encode(NativeContext& /*unused*/, std::int64_t value) {
     return Value::Integer(value);
   }
 };
@@ -54,8 +54,8 @@ struct NativeCodec<std::int64_t> final {
 template <>
 struct NativeCodec<double> final {
   static constexpr auto kType = NativeType::Double;
-  static auto Decode(Value value) -> double { return value.AsDouble(); }
-  static auto Encode(NativeContext& /*unused*/, double value) -> NativeResult {
+  static double Decode(Value value) { return value.AsDouble(); }
+  static NativeResult Encode(NativeContext& /*unused*/, double value) {
     return Value::Double(value);
   }
 };
@@ -63,8 +63,8 @@ struct NativeCodec<double> final {
 template <>
 struct NativeCodec<bool> final {
   static constexpr auto kType = NativeType::Boolean;
-  static auto Decode(Value value) -> bool { return value.AsBoolean(); }
-  static auto Encode(NativeContext& /*unused*/, bool value) -> NativeResult {
+  static bool Decode(Value value) { return value.AsBoolean(); }
+  static NativeResult Encode(NativeContext& /*unused*/, bool value) {
     return Value::Boolean(value);
   }
 };
@@ -72,8 +72,8 @@ struct NativeCodec<bool> final {
 template <>
 struct NativeCodec<std::string_view> final {
   static constexpr auto kType = NativeType::String;
-  static auto Decode(Value value) -> std::string_view;
-  static auto Encode(NativeContext& context, std::string_view text) -> NativeResult {
+  static std::string_view Decode(Value value);
+  static NativeResult Encode(NativeContext& context, std::string_view text) {
     return context.String(text);
   }
 };
@@ -81,7 +81,7 @@ struct NativeCodec<std::string_view> final {
 template <>
 struct NativeCodec<std::string> final {
   static constexpr auto kType = NativeType::String;
-  static auto Encode(NativeContext& context, const std::string& text) -> NativeResult {
+  static NativeResult Encode(NativeContext& context, const std::string& text) {
     return context.String(text);
   }
 };
@@ -94,8 +94,7 @@ struct NativeCodec<void> final {
 template <>
 struct NativeCodec<std::optional<std::string>> final {
   static constexpr auto kType = NativeType::NullableString;
-  static auto Encode(NativeContext& context, const std::optional<std::string>& text)
-      -> NativeResult {
+  static NativeResult Encode(NativeContext& context, const std::optional<std::string>& text) {
     return text ? context.String(*text) : NativeResult(Value::Null());
   }
 };
@@ -118,9 +117,9 @@ struct NativeAdapter<Function> final {
   using Result = NativeReturn<R>::Type;
 
   template <std::size_t... Indices>
-  static auto Invoke(NativeContext& context,
-                     std::span<const Value> values,
-                     std::index_sequence<Indices...> /*unused*/) -> NativeResult {
+  static NativeResult Invoke(NativeContext& context,
+                             std::span<const Value> values,
+                             std::index_sequence<Indices...> /*unused*/) {
     if constexpr (std::is_void_v<R>) {
       Function(context, NativeCodec<Args>::Decode(values.subspan(Indices).front())...);
       return Value::Null();
@@ -142,7 +141,7 @@ struct NativeAdapter<Function> final {
     }
   }
 
-  static auto Call(NativeContext& context, std::span<const Value> values) -> NativeResult {
+  static NativeResult Call(NativeContext& context, std::span<const Value> values) {
     return Invoke(context, values, std::index_sequence_for<Args...>());
   }
 };
@@ -153,29 +152,26 @@ struct NativeAdapter<Function> final {
 class NativeFunction final {
  public:
   template <auto Function>
-  [[nodiscard]] static auto Bind(std::string name) -> NativeFunction {
+  [[nodiscard]] static NativeFunction Bind(std::string name) {
     return BindSignature<Function>(std::move(name), Function);
   }
 
-  [[nodiscard]] auto name() const noexcept -> std::string_view { return name_; }
-  [[nodiscard]] auto parameters() const noexcept -> std::span<const NativeType> {
-    return parameters_;
-  }
-  [[nodiscard]] auto result_type() const noexcept -> NativeType { return result_type_; }
+  [[nodiscard]] std::string_view name() const noexcept { return name_; }
+  [[nodiscard]] std::span<const NativeType> parameters() const noexcept { return parameters_; }
+  [[nodiscard]] NativeType result_type() const noexcept { return result_type_; }
   // 参数借用调用帧的根槽；返回值必须在下一次分配之前写入根槽或 RootedValue。
-  [[nodiscard]] auto Invoke(Isolate& isolate, std::span<const Value> arguments) const
-      -> NativeResult;
+  [[nodiscard]] NativeResult Invoke(Isolate& isolate, std::span<const Value> arguments) const;
 
  private:
   template <auto Function, class R, class... Args>
-  static auto BindSignature(std::string name, R (* /*unused*/)(NativeContext&, Args...) noexcept)
-      -> NativeFunction {
+  static NativeFunction BindSignature(std::string name,
+                                      R (* /*unused*/)(NativeContext&, Args...) noexcept) {
     using Adapter = internal::NativeAdapter<Function>;
     return NativeFunction(std::move(name), {internal::NativeCodec<Args>::kType...},
                           internal::NativeCodec<typename Adapter::Result>::kType, &Adapter::Call);
   }
 
-  using Callback = auto (*)(NativeContext&, std::span<const Value>) -> NativeResult;
+  using Callback = NativeResult (*)(NativeContext&, std::span<const Value>);
   NativeFunction(std::string name,
                  std::vector<NativeType> parameters,
                  NativeType result_type,
@@ -192,6 +188,6 @@ class NativeFunction final {
 
 enum class NativeRegistrationError : std::uint8_t { InvalidName, DuplicateName };
 
-[[nodiscard]] auto NativeTypeName(NativeType type) noexcept -> std::string_view;
+[[nodiscard]] std::string_view NativeTypeName(NativeType type) noexcept;
 
 }  // namespace vela::runtime

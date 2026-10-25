@@ -28,8 +28,8 @@ using internal::kNoImageId;
 using internal::ReadNumbers;
 
 template <class T>
-auto ReadReferences(BinaryReader& reader, std::span<T* const> values)
-    -> std::expected<std::vector<T*>, BinaryError> {
+std::expected<std::vector<T*>, BinaryError> ReadReferences(BinaryReader& reader,
+                                                           std::span<T* const> values) {
   const auto indices = ReadNumbers<std::uint64_t>(reader);
   if (!indices) {
     return std::unexpected(indices.error());
@@ -48,8 +48,9 @@ auto ReadReferences(BinaryReader& reader, std::span<T* const> values)
   return result;
 }
 
-auto ReadTables(BinaryReader& reader, const internal::LoadedLayouts& layouts)
-    -> std::expected<std::vector<std::shared_ptr<const LayoutTables>>, BinaryError> {
+std::expected<std::vector<std::shared_ptr<const LayoutTables>>, BinaryError> ReadTables(
+    BinaryReader& reader,
+    const internal::LoadedLayouts& layouts) {
   const auto count = reader.Count(4 * sizeof(std::uint64_t));
   if (!count) {
     return std::unexpected(count.error());
@@ -90,8 +91,9 @@ auto ReadTables(BinaryReader& reader, const internal::LoadedLayouts& layouts)
   return tables;
 }
 
-auto ReadStrings(BinaryReader& reader, runtime::Isolate& isolate)
-    -> std::expected<std::vector<std::shared_ptr<const StringConstants>>, BinaryError> {
+std::expected<std::vector<std::shared_ptr<const StringConstants>>, BinaryError> ReadStrings(
+    BinaryReader& reader,
+    runtime::Isolate& isolate) {
   const auto count = reader.Count(sizeof(std::uint64_t));
   if (!count) {
     return std::unexpected(count.error());
@@ -129,8 +131,8 @@ auto ReadStrings(BinaryReader& reader, runtime::Isolate& isolate)
   return pools;
 }
 
-auto ReadPaths(BinaryReader& reader)
-    -> std::expected<std::vector<std::shared_ptr<const std::vector<std::string>>>, BinaryError> {
+std::expected<std::vector<std::shared_ptr<const std::vector<std::string>>>, BinaryError> ReadPaths(
+    BinaryReader& reader) {
   const auto count = reader.Count(sizeof(std::uint64_t));
   if (!count) {
     return std::unexpected(count.error());
@@ -146,8 +148,7 @@ auto ReadPaths(BinaryReader& reader)
   return pools;
 }
 
-auto ReadDebug(BinaryReader& reader, FunctionStorage& function)
-    -> std::expected<void, BinaryError> {
+std::expected<void, BinaryError> ReadDebug(BinaryReader& reader, FunctionStorage& function) {
   const auto mappings = reader.Count(4 * sizeof(std::uint32_t));
   if (!mappings) {
     return std::unexpected(mappings.error());
@@ -179,8 +180,9 @@ auto ReadDebug(BinaryReader& reader, FunctionStorage& function)
   return {};
 }
 
-auto ReadNative(BinaryReader& reader, const runtime::Isolate& isolate)
-    -> std::expected<std::shared_ptr<const runtime::NativeFunction>, BinaryError> {
+std::expected<std::shared_ptr<const runtime::NativeFunction>, BinaryError> ReadNative(
+    BinaryReader& reader,
+    const runtime::Isolate& isolate) {
   const auto symbol = reader.Text();
   if (!symbol) {
     return std::unexpected(symbol.error());
@@ -210,9 +212,8 @@ auto ReadNative(BinaryReader& reader, const runtime::Isolate& isolate)
 }
 
 template <class T>
-auto Pool(std::uint64_t index,
-          std::span<const std::shared_ptr<const T>> pools,
-          BinaryReader& reader) -> std::expected<std::shared_ptr<const T>, BinaryError> {
+std::expected<std::shared_ptr<const T>, BinaryError>
+Pool(std::uint64_t index, std::span<const std::shared_ptr<const T>> pools, BinaryReader& reader) {
   if (index == kNoImageId) {
     return nullptr;
   }
@@ -228,10 +229,10 @@ struct ImageReader final {
   std::span<const std::shared_ptr<const LayoutTables>> tables;
   std::span<const std::shared_ptr<const StringConstants>> strings;
   std::span<const std::shared_ptr<const std::vector<std::string>>> paths;
-  auto ReadFunction() const -> std::expected<FunctionStorage, BinaryError>;
+  std::expected<FunctionStorage, BinaryError> ReadFunction() const;
 };
 
-auto ImageReader::ReadFunction() const -> std::expected<FunctionStorage, BinaryError> {
+std::expected<FunctionStorage, BinaryError> ImageReader::ReadFunction() const {
   FunctionStorage function;
   auto name = reader->Text();
   if (!name) {
@@ -287,8 +288,7 @@ auto ImageReader::ReadFunction() const -> std::expected<FunctionStorage, BinaryE
   return function;
 }
 
-auto ReadPayload(BinaryReader& reader, runtime::Isolate& isolate)
-    -> std::expected<Program, BinaryError> {
+std::expected<Program, BinaryError> ReadPayload(BinaryReader& reader, runtime::Isolate& isolate) {
   const auto layouts = internal::ReadLayouts(reader, isolate);
   if (!layouts) {
     return std::unexpected(layouts.error());
@@ -343,8 +343,8 @@ auto ReadPayload(BinaryReader& reader, runtime::Isolate& isolate)
 
 }  // namespace
 
-auto LoadBytecode(std::span<const std::byte> bytes, runtime::Isolate& isolate)
-    -> std::expected<Program, BinaryError> {
+std::expected<Program, BinaryError> LoadBytecode(std::span<const std::byte> bytes,
+                                                 runtime::Isolate& isolate) {
   BinaryReader reader(bytes);
   const auto magic = reader.Take(internal::kImageMagic.size());
   if (!magic) {

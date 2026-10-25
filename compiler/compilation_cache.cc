@@ -43,7 +43,7 @@ struct CacheImage final {
   std::span<const std::byte> bytecode;
 };
 
-auto ReadImage(BinaryReader& reader) -> std::expected<CacheImage, BinaryError> {
+std::expected<CacheImage, BinaryError> ReadImage(BinaryReader& reader) {
   auto build_identity = reader.Text();
   auto entry = reader.Text();
   const auto count = reader.Count(sizeof(std::uint64_t) * 3);
@@ -89,7 +89,7 @@ auto ReadImage(BinaryReader& reader) -> std::expected<CacheImage, BinaryError> {
   return image;
 }
 
-auto DecodeImage(std::span<const std::byte> bytes) -> std::expected<CacheImage, BinaryError> {
+std::expected<CacheImage, BinaryError> DecodeImage(std::span<const std::byte> bytes) {
   BinaryReader reader(bytes);
   const auto magic = reader.Take(kCacheMagic.size());
   const auto checksum = reader.Record<std::uint64_t, std::uint64_t>();
@@ -105,7 +105,7 @@ auto DecodeImage(std::span<const std::byte> bytes) -> std::expected<CacheImage, 
   return ReadImage(body);
 }
 
-auto IsCurrent(const InputIdentity& input) -> bool {
+bool IsCurrent(const InputIdentity& input) {
   if (input.path.starts_with(frontend::kStandardSourcePrefix)) {
     const auto source = frontend::StandardDeclarationSource(
         input.path.substr(frontend::kStandardSourcePrefix.size()));
@@ -116,7 +116,7 @@ auto IsCurrent(const InputIdentity& input) -> bool {
   return bytes && ContentFingerprint(*bytes) == input.fingerprint;
 }
 
-auto IsCurrent(const CacheImage& image, std::string_view entry) -> bool {
+bool IsCurrent(const CacheImage& image, std::string_view entry) {
   if (image.build_identity != kCompilerBuildIdentity || image.entry != entry ||
       !std::ranges::all_of(image.inputs,
                            [](const auto& input) -> bool { return IsCurrent(input); })) {
@@ -139,7 +139,7 @@ void WriteInputs(BinaryWriter& writer, std::span<const frontend::SourceFile> inp
   }
 }
 
-auto PrepareImage(const frontend::Program& source, std::string_view entry) -> BinaryWriter {
+BinaryWriter PrepareImage(const frontend::Program& source, std::string_view entry) {
   BinaryWriter writer;
   writer.Write(kCompilerBuildIdentity);
   writer.Write(entry);
@@ -153,10 +153,10 @@ auto PrepareImage(const frontend::Program& source, std::string_view entry) -> Bi
   return writer;
 }
 
-auto Rebuild(std::string_view path,
-             const std::filesystem::path& cache_path,
-             runtime::Isolate& isolate,
-             CacheStatus status) -> std::expected<CachedCompileResult, std::string> {
+std::expected<CachedCompileResult, std::string> Rebuild(std::string_view path,
+                                                        const std::filesystem::path& cache_path,
+                                                        runtime::Isolate& isolate,
+                                                        CacheStatus status) {
   auto parsed = frontend::LoadProgram(path);
   auto body = PrepareImage(parsed.program, path);
   auto compiled = CompileParsed(std::move(parsed), isolate);
@@ -188,10 +188,10 @@ auto Rebuild(std::string_view path,
 
 }  // namespace
 
-auto CompileFileCached(std::string_view path,
-                       const std::filesystem::path& cache_directory,
-                       runtime::Isolate& isolate)
-    -> std::expected<CachedCompileResult, std::string> {
+std::expected<CachedCompileResult, std::string> CompileFileCached(
+    std::string_view path,
+    const std::filesystem::path& cache_directory,
+    runtime::Isolate& isolate) {
   std::error_code error;
   const auto absolute = std::filesystem::absolute(Utf8Path(path), error).lexically_normal();
   if (error) {

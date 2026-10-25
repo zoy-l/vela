@@ -18,7 +18,7 @@
 namespace vela::benchmarks {
 namespace {
 
-auto Image(benchmark::State& state) -> std::optional<std::vector<std::byte>> {
+std::optional<std::vector<std::byte>> Image(benchmark::State& state) {
   runtime::Isolate isolate;
   const auto source =
       std::filesystem::path(VELA_BENCHMARK_SOURCE_DIR) / "string_interpolation.vela";

@@ -24,7 +24,7 @@ namespace {
 constexpr std::int64_t kInvalidParams = -32602;
 constexpr std::int64_t kRequestFailed = -32803;
 
-auto ChangeRange(const yyjson_val* value) -> std::expected<TextRange, std::string> {
+std::expected<TextRange, std::string> ChangeRange(const yyjson_val* value) {
   const auto start = ReadTextPosition(GetJsonField(value, protocol::kStart));
   const auto end = ReadTextPosition(GetJsonField(value, protocol::kEnd));
   if (!start || !end) {
@@ -33,8 +33,9 @@ auto ChangeRange(const yyjson_val* value) -> std::expected<TextRange, std::strin
   return TextRange{.start = *start, .end = *end};
 }
 
-auto ApplyChanges(SourceText& source, const yyjson_val* changes, PositionEncoding encoding)
-    -> std::expected<void, std::string> {
+std::expected<void, std::string> ApplyChanges(SourceText& source,
+                                              const yyjson_val* changes,
+                                              PositionEncoding encoding) {
   if (!yyjson_is_arr(changes)) {
     return std::unexpected("contentChanges must be an array");
   }
@@ -67,7 +68,7 @@ auto ApplyChanges(SourceText& source, const yyjson_val* changes, PositionEncodin
 
 }  // namespace
 
-auto ReadTextPosition(const yyjson_val* value) -> std::expected<TextPosition, std::string> {
+std::expected<TextPosition, std::string> ReadTextPosition(const yyjson_val* value) {
   const auto line = JsonInteger(GetJsonField(value, protocol::kLine));
   const auto character = JsonInteger(GetJsonField(value, protocol::kCharacter));
   if (!line || !character || *line < 0 || *character < 0) {
@@ -79,7 +80,7 @@ auto ReadTextPosition(const yyjson_val* value) -> std::expected<TextPosition, st
   };
 }
 
-auto JsonPosition(yyjson_mut_doc* document, TextPosition position) -> yyjson_mut_val* {
+yyjson_mut_val* JsonPosition(yyjson_mut_doc* document, TextPosition position) {
   auto* value = yyjson_mut_obj(document);
   AddJsonField(document, value, protocol::kLine, yyjson_mut_uint(document, position.line));
   AddJsonField(document, value, protocol::kCharacter,
@@ -87,7 +88,7 @@ auto JsonPosition(yyjson_mut_doc* document, TextPosition position) -> yyjson_mut
   return value;
 }
 
-auto LanguageServer::Open(const yyjson_val* params) -> std::expected<void, std::string> {
+std::expected<void, std::string> LanguageServer::Open(const yyjson_val* params) {
   const auto* document = GetJsonField(params, protocol::kTextDocument);
   const auto uri = JsonText(GetJsonField(document, protocol::kUri));
   const auto text = JsonText(GetJsonField(document, protocol::kText));
@@ -124,7 +125,7 @@ auto LanguageServer::Open(const yyjson_val* params) -> std::expected<void, std::
   return {};
 }
 
-auto LanguageServer::Change(const yyjson_val* params) -> std::expected<void, std::string> {
+std::expected<void, std::string> LanguageServer::Change(const yyjson_val* params) {
   const auto* document = GetJsonField(params, protocol::kTextDocument);
   const auto uri = JsonText(GetJsonField(document, protocol::kUri));
   const auto version = JsonInteger(GetJsonField(document, protocol::kVersion));
@@ -151,7 +152,7 @@ auto LanguageServer::Change(const yyjson_val* params) -> std::expected<void, std
   return {};
 }
 
-auto LanguageServer::Close(const yyjson_val* params) -> std::expected<void, std::string> {
+std::expected<void, std::string> LanguageServer::Close(const yyjson_val* params) {
   const auto uri =
       JsonText(GetJsonField(GetJsonField(params, protocol::kTextDocument), protocol::kUri));
   if (!uri) {

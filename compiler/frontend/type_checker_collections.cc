@@ -13,7 +13,7 @@
 
 namespace vela::frontend {
 
-auto TypeChecker::NullableType(Type type) -> Type {
+TypeChecker::Type TypeChecker::NullableType(Type type) {
   if (!type.nullable) {
     type.nullable = true;
     type.name = type.kind == Type::Kind::Function ? "(" + type.name + ")?" : type.name + '?';
@@ -22,7 +22,7 @@ auto TypeChecker::NullableType(Type type) -> Type {
   return type;
 }
 
-auto TypeChecker::ResolveGenericType(const TypeName& source) -> Type {
+TypeChecker::Type TypeChecker::ResolveGenericType(const TypeName& source) {
   Type::Kind kind = Type::Kind::Invalid;
   std::size_t count = 2;
   if (source.name == "Expected") {
@@ -59,8 +59,8 @@ auto TypeChecker::ResolveGenericType(const TypeName& source) -> Type {
   return type;
 }
 
-auto TypeChecker::CheckCollectionConstruction(const Expression& expression, const Type* expected)
-    -> Type {
+TypeChecker::Type TypeChecker::CheckCollectionConstruction(const Expression& expression,
+                                                           const Type* expected) {
   const auto& callee = *expression.callee;
   Type type;
   if (!callee.type_arguments.empty()) {
@@ -87,8 +87,8 @@ auto TypeChecker::CheckCollectionConstruction(const Expression& expression, cons
   return type;
 }
 
-auto TypeChecker::CheckCollectionMethod(const Expression& expression, const Type& receiver)
-    -> Type {
+TypeChecker::Type TypeChecker::CheckCollectionMethod(const Expression& expression,
+                                                     const Type& receiver) {
   const auto arguments = generic_arguments_.at(receiver.name);
   const auto& name = expression.callee->text;
   FunctionInfo signature;
@@ -105,12 +105,12 @@ auto TypeChecker::CheckCollectionMethod(const Expression& expression, const Type
     builtin_calls_.insert_or_assign(&expression, *operation);
     return CheckFunctionCall(signature, expression);
   }
-  Builtin builtin = Builtin::CollectionLength;
-  if (name == "has" || name == "remove" || (name == "add" && receiver.kind == Type::Kind::Set)) {
+  Builtin builtin = Builtin::CollectionSize;
+  if (name == "has" || name == "delete" || (name == "add" && receiver.kind == Type::Kind::Set)) {
     if (name == "has") {
       builtin = Builtin::CollectionHas;
-    } else if (name == "remove") {
-      builtin = Builtin::CollectionRemove;
+    } else if (name == "delete") {
+      builtin = Builtin::CollectionDelete;
     } else {
       builtin = Builtin::SetAdd;
     }
