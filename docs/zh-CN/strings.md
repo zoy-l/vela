@@ -59,7 +59,7 @@ const emoji = '\u{1F600}';
 
 ## 大小写转换与规划中的匹配 API
 
-`text.toLowerCase(): string` 与 `text.toUpperCase(): string` 实现 Unicode 18.0.0 默认完整大小写转换，包括展开映射及 Final_Sigma，不依赖 locale，也不做规范化。详见[字符串大小写转换](string_case.md)。Dart 风格 RegExp 与 RegExpMatch 仍为尚未实现的[正则表达式设计](regexp.md)。
+`text.toLowerCase(): string` 与 `text.toUpperCase(): string` 实现 Unicode 18.0.0 默认完整大小写转换，包括展开映射及 Final_Sigma，不依赖 locale，也不做规范化。详见[字符串大小写转换](string_case.md)。Dart 风格 RegExp 与 RegExpMatch 提供 PCRE2 Unicode 匹配，位置使用 Vela 码点索引。详见[正则表达式](regexp.md)。
 
 ## 示例
 

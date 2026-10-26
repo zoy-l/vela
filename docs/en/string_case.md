@@ -57,7 +57,7 @@ immutable string; object allocation identity is not part of the API contract.
 
 RegExp ignore-case matching must not implement comparison by converting the
 whole input with these methods. Expansions change offsets and do not implement
-the proposed RegExp API's caseless matching rules.
+the RegExp API's caseless matching rules.
 
 ## Unicode data and implementation
 
@@ -85,8 +85,8 @@ not in each runtime conversion.
 
 Record the UCD release, input identities, generated output, generator, and
 Unicode data license in the existing dependency/build records. Require the
-supplement and utf8proc Unicode versions to agree. The planned PCRE2-backed
-RegExp engine will pin its Unicode tables separately; they need not be identical because they implement regex
+supplement and utf8proc Unicode versions to agree. The PCRE2-backed
+RegExp engine pins its Unicode tables separately; they need not be identical because they implement regex
 matching, not this conversion API. A Unicode update is observable, participates
 in build/cache identity, and requires fixture review. Never select mappings
 from the host OS, browser, or locale or download data at runtime. Host C/C++

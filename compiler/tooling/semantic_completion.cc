@@ -16,6 +16,7 @@
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
 #include "compiler/frontend/byte_builtins.h"
+#include "compiler/frontend/regexp_builtins.h"
 #include "compiler/frontend/token.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/tooling/builtin_documentation.h"
@@ -54,6 +55,7 @@ void AddBuiltins(std::vector<Completion>& result, Kind kind) {
   }
   constexpr auto kNames = std::to_array<std::string_view>({
       "String",
+      "RegExp",
       "toString",
       "toInt",
       "toDouble",
@@ -73,12 +75,12 @@ void AddBuiltins(std::vector<Completion>& result, Kind kind) {
     if (const auto builtin = frontend::FindBuiltin(kind, name)) {
       auto completion_kind =
           kind == Kind::Invalid ? CompletionKind::Function : CompletionKind::Method;
-      if (*builtin == Builtin::NewMutableString) {
+      if (*builtin == Builtin::NewMutableString || *builtin == Builtin::NewRegExp) {
         completion_kind = CompletionKind::Class;
       }
       result.push_back({
           .label = std::string(name),
-          .detail = *builtin == Builtin::NewMutableString
+          .detail = completion_kind == CompletionKind::Class
                         ? std::string(BuiltinTypeDetail(name))
                         : BuiltinDetail(frontend::BuiltinSignature(*builtin)),
           .kind = completion_kind,
@@ -137,6 +139,25 @@ void AddByteCompletions(std::vector<Completion>& result, Kind kind) {
       .kind = CompletionKind::Property,
       .documentation = {},
   });
+}
+
+void AddRegExpCompletions(std::vector<Completion>& result, Kind kind) {
+  for (const auto& [name, builtin] : frontend::RegExpMethods(kind)) {
+    result.push_back({
+        .label = std::string(name),
+        .detail = BuiltinDetail(frontend::BuiltinSignature(builtin)),
+        .kind = CompletionKind::Method,
+        .documentation = std::string(BuiltinDocumentation(kind, name)),
+    });
+  }
+  for (const auto& [name, builtin] : frontend::RegExpProperties(kind)) {
+    result.push_back({
+        .label = std::string(name),
+        .detail = frontend::BuiltinSignature(builtin).return_type.name,
+        .kind = CompletionKind::Property,
+        .documentation = std::string(BuiltinDocumentation(kind, name)),
+    });
+  }
 }
 
 }  // namespace
@@ -312,6 +333,7 @@ void SemanticIndex::AddAsyncCompletions(std::vector<Completion>& result,
 void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
                                             const frontend::TypeDescriptor& type) const {
   const auto kind = type.kind;
+  AddRegExpCompletions(result, kind);
   if (!frontend::ByteMethods(kind).empty()) {
     AddByteCompletions(result, kind);
     return;
@@ -447,7 +469,8 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
     return {};
   }
   std::vector<Completion> result;
-  const auto dot = current > 0 && tokens.at(current - 1).kind == frontend::TokenKind::Dot;
+  const auto dot = current > 0 && (tokens.at(current - 1).kind == frontend::TokenKind::Dot ||
+                                   tokens.at(current - 1).kind == frontend::TokenKind::QuestionDot);
   auto selected = VisibleLocals(offset);
   if (dot) {
     result = QualifiedCompletions(current, selected);
@@ -490,6 +513,7 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
         "Set",
         "Map",
         "Expected",
+        "RegExpMatch",
         "Future",
         "Completer",
         "Timer",

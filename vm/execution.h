@@ -147,6 +147,7 @@ class Execution final {
                             runtime::Value right);
   StepResult ExecuteBuiltin(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteCalendar(ActiveFrame& active, Instruction instruction);
+  StepResult ExecuteRegExp(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteAsync(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteCompleter(const AsyncArguments& call);
   StepResult ExecuteAsyncState(const AsyncArguments& call);

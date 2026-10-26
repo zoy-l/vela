@@ -99,6 +99,14 @@ std::vector<runtime::TypeConstraint> CreateTypeConstraints(
         target.kind = runtime::ValueKind::Object;
         target.object_kind = runtime::ObjectKind::ByteData;
         break;
+      case Kind::RegExp:
+        target.kind = runtime::ValueKind::Object;
+        target.object_kind = runtime::ObjectKind::RegExp;
+        break;
+      case Kind::RegExpMatch:
+        target.kind = runtime::ValueKind::Object;
+        target.object_kind = runtime::ObjectKind::RegExpMatch;
+        break;
       case Kind::Function:
         target.kind = runtime::ValueKind::Object;
         target.callable = true;

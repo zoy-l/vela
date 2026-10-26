@@ -890,8 +890,9 @@ TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
     object = NonNullable(object);
   }
   if (object.kind != Type::Kind::Array && object.kind != Type::Kind::String &&
-      object.kind != Type::Kind::ByteArray) {
-    AddDiagnostic(expression.location, "indexing requires an array, ByteArray, or string");
+      object.kind != Type::Kind::ByteArray && object.kind != Type::Kind::RegExpMatch) {
+    AddDiagnostic(expression.location,
+                  "indexing requires an array, ByteArray, string, or RegExpMatch");
   }
   if (index.kind != Type::Kind::Int || index.nullable) {
     AddDiagnostic(expression.index->location, "index must be int");
@@ -899,6 +900,10 @@ TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
   if (object.kind == Type::Kind::String) {
     builtin_calls_.insert_or_assign(&expression, Builtin::StringIndex);
     return object;
+  }
+  if (object.kind == Type::Kind::RegExpMatch) {
+    builtin_calls_.insert_or_assign(&expression, Builtin::RegExpMatchGroup);
+    return NullableType(Type{.kind = Type::Kind::String, .name = "string"});
   }
   if (object.kind == Type::Kind::ByteArray) {
     Type result{.kind = Type::Kind::Int, .name = "int"};
@@ -948,6 +953,11 @@ TypeChecker::Type TypeChecker::CheckArrayLiteral(const Expression& expression,
 
 TypeChecker::Type TypeChecker::CheckUnary(const Expression& expression) {
   Type operand = CheckExpression(*expression.operand, nullptr);
+  if ((expression.text == "++" || expression.text == "--") &&
+      builtin_calls_.contains(expression.operand.get())) {
+    AddDiagnostic(expression.operand->location,
+                  "builtin properties and indexed values are immutable");
+  }
   if ((expression.text == "++" || expression.text == "--") && !IsAssignable(*expression.operand)) {
     AddDiagnostic(expression.operand->location, "increment operand is not assignable");
   }
@@ -1004,6 +1014,9 @@ TypeChecker::Type TypeChecker::CheckCompoundAssignment(const Expression& express
   }
   const auto left = CheckExpression(*expression.left, nullptr);
   const auto right = CheckExpression(*expression.right, &left);
+  if (builtin_calls_.contains(expression.left.get())) {
+    AddDiagnostic(expression.left->location, "builtin properties and indexed values are immutable");
+  }
   if (!IsValid(left) || !IsValid(right)) {
     return InvalidType();
   }
@@ -1208,8 +1221,7 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
     left = binding->type;
   }
   if (builtin_calls_.contains(expression.left.get())) {
-    AddDiagnostic(expression.left->location,
-                  "builtin properties and string elements are immutable");
+    AddDiagnostic(expression.left->location, "builtin properties and indexed values are immutable");
   }
   const Type right = CheckExpression(*expression.right, &left);
   if (binding != nullptr) {
@@ -1226,7 +1238,7 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
 }
 
 void TypeChecker::CheckMemberAssignment(const Expression& member) {
-  bool read_only = interface_members_.contains(&member);
+  bool read_only = interface_members_.contains(&member) || builtin_method_values_.contains(&member);
   if (const auto found = static_members_.find(&member); found != static_members_.end()) {
     const auto& owner = classes_.at(found->second.owner);
     read_only = read_only || owner.methods.contains(found->second.member) ||

@@ -18,6 +18,7 @@
 #include "base/callable.h"
 #include "base/execution_limits.h"
 #include "base/execution_status.h"
+#include "base/regexp.h"
 #include "runtime/byte_operations.h"
 #include "runtime/exception.h"
 #include "vm/debugger.h"
@@ -959,6 +960,9 @@ StepResult Execution::AllocateCollection(ActiveFrame& active, FutureRegisters re
 
 StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) {
   const auto builtin = static_cast<Builtin>(DecodeB(instruction));
+  if (IsRegExpBuiltin(builtin)) {
+    return ExecuteRegExp(active, instruction);
+  }
   if (IsByteBuiltin(builtin)) {
     auto values = active.frame.registers();
     const auto count = BuiltinArity(builtin);

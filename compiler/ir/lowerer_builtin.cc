@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "base/builtin.h"
+#include "base/regexp.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/ir/ir.h"
 
@@ -64,6 +65,19 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
       });
     }
   }
+  if (HasRegExpArrayLayout(builtin)) {
+    auto type = model_.expression_types.at(&expression);
+    type.nullable = false;
+    if (type.name.ends_with('?')) {
+      type.name.pop_back();
+    }
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = static_cast<RegisterId>(base + arity - 1),
+        .immediate = static_cast<std::int64_t>(RegisterArrayType(type)),
+        .location = expression.location,
+    });
+  }
   const auto result = AllocateTemporary(expression.location);
   Emit({
       .opcode = Opcode::BuiltinCall,
@@ -88,6 +102,19 @@ void Lowerer::LowerBuiltinDefaults(Builtin builtin,
                                    const frontend::Expression& expression,
                                    RegisterId base) {
   const auto arity = BuiltinArity(builtin);
+  if (builtin == Builtin::NewRegExp) {
+    for (std::size_t index = 1; index < arity; ++index) {
+      Emit({
+          .opcode = Opcode::LoadBool,
+          .dst = static_cast<RegisterId>(base + index),
+          .immediate = index == 2 ? 1 : 0,
+          .location = expression.location,
+      });
+    }
+  }
+  if (builtin == Builtin::RegExpAllMatches || builtin == Builtin::RegExpMatchAsPrefix) {
+    Emit({.opcode = Opcode::LoadInt, .dst = base + 2, .location = expression.location});
+  }
   if (builtin == Builtin::ArrayJoin && expression.arguments.empty()) {
     frontend::Expression separator;
     separator.text = ",";

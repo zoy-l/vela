@@ -13,7 +13,9 @@
 
 #include "base/builtin.h"
 #include "base/byte_access.h"
+#include "base/regexp.h"
 #include "compiler/frontend/byte_builtins.h"
+#include "compiler/frontend/regexp_builtins.h"
 #include "compiler/frontend/type_checker.h"
 
 namespace vela::frontend {
@@ -273,6 +275,9 @@ FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
 }
 
 const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
+  if (IsRegExpBuiltin(builtin)) {
+    return RegExpBuiltinSignature(builtin);
+  }
   if (IsByteBuiltin(builtin)) {
     return ByteBuiltinSignature(builtin);
   }
@@ -284,6 +289,11 @@ const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
 }
 
 std::optional<Builtin> FindBuiltinProperty(Kind receiver, std::string_view name) {
+  for (const auto& [member, builtin] : RegExpProperties(receiver)) {
+    if (member == name) {
+      return builtin;
+    }
+  }
   if (receiver == Kind::ByteArray && name == "length") {
     return Builtin::ByteArrayLength;
   }
@@ -317,11 +327,14 @@ bool IsBuiltinName(std::string_view name) {
   return name == "int" || name == "double" || name == "bool" || name == "string" ||
          name == "void" || name == "ok" || name == "err" || name == "Expected" || name == "Set" ||
          name == "Map" || name == "Future" || name == "Completer" || name == "Timer" ||
-         name == "CancellationToken" || name == "ByteData" || name == "sleep" ||
-         FindBuiltin(Kind::Invalid, name).has_value();
+         name == "CancellationToken" || name == "ByteData" || name == "RegExpMatch" ||
+         name == "sleep" || FindBuiltin(Kind::Invalid, name).has_value();
 }
 
 std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {
+  if (const auto builtin = FindRegExpBuiltin(receiver, name)) {
+    return builtin;
+  }
   if (const auto builtin = FindByteBuiltin(receiver, name)) {
     return builtin;
   }

@@ -406,6 +406,14 @@ and provides checked unaligned integer/float access with Endian enum arguments.
 Neither byte type implicitly converts to int[] or string. See
 [byte storage and typed views](byte_data.md).
 
+## Regular expressions
+
+`RegExp` and `RegExpMatch` are built-in reference types with identity equality.
+They support nullable annotations, fields, closures, invariant containers and
+async payloads. RegExpMatch is created by searches; all properties and match
+indexing are read-only. Coordinates count Unicode code points. See
+[regular expressions](regexp.md) and the [example](../../examples/regexp.vela).
+
 ## Ordered Set and Map
 
 ```typescript

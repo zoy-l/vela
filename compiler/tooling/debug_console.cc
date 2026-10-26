@@ -27,6 +27,7 @@
 #include "base/path.h"
 #include "runtime/heap.h"
 #include "runtime/object.h"
+#include "runtime/regexp.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
 #include "runtime/value_io.h"
@@ -183,6 +184,8 @@ void WriteDebugValue(std::ostream& output, runtime::Value value) {
       output << "collection(size=" << *collection_size << ')';
     } else if (runtime::Heap::IsMutableString(object)) {
       output << "String";
+    } else if (runtime::Heap::IsRegExp(object) || runtime::Heap::IsRegExpMatch(object)) {
+      runtime::WriteRegExp(output, *value.AsObject());
     } else if (runtime::Heap::IsByteArray(object)) {
       output << "ByteArray(length=" << runtime::Heap::ByteArrayBytes(*value.AsObject()).size()
              << ')';

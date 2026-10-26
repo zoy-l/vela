@@ -31,6 +31,10 @@ const sum = values.reduce((total, value) => total + value, 0);
 
 `ByteArray(length: int)` 分配固定长度、零初始化的原始字节。`ByteArray.from(values: int[])` 与 `bytes.slice(...)` 显式复制存储，`ByteData.view(bytes, ...)` 则保活并共享所有者。带类型访问器检查视图相对边界和整数范围，允许非对齐偏移。多字节方法默认采用 `Endian.big`，小端与宿主字节序通过枚举显式选择。详见[字节存储与带类型视图](byte_data.md)。
 
+## 正则表达式
+
+`RegExp(source, ...)` 编译不可变的 PCRE2 Unicode 模式。搜索方法返回 bool、可空字符串或匹配对象，以及立即求值的带类型匹配数组。`RegExpMatch` 保活输入和模式，暴露码点范围及编号／命名捕获；未参与的捕获返回 null。`RegExp.escape` 生成字面匹配片段。配置、限制与 Error code 详见[正则表达式](regexp.md)。
+
 ## 随机数生成
 
 `Random.seed(value: int): void`、`Random.nextInt(bound: int): int` 以及 `Math.random(): double` 采用 Isolate 独立的 xoroshiro128++ 1.0 算法，并使用 SplitMix64 进行状态播种。每个 Isolate 默认以种子 0 初始化，相同的种子与相同的调用序列严格保证可复现完全相同的结果。种子的全部 64 位（包括负整数的二进制位）均得到完好保留。宿主可独立对 `isolate.random()` 播种。这属于仿真模拟生成器，并非密码学安全伪随机数发生器。

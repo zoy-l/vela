@@ -2,6 +2,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <utility>
+#include <vector>
 
 #include "base/builtin.h"
 #include "gtest/gtest.h"
@@ -59,6 +61,25 @@ TEST(VmTest, ByteBuiltinsSupportAliasedDestinationsAcrossAllocationAndGC) {
   const auto result = LoadAndExecute(isolate, function);
   ASSERT_TRUE(result.Succeeded()) << result.message;
   EXPECT_EQ(result.value.AsInteger(), kExpectedSum);
+}
+
+TEST(VmTest, RegExpArrayBuiltinRejectsMissingLayoutMetadata) {
+  Isolate isolate;
+  FunctionStorage function;
+  function.name = "main";
+  function.register_count = 2;
+  function.code = {
+      EncodeAImm16(OpCode::LoadInt, 1, 0),
+      EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::RegExpMatchGroupNames),
+                0),
+      EncodeABC(OpCode::Return, 0, 0, 0),
+  };
+  std::vector<FunctionStorage> functions;
+  functions.push_back(std::move(function));
+  const auto program = Program::Create(std::move(functions), isolate);
+  ASSERT_TRUE(program);
+  const auto result = VirtualMachine(isolate).Execute(*program, 0);
+  EXPECT_EQ(result.status, ExecutionStatus::TypeError);
 }
 
 TEST(VmTest, StringConcatSupportsAliasedDestinationsAcrossSafepoints) {

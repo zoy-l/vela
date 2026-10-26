@@ -1,5 +1,86 @@
 import("abseil_sources.gni")
 
+copy("pcre2_config") {
+  sources = [ "pcre2/src/config.h.generic" ]
+  outputs = [ "$target_gen_dir/pcre2/config.h" ]
+}
+
+copy("pcre2_header") {
+  sources = [ "pcre2/src/pcre2.h.generic" ]
+  outputs = [ "$target_gen_dir/pcre2/pcre2.h" ]
+}
+
+copy("pcre2_chartables") {
+  sources = [ "pcre2/src/pcre2_chartables.c.dist" ]
+  outputs = [ "$target_gen_dir/pcre2/pcre2_chartables.c" ]
+}
+
+config("pcre2_headers") {
+  defines = [
+    "PCRE2_STATIC",
+    "PCRE2_CODE_UNIT_WIDTH=8",
+  ]
+  pcre2_include = rebase_path("$target_gen_dir/pcre2", root_build_dir)
+  if (target_os == "win") {
+    cflags = [ "/external:I$pcre2_include" ]
+  } else {
+    cflags = [
+      "-isystem",
+      pcre2_include,
+    ]
+  }
+}
+
+static_library("pcre2") {
+  configs -= [ "//build/config:vela_warnings" ]
+  deps = [
+    ":pcre2_chartables",
+    ":pcre2_config",
+    ":pcre2_header",
+  ]
+  public_configs = [ ":pcre2_headers" ]
+  include_dirs = [
+    "pcre2/src",
+    "$target_gen_dir/pcre2",
+  ]
+  defines = [
+    "HAVE_CONFIG_H",
+    "SUPPORT_PCRE2_8",
+    "SUPPORT_UNICODE",
+    "MATCH_LIMIT=1000000",
+    "MATCH_LIMIT_DEPTH=1000",
+    "HEAP_LIMIT=8192",
+    "LINK_SIZE=2",
+  ]
+  sources = [
+    "$target_gen_dir/pcre2/pcre2_chartables.c",
+    "pcre2/src/pcre2_auto_possess.c",
+    "pcre2/src/pcre2_chkdint.c",
+    "pcre2/src/pcre2_compile.c",
+    "pcre2/src/pcre2_compile_cgroup.c",
+    "pcre2/src/pcre2_compile_class.c",
+    "pcre2/src/pcre2_config.c",
+    "pcre2/src/pcre2_context.c",
+    "pcre2/src/pcre2_error.c",
+    "pcre2/src/pcre2_extuni.c",
+    "pcre2/src/pcre2_find_bracket.c",
+    "pcre2/src/pcre2_jit_compile.c",
+    "pcre2/src/pcre2_match.c",
+    "pcre2/src/pcre2_match_data.c",
+    "pcre2/src/pcre2_newline.c",
+    "pcre2/src/pcre2_ord2utf.c",
+    "pcre2/src/pcre2_pattern_info.c",
+    "pcre2/src/pcre2_script_run.c",
+    "pcre2/src/pcre2_string_utils.c",
+    "pcre2/src/pcre2_study.c",
+    "pcre2/src/pcre2_substring.c",
+    "pcre2/src/pcre2_tables.c",
+    "pcre2/src/pcre2_ucd.c",
+    "pcre2/src/pcre2_valid_utf.c",
+    "pcre2/src/pcre2_xclass.c",
+  ]
+}
+
 config("xxhash_headers") {
   xxhash_include = rebase_path("xxhash", root_build_dir)
   if (target_os == "win") {

@@ -1,0 +1,25 @@
+func main(): void {
+  const pattern = RegExp('(?<name>[A-Za-z]+)=([0-9]+)');
+  const found = pattern.firstMatch('😀age=42');
+  if (found != null) {
+    print(found.namedGroup('name') ?? '');
+    print(found[2] ?? '');
+    print(found.start);
+    print(found.end);
+  }
+
+  const numbers = RegExp('[0-9]+').allMatches('7, 42');
+  for (const item in numbers) {
+    print(item.group(0) ?? '');
+  }
+
+  const literal = 'Vela (C++)';
+  print(RegExp('^' + RegExp.escape(literal) + '$').hasMatch(literal));
+  print(RegExp('').allMatches('😀中').length);
+
+  try {
+    RegExp('(');
+  } catch (error: Error) {
+    print(error.code);
+  }
+}

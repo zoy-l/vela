@@ -5,6 +5,7 @@ vars = {
   "utf8proc_revision": "79cdd5ab40c79afa559f689ffc13b76812dee1ac",
   "yyjson_revision": "6447536015f3d600f3d65323b10976103b337ca7",
   "xxhash_revision": "e626a72bc2321cd320e953a0ccf1584cad60f363",
+  "pcre2_revision": "6f9d7c1373262c541324a16a358785b33ef116cf",
   "clang_revision": "git_revision:80743bd43fd5b38fedc503308e7a652e23d3ec93",
   "gn_windows_amd64": "oSpjjlooOXrPOilIB3Jp8v8m7oWgj_1FzsBmUS0uyf4C",
   "gn_linux_amd64": "HGFL8feSRdxEbidQY0WQp34I18nDUSi0hBC_CpgshIEC",
@@ -21,6 +22,7 @@ deps = {
   "third_party/utf8proc": "https://github.com/JuliaStrings/utf8proc.git@" + Var("utf8proc_revision"),
   "third_party/yyjson": "https://github.com/ibireme/yyjson.git@" + Var("yyjson_revision"),
   "third_party/xxhash": "https://github.com/Cyan4973/xxHash.git@" + Var("xxhash_revision"),
+  "third_party/pcre2": "https://github.com/PCRE2Project/pcre2.git@" + Var("pcre2_revision"),
   "third_party/build_tools/clang/windows-amd64": {
     "packages": [{
       "package": "fuchsia/third_party/clang/windows-amd64",

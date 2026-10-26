@@ -15,6 +15,14 @@ StatusDescription DescribeStatus(ExecutionStatus status) noexcept {
   switch (status) {
     case ExecutionStatus::Returned:
       return {.code = "Returned", .message = "returned"};
+    case ExecutionStatus::RegExpSyntaxError:
+      return {.code = "RegExpSyntaxError", .message = "invalid regular expression"};
+    case ExecutionStatus::RegExpGroupError:
+      return {.code = "RegExpGroupError", .message = "unknown named capture"};
+    case ExecutionStatus::RegExpLimitError:
+      return {.code = "RegExpLimitError", .message = "regular expression resource limit exceeded"};
+    case ExecutionStatus::RegExpExecutionError:
+      return {.code = "RegExpExecutionError", .message = "regular expression execution failed"};
     case ExecutionStatus::OutOfMemory:
       return {.code = "OutOfMemory", .message = "out of memory"};
     case ExecutionStatus::TypeError:

@@ -292,7 +292,8 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindCallParameters(
   }
   const auto& call = *found->second;
   if (const auto builtin = model_.builtin_calls.find(&call);
-      builtin != model_.builtin_calls.end() && builtin->second == Builtin::NewByteArray) {
+      builtin != model_.builtin_calls.end() &&
+      (builtin->second == Builtin::NewByteArray || builtin->second == Builtin::NewRegExp)) {
     return frontend::BuiltinSignature(builtin->second);
   }
   if (const auto async = model_.async_calls.find(&call); async != model_.async_calls.end()) {

@@ -43,7 +43,7 @@ constexpr std::size_t Index(Builtin builtin) {
 
 const FunctionDescriptor& ByteBuiltinSignature(Builtin builtin) {
   static const auto signatures = [] {
-    std::array<FunctionDescriptor, Index(Builtin::Count)> result;
+    std::array<FunctionDescriptor, Index(Builtin::ByteDataSetFloat64) + 1> result;
     const TypeDescriptor integer{.kind = Kind::Int, .name = "int"};
     const TypeDescriptor number{.kind = Kind::Double, .name = "double"};
     const TypeDescriptor nothing{.kind = Kind::Void, .name = "void"};

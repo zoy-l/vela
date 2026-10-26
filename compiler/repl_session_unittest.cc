@@ -63,6 +63,18 @@ TEST_F(ReplSessionTest, ByteViewsAndMethodsRetainTheirOwnersAcrossSubmissions) {
   EXPECT_EQ(output().str(), "42\n42\n42\n");
 }
 
+TEST_F(ReplSessionTest, RegExpCapturesAndBoundMethodsRetainOwnersAcrossSubmissions) {
+  session().isolate().heap().SetGcThreshold(1);
+  Execute("const re = RegExp('(?<digits>[0-9]+)');");
+  Execute("const found = re.firstMatch('😀42');");
+  Execute("const all: (string) => RegExpMatch[] = re.allMatches;");
+  session().isolate().heap().Collect();
+  Execute("found?.namedGroup('digits')");
+  Execute("all('1 2').length");
+  Execute("found?.start");
+  EXPECT_EQ(output().str(), "42\n2\n1\n");
+}
+
 TEST_F(ReplSessionTest, BuiltinMethodValuesKeepReceiversAndTargetsAcrossSubmissions) {
   session().isolate().heap().SetGcThreshold(1);
   Execute("const values = [20];");

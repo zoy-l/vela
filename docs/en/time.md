@@ -214,7 +214,7 @@ Method values have fixed full parameter lists; call-site omission supplies
 zero defaults for the four optional time fields.
 
 The Isolate owns the canonical DateParts layout. Compilation binds the checked
-standard declaration to it; version 6 images encode and validate the standard
+standard declaration to it; version 7 images encode and validate the standard
 class role and shape. The VM validates the toUTC wrapper's class-pool operand
 against this layout. Programs and REPL submissions borrow layouts from their
 owning Isolate. See [bytecode images](compilation_cache.md) and the runnable

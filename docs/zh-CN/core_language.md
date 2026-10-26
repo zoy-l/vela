@@ -286,6 +286,10 @@ const fraction: double = whole.toDouble();
 
 `ByteArray(length: int)` 拥有零初始化、固定长度的原始字节。下标读取返回 int，写入要求 0..255 的 int。`ByteArray.from(int[])` 和 `slice()` 复制存储；`ByteData.view(bytes, ...)` 共享并保活所有者，通过 Endian 枚举提供受检查、允许非对齐的整数与浮点访问。两种字节类型都不隐式转换为 int[] 或 string。详见[字节存储与带类型视图](byte_data.md)。
 
+## 正则表达式
+
+`RegExp` 与 `RegExpMatch` 是按引用身份比较的内建引用类型，支持可空标注、字段、闭包、不变容器与异步载荷。RegExpMatch 由搜索创建，全部属性和匹配下标只读；坐标按 Unicode 码点计数。详见[正则表达式](regexp.md)与[示例](../../examples/regexp.vela)。
+
 ## 有序 Set 与 Map
 
 ```typescript

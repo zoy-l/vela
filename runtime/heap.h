@@ -19,6 +19,9 @@
 namespace vela::runtime {
 
 class Heap;
+struct RegExpStorage;
+struct RegExpMatchStorage;
+struct RegExpCapture;
 
 class RootRange final {
  public:
@@ -112,6 +115,16 @@ class Heap final {
   void SetValueSlot(HeapObject& object, std::size_t index, Value value) noexcept;
   [[nodiscard]] HeapObject* AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept;
   [[nodiscard]] HeapObject* AllocateByteArray(std::size_t length) noexcept;
+  // 原生块参与堆压力核算；调用者负责配对释放，分配期间须保根所有借用对象。
+  [[nodiscard]] void* AllocateNative(std::size_t size) noexcept;
+  void FreeNative(void* pointer) noexcept;
+  [[nodiscard]] HeapObject* AllocateRegExp(const RegExpStorage& storage) noexcept;
+  [[nodiscard]] HeapObject* AllocateRegExpMatch(const RegExpMatchStorage& storage,
+                                                std::span<const RegExpCapture> captures) noexcept;
+  [[nodiscard]] static RegExpStorage& RegExpOf(HeapObject& object) noexcept;
+  [[nodiscard]] static RegExpMatchStorage& RegExpMatchOf(HeapObject& object) noexcept;
+  [[nodiscard]] static bool IsRegExp(const HeapObject& object) noexcept;
+  [[nodiscard]] static bool IsRegExpMatch(const HeapObject& object) noexcept;
   // 调用者保证范围合法；构造过程保根 owner，发布后由视图追踪其强引用。
   [[nodiscard]] HeapObject* AllocateByteData(HeapObject& owner, ByteViewRange range) noexcept;
   [[nodiscard]] static bool IsByteArray(const HeapObject& object) noexcept;
@@ -261,6 +274,8 @@ class Heap final {
 
  private:
   void MarkByteData(HeapObject& object) noexcept;
+  void MarkRegExp(HeapObject& object) noexcept;
+  static void ReleaseRegExp(HeapObject& object) noexcept;
   friend class RootRange;
   friend class Future;
 

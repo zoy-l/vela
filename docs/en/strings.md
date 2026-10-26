@@ -142,8 +142,8 @@ external text validation boundary.
 They are locale-independent and do not normalize text. See
 [string case conversion](string_case.md).
 
-Dart-style RegExp and RegExpMatch remain a
-[regular-expression design](regexp.md) and are not implemented.
+Dart-style RegExp and RegExpMatch provide PCRE2 Unicode matching with Vela
+code-point coordinates. See [regular expressions](regexp.md).
 
 ## Examples
 

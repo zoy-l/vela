@@ -5,6 +5,7 @@
 /third_party/benchmark/
 /third_party/googletest/
 /third_party/utf8proc/
+/third_party/pcre2/
 /third_party/unicode_data/inputs/
 /third_party/yyjson/
 /third_party/xxhash/

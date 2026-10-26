@@ -120,7 +120,7 @@ DateParts 是含七个 int 字段的固定布局标准类，不是 Map 或时刻
 
 受保护的标准环境提供受检查的签名和 DateParts 依赖闭包。标准静态方法的 intrinsic 标记经特化与 lowering 生成普通 builtin 包装函数。LSP、文档和源码工具消费相同的受检查签名。方法值具有完整的固定参数列表；直接调用时，四个可选时间字段省略后补零。
 
-Isolate 拥有规范 DateParts 布局，编译将受检查的标准声明绑定到该布局。版本 6 镜像编码并验证标准类角色和形状，VM 验证 toUTC 包装函数的类池操作数确实指向该布局。程序和 REPL 提交从所属 Isolate 借用布局。参见[字节码镜像](compilation_cache.md)与可运行的 [`examples/time.vela`](../../examples/time.vela)。
+Isolate 拥有规范 DateParts 布局，编译将受检查的标准声明绑定到该布局。版本 7 镜像编码并验证标准类角色和形状，VM 验证 toUTC 包装函数的类池操作数确实指向该布局。程序和 REPL 提交从所属 Isolate 借用布局。参见[字节码镜像](compilation_cache.md)与可运行的 [`examples/time.vela`](../../examples/time.vela)。
 
 ## 验证
 

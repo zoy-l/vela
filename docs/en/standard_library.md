@@ -66,6 +66,14 @@ view-relative bounds and integer ranges, including at unaligned offsets.
 Multi-byte methods default to `Endian.big`; little and host order are explicit
 enum choices. See [byte storage and typed views](byte_data.md).
 
+## Regular expressions
+
+`RegExp(source, ...)` compiles an immutable PCRE2 Unicode pattern. Search methods
+return bool, nullable text/matches, or eager typed match arrays. `RegExpMatch`
+retains its input and pattern and exposes code-point spans and numbered/named
+captures; unmatched captures are null. `RegExp.escape` produces literal pattern
+fragments. See [regular expressions](regexp.md) for flags, limits and Error codes.
+
 ## Random
 
 `Random.seed(value: int): void`, `Random.nextInt(bound: int): int`, and

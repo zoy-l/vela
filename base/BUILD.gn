@@ -19,6 +19,7 @@ source_set("base") {
     "opcode.h",
     "path.cc",
     "path.h",
+    "regexp.h",
     "source_location.h",
     "utf8.cc",
     "utf8.h",

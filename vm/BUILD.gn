@@ -17,6 +17,7 @@ source_set("vm") {
     "execution_async.cc",
     "execution_calendar.cc",
     "execution_exception.cc",
+    "execution_regexp.cc",
     "execution_status.h",
     "frame.h",
     "program.cc",

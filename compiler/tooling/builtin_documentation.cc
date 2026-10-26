@@ -14,6 +14,39 @@ namespace {
 
 using Kind = frontend::TypeDescriptor::Kind;
 
+std::string_view RegExpDocumentation(Kind receiver, std::string_view name) {
+  if (receiver == Kind::RegExp || name == "RegExp") {
+    if (name == "allMatches") {
+      return "Returns independent, non-overlapping matches in code-point order. start defaults "
+             "to zero. Empty matches advance one code point and include the terminal empty once.";
+    }
+    if (name == "matchAsPrefix") {
+      return "Attempts an anchored match at the code-point start (default zero) in the whole "
+             "input. Lookbehind retains preceding context; \\K may reset the reported start.";
+    }
+    if (name == "isUnicode") {
+      return "Always true. UTF and Unicode properties are enabled; \\C is rejected.";
+    }
+    return "Immutable PCRE2 Unicode regular expression. Defaults: multiLine false, caseSensitive "
+           "true, dotAll false. Uses code-point coordinates and no shared matching cursor. "
+           "Compilation and matching failures throw typed Error codes.";
+  }
+  if (receiver == Kind::RegExpMatch || name == "RegExpMatch") {
+    if (name == "groupNames") {
+      return "Independent unique-name snapshot in native name-table order.";
+    }
+    if (name == "namedGroup") {
+      return "Returns the first participating capture for this name, or null if none participate. "
+             "An unknown name throws RegExpGroupError.";
+    }
+    return "Immutable match retaining its input and pattern. start/end are Unicode code-point "
+           "offsets; group zero is the whole match. Unmatched captures return null; empty "
+           "participating captures return an empty string. Invalid group indices throw "
+           "IndexOutOfBounds.";
+  }
+  return {};
+}
+
 std::string_view ByteDocumentation(Kind receiver, std::string_view name) {
   if (receiver == Kind::ByteArray) {
     if (name == "length") {
@@ -37,30 +70,7 @@ std::string_view ByteDocumentation(Kind receiver, std::string_view name) {
   return {};
 }
 
-}  // namespace
-
-std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
-  std::string text = "(";
-  for (const auto& parameter : signature.parameters) {
-    if (text.back() != '(') {
-      text += ", ";
-    }
-    text += parameter.rest ? "..." : "";
-    text += parameter.name;
-    if (signature.optional_parameters.contains(parameter.name)) {
-      text += '?';
-    }
-    const auto type_name =
-        parameter.rest ? frontend::MakeArrayType(parameter.type).name : parameter.type.name;
-    text += ": " + type_name;
-  }
-  return text + "): " + signature.return_type.name;
-}
-
-std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
-  if (const auto bytes = ByteDocumentation(receiver, name); !bytes.empty()) {
-    return bytes;
-  }
+std::string_view AsyncDocumentation(Kind receiver, std::string_view name) {
   if (receiver == Kind::Future) {
     if (name == "then") {
       return "Queues a typed continuation. Values and returned Futures are flattened; thrown "
@@ -111,6 +121,39 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
   }
   if (name == "sleep") {
     return "Returns Future<void> after a nonnegative monotonic delay in integer milliseconds.";
+  }
+  return {};
+}
+
+}  // namespace
+
+std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
+  std::string text = "(";
+  for (const auto& parameter : signature.parameters) {
+    if (text.back() != '(') {
+      text += ", ";
+    }
+    text += parameter.rest ? "..." : "";
+    text += parameter.name;
+    if (signature.optional_parameters.contains(parameter.name)) {
+      text += '?';
+    }
+    const auto type_name =
+        parameter.rest ? frontend::MakeArrayType(parameter.type).name : parameter.type.name;
+    text += ": " + type_name;
+  }
+  return text + "): " + signature.return_type.name;
+}
+
+std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
+  if (const auto regexp = RegExpDocumentation(receiver, name); !regexp.empty()) {
+    return regexp;
+  }
+  if (const auto bytes = ByteDocumentation(receiver, name); !bytes.empty()) {
+    return bytes;
+  }
+  if (const auto async = AsyncDocumentation(receiver, name); !async.empty()) {
+    return async;
   }
   static const absl::flat_hash_map<std::pair<Kind, std::string_view>, std::string_view>
       kDocumentation = {
@@ -538,6 +581,12 @@ std::string_view BuiltinTypeDetail(std::string_view name) {
       {"String", "class String {\n  constructor();\n}"},
       {"ByteArray", "class ByteArray {\n  constructor(length: int);\n}"},
       {"ByteData", "type ByteData"},
+      {
+          "RegExp",
+          "class RegExp {\n  constructor(source: string, multiLine?: bool, caseSensitive?: bool, "
+          "dotAll?: bool);\n}",
+      },
+      {"RegExpMatch", "type RegExpMatch"},
       {"Set", "class Set<T> {\n  constructor();\n}"},
       {"Map", "class Map<K, V> {\n  constructor();\n}"},
       {"Expected", "type Expected<T, E>"},

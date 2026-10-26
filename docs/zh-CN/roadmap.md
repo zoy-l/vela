@@ -90,7 +90,7 @@ P0 行为详见[基础语言契约](language_basics.md)。
 - [x] 添加基础字符串标准库 API（[契约说明](strings.md)）
 - [x] 添加受检查的字符串数值解析 int/double parse 与 tryParse（[契约](numeric_parse.md)）
 - [x] 添加 Unicode 字符串大小写转换（[契约](string_case.md)）
-- [ ] 添加基于 PCRE2 的 Dart 风格正则 API 与带类型匹配结果（[设计](regexp.md)）
+- [x] 添加基于 PCRE2 的 Dart 风格正则 API 与带类型匹配结果（[契约](regexp.md)）
 - [x] 添加集合标准库 API
 - [ ] 添加基于原生值的 JSON 解析与序列化（[设计](json.md)）
 - [x] 添加固定字节存储与带类型字节视图（[契约](byte_data.md)）

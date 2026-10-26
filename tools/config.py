@@ -137,7 +137,8 @@ def _gn_value(value: str) -> str:
 
 def compiler_build_identity() -> str:
     """Invalidate compiled caches when compiler, runtime, ABI or pinned tools change."""
-    paths = {ROOT / "DEPS", ROOT / "BUILD.gn", ROOT / "tools" / "config.py"}
+    paths = {ROOT / "DEPS", ROOT / "BUILD.gn", ROOT / "tools" / "config.py",
+             ROOT / "third_party" / "BUILD.gn"}
     paths.update({ROOT / "third_party/unicode_data/manifest.json", ROOT / "tools/unicode_case.py"})
     for directory in ("base", "compiler", "runtime", "vm", "build"):
         paths.update(path for path in (ROOT / directory).rglob("*")

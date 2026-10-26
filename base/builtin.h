@@ -92,6 +92,27 @@ enum class Builtin : std::uint8_t {
   ByteDataSetFloat32,
   ByteDataGetFloat64,
   ByteDataSetFloat64,
+  NewRegExp,
+  RegExpEscape,
+  RegExpPattern,
+  RegExpIsMultiLine,
+  RegExpIsCaseSensitive,
+  RegExpIsDotAll,
+  RegExpIsUnicode,
+  RegExpHasMatch,
+  RegExpFirstMatch,
+  RegExpAllMatches,
+  RegExpMatchAsPrefix,
+  RegExpStringMatch,
+  RegExpMatchStart,
+  RegExpMatchEnd,
+  RegExpMatchInput,
+  RegExpMatchPattern,
+  RegExpMatchGroupCount,
+  RegExpMatchGroupNames,
+  RegExpMatchGroup,
+  RegExpMatchGroups,
+  RegExpMatchNamedGroup,
   Count,
 };
 
@@ -100,6 +121,17 @@ enum class Builtin : std::uint8_t {
     case Builtin::NewMutableString:
       return 0;
     case Builtin::ScalarToString:
+    case Builtin::RegExpEscape:
+    case Builtin::RegExpPattern:
+    case Builtin::RegExpIsMultiLine:
+    case Builtin::RegExpIsCaseSensitive:
+    case Builtin::RegExpIsDotAll:
+    case Builtin::RegExpIsUnicode:
+    case Builtin::RegExpMatchStart:
+    case Builtin::RegExpMatchEnd:
+    case Builtin::RegExpMatchInput:
+    case Builtin::RegExpMatchPattern:
+    case Builtin::RegExpMatchGroupCount:
     case Builtin::NewByteArray:
     case Builtin::ByteArrayFrom:
     case Builtin::ByteArrayLength:
@@ -127,6 +159,12 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayMutation:
       return 1;
     case Builtin::ArrayJoin:
+    case Builtin::RegExpHasMatch:
+    case Builtin::RegExpFirstMatch:
+    case Builtin::RegExpStringMatch:
+    case Builtin::RegExpMatchGroupNames:
+    case Builtin::RegExpMatchGroup:
+    case Builtin::RegExpMatchNamedGroup:
     case Builtin::ByteArrayGetIndex:
     case Builtin::ByteDataGetInt8:
     case Builtin::ByteDataGetUint8:
@@ -158,6 +196,8 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayCheckMutation:
       return 2;
     case Builtin::StringSlice:
+    case Builtin::RegExpMatchAsPrefix:
+    case Builtin::RegExpMatchGroups:
     case Builtin::ByteArraySlice:
     case Builtin::ByteArraySetIndex:
     case Builtin::ByteDataView:
@@ -175,6 +215,8 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArraySlice:
       return 3;
     case Builtin::ArrayFill:
+    case Builtin::NewRegExp:
+    case Builtin::RegExpAllMatches:
     case Builtin::ByteDataSetInt16:
     case Builtin::ByteDataSetUint16:
     case Builtin::ByteDataSetInt32:

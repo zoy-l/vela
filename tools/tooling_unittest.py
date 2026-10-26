@@ -1157,6 +1157,31 @@ class LanguageServerTest(unittest.TestCase):
         self.assertIn("length?: int", self.reply(messages, "factory")["result"]["contents"]["value"])
         self.assertEqual({item["label"] for item in self.reply(messages, "endian")["result"]}, {"big", "little", "host"})
 
+    def test_regexp_signatures_properties_and_named_arguments_share_metadata(self) -> None:
+        source = ("func main(): void { const re = RegExp('(?<x>a)', dotAll: true); "
+                  "const found = re.firstMatch('a'); re.allMatches('a'); "
+                  "print(found?.groupNames); print(found?.group(0)); }")
+        messages = self.session([
+            self.open(source),
+            self.symbol_query("hover", source, source.index("RegExp(") + 2, "ctor"),
+            self.symbol_query("completion", source, source.index("re.firstMatch") + 3, "re"),
+            self.symbol_query("completion", source, source.index("found?.groupNames") + 7, "found"),
+            self.symbol_query("hover", source, source.index(".allMatches") + 2, "all"),
+            self.symbol_query("hover", source, source.index("?.groupNames") + 3, "names"),
+            self.symbol_query("hover", source, source.index("?.group(0)") + 3, "group"),
+            self.symbol_query("completion", source, source.index("dotAll:") + 2, "args")])
+        self.assertFalse(self.diagnostics(messages)[-1]["diagnostics"])
+        self.assertIn("caseSensitive?: bool", self.reply(messages, "ctor")["result"]["contents"]["value"])
+        self.assertTrue({"pattern", "isUnicode", "firstMatch", "allMatches", "hasMatch", "matchAsPrefix", "stringMatch"}
+                        <= {item["label"] for item in self.reply(messages, "re")["result"]})
+        self.assertTrue({"start", "end", "input", "pattern", "groupCount", "groupNames", "group", "groups", "namedGroup"}
+                        <= {item["label"] for item in self.reply(messages, "found")["result"]})
+        self.assertIn("start?: int", self.reply(messages, "all")["result"]["contents"]["value"])
+        self.assertIn("RegExpMatch[]", self.reply(messages, "all")["result"]["contents"]["value"])
+        self.assertIn("string[]", self.reply(messages, "names")["result"]["contents"]["value"])
+        self.assertIn("string?", self.reply(messages, "group")["result"]["contents"]["value"])
+        self.assertIn("dotAll:", {item["label"] for item in self.reply(messages, "args")["result"]})
+
     def test_definition_accepts_identifier_end_before_punctuation_and_whitespace(self) -> None:
         source = ("class Box { public param value: int; }\n"
                   "func answer(): int { return 42; }\n"

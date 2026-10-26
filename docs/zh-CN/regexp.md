@@ -2,17 +2,17 @@
 
 [English](../en/regexp.md) | [**简体中文**](regexp.md)
 
-> 状态：设计规格。RegExp 和 RegExpMatch 尚未实现。本文定义第一版 API、匹配语义、引擎集成与完成条件。
+> 状态：已实现。RegExp 和 RegExpMatch 使用固定的 PCRE2 10.49、Unicode 17.0.0 表、码点坐标与计入堆核算的原生存储。
 
 Vela 采用 Dart 风格的 `RegExp` 对象及匹配结果，底层使用独立 PCRE2 库。模式遵循固定 PCRE2 版本及下述配置的语法和匹配规则，位置沿用 Vela 的 Unicode 码点索引。构造时编译模式，匹配不修改 RegExp 对象上的游标。API 不承诺 ECMAScript 兼容性。
 
 ```vela
 func main(): void {
   const pattern = RegExp('([A-Za-z]+)=([0-9]+)');
-  const match: RegExpMatch? = pattern.firstMatch('age=42');
-  if (match != null) {
-    print(match.group(1) ?? ''); // age
-    print(match.group(2) ?? ''); // 42
+  const found: RegExpMatch? = pattern.firstMatch('age=42');
+  if (found != null) {
+    print(found.group(1) ?? ''); // age
+    print(found.group(2) ?? ''); // 42
   }
 
   const numbers = RegExp('[0-9]+');
@@ -76,10 +76,10 @@ Vela 字符串为合法 UTF-8，所有公开位置按 Unicode 标量值计数。
 输入长度为 N 时，start 必须满足 `0 <= start <= N`，非法值走现有越界错误路径。位置相对完整原始输入，匹配范围为半开区间 `[start, end)`。start 控制搜索位置，不改变输入原点或锚点与后向查找可见的上下文。引擎接收完整输入和字节起点。matchAsPrefix 对该次尝试使用 `PCRE2_ANCHORED`。原生 `\K` 可以把报告的完整匹配起点重置到锚定尝试开始之后，捕获范围也可以位于完整匹配范围之外；这些是 PCRE2 语义，不能因此报错或丢弃成功结果。
 
 ```vela
-const match = RegExp('Vela').firstMatch('😀Vela');
-if (match != null) {
-  print(match.start); // 1
-  print(match.end);   // 5
+const found = RegExp('Vela').firstMatch('😀Vela');
+if (found != null) {
+  print(found.start); // 1
+  print(found.end);   // 5
 }
 ```
 
@@ -108,7 +108,7 @@ if (match != null) {
 
 通过 DEPS 和 GN 集成 PCRE2，启用 Unicode，只构建 8-bit 源码闭包，关闭 JIT。其 C API 显式返回错误，适合 Vela 关闭 C++ 异常的构建。固定不可变 revision，在依赖记录中登记实际 BSD-3-Clause WITH PCRE2-exception 及随附数据许可证、Unicode 表版本、源码闭包与构建配置。不修改上游源码，也不保留另一套回退引擎。
 
-通过 general context 接入 Vela 分配器，通过 compile context 设置上述配置，match data/context 由单次操作拥有。固定构建的 match、depth 和 heap 限制必须显式登记在 GN 配置与依赖记录中；它们属于实现上限，变化时需要回归审查。`PCRE2_ERROR_MATCHLIMIT`、`PCRE2_ERROR_DEPTHLIMIT`、`PCRE2_ERROR_HEAPLIMIT` 映射为独立的限制错误，不能解释为无匹配或实际分配失败。不设置无限预算；引擎计数不是墙钟 timeout。
+通过 general context 接入 Vela 分配器，通过 compile context 设置上述配置，match data 由单次操作拥有。匹配使用不可变默认上下文，可变工作缓冲区沿用模式的核算分配器。固定构建的 match、depth 和 heap 限制必须显式登记在 GN 配置与依赖记录中；它们属于实现上限，变化时需要回归审查。`PCRE2_ERROR_MATCHLIMIT`、`PCRE2_ERROR_DEPTHLIMIT`、`PCRE2_ERROR_HEAPLIMIT` 映射为独立的限制错误，不能解释为无匹配或实际分配失败。不设置无限预算；引擎计数不是墙钟 timeout。
 
 PCRE2 接收原始 UTF-8 缓冲区和显式长度，返回字节偏移，不复制 UTF-16 输入。每次操作共享一份边界映射，将公开码点起点转为字节起点，并将捕获范围转换回码点位置。allMatches 只构建一次映射，不对每个捕获重复扫描前缀。已有内部 UTF-8 校验契约允许在重复匹配调用中使用 `PCRE2_NO_UTF_CHECK`，但不允许未验证的外部输入或码点内部起点。分配前检查大小和索引转换，不截断 `PCRE2_SIZE`。编译诊断中的字节偏移转换为已解码模式字符串的码点偏移。
 
@@ -130,23 +130,15 @@ GC 追踪输入/模式引用，发布引用使用已有屏障。编译程序和�
 
 采用回溯引擎，不承诺通用的最坏线性复杂度。第一版不公开 timeout 参数。分配、已配置限制和引擎失败显式处理；性能验证覆盖歧义量词与失败搜索，不能只测成功的字面量匹配。
 
-## 实现范围与完成条件
+## 实现与验证
 
-现有[标准环境](../../compiler/frontend/standard_environment.cc)、[builtin 签名](../../compiler/frontend/builtins.h)、[UTF-8 helper](../../base/utf8.h)和[运行时对象模型](../../runtime/object.h)界定集成边界。runtime 拥有编译模式与匹配结果，不依赖 compiler/tooling。普通字符串检索保持已有实现与语义。
+共享[签名表](../../compiler/frontend/regexp_builtins.cc)提供静态检查与工具元数据。[运行时操作](../../runtime/regexp.cc)负责模式编译、搜索及捕获，[堆集成](../../runtime/heap_regexp.cc)负责原生内存核算、追踪与释放。runtime 不依赖 compiler/tooling，普通字符串检索沿用已有语义。
 
-| 阶段 | 必须完成的工作 |
-| --- | --- |
-| 依赖 | 通过 DEPS/GN 固定 PCRE2 8-bit Unicode 源码闭包、许可证、版本、配置与限制，关闭 JIT |
-| 前端 | 增加专用 RegExp/RegExpMatch 类型、签名、构造、属性、匹配下标、可空结果、不变容器及可选/命名参数检查 |
-| 运行时 | 接通编译/搜索、坐标转换、捕获、所有权、GC/核算和带类型错误映射 |
-| IR 与 VM | 降低构造和全部调用，标记分配与可抛出效果，保留源码求值顺序和新结果的引用身份 |
-| 镜像与缓存 | 记录类型/builtin 元数据并校验操作数，按需更新格式/构建身份；引擎编译程序与原生指针不写入镜像 |
-| 工具链 | 补全、悬停、文档和格式化共享签名；调试器提供可用的模式/匹配表示，REPL 正确保留生命周期 |
-| 交付 | 增加 `examples/regexp.vela`，全部 API 与验证路径完成后才勾选路线图 |
+固定解释器的匹配限制为 1,000,000，深度限制为 1,000，堆限制为 8,192 KiB；括号嵌套上限为 250，可变后向查找最大长度为 255。Unicode 17.0.0 表独立于大小写转换的 Unicode 18.0.0 数据。[依赖记录](../../third_party/README.md)定义源码闭包、许可证及配置。版本 7 镜像保留带类型布局操作数，原生编译程序在执行时重新创建。
 
-必要回归覆盖构造默认值及配置、Unicode 属性、有序分支、贪婪/非贪婪匹配、编号/命名捕获、未参与与空捕获、反向引用和前后查找、锚点与行终止符、Unicode 忽略大小写、补充平面字符及坐标转换、NUL、非法转义/模式、起点/捕获边界、空匹配与终止、重复调用独立性、分组快照和可恢复引擎失败。PCRE2 专项覆盖 Unicode 简写字符类、内联选项、换行指令、有界/无界后向查找、branch-reset 与重复名称、锚定匹配中的 `\K`、拒绝 `\C` 和前后查找内的 `\K`，以及各类已配置限制错误。兼容向量以固定 PCRE2 构建为准。GC 测试只保留匹配对象，施压 allMatches 分配与分组提取，并验证编译/工作缓冲区释放与核算。编译器、工具、新 Isolate 镜像和持久化 REPL 测试覆盖两种新类型。
+[编译器／镜像测试](../../compiler/regexp_unittest.cc)覆盖两种类型、选项、Unicode 坐标、捕获、PCRE2 原生构造、方法值、容器、异步载荷与错误。[运行时测试](../../runtime/regexp_unittest.cc)验证三个资源限制、执行失败、部分结果清理、仅匹配结果可达时的所有权、原生核算及 hasMatch 不分配 GC 对象。REPL 与 LSP 测试覆盖跨提交所有权、补全、悬停和命名参数。[可运行示例](../../examples/regexp.vela)使用普通 Vela 字符串转义与带类型结果。
 
-实现完成边界执行相关 Debug/Release 回归、工具测试、静态检查和 Release benchmark。区分模式编译与重复匹配，测量 hasMatch 分配、allMatches 物化、坐标映射、捕获、内存压力和回溯案例。本文不声称已有实现或基准结果。
+Release benchmark 分别测量模式编译、重复 hasMatch/firstMatch、allMatches 物化与坐标映射、捕获提取、GC 压力及回溯限制。聚合数据、波动与未改动 VM 工作负载对照保存在[滚动摘要](../../benchmarks/results/rolling_summary.json)。
 
 ## 参考
 

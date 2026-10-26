@@ -222,7 +222,7 @@ source-order evaluation. Null-safe access skips indices and arguments when the
 receiver is null. Builtin results are published only after success, including
 when a bytecode destination aliases an input.
 
-Version 6 bytecode images preserve the new object-kind constraints in typed
+Version 7 bytecode images preserve the byte object-kind constraints in typed
 arrays, collections and runtime type tests, and validate builtin argument
 windows. Images contain metadata and executable constructors, never live bytes,
 owners or raw addresses. Build identities include the implementation; old image

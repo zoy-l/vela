@@ -28,6 +28,8 @@ constexpr auto kNames = std::to_array<std::string_view>({
     "DateParts",
     "ByteArray",
     "ByteData",
+    "RegExp",
+    "RegExpMatch",
     "Endian",
     "int",
     "double",
@@ -37,6 +39,9 @@ constexpr auto kNames = std::to_array<std::string_view>({
 
 std::optional<Builtin> Intrinsic(std::string_view owner, const Function& declaration) {
   const auto& member = declaration.name;
+  if (owner == "RegExp" && member == "escape") {
+    return Builtin::RegExpEscape;
+  }
   if (owner == "ByteArray" && member == "from") {
     return Builtin::ByteArrayFrom;
   }
@@ -118,13 +123,30 @@ bool IsStandardName(std::string_view name) noexcept {
 
 bool IsStandardTypeNamespace(const Program& program, const Class& declaration) {
   const auto& name = declaration.name;
-  return (name == "int" || name == "double" || name == "ByteArray" || name == "ByteData") &&
+  return (name == "int" || name == "double" || name == "ByteArray" || name == "ByteData" ||
+          name == "RegExp" || name == "RegExpMatch") &&
          declaration.location.source_id < program.sources.size() &&
          program.sources.at(declaration.location.source_id).path ==
              std::string(kStandardSourcePrefix) + name;
 }
 
 std::optional<std::string_view> StandardDeclarationSource(std::string_view name) noexcept {
+  if (name == "RegExp") {
+    return R"(/// PCRE2 Unicode regular expression with code-point coordinates; no shared cursor.
+class RegExp {
+  private constructor() {}
+  /// Escapes literal text, including whitespace and extended-mode metacharacters.
+  static external func escape(text: string): string;
+}
+)";
+  }
+  if (name == "RegExpMatch") {
+    return R"(/// Immutable match retaining its input and pattern. Created by RegExp searches.
+class RegExpMatch {
+  private constructor() {}
+}
+)";
+  }
   if (name == "ByteArray") {
     return R"(/// Fixed-length, zero-initialized raw byte storage. Construct with ByteArray(length: int).
 class ByteArray {
@@ -325,6 +347,9 @@ void AddStandardEnvironment(Program& program) {
   }
   if (used.contains("Date")) {
     used.insert("DateParts");
+  }
+  if (used.contains("RegExpMatch")) {
+    used.insert("RegExp");
   }
   if (used.contains("ByteData") || used.contains("ByteArray")) {
     used.insert("ByteArray");

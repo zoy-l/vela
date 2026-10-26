@@ -2,7 +2,7 @@
 
 [**English**](regexp.md) | [简体中文](../zh-CN/regexp.md)
 
-> Status: design specification. RegExp and RegExpMatch are not implemented. This document defines the first-version API, matching semantics, engine integration, and completion criteria.
+> Status: implemented. RegExp and RegExpMatch use pinned PCRE2 10.49 with Unicode 17.0.0 tables, code-point coordinates and accounted native storage.
 
 Vela uses Dart-style `RegExp` objects and match results, backed by the standalone
 PCRE2 library. Patterns follow the pinned PCRE2 version's syntax and matching
@@ -13,10 +13,10 @@ a cursor on the RegExp object. The API makes no ECMAScript compatibility promise
 ```vela
 func main(): void {
   const pattern = RegExp('([A-Za-z]+)=([0-9]+)');
-  const match: RegExpMatch? = pattern.firstMatch('age=42');
-  if (match != null) {
-    print(match.group(1) ?? ''); // age
-    print(match.group(2) ?? ''); // 42
+  const found: RegExpMatch? = pattern.firstMatch('age=42');
+  if (found != null) {
+    print(found.group(1) ?? ''); // age
+    print(found.group(2) ?? ''); // 42
   }
 
   const numbers = RegExp('[0-9]+');
@@ -126,10 +126,10 @@ groups may also span text outside the reported whole match. These are PCRE2
 semantics, not an error or a reason to discard a successful result.
 
 ```vela
-const match = RegExp('Vela').firstMatch('😀Vela');
-if (match != null) {
-  print(match.start); // 1
-  print(match.end);   // 5
+const found = RegExp('Vela').firstMatch('😀Vela');
+if (found != null) {
+  print(found.start); // 1
+  print(found.end);   // 5
 }
 ```
 
@@ -179,7 +179,8 @@ source closure, and build configuration in dependency records. Do not modify
 upstream sources or retain another engine as a fallback.
 
 Use a general context with Vela's allocator, a compile context with the settings
-above, and operation-owned match data/context. Keep the pinned build's match,
+above, and operation-owned match data. Matching uses the immutable default
+context; mutable work buffers use the accounted pattern allocator. Keep the pinned build's match,
 depth, and heap limits explicit in GN configuration and dependency records;
 they are implementation limits, and changes require regression review. Translate
 `PCRE2_ERROR_MATCHLIMIT`, `PCRE2_ERROR_DEPTHLIMIT`, and `PCRE2_ERROR_HEAPLIMIT`
@@ -218,7 +219,7 @@ extraction allocates a string only when content is requested and cannot be reuse
 | Engine/backing allocation or representable-size exhaustion | Existing recoverable `OutOfMemory` path |
 | Match-work, matching-depth, or engine-heap limit reached | `Error` with code `RegExpLimitError` |
 | Other engine execution failure | Explicit `RegExpExecutionError`, not a no-match result |
-| Wrong static receiver, argument, or index type | Compile-time diagnostic; dynamic crossings retain runtime checks |
+| Wrong static receiver, argument, or index type | Compile-time diagnostic; native/bytecode boundaries retain runtime checks |
 
 No match is a normal false, null, or empty-array result. Engine failure is never
 reported as no match, and allMatches never returns a partial array. Errors flow
@@ -231,44 +232,34 @@ The first version exposes no timeout parameter. Allocation, configured limits,
 and engine failures remain explicit; performance validation includes ambiguous
 quantifiers and failed searches, not just successful literal matches.
 
-## Implementation and completion
+## Implementation and validation
 
-The existing [standard environment](../../compiler/frontend/standard_environment.cc),
-[builtin signatures](../../compiler/frontend/builtins.h),
-[UTF-8 helpers](../../base/utf8.h), and [runtime object model](../../runtime/object.h)
-define integration boundaries. Runtime owns compiled patterns and matches and
-does not depend on compiler/tooling. Ordinary string search retains its existing
-implementation and semantics.
+The shared [signature registry](../../compiler/frontend/regexp_builtins.cc)
+provides static checking and tooling metadata. [Runtime operations](../../runtime/regexp.cc)
+own compilation, search and captures; [heap integration](../../runtime/heap_regexp.cc)
+owns native accounting, tracing and release. Runtime does not depend on the
+compiler or tooling. Ordinary string search retains its existing semantics.
 
-| Stage | Required completion |
-| --- | --- |
-| Dependencies | Pin PCRE2's 8-bit Unicode source closure, licenses, version, configuration, and limits through DEPS/GN; disable JIT |
-| Frontend | Add dedicated RegExp/RegExpMatch types, signatures, construction, properties, match indexing, nullable results, invariant-container and optional/named-argument checking |
-| Runtime | Implement compile/search, coordinate conversion, captures, ownership, GC/accounting, and typed error mapping |
-| IR and VM | Lower construction and all calls; mark allocation and throwing effects; preserve source-order evaluation and fresh result identities |
-| Images and caches | Record type/builtin metadata and validate operands; update format/build identities as needed; compiled engine programs and native pointers are not image payloads |
-| Tooling | Share signatures with completion, hover, documentation and formatting; expose useful pattern/match values to debugger and preserve REPL lifetimes |
-| Delivery | Add `examples/regexp.vela`; mark the roadmap implemented only after all API and validation paths are complete |
+The pinned interpreter uses match limit 1,000,000, depth limit 1,000 and heap
+limit 8,192 KiB. Parentheses nesting is limited to 250 and maximum variable
+lookbehind to 255. Unicode 17.0.0 tables are independent of string casing Unicode
+18.0.0 data. [Dependency records](../../third_party/README.md) define the source
+closure, licenses and configuration. Image version 7 retains typed layout
+operands; native compiled programs are recreated during execution.
 
-Required regressions cover constructor defaults and flags, Unicode properties,
-ordered alternatives, greedy/lazy matching, numeric/named captures, unmatched
-versus empty groups, backreferences and lookarounds, anchors and line endings,
-Unicode ignore-case, supplementary characters and coordinate conversion, NUL,
-invalid escapes/patterns, start/group bounds, empty matches and termination,
-independent repeated calls, group snapshots, and recoverable engine failures.
-PCRE2-specific cases cover Unicode shorthand classes, inline options, newline
-directives, bounded/unbounded lookbehind, branch-reset groups and duplicate
-names, `\K` with anchored matching, rejected `\C` and lookaround `\K`, and each
-configured limit error. Compatibility fixtures target the pinned PCRE2 build.
-GC tests retain only a match, stress allMatches allocation and group extraction,
-and check compiled/work-buffer release and accounting. Compiler, tooling,
-fresh-Isolate image, and persistent REPL tests cover both new types.
+[Compiler/image tests](../../compiler/regexp_unittest.cc) cover both types,
+options, Unicode coordinates, captures, native PCRE2 constructs, method values,
+containers, async payloads and errors. [Runtime tests](../../runtime/regexp_unittest.cc)
+check all three resource limits, execution failures, partial-result cleanup,
+match-only reachability, native accounting and hasMatch zero GC allocations.
+REPL and LSP tests cover persistent ownership, completion, hover and named
+arguments. The runnable [example](../../examples/regexp.vela) uses ordinary Vela
+string escapes and typed results.
 
-At implementation completion run relevant Debug/Release regressions, tooling
-tests, static checks, and Release benchmarks. Measure compilation separately
-from repeated matching, hasMatch allocations, allMatches materialization,
-coordinate mapping, captures, memory pressure, and backtracking cases. This
-design records no completed implementation or benchmark results.
+Release benchmarks separate pattern compilation, repeated hasMatch/firstMatch,
+allMatches materialization and coordinate mapping, capture extraction, GC
+pressure and backtracking limits. Aggregate results, variation and unchanged VM
+workload comparisons are retained in the [rolling summary](../../benchmarks/results/rolling_summary.json).
 
 ## References
 

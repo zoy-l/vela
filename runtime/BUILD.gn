@@ -17,6 +17,7 @@ action("unicode_case_data") {
 source_set("runtime") {
   deps = [
     ":unicode_case_data",
+    "//third_party:pcre2",
     "//third_party:utf8proc",
   ]
   include_dirs = [ root_gen_dir ]
@@ -48,6 +49,7 @@ source_set("runtime") {
     "heap_bytes.cc",
     "heap_collection.cc",
     "heap_exception.cc",
+    "heap_regexp.cc",
     "heap_string.cc",
     "heap_string_case.cc",
     "heap_value_slots.cc",
@@ -62,6 +64,9 @@ source_set("runtime") {
     "object.h",
     "random.cc",
     "random.h",
+    "regexp.cc",
+    "regexp.h",
+    "regexp_storage.h",
     "register_storage.h",
     "rooted_value.cc",
     "rooted_value.h",
@@ -89,6 +94,7 @@ executable("runtime_tests") {
     "numeric_conversion_unittest.cc",
     "numeric_parse_unittest.cc",
     "random_unittest.cc",
+    "regexp_unittest.cc",
     "rooted_value_unittest.cc",
     "runtime_unittest.cc",
     "string_case_unittest.cc",
@@ -97,6 +103,7 @@ executable("runtime_tests") {
   deps = [
     ":runtime",
     "//third_party:gtest_main",
+    "//third_party:pcre2",
     "//third_party:utf8proc",
   ]
 }

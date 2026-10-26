@@ -67,6 +67,8 @@ enum class ObjectKind : std::uint8_t {
   CancellationToken,
   ByteArray,
   ByteData,
+  RegExp,
+  RegExpMatch,
   ValueSlots,
 };
 

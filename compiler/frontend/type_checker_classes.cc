@@ -5,6 +5,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/regexp.h"
 #include "compiler/frontend/ast.h"
 
 #include "compiler/frontend/builtins.h"
@@ -21,11 +22,16 @@ void TypeChecker::CollectTypes(const Program& program) {
   types_.emplace("String", Type{.kind = Type::Kind::MutableString, .name = "String"});
   types_.emplace("ByteArray", Type{.kind = Type::Kind::ByteArray, .name = "ByteArray"});
   types_.emplace("ByteData", Type{.kind = Type::Kind::ByteData, .name = "ByteData"});
+  types_.emplace("RegExp", Type{.kind = Type::Kind::RegExp, .name = "RegExp"});
+  types_.emplace("RegExpMatch", Type{.kind = Type::Kind::RegExpMatch, .name = "RegExpMatch"});
   types_.emplace("Timer", Type{.kind = Type::Kind::Timer, .name = "Timer"});
   types_.emplace("CancellationToken",
                  Type{.kind = Type::Kind::CancellationToken, .name = "CancellationToken"});
   static_cast<void>(ArrayType(types_.at("string")));
   static_cast<void>(ArrayType(types_.at("int")));
+  static_cast<void>(ArrayType(types_.at("RegExpMatch")));
+  static_cast<void>(NullableType(types_.at("RegExpMatch")));
+  static_cast<void>(ArrayType(NullableType(types_.at("string"))));
   types_.reserve(types_.size() + program.enums.size() + program.classes.size());
   classes_.reserve(program.classes.size());
   for (const auto& interface : program.interfaces) {
@@ -346,6 +352,9 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
   }
   if (const auto builtin = FindBuiltinProperty(object.kind, expression.text)) {
     builtin_calls_.insert_or_assign(&expression, *builtin);
+    if (IsRegExpBuiltin(*builtin)) {
+      return BuiltinSignature(*builtin).return_type;
+    }
     return {.kind = Type::Kind::Int, .name = "int"};
   }
   if (object.kind == Type::Kind::Interface) {

@@ -551,6 +551,10 @@ void Heap::MarkObject(HeapObject& object) noexcept {
 }
 
 void Heap::ProcessGrayObject(HeapObject& object) noexcept {
+  if (object.kind == ObjectKind::RegExp || object.kind == ObjectKind::RegExpMatch) {
+    MarkRegExp(object);
+    return;
+  }
   if (object.kind == ObjectKind::ByteData) {
     MarkByteData(object);
     return;
@@ -635,7 +639,9 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   const std::size_t block_size = object.allocation_size;
   allocated_bytes_ -= block_size;
 
-  if (object.layout != nullptr) {
+  if (object.kind == ObjectKind::RegExp) {
+    ReleaseRegExp(object);
+  } else if (object.layout != nullptr) {
     std::destroy_n(ObjectFields(&object), object.layout->field_count());
   } else if (object.kind == ObjectKind::MutableString) {
     ReleaseMutableString(object);

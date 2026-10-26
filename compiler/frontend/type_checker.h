@@ -38,6 +38,8 @@ struct TypeDescriptor final {
     MutableString,
     ByteArray,
     ByteData,
+    RegExp,
+    RegExpMatch,
     Array,
     Function,
     Enum,

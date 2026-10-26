@@ -81,6 +81,14 @@ content is scanned for references. Views, including those reached from fields,
 closures, typed containers, Expected or suspended async frames, retain the entire
 backing allocation. See [byte ownership](byte_data.md#ownership-mutation-and-gc).
 
+RegExp traces its original source and owns its PCRE2 program. RegExpMatch traces
+both its input and pattern; capture spans live inline in the match allocation.
+PCRE2 callbacks allocate through accounted native blocks, including compiler
+contexts, compiled code, match data and backtracking frames. Boundary maps and
+capture staging use the same accounting. Work buffers are operation-owned;
+compiled code is released with the pattern. Allocation safe points retain all
+borrowed values and partial arrays, using the existing root/publication barriers.
+
 ## Verification Contracts
 
 Correctness and memory invariants are enforced by validation suites:

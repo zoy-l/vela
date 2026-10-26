@@ -32,6 +32,10 @@ enum class ExecutionStatus : std::uint8_t {
   InvalidRadix,
   DateParseError,
   DateRangeError,
+  RegExpSyntaxError,
+  RegExpGroupError,
+  RegExpLimitError,
+  RegExpExecutionError,
 };
 
 [[nodiscard]] std::string_view ExecutionStatusName(ExecutionStatus status) noexcept;

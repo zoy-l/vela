@@ -631,6 +631,10 @@ void SemanticIndex::IndexExpression(const Expression& expression) {
     }
   } else if (expression.kind == Expression::Kind::Member) {
     auto receiver = ReceiverFor(*expression.object);
+    if (expression.null_safe && receiver.type.nullable) {
+      receiver.type.nullable = false;
+      receiver.type.name.pop_back();
+    }
     const auto key = KeyAt(expression.location);
     const auto found = members_.find(receiver.type.name);
     if (found != members_.end()) {
@@ -936,7 +940,8 @@ Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration) co
   if (frontend::IsStandardTypeNamespace(program_, declaration)) {
     return {
         .label = declaration.name,
-        .detail = declaration.name == "ByteArray" || declaration.name == "ByteData"
+        .detail = declaration.name == "ByteArray" || declaration.name == "ByteData" ||
+                          declaration.name == "RegExp" || declaration.name == "RegExpMatch"
                       ? std::string(BuiltinTypeDetail(declaration.name))
                       : declaration.name,
         .kind = CompletionKind::Type,
