@@ -373,7 +373,7 @@ void Heap::Publish(HeapObject& object, std::uint32_t allocation_size) noexcept {
   object.allocation_size = allocation_size;
   object.next = objects_;
   if (phase_ == GcPhase::Mark && object.kind != ObjectKind::String &&
-      object.kind != ObjectKind::MutableString) {
+      object.kind != ObjectKind::MutableString && object.kind != ObjectKind::ByteArray) {
     object.gray_next = gray_;
     gray_ = &object;
   } else if (phase_ == GcPhase::Sweep) {
@@ -542,7 +542,8 @@ void Heap::MarkObject(HeapObject& object) noexcept {
     return;
   }
   object.mark_bit = current_mark_bit_;
-  if (object.kind == ObjectKind::String || object.kind == ObjectKind::MutableString) {
+  if (object.kind == ObjectKind::String || object.kind == ObjectKind::MutableString ||
+      object.kind == ObjectKind::ByteArray) {
     return;
   }
   object.gray_next = gray_;
@@ -550,6 +551,10 @@ void Heap::MarkObject(HeapObject& object) noexcept {
 }
 
 void Heap::ProcessGrayObject(HeapObject& object) noexcept {
+  if (object.kind == ObjectKind::ByteData) {
+    MarkByteData(object);
+    return;
+  }
   if (object.kind == ObjectKind::ValueSlots) {
     for (const auto value : ValueSlots(object)) {
       MarkValue(value);

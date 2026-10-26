@@ -282,6 +282,10 @@ const fraction: double = whole.toDouble();
 
 `int.parse` / `int.tryParse` 与 `double.parse` / `double.tryParse` 将完整字符串显式解析为数值。整数解析检查有符号 int64 边界，tryParse 对非法文本返回 null。进制选择、浮点语法和错误见[字符串数值解析](numeric_parse.md)。
 
+## 固定字节存储
+
+`ByteArray(length: int)` 拥有零初始化、固定长度的原始字节。下标读取返回 int，写入要求 0..255 的 int。`ByteArray.from(int[])` 和 `slice()` 复制存储；`ByteData.view(bytes, ...)` 共享并保活所有者，通过 Endian 枚举提供受检查、允许非对齐的整数与浮点访问。两种字节类型都不隐式转换为 int[] 或 string。详见[字节存储与带类型视图](byte_data.md)。
+
 ## 有序 Set 与 Map
 
 ```typescript

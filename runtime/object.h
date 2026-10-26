@@ -65,6 +65,8 @@ enum class ObjectKind : std::uint8_t {
   Completer,
   Timer,
   CancellationToken,
+  ByteArray,
+  ByteData,
   ValueSlots,
 };
 

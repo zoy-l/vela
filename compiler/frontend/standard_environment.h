@@ -15,6 +15,6 @@ inline constexpr std::string_view kErrorSourceName = "builtin:Error";
     std::string_view name) noexcept;
 // 声明按源码标识符需要加入；用户模块无需导入，也不能覆盖这些全局名称。
 void AddStandardEnvironment(Program& program);
-[[nodiscard]] bool IsStandardScalarNamespace(const Program& program, const Class& declaration);
+[[nodiscard]] bool IsStandardTypeNamespace(const Program& program, const Class& declaration);
 
 }  // namespace vela::frontend

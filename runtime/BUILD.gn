@@ -30,6 +30,8 @@ source_set("runtime") {
     "array_storage.h",
     "builtins.cc",
     "builtins.h",
+    "byte_operations.cc",
+    "byte_operations.h",
     "collection_operations.cc",
     "collection_operations.h",
     "date.cc",
@@ -43,6 +45,7 @@ source_set("runtime") {
     "heap.cc",
     "heap.h",
     "heap_array.cc",
+    "heap_bytes.cc",
     "heap_collection.cc",
     "heap_exception.cc",
     "heap_string.cc",
@@ -77,6 +80,7 @@ executable("runtime_tests") {
   testonly = true
   sources = [
     "array_unittest.cc",
+    "byte_operations_unittest.cc",
     "collection_unittest.cc",
     "date_unittest.cc",
     "exception_unittest.cc",

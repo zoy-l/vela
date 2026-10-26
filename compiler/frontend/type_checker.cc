@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 #include "base/builtin.h"
+#include "base/byte_access.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
 #include "compiler/frontend/capture_analysis.h"
@@ -212,6 +213,8 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
     info.optional_parameters.insert("radix");
   } else if (function.intrinsic == Builtin::DateFromUTC) {
     info.optional_parameters = {"hour", "minute", "second", "millisecond"};
+  } else if (function.intrinsic && IsByteBuiltin(*function.intrinsic)) {
+    info.optional_parameters = BuiltinSignature(*function.intrinsic).optional_parameters;
   }
   info.visibility = function.visibility;
   info.storage = function.storage;
@@ -486,6 +489,11 @@ TypeChecker::Type TypeChecker::CheckNamedCall(const Expression& expression, cons
       return CheckCollectionConstruction(expression, &alias_type);
     }
     constructor_name = alias_type.name;
+  }
+  if (constructor_name != callee.text) {
+    if (const auto builtin = FindBuiltin(Type::Kind::Invalid, constructor_name)) {
+      return CheckBuiltinCall(expression, *builtin);
+    }
   }
   const auto class_info = classes_.find(constructor_name);
   if (class_info != classes_.end()) {
@@ -881,8 +889,9 @@ TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
     }
     object = NonNullable(object);
   }
-  if (object.kind != Type::Kind::Array && object.kind != Type::Kind::String) {
-    AddDiagnostic(expression.location, "indexing requires an array or string");
+  if (object.kind != Type::Kind::Array && object.kind != Type::Kind::String &&
+      object.kind != Type::Kind::ByteArray) {
+    AddDiagnostic(expression.location, "indexing requires an array, ByteArray, or string");
   }
   if (index.kind != Type::Kind::Int || index.nullable) {
     AddDiagnostic(expression.index->location, "index must be int");
@@ -890,6 +899,10 @@ TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
   if (object.kind == Type::Kind::String) {
     builtin_calls_.insert_or_assign(&expression, Builtin::StringIndex);
     return object;
+  }
+  if (object.kind == Type::Kind::ByteArray) {
+    Type result{.kind = Type::Kind::Int, .name = "int"};
+    return expression.null_safe ? NullableType(std::move(result)) : result;
   }
   if (object.kind != Type::Kind::Array) {
     return InvalidType();

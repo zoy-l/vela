@@ -1,0 +1,122 @@
+#include "compiler/ir/lowerer.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <optional>
+
+#include "base/builtin.h"
+#include "compiler/frontend/ast.h"
+#include "compiler/ir/ir.h"
+
+namespace vela::ir {
+
+Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expression) {
+  const auto builtin = model_.builtin_calls.at(&expression);
+  if (builtin == Builtin::ArrayUnshift || builtin == Builtin::ArraySplice ||
+      (builtin == Builtin::ArrayPush && expression.arguments.size() != 1)) {
+    return LowerArrayMutation(expression);
+  }
+  if (builtin == Builtin::StringCodePoints || builtin == Builtin::StringGraphemes ||
+      builtin == Builtin::CollectionKeys || builtin == Builtin::CollectionValues) {
+    return LowerSnapshotArray(expression);
+  }
+  const auto base = next_register_;
+  const auto arity = BuiltinArity(builtin);
+  for (std::size_t index = 0; index < arity; ++index) {
+    static_cast<void>(AllocateRegister(expression.location));
+  }
+  const auto kind = expression.kind;
+  const bool indexed = kind == frontend::Expression::Kind::Index;
+  const bool property = kind == frontend::Expression::Kind::Member;
+  const bool method = kind == frontend::Expression::Kind::Call &&
+                      expression.callee->kind == frontend::Expression::Kind::Member;
+  const std::size_t receiver_count = indexed || property || method ? 1 : 0;
+  std::optional<std::size_t> null_jump;
+  if (receiver_count != 0) {
+    const auto& object = method ? *expression.callee->object : *expression.object;
+    const auto receiver = LowerExpression(object);
+    Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = object.location});
+    if ((method && expression.callee->null_safe) || (!method && expression.null_safe)) {
+      null_jump = current_function_->instructions.size();
+      Emit({.opcode = Opcode::JumpIfNull, .lhs = base, .location = expression.location});
+    }
+  }
+  LowerBuiltinDefaults(builtin, expression, base);
+  if (indexed) {
+    const auto index = LowerExpression(*expression.index);
+    Emit({
+        .opcode = Opcode::Move,
+        .dst = static_cast<RegisterId>(base + 1),
+        .lhs = index.reg,
+        .location = expression.location,
+    });
+  } else {
+    for (std::size_t source_index = 0; source_index < expression.arguments.size(); ++source_index) {
+      const auto& argument = expression.arguments.at(source_index);
+      const auto index = model_.argument_order.at(&expression).at(source_index);
+      const auto value = LowerExpression(*argument.value);
+      Emit({
+          .opcode = Opcode::Move,
+          .dst = static_cast<RegisterId>(base + receiver_count + index),
+          .lhs = value.reg,
+          .location = argument.location,
+      });
+    }
+  }
+  const auto result = AllocateTemporary(expression.location);
+  Emit({
+      .opcode = Opcode::BuiltinCall,
+      .dst = result,
+      .lhs = base,
+      .index = static_cast<std::uint32_t>(builtin),
+      .location = expression.location,
+  });
+  if (null_jump) {
+    const auto end_jump = current_function_->instructions.size();
+    Emit({.opcode = Opcode::Jump, .location = expression.location});
+    current_function_->instructions.at(*null_jump).index =
+        static_cast<std::uint32_t>(current_function_->instructions.size());
+    Emit({.opcode = Opcode::LoadNull, .dst = result, .location = expression.location});
+    current_function_->instructions.at(end_jump).index =
+        static_cast<std::uint32_t>(current_function_->instructions.size());
+  }
+  return {.reg = result, .type = model_.expression_types.at(&expression)};
+}
+
+void Lowerer::LowerBuiltinDefaults(Builtin builtin,
+                                   const frontend::Expression& expression,
+                                   RegisterId base) {
+  const auto arity = BuiltinArity(builtin);
+  if (builtin == Builtin::ArrayJoin && expression.arguments.empty()) {
+    frontend::Expression separator;
+    separator.text = ",";
+    separator.location = expression.location;
+    const auto value = LowerStringLiteral(separator);
+    Emit({
+        .opcode = Opcode::Move,
+        .dst = base + 1,
+        .lhs = value.reg,
+        .location = expression.location,
+    });
+  } else if (builtin == Builtin::ArraySlice || builtin == Builtin::ArrayFill ||
+             builtin == Builtin::ByteArraySlice) {
+    const auto start = base + (builtin == Builtin::ArrayFill ? 2 : 1);
+    Emit({.opcode = Opcode::LoadInt, .dst = start, .location = expression.location});
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = start + 1,
+        .immediate = std::numeric_limits<std::int64_t>::max(),
+        .location = expression.location,
+    });
+  }
+  if (builtin >= Builtin::ByteDataGetInt16 && builtin <= Builtin::ByteDataSetFloat64) {
+    Emit({
+        .opcode = Opcode::LoadInt,
+        .dst = static_cast<RegisterId>(base + arity - 1),
+        .location = expression.location,
+    });
+  }
+}
+
+}  // namespace vela::ir

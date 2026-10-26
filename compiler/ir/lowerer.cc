@@ -851,15 +851,9 @@ Lowerer::LoweredValue Lowerer::LowerIndexAssignment(const frontend::Expression& 
   const auto array_before_index = SnapshotBefore(LowerExpression(*left.object), *left.index);
   const auto array = SnapshotBefore(array_before_index, right);
   const auto index = SnapshotBefore(LowerExpression(*left.index), right);
-  const auto& element_type = model_.array_elements.at(array.type.name);
+  const auto& element_type = model_.expression_types.at(&left);
   const auto value = LowerExpression(right);
-  Emit({
-      .opcode = Opcode::SetIndex,
-      .dst = array.reg,
-      .lhs = index.reg,
-      .rhs = value.reg,
-      .location = left.location,
-  });
+  EmitIndexWrite(array, index.reg, value.reg, left.location);
   return {.reg = value.reg, .type = element_type};
 }
 
@@ -1247,8 +1241,10 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
     for (std::size_t index = 0; index < function.parameters.size(); ++index) {
       if (function.optional_parameters.contains(function.parameters.at(index).name)) {
         Emit({
-            .opcode =
-                function.intrinsic == Builtin::DateFromUTC ? Opcode::LoadInt : Opcode::LoadNull,
+            .opcode = function.intrinsic == Builtin::DateFromUTC ||
+                              (function.intrinsic == Builtin::ByteDataView && index == 1)
+                          ? Opcode::LoadInt
+                          : Opcode::LoadNull,
             .dst = static_cast<RegisterId>(base + receiver_count + index),
             .location = expression.location,
         });
@@ -1486,19 +1482,13 @@ Lowerer::IncrementTarget Lowerer::LowerIncrementTarget(const frontend::Expressio
     return destination;
   }
   if (target.kind == frontend::Expression::Kind::Index) {
-    const auto receiver = LowerExpression(*target.object);
+    const auto receiver = SnapshotBefore(LowerExpression(*target.object), *target.index);
     const auto position = LowerExpression(*target.index);
     destination.object = receiver.reg;
     destination.index = position.reg;
-    destination.value = {
-        .reg = EmitTemporary({
-            .opcode = Opcode::GetIndex,
-            .lhs = receiver.reg,
-            .rhs = position.reg,
-            .location = target.location,
-        }),
-        .type = model_.expression_types.at(&target),
-    };
+    const auto value = AllocateTemporary(target.location);
+    EmitIndexRead(value, receiver, position.reg, target.location);
+    destination.value = {.reg = value, .type = model_.expression_types.at(&target)};
     return destination;
   }
   destination.value = LowerExpression(target);
@@ -1539,13 +1529,11 @@ void Lowerer::StoreIncrementTarget(const frontend::Expression& target,
     return;
   }
   if (destination.object && destination.index) {
-    Emit({
-        .opcode = Opcode::SetIndex,
-        .dst = *destination.object,
-        .lhs = *destination.index,
-        .rhs = value,
-        .location = location,
-    });
+    const LoweredValue receiver{
+        .reg = *destination.object,
+        .type = model_.expression_types.at(target.object.get()),
+    };
+    EmitIndexWrite(receiver, *destination.index, value, location);
   }
 }
 
@@ -1755,17 +1743,14 @@ Lowerer::LoweredValue Lowerer::LowerCompoundAssignment(const frontend::Expressio
     return {.reg = result, .type = old.type};
   }
   if (left_expression.kind == frontend::Expression::Kind::Index) {
-    const auto object = LowerExpression(*left_expression.object);
-    const auto index = LowerExpression(*left_expression.index);
-    const auto old = LoweredValue{
-        .reg = EmitTemporary({
-            .opcode = Opcode::GetIndex,
-            .lhs = object.reg,
-            .rhs = index.reg,
-            .location = left_expression.location,
-        }),
-        .type = model_.expression_types.at(&left_expression),
-    };
+    const auto before_index =
+        SnapshotBefore(LowerExpression(*left_expression.object), *left_expression.index);
+    const auto object = SnapshotBefore(before_index, *expression.right);
+    const auto index = SnapshotBefore(LowerExpression(*left_expression.index), *expression.right);
+    const auto old_register = AllocateTemporary(left_expression.location);
+    EmitIndexRead(old_register, object, index.reg, left_expression.location);
+    const auto old =
+        LoweredValue{.reg = old_register, .type = model_.expression_types.at(&left_expression)};
     const auto right = LowerExpression(*expression.right);
     const auto opcode = SelectCompoundOpcode(operation, old.type);
     if (!opcode) {
@@ -1774,13 +1759,7 @@ Lowerer::LoweredValue Lowerer::LowerCompoundAssignment(const frontend::Expressio
     }
     const auto result = EmitTemporary(
         {.opcode = *opcode, .lhs = old.reg, .rhs = right.reg, .location = expression.location});
-    Emit({
-        .opcode = Opcode::SetIndex,
-        .dst = object.reg,
-        .lhs = index.reg,
-        .rhs = result,
-        .location = left_expression.location,
-    });
+    EmitIndexWrite(object, index.reg, result, left_expression.location);
     return {.reg = result, .type = old.type};
   }
   AddDiagnostic(expression.location, "left side of assignment is not lowerable");
@@ -1805,7 +1784,8 @@ Lowerer::LoweredValue Lowerer::LowerBinaryValue(const frontend::Expression& expr
   if ((expression.text == "==" || expression.text == "!=") &&
       (left.type.nullable || right.type.nullable || left.type.kind == Kind::Null ||
        right.type.kind == Kind::Null || left.type.kind == Kind::Class ||
-       left.type.kind == Kind::Interface || left.type.kind == Kind::Function)) {
+       left.type.kind == Kind::Interface || left.type.kind == Kind::Function ||
+       left.type.kind == Kind::ByteArray || left.type.kind == Kind::ByteData)) {
     const auto result = AllocateTemporary(expression.location);
     Emit({
         .opcode = expression.text == "==" ? Opcode::EqualValue : Opcode::NotEqualValue,

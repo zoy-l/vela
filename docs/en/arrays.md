@@ -71,6 +71,11 @@ implementation detail. Reserving a smaller capacity is a no-op. Reserve does not
 create initialized elements or holes. The backing buffer is freed when the array
 is collected or its Isolate is destroyed.
 
+For fixed raw byte storage use [ByteArray and ByteData](byte_data.md). ByteArray
+is a separate reference type with one byte per element, fixed length and explicit
+copying; it shares no representation or implicit conversion with int[]. ByteData
+views share their ByteArray owner and retain it through GC.
+
 ## Representation, GC and performance
 
 The GC header and array identity never move. A small descriptor after the header

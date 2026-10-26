@@ -1,0 +1,77 @@
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/ir/lowerer.h"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <span>
+
+#include "base/builtin.h"
+#include "compiler/frontend/type_checker.h"
+#include "compiler/ir/ir.h"
+
+namespace vela::ir {
+
+void Lowerer::EmitByteIndexCall(Builtin builtin,
+                                RegisterId result,
+                                std::span<const RegisterId> values,
+                                frontend::SourceLocation location) {
+  const auto base = next_register_;
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    static_cast<void>(AllocateRegister(location));
+  }
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    Emit({
+        .opcode = Opcode::Move,
+        .dst = static_cast<RegisterId>(base + index),
+        .lhs = values.subspan(index).front(),
+        .location = location,
+    });
+  }
+  Emit({
+      .opcode = Opcode::BuiltinCall,
+      .dst = result,
+      .lhs = base,
+      .index = static_cast<std::uint32_t>(builtin),
+      .location = location,
+  });
+}
+
+void Lowerer::EmitIndexRead(RegisterId result,
+                            const LoweredValue& receiver,
+                            RegisterId index,
+                            frontend::SourceLocation location) {
+  if (receiver.type.kind == frontend::TypeDescriptor::Kind::ByteArray) {
+    const std::array values{receiver.reg, index};
+    EmitByteIndexCall(Builtin::ByteArrayGetIndex, result, values, location);
+  } else {
+    Emit({
+        .opcode = Opcode::GetIndex,
+        .dst = result,
+        .lhs = receiver.reg,
+        .rhs = index,
+        .location = location,
+    });
+  }
+}
+
+void Lowerer::EmitIndexWrite(const LoweredValue& receiver,
+                             RegisterId index,
+                             RegisterId value,
+                             frontend::SourceLocation location) {
+  if (receiver.type.kind == frontend::TypeDescriptor::Kind::ByteArray) {
+    const auto result = AllocateTemporary(location);
+    const std::array values{receiver.reg, index, value};
+    EmitByteIndexCall(Builtin::ByteArraySetIndex, result, values, location);
+  } else {
+    Emit({
+        .opcode = Opcode::SetIndex,
+        .dst = receiver.reg,
+        .lhs = index,
+        .rhs = value,
+        .location = location,
+    });
+  }
+}
+
+}  // namespace vela::ir

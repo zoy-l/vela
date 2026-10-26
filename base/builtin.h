@@ -66,6 +66,32 @@ enum class Builtin : std::uint8_t {
   DateToISOString,
   DateFromUTC,
   DateToUTC,
+  NewByteArray,
+  ByteArrayFrom,
+  ByteArrayLength,
+  ByteArraySlice,
+  ByteArrayGetIndex,
+  ByteArraySetIndex,
+  ByteDataView,
+  ByteDataLength,
+  ByteDataGetInt8,
+  ByteDataSetInt8,
+  ByteDataGetUint8,
+  ByteDataSetUint8,
+  ByteDataGetInt16,
+  ByteDataSetInt16,
+  ByteDataGetUint16,
+  ByteDataSetUint16,
+  ByteDataGetInt32,
+  ByteDataSetInt32,
+  ByteDataGetUint32,
+  ByteDataSetUint32,
+  ByteDataGetInt64,
+  ByteDataSetInt64,
+  ByteDataGetFloat32,
+  ByteDataSetFloat32,
+  ByteDataGetFloat64,
+  ByteDataSetFloat64,
   Count,
 };
 
@@ -74,6 +100,10 @@ enum class Builtin : std::uint8_t {
     case Builtin::NewMutableString:
       return 0;
     case Builtin::ScalarToString:
+    case Builtin::NewByteArray:
+    case Builtin::ByteArrayFrom:
+    case Builtin::ByteArrayLength:
+    case Builtin::ByteDataLength:
     case Builtin::StringToLowerCase:
     case Builtin::StringToUpperCase:
     case Builtin::DoubleParse:
@@ -97,6 +127,9 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayMutation:
       return 1;
     case Builtin::ArrayJoin:
+    case Builtin::ByteArrayGetIndex:
+    case Builtin::ByteDataGetInt8:
+    case Builtin::ByteDataGetUint8:
     case Builtin::IntParse:
     case Builtin::IntTryParse:
     case Builtin::DateToUTC:
@@ -125,11 +158,30 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayCheckMutation:
       return 2;
     case Builtin::StringSlice:
+    case Builtin::ByteArraySlice:
+    case Builtin::ByteArraySetIndex:
+    case Builtin::ByteDataView:
+    case Builtin::ByteDataSetInt8:
+    case Builtin::ByteDataSetUint8:
+    case Builtin::ByteDataGetInt16:
+    case Builtin::ByteDataGetUint16:
+    case Builtin::ByteDataGetInt32:
+    case Builtin::ByteDataGetUint32:
+    case Builtin::ByteDataGetInt64:
+    case Builtin::ByteDataGetFloat32:
+    case Builtin::ByteDataGetFloat64:
     case Builtin::StringGraphemeSlice:
     case Builtin::MapSet:
     case Builtin::ArraySlice:
       return 3;
     case Builtin::ArrayFill:
+    case Builtin::ByteDataSetInt16:
+    case Builtin::ByteDataSetUint16:
+    case Builtin::ByteDataSetInt32:
+    case Builtin::ByteDataSetUint32:
+    case Builtin::ByteDataSetInt64:
+    case Builtin::ByteDataSetFloat32:
+    case Builtin::ByteDataSetFloat64:
     case Builtin::ArraySplice:
       return 4;
     case Builtin::DateFromUTC:

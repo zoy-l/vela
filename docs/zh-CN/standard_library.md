@@ -27,6 +27,10 @@ const sum = values.reduce((total, value) => total + value, 0);
 
 `int.parse` / `int.tryParse` 和 `double.parse` / `double.tryParse` 解析完整字符串，不做隐式转换。非法文本抛出领域 Error，tryParse 则返回 null；显式 radix 非法时仍抛出错误。整数结果必须位于有符号 int64 范围内。详见[字符串数值解析](numeric_parse.md)。
 
+## 字节存储
+
+`ByteArray(length: int)` 分配固定长度、零初始化的原始字节。`ByteArray.from(values: int[])` 与 `bytes.slice(...)` 显式复制存储，`ByteData.view(bytes, ...)` 则保活并共享所有者。带类型访问器检查视图相对边界和整数范围，允许非对齐偏移。多字节方法默认采用 `Endian.big`，小端与宿主字节序通过枚举显式选择。详见[字节存储与带类型视图](byte_data.md)。
+
 ## 随机数生成
 
 `Random.seed(value: int): void`、`Random.nextInt(bound: int): int` 以及 `Math.random(): double` 采用 Isolate 独立的 xoroshiro128++ 1.0 算法，并使用 SplitMix64 进行状态播种。每个 Isolate 默认以种子 0 初始化，相同的种子与相同的调用序列严格保证可复现完全相同的结果。种子的全部 64 位（包括负整数的二进制位）均得到完好保留。宿主可独立对 `isolate.random()` 播种。这属于仿真模拟生成器，并非密码学安全伪随机数发生器。

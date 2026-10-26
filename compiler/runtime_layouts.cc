@@ -53,7 +53,9 @@ std::vector<runtime::ClassLayout*> CreateClassLayouts(const ir::Program& program
           kind == frontend::TypeDescriptor::Kind::Class ||
           kind == frontend::TypeDescriptor::Kind::Array ||
           kind == frontend::TypeDescriptor::Kind::String ||
-          kind == frontend::TypeDescriptor::Kind::MutableString) {
+          kind == frontend::TypeDescriptor::Kind::MutableString ||
+          kind == frontend::TypeDescriptor::Kind::ByteArray ||
+          kind == frontend::TypeDescriptor::Kind::ByteData) {
         reference_fields.push_back(
             class_info.kind == ir::Class::Kind::Expected ? 0U : static_cast<std::uint32_t>(index));
       }
@@ -135,6 +137,14 @@ runtime::ArrayLayout LayoutBuilder::Element(const frontend::TypeDescriptor& type
     case Kind::MutableString:
       layout.element_kind = runtime::ValueKind::Object;
       layout.element_object_kind = runtime::ObjectKind::MutableString;
+      break;
+    case Kind::ByteArray:
+      layout.element_kind = runtime::ValueKind::Object;
+      layout.element_object_kind = runtime::ObjectKind::ByteArray;
+      break;
+    case Kind::ByteData:
+      layout.element_kind = runtime::ValueKind::Object;
+      layout.element_object_kind = runtime::ObjectKind::ByteData;
       break;
     case Kind::Class:
     case Kind::Expected:

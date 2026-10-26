@@ -44,7 +44,7 @@ This guarantees atomic visibility, not crash durability of all directory metadat
 
 ## Image format and ownership
 
-Version 5 starts with `VELABC01`, a little-endian uint32 version and an XXH3-128
+Version 6 starts with `VELABC01`, a little-endian uint32 version and an XXH3-128
 payload checksum. Counts, text lengths and graph identities use uint64. No raw
 pointers, native C++ object layouts, heap snapshots or runtime global state are
 serialized. Integers preserve all 64 bits; doubles preserve their bit patterns.
@@ -58,6 +58,10 @@ shapes and binds them to the receiving Isolate's canonical layouts; DateParts
 has seven non-reference int fields. Date.toUTC builtin wrappers retain the
 checked class-pool operand. Numeric parsing and casing builtin IDs use the
 same validated instruction path.
+ByteArray and ByteData have separate object-kind constraints in array,
+collection, and runtime type metadata. Byte builtins validate their argument
+windows through the shared arity table. Owners, views and backing bytes are
+created during execution; their runtime pointers are never serialized.
 Array/collection graph reconstruction uses an iterative topological traversal;
 cycles and missing references are diagnosed. Counts are bounded by the remaining
 input before allocation. `Program::Create` validates code and cross-function

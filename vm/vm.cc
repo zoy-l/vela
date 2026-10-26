@@ -14,9 +14,11 @@
 #include <utility>
 #include <vector>
 #include "base/builtin.h"
+#include "base/byte_access.h"
 #include "base/callable.h"
 #include "base/execution_limits.h"
 #include "base/execution_status.h"
+#include "runtime/byte_operations.h"
 #include "runtime/exception.h"
 #include "vm/debugger.h"
 #include "vm/execution.h"
@@ -957,6 +959,19 @@ StepResult Execution::AllocateCollection(ActiveFrame& active, FutureRegisters re
 
 StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) {
   const auto builtin = static_cast<Builtin>(DecodeB(instruction));
+  if (IsByteBuiltin(builtin)) {
+    auto values = active.frame.registers();
+    const auto count = BuiltinArity(builtin);
+    std::array<runtime::Value, 4> arguments;
+    const auto input = std::span(arguments).first(count);
+    values.subspan(DecodeC(instruction), count).CopyTo(input);
+    const auto result = runtime::ExecuteByteBuiltin(builtin, input, isolate_.heap());
+    if (!result) {
+      return std::unexpected(result.error());
+    }
+    values.subspan(DecodeA(instruction)).front() = *result;
+    return {};
+  }
   if (builtin == Builtin::DateParse || builtin == Builtin::DateToISOString ||
       builtin == Builtin::DateFromUTC || builtin == Builtin::DateToUTC) {
     return ExecuteCalendar(active, instruction);

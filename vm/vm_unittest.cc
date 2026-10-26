@@ -36,6 +36,31 @@ ExecutionResult LoadAndExecute(Isolate& isolate, const Function& function) {
   return VirtualMachine(isolate).Execute(*program, 0);
 }
 
+TEST(VmTest, ByteBuiltinsSupportAliasedDestinationsAcrossAllocationAndGC) {
+  Isolate isolate(1);
+  constexpr auto kCode = std::to_array<Instruction>({
+      EncodeAImm16(OpCode::LoadInt, 0, 8),
+      EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::NewByteArray), 0),
+      EncodeAImm16(OpCode::LoadInt, 1, 0),
+      EncodeABC(OpCode::LoadNull, 2, 0, 0),
+      EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::ByteDataView), 0),
+      EncodeAImm16(OpCode::LoadInt, 1, 0),
+      EncodeAImm16(OpCode::LoadInt, 2, 42),
+      EncodeAImm16(OpCode::LoadInt, 3, 0),
+      EncodeABC(OpCode::BuiltinCall, 4, static_cast<std::uint8_t>(Builtin::ByteDataSetInt64), 0),
+      EncodeAImm16(OpCode::LoadInt, 2, 0),
+      EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::ByteDataGetInt64), 0),
+      EncodeABC(OpCode::Return, 0, 0, 0),
+  });
+  Function function;
+  function.code = kCode;
+  constexpr std::uint16_t kRegisterCount = 5;
+  function.register_count = kRegisterCount;
+  const auto result = LoadAndExecute(isolate, function);
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), kExpectedSum);
+}
+
 TEST(VmTest, StringConcatSupportsAliasedDestinationsAcrossSafepoints) {
   Isolate isolate(1);
   std::array<runtime::StringObject*, 1> constants{};

@@ -6,12 +6,36 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "compiler/frontend/builtins.h"
 #include "compiler/frontend/type_checker.h"
 
 namespace vela::tooling {
 namespace {
 
 using Kind = frontend::TypeDescriptor::Kind;
+
+std::string_view ByteDocumentation(Kind receiver, std::string_view name) {
+  if (receiver == Kind::ByteArray) {
+    if (name == "length") {
+      return "Read-only fixed byte length. ByteArray stores checked int bytes in 0..255.";
+    }
+    if (name == "slice") {
+      return "Copies a normalized half-open byte range into independent fixed storage. Negative "
+             "endpoints count from the end; endpoints clamp to the byte length.";
+    }
+  }
+  if (receiver == Kind::ByteData) {
+    if (name == "byteLength") {
+      return "Read-only byte length of this shared, owner-retaining view.";
+    }
+    if (frontend::FindBuiltin(receiver, name)) {
+      return "Checks a view-relative byte offset and performs unaligned typed byte access. "
+             "Multi-byte access defaults to Endian.big. Integer writes reject overflow before "
+             "modifying storage; floating writes preserve IEEE values.";
+    }
+  }
+  return {};
+}
 
 }  // namespace
 
@@ -34,6 +58,9 @@ std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
 }
 
 std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
+  if (const auto bytes = ByteDocumentation(receiver, name); !bytes.empty()) {
+    return bytes;
+  }
   if (receiver == Kind::Future) {
     if (name == "then") {
       return "Queues a typed continuation. Values and returned Futures are flattened; thrown "
@@ -509,6 +536,8 @@ std::string_view BuiltinTypeDetail(std::string_view name) {
       {"string", "string"},
       {"void", "void"},
       {"String", "class String {\n  constructor();\n}"},
+      {"ByteArray", "class ByteArray {\n  constructor(length: int);\n}"},
+      {"ByteData", "type ByteData"},
       {"Set", "class Set<T> {\n  constructor();\n}"},
       {"Map", "class Map<K, V> {\n  constructor();\n}"},
       {"Expected", "type Expected<T, E>"},

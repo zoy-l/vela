@@ -1,0 +1,14 @@
+func main(): int {
+  const bytes = ByteArray(length: 16);
+  const data = ByteData.view(bytes, offset: 1, length: 12);
+  data.setInt32(0, 42, endian: Endian.little);
+  data.setFloat64(4, 1.25);
+  print(data.getInt32(0, endian: Endian.little));
+  print(data.getFloat64(4));
+  const copy = bytes.slice();
+  copy[1] = 0;
+  print(bytes[1]);
+  const imported = ByteArray.from([0, 127, 255]);
+  print(imported.length);
+  return bytes[1] == 42 && copy[1] == 0 && imported[2] == 255 ? 0 : 1;
+}

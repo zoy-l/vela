@@ -397,6 +397,15 @@ convert complete strings to numbers. Integer parsing checks signed int64 bounds;
 tryParse returns null for invalid text. See [numeric parsing](numeric_parse.md)
 for radix selection, floating-point grammar, and errors.
 
+## Fixed byte storage
+
+`ByteArray(length: int)` owns zero-initialized, fixed-length raw bytes. Indexed
+reads return int; writes require int values in 0..255. `ByteArray.from(int[])` and
+`slice()` copy storage. `ByteData.view(bytes, ...)` shares and retains the owner
+and provides checked unaligned integer/float access with Endian enum arguments.
+Neither byte type implicitly converts to int[] or string. See
+[byte storage and typed views](byte_data.md).
+
 ## Ordered Set and Map
 
 ```typescript

@@ -257,7 +257,7 @@ std::expected<ImageElement, BinaryError> ReadElement(BinaryReader& reader) {
   const auto [kind, object_kind, flags, interface, instance, array, collection] = *record;
   constexpr auto allowed_flags = kNullableImageFlag | kCallableImageFlag | kInterfaceImageFlag;
   if (kind > static_cast<std::uint8_t>(runtime::ValueKind::String) ||
-      object_kind > static_cast<std::uint8_t>(runtime::ObjectKind::CancellationToken) ||
+      object_kind > static_cast<std::uint8_t>(runtime::ObjectKind::ByteData) ||
       flags > allowed_flags) {
     return std::unexpected(reader.Error("invalid element kind or flags"));
   }

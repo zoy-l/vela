@@ -57,6 +57,15 @@ strings without implicit conversion. Invalid text throws a domain Error or
 returns null with tryParse; an invalid explicit radix still throws. Integer
 results must fit signed int64. See [numeric parsing](numeric_parse.md).
 
+## Byte storage
+
+`ByteArray(length: int)` allocates fixed, zero-initialized raw bytes.
+`ByteArray.from(values: int[])` and `bytes.slice(...)` explicitly copy storage.
+`ByteData.view(bytes, ...)` retains and shares its owner; typed accessors check
+view-relative bounds and integer ranges, including at unaligned offsets.
+Multi-byte methods default to `Endian.big`; little and host order are explicit
+enum choices. See [byte storage and typed views](byte_data.md).
+
 ## Random
 
 `Random.seed(value: int): void`, `Random.nextInt(bound: int): int`, and

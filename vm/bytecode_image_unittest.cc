@@ -11,6 +11,7 @@
 
 #include "base/async_operation.h"
 #include "base/binary.h"
+#include "base/builtin.h"
 #include "base/fingerprint.h"
 #include "runtime/isolate.h"
 #include "vm/bytecode.h"
@@ -81,6 +82,14 @@ INSTANTIATE_TEST_SUITE_P(
         ImageFunction{EncodeABC(OpCode::Return, 1, 0, 0), 1, kNoPool},
         ImageFunction{EncodeABC(OpCode::Return, 0, 0, 0), 0, kNoPool},
         ImageFunction{EncodeABC(OpCode::Return, 0, 0, 0), 1, 0},
+        ImageFunction{EncodeABC(OpCode::BuiltinCall,
+                                0,
+                                static_cast<std::uint8_t>(Builtin::ByteDataSetFloat64),
+                                0),
+                      3, kNoPool},
+        ImageFunction{
+            EncodeABC(OpCode::BuiltinCall, 0, static_cast<std::uint8_t>(Builtin::ByteDataView), 0),
+            2, kNoPool},
         ImageFunction{EncodeABC(OpCode::LoadNull, 0, 0, 0), 1, kNoPool},
         ImageFunction{EncodeAImm16(OpCode::Jump, 0, 10), 1, kNoPool},
         ImageFunction{EncodeABC(OpCode::Await, 0, 0, 0), 1, kNoPool},

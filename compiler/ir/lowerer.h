@@ -1,5 +1,7 @@
 #pragma once
 
+#include "base/builtin.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -120,12 +122,11 @@ class Lowerer final {
   [[nodiscard]] LoweredValue LowerIndexAssignment(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerConstruction(const frontend::Expression& expression,
                                                const frontend::TypeDescriptor& expected);
-  [[nodiscard]] LoweredValue LowerConstructorCall(
-      std::span<const frontend::CallArgument> arguments,
-      std::span<const std::uint32_t> argument_order,
-      frontend::SourceLocation location,
-      const frontend::ClassDescriptor& info,
-      RegisterId object);
+  [[nodiscard]] LoweredValue LowerConstructorCall(std::span<const frontend::CallArgument> arguments,
+                                                  std::span<const std::uint32_t> argument_order,
+                                                  frontend::SourceLocation location,
+                                                  const frontend::ClassDescriptor& info,
+                                                  RegisterId object);
   [[nodiscard]] LoweredValue LowerMember(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerObjectMember(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerGetter(const frontend::Expression& expression,
@@ -185,6 +186,21 @@ class Lowerer final {
   LoweredValue LowerStringLiteral(const frontend::Expression& expression);
   LoweredValue LowerStringInterpolation(const frontend::Expression& expression);
   LoweredValue LowerBuiltin(const frontend::Expression& expression);
+  void EmitByteIndexCall(Builtin builtin,
+                         RegisterId result,
+                         std::span<const RegisterId> values,
+                         frontend::SourceLocation location);
+  void EmitIndexRead(RegisterId result,
+                     const LoweredValue& receiver,
+                     RegisterId index,
+                     frontend::SourceLocation location);
+  void EmitIndexWrite(const LoweredValue& receiver,
+                      RegisterId index,
+                      RegisterId value,
+                      frontend::SourceLocation location);
+  void LowerBuiltinDefaults(Builtin builtin,
+                            const frontend::Expression& expression,
+                            RegisterId base);
   LoweredValue LowerAsyncCall(const frontend::Expression& expression);
   LoweredValue LowerSnapshotArray(const frontend::Expression& expression);
   LoweredValue LowerCollectionConstruction(const frontend::Expression& expression);

@@ -36,6 +36,8 @@ struct TypeDescriptor final {
     Double,
     String,
     MutableString,
+    ByteArray,
+    ByteData,
     Array,
     Function,
     Enum,

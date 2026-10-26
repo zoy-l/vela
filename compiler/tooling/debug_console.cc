@@ -183,6 +183,12 @@ void WriteDebugValue(std::ostream& output, runtime::Value value) {
       output << "collection(size=" << *collection_size << ')';
     } else if (runtime::Heap::IsMutableString(object)) {
       output << "String";
+    } else if (runtime::Heap::IsByteArray(object)) {
+      output << "ByteArray(length=" << runtime::Heap::ByteArrayBytes(*value.AsObject()).size()
+             << ')';
+    } else if (runtime::Heap::IsByteData(object)) {
+      output << "ByteData(byteLength=" << runtime::Heap::ByteDataBytes(*value.AsObject()).size()
+             << ')';
     } else {
       output << "object";
     }

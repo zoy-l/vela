@@ -94,7 +94,7 @@ P1 contracts are specified in [Core language specification](core_language.md).
 - [ ] Add PCRE2-backed regular expressions with Dart-style APIs and typed matches ([design](regexp.md))
 - [x] Add collection standard library APIs
 - [ ] Add JSON parsing and serialization over native values ([design](json.md))
-- [ ] Add fixed byte storage and typed byte views ([design](byte_data.md))
+- [x] Add fixed byte storage and typed byte views ([contract](byte_data.md))
 - [x] Define process exit codes
 
 ## P2: errors and host integration

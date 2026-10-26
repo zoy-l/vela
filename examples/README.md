@@ -23,6 +23,7 @@ output and where evaluation stops.
 | [numeric_parse.vela](numeric_parse.vela) | Decimal/hexadecimal integers, nullable tryParse, and decimal exponents | `42`, `255`, `0`, `125` |
 | [string_case.vela](string_case.vela) | Unicode full mappings, expansion, and contextual lowercasing | `vela`, `VELA`, `STRASSE`, `ος`, `i̇` |
 | [time.vela](time.vela) | Explicit-offset parsing, canonical UTC output, readonly calendar parts, and reconstruction | `2026-10-26T04:30:45.123Z`, `true`, `1970-01-01T00:00:00.000Z` |
+| [byte_data.vela](byte_data.vela) | Fixed byte storage, unaligned shared views, integer/float access, byte order, and explicit copies | `42`, `1.25`, `42`, `3` |
 
 For example:
 

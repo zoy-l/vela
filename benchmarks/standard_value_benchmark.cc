@@ -1,3 +1,5 @@
+#include "benchmarks/standard_value_benchmark.h"
+
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -10,7 +12,6 @@
 #include "vm/vm.h"
 
 namespace vela::benchmarks {
-namespace {
 
 void SteadyValue(benchmark::State& state, std::string_view source, std::int64_t expected) {
   runtime::Isolate isolate;
@@ -51,6 +52,8 @@ void SteadyValue(benchmark::State& state, std::string_view source, std::int64_t 
     state.SkipWithError("Standard API execution retained temporary heap values");
   }
 }
+
+namespace {
 
 enum class CaseWorkload : std::uint8_t {
   UnchangedAscii,

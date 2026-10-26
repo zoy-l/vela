@@ -22,7 +22,7 @@ English and Simplified Chinese editions are listed side by side below. Entries m
 | **Standard Library** / 标准库 | [standard_library.md](en/standard_library.md) | [standard_library.md](zh-CN/standard_library.md) |
 | **UTC Date & Time** / UTC 日期与时间 | [time.md](en/time.md) | [time.md](zh-CN/time.md) |
 | **JSON & Dynamic Values (Design)** / JSON 与动态值（设计） | [json.md](en/json.md) | [json.md](zh-CN/json.md) |
-| **Byte Storage & Typed Views (Design)** / 字节存储与带类型视图（设计） | [byte_data.md](en/byte_data.md) | [byte_data.md](zh-CN/byte_data.md) |
+| **Byte Storage & Typed Views** / 字节存储与带类型视图 | [byte_data.md](en/byte_data.md) | [byte_data.md](zh-CN/byte_data.md) |
 | **Toolchain Contracts** / 工具链契约 | [toolchain.md](en/toolchain.md) | [toolchain.md](zh-CN/toolchain.md) |
 | **VM Execution Contracts** / VM 执行契约 | [vm_execution.md](en/vm_execution.md) | [vm_execution.md](zh-CN/vm_execution.md) |
 | **VM Storage & Dispatch** / 虚拟机存储与分派 | [vm_storage.md](en/vm_storage.md) | [vm_storage.md](zh-CN/vm_storage.md) |

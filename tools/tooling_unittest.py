@@ -1133,6 +1133,30 @@ class LanguageServerTest(unittest.TestCase):
         self.assertTrue({"year", "month", "day", "hour", "minute", "second", "millisecond"} <= parts)
         self.assertNotIn("yearValue", parts)
 
+    def test_byte_storage_views_and_endian_share_checked_api_metadata(self) -> None:
+        source = ("func main(): void { const bytes = ByteArray(length: 8); "
+                  "const view = ByteData.view(bytes); bytes.slice(); "
+                  "view.setInt32(0, 42, endian: Endian.little); print(view.byteLength); }")
+        messages = self.session([
+            self.open(source),
+            self.symbol_query("hover", source, source.index("ByteArray(") + 2, "owner"),
+            self.symbol_query("completion", source, source.index("bytes.slice") + len("bytes."), "bytes"),
+            self.symbol_query("completion", source, source.index("view.setInt32") + len("view."), "view"),
+            self.symbol_query("hover", source, source.index(".setInt32") + 2, "write"),
+            self.symbol_query("hover", source, source.index(".view(") + 2, "factory"),
+            self.symbol_query("completion", source, source.index("Endian.little") + len("Endian."), "endian")])
+        self.assertIn("constructor(length: int)", self.reply(messages, "owner")["result"]["contents"]["value"])
+        owners = {item["label"] for item in self.reply(messages, "bytes")["result"]}
+        self.assertTrue({"length", "slice"} <= owners)
+        self.assertFalse({"push", "pop", "capacity", "from"} & owners)
+        views = {item["label"] for item in self.reply(messages, "view")["result"]}
+        self.assertTrue({"byteLength", "getInt8", "setInt8", "getUint16", "setUint32", "getInt64", "setFloat32", "getFloat64"} <= views)
+        self.assertNotIn("getUint64", views)
+        self.assertIn("endian?: Endian", self.reply(messages, "write")["result"]["contents"]["value"])
+        self.assertIn("offset?: int", self.reply(messages, "factory")["result"]["contents"]["value"])
+        self.assertIn("length?: int", self.reply(messages, "factory")["result"]["contents"]["value"])
+        self.assertEqual({item["label"] for item in self.reply(messages, "endian")["result"]}, {"big", "little", "host"})
+
     def test_definition_accepts_identifier_end_before_punctuation_and_whitespace(self) -> None:
         source = ("class Box { public param value: int; }\n"
                   "func answer(): int { return 42; }\n"

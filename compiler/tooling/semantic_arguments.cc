@@ -291,6 +291,10 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindCallParameters(
     return std::nullopt;
   }
   const auto& call = *found->second;
+  if (const auto builtin = model_.builtin_calls.find(&call);
+      builtin != model_.builtin_calls.end() && builtin->second == Builtin::NewByteArray) {
+    return frontend::BuiltinSignature(builtin->second);
+  }
   if (const auto async = model_.async_calls.find(&call); async != model_.async_calls.end()) {
     return async->second.signature;
   }

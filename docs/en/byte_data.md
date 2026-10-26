@@ -2,10 +2,8 @@
 
 [**English**](byte_data.md) | [简体中文](../zh-CN/byte_data.md)
 
-> Status: design specification. ByteArray, ByteData, and Endian are not implemented. The implementation must satisfy the ownership, checking, compiler, and validation contracts below.
-
 `ByteArray` owns fixed-length, contiguous byte storage. `ByteData` is a typed
-read/write view over that storage and keeps its owner alive. The design uses
+read/write view over that storage and keeps its owner alive. The API uses
 Dart-style multi-byte accessors and explicit endianness, retaining the Vela name
 ByteArray. It does not introduce ByteBuffer or depend on the
 [JSON API](json.md).
@@ -60,9 +58,9 @@ Endpoint normalization must avoid overflow for extreme int values.
 
 `from` explicitly copies from int[]. Copying back requires explicit indexed
 reads into an int[]; no implicit conversion, representation cast, or shared
-backing storage is provided. Passing a dynamic value to `from` still requires
-its actual container type to satisfy int[]; checking the contents of a
-dynamic[] is a separate conversion.
+backing storage is provided. `from` requires a statically checked int[];
+nullable integer arrays and arrays of other element types are rejected.
+This feature does not add dynamic values or mixed containers.
 
 ## Endian and ByteData API
 
@@ -179,7 +177,7 @@ pointer API is added in this version.
 | Negative allocation length or out-of-range integer value | Existing `InvalidNumericConversion` |
 | Allocation or representable-storage exhaustion | Existing recoverable `OutOfMemory` |
 | Wrong static argument, index, value, or endian type | Compile-time diagnostic |
-| Wrong actual type through dynamic | Existing checked-cast or type-error path |
+| Wrong runtime operand in a checked builtin | Existing TypeError path |
 
 The status names above identify existing execution paths; Error.code continues
 to use the established status-to-string mapping. Errors remain catchable through
@@ -193,48 +191,71 @@ Only ByteArray provides indexed access. `length` and `byteLength` are read-only
 built-in properties; member access cannot fabricate fields or bypass checking.
 Endian remains an enum, not an interchangeable integer selector.
 
-## Implementation and completion
+## Integration and validation
 
-Use the existing [standard environment](../../compiler/frontend/standard_environment.cc),
-[builtin signature interface](../../compiler/frontend/builtins.h),
-[runtime object model](../../runtime/object.h), and
-[heap](../../runtime/heap.h). ByteArray and ByteData need dedicated frontend
-types and runtime object kinds; they can use the existing object-valued Value
-representation. Their storage must not reuse int[] layouts or the growable
-array's reallocation machinery.
+ByteArray and ByteData have dedicated frontend type kinds and runtime object
+kinds, using the existing object-valued Value representation. The protected
+standard environment supplies factory namespaces and the Endian enum. Constructor,
+property and method signatures share builtin metadata with completion, hover,
+named arguments and source tools. Aliases, nullable types, fields, captures,
+arrays, collections, Expected and Future payloads retain their normal type rules.
 
-| Stage | Required completion |
-| --- | --- |
-| Standard declarations | Register ByteArray, ByteData, and Endian and their dependency closure; expose exact signatures/defaults to source checking and tooling |
-| Frontend | Add the dedicated types, constructors, byte subscripts, read-only properties, methods, and enum checking; preserve nullable and invariant-container rules |
-| Runtime | Implement raw fixed storage, owner-retaining views, checked byte/typed operations, GC tracing, barriers, accounting, and destruction |
-| IR and compiler | Lower byte access and view operations with correct widths/types; model allocation, reads, aliasing writes, and throwing effects |
-| VM and builtins | Connect all constructors, accessors, defaults, endian values, and existing errors; keep mutations observable through every alias |
-| Images and caches | Encode type/layout/builtin metadata, validate arity and operand ranges, update format and build identities as needed; runtime owners and pointers are never image payloads |
-| Tooling | Complete signatures, named arguments, hover, documentation, formatting, debugger representation, and persistent REPL type/layout retention |
-| Delivery | Add `examples/byte_data.vela`; finish the full contract before marking the feature implemented |
+Instance method values bind the receiver and retain it through GC. With no
+function-type context they use the full positional signature, including Endian;
+a context such as `(int) => int` can select getInt32 with its default big order.
+Static factory values have fixed full positional signatures. Explicit null does
+not stand for omitted int or Endian arguments.
 
-Reads cannot be treated as constants across aliasing writes; writes cannot be
-removed merely because a view's own reference is dead. Bounds/value failures
-and allocations are observable effects. Use the shared builtin/signature data
-for compilation and editor consumers rather than maintaining a second API model.
-The runtime remains independent of compiler and tooling.
+Each owner is one GC allocation containing its object header and exactly length
+raw bytes; it uses neither int[] layouts nor growable-array capacity machinery.
+The current heap allocation-size representation bounds a single allocation to
+uint32 bytes including its header; larger requests follow OutOfMemory. A view
+stores a strong owner pointer, base offset and fixed length. Its owner reference
+is initialized before the existing GC publication barrier. ByteArray is a GC
+leaf; ByteData traces its owner. Storage contributes to ordinary heap accounting
+and is reclaimed once the owner becomes unreachable.
 
-Required tests cover zero initialization, empty owners/views, explicit copies,
-slice normalization, readonly properties, rejected resizing, byte value ranges,
-every integer width and endpoint, default/big/little/host byte order, unaligned
-access, view-relative bounds, negative and extreme int offsets, unchanged bytes
-after failure, floating reference vectors, signed zero/non-finite values, and
-overlapping views. GC tests must retain only a view, collect after copy/view
-construction, trace owners from dynamic and typed containers, and verify backing
-release/accounting after all roots disappear. Compiler/tooling and fresh-Isolate
-image tests must cover both reference types and Endian.
+The compiler lowers byte subscripts and multi-byte operations to dedicated
+checked builtins. Ordinary array indexing retains its own bytecode path. Reads, writes, failures and allocations remain observable through the
+existing IR effect and exception paths. Default arguments are filled before
+source-order evaluation. Null-safe access skips indices and arguments when the
+receiver is null. Builtin results are published only after success, including
+when a bytecode destination aliases an input.
 
-At implementation completion, run relevant Debug/Release regressions, tooling
-tests, and repository static checks. Release benchmarks measure allocation and
-zeroing, byte access, copy throughput, aligned/unaligned typed access, endian
-conversion, view creation, and GC pressure. This specification makes no claim
-that these checks or benchmarks have already passed.
+Version 6 bytecode images preserve the new object-kind constraints in typed
+arrays, collections and runtime type tests, and validate builtin argument
+windows. Images contain metadata and executable constructors, never live bytes,
+owners or raw addresses. Build identities include the implementation; old image
+versions are rejected. REPL submissions retain checked types and layouts in
+ordinary Isolate ownership. Debugger output identifies ByteArray length and
+ByteData byteLength. The runtime has no dependency on compiler or tooling.
+
+Regression tests cover zeroing, empty owners and views, copying and slice
+normalization, readonly properties, rejected resizing, every integer width and
+endpoint, big/little/host order, unaligned access, view-relative and extreme
+bounds, unchanged storage after failure, IEEE reference vectors, signed zero,
+NaN/infinities, and overlapping views. Float32 rounding is checked under changed
+host rounding modes without modifying that environment. GC tests retain only a
+view, including an empty view, and verify final storage release. Compiler,
+source-free fresh-Isolate images, async suspension, typed containers, Expected,
+REPL, LSP, formatting and generated documentation use the production paths.
+
+Run [`examples/byte_data.vela`](../../examples/byte_data.vela) for the public API.
+Release benchmark workloads measure zeroing/allocation, indexed access,
+copying, aligned/unaligned typed access, byte orders, view creation and GC
+pressure. See [measurement boundaries](../../benchmarks/README.md) and
+[retained aggregate evidence](../../benchmarks/results/rolling_summary.json).
+
+On the recorded Windows x64 Ryzen 9 7900X Release run, allocating and zeroing
+4 KiB took a median 303 ns through the VM; allocating a source and copying its
+4 KiB slice took 423 ns. Runtime-only view creation took 13.4–13.5 ns for owners
+from 64 bytes to 64 KiB. The typed-access cases performed 1,000 write/read pairs
+in 64.9–68.1 µs across the measured alignments and byte orders. All 19 cases
+passed correctness checks and retained zero additional heap bytes after GC.
+The five existing VM workloads had latest/baseline median ratios of
+0.992–1.012, with array allocation at 1.004. Exact variation, counters, source
+fingerprints and timing boundaries are retained in the linked aggregate summary;
+these machine-specific observations are not API latency guarantees.
 
 ## References
 

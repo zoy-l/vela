@@ -26,6 +26,9 @@ constexpr auto kNames = std::to_array<std::string_view>({
     "performance",
     "Date",
     "DateParts",
+    "ByteArray",
+    "ByteData",
+    "Endian",
     "int",
     "double",
     "Error",
@@ -34,6 +37,12 @@ constexpr auto kNames = std::to_array<std::string_view>({
 
 std::optional<Builtin> Intrinsic(std::string_view owner, const Function& declaration) {
   const auto& member = declaration.name;
+  if (owner == "ByteArray" && member == "from") {
+    return Builtin::ByteArrayFrom;
+  }
+  if (owner == "ByteData" && member == "view") {
+    return Builtin::ByteDataView;
+  }
   if (owner == "int") {
     if (member == "parse") {
       return Builtin::IntParse;
@@ -107,15 +116,38 @@ bool IsStandardName(std::string_view name) noexcept {
   return std::ranges::find(kNames, name) != kNames.end();
 }
 
-bool IsStandardScalarNamespace(const Program& program, const Class& declaration) {
+bool IsStandardTypeNamespace(const Program& program, const Class& declaration) {
   const auto& name = declaration.name;
-  return (name == "int" || name == "double") &&
+  return (name == "int" || name == "double" || name == "ByteArray" || name == "ByteData") &&
          declaration.location.source_id < program.sources.size() &&
          program.sources.at(declaration.location.source_id).path ==
              std::string(kStandardSourcePrefix) + name;
 }
 
 std::optional<std::string_view> StandardDeclarationSource(std::string_view name) noexcept {
+  if (name == "ByteArray") {
+    return R"(/// Fixed-length, zero-initialized raw byte storage. Construct with ByteArray(length: int).
+class ByteArray {
+  private constructor() {}
+  /// Validates and copies int[] elements in 0..255 into independently owned byte storage.
+  static external func from(values: int[]): ByteArray;
+}
+)";
+  }
+  if (name == "ByteData") {
+    return R"(/// A typed byte view that retains its ByteArray owner. Construct with ByteData.view.
+class ByteData {
+  private constructor() {}
+  /// Creates a shared view; offset defaults to zero, length to the remaining bytes.
+  static external func view(bytes: ByteArray, offset: int, length: int): ByteData;
+}
+)";
+  }
+  if (name == "Endian") {
+    return R"(/// Byte order; multi-byte ByteData access defaults to big. host uses execution-platform order.
+enum Endian { big, little, host }
+)";
+  }
   if (name == "int") {
     return R"(/// Signed 64-bit integers and explicit string parsing.
 class int {
@@ -293,6 +325,10 @@ void AddStandardEnvironment(Program& program) {
   }
   if (used.contains("Date")) {
     used.insert("DateParts");
+  }
+  if (used.contains("ByteData") || used.contains("ByteArray")) {
+    used.insert("ByteArray");
+    used.insert("Endian");
   }
   for (const auto name : kNames) {
     if (!used.contains(name)) {

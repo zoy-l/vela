@@ -15,6 +15,7 @@
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
+#include "compiler/frontend/byte_builtins.h"
 #include "compiler/frontend/token.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/tooling/builtin_documentation.h"
@@ -119,6 +120,23 @@ void AddArrayElementMethods(std::vector<Completion>& result,
         .documentation = {},
     });
   }
+}
+
+void AddByteCompletions(std::vector<Completion>& result, Kind kind) {
+  for (const auto& [name, builtin] : frontend::ByteMethods(kind)) {
+    result.push_back({
+        .label = std::string(name),
+        .detail = BuiltinDetail(frontend::BuiltinSignature(builtin)),
+        .kind = CompletionKind::Method,
+        .documentation = {},
+    });
+  }
+  result.push_back({
+      .label = kind == Kind::ByteArray ? "length" : "byteLength",
+      .detail = "int",
+      .kind = CompletionKind::Property,
+      .documentation = {},
+  });
 }
 
 }  // namespace
@@ -294,6 +312,10 @@ void SemanticIndex::AddAsyncCompletions(std::vector<Completion>& result,
 void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
                                             const frontend::TypeDescriptor& type) const {
   const auto kind = type.kind;
+  if (!frontend::ByteMethods(kind).empty()) {
+    AddByteCompletions(result, kind);
+    return;
+  }
   AddBuiltins(result, kind);
   const auto property = [&result](std::string_view name, std::string detail = "int") -> void {
     result.push_back({

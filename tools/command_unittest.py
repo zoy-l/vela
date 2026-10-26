@@ -42,6 +42,18 @@ class CommandTest(unittest.TestCase):
         image.write_bytes(data)
         self.assertIn("checksum", self.command("exec", image, expected=65).stderr)
 
+    def test_byte_views_survive_async_suspension_and_expected_payloads(self) -> None:
+        self.write("async func main(): Future<int> { "
+                   "const data = ByteData.view(ByteArray(8)); data.setInt64(0,42); await 0; "
+                   "const saved: Expected<ByteData,string> = ok(data); "
+                   "for (let i = 0; i < 1000; i++) { const temporary = ByteArray(1024); } "
+                   "return saved.value().getInt64(0); }")
+        self.command("run", self.entry, expected=42)
+        image = self.directory / "async-bytes.vbc"
+        self.command("compile", self.entry, image)
+        self.entry.unlink()
+        self.command("exec", image, expected=42)
+
     def test_async_run_and_image_wait_for_background_timers(self) -> None:
         self.write("async func main(): Future<int> { "
                    "Timer.after(0, (): void => { print('timer'); }); return 42; }")
@@ -69,6 +81,20 @@ class CommandTest(unittest.TestCase):
         self.command("compile", self.entry, image)
         self.entry.unlink()
         self.command("exec", image)
+
+    def test_byte_api_source_tools_and_source_free_image_execution(self) -> None:
+        self.write("export func make(size: int): ByteData { return ByteData.view(ByteArray(size)); }\n"
+                   "func main(): int { const view = make(4); view.setInt32(0,42); return view.getInt32(0); }")
+        formatted = self.command("fmt", self.entry).stdout
+        self.write(formatted)
+        self.command("fmt", "--check", self.entry)
+        output = self.directory / "api.md"
+        self.command("doc", self.entry, output)
+        self.assertIn("func make(size: int): ByteData", output.read_text(encoding="utf-8"))
+        image = self.directory / "bytes.vbc"
+        self.command("compile", self.entry, image)
+        self.entry.unlink()
+        self.command("exec", image, expected=42)
 
     def test_async_idle_and_background_errors_are_failures(self) -> None:
         self.write("func main(): Future<int> { return Future.race<int>([]); }")

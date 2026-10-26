@@ -77,6 +77,11 @@ enum class CollectionRemove : std::uint8_t { Removed, Missing };
 enum class CollectionProjection : std::uint8_t { Keys, Values };
 enum class SetOperation : std::uint8_t { Union, Intersection, Difference };
 
+struct ByteViewRange final {
+  std::uint32_t offset;
+  std::uint32_t length;
+};
+
 class Heap final {
  public:
   [[nodiscard]] StringObject* ConvertStringCase(StringObject& source,
@@ -106,6 +111,15 @@ class Heap final {
   [[nodiscard]] static std::span<Value> ValueSlots(HeapObject& object) noexcept;
   void SetValueSlot(HeapObject& object, std::size_t index, Value value) noexcept;
   [[nodiscard]] HeapObject* AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept;
+  [[nodiscard]] HeapObject* AllocateByteArray(std::size_t length) noexcept;
+  // 调用者保证范围合法；构造过程保根 owner，发布后由视图追踪其强引用。
+  [[nodiscard]] HeapObject* AllocateByteData(HeapObject& owner, ByteViewRange range) noexcept;
+  [[nodiscard]] static bool IsByteArray(const HeapObject& object) noexcept;
+  [[nodiscard]] static bool IsByteData(const HeapObject& object) noexcept;
+  [[nodiscard]] static bool IsIntegerArray(const HeapObject& object) noexcept;
+  // 借用对象的固定原始存储；调用者先验证对象种类并在借用期间保根。
+  [[nodiscard]] static std::span<std::uint8_t> ByteArrayBytes(HeapObject& object) noexcept;
+  [[nodiscard]] static std::span<std::uint8_t> ByteDataBytes(HeapObject& object) noexcept;
   [[nodiscard]] HeapObject* AllocateExpected(ClassLayout& layout,
                                              Value payload,
                                              ExpectedAlternative alternative) noexcept;
@@ -246,6 +260,7 @@ class Heap final {
   [[nodiscard]] std::size_t committed_bytes() const noexcept { return committed_bytes_; }
 
  private:
+  void MarkByteData(HeapObject& object) noexcept;
   friend class RootRange;
   friend class Future;
 

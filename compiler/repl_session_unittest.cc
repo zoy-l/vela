@@ -48,6 +48,21 @@ TEST_F(ReplSessionTest, PersistsValuesAndInitializesOnceWithoutReplayingHistory)
   EXPECT_EQ(output().str(), "once\n42\ndone\n");
 }
 
+TEST_F(ReplSessionTest, ByteViewsAndMethodsRetainTheirOwnersAcrossSubmissions) {
+  session().isolate().heap().SetGcThreshold(1);
+  Execute("const bytes = ByteArray.from([0,0,0,0]);");
+  Execute("const view = ByteData.view(bytes);");
+  Execute("const write: (int,int) => void = view.setInt32;");
+  Execute("const read: (int) => int = view.getInt32;");
+  Execute("write(0,42);");
+  session().isolate().heap().Collect();
+  Execute("const views: ByteData[] = [view];");
+  Execute("read(0)");
+  Execute("bytes[3]");
+  Execute("views[0].getInt32(0)");
+  EXPECT_EQ(output().str(), "42\n42\n42\n");
+}
+
 TEST_F(ReplSessionTest, BuiltinMethodValuesKeepReceiversAndTargetsAcrossSubmissions) {
   session().isolate().heap().SetGcThreshold(1);
   Execute("const values = [20];");

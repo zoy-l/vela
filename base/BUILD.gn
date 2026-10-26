@@ -4,6 +4,7 @@ source_set("base") {
     "binary.cc",
     "binary.h",
     "builtin.h",
+    "byte_access.h",
     "callable.h",
     "diagnostic.cc",
     "diagnostic.h",

@@ -192,3 +192,20 @@ register capacity. Native allocator bookkeeping and temporary backend allocation
 are excluded. A final collection verifies zero additional retained heap bytes.
 The rolling summary retains aggregate timings, variation, these counters, and
 the before/after synchronous and clock regression comparison.
+
+`byte_data_benchmark.cc` uses the same checked steady VM harness for
+`byte/allocate_zero`, `byte/copy`, `byte/index`, typed big/little/host access
+at aligned and unaligned offsets, and GC pressure. Those cases include local
+owner allocation and zeroing. Copy cases include allocating the source and its
+independent slice; `copied_bytes` counts the slice payload. Typed cases perform
+1,000 write/read pairs and check their sum. Compilation and setup stay outside
+the timer, and first-call GC bytes include the owning and view objects.
+
+`byte/runtime_view` measures runtime view allocation and GC alone, with a rooted
+owner allocated and zeroed before timing. Its three owner sizes check that view
+creation cost does not scale with backing length. All cases check results and
+zero additional retained heap bytes after collection. GC byte counters exclude
+allocator bookkeeping. The retained regression suite compares existing VM
+integer loops, calls, fields, array traversal and array allocation with identical
+Release settings. See [the rolling aggregate summary](results/rolling_summary.json)
+for exact settings, variation, counters and comparison limits.

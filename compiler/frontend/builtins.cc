@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "base/builtin.h"
+#include "base/byte_access.h"
+#include "compiler/frontend/byte_builtins.h"
 #include "compiler/frontend/type_checker.h"
 
 namespace vela::frontend {
@@ -271,6 +273,9 @@ FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
 }
 
 const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
+  if (IsByteBuiltin(builtin)) {
+    return ByteBuiltinSignature(builtin);
+  }
   if (builtin == Builtin::StringToLowerCase || builtin == Builtin::StringToUpperCase) {
     static const auto signature = Signature(Kind::String, "string", {});
     return signature;
@@ -279,6 +284,12 @@ const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
 }
 
 std::optional<Builtin> FindBuiltinProperty(Kind receiver, std::string_view name) {
+  if (receiver == Kind::ByteArray && name == "length") {
+    return Builtin::ByteArrayLength;
+  }
+  if (receiver == Kind::ByteData && name == "byteLength") {
+    return Builtin::ByteDataLength;
+  }
   if (receiver == Kind::Array) {
     if (name == "length") {
       return Builtin::ArrayLength;
@@ -306,11 +317,14 @@ bool IsBuiltinName(std::string_view name) {
   return name == "int" || name == "double" || name == "bool" || name == "string" ||
          name == "void" || name == "ok" || name == "err" || name == "Expected" || name == "Set" ||
          name == "Map" || name == "Future" || name == "Completer" || name == "Timer" ||
-         name == "CancellationToken" || name == "sleep" ||
+         name == "CancellationToken" || name == "ByteData" || name == "sleep" ||
          FindBuiltin(Kind::Invalid, name).has_value();
 }
 
 std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {
+  if (const auto builtin = FindByteBuiltin(receiver, name)) {
+    return builtin;
+  }
   if (receiver == Kind::String) {
     constexpr auto methods = std::to_array<std::pair<std::string_view, Builtin>>({
         {"codePoints", Builtin::StringCodePoints},

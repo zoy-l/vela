@@ -151,13 +151,7 @@ Lowerer::LoweredValue Lowerer::LowerIndex(const frontend::Expression& expression
     const auto null_jump = current_function_->instructions.size();
     Emit({.opcode = Opcode::JumpIfNull, .lhs = array.reg, .location = expression.location});
     const LoweredValue index = LowerExpression(*expression.index);
-    Emit({
-        .opcode = Opcode::GetIndex,
-        .dst = result,
-        .lhs = array.reg,
-        .rhs = index.reg,
-        .location = expression.location,
-    });
+    EmitIndexRead(result, array, index.reg, expression.location);
     const auto end_jump = current_function_->instructions.size();
     Emit({.opcode = Opcode::Jump, .location = expression.location});
     current_function_->instructions.at(null_jump).index =
@@ -169,16 +163,10 @@ Lowerer::LoweredValue Lowerer::LowerIndex(const frontend::Expression& expression
   }
   const LoweredValue stable_array = SnapshotBefore(array, *expression.index);
   const LoweredValue index = LowerExpression(*expression.index);
-  Emit({
-      .opcode = Opcode::GetIndex,
-      .dst = result,
-      .lhs = stable_array.reg,
-      .rhs = index.reg,
-      .location = expression.location,
-  });
+  EmitIndexRead(result, stable_array, index.reg, expression.location);
   return {
       .reg = result,
-      .type = model_.array_elements.at(stable_array.type.name),
+      .type = model_.expression_types.at(&expression),
   };
 }
 

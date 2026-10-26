@@ -19,6 +19,8 @@ void TypeChecker::CollectTypes(const Program& program) {
   types_.emplace("double", Type{.kind = Type::Kind::Double, .name = "double"});
   types_.emplace("string", Type{.kind = Type::Kind::String, .name = "string"});
   types_.emplace("String", Type{.kind = Type::Kind::MutableString, .name = "String"});
+  types_.emplace("ByteArray", Type{.kind = Type::Kind::ByteArray, .name = "ByteArray"});
+  types_.emplace("ByteData", Type{.kind = Type::Kind::ByteData, .name = "ByteData"});
   types_.emplace("Timer", Type{.kind = Type::Kind::Timer, .name = "Timer"});
   types_.emplace("CancellationToken",
                  Type{.kind = Type::Kind::CancellationToken, .name = "CancellationToken"});
@@ -54,7 +56,7 @@ void TypeChecker::CollectTypes(const Program& program) {
 
   for (const Class& class_declaration : program.classes) {
     const auto& name = class_declaration.name;
-    if (IsStandardScalarNamespace(program, class_declaration)) {
+    if (IsStandardTypeNamespace(program, class_declaration)) {
       ClassInfo info;
       info.type = types_.at(name);
       classes_.emplace(name, std::move(info));

@@ -933,10 +933,12 @@ std::string SemanticIndex::DefaultValue(const Expression& expression) const {
 }
 
 Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration) const {
-  if (frontend::IsStandardScalarNamespace(program_, declaration)) {
+  if (frontend::IsStandardTypeNamespace(program_, declaration)) {
     return {
         .label = declaration.name,
-        .detail = declaration.name,
+        .detail = declaration.name == "ByteArray" || declaration.name == "ByteData"
+                      ? std::string(BuiltinTypeDetail(declaration.name))
+                      : declaration.name,
         .kind = CompletionKind::Type,
         .documentation = {},
     };

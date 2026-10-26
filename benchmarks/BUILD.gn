@@ -2,6 +2,7 @@ executable("vela_benchmarks") {
   testonly = true
   sources = [
     "async_benchmark.cc",
+    "byte_data_benchmark.cc",
     "compilation_cache_benchmark.cc",
     "gc_strategy_benchmark.cc",
     "native_workloads.cc",
@@ -9,6 +10,7 @@ executable("vela_benchmarks") {
     "repl_benchmark.cc",
     "representative_benchmark.cc",
     "standard_value_benchmark.cc",
+    "standard_value_benchmark.h",
     "symbol_tables_benchmark.cc",
     "vm_benchmark.cc",
   ]
