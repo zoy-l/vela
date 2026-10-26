@@ -48,6 +48,18 @@ TEST_F(ReplSessionTest, PersistsValuesAndInitializesOnceWithoutReplayingHistory)
   EXPECT_EQ(output().str(), "once\n42\ndone\n");
 }
 
+TEST_F(ReplSessionTest, BuiltinMethodValuesKeepReceiversAndTargetsAcrossSubmissions) {
+  session().isolate().heap().SetGcThreshold(1);
+  Execute("const values = [20];");
+  Execute("const append: (int) => int = values.push;");
+  Execute("const copy: () => int[] = values.slice;");
+  Execute("func unrelated(): int { return 100; }");
+  session().isolate().heap().Collect();
+  Execute("append(22);");
+  Execute("copy().reduce((sum, value) => sum + value, 0)");
+  EXPECT_EQ(output().str(), "42\n");
+}
+
 TEST_F(ReplSessionTest, ExistingClosuresKeepTargetsAndCapturesAfterNewFunctionsAndGlobals) {
   session().isolate().heap().SetGcThreshold(1);
   Execute(R"(func counter(): () => int {
@@ -160,6 +172,19 @@ TEST_F(ReplSessionTest, IncompleteInputAndResetHaveNoEffects) {
   Execute("const value = 3;");
   Execute("value");
   EXPECT_EQ(output().str(), "3\n");
+}
+
+TEST_F(ReplSessionTest, SuspendedFunctionsShareGlobalsAcrossLaterSubmissions) {
+  Execute("let result = 0;");
+  Execute("const completer = Completer<int>();");
+  Execute("async func task(): Future<void> { result = await completer.future; }");
+  Execute("task();");
+  Execute("let added = 1;");
+  Execute("completer.complete(42);");
+  while (session().isolate().scheduler().PumpOne()) {
+  }
+  Execute("result");
+  EXPECT_EQ(output().str(), "42\n");
 }
 
 TEST_F(ReplSessionTest, TrailingCommentsAndBlockLambdaExpressionsKeepTheirSyntax) {

@@ -51,6 +51,8 @@ source_set("frontend") {
     "frontend/type_checker.cc",
     "frontend/type_checker.h",
     "frontend/type_checker_array.cc",
+    "frontend/type_checker_async.cc",
+    "frontend/type_checker_builtin_values.cc",
     "frontend/type_checker_cast.cc",
     "frontend/type_checker_classes.cc",
     "frontend/type_checker_collections.cc",
@@ -82,6 +84,7 @@ source_set("ir") {
     "ir/lowerer.h",
     "ir/lowerer_array.cc",
     "ir/lowerer_array_algorithms.cc",
+    "ir/lowerer_async.cc",
     "ir/lowerer_class.cc",
     "ir/lowerer_collections.cc",
     "ir/lowerer_double.cc",
@@ -228,6 +231,8 @@ executable("vela_frontend_tests") {
 executable("vela_compiler_tests") {
   testonly = true
   sources = [
+    "async_contract_unittest.cc",
+    "builtin_function_value_unittest.cc",
     "bytecode_image_unittest.cc",
     "cast_unittest.cc",
     "class_unittest.cc",

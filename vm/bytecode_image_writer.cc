@@ -215,6 +215,7 @@ void ImageWriter::WriteFunction(const FunctionStorage& function) {
   writer.Write(paths.Index(function.source_paths.get()));
   writer.Write(function.register_count);
   writer.Write(function.parameter_count);
+  writer.Write(static_cast<std::uint8_t>(function.is_async));
   WriteNumbers(writer, std::span(function.code));
   WriteNumbers(writer, std::span(function.integers));
   WriteNumbers(writer, std::span(function.doubles));

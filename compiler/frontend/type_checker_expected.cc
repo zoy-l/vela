@@ -1,6 +1,9 @@
 #include "compiler/frontend/type_checker.h"
 
+#include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
 
 #include "compiler/frontend/ast.h"
 
@@ -28,9 +31,9 @@ TypeChecker::Type TypeChecker::CheckExpectedFactory(const Expression& expression
   return CheckFunctionCall(signature, expression);
 }
 
-TypeChecker::Type TypeChecker::CheckExpectedMethod(const Expression& expression,
-                                                   const Type& receiver) {
-  const auto& name = expression.callee->text;
+std::optional<TypeChecker::ExpectedMethod> TypeChecker::ResolveExpectedMethod(
+    const Type& receiver,
+    std::string_view name) {
   const auto arguments = generic_arguments_.at(receiver.name);
   Type result;
   ExpectedOperation operation = ExpectedOperation::HasValue;
@@ -43,14 +46,25 @@ TypeChecker::Type TypeChecker::CheckExpectedMethod(const Expression& expression,
     operation = ExpectedOperation::Error;
     result = arguments.back();
   } else {
-    AddDiagnostic(expression.location, "unknown Expected method '" + name + "'");
+    return std::nullopt;
+  }
+  FunctionInfo signature;
+  signature.return_type = result;
+  return ExpectedMethod{.operation = operation, .signature = std::move(signature)};
+}
+
+TypeChecker::Type TypeChecker::CheckExpectedMethod(const Expression& expression,
+                                                   const Type& receiver) {
+  const auto method = ResolveExpectedMethod(receiver, expression.callee->text);
+  if (!method) {
+    AddDiagnostic(expression.location, "unknown Expected method '" + expression.callee->text + "'");
     return InvalidType();
   }
   if (!expression.arguments.empty()) {
     AddDiagnostic(expression.location, "Expected accessors do not accept arguments");
   }
-  expected_calls_.insert_or_assign(&expression, operation);
-  return result;
+  expected_calls_.insert_or_assign(&expression, method->operation);
+  return method->signature.return_type;
 }
 
 }  // namespace vela::frontend

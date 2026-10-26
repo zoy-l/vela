@@ -18,6 +18,9 @@ void TypeChecker::CollectTypes(const Program& program) {
   types_.emplace("double", Type{.kind = Type::Kind::Double, .name = "double"});
   types_.emplace("string", Type{.kind = Type::Kind::String, .name = "string"});
   types_.emplace("String", Type{.kind = Type::Kind::MutableString, .name = "String"});
+  types_.emplace("Timer", Type{.kind = Type::Kind::Timer, .name = "Timer"});
+  types_.emplace("CancellationToken",
+                 Type{.kind = Type::Kind::CancellationToken, .name = "CancellationToken"});
   static_cast<void>(ArrayType(types_.at("string")));
   static_cast<void>(ArrayType(types_.at("int")));
   types_.reserve(types_.size() + program.enums.size() + program.classes.size());
@@ -95,6 +98,19 @@ void TypeChecker::ResolveDeclarations(const Program& program) {
 void TypeChecker::ResolveClass(const Class& class_declaration, ClassInfo& info) {
   info.declaration = &class_declaration;
   info.constructor.return_type = info.type;
+  ResolveClassRelations(class_declaration, info);
+  ResolveClassMembers(class_declaration, info);
+}
+
+void TypeChecker::ResolveClassRelations(const Class& class_declaration, ClassInfo& info) {
+  if (class_declaration.base_class) {
+    const auto base = ResolveType(*class_declaration.base_class, false);
+    if (base.kind != Type::Kind::Class || base.nullable) {
+      AddDiagnostic(class_declaration.base_class->location, "extends requires a class type");
+    } else {
+      info.base_class = base.name;
+    }
+  }
   for (const auto& interface : class_declaration.interfaces) {
     const auto type = ResolveType(interface, false);
     if (type.kind != Type::Kind::Interface || type.nullable) {
@@ -103,29 +119,89 @@ void TypeChecker::ResolveClass(const Class& class_declaration, ClassInfo& info) 
       AddDiagnostic(interface.location, "duplicate implemented interface");
     }
   }
+}
+
+void TypeChecker::ResolveClassMembers(const Class& class_declaration, ClassInfo& info) {
   info.fields.reserve(class_declaration.fields.size());
   info.field_order.reserve(class_declaration.fields.size());
   info.methods.reserve(class_declaration.methods.size());
   for (const Field& field : class_declaration.fields) {
     ResolveField(field, class_declaration, info);
   }
+  ResolveClassMethods(class_declaration, info);
+  ResolveClassConstructor(class_declaration, info);
+}
+
+void TypeChecker::ResolveClassMethods(const Class& class_declaration, ClassInfo& info) {
   for (const Function& method : class_declaration.methods) {
-    FunctionInfo method_info = ResolveSignature(method);
-    if (info.fields.contains(method.name) || info.static_fields.contains(method.name)) {
-      AddDiagnostic(method.location, "member name is already used by a field");
-    }
-    if (!info.methods.emplace(method.name, std::move(method_info)).second) {
-      AddDiagnostic(method.location, "duplicate method '" + method.name + "'");
-    }
+    ResolveClassMethod(method, info);
   }
-  if (class_declaration.constructor) {
-    const auto signature = ResolveSignature(*class_declaration.constructor);
-    info.methods.emplace("$constructor", signature);
-    info.constructor.visibility = class_declaration.constructor->visibility;
-    if (class_declaration.constructor_kind == ConstructorKind::Explicit) {
-      info.constructor = signature;
-      info.constructor.return_type = info.type;
+}
+
+void TypeChecker::ResolveClassMethod(const Function& method, ClassInfo& info) {
+  FunctionInfo method_info = ResolveSignature(method);
+  if (info.fields.contains(method.name) || info.static_fields.contains(method.name)) {
+    AddDiagnostic(method.location, "member name is already used by a field");
+  }
+  const auto found = info.methods.find(method.name);
+  if (found == info.methods.end()) {
+    if (method_info.is_setter && !method_info.parameters.empty()) {
+      method_info.setter_parameter_type = method_info.parameters.front().type;
+      method_info.setter_return_type = method_info.return_type;
     }
+    info.methods.emplace(method.name, std::move(method_info));
+  } else if ((found->second.is_getter && method_info.is_setter) ||
+             (found->second.is_setter && method_info.is_getter)) {
+    MergeAccessor(found->second, method_info, method.location);
+  } else {
+    AddDiagnostic(method.location, "duplicate method '" + method.name + "'");
+  }
+  CheckAccessor(method);
+}
+
+void TypeChecker::MergeAccessor(FunctionInfo& existing,
+                                const FunctionInfo& incoming,
+                                SourceLocation location) {
+  if (existing.is_getter && incoming.is_setter &&
+      (incoming.parameters.size() != 1 ||
+       !IsSameType(existing.return_type, incoming.parameters.front().type))) {
+    AddDiagnostic(location, "accessor getter and setter types must match");
+  }
+  if (existing.is_setter && incoming.is_getter &&
+      (existing.parameters.size() != 1 ||
+       !IsSameType(existing.parameters.front().type, incoming.return_type))) {
+    AddDiagnostic(location, "accessor getter and setter types must match");
+  }
+  existing.is_getter = existing.is_getter || incoming.is_getter;
+  existing.is_setter = existing.is_setter || incoming.is_setter;
+  if (incoming.is_setter && !incoming.parameters.empty()) {
+    existing.parameters = incoming.parameters;
+    existing.parameter_indices = incoming.parameter_indices;
+    existing.setter_parameter_type = incoming.parameters.front().type;
+    existing.setter_return_type = incoming.return_type;
+  }
+}
+
+void TypeChecker::CheckAccessor(const Function& method) {
+  if (method.is_getter && !method.parameters.empty()) {
+    AddDiagnostic(method.location, "getter must not declare parameters");
+  }
+  if (method.is_setter && (method.parameters.size() != 1 ||
+                           ResolveType(method.return_type, true).kind != Type::Kind::Void)) {
+    AddDiagnostic(method.location, "setter must declare one parameter and return void");
+  }
+}
+
+void TypeChecker::ResolveClassConstructor(const Class& class_declaration, ClassInfo& info) {
+  if (!class_declaration.constructor) {
+    return;
+  }
+  const auto signature = ResolveSignature(*class_declaration.constructor);
+  info.methods.emplace("$constructor", signature);
+  info.constructor.visibility = class_declaration.constructor->visibility;
+  if (class_declaration.constructor_kind == ConstructorKind::Explicit) {
+    info.constructor = signature;
+    info.constructor.return_type = info.type;
   }
 }
 
@@ -183,9 +259,28 @@ TypeChecker::Type TypeChecker::CheckClassConstruction(const ClassInfo& class_inf
   return CheckFunctionCall(class_info.constructor, expression);
 }
 
-TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression) {
+TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression,
+                                                 const Type* expected) {
   if (const auto* owner = StaticOwner(expression)) {
     return CheckStaticMember(expression, *owner);
+  }
+  if (expression.object->kind == Expression::Kind::Name && expression.object->text == "super") {
+    if (owner_ == nullptr || !owner_->base_class) {
+      AddDiagnostic(expression.location, "super requires a derived class context");
+      return InvalidType();
+    }
+    const auto base = classes_.find(*owner_->base_class);
+    if (base == classes_.end()) {
+      return InvalidType();
+    }
+    const auto method = base->second.methods.find(expression.text);
+    if (method == base->second.methods.end()) {
+      AddDiagnostic(expression.location, "unknown super member '" + expression.text + "'");
+      return InvalidType();
+    }
+    super_members_.insert_or_assign(
+        &expression, MemberReference{.owner = *owner_->base_class, .member = expression.text});
+    return method->second.is_getter ? method->second.return_type : FunctionType(method->second);
   }
   if (expression.object->kind == Expression::Kind::Name &&
       LookupLocal(expression.object->text) == nullptr) {
@@ -201,10 +296,14 @@ TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression) {
 
   const Type object = CheckExpression(*expression.object, nullptr);
   if (object.nullable) {
-    AddDiagnostic(expression.object->location, "nullable receiver requires a non-null check");
-    return InvalidType();
+    if (!expression.null_safe) {
+      AddDiagnostic(expression.object->location, "nullable receiver requires a non-null check");
+      return InvalidType();
+    }
+    auto result = CheckObjectMember(expression, NonNullable(object), expected);
+    return IsValid(result) ? NullableType(std::move(result)) : result;
   }
-  return CheckObjectMember(expression, object);
+  return CheckObjectMember(expression, object, expected);
 }
 
 TypeChecker::Type TypeChecker::CheckStaticMember(const Expression& expression,
@@ -227,7 +326,14 @@ TypeChecker::Type TypeChecker::CheckStaticMember(const Expression& expression,
   return InvalidType();
 }
 
-TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression, const Type& object) {
+TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
+                                                 const Type& object,
+                                                 const Type* expected) {
+  if ((object.kind == Type::Kind::Completer &&
+       (expression.text == "future" || expression.text == "isCompleted")) ||
+      (object.kind == Type::Kind::CancellationToken && expression.text == "isCancelled")) {
+    return CheckAsyncProperty(expression, object);
+  }
   if (const auto builtin = FindBuiltinProperty(object.kind, expression.text)) {
     builtin_calls_.insert_or_assign(&expression, *builtin);
     return {.kind = Type::Kind::Int, .name = "int"};
@@ -242,8 +348,7 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression, c
     }
   }
   if (object.kind != Type::Kind::Class) {
-    AddDiagnostic(expression.location, "member access requires a class object");
-    return InvalidType();
+    return CheckBuiltinMethodValue(expression, object, expected);
   }
   const auto class_info = classes_.find(object.name);
   if (class_info == classes_.end()) {
@@ -253,6 +358,10 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression, c
   if (field == class_info->second.fields.end()) {
     const auto method = class_info->second.methods.find(expression.text);
     if (method != class_info->second.methods.end()) {
+      if (method->second.is_getter) {
+        CheckAccess(method->second.visibility, object.name, expression.location);
+        return method->second.return_type;
+      }
       CheckAccess(method->second.visibility, object.name, expression.location);
       if (method->second.storage == MemberStorage::Static) {
         AddDiagnostic(expression.location, "static method must be accessed through its class");

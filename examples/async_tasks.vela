@@ -1,0 +1,18 @@
+async func load(value: int): Future<int> {
+  await sleep(1);
+  return value;
+}
+
+async func main(): Future<int> {
+  const pending: Future<int>[] = [load(20), load(22)];
+  const values: int[] = await Future.wait(pending);
+  print(values[0] + values[1]); // 42: wait preserves the input order.
+
+  const immediate: int = await Future.value(7);
+  print(immediate); // 7
+  const deferred: int = await Future.microtask((): int => 8);
+  print(deferred); // 8
+
+  // The CLI waits for this Future and uses its result as the process exit code.
+  return 0;
+}

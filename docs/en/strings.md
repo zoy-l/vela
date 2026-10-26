@@ -135,6 +135,13 @@ Low-level heap string/builder interfaces accept valid UTF-8; untrusted native
 input must first use `InvalidUtf8Offset`. The source lexer is the current
 external text validation boundary.
 
+## Planned string APIs
+
+Unicode `toLowerCase()` / `toUpperCase()` are specified in
+[string case conversion](string_case.md). Dart-style RegExp and RegExpMatch are
+specified in [regular expressions](regexp.md). Both are design specifications;
+the APIs are not part of the implemented methods listed above.
+
 ## Examples
 
 Run `examples/strings.vela` for escapes, interpolation, conversions, string operations, `join`, and an imported helper. `examples/string_builder.vela` demonstrates loop construction and immutable snapshots.

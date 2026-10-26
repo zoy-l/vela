@@ -1081,6 +1081,35 @@ class LanguageServerTest(unittest.TestCase):
         self.assertEqual(self.reply(messages, "field")["result"]["range"]["start"]["line"], 1)
         self.assertEqual(self.reply(messages, "method")["result"]["range"]["start"]["line"], 0)
 
+    def test_async_members_have_typed_hover_completion_and_named_arguments(self) -> None:
+        source = ("async func main(): Future<int> { const future = Future.value(40); "
+                  "return await future.then((value) => value + 2); }")
+        messages = self.session([self.open(source),
+            self.symbol_query("hover", source, source.index(".then") + 2, "hover"),
+            self.symbol_query("completion", source, source.index(".then") + 1, "members"),
+            self.symbol_query("completion", source, source.index("Future.value") + len("Future."), "factories")])
+        hover = self.reply(messages, "hover")["result"]["contents"]["value"]
+        self.assertIn("Future<int>", hover)
+        self.assertIn("continuation", hover)
+        members = {item["label"] for item in self.reply(messages, "members")["result"]}
+        self.assertTrue({"then", "catchError", "whenComplete", "timeout"} <= members)
+        factories = {item["label"] for item in self.reply(messages, "factories")["result"]}
+        self.assertTrue({"value", "error", "sync", "microtask", "delayed", "wait", "race"} <= factories)
+        source = "async func main(): Future<int[]> { return await Future.wait<int>([], ea); }"
+        messages = self.session([self.open(source),
+            self.symbol_query("completion", source, source.index("ea)") + 2)])
+        labels = {item["label"] for item in self.reply(messages, "query")["result"]}
+        self.assertIn("eagerError:", labels)
+
+    def test_builtin_method_values_keep_function_type_and_documentation(self) -> None:
+        source = ("func main(): int { const values = [40]; "
+                  "const copy: () => int[] = values.slice; return copy()[0] + 2; }")
+        messages = self.session([self.open(source),
+            self.symbol_query("hover", source, source.index("copy()"), "value"),
+            self.symbol_query("hover", source, source.index(".slice") + 2, "method")])
+        self.assertIn("() => int[]", self.reply(messages, "value")["result"]["contents"]["value"])
+        self.assertIn("shallow copy", self.reply(messages, "method")["result"]["contents"]["value"])
+
     def test_definition_accepts_identifier_end_before_punctuation_and_whitespace(self) -> None:
         source = ("class Box { public param value: int; }\n"
                   "func answer(): int { return 42; }\n"

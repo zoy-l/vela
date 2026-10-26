@@ -12,7 +12,7 @@
 
 namespace vela::vm {
 
-inline constexpr std::uint32_t kBytecodeImageVersion = 2;
+inline constexpr std::uint32_t kBytecodeImageVersion = 4;
 
 [[nodiscard]] std::expected<std::vector<std::byte>, BinaryError> SaveBytecode(
     const Program& program,

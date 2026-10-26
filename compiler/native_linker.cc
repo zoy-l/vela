@@ -34,6 +34,10 @@ bool MatchesNativeType(const frontend::TypeDescriptor& type, runtime::NativeType
       return type.kind == Kind::String;
     case runtime::NativeType::NullableString:
       std::unreachable();
+    case runtime::NativeType::Future:
+      return type.kind == Kind::Future;
+    case runtime::NativeType::CancellationToken:
+      return type.kind == Kind::CancellationToken;
   }
   std::unreachable();
 }

@@ -224,6 +224,7 @@ bool IsDeclarationStart(TokenKind kind) {
     case TokenKind::Export:
     case TokenKind::External:
     case TokenKind::Func:
+    case TokenKind::Async:
     case TokenKind::Class:
     case TokenKind::Interface:
     case TokenKind::Enum:

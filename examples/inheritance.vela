@@ -1,0 +1,62 @@
+interface Measurable {
+  measure(): int;
+}
+
+interface Named {
+  name(): string;
+}
+
+class DefaultCounter {
+  public value: int = 0;
+}
+
+class DefaultBonusCounter extends DefaultCounter {
+  public param bonus: int;
+
+  public total(): int {
+    return this.value + this.bonus;
+  }
+}
+
+class Counter {
+  public value: int;
+
+  constructor(value: int) {
+    this.value = value;
+  }
+
+  public measure(): int {
+    return this.value;
+  }
+}
+
+class BonusCounter extends Counter implements Measurable, Named {
+  public bonus: int;
+
+  constructor(value: int, bonus: int) {
+    super(value);
+    this.bonus = bonus;
+  }
+
+  public override measure(): int {
+    return super.measure() + this.bonus;
+  }
+
+  public name(): string {
+    return 'bonus counter';
+  }
+}
+
+func main(): void {
+  print(DefaultBonusCounter(bonus: 2).total()); // 2: implicit super() uses value's default.
+
+  const counter = BonusCounter(40, 2);
+  print(counter.value); // 40: inherited field
+  print(counter.bonus); // 2: derived field
+  print(counter.measure()); // 42: override delegates to the base implementation.
+
+  const measured: Measurable = counter;
+  const named: Named = counter;
+  print(measured.measure()); // 42: interface dispatch
+  print(named.name()); // bonus counter
+}

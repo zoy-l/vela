@@ -43,6 +43,10 @@ Vela does not expose the full Date or Performance browser interfaces.
 The old `Time` object and microsecond APIs are removed. Numeric types remain exact:
 use `0.0` in a comparison with `performance.now()`, or explicit numeric conversion.
 
+UTC calendar construction/decomposition and strict ISO date-time parsing/output
+are proposed in [UTC date and time API](time.md). The four conversion methods and
+DateParts are not implemented; the clock APIs above remain the current surface.
+
 ## Random
 
 `Random.seed(value: int): void`, `Random.nextInt(bound: int): int`, and

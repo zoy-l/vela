@@ -1,0 +1,19 @@
+func category(score: int): string {
+  // Right associative: score >= 90 ? 'high' : (score >= 60 ? 'pass' : 'retry').
+  return score >= 90 ? 'high' : score >= 60 ? 'pass' : 'retry';
+}
+
+func selected(): int {
+  print('selected');
+  return 42;
+}
+
+func main(): void {
+  print(category(95)); // high
+  print(category(70)); // pass
+  print(category(40)); // retry
+
+  const ready = true;
+  const answer: int = ready ? selected() : 1 / 0;
+  print(answer); // 42; the unselected branch is never evaluated.
+}

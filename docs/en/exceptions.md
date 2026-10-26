@@ -40,9 +40,19 @@ bindings follow ordinary lexical scope and mutable closure-capture rules.
 The default global `Error(message: string, code: string)` requires no import;
 `code` defaults to `"Error"`. This is an ordinary fixed-layout class. VM failures
 are materialized as this type: `message` contains the diagnostic, while `code`
-contains `ExecutionStatusName`, for example `"division by zero"` or
-`"native function failed"`. Custom error types require no inheritance or common
+contains the stable `ExecutionStatusCode`, for example `"DivisionByZero"` or
+`"NativeFailure"`. Diagnostic wording is separate and may change without changing
+the code. Domain APIs document their own named codes. An explicitly constructed
+Error retains its supplied code unchanged. Custom error types require no inheritance or common
 base class. Native failures and runtime checked operations use the same catch path.
+
+Async completion errors use `FutureAlreadyCompleted` for a second completion request
+and `FutureSelfAdoption` for a direct or indirect adoption cycle. `TimeoutException`
+is an independent throwable class whose default code is `Timeout`. An external
+`Future<T>` completing with an incompatible value or a non-throwable error produces
+`TypeError`. `AsyncIdle` is a host execution status when the root Future has no
+producer that can advance it; it is not an exception injected into the pending task.
+See [async contracts](async_tasks.md) for propagation and scheduling.
 
 Finally executes on normal completion, return, break, continue, and exception
 propagation. Return expressions are evaluated once before finally; changing a

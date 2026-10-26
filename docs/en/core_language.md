@@ -70,6 +70,32 @@ func aliasDemo(): void {
 }
 ```
 
+Instance method values retain their receiver, evaluated once when the value is
+created. This includes primitive, string, builder, array, collection, and Expected
+builtins, inherited methods, and interface/super bindings. A null-safe method
+access returns null for a null receiver; a live binding keeps its receiver alive.
+
+```vela
+func builtinValues(): void {
+  const values = [20, 22];
+  const copy: () => int[] = values.slice;
+  const append: (int) => int = values.push;
+  const map: ((int) => string) => string[] = values.map;
+  append(42);
+  print(copy().length); // 3
+  print(map(value => value.toString()).join(',')); // 20,22,42
+}
+```
+
+A function value has a fixed positional signature. A contextual function type
+selects a legal argument count for optional/variadic builtin methods and fixes
+callback/result types for higher-order methods. Without such context, an ordinary
+fixed-parameter builtin value uses its complete parameter list; variadic and
+callback algorithm values require a function type context. For example, inferred
+`values.slice` takes two indices, while the annotated copy above takes none.
+Defaults are evaluated by the underlying method at invocation, not at binding.
+No dynamic dispatcher or second callable ABI is introduced.
+
 ## Generic functions, classes, and aliases
 
 ```typescript
@@ -306,6 +332,31 @@ analysis requires every field to be initialized on every returning path. Reading
 an uninitialized field, calling an instance method, or exposing `this` before
 initialization is rejected. Members default to `public`; `private` is scoped to
 the declaring class. Private `param` fields still create named parameters.
+
+A derived constructor does not inherit the base class's `param` arguments. When
+the base has required parameters, the derived constructor must pass them through
+an explicit `super(...)` call:
+
+```typescript
+class Counter {
+  public param value: int;
+}
+
+class BonusCounter extends Counter {
+  public param bonus: int;
+
+  constructor {
+    super(value: this.bonus * 20);
+  }
+}
+
+const counter = BonusCounter(bonus: 2); // value = 40, bonus = 2
+```
+
+When every base parameter has a default, or the base has no required parameters,
+the derived constructor may omit `super()`. The base constructor then runs
+implicitly before the derived constructor body. Omitting `super(...)` when the
+base has a required parameter is a compile-time error.
 
 ## Static members
 

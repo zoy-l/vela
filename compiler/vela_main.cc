@@ -23,7 +23,9 @@
 #include "compiler/tooling/language_server.h"
 #include "compiler/tooling/repl_console.h"
 #include "compiler/tooling/standard_streams.h"
+#include "runtime/future.h"
 #include "runtime/isolate.h"
+#include "runtime/value.h"
 #include "vm/bytecode_image.h"
 #include "vm/execution_status.h"
 #include "vm/program.h"
@@ -73,6 +75,76 @@ int CheckFile(std::string_view path_text) {
 
 enum class ExecutionMode : std::uint8_t { Run, Debug };
 
+void PrintAsyncFailure(const vela::runtime::Future& root,
+                       std::string_view label = "async main failed") {
+  const auto diagnostic = root.error_diagnostic();
+  if (!diagnostic || diagnostic->message.empty()) {
+    std::cerr << "vela: " << label << '\n';
+  } else {
+    std::cerr << "vela: " << label << ": " << diagnostic->message << '\n';
+  }
+  if (!diagnostic) {
+    return;
+  }
+  for (const auto& frame : diagnostic->stack_trace) {
+    std::cerr << "  at " << (frame.function.empty() ? "<anonymous>" : frame.function);
+    if (!frame.source_path.empty()) {
+      std::cerr << " (" << frame.source_path << ':' << frame.line << ':' << frame.column << ')';
+    } else {
+      std::cerr << " (instruction " << frame.instruction << ')';
+    }
+    std::cerr << '\n';
+  }
+}
+
+int ExecuteAsync(const vela::vm::Program& program,
+                 vela::runtime::Isolate& isolate,
+                 const vela::vm::FunctionHandle& function) {
+  vela::vm::VirtualMachine machine(isolate);
+  auto& scheduler = isolate.scheduler();
+  bool background_failed = false;
+  scheduler.SetUnhandledErrorHandler(
+      [&](const vela::runtime::Future& future, vela::runtime::Value) {
+        background_failed = true;
+        PrintAsyncFailure(future, "unhandled Future error");
+      });
+  const auto executed = machine.Execute(program, function.index());
+  if (!executed.Succeeded()) {
+    scheduler.SetUnhandledErrorHandler({});
+    vela::vm::WriteRuntimeError(std::cerr, executed);
+    return kRuntimeErrorExitCode;
+  }
+  const auto* future = executed.value.IsObject()
+                           ? vela::runtime::Heap::GetFuture(*executed.value.AsObject())
+                           : nullptr;
+  auto root = future != nullptr ? future->Rooted()
+                                : vela::runtime::Future::Value(executed.value, &scheduler);
+  root.AttachHeap(isolate.heap());
+  root.Observe([](vela::runtime::FutureState, vela::runtime::Value) {});
+  if (!scheduler.PumpUntil(root, vela::runtime::FuturePumpMode::WaitForHost)) {
+    scheduler.SetUnhandledErrorHandler({});
+    std::cerr << "vela: async idle/deadlock: main has no pending work\n";
+    return kRuntimeErrorExitCode;
+  }
+  while (scheduler.PumpOne(vela::runtime::FuturePumpMode::WaitForHost)) {
+  }
+  scheduler.SetUnhandledErrorHandler({});
+  if (root.state() == vela::runtime::FutureState::Failed) {
+    PrintAsyncFailure(root);
+    return kRuntimeErrorExitCode;
+  }
+  if (background_failed) {
+    return kRuntimeErrorExitCode;
+  }
+  const auto exit_code =
+      vela::compiler::ProcessExitCode(root.value().value_or(vela::runtime::Value::Null()));
+  if (!exit_code) {
+    std::cerr << "vela: error: " << exit_code.error() << '\n';
+    return kRuntimeErrorExitCode;
+  }
+  return *exit_code;
+}
+
 int Execute(const vela::vm::Program& program,
             vela::runtime::Isolate& isolate,
             ExecutionMode mode = ExecutionMode::Run) {
@@ -86,9 +158,11 @@ int Execute(const vela::vm::Program& program,
     return kSourceErrorExitCode;
   }
 
-  const auto result = mode == ExecutionMode::Debug
-                          ? vela::tooling::RunDebugConsole(function, isolate, std::cin, std::cerr)
-                          : vela::vm::VirtualMachine(isolate).Execute(program, function.index());
+  if (mode == ExecutionMode::Run) {
+    return ExecuteAsync(program, isolate, function);
+  }
+
+  const auto result = vela::tooling::RunDebugConsole(function, isolate, std::cin, std::cerr);
   if (result.status == vela::vm::ExecutionStatus::DebuggerStopped) {
     std::cerr << "debugger stopped\n";
     return 0;

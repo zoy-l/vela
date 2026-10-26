@@ -9,6 +9,7 @@
 
 #include "base/execution_limits.h"
 #include "base/source_location.h"
+#include "runtime/future.h"
 #include "runtime/isolate.h"
 #include "runtime/value.h"
 #include "vm/debugger.h"
@@ -28,7 +29,7 @@ struct StackFrame final {
 
 struct ExecutionResult final {
   // 返回引用不自动保根；宿主须在下一次分配或 GC 前注册 RootRange。
-  runtime::Value value;
+  runtime::Value value = runtime::Value::Null();
   ExecutionStatus status = ExecutionStatus::InvalidEntry;
   std::vector<StackFrame> stack_trace;
   std::string message;
@@ -51,6 +52,8 @@ class VirtualMachine final {
   [[nodiscard]] ExecutionResult Execute(const FunctionHandle& function) noexcept;
   [[nodiscard]] ExecutionResult Execute(const Program& program,
                                         std::uint32_t entry_function) noexcept;
+  [[nodiscard]] runtime::Future ExecuteFuture(const Program& program,
+                                              std::uint32_t entry_function) noexcept;
   [[nodiscard]] ExecutionResult Debug(const FunctionHandle& function, Debugger& debugger) noexcept;
   [[nodiscard]] std::size_t register_bytes() const noexcept;
 

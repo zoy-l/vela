@@ -105,7 +105,8 @@ void ThreadJumps(Function& function) {
   std::vector<std::uint8_t> keep(count, 1);
   for (std::size_t index = 0; index < count; ++index) {
     auto& instruction = function.instructions.at(index);
-    if (instruction.opcode != Opcode::Jump && instruction.opcode != Opcode::JumpIfFalse) {
+    if (instruction.opcode != Opcode::Jump && instruction.opcode != Opcode::JumpIfFalse &&
+        instruction.opcode != Opcode::JumpIfNull) {
       continue;
     }
     const auto target = instruction.index;

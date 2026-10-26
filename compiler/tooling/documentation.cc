@@ -263,6 +263,9 @@ void Documentation::Emit(Declaration declaration) {
   switch (declaration.kind) {
     case Declaration::Kind::Function: {
       const auto& function = program.functions.at(declaration.index);
+      if (function.is_async) {
+        output_ << "async ";
+      }
       output_ << (function.native_symbol.empty() ? "func " : "external func ");
       Signature(output_, function);
       output_ << ";\n";

@@ -16,6 +16,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "base/async_operation.h"
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
@@ -67,7 +68,8 @@ struct EncodingContext final {
 std::optional<frontend::Diagnostic> ValidateEncodingOperands(const ir::Instruction& instruction,
                                                              std::string_view source_path) {
   const bool uses_wide_target =
-      instruction.opcode == ir::Opcode::Jump || instruction.opcode == ir::Opcode::JumpIfFalse;
+      instruction.opcode == ir::Opcode::Jump || instruction.opcode == ir::Opcode::JumpIfFalse ||
+      instruction.opcode == ir::Opcode::JumpIfNull;
   const bool uses_wide_constant = instruction.opcode == ir::Opcode::LoadString ||
                                   instruction.opcode == ir::Opcode::LoadDouble ||
                                   instruction.opcode == ir::Opcode::LoadIntConstant;
@@ -87,11 +89,36 @@ std::optional<frontend::Diagnostic> ValidateEncodingOperands(const ir::Instructi
   return std::nullopt;
 }
 
+std::expected<vm::Instruction, frontend::Diagnostic> EncodeJump(
+    const ir::Instruction& instruction,
+    const EncodingContext& context,
+    std::string_view source_path) {
+  if (instruction.index >= context.function->instructions.size()) {
+    return std::unexpected(frontend::Diagnostic{
+        .location = instruction.location,
+        .message = "invalid jump target in IR",
+        .source_path = std::string(source_path),
+    });
+  }
+  const std::int64_t offset = static_cast<std::int64_t>(instruction.index) -
+                              static_cast<std::int64_t>(context.code_size + 1);
+  if (!FitsImmediate16(offset)) {
+    return std::unexpected(frontend::Diagnostic{
+        .location = instruction.location,
+        .message = "jump target exceeds bootstrap bytecode range",
+        .source_path = std::string(source_path),
+    });
+  }
+  const std::uint8_t condition =
+      instruction.opcode == ir::Opcode::JumpIfFalse || instruction.opcode == ir::Opcode::JumpIfNull
+          ? Byte(instruction.lhs)
+          : 0;
+  return vm::EncodeAImm16(instruction.opcode, condition, static_cast<std::int16_t>(offset));
+}
+
 std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
     const ir::Instruction& instruction,
     const EncodingContext& context) {
-  const auto& function = *context.function;
-  const auto code_size = context.code_size;
   const auto function_count = context.function_count;
   const auto class_count = context.class_count;
   const std::string_view source_path =
@@ -128,6 +155,13 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
     case ir::Opcode::SubInt:
     case ir::Opcode::MulInt:
     case ir::Opcode::DivInt:
+    case ir::Opcode::ModInt:
+    case ir::Opcode::BitAndInt:
+    case ir::Opcode::BitOrInt:
+    case ir::Opcode::BitXorInt:
+    case ir::Opcode::ShiftLeftInt:
+    case ir::Opcode::ShiftRightInt:
+    case ir::Opcode::ShiftUnsignedRightInt:
     case ir::Opcode::EqualInt:
     case ir::Opcode::NotEqualInt:
     case ir::Opcode::EqualBool:
@@ -141,6 +175,8 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
     case ir::Opcode::AndBool:
     case ir::Opcode::OrBool:
     case ir::Opcode::StringConcat:
+    case ir::Opcode::NewFuture:
+    case ir::Opcode::SleepFuture:
     case ir::Opcode::StringInterpolate:
     case ir::Opcode::EqualString:
     case ir::Opcode::NotEqualString:
@@ -173,6 +209,16 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
     case ir::Opcode::Throw:
     case ir::Opcode::Rethrow:
       return vm::EncodeABC(opcode, 0, Byte(instruction.lhs), 0);
+    case ir::Opcode::AsyncCall:
+      if (instruction.index >= static_cast<std::uint32_t>(AsyncOperation::Count)) {
+        return std::unexpected(frontend::Diagnostic{
+            .location = instruction.location,
+            .message = "invalid async operation in IR",
+            .source_path = std::string(source_path),
+        });
+      }
+      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.index),
+                           Byte(instruction.lhs));
     case ir::Opcode::BuiltinCall:
       if (instruction.index >= static_cast<std::uint32_t>(Builtin::Count)) {
         return std::unexpected(frontend::Diagnostic{
@@ -233,8 +279,10 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
       return vm::EncodeABC(opcode, Byte(instruction.dst),
                            static_cast<std::uint8_t>(instruction.index), Byte(instruction.lhs));
     case ir::Opcode::NegInt:
+    case ir::Opcode::BitNotInt:
     case ir::Opcode::NotBool:
     case ir::Opcode::NegDouble:
+    case ir::Opcode::Await:
       return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs), 0);
     case ir::Opcode::NewInstance:
       if (instruction.index >= class_count) {
@@ -256,27 +304,9 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
     case ir::Opcode::Return:
       return vm::EncodeABC(opcode, Byte(instruction.dst), 0, 0);
     case ir::Opcode::Jump:
-    case ir::Opcode::JumpIfFalse: {
-      if (instruction.index >= function.instructions.size()) {
-        return std::unexpected(frontend::Diagnostic{
-            .location = instruction.location,
-            .message = "invalid jump target in IR",
-            .source_path = std::string(source_path),
-        });
-      }
-      const std::int64_t offset =
-          static_cast<std::int64_t>(instruction.index) - static_cast<std::int64_t>(code_size + 1);
-      if (!FitsImmediate16(offset)) {
-        return std::unexpected(frontend::Diagnostic{
-            .location = instruction.location,
-            .message = "jump target exceeds bootstrap bytecode range",
-            .source_path = std::string(source_path),
-        });
-      }
-      const std::uint8_t condition =
-          instruction.opcode == ir::Opcode::JumpIfFalse ? Byte(instruction.lhs) : 0;
-      return vm::EncodeAImm16(opcode, condition, static_cast<std::int16_t>(offset));
-    }
+    case ir::Opcode::JumpIfFalse:
+    case ir::Opcode::JumpIfNull:
+      return EncodeJump(instruction, context, source_path);
   }
 
   return std::unexpected(frontend::Diagnostic{
@@ -443,6 +473,7 @@ CompileResult CompileProgram(const frontend::Program& source,
     compiled.doubles = function.doubles;
     compiled.register_count = static_cast<std::uint16_t>(function.register_count);
     compiled.parameter_count = static_cast<std::uint16_t>(function.parameter_count);
+    compiled.is_async = function.is_async;
     compiled.source_paths = source_paths;
     auto encoded = EncodeFunction(function,
                                   EncodingContext{
@@ -459,7 +490,8 @@ CompileResult CompileProgram(const frontend::Program& source,
     functions.push_back(std::move(*encoded));
   }
   auto prepared = vm::Program::Create(std::move(functions), isolate,
-                                      std::move(lowered.program.global_initializers));
+                                      std::move(lowered.program.global_initializers),
+                                      state != nullptr ? state->globals : nullptr);
   if (!prepared) {
     const auto& error = prepared.error();
     const auto location =
@@ -468,6 +500,9 @@ CompileResult CompileProgram(const frontend::Program& source,
     return result;
   }
   result.program = std::move(*prepared);
+  if (state != nullptr) {
+    state->globals = result.program.shared_globals();
+  }
   layout_transaction.Commit();
   return result;
 }

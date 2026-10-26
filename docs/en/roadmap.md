@@ -71,6 +71,7 @@ P0 behavior is specified in [Basic language contracts](language_basics.md).
 - [x] Add generics such as `Set<T>` and `Map<K, V>`
 - [x] Add explicit interface / implements contracts
 - [x] Add type tests and checked casts
+- [ ] Add checked dynamic values, heterogeneous containers, and dynamic dispatch ([design](json.md))
 - [x] Diagnose unreachable statements
 - [x] Require complete returns on every finite control-flow path
 
@@ -84,10 +85,15 @@ P1 contracts are specified in [Core language specification](core_language.md).
 - [x] Add import aliases for qualified access and name conflict resolution
 - [x] Compile multiple source files as one program
 - [x] Add console output
-- [x] Add console input
+- [ ] Console input is outside the current standard API; see [standard library scope](standard_library.md).
 - [x] Add time, random, and math libraries
+- [ ] Add lightweight UTC calendar conversion and strict ISO date-time input/output ([design](time.md))
 - [x] Add basic string standard library APIs ([contracts](strings.md))
+- [ ] Add Unicode string case conversion ([design](string_case.md))
+- [ ] Add PCRE2-backed regular expressions with Dart-style APIs and typed matches ([design](regexp.md))
 - [x] Add collection standard library APIs
+- [ ] Add JSON parsing and serialization over native values ([design](json.md))
+- [ ] Add fixed byte storage and typed byte views ([design](byte_data.md))
 - [x] Define process exit codes
 
 ## P2: errors and host integration
@@ -96,6 +102,7 @@ P1 contracts are specified in [Core language specification](core_language.md).
 - [x] Add `throw` and typed error values
 - [x] Preserve VM stack traces
 - [x] Define compiler and runtime error formatting
+- [x] Stabilize machine-readable runtime error codes independently of diagnostic wording
 - [x] Add typed native function bindings
 - [x] Define host handle rooting and lifetime APIs
 
@@ -122,8 +129,8 @@ P1 contracts are specified in [Core language specification](core_language.md).
 
 Current bytecode limits and measured execution costs are documented in
 [VM execution contracts](vm_execution.md).
-The async language and runtime contract is specified in [Async Functions and Future Semantics](async_tasks.md);
-async tasks remain outside the basic language milestone.
+Async APIs, scheduling, host ownership, and performance boundaries are specified in
+[Async Functions and Future Semantics](async_tasks.md).
 
 ## Recommended implementation order
 
@@ -136,6 +143,6 @@ async tasks remain outside the basic language milestone.
 7. Add errors, stack traces, and native bindings.
 8. Re-run Release benchmarks before changing VM dispatch or GC strategy.
 
-Class inheritance, method overriding, async tasks, and JIT remain
-outside the basic language milestone until the static object model and typed VM
-contracts are stable.
+Class inheritance, method overriding, and async tasks now run through the source,
+type checker, Typed IR, bytecode, VM, and CLI paths. JIT remains outside the basic
+language milestone.

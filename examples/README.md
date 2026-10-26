@@ -1,8 +1,40 @@
 # Vela examples
 
-The examples use only syntax supported by the current bootstrap compiler. The
-CLI prints the value returned by `main`; object-returning examples print
-`object` because object field inspection is deliberately a runtime API concern.
+The examples use syntax supported by the current compiler. Use `print` to display
+values. An integer returned by `main` becomes the process exit code; `void` means
+success. The CLI also waits for an async main's Future and uses its result as the
+exit code. The examples in the table below all exit with code `0`.
+
+## Operators, iteration, classes, and async
+
+Each file runs independently. Comments next to the expressions show their expected
+output and where evaluation stops.
+
+| Example | Features | Expected output (one value per line) |
+| --- | --- | --- |
+| [compound_assignment.vela](compound_assignment.vela) | All eleven compound assignments, prefix/postfix `++` and `--`, and an index evaluated once | `9`, `9`, `11`, `11`, `9`, `15`, `1` |
+| [collection_iteration.vela](collection_iteration.vela) | Read-only `const` bindings for arrays and Sets; Map `[key, value]` destructuring | `60`, `Vela`, `Dart`, `Vela: 42`, `Dart: 7` |
+| [bitwise.vela](bitwise.vela) | 64-bit `~`, `&`, `\|`, `^`, `<<`, `>>`, and `>>>` | `-6`, `1`, `7`, `6`, `20`, `-2`, `4611686018427387902`, `1099511627776` |
+| [conditional.vela](conditional.vela) | Right-associative `? :` and evaluation of only the selected branch | `high`, `pass`, `retry`, `selected`, `42` |
+| [null_safe.vela](null_safe.vela) | `?.`, `?.[]`, and `??`; skipped method calls, index expressions, and default expressions | `fallback`, `empty`, `Vela`, `no label`, `label: Vela`, `7`, `index evaluated`, `42` |
+| [inheritance.vela](inheritance.vela) | Single inheritance, implicit and explicit `super(...)`, two interfaces, inherited fields, and `override` | `2`, `40`, `2`, `42`, `42`, `bonus counter` |
+| [accessors.vela](accessors.vela) | Getter/setter property access and a computed read-only property | `10`, `21`, `42` |
+| [async_tasks.vela](async_tasks.vela) | Async main, `await`, `sleep`, `Future.wait`, `Future.value`, and `Future.microtask` | `42`, `7`, `8` |
+
+For example:
+
+```powershell
+.\out\release\vela.exe run examples\compound_assignment.vela
+.\out\release\vela.exe run examples\collection_iteration.vela
+.\out\release\vela.exe run examples\bitwise.vela
+.\out\release\vela.exe run examples\conditional.vela
+.\out\release\vela.exe run examples\null_safe.vela
+.\out\release\vela.exe run examples\inheritance.vela
+.\out\release\vela.exe run examples\accessors.vela
+.\out\release\vela.exe run examples\async_tasks.vela
+```
+
+## Other examples
 
 ```powershell
 .\out\debug\vela.exe run examples\hello.vela
@@ -26,8 +58,8 @@ relative source files as one program.
 
 `typed_arrays.vela` demonstrates integer, boolean, string, enum, class, and
 nested arrays, contextual empty literals, array parameters and returns, and
-shared storage on assignment. It prints `second`, `true`, `42`, then the CLI
-prints the returned `42`. Element types match exactly; implicit conversions
+shared storage on assignment. It prints `second`, `true`, `42`, then exits with
+code `42`. Element types match exactly; implicit conversions
 are not supported.
 
 `double.vela` uses decimal and exponent literals, double parameters and returns,

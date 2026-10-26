@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/async_operation.h"
 #include "base/builtin.h"
 #include "compiler/ir/ir.h"
 
@@ -29,6 +30,7 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
       return {.defines_value = true};
     case Opcode::Move:
     case Opcode::NegInt:
+    case Opcode::BitNotInt:
     case Opcode::NegDouble:
     case Opcode::NotBool:
     case Opcode::GetField:
@@ -40,6 +42,9 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
     case Opcode::ExpectedValue:
     case Opcode::NewDynamicArray:
     case Opcode::ExceptionValue:
+    case Opcode::NewFuture:
+    case Opcode::Await:
+    case Opcode::SleepFuture:
       return {.defines_value = true, .uses = {Field::Left}, .use_count = 1};
     case Opcode::SetField:
       return {.uses = {Field::Destination, Field::Left}, .use_count = 2};
@@ -48,6 +53,7 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
     case Opcode::Print:
     case Opcode::SetGlobal:
     case Opcode::JumpIfFalse:
+    case Opcode::JumpIfNull:
     case Opcode::Throw:
     case Opcode::Rethrow:
       return {.uses = {Field::Left}, .use_count = 1};
@@ -78,6 +84,12 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
           .argument_count =
               static_cast<std::uint32_t>(BuiltinArity(static_cast<Builtin>(instruction.index))),
       };
+    case Opcode::AsyncCall:
+      return {
+          .defines_value = true,
+          .argument_count = static_cast<std::uint32_t>(
+              AsyncArity(static_cast<AsyncOperation>(instruction.index))),
+      };
     case Opcode::StringInterpolate:
       return {.defines_value = true, .argument_count = instruction.rhs};
     case Opcode::NativeCall:
@@ -89,6 +101,13 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
     case Opcode::SubInt:
     case Opcode::MulInt:
     case Opcode::DivInt:
+    case Opcode::ModInt:
+    case Opcode::BitAndInt:
+    case Opcode::BitOrInt:
+    case Opcode::BitXorInt:
+    case Opcode::ShiftLeftInt:
+    case Opcode::ShiftRightInt:
+    case Opcode::ShiftUnsignedRightInt:
     case Opcode::AddDouble:
     case Opcode::SubDouble:
     case Opcode::MulDouble:
@@ -161,12 +180,13 @@ std::vector<std::uint8_t> FindBlockStarts(const Function& function) {
   for (std::size_t index = 0; index < code.size(); ++index) {
     const auto& instruction = code.subspan(index).front();
     const auto opcode = instruction.opcode;
-    if (opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse) {
+    if (opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse || opcode == Opcode::JumpIfNull) {
       if (instruction.index < code.size()) {
         starts.at(instruction.index) = 1;
       }
     }
-    if ((opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse || opcode == Opcode::Return ||
+    if ((opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse || opcode == Opcode::JumpIfNull ||
+         opcode == Opcode::Return ||
          opcode == Opcode::Throw || opcode == Opcode::Rethrow ||
          (instruction.handler && MayThrow(opcode))) &&
         index + 1 < code.size()) {
@@ -202,7 +222,8 @@ FlowGraph BuildFlowGraph(const Function& function) {
   for (std::size_t index = 0; index < graph.blocks.size(); ++index) {
     auto& block = graph.blocks.at(index);
     const auto& last = code.at(block.end - 1);
-    if ((last.opcode == Opcode::Jump || last.opcode == Opcode::JumpIfFalse) &&
+    if ((last.opcode == Opcode::Jump || last.opcode == Opcode::JumpIfFalse ||
+         last.opcode == Opcode::JumpIfNull) &&
         last.index < code.size()) {
       block.successors.push_back(graph.instruction_blocks.at(last.index));
     }
@@ -287,7 +308,8 @@ void CompactInstructions(Function& function, std::span<const std::uint8_t> keep)
       continue;
     }
     auto instruction = code.at(index);
-    if (instruction.opcode == Opcode::Jump || instruction.opcode == Opcode::JumpIfFalse) {
+    if (instruction.opcode == Opcode::Jump || instruction.opcode == Opcode::JumpIfFalse ||
+        instruction.opcode == Opcode::JumpIfNull) {
       instruction.index = remap.at(instruction.index);
     }
     code.at(destination++) = instruction;
@@ -305,6 +327,7 @@ bool MayThrow(Opcode opcode) {
   switch (opcode) {
     case Opcode::Jump:
     case Opcode::JumpIfFalse:
+    case Opcode::JumpIfNull:
     case Opcode::Return:
     case Opcode::Print:
     case Opcode::Catch:

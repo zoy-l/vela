@@ -11,9 +11,11 @@
 
 #include "gtest/gtest.h"
 
+#include "base/async_operation.h"
 #include "base/callable.h"
 #include "base/execution_limits.h"
 
+#include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
@@ -34,6 +36,42 @@ constexpr auto kInvalidOpcode = static_cast<OpCode>(0xff);
 constexpr std::int16_t kOutsideJump = 5;
 constexpr std::uint32_t kOriginalLine = 7;
 constexpr std::uint32_t kChangedLine = 99;
+
+TEST(ProgramTest, BorrowedAsyncFunctionKeepsAwaitSemanticsAndRejectsSynchronousAwait) {
+  runtime::Isolate isolate;
+  const auto code = std::to_array<Instruction>({
+      EncodeAImm16(OpCode::LoadInt, 0, 42),
+      EncodeABC(OpCode::Await, 0, 0, 0),
+      EncodeABC(OpCode::Return, 0, 0, 0),
+  });
+  Function function;
+  function.code = code;
+  function.register_count = 1;
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate));
+  function.is_async = true;
+  const auto program = Program::Load(std::span(&function, 1), isolate);
+  ASSERT_TRUE(program);
+  ASSERT_TRUE(program->functions().front().View().is_async);
+  auto result = VirtualMachine(isolate).ExecuteFuture(*program, 0);
+  EXPECT_TRUE(result.is_pending());
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(result));
+  ASSERT_EQ(result.state(), runtime::FutureState::Succeeded);
+  EXPECT_EQ(result.value().value_or(runtime::Value::Null()).AsInteger(), kExpectedResult);
+}
+
+TEST(ProgramTest, RejectsInvalidAsyncOperationAndArgumentWindow) {
+  runtime::Isolate isolate;
+  FunctionStorage function;
+  function.register_count = 1;
+  function.code = {
+      EncodeABC(OpCode::AsyncCall, 0, static_cast<std::uint8_t>(AsyncOperation::Count), 0),
+      EncodeABC(OpCode::Return, 0, 0, 0),
+  };
+  EXPECT_FALSE(Program::Create({function}, isolate));
+  function.code.front() =
+      EncodeABC(OpCode::AsyncCall, 0, static_cast<std::uint8_t>(AsyncOperation::Wait), 0);
+  EXPECT_FALSE(Program::Create({function}, isolate));
+}
 
 TEST(ProgramTest, ValidatesSourceMappingBoundariesAndOrder) {
   runtime::Isolate isolate;

@@ -301,7 +301,9 @@ std::optional<Builtin> FindBuiltinProperty(Kind receiver, std::string_view name)
 bool IsBuiltinName(std::string_view name) {
   return name == "int" || name == "double" || name == "bool" || name == "string" ||
          name == "void" || name == "ok" || name == "err" || name == "Expected" || name == "Set" ||
-         name == "Map" || FindBuiltin(Kind::Invalid, name).has_value();
+         name == "Map" || name == "Future" || name == "Completer" || name == "Timer" ||
+         name == "CancellationToken" || name == "sleep" ||
+         FindBuiltin(Kind::Invalid, name).has_value();
 }
 
 std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {

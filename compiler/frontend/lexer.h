@@ -41,6 +41,18 @@ class Lexer final {
   void SkipBlockComment();
   void RecordComment(SourceLocation location, std::size_t start);
   void ScanToken(std::size_t start);
+  [[nodiscard]] bool ScanPunctuation(char character, std::size_t start);
+  struct PunctuationContext final {
+    char character;
+    std::size_t start;
+  };
+  void ScanQuestion(std::size_t start);
+  void ScanArithmetic(PunctuationContext context);
+  void ScanComparison(PunctuationContext context);
+  void ScanEquals(std::size_t start);
+  void ScanLess(std::size_t start);
+  void ScanGreater(std::size_t start);
+  void ScanBitwise(PunctuationContext context);
   void ScanIdentifier();
   void ScanNumber();
   void ScanString(char quote);

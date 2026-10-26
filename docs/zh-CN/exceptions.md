@@ -31,7 +31,9 @@ func main(): int {
 
 末尾的 `catch { ... }` 可以捕获任何异常，且不向局部暴露未类型化的值。若需绑定异常变量，则必须使用 `catch (name: Type)` 语法。重复的捕获类型以及在通用 catch 之后的 catch 子句均会被编译器拒绝。try 块必须跟随 catch、finally 或两者兼具。Catch 块绑定的变量遵循常规词法作用域及可变闭包捕获规则。
 
-全局内置的 `Error(message: string, code: string)` 类无需导入即可使用，其中 `code` 默认为 `"Error"`。这是一个具有固定内存布局的普通类。虚拟机执行失败时会具体化为该类型：`message` 包含诊断信息，而 `code` 包含 `ExecutionStatusName` 字符串（例如 `"division by zero"` 或 `"native function failed"`）。自定义错误类型无需继承任何通用基类。原生 C++ 失败与运行时受查失败走完全相同的 catch 处理路径。
+全局内置的 `Error(message: string, code: string)` 类无需导入即可使用，其中 `code` 默认为 `"Error"`。这是一个具有固定内存布局的普通类。虚拟机执行失败时会具体化为该类型：`message` 包含诊断信息，`code` 使用稳定的 `ExecutionStatusCode`，例如 `"DivisionByZero"` 或 `"NativeFailure"`。诊断文案与错误码分离，修改文案不能改变错误码。领域 API 在各自契约中定义命名错误码；显式构造的 Error 保留用户传入的 code。自定义错误类型无需继承任何通用基类。原生 C++ 失败与运行时受查失败走完全相同的 catch 处理路径。
+
+异步完成错误中，第二次请求完成使用 `FutureAlreadyCompleted`，直接或间接采用自身使用 `FutureSelfAdoption`。`TimeoutException` 是独立的可抛出类，默认 code 为 `Timeout`。原生 `Future<T>` 完成的值类型不符或错误不可抛出时产生 `TypeError`。根 Future 没有可推进其执行的生产者时，宿主执行状态为 `AsyncIdle`；不会向挂起任务注入异常。传播与调度规则见[异步契约](async_tasks.md)。
 
 Finally 块在正常完成、return、break、continue 以及异常传播时均会执行。return 表达式在进入 finally 前计算一次；在 finally 中修改局部变量无法覆盖先前计算得出的返回值。若 finally 内部执行了 return、break、continue 或 throw，则会直接取代待定的完成状态。finally 内部抛出的错误由外层区域处理，绝不会被当前同一个 try 的 catch 子句捕获。只有真正被 break/continue 退出的 finalizer 才会执行；跳出 try 内部的循环不会导致 try 提前退出。finally 在其自身的词法作用域中解析变量名，不受被保护代码体内名称遮蔽的影响。
 

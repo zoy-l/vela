@@ -9,6 +9,7 @@
 
 #include "gtest/gtest.h"
 
+#include "base/async_operation.h"
 #include "base/binary.h"
 #include "base/fingerprint.h"
 #include "runtime/isolate.h"
@@ -51,6 +52,7 @@ std::vector<std::byte> FunctionImage(ImageFunction input) {
   body.Write(std::numeric_limits<std::uint64_t>::max());
   body.Write(input.registers);
   body.Write(std::uint16_t{0});
+  body.Write(std::uint8_t{0});
   body.Write(std::uint64_t{1});
   body.Write(input.instruction);
   // 整数、浮点、源码映射、异常表、原生符号文本和全局初始化表均为空。
@@ -73,12 +75,20 @@ constexpr auto kNoPool = std::numeric_limits<std::uint64_t>::max();
 INSTANTIATE_TEST_SUITE_P(
     InvalidMetadataAndInstructions,
     BytecodeImageBoundaryTest,
-    testing::Values(ImageFunction{EncodeABC(static_cast<OpCode>(0xff), 0, 0, 0), 1, kNoPool},
-                    ImageFunction{EncodeABC(OpCode::Return, 1, 0, 0), 1, kNoPool},
-                    ImageFunction{EncodeABC(OpCode::Return, 0, 0, 0), 0, kNoPool},
-                    ImageFunction{EncodeABC(OpCode::Return, 0, 0, 0), 1, 0},
-                    ImageFunction{EncodeABC(OpCode::LoadNull, 0, 0, 0), 1, kNoPool},
-                    ImageFunction{EncodeAImm16(OpCode::Jump, 0, 10), 1, kNoPool}));
+    testing::Values(
+        ImageFunction{EncodeABC(static_cast<OpCode>(0xff), 0, 0, 0), 1, kNoPool},
+        ImageFunction{EncodeABC(OpCode::Return, 1, 0, 0), 1, kNoPool},
+        ImageFunction{EncodeABC(OpCode::Return, 0, 0, 0), 0, kNoPool},
+        ImageFunction{EncodeABC(OpCode::Return, 0, 0, 0), 1, 0},
+        ImageFunction{EncodeABC(OpCode::LoadNull, 0, 0, 0), 1, kNoPool},
+        ImageFunction{EncodeAImm16(OpCode::Jump, 0, 10), 1, kNoPool},
+        ImageFunction{EncodeABC(OpCode::Await, 0, 0, 0), 1, kNoPool},
+        ImageFunction{
+            EncodeABC(OpCode::AsyncCall, 0, static_cast<std::uint8_t>(AsyncOperation::Count), 0), 1,
+            kNoPool},
+        ImageFunction{
+            EncodeABC(OpCode::AsyncCall, 0, static_cast<std::uint8_t>(AsyncOperation::Wait), 0), 1,
+            kNoPool}));
 
 TEST(BytecodeImageBoundaryTest, LoadsMinimalValidImageAndRejectsExtraDataAndHugeCount) {
   runtime::Isolate isolate;

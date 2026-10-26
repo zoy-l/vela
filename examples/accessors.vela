@@ -1,0 +1,23 @@
+class Account {
+  private storedBalance: int = 10;
+
+  public get balance(): int {
+    return this.storedBalance;
+  }
+
+  public set balance(value: int): void {
+    this.storedBalance = value;
+  }
+
+  public get doubled(): int {
+    return this.storedBalance * 2;
+  }
+}
+
+func main(): void {
+  const account = Account();
+  print(account.balance); // 10: ordinary field syntax invokes the getter.
+  account.balance = 21; // Ordinary assignment invokes the setter.
+  print(account.balance); // 21
+  print(account.doubled); // 42: a computed, read-only property
+}

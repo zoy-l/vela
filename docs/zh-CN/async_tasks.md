@@ -2,7 +2,7 @@
 
 [English](../en/async_tasks.md) | [**简体中文**](async_tasks.md)
 
-> 状态：设计规范。异步任务尚未实现；实现必须满足本文完整定义的语言、运行时、宿主和验证契约。
+> 状态：已实现。本文是 async/Future 语言、运行时、宿主和 CLI 行为契约。
 
 ## 目标
 
@@ -13,6 +13,8 @@ Vela 保留熟悉的 `async` / `await` 语法，并以 `Future<T>` 表示异步�
 ## API 示例
 
 ```vela
+class User { public param name: string; }
+
 external func fetchUser(id: int): Future<User>;
 
 async func loadUsers(ids: int[]): Future<User[]> {
@@ -44,6 +46,19 @@ async func main(): Future<int> {
 
 ## Future API
 
+```vela
+const producer = Completer<int>();
+const result = producer.future.then((value) => value + 2);
+Timer.after(0, (): void => { producer.complete(40); });
+const answer: int = await result;
+```
+
+示例在 async 函数内执行。`Completer<T>()` 也可从上下文推导 `Completer<T>`。其只读属性为 `future: Future<T>` 和 `isCompleted: bool`；提出完成请求时 `isCompleted` 即为 true，包括采用尚未完成的 Future。`complete(value)` 接受 `T` 或 `Future<T>`；`Completer<void>.complete()` 不接收实参。`completeError(error)` 要求非空的类或接口实例。重复完成抛出 `Error(code: 'FutureAlreadyCompleted')`，直接或间接采用自身抛出 `Error(code: 'FutureSelfAdoption')`。
+
+`then` 从回调返回值推导结果类型；源为 `Future<void>` 时，成功回调不接收值参数。错误回调必须有一个非空的类或接口参数，未标注的 lambda 参数默认为 `Error`。回调只处理匹配该参数类型的异常，其余错误原样传播。`catchError` 必须返回源值类型或相同值类型的 Future。`whenComplete` 的无参 action 返回 `void` 或 `Future<void>`，异步 action 完成后才转发结果。可选回调可以为空。这些 API 使用静态回调类型，不引入 `dynamic` 或 `unknown`。
+
+`Future<T>` 的结果类型支持协变，`Completer<T>` 保持不变性。工厂和回调 API 会采用返回的 Future，类型实参不允许嵌套的 Future 载荷。值任务的 `Future.wait` 返回 `Future<T[]>`；`Future<void>[]` 聚合为 `Future<void>`，因为 Vela 没有 `void[]` 值类型。后一种情况的 cleanUp 为无参回调，且不会被调用。工厂的显式类型实参和上下文结果类型都必须与载荷或计算结果匹配。
+
 - `Future.value(value)` 和 `Future.error(error)` 分别创建成功或失败的已完成 Future。若 `Future.value` 接收另一个 Future，会采用其完成结果；不会解析任意对象的 `then` 成员。
 - `Future.sync(computation)` 立即调用计算函数，将其返回值、Future 或抛出的异常转换为 Future 结果。
 - `Future.microtask(computation)` 将计算函数加入微任务队列；`Future.delayed(milliseconds, computation)` 在 timer 到期后调用计算函数。`sleep(milliseconds)` 返回一个延迟完成为 `void` 的 Future。
@@ -53,7 +68,11 @@ async func main(): Future<int> {
 - `future.timeout(milliseconds, onTimeout)` 在时限内采用源 Future；超时后采用 `onTimeout` 返回的值或 Future，否则以 `TimeoutException` 失败。超时不会自动取消源操作，源 Future 仍会被观察。
 - `Completer<T>` 为事件回调和其它非 async 生产者创建并完成 Future。`complete` 可接收值或 Future，后者会被采用；`complete` / `completeError` 只能调用一次，错误值必须是 Vela 可抛出的对象。第二次完成是契约错误。完成通知始终异步执行，避免监听器重入生产者。
 
-Future 可有多个 waiter。完成值或错误在所有监听器消费前保持有效。组合 API 会观察每个输入的完成结果，不会因聚合 Future 提前失败而丢弃后续错误。
+Future 可有多个 waiter。完成值或错误在所有监听器消费前保持有效。组合 API 会观察每个输入的完成结果，不会因聚合 Future 提前失败而丢弃后续错误。wait 失败后，每个成功产生的非空输入都清理一次，包括提前失败后才到达的成功结果。清理回调的错误按未处理 Future 错误报告，不替换聚合结果记录的首个错误。
+
+wait 和 race 的输入共享一个 GC 槽对象来保存聚合引用。每个输入保留该对象，GC 标记聚合状态时只扫描一次引用列表；提前失败后，cleanUp 回调和后到的结果仍由共享槽保持可达。
+
+`future.timeout(milliseconds, onTimeout: null)` 保持源值类型。`TimeoutException` 是独立的可抛出类，提供 `message: string` 和 `code: string`（默认为 `Timeout`）；使用对应类型的 catch 或错误回调处理。源 Future 自身产生的 `TimeoutException` 会原样传播，不触发 `onTimeout`。
 
 ## 执行与调度
 
@@ -69,7 +88,15 @@ async 函数中的 `throw`、运行时错误和 await 传播错误使用 Vela �
 
 微任务检查点结束时，宿主会收到尚未处理的 Future 错误通知；稍后增加处理器时，宿主可收到相应的已处理通知。`main` 可以返回 `Future<int>`；其失败映射为程序运行失败。后台 Future 的未处理错误作为运行时诊断报告。
 
-挂起的局部值、Future 结果、错误、等待者和排队回调都必须在 GC 中保持可达。执行会话在续延完成前保留所需的 Isolate、Program 和诊断元数据。VM 代码只在所属 Isolate 线程运行；外部线程投递完成消息，由该线程更新 Future。
+CLI 的 `run` 命令会识别零参数的 `async func main(): Future<int>`，启动根 Future，并驱动当前 Isolate 的微任务、timer 和宿主完成事件，直到根 Future 完成或没有任何可推进的工作。成功结果转换为进程退出码；失败结果打印保留源码位置和 await 栈的异步诊断。没有生产者的未完成 Future 不会单独保持进程存活，CLI 会报告 async idle/deadlock。
+
+挂起的局部值、Future 结果、错误、等待者和排队回调在 GC 中保持可达。续延保留 Program 和诊断元数据，借用 Isolate；宿主必须让 Isolate 存活到其 Program、Future 句柄及原生生产者释放之后。VM 代码只在所属 Isolate 线程运行；外部线程投递完成消息，由该线程更新 Future。
+
+Future 值、监听器、VM 帧、GC 状态和 timer 队列由 Isolate 线程独占，内部不使用互斥锁。宿主线程通过无锁 MPSC 消息队列发布不可变的完成消息，Isolate 每次应用一个宿主事件，再排空其微任务。等待宿主事件或 timer 时通过信号量休眠。完成请求的占位和取消状态使用原子操作。Future 状态读取、监听器注册、堆操作与 Program 销毁仍在所属线程执行。原生取消回调可能在取消或注册线程运行，VM 工作必须经调度器投递。
+
+`NativeContext::CreateCompleter()` 登记一个存活的宿主生产者；完成操作或释放全部生产者句柄会注销事件源。`NativeContext` 将返回的原生 Future 绑定到自己的调度器，拒绝已属于其他 Isolate 的 Future。原生 Future 完成时检查 external 声明中的 `Future<T>` 载荷；值类型不符或错误不可抛出时，检查后的 Future 以 `TypeError` 失败。跨线程投递的堆值必须已属于该 Isolate，并在发布前保持保根；分配和编码在所属线程完成。
+
+`FutureScheduler::PumpOne()` 和 `PumpUntil()` 在没有可执行工作或 timer 时返回 idle；`WaitForHost` 模式还会等待已登记的宿主事件源。挂起状态只保存活跃寄存器值，全局槽通过 Future 引用图追踪；不可达的未完成任务及 Future 结果循环仍可回收。REPL 的后续提交共享同一份可增长的全局存储，早先提交的续延能读取和更新当前全局值。
 
 CLI 等待根 main Future 与所有仍存活的宿主事件源。单独一个没有生产者的未完成 Future 不保持进程存活；若根 Future 仍未完成且没有可推进它的工作，CLI 报告 async idle/deadlock，嵌入式 pump 则返回 idle，供宿主稍后继续。
 
@@ -78,6 +105,8 @@ CLI 等待根 main Future 与所有仍存活的宿主事件源。单独一个没
 异步结果语义不依赖时钟；I/O 与 timer 属于宿主事件层。标准库提供 `sleep(milliseconds)`、`Timer.after(milliseconds, callback)` 和 `Timer.periodic(milliseconds, callback)`。两个 Timer 工厂都返回 `Timer` 句柄，通过 `timer.cancel()` 取消；`Timer.after` 触发一次，`Timer.periodic` 定期触发。callback 在 Isolate 线程运行；返回的 Future 不会阻塞后续 tick，其错误按普通未处理 Future 错误规则报告。
 
 所有 timer 使用单调时钟。interval 不补发过期 tick，避免积累无界回调队列；同一 deadline 的事件按创建顺序处理。每个宿主事件完成后，先排空由其触发的微任务，再处理下一个事件。
+
+延迟是单调时钟可表示范围内的非负整数毫秒，周期 timer 的间隔必须为正数；非法时长抛出可捕获的 `Error`。Timer 回调无参数，返回 `void` 或 `Future<void>`。取消是幂等操作，在所属线程立即释放保留的回调。`CancellationToken()` 提供 `isCancelled: bool` 和幂等的 `cancel()`；原生类型编解码与宿主共享同一份取消请求状态。
 
 ## 性能与实现边界
 

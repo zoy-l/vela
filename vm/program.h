@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/execution_status.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_function.h"
@@ -21,6 +22,10 @@
 #include "vm/exception_handler.h"
 
 namespace vela::vm {
+
+namespace internal {
+class Execution;
+}
 
 // 原生常量指针池地址稳定且持续保根；所属 Isolate 须覆盖程序和入口句柄的生命周期。
 struct StringConstants final {
@@ -69,6 +74,7 @@ struct FunctionStorage final {
   std::vector<double> doubles;
   std::uint16_t register_count = 0;
   std::uint16_t parameter_count = 0;
+  bool is_async = false;
   std::shared_ptr<const std::vector<std::string>> source_paths;
   std::vector<SourceMapping> source_mappings;
   std::shared_ptr<const runtime::NativeFunction> native;
@@ -86,17 +92,20 @@ struct ValidationError final {
 
 enum class GlobalState : std::uint8_t { Uninitialized, Initializing, Ready };
 
-// 每个编译程序拥有一份惰性静态状态；槽位地址固定并随程序持续保根。
+// REPL 各次编译共享惰性全局状态；外部 Program 句柄保根，续延通过值图追踪槽位。
 struct GlobalStorage final {
-  GlobalStorage(runtime::Heap& heap, std::vector<std::uint32_t> functions)
-      : values(functions.size()),
-        states(functions.size(), GlobalState::Uninitialized),
-        initializers(std::move(functions)),
-        roots(heap, values.data(), values.size()) {}
-  std::vector<runtime::Value> values;
+  GlobalStorage(runtime::Heap& heap, std::vector<std::uint32_t> functions);
+  [[nodiscard]] std::expected<void, ExecutionStatus> Extend(std::vector<std::uint32_t> functions);
+  void Retain() noexcept;
+  void Release() noexcept;
+  void Store(std::size_t index, runtime::Value value) noexcept;
+  runtime::Heap& owner;
+  runtime::Value storage;
+  std::span<runtime::Value> values;
   std::vector<GlobalState> states;
   std::vector<std::uint32_t> initializers;
   runtime::RootRange roots;
+  std::size_t external_users = 0;
 };
 
 struct ProgramStorage final {
@@ -110,11 +119,18 @@ class FunctionHandle;
 class Program final {
  public:
   Program() = default;
+  ~Program();
+  Program(const Program& other);
+  Program& operator=(const Program& other);
+  Program(Program&& other) noexcept;
+  Program& operator=(Program&& other) noexcept;
 
   [[nodiscard]] static std::expected<Program, ValidationError> Create(
       std::vector<FunctionStorage> functions,
       runtime::Isolate& isolate,
-      std::vector<std::uint32_t> global_initializers = {});
+      std::vector<std::uint32_t> global_initializers = {},
+      std::shared_ptr<GlobalStorage> globals = {});
+  [[nodiscard]] std::shared_ptr<GlobalStorage> shared_globals() const noexcept;
   [[nodiscard]] static std::expected<Program, ValidationError> Load(
       std::span<const Function> functions,
       runtime::Isolate& isolate,
@@ -127,8 +143,14 @@ class Program final {
 
  private:
   friend class FunctionHandle;
-  explicit Program(std::shared_ptr<const ProgramStorage> storage) : storage_(std::move(storage)) {}
+  friend class internal::Execution;
+  enum class Rooting : std::uint8_t { External, Continuation };
+  Program(std::shared_ptr<const ProgramStorage> storage, Rooting rooting = Rooting::External);
+  [[nodiscard]] Program Internal() const;
+  void Retain() noexcept;
+  void Release() noexcept;
   std::shared_ptr<const ProgramStorage> storage_;
+  bool external_ = true;
 };
 
 class FunctionHandle final {
@@ -138,6 +160,7 @@ class FunctionHandle final {
   [[nodiscard]] const Program& program() const noexcept { return program_; }
   [[nodiscard]] std::uint32_t index() const noexcept { return index_; }
   [[nodiscard]] std::uint16_t parameter_count() const noexcept;
+  [[nodiscard]] bool is_async() const noexcept;
   [[nodiscard]] std::uint16_t register_count() const noexcept;
   [[nodiscard]] std::span<const Instruction> code() const noexcept;
 

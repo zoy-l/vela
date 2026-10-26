@@ -246,7 +246,7 @@ std::expected<ImageElement, BinaryError> ReadElement(BinaryReader& reader) {
   const auto [kind, object_kind, flags, interface, instance, array, collection] = *record;
   constexpr auto allowed_flags = kNullableImageFlag | kCallableImageFlag | kInterfaceImageFlag;
   if (kind > static_cast<std::uint8_t>(runtime::ValueKind::String) ||
-      object_kind > static_cast<std::uint8_t>(runtime::ObjectKind::Exception) ||
+      object_kind > static_cast<std::uint8_t>(runtime::ObjectKind::CancellationToken) ||
       flags > allowed_flags) {
     return std::unexpected(reader.Error("invalid element kind or flags"));
   }
@@ -350,7 +350,8 @@ std::expected<LoadedLayouts, BinaryError> ReadLayouts(BinaryReader& reader,
   }
   layouts.arrays.resize(*arrays);
   layouts.collections.resize(*collections);
-  if (auto built = LayoutLoader(array_inputs, collection_inputs, isolate, layouts).Build(); !built) {
+  if (auto built = LayoutLoader(array_inputs, collection_inputs, isolate, layouts).Build();
+      !built) {
     return std::unexpected(reader.Error(built.error()));
   }
   return layouts;

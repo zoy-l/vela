@@ -21,7 +21,6 @@
 #include "compiler/frontend/token.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/repl_identity.h"
-#include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "vm/program.h"
 #include "vm/vm.h"
@@ -32,6 +31,7 @@ namespace {
 bool IsDeclaration(frontend::TokenKind kind) {
   using Kind = frontend::TokenKind;
   switch (kind) {
+    case Kind::Async:
     case Kind::Func:
     case Kind::Class:
     case Kind::Enum:
@@ -305,14 +305,6 @@ SubmissionResult ReplSession::Submit(std::string_view source) {
   if (!compiled.Succeeded()) {
     Remap(compiled.diagnostics, current);
     return SubmissionFailure(SubmissionStatus::Rejected, std::move(compiled.diagnostics));
-  }
-  auto* globals = compiled.program.globals();
-  if (const auto* previous = program_.globals(); previous != nullptr) {
-    std::ranges::copy(previous->values, globals->values.begin());
-    std::ranges::copy(previous->states, globals->states.begin());
-    // 注册复制后的根，覆盖当前增量标记周期；旧程序在注册期间仍保持存活。
-    runtime::RootRange copied_roots(isolate_->heap(), globals->values.data(),
-                                    globals->values.size());
   }
   program_ = std::move(compiled.program);
   compilation_ = std::move(compilation);

@@ -178,6 +178,8 @@ class SemanticIndex final {
                     std::size_t available);
   [[nodiscard]] Receiver ReceiverFor(const frontend::Expression& expression) const;
   [[nodiscard]] std::vector<Completion> MemberCompletions(const Receiver& receiver) const;
+  void AddAsyncCompletions(std::vector<Completion>& result,
+                           const frontend::TypeDescriptor& type) const;
   void AddContainerCompletions(std::vector<Completion>& result,
                                const frontend::TypeDescriptor& type) const;
   [[nodiscard]] absl::flat_hash_map<std::string, Completion> VisibleLocals(

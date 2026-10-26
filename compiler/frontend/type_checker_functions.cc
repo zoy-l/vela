@@ -11,6 +11,37 @@
 
 namespace vela::frontend {
 
+void TypeChecker::CheckGeneratedFunction(std::size_t index) {
+  const auto* function = generated_functions_.at(index).declaration.get();
+  // 检查函数体可能生成其它函数，不能跨 vector 扩容借用签名。
+  const auto signature = generated_functions_.at(index).signature;
+  auto scopes = std::move(scopes_);
+  auto refinements = std::move(refinements_);
+  auto lambdas = std::move(lambda_scopes_);
+  const auto* owner = std::exchange(owner_, nullptr);
+  const auto constructor = std::exchange(in_constructor_, false);
+  const auto asynchronous = std::exchange(in_async_function_, function->is_async);
+  const auto loop = std::exchange(loop_depth_, 0);
+  const auto switching = std::exchange(switch_depth_, 0);
+  BeginScope();
+  for (std::size_t parameter = 0; parameter < function->parameters.size(); ++parameter) {
+    const auto& declaration = function->parameters.at(parameter);
+    DeclareLocal(declaration.name, signature.parameters.at(parameter).type, declaration.location,
+                 BindingKind::Constant, &declaration);
+  }
+  const auto flow = CheckBlock(*function->body, signature.return_type);
+  control_flow_.insert_or_assign(function->body.get(), flow);
+  EndScope();
+  scopes_ = std::move(scopes);
+  refinements_ = std::move(refinements);
+  lambda_scopes_ = std::move(lambdas);
+  owner_ = owner;
+  in_constructor_ = constructor;
+  in_async_function_ = asynchronous;
+  loop_depth_ = loop;
+  switch_depth_ = switching;
+}
+
 TypeChecker::Type TypeChecker::FunctionType(const FunctionInfo& signature) {
   std::string name = "(";
   FunctionInfo positional;
@@ -54,6 +85,8 @@ TypeChecker::Type TypeChecker::CheckLambda(const Expression& expression, const T
     return FunctionType(lambdas_.at(found->second).signature);
   }
   const auto& function = *expression.function;
+  const bool previous_async = in_async_function_;
+  in_async_function_ = function.is_async;
   std::optional<FunctionInfo> context;
   if (expected != nullptr && expected->kind == Type::Kind::Function) {
     // 函数体检查会扩展 function_types_；持有签名副本，避免 flat_hash_map 重排使引用失效。
@@ -64,6 +97,9 @@ TypeChecker::Type TypeChecker::CheckLambda(const Expression& expression, const T
     }
   }
   auto signature = ResolveSignature(function, context ? &*context : nullptr);
+  if (function.is_async && signature.return_type.kind != Type::Kind::Future) {
+    AddDiagnostic(function.location, "async lambda return type must be Future<T>");
+  }
   const auto index = lambdas_.size();
   lambda_indices_.emplace(&expression, index);
   lambdas_.push_back({.expression = &expression, .signature = signature, .captures = {}});
@@ -99,6 +135,7 @@ TypeChecker::Type TypeChecker::CheckLambda(const Expression& expression, const T
   refinements_ = std::move(previous_facts);
   lambda_scopes_.pop_back();
   lambdas_.at(index).signature = signature;
+  in_async_function_ = previous_async;
   return FunctionType(signature);
 }
 

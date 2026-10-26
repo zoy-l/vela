@@ -40,6 +40,10 @@ std::vector<runtime::ClassLayout*> CreateClassLayouts(const ir::Program& program
       if (kind == frontend::TypeDescriptor::Kind::Set ||
           kind == frontend::TypeDescriptor::Kind::Map ||
           kind == frontend::TypeDescriptor::Kind::Expected ||
+          kind == frontend::TypeDescriptor::Kind::Future ||
+          kind == frontend::TypeDescriptor::Kind::Completer ||
+          kind == frontend::TypeDescriptor::Kind::Timer ||
+          kind == frontend::TypeDescriptor::Kind::CancellationToken ||
           kind == frontend::TypeDescriptor::Kind::Interface ||
           kind == frontend::TypeDescriptor::Kind::Function ||
           kind == frontend::TypeDescriptor::Kind::Class ||
@@ -135,6 +139,22 @@ runtime::ArrayLayout LayoutBuilder::Element(const frontend::TypeDescriptor& type
       if (type.kind == Kind::Expected) {
         layout.element_object_kind = runtime::ObjectKind::Expected;
       }
+      break;
+    case Kind::Future:
+      layout.element_kind = runtime::ValueKind::Object;
+      layout.element_object_kind = runtime::ObjectKind::Future;
+      break;
+    case Kind::Completer:
+      layout.element_kind = runtime::ValueKind::Object;
+      layout.element_object_kind = runtime::ObjectKind::Completer;
+      break;
+    case Kind::Timer:
+      layout.element_kind = runtime::ValueKind::Object;
+      layout.element_object_kind = runtime::ObjectKind::Timer;
+      break;
+    case Kind::CancellationToken:
+      layout.element_kind = runtime::ValueKind::Object;
+      layout.element_object_kind = runtime::ObjectKind::CancellationToken;
       break;
     case Kind::Interface:
       layout.element_kind = runtime::ValueKind::Object;

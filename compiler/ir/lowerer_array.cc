@@ -145,19 +145,40 @@ Lowerer::LoweredValue Lowerer::LowerArrayLiteral(const frontend::Expression& exp
 }
 
 Lowerer::LoweredValue Lowerer::LowerIndex(const frontend::Expression& expression) {
-  const LoweredValue array = SnapshotBefore(LowerExpression(*expression.object), *expression.index);
-  const LoweredValue index = LowerExpression(*expression.index);
+  const LoweredValue array = LowerExpression(*expression.object);
   const RegisterId result = AllocateTemporary(expression.location);
+  if (expression.null_safe) {
+    const auto null_jump = current_function_->instructions.size();
+    Emit({.opcode = Opcode::JumpIfNull, .lhs = array.reg, .location = expression.location});
+    const LoweredValue index = LowerExpression(*expression.index);
+    Emit({
+        .opcode = Opcode::GetIndex,
+        .dst = result,
+        .lhs = array.reg,
+        .rhs = index.reg,
+        .location = expression.location,
+    });
+    const auto end_jump = current_function_->instructions.size();
+    Emit({.opcode = Opcode::Jump, .location = expression.location});
+    current_function_->instructions.at(null_jump).index =
+        static_cast<std::uint32_t>(current_function_->instructions.size());
+    Emit({.opcode = Opcode::LoadNull, .dst = result, .location = expression.location});
+    current_function_->instructions.at(end_jump).index =
+        static_cast<std::uint32_t>(current_function_->instructions.size());
+    return {.reg = result, .type = model_.expression_types.at(&expression)};
+  }
+  const LoweredValue stable_array = SnapshotBefore(array, *expression.index);
+  const LoweredValue index = LowerExpression(*expression.index);
   Emit({
       .opcode = Opcode::GetIndex,
       .dst = result,
-      .lhs = array.reg,
+      .lhs = stable_array.reg,
       .rhs = index.reg,
       .location = expression.location,
   });
   return {
       .reg = result,
-      .type = model_.array_elements.at(array.type.name),
+      .type = model_.array_elements.at(stable_array.type.name),
   };
 }
 

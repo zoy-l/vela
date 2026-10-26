@@ -45,6 +45,12 @@ std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
 void AddBuiltins(std::vector<Completion>& result, Kind kind) {
   if (kind == Kind::Invalid) {
     result.push_back({
+        .label = "sleep",
+        .detail = "(milliseconds: int): Future<void>",
+        .kind = CompletionKind::Function,
+        .documentation = std::string(BuiltinDocumentation(kind, "sleep")),
+    });
+    result.push_back({
         .label = "print",
         .detail = "(value): void",
         .kind = CompletionKind::Function,
@@ -134,6 +140,21 @@ void AddArrayElementMethods(std::vector<Completion>& result,
 }  // namespace
 
 std::optional<Completion> SemanticIndex::BuiltinCompletion(const frontend::Token& token) const {
+  if (const auto call = calls_.find(Key{0, token.offset}); call != calls_.end()) {
+    if (const auto async = model_.async_calls.find(call->second);
+        async != model_.async_calls.end()) {
+      const auto& callee = *call->second->callee;
+      const auto receiver =
+          async->second.receiver ? ReceiverFor(*callee.object).type.kind : Kind::Invalid;
+      return Completion{
+          .label = token.lexeme,
+          .detail = BuiltinDetail(async->second.signature),
+          .kind = callee.kind == frontend::Expression::Kind::Member ? CompletionKind::Method
+                                                                    : CompletionKind::Function,
+          .documentation = std::string(BuiltinDocumentation(receiver, token.lexeme)),
+      };
+    }
+  }
   std::vector<Completion> candidates;
   if (const auto receiver = receivers_.find(Key{0, token.offset}); receiver != receivers_.end()) {
     candidates = MemberCompletions(receiver->second);
@@ -202,6 +223,32 @@ std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receive
     }
   }
   if (receiver.storage == frontend::MemberStorage::Static) {
+    const auto method = [&result](std::string name, std::string detail) {
+      result.push_back({
+          .label = std::move(name),
+          .detail = std::move(detail),
+          .kind = CompletionKind::Method,
+          .documentation = {},
+      });
+    };
+    if (receiver.type.name == "Future") {
+      method("value", "(value: T): Future<T>");
+      method("error", "(error: Error): Future<T>");
+      method("sync", "(computation: () => T): Future<T>");
+      method("microtask", "(computation: () => T): Future<T>");
+      method("delayed", "(milliseconds: int, computation: () => T): Future<T>");
+      method("wait",
+             "(values: Future<T>[], eagerError?: bool, cleanUp?: ((T) => void)?): Future<T[]>");
+      method("race", "(values: Future<T>[]): Future<T>");
+    } else if (receiver.type.kind == Kind::Timer) {
+      method("after", "(milliseconds: int, callback: () => void): Timer");
+      method("periodic", "(milliseconds: int, callback: () => void): Timer");
+    }
+    for (auto& completion : result) {
+      if (completion.documentation.empty()) {
+        completion.documentation = BuiltinDocumentation(receiver.type.kind, completion.label);
+      }
+    }
     return result;
   }
   AddContainerCompletions(result, receiver.type);
@@ -213,14 +260,13 @@ std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receive
   return result;
 }
 
-void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
-                                            const frontend::TypeDescriptor& type) const {
+void SemanticIndex::AddAsyncCompletions(std::vector<Completion>& result,
+                                        const frontend::TypeDescriptor& type) const {
   const auto kind = type.kind;
-  AddBuiltins(result, kind);
-  const auto property = [&result](std::string_view name) -> void {
+  const auto property = [&result](std::string_view name, std::string detail = "int") -> void {
     result.push_back({
         .label = std::string(name),
-        .detail = "int",
+        .detail = std::move(detail),
         .kind = CompletionKind::Property,
         .documentation = {},
     });
@@ -233,6 +279,55 @@ void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
         .documentation = {},
     });
   };
+  if (kind == Kind::Future || kind == Kind::Completer) {
+    const auto found = model_.generic_arguments.find(type.name);
+    if (found == model_.generic_arguments.end()) {
+      return;
+    }
+    const auto& element = found->second.front();
+    if (kind == Kind::Completer) {
+      property("future", "Future<" + element.name + ">");
+      property("isCompleted", "bool");
+      method("complete",
+             element.kind == Kind::Void ? "(): void" : "(value: " + element.name + "): void");
+      method("completeError", "(error: Error): void");
+    } else {
+      const auto on_value = element.kind == Kind::Void ? "()" : "(" + element.name + ")";
+      method("then", "(onValue: " + on_value + " => R, onError?: ((Error) => R)?): Future<R>");
+      method("catchError", "(onError: (Error) => " + element.name + "): " + type.name);
+      method("whenComplete", "(action: () => void): " + type.name);
+      method("timeout",
+             "(milliseconds: int, onTimeout?: (() => " + element.name + ")?): " + type.name);
+    }
+  } else if (kind == Kind::Timer || kind == Kind::CancellationToken) {
+    method("cancel", "(): void");
+    if (kind == Kind::CancellationToken) {
+      property("isCancelled", "bool");
+    }
+  }
+}
+
+void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
+                                            const frontend::TypeDescriptor& type) const {
+  const auto kind = type.kind;
+  AddBuiltins(result, kind);
+  const auto property = [&result](std::string_view name, std::string detail = "int") -> void {
+    result.push_back({
+        .label = std::string(name),
+        .detail = std::move(detail),
+        .kind = CompletionKind::Property,
+        .documentation = {},
+    });
+  };
+  const auto method = [&result](std::string_view name, std::string detail) -> void {
+    result.push_back({
+        .label = std::string(name),
+        .detail = std::move(detail),
+        .kind = CompletionKind::Method,
+        .documentation = {},
+    });
+  };
+  AddAsyncCompletions(result, type);
   if (kind == Kind::Array || kind == Kind::String) {
     property("length");
   }
@@ -365,12 +460,12 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
     }
     AddBuiltins(result, Kind::Invalid);
     constexpr auto kKeywords = std::to_array<std::string_view>({
-        "func",       "let",      "const",   "class",  "enum",    "interface",
-        "type",       "public",   "private", "static", "param",   "constructor",
-        "implements", "return",   "if",      "else",   "for",     "while",
-        "break",      "continue", "switch",  "case",   "default", "match",
-        "try",        "catch",    "finally", "throw",  "import",  "export",
-        "external",   "is",       "as",      "true",   "false",   "null",
+        "func",   "let",     "const",    "class", "enum",        "interface",  "type",
+        "public", "private", "static",   "param", "constructor", "implements", "return",
+        "if",     "else",    "for",      "while", "break",       "continue",   "switch",
+        "case",   "default", "match",    "try",   "catch",       "finally",    "throw",
+        "import", "export",  "external", "is",    "as",          "true",       "false",
+        "null",   "async",   "await",
     });
     for (const auto keyword : kKeywords) {
       result.push_back({
@@ -389,6 +484,11 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
         "Set",
         "Map",
         "Expected",
+        "Future",
+        "Completer",
+        "Timer",
+        "CancellationToken",
+        "TimeoutException",
         "Math",
         "Random",
         "performance",

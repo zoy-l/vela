@@ -53,6 +53,8 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
   const bool lambda = expression.kind == frontend::Expression::Kind::Lambda;
   const auto interface = model_.interface_members.find(&expression);
   const auto static_member = model_.static_members.find(&expression);
+  const auto builtin = model_.builtin_method_values.find(&expression);
+  const auto super = model_.super_members.find(&expression);
   const bool method = expression.kind == frontend::Expression::Kind::Member &&
                       static_member == model_.static_members.end();
   std::vector<frontend::Capture> captures;
@@ -63,11 +65,24 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
     target = lambda_ids_.at(index);
     captures = model_.lambdas.at(index).captures;
   } else if (method) {
-    receiver = LowerExpression(*expression.object);
-    target =
-        interface == model_.interface_members.end()
-            ? function_ids_.at(receiver->type.name + "." + expression.text)
-            : interface_method_ids_.at(interface->second.owner + "." + interface->second.member);
+    if (super != model_.super_members.end()) {
+      const auto* self = FindLocal("this");
+      receiver = ReadLocal(*self, expression.location);
+      target = function_ids_.at(FindMethodOwner(super->second.owner, expression.text) + "." +
+                                expression.text);
+    } else {
+      receiver = LowerExpression(*expression.object);
+      const auto name = receiver->type.nullable
+                            ? receiver->type.name.substr(0, receiver->type.name.size() - 1)
+                            : receiver->type.name;
+      if (builtin != model_.builtin_method_values.end()) {
+        target = function_ids_.at(model_.generated_functions.at(builtin->second).declaration->name);
+      } else if (interface != model_.interface_members.end()) {
+        target = interface_method_ids_.at(interface->second.owner + "." + interface->second.member);
+      } else {
+        target = function_ids_.at(FindMethodOwner(name, expression.text) + "." + expression.text);
+      }
+    }
     captures.push_back({
         .name = "this",
         .type = receiver->type,
@@ -89,6 +104,11 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
   }
   const auto layout = CallableClass(target, mode, captures);
   const auto object = AllocateTemporary(expression.location);
+  std::optional<std::size_t> null_jump;
+  if (receiver && expression.null_safe) {
+    null_jump = current_function_->instructions.size();
+    Emit({.opcode = Opcode::JumpIfNull, .lhs = receiver->reg, .location = expression.location});
+  }
   Emit({
       .opcode = Opcode::NewInstance,
       .dst = object,
@@ -104,6 +124,15 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
         .index = static_cast<FieldId>(index),
         .location = expression.location,
     });
+  }
+  if (null_jump) {
+    const auto end_jump = current_function_->instructions.size();
+    Emit({.opcode = Opcode::Jump, .location = expression.location});
+    current_function_->instructions.at(*null_jump).index =
+        static_cast<std::uint32_t>(current_function_->instructions.size());
+    Emit({.opcode = Opcode::LoadNull, .dst = object, .location = expression.location});
+    current_function_->instructions.at(end_jump).index =
+        static_cast<std::uint32_t>(current_function_->instructions.size());
   }
   return {.reg = object, .type = model_.expression_types.at(&expression)};
 }

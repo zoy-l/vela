@@ -15,9 +15,11 @@
 #include <utility>
 #include <vector>
 
+#include "base/async_operation.h"
 #include "base/builtin.h"
 #include "base/callable.h"
 #include "base/execution_limits.h"
+#include "base/execution_status.h"
 #include "base/utf8.h"
 #include "runtime/isolate.h"
 #include "runtime/native_function.h"
@@ -42,6 +44,34 @@ struct LayoutKey final {
 
 bool IsRegister(std::uint8_t index, const Function& function) noexcept {
   return index < function.register_count;
+}
+
+bool IsRegisterPair(std::uint8_t first,
+                    std::uint8_t second,
+                    const Function& function) noexcept {
+  return IsRegister(first, function) && IsRegister(second, function);
+}
+
+bool IsValidAsyncInstruction(Instruction instruction, const Function& function) noexcept {
+  const auto operand_a = DecodeA(instruction);
+  const auto operand_b = DecodeB(instruction);
+  const auto operand_c = DecodeC(instruction);
+  switch (DecodeOp(instruction)) {
+    case OpCode::AsyncCall:
+      return IsRegister(operand_a, function) &&
+             operand_b < static_cast<std::uint8_t>(AsyncOperation::Count) &&
+             static_cast<std::size_t>(operand_c) +
+                     AsyncArity(static_cast<AsyncOperation>(operand_b)) <=
+                 function.register_count;
+    case OpCode::NewFuture:
+      return IsRegisterPair(operand_a, operand_b, function) && operand_c <= 1;
+    case OpCode::SleepFuture:
+      return IsRegisterPair(operand_a, operand_b, function);
+    case OpCode::Await:
+      return function.is_async && IsRegisterPair(operand_a, operand_b, function);
+    default:
+      return false;
+  }
 }
 
 bool IsValidInstruction(Instruction instruction,
@@ -89,6 +119,7 @@ bool IsValidInstruction(Instruction instruction,
       return IsRegister(operand_a, function) && operand_b < global_count;
     case OpCode::Move:
     case OpCode::NegInt:
+    case OpCode::BitNotInt:
     case OpCode::NegDouble:
     case OpCode::NotBool:
     case OpCode::GetField:
@@ -121,6 +152,13 @@ bool IsValidInstruction(Instruction instruction,
     case OpCode::SubInt:
     case OpCode::MulInt:
     case OpCode::DivInt:
+    case OpCode::ModInt:
+    case OpCode::BitAndInt:
+    case OpCode::BitOrInt:
+    case OpCode::BitXorInt:
+    case OpCode::ShiftLeftInt:
+    case OpCode::ShiftRightInt:
+    case OpCode::ShiftUnsignedRightInt:
     case OpCode::EqualInt:
     case OpCode::NotEqualInt:
     case OpCode::EqualBool:
@@ -155,16 +193,23 @@ bool IsValidInstruction(Instruction instruction,
              operand_b < static_cast<std::uint8_t>(Builtin::Count) &&
              static_cast<std::size_t>(operand_c) + BuiltinArity(static_cast<Builtin>(operand_b)) <=
                  function.register_count;
+    case OpCode::AsyncCall:
+      return IsValidAsyncInstruction(instruction, function);
     case OpCode::StringInterpolate:
       return IsRegister(operand_a, function) &&
              static_cast<std::size_t>(operand_b) + operand_c <= function.register_count;
     case OpCode::Jump:
       return true;
     case OpCode::JumpIfFalse:
+    case OpCode::JumpIfNull:
       return IsRegister(operand_a, function);
     case OpCode::NewInstance:
       return IsRegister(operand_a, function) && operand_b < function.classes.size() &&
              function.classes.subspan(operand_b).front() != nullptr;
+    case OpCode::NewFuture:
+    case OpCode::SleepFuture:
+    case OpCode::Await:
+      return IsValidAsyncInstruction(instruction, function);
     case OpCode::LoadString:
       return IsRegister(operand_a, function) &&
              DecodeUnsigned16(instruction) < function.strings.size() &&
@@ -356,6 +401,7 @@ Function FunctionStorage::View() const noexcept {
       .doubles = doubles,
       .register_count = register_count,
       .parameter_count = parameter_count,
+      .is_async = is_async,
       .types = layouts != nullptr ? layouts->types() : std::span<const runtime::TypeConstraint>(),
       .collections = layouts != nullptr ? layouts->collections()
                                         : std::span<const runtime::CollectionLayout* const>(),
@@ -375,7 +421,8 @@ Function FunctionStorage::View() const noexcept {
 std::expected<Program, ValidationError> Program::Create(
     std::vector<FunctionStorage> functions,
     runtime::Isolate& isolate,
-    std::vector<std::uint32_t> global_initializers) {
+    std::vector<std::uint32_t> global_initializers,
+    std::shared_ptr<GlobalStorage> globals) {
   const auto valid = ValidateFunctions(functions, global_initializers);
   if (!valid) {
     return std::unexpected(valid.error());
@@ -390,14 +437,124 @@ std::expected<Program, ValidationError> Program::Create(
       });
     }
   }
-  auto globals = global_initializers.empty() ? nullptr
-                                             : std::make_shared<GlobalStorage>(
-                                                   isolate.heap(), std::move(global_initializers));
+  if (globals != nullptr) {
+    const auto& previous = globals->initializers;
+    if (&globals->owner != &isolate.heap() || global_initializers.size() < previous.size() ||
+        !std::ranges::equal(previous, std::span(global_initializers).first(previous.size()))) {
+      return std::unexpected(ValidationError{
+          .function = 0,
+          .instruction = 0,
+          .message = "incremental globals must preserve their isolate and initializer prefix",
+      });
+    }
+    const auto extended = globals->Extend(std::move(global_initializers));
+    if (!extended) {
+      return std::unexpected(ValidationError{
+          .function = 0,
+          .instruction = 0,
+          .message = "out of memory extending globals",
+      });
+    }
+  } else if (!global_initializers.empty()) {
+    globals = std::make_shared<GlobalStorage>(isolate.heap(), std::move(global_initializers));
+    if (globals->storage.IsNull()) {
+      return std::unexpected(ValidationError{
+          .function = 0,
+          .instruction = 0,
+          .message = "out of memory allocating globals",
+      });
+    }
+  }
   return Program(std::make_shared<const ProgramStorage>(ProgramStorage{
       .functions = std::move(functions),
       .isolate = &isolate,
       .globals = std::move(globals),
   }));
+}
+
+GlobalStorage::GlobalStorage(runtime::Heap& heap, std::vector<std::uint32_t> functions)
+    : owner(heap),
+      states(functions.size(), GlobalState::Uninitialized),
+      initializers(std::move(functions)) {
+  if (auto* object = heap.AllocateValueSlots(initializers.size())) {
+    storage = runtime::Value::Object(object);
+    values = runtime::Heap::ValueSlots(*object);
+  }
+}
+
+std::expected<void, ExecutionStatus> GlobalStorage::Extend(std::vector<std::uint32_t> functions) {
+  // 扩容发生在执行片段之间；旧 Program 与挂起帧共享同一个全局存储对象。
+  const auto extended = owner.ExtendValueSlots(*storage.AsObject(), functions.size());
+  if (!extended) {
+    return extended;
+  }
+  values = runtime::Heap::ValueSlots(*storage.AsObject());
+  states.resize(functions.size(), GlobalState::Uninitialized);
+  initializers = std::move(functions);
+  return {};
+}
+
+void GlobalStorage::Retain() noexcept {
+  if (external_users++ == 0) {
+    roots.Attach(owner, &storage, 1);
+  }
+}
+
+void GlobalStorage::Release() noexcept {
+  if (--external_users == 0) {
+    roots.Detach();
+  }
+}
+
+void GlobalStorage::Store(std::size_t index, runtime::Value value) noexcept {
+  owner.SetValueSlot(*storage.AsObject(), index, value);
+}
+
+Program::Program(std::shared_ptr<const ProgramStorage> storage, Rooting rooting)
+    : storage_(std::move(storage)), external_(rooting == Rooting::External) {
+  Retain();
+}
+
+Program::~Program() {
+  Release();
+}
+Program::Program(const Program& other)
+    : Program(other.storage_, other.external_ ? Rooting::External : Rooting::Continuation) {}
+Program& Program::operator=(const Program& other) {
+  if (this != &other) {
+    Release();
+    storage_ = other.storage_;
+    external_ = other.external_;
+    Retain();
+  }
+  return *this;
+}
+Program::Program(Program&& other) noexcept
+    : storage_(std::move(other.storage_)), external_(other.external_) {}
+Program& Program::operator=(Program&& other) noexcept {
+  if (this != &other) {
+    Release();
+    storage_ = std::move(other.storage_);
+    external_ = other.external_;
+  }
+  return *this;
+}
+void Program::Retain() noexcept {
+  if (storage_ != nullptr && external_ && storage_->globals != nullptr) {
+    storage_->globals->Retain();
+  }
+}
+void Program::Release() noexcept {
+  if (storage_ != nullptr && external_ && storage_->globals != nullptr) {
+    storage_->globals->Release();
+  }
+}
+Program Program::Internal() const {
+  return {storage_, Rooting::Continuation};
+}
+
+std::shared_ptr<GlobalStorage> Program::shared_globals() const noexcept {
+  return storage_ != nullptr ? storage_->globals : nullptr;
 }
 
 std::expected<Program, ValidationError> Program::Load(
@@ -452,6 +609,7 @@ std::expected<Program, ValidationError> Program::Load(
       stored.native = std::make_shared<const runtime::NativeFunction>(*function.native);
     }
     stored.parameter_count = function.parameter_count;
+    stored.is_async = function.is_async;
     if (!function.strings.empty()) {
       auto strings = std::make_shared<StringConstants>(isolate.heap(), function.strings);
       stored.strings = std::move(strings);
@@ -490,6 +648,10 @@ bool Program::IsForIsolate(const runtime::Isolate& isolate) const noexcept {
 
 std::uint16_t FunctionHandle::parameter_count() const noexcept {
   return program_.functions().subspan(index_).front().parameter_count;
+}
+
+bool FunctionHandle::is_async() const noexcept {
+  return program_.functions().subspan(index_).front().is_async;
 }
 
 std::uint16_t FunctionHandle::register_count() const noexcept {

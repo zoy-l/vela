@@ -110,6 +110,11 @@ bool TypeChecker::CanAssign(const Type& target, const Type& value) const {
     const auto found = classes_.find(NonNullable(value).name);
     return found != classes_.end() && found->second.interfaces.contains(NonNullable(target).name);
   }
+  if (target.kind == Type::Kind::Future && value.kind == Type::Kind::Future &&
+      (target.nullable || !value.nullable)) {
+    return CanAssign(generic_arguments_.at(NonNullable(target).name).front(),
+                     generic_arguments_.at(NonNullable(value).name).front());
+  }
   return false;
 }
 

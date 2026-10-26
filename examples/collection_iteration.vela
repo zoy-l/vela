@@ -1,0 +1,24 @@
+func main(): void {
+  const values = [10, 20, 30];
+  let total = 0;
+  for (const value in values) {
+    total += value;
+  }
+  print(total); // 60
+
+  const names = Set<string>();
+  names.add('Vela');
+  names.add('Dart');
+  names.add('Vela');
+  for (const name in names) {
+    print(name); // Vela, then Dart, in insertion order.
+  }
+
+  const scores = Map<string, int>();
+  scores.set('Vela', 42);
+  scores.set('Dart', 7);
+  for (const [name, score] in scores) {
+    // Both bindings are read-only; score retains its int type.
+    print('${name}: ${score}');
+  }
+}

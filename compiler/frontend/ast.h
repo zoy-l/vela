@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -68,11 +69,15 @@ struct Expression final {
     TypeTest,
     TypeCast,
     Match,
+    Await,
+    Conditional,
   };
 
   Kind kind = Kind::IntegerLiteral;
   SourceLocation location;
   std::string text;
+  bool null_safe = false;
+  bool postfix = false;
   std::int64_t integer_value = 0;
   double double_value = 0.0;
   bool boolean_value = false;
@@ -115,6 +120,7 @@ struct Statement final {
     If,
     While,
     For,
+    ForEach,
     Break,
     Continue,
     Switch,
@@ -151,6 +157,9 @@ struct Statement final {
   std::unique_ptr<Statement> finally_branch;
   // 仅交互入口的末尾表达式回显；普通语法不产生此标记。
   bool echo = false;
+  std::unique_ptr<Expression> iterable;
+  std::string second_name;
+  bool destructuring = false;
 };
 
 struct Function final {
@@ -166,6 +175,10 @@ struct Function final {
   ExportKind export_kind = ExportKind::Local;
   std::string native_symbol;
   Role role = Role::Ordinary;
+  bool is_async = false;
+  bool is_override = false;
+  bool is_getter = false;
+  bool is_setter = false;
 };
 
 struct Enum final {
@@ -188,6 +201,7 @@ struct Class final {
   std::unique_ptr<Function> constructor;
   ConstructorKind constructor_kind = ConstructorKind::Generated;
   std::vector<TypeName> interfaces;
+  std::optional<TypeName> base_class;
   ExportKind export_kind = ExportKind::Local;
 };
 

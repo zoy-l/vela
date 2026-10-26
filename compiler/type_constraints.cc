@@ -62,6 +62,22 @@ std::vector<runtime::TypeConstraint> CreateTypeConstraints(
           target.object_kind = runtime::ObjectKind::Expected;
         }
         break;
+      case Kind::Future:
+        target.kind = runtime::ValueKind::Object;
+        target.object_kind = runtime::ObjectKind::Future;
+        break;
+      case Kind::Completer:
+        target.kind = runtime::ValueKind::Object;
+        target.object_kind = runtime::ObjectKind::Completer;
+        break;
+      case Kind::Timer:
+        target.kind = runtime::ValueKind::Object;
+        target.object_kind = runtime::ObjectKind::Timer;
+        break;
+      case Kind::CancellationToken:
+        target.kind = runtime::ValueKind::Object;
+        target.object_kind = runtime::ObjectKind::CancellationToken;
+        break;
       case Kind::Interface:
         target.kind = runtime::ValueKind::Object;
         target.interface = model.interfaces.at(name).index;

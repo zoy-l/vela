@@ -13,6 +13,7 @@
 #include <absl/container/flat_hash_map.h>
 
 #include "runtime/heap.h"
+#include "runtime/future.h"
 #include "runtime/native_function.h"
 #include "runtime/object.h"
 #include "runtime/random.h"
@@ -29,7 +30,7 @@ struct LayoutCounts final {
 class Isolate final {
  public:
   explicit Isolate(std::size_t gc_threshold = kDefaultGcThreshold) noexcept;
-  ~Isolate() = default;
+  ~Isolate();
 
   Isolate(Isolate&&) = delete;
   Isolate& operator=(Isolate&&) = delete;
@@ -41,6 +42,7 @@ class Isolate final {
   [[nodiscard]] ClassLayout& error_layout() noexcept { return *error_layout_; }
   [[nodiscard]] const ClassLayout& error_layout() const noexcept { return *error_layout_; }
   [[nodiscard]] Random& random() noexcept { return random_; }
+  [[nodiscard]] FutureScheduler& scheduler() noexcept { return scheduler_; }
   [[nodiscard]] std::ostream& output() noexcept;
   void SetOutput(std::ostream& output) noexcept;
 
@@ -62,6 +64,7 @@ class Isolate final {
   absl::flat_hash_map<std::string, std::shared_ptr<const NativeFunction>> natives_;
   ClassLayout* error_layout_ = nullptr;
   Random random_;
+  FutureScheduler scheduler_;
   std::ostream* output_ = nullptr;
   Heap heap_;
 };

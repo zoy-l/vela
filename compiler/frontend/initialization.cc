@@ -18,7 +18,11 @@
 namespace vela::frontend {
 namespace {
 
-using Initialized = absl::flat_hash_set<std::string>;
+struct Initialized final {
+  enum class Base : unsigned char { Pending, Complete, Maybe };
+  absl::flat_hash_set<std::string> fields;
+  Base base = Base::Pending;
+};
 using Path = std::optional<Initialized>;
 
 Path Merge(Path left, const Path& right) {
@@ -26,7 +30,11 @@ Path Merge(Path left, const Path& right) {
     return right;
   }
   if (right) {
-    absl::erase_if(*left, [&](const auto& name) -> bool { return !right->contains(name); });
+    absl::erase_if(left->fields,
+                   [&](const auto& name) -> bool { return !right->fields.contains(name); });
+    if (left->base != right->base) {
+      left->base = Initialized::Base::Maybe;
+    }
   }
   return left;
 }
@@ -60,6 +68,8 @@ class Initialization final {
   void RequireComplete(const Initialized& initialized, SourceLocation location);
   void Error(SourceLocation location, std::string message);
   void Walk(const Expression* expression, Initialized& initialized);
+  void WalkSuper(const Expression& expression, Initialized& initialized);
+  bool WalkSpecial(const Expression& expression, Initialized& initialized);
   Path Walk(const Statement& statement, Initialized initialized);
   Path Loop(const Statement& statement, Initialized initialized);
   Path Switch(const Statement& statement, Initialized initialized);
@@ -79,12 +89,85 @@ void Initialization::Error(SourceLocation location, std::string message) {
 }
 
 void Initialization::RequireComplete(const Initialized& initialized, SourceLocation location) {
+  if (owner_.base_class && initialized.base != Initialized::Base::Complete) {
+    Error(location, "derived constructor must call super(...) before this escapes or returns");
+  }
   for (const auto& field : owner_.fields) {
-    if (field.storage == MemberStorage::Instance && !initialized.contains(field.name)) {
+    if (field.storage == MemberStorage::Instance && !initialized.fields.contains(field.name)) {
       Error(location, "field '" + field.name +
                           "' must be initialized before this escapes or the constructor returns");
     }
   }
+}
+
+void Initialization::WalkSuper(const Expression& expression, Initialized& initialized) {
+  for (const auto& argument : expression.arguments) {
+    Walk(argument.value.get(), initialized);
+  }
+  if (initialized.base != Initialized::Base::Pending) {
+    Error(expression.location, "super(...) must be called exactly once on each constructor path");
+  }
+  initialized.base = Initialized::Base::Complete;
+  const auto base_class = owner_.base_class;
+  if (!base_class) {
+    return;
+  }
+  const auto& base = model_.classes.at(base_class->name);
+  initialized.fields.insert(base.field_order.begin(), base.field_order.end());
+}
+
+bool Initialization::WalkSpecial(const Expression& expression, Initialized& initialized) {
+  if (expression.kind == Expression::Kind::Call &&
+      expression.callee->kind == Expression::Kind::Name && expression.callee->text == "super") {
+    WalkSuper(expression, initialized);
+    return true;
+  }
+  if (expression.kind == Expression::Kind::Lambda) {
+    const auto& lambda = model_.lambdas.at(model_.lambda_indices.at(&expression));
+    if (std::ranges::any_of(lambda.captures, [](const Capture& capture) -> bool {
+          return capture.name == "this";
+        })) {
+      RequireComplete(initialized, expression.location);
+    }
+    return true;
+  }
+  if (expression.kind == Expression::Kind::Match) {
+    Walk(expression.operand.get(), initialized);
+    Path merged;
+    for (const auto& arm : expression.arms) {
+      auto branch = initialized;
+      Walk(arm.value.get(), branch);
+      merged = Merge(std::move(merged), branch);
+    }
+    if (merged) {
+      initialized = std::move(*merged);
+    }
+    return true;
+  }
+  if (expression.kind == Expression::Kind::Binary && expression.text == "=" &&
+      expression.left->kind == Expression::Kind::Member && IsThis(*expression.left->object)) {
+    Walk(expression.right.get(), initialized);
+    initialized.fields.insert(expression.left->text);
+    return true;
+  }
+  if (expression.kind == Expression::Kind::Member && IsThis(*expression.object)) {
+    const bool is_field = fields_.fields.contains(expression.text);
+    if (is_field && !initialized.fields.contains(expression.text)) {
+      Error(expression.location, "field '" + expression.text + "' is read before initialization");
+    } else if (!is_field) {
+      RequireComplete(initialized, expression.location);
+    }
+    return true;
+  }
+  if (expression.kind == Expression::Kind::Binary &&
+      (expression.text == "&&" || expression.text == "||")) {
+    Walk(expression.left.get(), initialized);
+    auto right = initialized;
+    Walk(expression.right.get(), right);
+    initialized = *Merge(initialized, right);
+    return true;
+  }
+  return false;
 }
 
 void Initialization::Walk(const Expression* expression, Initialized& initialized) {
@@ -95,49 +178,7 @@ void Initialization::Walk(const Expression* expression, Initialized& initialized
     RequireComplete(initialized, expression->location);
     return;
   }
-  if (expression->kind == Expression::Kind::Lambda) {
-    const auto& lambda = model_.lambdas.at(model_.lambda_indices.at(expression));
-    if (std::ranges::any_of(lambda.captures, [](const Capture& capture) -> bool {
-          return capture.name == "this";
-        })) {
-      RequireComplete(initialized, expression->location);
-    }
-    return;
-  }
-  if (expression->kind == Expression::Kind::Match) {
-    Walk(expression->operand.get(), initialized);
-    Path merged;
-    for (const auto& arm : expression->arms) {
-      auto branch = initialized;
-      Walk(arm.value.get(), branch);
-      merged = Merge(std::move(merged), branch);
-    }
-    if (merged) {
-      initialized = std::move(*merged);
-    }
-    return;
-  }
-  if (expression->kind == Expression::Kind::Binary && expression->text == "=" &&
-      expression->left->kind == Expression::Kind::Member && IsThis(*expression->left->object)) {
-    Walk(expression->right.get(), initialized);
-    initialized.insert(expression->left->text);
-    return;
-  }
-  if (expression->kind == Expression::Kind::Member && IsThis(*expression->object)) {
-    const bool is_field = fields_.contains(expression->text);
-    if (is_field && !initialized.contains(expression->text)) {
-      Error(expression->location, "field '" + expression->text + "' is read before initialization");
-    } else if (!is_field) {
-      RequireComplete(initialized, expression->location);
-    }
-    return;
-  }
-  if (expression->kind == Expression::Kind::Binary &&
-      (expression->text == "&&" || expression->text == "||")) {
-    Walk(expression->left.get(), initialized);
-    auto right = initialized;
-    Walk(expression->right.get(), right);
-    initialized = *Merge(initialized, right);
+  if (WalkSpecial(*expression, initialized)) {
     return;
   }
   for (const auto* child : {
@@ -235,6 +276,9 @@ Path Initialization::Walk(const Statement& statement, Initialized initialized) {
     case Statement::Kind::While:
     case Statement::Kind::For:
       return Loop(statement, std::move(initialized));
+    case Statement::Kind::ForEach:
+      Walk(statement.iterable.get(), initialized);
+      return Walk(*statement.then_branch, std::move(initialized));
     case Statement::Kind::Switch:
       return Switch(statement, std::move(initialized));
     case Statement::Kind::Try:
@@ -319,11 +363,17 @@ Path Initialization::Try(const Statement& statement, const Initialized& initiali
 
 Diagnostics Initialization::Run() {
   Initialized initialized;
+  const auto& info = model_.classes.at(owner_.name);
+  fields_.fields.insert(info.field_order.begin(), info.field_order.end());
+  if (owner_.base_class && !model_.explicit_super_constructors.contains(owner_.name)) {
+    const auto& base = model_.classes.at(owner_.base_class->name);
+    initialized.base = Initialized::Base::Complete;
+    initialized.fields.insert(base.field_order.begin(), base.field_order.end());
+  }
   for (const auto& field : owner_.fields) {
     if (field.storage == MemberStorage::Instance) {
-      fields_.insert(field.name);
       if (field.initializer || field.role == FieldRole::Parameter) {
-        initialized.insert(field.name);
+        initialized.fields.insert(field.name);
       }
     }
   }
@@ -332,6 +382,8 @@ Diagnostics Initialization::Run() {
     if (exits) {
       RequireComplete(*exits, owner_.constructor->location);
     }
+  } else if (owner_.base_class) {
+    RequireComplete(initialized, owner_.location);
   }
   return std::move(diagnostics_);
 }

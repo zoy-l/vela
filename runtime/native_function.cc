@@ -1,4 +1,5 @@
 #include "runtime/native_function.h"
+#include "runtime/future.h"
 
 #include <cstddef>
 #include <expected>
@@ -29,6 +30,12 @@ bool MatchesType(Value value, NativeType type) {
       return value.IsString() && value.AsString() != nullptr;
     case NativeType::NullableString:
       return value.IsNull() || (value.IsString() && value.AsString() != nullptr);
+    case NativeType::Future:
+      return value.IsObject() && value.AsObject() != nullptr &&
+             Heap::GetFuture(*value.AsObject()) != nullptr;
+    case NativeType::CancellationToken:
+      return value.IsObject() && value.AsObject() != nullptr &&
+             Heap::GetCancellationToken(*value.AsObject()) != nullptr;
   }
   std::unreachable();
 }
@@ -52,8 +59,58 @@ NativeResult NativeContext::String(std::string_view text) const {
   return Value::String(string);
 }
 
+std::expected<Value, NativeError> NativeContext::FutureValue(const Future& future) const {
+  auto bound = future.Rooted();
+  if (!bound.Bind(isolate_->scheduler(), isolate_->heap())) {
+    return std::unexpected(NativeError{
+        .kind = NativeErrorKind::TypeMismatch,
+        .message = "native Future belongs to a different Isolate",
+    });
+  }
+  auto* object = isolate_->heap().AllocateFuture(std::move(bound));
+  if (object == nullptr) {
+    return std::unexpected(NativeError{
+        .kind = NativeErrorKind::OutOfMemory,
+        .message = "out of memory creating native Future",
+    });
+  }
+  return Value::Object(object);
+}
+
+Completer NativeContext::CreateCompleter() const {
+  return isolate_->scheduler().CreateHostCompleter();
+}
+
+NativeResult NativeContext::CancellationValue(const CancellationToken& token) const {
+  auto* object = isolate_->heap().AllocateCancellationToken(token);
+  if (object == nullptr) {
+    return std::unexpected(NativeError{
+        .kind = NativeErrorKind::OutOfMemory,
+        .message = "out of memory creating CancellationToken",
+    });
+  }
+  return Value::Object(object);
+}
+
+CancellationToken internal::NativeCodec<CancellationToken>::Decode(Value value) {
+  return *Heap::GetCancellationToken(*value.AsObject());
+}
+
+NativeResult internal::NativeCodec<CancellationToken>::Encode(NativeContext& context,
+                                                              const CancellationToken& token) {
+  return context.CancellationValue(token);
+}
+
 std::string_view internal::NativeCodec<std::string_view>::Decode(Value value) {
   return value.AsString()->value();
+}
+
+Future internal::NativeCodec<Future>::Decode(Value value) {
+  return Heap::GetFuture(*value.AsObject())->Rooted();
+}
+
+NativeResult internal::NativeCodec<Future>::Encode(NativeContext& context, const Future& future) {
+  return context.FutureValue(future);
 }
 
 NativeResult NativeFunction::Invoke(Isolate& isolate, std::span<const Value> arguments) const {
@@ -98,6 +155,10 @@ std::string_view NativeTypeName(NativeType type) noexcept {
       return "string";
     case NativeType::NullableString:
       return "string?";
+    case NativeType::Future:
+      return "Future";
+    case NativeType::CancellationToken:
+      return "CancellationToken";
   }
   std::unreachable();
 }

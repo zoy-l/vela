@@ -152,6 +152,23 @@ final heap object counts, allocated bytes, committed bytes, and the result.
 The console `Time` column is wall time; `CPU` is CPU time, both in nanoseconds by
 default. Compare equivalent Release configurations and measurement boundaries.
 
+The `async/` suite compiles and executes real Vela programs. It measures a call
+without await, a completed await, a pending microtask and its continuation,
+1,000 calls without await, and the first call in a fresh Isolate. Concurrent
+tasks retain an array across a shared pending Future; the `suspended_gc` cases
+collect before resuming. Concurrent tasks and zero-delay timers run at 1, 100,
+and 1,000 instances. Each case checks its result; steady cases also check that
+the final collection leaves no suspended frame or additional retained heap value.
+
+`saved_state_bytes` includes frame metadata and the capacities of saved values
+and register indices; `saved_bytes_per_frame` divides it by the number of
+suspended frames. `first_async_bytes` measures GC-accounted allocation before
+the first pump. These counters exclude allocator bookkeeping and native Future
+control blocks. `async/first_call` excludes compilation and destruction. Compare
+`vm/integer_loop`, `vm/function_calls`, and `vm/field_access` separately for
+synchronous regression. Aggregate evidence is retained in
+[`results/rolling_summary.json`](results/rolling_summary.json).
+
 The source directory is supplied by GN, so the benchmark executable can run
 from any working directory while the source checkout remains available. To add
 a small workload, place its `.vela` file here and register its applicable cases

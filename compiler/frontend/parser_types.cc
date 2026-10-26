@@ -51,7 +51,7 @@ std::vector<std::string> Parser::ParseTypeParameters() {
       break;
     }
   }
-  if (Expect(TokenKind::Greater, "expected '>' after generic parameters")) {
+  if (MatchTypeGreater()) {
     AnnotatePrevious(TokenRole::TypeDelimiter);
   }
   return parameters;
@@ -75,7 +75,7 @@ std::vector<TypeName> Parser::ParseTypeArguments() {
       break;
     }
   }
-  if (Expect(TokenKind::Greater, "expected '>' after type arguments")) {
+  if (MatchTypeGreater()) {
     AnnotatePrevious(TokenRole::TypeDelimiter);
   }
   last_type_arguments_depth_ = depth;
@@ -119,12 +119,32 @@ std::optional<TypeName> Parser::ParseTypeBody() {
     AddDiagnostic(Peek().location, "expected type name");
     return std::nullopt;
   }
-  while (Check(TokenKind::Question) || Check(TokenKind::LeftBracket)) {
+  return ParseTypeSuffixes(std::move(result), depth);
+}
+
+std::optional<TypeName> Parser::ParseTypeSuffixes(TypeName result, std::size_t depth) {
+  while (pending_type_greater_ == 0 &&
+         (Check(TokenKind::Question) || Check(TokenKind::QuestionQuestion) ||
+          Check(TokenKind::LeftBracket))) {
     if (depth >= kMaxTypeNesting) {
       AddDiagnostic(Peek().location, "type nesting exceeds the limit of 128");
       return std::nullopt;
     }
     ++depth;
+    if (Match(TokenKind::QuestionQuestion)) {
+      for (int repeat = 0; repeat < 2; ++repeat) {
+        ++depth;
+        TypeName wrapper{
+            .name = result.name + "?",
+            .location = result.location,
+            .kind = TypeName::Kind::Nullable,
+            .arguments = {},
+        };
+        wrapper.arguments.push_back(std::move(result));
+        result = std::move(wrapper);
+      }
+      continue;
+    }
     const auto kind = Match(TokenKind::Question) ? TypeName::Kind::Nullable : TypeName::Kind::Array;
     if (kind == TypeName::Kind::Array &&
         (!Expect(TokenKind::LeftBracket, "expected '[' in array type") ||
@@ -218,10 +238,45 @@ bool Parser::IsTypeApplication() const {
       return next == TokenKind::LeftParen || next == TokenKind::Dot || next == TokenKind::Is ||
              next == TokenKind::As || next == TokenKind::Semicolon || next == TokenKind::Comma ||
              next == TokenKind::RightParen || next == TokenKind::RightBracket;
+    } else if (kind == TokenKind::ShiftRight) {
+      if (depth <= 2) {
+        const auto next = tokens_.subspan(index + 1).front().kind;
+        return next == TokenKind::LeftParen || next == TokenKind::Dot || next == TokenKind::Is ||
+               next == TokenKind::As || next == TokenKind::Semicolon || next == TokenKind::Comma ||
+               next == TokenKind::RightParen || next == TokenKind::RightBracket;
+      }
+      depth -= 2;
+    } else if (kind == TokenKind::ShiftUnsignedRight) {
+      if (depth <= 3) {
+        const auto next = tokens_.subspan(index + 1).front().kind;
+        return next == TokenKind::LeftParen || next == TokenKind::Dot || next == TokenKind::Is ||
+               next == TokenKind::As || next == TokenKind::Semicolon || next == TokenKind::Comma ||
+               next == TokenKind::RightParen || next == TokenKind::RightBracket;
+      }
+      depth -= 3;
     } else if (kind == TokenKind::Semicolon || kind == TokenKind::LeftBrace ||
                kind == TokenKind::RightBrace || kind == TokenKind::EndOfFile) {
       return false;
     }
+  }
+  return false;
+}
+
+bool Parser::MatchTypeGreater() {
+  if (pending_type_greater_ != 0) {
+    --pending_type_greater_;
+    return true;
+  }
+  if (Match(TokenKind::Greater)) {
+    return true;
+  }
+  if (Match(TokenKind::ShiftRight)) {
+    pending_type_greater_ = 1;
+    return true;
+  }
+  if (Match(TokenKind::ShiftUnsignedRight)) {
+    pending_type_greater_ = 2;
+    return true;
   }
   return false;
 }

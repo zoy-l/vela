@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <string_view>
 
@@ -74,6 +75,52 @@ func main(): int {
   EXPECT_FALSE(result.Succeeded());
   ASSERT_EQ(result.diagnostics.size(), 1U);
   EXPECT_EQ(result.diagnostics.front().message, "duplicate local name 'local_with_a_long_name'");
+}
+
+TEST(FrontendTest, RejectsCoalesceAssignment) {
+  constexpr auto kInvalidSources = std::to_array<std::string_view>({
+      R"(func main(): void { let value: int? = null; value ??= 42; })",
+      R"(let value: int? = null; func main(): void { value ??= 42; })",
+      R"(class Box { param value: int?; }
+         func main(): void { const box = Box(value: null); box.value ??= 42; })",
+      R"(func main(): void { const values: int?[] = [null]; values[0] ??= 42; })",
+  });
+  for (const auto source : kInvalidSources) {
+    SCOPED_TRACE(source);
+    EXPECT_FALSE(CheckSource(source).Succeeded());
+  }
+}
+
+TEST(FrontendTest, ChecksAsyncFutureReturnAndAwaitContext) {
+  constexpr std::string_view source = R"(
+external func fetch(): Future<int>;
+
+async func main(): Future<int> {
+  return await fetch();
+}
+)";
+  const CheckResult result = CheckSource(source);
+  EXPECT_TRUE(result.Succeeded()) << (result.diagnostics.empty()
+                                          ? ""
+                                          : result.diagnostics.front().message);
+}
+
+TEST(FrontendTest, RejectsAwaitOutsideAsyncFunction) {
+  constexpr std::string_view source = R"(
+external func fetch(): Future<int>;
+
+func main(): int {
+  return await fetch();
+}
+)";
+  const CheckResult result = CheckSource(source);
+  EXPECT_FALSE(result.Succeeded());
+  EXPECT_NE(std::ranges::find_if(result.diagnostics,
+                                 [](const Diagnostic& diagnostic) {
+                                   return diagnostic.message ==
+                                          "await is only valid inside an async function";
+                                 }),
+            result.diagnostics.end());
 }
 
 TEST(FrontendTest, RejectsArrayTypeMismatchesWithoutConversions) {

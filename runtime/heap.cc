@@ -32,6 +32,18 @@ std::span<const T> Slots(std::span<const std::byte> bytes) noexcept {
   return {static_cast<const T*>(storage), bytes.size() / sizeof(T)};
 }
 
+std::unique_ptr<Future> AllocateFutureStorage(Future future) noexcept {
+  return std::unique_ptr<Future>(new (std::nothrow) Future(std::move(future)));
+}
+
+void DestroyFutureStorage(Future* future) noexcept {
+  if (future == nullptr) {
+    return;
+  }
+  future->~Future();
+  ::operator delete(future);
+}
+
 }  // namespace
 
 TypeConstraint ArrayLayout::element_type() const noexcept {
@@ -197,6 +209,81 @@ const ClassLayout* Heap::ClassOf(const HeapObject& object) noexcept {
   return object.kind == ObjectKind::Instance ? object.layout : nullptr;
 }
 
+HeapObject* Heap::AllocateFuture(Future future) noexcept {
+  future.AttachHeap(*this);
+  const std::size_t requested_size = AlignUp(sizeof(HeapObject), alignof(Value));
+  MaybeCollect(requested_size);
+  const auto allocation = AllocateRaw(requested_size);
+  if (allocation.memory == nullptr) {
+    return nullptr;
+  }
+  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
+  object->kind = ObjectKind::Future;
+  object->native_payload = AllocateFutureStorage(std::move(future)).release();
+  if (object->native_payload == nullptr) {
+    std::destroy_at(object);
+    allocated_bytes_ -= allocation.size;
+    ::operator delete(allocation.memory);
+    return nullptr;
+  }
+  static_cast<Future*>(object->native_payload)->MakeHeapOwned();
+  Publish(*object, allocation.size);
+  return object;
+}
+
+Future* Heap::GetFuture(const HeapObject& object) noexcept {
+  return object.kind == ObjectKind::Future ? static_cast<Future*>(object.native_payload) : nullptr;
+}
+
+HeapObject* Heap::AllocateCompleter(Future future) noexcept {
+  auto* object = AllocateFuture(std::move(future));
+  if (object != nullptr) {
+    object->kind = ObjectKind::Completer;
+  }
+  return object;
+}
+
+Future* Heap::GetCompleter(const HeapObject& object) noexcept {
+  return object.kind == ObjectKind::Completer ? static_cast<Future*>(object.native_payload)
+                                              : nullptr;
+}
+
+HeapObject* Heap::AllocateTimer(Timer timer) noexcept {
+  MaybeCollect(sizeof(HeapObject));
+  const auto allocation = AllocateRaw(sizeof(HeapObject));
+  if (allocation.memory == nullptr) {
+    return nullptr;
+  }
+  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
+  object->kind = ObjectKind::Timer;
+  object->native_payload = std::make_unique<Timer>(std::move(timer)).release();
+  Publish(*object, allocation.size);
+  return object;
+}
+
+Timer* Heap::GetTimer(const HeapObject& object) noexcept {
+  return object.kind == ObjectKind::Timer ? static_cast<Timer*>(object.native_payload) : nullptr;
+}
+
+HeapObject* Heap::AllocateCancellationToken(CancellationToken token) noexcept {
+  MaybeCollect(sizeof(HeapObject));
+  const auto allocation = AllocateRaw(sizeof(HeapObject));
+  if (allocation.memory == nullptr) {
+    return nullptr;
+  }
+  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
+  object->kind = ObjectKind::CancellationToken;
+  object->native_payload = std::make_unique<CancellationToken>(std::move(token)).release();
+  Publish(*object, allocation.size);
+  return object;
+}
+
+CancellationToken* Heap::GetCancellationToken(const HeapObject& object) noexcept {
+  return object.kind == ObjectKind::CancellationToken
+             ? static_cast<CancellationToken*>(object.native_payload)
+             : nullptr;
+}
+
 bool Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept {
   if (value.IsNull()) {
     return type.nullable;
@@ -221,7 +308,7 @@ bool Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept {
   return !type.callable || (object->layout != nullptr && object->layout->callable().has_value());
 }
 
-HeapObject* Heap::AllocateInstance(ClassLayout& layout,
+HeapObject* Heap::AllocateInstance(const ClassLayout& layout,
                                    std::span<const Value> initial_fields) noexcept {
   if (initial_fields.size() > layout.field_count()) {
     return nullptr;
@@ -400,6 +487,10 @@ void Heap::UnregisterRoot(RootRange& root) noexcept {
 }
 
 void Heap::MarkRoots() noexcept {
+  std::erase_if(future_roots_, [](const auto& root) { return root.IsExpired(); });
+  for (const auto& root : future_roots_) {
+    root.Trace(*this);
+  }
   for (RootRange* root = roots_; root != nullptr; root = root->next_) {
     MarkRoot(*root);
   }
@@ -459,6 +550,18 @@ void Heap::MarkObject(HeapObject& object) noexcept {
 }
 
 void Heap::ProcessGrayObject(HeapObject& object) noexcept {
+  if (object.kind == ObjectKind::ValueSlots) {
+    for (const auto value : ValueSlots(object)) {
+      MarkValue(value);
+    }
+    return;
+  }
+  if (object.kind == ObjectKind::Future || object.kind == ObjectKind::Completer) {
+    if (static_cast<Future*>(object.native_payload) != nullptr) {
+      static_cast<Future*>(object.native_payload)->Trace(*this);
+    }
+    return;
+  }
   if (object.kind == ObjectKind::Exception) {
     MarkObject(*ExceptionData::From(object).payload);
     return;
@@ -535,6 +638,23 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
     ReleaseCollection(object);
   } else if (object.kind == ObjectKind::Array) {
     ReleaseArray(object);
+  } else if (object.kind == ObjectKind::Future || object.kind == ObjectKind::Completer) {
+    DestroyFutureStorage(static_cast<Future*>(object.native_payload));
+    object.native_payload = nullptr;
+  } else if (object.kind == ObjectKind::Exception) {
+    const std::unique_ptr<FutureDiagnostic> diagnostic(
+        ExceptionData::From(object).async_diagnostic);
+  } else if (object.kind == ObjectKind::Timer) {
+    const std::unique_ptr<Timer> owned(static_cast<Timer*>(object.native_payload));
+  } else if (object.kind == ObjectKind::CancellationToken) {
+    const std::unique_ptr<CancellationToken> owned(
+        static_cast<CancellationToken*>(object.native_payload));
+  } else if (object.kind == ObjectKind::ValueSlots) {
+    const auto bytes = object.length * sizeof(Value);
+    allocated_bytes_ -= bytes;
+    committed_bytes_ -= bytes;
+    std::destroy_n(static_cast<Value*>(object.native_payload), object.length);
+    ::operator delete(object.native_payload);
   }
   void* memory = &object;
   // StringObject 仅含可平凡析构的对象头；复用或释放存储即结束其生命周期。

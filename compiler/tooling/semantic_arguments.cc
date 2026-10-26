@@ -291,6 +291,9 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindCallParameters(
     return std::nullopt;
   }
   const auto& call = *found->second;
+  if (const auto async = model_.async_calls.find(&call); async != model_.async_calls.end()) {
+    return async->second.signature;
+  }
   const auto& callee = *call.callee;
   // 函数值只接受位置实参；不把内部的数字参数名暴露为命名实参补全。
   if (model_.bindings.contains(&callee) || model_.globals.contains(callee.text) ||

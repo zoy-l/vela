@@ -7,6 +7,7 @@
 
 #include "base/execution_status.h"
 #include "compiler/compiler.h"
+#include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/value.h"
@@ -16,11 +17,19 @@ namespace vela::compiler {
 namespace {
 
 constexpr std::int64_t kExpectedSum = 42;
+constexpr int kTemporaryAllocationCount = 32;
 
 using vela::runtime::Isolate;
 using vela::runtime::RootRange;
 using vela::runtime::Value;
 using vela::vm::VirtualMachine;
+
+void AllocateAndCollectTemporaryStrings(Isolate& isolate) {
+  for (int index = 0; index < kTemporaryAllocationCount; ++index) {
+    static_cast<void>(isolate.heap().AllocateString("temporary"));
+    isolate.heap().Collect();
+  }
+}
 
 TEST(CompilerTest, CompilesQualifiedEnumMemberWithoutExpectedType) {
   constexpr std::string_view source = R"(
@@ -49,7 +58,6 @@ func main(): int {
   return x + y;
 }
 )";
-
   Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
@@ -59,6 +67,254 @@ func main(): int {
   ASSERT_EQ(result.status, ExecutionStatus::Returned);
   ASSERT_TRUE(result.value.IsInteger());
   EXPECT_EQ(result.value.AsInteger(), kExpectedSum);
+}
+
+TEST(CompilerTest, NullSafeAccessCoalescesAndSkipsArgumentsAndIndices) {
+  constexpr std::string_view source = R"(
+class Item {
+  public param value: int;
+  public read(unused: int): int { return this.value; }
+}
+func fail(): int { return 1 / 0; }
+func main(): int {
+  const missing: Item? = null;
+  const present: Item? = Item(value: 20);
+  const absent: int[]? = null;
+  const values: int[]? = [22];
+  const field: int? = present?.value;
+  const method: int? = missing?.read(fail());
+  const skipped: int? = absent?.[fail()];
+  const indexed: int? = values?.[0];
+  return (field ?? fail()) + (indexed ?? fail()) +
+         (missing?.value ?? 0) + (present?.read(0) ?? fail()) - 20 +
+         (method ?? 0) + (skipped ?? 0);
+}
+)";
+  Isolate isolate;
+  const auto compiled = CompileSource(source, isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  const auto result = VirtualMachine(isolate).Execute(compiled.program, entry.index());
+  ASSERT_TRUE(result.Succeeded());
+  ASSERT_TRUE(result.value.IsInteger());
+  EXPECT_EQ(result.value.AsInteger(), kExpectedSum);
+}
+
+TEST(CompilerTest, CoalescePreservesStorageAndSkipsUnneededDefaults) {
+  constexpr std::string_view source = R"(
+let fallback_calls: int = 0;
+let global_value: int? = null;
+class Box { public param value: int?; }
+func fallback(): int {
+  fallback_calls += 1;
+  return 42;
+}
+func main(): bool {
+  let missing: int? = null;
+  let present: int? = 7;
+  const box = Box(value: null);
+  const values: int?[] = [null, 7];
+  const local_result: int = missing ?? fallback();
+  const global_result: int = global_value ?? fallback();
+  const field_result: int = box.value ?? fallback();
+  const element_result: int = values[0] ?? fallback();
+  const present_result: int = present ?? fallback();
+  const present_element: int = values[1] ?? fallback();
+  return local_result == 42 && global_result == 42 && field_result == 42 &&
+         element_result == 42 && present_result == 7 && present_element == 7 &&
+         fallback_calls == 4 && missing == null && global_value == null &&
+         box.value == null && values[0] == null && present == 7 && values[1] == 7;
+}
+)";
+  Isolate isolate(1);
+  const auto compiled = CompileSource(source, isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  const auto result = VirtualMachine(isolate).Execute(compiled.program, entry.index());
+  ASSERT_TRUE(result.Succeeded());
+  ASSERT_TRUE(result.value.IsBoolean());
+  EXPECT_TRUE(result.value.AsBoolean());
+}
+
+TEST(CompilerTest, ExecutesAsyncMainThroughRootFuture) {
+  constexpr std::int64_t kAsyncResult = 3;
+  constexpr std::string_view source = R"(
+async func main(): Future<int> {
+  return 3;
+}
+)";
+  Isolate isolate;
+  const auto compiled = CompileSource(source, isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto function = compiled.program.FindFunction("main");
+  ASSERT_TRUE(function.IsValid());
+  ASSERT_TRUE(function.is_async());
+  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, function.index());
+  EXPECT_EQ(root.state(), runtime::FutureState::Succeeded);
+  EXPECT_EQ(isolate.scheduler().pending_microtasks(), 0);
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
+  const auto value = root.value();
+  ASSERT_TRUE(value.has_value());
+  EXPECT_EQ(value.value_or(Value::Null()).AsInteger(), kAsyncResult);
+}
+
+TEST(CompilerTest, SuspendsAsyncMainAtAwaitAndResumesThroughScheduler) {
+  constexpr std::int64_t kAsyncResult = 4;
+  constexpr std::string_view source = R"(
+async func main(): Future<int> {
+  await sleep(1);
+  return 4;
+}
+)";
+  Isolate isolate;
+  const auto compiled = CompileSource(source, isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto function = compiled.program.FindFunction("main");
+  ASSERT_TRUE(function.IsValid());
+  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, function.index());
+  EXPECT_EQ(root.state(), runtime::FutureState::Pending);
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
+  EXPECT_EQ(root.value().value_or(Value::Null()).AsInteger(), kAsyncResult);
+}
+
+TEST(CompilerTest, AsyncFailureRetainsDiagnosticAcrossRootFuture) {
+  constexpr std::string_view source = R"(
+async func main(): Future<void> {
+  throw Error(message: "async failure");
+}
+)";
+  Isolate isolate;
+  const auto compiled = CompileSource(source, isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+
+  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  ASSERT_EQ(root.state(), runtime::FutureState::Failed);
+  const auto diagnostic = root.error_diagnostic();
+  ASSERT_TRUE(diagnostic.has_value());
+  const auto diagnostic_value = diagnostic.value_or(runtime::FutureDiagnostic{});
+  EXPECT_EQ(diagnostic_value.message, "async failure");
+  ASSERT_FALSE(diagnostic_value.stack_trace.empty());
+  EXPECT_EQ(diagnostic_value.stack_trace.front().function, "main");
+}
+
+TEST(CompilerTest, SuspendedAsyncExecutionSurvivesHeapCollection) {
+  constexpr std::string_view source = R"(
+async func main(): Future<int> {
+  await sleep(1);
+  return 7;
+}
+)";
+  Isolate isolate(1);
+  const auto compiled = CompileSource(source, isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+
+  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
+  ASSERT_EQ(root.state(), runtime::FutureState::Pending);
+  AllocateAndCollectTemporaryStrings(isolate);
+
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
+  EXPECT_EQ(root.value().value_or(Value::Null()).AsInteger(), 7);
+}
+
+TEST(CompilerTest, FutureWaitAndRaceAreAvailableToVelaCode) {
+  constexpr std::string_view source = R"(
+async func main(): Future<int> {
+  let values: Future<int>[] = [Future.value(2), Future.value(3)];
+  let waited: int[] = await Future.wait(values);
+  let winner: int = await Future.race(values);
+  return waited[0] + waited[1] + winner;
+}
+)";
+  Isolate isolate;
+  const auto compiled = CompileSource(source, isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
+  EXPECT_EQ(root.value().value_or(Value::Null()).AsInteger(), 7);
+}
+
+TEST(CompilerTest, FutureWaitCollectsPendingResultsInInputOrder) {
+  constexpr std::string_view source = R"(
+async func delayed(): Future<int> {
+  await sleep(1);
+  return 5;
+}
+async func main(): Future<int> {
+  let values: Future<int>[] = [delayed(), Future.value(6)];
+  let waited: int[] = await Future.wait(values);
+  return waited[0] * 10 + waited[1];
+}
+)";
+  Isolate isolate;
+  const auto compiled = CompileSource(source, isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
+  EXPECT_EQ(root.value().value_or(Value::Null()).AsInteger(), 56);
+}
+
+TEST(CompilerTest, FutureSyncInvokesComputationAndReturnsFuture) {
+  constexpr std::string_view source = R"(
+async func main(): Future<int> {
+  return await Future.sync((): int => 8);
+}
+)";
+  Isolate isolate;
+  const auto compiled = CompileSource(source, isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
+  EXPECT_EQ(root.value().value_or(Value::Null()).AsInteger(), 8);
+}
+
+TEST(CompilerTest, FutureDelayedAndMicrotaskInvokeCallbacks) {
+  constexpr std::string_view source = R"(
+async func main(): Future<int> {
+  let delayed: int = await Future.delayed(1, (): int => 6);
+  let microtask: int = await Future.microtask((): int => 7);
+  return delayed + microtask;
+}
+)";
+  Isolate isolate;
+  const auto compiled = CompileSource(source, isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
+  EXPECT_EQ(root.value().value_or(Value::Null()).AsInteger(), 13);
 }
 
 TEST(CompilerTest, CompilesNestedClassConstruction) {

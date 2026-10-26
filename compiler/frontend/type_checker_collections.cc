@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -27,6 +28,12 @@ TypeChecker::Type TypeChecker::ResolveGenericType(const TypeName& source) {
   std::size_t count = 2;
   if (source.name == "Expected") {
     kind = Type::Kind::Expected;
+  } else if (source.name == "Future") {
+    kind = Type::Kind::Future;
+    count = 1;
+  } else if (source.name == "Completer") {
+    kind = Type::Kind::Completer;
+    count = 1;
   } else if (source.name == "Set") {
     kind = Type::Kind::Set;
     count = 1;
@@ -41,9 +48,16 @@ TypeChecker::Type TypeChecker::ResolveGenericType(const TypeName& source) {
   std::vector<Type> arguments;
   std::string name = source.name + '<';
   for (std::size_t index = 0; index < count; ++index) {
+    const bool allow_void = kind == Type::Kind::Expected && index == 0;
     auto argument =
-        ResolveType(source.arguments.at(index), kind == Type::Kind::Expected && index == 0);
+        ResolveType(source.arguments.at(index),
+                    allow_void || kind == Type::Kind::Future || kind == Type::Kind::Completer);
     if (!IsValid(argument)) {
+      return InvalidType();
+    }
+    if ((kind == Type::Kind::Future || kind == Type::Kind::Completer) &&
+        argument.kind == Type::Kind::Future) {
+      AddDiagnostic(source.location, "Future payload types must be flattened");
       return InvalidType();
     }
     name += (index == 0 ? "" : ", ") + argument.name;
@@ -87,10 +101,10 @@ TypeChecker::Type TypeChecker::CheckCollectionConstruction(const Expression& exp
   return type;
 }
 
-TypeChecker::Type TypeChecker::CheckCollectionMethod(const Expression& expression,
-                                                     const Type& receiver) {
+std::optional<TypeChecker::BuiltinMethod> TypeChecker::ResolveCollectionMethod(
+    const Type& receiver,
+    std::string_view name) {
   const auto arguments = generic_arguments_.at(receiver.name);
-  const auto& name = expression.callee->text;
   FunctionInfo signature;
   signature.return_type = {.kind = Type::Kind::Void, .name = "void"};
   const auto add = [&](std::string parameter, Type type) -> void {
@@ -102,8 +116,7 @@ TypeChecker::Type TypeChecker::CheckCollectionMethod(const Expression& expressio
   if (operation) {
     signature.return_type = receiver;
     add("other", receiver);
-    builtin_calls_.insert_or_assign(&expression, *operation);
-    return CheckFunctionCall(signature, expression);
+    return BuiltinMethod{.operation = *operation, .signature = std::move(signature)};
   }
   Builtin builtin = Builtin::CollectionSize;
   if (name == "has" || name == "delete" || (name == "add" && receiver.kind == Type::Kind::Set)) {
@@ -131,11 +144,21 @@ TypeChecker::Type TypeChecker::CheckCollectionMethod(const Expression& expressio
     builtin = keys ? Builtin::CollectionKeys : Builtin::CollectionValues;
     signature.return_type = ArrayType(keys ? arguments.front() : arguments.back());
   } else {
-    AddDiagnostic(expression.location, "unknown collection method '" + name + "'");
+    return std::nullopt;
+  }
+  return BuiltinMethod{.operation = builtin, .signature = std::move(signature)};
+}
+
+TypeChecker::Type TypeChecker::CheckCollectionMethod(const Expression& expression,
+                                                     const Type& receiver) {
+  const auto method = ResolveCollectionMethod(receiver, expression.callee->text);
+  if (!method) {
+    AddDiagnostic(expression.location,
+                  "unknown collection method '" + expression.callee->text + "'");
     return InvalidType();
   }
-  builtin_calls_.insert_or_assign(&expression, builtin);
-  return CheckFunctionCall(signature, expression);
+  builtin_calls_.insert_or_assign(&expression, method->operation);
+  return CheckFunctionCall(method->signature, expression);
 }
 
 }  // namespace vela::frontend

@@ -2,7 +2,7 @@
 
 [**English**](async_tasks.md) | [简体中文](../zh-CN/async_tasks.md)
 
-> Status: design specification. Async tasks are not implemented; implementation must satisfy the complete language, runtime, host, and validation contracts in this document.
+> Status: implemented. This document defines the async/Future language, runtime, host, and CLI contracts.
 
 ## Goals
 
@@ -13,6 +13,8 @@ The design covers async functions, Future composition, error propagation, async 
 ## API Example
 
 ```vela
+class User { public param name: string; }
+
 external func fetchUser(id: int): Future<User>;
 
 async func loadUsers(ids: int[]): Future<User[]> {
@@ -44,6 +46,19 @@ async func main(): Future<int> {
 
 ## Future API
 
+```vela
+const producer = Completer<int>();
+const result = producer.future.then((value) => value + 2);
+Timer.after(0, (): void => { producer.complete(40); });
+const answer: int = await result;
+```
+
+The example runs inside an async function. `Completer<T>()` also accepts a contextual `Completer<T>` type. Its read-only properties are `future: Future<T>` and `isCompleted: bool`. `isCompleted` becomes true when completion is requested, including adoption of a pending Future. `complete(value)` accepts `T` or `Future<T>`; `Completer<void>.complete()` takes no argument. `completeError(error)` requires a non-null class or interface instance. Duplicate completion throws `Error` with code `FutureAlreadyCompleted`; direct or indirect self-adoption throws code `FutureSelfAdoption`.
+
+`then` infers its result from the callback's return type. For a `Future<void>` source, the success callback takes no value parameter. Error callbacks take exactly one non-null class or interface parameter; an unannotated lambda parameter defaults to `Error`. The callback handles matching payload types, and other errors propagate unchanged. `catchError` must return the source value type or a Future of that type. `whenComplete` accepts a zero-argument action returning `void` or `Future<void>`; an asynchronous action finishes before the result is forwarded. Optional callbacks may be null. These APIs use static callback types and introduce no `dynamic` or `unknown` type.
+
+`Future<T>` is covariant in its result type; `Completer<T>` remains invariant. Future result types are flattened: factories and callback APIs adopt returned Futures, and nested Future payload type arguments are rejected. `Future.wait` returns `Future<T[]>` for value tasks. For `Future<void>[]`, it returns `Future<void>` because Vela has no `void[]` value type; a cleanup callback for this case takes no arguments and is never invoked. Explicit factory type arguments and contextual result types are checked against payload and callback result types.
+
 - `Future.value(value)` and `Future.error(error)` create already-completed Futures with a value or error. If `Future.value` receives another Future, it adopts that Future's result; it does not inspect arbitrary objects for a `then` member.
 - `Future.sync(computation)` invokes the computation immediately and converts its return value, returned Future, or thrown exception into a Future result.
 - `Future.microtask(computation)` queues the computation on the microtask queue. `Future.delayed(milliseconds, computation)` invokes it after a timer; `sleep(milliseconds)` returns a Future that completes with `void` after the delay.
@@ -53,7 +68,11 @@ async func main(): Future<int> {
 - `future.timeout(milliseconds, onTimeout)` adopts the source Future if it completes in time. Otherwise it adopts the value or Future returned by `onTimeout`, or fails with `TimeoutException`. Timeout does not cancel the source operation, which continues to be observed.
 - `Completer<T>` creates and completes a Future for event callbacks and other non-async producers. `complete` accepts a value or Future, adopting the latter; `complete` / `completeError` may be called once, and an error must be a Vela-thrown object. A second completion violates the contract. Completion notifications are always asynchronous so listeners cannot reenter the producer.
 
-A Future may have multiple waiters. Its value or error remains valid until all listeners consume it. Composition APIs observe every input result, so a later input error is not discarded when an aggregate Future fails early.
+A Future may have multiple waiters. Its value or error remains valid until all listeners consume it. Composition APIs observe every input result, so a later input error is not discarded when an aggregate Future fails early. Cleanup runs once for each non-null successful input when a wait fails, including successes arriving after an eager failure. A cleanup error follows the unhandled Future error rules and does not replace the aggregate's first error.
+
+Wait and race inputs share one GC-owned slot object for aggregate references. Each input retains that object, so marking the aggregate scans its reference list once. The shared slots also keep cleanup callbacks and late results reachable after an eager failure.
+
+`future.timeout(milliseconds, onTimeout: null)` returns the source value type. `TimeoutException` is an independent throwable class with `message: string` and `code: string` (default `Timeout`); use a typed catch or an error callback with a `TimeoutException` parameter. A source failure containing `TimeoutException` is forwarded normally and does not trigger `onTimeout`.
 
 ## Execution and Scheduling
 
@@ -69,7 +88,13 @@ Throws, runtime errors, and await propagation in async functions use Vela's exis
 
 At the end of a microtask checkpoint, the host is notified about unhandled Future errors; if a handler is attached later, the host may receive a handled notification. `main` may return `Future<int>`; its failure becomes the program's execution failure. Unhandled errors from background Futures are reported as runtime diagnostics.
 
-Suspended locals, Future results, errors, waiters, and queued callbacks must remain reachable to the GC. The execution session retains the Isolate, Program, and diagnostic metadata needed until continuations finish. VM code runs only on the owning Isolate thread; external threads post completion messages for that thread to apply to Futures.
+Suspended locals, Future results, errors, waiters, and queued callbacks remain reachable to the GC. Continuations retain their Program and diagnostic metadata and borrow their Isolate. The host must keep the Isolate alive until its Programs, Future handles, and native producers are released. VM code runs only on the owning Isolate thread; external threads post completion messages for that thread to apply to Futures.
+
+Future values, listeners, VM frames, GC state, and timer queues belong to the Isolate thread and use no mutexes. Host threads publish immutable completion messages through a lock-free MPSC mailbox; the Isolate applies one host event and then drains its microtasks. A semaphore parks the owner while waiting for a host event or timer. Completion reservation and cancellation state use atomics. Future state inspection, listener registration, heap operations, and Program destruction stay on the owner thread. Native cancellation callbacks may run on the cancelling or subscribing thread; they must post VM work through the scheduler.
+
+`NativeContext::CreateCompleter()` registers a live host producer. Completing it, or dropping every producer handle, releases that event source. `NativeContext` binds returned native Futures to its scheduler; a Future already belonging to another Isolate is rejected. The external declaration's `Future<T>` payload is checked when the native Future completes. An incompatible value or a non-throwable error fails the checked Future with `TypeError`. Heap values posted from another thread must already belong to the Isolate and remain rooted until publication; allocation and encoding happen on the owner thread.
+
+`FutureScheduler::PumpOne()` and `PumpUntil()` return idle when no immediately available work or timer can advance execution. Their `WaitForHost` mode also waits for registered native event sources. Suspensions retain live register values and trace global slots through the Future graph; unreachable pending tasks and cycles involving Future results remain collectible. REPL submissions share the same growing global storage, so continuations from earlier submissions observe and update current globals.
 
 The CLI waits for the root main Future and all live host event sources. A pending Future with no producer does not keep the process alive; if the root Future remains pending with no work that can advance it, the CLI reports async idle/deadlock. An embedding pump returns idle so the host may resume it later.
 
@@ -78,6 +103,8 @@ The CLI waits for the root main Future and all live host event sources. A pendin
 Async result semantics do not depend on a clock; I/O and timers belong to the host event layer. The standard library provides `sleep(milliseconds)`, `Timer.after(milliseconds, callback)`, and `Timer.periodic(milliseconds, callback)`. Both Timer factories return a `Timer` handle canceled with `timer.cancel()`; `Timer.after` fires once and `Timer.periodic` fires repeatedly. Callbacks run on the Isolate thread. A Future returned by a timer callback does not block later ticks, and its error follows the normal unhandled Future error rules.
 
 Timers use a monotonic clock. Intervals do not replay missed ticks, avoiding an unbounded callback backlog; events with the same deadline run in creation order. After each host event, its microtasks are drained before the next event is processed.
+
+Delays are nonnegative integer milliseconds within the monotonic clock's representable range; periodic intervals must be positive. Invalid durations throw a catchable `Error`. Timer callbacks take no arguments and return `void` or `Future<void>`. Cancelling a timer is idempotent and releases its retained callback immediately on the owner thread. `CancellationToken()` exposes `isCancelled: bool` and idempotent `cancel()`; the typed native codec shares the same request state with the host.
 
 ## Performance and Implementation Boundaries
 

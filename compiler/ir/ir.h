@@ -53,6 +53,7 @@ struct Function final {
   std::vector<double> doubles;
   std::string native_symbol;
   std::vector<Handler> handlers;
+  bool is_async = false;
 };
 
 struct Program final {

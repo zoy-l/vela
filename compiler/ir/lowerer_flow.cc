@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/control_flow.h"
 #include "compiler/frontend/type_checker.h"
@@ -116,6 +117,155 @@ void Lowerer::LowerFor(const frontend::Statement& statement) {
   if (exit_jump) {
     current_function_->instructions.at(*exit_jump).index = loop_end;
   }
+  for (const auto jump : controls_.back().break_jumps) {
+    current_function_->instructions.at(jump).index = loop_end;
+  }
+  controls_.pop_back();
+  PopScope();
+}
+
+void Lowerer::LowerForEach(const frontend::Statement& statement) {
+  PushScope();
+  const auto iterable = LowerExpression(*statement.iterable);
+  const auto kind = iterable.type.kind;
+  const bool is_array = kind == frontend::TypeDescriptor::Kind::Array;
+  const bool is_set = kind == frontend::TypeDescriptor::Kind::Set;
+  const bool is_map = kind == frontend::TypeDescriptor::Kind::Map;
+  if (!is_array && !is_set && !is_map) {
+    AddDiagnostic(statement.location, "collection iteration requires an array, set, or map");
+    PopScope();
+    return;
+  }
+  RegisterId values_array = iterable.reg;
+  RegisterId map_values_array = iterable.reg;
+  frontend::TypeDescriptor element_type;
+  frontend::TypeDescriptor value_type;
+  if (is_array) {
+    element_type = model_.array_elements.at(iterable.type.name);
+  } else {
+    const auto& arguments = model_.generic_arguments.at(iterable.type.name);
+    element_type = arguments.front();
+    const auto base = AllocateRegister(statement.location);
+    Emit({.opcode = Opcode::Move, .dst = base, .lhs = iterable.reg, .location = statement.location});
+    const auto keys_array = AllocateRegister(statement.location);
+    RegisterId value_base = base;
+    if (is_map && statement.destructuring) {
+      value_base = AllocateRegister(statement.location);
+      map_values_array = AllocateRegister(statement.location);
+      value_type = arguments.back();
+      Emit({
+          .opcode = Opcode::Move,
+          .dst = value_base,
+          .lhs = iterable.reg,
+          .location = statement.location,
+      });
+    }
+    const auto length = EmitTemporary({
+        .opcode = Opcode::BuiltinCall,
+        .lhs = base,
+        .index = static_cast<std::uint32_t>(Builtin::CollectionSize),
+        .location = statement.location,
+    });
+    Emit({
+        .opcode = Opcode::NewDynamicArray,
+        .dst = keys_array,
+        .lhs = length,
+        .index = RegisterArrayType(frontend::MakeArrayType(element_type)),
+        .location = statement.location,
+    });
+    Emit({
+        .opcode = Opcode::BuiltinCall,
+        .dst = AllocateTemporary(statement.location),
+        .lhs = base,
+        .index = static_cast<std::uint32_t>(Builtin::CollectionKeys),
+        .location = statement.location,
+    });
+    values_array = keys_array;
+    if (is_map && statement.destructuring) {
+      Emit({
+          .opcode = Opcode::NewDynamicArray,
+          .dst = map_values_array,
+          .lhs = length,
+          .index = RegisterArrayType(frontend::MakeArrayType(value_type)),
+          .location = statement.location,
+      });
+      Emit({
+          .opcode = Opcode::BuiltinCall,
+          .dst = AllocateTemporary(statement.location),
+          .lhs = value_base,
+          .index = static_cast<std::uint32_t>(Builtin::CollectionValues),
+          .location = statement.location,
+      });
+    }
+  }
+  const auto index = AllocateTemporary(statement.location);
+  Emit({.opcode = Opcode::LoadInt, .dst = index, .immediate = 0, .location = statement.location});
+  const auto length = EmitTemporary({
+      .opcode = Opcode::BuiltinCall,
+      .lhs = values_array,
+      .index = static_cast<std::uint32_t>(Builtin::ArrayLength),
+      .location = statement.location,
+  });
+  const auto loop_start = current_function_->instructions.size();
+  const auto condition = EmitTemporary({
+      .opcode = Opcode::LessInt,
+      .lhs = index,
+      .rhs = length,
+      .location = statement.location,
+  });
+  const auto exit_jump = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = condition, .location = statement.location});
+  const auto value = EmitTemporary({
+      .opcode = Opcode::GetIndex,
+      .lhs = values_array,
+      .rhs = index,
+      .location = statement.location,
+  });
+  const auto binding = AllocateRegister(statement.location);
+  Emit({.opcode = Opcode::Move, .dst = binding, .lhs = value, .location = statement.location});
+  DeclareLocal(statement.name, binding, element_type, statement.location, &statement);
+  if (statement.destructuring) {
+    const auto second = EmitTemporary({
+        .opcode = Opcode::GetIndex,
+        .lhs = map_values_array,
+        .rhs = index,
+        .location = statement.location,
+    });
+    const auto second_binding = AllocateRegister(statement.location);
+    Emit({
+        .opcode = Opcode::Move,
+        .dst = second_binding,
+        .lhs = second,
+        .location = statement.location,
+    });
+    DeclareLocal(statement.second_name, second_binding, value_type, statement.location, &statement);
+  }
+  controls_.push_back(
+      {.break_jumps = {}, .continue_jumps = {}, .finally_depth = finalizers_.size()});
+  LowerScopedStatement(*statement.then_branch);
+  for (const auto jump : controls_.back().continue_jumps) {
+    current_function_->instructions.at(jump).index =
+        static_cast<std::uint32_t>(current_function_->instructions.size());
+  }
+  const auto one = EmitTemporary({
+      .opcode = Opcode::LoadInt,
+      .immediate = 1,
+      .location = statement.location,
+  });
+  Emit({
+      .opcode = Opcode::AddInt,
+      .dst = index,
+      .lhs = index,
+      .rhs = one,
+      .location = statement.location,
+  });
+  Emit({
+      .opcode = Opcode::Jump,
+      .index = static_cast<std::uint32_t>(loop_start),
+      .location = statement.location,
+  });
+  const auto loop_end = static_cast<std::uint32_t>(current_function_->instructions.size());
+  current_function_->instructions.at(exit_jump).index = loop_end;
   for (const auto jump : controls_.back().break_jumps) {
     current_function_->instructions.at(jump).index = loop_end;
   }

@@ -1,0 +1,32 @@
+class Label {
+  public param text: string;
+
+  public display(): string {
+    return 'label: ${this.text}';
+  }
+}
+
+func defaultText(): string {
+  print('fallback');
+  return 'empty';
+}
+
+func position(): int {
+  print('index evaluated');
+  return 0;
+}
+
+func main(): void {
+  const missing: Label? = null;
+  const present: Label? = Label(text: 'Vela');
+  print(missing?.text ?? defaultText()); // fallback, then empty
+  // The default is only the expression's result; missing remains null.
+  print(present?.text ?? defaultText()); // Vela; defaultText is skipped.
+  print(missing?.display() ?? 'no label'); // no label
+  print(present?.display() ?? 'no label'); // label: Vela
+
+  const absent: int[]? = null;
+  const values: int[]? = [42];
+  print(absent?.[position()] ?? 7); // 7; position is skipped.
+  print(values?.[position()] ?? 7); // index evaluated, then 42
+}

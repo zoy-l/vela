@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -76,12 +77,6 @@ void Lowerer::LowerInitializer(std::string name,
 Lowerer::LoweredValue Lowerer::LowerConstruction(const frontend::Expression& expression,
                                                  const frontend::TypeDescriptor& expected) {
   const auto& info = model_.classes.at(expected.name);
-  const auto& source = *info.declaration;
-  const auto& signature = info.constructor;
-  const bool generated = source.constructor_kind == frontend::ConstructorKind::Generated;
-  std::vector<std::optional<RegisterId>> arguments(generated ? 0 : signature.parameters.size());
-  std::vector<bool> provided(info.field_order.size(), false);
-  const auto& order = model_.argument_order.at(&expression);
   const auto object = AllocateTemporary(expression.location);
   Emit({
       .opcode = Opcode::NewInstance,
@@ -89,10 +84,25 @@ Lowerer::LoweredValue Lowerer::LowerConstruction(const frontend::Expression& exp
       .index = class_ids_.at(expected.name),
       .location = expression.location,
   });
+  return LowerConstructorCall(expression.arguments, model_.argument_order.at(&expression),
+                              expression.location, info, object);
+}
+
+Lowerer::LoweredValue Lowerer::LowerConstructorCall(
+    std::span<const frontend::CallArgument> call_arguments,
+    std::span<const std::uint32_t> argument_order,
+    frontend::SourceLocation location,
+    const frontend::ClassDescriptor& info,
+    RegisterId object) {
+  const auto& source = *info.declaration;
+  const auto& signature = info.constructor;
+  const bool generated = source.constructor_kind == frontend::ConstructorKind::Generated;
+  std::vector<std::optional<RegisterId>> arguments(generated ? 0 : signature.parameters.size());
+  std::vector<bool> provided(info.field_order.size(), false);
   // param 实参依源码顺序直接写入尚未逸出的对象，避免为全部字段保留寄存器。
-  for (std::size_t index = 0; index < expression.arguments.size(); ++index) {
-    const auto& argument = expression.arguments.at(index);
-    const auto parameter = order.at(index);
+  for (std::size_t index = 0; index < call_arguments.size(); ++index) {
+    const auto& argument = call_arguments.subspan(index).front();
+    const auto parameter = argument_order.subspan(index).front();
     const auto value = LowerExpression(*argument.value);
     if (generated) {
       const auto field = info.fields.at(signature.parameters.at(parameter).name).index;
@@ -136,32 +146,36 @@ Lowerer::LoweredValue Lowerer::LowerConstruction(const frontend::Expression& exp
       });
     }
   }
+  if (source.base_class && !model_.explicit_super_constructors.contains(info.type.name)) {
+    const auto& base = model_.classes.at(source.base_class->name);
+    static_cast<void>(LowerConstructorCall({}, {}, location, base, object));
+  }
   if (source.constructor) {
     const auto count =
         source.constructor_kind == frontend::ConstructorKind::Explicit ? arguments.size() : 0;
     const auto base = next_register_;
     for (std::size_t index = 0; index <= count; ++index) {
-      static_cast<void>(AllocateRegister(expression.location));
+      static_cast<void>(AllocateRegister(location));
     }
-    Emit({.opcode = Opcode::Move, .dst = base, .lhs = object, .location = expression.location});
+    Emit({.opcode = Opcode::Move, .dst = base, .lhs = object, .location = location});
     for (std::size_t index = 0; index < count; ++index) {
       Emit({
           .opcode = Opcode::Move,
           .dst = static_cast<RegisterId>(base + index + 1),
           .lhs = *arguments.at(index),
-          .location = expression.location,
+          .location = location,
       });
     }
-    const auto ignored = AllocateTemporary(expression.location);
+    const auto ignored = AllocateTemporary(location);
     Emit({
         .opcode = Opcode::Call,
         .dst = ignored,
         .lhs = base,
-        .index = function_ids_.at(expected.name + ".$constructor"),
-        .location = expression.location,
+        .index = function_ids_.at(info.type.name + ".$constructor"),
+        .location = location,
     });
   }
-  return {.reg = object, .type = expected};
+  return {.reg = object, .type = info.type};
 }
 
 }  // namespace vela::ir

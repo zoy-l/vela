@@ -21,6 +21,8 @@ const sum = values.reduce((total, value) => total + value, 0);
 
 `performance.now(): double` 读取单调时钟时间（单位：毫秒），保留亚毫秒级小数精度。计算耗时只需将两次读取结果相减；其时间零点未作规定，连续两次读取返回相同数值属于正常合法情况。`Date.now(): int` 读取自 Unix 纪元以来的整数毫秒数；系统时钟被调整时该墙钟时间可能发生跃变。这些名称与单位严格对标 JavaScript 的 [performance.now](https://developer.mozilla.org/en-US/docs/Web/API/Performance/now) 与 [Date.now](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/now)。Vela 未引入完整的浏览器 Date 或 Performance 复杂对象模型。旧有的 `Time` 对象与微秒 API 已被废除。数值类型保持严格强类型：与 `performance.now()` 比较时必须使用 `0.0`，或显式进行数值类型转换。
 
+UTC 日历构造/分解及严格 ISO 日期时间解析/输出见 [UTC 日期与时间 API 设计](time.md)。四个转换方法与 DateParts 尚未实现，当前已提供的时间接口仍为上述时钟 API。
+
 ## 随机数生成
 
 `Random.seed(value: int): void`、`Random.nextInt(bound: int): int` 以及 `Math.random(): double` 采用 Isolate 独立的 xoroshiro128++ 1.0 算法，并使用 SplitMix64 进行状态播种。每个 Isolate 默认以种子 0 初始化，相同的种子与相同的调用序列严格保证可复现完全相同的结果。种子的全部 64 位（包括负整数的二进制位）均得到完好保留。宿主可独立对 `isolate.random()` 播种。这属于仿真模拟生成器，并非密码学安全伪随机数发生器。

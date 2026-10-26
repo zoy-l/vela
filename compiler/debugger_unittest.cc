@@ -79,6 +79,30 @@ void ExpectNoInitializingGlobals(const vm::Program& program) {
       globals->states, [](auto state) -> bool { return state == vm::GlobalState::Initializing; }));
 }
 
+TEST(DebuggerTest, ContinuesThroughAwaitAndScheduledCallbacks) {
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(R"(
+func transform(value: int): int { return value + 2; }
+async func main(): Future<int> {
+  await 0;
+  return await Future.value(40).then(transform);
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  bool saw_transform = false;
+  CallbackDebugger debugger([&](const vm::DebugContext& context) {
+    isolate.heap().Collect();
+    saw_transform = saw_transform || context.current_frame().name() == "transform";
+    return vm::DebugAction::Continue;
+  });
+  const auto result =
+      vm::VirtualMachine(isolate).Debug(compiled.program.FindFunction("main"), debugger);
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+  EXPECT_TRUE(saw_transform);
+}
+
 TEST(DebuggerTest, RootsLiveRegistersDuringEveryPausedInstruction) {
   runtime::Isolate isolate(1);
   const auto compiled = CompileSource(R"(
@@ -86,6 +110,8 @@ func work(text: string): int {
   const values: string[] = [text, text + "!"];
   return values[1].length;
 }
+
+
 func main(): int {
   const text = ["a", "b"].join("");
   return work(text) + 39;

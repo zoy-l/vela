@@ -1,17 +1,23 @@
 #include "vm/vm.h"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 #include "base/builtin.h"
 #include "base/callable.h"
 #include "base/execution_limits.h"
+#include "base/execution_status.h"
+#include "runtime/exception.h"
 #include "vm/debugger.h"
 #include "vm/execution.h"
 #include "vm/execution_status.h"
@@ -19,9 +25,12 @@
 #include "vm/register_file.h"
 
 #include "runtime/builtins.h"
+#include "runtime/error.h"
+#include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_function.h"
+#include "runtime/object.h"
 #include "runtime/register_storage.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
@@ -34,11 +43,19 @@ namespace internal {
 namespace {
 
 inline constexpr std::size_t kInlineInterpolationParts = 8;
+inline constexpr std::uint64_t kIntShiftMask = 63U;
 
 struct BinaryOperands final {
   runtime::RegisterReference left;
   runtime::RegisterReference right;
 };
+
+template <class T>
+void ConsumeFutureCompletion(std::expected<void, T> completion) {
+  if (!completion) {
+    std::unreachable();
+  }
+}
 
 bool IsEqualValue(runtime::Value left, runtime::Value right) noexcept {
   if (left.kind() != right.kind()) {
@@ -85,6 +102,35 @@ bool IsEqualValue(runtime::Value left, runtime::Value right) noexcept {
       if (!overflow) {
         result = left / right;
       }
+      break;
+    case OpCode::ModInt:
+      if (right == 0) {
+        return std::unexpected(ExecutionStatus::DivisionByZero);
+      }
+      overflow = left == std::numeric_limits<std::int64_t>::min() && right == -1;
+      if (!overflow) {
+        result = left % right;
+      }
+      break;
+    case OpCode::BitAndInt:
+      result = left & right;
+      break;
+    case OpCode::BitOrInt:
+      result = left | right;
+      break;
+    case OpCode::BitXorInt:
+      result = left ^ right;
+      break;
+    case OpCode::ShiftLeftInt:
+      result = static_cast<std::int64_t>(static_cast<std::uint64_t>(left) <<
+                                         (static_cast<std::uint64_t>(right) & kIntShiftMask));
+      break;
+    case OpCode::ShiftRightInt:
+      result = left >> (static_cast<std::uint64_t>(right) & kIntShiftMask);
+      break;
+    case OpCode::ShiftUnsignedRightInt:
+      result = static_cast<std::int64_t>(static_cast<std::uint64_t>(left) >>
+                                         (static_cast<std::uint64_t>(right) & kIntShiftMask));
       break;
     default:
       std::unreachable();
@@ -228,6 +274,11 @@ ExecutionResult Execution::RunImpl(std::uint32_t entry_function, Debugger* debug
   }
   entry.frame.Attach(isolate_.heap(), entry_values);
   frame_count_ = 1;
+  return Continue<Debugging>(debugger);
+}
+
+template <bool Debugging>
+ExecutionResult Execution::Continue(Debugger* debugger) noexcept {
   while (frame_count_ != 0) {
     if constexpr (Debugging) {
       const DebugContext context(frames_.data(), frame_count_);
@@ -260,6 +311,270 @@ ExecutionResult Execution::Run(std::uint32_t entry_function) noexcept {
 
 ExecutionResult Execution::DebugRun(std::uint32_t entry_function, Debugger& debugger) noexcept {
   return RunImpl<true>(entry_function, &debugger);
+}
+
+runtime::FutureDiagnostic Execution::Diagnostic(const ExecutionResult& result) {
+  runtime::FutureDiagnostic diagnostic{
+      .message = result.message,
+      .stack_trace = {},
+      .status = result.status,
+  };
+  for (const auto& frame : result.stack_trace) {
+    diagnostic.stack_trace.push_back({
+        .function = frame.function,
+        .source_path = frame.source_path,
+        .line = frame.location.line,
+        .column = frame.location.column,
+        .instruction = frame.instruction,
+    });
+  }
+  return diagnostic;
+}
+
+runtime::FutureDiagnostic Execution::ThrowDiagnostic(runtime::Value payload) const {
+  std::string message;
+  if (runtime::Heap::IsValueOfType(
+          payload, {.kind = runtime::ValueKind::Object, .instance = &isolate_.error_layout()})) {
+    message = runtime::Heap::GetField(*payload.AsObject(), runtime::kErrorMessageField)
+                  ->AsString()
+                  ->value();
+  }
+  return Diagnostic({
+      .value = payload,
+      .status = ExecutionStatus::Thrown,
+      .stack_trace = CaptureStack(),
+      .message = std::move(message),
+  });
+}
+
+void Execution::CompleteFuture(runtime::Isolate& isolate,
+                               runtime::Future& future,
+                               const runtime::Future& source) {
+  const auto adopted = future.Adopt(source);
+  if (!adopted) {
+    const auto status = runtime::FutureCompletionStatus(adopted.error());
+    const auto payload = runtime::CreateError(
+        isolate.heap(), isolate.error_layout(),
+        {.message = ExecutionStatusName(status), .code = ExecutionStatusCode(status)});
+    ConsumeFutureCompletion(
+        future.CompleteError(payload.value_or(runtime::Value::Null()),
+                             {
+                                 .message = std::string(ExecutionStatusName(status)),
+                                 .stack_trace = {},
+                                 .status = status,
+                             }));
+  }
+}
+
+void Execution::CompleteFuture(runtime::Isolate& isolate,
+                               runtime::Future& future,
+                               const ExecutionResult& result) {
+  if (result.Succeeded()) {
+    if (result.value.IsObject()) {
+      if (const auto* nested = runtime::Heap::GetFuture(*result.value.AsObject())) {
+        CompleteFuture(isolate, future, *nested);
+        return;
+      }
+    }
+    ConsumeFutureCompletion(future.Complete(result.value));
+  } else {
+    auto payload = result.value;
+    if (payload.IsNull() && result.status != ExecutionStatus::DebuggerStopped) {
+      payload = runtime::CreateError(
+                    isolate.heap(), isolate.error_layout(),
+                    {
+                        .message = result.message.empty() ? ExecutionStatusName(result.status)
+                                                          : std::string_view(result.message),
+                        .code = ExecutionStatusCode(result.status),
+                    })
+                    .value_or(runtime::Value::Null());
+    }
+    ConsumeFutureCompletion(future.CompleteError(payload, Execution::Diagnostic(result)));
+  }
+}
+
+runtime::Future Execution::InvokeFuture(runtime::Isolate& isolate,
+                                        const Program& program,
+                                        runtime::Value callable,
+                                        std::span<const runtime::Value> arguments,
+                                        std::shared_ptr<DebugSession> debug_session) {
+  std::array<RegisterFile, kMaxCallFrames> registers;
+  std::vector<runtime::Value> native_arguments;
+  Execution execution(isolate, program, registers, native_arguments, std::move(debug_session));
+  const auto invoked = execution.Invoke(callable, arguments);
+  if (invoked.Succeeded() && invoked.value.IsObject()) {
+    if (const auto* source = runtime::Heap::GetFuture(*invoked.value.AsObject())) {
+      return source->Rooted();
+    }
+  }
+  runtime::Future result(&isolate.scheduler());
+  result.AttachHeap(isolate.heap());
+  CompleteFuture(isolate, result, invoked);
+  return result;
+}
+
+namespace {
+
+// 只有挂起帧持有寄存器快照；VM 调用栈在一个执行片段退出后立即释放。
+class SuspendedFrame final {
+ public:
+  SuspendedFrame(runtime::Isolate& isolate,
+                 Program program,
+                 runtime::Future result,
+                 SuspensionPoint point,
+                 std::vector<std::uint8_t> indices,
+                 std::shared_ptr<DebugSession> debug_session,
+                 std::shared_ptr<std::vector<runtime::Value>> values)
+      : isolate_(&isolate),
+        program_(std::move(program)),
+        result_(std::move(result)),
+        point_(point),
+        indices_(std::move(indices)),
+        debug_session_(std::move(debug_session)),
+        values_(std::move(values)) {
+    isolate_->scheduler().AddSuspendedFrame(SavedBytes());
+  }
+
+  ~SuspendedFrame() { isolate_->scheduler().RemoveSuspendedFrame(SavedBytes()); }
+  SuspendedFrame(const SuspendedFrame&) = delete;
+  SuspendedFrame& operator=(const SuspendedFrame&) = delete;
+  SuspendedFrame(SuspendedFrame&&) = delete;
+  SuspendedFrame& operator=(SuspendedFrame&&) = delete;
+
+  void Resume(const runtime::FutureResult& completion) {
+    std::array<RegisterFile, kMaxCallFrames> registers;
+    std::vector<runtime::Value> native_arguments;
+    Execution execution(*isolate_, program_, registers, native_arguments, debug_session_);
+    const auto saved = std::span(*values_).first(indices_.size());
+    Execution::CompleteFuture(*isolate_, result_,
+                              execution.ResumeFrame(point_, indices_, saved, completion));
+  }
+
+ private:
+  [[nodiscard]] std::size_t SavedBytes() const noexcept {
+    return sizeof(SuspendedFrame) + sizeof(std::vector<runtime::Value>) +
+           (values_->capacity() * sizeof(runtime::Value)) + indices_.capacity();
+  }
+  runtime::Isolate* isolate_;
+  Program program_;
+  runtime::Future result_;
+  SuspensionPoint point_;
+  std::vector<std::uint8_t> indices_;
+  std::shared_ptr<DebugSession> debug_session_;
+  std::shared_ptr<std::vector<runtime::Value>> values_;
+};
+
+}  // namespace
+
+ExecutionStatus Execution::RestoreFutureError(const runtime::FutureResult& completion) {
+  const auto& diagnostic = completion.diagnostic;
+  if (!completion.value.IsObject() || completion.value.AsObject() == nullptr) {
+    error_message_ = diagnostic.message;
+    return diagnostic.status == ExecutionStatus::Thrown ? ExecutionStatus::TypeError
+                                                        : diagnostic.status;
+  }
+  const auto created = CreateException(completion.value, diagnostic.status, diagnostic.message);
+  if (!created) {
+    return created.error();
+  }
+  auto& exception = runtime::ExceptionData::From(*pending_exception_.AsObject());
+  exception.async_diagnostic = std::make_unique<runtime::FutureDiagnostic>(diagnostic).release();
+  const auto boundary = CaptureStack();
+  for (const auto& frame : boundary) {
+    exception.async_diagnostic->stack_trace.push_back({
+        .function = frame.function,
+        .source_path = frame.source_path,
+        .line = frame.location.line,
+        .column = frame.location.column,
+        .instruction = frame.instruction,
+    });
+  }
+  return diagnostic.status;
+}
+
+ExecutionResult Execution::ResumeFrame(SuspensionPoint point,
+                                       std::span<const std::uint8_t> indices,
+                                       std::span<const runtime::Value> saved,
+                                       const runtime::FutureResult& completion) noexcept {
+  auto& active = frames_.front();
+  active.function = &functions_.subspan(point.function).front();
+  auto values = registers_.front().Acquire(active.function->register_count);
+  if (values.IsEmpty()) {
+    return {.status = ExecutionStatus::OutOfMemory, .stack_trace = {}, .message = {}};
+  }
+  active.frame.Attach(isolate_.heap(), values);
+  for (std::size_t index = 0; index < saved.size(); ++index) {
+    values.subspan(indices.subspan(index).front()).front() = saved.subspan(index).front();
+  }
+  active.program_counter = point.program_counter;
+  frame_count_ = 1;
+  if (completion.state == runtime::FutureState::Failed) {
+    const auto& diagnostic = completion.diagnostic;
+    if (diagnostic.status == ExecutionStatus::DebuggerStopped) {
+      return {
+          .value = runtime::Value::Null(),
+          .status = diagnostic.status,
+          .stack_trace = {},
+          .message = diagnostic.message,
+      };
+    }
+    const auto status = RestoreFutureError(completion);
+    if (auto failure = HandleError(status)) {
+      return std::move(*failure);
+    }
+  } else {
+    values.subspan(point.destination).front() = completion.value;
+  }
+  return debug_session_ != nullptr && debug_session_->debugger != nullptr
+             ? Continue<true>(debug_session_->debugger)
+             : Continue<false>(nullptr);
+}
+
+ExecutionResult Execution::Invoke(runtime::Value callable,
+                                  std::span<const runtime::Value> arguments) noexcept {
+  runtime::RootRange argument_roots(isolate_.heap(), arguments.data(), arguments.size());
+  runtime::RootRange callable_root(isolate_.heap(), &callable, 1);
+  const auto* layout = callable.IsObject() ? runtime::Heap::ClassOf(*callable.AsObject()) : nullptr;
+  if (layout == nullptr || !layout->callable()) {
+    return {.status = ExecutionStatus::TypeError, .stack_trace = {}, .message = {}};
+  }
+  auto target = *layout->callable();
+  std::optional<runtime::Value> implicit;
+  if (target.mode == CallableMode::Closure) {
+    implicit = callable;
+  } else if (target.mode == CallableMode::BoundMethod ||
+             target.mode == CallableMode::InterfaceMethod) {
+    implicit = *runtime::Heap::GetField(*callable.AsObject(), 0);
+    if (target.mode == CallableMode::InterfaceMethod) {
+      const auto resolved = InterfaceTarget(*implicit, target.function);
+      if (!resolved) {
+        return {.status = resolved.error(), .stack_trace = {}, .message = {}};
+      }
+      target.function = *resolved;
+    }
+  }
+  const auto& function = functions_.subspan(target.function).front();
+  const auto hidden = implicit.has_value() ? 1U : 0U;
+  if (function.parameter_count != arguments.size() + hidden) {
+    return {.status = ExecutionStatus::TypeError, .stack_trace = {}, .message = {}};
+  }
+  auto values = registers_.front().Acquire(function.register_count);
+  if (values.IsEmpty()) {
+    return {.status = ExecutionStatus::OutOfMemory, .stack_trace = {}, .message = {}};
+  }
+  auto& active = frames_.front();
+  active.function = &function;
+  active.frame.Attach(isolate_.heap(), values);
+  if (implicit) {
+    values.front() = *implicit;
+  }
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    values.subspan(index + hidden).front() = arguments.subspan(index).front();
+  }
+  frame_count_ = 1;
+  return debug_session_ != nullptr && debug_session_->debugger != nullptr
+             ? Continue<true>(debug_session_->debugger)
+             : Continue<false>(nullptr);
 }
 
 StepResult Execution::ExecuteInstruction(ActiveFrame& active, Instruction instruction) {
@@ -314,6 +629,13 @@ StepResult Execution::ExecuteInstruction(ActiveFrame& active, Instruction instru
     case OpCode::SubInt:
     case OpCode::MulInt:
     case OpCode::DivInt:
+    case OpCode::ModInt:
+    case OpCode::BitAndInt:
+    case OpCode::BitOrInt:
+    case OpCode::BitXorInt:
+    case OpCode::ShiftLeftInt:
+    case OpCode::ShiftRightInt:
+    case OpCode::ShiftUnsignedRightInt:
     case OpCode::EqualInt:
     case OpCode::NotEqualInt:
     case OpCode::LessInt:
@@ -323,12 +645,17 @@ StepResult Execution::ExecuteInstruction(ActiveFrame& active, Instruction instru
       return IntegerOperation(
           opcode, values.subspan(operand_a).front(),
           {.left = values.subspan(operand_b).front(), .right = values.subspan(operand_c).front()});
-    case OpCode::NegInt: {
+    case OpCode::NegInt:
+    case OpCode::BitNotInt: {
       const auto operand = values.subspan(operand_b).front();
       if (!operand.IsInteger()) {
         return std::unexpected(ExecutionStatus::TypeError);
       }
       const auto value = operand.AsInteger();
+      if (opcode == OpCode::BitNotInt) {
+        values.subspan(operand_a).front().SetInteger(~value);
+        return {};
+      }
       if (value == std::numeric_limits<std::int64_t>::min()) {
         return std::unexpected(ExecutionStatus::IntegerOverflow);
       }
@@ -368,10 +695,9 @@ StepResult Execution::ExecuteObject(ActiveFrame& active,
     case OpCode::ExpectedValue:
       return ExecuteExpected(active, instruction);
     case OpCode::LoadString:
-      values.subspan(operand_a).front().SetString(
-          std::span(active.function->strings->values)
-              .subspan(DecodeUnsigned16(instruction))
-              .front());
+      values.subspan(operand_a).front().SetString(std::span(active.function->strings->values)
+                                                      .subspan(DecodeUnsigned16(instruction))
+                                                      .front());
       return {};
     case OpCode::EqualValue:
     case OpCode::NotEqualValue: {
@@ -393,7 +719,11 @@ StepResult Execution::ExecuteObject(ActiveFrame& active,
     case OpCode::NewDynamicArray:
     case OpCode::NewInstance:
     case OpCode::NewCollection:
+    case OpCode::NewFuture:
+    case OpCode::SleepFuture:
       return AllocateObject(active, opcode, operand_a, operand_b, operand_c);
+    case OpCode::Await:
+      return Await(active, {.destination = operand_a, .source = operand_b});
     case OpCode::GetIndex:
     case OpCode::SetIndex:
       return ArrayOperation(opcode, values.subspan(operand_a).front(),
@@ -448,12 +778,19 @@ StepResult Execution::ExecuteObject(ActiveFrame& active,
       }
       return {};
     }
+    case OpCode::JumpIfNull:
+      if (values.subspan(operand_a).front().IsNull()) {
+        Jump(active, DecodeImm16(instruction));
+      }
+      return {};
     case OpCode::Print:
       runtime::WriteValue(isolate_.output(), values.subspan(operand_b).front());
       isolate_.output() << '\n';
       return {};
     case OpCode::NativeCall:
       return ExecuteNative(active, instruction);
+    case OpCode::AsyncCall:
+      return ExecuteAsync(active, instruction);
     case OpCode::Catch:
     case OpCode::ExceptionValue:
     case OpCode::Throw:
@@ -469,11 +806,51 @@ StepResult Execution::ExecuteObject(ActiveFrame& active,
     case OpCode::SetGlobal:
       return AccessGlobal(active, instruction);
     case OpCode::Return:
-      Return(active, values.subspan(operand_a).front());
-      return {};
+      return Return(active, values.subspan(operand_a).front());
     default:
       std::unreachable();
   }
+}
+
+StepResult Execution::Await(ActiveFrame& active, FutureRegisters registers) {
+  const auto source = active.frame.registers().subspan(registers.source).front().Read();
+  const auto* input = source.IsObject() ? runtime::Heap::GetFuture(*source.AsObject()) : nullptr;
+  auto future =
+      input != nullptr ? input->Rooted() : runtime::Future::Value(source, &isolate_.scheduler());
+  future.AttachHeap(isolate_.heap());
+  runtime::Future result(&isolate_.scheduler());
+  auto* object = isolate_.heap().AllocateFuture(result);
+  if (object == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  auto saved = std::make_shared<std::vector<runtime::Value>>();
+  std::vector<std::uint8_t> indices;
+  const auto values = active.frame.registers();
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    const auto value = values.subspan(index).front().Read();
+    if (!value.IsNull()) {
+      indices.push_back(static_cast<std::uint8_t>(index));
+      saved->push_back(value);
+    }
+  }
+  if (globals_ != nullptr) {
+    saved->push_back(globals_->storage);
+  }
+  saved->push_back(runtime::Value::Object(object));
+  result.KeepAlive(saved);
+  const auto function = static_cast<std::uint32_t>(active.function - functions_.data());
+  auto suspended =
+      std::make_shared<SuspendedFrame>(isolate_, program_.Internal(), result.Internal(),
+                                       SuspensionPoint{
+                                           .function = function,
+                                           .program_counter = active.program_counter,
+                                           .destination = registers.destination,
+                                       },
+                                       std::move(indices), debug_session_, saved);
+  future.ObserveResult(
+      [suspended](const runtime::FutureResult& completion) { suspended->Resume(completion); },
+      saved);
+  return Return(active, runtime::Value::Object(object));
 }
 
 StepResult Execution::AllocateObject(ActiveFrame& active,
@@ -481,44 +858,101 @@ StepResult Execution::AllocateObject(ActiveFrame& active,
                                      std::uint8_t operand_a,
                                      std::uint8_t operand_b,
                                      std::uint8_t operand_c) {
-  const auto values = active.frame.registers();
-  auto& heap = isolate_.heap();
   switch (opcode) {
     case OpCode::NewArray:
     case OpCode::NewDynamicArray:
     case OpCode::NewInstance: {
-      std::size_t length = operand_c;
-      if (opcode == OpCode::NewDynamicArray) {
-        const auto size = values.subspan(operand_c).front();
-        if (!size.IsInteger() || size.AsInteger() < 0) {
-          return std::unexpected(ExecutionStatus::IndexOutOfBounds);
-        }
-        length = static_cast<std::size_t>(size.AsInteger());
-      }
-      auto* object =
-          opcode == OpCode::NewArray || opcode == OpCode::NewDynamicArray
-              ? heap.AllocateArray(*active.function->layouts->arrays().subspan(operand_b).front(),
-                                   length)
-              : heap.AllocateInstance(
-                    *active.function->layouts->classes().subspan(operand_b).front());
-      if (object == nullptr) {
-        return std::unexpected(ExecutionStatus::OutOfMemory);
-      }
-      values.subspan(operand_a).front().SetObject(object);
-      return {};
+      return AllocateArrayOrInstance(
+          active, opcode, {.destination = operand_a, .source = operand_c, .layout = operand_b});
     }
-    case OpCode::NewCollection: {
-      const auto& layout = *active.function->layouts->collections().subspan(operand_b).front();
-      auto* collection = heap.AllocateCollection(layout);
-      if (collection == nullptr) {
-        return std::unexpected(ExecutionStatus::OutOfMemory);
-      }
-      values.subspan(operand_a).front().SetObject(collection);
-      return {};
+    case OpCode::NewFuture: {
+      return AllocateFuture(active, {.destination = operand_a, .source = operand_b}, operand_c);
     }
+    case OpCode::SleepFuture:
+      return AllocateSleep(active, {.destination = operand_a, .source = operand_b});
+    case OpCode::NewCollection:
+      return AllocateCollection(active, {.destination = operand_a, .layout = operand_b});
     default:
       std::unreachable();
   }
+}
+
+StepResult Execution::AllocateArrayOrInstance(ActiveFrame& active,
+                                              OpCode opcode,
+                                              FutureRegisters registers) {
+  const auto values = active.frame.registers();
+  std::size_t length = registers.source;
+  if (opcode == OpCode::NewDynamicArray) {
+    const auto size = values.subspan(registers.source).front();
+    if (!size.IsInteger() || size.AsInteger() < 0) {
+      return std::unexpected(ExecutionStatus::IndexOutOfBounds);
+    }
+    length = static_cast<std::size_t>(size.AsInteger());
+  }
+  auto* object =
+      opcode == OpCode::NewInstance
+          ? isolate_.heap().AllocateInstance(
+                *active.function->layouts->classes().subspan(registers.layout).front())
+          : isolate_.heap().AllocateArray(
+                *active.function->layouts->arrays().subspan(registers.layout).front(), length);
+  if (object == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  values.subspan(registers.destination).front().SetObject(object);
+  return {};
+}
+
+StepResult Execution::AllocateFuture(ActiveFrame& active,
+                                     FutureRegisters registers,
+                                     std::uint8_t error_flag) {
+  const auto payload = active.frame.registers().subspan(registers.source).front().Read();
+  runtime::Future future(&isolate_.scheduler());
+  if (payload.IsObject() && payload.AsObject() != nullptr) {
+    if (auto* source = runtime::Heap::GetFuture(*payload.AsObject());
+        error_flag == 0 && source != nullptr) {
+      future = *source;
+    } else if (error_flag != 0) {
+      ConsumeFutureCompletion(future.CompleteError(payload, ThrowDiagnostic(payload)));
+    } else {
+      ConsumeFutureCompletion(future.Complete(payload));
+    }
+  } else if (error_flag != 0) {
+    ConsumeFutureCompletion(future.CompleteError(payload, ThrowDiagnostic(payload)));
+  } else {
+    ConsumeFutureCompletion(future.Complete(payload));
+  }
+  auto* object = isolate_.heap().AllocateFuture(std::move(future));
+  if (object == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  active.frame.registers().subspan(registers.destination).front().SetObject(object);
+  return {};
+}
+
+StepResult Execution::AllocateSleep(ActiveFrame& active, FutureRegisters registers) {
+  const auto delay = active.frame.registers().subspan(registers.source).front();
+  if (!delay.IsInteger() ||
+      !runtime::FutureScheduler::CanSchedule(std::chrono::milliseconds(delay.AsInteger()))) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  auto future =
+      runtime::Future::Sleep(std::chrono::milliseconds(delay.AsInteger()), isolate_.scheduler());
+  auto* object = isolate_.heap().AllocateFuture(std::move(future));
+  if (object == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  active.frame.registers().subspan(registers.destination).front().SetObject(object);
+  return {};
+}
+
+StepResult Execution::AllocateCollection(ActiveFrame& active, FutureRegisters registers) {
+  const auto& layout = *active.function->layouts->collections().subspan(registers.layout).front();
+  auto* collection = isolate_.heap().AllocateCollection(layout);
+  if (collection == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  active.frame.registers().subspan(registers.destination).front().SetObject(collection);
+  return {};
 }
 
 StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) {
@@ -600,10 +1034,10 @@ StepResult Execution::Interpolate(ActiveFrame& active, Instruction instruction) 
     parts.subspan(index).front() = value.AsString();
   }
   auto& heap = isolate_.heap();
-  const auto string = index == arguments.size()
-                          ? std::expected<runtime::StringObject*, runtime::StringJoinError>(
-                                heap.JoinStrings(parts))
-                          : heap.JoinValues(arguments);
+  const auto string =
+      index == arguments.size()
+          ? std::expected<runtime::StringObject*, runtime::StringJoinError>(heap.JoinStrings(parts))
+          : heap.JoinValues(arguments);
   if (!string) {
     return std::unexpected(string.error() == runtime::StringJoinError::TypeMismatch
                                ? ExecutionStatus::TypeError
@@ -740,7 +1174,7 @@ StepResult Execution::AccessGlobal(ActiveFrame& active, Instruction instruction)
   auto& value = std::span(globals_->values).subspan(index).front();
   auto slot = active.frame.registers().subspan(DecodeA(instruction)).front();
   if (DecodeOp(instruction) == OpCode::SetGlobal) {
-    value = slot;
+    globals_->Store(index, slot);
     state = GlobalState::Ready;
     return {};
   }
@@ -754,11 +1188,8 @@ StepResult Execution::AccessGlobal(ActiveFrame& active, Instruction instruction)
       break;
   }
   state = GlobalState::Initializing;
-  const auto entered =
-      EnterCall(std::span(globals_->initializers).subspan(index).front(),
-                active,
-                instruction,
-                std::nullopt);
+  const auto entered = EnterCall(std::span(globals_->initializers).subspan(index).front(), active,
+                                 instruction, std::nullopt);
   if (entered) {
     std::span(frames_).subspan(frame_count_ - 1).front().initialized_global = index;
   }
@@ -865,10 +1296,19 @@ StepResult Execution::EnterCall(std::uint32_t target,
   return {};
 }
 
-void Execution::Return(ActiveFrame& active, runtime::Value value) {
+StepResult Execution::Return(ActiveFrame& active, runtime::Value value) {
+  if (active.function->is_async &&
+      (!value.IsObject() || runtime::Heap::GetFuture(*value.AsObject()) == nullptr)) {
+    auto future = runtime::Future::Value(value, &isolate_.scheduler());
+    auto* object = isolate_.heap().AllocateFuture(std::move(future));
+    if (object == nullptr) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
+    }
+    value = runtime::Value::Object(object);
+  }
   if (active.initialized_global) {
     const auto index = *active.initialized_global;
-    std::span(globals_->values).subspan(index).front() = value;
+    globals_->Store(index, value);
     std::span(globals_->states).subspan(index).front() = GlobalState::Ready;
   }
   const auto return_register = active.return_register;
@@ -876,10 +1316,11 @@ void Execution::Return(ActiveFrame& active, runtime::Value value) {
   --frame_count_;
   if (frame_count_ == 0) {
     result_ = value;
-    return;
+    return {};
   }
   auto& caller = std::span(frames_).subspan(frame_count_ - 1).front();
   caller.frame.registers().subspan(return_register).front() = value;
+  return {};
 }
 
 }  // namespace
@@ -899,6 +1340,20 @@ std::size_t VirtualMachine::register_bytes() const noexcept {
 ExecutionResult VirtualMachine::Execute(const Program& program,
                                         std::uint32_t entry_function) noexcept {
   return ExecuteImpl(program, entry_function, nullptr);
+}
+
+runtime::Future VirtualMachine::ExecuteFuture(const Program& program,
+                                              std::uint32_t entry_function) noexcept {
+  const auto executed = Execute(program, entry_function);
+  if (executed.Succeeded() && executed.value.IsObject()) {
+    if (const auto* source = runtime::Heap::GetFuture(*executed.value.AsObject())) {
+      return source->Rooted();
+    }
+  }
+  runtime::Future result(&isolate_.scheduler());
+  result.AttachHeap(isolate_.heap());
+  internal::Execution::CompleteFuture(isolate_, result, executed);
+  return result;
 }
 
 ExecutionResult VirtualMachine::Debug(const FunctionHandle& function, Debugger& debugger) noexcept {
@@ -926,9 +1381,53 @@ ExecutionResult VirtualMachine::ExecuteImpl(const Program& program,
         .message = {},
     };
   }
-  internal::Execution execution(isolate_, program, registers_, native_arguments_);
-  return debugger != nullptr ? execution.DebugRun(entry_function, *debugger)
-                             : execution.Run(entry_function);
+  if (debugger == nullptr) {
+    internal::Execution execution(isolate_, program, registers_, native_arguments_);
+    return execution.Run(entry_function);
+  }
+  auto session = std::make_shared<internal::DebugSession>(internal::DebugSession{debugger});
+  internal::Execution execution(isolate_, program, registers_, native_arguments_, session);
+  auto result = execution.DebugRun(entry_function, *debugger);
+  runtime::RootRange result_root(isolate_.heap(), &result.value, 1);
+  if (result.Succeeded() && result.value.IsObject()) {
+    if (auto* source = runtime::Heap::GetFuture(*result.value.AsObject())) {
+      auto root = source->Rooted();
+      root.Observe([](runtime::FutureState, runtime::Value) {});
+      if (!isolate_.scheduler().PumpUntil(root, runtime::FuturePumpMode::WaitForHost)) {
+        result = {
+            .value = runtime::Value::Null(),
+            .status = ExecutionStatus::AsyncIdle,
+            .stack_trace = {},
+            .message = {},
+        };
+      } else if (root.state() == runtime::FutureState::Failed) {
+        const auto diagnostic = root.error_diagnostic().value_or(runtime::FutureDiagnostic{});
+        result = {
+            .value = root.error().value_or(runtime::Value::Null()),
+            .status = diagnostic.status,
+            .stack_trace = {},
+            .message = diagnostic.message,
+        };
+        for (const auto& frame : diagnostic.stack_trace) {
+          result.stack_trace.push_back({
+              .function = frame.function,
+              .source_path = frame.source_path,
+              .location = {.line = frame.line, .column = frame.column},
+              .instruction = frame.instruction,
+          });
+        }
+      } else {
+        result.value = root.value().value_or(runtime::Value::Null());
+      }
+    }
+  }
+  if (result.status != ExecutionStatus::DebuggerStopped &&
+      result.status != ExecutionStatus::AsyncIdle) {
+    while (isolate_.scheduler().PumpOne(runtime::FuturePumpMode::WaitForHost)) {
+    }
+  }
+  session->debugger = nullptr;
+  return result;
 }
 
 }  // namespace vela::vm

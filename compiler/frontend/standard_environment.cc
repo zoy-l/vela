@@ -18,8 +18,8 @@
 
 namespace vela::frontend {
 namespace {
-constexpr auto kNames =
-    std::to_array<std::string_view>({"Math", "Random", "performance", "Date", "Error"});
+constexpr auto kNames = std::to_array<std::string_view>(
+    {"Math", "Random", "performance", "Date", "Error", "TimeoutException"});
 }
 
 bool IsStandardName(std::string_view name) noexcept {
@@ -27,6 +27,14 @@ bool IsStandardName(std::string_view name) noexcept {
 }
 
 std::optional<std::string_view> StandardDeclarationSource(std::string_view name) noexcept {
+  if (name == "TimeoutException") {
+    return R"(/// The source Future did not complete before its timeout.
+class TimeoutException {
+  public param message: string = 'Future timed out';
+  public param code: string = 'Timeout';
+}
+)";
+  }
   if (name == "Error") {
     return R"(/// A standard error that can be thrown and caught. Constructing an instance does not throw it.
 /// message describes the failure; code is a program-readable identifier, defaulting to 'Error'.
@@ -136,7 +144,8 @@ void AddStandardEnvironment(Program& program) {
   absl::flat_hash_set<std::string> used;
   for (const auto& source : program.sources) {
     // 大多数文件不使用标准对象，先用字符串搜索避开额外的 tokenize。
-    bool candidate = false;
+    bool candidate = source.text.contains("Future") || source.text.contains("Completer") ||
+                     source.text.contains("Timer");
     for (const auto name : kNames) {
       if (source.text.contains(name)) {
         candidate = true;
@@ -149,6 +158,12 @@ void AddStandardEnvironment(Program& program) {
     for (const auto& token : Lexer(source.text).Tokenize().tokens) {
       if (token.kind == TokenKind::Identifier && IsStandardName(token.lexeme)) {
         used.insert(token.lexeme);
+      }
+      if (token.kind == TokenKind::Identifier &&
+          (token.lexeme == "Future" || token.lexeme == "Completer" || token.lexeme == "Timer" ||
+           token.lexeme == "TimeoutException")) {
+        used.insert("Error");
+        used.insert("TimeoutException");
       }
     }
   }

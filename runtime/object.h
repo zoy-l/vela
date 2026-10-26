@@ -12,6 +12,9 @@
 namespace vela::runtime {
 
 class Isolate;
+class Future;
+class Timer;
+class CancellationToken;
 
 struct ClassLayoutOptions final {
   std::optional<CallableTarget> callable;
@@ -58,6 +61,11 @@ enum class ObjectKind : std::uint8_t {
   Expected,
   Collection,
   Exception,
+  Future,
+  Completer,
+  Timer,
+  CancellationToken,
+  ValueSlots,
 };
 
 struct CollectionLayout;
@@ -97,7 +105,7 @@ struct HeapObject final {
   ObjectKind kind = ObjectKind::Instance;
   std::uint8_t mark_bit = 0;
   std::uint32_t allocation_size = 0;
-  ClassLayout* layout = nullptr;
+  const ClassLayout* layout = nullptr;
   HeapObject* next = nullptr;
   HeapObject* gray_next = nullptr;
   // kind 已区分数组与集合；单一布局指针避免为互斥布局增加对象头开销。
@@ -109,6 +117,8 @@ struct HeapObject final {
     return static_cast<const CollectionLayout*>(indexed_layout);
   }
   std::uint32_t length = 0;
+  // kind 确定 native_payload 的类型；底层存储由 Heap 按该类型销毁。
+  void* native_payload = nullptr;
 };
 
 struct TypeConstraint final {

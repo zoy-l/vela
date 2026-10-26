@@ -1,5 +1,6 @@
 source_set("base") {
   sources = [
+    "async_operation.h",
     "binary.cc",
     "binary.h",
     "builtin.h",

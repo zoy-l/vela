@@ -22,6 +22,15 @@ namespace {
 
 // 特化数量有界，既防止递增递归泛型无限展开，也对应当前字节码的索引容量。
 
+bool IsBuiltinGenericExpression(const Expression& expression) {
+  if (expression.text == "Set" || expression.text == "Map" || expression.text == "Expected" ||
+      expression.text == "Future" || expression.text == "Completer") {
+    return true;
+  }
+  return expression.kind == Expression::Kind::Member && expression.object != nullptr &&
+         expression.object->kind == Expression::Kind::Name && expression.object->text == "Future";
+}
+
 Function CloneFunction(const Function& source);
 
 std::unique_ptr<Statement> CloneStatement(const Statement* source);
@@ -34,6 +43,8 @@ std::unique_ptr<Expression> CloneExpression(const Expression* source) {
   result->kind = source->kind;
   result->location = source->location;
   result->text = source->text;
+  result->null_safe = source->null_safe;
+  result->postfix = source->postfix;
   result->integer_value = source->integer_value;
   result->double_value = source->double_value;
   result->boolean_value = source->boolean_value;
@@ -122,6 +133,7 @@ Function CloneFunction(const Function& source) {
   result.export_kind = source.export_kind;
   result.native_symbol = source.native_symbol;
   result.role = source.role;
+  result.is_async = source.is_async;
   return result;
 }
 
@@ -341,7 +353,8 @@ void Specializer::NormalizeType(TypeName& type, const Substitutions& substitutio
     return;
   }
   if (type.kind == TypeName::Kind::Generic) {
-    if (type.name == "Set" || type.name == "Map" || type.name == "Expected") {
+    if (type.name == "Set" || type.name == "Map" || type.name == "Expected" ||
+        type.name == "Future" || type.name == "Completer") {
       return;
     }
     type.name = Instantiate(type.name, type.arguments, type.location);
@@ -386,8 +399,7 @@ void Specializer::Normalize(Expression* expression, const Substitutions& substit
     expression->text =
         Instantiate(expression->text, expression->type_arguments, expression->location);
     expression->type_arguments.clear();
-  } else if (!expression->type_arguments.empty() && expression->text != "Set" &&
-             expression->text != "Map" && expression->text != "Expected") {
+  } else if (!expression->type_arguments.empty() && !IsBuiltinGenericExpression(*expression)) {
     Error(expression->location, "type arguments require a generic declaration");
   }
   for (auto* child : {

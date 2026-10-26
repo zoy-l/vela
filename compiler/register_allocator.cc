@@ -1,4 +1,5 @@
 #include "compiler/register_allocator.h"
+#include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -6,6 +7,7 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "base/execution_limits.h"
@@ -174,6 +176,7 @@ void Rewrite(ir::Function& function,
     }
     if (original.opcode == ir::Opcode::Call || original.opcode == ir::Opcode::CallInterface ||
         original.opcode == ir::Opcode::CallIndirect || original.opcode == ir::Opcode::BuiltinCall ||
+        original.opcode == ir::Opcode::AsyncCall ||
         original.opcode == ir::Opcode::StringInterpolate ||
         original.opcode == ir::Opcode::NativeCall) {
       instruction.lhs = access.argument_count != 0 ? mapping.at(original.lhs) : 0;
@@ -191,6 +194,68 @@ void RemoveSelfMoves(ir::Function& function) {
     }
   }
   ir::CompactInstructions(function, keep);
+}
+
+std::vector<ir::RegisterId> DeadRegisters(std::uint32_t count,
+                                          const absl::flat_hash_set<ir::RegisterId>& live) {
+  std::vector<ir::RegisterId> result;
+  for (ir::RegisterId reg = 0; reg < count; ++reg) {
+    if (!live.contains(reg)) {
+      result.push_back(reg);
+    }
+  }
+  return result;
+}
+
+void ClearDeadSuspendedRegisters(ir::Function& function, std::span<const ir::Function> functions) {
+  if (!function.is_async ||
+      std::ranges::none_of(function.instructions, [](const auto& instruction) {
+        return instruction.opcode == ir::Opcode::Await;
+      })) {
+    return;
+  }
+  const auto graph = ir::BuildFlowGraph(function);
+  const auto liveness =
+      ir::AnalyzeLiveness(function, graph, functions, ir::LivenessMode::AllInstructions);
+  std::vector<std::vector<ir::RegisterId>> clear(function.instructions.size());
+  for (std::size_t block_index = 0; block_index < graph.blocks.size(); ++block_index) {
+    const auto& block = graph.blocks.at(block_index);
+    auto live = liveness.at(block_index).live_out;
+    for (auto position = block.end; position > block.begin;) {
+      const auto index = --position;
+      const auto& instruction = function.instructions.at(index);
+      const auto access = ir::AnalyzeRegisters(instruction, functions);
+      if (access.defines_value) {
+        live.erase(instruction.dst);
+      }
+      ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) { live.insert(reg); });
+      if (instruction.opcode == ir::Opcode::Await) {
+        clear.at(index) = DeadRegisters(function.register_count, live);
+      }
+    }
+  }
+  std::vector<ir::Instruction> code;
+  std::vector<std::uint32_t> remap(function.instructions.size() + 1);
+  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
+    remap.at(index) = static_cast<std::uint32_t>(code.size());
+    const auto& instruction = function.instructions.at(index);
+    for (const auto reg : clear.at(index)) {
+      code.push_back(
+          {.opcode = ir::Opcode::LoadNull, .dst = reg, .location = instruction.location});
+    }
+    code.push_back(instruction);
+  }
+  remap.back() = static_cast<std::uint32_t>(code.size());
+  for (auto& instruction : code) {
+    if (instruction.opcode == ir::Opcode::Jump || instruction.opcode == ir::Opcode::JumpIfFalse ||
+        instruction.opcode == ir::Opcode::JumpIfNull) {
+      instruction.index = remap.at(instruction.index);
+    }
+  }
+  for (auto& handler : function.handlers) {
+    handler.target = remap.at(handler.target);
+  }
+  function.instructions = std::move(code);
 }
 
 }  // namespace
@@ -220,6 +285,7 @@ std::optional<frontend::Diagnostic> AllocateRegisters(ir::Function& function,
   }
   Rewrite(function, functions, allocations);
   RemoveSelfMoves(function);
+  ClearDeadSuspendedRegisters(function, functions);
   return std::nullopt;
 }
 

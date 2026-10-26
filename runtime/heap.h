@@ -7,9 +7,11 @@
 #include <span>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/execution_status.h"
 #include "runtime/exception.h"
+#include "runtime/future.h"
 #include "runtime/object.h"
 #include "runtime/register_storage.h"
 #include "runtime/value.h"
@@ -83,8 +85,22 @@ class Heap final {
   Heap(const Heap&) = delete;
   Heap& operator=(const Heap&) = delete;
 
-  [[nodiscard]] HeapObject* AllocateInstance(ClassLayout& layout,
+  [[nodiscard]] HeapObject* AllocateInstance(const ClassLayout& layout,
                                              std::span<const Value> initial_fields = {}) noexcept;
+  [[nodiscard]] HeapObject* AllocateFuture(Future future) noexcept;
+  [[nodiscard]] static Future* GetFuture(const HeapObject& object) noexcept;
+  [[nodiscard]] HeapObject* AllocateCompleter(Future future) noexcept;
+  [[nodiscard]] static Future* GetCompleter(const HeapObject& object) noexcept;
+  [[nodiscard]] HeapObject* AllocateTimer(Timer timer) noexcept;
+  [[nodiscard]] static Timer* GetTimer(const HeapObject& object) noexcept;
+  [[nodiscard]] HeapObject* AllocateCancellationToken(CancellationToken token) noexcept;
+  [[nodiscard]] static CancellationToken* GetCancellationToken(const HeapObject& object) noexcept;
+  // VM 的异构全局槽属于 GC 对象，不作为脚本数组或 dynamic 类型暴露。
+  [[nodiscard]] HeapObject* AllocateValueSlots(std::size_t count) noexcept;
+  [[nodiscard]] std::expected<void, ExecutionStatus> ExtendValueSlots(HeapObject& object,
+                                                                      std::size_t count) noexcept;
+  [[nodiscard]] static std::span<Value> ValueSlots(HeapObject& object) noexcept;
+  void SetValueSlot(HeapObject& object, std::size_t index, Value value) noexcept;
   [[nodiscard]] HeapObject* AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept;
   [[nodiscard]] HeapObject* AllocateExpected(ClassLayout& layout,
                                              Value payload,
@@ -227,6 +243,7 @@ class Heap final {
 
  private:
   friend class RootRange;
+  friend class Future;
 
   static constexpr auto kSizeClasses =
       std::to_array<std::size_t>({32, 64, 128, 256, 512, 1024, 2048, 4096});
@@ -269,6 +286,7 @@ class Heap final {
   HeapObject* gray_ = nullptr;
   HeapObject** sweep_link_ = nullptr;
   RootRange* roots_ = nullptr;
+  std::vector<Future::Root> future_roots_;
   std::array<HeapObject*, kSizeClasses.size()> free_blocks_{};
 
   std::size_t object_count_ = 0;

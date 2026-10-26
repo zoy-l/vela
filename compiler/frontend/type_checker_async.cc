@@ -1,0 +1,620 @@
+#include "base/async_operation.h"
+#include "compiler/frontend/ast.h"
+#include "compiler/frontend/type_checker.h"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace vela::frontend {
+namespace {
+
+using Type = TypeDescriptor;
+using Kind = Type::Kind;
+
+const Type kVoid{.kind = Kind::Void, .name = "void"};
+const Type kInt{.kind = Kind::Int, .name = "int"};
+const Type kBool{.kind = Kind::Bool, .name = "bool"};
+
+enum class ParameterPresence : std::uint8_t { Required, Optional };
+
+void AddParameter(FunctionDescriptor& signature,
+                  std::string name,
+                  Type type,
+                  ParameterPresence presence = ParameterPresence::Required) {
+  if (presence == ParameterPresence::Optional) {
+    signature.optional_parameters.insert(name);
+  }
+  signature.parameter_indices.emplace(name,
+                                      static_cast<std::uint32_t>(signature.parameters.size()));
+  signature.parameters.push_back({.name = std::move(name), .type = std::move(type)});
+}
+
+std::optional<std::size_t> Argument(const Expression& expression,
+                                    std::string_view name,
+                                    std::size_t position) {
+  for (std::size_t index = 0; index < expression.arguments.size(); ++index) {
+    const auto& argument = expression.arguments.at(index);
+    if (argument.name == name || (argument.name.empty() && index == position)) {
+      return index;
+    }
+  }
+  return std::nullopt;
+}
+
+bool IsThrowable(const Type& type) {
+  return !type.nullable && (type.kind == Kind::Class || type.kind == Kind::Interface);
+}
+
+}  // namespace
+
+TypeChecker::Type TypeChecker::RegisterAsyncCall(const Expression& expression,
+                                                 AsyncCallDescriptor descriptor,
+                                                 std::span<const std::optional<Type>> checked) {
+  const auto result = CheckFunctionCall(descriptor.signature, expression, checked);
+  async_calls_.insert_or_assign(&expression, std::move(descriptor));
+  return result;
+}
+
+TypeChecker::Type TypeChecker::MakeFutureType(const Expression& expression, const Type& element) {
+  if (!IsValid(element)) {
+    return InvalidType();
+  }
+  if (element.kind == Kind::Future) {
+    if (!element.nullable) {
+      return element;
+    }
+    auto value = generic_arguments_.at(NonNullable(element).name).front();
+    if (value.kind != Kind::Void) {
+      value = NullableType(value);
+    }
+    return MakeFutureType(expression, value);
+  }
+  return ResolveGenericType({
+      .name = "Future",
+      .location = expression.location,
+      .kind = TypeName::Kind::Generic,
+      .arguments = {{.name = element.name, .location = expression.location, .arguments = {}}},
+  });
+}
+
+TypeChecker::Type TypeChecker::CheckAsyncCallback(const Expression& expression,
+                                                  std::span<const Type> parameters,
+                                                  CallbackPresence presence) {
+  FunctionInfo context;
+  for (const auto& type : parameters) {
+    AddParameter(context, std::to_string(context.parameters.size()), type);
+  }
+  auto expected = FunctionType(context);
+  if (presence == CallbackPresence::Optional) {
+    expected = NullableType(expected);
+  }
+  auto type = CheckExpression(expression, &expected);
+  if (type.kind != Kind::Function || (type.nullable && presence == CallbackPresence::Required)) {
+    AddDiagnostic(expression.location, "async callback must be a non-null function");
+    return InvalidType();
+  }
+  const auto& signature = function_types_.at(NonNullable(type).name);
+  if (!IsValid(signature.return_type)) {
+    return InvalidType();
+  }
+  if (signature.parameters.size() != parameters.size()) {
+    AddDiagnostic(expression.location, "async callback parameter count does not match");
+  }
+  return type;
+}
+
+TypeChecker::Type TypeChecker::CheckFutureCall(const Expression& expression, const Type* expected) {
+  const auto& method = expression.callee->text;
+  if (method == "wait" || method == "race") {
+    return CheckFutureAggregation(expression, expected);
+  }
+  if (method == "sync" || method == "microtask" || method == "delayed") {
+    return CheckFutureComputation(expression, expected);
+  }
+  return CheckFutureValueFactory(expression, expected);
+}
+
+TypeChecker::Type TypeChecker::CheckFutureValueFactory(const Expression& expression,
+                                                       const Type* expected) {
+  const auto& callee = *expression.callee;
+  if (callee.text != "value" && callee.text != "error") {
+    AddDiagnostic(callee.location, "unknown Future factory '" + callee.text + "'");
+    return InvalidType();
+  }
+  std::optional<Type> context;
+  if (!callee.type_arguments.empty()) {
+    context = ResolveGenericType({
+        .name = "Future",
+        .location = callee.location,
+        .kind = TypeName::Kind::Generic,
+        .arguments = callee.type_arguments,
+    });
+  } else if (expected != nullptr && expected->kind == Kind::Future) {
+    context = NonNullable(*expected);
+  }
+  if (expression.arguments.size() != 1) {
+    AddDiagnostic(expression.location, "Future factory expects one argument");
+    return InvalidType();
+  }
+  const auto element =
+      context && IsValid(*context) ? generic_arguments_.at(context->name).front() : InvalidType();
+  const auto argument =
+      CheckExpression(*expression.arguments.front().value,
+                      callee.text == "value" && IsValid(element) ? &element : nullptr);
+  FunctionInfo signature;
+  AddParameter(signature, callee.text == "value" ? "value" : "error", argument);
+  const std::array<std::optional<Type>, 1> checked{argument};
+  static_cast<void>(CheckFunctionCall(signature, expression, checked));
+  if (callee.text == "error") {
+    if (!IsThrowable(argument)) {
+      AddDiagnostic(expression.location, "Future.error requires a non-null throwable object");
+    }
+    return context.value_or(MakeFutureType(expression, kVoid));
+  }
+  if (context && argument.kind != Kind::Future) {
+    if (!CanAssign(element, argument)) {
+      AddDiagnostic(expression.location, "Future.value payload does not match its result type");
+    }
+    return *context;
+  }
+  const auto result = MakeFutureType(expression, argument);
+  if (context && IsValid(result) && !CanAssign(*context, result)) {
+    AddDiagnostic(expression.location, "Future.value payload does not match its result type");
+  }
+  return result;
+}
+
+TypeChecker::Type TypeChecker::CheckFutureComputation(const Expression& expression,
+                                                      const Type* expected) {
+  const auto& callee = *expression.callee;
+  const auto& method = callee.text;
+  std::optional<Type> context;
+  if (!callee.type_arguments.empty()) {
+    context = ResolveGenericType({
+        .name = "Future",
+        .location = callee.location,
+        .kind = TypeName::Kind::Generic,
+        .arguments = callee.type_arguments,
+    });
+  } else if (expected != nullptr && expected->kind == Kind::Future) {
+    context = NonNullable(*expected);
+  }
+  const bool delayed = method == "delayed";
+  const auto callback = Argument(expression, "computation", delayed ? 1 : 0);
+  if (!callback) {
+    AddDiagnostic(expression.location, "Future factory requires a computation");
+    return InvalidType();
+  }
+  auto type = CheckAsyncCallback(*expression.arguments.at(*callback).value, {});
+  if (!IsValid(type)) {
+    return type;
+  }
+  auto result = MakeFutureType(expression, function_types_.at(type.name).return_type);
+  if (context && IsValid(*context) && !CanAssign(*context, result)) {
+    AddDiagnostic(expression.location, "Future computation result does not match its context");
+  }
+  if (context) {
+    result = *context;
+  }
+  FunctionInfo signature;
+  signature.return_type = result;
+  if (delayed) {
+    AddParameter(signature, "milliseconds", kInt);
+  }
+  AddParameter(signature, "computation", type);
+  std::vector<std::optional<Type>> checked(expression.arguments.size());
+  checked.at(*callback) = type;
+  if (method == "sync") {
+    return CheckFunctionCall(signature, expression, checked);
+  }
+  return RegisterAsyncCall(
+      expression,
+      {
+          .operation = delayed ? AsyncOperation::Delayed : AsyncOperation::Microtask,
+          .signature = std::move(signature),
+      },
+      checked);
+}
+
+void TypeChecker::AddFutureCleanup(const Expression& expression,
+                                   FunctionInfo& signature,
+                                   const Type& element,
+                                   std::vector<std::optional<Type>>& checked) {
+  FunctionInfo context;
+  context.return_type = kVoid;
+  if (element.kind != Kind::Void) {
+    AddParameter(context, "value", element);
+  }
+  auto callback_type = NullableType(FunctionType(context));
+  const auto input = Argument(expression, "cleanUp", 2);
+  if (input && expression.arguments.at(*input).value->kind != Expression::Kind::NullLiteral) {
+    const std::array<Type, 1> parameters{element};
+    auto type = CheckAsyncCallback(
+        *expression.arguments.at(*input).value,
+        std::span<const Type>(parameters).first(element.kind == Kind::Void ? 0 : 1),
+        CallbackPresence::Optional);
+    if (IsValid(type)) {
+      const auto callback = function_types_.at(NonNullable(type).name);
+      if (callback.parameters.size() == 1 &&
+          !CanAssign(callback.parameters.front().type, element)) {
+        AddDiagnostic(expression.location, "cleanUp parameter must accept the input element type");
+      }
+      if (callback.return_type.kind != Kind::Void &&
+          !IsSameType(callback.return_type, MakeFutureType(expression, kVoid))) {
+        AddDiagnostic(expression.location, "cleanUp must return void or Future<void>");
+      }
+      callback_type = NullableType(type);
+      checked.at(*input) = type;
+    }
+  }
+  AddParameter(signature, "cleanUp", callback_type, ParameterPresence::Optional);
+}
+
+TypeChecker::Type TypeChecker::FutureAggregationElement(const Expression& expression,
+                                                        const Type* expected) {
+  const bool wait = expression.callee->text == "wait";
+  Type element;
+  const auto& explicit_types = expression.callee->type_arguments;
+  if (explicit_types.size() == 1) {
+    element = ResolveType(explicit_types.front(), true);
+  } else if (!explicit_types.empty()) {
+    AddDiagnostic(expression.location, "Future aggregation accepts one type argument");
+  } else if (expected != nullptr && expected->kind == Kind::Future) {
+    element = generic_arguments_.at(NonNullable(*expected).name).front();
+    if (wait) {
+      if (element.kind == Kind::Array) {
+        element = array_elements_.at(element.name);
+      } else if (element.kind != Kind::Void) {
+        element = InvalidType();
+      }
+    }
+  }
+  return element;
+}
+
+TypeChecker::Type TypeChecker::CheckFutureAggregation(const Expression& expression,
+                                                      const Type* expected) {
+  const bool wait = expression.callee->text == "wait";
+  const auto input = Argument(expression, "values", 0);
+  if (!input) {
+    AddDiagnostic(expression.location, "Future aggregation requires values");
+    return InvalidType();
+  }
+  auto element = FutureAggregationElement(expression, expected);
+  const auto context =
+      IsValid(element) ? ArrayType(MakeFutureType(expression, element)) : InvalidType();
+  auto values = CheckExpression(*expression.arguments.at(*input).value,
+                                IsValid(context) ? &context : nullptr);
+  const auto checked_values = values;
+  if (values.kind != Kind::Array || values.nullable) {
+    AddDiagnostic(expression.location, "Future aggregation expects Future<T>[]");
+    if (!IsValid(context)) {
+      return InvalidType();
+    }
+    // 保留显式类型实参或调用上下文建立的签名，供错误诊断和编辑器补全使用。
+    values = context;
+  }
+  const auto future = array_elements_.at(values.name);
+  if (future.kind != Kind::Future || future.nullable) {
+    AddDiagnostic(expression.location, "Future aggregation expects non-null Future<T> elements");
+    return InvalidType();
+  }
+  const auto actual = generic_arguments_.at(future.name).front();
+  if (IsValid(element) && !IsSameType(element, actual)) {
+    AddDiagnostic(expression.location, "Future aggregation element type does not match");
+  }
+  element = actual;
+  FunctionInfo signature;
+  const auto collected = wait && element.kind != Kind::Void ? ArrayType(element) : element;
+  signature.return_type = MakeFutureType(expression, collected);
+  AddParameter(signature, "values", values);
+  std::vector<std::optional<Type>> checked(expression.arguments.size());
+  checked.at(*input) = checked_values;
+  if (wait) {
+    AddParameter(signature, "eagerError", kBool, ParameterPresence::Optional);
+    AddFutureCleanup(expression, signature, element, checked);
+  }
+  return RegisterAsyncCall(
+      expression,
+      {
+          .operation = wait ? AsyncOperation::Wait : AsyncOperation::Race,
+          .signature = std::move(signature),
+          .runtime_type =
+              wait && element.kind != Kind::Void ? std::optional(collected) : std::nullopt,
+      },
+      checked);
+}
+
+TypeChecker::Type TypeChecker::CheckAsyncConstruction(const Expression& expression,
+                                                      const Type* expected) {
+  Type type;
+  AsyncOperation operation = AsyncOperation::Count;
+  if (expression.callee->text == "Completer") {
+    operation = AsyncOperation::NewCompleter;
+    if (!expression.callee->type_arguments.empty()) {
+      type = ResolveGenericType({
+          .name = "Completer",
+          .location = expression.location,
+          .kind = TypeName::Kind::Generic,
+          .arguments = expression.callee->type_arguments,
+      });
+    } else if (expected != nullptr && expected->kind == Kind::Completer) {
+      type = NonNullable(*expected);
+    } else {
+      AddDiagnostic(expression.location,
+                    "Completer requires explicit or contextual type arguments");
+    }
+  } else {
+    operation = AsyncOperation::NewCancellationToken;
+    type = types_.at("CancellationToken");
+  }
+  FunctionInfo signature;
+  signature.return_type = type;
+  return RegisterAsyncCall(expression, {.operation = operation, .signature = std::move(signature)});
+}
+
+TypeChecker::Type TypeChecker::CheckTimerFactory(const Expression& expression) {
+  const auto& method = expression.callee->text;
+  if (method != "after" && method != "periodic") {
+    AddDiagnostic(expression.location, "unknown Timer factory");
+    return InvalidType();
+  }
+  const auto callback = Argument(expression, "callback", 1);
+  if (!callback) {
+    AddDiagnostic(expression.location, "Timer factory requires a callback");
+    return InvalidType();
+  }
+  auto type = CheckAsyncCallback(*expression.arguments.at(*callback).value, {});
+  if (!IsValid(type)) {
+    return type;
+  }
+  const auto returned = function_types_.at(type.name).return_type;
+  if (returned.kind != Kind::Void && !IsSameType(returned, MakeFutureType(expression, kVoid))) {
+    AddDiagnostic(expression.location, "Timer callback must return void or Future<void>");
+  }
+  FunctionInfo signature;
+  signature.return_type = types_.at("Timer");
+  AddParameter(signature, "milliseconds", kInt);
+  AddParameter(signature, "callback", type);
+  std::vector<std::optional<Type>> checked(expression.arguments.size());
+  checked.at(*callback) = type;
+  return RegisterAsyncCall(expression,
+                           {
+                               .operation = method == "after" ? AsyncOperation::TimerAfter
+                                                              : AsyncOperation::TimerPeriodic,
+                               .signature = std::move(signature),
+                           },
+                           checked);
+}
+
+TypeChecker::Type TypeChecker::CheckAsyncProperty(const Expression& expression,
+                                                  const Type& receiver) {
+  FunctionInfo signature;
+  AsyncOperation operation = AsyncOperation::Count;
+  if (receiver.kind == Kind::Completer && expression.text == "future") {
+    signature.return_type =
+        MakeFutureType(expression, generic_arguments_.at(receiver.name).front());
+    operation = AsyncOperation::CompleterFuture;
+  } else {
+    signature.return_type = kBool;
+    operation = receiver.kind == Kind::Completer ? AsyncOperation::CompleterIsCompleted
+                                                 : AsyncOperation::CancellationIsCancelled;
+  }
+  const auto result = signature.return_type;
+  async_calls_.insert_or_assign(&expression, AsyncCallDescriptor{
+                                                 .operation = operation,
+                                                 .signature = std::move(signature),
+                                                 .receiver = true,
+                                             });
+  return result;
+}
+
+TypeChecker::Type TypeChecker::CheckCompleterMethod(const Expression& expression,
+                                                    const Type& receiver) {
+  const bool error = expression.callee->text == "completeError";
+  const auto element = generic_arguments_.at(receiver.name).front();
+  AsyncCallDescriptor descriptor{
+      .operation = error ? AsyncOperation::CompleterError : AsyncOperation::CompleterComplete,
+      .signature = {},
+      .receiver = true,
+  };
+  auto& signature = descriptor.signature;
+  signature.return_type = kVoid;
+  std::vector<std::optional<Type>> checked(expression.arguments.size());
+  if (error || element.kind != Kind::Void || !expression.arguments.empty()) {
+    const auto input = Argument(expression, error ? "error" : "value", 0);
+    Type type = element;
+    if (input) {
+      type = CheckExpression(*expression.arguments.at(*input).value, error ? nullptr : &element);
+      checked.at(*input) = type;
+      const bool valid =
+          error ? IsThrowable(type)
+                : CanAssign(element, type) || IsSameType(MakeFutureType(expression, element), type);
+      if (!valid) {
+        AddDiagnostic(expression.location, "Completer payload does not match its contract");
+      }
+    }
+    AddParameter(signature, error ? "error" : "value", type);
+  }
+  return RegisterAsyncCall(expression, std::move(descriptor), checked);
+}
+
+TypeChecker::Type TypeChecker::AddThenError(const Expression& expression,
+                                            FunctionInfo& signature,
+                                            std::vector<std::optional<Type>>& checked) {
+  auto error_type = types_.at("Error");
+  FunctionInfo context;
+  context.return_type = generic_arguments_.at(signature.return_type.name).front();
+  AddParameter(context, "error", error_type);
+  auto callback = NullableType(FunctionType(context));
+  const auto input = Argument(expression, "onError", 1);
+  if (input && expression.arguments.at(*input).value->kind != Expression::Kind::NullLiteral) {
+    const std::array<Type, 1> parameters{error_type};
+    auto type = CheckAsyncCallback(*expression.arguments.at(*input).value, parameters,
+                                   CallbackPresence::Optional);
+    if (IsValid(type)) {
+      const auto actual = function_types_.at(NonNullable(type).name);
+      if (actual.parameters.size() == 1) {
+        error_type = actual.parameters.front().type;
+      }
+      if (!CanAssign(signature.return_type, MakeFutureType(expression, actual.return_type))) {
+        AddDiagnostic(expression.location, "then onError result must match onValue");
+      }
+      callback = NullableType(type);
+      checked.at(*input) = type;
+    }
+  }
+  AddParameter(signature, "onError", callback, ParameterPresence::Optional);
+  return error_type;
+}
+
+TypeChecker::Type TypeChecker::CheckFutureCallback(const Expression& expression,
+                                                   const Type& receiver) {
+  const auto& method = expression.callee->text;
+  const bool then = method == "then";
+  const bool cleanup = method == "whenComplete";
+  std::string_view name = "onError";
+  auto operation = AsyncOperation::CatchError;
+  if (then) {
+    name = "onValue";
+    operation = AsyncOperation::Then;
+  }
+  if (cleanup) {
+    name = "action";
+    operation = AsyncOperation::WhenComplete;
+  }
+  const auto input = Argument(expression, name, 0);
+  if (!input) {
+    AddDiagnostic(expression.location, "Future method requires a callback");
+    return InvalidType();
+  }
+  const auto element = generic_arguments_.at(receiver.name).front();
+  std::vector<Type> parameters;
+  if (!then && !cleanup) {
+    parameters.push_back(types_.at("Error"));
+  }
+  if (then && element.kind != Kind::Void) {
+    parameters.push_back(element);
+  }
+  auto callback = CheckAsyncCallback(*expression.arguments.at(*input).value, parameters);
+  if (!IsValid(callback)) {
+    return callback;
+  }
+  const auto callback_signature = function_types_.at(callback.name);
+  const auto output = MakeFutureType(expression, callback_signature.return_type);
+  if (!IsValid(output)) {
+    return InvalidType();
+  }
+  AsyncCallDescriptor descriptor{.operation = operation, .signature = {}, .receiver = true};
+  auto& signature = descriptor.signature;
+  signature.return_type = then ? output : receiver;
+  if (then && !parameters.empty() && callback_signature.parameters.size() == 1 &&
+      !CanAssign(callback_signature.parameters.front().type, element)) {
+    AddDiagnostic(expression.location, "then callback must accept the Future value type");
+  }
+  if (!then && !cleanup && !CanAssign(receiver, output)) {
+    AddDiagnostic(expression.location, "catchError callback must return the Future value type");
+  }
+  if (cleanup && !IsSameType(output, MakeFutureType(expression, kVoid))) {
+    AddDiagnostic(expression.location, "whenComplete action must return void or Future<void>");
+  }
+  AddParameter(signature, std::string(name), callback);
+  std::vector<std::optional<Type>> checked(expression.arguments.size());
+  checked.at(*input) = callback;
+  if (!cleanup) {
+    auto error_type = types_.at("Error");
+    if (then) {
+      error_type = AddThenError(expression, signature, checked);
+    } else if (callback_signature.parameters.size() == 1) {
+      error_type = callback_signature.parameters.front().type;
+    }
+    if (!IsThrowable(error_type)) {
+      AddDiagnostic(expression.location, "error callback requires a non-null throwable parameter");
+    }
+    descriptor.runtime_type = error_type;
+  }
+  return RegisterAsyncCall(expression, std::move(descriptor), checked);
+}
+
+TypeChecker::Type TypeChecker::CheckFutureTimeout(const Expression& expression,
+                                                  const Type& receiver) {
+  const auto element = generic_arguments_.at(receiver.name).front();
+  AsyncCallDescriptor descriptor{
+      .operation = AsyncOperation::Timeout,
+      .signature = {},
+      .receiver = true,
+      .runtime_type = types_.at("TimeoutException"),
+  };
+  auto& signature = descriptor.signature;
+  signature.return_type = receiver;
+  AddParameter(signature, "milliseconds", kInt);
+  FunctionInfo context;
+  context.return_type = element;
+  auto callback = NullableType(FunctionType(context));
+  std::vector<std::optional<Type>> checked(expression.arguments.size());
+  const auto input = Argument(expression, "onTimeout", 1);
+  if (input && expression.arguments.at(*input).value->kind != Expression::Kind::NullLiteral) {
+    const auto type =
+        CheckAsyncCallback(*expression.arguments.at(*input).value, {}, CallbackPresence::Optional);
+    if (IsValid(type)) {
+      const auto output =
+          MakeFutureType(expression, function_types_.at(NonNullable(type).name).return_type);
+      if (!CanAssign(receiver, output)) {
+        AddDiagnostic(expression.location, "onTimeout must return the Future value type");
+      }
+      callback = NullableType(type);
+      checked.at(*input) = type;
+    }
+  }
+  AddParameter(signature, "onTimeout", callback, ParameterPresence::Optional);
+  return RegisterAsyncCall(expression, std::move(descriptor), checked);
+}
+
+TypeChecker::Type TypeChecker::CheckAsyncMethod(const Expression& expression,
+                                                const Type& receiver,
+                                                const Type* expected) {
+  const auto& method = expression.callee->text;
+  auto result = InvalidType();
+  if (receiver.kind == Kind::Completer && (method == "complete" || method == "completeError")) {
+    result = CheckCompleterMethod(expression, receiver);
+  } else if (receiver.kind == Kind::Future && method == "timeout") {
+    result = CheckFutureTimeout(expression, receiver);
+  } else if (receiver.kind == Kind::Future &&
+             (method == "then" || method == "catchError" || method == "whenComplete")) {
+    result = CheckFutureCallback(expression, receiver);
+  } else if ((receiver.kind == Kind::Timer || receiver.kind == Kind::CancellationToken) &&
+             method == "cancel") {
+    FunctionInfo signature;
+    signature.return_type = kVoid;
+    result =
+        RegisterAsyncCall(expression, {
+                                          .operation = receiver.kind == Kind::Timer
+                                                           ? AsyncOperation::TimerCancel
+                                                           : AsyncOperation::CancellationCancel,
+                                          .signature = std::move(signature),
+                                          .receiver = true,
+                                      });
+  } else {
+    AddDiagnostic(expression.location, "unknown async method '" + method + "'");
+  }
+  if (expected != nullptr && IsValid(result) && !CanAssign(*expected, result)) {
+    AddDiagnostic(expression.location, "async method result does not match its context");
+  }
+  return result;
+}
+
+TypeChecker::Type TypeChecker::CheckSleepCall(const Expression& expression) {
+  FunctionInfo signature;
+  signature.return_type = MakeFutureType(expression, kVoid);
+  AddParameter(signature, "milliseconds", kInt);
+  return CheckFunctionCall(signature, expression);
+}
+
+}  // namespace vela::frontend

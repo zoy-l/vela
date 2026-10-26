@@ -589,6 +589,11 @@ SemanticIndex::Receiver SemanticIndex::ReceiverFor(const Expression& expression)
   if (type != model_.expression_types.end()) {
     receiver.type = type->second;
   } else if (expression.kind == Expression::Kind::Name && !model_.bindings.contains(&expression)) {
+    if (expression.text == "Future") {
+      receiver.type = {.kind = frontend::TypeDescriptor::Kind::Future, .name = "Future"};
+      receiver.storage = frontend::MemberStorage::Static;
+      return receiver;
+    }
     if (const auto named = model_.types.find(expression.text); named != model_.types.end()) {
       receiver.type = named->second;
       receiver.storage = frontend::MemberStorage::Static;

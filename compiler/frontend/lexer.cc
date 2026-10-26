@@ -23,12 +23,19 @@ const absl::flat_hash_map<std::string_view, TokenKind> kKeywords = {
     {"static", TokenKind::Static},
     {"param", TokenKind::Param},
     {"constructor", TokenKind::Constructor},
+    {"extends", TokenKind::Extends},
+    {"super", TokenKind::Super},
+    {"override", TokenKind::Override},
+    {"get", TokenKind::Get},
+    {"set", TokenKind::Set},
     {"interface", TokenKind::Interface},
     {"implements", TokenKind::Implements},
     {"is", TokenKind::Is},
     {"as", TokenKind::As},
     {"match", TokenKind::Match},
     {"func", TokenKind::Func},
+    {"async", TokenKind::Async},
+    {"await", TokenKind::Await},
     {"let", TokenKind::Let},
     {"const", TokenKind::Const},
     {"class", TokenKind::Class},
@@ -50,6 +57,7 @@ const absl::flat_hash_map<std::string_view, TokenKind> kKeywords = {
     {"break", TokenKind::Break},
     {"continue", TokenKind::Continue},
     {"for", TokenKind::For},
+    {"in", TokenKind::In},
     {"print", TokenKind::Print},
     {"switch", TokenKind::Switch},
     {"case", TokenKind::Case},
@@ -102,6 +110,21 @@ LexResult Lexer::Tokenize() {
 
 void Lexer::ScanToken(std::size_t start) {
   const char character = Advance();
+  if (ScanPunctuation(character, start)) {
+    return;
+  }
+  if (IsIdentifierStart(character)) {
+    ScanIdentifier();
+    return;
+  }
+  if (IsDigit(character)) {
+    ScanNumber();
+    return;
+  }
+  AddDiagnostic(token_location_, "unexpected character");
+}
+
+bool Lexer::ScanPunctuation(char character, std::size_t start) {
   switch (character) {
     case '{':
       AddToken(TokenKind::LeftBrace, start);
@@ -131,69 +154,139 @@ void Lexer::ScanToken(std::size_t start) {
       AddToken(TokenKind::Colon, start);
       break;
     case '?':
-      AddToken(TokenKind::Question, start);
+      ScanQuestion(start);
       break;
     case '.':
       AddToken(TokenKind::Dot, start);
       break;
     case '+':
-      AddToken(TokenKind::Plus, start);
-      break;
     case '-':
-      AddToken(TokenKind::Minus, start);
-      break;
     case '*':
-      AddToken(TokenKind::Star, start);
-      break;
     case '/':
-      AddToken(TokenKind::Slash, start);
+    case '%':
+      ScanArithmetic({.character = character, .start = start});
       break;
-    case '=': {
-      auto kind = TokenKind::Equal;
-      if (Match('=')) {
-        kind = TokenKind::EqualEqual;
-      } else if (Match('>')) {
-        kind = TokenKind::Arrow;
-      }
-      AddToken(kind, start);
+    case '=':
+    case '<':
+    case '>':
+      ScanComparison({.character = character, .start = start});
       break;
-    }
     case '!':
       AddToken(Match('=') ? TokenKind::BangEqual : TokenKind::Bang, start);
       break;
-    case '<':
-      AddToken(Match('=') ? TokenKind::LessEqual : TokenKind::Less, start);
-      break;
-    case '>':
-      AddToken(Match('=') ? TokenKind::GreaterEqual : TokenKind::Greater, start);
-      break;
     case '&':
-      if (Match('&')) {
-        AddToken(TokenKind::AndAnd, start);
-      } else {
-        AddDiagnostic(token_location_, "expected '&' after '&'");
-      }
-      break;
     case '|':
-      if (Match('|')) {
-        AddToken(TokenKind::OrOr, start);
-      } else {
-        AddDiagnostic(token_location_, "expected '|' after '|'");
-      }
+    case '^':
+    case '~':
+      ScanBitwise({.character = character, .start = start});
       break;
     case '"':
     case '\'':
       ScanString(character);
-      break;
+      return true;
     default:
-      if (IsIdentifierStart(character)) {
-        ScanIdentifier();
-      } else if (IsDigit(character)) {
-        ScanNumber();
-      } else {
-        AddDiagnostic(token_location_, "unexpected character");
-      }
-      break;
+      return false;
+  }
+  return true;
+}
+
+void Lexer::ScanQuestion(std::size_t start) {
+  if (Match('.')) {
+    AddToken(TokenKind::QuestionDot, start);
+  } else if (Match('?')) {
+    AddToken(TokenKind::QuestionQuestion, start);
+  } else {
+    AddToken(TokenKind::Question, start);
+  }
+}
+
+void Lexer::ScanArithmetic(PunctuationContext context) {
+  const auto [character, start] = context;
+  if (character == '+') {
+    if (Match('+')) {
+      AddToken(TokenKind::PlusPlus, start);
+    } else {
+      AddToken(Match('=') ? TokenKind::PlusEqual : TokenKind::Plus, start);
+    }
+  } else if (character == '-') {
+    if (Match('-')) {
+      AddToken(TokenKind::MinusMinus, start);
+    } else {
+      AddToken(Match('=') ? TokenKind::MinusEqual : TokenKind::Minus, start);
+    }
+  } else if (character == '*') {
+    AddToken(Match('=') ? TokenKind::StarEqual : TokenKind::Star, start);
+  } else if (character == '/') {
+    AddToken(Match('=') ? TokenKind::SlashEqual : TokenKind::Slash, start);
+  } else {
+    AddToken(Match('=') ? TokenKind::PercentEqual : TokenKind::Percent, start);
+  }
+}
+
+void Lexer::ScanComparison(PunctuationContext context) {
+  const auto [character, start] = context;
+  switch (character) {
+    case '=':
+      ScanEquals(start);
+      return;
+    case '<':
+      ScanLess(start);
+      return;
+    default:
+      ScanGreater(start);
+      return;
+  }
+}
+
+void Lexer::ScanEquals(std::size_t start) {
+  if (Match('=')) {
+    AddToken(TokenKind::EqualEqual, start);
+  } else if (Match('>')) {
+    AddToken(TokenKind::Arrow, start);
+  } else {
+    AddToken(TokenKind::Equal, start);
+  }
+}
+
+void Lexer::ScanLess(std::size_t start) {
+  if (Match('<')) {
+    AddToken(Match('=') ? TokenKind::ShiftLeftEqual : TokenKind::ShiftLeft, start);
+  } else {
+    AddToken(Match('=') ? TokenKind::LessEqual : TokenKind::Less, start);
+  }
+}
+
+void Lexer::ScanGreater(std::size_t start) {
+  if (Match('>')) {
+    if (Match('>')) {
+      AddToken(Match('=') ? TokenKind::ShiftUnsignedRightEqual : TokenKind::ShiftUnsignedRight,
+               start);
+    } else {
+      AddToken(Match('=') ? TokenKind::ShiftRightEqual : TokenKind::ShiftRight, start);
+    }
+  } else {
+    AddToken(Match('=') ? TokenKind::GreaterEqual : TokenKind::Greater, start);
+  }
+}
+
+void Lexer::ScanBitwise(PunctuationContext context) {
+  const auto [character, start] = context;
+  if (character == '&') {
+    if (Match('&')) {
+      AddToken(TokenKind::AndAnd, start);
+    } else {
+      AddToken(Match('=') ? TokenKind::AmpersandEqual : TokenKind::Ampersand, start);
+    }
+  } else if (character == '|') {
+    if (Match('|')) {
+      AddToken(TokenKind::OrOr, start);
+    } else {
+      AddToken(Match('=') ? TokenKind::PipeEqual : TokenKind::Pipe, start);
+    }
+  } else if (character == '^') {
+    AddToken(Match('=') ? TokenKind::CaretEqual : TokenKind::Caret, start);
+  } else {
+    AddToken(TokenKind::Tilde, start);
   }
 }
 

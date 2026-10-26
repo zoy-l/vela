@@ -75,6 +75,10 @@ class Lowerer final {
 
   void AddDiagnostic(frontend::SourceLocation location, std::string message);
   void BuildClassTable();
+  [[nodiscard]] Class BuildClass(const frontend::Class& source_class,
+                                 const frontend::ClassDescriptor& class_info);
+  [[nodiscard]] std::string FindMethodOwner(std::string method_owner,
+                                            std::string_view method_name) const;
   void BuildInterfaceSelectors();
   void BuildFunctionTable();
   std::uint32_t AddFunctionId(const std::string& name,
@@ -87,8 +91,16 @@ class Lowerer final {
                         const frontend::TypeDescriptor& type,
                         frontend::SourceLocation location);
   void LowerFunction(const frontend::Function& source,
+                     const frontend::FunctionDescriptor& function_info,
                      const frontend::Class* owner = nullptr,
                      const frontend::LambdaDescriptor* lambda = nullptr);
+  void LowerFunctionParameters(const frontend::Function& source,
+                               const frontend::FunctionDescriptor& function_info,
+                               const frontend::Class* owner,
+                               const frontend::LambdaDescriptor* lambda);
+  void LowerNativeFunction(const frontend::Function& source, Function& function);
+  std::optional<LoweredValue> LowerSuperGetter(const frontend::Expression& expression);
+  void LowerCaptures(const frontend::Function& source, const frontend::LambdaDescriptor& lambda);
   void LowerStatement(const frontend::Statement& statement);
   void LowerBlock(const frontend::Statement& statement);
   void LowerScopedStatement(const frontend::Statement& statement);
@@ -103,11 +115,29 @@ class Lowerer final {
   [[nodiscard]] LoweredValue LowerExpression(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue SnapshotBefore(LoweredValue value, const frontend::Expression& later);
   [[nodiscard]] LoweredValue LowerAssignment(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerNameAssignment(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerMemberAssignment(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerIndexAssignment(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerConstruction(const frontend::Expression& expression,
                                                const frontend::TypeDescriptor& expected);
+  [[nodiscard]] LoweredValue LowerConstructorCall(
+      std::span<const frontend::CallArgument> arguments,
+      std::span<const std::uint32_t> argument_order,
+      frontend::SourceLocation location,
+      const frontend::ClassDescriptor& info,
+      RegisterId object);
   [[nodiscard]] LoweredValue LowerMember(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerObjectMember(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerGetter(const frontend::Expression& expression,
+                                         const LoweredValue& object);
   [[nodiscard]] LoweredValue LowerIndex(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerCall(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerSpecialCall(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerDispatchCall(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerNamedCall(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerMethodCall(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerFutureCall(const frontend::Expression& expression);
+  [[nodiscard]] std::uint32_t AddSyncFutureFunction(const frontend::TypeDescriptor& return_type);
   LoweredValue LowerFunctionValue(const frontend::Expression& expression);
   LoweredValue LowerIndirectCall(const frontend::Expression& expression);
   LoweredValue LowerInterfaceCall(const frontend::Expression& expression);
@@ -144,6 +174,7 @@ class Lowerer final {
   void LowerWhile(const frontend::Statement& statement);
 
   void LowerFor(const frontend::Statement& statement);
+  void LowerForEach(const frontend::Statement& statement);
 
   LoweredValue LowerIntegerLiteral(const frontend::Expression& expression);
   LoweredValue LowerDoubleLiteral(const frontend::Expression& expression);
@@ -154,6 +185,7 @@ class Lowerer final {
   LoweredValue LowerStringLiteral(const frontend::Expression& expression);
   LoweredValue LowerStringInterpolation(const frontend::Expression& expression);
   LoweredValue LowerBuiltin(const frontend::Expression& expression);
+  LoweredValue LowerAsyncCall(const frontend::Expression& expression);
   LoweredValue LowerSnapshotArray(const frontend::Expression& expression);
   LoweredValue LowerCollectionConstruction(const frontend::Expression& expression);
   std::uint32_t RegisterCollectionType(frontend::TypeDescriptor type);
@@ -189,8 +221,25 @@ class Lowerer final {
                                const frontend::TypeDescriptor& type);
 
   LoweredValue LowerUnary(const frontend::Expression& expression);
+  LoweredValue LowerIncrement(const frontend::Expression& expression);
+  struct IncrementTarget final {
+    LoweredValue value;
+    std::optional<RegisterId> object;
+    std::optional<RegisterId> index;
+    std::optional<FieldId> field;
+  };
+  [[nodiscard]] IncrementTarget LowerIncrementTarget(const frontend::Expression& target);
+  void StoreIncrementTarget(const frontend::Expression& target,
+                            const IncrementTarget& destination,
+                            RegisterId value,
+                            frontend::SourceLocation location);
 
   LoweredValue LowerBinary(const frontend::Expression& expression);
+  LoweredValue LowerIntegerAdditionChain(const frontend::Expression& expression);
+  LoweredValue LowerCompoundAssignment(const frontend::Expression& expression,
+                                       std::string_view operation);
+  LoweredValue LowerBinaryValue(const frontend::Expression& expression);
+  LoweredValue LowerConditional(const frontend::Expression& expression);
 
   LoweredValue LowerInvocation(const frontend::Expression& expression,
                                const frontend::FunctionDescriptor& function,

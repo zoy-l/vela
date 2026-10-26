@@ -1,20 +1,28 @@
 #include <array>
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <utility>
+#include <vector>
 
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
 #include "compiler/frontend/checker.h"
 #include "compiler/frontend/source_loader.h"
+#include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_function.h"
 #include "runtime/rooted_value.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
+#include "vm/bytecode_image.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"
 
@@ -24,9 +32,15 @@ namespace {
 using runtime::NativeContext;
 using runtime::NativeError;
 
+runtime::Completer*& PendingFetchCompleter() {
+  static runtime::Completer* completer = nullptr;
+  return completer;
+}
+
 constexpr double kScaleFactor = 2.0;
 constexpr unsigned char kInvalidUtf8Byte = 0xff;
 constexpr std::int64_t kHostAnswer = 42;
+constexpr std::int64_t kNativeFutureValue = 42;
 
 std::int64_t Add(NativeContext& /*unused*/, std::int64_t left, std::int64_t right) noexcept {
   return left + right;
@@ -59,6 +73,150 @@ std::expected<std::int64_t, NativeError> Answer(NativeContext& /*unused*/) noexc
 
 void Collect(NativeContext& context) noexcept {
   context.isolate().heap().Collect();
+}
+
+runtime::Future Fetch(NativeContext& context) noexcept {
+  auto completer = context.CreateCompleter();
+  const auto future = completer.future();
+  *PendingFetchCompleter() = std::move(completer);
+  return future;
+}
+
+runtime::Future EchoFuture(NativeContext& /*unused*/, runtime::Future future) noexcept {
+  return future;
+}
+
+runtime::Future CompletedWithoutScheduler(NativeContext& /*unused*/) noexcept {
+  return runtime::Future::Value(runtime::Value::Integer(kNativeFutureValue));
+}
+
+runtime::Future WrongFuturePayload(NativeContext& /*unused*/) noexcept {
+  return runtime::Future::Value(runtime::Value::Boolean(true));
+}
+
+runtime::Future WrongFutureError(NativeContext& /*unused*/) noexcept {
+  return runtime::Future::Error(runtime::Value::Integer(kNativeFutureValue));
+}
+
+constexpr std::string_view kNativeFutureContract = R"(
+external func ready(): Future<int>;
+external func wrong(): Future<int>;
+external func wrongError(): Future<int>;
+async func main(): Future<int> {
+  try { await wrong(); return 0; }
+  catch (error: Error) {
+    if (error.code != 'TypeError') { return 0; }
+  }
+  try { await wrongError(); return 0; }
+  catch (error: Error) {
+    if (error.code != 'TypeError') { return 0; }
+  }
+  return await ready();
+}
+)";
+
+TEST(NativeBindingTest, NativeFutureIsBoundAndItsPayloadIsCheckedBeforeScriptConsumption) {
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(
+      isolate.RegisterNative(runtime::NativeFunction::Bind<CompletedWithoutScheduler>("ready")));
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<WrongFuturePayload>("wrong")));
+  ASSERT_TRUE(
+      isolate.RegisterNative(runtime::NativeFunction::Bind<WrongFutureError>("wrongError")));
+  const auto compiled = CompileSource(kNativeFutureContract, isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  auto root = vm::VirtualMachine(isolate).ExecuteFuture(
+      compiled.program, compiled.program.FindFunction("main").index());
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  EXPECT_EQ(root.value().value_or(runtime::Value::Null()).AsInteger(), kNativeFutureValue);
+}
+
+TEST(NativeBindingTest, NativeFuturePayloadChecksSurviveFreshIsolateImageLoading) {
+  std::vector<std::byte> image;
+  {
+    runtime::Isolate isolate;
+    ASSERT_TRUE(
+        isolate.RegisterNative(runtime::NativeFunction::Bind<CompletedWithoutScheduler>("ready")));
+    ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<WrongFuturePayload>("wrong")));
+    ASSERT_TRUE(
+        isolate.RegisterNative(runtime::NativeFunction::Bind<WrongFutureError>("wrongError")));
+    const auto compiled = CompileSource(kNativeFutureContract, isolate);
+    ASSERT_TRUE(compiled.Succeeded());
+    const auto saved = vm::SaveBytecode(compiled.program, isolate);
+    ASSERT_TRUE(saved);
+    image = *saved;
+  }
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(
+      isolate.RegisterNative(runtime::NativeFunction::Bind<CompletedWithoutScheduler>("ready")));
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<WrongFuturePayload>("wrong")));
+  ASSERT_TRUE(
+      isolate.RegisterNative(runtime::NativeFunction::Bind<WrongFutureError>("wrongError")));
+  const auto loaded = vm::LoadBytecode(image, isolate);
+  ASSERT_TRUE(loaded) << loaded.error().message;
+  auto root =
+      vm::VirtualMachine(isolate).ExecuteFuture(*loaded, loaded->FindFunction("main").index());
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
+  EXPECT_EQ(root.value().value_or(runtime::Value::Null()).AsInteger(), kNativeFutureValue);
+}
+
+runtime::Future WaitForCancellation(NativeContext& context,
+                                    runtime::CancellationToken token) noexcept {
+  auto completer = context.CreateCompleter();
+  token.Observe([completer]() mutable {
+    const auto completion = completer.Complete(runtime::Value::Integer(42));
+    EXPECT_TRUE(completion.has_value());
+  });
+  return completer.future();
+}
+
+TEST(NativeBindingTest, CancellationTokenReachesNativeProducerWithoutCancellingFutureItself) {
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(
+      isolate.RegisterNative(runtime::NativeFunction::Bind<WaitForCancellation>("waitCancel")));
+  const auto compiled = CompileSource(R"(
+external func waitCancel(token: CancellationToken): Future<int>;
+async func main(): Future<int> {
+  const token = CancellationToken();
+  const pending = waitCancel(token);
+  token.cancel();
+  return await pending;
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  auto root = vm::VirtualMachine(isolate).ExecuteFuture(
+      compiled.program, compiled.program.FindFunction("main").index());
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  EXPECT_EQ(root.value().value_or(runtime::Value::Null()).AsInteger(), kNativeFutureValue);
+}
+
+std::optional<runtime::Future> StartNativeFetch(runtime::Isolate& isolate) {
+  if (!isolate.RegisterNative(runtime::NativeFunction::Bind<Fetch>("fetch"))) {
+    return std::nullopt;
+  }
+  const auto compiled = CompileSource(R"(
+external func fetch(): Future<int>;
+async func main(): Future<int> { return await fetch(); }
+)",
+                                      isolate);
+  if (!compiled.Succeeded()) {
+    return std::nullopt;
+  }
+  const auto entry = compiled.program.FindFunction("main");
+  if (!entry.IsValid()) {
+    return std::nullopt;
+  }
+  return vm::VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
+}
+
+bool CompleteNativeFuture(runtime::Completer& completer) {
+  std::atomic_bool succeeded = false;
+  std::thread host([&completer, &succeeded] {
+    succeeded = completer.Complete(runtime::Value::Integer(kNativeFutureValue)).has_value();
+  });
+  host.join();
+  return succeeded;
 }
 
 TEST(NativeBindingTest, DirectIndirectAndModuleCallsUseExactSignatures) {
@@ -198,6 +356,38 @@ TEST(NativeBindingTest, RegistrationRejectsDuplicatesAndHostCallsKeepArgumentsRo
   const auto mismatched = binding->Invoke(isolate, wrong);
   ASSERT_FALSE(mismatched);
   EXPECT_EQ(mismatched.error().kind, runtime::NativeErrorKind::TypeMismatch);
+}
+
+TEST(NativeBindingTest, NativeFutureResumesAwaitingAsyncExecution) {
+  runtime::Isolate isolate;
+  runtime::Completer completer;
+  PendingFetchCompleter() = &completer;
+  auto root = StartNativeFetch(isolate);
+  ASSERT_TRUE(root.has_value());
+  auto root_future = root.value_or(runtime::Future{});
+  ASSERT_EQ(root_future.state(), runtime::FutureState::Pending);
+  ASSERT_TRUE(CompleteNativeFuture(completer));
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root_future));
+  ASSERT_EQ(root_future.state(), runtime::FutureState::Succeeded);
+  ASSERT_EQ(root_future.value().value_or(runtime::Value::Null()).AsInteger(), kNativeFutureValue);
+  PendingFetchCompleter() = nullptr;
+}
+
+TEST(NativeBindingTest, NativeFutureParametersUseHeapBackedCodec) {
+  runtime::Isolate isolate;
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<EchoFuture>("echo")));
+  const auto compiled = CompileSource(R"(
+external func echo(input: Future<int>): Future<int>;
+async func main(): Future<int> { return await echo(Future.value(9)); }
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto entry = compiled.program.FindFunction("main");
+  ASSERT_TRUE(entry.IsValid());
+  auto root = vm::VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
+  EXPECT_EQ(root.value().value_or(runtime::Value::Null()).AsInteger(), 9);
 }
 
 }  // namespace

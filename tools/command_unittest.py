@@ -42,6 +42,39 @@ class CommandTest(unittest.TestCase):
         image.write_bytes(data)
         self.assertIn("checksum", self.command("exec", image, expected=65).stderr)
 
+    def test_async_run_and_image_wait_for_background_timers(self) -> None:
+        self.write("async func main(): Future<int> { "
+                   "Timer.after(0, (): void => { print('timer'); }); return 42; }")
+        self.assertEqual(self.command("run", self.entry, expected=42).stdout, "timer\n")
+        image = self.directory / "async.vbc"
+        self.command("compile", self.entry, image)
+        self.entry.unlink()
+        self.assertEqual(self.command("exec", image, expected=42).stdout, "timer\n")
+
+    def test_async_idle_and_background_errors_are_failures(self) -> None:
+        self.write("func main(): Future<int> { return Future.race<int>([]); }")
+        self.assertIn("idle/deadlock", self.command("run", self.entry, expected=70).stderr)
+        self.write("func main(): int { Future.microtask((): void => { "
+                   "throw Error(message: 'background'); }); return 0; }")
+        self.assertIn("unhandled Future error: background", self.command("run", self.entry, expected=70).stderr)
+
+    def test_async_failure_keeps_throw_and_await_locations(self) -> None:
+        self.write("async func fail(): Future<int> { await 0; return 1 / 0; }\n"
+                   "async func main(): Future<int> { return await fail(); }")
+        result = self.command("run", self.entry, expected=70)
+        self.assertIn("division by zero", result.stderr)
+        self.assertIn("at fail", result.stderr)
+        self.assertIn("at main", result.stderr)
+
+    def test_documentation_preserves_async_and_function_value_types(self) -> None:
+        self.write("export async func load(): Future<int> { return 42; }\n"
+                   "export func bind(value: int): () => string { return value.toString; }")
+        output = self.directory / "api.md"
+        self.command("doc", self.entry, output)
+        text = output.read_text(encoding="utf-8")
+        self.assertIn("async func load(): Future<int>", text)
+        self.assertIn("func bind(value: int): () => string", text)
+
     def test_source_entries_require_files_and_import_schemes_are_explicit(self) -> None:
         result = self.command("check", self.directory, expected=65)
         self.assertIn("source path must name a file", result.stderr)

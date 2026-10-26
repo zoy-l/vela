@@ -15,6 +15,13 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   results or deduction guides. Local variable type inference remains allowed.
 - Use `#pragma once` in headers; do not use include guards.
 - Use the repository's `.clang-format` for mechanical formatting, with a 100-column line limit.
+- For C++ enums and initializer lists, clang-tidy requires trailing commas in multiline constructs;
+  clang-format controls their layout. Single-line comma policy is `Ignore`: the pinned checker
+  mistakes the separator after an empty designated initializer such as `.signature = {},` for a
+  trailing comma and can delete it. Re-evaluate this setting when updating the pinned tools.
+- Keep `readability-redundant-member-init` enabled. For aggregate result objects, explicitly
+  initialize class-type fields at construction sites that would otherwise trigger the compiler's
+  missing-designated-field warning; do not add redundant default member initializers to silence it.
 - Use `snake_case` for file names, `PascalCase` for types, and CamelCase beginning with an uppercase
   letter for ordinary functions and methods.
 - Name test source files `*_unittest.cc` and place them in the module under test. Use GoogleTest

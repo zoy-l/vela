@@ -9,6 +9,8 @@
 
 namespace vela::runtime {
 
+struct FutureDiagnostic;
+
 // 只在一次执行内解释；函数编号属于保持存活的 Program，不保存借用指针。
 struct TracePosition final {
   std::uint32_t function = 0;
@@ -22,6 +24,8 @@ struct ExceptionData final {
   ExecutionStatus status = ExecutionStatus::Thrown;
   std::uint32_t trace_count = 0;
   std::uint32_t message_length = 0;
+  // 异步包络拥有跨执行会话的诊断；同步异常保留紧凑的位置数组。
+  FutureDiagnostic* async_diagnostic = nullptr;
 
   [[nodiscard]] std::span<const TracePosition> trace() const noexcept;
   [[nodiscard]] std::string_view message() const noexcept;

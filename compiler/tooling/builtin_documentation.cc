@@ -15,6 +15,57 @@ using Kind = frontend::TypeDescriptor::Kind;
 }  // namespace
 
 std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
+  if (receiver == Kind::Future) {
+    if (name == "then") {
+      return "Queues a typed continuation. Values and returned Futures are flattened; thrown "
+             "callback errors fail the result.";
+    }
+    if (name == "catchError") {
+      return "Handles errors matching the callback's non-null class or interface parameter. "
+             "Unmatched errors propagate unchanged.";
+    }
+    if (name == "whenComplete") {
+      return "Runs action after success or failure, waits for its Future, and preserves the source "
+             "result unless action fails.";
+    }
+    if (name == "timeout") {
+      return "Uses the source result before the deadline, otherwise onTimeout or TimeoutException. "
+             "The source remains observed.";
+    }
+    if (name == "wait") {
+      return "Collects values in input order. eagerError controls early failure; cleanUp releases "
+             "non-null successes after any input fails.";
+    }
+    if (name == "race") {
+      return "Adopts the first completion and observes every input. Empty inputs remain pending.";
+    }
+    return "Creates a typed Future. Computations may return values or Futures; microtask queues "
+           "work before timers.";
+  }
+  if (receiver == Kind::Completer) {
+    if (name == "future") {
+      return "The Future completed by this producer.";
+    }
+    if (name == "isCompleted") {
+      return "Whether a completion has been requested, including adoption of a pending Future.";
+    }
+    return "Completes once with a value, Future, or throwable object. Duplicate completion and "
+           "self-adoption throw catchable Errors.";
+  }
+  if (receiver == Kind::Timer) {
+    return "Schedules callbacks on the Isolate thread. cancel() releases the callback and prevents "
+           "future ticks.";
+  }
+  if (receiver == Kind::CancellationToken) {
+    return "A separate cancellation request shared with native operations. cancel() is idempotent; "
+           "the operation still completes its Future.";
+  }
+  if (name == "Future" || name == "Completer" || name == "Timer" || name == "CancellationToken") {
+    return "Typed asynchronous operations. See the async/Future language contract.";
+  }
+  if (name == "sleep") {
+    return "Returns Future<void> after a nonnegative monotonic delay in integer milliseconds.";
+  }
   static const absl::flat_hash_map<std::pair<Kind, std::string_view>, std::string_view>
       kDocumentation = {
           {
@@ -431,6 +482,10 @@ std::string_view BuiltinTypeDetail(std::string_view name) {
       {"Set", "class Set<T> {\n  constructor();\n}"},
       {"Map", "class Map<K, V> {\n  constructor();\n}"},
       {"Expected", "type Expected<T, E>"},
+      {"Future", "type Future<T>"},
+      {"Completer", "class Completer<T> {\n  constructor();\n}"},
+      {"Timer", "type Timer"},
+      {"CancellationToken", "class CancellationToken {\n  constructor();\n}"},
   };
   const auto found = kTypes.find(name);
   return found == kTypes.end() ? std::string_view{} : found->second;

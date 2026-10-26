@@ -32,8 +32,8 @@ The initial class model is deliberately smaller than C++:
 
 - `class` declares a nominal object layout with statically known fields and
   methods;
-- classes are final; inheritance and class method overriding are later language
-  work, while explicit interfaces already support runtime dispatch;
+- classes support single inheritance, explicit `super` constructor chaining,
+  `override` method replacement, and runtime dispatch through multiple interfaces;
 - a class construction expression has no `new` keyword;
 - named construction arguments are resolved to `param` fields or explicit constructor parameter
   IDs at compile time;
@@ -208,6 +208,10 @@ borrowed loading inputs: `Program::Load` copies them, then validates the owned
 snapshot. Execution does not repeat program validation. Layouts remain owned
 by the Isolate, which must outlive all programs, handles, and root ranges.
 Program destruction and root operations remain on the Isolate's thread.
+REPL submissions share growing GC-owned global slots. External Program handles
+root the slot object; continuations trace it through their reachable Future graph.
+This keeps earlier submissions' writes visible and lets unreachable pending tasks
+and their globals be collected together.
 Execution results are borrowed values: hosts must root returned objects or
 strings before another allocation or collection. See
 [VM execution contracts](vm_execution.md) for register allocation and limits.
@@ -220,6 +224,13 @@ retain a script object. Strings use valid UTF-8, with code point lengths,
 indices, and slice boundaries, plus a separate byte length. Interpolation,
 explicit conversions, join, and GC-owned builders use the same checked compiler
 and VM path. See [string contracts](strings.md) for APIs, costs, and rooting.
+
+Async calls use ordinary VM frames until an await, then retain the live register
+values and resume in a later execution slice. Future state, timer queues, and GC
+remain owned by the Isolate thread. Host threads publish completion messages through
+an atomic MPSC mailbox; completion reservation and cancellation are atomic. A
+semaphore parks and wakes the owner. Native producers and external Future handles
+must be released before their Isolate is destroyed. See [async contracts](async_tasks.md).
 
 Generational collection remains an optimization decision for the Release
 benchmarks. It can be added behind this object, root, and barrier contract

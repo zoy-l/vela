@@ -1,8 +1,10 @@
 #pragma once
 
+#include <memory>
 #include "compiler/frontend/symbol_ids.h"
 #include "compiler/ir/persistent_ids.h"
 #include "compiler/runtime_layouts.h"
+#include "vm/program.h"
 
 namespace vela::compiler {
 
@@ -10,6 +12,7 @@ struct CompilationState final {
   frontend::SymbolIds interfaces;
   ir::PersistentIds ids;
   LayoutCache layouts;
+  std::shared_ptr<vm::GlobalStorage> globals;
 };
 
 }  // namespace vela::compiler

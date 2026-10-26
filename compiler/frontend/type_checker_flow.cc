@@ -80,6 +80,7 @@ StatementFlow TypeChecker::CheckStatement(const Statement& statement, const Type
       flow = CheckWhile(statement, return_type);
       break;
     case Statement::Kind::For:
+    case Statement::Kind::ForEach:
       flow = CheckFor(statement, return_type);
       break;
     case Statement::Kind::Switch:
@@ -199,6 +200,9 @@ StatementFlow TypeChecker::CheckWhile(const Statement& statement, const Type& re
 }
 
 StatementFlow TypeChecker::CheckFor(const Statement& statement, const Type& return_type) {
+  if (statement.kind == Statement::Kind::ForEach) {
+    return CheckForEach(statement, return_type);
+  }
   BeginScope();
   if (statement.initializer) {
     CheckStatement(*statement.initializer, return_type);
@@ -240,6 +244,50 @@ StatementFlow TypeChecker::CheckFor(const Statement& statement, const Type& retu
   return {
       .can_fall_through = condition != ConditionTruth::AlwaysTrue || body.can_break,
       .condition = condition,
+  };
+}
+
+StatementFlow TypeChecker::CheckForEach(const Statement& statement, const Type& return_type) {
+  BeginScope();
+  const auto iterable = CheckExpression(*statement.iterable, nullptr);
+  Type element;
+  if (iterable.kind == Type::Kind::Array) {
+    element = array_elements_.at(iterable.name);
+  } else if (iterable.kind == Type::Kind::Set || iterable.kind == Type::Kind::Map) {
+    const auto arguments = generic_arguments_.find(iterable.name);
+    if (arguments != generic_arguments_.end() && !arguments->second.empty()) {
+      element = arguments->second.front();
+    }
+  }
+  if (!IsValid(element)) {
+    AddDiagnostic(statement.iterable->location, "'in' requires an array, set, or map");
+  }
+  if (statement.destructuring) {
+    if (iterable.kind != Type::Kind::Map) {
+      AddDiagnostic(statement.location, "dictionary destructuring requires a map");
+    } else {
+      const auto arguments = generic_arguments_.find(iterable.name);
+      if (arguments == generic_arguments_.end() || arguments->second.size() != 2) {
+        AddDiagnostic(statement.location, "map type arguments are invalid");
+      } else {
+        DeclareLocal(statement.name, arguments->second.front(), statement.location,
+                     BindingKind::Constant, &statement);
+        DeclareLocal(statement.second_name, arguments->second.back(), statement.location,
+                     BindingKind::Constant, &statement);
+      }
+    }
+  } else {
+    DeclareLocal(statement.name, element, statement.location, BindingKind::Constant, &statement);
+  }
+  ++loop_depth_;
+  const auto body = CheckScopedStatement(*statement.then_branch, return_type);
+  --loop_depth_;
+  EndScope();
+  return {
+      .can_fall_through = true,
+      .can_break = body.can_break,
+      .can_continue = body.can_continue,
+      .condition = ConditionTruth::AlwaysTrue,
   };
 }
 

@@ -16,8 +16,20 @@
 namespace vela::runtime {
 
 class Isolate;
+class Future;
+class Completer;
+class CancellationToken;
 
-enum class NativeType : std::uint8_t { Void, Boolean, Integer, Double, String, NullableString };
+enum class NativeType : std::uint8_t {
+  Void,
+  Boolean,
+  Integer,
+  Double,
+  String,
+  NullableString,
+  Future,
+  CancellationToken,
+};
 enum class NativeErrorKind : std::uint8_t { Failure, TypeMismatch, OutOfMemory, InvalidUtf8 };
 
 struct NativeError final {
@@ -32,6 +44,9 @@ class NativeContext final {
   explicit NativeContext(Isolate& isolate) noexcept : isolate_(&isolate) {}
   [[nodiscard]] Isolate& isolate() const noexcept { return *isolate_; }
   [[nodiscard]] NativeResult String(std::string_view text) const;
+  [[nodiscard]] std::expected<Value, NativeError> FutureValue(const Future& future) const;
+  [[nodiscard]] Completer CreateCompleter() const;
+  [[nodiscard]] NativeResult CancellationValue(const CancellationToken& token) const;
 
  private:
   Isolate* isolate_;
@@ -97,6 +112,20 @@ struct NativeCodec<std::optional<std::string>> final {
   static NativeResult Encode(NativeContext& context, const std::optional<std::string>& text) {
     return text ? context.String(*text) : NativeResult(Value::Null());
   }
+};
+
+template <>
+struct NativeCodec<Future> final {
+  static constexpr auto kType = NativeType::Future;
+  static Future Decode(Value value);
+  static NativeResult Encode(NativeContext& context, const Future& future);
+};
+
+template <>
+struct NativeCodec<CancellationToken> final {
+  static constexpr auto kType = NativeType::CancellationToken;
+  static CancellationToken Decode(Value value);
+  static NativeResult Encode(NativeContext& context, const CancellationToken& token);
 };
 
 template <class T>

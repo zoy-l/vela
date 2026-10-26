@@ -1,0 +1,13 @@
+func main(): void {
+  const value = 5;
+  print(~value); // -6
+  print(value & 3); // 1
+  print(value | 2); // 7
+  print(value ^ 3); // 6
+  print(value << 2); // 20
+
+  const negative = -8;
+  print(negative >> 2); // -2: arithmetic shift preserves the sign.
+  print(negative >>> 2); // 4611686018427387902: logical shift inserts zeros.
+  print(1 << 40); // 1099511627776: int bit operations use all 64 bits.
+}

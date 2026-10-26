@@ -44,6 +44,11 @@ Isolate::Isolate(std::size_t gc_threshold) noexcept : heap_(gc_threshold) {
   error_layout_ = CreateClassLayout(kErrorFieldCount, references);
 }
 
+Isolate::~Isolate() {
+  // 先释放排队回调的根，再销毁堆；堆中挂起帧的析构仍可访问调度器。
+  scheduler_.Shutdown();
+}
+
 std::ostream& Isolate::output() noexcept {
   return output_ != nullptr ? *output_ : std::cout;
 }

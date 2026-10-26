@@ -46,7 +46,7 @@ func main(): int {
 func main(): int {
   try { let zero = 0; return 1 / zero; }
   catch (error: Error) {
-    if (error.message == "division by zero" && error.code == "division by zero") { return 42; }
+    if (error.message == "division by zero" && error.code == "DivisionByZero") { return 42; }
     return 0;
   }
 })",
@@ -159,6 +159,34 @@ func main(): int {
   let value = 0;
   try { value = 40; } finally { value = value + 2; }
   return value;
+})",
+                             R"(
+func main(): int {
+  let first = '';
+  try { Math.sqrt(-1.0); }
+  catch (error: Error) {
+    if (error.code != 'NativeFailure') { return 0; }
+    first = error.message;
+  }
+  try { Random.nextInt(0); }
+  catch (error: Error) {
+    if (error.code == 'NativeFailure' && error.message != first) { return 42; }
+  }
+  return 0;
+})",
+                             R"(
+func main(): int {
+  let caught = 0;
+  try { const values = [1]; print(values[2]); }
+  catch (error: Error) { if (error.code == 'IndexOutOfBounds') { caught += 1; } }
+  try { const value: int? = null; print(value as int); }
+  catch (error: Error) { if (error.code == 'InvalidCast') { caught += 1; } }
+  try { throw Error(message: 'custom message', code: 'ApplicationFailure'); }
+  catch (error: Error) {
+    if (error.code == 'ApplicationFailure' && error.message == 'custom message') { caught += 1; }
+  }
+  if (caught == 3) { return 42; }
+  return 0;
 })"));
 
 TEST(ExceptionTest, FinallyPreservesOriginalTraceAcrossNestedHandledExceptions) {

@@ -51,6 +51,22 @@ func aliasDemo(): void {
 }
 ```
 
+实例方法值保留接收者，创建绑定时只求值一次。此规则覆盖基本值、字符串、builder、数组、集合与 Expected 内建方法，以及继承方法、接口和 super 绑定。空安全方法访问在接收者为 null 时返回 null，存活的绑定保活接收者。
+
+```vela
+func builtinValues(): void {
+  const values = [20, 22];
+  const copy: () => int[] = values.slice;
+  const append: (int) => int = values.push;
+  const map: ((int) => string) => string[] = values.map;
+  append(42);
+  print(copy().length); // 3
+  print(map(value => value.toString()).join(',')); // 20,22,42
+}
+```
+
+函数值具有固定的位置参数签名。目标函数类型为可选/可变参数内建方法选定合法参数数量，并确定高阶方法的回调与结果类型。没有上下文时，普通固定参数内建方法值采用完整参数列表；可变参数与回调算法方法值需要函数类型上下文。例如，推断得到的 `values.slice` 接受两个下标，而示例中显式标注的 copy 不接受参数。默认值由底层方法在调用时处理，不在绑定时计算。不引入动态分派或第二套可调用 ABI。
+
 ## 泛型函数、类与类型别名
 
 ```typescript
@@ -220,6 +236,26 @@ func main(): void {
 对于需要手写特殊参数列表的类，可以显式声明 `constructor(name: Type, ...) { ... }`。手写参数列表与 `param` 字段互斥。这明确了函数签名的来源，并防止参数被隐式注入到 `constructor()` 中。
 
 参数绑定与字段偏移量在编译期直接解析。运行时不执行任何注解反射，亦不维护参数名称字符串字典。对于显式构造函数，字段默认值在函数体前执行；确定性初始化分析强制要求在每条返回路径上所有字段均已完成初始化。读取未初始化的字段、调用实例方法或在初始化完成前暴露 `this` 均会被静态拦截。成员默认可见性为 `public`；`private` 仅对声明该成员的类本身可见。私有的 `param` 字段依然生成公开的命名构造参数。
+
+继承类的构造函数不会自动接收父类的 `param` 参数。父类有必填参数时，子类必须在构造体中显式调用 `super(...)`：
+
+```typescript
+class Counter {
+  public param value: int;
+}
+
+class BonusCounter extends Counter {
+  public param bonus: int;
+
+  constructor {
+    super(value: this.bonus * 20);
+  }
+}
+
+const counter = BonusCounter(bonus: 2); // value = 40, bonus = 2
+```
+
+如果父类参数都有默认值，或者父类没有必填参数，子类可以省略 `super()`；父类构造函数会在子类构造体前隐式执行。省略 `super(...)` 而父类仍有必填参数时，编译器报告错误。
 
 ## 静态成员
 

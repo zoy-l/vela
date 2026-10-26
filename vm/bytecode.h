@@ -82,6 +82,7 @@ struct Function final {
   std::span<const double> doubles;
   std::uint16_t register_count = 0;
   std::uint16_t parameter_count = 0;
+  bool is_async = false;
   std::span<const runtime::TypeConstraint> types;
   std::span<const runtime::CollectionLayout* const> collections;
   DebugInfo debug;

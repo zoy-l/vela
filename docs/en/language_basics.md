@@ -86,9 +86,20 @@ facts for locals they may write. Loop backedges and continue paths cannot
 reuse a fact that a previous iteration could invalidate.
 
 Fields and indexed elements are not promoted because another operation may
-change their contents. Copy the value to a local and check that local before
-arithmetic, indexing, member access, or method invocation. No implicit null
-assertion, nullable access operator, or null-to-default conversion is provided.
+change their contents. For a non-null value, copy the value to a local and check
+it, or use null-safe operators: `?.` skips member access or a method call when
+the receiver is null, and `?.[index]` also skips evaluation of the index when
+the array is null.
+
+`left ?? right` evaluates the left operand once and evaluates the right operand
+only when the left result is null. It returns the selected value without
+assigning to the left variable, field, or array element. `??=` is not supported;
+writing the result back requires explicit assignment.
+
+```typescript
+let value: int? = null;
+const result: int = value ?? 42; // result is 42; value remains null.
+```
 
 Null comparisons are allowed for value types. Equality of nullable values
 requires the same underlying type; null equals only null. Non-null strings

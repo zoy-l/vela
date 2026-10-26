@@ -239,12 +239,12 @@ std::expected<FunctionStorage, BinaryError> ImageReader::ReadFunction() const {
     return std::unexpected(name.error());
   }
   function.name = std::move(*name);
-  const auto pools =
-      reader->Record<std::uint64_t, std::uint64_t, std::uint64_t, std::uint16_t, std::uint16_t>();
+  const auto pools = reader->Record<std::uint64_t, std::uint64_t, std::uint64_t, std::uint16_t,
+                                    std::uint16_t, std::uint8_t>();
   if (!pools) {
     return std::unexpected(pools.error());
   }
-  const auto [table_id, strings_id, paths_id, registers, parameters] = *pools;
+  const auto [table_id, strings_id, paths_id, registers, parameters, async] = *pools;
   auto table = Pool(table_id, tables, *reader);
   auto string_pool = Pool(strings_id, strings, *reader);
   auto path_pool = Pool(paths_id, paths, *reader);
@@ -262,6 +262,10 @@ std::expected<FunctionStorage, BinaryError> ImageReader::ReadFunction() const {
   function.source_paths = std::move(*path_pool);
   function.register_count = registers;
   function.parameter_count = parameters;
+  if (async > 1) {
+    return std::unexpected(reader->Error("invalid async function flag"));
+  }
+  function.is_async = async != 0;
   auto code = ReadNumbers<std::uint32_t>(*reader);
   auto integers = ReadNumbers<std::int64_t>(*reader);
   auto doubles = ReadNumbers<double>(*reader);
@@ -305,7 +309,8 @@ std::expected<Program, BinaryError> ReadPayload(BinaryReader& reader, runtime::I
   if (!paths) {
     return std::unexpected(paths.error());
   }
-  const auto count = reader.Count((10 * sizeof(std::uint64_t)) + (2 * sizeof(std::uint16_t)));
+  const auto count = reader.Count((10 * sizeof(std::uint64_t)) + (2 * sizeof(std::uint16_t)) +
+                                  sizeof(std::uint8_t));
   if (!count) {
     return std::unexpected(count.error());
   }

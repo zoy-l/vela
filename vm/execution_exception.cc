@@ -1,3 +1,4 @@
+#include "base/execution_status.h"
 #include "vm/execution.h"
 
 #include <algorithm>
@@ -109,24 +110,8 @@ StepResult Execution::CreateException(runtime::Value payload,
 
 std::expected<runtime::Value, ExecutionStatus> Execution::RuntimeError(ExecutionStatus status,
                                                                        std::string_view message) {
-  auto& heap = isolate_.heap();
-  std::array<runtime::Value, runtime::kErrorFieldCount> fields;
-  runtime::RootRange roots(heap, fields.data(), fields.size());
-  auto* text = heap.AllocateString(message);
-  if (text == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  fields.at(runtime::kErrorMessageField) = runtime::Value::String(text);
-  auto* code = heap.AllocateString(ExecutionStatusName(status));
-  if (code == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  fields.at(runtime::kErrorCodeField) = runtime::Value::String(code);
-  auto* instance = heap.AllocateInstance(isolate_.error_layout(), fields);
-  if (instance == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  return runtime::Value::Object(instance);
+  return runtime::CreateError(isolate_.heap(), isolate_.error_layout(),
+                              {.message = message, .code = ExecutionStatusCode(status)});
 }
 
 void Execution::AbortInitializers() noexcept {
@@ -144,6 +129,34 @@ void Execution::ResetInitializer(ActiveFrame& active) noexcept {
         GlobalState::Uninitialized;
     active.initialized_global.reset();
   }
+}
+
+std::optional<ExecutionResult> Execution::CompleteAsyncError(ActiveFrame& active) {
+  const auto& exception = runtime::ExceptionData::From(*pending_exception_.AsObject());
+  ExecutionResult failure{
+      .value = runtime::Value::Object(exception.payload),
+      .status = exception.status,
+      .stack_trace = ResolveTrace(exception.trace()),
+      .message = std::string(exception.message()),
+  };
+  auto diagnostic =
+      exception.async_diagnostic != nullptr ? *exception.async_diagnostic : Diagnostic(failure);
+  runtime::Future future(&isolate_.scheduler());
+  const auto completion = future.CompleteError(failure.value, std::move(diagnostic));
+  auto* object = completion ? isolate_.heap().AllocateFuture(std::move(future)) : nullptr;
+  if (object == nullptr) {
+    return ExecutionResult{
+        .status = ExecutionStatus::OutOfMemory,
+        .stack_trace = {},
+        .message = {},
+    };
+  }
+  pending_exception_ = runtime::Value::Null();
+  const auto returned = Return(active, runtime::Value::Object(object));
+  if (!returned) {
+    return ExecutionResult{.status = returned.error(), .stack_trace = {}, .message = {}};
+  }
+  return std::nullopt;
 }
 
 std::optional<ExecutionResult> Execution::HandleError(ExecutionStatus status) {
@@ -168,17 +181,32 @@ std::optional<ExecutionResult> Execution::HandleError(ExecutionStatus status) {
       active.program_counter = handler->target;
       return std::nullopt;
     }
+    if (active.function->is_async) {
+      return CompleteAsyncError(active);
+    }
     ResetInitializer(active);
     active.frame.Detach();
     --frame_count_;
   }
   const auto& exception = runtime::ExceptionData::From(*pending_exception_.AsObject());
-  return ExecutionResult{
+  ExecutionResult failure{
       .value = runtime::Value::Object(exception.payload),
       .status = exception.status,
       .stack_trace = ResolveTrace(exception.trace()),
       .message = std::string(exception.message()),
   };
+  if (const auto* diagnostic = exception.async_diagnostic) {
+    failure.stack_trace.clear();
+    for (const auto& frame : diagnostic->stack_trace) {
+      failure.stack_trace.push_back({
+          .function = frame.function,
+          .source_path = frame.source_path,
+          .location = {.line = frame.line, .column = frame.column},
+          .instruction = frame.instruction,
+      });
+    }
+  }
+  return failure;
 }
 
 StepResult Execution::ExecuteException(ActiveFrame& active, Instruction instruction) {

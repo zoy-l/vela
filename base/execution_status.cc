@@ -4,47 +4,81 @@
 #include <utility>
 
 namespace vela {
+namespace {
 
-std::string_view ExecutionStatusName(ExecutionStatus status) noexcept {
+struct StatusDescription final {
+  std::string_view code;
+  std::string_view message;
+};
+
+StatusDescription DescribeStatus(ExecutionStatus status) noexcept {
   switch (status) {
     case ExecutionStatus::Returned:
-      return "returned";
+      return {.code = "Returned", .message = "returned"};
     case ExecutionStatus::OutOfMemory:
-      return "out of memory";
+      return {.code = "OutOfMemory", .message = "out of memory"};
     case ExecutionStatus::TypeError:
-      return "runtime type error";
+      return {.code = "TypeError", .message = "runtime type error"};
     case ExecutionStatus::InvalidField:
-      return "invalid field";
+      return {.code = "InvalidField", .message = "invalid field"};
     case ExecutionStatus::IndexOutOfBounds:
-      return "index or slice out of bounds";
+      return {.code = "IndexOutOfBounds", .message = "index or slice out of bounds"};
     case ExecutionStatus::IntegerOverflow:
-      return "integer overflow";
+      return {.code = "IntegerOverflow", .message = "integer overflow"};
     case ExecutionStatus::DivisionByZero:
-      return "division by zero";
+      return {.code = "DivisionByZero", .message = "division by zero"};
     case ExecutionStatus::InvalidNumericConversion:
-      return "numeric conversion is outside the target range";
+      return {
+          .code = "InvalidNumericConversion",
+          .message = "numeric conversion is outside the target range",
+      };
     case ExecutionStatus::CyclicInitialization:
-      return "cyclic global initialization";
+      return {.code = "CyclicInitialization", .message = "cyclic global initialization"};
     case ExecutionStatus::InvalidCast:
-      return "checked cast failed";
+      return {.code = "InvalidCast", .message = "checked cast failed"};
     case ExecutionStatus::InactiveExpectedAlternative:
-      return "accessed the inactive Expected alternative";
+      return {
+          .code = "InactiveExpectedAlternative",
+          .message = "accessed the inactive Expected alternative",
+      };
     case ExecutionStatus::StackOverflow:
-      return "stack overflow";
+      return {.code = "StackOverflow", .message = "stack overflow"};
     case ExecutionStatus::InvalidEntry:
-      return "invalid entry function";
+      return {.code = "InvalidEntry", .message = "invalid entry function"};
     case ExecutionStatus::InvalidIsolate:
-      return "program belongs to a different isolate";
+      return {.code = "InvalidIsolate", .message = "program belongs to a different isolate"};
     case ExecutionStatus::NativeFailure:
-      return "native function failed";
+      return {.code = "NativeFailure", .message = "native function failed"};
     case ExecutionStatus::Thrown:
-      return "unhandled exception";
+      return {.code = "Thrown", .message = "unhandled exception"};
     case ExecutionStatus::DebuggerStopped:
-      return "debugger stopped execution";
+      return {.code = "DebuggerStopped", .message = "debugger stopped execution"};
     case ExecutionStatus::ConcurrentModification:
-      return "array structurally modified during callback";
+      return {
+          .code = "ConcurrentModification",
+          .message = "array structurally modified during callback",
+      };
+    case ExecutionStatus::FutureAlreadyCompleted:
+      return {
+          .code = "FutureAlreadyCompleted",
+          .message = "Future completion was already requested",
+      };
+    case ExecutionStatus::FutureSelfAdoption:
+      return {.code = "FutureSelfAdoption", .message = "Future cannot adopt itself"};
+    case ExecutionStatus::AsyncIdle:
+      return {.code = "AsyncIdle", .message = "async root has no pending producer"};
   }
   std::unreachable();
+}
+
+}  // namespace
+
+std::string_view ExecutionStatusName(ExecutionStatus status) noexcept {
+  return DescribeStatus(status).message;
+}
+
+std::string_view ExecutionStatusCode(ExecutionStatus status) noexcept {
+  return DescribeStatus(status).code;
 }
 
 }  // namespace vela
