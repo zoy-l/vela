@@ -49,7 +49,8 @@ std::optional<std::size_t> Argument(const Expression& expression,
 }
 
 bool IsThrowable(const Type& type) {
-  return !type.nullable && (type.kind == Kind::Class || type.kind == Kind::Interface);
+  return type.kind == Kind::Dynamic ||
+         (!type.nullable && (type.kind == Kind::Class || type.kind == Kind::Interface));
 }
 
 }  // namespace
@@ -159,7 +160,7 @@ TypeChecker::Type TypeChecker::CheckFutureValueFactory(const Expression& express
     return context.value_or(MakeFutureType(expression, kVoid));
   }
   if (context && argument.kind != Kind::Future) {
-    if (!CanAssign(element, argument)) {
+    if (argument.kind != Kind::Dynamic && !CanAssign(element, argument)) {
       AddDiagnostic(expression.location, "Future.value payload does not match its result type");
     }
     return *context;
@@ -420,6 +421,7 @@ TypeChecker::Type TypeChecker::CheckCompleterMethod(const Expression& expression
                                                     const Type& receiver) {
   const bool error = expression.callee->text == "completeError";
   const auto element = generic_arguments_.at(receiver.name).front();
+  static_cast<void>(MakeFutureType(expression, element));
   AsyncCallDescriptor descriptor{
       .operation = error ? AsyncOperation::CompleterError : AsyncOperation::CompleterComplete,
       .signature = {},
@@ -434,9 +436,9 @@ TypeChecker::Type TypeChecker::CheckCompleterMethod(const Expression& expression
     if (input) {
       type = CheckExpression(*expression.arguments.at(*input).value, error ? nullptr : &element);
       checked.at(*input) = type;
-      const bool valid =
-          error ? IsThrowable(type)
-                : CanAssign(element, type) || IsSameType(MakeFutureType(expression, element), type);
+      const bool valid = error ? IsThrowable(type)
+                               : type.kind == Kind::Dynamic || CanAssign(element, type) ||
+                                     IsSameType(MakeFutureType(expression, element), type);
       if (!valid) {
         AddDiagnostic(expression.location, "Completer payload does not match its contract");
       }

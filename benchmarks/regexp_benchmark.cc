@@ -103,8 +103,11 @@ void SearchRegExp(benchmark::State& state, Builtin builtin) {
   }
   roots.at(1) = Value::String(heap.AllocateString(text));
   const runtime::ArrayLayout layout{
-      .element_kind = runtime::ValueKind::Object,
-      .element_object_kind = runtime::ObjectKind::RegExpMatch,
+      .element =
+          {
+              .kind = runtime::ValueKind::Object,
+              .object_kind = runtime::ObjectKind::RegExpMatch,
+          },
   };
   const std::array arguments{roots.at(0), roots.at(1), Value::Integer(0), Value::Integer(0)};
   heap.Collect();

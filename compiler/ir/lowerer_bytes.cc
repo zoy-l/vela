@@ -12,10 +12,10 @@
 
 namespace vela::ir {
 
-void Lowerer::EmitByteIndexCall(Builtin builtin,
-                                RegisterId result,
-                                std::span<const RegisterId> values,
-                                frontend::SourceLocation location) {
+void Lowerer::EmitBuiltinCall(Builtin builtin,
+                              RegisterId result,
+                              std::span<const RegisterId> values,
+                              frontend::SourceLocation location) {
   const auto base = next_register_;
   for (std::size_t index = 0; index < values.size(); ++index) {
     static_cast<void>(AllocateRegister(location));
@@ -41,9 +41,13 @@ void Lowerer::EmitIndexRead(RegisterId result,
                             const LoweredValue& receiver,
                             RegisterId index,
                             frontend::SourceLocation location) {
-  if (receiver.type.kind == frontend::TypeDescriptor::Kind::ByteArray) {
+  if (receiver.type.kind == frontend::TypeDescriptor::Kind::ByteArray ||
+      receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
     const std::array values{receiver.reg, index};
-    EmitByteIndexCall(Builtin::ByteArrayGetIndex, result, values, location);
+    EmitBuiltinCall(receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic
+                        ? Builtin::DynamicIndexRead
+                        : Builtin::ByteArrayGetIndex,
+                    result, values, location);
   } else {
     Emit({
         .opcode = Opcode::GetIndex,
@@ -59,10 +63,14 @@ void Lowerer::EmitIndexWrite(const LoweredValue& receiver,
                              RegisterId index,
                              RegisterId value,
                              frontend::SourceLocation location) {
-  if (receiver.type.kind == frontend::TypeDescriptor::Kind::ByteArray) {
+  if (receiver.type.kind == frontend::TypeDescriptor::Kind::ByteArray ||
+      receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
     const auto result = AllocateTemporary(location);
     const std::array values{receiver.reg, index, value};
-    EmitByteIndexCall(Builtin::ByteArraySetIndex, result, values, location);
+    EmitBuiltinCall(receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic
+                        ? Builtin::DynamicIndexWrite
+                        : Builtin::ByteArraySetIndex,
+                    result, values, location);
   } else {
     Emit({
         .opcode = Opcode::SetIndex,

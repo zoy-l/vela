@@ -373,6 +373,36 @@ TEST(NativeBindingTest, NativeFutureResumesAwaitingAsyncExecution) {
   PendingFetchCompleter() = nullptr;
 }
 
+TEST(NativeBindingTest, ForeignProgramCallablesCannotReuseLocalFunctionIndices) {
+  runtime::Isolate isolate(1);
+  const auto producer = CompileSource("func main(): () => int { return (): int => 7; }", isolate);
+  ASSERT_TRUE(producer.Succeeded());
+  const auto produced = vm::VirtualMachine(isolate).Execute(producer.program.FindFunction("main"));
+  ASSERT_TRUE(produced.Succeeded());
+  const runtime::RootedValue callable(isolate, produced.value);
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Fetch>("fetch")));
+  const auto consumer = CompileSource(R"(external func fetch(): Future<dynamic>;
+async func main(): Future<int> {
+  const callable: dynamic = await fetch();
+  const typed: () => int = callable;
+  let caught = 0;
+  try { callable(); } catch (error: Error) { caught += 1; }
+  try { typed(); } catch (error: Error) { caught += 1; }
+  return caught == 2 ? 42 : 0;
+})",
+                                      isolate);
+  ASSERT_TRUE(consumer.Succeeded());
+  runtime::Completer completer;
+  PendingFetchCompleter() = &completer;
+  auto result = vm::VirtualMachine(isolate).ExecuteFuture(
+      consumer.program, consumer.program.FindFunction("main").index());
+  PendingFetchCompleter() = nullptr;
+  ASSERT_TRUE(completer.Complete(callable.value()));
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(result));
+  ASSERT_EQ(result.state(), runtime::FutureState::Succeeded);
+  EXPECT_EQ(result.value().value_or(runtime::Value::Null()).AsInteger(), kNativeFutureValue);
+}
+
 TEST(NativeBindingTest, NativeFutureParametersUseHeapBackedCodec) {
   runtime::Isolate isolate;
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<EchoFuture>("echo")));

@@ -50,7 +50,11 @@ std::expected<std::size_t, ExecutionStatus> CallbackArity(const Program& program
                                     {.kind = runtime::ValueKind::Object, .callable = true})) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto target = *runtime::Heap::ClassOf(*callback.AsObject())->callable();
+  const auto* callable_layout = runtime::Heap::ClassOf(*callback.AsObject());
+  if (!program.HasCallable(*callable_layout)) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto target = *callable_layout->callable();
   auto function = target.function;
   if (target.mode == CallableMode::InterfaceMethod) {
     const auto receiver = *runtime::Heap::GetField(*callback.AsObject(), 0);
@@ -213,8 +217,12 @@ class Aggregation final : public std::enable_shared_from_this<Aggregation> {
     const auto output = Value::Object(object);
     runtime::RootRange root(isolate_->heap(), &output, 1);
     for (std::uint32_t index = 0; index < count_; ++index) {
-      const auto stored =
-          isolate_->heap().SetElement(*object, index, values.subspan(kValuesStart + index).front());
+      auto value = values.subspan(kValuesStart + index).front();
+      const auto* instance = layout_->element.instance;
+      if (!value.IsNull() && instance != nullptr && instance->IsEnum()) {
+        value = *runtime::Heap::GetField(*value.AsObject(), 0);
+      }
+      const auto stored = isolate_->heap().SetElement(*object, index, value);
       if (!stored) {
         const auto status = stored.error() == runtime::ArrayAccessError::OutOfMemory
                                 ? ExecutionStatus::OutOfMemory
@@ -251,33 +259,20 @@ struct FutureContinuation final {
   Future* source;
   Future target;
   std::shared_ptr<std::vector<Value>> references;
+  const runtime::TypeSignature* result_type = nullptr;
+  runtime::FutureDiagnostic type_error;
 };
 
-StepResult ValidateNativeFuture(const FutureContinuation& context,
-                                const AsyncArguments& call,
-                                const LayoutTables& layouts,
-                                const runtime::FutureDiagnostic& diagnostic) {
+void ObserveCheckedCompletion(const FutureContinuation& context,
+                              Future& source,
+                              std::optional<runtime::TypeConstraint> type,
+                              const runtime::FutureDiagnostic& diagnostic) {
   auto* isolate = context.isolate;
-  auto* source = context.source;
   auto target = context.target;
   const auto references = context.references;
-  const auto argument = [&call](std::size_t index) { return call.At(index); };
-
-  const auto type_index = argument(1);
-  if (!type_index.IsInteger() || type_index.AsInteger() < -1 ||
-      (type_index.AsInteger() >= 0 &&
-       static_cast<std::size_t>(type_index.AsInteger()) >= layouts.types().size())) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto type =
-      type_index.AsInteger() < 0
-          ? std::optional<runtime::TypeConstraint>{}
-          : layouts.types().subspan(static_cast<std::size_t>(type_index.AsInteger())).front();
-  source->ObserveResult(
+  source.ObserveResult(
       [isolate, target, type, diagnostic](const FutureResult& input) mutable {
-        const auto* error_class =
-            input.value.IsObject() ? runtime::Heap::ClassOf(*input.value.AsObject()) : nullptr;
-        bool matches = error_class != nullptr && !error_class->callable();
+        bool matches = runtime::Heap::IsThrowable(input.value);
         if (input.state == FutureState::Succeeded) {
           matches = type ? runtime::Heap::IsValueOfType(input.value, *type) : input.value.IsNull();
         }
@@ -295,13 +290,22 @@ StepResult ValidateNativeFuture(const FutureContinuation& context,
         }
       },
       references);
+}
 
+StepResult ValidateNativeFuture(const FutureContinuation& context,
+                                const AsyncArguments& call,
+                                const runtime::FutureDiagnostic& diagnostic) {
+  ObserveCheckedCompletion(context, *context.source, call.runtime_type, diagnostic);
   return {};
+}
+
+void CompleteCallback(const FutureContinuation& context, Future& source) {
+  assert(context.result_type != nullptr);
+  ObserveCheckedCompletion(context, source, context.result_type->result, context.type_error);
 }
 
 StepResult ScheduleTimeout(const FutureContinuation& context,
                            const AsyncArguments& call,
-                           const LayoutTables& layouts,
                            const runtime::FutureDiagnostic& diagnostic) {
   auto* isolate = context.isolate;
   const auto program = context.program;
@@ -314,15 +318,12 @@ StepResult ScheduleTimeout(const FutureContinuation& context,
   const auto argument = [&call](std::size_t index) { return call.At(index); };
 
   const auto delay = argument(1);
-  const auto type_index = argument(3);
   if (!delay.IsInteger() ||
-      !runtime::FutureScheduler::CanSchedule(std::chrono::milliseconds(delay.AsInteger())) ||
-      !type_index.IsInteger() || type_index.AsInteger() < 0 ||
-      static_cast<std::size_t>(type_index.AsInteger()) >= layouts.types().size()) {
+      !runtime::FutureScheduler::CanSchedule(std::chrono::milliseconds(delay.AsInteger()))) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto timeout_type =
-      layouts.types().subspan(static_cast<std::size_t>(type_index.AsInteger())).front();
+  assert(call.runtime_type.has_value());
+  const auto timeout_type = *call.runtime_type;
   constexpr std::array<std::uint32_t, 2> kErrorReferences{
       runtime::kErrorMessageField,
       runtime::kErrorCodeField,
@@ -343,14 +344,14 @@ StepResult ScheduleTimeout(const FutureContinuation& context,
   auto roots = std::make_shared<runtime::RootRange>(heap, references->data(), references->size());
   auto timer = scheduler.After(
       std::chrono::milliseconds(delay.AsInteger()),
-      [isolate, program, debug_session, callback, target, won, references, roots, timeout_type,
-       diagnostic]() mutable {
+      [context, isolate, program, debug_session, callback, target, won, references, roots,
+       timeout_type, diagnostic]() mutable {
         if (std::exchange(*won, true)) {
           return;
         }
         if (!callback.IsNull()) {
           auto replacement = ScriptCallback{*isolate, program, callback, debug_session}.Invoke();
-          Execution::CompleteFuture(*isolate, target, replacement);
+          CompleteCallback(context, replacement);
         } else {
           const auto error =
               runtime::CreateError(isolate->heap(), *timeout_type.instance,
@@ -417,9 +418,7 @@ StepResult ObserveCompletion(const FutureContinuation& context, const AsyncArgum
   return {};
 }
 
-StepResult ObserveCallbacks(const FutureContinuation& context,
-                            const AsyncArguments& call,
-                            const LayoutTables& layouts) {
+StepResult ObserveCallbacks(const FutureContinuation& context, const AsyncArguments& call) {
   auto* isolate = context.isolate;
   const auto program = context.program;
   const auto debug_session = context.debug_session;
@@ -429,13 +428,8 @@ StepResult ObserveCallbacks(const FutureContinuation& context,
   const auto operation = call.operation;
   const auto argument = [&call](std::size_t index) { return call.At(index); };
 
-  const auto type_index = argument(operation == AsyncOperation::Then ? 3 : 2);
-  if (!type_index.IsInteger() || type_index.AsInteger() < 0 ||
-      static_cast<std::size_t>(type_index.AsInteger()) >= layouts.types().size()) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto error_type =
-      layouts.types().subspan(static_cast<std::size_t>(type_index.AsInteger())).front();
+  assert(call.runtime_type.has_value());
+  const auto error_type = *call.runtime_type;
   const auto on_value = operation == AsyncOperation::Then ? argument(1) : Value::Null();
   const auto on_error = operation == AsyncOperation::Then ? argument(2) : argument(1);
   if (operation == AsyncOperation::Then) {
@@ -451,7 +445,7 @@ StepResult ObserveCallbacks(const FutureContinuation& context,
     }
   }
   source->ObserveResult(
-      [isolate, program, debug_session, target, on_value, on_error,
+      [context, isolate, program, debug_session, target, on_value, on_error,
        error_type](const FutureResult& input) mutable {
         const auto callback = input.state == FutureState::Succeeded ? on_value : on_error;
         if (callback.IsNull() || (input.state == FutureState::Failed &&
@@ -472,7 +466,7 @@ StepResult ObserveCallbacks(const FutureContinuation& context,
         }
         auto invoked = ScriptCallback{*isolate, program, callback, debug_session}.Invoke(
             std::span(argument_value).first(*count));
-        Execution::CompleteFuture(*isolate, target, invoked);
+        CompleteCallback(context, invoked);
       },
       references);
   return {};
@@ -483,11 +477,24 @@ StepResult ObserveCallbacks(const FutureContinuation& context,
 StepResult Execution::ExecuteAsync(ActiveFrame& active, Instruction instruction) {
   const auto operation = static_cast<AsyncOperation>(DecodeB(instruction));
   const auto registers = active.frame.registers();
-  const AsyncArguments call{
+  AsyncArguments call{
       .operation = operation,
       .values = registers.subspan(DecodeC(instruction), AsyncArity(operation)),
       .destination = registers.subspan(DecodeA(instruction)).front(),
   };
+  if (operation == AsyncOperation::Then || operation == AsyncOperation::CatchError ||
+      operation == AsyncOperation::Timeout || operation == AsyncOperation::ValidateFuture) {
+    const auto index = call.At(AsyncArity(operation) - 1);
+    const auto types = active.function->layouts->types();
+    if (!index.IsInteger() || index.AsInteger() < -1 ||
+        (index.AsInteger() == -1 && operation != AsyncOperation::ValidateFuture) ||
+        (index.AsInteger() >= 0 && static_cast<std::size_t>(index.AsInteger()) >= types.size())) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    if (index.AsInteger() >= 0) {
+      call.runtime_type = types.subspan(static_cast<std::size_t>(index.AsInteger())).front();
+    }
+  }
   switch (operation) {
     case AsyncOperation::NewCompleter:
     case AsyncOperation::NewCancellationToken:
@@ -508,7 +515,7 @@ StepResult Execution::ExecuteAsync(ActiveFrame& active, Instruction instruction)
     case AsyncOperation::Race:
       return ExecuteAsyncAggregation(active, call);
     default:
-      return ExecuteAsyncComposition(active, call);
+      return ExecuteAsyncComposition(call);
   }
 }
 
@@ -579,6 +586,9 @@ StepResult Execution::ExecuteCompleter(const AsyncArguments& call) {
     return {};
   }
   const auto value = argument(1);
+  if (operation == AsyncOperation::CompleterError && !runtime::Heap::IsThrowable(value)) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
   const auto* adopted = value.IsObject() ? runtime::Heap::GetFuture(*value.AsObject()) : nullptr;
   const auto completion = [&] {
     if (operation == AsyncOperation::CompleterError) {
@@ -718,7 +728,7 @@ StepResult Execution::ExecuteAsyncAggregation(ActiveFrame& active, const AsyncAr
   return {};
 }
 
-StepResult Execution::ExecuteAsyncComposition(ActiveFrame& active, const AsyncArguments& call) {
+StepResult Execution::ExecuteAsyncComposition(const AsyncArguments& call) {
   const auto operation = call.operation;
   const auto arguments = call.values;
   auto destination = call.destination;
@@ -734,6 +744,33 @@ StepResult Execution::ExecuteAsyncComposition(ActiveFrame& active, const AsyncAr
   auto* object = heap.AllocateFuture(result);
   if (object == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  const runtime::TypeSignature* result_type = nullptr;
+  if (operation != AsyncOperation::ValidateFuture) {
+    const auto receiver_type = runtime::Heap::TypeOf(first);
+    result_type = receiver_type.signature;
+    if (operation == AsyncOperation::Then) {
+      const auto callback = runtime::Heap::TypeOf(argument(1));
+      if (!callback.callable || callback.signature == nullptr) {
+        return std::unexpected(ExecutionStatus::TypeError);
+      }
+      runtime::TypeSignature output;
+      output.result = callback.signature->FlattenedResult();
+      result_type = isolate_.CreateTypeSignature(std::move(output));
+    }
+    if (result_type == nullptr) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    const auto* layout = isolate_.CreateArrayLayout({
+        .element =
+            {
+                .kind = runtime::ValueKind::Object,
+                .object_kind = runtime::ObjectKind::Future,
+                .signature = result_type,
+            },
+    });
+    const auto bound = runtime::Heap::BindRuntimeType(*object, *layout);
+    assert(bound.has_value());
   }
   auto references = std::make_shared<std::vector<Value>>(arguments.size() + 1);
   arguments.CopyTo(std::span(*references).first(arguments.size()));
@@ -753,6 +790,12 @@ StepResult Execution::ExecuteAsyncComposition(ActiveFrame& active, const AsyncAr
       .source = source,
       .target = target,
       .references = references,
+      .result_type = result_type,
+      .type_error = Diagnostic({
+          .status = ExecutionStatus::TypeError,
+          .stack_trace = CaptureStack(),
+          .message = "Future callback result does not match its result type",
+      }),
   };
   StepResult observed;
   if (operation == AsyncOperation::ValidateFuture) {
@@ -761,18 +804,18 @@ StepResult Execution::ExecuteAsyncComposition(ActiveFrame& active, const AsyncAr
         .stack_trace = CaptureStack(),
         .message = "native Future completion does not match its external declaration",
     });
-    observed = ValidateNativeFuture(context, call, *active.function->layouts, diagnostic);
+    observed = ValidateNativeFuture(context, call, diagnostic);
   } else if (operation == AsyncOperation::Timeout) {
     const auto diagnostic = Diagnostic({
         .status = ExecutionStatus::Thrown,
         .stack_trace = CaptureStack(),
         .message = "Future timed out",
     });
-    observed = ScheduleTimeout(context, call, *active.function->layouts, diagnostic);
+    observed = ScheduleTimeout(context, call, diagnostic);
   } else if (operation == AsyncOperation::WhenComplete) {
     observed = ObserveCompletion(context, call);
   } else {
-    observed = ObserveCallbacks(context, call, *active.function->layouts);
+    observed = ObserveCallbacks(context, call);
   }
   if (!observed) {
     return observed;

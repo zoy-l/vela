@@ -26,7 +26,8 @@ Lowerer::LoweredValue Lowerer::ReadLocal(const Local& local, frontend::SourceLoc
 
 ClassId Lowerer::CallableClass(std::uint32_t function_id,
                                CallableMode mode,
-                               const std::vector<frontend::Capture>& captures) {
+                               const std::vector<frontend::Capture>& captures,
+                               const frontend::TypeDescriptor& type) {
   const auto key = (static_cast<std::uint64_t>(mode) << 32U) | function_id;
   const auto existing = callable_classes_.find(key);
   if (existing != callable_classes_.end()) {
@@ -36,6 +37,7 @@ ClassId Lowerer::CallableClass(std::uint32_t function_id,
   Class layout;
   layout.name = "$callable" + std::to_string(key);
   layout.callable = CallableTarget{.function = function_id, .mode = mode};
+  layout.callable_type = type.nullable ? type.name.substr(1, type.name.size() - 3) : type.name;
   for (const auto& capture : captures) {
     layout.field_order.push_back(capture.name);
     layout.field_types.push_back(
@@ -102,7 +104,8 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
   } else if (method) {
     mode = CallableMode::BoundMethod;
   }
-  const auto layout = CallableClass(target, mode, captures);
+  const auto layout =
+      CallableClass(target, mode, captures, model_.expression_types.at(&expression));
   const auto object = AllocateTemporary(expression.location);
   std::optional<std::size_t> null_jump;
   if (receiver && expression.null_safe) {

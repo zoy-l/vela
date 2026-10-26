@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -74,7 +75,22 @@ enum class StringJoinError : std::uint8_t { TypeMismatch, OutOfMemory };
 enum class StringCase : std::uint8_t { Lower, Upper };
 enum class ExpectedAlternative : std::uint8_t { Ok, Err };
 enum class ExpectedAccessError : std::uint8_t { NotExpected, InactiveAlternative };
-enum class CollectionError : std::uint8_t { NotCollection, TypeMismatch, OutOfMemory };
+enum class CollectionError : std::uint8_t {
+  NotCollection,
+  TypeMismatch,
+  OutOfMemory,
+  ConcurrentModification,
+};
+
+struct CollectionCursor final {
+  std::uint64_t mutation = 0;
+  std::uint32_t next = 0;
+};
+
+struct CollectionEntry final {
+  Value key;
+  Value value;
+};
 enum class CollectionInsert : std::uint8_t { Inserted, Updated };
 enum class CollectionRemove : std::uint8_t { Removed, Missing };
 enum class CollectionProjection : std::uint8_t { Keys, Values };
@@ -161,6 +177,13 @@ class Heap final {
       HeapObject& object) noexcept;
   [[nodiscard]] static std::expected<std::uint32_t, CollectionError> CollectionLength(
       const HeapObject& object) noexcept;
+  [[nodiscard]] static std::expected<CollectionCursor, CollectionError> IterateCollection(
+      const HeapObject& object) noexcept;
+  [[nodiscard]] static std::expected<void, CollectionError> CheckCollectionMutation(
+      const HeapObject& object,
+      const CollectionCursor& cursor) noexcept;
+  [[nodiscard]] static std::expected<std::optional<CollectionEntry>, CollectionError>
+  NextCollectionEntry(const HeapObject& object, CollectionCursor& cursor) noexcept;
   [[nodiscard]] std::expected<void, CollectionError> CopyCollection(
       const HeapObject& object,
       HeapObject& array,
@@ -233,7 +256,27 @@ class Heap final {
     return std::span(ObjectFields(&object), object.layout->field_count()).subspan(index).data();
   }
   [[nodiscard]] static const ClassLayout* ClassOf(const HeapObject& object) noexcept;
+  [[nodiscard]] static ObjectKind KindOf(const HeapObject& object) noexcept { return object.kind; }
+  [[nodiscard]] static TypeConstraint TypeOf(Value value) noexcept;
+  [[nodiscard]] static const TypeConstraint* RuntimeTypeOf(const HeapObject& object) noexcept {
+    if ((object.kind != ObjectKind::Future && object.kind != ObjectKind::Completer) ||
+        object.indexed_layout == nullptr) {
+      return nullptr;
+    }
+    return &object.array_layout()->element;
+  }
+  [[nodiscard]] static const ArrayLayout* ArrayTypeOf(const HeapObject& object) noexcept {
+    return object.kind == ObjectKind::Array ? object.array_layout() : nullptr;
+  }
+  [[nodiscard]] static const CollectionLayout* CollectionTypeOf(const HeapObject& object) noexcept {
+    return object.kind == ObjectKind::Collection ? object.collection_layout() : nullptr;
+  }
   [[nodiscard]] static bool IsValueOfType(Value value, const TypeConstraint& type) noexcept;
+  [[nodiscard]] static bool IsThrowable(Value value) noexcept;
+  // Future/Completer 的类型身份由生产者绑定，布局由 Isolate 持有；禁止重标已有身份。
+  [[nodiscard]] static std::expected<void, ExecutionStatus> BindRuntimeType(
+      HeapObject& object,
+      const ArrayLayout& type) noexcept;
   [[nodiscard]] static const Value* GetField(const HeapObject& object,
                                              std::uint32_t index) noexcept {
     if (object.layout == nullptr || index >= object.layout->field_count()) {

@@ -16,7 +16,7 @@ TEST(NullableArrayTest, StoresTaggedPrimitiveValuesWithoutConvertingThem) {
   Isolate isolate;
   auto& heap = isolate.heap();
   const auto* integers =
-      isolate.CreateArrayLayout({.element_kind = ValueKind::Integer, .nullable_elements = true});
+      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer, .nullable = true}});
   constexpr std::size_t kLength = 1024;
   auto* array = heap.AllocateArray(*integers, kLength);
   ASSERT_NE(array, nullptr);
@@ -31,7 +31,7 @@ TEST(NullableArrayTest, StoresTaggedPrimitiveValuesWithoutConvertingThem) {
   ASSERT_TRUE(heap.SetElement(*array, 0, Value::Null()));
   EXPECT_TRUE(Heap::GetElement(*array, 0)->IsNull());
   EXPECT_EQ(heap.SetElement(*array, kLength, Value::Null()).error(), ArrayAccessError::OutOfBounds);
-  const auto* strict = isolate.CreateArrayLayout({.element_kind = ValueKind::Integer});
+  const auto* strict = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
   auto* strict_array = heap.AllocateArray(*strict, 1);
   ASSERT_NE(strict_array, nullptr);
   EXPECT_EQ(heap.SetElement(*strict_array, 0, Value::Null()).error(),
@@ -44,7 +44,7 @@ TEST(NullableArrayTest, KeepsReferenceElementsCompactAndChecksTheirLayouts) {
   auto* record = isolate.CreateClassLayout(0, {});
   auto* other = isolate.CreateClassLayout(0, {});
   const auto* records = isolate.CreateArrayLayout(
-      {.element_kind = ValueKind::Object, .element_class = record, .nullable_elements = true});
+      {.element = {.kind = ValueKind::Object, .instance = record, .nullable = true}});
   EXPECT_EQ(records->element_size(), sizeof(HeapObject*));
   Value root = Value::Object(heap.AllocateArray(*records, 1));
   RootRange roots(heap, &root, 1);
@@ -68,7 +68,7 @@ TEST(NullableArrayTest, RetainsStringElementsDuringIncrementalSweep) {
   Isolate isolate;
   auto& heap = isolate.heap();
   const auto* strings =
-      isolate.CreateArrayLayout({.element_kind = ValueKind::String, .nullable_elements = true});
+      isolate.CreateArrayLayout({.element = {.kind = ValueKind::String, .nullable = true}});
   EXPECT_EQ(strings->element_size(), sizeof(StringObject*));
   auto* string = heap.AllocateString("retained");
   Value root = Value::Object(heap.AllocateArray(*strings, 1));
@@ -88,7 +88,7 @@ TEST(NullableArrayTest, RetainsStringElementsDuringIncrementalSweep) {
 TEST(DynamicArrayTest, GrowsGeometricallyAndPreservesAliasedIdentity) {
   Isolate isolate(1);
   auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element_kind = ValueKind::Integer});
+  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
   Value root = Value::Object(heap.AllocateArray(*layout, 0));
   RootRange roots(heap, &root, 1);
   auto* array = root.AsObject();
@@ -112,7 +112,7 @@ TEST(DynamicArrayTest, GrowsGeometricallyAndPreservesAliasedIdentity) {
 TEST(DynamicArrayTest, NativeViewsObserveRelocatedCompactStorage) {
   Isolate isolate;
   auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element_kind = ValueKind::Integer});
+  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
   Value root = Value::Object(heap.AllocateArray(*layout, 0));
   RootRange roots(heap, &root, 1);
   auto* array = root.AsObject();
@@ -127,7 +127,7 @@ TEST(DynamicArrayTest, NativeViewsObserveRelocatedCompactStorage) {
 TEST(DynamicArrayTest, ReserveAccountsStorageAndPreservesContentsAndMutationVersion) {
   Isolate isolate;
   auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element_kind = ValueKind::Integer});
+  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
   constexpr std::size_t kCount = 4096;
   Value root = Value::Object(heap.AllocateArray(*layout, kCount));
   RootRange roots(heap, &root, 1);
@@ -150,7 +150,7 @@ TEST(DynamicArrayTest, ShiftsTaggedValuesAndRejectsInvalidMutationsAtomically) {
   Isolate isolate;
   auto& heap = isolate.heap();
   const auto* layout =
-      isolate.CreateArrayLayout({.element_kind = ValueKind::Integer, .nullable_elements = true});
+      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer, .nullable = true}});
   Value root = Value::Object(heap.AllocateArray(*layout, 0));
   RootRange roots(heap, &root, 1);
   auto& array = *root.AsObject();
@@ -178,7 +178,7 @@ TEST(DynamicArrayTest, ShiftsTaggedValuesAndRejectsInvalidMutationsAtomically) {
 TEST(DynamicArrayTest, RootsPendingReferencesDuringGrowthAndDropsRemovedElements) {
   Isolate isolate(1);
   auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element_kind = ValueKind::String});
+  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::String}});
   Value root = Value::Object(heap.AllocateArray(*layout, 0));
   RootRange roots(heap, &root, 1);
   auto& array = *root.AsObject();
@@ -199,7 +199,7 @@ TEST(DynamicArrayTest, RootsPendingReferencesDuringGrowthAndDropsRemovedElements
 TEST(DynamicArrayTest, ClearRetainsCapacityWithoutRetainingReferencesAndReleasesOwnedBuffers) {
   Isolate isolate(1);
   auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element_kind = ValueKind::String});
+  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::String}});
   Value root = Value::Object(heap.AllocateArray(*layout, 0));
   RootRange roots(heap, &root, 1);
   auto& array = *root.AsObject();
@@ -224,7 +224,7 @@ TEST(DynamicArrayTest, ReplacesReferenceRangesDuringSweep) {
   auto& heap = isolate.heap();
   auto* record = isolate.CreateClassLayout(0, {});
   const auto* layout =
-      isolate.CreateArrayLayout({.element_kind = ValueKind::Object, .element_class = record});
+      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = record}});
   auto* child = heap.AllocateInstance(*record);
   Value root = Value::Object(heap.AllocateArray(*layout, 0));
   RootRange roots(heap, &root, 1);

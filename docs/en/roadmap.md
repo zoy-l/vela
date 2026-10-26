@@ -71,7 +71,7 @@ P0 behavior is specified in [Basic language contracts](language_basics.md).
 - [x] Add generics such as `Set<T>` and `Map<K, V>`
 - [x] Add explicit interface / implements contracts
 - [x] Add type tests and checked casts
-- [ ] Add checked dynamic values, heterogeneous containers, and dynamic dispatch ([design](json.md))
+- [x] Add checked dynamic values, heterogeneous containers, and dynamic dispatch ([design](json.md))
 - [x] Diagnose unreachable statements
 - [x] Require complete returns on every finite control-flow path
 
@@ -93,7 +93,7 @@ P1 contracts are specified in [Core language specification](core_language.md).
 - [x] Add Unicode string case conversion ([contract](string_case.md))
 - [x] Add PCRE2-backed regular expressions with Dart-style APIs and typed matches ([contract](regexp.md))
 - [x] Add collection standard library APIs
-- [ ] Add JSON parsing and serialization over native values ([design](json.md))
+- [x] Add JSON parsing and serialization over native values ([design](json.md))
 - [x] Add fixed byte storage and typed byte views ([contract](byte_data.md))
 - [x] Define process exit codes
 

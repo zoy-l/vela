@@ -72,7 +72,9 @@ std::vector<StackFrame> Execution::ResolveTrace(
                                   ? std::span<const std::string>(*function.source_paths)
                                   : std::span<const std::string>();
     const DebugInfo debug{
-        .name = function.name, .source_paths = source_paths, .mappings = function.source_mappings,
+        .name = function.name,
+        .source_paths = source_paths,
+        .mappings = function.source_mappings,
     };
     StackFrame frame{
         .function = std::string(debug.name),
@@ -177,6 +179,10 @@ std::optional<ExecutionResult> Execution::HandleError(ExecutionStatus status) {
   }
   while (frame_count_ != 0) {
     auto& active = std::span(frames_).subspan(frame_count_ - 1).front();
+    active.json_encoder.reset();
+    active.dynamic_return = false;
+    active.dynamic_call_plan = false;
+    active.dynamic_assignment.reset();
     if (const auto* handler = FindHandler(active.function->handlers, active.program_counter - 1)) {
       active.program_counter = handler->target;
       return std::nullopt;
@@ -233,7 +239,7 @@ StepResult Execution::ExecuteException(ActiveFrame& active, Instruction instruct
     pending_exception_ = value;
     return std::unexpected(exception.status);
   }
-  if (!runtime::Heap::IsValueOfType(value, {.kind = runtime::ValueKind::Object})) {
+  if (!runtime::Heap::IsThrowable(value.Read())) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   std::string_view message;

@@ -5,6 +5,7 @@ executable("vela_benchmarks") {
     "byte_data_benchmark.cc",
     "compilation_cache_benchmark.cc",
     "gc_strategy_benchmark.cc",
+    "json_benchmark.cc",
     "native_workloads.cc",
     "native_workloads.h",
     "regexp_benchmark.cc",

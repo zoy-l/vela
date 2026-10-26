@@ -24,14 +24,21 @@ cleared on reuse. Register views borrow payload/tag arrays and cannot outlive
 the active frame; slot-reference assignment writes a value rather than rebinding
 the reference. Moving a slot reference preserves that contract.
 
-Builtins materialize at most three public values at their input boundary. Native
+Value builtins materialize at most four public values at their input boundary. Native
 callbacks materialize only their actual argument count in a reusable VM-owned
 buffer, which grows only when a larger call window is first encountered.
 Explicit numeric conversions use the shared single-value conversion boundary,
-avoiding the generic three-value argument array and generic builtin dispatch.
+avoiding the generic four-value argument array and generic builtin dispatch.
 The host builtin path uses the same range/type checks; no conversion rule changes.
 There is no repeated heap allocation or full 256-slot initialization. The actual
 register window remains rooted throughout allocation and callback execution.
+
+Dynamic primitive values use the existing register tags. Erased enums are boxed
+with their nominal identity; statically typed enum arrays keep compact integer
+storage. Dynamic arrays and collection slots store tagged values and use ordinary
+GC barriers. Canonical Isolate metadata describes container arguments, callable
+signatures, Expected payloads, and Future/Completer payloads independently of a
+frontend compilation result.
 
 ## Constants
 

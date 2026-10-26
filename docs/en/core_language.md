@@ -12,6 +12,12 @@ payload-enum proposal. Runnable versions are in [`examples/`](../../examples/).
 `func`, postfix annotations, strict types, explicit
 enum qualification, `T?`, and C/C++ switch fallthrough remain established rules.
 
+Explicit `dynamic` values retain their actual language type, including null.
+Operations and conversions to concrete types are checked at runtime. Containers
+keep their declared type arguments when erased to dynamic; `int[]` does not become
+`dynamic[]`. See [JSON and dynamic values](json.md) for the complete contract and
+[`examples/json.vela`](../../examples/json.vela) for parsing and model serialization.
+
 ## Functions, function values, and closures
 
 ```typescript

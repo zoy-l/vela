@@ -71,6 +71,9 @@ TypeChecker::Type TypeChecker::CheckGlobalInitializer(const Global& declaration,
   lambda_scopes_.clear();
   refinements_.clear();
   const auto actual = CheckExpression(*declaration.initializer, expected);
+  if (expected != nullptr) {
+    RecordConversion(*declaration.initializer, *expected, actual);
+  }
   scopes_ = std::move(saved_scopes);
   lambda_scopes_ = std::move(saved_lambdas);
   refinements_ = std::move(saved_facts);

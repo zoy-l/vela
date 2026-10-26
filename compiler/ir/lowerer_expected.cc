@@ -1,5 +1,7 @@
+#include "base/member.h"
 #include "compiler/ir/lowerer.h"
 
+#include <string_view>
 #include <utility>
 
 #include "compiler/frontend/ast.h"
@@ -7,6 +9,27 @@
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
+
+void Lowerer::RegisterExpectedMember(const frontend::TypeDescriptor& receiver,
+                                     std::string_view name,
+                                     const frontend::ExpectedMethod& descriptor) {
+  auto function = CreateMemberFunction(receiver, name, descriptor.signature);
+  current_function_ = &function;
+  current_handler_.reset();
+  next_register_ = function.parameter_count;
+  const auto result = EmitTemporary({
+      .opcode = descriptor.operation == frontend::ExpectedOperation::HasValue
+                    ? Opcode::ExpectedHasValue
+                    : Opcode::ExpectedValue,
+      .lhs = 0,
+      .index = descriptor.operation == frontend::ExpectedOperation::Error ? 1U : 0U,
+      .location = {},
+  });
+  Emit({.opcode = Opcode::Return, .dst = result, .location = {}});
+  function.register_count = next_register_;
+  PublishMemberFunction(receiver, name, MemberKind::Method, descriptor.signature,
+                        std::move(function));
+}
 
 ClassId Lowerer::RegisterExpectedType(frontend::TypeDescriptor type) {
   if (type.nullable) {

@@ -1,11 +1,13 @@
 #include "compiler/frontend/type_checker.h"
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/builtins.h"
 
 namespace vela::frontend {
 
@@ -31,10 +33,14 @@ TypeChecker::Type TypeChecker::CheckExpectedFactory(const Expression& expression
   return CheckFunctionCall(signature, expression);
 }
 
-std::optional<TypeChecker::ExpectedMethod> TypeChecker::ResolveExpectedMethod(
-    const Type& receiver,
-    std::string_view name) {
-  const auto arguments = generic_arguments_.at(receiver.name);
+std::optional<ExpectedMethod> TypeChecker::ResolveExpectedMethod(const Type& receiver,
+                                                                 std::string_view name) {
+  return ResolveExpectedBuiltin(generic_arguments_.at(receiver.name), name);
+}
+
+std::optional<ExpectedMethod> ResolveExpectedBuiltin(std::span<const TypeDescriptor> arguments,
+                                                     std::string_view name) {
+  using Type = TypeDescriptor;
   Type result;
   ExpectedOperation operation = ExpectedOperation::HasValue;
   if (name == "hasValue") {
@@ -48,7 +54,7 @@ std::optional<TypeChecker::ExpectedMethod> TypeChecker::ResolveExpectedMethod(
   } else {
     return std::nullopt;
   }
-  FunctionInfo signature;
+  FunctionDescriptor signature;
   signature.return_type = result;
   return ExpectedMethod{.operation = operation, .signature = std::move(signature)};
 }

@@ -11,6 +11,7 @@
 #include <utility>
 #include "base/builtin.h"
 
+#include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
 #include "compiler/frontend/ast.h"
@@ -22,6 +23,7 @@ namespace vela::frontend {
 namespace {
 constexpr auto kNames = std::to_array<std::string_view>({
     "Math",
+    "Json",
     "Random",
     "performance",
     "Date",
@@ -38,45 +40,24 @@ constexpr auto kNames = std::to_array<std::string_view>({
 });
 
 std::optional<Builtin> Intrinsic(std::string_view owner, const Function& declaration) {
-  const auto& member = declaration.name;
-  if (owner == "RegExp" && member == "escape") {
-    return Builtin::RegExpEscape;
-  }
-  if (owner == "ByteArray" && member == "from") {
-    return Builtin::ByteArrayFrom;
-  }
-  if (owner == "ByteData" && member == "view") {
-    return Builtin::ByteDataView;
-  }
-  if (owner == "int") {
-    if (member == "parse") {
-      return Builtin::IntParse;
-    }
-    if (member == "tryParse") {
-      return Builtin::IntTryParse;
-    }
-  } else if (owner == "double") {
-    if (member == "parse") {
-      return Builtin::DoubleParse;
-    }
-    if (member == "tryParse") {
-      return Builtin::DoubleTryParse;
-    }
-  } else if (owner == "Date") {
-    if (member == "parse") {
-      return Builtin::DateParse;
-    }
-    if (member == "toISOString") {
-      return Builtin::DateToISOString;
-    }
-    if (member == "fromUTC") {
-      return Builtin::DateFromUTC;
-    }
-    if (member == "toUTC") {
-      return Builtin::DateToUTC;
-    }
-  }
-  return std::nullopt;
+  static const absl::flat_hash_map<std::pair<std::string_view, std::string_view>, Builtin>
+      kIntrinsics = {
+          {{"Json", "parse"}, Builtin::JsonParse},
+          {{"Json", "stringify"}, Builtin::JsonStringify},
+          {{"RegExp", "escape"}, Builtin::RegExpEscape},
+          {{"ByteArray", "from"}, Builtin::ByteArrayFrom},
+          {{"ByteData", "view"}, Builtin::ByteDataView},
+          {{"int", "parse"}, Builtin::IntParse},
+          {{"int", "tryParse"}, Builtin::IntTryParse},
+          {{"double", "parse"}, Builtin::DoubleParse},
+          {{"double", "tryParse"}, Builtin::DoubleTryParse},
+          {{"Date", "parse"}, Builtin::DateParse},
+          {{"Date", "toISOString"}, Builtin::DateToISOString},
+          {{"Date", "fromUTC"}, Builtin::DateFromUTC},
+          {{"Date", "toUTC"}, Builtin::DateToUTC},
+      };
+  const auto found = kIntrinsics.find({owner, declaration.name});
+  return found == kIntrinsics.end() ? std::nullopt : std::optional(found->second);
 }
 
 bool HasStandardReferences(std::string_view text) {
@@ -107,6 +88,9 @@ void CollectSourceStandardNames(std::string_view text, absl::flat_hash_set<std::
     }
     if (IsStandardName(token.lexeme)) {
       used.insert(token.lexeme);
+      if (token.lexeme == "Json") {
+        used.insert("Error");
+      }
     }
     if (std::ranges::find(kAsyncNames, token.lexeme) != kAsyncNames.end()) {
       used.insert("Error");
@@ -168,6 +152,17 @@ class ByteData {
   if (name == "Endian") {
     return R"(/// Byte order; multi-byte ByteData access defaults to big. host uses execution-platform order.
 enum Endian { big, little, host }
+)";
+  }
+  if (name == "Json") {
+    return R"(/// Strict in-memory JSON using native values, dynamic arrays, and ordered maps.
+class Json {
+  private constructor() {}
+  /// Parses one complete JSON value. Invalid input throws JsonDecodeError with a byte offset.
+  static external func parse(source: string): dynamic;
+  /// Encodes compact JSON; objects use public toJson(). Cycles throw JsonEncodeError.
+  static external func stringify(value: dynamic): string;
+}
 )";
   }
   if (name == "int") {

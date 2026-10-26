@@ -9,6 +9,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <span>
 #include <utility>
 
@@ -28,6 +29,7 @@ constexpr std::uint32_t kInitialCapacity = 8;
 constexpr std::uint32_t kMaximumCapacity = 1U << (std::numeric_limits<std::uint32_t>::digits - 2U);
 
 struct CollectionStorage final {
+  std::uint64_t mutation = 0;
   std::byte* data = nullptr;
   std::size_t bytes = 0;
   std::uint32_t capacity = 0;
@@ -124,8 +126,13 @@ std::size_t HashKey(Value value) noexcept {
     }
     case ValueKind::String:
       return absl::HashOf(value.kind(), value.AsString()->value());
-    case ValueKind::Object:
+    case ValueKind::Object: {
+      const auto* layout = Heap::ClassOf(*value.AsObject());
+      if (layout != nullptr && layout->IsEnum()) {
+        return absl::HashOf(layout, Heap::GetField(*value.AsObject(), 0)->AsInteger());
+      }
       return absl::HashOf(value.kind(), value.AsObject());
+    }
   }
   std::unreachable();
 }
@@ -148,8 +155,15 @@ bool IsSameKey(Value left, Value right) noexcept {
     }
     case ValueKind::String:
       return left.AsString()->value() == right.AsString()->value();
-    case ValueKind::Object:
+    case ValueKind::Object: {
+      const auto* layout = Heap::ClassOf(*left.AsObject());
+      if (layout != nullptr && layout->IsEnum()) {
+        return layout == Heap::ClassOf(*right.AsObject()) &&
+               Heap::GetField(*left.AsObject(), 0)->AsInteger() ==
+                   Heap::GetField(*right.AsObject(), 0)->AsInteger();
+      }
       return left.AsObject() == right.AsObject();
+    }
   }
   std::unreachable();
 }
@@ -232,7 +246,12 @@ std::expected<void, CollectionError> Heap::GrowCollection(HeapObject& object) no
   if (memory == nullptr) {
     return std::unexpected(CollectionError::OutOfMemory);
   }
-  CollectionStorage replacement{.data = memory, .bytes = bytes, .capacity = capacity};
+  CollectionStorage replacement{
+      .mutation = current.mutation,
+      .data = memory,
+      .bytes = bytes,
+      .capacity = capacity,
+  };
   const auto target = View(replacement, layout);
   std::ranges::fill(target.buckets, kEmpty);
   if (current.size != 0) {
@@ -307,6 +326,7 @@ std::expected<CollectionInsert, CollectionError> Heap::InsertCollection(HeapObje
   table.buckets.subspan(slot.bucket).front() = entry;
   LinkTail(storage, table, entry);
   ++storage.size;
+  ++storage.mutation;
   if (key.IsObject() || key.IsString()) {
     WriteBarrier(object, key);
   }
@@ -379,6 +399,7 @@ std::expected<CollectionRemove, CollectionError> Heap::RemoveCollection(HeapObje
   }
   table.buckets.subspan(slot.bucket).front() = kDeleted;
   --storage.size;
+  ++storage.mutation;
   if (storage.size == 0) {
     storage.used = 0;
     std::ranges::fill(table.buckets, kEmpty);
@@ -391,6 +412,9 @@ std::expected<void, CollectionError> Heap::ClearCollection(HeapObject& object) n
     return std::unexpected(CollectionError::NotCollection);
   }
   auto& storage = Storage(object);
+  if (storage.size != 0) {
+    ++storage.mutation;
+  }
   if (storage.capacity != 0) {
     std::ranges::fill(View(storage, *object.collection_layout()).buckets, kEmpty);
   }
@@ -459,6 +483,47 @@ std::expected<std::uint32_t, CollectionError> Heap::CollectionLength(
   return Storage(object).size;
 }
 
+std::expected<CollectionCursor, CollectionError> Heap::IterateCollection(
+    const HeapObject& object) noexcept {
+  if (object.kind != ObjectKind::Collection) {
+    return std::unexpected(CollectionError::NotCollection);
+  }
+  const auto& storage = Storage(object);
+  return CollectionCursor{.mutation = storage.mutation, .next = storage.head};
+}
+
+std::expected<void, CollectionError> Heap::CheckCollectionMutation(
+    const HeapObject& object,
+    const CollectionCursor& cursor) noexcept {
+  if (object.kind != ObjectKind::Collection) {
+    return std::unexpected(CollectionError::NotCollection);
+  }
+  if (Storage(object).mutation != cursor.mutation) {
+    return std::unexpected(CollectionError::ConcurrentModification);
+  }
+  return {};
+}
+
+std::expected<std::optional<CollectionEntry>, CollectionError> Heap::NextCollectionEntry(
+    const HeapObject& object,
+    CollectionCursor& cursor) noexcept {
+  if (const auto checked = CheckCollectionMutation(object, cursor); !checked) {
+    return std::unexpected(checked.error());
+  }
+  if (cursor.next == kEmpty) {
+    return std::nullopt;
+  }
+  const auto& layout = *object.collection_layout();
+  const auto table = View(Storage(object), layout);
+  const auto index = cursor.next;
+  cursor.next = table.next.subspan(index).front();
+  return CollectionEntry{
+      .key = LoadElementStorage(layout.keys, table.keys, index),
+      .value =
+          layout.values ? LoadElementStorage(*layout.values, table.values, index) : Value::Null(),
+  };
+}
+
 std::expected<void, CollectionError> Heap::CopyCollection(
     const HeapObject& object,
     HeapObject& array,
@@ -492,7 +557,8 @@ std::expected<void, CollectionError> Heap::CopyCollection(
 void Heap::MarkCollection(HeapObject& object) noexcept {
   const auto& layout = *object.collection_layout();
   const auto references = [](const ArrayLayout& type) -> bool {
-    return type.element_kind == ValueKind::Object || type.element_kind == ValueKind::String;
+    return type.element.dynamic || type.element.kind == ValueKind::Object ||
+           type.element.kind == ValueKind::String;
   };
   const bool key_references = references(layout.keys);
   const bool value_references = layout.values && references(*layout.values);

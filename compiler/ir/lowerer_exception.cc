@@ -47,7 +47,18 @@ Lowerer::Completion Lowerer::LowerFinalizers(std::size_t depth) {
 void Lowerer::LowerReturn(const frontend::Statement& statement) {
   RegisterId result = 0;
   if (statement.expression) {
-    result = LowerExpression(*statement.expression).reg;
+    const auto value = LowerExpression(*statement.expression);
+    if (current_function_->is_async && value.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+      result = LowerFuturePayload(value, current_function_->return_type, statement.location);
+    } else if (current_function_->is_async &&
+               value.type.kind == frontend::TypeDescriptor::Kind::Enum) {
+      result = LowerConversion(value,
+                               {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},
+                               statement.location)
+                   .reg;
+    } else {
+      result = value.reg;
+    }
     if (!finalizers_.empty()) {
       const auto snapshot = AllocateTemporary(statement.location);
       Emit(

@@ -98,6 +98,9 @@ std::uint32_t Lowerer::RegisterArrayType(const frontend::TypeDescriptor& type) {
     return found->second;
   }
   const auto& element = model_.array_elements.at(type.name);
+  if (element.kind == frontend::TypeDescriptor::Kind::Enum) {
+    static_cast<void>(RegisterEnumType(element));
+  }
   if (element.kind == frontend::TypeDescriptor::Kind::Set ||
       element.kind == frontend::TypeDescriptor::Kind::Map) {
     static_cast<void>(RegisterCollectionType(element));

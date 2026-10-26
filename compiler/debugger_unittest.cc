@@ -134,6 +134,37 @@ func main(): int {
   EXPECT_NE(std::ranges::find(frames, "work"), frames.end());
 }
 
+TEST(DebuggerTest, JsonConversionAndDynamicCallsKeepOrdinaryFramesAndGcRoots) {
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(R"(
+class Payload {
+  public param value: dynamic;
+  public toJson(): dynamic[] { return [this.value, true, null]; }
+  public read(): int { return this.value; }
+}
+func main(): int {
+  const object: dynamic = Payload(value: 42);
+  const read = object.read;
+  const text = Json.stringify(object);
+  const values: dynamic[] = Json.parse(text);
+  return read() == values[0] && text == '[42,true,null]' ? 42 : 0;
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  std::vector<std::string> frames;
+  CallbackDebugger debugger([&](const vm::DebugContext& context) {
+    CollectAndCheckFrame(context, isolate, frames);
+    return vm::DebugAction::Continue;
+  });
+  const auto result =
+      vm::VirtualMachine(isolate).Debug(compiled.program.FindFunction("main"), debugger);
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), kExpectedAnswer);
+  EXPECT_NE(std::ranges::find(frames, "Payload.toJson"), frames.end());
+  EXPECT_NE(std::ranges::find(frames, "Payload.read"), frames.end());
+}
+
 TEST(DebuggerTest, ReportsTheCurrentInstructionAndTheCallersCallSite) {
   runtime::Isolate isolate;
   const auto compiled = CompileSource(R"(

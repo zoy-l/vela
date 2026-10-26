@@ -99,7 +99,7 @@ TEST_F(ByteOperationsTest, ByteWritesCheckValueAndIndexBeforeMutating) {
 }
 
 TEST_F(ByteOperationsTest, CopiesOnlyValidatedIntArraysAndDoesNotShareStorage) {
-  const ArrayLayout layout{.element_kind = ValueKind::Integer};
+  const ArrayLayout layout{.element = {.kind = ValueKind::Integer}};
   roots().at(2) = Value::Object(heap().AllocateArray(layout, 3));
   auto& array = *roots().at(2).AsObject();
   ASSERT_TRUE(heap().SetElement(array, 0, Value::Integer(42)));

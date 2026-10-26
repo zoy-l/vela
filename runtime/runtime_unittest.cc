@@ -104,7 +104,7 @@ TEST(RuntimeTest, ArrayStorageSurvivesCollectionAndReuse) {
   Heap& heap = isolate.heap();
   auto* layout = isolate.CreateClassLayout(0, std::span<const std::uint32_t>());
   const auto* array_layout =
-      isolate.CreateArrayLayout({.element_kind = ValueKind::Object, .element_class = layout});
+      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = layout}});
   Value array = Value::Object(heap.AllocateArray(*array_layout, 1));
   RootRange roots(heap, &array, 1);
   auto* child = heap.AllocateInstance(*layout);
@@ -131,9 +131,9 @@ TEST(RuntimeTest, TypedArraysUseCompactAccountedStorage) {
   Isolate isolate;
   auto& heap = isolate.heap();
   constexpr std::size_t kLength = 1024;
-  const auto* booleans = isolate.CreateArrayLayout({.element_kind = ValueKind::Boolean});
-  const auto* integers = isolate.CreateArrayLayout({.element_kind = ValueKind::Integer});
-  const auto* doubles = isolate.CreateArrayLayout({.element_kind = ValueKind::Double});
+  const auto* booleans = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Boolean}});
+  const auto* integers = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
+  const auto* doubles = isolate.CreateArrayLayout({.element = {.kind = ValueKind::Double}});
   auto* array = heap.AllocateArray(*booleans, kLength);
   ASSERT_NE(array, nullptr);
   const auto boolean_bytes = heap.allocated_bytes();
@@ -170,9 +170,9 @@ TEST(RuntimeTest, NestedArrayWriteBarrierRetainsChildrenAndRejectsWrongLayouts) 
   auto* record = isolate.CreateClassLayout(0, {});
   auto* other_record = isolate.CreateClassLayout(0, {});
   const auto* records =
-      isolate.CreateArrayLayout({.element_kind = ValueKind::Object, .element_class = record});
+      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = record}});
   const auto* nested =
-      isolate.CreateArrayLayout({.element_kind = ValueKind::Object, .element_array = records});
+      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .array = records}});
   Value root = Value::Object(heap.AllocateArray(*nested, 1));
   RootRange roots(heap, &root, 1);
   auto* inner = heap.AllocateArray(*records, 1);
@@ -198,7 +198,7 @@ TEST(RuntimeTest, ArrayWriteBarrierRetainsUnsweptChild) {
   auto& heap = isolate.heap();
   auto* record = isolate.CreateClassLayout(0, {});
   const auto* records =
-      isolate.CreateArrayLayout({.element_kind = ValueKind::Object, .element_class = record});
+      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = record}});
   auto* child = heap.AllocateInstance(*record);
   Value root = Value::Object(heap.AllocateArray(*records, 1));
   RootRange roots(heap, &root, 1);

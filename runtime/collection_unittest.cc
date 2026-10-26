@@ -21,8 +21,8 @@ class OrderedCollectionTest : public testing::Test {
 
   void SetUp() override {
     const auto* layout = isolate_.CreateCollectionLayout({
-        .keys = {.element_kind = ValueKind::Integer},
-        .values = ArrayLayout{.element_kind = ValueKind::Integer},
+        .keys = {.element = {.kind = ValueKind::Integer}},
+        .values = ArrayLayout{.element = {.kind = ValueKind::Integer}},
     });
     values_.at(0) = Value::Object(isolate_.heap().AllocateCollection(*layout));
     ASSERT_NE(values_.at(0).AsObject(), nullptr);
@@ -50,7 +50,7 @@ class OrderedCollectionTest : public testing::Test {
   void VerifySnapshotOrder() {
     constexpr auto kHalfEntries = kEntryCount / 2;
     auto& heap = isolate_.heap();
-    const auto* integers = isolate_.CreateArrayLayout({.element_kind = ValueKind::Integer});
+    const auto* integers = isolate_.CreateArrayLayout({.element = {.kind = ValueKind::Integer}});
     values_.at(1) = Value::Object(heap.AllocateArray(*integers, kEntryCount));
     ASSERT_TRUE(heap.CopyCollection(map(), *values_.at(1).AsObject(), CollectionProjection::Keys));
     for (std::uint32_t index = 0; index < kHalfEntries; ++index) {
@@ -81,8 +81,8 @@ TEST(CollectionTest, ClearsEntriesAndAllowsReuse) {
   Isolate isolate;
   auto& heap = isolate.heap();
   const auto* layout = isolate.CreateCollectionLayout({
-      .keys = {.element_kind = ValueKind::Integer},
-      .values = ArrayLayout{.element_kind = ValueKind::Integer},
+      .keys = {.element = {.kind = ValueKind::Integer}},
+      .values = ArrayLayout{.element = {.kind = ValueKind::Integer}},
   });
   Value value = Value::Object(heap.AllocateCollection(*layout));
   RootRange root(heap, &value, 1);
@@ -101,7 +101,7 @@ TEST(CollectionTest, CanonicalizesNanAndSignedZeroKeyEquality) {
   Isolate isolate;
   auto& heap = isolate.heap();
   const auto* layout =
-      isolate.CreateCollectionLayout({.keys = {.element_kind = ValueKind::Double}});
+      isolate.CreateCollectionLayout({.keys = {.element = {.kind = ValueKind::Double}}});
   Value value = Value::Object(heap.AllocateCollection(*layout));
   RootRange root(heap, &value, 1);
   auto& set = *value.AsObject();
@@ -122,8 +122,8 @@ TEST(CollectionTest, TracesLiveEntriesAndReclaimsRemovedCyclesAndBuffers) {
   const std::array<std::uint32_t, 1> references = {0};
   auto* instance = isolate.CreateClassLayout(1, references);
   const auto* layout = isolate.CreateCollectionLayout({
-      .keys = {.element_kind = ValueKind::Object, .element_class = instance},
-      .values = ArrayLayout{.element_kind = ValueKind::String},
+      .keys = {.element = {.kind = ValueKind::Object, .instance = instance}},
+      .values = ArrayLayout{.element = {.kind = ValueKind::String}},
   });
   std::array<Value, 3> values;
   RootRange roots(heap, values.data(), values.size());
@@ -175,7 +175,7 @@ TEST_P(SetCombinationTest, KeepsReferenceKeysAliveAcrossGrowthAndReturnsIndepend
   Isolate isolate(1);
   auto& heap = isolate.heap();
   const auto* layout =
-      isolate.CreateCollectionLayout({.keys = {.element_kind = ValueKind::String}});
+      isolate.CreateCollectionLayout({.keys = {.element = {.kind = ValueKind::String}}});
   std::array<Value, 4> values;
   RootRange roots(heap, values.data(), values.size());
   values.at(0) = Value::Object(heap.AllocateCollection(*layout));
@@ -209,7 +209,7 @@ TEST_P(CollectionBarrierTest, ProtectsNewEdgesDuringIncrementalCollection) {
   Isolate isolate;
   auto& heap = isolate.heap();
   const auto* layout =
-      isolate.CreateCollectionLayout({.keys = {.element_kind = ValueKind::String}});
+      isolate.CreateCollectionLayout({.keys = {.element = {.kind = ValueKind::String}}});
   std::array<Value, 2> values;
   RootRange roots(heap, values.data(), values.size());
   values.at(0) = Value::Object(heap.AllocateCollection(*layout));

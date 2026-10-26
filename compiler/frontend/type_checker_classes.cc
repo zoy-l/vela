@@ -4,6 +4,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/regexp.h"
 #include "compiler/frontend/ast.h"
@@ -15,6 +16,8 @@ namespace vela::frontend {
 
 void TypeChecker::CollectTypes(const Program& program) {
   types_.emplace("void", Type{.kind = Type::Kind::Void, .name = "void"});
+  types_.emplace("dynamic", Type{.kind = Type::Kind::Dynamic, .name = "dynamic"});
+  static_cast<void>(ArrayType(types_.at("dynamic")));
   types_.emplace("bool", Type{.kind = Type::Kind::Bool, .name = "bool"});
   types_.emplace("int", Type{.kind = Type::Kind::Int, .name = "int"});
   types_.emplace("double", Type{.kind = Type::Kind::Double, .name = "double"});
@@ -32,6 +35,10 @@ void TypeChecker::CollectTypes(const Program& program) {
   static_cast<void>(ArrayType(types_.at("RegExpMatch")));
   static_cast<void>(NullableType(types_.at("RegExpMatch")));
   static_cast<void>(ArrayType(NullableType(types_.at("string"))));
+  const Type json_object{.kind = Type::Kind::Map, .name = "Map<string, dynamic>"};
+  types_.emplace(json_object.name, json_object);
+  generic_arguments_.emplace(json_object.name,
+                             std::vector<Type>{types_.at("string"), types_.at("dynamic")});
   types_.reserve(types_.size() + program.enums.size() + program.classes.size());
   classes_.reserve(program.classes.size());
   for (const auto& interface : program.interfaces) {
@@ -190,6 +197,9 @@ void TypeChecker::MergeAccessor(FunctionInfo& existing,
   }
   existing.is_getter = existing.is_getter || incoming.is_getter;
   existing.is_setter = existing.is_setter || incoming.is_setter;
+  if (incoming.is_getter) {
+    existing.return_type = incoming.return_type;
+  }
   if (incoming.is_setter && !incoming.parameters.empty()) {
     existing.parameters = incoming.parameters;
     existing.parameter_indices = incoming.parameter_indices;
@@ -345,6 +355,10 @@ TypeChecker::Type TypeChecker::CheckStaticMember(const Expression& expression,
 TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
                                                  const Type& object,
                                                  const Type* expected) {
+  if (object.kind == Type::Kind::Dynamic) {
+    InvalidateCapturedRefinements();
+    return object;
+  }
   if ((object.kind == Type::Kind::Completer &&
        (expression.text == "future" || expression.text == "isCompleted")) ||
       (object.kind == Type::Kind::CancellationToken && expression.text == "isCancelled")) {
@@ -379,6 +393,7 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
     if (method != class_info->second.methods.end()) {
       if (method->second.is_getter) {
         CheckAccess(method->second.visibility, object.name, expression.location);
+        InvalidateCapturedRefinements();
         return method->second.return_type;
       }
       CheckAccess(method->second.visibility, object.name, expression.location);
@@ -424,6 +439,7 @@ void TypeChecker::CheckFieldInitializers(const Class& owner, const ClassInfo& in
                                  ? info.static_fields.at(field.name).type
                                  : info.fields.at(field.name).type;
       const auto actual = CheckExpression(*field.initializer, &expected);
+      RecordConversion(*field.initializer, expected, actual);
       if (IsValid(actual) && !CanAssign(expected, actual)) {
         AddDiagnostic(field.location, "field initializer does not match its declared type");
       }

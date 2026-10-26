@@ -230,6 +230,64 @@ TEST(ProgramTest, RejectsInvalidJumpsAndFallthroughAtLoading) {
   EXPECT_FALSE(Program::Load(functions, isolate).has_value());
 }
 
+TEST(ProgramTest, RejectsCallableIdentityThatDisagreesWithTheTargetSignature) {
+  runtime::Isolate isolate;
+  const auto* signature = isolate.CreateTypeSignature({
+      .parameters = {},
+      .result = runtime::TypeConstraint{.kind = runtime::ValueKind::Integer},
+  });
+  auto* callable = isolate.CreateClassLayout(
+      0, {},
+      {
+          .callable = CallableTarget{.function = 0, .mode = CallableMode::Plain},
+          .interfaces = {},
+          .dispatch_targets = {},
+          .callable_type = signature,
+      });
+  const auto code = std::to_array<Instruction>({EncodeABC(OpCode::Return, 0, 0, 0)});
+  const std::array classes{callable};
+  CallSignature declared;
+  Function function;
+  function.code = code;
+  function.register_count = 1;
+  function.classes = classes;
+  function.signature = &declared;
+  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate));
+}
+
+TEST(ProgramTest, RejectsInterfaceDispatchThatDisagreesWithItsCallableSignature) {
+  runtime::Isolate isolate;
+  const auto* signature = isolate.CreateTypeSignature({
+      .parameters = {},
+      .result = runtime::TypeConstraint{.kind = runtime::ValueKind::Integer},
+  });
+  const std::array<std::uint32_t, 1> references{0};
+  auto* callable = isolate.CreateClassLayout(
+      1, references,
+      {
+          .callable = CallableTarget{.function = 0, .mode = CallableMode::InterfaceMethod},
+          .interfaces = {},
+          .dispatch_targets = {},
+          .callable_type = signature,
+      });
+  auto* implementation =
+      isolate.CreateClassLayout(0, {}, {.callable = {}, .interfaces = {}, .dispatch_targets = {0}});
+  const std::array classes{callable, implementation};
+  CallSignature actual;
+  actual.hidden_parameters = 1;
+  const std::array code{EncodeABC(OpCode::Return, 0, 0, 0)};
+  Function function;
+  function.code = code;
+  function.register_count = 1;
+  function.parameter_count = 1;
+  function.classes = classes;
+  function.signature = &actual;
+  const auto loaded = Program::Load(std::span(&function, 1), isolate);
+  ASSERT_FALSE(loaded);
+  EXPECT_EQ(loaded.error().message,
+            "interface implementation disagrees with its callable signature");
+}
+
 TEST(ProgramTest, RejectsInvalidCallableAndInterfaceTargetsAtLoading) {
   runtime::Isolate isolate;
   const auto code = std::to_array<Instruction>({EncodeABC(OpCode::Return, 0, 0, 0)});
@@ -238,23 +296,32 @@ TEST(ProgramTest, RejectsInvalidCallableAndInterfaceTargetsAtLoading) {
           .callable = CallableTarget{.function = 1, .mode = CallableMode::Plain},
           .interfaces = {},
           .dispatch_targets = {},
+          .callable_type = {},
       },
       {
           .callable = CallableTarget{.function = 0, .mode = CallableMode::Closure},
           .interfaces = {},
           .dispatch_targets = {},
+          .callable_type = {},
       },
       {
           .callable = CallableTarget{.function = 0, .mode = CallableMode::InterfaceMethod},
           .interfaces = {},
           .dispatch_targets = {},
+          .callable_type = {},
       },
       {
           .callable = CallableTarget{.function = 0, .mode = static_cast<CallableMode>(0xff)},
           .interfaces = {},
           .dispatch_targets = {},
+          .callable_type = {},
       },
-      {.callable = std::nullopt, .interfaces = {}, .dispatch_targets = {0}},
+      {
+          .callable = std::nullopt,
+          .interfaces = {},
+          .dispatch_targets = {0},
+          .callable_type = {},
+      },
   });
   for (const auto& options : layouts) {
     auto* layout = isolate.CreateClassLayout(0, {}, options);

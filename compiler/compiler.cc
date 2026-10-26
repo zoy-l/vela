@@ -31,7 +31,6 @@
 #include "compiler/native_linker.h"
 #include "compiler/register_allocator.h"
 #include "compiler/runtime_layouts.h"
-#include "compiler/type_constraints.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
@@ -67,9 +66,9 @@ struct EncodingContext final {
 
 std::optional<frontend::Diagnostic> ValidateEncodingOperands(const ir::Instruction& instruction,
                                                              std::string_view source_path) {
-  const bool uses_wide_target =
-      instruction.opcode == ir::Opcode::Jump || instruction.opcode == ir::Opcode::JumpIfFalse ||
-      instruction.opcode == ir::Opcode::JumpIfNull;
+  const bool uses_wide_target = instruction.opcode == ir::Opcode::Jump ||
+                                instruction.opcode == ir::Opcode::JumpIfFalse ||
+                                instruction.opcode == ir::Opcode::JumpIfNull;
   const bool uses_wide_constant = instruction.opcode == ir::Opcode::LoadString ||
                                   instruction.opcode == ir::Opcode::LoadDouble ||
                                   instruction.opcode == ir::Opcode::LoadIntConstant;
@@ -89,10 +88,9 @@ std::optional<frontend::Diagnostic> ValidateEncodingOperands(const ir::Instructi
   return std::nullopt;
 }
 
-std::expected<vm::Instruction, frontend::Diagnostic> EncodeJump(
-    const ir::Instruction& instruction,
-    const EncodingContext& context,
-    std::string_view source_path) {
+std::expected<vm::Instruction, frontend::Diagnostic> EncodeJump(const ir::Instruction& instruction,
+                                                                const EncodingContext& context,
+                                                                std::string_view source_path) {
   if (instruction.index >= context.function->instructions.size()) {
     return std::unexpected(frontend::Diagnostic{
         .location = instruction.location,
@@ -435,17 +433,21 @@ CompileResult CompileProgram(const frontend::Program& source,
 
   CompileResult result;
   runtime::LayoutTransaction layout_transaction(isolate);
-  auto* cache = state == nullptr ? nullptr : &state->layouts;
-  auto class_layouts = CreateClassLayouts(lowered.program, isolate, cache);
+  LayoutCache local_cache;
+  auto* cache = state == nullptr ? &local_cache : &state->layouts;
+  if (cache->code_identity == nullptr) {
+    cache->code_identity = isolate.CreateCodeIdentity();
+  }
+  const auto interfaces = CreateInterfaceTypes(model, isolate, cache);
+  auto class_layouts = CreateClassLayouts(lowered.program, interfaces, isolate, cache);
 
-  auto layouts = CreateRuntimeLayouts(lowered.program, model, class_layouts, isolate, cache);
+  auto layouts =
+      CreateRuntimeLayouts(lowered.program, model, class_layouts, interfaces, isolate, cache);
 
   std::vector<vm::FunctionStorage> functions;
-  auto type_constraints = CreateTypeConstraints(lowered.program, model, class_layouts,
-                                                layouts.arrays, layouts.collections);
   auto shared_layouts = std::make_shared<const vm::LayoutTables>(
       std::move(class_layouts), std::move(layouts.arrays), std::move(layouts.collections),
-      std::move(type_constraints));
+      std::move(layouts.types), std::move(lowered.program.members));
   functions.reserve(lowered.program.functions.size());
   const auto source_paths = std::make_shared<const std::vector<std::string>>(std::move(paths));
   std::shared_ptr<vm::StringConstants> strings;
@@ -474,6 +476,7 @@ CompileResult CompileProgram(const frontend::Program& source,
     compiled.register_count = static_cast<std::uint16_t>(function.register_count);
     compiled.parameter_count = static_cast<std::uint16_t>(function.parameter_count);
     compiled.is_async = function.is_async;
+    compiled.signature = function.signature;
     compiled.source_paths = source_paths;
     auto encoded = EncodeFunction(function,
                                   EncodingContext{
@@ -489,9 +492,9 @@ CompileResult CompileProgram(const frontend::Program& source,
     }
     functions.push_back(std::move(*encoded));
   }
-  auto prepared = vm::Program::Create(std::move(functions), isolate,
-                                      std::move(lowered.program.global_initializers),
-                                      state != nullptr ? state->globals : nullptr);
+  auto prepared = vm::Program::Create(
+      std::move(functions), isolate, std::move(lowered.program.global_initializers),
+      state != nullptr ? state->globals : nullptr, cache->code_identity);
   if (!prepared) {
     const auto& error = prepared.error();
     const auto location =

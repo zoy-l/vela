@@ -1,5 +1,6 @@
 #pragma once
 
+#include "base/array_algorithm.h"
 #include "base/builtin.h"
 
 #include <cstddef>
@@ -14,6 +15,7 @@
 #include <absl/container/flat_hash_map.h>
 
 #include "base/callable.h"
+#include "base/member.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_checker.h"
@@ -100,6 +102,9 @@ class Lowerer final {
                                const frontend::FunctionDescriptor& function_info,
                                const frontend::Class* owner,
                                const frontend::LambdaDescriptor* lambda);
+  void RegisterFunctionSignature(Function& function,
+                                 const frontend::Function& source,
+                                 const frontend::FunctionDescriptor& function_info);
   void LowerNativeFunction(const frontend::Function& source, Function& function);
   std::optional<LoweredValue> LowerSuperGetter(const frontend::Expression& expression);
   void LowerCaptures(const frontend::Function& source, const frontend::LambdaDescriptor& lambda);
@@ -109,12 +114,19 @@ class Lowerer final {
   void LowerSwitch(const frontend::Statement& statement);
   void LowerTry(const frontend::Statement& statement);
   void LowerReturn(const frontend::Statement& statement);
+  [[nodiscard]] RegisterId LowerFuturePayload(const LoweredValue& value,
+                                              const frontend::TypeDescriptor& future,
+                                              frontend::SourceLocation location);
   void LowerControlExit(const frontend::Statement& statement);
   Completion LowerFinalizers(std::size_t depth);
   RegisterId LowerConstantLabel(const frontend::Expression& source);
   LoweredValue LowerMatch(const frontend::Expression& expression);
 
   [[nodiscard]] LoweredValue LowerExpression(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerExpressionValue(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerConversion(LoweredValue value,
+                                             const frontend::TypeDescriptor& target,
+                                             frontend::SourceLocation location);
   [[nodiscard]] LoweredValue SnapshotBefore(LoweredValue value, const frontend::Expression& later);
   [[nodiscard]] LoweredValue LowerAssignment(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerNameAssignment(const frontend::Expression& expression);
@@ -133,6 +145,15 @@ class Lowerer final {
                                          const LoweredValue& object);
   [[nodiscard]] LoweredValue LowerIndex(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerCall(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerDynamicCall(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerDynamicMethodCall(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerDynamicMember(const frontend::Expression& expression,
+                                                Builtin operation = Builtin::DynamicMemberGet);
+  [[nodiscard]] LoweredValue LowerDynamicAssignment(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerDynamicCompoundAssignment(const frontend::Expression& expression,
+                                                            Opcode operation);
+  [[nodiscard]] std::pair<RegisterId, RegisterId> LowerDynamicArguments(
+      const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerSpecialCall(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerDispatchCall(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerNamedCall(const frontend::Expression& expression);
@@ -144,12 +165,44 @@ class Lowerer final {
   LoweredValue LowerInterfaceCall(const frontend::Expression& expression);
   LoweredValue LowerTypeOperation(const frontend::Expression& expression);
   std::uint32_t RegisterRuntimeType(const frontend::TypeDescriptor& type);
+  ClassId RegisterEnumType(const frontend::TypeDescriptor& type);
+  void RegisterClassMembers(const frontend::Class& source,
+                            const frontend::ClassDescriptor& descriptor);
+  void RegisterBuiltinMembers();
+  void RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std::string_view name);
+  void RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& receiver,
+                                    std::string_view name,
+                                    ArrayAlgorithm algorithm);
+  void RegisterExpectedMember(const frontend::TypeDescriptor& receiver,
+                              std::string_view name,
+                              const frontend::ExpectedMethod& descriptor);
+  Function CreateMemberFunction(const frontend::TypeDescriptor& receiver,
+                                std::string_view name,
+                                const frontend::FunctionDescriptor& signature);
+  void PublishMemberFunction(const frontend::TypeDescriptor& receiver,
+                             std::string_view name,
+                             MemberKind kind,
+                             const frontend::FunctionDescriptor& signature,
+                             Function function);
+  void RegisterClassProperty(std::uint32_t receiver,
+                             const frontend::ClassDescriptor& owner,
+                             const std::string& name);
+  void RegisterBuiltinReceiver(const frontend::TypeDescriptor& receiver,
+                               std::span<const std::string> names);
+  void RegisterBuiltinReceiverMember(const frontend::TypeDescriptor& receiver,
+                                     std::string_view name);
+  void RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
+                             std::string_view name,
+                             Builtin builtin,
+                             const frontend::FunctionDescriptor& signature,
+                             MemberKind kind);
   LoweredValue LowerExpected(const frontend::Expression& expression);
   ClassId RegisterExpectedType(frontend::TypeDescriptor type);
   LoweredValue ReadLocal(const Local& local, frontend::SourceLocation location);
   ClassId CallableClass(std::uint32_t function_id,
                         CallableMode mode,
-                        const std::vector<frontend::Capture>& captures);
+                        const std::vector<frontend::Capture>& captures,
+                        const frontend::TypeDescriptor& type);
 
   [[nodiscard]] const frontend::ClassDescriptor* FindClass(std::string_view name) const;
   [[nodiscard]] const Local* FindLocal(std::string_view name) const;
@@ -186,10 +239,10 @@ class Lowerer final {
   LoweredValue LowerStringLiteral(const frontend::Expression& expression);
   LoweredValue LowerStringInterpolation(const frontend::Expression& expression);
   LoweredValue LowerBuiltin(const frontend::Expression& expression);
-  void EmitByteIndexCall(Builtin builtin,
-                         RegisterId result,
-                         std::span<const RegisterId> values,
-                         frontend::SourceLocation location);
+  void EmitBuiltinCall(Builtin builtin,
+                       RegisterId result,
+                       std::span<const RegisterId> values,
+                       frontend::SourceLocation location);
   void EmitIndexRead(RegisterId result,
                      const LoweredValue& receiver,
                      RegisterId index,
@@ -211,18 +264,37 @@ class Lowerer final {
   LoweredValue LowerArrayAlgorithm(const frontend::Expression& expression);
   RegisterId EmitArrayCallback(RegisterId callback,
                                std::span<const RegisterId> arguments,
+                               const frontend::FunctionDescriptor& signature,
+                               std::span<const frontend::TypeDescriptor> argument_types,
                                RegisterId guard,
                                frontend::SourceLocation location);
   struct ArrayAlgorithmRegisters final {
-    RegisterId array;
-    RegisterId callback;
-    RegisterId length;
-    RegisterId guard;
-    RegisterId positions;
-    std::size_t callback_arity;
+    RegisterId array = 0;
+    RegisterId callback = 0;
+    RegisterId length = 0;
+    RegisterId guard = 0;
+    RegisterId positions = 0;
+    std::size_t callback_arity = 0;
     enum class Comparison : std::uint8_t { Default, Integer, Double };
-    Comparison comparison;
+    Comparison comparison = Comparison::Default;
+    frontend::TypeDescriptor element_type;
+    const frontend::FunctionDescriptor* signature = nullptr;
+    std::optional<RegisterId> validation_plan = std::nullopt;
   };
+  LoweredValue LowerArrayTraversal(const ArrayAlgorithmRegisters& inputs,
+                                   ArrayAlgorithm algorithm,
+                                   const frontend::TypeDescriptor& receiver_type,
+                                   const frontend::TypeDescriptor& result_type,
+                                   frontend::SourceLocation location,
+                                   std::optional<RegisterId> mapped_output = std::nullopt);
+  LoweredValue LowerArraySortTraversal(const ArrayAlgorithmRegisters& inputs,
+                                       const frontend::TypeDescriptor& result_type,
+                                       frontend::SourceLocation location);
+  RegisterId CheckArrayCallbackResult(RegisterId value,
+                                      const ArrayAlgorithmRegisters& inputs,
+                                      ArrayAlgorithm algorithm,
+                                      const frontend::TypeDescriptor& result_type,
+                                      frontend::SourceLocation location);
   RegisterId EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
                            std::pair<RegisterId, RegisterId> indices,
                            frontend::SourceLocation location);
@@ -238,17 +310,20 @@ class Lowerer final {
 
   LoweredValue LowerUnary(const frontend::Expression& expression);
   LoweredValue LowerIncrement(const frontend::Expression& expression);
-  struct IncrementTarget final {
+  struct MutationTarget final {
     LoweredValue value;
+    std::optional<std::uint32_t> global;
+    std::optional<std::uint32_t> setter;
     std::optional<RegisterId> object;
     std::optional<RegisterId> index;
     std::optional<FieldId> field;
+    std::optional<RegisterId> member;
   };
-  [[nodiscard]] IncrementTarget LowerIncrementTarget(const frontend::Expression& target);
-  void StoreIncrementTarget(const frontend::Expression& target,
-                            const IncrementTarget& destination,
-                            RegisterId value,
-                            frontend::SourceLocation location);
+  [[nodiscard]] MutationTarget LowerMutationTarget(const frontend::Expression& target);
+  void StoreMutationTarget(const frontend::Expression& target,
+                           const MutationTarget& destination,
+                           RegisterId value,
+                           frontend::SourceLocation location);
 
   LoweredValue LowerBinary(const frontend::Expression& expression);
   LoweredValue LowerIntegerAdditionChain(const frontend::Expression& expression);

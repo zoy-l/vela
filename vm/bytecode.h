@@ -3,7 +3,10 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <vector>
 
+#include "base/callable.h"
+#include "base/member.h"
 #include "base/opcode.h"
 #include "runtime/native_function.h"
 #include "runtime/object.h"
@@ -89,6 +92,8 @@ struct Function final {
   const runtime::NativeFunction* native = nullptr;
   std::span<const ExceptionHandler> handlers;
   std::span<const std::int64_t> integers;
+  const CallSignature* signature = nullptr;
+  const std::vector<MemberDefinition>* members = nullptr;
 };
 
 }  // namespace vela::vm

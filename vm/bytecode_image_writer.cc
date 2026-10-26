@@ -1,3 +1,4 @@
+#include "base/callable.h"
 #include "vm/bytecode_image.h"
 
 #include <cstddef>
@@ -56,11 +57,15 @@ struct ImageWriter final {
   ImageTable<runtime::ClassLayout> classes;
   ImageTable<runtime::ArrayLayout> arrays;
   ImageTable<runtime::CollectionLayout> collections;
+  ImageTable<runtime::TypeSignature> signatures;
+  ImageTable<runtime::InterfaceType> interfaces;
   ImageTable<LayoutTables> tables;
   ImageTable<StringConstants> strings;
   ImageTable<std::vector<std::string>> paths;
 
   void Collect(const Program& program);
+  void CollectTypeGraph();
+  void WriteTypeSignatures();
   void AddElement(const runtime::ArrayLayout& element);
   void AddType(const runtime::TypeConstraint& type);
   void WriteElement(const runtime::ArrayLayout& element);
@@ -71,16 +76,53 @@ struct ImageWriter final {
   void WriteTexts(std::span<const std::string> values);
 };
 
+void ImageWriter::CollectTypeGraph() {
+  std::size_t array = 0;
+  std::size_t collection = 0;
+  std::size_t instance = 0;
+  std::size_t signature = 0;
+  while (array < arrays.values.size() || collection < collections.values.size() ||
+         instance < classes.values.size() || signature < signatures.values.size()) {
+    if (instance < classes.values.size()) {
+      const auto* layout = classes.values.at(instance++);
+      signatures.Add(layout->callable_type());
+      signatures.Add(layout->expected_type());
+      for (const auto* interface : layout->interfaces()) {
+        interfaces.Add(interface);
+      }
+    }
+    if (array < arrays.values.size()) {
+      AddElement(*arrays.values.at(array++));
+    }
+    if (collection < collections.values.size()) {
+      const auto& layout = *collections.values.at(collection++);
+      AddElement(layout.keys);
+      if (layout.values) {
+        AddElement(*layout.values);
+      }
+    }
+    if (signature < signatures.values.size()) {
+      const auto& type = *signatures.values.at(signature++);
+      for (const auto& parameter : type.parameters) {
+        AddType(parameter.type);
+      }
+      if (type.result) {
+        AddType(*type.result);
+      }
+    }
+  }
+}
+
 void ImageWriter::AddElement(const runtime::ArrayLayout& element) {
-  classes.Add(element.element_class);
-  arrays.Add(element.element_array);
-  collections.Add(element.element_collection);
+  AddType(element.element);
 }
 
 void ImageWriter::AddType(const runtime::TypeConstraint& type) {
   classes.Add(type.instance);
   arrays.Add(type.array);
   collections.Add(type.collection);
+  interfaces.Add(type.interface);
+  signatures.Add(type.signature);
 }
 
 void ImageWriter::Collect(const Program& program) {
@@ -103,20 +145,7 @@ void ImageWriter::Collect(const Program& program) {
       AddType(type);
     }
   }
-  std::size_t array = 0;
-  std::size_t collection = 0;
-  while (array < arrays.values.size() || collection < collections.values.size()) {
-    if (array < arrays.values.size()) {
-      AddElement(*arrays.values.at(array++));
-    }
-    if (collection < collections.values.size()) {
-      const auto& layout = *collections.values.at(collection++);
-      AddElement(layout.keys);
-      if (layout.values) {
-        AddElement(*layout.values);
-      }
-    }
-  }
+  CollectTypeGraph();
 }
 
 void ImageWriter::WriteElement(const runtime::ArrayLayout& element) {
@@ -129,12 +158,14 @@ void ImageWriter::WriteType(const runtime::TypeConstraint& type) {
   const auto flags =
       static_cast<std::uint8_t>((type.nullable ? internal::kNullableImageFlag : 0) |
                                 (type.callable ? internal::kCallableImageFlag : 0) |
-                                (type.interface ? internal::kInterfaceImageFlag : 0));
+                                ((type.interface != nullptr) ? internal::kInterfaceImageFlag : 0) |
+                                (type.dynamic ? internal::kDynamicImageFlag : 0));
   writer.Write(flags);
-  writer.Write(type.interface.value_or(0));
+  writer.Write(interfaces.Index(type.interface));
   writer.Write(classes.Index(type.instance));
   writer.Write(arrays.Index(type.array));
   writer.Write(collections.Index(type.collection));
+  writer.Write(signatures.Index(type.signature));
 }
 
 void ImageWriter::WriteClass(const runtime::ClassLayout& layout) {
@@ -152,11 +183,34 @@ void ImageWriter::WriteClass(const runtime::ClassLayout& layout) {
     writer.Write(layout.callable()->function);
     writer.Write(static_cast<std::uint8_t>(layout.callable()->mode));
   }
-  WriteNumbers(writer, layout.interfaces());
+  writer.Write(static_cast<std::uint64_t>(layout.interfaces().size()));
+  for (const auto* interface : layout.interfaces()) {
+    writer.Write(interfaces.Index(interface));
+  }
   WriteNumbers(writer, layout.dispatch_targets());
+  writer.Write(static_cast<std::uint8_t>(layout.IsEnum()));
+  writer.Write(signatures.Index(layout.callable_type()));
+  writer.Write(signatures.Index(layout.expected_type()));
+}
+
+void ImageWriter::WriteTypeSignatures() {
+  writer.Write(static_cast<std::uint64_t>(signatures.values.size()));
+  for (const auto* signature : signatures.values) {
+    writer.Write(static_cast<std::uint64_t>(signature->parameters.size()));
+    for (const auto& parameter : signature->parameters) {
+      WriteType(parameter.type);
+      writer.Write(static_cast<std::uint8_t>(parameter.optional));
+      writer.Write(static_cast<std::uint8_t>(parameter.rest));
+    }
+    writer.Write(static_cast<std::uint8_t>(signature->result.has_value()));
+    if (signature->result) {
+      WriteType(*signature->result);
+    }
+  }
 }
 
 void ImageWriter::WriteTables() {
+  writer.Write(static_cast<std::uint64_t>(interfaces.values.size()));
   writer.Write(static_cast<std::uint64_t>(classes.values.size()));
   for (const auto* layout : classes.values) {
     WriteClass(*layout);
@@ -173,6 +227,7 @@ void ImageWriter::WriteTables() {
       WriteElement(*layout->values);
     }
   }
+  WriteTypeSignatures();
   writer.Write(static_cast<std::uint64_t>(tables.values.size()));
   for (const auto* table : tables.values) {
     writer.Write(static_cast<std::uint64_t>(table->classes().size()));
@@ -190,6 +245,15 @@ void ImageWriter::WriteTables() {
     writer.Write(static_cast<std::uint64_t>(table->types().size()));
     for (const auto& type : table->types()) {
       WriteType(type);
+    }
+    writer.Write(static_cast<std::uint64_t>(table->members().size()));
+    for (const auto& member : table->members()) {
+      writer.Write(member.receiver_type);
+      writer.Write(std::string_view(member.name));
+      writer.Write(static_cast<std::uint8_t>(member.kind));
+      writer.Write(member.target);
+      writer.Write(member.type.value_or(kInvalidFunctionTarget));
+      writer.Write(member.setter.value_or(kInvalidFunctionTarget));
     }
   }
   writer.Write(static_cast<std::uint64_t>(strings.values.size()));
@@ -223,6 +287,19 @@ void ImageWriter::WriteFunction(const FunctionStorage& function) {
   writer.Write(function.register_count);
   writer.Write(function.parameter_count);
   writer.Write(static_cast<std::uint8_t>(function.is_async));
+  writer.Write(static_cast<std::uint8_t>(function.signature.has_value()));
+  if (function.signature) {
+    const auto& signature = *function.signature;
+    writer.Write(signature.hidden_parameters);
+    writer.Write(signature.result.value_or(kInvalidFunctionTarget));
+    writer.Write(static_cast<std::uint64_t>(signature.parameters.size()));
+    for (const auto& parameter : signature.parameters) {
+      writer.Write(std::string_view(parameter.name));
+      writer.Write(parameter.type);
+      writer.Write(static_cast<std::uint8_t>(parameter.optional));
+      writer.Write(static_cast<std::uint8_t>(parameter.rest));
+    }
+  }
   WriteNumbers(writer, std::span(function.code));
   WriteNumbers(writer, std::span(function.integers));
   WriteNumbers(writer, std::span(function.doubles));

@@ -24,6 +24,9 @@ struct LayoutCounts final {
   std::size_t classes = 0;
   std::size_t arrays = 0;
   std::size_t collections = 0;
+  std::size_t signatures = 0;
+  std::size_t interfaces = 0;
+  std::size_t code_identities = 0;
   bool operator==(const LayoutCounts&) const = default;
 };
 
@@ -55,6 +58,9 @@ class Isolate final {
                                                ClassLayoutOptions options = {});
   [[nodiscard]] const ArrayLayout* CreateArrayLayout(ArrayLayout layout);
   [[nodiscard]] const CollectionLayout* CreateCollectionLayout(CollectionLayout layout);
+  [[nodiscard]] const TypeSignature* CreateTypeSignature(TypeSignature signature);
+  [[nodiscard]] const InterfaceType* CreateInterfaceType();
+  [[nodiscard]] const CodeIdentity* CreateCodeIdentity();
   [[nodiscard]] std::expected<void, NativeRegistrationError> RegisterNative(
       NativeFunction function);
   [[nodiscard]] std::shared_ptr<const NativeFunction> FindNative(std::string_view name) const;
@@ -65,6 +71,12 @@ class Isolate final {
   std::vector<std::unique_ptr<ClassLayout>> class_layouts_;
   std::vector<std::unique_ptr<ArrayLayout>> array_layouts_;
   std::vector<std::unique_ptr<CollectionLayout>> collection_layouts_;
+  std::vector<std::unique_ptr<TypeSignature>> type_signatures_;
+  std::vector<std::unique_ptr<InterfaceType>> interface_types_;
+  std::vector<std::unique_ptr<CodeIdentity>> code_identities_;
+  absl::flat_hash_map<ArrayLayout, const ArrayLayout*> array_layout_index_;
+  absl::flat_hash_map<CollectionLayout, const CollectionLayout*> collection_layout_index_;
+  absl::flat_hash_map<TypeSignature, const TypeSignature*> type_signature_index_;
   absl::flat_hash_map<std::string, std::shared_ptr<const NativeFunction>> natives_;
   ClassLayout* error_layout_ = nullptr;
   ClassLayout* date_parts_layout_ = nullptr;

@@ -17,6 +17,7 @@ action("unicode_case_data") {
 source_set("runtime") {
   deps = [
     ":unicode_case_data",
+    "//base:json",
     "//third_party:pcre2",
     "//third_party:utf8proc",
   ]
@@ -55,6 +56,9 @@ source_set("runtime") {
     "heap_value_slots.cc",
     "isolate.cc",
     "isolate.h",
+    "json.h",
+    "json_decode.cc",
+    "json_encode.cc",
     "layout_transaction.cc",
     "layout_transaction.h",
     "native_function.cc",
@@ -90,6 +94,7 @@ executable("runtime_tests") {
     "date_unittest.cc",
     "exception_unittest.cc",
     "future_unittest.cc",
+    "json_unittest.cc",
     "layout_transaction_unittest.cc",
     "numeric_conversion_unittest.cc",
     "numeric_parse_unittest.cc",

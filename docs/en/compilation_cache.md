@@ -44,7 +44,7 @@ This guarantees atomic visibility, not crash durability of all directory metadat
 
 ## Image format and ownership
 
-Version 7 starts with `VELABC01`, a little-endian uint32 version and an XXH3-128
+Version 9 starts with `VELABC01`, a little-endian uint32 version and an XXH3-128
 payload checksum. Counts, text lengths and graph identities use uint64. No raw
 pointers, native C++ object layouts, heap snapshots or runtime global state are
 serialized. Integers preserve all 64 bits; doubles preserve their bit patterns.
@@ -65,10 +65,15 @@ created during execution; their runtime pointers are never serialized.
 RegExp and RegExpMatch retain distinct object-kind constraints. RegExp array
 results carry compiled array-layout pool operands, checked by the VM against
 the expected match/string/nullability shape. Engine code and match spans are
-created during execution and are never image payloads. Version 7 adds these
-types and builtins; older formats are rejected.
+created during execution and are never image payloads.
 
-Array/collection graph reconstruction uses an iterative topological traversal;
+Dynamic metadata includes nominal enum and interface identities, structural
+function and Expected signatures, Future/Completer payload signatures, and public
+member dispatch records. Function call records retain parameter names, optional
+and rest flags, checked type indices, and result types. Loading validates these
+contracts and Expected GC layouts before publishing executable code.
+
+Array/collection/signature graph reconstruction uses an iterative topological traversal;
 cycles and missing references are diagnosed. Counts are bounded by the remaining
 input before allocation. `Program::Create` validates code and cross-function
 targets after reconstruction and before any execution.

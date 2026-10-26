@@ -70,7 +70,7 @@ P0 行为详见[基础语言契约](language_basics.md)。
 - [x] 添加泛型，例如 `Set<T>` 和 `Map<K, V>`
 - [x] 添加显式 interface / implements 契约
 - [x] 添加类型判断和带检查的类型转换
-- [ ] 添加受检查的动态值、混合容器和动态分派（[设计](json.md)）
+- [x] 添加受检查的动态值、混合容器和动态分派（[设计](json.md)）
 - [x] 诊断不可达语句
 - [x] 要求每条有限控制流路径都完整返回
 
@@ -92,7 +92,7 @@ P0 行为详见[基础语言契约](language_basics.md)。
 - [x] 添加 Unicode 字符串大小写转换（[契约](string_case.md)）
 - [x] 添加基于 PCRE2 的 Dart 风格正则 API 与带类型匹配结果（[契约](regexp.md)）
 - [x] 添加集合标准库 API
-- [ ] 添加基于原生值的 JSON 解析与序列化（[设计](json.md)）
+- [x] 添加基于原生值的 JSON 解析与序列化（[设计](json.md)）
 - [x] 添加固定字节存储与带类型字节视图（[契约](byte_data.md)）
 - [x] 明确进程退出码
 

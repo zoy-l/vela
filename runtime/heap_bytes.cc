@@ -39,7 +39,7 @@ bool Heap::IsIntegerArray(const HeapObject& object) noexcept {
     return false;
   }
   const auto& layout = *object.array_layout();
-  return layout.element_kind == ValueKind::Integer && !layout.nullable_elements;
+  return layout.element.kind == ValueKind::Integer && !layout.element.nullable;
 }
 
 std::span<std::uint8_t> Heap::ByteArrayBytes(HeapObject& object) noexcept {

@@ -39,7 +39,7 @@ void VisitStorage(const ArrayLayout& layout, std::span<std::byte> storage, const
     visitor(Elements<Value>(storage));
     return;
   }
-  switch (layout.element_kind) {
+  switch (layout.element.kind) {
     case ValueKind::Boolean:
       visitor(Elements<bool>(storage));
       return;
@@ -148,7 +148,7 @@ std::expected<std::uint64_t, ArrayAccessError> Heap::ArrayMutation(
 
 std::expected<std::span<std::int64_t>, ArrayAccessError> Heap::IntegerElements(
     HeapObject& array) noexcept {
-  if (array.kind != ObjectKind::Array || array.array_layout()->element_kind != ValueKind::Integer ||
+  if (array.kind != ObjectKind::Array || array.array_layout()->element.kind != ValueKind::Integer ||
       array.array_layout()->HasTaggedElements()) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
@@ -328,7 +328,8 @@ std::expected<void, ArrayAccessError> Heap::ReplaceArrayRange(HeapObject& array,
   }
   array.length = next_length;
   ++internal::ArrayBuffer(array).mutation;
-  if (layout.element_kind == ValueKind::Object || layout.element_kind == ValueKind::String) {
+  if (layout.element.dynamic || layout.element.kind == ValueKind::Object ||
+      layout.element.kind == ValueKind::String) {
     for (std::uint32_t index = 0; index < inserted; ++index) {
       WriteBarrier(array, LoadElementStorage(layout, storage, start + index));
     }
@@ -374,13 +375,17 @@ std::expected<void, ArrayAccessError> Heap::ClearArray(HeapObject& array) noexce
 void Heap::MarkArray(HeapObject& array) noexcept {
   const auto& layout = *array.array_layout();
   const auto storage = Storage(array, layout, array.length);
-  if (layout.element_kind == ValueKind::Object) {
+  if (layout.element.dynamic) {
+    for (const auto value : Elements<Value>(storage)) {
+      MarkValue(value);
+    }
+  } else if (layout.element.kind == ValueKind::Object) {
     for (auto* child : Elements<HeapObject*>(storage)) {
       if (child != nullptr) {
         MarkObject(*child);
       }
     }
-  } else if (layout.element_kind == ValueKind::String) {
+  } else if (layout.element.kind == ValueKind::String) {
     for (auto* string : Elements<StringObject*>(storage)) {
       if (string != nullptr) {
         MarkObject(string->header_);

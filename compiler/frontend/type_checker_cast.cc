@@ -15,7 +15,13 @@ TypeChecker::Type TypeChecker::CheckTypeOperation(const Expression& expression) 
       source.kind == Type::Kind::Class || source.kind == Type::Kind::Interface;
   const bool target_nominal =
       target.kind == Type::Kind::Class || target.kind == Type::Kind::Interface;
-  if (source.kind != Type::Kind::Null && !(source_nominal && target_nominal) &&
+  const auto* binding = expression.operand->kind == Expression::Kind::Name
+                            ? LookupLocal(expression.operand->text)
+                            : nullptr;
+  const bool dynamic_source = source.kind == Type::Kind::Dynamic ||
+                              (binding != nullptr && binding->type.kind == Type::Kind::Dynamic);
+  if (source.kind != Type::Kind::Null && !dynamic_source && target.kind != Type::Kind::Dynamic &&
+      !(source_nominal && target_nominal) &&
       !IsSameType(NonNullable(source), NonNullable(target))) {
     AddDiagnostic(
         expression.location,

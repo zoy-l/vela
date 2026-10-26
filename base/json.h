@@ -3,9 +3,9 @@
 #include <cstddef>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include <yyjson.h>
 
@@ -14,6 +14,7 @@ namespace vela {
 struct JsonError final {
   std::size_t offset = 0;
   std::string message;
+  bool out_of_memory = false;
 };
 
 [[nodiscard]] const yyjson_val* GetJsonField(const yyjson_val* object,
@@ -28,6 +29,11 @@ void AddJsonField(yyjson_mut_doc* document,
 
 struct JsonDeleter final {
   void operator()(yyjson_doc* document) const noexcept;
+};
+
+struct JsonBufferDeleter final {
+  std::optional<yyjson_alc> allocator = std::nullopt;
+  void operator()(char* buffer) const noexcept;
 };
 
 struct MutableJsonDeleter final {
@@ -46,10 +52,13 @@ class JsonOutput final {
   std::unique_ptr<yyjson_mut_doc, MutableJsonDeleter> document_;
 };
 
-// in-situ 字符串视图借用 storage_；移动转移堆缓冲，不使 yyjson 节点中的指针失效。
+// document 独占节点和字符串；自定义 allocator 的上下文须覆盖 document 生命周期。
 class JsonDocument final {
  public:
-  [[nodiscard]] static std::expected<JsonDocument, JsonError> Parse(std::string_view text);
+  [[nodiscard]] static std::expected<JsonDocument, JsonError> Parse(
+      std::string_view text,
+      yyjson_read_flag flags = YYJSON_READ_NOFLAG,
+      const yyjson_alc* allocator = nullptr);
   JsonDocument(const JsonDocument&) = delete;
   JsonDocument& operator=(const JsonDocument&) = delete;
   JsonDocument(JsonDocument&&) noexcept = default;
@@ -57,10 +66,11 @@ class JsonDocument final {
   ~JsonDocument() = default;
 
   [[nodiscard]] const yyjson_val* root() const noexcept;
+  [[nodiscard]] yyjson_val* root() noexcept;
 
  private:
   JsonDocument() = default;
-  std::vector<char> storage_;
+  std::unique_ptr<char, JsonBufferDeleter> storage_;
   std::unique_ptr<yyjson_doc, JsonDeleter> document_;
 };
 

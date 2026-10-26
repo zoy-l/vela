@@ -5,6 +5,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/array_algorithm.h"
 #include "base/builtin.h"
 #include "compiler/frontend/type_checker.h"
 
@@ -23,8 +24,18 @@ namespace vela::frontend {
 ArrayAlgorithms() noexcept;
 [[nodiscard]] std::span<const std::pair<std::string_view, Builtin>> ArrayMethods() noexcept;
 [[nodiscard]] FunctionDescriptor ArrayMethodSignature(Builtin builtin,
-                                                      const TypeDescriptor& receiver,
                                                       const TypeDescriptor& element);
+struct CollectionMethod final {
+  Builtin operation = Builtin::Count;
+  FunctionDescriptor signature;
+};
+[[nodiscard]] std::optional<CollectionMethod> ResolveCollectionBuiltin(
+    const TypeDescriptor& receiver,
+    std::span<const TypeDescriptor> arguments,
+    std::string_view name);
+[[nodiscard]] std::optional<ExpectedMethod> ResolveExpectedBuiltin(
+    std::span<const TypeDescriptor> arguments,
+    std::string_view name);
 [[nodiscard]] std::optional<Builtin> FindSetOperation(std::string_view name);
 [[nodiscard]] FunctionDescriptor ArrayCallbackSignature(ArrayAlgorithm algorithm,
                                                         const TypeDescriptor& element,

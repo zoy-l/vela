@@ -28,31 +28,31 @@
       "target": "//benchmarks:vela_benchmarks"
     },
     "source": {
-      "revision": "8905487fae47291d6c102cc112044632a071a7e6",
+      "revision": "3aa33a6305552e4d9b674ae5b5bdc6e40ec0cbde",
       "working_tree": "clean",
-      "description": "Clean archive of the pre-RegExp revision; pinned dependency directories shared read-only through junctions.",
-      "build_inputs_sha256": "096ed0cf8ce5924b23be3394895a6d17310c4af6a57a3ca8972551898d4ddab1",
-      "build_input_count": 343,
-      "compiler_build_identity": "312b797ca9c91c650f093a320bd91214d3ca4568e9c837280c417a659f2484d8",
-      "fingerprint_algorithm": "SHA256 over UTF-8 repository-relative paths sorted by encoded byte order, NUL, then binary SHA256 of file bytes. Includes .gn/DEPS/BUILD.gn, .cc/.h/.gn/.gni/.py under base/benchmarks/build/compiler/runtime/tools/vm, third_party top-level GN files and Unicode manifest/license. Pinned dependency revisions and UCD hashes are in DEPS/manifest; generated files, raw inputs, docs and result JSON are excluded.",
+      "description": "Clean HEAD archive before dynamic/JSON; pinned dependency directories shared through junctions.",
+      "build_inputs_sha256": "791b72fdf54d3ca288b68d7b8a15984a5a8f118903550808a928f7c1e4df05b9",
+      "build_input_count": 400,
+      "compiler_build_identity": "2fb203a3cfeb1459765a9a4f0c9650f95ea025f21d174b74783fc532f3307e5c",
+      "fingerprint_algorithm": "SHA256 over UTF-8 repository-relative paths sorted by encoded byte order, NUL, then binary SHA256 of file bytes. Includes .gn/DEPS/BUILD.gn, .cc/.h/.gn/.gni/.py/.vela under base/benchmarks/build/compiler/runtime/tools/vm, third_party top-level GN files and Unicode manifest/license. Generated files, docs, raw dependency inputs and result JSON are excluded.",
       "standard_value_harness_sha256": "08806d4d82a1fa0b4690074112f925db9c1134123502237f1dc2d58c26936ff0",
       "vm_driver_sha256": "9e246bbff8e1d566159a1c3f6a634ee5e6f3b852fcb3922320d876615fe78f25"
     },
     "suite": {
-      "id": "regexp-api-vm-regression-v1",
-      "run_date": "2026-10-26T22:14:29+08:00",
-      "working_directory": "C:/Users/zoy/AppData/Local/Temp/vela-regexp-6eowgsq7/baseline-source",
+      "id": "dynamic-json-vm-regression-v1",
+      "run_date": "2026-10-27T06:08:03+08:00",
+      "working_directory": "C:/Users/zoy/AppData/Local/Temp/vela-dynamic-json-final-0pg75bz6/baseline-source",
       "command_argv": [
-        "C:/Users/zoy/AppData/Local/Temp/vela-regexp-6eowgsq7/baseline-source/out/release/vela_benchmarks.exe",
+        "C:/Users/zoy/AppData/Local/Temp/vela-dynamic-json-final-0pg75bz6/baseline-source/out/release/vela_benchmarks.exe",
         "--benchmark_filter=^vm/(integer_loop|function_calls|field_access|array_traversal|array_allocation)$",
-        "--benchmark_min_time=0.5s",
+        "--benchmark_min_time=1s",
         "--benchmark_repetitions=9",
         "--benchmark_enable_random_interleaving=true",
-        "--benchmark_out=C:/Users/zoy/AppData/Local/Temp/vela-regexp-6eowgsq7/baseline-vm-stable.json",
+        "--benchmark_out=C:/Users/zoy/AppData/Local/Temp/vela-dynamic-json-final-0pg75bz6/baseline-vm.json",
         "--benchmark_out_format=json"
       ],
       "settings": {
-        "minimum_cpu_time_seconds": 0.5,
+        "minimum_cpu_time_seconds": 1,
         "repetitions": 9,
         "random_interleaving": true,
         "threads": 1,
@@ -70,12 +70,12 @@
       "correctness_checks_passed": true,
       "cases": {
         "vm/integer_loop": {
-          "median_wall_ns": 17469.28573163662,
-          "stddev_wall_ns": 105.17242824459508,
-          "cv_wall": 0.006022141416985478,
-          "median_cpu_ns": 17264.345520170893,
-          "stddev_cpu_ns": 191.82606133521034,
-          "cv_cpu": 0.011111111111109849,
+          "median_wall_ns": 20087.736216820587,
+          "stddev_wall_ns": 3050.7808920520697,
+          "cv_wall": 0.14519843748210884,
+          "median_cpu_ns": 19670.671113075387,
+          "stddev_cpu_ns": 3077.2967747324665,
+          "cv_cpu": 0.15108329969026787,
           "counters": {
             "allocated_bytes": 0.0,
             "committed_bytes": 0.0,
@@ -89,12 +89,12 @@
           }
         },
         "vm/function_calls": {
-          "median_wall_ns": 27664.976495237777,
-          "stddev_wall_ns": 1521.419136195026,
-          "cv_wall": 0.053633977889609205,
-          "median_cpu_ns": 27622.64454176544,
-          "stddev_cpu_ns": 1747.686089622279,
-          "cv_cpu": 0.06186404847588822,
+          "median_wall_ns": 33870.69754288469,
+          "stddev_wall_ns": 2542.194255285305,
+          "cv_wall": 0.0751655306842014,
+          "median_cpu_ns": 33133.37053571428,
+          "stddev_cpu_ns": 2476.873568443563,
+          "cv_cpu": 0.07530512760998226,
           "counters": {
             "allocated_bytes": 0.0,
             "committed_bytes": 0.0,
@@ -108,18 +108,18 @@
           }
         },
         "vm/field_access": {
-          "median_wall_ns": 24650.964287242718,
-          "stddev_wall_ns": 102.24055061724253,
-          "cv_wall": 0.00415066927784396,
-          "median_cpu_ns": 24553.57142857143,
-          "stddev_cpu_ns": 372.0238095236364,
-          "cv_cpu": 0.015228426395931999,
+          "median_wall_ns": 29927.451785105015,
+          "stddev_wall_ns": 2137.1090663425935,
+          "cv_wall": 0.07362534185582034,
+          "median_cpu_ns": 29296.875,
+          "stddev_cpu_ns": 2238.431277261671,
+          "cv_cpu": 0.07934377942785985,
           "counters": {
-            "allocated_bytes": 45184.0,
+            "allocated_bytes": 24704.0,
             "committed_bytes": 65536.0,
             "first_allocated_bytes": 128.0,
             "first_committed_bytes": 128.0,
-            "heap_objects": 353.0,
+            "heap_objects": 193.0,
             "register_bytes": 36.0,
             "result": 1000.0,
             "retained_bytes": 0.0,
@@ -127,18 +127,18 @@
           }
         },
         "vm/array_traversal": {
-          "median_wall_ns": 511874.7000815347,
-          "stddev_wall_ns": 6080.82776701829,
-          "cv_wall": 0.011872086377250832,
-          "median_cpu_ns": 515625.0,
-          "stddev_cpu_ns": 7812.500000003108,
-          "cv_cpu": 0.015306122448985684,
+          "median_wall_ns": 546746.214261345,
+          "stddev_wall_ns": 36217.340617103124,
+          "cv_wall": 0.0647782112969828,
+          "median_cpu_ns": 530133.9285714285,
+          "stddev_cpu_ns": 35816.349542354365,
+          "cv_cpu": 0.06564160061580582,
           "counters": {
-            "allocated_bytes": 59648.0,
-            "committed_bytes": 62592.0,
+            "allocated_bytes": 61696.0,
+            "committed_bytes": 63616.0,
             "first_allocated_bytes": 256.0,
             "first_committed_bytes": 256.0,
-            "heap_objects": 233.0,
+            "heap_objects": 241.0,
             "register_bytes": 45.0,
             "result": 120000.0,
             "retained_bytes": 0.0,
@@ -146,18 +146,18 @@
           }
         },
         "vm/array_allocation": {
-          "median_wall_ns": 372097.80392425065,
-          "stddev_wall_ns": 2756.2947889067996,
-          "cv_wall": 0.007384959911044947,
-          "median_cpu_ns": 376606.85591858596,
-          "stddev_cpu_ns": 4184.520621319286,
-          "cv_cpu": 0.011194029850750723,
+          "median_wall_ns": 400704.29687537916,
+          "stddev_wall_ns": 41588.329732858765,
+          "cv_wall": 0.09681234302842756,
+          "median_cpu_ns": 383649.5535714286,
+          "stddev_cpu_ns": 44323.14918154762,
+          "cv_cpu": 0.1060254924681344,
           "counters": {
-            "allocated_bytes": 57344.0,
-            "committed_bytes": 61440.0,
+            "allocated_bytes": 59392.0,
+            "committed_bytes": 62464.0,
             "first_allocated_bytes": 59392.0,
             "first_committed_bytes": 62464.0,
-            "heap_objects": 224.0,
+            "heap_objects": 232.0,
             "register_bytes": 45.0,
             "result": 499500.0,
             "retained_bytes": 0.0,
@@ -169,11 +169,10 @@
     "supplemental_suites": [],
     "comparison_to_previous": {
       "comparable": false,
-      "basis": "A new clean baseline for the RegExp suite; earlier rolling entries use a different suite identity."
+      "basis": "Fresh clean HEAD baseline for the dynamic/JSON suite; earlier rolling entries used different measurement settings."
     },
     "measurement_limits": [
-      "Release CPU-time medians; OS scheduling, CPU frequency and code layout can affect small ratios.",
-      "No regex workload exists in the pre-feature revision."
+      "Single Windows x64 machine; scheduling and CPU frequency contribute to variation."
     ]
   },
   "latest": {
@@ -204,31 +203,31 @@
       "target": "//benchmarks:vela_benchmarks"
     },
     "source": {
-      "revision": "8905487fae47291d6c102cc112044632a071a7e6",
+      "revision": "3aa33a6305552e4d9b674ae5b5bdc6e40ec0cbde",
       "working_tree": "dirty",
-      "description": "Revision plus the complete PCRE2-backed RegExp/RegExpMatch implementation, tools and verification sources.",
-      "build_inputs_sha256": "8f35c93bc21af9fa31ea661dc564f0f8e2aa2af6eb700f54166ca98dd16ee34b",
-      "build_input_count": 354,
-      "compiler_build_identity": "2fb203a3cfeb1459765a9a4f0c9650f95ea025f21d174b74783fc532f3307e5c",
-      "fingerprint_algorithm": "SHA256 over UTF-8 repository-relative paths sorted by encoded byte order, NUL, then binary SHA256 of file bytes. Includes .gn/DEPS/BUILD.gn, .cc/.h/.gn/.gni/.py under base/benchmarks/build/compiler/runtime/tools/vm, third_party top-level GN files and Unicode manifest/license. Pinned dependency revisions and UCD hashes are in DEPS/manifest; generated files, raw inputs, docs and result JSON are excluded.",
+      "description": "Revision plus checked dynamic and native-value JSON implementation, tooling and verification.",
+      "build_inputs_sha256": "e9471ce072dd0ec8d3b904159e79695e9d5f430af59e54df7d1660b38491240e",
+      "build_input_count": 413,
+      "compiler_build_identity": "d5faad3227cf1882726e5ccef0239f5bd6606219d69c60027cdffed9b8b7dfb4",
+      "fingerprint_algorithm": "SHA256 over UTF-8 repository-relative paths sorted by encoded byte order, NUL, then binary SHA256 of file bytes. Includes .gn/DEPS/BUILD.gn, .cc/.h/.gn/.gni/.py/.vela under base/benchmarks/build/compiler/runtime/tools/vm, third_party top-level GN files and Unicode manifest/license. Generated files, docs, raw dependency inputs and result JSON are excluded.",
       "standard_value_harness_sha256": "08806d4d82a1fa0b4690074112f925db9c1134123502237f1dc2d58c26936ff0",
       "vm_driver_sha256": "9e246bbff8e1d566159a1c3f6a634ee5e6f3b852fcb3922320d876615fe78f25"
     },
     "suite": {
-      "id": "regexp-api-vm-regression-v1",
-      "run_date": "2026-10-26T22:17:21+08:00",
+      "id": "dynamic-json-vm-regression-v1",
+      "run_date": "2026-10-27T06:16:09+08:00",
       "working_directory": "C:/Users/zoy/Documents/Vela",
       "command_argv": [
-        "C:/Users/zoy/Documents/Vela/out/values-time-release/vela_benchmarks.exe",
+        "C:/Users/zoy/Documents/Vela/out/release/vela_benchmarks.exe",
         "--benchmark_filter=^vm/(integer_loop|function_calls|field_access|array_traversal|array_allocation)$",
-        "--benchmark_min_time=0.5s",
+        "--benchmark_min_time=1s",
         "--benchmark_repetitions=9",
         "--benchmark_enable_random_interleaving=true",
-        "--benchmark_out=C:/Users/zoy/AppData/Local/Temp/vela-regexp-6eowgsq7/latest-vm-stable.json",
+        "--benchmark_out=C:/Users/zoy/AppData/Local/Temp/vela-dynamic-json-final-0pg75bz6/final-vm.json",
         "--benchmark_out_format=json"
       ],
       "settings": {
-        "minimum_cpu_time_seconds": 0.5,
+        "minimum_cpu_time_seconds": 1,
         "repetitions": 9,
         "random_interleaving": true,
         "threads": 1,
@@ -246,12 +245,12 @@
       "correctness_checks_passed": true,
       "cases": {
         "vm/integer_loop": {
-          "median_wall_ns": 17386.569108170144,
-          "stddev_wall_ns": 574.977296723457,
-          "cv_wall": 0.032703025664192496,
-          "median_cpu_ns": 17264.345520170893,
-          "stddev_cpu_ns": 546.3208621659564,
-          "cv_cpu": 0.03133497706106933,
+          "median_wall_ns": 19381.373415818798,
+          "stddev_wall_ns": 1505.8370001123433,
+          "cv_wall": 0.074303093380849,
+          "median_cpu_ns": 19042.990003337058,
+          "stddev_cpu_ns": 1554.1924050210573,
+          "cv_cpu": 0.07880062759081662,
           "counters": {
             "allocated_bytes": 0.0,
             "committed_bytes": 0.0,
@@ -265,12 +264,12 @@
           }
         },
         "vm/function_calls": {
-          "median_wall_ns": 27432.038248446832,
-          "stddev_wall_ns": 1300.391752608346,
-          "cv_wall": 0.04650279055799771,
-          "median_cpu_ns": 27622.64454176544,
-          "stddev_cpu_ns": 941.6810639238754,
-          "cv_cpu": 0.03383458646616734,
+          "median_wall_ns": 30990.02290185783,
+          "stddev_wall_ns": 3923.476988956499,
+          "cv_wall": 0.1212180064649297,
+          "median_cpu_ns": 30151.299885491328,
+          "stddev_cpu_ns": 3835.853890735279,
+          "cv_cpu": 0.12115503479171338,
           "counters": {
             "allocated_bytes": 0.0,
             "committed_bytes": 0.0,
@@ -284,18 +283,18 @@
           }
         },
         "vm/field_access": {
-          "median_wall_ns": 24649.13928581934,
-          "stddev_wall_ns": 237.4143073662374,
-          "cv_wall": 0.009600542358324504,
-          "median_cpu_ns": 24553.57142857143,
-          "stddev_cpu_ns": 279.0178571429681,
-          "cv_cpu": 0.01145038167939387,
+          "median_wall_ns": 27292.72378806278,
+          "stddev_wall_ns": 1233.2636482644887,
+          "cv_wall": 0.0445189641011621,
+          "median_cpu_ns": 26977.478844913294,
+          "stddev_cpu_ns": 1171.32355178665,
+          "cv_cpu": 0.04289482361084329,
           "counters": {
-            "allocated_bytes": 45184.0,
+            "allocated_bytes": 61824.0,
             "committed_bytes": 65536.0,
             "first_allocated_bytes": 128.0,
             "first_committed_bytes": 128.0,
-            "heap_objects": 353.0,
+            "heap_objects": 483.0,
             "register_bytes": 36.0,
             "result": 1000.0,
             "retained_bytes": 0.0,
@@ -303,18 +302,18 @@
           }
         },
         "vm/array_traversal": {
-          "median_wall_ns": 508301.5999989584,
-          "stddev_wall_ns": 4317.728246844434,
-          "cv_wall": 0.008465608727989718,
-          "median_cpu_ns": 515625.0,
-          "stddev_cpu_ns": 7812.500000003108,
-          "cv_cpu": 0.015306122448985684,
+          "median_wall_ns": 564602.5047123263,
+          "stddev_wall_ns": 80950.70294572554,
+          "cv_wall": 0.1347406243516388,
+          "median_cpu_ns": 551470.5882352941,
+          "stddev_cpu_ns": 73154.1226822306,
+          "cv_cpu": 0.12560000140518363,
           "counters": {
-            "allocated_bytes": 59648.0,
-            "committed_bytes": 62592.0,
+            "allocated_bytes": 19456.0,
+            "committed_bytes": 42496.0,
             "first_allocated_bytes": 256.0,
             "first_committed_bytes": 256.0,
-            "heap_objects": 233.0,
+            "heap_objects": 76.0,
             "register_bytes": 45.0,
             "result": 120000.0,
             "retained_bytes": 0.0,
@@ -322,18 +321,18 @@
           }
         },
         "vm/array_allocation": {
-          "median_wall_ns": 372448.15212521295,
-          "stddev_wall_ns": 1650.9194665267378,
-          "cv_wall": 0.00442329024172079,
-          "median_cpu_ns": 368237.8146759507,
-          "stddev_cpu_ns": 5579.360828424111,
-          "cv_cpu": 0.015075376884423772,
+          "median_wall_ns": 397368.00242027955,
+          "stddev_wall_ns": 51811.73163545178,
+          "cv_wall": 0.1229879362782526,
+          "median_cpu_ns": 386034.95028623077,
+          "stddev_cpu_ns": 49212.87090918048,
+          "cv_cpu": 0.11939392218705626,
           "counters": {
-            "allocated_bytes": 57344.0,
-            "committed_bytes": 61440.0,
+            "allocated_bytes": 49152.0,
+            "committed_bytes": 57344.0,
             "first_allocated_bytes": 59392.0,
             "first_committed_bytes": 62464.0,
-            "heap_objects": 224.0,
+            "heap_objects": 192.0,
             "register_bytes": 45.0,
             "result": 499500.0,
             "retained_bytes": 0.0,
@@ -344,156 +343,160 @@
     },
     "supplemental_suites": [
       {
-        "id": "regexp-unicode-interpreter-v1",
-        "run_date": "2026-10-26T22:07:19+08:00",
+        "id": "native-json-checked-dynamic-v1",
+        "run_date": "2026-10-27T06:17:55+08:00",
         "working_directory": "C:/Users/zoy/Documents/Vela",
         "command_argv": [
-          "C:/Users/zoy/Documents/Vela/out/values-time-release/vela_benchmarks.exe",
-          "--benchmark_filter=^regexp/",
-          "--benchmark_min_time=0.2s",
-          "--benchmark_repetitions=5",
+          "C:/Users/zoy/Documents/Vela/out/release/vela_benchmarks.exe",
+          "--benchmark_filter=^(json/|dynamic/)",
+          "--benchmark_min_time=0.5s",
+          "--benchmark_repetitions=9",
           "--benchmark_enable_random_interleaving=true",
-          "--benchmark_out=C:/Users/zoy/AppData/Local/Temp/vela-regexp-6eowgsq7/regexp-final.json",
+          "--benchmark_out=C:/Users/zoy/AppData/Local/Temp/vela-dynamic-json-final-0pg75bz6/final-json-dynamic.json",
           "--benchmark_out_format=json"
         ],
         "settings": {
-          "minimum_cpu_time_seconds": 0.2,
-          "repetitions": 5,
+          "minimum_cpu_time_seconds": 0.5,
+          "repetitions": 9,
           "random_interleaving": true,
           "threads": 1,
           "time_unit": "ns",
           "variation": "sample standard deviation and coefficient of variation (fraction)"
         },
         "expected_cases": [
-          "regexp/compile",
-          "regexp/has_match/32",
-          "regexp/has_match/4096",
-          "regexp/first_match/32",
-          "regexp/first_match/4096",
-          "regexp/all_matches/32",
-          "regexp/all_matches/4096",
-          "regexp/captures",
-          "regexp/backtracking_limit",
-          "regexp/gc_pressure"
+          "json/decode/1",
+          "json/decode/64",
+          "json/decode/4096",
+          "json/encode/1",
+          "json/encode/64",
+          "json/encode/4096",
+          "json/to_json",
+          "dynamic/member_calls",
+          "dynamic/typed_boundaries"
         ],
         "all_expected_cases_passed": true,
         "correctness_checks_passed": true,
         "cases": {
-          "regexp/compile": {
-            "median_wall_ns": 614.3755662278589,
-            "stddev_wall_ns": 8.266874070968743,
-            "cv_wall": 0.013437695150126728,
-            "median_cpu_ns": 627.7905289009648,
-            "stddev_cpu_ns": 14.327293086131828,
-            "cv_cpu": 0.023208582945134597,
-            "counters": {}
-          },
-          "regexp/has_match/32": {
-            "median_wall_ns": 522.5370535169661,
-            "stddev_wall_ns": 10.524808760172306,
-            "cv_wall": 0.020375844731721143,
-            "median_cpu_ns": 523.1584821428571,
-            "stddev_cpu_ns": 15.597572387693678,
-            "cv_cpu": 0.030217134831077914,
+          "json/decode/1": {
+            "median_wall_ns": 640.9823213678984,
+            "stddev_wall_ns": 16.425649667551706,
+            "cv_wall": 0.025378473786508152,
+            "median_cpu_ns": 627.7901785714286,
+            "stddev_cpu_ns": 17.243765083462797,
+            "cv_cpu": 0.02713243348937444,
             "counters": {
-              "retained_bytes": 0.0,
-              "subject_code_points": 96.0
-            }
-          },
-          "regexp/has_match/4096": {
-            "median_wall_ns": 40621.01005989202,
-            "stddev_wall_ns": 8788.303236984533,
-            "cv_wall": 0.19248972686744129,
-            "median_cpu_ns": 43596.540178571435,
-            "stddev_cpu_ns": 9040.3709862094,
-            "cv_cpu": 0.19562680522007234,
-            "counters": {
-              "retained_bytes": 0.0,
-              "subject_code_points": 12288.0
-            }
-          },
-          "regexp/first_match/32": {
-            "median_wall_ns": 570.62767856613,
-            "stddev_wall_ns": 23.720103527567225,
-            "cv_wall": 0.041115157657362136,
-            "median_cpu_ns": 558.0357142857143,
-            "stddev_cpu_ns": 24.66192735723276,
-            "cv_cpu": 0.044194173824161104,
-            "counters": {
-              "retained_bytes": 0.0,
-              "subject_code_points": 96.0
-            }
-          },
-          "regexp/first_match/4096": {
-            "median_wall_ns": 39734.70619015387,
-            "stddev_wall_ns": 568.8139307676659,
-            "cv_wall": 0.014263877811616027,
-            "median_cpu_ns": 39239.07584128578,
-            "stddev_cpu_ns": 1849.7477743244406,
-            "cv_cpu": 0.04714045207910351,
-            "counters": {
-              "retained_bytes": 0.0,
-              "subject_code_points": 12288.0
-            }
-          },
-          "regexp/all_matches/32": {
-            "median_wall_ns": 5087.234861623018,
-            "stddev_wall_ns": 38.84431559423875,
-            "cv_wall": 0.007644489817816637,
-            "median_cpu_ns": 4970.033314918052,
-            "stddev_cpu_ns": 143.27365042802757,
-            "cv_cpu": 0.028233121520882042,
-            "counters": {
-              "retained_bytes": 0.0,
-              "subject_code_points": 96.0
-            }
-          },
-          "regexp/all_matches/4096": {
-            "median_wall_ns": 792796.648102266,
-            "stddev_wall_ns": 16091.639242670059,
-            "cv_wall": 0.020178387155979378,
-            "median_cpu_ns": 785614.5251396649,
-            "stddev_cpu_ns": 23905.48871792561,
-            "cv_cpu": 0.02976753029919085,
-            "counters": {
-              "retained_bytes": 0.0,
-              "subject_code_points": 12288.0
-            }
-          },
-          "regexp/captures": {
-            "median_wall_ns": 938.3018545445262,
-            "stddev_wall_ns": 24.321519153567955,
-            "cv_wall": 0.02622905363748462,
-            "median_cpu_ns": 889.3684270441663,
-            "stddev_cpu_ns": 28.654538201466416,
-            "cv_cpu": 0.03147830790259262,
-            "counters": {
-              "persistent_bytes": 725.0,
+              "bytes_per_second": 84423111.1111111,
+              "first_call_gc_bytes": 1280.0,
+              "first_call_objects": 7.0,
               "retained_bytes": 0.0
             }
           },
-          "regexp/backtracking_limit": {
-            "median_wall_ns": 1761.190848290945,
-            "stddev_wall_ns": 32.331618787191715,
-            "cv_wall": 0.018312338367652264,
-            "median_cpu_ns": 1743.8616071428569,
-            "stddev_cpu_ns": 47.757616969962996,
-            "cv_cpu": 0.026849144975740764,
+          "json/decode/64": {
+            "median_wall_ns": 31380.15607211643,
+            "stddev_wall_ns": 7516.456525885111,
+            "cv_wall": 0.22233877775771055,
+            "median_cpu_ns": 30482.632851265957,
+            "stddev_cpu_ns": 7409.653504230243,
+            "cv_cpu": 0.22614435664340912,
             "counters": {
-              "persistent_bytes": 770.0,
+              "bytes_per_second": 109209726.60869566,
+              "first_call_gc_bytes": 66688.0,
+              "first_call_objects": 385.0,
               "retained_bytes": 0.0
             }
           },
-          "regexp/gc_pressure": {
-            "median_wall_ns": 102882.1484396758,
-            "stddev_wall_ns": 758.544306204945,
-            "cv_wall": 0.007383598551435993,
-            "median_cpu_ns": 103759.765625,
-            "stddev_cpu_ns": 0.0,
-            "cv_cpu": 0.0,
+          "json/decode/4096": {
+            "median_wall_ns": 2315694.2857895046,
+            "stddev_wall_ns": 135821.32281361203,
+            "cv_wall": 0.05767933793505704,
+            "median_cpu_ns": 2232142.8571428573,
+            "stddev_cpu_ns": 137950.12066770202,
+            "cv_cpu": 0.06013133908455941,
             "counters": {
-              "first_call_gc_bytes": 7608.0,
-              "register_bytes": 63.0,
+              "bytes_per_second": 95420864.0,
+              "first_call_gc_bytes": 4259968.0,
+              "first_call_objects": 24577.0,
+              "retained_bytes": 0.0
+            }
+          },
+          "json/encode/1": {
+            "median_wall_ns": 734.3639508690102,
+            "stddev_wall_ns": 111.76404682481136,
+            "cv_wall": 0.144282567922485,
+            "median_cpu_ns": 714.9832589285714,
+            "stddev_cpu_ns": 113.68586783626269,
+            "cv_cpu": 0.15044313242775342,
+            "counters": {
+              "bytes_per_second": 74127609.75609756,
+              "first_call_gc_bytes": 912.0,
+              "input_heap_bytes": 1280.0,
+              "retained_bytes": 0.0
+            }
+          },
+          "json/encode/64": {
+            "median_wall_ns": 31859.86160782964,
+            "stddev_wall_ns": 2182.682325151802,
+            "cv_wall": 0.06725415703054127,
+            "median_cpu_ns": 31389.508928571428,
+            "stddev_cpu_ns": 2066.6374668237518,
+            "cv_cpu": 0.06519458007810948,
+            "counters": {
+              "bytes_per_second": 106054542.22222222,
+              "first_call_gc_bytes": 8912.0,
+              "input_heap_bytes": 66688.0,
+              "retained_bytes": 0.0
+            }
+          },
+          "json/encode/4096": {
+            "median_wall_ns": 2228067.2241942985,
+            "stddev_wall_ns": 462063.9298651861,
+            "cv_wall": 0.19087854847207128,
+            "median_cpu_ns": 2194816.0535117057,
+            "stddev_cpu_ns": 463821.31255902833,
+            "cv_cpu": 0.1953084638977166,
+            "counters": {
+              "bytes_per_second": 97043667.8095238,
+              "first_call_gc_bytes": 475913.0,
+              "input_heap_bytes": 4259968.0,
+              "retained_bytes": 0.0
+            }
+          },
+          "json/to_json": {
+            "median_wall_ns": 849.7966517617377,
+            "stddev_wall_ns": 92.28804261633796,
+            "cv_wall": 0.10478273099758001,
+            "median_cpu_ns": 837.0535714285714,
+            "stddev_cpu_ns": 95.1608162652582,
+            "cv_cpu": 0.11036430703648246,
+            "counters": {
+              "first_call_gc_bytes": 896.0,
+              "register_bytes": 54.0,
+              "retained_bytes": 0.0
+            }
+          },
+          "dynamic/member_calls": {
+            "median_wall_ns": 274691.8151116408,
+            "stddev_wall_ns": 48765.287959950554,
+            "cv_wall": 0.1653403412325638,
+            "median_cpu_ns": 265055.1314673452,
+            "stddev_cpu_ns": 47321.806274801536,
+            "cv_cpu": 0.16607973089634534,
+            "counters": {
+              "first_call_gc_bytes": 44768.0,
+              "register_bytes": 108.0,
+              "retained_bytes": 0.0
+            }
+          },
+          "dynamic/typed_boundaries": {
+            "median_wall_ns": 26790.638495793304,
+            "stddev_wall_ns": 4925.76167825986,
+            "cv_wall": 0.16679007398776466,
+            "median_cpu_ns": 25634.479525898147,
+            "stddev_cpu_ns": 4900.630816200571,
+            "cv_cpu": 0.171356652395078,
+            "counters": {
+              "first_call_gc_bytes": 0.0,
+              "register_bytes": 36.0,
               "retained_bytes": 0.0
             }
           }
@@ -502,24 +505,24 @@
     ],
     "comparison_to_previous": {
       "comparable": true,
-      "basis": "Same machine, pinned compiler/toolchain, Release flags, VM driver/workloads, timing boundaries and measurement settings. Only the five common VM cases are compared.",
+      "basis": "Same machine, pinned toolchain, Release flags, VM driver/workloads and measurement settings. Only the five common VM cases are compared.",
       "median_cpu_ratio_latest_over_previous": {
-        "vm/integer_loop": 1.0,
-        "vm/function_calls": 1.0,
-        "vm/field_access": 1.0,
-        "vm/array_traversal": 1.0,
-        "vm/array_allocation": 0.9777777777777776
+        "vm/integer_loop": 0.9680905086496464,
+        "vm/function_calls": 0.9099979687545341,
+        "vm/field_access": 0.9208312779063738,
+        "vm/array_traversal": 1.0402476780185759,
+        "vm/array_allocation": 1.0062176449642553
       }
     },
     "measurement_limits": [
-      "Regex is a new API; supplemental workloads have no pre-feature counterpart.",
-      "Regex compile measures PCRE2 compilation; repeated search reuses the compiled program and includes operation-local coordinate mapping, native work buffers and normal GC.",
-      "Capture and limit workloads initialize global patterns before timing and establish the retained-memory baseline after warm-up; persistent_bytes includes the live program and globals.",
-      "hasMatch checks both GC object count and accounted bytes against the pre-search baseline. Temporary work buffers are released on each operation; all reported retained_bytes counters are zero.",
-      "PCRE2 interpreter budgets: match 1000000, depth 1000, heap 8192 KiB; UTF/UCP enabled, JIT disabled, Unicode 17.0.0.",
-      "Backtracking has no general linear-time guarantee. Configured counters are not wall-clock timeouts.",
-      "Variation and ratios are observations from one Windows x64 machine; small differences are not causal speedup claims.",
-      "Primary VM comparison uses 0.5-second calibrated samples and nine randomly interleaved repetitions per case; regex supplemental samples use 0.2 seconds and five repetitions."
+      "Primary VM suites use one-second calibrated samples, nine repetitions and random interleaving; supplemental JSON/dynamic samples use 0.5 seconds and nine repetitions.",
+      "Ratios are observations from one Windows x64 machine, not causal speedup claims; inspect the coefficient of variation alongside each median.",
+      "JSON decode includes yyjson parsing and native-value construction; encode reuses rooted input, includes traversal and output allocation, and validates the complete output.",
+      "first_call_gc_bytes and first_call_objects are accounted GC heap snapshots after one warm operation, not cumulative native allocator traffic or peak resident memory.",
+      "JSON throughput is measured in input/output UTF-8 bytes. Payloads contain ordered objects, Unicode strings, mixed arrays and numeric values.",
+      "toJson and dynamic workloads include ordinary VM dispatch and GC; dynamic/member_calls and dynamic/typed_boundaries perform 1000 operations per invocation.",
+      "All temporary retained_bytes counters are zero after collection; JSON encoding input_heap_bytes remains rooted during measurement.",
+      "New JSON/dynamic cases have no pre-feature counterpart. Primitive arrays remain compact; measured ordinary typed-code regressions are retained without normalization."
     ]
   }
 }

@@ -123,6 +123,31 @@ TEST_F(CompilationCacheTest, InvalidSourceCannotExecuteOrReplaceOldImage) {
   EXPECT_EQ(restored->status, CacheStatus::Hit);
 }
 
+TEST_F(CompilationCacheTest, JsonAndDynamicDispatchRetainMetadataInFreshIsolateCacheHit) {
+  Write("main.vela", R"(class Payload {
+  public toJson(): int[] { return [40, 2]; }
+}
+func main(): int {
+  const root: dynamic = Json.parse(Json.stringify(Payload()));
+  const get = root.slice;
+  const values: dynamic[] = get();
+  return values[0] + values[1];
+})");
+  const auto first = Compile();
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first->status, CacheStatus::Absent);
+  ExpectRun(*first, kAnswer);
+  runtime::Isolate fresh(1);
+  const auto cached =
+      CompileFileCached(PathText(directory() / "main.vela"), directory() / "cache", fresh);
+  ASSERT_TRUE(cached);
+  ASSERT_EQ(cached->status, CacheStatus::Hit);
+  const auto result =
+      vm::VirtualMachine(fresh).Execute(cached->compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), kAnswer);
+}
+
 TEST_F(CompilationCacheTest, RebuildsCorruptCacheAndReportsUnwritableCacheDirectory) {
   ASSERT_TRUE(Compile());
   std::error_code error;

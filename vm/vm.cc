@@ -75,8 +75,15 @@ bool IsEqualValue(runtime::Value left, runtime::Value right) noexcept {
       return left.AsDouble() == right.AsDouble();
     case runtime::ValueKind::String:
       return left.AsString()->value() == right.AsString()->value();
-    case runtime::ValueKind::Object:
+    case runtime::ValueKind::Object: {
+      const auto* layout = runtime::Heap::ClassOf(*left.AsObject());
+      if (layout != nullptr && layout->IsEnum()) {
+        return layout == runtime::Heap::ClassOf(*right.AsObject()) &&
+               runtime::Heap::GetField(*left.AsObject(), 0)->AsInteger() ==
+                   runtime::Heap::GetField(*right.AsObject(), 0)->AsInteger();
+      }
       return left.AsObject() == right.AsObject();
+    }
   }
   return false;
 }
@@ -258,6 +265,21 @@ bool IsEqualValue(runtime::Value left, runtime::Value right) noexcept {
   }
   destination.SetBoolean(result);
   return {};
+}
+
+std::expected<runtime::Value, runtime::BuiltinError>
+ExecuteValueBuiltin(Builtin builtin, runtime::RegisterView arguments, runtime::Heap& heap) {
+  if (builtin == Builtin::NumericToInt || builtin == Builtin::NumericToDouble) {
+    return runtime::ConvertNumber(builtin == Builtin::NumericToInt
+                                      ? runtime::NumericConversion::ToInt
+                                      : runtime::NumericConversion::ToDouble,
+                                  arguments.front().Read());
+  }
+  constexpr std::size_t kMaxBuiltinArguments = 4;
+  std::array<runtime::Value, kMaxBuiltinArguments> materialized;
+  const auto input = std::span(materialized).first(arguments.size());
+  arguments.CopyTo(input);
+  return runtime::ExecuteBuiltin(builtin, input, heap);
 }
 
 }  // namespace
@@ -537,29 +559,26 @@ ExecutionResult Execution::Invoke(runtime::Value callable,
                                   std::span<const runtime::Value> arguments) noexcept {
   runtime::RootRange argument_roots(isolate_.heap(), arguments.data(), arguments.size());
   runtime::RootRange callable_root(isolate_.heap(), &callable, 1);
-  const auto* layout = callable.IsObject() ? runtime::Heap::ClassOf(*callable.AsObject()) : nullptr;
-  if (layout == nullptr || !layout->callable()) {
-    return {.status = ExecutionStatus::TypeError, .stack_trace = {}, .message = {}};
+  const auto resolved = ResolveCallable(callable);
+  if (!resolved) {
+    return {.status = resolved.error(), .stack_trace = {}, .message = {}};
   }
-  auto target = *layout->callable();
-  std::optional<runtime::Value> implicit;
-  if (target.mode == CallableMode::Closure) {
-    implicit = callable;
-  } else if (target.mode == CallableMode::BoundMethod ||
-             target.mode == CallableMode::InterfaceMethod) {
-    implicit = *runtime::Heap::GetField(*callable.AsObject(), 0);
-    if (target.mode == CallableMode::InterfaceMethod) {
-      const auto resolved = InterfaceTarget(*implicit, target.function);
-      if (!resolved) {
-        return {.status = resolved.error(), .stack_trace = {}, .message = {}};
-      }
-      target.function = *resolved;
-    }
-  }
-  const auto& function = functions_.subspan(target.function).front();
+  const auto& [target, implicit] = *resolved;
+  const auto& function = functions_.subspan(target).front();
   const auto hidden = implicit.has_value() ? 1U : 0U;
   if (function.parameter_count != arguments.size() + hidden) {
     return {.status = ExecutionStatus::TypeError, .stack_trace = {}, .message = {}};
+  }
+  if (function.signature) {
+    const auto& signature = *function.signature;
+    const auto skipped = hidden - signature.hidden_parameters;
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      const auto parameter = signature.parameters.at(index + skipped).type;
+      const auto& type = function.layouts->types().subspan(parameter).front();
+      if (!runtime::Heap::IsValueOfType(arguments.subspan(index).front(), type)) {
+        return {.status = ExecutionStatus::InvalidCast, .stack_trace = {}, .message = {}};
+      }
+    }
   }
   auto values = registers_.front().Acquire(function.register_count);
   if (values.IsEmpty()) {
@@ -572,7 +591,17 @@ ExecutionResult Execution::Invoke(runtime::Value callable,
     values.front() = *implicit;
   }
   for (std::size_t index = 0; index < arguments.size(); ++index) {
-    values.subspan(index + hidden).front() = arguments.subspan(index).front();
+    auto value = arguments.subspan(index).front();
+    if (function.signature) {
+      const auto& signature = *function.signature;
+      const auto parameter =
+          signature.parameters.at(index + hidden - signature.hidden_parameters).type;
+      const auto& type = function.layouts->types().subspan(parameter).front();
+      if (!value.IsNull() && type.instance != nullptr && type.instance->IsEnum()) {
+        value = *runtime::Heap::GetField(*value.AsObject(), 0);
+      }
+    }
+    values.subspan(index + hidden).front() = value;
   }
   frame_count_ = 1;
   return debug_session_ != nullptr && debug_session_->debugger != nullptr
@@ -909,6 +938,9 @@ StepResult Execution::AllocateFuture(ActiveFrame& active,
                                      FutureRegisters registers,
                                      std::uint8_t error_flag) {
   const auto payload = active.frame.registers().subspan(registers.source).front().Read();
+  if (error_flag != 0 && !runtime::Heap::IsThrowable(payload)) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
   runtime::Future future(&isolate_.scheduler());
   if (payload.IsObject() && payload.AsObject() != nullptr) {
     if (auto* source = runtime::Heap::GetFuture(*payload.AsObject());
@@ -919,8 +951,6 @@ StepResult Execution::AllocateFuture(ActiveFrame& active,
     } else {
       ConsumeFutureCompletion(future.Complete(payload));
     }
-  } else if (error_flag != 0) {
-    ConsumeFutureCompletion(future.CompleteError(payload, ThrowDiagnostic(payload)));
   } else {
     ConsumeFutureCompletion(future.Complete(payload));
   }
@@ -960,6 +990,31 @@ StepResult Execution::AllocateCollection(ActiveFrame& active, FutureRegisters re
 
 StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) {
   const auto builtin = static_cast<Builtin>(DecodeB(instruction));
+  if (builtin == Builtin::DynamicAsync) {
+    return ExecuteDynamicAsync(active, instruction);
+  }
+  if (builtin >= Builtin::DynamicArrayPrepare && builtin <= Builtin::DynamicArrayValidate) {
+    return ExecuteDynamicArray(active, instruction);
+  }
+  if (builtin == Builtin::DynamicCall) {
+    return ExecuteDynamicCall(active, instruction);
+  }
+  if (builtin == Builtin::DynamicMethodCall) {
+    return ExecuteDynamicMethodCall(active, instruction);
+  }
+  if (builtin == Builtin::DynamicMemberGet || builtin == Builtin::DynamicMemberSet ||
+      builtin == Builtin::DynamicResolveCall) {
+    return ExecuteDynamicMember(active, instruction);
+  }
+  if (builtin == Builtin::BindRuntimeType || builtin == Builtin::CheckFuturePayload) {
+    return ExecuteTypeBinding(active, instruction);
+  }
+  if (builtin >= Builtin::DynamicBinary && builtin <= Builtin::DynamicIndexWrite) {
+    return ExecuteDynamic(active, instruction);
+  }
+  if (builtin == Builtin::JsonParse || builtin == Builtin::JsonStringify) {
+    return ExecuteJson(active, instruction);
+  }
   if (IsRegExpBuiltin(builtin)) {
     return ExecuteRegExp(active, instruction);
   }
@@ -982,19 +1037,7 @@ StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instructio
   }
   auto values = active.frame.registers();
   const auto arguments = values.subspan(DecodeC(instruction), BuiltinArity(builtin));
-  const auto result = [&]() -> std::expected<runtime::Value, runtime::BuiltinError> {
-    if (builtin == Builtin::NumericToInt || builtin == Builtin::NumericToDouble) {
-      return runtime::ConvertNumber(builtin == Builtin::NumericToInt
-                                        ? runtime::NumericConversion::ToInt
-                                        : runtime::NumericConversion::ToDouble,
-                                    arguments.front().Read());
-    }
-    constexpr std::size_t kMaxBuiltinArguments = 4;
-    std::array<runtime::Value, kMaxBuiltinArguments> materialized;
-    const auto input = std::span(materialized).first(arguments.size());
-    arguments.CopyTo(input);
-    return runtime::ExecuteBuiltin(builtin, input, isolate_.heap());
-  }();
+  const auto result = ExecuteValueBuiltin(builtin, arguments, isolate_.heap());
   if (!result) {
     switch (result.error()) {
       case runtime::BuiltinError::OutOfMemory:
@@ -1016,6 +1059,194 @@ StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instructio
     }
   }
   values.subspan(DecodeA(instruction)).front() = *result;
+  return {};
+}
+
+StepResult Execution::ExecuteDynamic(ActiveFrame& active, Instruction instruction) {
+  const auto builtin = static_cast<Builtin>(DecodeB(instruction));
+  const auto values = active.frame.registers();
+  const auto arguments = values.subspan(DecodeC(instruction), BuiltinArity(builtin));
+  auto destination = values.subspan(DecodeA(instruction)).front();
+  if (builtin == Builtin::DynamicNegate) {
+    const auto operand = arguments.front();
+    if (operand.IsInteger()) {
+      return IntegerArithmetic(OpCode::SubInt, destination, 0, operand.AsInteger());
+    }
+    if (!operand.IsDouble()) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    destination.SetDouble(-operand.AsDouble());
+    return {};
+  }
+  if (builtin == Builtin::DynamicBinary) {
+    return ExecuteDynamicBinary(destination, arguments);
+  }
+  return ExecuteDynamicIndex(active, instruction);
+}
+
+StepResult Execution::ExecuteDynamicBinary(runtime::RegisterReference destination,
+                                           runtime::RegisterView arguments) {
+  const auto selector = arguments.front();
+  if (!selector.IsInteger() || selector.AsInteger() < 0 ||
+      selector.AsInteger() > static_cast<std::int64_t>(OpCode::Return)) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto operation = static_cast<OpCode>(selector.AsInteger());
+  const auto left = arguments.subspan(1).front();
+  const auto right = arguments.subspan(2).front();
+  if (operation == OpCode::EqualInt || operation == OpCode::NotEqualInt) {
+    return ExecuteDynamicEquality(operation, destination, left.Read(), right.Read());
+  }
+  if (operation == OpCode::AddInt && (left.IsString() || right.IsString())) {
+    return StringOperation(OpCode::StringConcat, destination, left, right);
+  }
+  std::optional<OpCode> double_operation;
+  switch (operation) {
+    case OpCode::AddInt:
+      double_operation = OpCode::AddDouble;
+      break;
+    case OpCode::SubInt:
+      double_operation = OpCode::SubDouble;
+      break;
+    case OpCode::MulInt:
+      double_operation = OpCode::MulDouble;
+      break;
+    case OpCode::DivInt:
+      double_operation = OpCode::DivDouble;
+      break;
+    case OpCode::LessInt:
+      double_operation = OpCode::LessDouble;
+      break;
+    case OpCode::LessEqualInt:
+      double_operation = OpCode::LessEqualDouble;
+      break;
+    case OpCode::GreaterInt:
+      double_operation = OpCode::GreaterDouble;
+      break;
+    case OpCode::GreaterEqualInt:
+      double_operation = OpCode::GreaterEqualDouble;
+      break;
+    case OpCode::ModInt:
+    case OpCode::BitAndInt:
+    case OpCode::BitOrInt:
+    case OpCode::BitXorInt:
+    case OpCode::ShiftLeftInt:
+    case OpCode::ShiftRightInt:
+    case OpCode::ShiftUnsignedRightInt:
+      break;
+    default:
+      return std::unexpected(ExecutionStatus::TypeError);
+  }
+  if (left.IsDouble() && right.IsDouble() && double_operation) {
+    return DoubleOperation(*double_operation, destination, {.left = left, .right = right});
+  }
+  return IntegerOperation(operation, destination, {.left = left, .right = right});
+}
+
+StepResult Execution::ExecuteDynamicEquality(OpCode operation,
+                                             runtime::RegisterReference destination,
+                                             runtime::Value left,
+                                             runtime::Value right) {
+  if (!left.IsNull() && !right.IsNull()) {
+    if (left.kind() != right.kind()) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    if (left.IsObject()) {
+      const auto kind = runtime::Heap::KindOf(*left.AsObject());
+      const auto* layout = runtime::Heap::ClassOf(*left.AsObject());
+      if (kind == runtime::ObjectKind::Array || kind == runtime::ObjectKind::MutableString ||
+          kind == runtime::ObjectKind::Expected || kind == runtime::ObjectKind::Collection ||
+          (layout != nullptr && layout->callable())) {
+        return std::unexpected(ExecutionStatus::TypeError);
+      }
+    }
+  }
+  const auto equal = IsEqualValue(left, right);
+  destination.SetBoolean(operation == OpCode::EqualInt ? equal : !equal);
+  return {};
+}
+
+StepResult Execution::ExecuteDynamicIndex(ActiveFrame& active, Instruction instruction) {
+  const auto builtin = static_cast<Builtin>(DecodeB(instruction));
+  const auto values = active.frame.registers();
+  const auto arguments = values.subspan(DecodeC(instruction), BuiltinArity(builtin));
+  auto destination = values.subspan(DecodeA(instruction)).front();
+  const auto receiver = arguments.front().Read();
+  if (builtin == Builtin::DynamicIndexRead && receiver.IsString()) {
+    const std::array input{receiver, arguments.subspan(1).front().Read()};
+    const auto result = runtime::ExecuteBuiltin(Builtin::StringIndex, input, isolate_.heap());
+    if (!result) {
+      if (result.error() == runtime::BuiltinError::OutOfMemory) {
+        return std::unexpected(ExecutionStatus::OutOfMemory);
+      }
+      return std::unexpected(result.error() == runtime::BuiltinError::IndexOutOfBounds
+                                 ? ExecutionStatus::IndexOutOfBounds
+                                 : ExecutionStatus::TypeError);
+    }
+    destination = *result;
+    return {};
+  }
+  if (!receiver.IsObject()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  auto& object = *receiver.AsObject();
+  const auto kind = runtime::Heap::KindOf(object);
+  if (kind == runtime::ObjectKind::ByteArray) {
+    const auto writing = builtin == Builtin::DynamicIndexWrite;
+    std::array<runtime::Value, 3> input;
+    const auto materialized = std::span(input).first(arguments.size());
+    arguments.CopyTo(materialized);
+    const auto result = runtime::ExecuteByteBuiltin(
+        writing ? Builtin::ByteArraySetIndex : Builtin::ByteArrayGetIndex, materialized,
+        isolate_.heap());
+    if (!result) {
+      return std::unexpected(result.error());
+    }
+    destination = writing ? arguments.subspan(2).front().Read() : *result;
+    return {};
+  }
+  if (kind == runtime::ObjectKind::RegExpMatch && builtin == Builtin::DynamicIndexRead) {
+    return ExecuteRegExp(active, EncodeABC(OpCode::BuiltinCall, DecodeA(instruction),
+                                           static_cast<std::uint8_t>(Builtin::RegExpMatchGroup),
+                                           DecodeC(instruction)));
+  }
+  if (kind != runtime::ObjectKind::Array) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  return ExecuteDynamicArrayIndex(builtin, destination, arguments);
+}
+
+StepResult Execution::ExecuteDynamicArrayIndex(Builtin builtin,
+                                               runtime::RegisterReference destination,
+                                               runtime::RegisterView arguments) {
+  const auto receiver = arguments.front().Read();
+  const auto index = arguments.subspan(1).front();
+  const auto& layout = *runtime::Heap::ArrayTypeOf(*receiver.AsObject());
+  if (builtin == Builtin::DynamicIndexWrite) {
+    const auto original = arguments.subspan(2).front().Read();
+    if (!runtime::Heap::IsValueOfType(original, layout.value_type())) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    auto value = original;
+    const auto* element = layout.element.instance;
+    if (!value.IsNull() && element != nullptr && element->IsEnum()) {
+      value = *runtime::Heap::GetField(*value.AsObject(), 0);
+    }
+    if (auto written = ArrayOperation(OpCode::SetIndex, arguments.front(), index, value);
+        !written) {
+      return written;
+    }
+    destination = original;
+    return {};
+  }
+  if (auto read = ArrayOperation(OpCode::GetIndex, destination, receiver, index); !read) {
+    return read;
+  }
+  const auto boxed = BoxDynamicValue(destination.Read(), layout.element);
+  if (!boxed) {
+    return std::unexpected(boxed.error());
+  }
+  destination = *boxed;
   return {};
 }
 
@@ -1261,59 +1492,30 @@ StepResult Execution::CallIndirect(ActiveFrame& active, Instruction instruction)
   if (!value.IsObject() || value.AsObject() == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto* layout = runtime::Heap::ClassOf(*value.AsObject());
-  if (layout == nullptr || !layout->callable()) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  const auto resolved = ResolveCallable(value.Read());
+  if (!resolved) {
+    return std::unexpected(resolved.error());
   }
-  auto target = *layout->callable();
-  if (target.mode != CallableMode::InterfaceMethod && target.function >= functions_.size()) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  std::optional<runtime::Value> implicit;
-  if (target.mode == CallableMode::Closure) {
-    implicit = value.Read();
-  } else if (target.mode == CallableMode::BoundMethod ||
-             target.mode == CallableMode::InterfaceMethod) {
-    const auto* receiver = runtime::Heap::GetField(*value.AsObject(), 0);
-    if (receiver == nullptr) {
-      return std::unexpected(ExecutionStatus::TypeError);
-    }
-    implicit = *receiver;
-    if (target.mode == CallableMode::InterfaceMethod) {
-      const auto method = InterfaceTarget(*receiver, target.function);
-      if (!method) {
-        return std::unexpected(method.error());
-      }
-      target.function = *method;
-    }
-  }
-  const auto count = functions_.subspan(target.function).front().parameter_count;
+  const auto& [target, implicit] = *resolved;
+  const auto count = functions_.subspan(target).front().parameter_count;
   const auto hidden = implicit.has_value() ? 1U : 0U;
   if (count < hidden || static_cast<std::size_t>(DecodeC(instruction)) + count - hidden >
                             active.frame.registers().size()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  return EnterCall(target.function, active, instruction, implicit);
+  return EnterCall(target, active, instruction, implicit);
 }
 
 StepResult Execution::EnterCall(std::uint32_t target,
                                 ActiveFrame& active,
                                 Instruction instruction,
                                 std::optional<runtime::Value> implicit) {
-  if (frame_count_ == kMaxCallFrames) {
-    return std::unexpected(ExecutionStatus::StackOverflow);
+  const auto entered = EnterFrame({.function = target, .destination = DecodeA(instruction)});
+  if (!entered) {
+    return std::unexpected(entered.error());
   }
+  const auto callee_values = *entered;
   const auto& callee = functions_.subspan(target).front();
-  auto callee_values = registers_.subspan(frame_count_).front().Acquire(callee.register_count);
-  if (callee_values.IsEmpty()) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  auto& next = std::span(frames_).subspan(frame_count_).front();
-  next.function = &callee;
-  next.program_counter = 0;
-  next.return_register = DecodeA(instruction);
-  next.initialized_global.reset();
-  next.frame.Attach(isolate_.heap(), callee_values);
   const std::size_t hidden = implicit.has_value() ? 1 : 0;
   if (implicit) {
     callee_values.front() = *implicit;
@@ -1321,8 +1523,34 @@ StepResult Execution::EnterCall(std::uint32_t target,
   callee_values.subspan(hidden, callee.parameter_count - hidden)
       .CopyFrom(
           active.frame.registers().subspan(DecodeC(instruction), callee.parameter_count - hidden));
-  ++frame_count_;
   return {};
+}
+
+std::expected<runtime::RegisterView, ExecutionStatus> Execution::EnterFrame(FrameEntry entry) {
+  if (frame_count_ == kMaxCallFrames) {
+    return std::unexpected(ExecutionStatus::StackOverflow);
+  }
+  const auto& callee = functions_.subspan(entry.function).front();
+  auto callee_values = registers_.subspan(frame_count_).front().Acquire(callee.register_count);
+  if (callee_values.IsEmpty()) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  auto& next = std::span(frames_).subspan(frame_count_).front();
+  next.function = &callee;
+  next.program_counter = 0;
+  next.return_register = entry.destination;
+  next.initialized_global.reset();
+  next.frame.Attach(isolate_.heap(), callee_values);
+  ++frame_count_;
+  return callee_values;
+}
+
+bool Execution::IsErasedReturn() const {
+  if (frame_count_ == 1) {
+    return true;
+  }
+  const auto& caller = std::span(frames_).subspan(frame_count_ - 2).front();
+  return caller.json_encoder || caller.dynamic_return;
 }
 
 StepResult Execution::Return(ActiveFrame& active, runtime::Value value) {
@@ -1340,7 +1568,28 @@ StepResult Execution::Return(ActiveFrame& active, runtime::Value value) {
     globals_->Store(index, value);
     std::span(globals_->states).subspan(index).front() = GlobalState::Ready;
   }
+  if (value.IsObject() && active.function->signature && active.function->signature->result) {
+    const auto& type =
+        active.function->layouts->types().subspan(*active.function->signature->result).front();
+    if (type.object_kind == runtime::ObjectKind::Future ||
+        type.object_kind == runtime::ObjectKind::Completer) {
+      const auto* layout = isolate_.CreateArrayLayout({.element = type});
+      if (auto bound = runtime::Heap::BindRuntimeType(*value.AsObject(), *layout); !bound) {
+        return bound;
+      }
+    }
+  }
   const auto return_register = active.return_register;
+  const auto erased_return = IsErasedReturn();
+  if (erased_return && active.function->signature && active.function->signature->result) {
+    const auto& type =
+        active.function->layouts->types().subspan(*active.function->signature->result).front();
+    const auto boxed = BoxDynamicValue(value, type);
+    if (!boxed) {
+      return std::unexpected(boxed.error());
+    }
+    value = *boxed;
+  }
   active.frame.Detach();
   --frame_count_;
   if (frame_count_ == 0) {
@@ -1348,7 +1597,25 @@ StepResult Execution::Return(ActiveFrame& active, runtime::Value value) {
     return {};
   }
   auto& caller = std::span(frames_).subspan(frame_count_ - 1).front();
+  caller.dynamic_return = false;
+  if (caller.json_encoder) {
+    caller.json_encoder->ResumeConversion(value);
+    return ContinueJson(caller);
+  }
   caller.frame.registers().subspan(return_register).front() = value;
+  if (caller.dynamic_assignment) {
+    caller.frame.registers().subspan(return_register).front() =
+        caller.frame.registers().subspan(*caller.dynamic_assignment).front();
+    caller.dynamic_assignment.reset();
+  }
+  if (caller.dynamic_call_plan) {
+    caller.dynamic_call_plan = false;
+    const auto plan = CreateDynamicCallPlan(value, DynamicCallStyle::Function);
+    if (!plan) {
+      return std::unexpected(plan.error());
+    }
+    caller.frame.registers().subspan(return_register).front() = *plan;
+  }
   return {};
 }
 

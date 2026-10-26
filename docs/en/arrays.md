@@ -4,7 +4,9 @@
 
 
 `T[]` is a dense, mutable, growable array. Its element type remains invariant and
-exact; there is no separate `List<T>`, mixed-element array, implicit numeric
+exact. `dynamic[]` explicitly supports mixed elements while retaining each value's
+language type and checked access to typed slots; see [JSON and dynamic values](json.md).
+There is no separate `List<T>`, implicit numeric
 conversion, sparse index assignment or writable `length` property.
 
 ```vela
@@ -87,7 +89,7 @@ unchanged.
 
 Int/enum elements occupy 8 bytes, doubles 8 bytes, booleans one native bool and
 reference elements one native pointer. Nullable reference elements keep the same
-pointer width; nullable primitive elements use tagged `Value` slots. Capacity is
+pointer width; nullable primitive elements and `dynamic` elements use tagged `Value` slots. Capacity is
 measured in elements, independently of element width.
 
 Push and insertion grow geometrically when needed, with checked length arithmetic.
@@ -159,7 +161,8 @@ and named argument completion consume the same array-method signatures.
 - Callback structural mutation throws Error, including a push/pop pair that
   restores the original length. This avoids sparse results and missing values
   incompatible with T[]. Closures replace JavaScript's dynamic thisArg.
-- join and default sort accept primitive/nullable elements. Object and nested
+- join and default sort accept primitive/nullable elements, including dynamic
+  elements after checking their actual values. Object and nested
   array sorting requires an explicit comparator; join does not invoke implicit
   object conversion. Numeric text uses JS conventions for -0, NaN, Infinity and
   decimal/exponent notation, while int retains Vela's exact 64-bit representation.

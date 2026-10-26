@@ -14,6 +14,8 @@
 #include "base/builtin.h"
 #include "base/fingerprint.h"
 #include "runtime/isolate.h"
+#include "runtime/object.h"
+#include "runtime/value.h"
 #include "vm/bytecode.h"
 #include "vm/bytecode_image.h"
 #include "vm/bytecode_image_internal.h"
@@ -41,9 +43,9 @@ std::vector<std::byte> Image(std::span<const std::byte> payload) {
 
 std::vector<std::byte> FunctionImage(ImageFunction input) {
   BinaryWriter body;
-  constexpr std::size_t kSharedTableCount = 6;
+  constexpr std::size_t kSharedTableCount = 8;
   constexpr std::size_t kEmptyFunctionTailCount = 6;
-  // 六个空的布局/共享池表；随后写一个最小函数，故意绕过 Program::Create 构造边界。
+  // 空的布局/共享池表；随后写一个最小函数，故意绕过 Program::Create 构造边界。
   for (std::size_t index = 0; index < kSharedTableCount; ++index) {
     body.Write(std::uint64_t{0});
   }
@@ -54,6 +56,7 @@ std::vector<std::byte> FunctionImage(ImageFunction input) {
   body.Write(std::numeric_limits<std::uint64_t>::max());
   body.Write(input.registers);
   body.Write(std::uint16_t{0});
+  body.Write(std::uint8_t{0});
   body.Write(std::uint8_t{0});
   body.Write(std::uint64_t{1});
   body.Write(input.instruction);
@@ -74,6 +77,159 @@ TEST_P(BytecodeImageBoundaryTest, RejectsChecksummedButInvalidFunctionBeforeExec
 }
 
 constexpr auto kNoPool = std::numeric_limits<std::uint64_t>::max();
+
+void WriteElement(BinaryWriter& writer, const internal::ImageElement& type) {
+  writer.Write(type.kind);
+  writer.Write(type.object_kind);
+  writer.Write(type.flags);
+  writer.Write(type.interface);
+  writer.Write(type.instance);
+  writer.Write(type.array);
+  writer.Write(type.collection);
+  writer.Write(type.signature);
+}
+
+std::vector<std::byte> ImageWithLayouts(BinaryWriter& body) {
+  constexpr std::size_t kRemainingPools = 3;
+  for (std::size_t index = 0; index < kRemainingPools; ++index) {
+    body.Write(std::uint64_t{0});
+  }
+  const auto minimal = FunctionImage({
+      .instruction = EncodeABC(OpCode::Return, 0, 0, 0),
+      .registers = 1,
+      .pool = kNoPool,
+  });
+  constexpr std::size_t kHeaderBytes =
+      internal::kImageMagic.size() + sizeof(std::uint32_t) + (2 * sizeof(std::uint64_t));
+  constexpr std::size_t kEmptyPools = 8;
+  body.Write(std::span(minimal).subspan(kHeaderBytes + (kEmptyPools * sizeof(std::uint64_t))));
+  return Image(body.bytes());
+}
+
+TEST(BytecodeImageBoundaryTest, RebuildsDeepTypeGraphsWithoutRecursiveCppCalls) {
+  constexpr std::uint64_t kDepth = 16384;
+  BinaryWriter body;
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint64_t{0});
+  body.Write(kDepth);
+  for (std::uint64_t index = 0; index < kDepth; ++index) {
+    internal::ImageElement element;
+    element.kind = static_cast<std::uint8_t>(runtime::ValueKind::Object);
+    element.object_kind = static_cast<std::uint8_t>(runtime::ObjectKind::Array);
+    element.array = index + 1;
+    if (index + 1 == kDepth) {
+      element.kind = static_cast<std::uint8_t>(runtime::ValueKind::Integer);
+      element.object_kind = static_cast<std::uint8_t>(runtime::ObjectKind::Instance);
+      element.array = kNoPool;
+    }
+    WriteElement(body, element);
+  }
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint64_t{0});
+  runtime::Isolate isolate;
+  const auto loaded = LoadBytecode(ImageWithLayouts(body), isolate);
+  ASSERT_TRUE(loaded) << loaded.error().message;
+  EXPECT_EQ(isolate.layout_counts().arrays, kDepth);
+}
+
+TEST(BytecodeImageBoundaryTest, RejectsCyclicTypeGraphsAndRollsBackMetadata) {
+  BinaryWriter body;
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint64_t{1});
+  WriteElement(body, {
+                         .kind = static_cast<std::uint8_t>(runtime::ValueKind::Object),
+                         .object_kind = static_cast<std::uint8_t>(runtime::ObjectKind::Array),
+                         .array = 0,
+                     });
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint64_t{0});
+  runtime::Isolate isolate;
+  const auto initial = isolate.layout_counts();
+  const auto loaded = LoadBytecode(ImageWithLayouts(body), isolate);
+  ASSERT_FALSE(loaded);
+  EXPECT_NE(loaded.error().message.find("cyclic runtime type layouts"), std::string::npos);
+  EXPECT_EQ(isolate.layout_counts(), initial);
+}
+
+struct ExpectedImageInput final {
+  std::uint64_t references = 1;
+  std::uint64_t parameters = 1;
+  std::uint8_t optional = 0;
+  std::uint8_t rest = 0;
+};
+
+std::vector<std::byte> ExpectedImage(ExpectedImageInput input) {
+  BinaryWriter body;
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint64_t{1});
+  body.Write(static_cast<std::uint8_t>(internal::StandardClass::None));
+  body.Write(std::uint32_t{1});
+  body.Write(input.references);
+  for (std::uint64_t index = 0; index < input.references; ++index) {
+    body.Write(std::uint32_t{0});
+  }
+  body.Write(std::uint8_t{0});
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint8_t{0});
+  body.Write(kNoPool);
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint64_t{1});
+  body.Write(input.parameters);
+  for (std::uint64_t index = 0; index < input.parameters; ++index) {
+    WriteElement(body, {.kind = static_cast<std::uint8_t>(runtime::ValueKind::String)});
+    body.Write(input.optional);
+    body.Write(input.rest);
+  }
+  body.Write(std::uint8_t{1});
+  WriteElement(body, {.kind = static_cast<std::uint8_t>(runtime::ValueKind::Integer)});
+  return ImageWithLayouts(body);
+}
+
+class ExpectedImageBoundaryTest : public testing::TestWithParam<ExpectedImageInput> {};
+
+TEST_P(ExpectedImageBoundaryTest, RejectsPayloadSignaturesThatDisagreeWithGcStorage) {
+  runtime::Isolate isolate;
+  const auto initial = isolate.layout_counts();
+  EXPECT_FALSE(LoadBytecode(ExpectedImage(GetParam()), isolate));
+  EXPECT_EQ(isolate.layout_counts(), initial);
+}
+
+INSTANTIATE_TEST_SUITE_P(InvalidExpectedMetadata,
+                         ExpectedImageBoundaryTest,
+                         testing::Values(ExpectedImageInput{.references = 0},
+                                         ExpectedImageInput{.parameters = 0},
+                                         ExpectedImageInput{.parameters = 2},
+                                         ExpectedImageInput{.optional = 1},
+                                         ExpectedImageInput{.rest = 1}));
+
+TEST(BytecodeImageBoundaryTest, AcceptsExpectedPayloadSignatureWithMatchingGcStorage) {
+  runtime::Isolate isolate;
+  EXPECT_TRUE(LoadBytecode(ExpectedImage({}), isolate));
+}
+
+TEST(BytecodeImageBoundaryTest, RejectsGenericFunctionResultWithoutItsPayloadIdentity) {
+  BinaryWriter body;
+  constexpr std::size_t kPoolsBeforeSignatures = 4;
+  for (std::size_t index = 0; index < kPoolsBeforeSignatures; ++index) {
+    body.Write(std::uint64_t{0});
+  }
+  body.Write(std::uint64_t{1});
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint8_t{1});
+  WriteElement(body, {
+                         .kind = static_cast<std::uint8_t>(runtime::ValueKind::Object),
+                         .object_kind = static_cast<std::uint8_t>(runtime::ObjectKind::Future),
+                     });
+  runtime::Isolate isolate;
+  const auto loaded = LoadBytecode(ImageWithLayouts(body), isolate);
+  ASSERT_FALSE(loaded);
+  EXPECT_NE(loaded.error().message.find("payload signature"), std::string::npos);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     InvalidMetadataAndInstructions,
     BytecodeImageBoundaryTest,
@@ -123,6 +279,7 @@ TEST(BytecodeImageBoundaryTest, LoadsMinimalValidImageAndRejectsExtraDataAndHuge
 TEST(BytecodeImageBoundaryTest, RejectsMalformedStandardDatePartsLayouts) {
   for (const auto fields : {0U, 6U, 8U}) {
     BinaryWriter body;
+    body.Write(std::uint64_t{0});
     body.Write(std::uint64_t{1});
     body.Write(static_cast<std::uint8_t>(internal::StandardClass::DateParts));
     body.Write(fields);
@@ -130,6 +287,9 @@ TEST(BytecodeImageBoundaryTest, RejectsMalformedStandardDatePartsLayouts) {
     body.Write(std::uint8_t{0});
     body.Write(std::uint64_t{0});
     body.Write(std::uint64_t{0});
+    body.Write(std::uint8_t{0});
+    body.Write(kNoPool);
+    body.Write(kNoPool);
     runtime::Isolate isolate;
     const auto loaded = LoadBytecode(Image(body.bytes()), isolate);
     ASSERT_FALSE(loaded);
@@ -141,6 +301,7 @@ TEST(BytecodeImageBoundaryTest, FailedLoadingReleasesPartiallyCreatedLayoutMetad
   runtime::Isolate isolate;
   const auto initial = isolate.layout_counts();
   BinaryWriter body;
+  body.Write(std::uint64_t{0});
   body.Write(std::uint64_t{1});
   body.Write(std::uint8_t{0});
   body.Write(std::uint32_t{0});
@@ -148,6 +309,9 @@ TEST(BytecodeImageBoundaryTest, FailedLoadingReleasesPartiallyCreatedLayoutMetad
   body.Write(std::uint8_t{0});
   body.Write(std::uint64_t{0});
   body.Write(std::uint64_t{0});
+  body.Write(std::uint8_t{0});
+  body.Write(kNoPool);
+  body.Write(kNoPool);
   // 完整类记录后缺少数组表；进入重建并分配布局后才失败。
   EXPECT_FALSE(LoadBytecode(Image(body.bytes()), isolate));
   EXPECT_EQ(isolate.layout_counts(), initial);

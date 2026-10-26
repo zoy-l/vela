@@ -4,13 +4,19 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
+
+#include "base/callable.h"
 #include "base/execution_status.h"
+#include "base/member.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_function.h"
@@ -42,7 +48,8 @@ class LayoutTables final {
   LayoutTables(std::vector<runtime::ClassLayout*> classes,
                std::vector<const runtime::ArrayLayout*> arrays,
                std::vector<const runtime::CollectionLayout*> collections,
-               std::vector<runtime::TypeConstraint> types);
+               std::vector<runtime::TypeConstraint> types,
+               std::vector<MemberDefinition> members = {});
   LayoutTables(const LayoutTables&) = delete;
   LayoutTables& operator=(const LayoutTables&) = delete;
   LayoutTables(LayoutTables&&) = delete;
@@ -57,12 +64,27 @@ class LayoutTables final {
     return collections_;
   }
   [[nodiscard]] std::span<const runtime::TypeConstraint> types() const noexcept { return types_; }
+  [[nodiscard]] const std::vector<MemberDefinition>& members() const noexcept { return members_; }
+  [[nodiscard]] const MemberDefinition* FindMember(runtime::Value receiver,
+                                                   std::string_view name) const;
+  [[nodiscard]] bool IsCanonicalReceiverType(std::uint32_t index) const;
 
  private:
   std::vector<runtime::ClassLayout*> classes_;
   std::vector<const runtime::ArrayLayout*> arrays_;
   std::vector<const runtime::CollectionLayout*> collections_;
   std::vector<runtime::TypeConstraint> types_;
+  using ReceiverKey = std::tuple<runtime::ValueKind,
+                                 runtime::ObjectKind,
+                                 const runtime::ClassLayout*,
+                                 const runtime::ArrayLayout*,
+                                 const runtime::CollectionLayout*,
+                                 const runtime::TypeSignature*>;
+  [[nodiscard]] static ReceiverKey Key(const runtime::TypeConstraint& type);
+  std::vector<MemberDefinition> members_;
+  absl::flat_hash_map<ReceiverKey, std::uint32_t> receiver_indices_;
+  // name 视图只借用 members_；构造索引后成员描述不再移动或修改。
+  absl::flat_hash_map<std::pair<std::uint32_t, std::string_view>, std::size_t> member_indices_;
 };
 
 // 可变构建输入只在创建程序时使用，成功后所有权移入不可变共享存储。
@@ -80,6 +102,7 @@ struct FunctionStorage final {
   std::shared_ptr<const runtime::NativeFunction> native;
   std::vector<ExceptionHandler> handlers;
   std::vector<std::int64_t> integers;
+  std::optional<CallSignature> signature = std::nullopt;
 
   [[nodiscard]] Function View() const noexcept;
 };
@@ -110,6 +133,7 @@ struct GlobalStorage final {
 
 struct ProgramStorage final {
   std::vector<FunctionStorage> functions;
+  const runtime::CodeIdentity* code_identity = nullptr;
   const runtime::Isolate* isolate = nullptr;
   std::shared_ptr<GlobalStorage> globals;
 };
@@ -129,7 +153,8 @@ class Program final {
       std::vector<FunctionStorage> functions,
       runtime::Isolate& isolate,
       std::vector<std::uint32_t> global_initializers = {},
-      std::shared_ptr<GlobalStorage> globals = {});
+      std::shared_ptr<GlobalStorage> globals = {},
+      const runtime::CodeIdentity* code_identity = nullptr);
   [[nodiscard]] std::shared_ptr<GlobalStorage> shared_globals() const noexcept;
   [[nodiscard]] static std::expected<Program, ValidationError> Load(
       std::span<const Function> functions,
@@ -140,6 +165,7 @@ class Program final {
   [[nodiscard]] FunctionHandle FindFunction(std::string_view name) const noexcept;
   [[nodiscard]] bool IsForIsolate(const runtime::Isolate& isolate) const noexcept;
   [[nodiscard]] GlobalStorage* globals() const noexcept;
+  [[nodiscard]] bool HasCallable(const runtime::ClassLayout& layout) const noexcept;
 
  private:
   friend class FunctionHandle;

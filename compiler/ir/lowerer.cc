@@ -43,7 +43,17 @@ std::string MethodKey(std::string_view owner, const frontend::Function& method) 
 }
 
 bool HasAssignments(const frontend::Expression& expression) {
-  if (expression.kind == frontend::Expression::Kind::Binary && expression.text == "=") {
+  if (expression.kind == frontend::Expression::Kind::Call) {
+    return true;
+  }
+  if (expression.kind == frontend::Expression::Kind::Binary &&
+      (expression.text == "=" ||
+       (expression.text.ends_with('=') && expression.text != "==" && expression.text != "!=" &&
+        expression.text != "<=" && expression.text != ">="))) {
+    return true;
+  }
+  if (expression.kind == frontend::Expression::Kind::Unary &&
+      (expression.text == "++" || expression.text == "--")) {
     return true;
   }
   for (const auto* child : {
@@ -186,6 +196,7 @@ LoweringResult Lowerer::Lower() {
         .callable = std::nullopt,
         .interfaces = {},
         .dispatch_targets = {},
+        .callable_type = {},
     });
   }
   for (const frontend::Function& function : source_.functions) {
@@ -220,6 +231,7 @@ LoweringResult Lowerer::Lower() {
   for (const auto& generated : model_.generated_functions) {
     LowerFunction(*generated.declaration, generated.signature);
   }
+  RegisterBuiltinMembers();
   return {.program = std::move(program_), .diagnostics = std::move(diagnostics_)};
 }
 
@@ -267,7 +279,16 @@ void Lowerer::BuildClassTable() {
     }
     const auto class_id = static_cast<ClassId>(program_.classes.size());
     class_ids_.emplace(source_class.name, class_id);
-    program_.classes.push_back(BuildClass(source_class, class_info->second));
+    program_.classes.emplace_back();
+  }
+  for (const auto& source_class : source_.classes) {
+    const auto class_info = model_.classes.find(source_class.name);
+    if (class_info == model_.classes.end()) {
+      continue;
+    }
+    auto descriptor = BuildClass(source_class, class_info->second);
+    program_.classes.at(class_ids_.at(source_class.name)) = std::move(descriptor);
+    RegisterClassMembers(source_class, class_info->second);
   }
 }
 
@@ -493,6 +514,23 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
   }
 }
 
+void Lowerer::RegisterFunctionSignature(Function& function,
+                                        const frontend::Function& source,
+                                        const frontend::FunctionDescriptor& function_info) {
+  function.signature.emplace();
+  auto& signature = *function.signature;
+  signature.hidden_parameters =
+      static_cast<std::uint8_t>(function.parameter_count - source.parameters.size());
+  for (const auto& parameter : source.parameters) {
+    const auto& type =
+        function_info.parameters.at(function_info.parameter_indices.at(parameter.name)).type;
+    signature.parameters.push_back({.name = parameter.name, .type = RegisterRuntimeType(type)});
+  }
+  if (function.return_type.kind != frontend::TypeDescriptor::Kind::Void) {
+    signature.result = RegisterRuntimeType(function.return_type);
+  }
+}
+
 void Lowerer::LowerFunction(const frontend::Function& source,
                             const frontend::FunctionDescriptor& function_info,
                             const frontend::Class* owner,
@@ -517,6 +555,7 @@ void Lowerer::LowerFunction(const frontend::Function& source,
   const bool has_receiver = owner != nullptr && source.storage == frontend::MemberStorage::Instance;
   function.parameter_count = static_cast<std::uint32_t>(
       source.parameters.size() + ((has_receiver || lambda != nullptr) ? 1 : 0));
+  RegisterFunctionSignature(function, source, function_info);
   if (source.intrinsic) {
     const auto builtin = *source.intrinsic;
     auto result = function.parameter_count;
@@ -641,6 +680,80 @@ void Lowerer::LowerBlock(const frontend::Statement& statement) {
 }
 
 Lowerer::LoweredValue Lowerer::LowerExpression(const frontend::Expression& expression) {
+  auto value = LowerExpressionValue(expression);
+  using Kind = frontend::TypeDescriptor::Kind;
+  using Expression = frontend::Expression;
+  if ((value.type.kind == Kind::Future || value.type.kind == Kind::Completer) &&
+      (expression.kind == Expression::Kind::Call || expression.kind == Expression::Kind::Member ||
+       expression.kind == Expression::Kind::Await)) {
+    const auto type = RegisterRuntimeType(value.type);
+    const auto identity = EmitTemporary(
+        {.opcode = Opcode::LoadInt, .immediate = type, .location = expression.location});
+    const auto result = AllocateTemporary(expression.location);
+    const std::array arguments{value.reg, identity};
+    EmitBuiltinCall(Builtin::BindRuntimeType, result, arguments, expression.location);
+    value.reg = result;
+  }
+  const auto conversion = model_.checked_conversions.find(&expression);
+  if (conversion != model_.checked_conversions.end()) {
+    value = LowerConversion(std::move(value), conversion->second, expression.location);
+  }
+  return value;
+}
+
+Lowerer::LoweredValue Lowerer::LowerConversion(LoweredValue value,
+                                               const frontend::TypeDescriptor& target,
+                                               frontend::SourceLocation location) {
+  if (target.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+    if (value.type.kind != frontend::TypeDescriptor::Kind::Enum) {
+      return {.reg = value.reg, .type = target};
+    }
+    const auto layout = RegisterEnumType(value.type);
+    const auto boxed = AllocateTemporary(location);
+    std::optional<std::size_t> null_jump;
+    if (value.type.nullable) {
+      Emit({.opcode = Opcode::LoadNull, .dst = boxed, .location = location});
+      null_jump = current_function_->instructions.size();
+      Emit({.opcode = Opcode::JumpIfNull, .lhs = value.reg, .location = location});
+    }
+    Emit({.opcode = Opcode::NewInstance, .dst = boxed, .index = layout, .location = location});
+    Emit({.opcode = Opcode::SetField, .dst = boxed, .lhs = value.reg, .location = location});
+    if (null_jump) {
+      current_function_->instructions.at(*null_jump).index =
+          static_cast<std::uint32_t>(current_function_->instructions.size());
+    }
+    return {.reg = boxed, .type = target};
+  }
+  if (value.type.kind == frontend::TypeDescriptor::Kind::Enum) {
+    value = LowerConversion(std::move(value),
+                            {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},
+                            location);
+  }
+  const auto index = RegisterRuntimeType(target);
+  const auto result = AllocateTemporary(location);
+  Emit({
+      .opcode = Opcode::CheckedCast,
+      .dst = result,
+      .lhs = value.reg,
+      .index = index,
+      .location = location,
+  });
+  if (target.kind == frontend::TypeDescriptor::Kind::Enum) {
+    std::optional<std::size_t> null_jump;
+    if (target.nullable) {
+      null_jump = current_function_->instructions.size();
+      Emit({.opcode = Opcode::JumpIfNull, .lhs = result, .location = location});
+    }
+    Emit({.opcode = Opcode::GetField, .dst = result, .lhs = result, .location = location});
+    if (null_jump) {
+      current_function_->instructions.at(*null_jump).index =
+          static_cast<std::uint32_t>(current_function_->instructions.size());
+    }
+  }
+  return {.reg = result, .type = target};
+}
+
+Lowerer::LoweredValue Lowerer::LowerExpressionValue(const frontend::Expression& expression) {
   if (model_.array_algorithms.contains(&expression)) {
     return LowerArrayAlgorithm(expression);
   }
@@ -700,7 +813,12 @@ Lowerer::LoweredValue Lowerer::LowerExpression(const frontend::Expression& expre
         return LowerFunctionValue(expression);
       }
       auto value = ReadLocal(*local, expression.location);
-      value.type = model_.expression_types.at(&expression);
+      const auto& refined = model_.expression_types.at(&expression);
+      if (value.type.kind == frontend::TypeDescriptor::Kind::Dynamic &&
+          refined.kind != frontend::TypeDescriptor::Kind::Dynamic) {
+        return LowerConversion(std::move(value), refined, expression.location);
+      }
+      value.type = refined;
       return value;
     }
     case frontend::Expression::Kind::Lambda:
@@ -719,7 +837,18 @@ Lowerer::LoweredValue Lowerer::LowerExpression(const frontend::Expression& expre
           .lhs = operand.reg,
           .location = expression.location,
       });
-      return {.reg = result, .type = model_.expression_types.at(&expression)};
+      const auto& type = model_.expression_types.at(&expression);
+      if (type.kind == frontend::TypeDescriptor::Kind::Enum &&
+          (operand.type.kind == frontend::TypeDescriptor::Kind::Future ||
+           operand.type.kind == frontend::TypeDescriptor::Kind::Dynamic)) {
+        return LowerConversion(
+            {
+                .reg = result,
+                .type = {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},
+            },
+            type, expression.location);
+      }
+      return {.reg = result, .type = type};
     }
     case frontend::Expression::Kind::Conditional:
       return LowerConditional(expression);
@@ -736,6 +865,13 @@ Lowerer::LoweredValue Lowerer::LowerExpression(const frontend::Expression& expre
 }
 
 Lowerer::LoweredValue Lowerer::LowerAssignment(const frontend::Expression& expression) {
+  if (expression.left->kind == frontend::Expression::Kind::Member) {
+    const auto receiver = model_.expression_types.find(expression.left->object.get());
+    if (receiver != model_.expression_types.end() &&
+        receiver->second.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+      return LowerDynamicAssignment(expression);
+    }
+  }
   const auto& left = *expression.left;
   if (left.kind == frontend::Expression::Kind::Name) {
     return LowerNameAssignment(expression);
@@ -879,6 +1015,11 @@ std::optional<Lowerer::LoweredValue> Lowerer::LowerSuperGetter(
 }
 
 Lowerer::LoweredValue Lowerer::LowerMember(const frontend::Expression& expression) {
+  const auto receiver_type = model_.expression_types.find(expression.object.get());
+  if (receiver_type != model_.expression_types.end() &&
+      receiver_type->second.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+    return LowerDynamicMember(expression);
+  }
   if (const auto getter = LowerSuperGetter(expression)) {
     return *getter;
   }
@@ -1007,6 +1148,18 @@ Lowerer::LoweredValue Lowerer::LowerGetter(const frontend::Expression& expressio
 }
 
 Lowerer::LoweredValue Lowerer::LowerCall(const frontend::Expression& expression) {
+  if (expression.callee->kind == frontend::Expression::Kind::Member) {
+    const auto receiver_type = model_.expression_types.find(expression.callee->object.get());
+    if (receiver_type != model_.expression_types.end() &&
+        receiver_type->second.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+      return LowerDynamicMethodCall(expression);
+    }
+  }
+  const auto callee_type = model_.expression_types.find(expression.callee.get());
+  if (callee_type != model_.expression_types.end() &&
+      callee_type->second.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+    return LowerDynamicCall(expression);
+  }
   auto special = LowerSpecialCall(expression);
   if (special.type.kind != frontend::TypeDescriptor::Kind::Invalid) {
     return special;
@@ -1170,7 +1323,16 @@ Lowerer::LoweredValue Lowerer::LowerMethodCall(const frontend::Expression& expre
 
 Lowerer::LoweredValue Lowerer::LowerFutureCall(const frontend::Expression& expression) {
   const auto& method = expression.callee->text;
-  const auto payload = LowerExpression(*expression.arguments.front().value);
+  auto payload = LowerExpression(*expression.arguments.front().value);
+  if (method == "value" && payload.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+    payload.reg =
+        LowerFuturePayload(payload, model_.expression_types.at(&expression), expression.location);
+  }
+  if (payload.type.kind == frontend::TypeDescriptor::Kind::Enum) {
+    payload = LowerConversion(payload,
+                              {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},
+                              expression.location);
+  }
   const auto result = AllocateTemporary(expression.location);
   if (method == "sync") {
     const auto base = next_register_;
@@ -1213,6 +1375,28 @@ std::uint32_t Lowerer::AddSyncFutureFunction(const frontend::TypeDescriptor& ret
       {.opcode = Opcode::CallIndirect, .dst = 1, .lhs = 2, .rhs = 0, .index = 0, .location = {}},
       {.opcode = Opcode::Return, .dst = 1, .location = {}},
   };
+  const auto& payload = model_.generic_arguments.at(return_type.name).front();
+  if (payload.kind == frontend::TypeDescriptor::Kind::Enum) {
+    function.instructions.pop_back();
+    if (payload.nullable) {
+      function.instructions.push_back(
+          {.opcode = Opcode::JumpIfNull, .lhs = 1, .index = 4, .location = {}});
+    }
+    function.instructions.push_back({
+        .opcode = Opcode::NewInstance,
+        .dst = 2,
+        .index = RegisterEnumType(payload),
+        .location = {},
+    });
+    function.instructions.push_back(
+        {.opcode = Opcode::SetField, .dst = 2, .lhs = 1, .location = {}});
+    function.instructions.push_back({.opcode = Opcode::Return, .dst = 2, .location = {}});
+    if (payload.nullable) {
+      function.instructions.at(1).index = static_cast<std::uint32_t>(function.instructions.size());
+      function.instructions.push_back({.opcode = Opcode::Return, .dst = 1, .location = {}});
+    }
+    function.register_count = 3;
+  }
   program_.functions.push_back(std::move(function));
   return index;
 }
@@ -1427,8 +1611,12 @@ Lowerer::LoweredValue Lowerer::LowerEnumMember(const frontend::Expression& expre
 
 Lowerer::LoweredValue Lowerer::LowerIncrement(const frontend::Expression& expression) {
   const auto& target = *expression.operand;
-  const auto destination = LowerIncrementTarget(target);
-  const auto& operand = destination.value;
+  const auto destination = LowerMutationTarget(target);
+  auto operand = destination.value;
+  if (operand.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+    operand = LowerConversion(operand, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"},
+                              expression.location);
+  }
   const auto one = EmitTemporary({
       .opcode = Opcode::LoadInt,
       .immediate = 1,
@@ -1451,14 +1639,36 @@ Lowerer::LoweredValue Lowerer::LowerIncrement(const frontend::Expression& expres
         .location = expression.location,
     });
   }
-  StoreIncrementTarget(target, destination, result, expression.location);
+  StoreMutationTarget(target, destination, result, expression.location);
   return {.reg = returned, .type = operand.type};
 }
 
-Lowerer::IncrementTarget Lowerer::LowerIncrementTarget(const frontend::Expression& target) {
-  IncrementTarget destination;
+Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression& target) {
+  MutationTarget destination;
+  const auto static_member = model_.static_members.find(&target);
+  if (static_member != model_.static_members.end()) {
+    const auto& member = static_member->second;
+    destination.global = global_ids_.at(member.owner + "." + member.member);
+    destination.value = LowerMember(target);
+    return destination;
+  }
   if (target.kind == frontend::Expression::Kind::Member) {
-    const auto receiver = LowerExpression(*target.object);
+    auto receiver = LowerExpression(*target.object);
+    receiver.reg =
+        EmitTemporary({.opcode = Opcode::Move, .lhs = receiver.reg, .location = target.location});
+    if (receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+      frontend::Expression name;
+      name.text = target.text;
+      name.location = target.location;
+      const auto text = LowerStringLiteral(name);
+      const auto value = AllocateTemporary(target.location);
+      const std::array values{receiver.reg, text.reg};
+      EmitBuiltinCall(Builtin::DynamicMemberGet, value, values, target.location);
+      destination.object = receiver.reg;
+      destination.member = text.reg;
+      destination.value = {.reg = value, .type = model_.expression_types.at(&target)};
+      return destination;
+    }
     const auto* owner = FindClass(receiver.type.name);
     if (owner == nullptr) {
       AddDiagnostic(target.location, "increment target is not a class field");
@@ -1466,6 +1676,14 @@ Lowerer::IncrementTarget Lowerer::LowerIncrementTarget(const frontend::Expressio
     }
     destination.field = FindField(*owner, target.text);
     if (!destination.field) {
+      const auto method = owner->methods.find(target.text);
+      if (method != owner->methods.end() && method->second.is_getter && method->second.is_setter) {
+        const auto method_owner = FindMethodOwner(receiver.type.name, target.text);
+        destination.object = receiver.reg;
+        destination.setter = function_ids_.at(method_owner + ".$set." + target.text);
+        destination.value = LowerGetter(target, receiver);
+        return destination;
+      }
       AddDiagnostic(target.location, "increment target field is unknown");
       return destination;
     }
@@ -1482,8 +1700,12 @@ Lowerer::IncrementTarget Lowerer::LowerIncrementTarget(const frontend::Expressio
     return destination;
   }
   if (target.kind == frontend::Expression::Kind::Index) {
-    const auto receiver = SnapshotBefore(LowerExpression(*target.object), *target.index);
-    const auto position = LowerExpression(*target.index);
+    auto receiver = SnapshotBefore(LowerExpression(*target.object), *target.index);
+    receiver.reg =
+        EmitTemporary({.opcode = Opcode::Move, .lhs = receiver.reg, .location = target.location});
+    auto position = LowerExpression(*target.index);
+    position.reg =
+        EmitTemporary({.opcode = Opcode::Move, .lhs = position.reg, .location = target.location});
     destination.object = receiver.reg;
     destination.index = position.reg;
     const auto value = AllocateTemporary(target.location);
@@ -1495,10 +1717,34 @@ Lowerer::IncrementTarget Lowerer::LowerIncrementTarget(const frontend::Expressio
   return destination;
 }
 
-void Lowerer::StoreIncrementTarget(const frontend::Expression& target,
-                                   const IncrementTarget& destination,
-                                   RegisterId value,
-                                   frontend::SourceLocation location) {
+void Lowerer::StoreMutationTarget(const frontend::Expression& target,
+                                  const MutationTarget& destination,
+                                  RegisterId value,
+                                  frontend::SourceLocation location) {
+  if (destination.global) {
+    Emit({
+        .opcode = Opcode::SetGlobal,
+        .lhs = value,
+        .index = *destination.global,
+        .location = location,
+    });
+    return;
+  }
+  if (destination.setter) {
+    const auto base = AllocateRegister(location);
+    const auto argument = AllocateRegister(location);
+    Emit({.opcode = Opcode::Move, .dst = base, .lhs = *destination.object, .location = location});
+    Emit({.opcode = Opcode::Move, .dst = argument, .lhs = value, .location = location});
+    const auto ignored = AllocateTemporary(location);
+    Emit({
+        .opcode = Opcode::Call,
+        .dst = ignored,
+        .lhs = base,
+        .index = *destination.setter,
+        .location = location,
+    });
+    return;
+  }
   if (target.kind == frontend::Expression::Kind::Name) {
     const auto* local = FindLocal(target.text);
     if (local != nullptr) {
@@ -1528,6 +1774,12 @@ void Lowerer::StoreIncrementTarget(const frontend::Expression& target,
     });
     return;
   }
+  if (destination.object && destination.member) {
+    const std::array values{*destination.object, *destination.member, value};
+    const auto result = AllocateTemporary(location);
+    EmitBuiltinCall(Builtin::DynamicMemberSet, result, values, location);
+    return;
+  }
   if (destination.object && destination.index) {
     const LoweredValue receiver{
         .reg = *destination.object,
@@ -1543,6 +1795,11 @@ Lowerer::LoweredValue Lowerer::LowerUnary(const frontend::Expression& expression
   }
   const LoweredValue operand = LowerExpression(*expression.operand);
   const RegisterId result = AllocateTemporary(expression.location);
+  if (expression.text == "-" && operand.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+    const std::array values{operand.reg};
+    EmitBuiltinCall(Builtin::DynamicNegate, result, values, expression.location);
+    return {.reg = result, .type = operand.type};
+  }
   if (expression.text == "-" && operand.type.kind == frontend::TypeDescriptor::Kind::Double) {
     Emit({
         .opcode = Opcode::NegDouble,
@@ -1660,116 +1917,46 @@ Lowerer::LoweredValue Lowerer::LowerIntegerAdditionChain(const frontend::Express
 
 Lowerer::LoweredValue Lowerer::LowerCompoundAssignment(const frontend::Expression& expression,
                                                        std::string_view operation) {
-  const auto& left_expression = *expression.left;
-  if (left_expression.kind == frontend::Expression::Kind::Name) {
-    const auto left = LowerExpression(left_expression);
-    const auto right = LowerExpression(*expression.right);
-    const auto opcode = SelectCompoundOpcode(operation, left.type);
-    if (!opcode) {
-      AddDiagnostic(expression.location, "unsupported compound assignment operation");
-      return {.reg = 0, .type = InvalidType()};
-    }
-    const auto result = EmitTemporary(
-        {.opcode = *opcode, .lhs = left.reg, .rhs = right.reg, .location = expression.location});
-    if (const auto* local = FindLocal(left_expression.text); local != nullptr) {
-      Emit({
-          .opcode = local->cell ? Opcode::SetField : Opcode::Move,
-          .dst = local->reg,
-          .lhs = result,
-          .location = expression.location,
-      });
-    } else if (model_.globals.contains(left_expression.text)) {
-      Emit({
-          .opcode = Opcode::SetGlobal,
-          .lhs = result,
-          .index = global_ids_.at(left_expression.text),
-          .location = expression.location,
-      });
-    }
-    return {.reg = result, .type = left.type};
+  const auto& left = *expression.left;
+  if (model_.expression_types.at(&left).kind == frontend::TypeDescriptor::Kind::Dynamic) {
+    return LowerDynamicCompoundAssignment(
+        expression, *SelectBinaryOpcode(
+                        operation, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"}));
   }
-  if (left_expression.kind == frontend::Expression::Kind::Member) {
-    const auto static_member = model_.static_members.find(&left_expression);
-    if (static_member != model_.static_members.end()) {
-      const auto old = LowerMember(left_expression);
-      const auto right = LowerExpression(*expression.right);
-      const auto opcode = SelectCompoundOpcode(operation, old.type);
-      if (!opcode) {
-        AddDiagnostic(expression.location, "unsupported compound assignment operation");
-        return {.reg = 0, .type = InvalidType()};
-      }
-      const auto result = EmitTemporary(
-          {.opcode = *opcode, .lhs = old.reg, .rhs = right.reg, .location = expression.location});
-      Emit({
-          .opcode = Opcode::SetGlobal,
-          .lhs = result,
-          .index = global_ids_.at(static_member->second.owner + "." + static_member->second.member),
-          .location = expression.location,
-      });
-      return {.reg = result, .type = old.type};
-    }
-    const auto object = LowerExpression(*left_expression.object);
-    const auto* class_info = FindClass(object.type.name);
-    const auto field =
-        class_info == nullptr ? std::nullopt : FindField(*class_info, left_expression.text);
-    if (!field || class_info == nullptr) {
-      AddDiagnostic(left_expression.location, "unknown field during compound assignment lowering");
-      return {.reg = 0, .type = InvalidType()};
-    }
-    const auto old = LoweredValue{
-        .reg = EmitTemporary({
-            .opcode = Opcode::GetField,
-            .lhs = object.reg,
-            .index = *field,
-            .location = left_expression.location,
-        }),
-        .type = model_.expression_types.at(&left_expression),
-    };
-    const auto right = LowerExpression(*expression.right);
-    const auto opcode = SelectCompoundOpcode(operation, old.type);
-    if (!opcode) {
-      AddDiagnostic(expression.location, "unsupported compound assignment operation");
-      return {.reg = 0, .type = InvalidType()};
-    }
-    const auto result = EmitTemporary(
-        {.opcode = *opcode, .lhs = old.reg, .rhs = right.reg, .location = expression.location});
-    Emit({
-        .opcode = Opcode::SetField,
-        .dst = object.reg,
-        .lhs = result,
-        .index = *field,
-        .location = left_expression.location,
-    });
-    return {.reg = result, .type = old.type};
+  auto target = LowerMutationTarget(left);
+  target.value = SnapshotBefore(target.value, *expression.right);
+  const auto right = LowerExpression(*expression.right);
+  const auto opcode = SelectCompoundOpcode(operation, target.value.type);
+  if (!opcode) {
+    AddDiagnostic(expression.location, "unsupported compound assignment operation");
+    return {.reg = 0, .type = InvalidType()};
   }
-  if (left_expression.kind == frontend::Expression::Kind::Index) {
-    const auto before_index =
-        SnapshotBefore(LowerExpression(*left_expression.object), *left_expression.index);
-    const auto object = SnapshotBefore(before_index, *expression.right);
-    const auto index = SnapshotBefore(LowerExpression(*left_expression.index), *expression.right);
-    const auto old_register = AllocateTemporary(left_expression.location);
-    EmitIndexRead(old_register, object, index.reg, left_expression.location);
-    const auto old =
-        LoweredValue{.reg = old_register, .type = model_.expression_types.at(&left_expression)};
-    const auto right = LowerExpression(*expression.right);
-    const auto opcode = SelectCompoundOpcode(operation, old.type);
-    if (!opcode) {
-      AddDiagnostic(expression.location, "unsupported compound assignment operation");
-      return {.reg = 0, .type = InvalidType()};
-    }
-    const auto result = EmitTemporary(
-        {.opcode = *opcode, .lhs = old.reg, .rhs = right.reg, .location = expression.location});
-    EmitIndexWrite(object, index.reg, result, left_expression.location);
-    return {.reg = result, .type = old.type};
-  }
-  AddDiagnostic(expression.location, "left side of assignment is not lowerable");
-  return {.reg = 0, .type = InvalidType()};
+  const auto result = EmitTemporary({
+      .opcode = *opcode,
+      .lhs = target.value.reg,
+      .rhs = right.reg,
+      .location = expression.location,
+  });
+  StoreMutationTarget(left, target, result, expression.location);
+  return {.reg = result, .type = target.value.type};
 }
 
 Lowerer::LoweredValue Lowerer::LowerBinaryValue(const frontend::Expression& expression) {
   const auto left = SnapshotBefore(LowerExpression(*expression.left), *expression.right);
   const LoweredValue right = LowerExpression(*expression.right);
   using Kind = frontend::TypeDescriptor::Kind;
+  if (left.type.kind == Kind::Dynamic || right.type.kind == Kind::Dynamic) {
+    const auto operation = *SelectBinaryOpcode(expression.text, {.kind = Kind::Int, .name = "int"});
+    const auto selector = EmitTemporary({
+        .opcode = Opcode::LoadInt,
+        .immediate = static_cast<std::int64_t>(operation),
+        .location = expression.location,
+    });
+    const auto result = AllocateTemporary(expression.location);
+    const std::array values{selector, left.reg, right.reg};
+    EmitBuiltinCall(Builtin::DynamicBinary, result, values, expression.location);
+    return {.reg = result, .type = model_.expression_types.at(&expression)};
+  }
   if (expression.text == "+" && model_.expression_types.at(&expression).kind == Kind::String) {
     const auto result = AllocateTemporary(expression.location);
     Emit({

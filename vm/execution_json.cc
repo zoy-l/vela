@@ -1,0 +1,93 @@
+#include "base/member.h"
+#include "vm/execution.h"
+
+#include <cassert>
+#include <expected>
+#include <string>
+
+#include "base/builtin.h"
+#include "runtime/error.h"
+#include "runtime/json.h"
+#include "runtime/object.h"
+#include "runtime/string.h"
+#include "runtime/value.h"
+#include "vm/bytecode.h"
+#include "vm/execution_status.h"
+
+namespace vela::vm::internal {
+
+StepResult Execution::JsonError(const runtime::JsonRuntimeError& error) {
+  if (error.failure == runtime::JsonFailure::OutOfMemory) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  if (error.failure == runtime::JsonFailure::ConcurrentModification) {
+    return std::unexpected(ExecutionStatus::ConcurrentModification);
+  }
+  const auto decoding = error.failure == runtime::JsonFailure::Decode;
+  const auto message =
+      decoding ? error.message + " at byte " + std::to_string(error.offset) : error.message;
+  const auto payload = runtime::CreateError(
+      isolate_.heap(), isolate_.error_layout(),
+      {.message = message, .code = decoding ? "JsonDecodeError" : "JsonEncodeError"});
+  if (!payload) {
+    return std::unexpected(payload.error());
+  }
+  if (auto created = CreateException(*payload, ExecutionStatus::Thrown, message); !created) {
+    return created;
+  }
+  return std::unexpected(ExecutionStatus::Thrown);
+}
+
+StepResult Execution::ExecuteJson(ActiveFrame& active, Instruction instruction) {
+  const auto values = active.frame.registers();
+  const auto input = values.subspan(DecodeC(instruction)).front().Read();
+  if (static_cast<Builtin>(DecodeB(instruction)) == Builtin::JsonParse) {
+    if (!input.IsString()) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    const auto parsed = runtime::ParseJson(input.AsString()->value(), isolate_);
+    if (!parsed) {
+      return JsonError(parsed.error());
+    }
+    values.subspan(DecodeA(instruction)).front() = *parsed;
+    return {};
+  }
+  active.json_encoder = runtime::JsonEncoder::Create(isolate_, input);
+  if (!active.json_encoder) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  active.json_destination = DecodeA(instruction);
+  return ContinueJson(active);
+}
+
+StepResult Execution::ContinueJson(ActiveFrame& active) {
+  const auto step = active.json_encoder->Advance();
+  if (!step) {
+    return JsonError(step.error());
+  }
+  if (step->action == runtime::JsonEncodeAction::Complete) {
+    active.frame.registers().subspan(active.json_destination).front() = step->value;
+    active.json_encoder.reset();
+    return {};
+  }
+  const auto* method = active.function->layouts->FindMember(step->value, "toJson");
+  if (method == nullptr || method->kind != MemberKind::Method) {
+    return JsonError(active.json_encoder->ConversionError(
+        "JSON object requires a public zero-argument toJson() returning a value"));
+  }
+  const auto callable =
+      active.function->layouts->classes().subspan(method->target).front()->callable();
+  assert(callable.has_value());
+  const auto target = (*callable).function;
+  const auto& function = functions_.subspan(target).front();
+  const auto& signature = function.signature;
+  if (!signature || !signature->parameters.empty() || !signature->result) {
+    return JsonError(active.json_encoder->ConversionError(
+        "JSON object requires a public zero-argument toJson() returning a value"));
+  }
+  // 参数和返回值经普通帧传递；JSON builtin 不重入解释器，不改写用户异常与 trace。
+  return EnterCall(target, active, EncodeABC(OpCode::Call, active.json_destination, 0, 0),
+                   step->value);
+}
+
+}  // namespace vela::vm::internal

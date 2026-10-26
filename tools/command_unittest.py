@@ -120,6 +120,25 @@ class CommandTest(unittest.TestCase):
         self.assertIn("async func load(): Future<int>", text)
         self.assertIn("func bind(value: int): () => string", text)
 
+    def test_json_dynamic_survive_documentation_formatting_images_and_repl(self) -> None:
+        self.write("export func encode(value: dynamic): string { return Json.stringify(value); }\n"
+                   "func main(): int { const root: dynamic = Json.parse('[40,true,null]'); "
+                   "root[0] += 2; return encode(root) == '[42,true,null]' ? 42 : 0; }")
+        formatted = self.command("fmt", self.entry).stdout
+        self.write(formatted)
+        self.command("fmt", "--check", self.entry)
+        output = self.directory / "api.md"
+        self.command("doc", self.entry, output)
+        self.assertIn("func encode(value: dynamic): string", output.read_text(encoding="utf-8"))
+        image = self.directory / "json.vbc"
+        self.command("compile", self.entry, image)
+        self.entry.unlink()
+        self.command("exec", image, expected=42)
+        result = self.command("repl", commands=(
+            "const root: dynamic = Json.parse('[40,true,null]');\n"
+            "root[0] += 2;\nJson.stringify(root)\n.quit\n"))
+        self.assertIn("[42,true,null]", result.stdout)
+
     def test_source_entries_require_files_and_import_schemes_are_explicit(self) -> None:
         result = self.command("check", self.directory, expected=65)
         self.assertIn("source path must name a file", result.stderr)

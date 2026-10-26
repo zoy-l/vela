@@ -46,8 +46,11 @@ func main(): Shade {
   ASSERT_TRUE(function.IsValid());
   const auto result = VirtualMachine(isolate).Execute(function);
   ASSERT_TRUE(result.Succeeded());
-  ASSERT_TRUE(result.value.IsInteger());
-  EXPECT_EQ(result.value.AsInteger(), 1);
+  ASSERT_TRUE(result.value.IsObject());
+  const auto* layout = runtime::Heap::ClassOf(*result.value.AsObject());
+  ASSERT_NE(layout, nullptr);
+  EXPECT_TRUE(layout->IsEnum());
+  EXPECT_EQ(runtime::Heap::GetField(*result.value.AsObject(), 0)->AsInteger(), 1);
 }
 
 TEST(CompilerTest, CompilesIntegerFunction) {

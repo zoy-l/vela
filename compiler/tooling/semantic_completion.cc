@@ -1,3 +1,4 @@
+#include "base/array_algorithm.h"
 #include "compiler/tooling/semantic_index.h"
 
 #include <algorithm>
@@ -91,12 +92,11 @@ void AddBuiltins(std::vector<Completion>& result, Kind kind) {
 }
 
 void AddArrayElementMethods(std::vector<Completion>& result,
-                            const frontend::TypeDescriptor& receiver,
                             const frontend::TypeDescriptor& element) {
   for (const auto& [name, builtin] : frontend::ArrayMethods()) {
     result.push_back({
         .label = std::string(name),
-        .detail = BuiltinDetail(frontend::ArrayMethodSignature(builtin, receiver, element)),
+        .detail = BuiltinDetail(frontend::ArrayMethodSignature(builtin, element)),
         .kind = CompletionKind::Method,
         .documentation = {},
     });
@@ -111,8 +111,7 @@ void AddArrayElementMethods(std::vector<Completion>& result,
   }
   for (const auto& [name, algorithm] : frontend::ArrayAlgorithms()) {
     auto accumulator = element;
-    if (algorithm == frontend::ArrayAlgorithm::Reduce ||
-        algorithm == frontend::ArrayAlgorithm::Map) {
+    if (algorithm == ArrayAlgorithm::Reduce || algorithm == ArrayAlgorithm::Map) {
       accumulator.name = "R";
     }
     result.push_back({
@@ -366,7 +365,7 @@ void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
     property("capacity");
     const auto element = model_.array_elements.find(type.name);
     if (element != model_.array_elements.end()) {
-      AddArrayElementMethods(result, type, element->second);
+      AddArrayElementMethods(result, element->second);
     }
   } else if (kind == Kind::Set || kind == Kind::Map || kind == Kind::Expected) {
     const auto arguments = model_.generic_arguments.find(type.name);
@@ -505,6 +504,7 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
       });
     }
     constexpr auto kTypes = std::to_array<std::string_view>({
+        "dynamic",
         "int",
         "double",
         "bool",
@@ -523,6 +523,7 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
         "Random",
         "performance",
         "Date",
+        "Json",
         "Error",
     });
     for (const auto type : kTypes) {

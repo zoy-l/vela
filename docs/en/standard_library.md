@@ -3,7 +3,7 @@
 [**English**](standard_library.md) | [简体中文](../zh-CN/standard_library.md)
 
 
-`Math`, `Random`, `performance`, `Date`, `DateParts` and `Error` are default global declarations;
+`Math`, `Random`, `performance`, `Date`, `DateParts`, `Json` and `Error` are default global declarations;
 they require no import. Native calls remain statically checked and linked.
 Only referenced standard objects contribute declarations and native functions;
 ordinary scripts do not load the entire standard environment. These global
@@ -49,6 +49,14 @@ constructs an instant, and `Date.toUTC(timestamp)` returns a read-only DateParts
 snapshot. Calendar conversion supports years 1..9999 and uses explicit UTC,
 independent of the host time zone. See [UTC date and time API](time.md) for the
 accepted grammar, defaults, ranges, and error codes.
+
+## JSON
+
+`Json.parse(source: string): dynamic` returns ordinary primitives, `dynamic[]`
+and ordered `Map<string, dynamic>` objects. `Json.stringify(value: dynamic): string`
+produces compact JSON and supports application objects through public `toJson()`
+methods. Dynamic operations and assignments to concrete types are checked;
+see [JSON and dynamic values](json.md) for numeric, Unicode, cycle and error contracts.
 
 ## Numeric parsing
 

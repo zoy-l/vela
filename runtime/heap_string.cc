@@ -177,7 +177,7 @@ std::expected<std::span<StringObject* const>, ArrayAccessError> Heap::StringElem
   if (array.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }
-  if (array.array_layout()->element_kind != ValueKind::String) {
+  if (array.array_layout()->element.kind != ValueKind::String) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
   const void* storage = internal::ArrayBuffer(array).data;
@@ -198,7 +198,7 @@ std::expected<StringObject*, StringJoinError> Heap::JoinArray(const HeapObject& 
     return std::unexpected(StringJoinError::TypeMismatch);
   }
   const auto& layout = *array.array_layout();
-  if (layout.element_kind == ValueKind::String && !layout.nullable_elements) {
+  if (layout.element.kind == ValueKind::String && !layout.element.nullable) {
     const auto parts = *StringElements(array);
     if (std::ranges::any_of(parts, [](auto* part) -> bool { return part == nullptr; })) {
       return std::unexpected(StringJoinError::TypeMismatch);
@@ -209,8 +209,10 @@ std::expected<StringObject*, StringJoinError> Heap::JoinArray(const HeapObject& 
     }
     return string;
   }
-  if (layout.element_kind != ValueKind::String && layout.element_kind != ValueKind::Integer &&
-      layout.element_kind != ValueKind::Double && layout.element_kind != ValueKind::Boolean) {
+  if (layout.element.instance != nullptr ||
+      (!layout.element.dynamic && layout.element.kind != ValueKind::String &&
+       layout.element.kind != ValueKind::Integer && layout.element.kind != ValueKind::Double &&
+       layout.element.kind != ValueKind::Boolean)) {
     return std::unexpected(StringJoinError::TypeMismatch);
   }
   const auto storage = internal::ArrayBytes(array, layout);

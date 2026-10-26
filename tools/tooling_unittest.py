@@ -124,6 +124,48 @@ class LanguageServerTest(unittest.TestCase):
         self.assertIn("Adds two values.\nEvaluates each argument once.",
                       self.reply(messages, "0")["result"]["contents"]["value"])
 
+    def test_json_and_checked_dynamic_share_types_hover_tokens_and_completion(self) -> None:
+        source = ("func main(): void {\n"
+                  "  const root: dynamic = Json.parse('[1,true,null]');\n"
+                  "  const items: dynamic[] = root;\n"
+                  "  print(Json.stringify(items));\n"
+                  "}\n")
+        messages = self.session([self.open(source),
+            self.symbol_query("hover", source, source.index("dynamic"), "type"),
+            self.symbol_query("hover", source, source.index("parse("), "parse"),
+            self.symbol_query("hover", source, source.index("stringify("), "stringify"),
+            self.symbol_query("hover", source, source.index("= root") + 2, "root"),
+            self.symbol_query("completion", source, source.index("Json.parse") + len("Json."), "members"),
+            self.symbol_query("completion", source, source.index("print("), "globals"),
+            request("textDocument/semanticTokens/full", {"textDocument": {"uri": self.uri}}, "tokens")])
+        self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+        for identity, signature in (("type", "type dynamic"),
+                                    ("parse", "Json.parse(source: string): dynamic"),
+                                    ("stringify", "Json.stringify(value: dynamic): string"),
+                                    ("root", "const root: dynamic")):
+            self.assertIn(signature, self.reply(messages, identity)["result"]["contents"]["value"])
+        self.assertIn("checked at runtime", self.reply(messages, "type")["result"]["contents"]["value"])
+        self.assertEqual({item["label"] for item in self.reply(messages, "members")["result"]},
+                         {"parse", "stringify"})
+        self.assertTrue({"Json", "dynamic"} <= {
+            item["label"] for item in self.reply(messages, "globals")["result"]})
+        tokens = self.semantic_tokens(messages)
+        line = source.splitlines()[1]
+        self.assertIn((1, line.index("dynamic"), 7, "type", 2), tokens)
+        self.assertIn((1, line.index("Json"), 4, "class", 2), tokens)
+
+    def test_dynamic_diagnostics_and_formatting_keep_explicit_type_boundaries(self) -> None:
+        source = "func main():void{const values:dynamic[]=[1,true,null];const value:int=values[0];}"
+        messages = self.session([self.open(source),
+            request("textDocument/formatting", {"textDocument": {"uri": self.uri}}, "format"),
+            self.change([{"text": "func main(): void { const value: dynamic? = null; }"}])])
+        self.assertEqual(self.diagnostics(messages)[0]["diagnostics"], [])
+        self.assertTrue(any("already nullable" in item["message"]
+                            for item in self.diagnostics(messages)[-1]["diagnostics"]))
+        formatted = self.reply(messages, "format")["result"][0]["newText"]
+        self.assertIn("const values: dynamic[] = [1, true, null];", formatted)
+        self.assertIn("const value: int = values[0];", formatted)
+
     def test_hover_members_types_aliases_and_builtins(self) -> None:
         source = ("interface Readable { read(): int; }\n"
                   "enum Mode { light, dark }\n"

@@ -1,3 +1,4 @@
+#include "base/array_algorithm.h"
 #include "compiler/frontend/type_checker.h"
 
 #include <cstddef>
@@ -140,7 +141,7 @@ TypeChecker::Type TypeChecker::CheckArrayMethod(const Expression& expression,
   }
   for (const auto& [method, builtin] : ArrayMethods()) {
     if (method == name) {
-      auto signature = ArrayMethodSignature(builtin, receiver, element);
+      auto signature = ArrayMethodSignature(builtin, element);
       if (builtin == Builtin::ArrayPop || builtin == Builtin::ArrayShift) {
         signature.return_type = NullableType(element);
       }

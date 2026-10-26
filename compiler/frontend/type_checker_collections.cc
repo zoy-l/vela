@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -15,11 +16,8 @@
 namespace vela::frontend {
 
 TypeChecker::Type TypeChecker::NullableType(Type type) {
-  if (!type.nullable) {
-    type.nullable = true;
-    type.name = type.kind == Type::Kind::Function ? "(" + type.name + ")?" : type.name + '?';
-    types_.try_emplace(type.name, type);
-  }
+  type = MakeNullableType(std::move(type));
+  types_.try_emplace(type.name, type);
   return type;
 }
 
@@ -104,8 +102,26 @@ TypeChecker::Type TypeChecker::CheckCollectionConstruction(const Expression& exp
 std::optional<TypeChecker::BuiltinMethod> TypeChecker::ResolveCollectionMethod(
     const Type& receiver,
     std::string_view name) {
-  const auto arguments = generic_arguments_.at(receiver.name);
-  FunctionInfo signature;
+  auto method = ResolveCollectionBuiltin(receiver, generic_arguments_.at(receiver.name), name);
+  if (!method) {
+    return std::nullopt;
+  }
+  const auto& result = method->signature.return_type;
+  if (result.kind == Type::Kind::Array) {
+    static_cast<void>(
+        ArrayType(generic_arguments_.at(receiver.name)
+                      .at(name == "keys" || receiver.kind == Type::Kind::Set ? 0 : 1)));
+  } else if (result.nullable) {
+    types_.try_emplace(result.name, result);
+  }
+  return BuiltinMethod{.operation = method->operation, .signature = std::move(method->signature)};
+}
+
+std::optional<CollectionMethod> ResolveCollectionBuiltin(const TypeDescriptor& receiver,
+                                                         std::span<const TypeDescriptor> arguments,
+                                                         std::string_view name) {
+  using Type = TypeDescriptor;
+  FunctionDescriptor signature;
   signature.return_type = {.kind = Type::Kind::Void, .name = "void"};
   const auto add = [&](std::string parameter, Type type) -> void {
     signature.parameter_indices.emplace(parameter,
@@ -116,7 +132,7 @@ std::optional<TypeChecker::BuiltinMethod> TypeChecker::ResolveCollectionMethod(
   if (operation) {
     signature.return_type = receiver;
     add("other", receiver);
-    return BuiltinMethod{.operation = *operation, .signature = std::move(signature)};
+    return CollectionMethod{.operation = *operation, .signature = std::move(signature)};
   }
   Builtin builtin = Builtin::CollectionSize;
   if (name == "has" || name == "delete" || (name == "add" && receiver.kind == Type::Kind::Set)) {
@@ -134,7 +150,7 @@ std::optional<TypeChecker::BuiltinMethod> TypeChecker::ResolveCollectionMethod(
   } else if (name == "get" && receiver.kind == Type::Kind::Map) {
     builtin = Builtin::MapGet;
     add("key", arguments.front());
-    signature.return_type = NullableType(arguments.back());
+    signature.return_type = MakeNullableType(arguments.back());
   } else if (name == "set" && receiver.kind == Type::Kind::Map) {
     builtin = Builtin::MapSet;
     add("key", arguments.front());
@@ -142,11 +158,11 @@ std::optional<TypeChecker::BuiltinMethod> TypeChecker::ResolveCollectionMethod(
   } else if (name == "values" || (name == "keys" && receiver.kind == Type::Kind::Map)) {
     const bool keys = name == "keys" || receiver.kind == Type::Kind::Set;
     builtin = keys ? Builtin::CollectionKeys : Builtin::CollectionValues;
-    signature.return_type = ArrayType(keys ? arguments.front() : arguments.back());
+    signature.return_type = MakeArrayType(keys ? arguments.front() : arguments.back());
   } else {
     return std::nullopt;
   }
-  return BuiltinMethod{.operation = builtin, .signature = std::move(signature)};
+  return CollectionMethod{.operation = builtin, .signature = std::move(signature)};
 }
 
 TypeChecker::Type TypeChecker::CheckCollectionMethod(const Expression& expression,

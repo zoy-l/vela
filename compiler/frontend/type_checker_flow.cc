@@ -58,7 +58,9 @@ StatementFlow TypeChecker::CheckStatement(const Statement& statement, const Type
       break;
     case Statement::Kind::Throw: {
       const auto type = CheckExpression(*statement.expression, nullptr);
-      if ((type.kind != Type::Kind::Class && type.kind != Type::Kind::Interface) || type.nullable) {
+      if (type.kind != Type::Kind::Dynamic &&
+          ((type.kind != Type::Kind::Class && type.kind != Type::Kind::Interface) ||
+           type.nullable)) {
         AddDiagnostic(statement.location, "throw requires a non-null class or interface value");
       }
       flow.can_fall_through = false;
@@ -134,9 +136,7 @@ StatementFlow TypeChecker::CheckSequence(const Statement& statement, const Type&
 
 StatementFlow TypeChecker::CheckIf(const Statement& statement, const Type& return_type) {
   const auto condition_type = CheckExpression(*statement.condition, nullptr);
-  if (condition_type.kind != Type::Kind::Bool || condition_type.nullable) {
-    AddDiagnostic(statement.condition->location, "if condition must be bool");
-  }
+  CheckBooleanOperand(*statement.condition, condition_type, "if condition must be bool");
   const auto before = refinements_;
   RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
   const auto then_flow = CheckScopedStatement(*statement.then_branch, return_type);
@@ -176,9 +176,7 @@ StatementFlow TypeChecker::CheckIf(const Statement& statement, const Type& retur
 StatementFlow TypeChecker::CheckWhile(const Statement& statement, const Type& return_type) {
   InvalidateAssignments(statement);
   const auto condition_type = CheckExpression(*statement.condition, nullptr);
-  if (condition_type.kind != Type::Kind::Bool || condition_type.nullable) {
-    AddDiagnostic(statement.condition->location, "while condition must be bool");
-  }
+  CheckBooleanOperand(*statement.condition, condition_type, "while condition must be bool");
   ++loop_depth_;
   const auto before = refinements_;
   RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
@@ -211,9 +209,7 @@ StatementFlow TypeChecker::CheckFor(const Statement& statement, const Type& retu
   auto condition = ConditionTruth::AlwaysTrue;
   if (statement.condition) {
     const auto condition_type = CheckExpression(*statement.condition, nullptr);
-    if (condition_type.kind != Type::Kind::Bool || condition_type.nullable) {
-      AddDiagnostic(statement.condition->location, "for condition must be bool");
-    }
+    CheckBooleanOperand(*statement.condition, condition_type, "for condition must be bool");
     condition = EvaluateCondition(*statement.condition);
   }
   const auto before = refinements_;

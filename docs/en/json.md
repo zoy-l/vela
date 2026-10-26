@@ -2,7 +2,8 @@
 
 [**English**](json.md) | [简体中文](../zh-CN/json.md)
 
-> Status: design specification. The language-level JSON API and `dynamic` described here are not implemented. Completion requires the full frontend, runtime, VM, tooling, and validation paths below.
+This document defines the JSON API and checked dynamic value contracts. The runnable
+example is [`examples/json.vela`](../../examples/json.vela).
 
 Vela uses Dart's JSON value model: decoding produces ordinary primitive values,
 arrays, and ordered maps; encoding accepts those values directly. The public
@@ -97,6 +98,8 @@ extends to dynamic locals and parameters, and is invalidated by assignments or
 calls that can modify captured bindings. Fields and indexed elements are not
 promoted. Without a known function signature, a dynamic call cannot provide
 context for unannotated lambda parameters; ordinary inference diagnostics apply.
+Generic callables must be instantiated before erasure; a dynamic call does not
+accept explicit type arguments.
 
 Dynamic typing is introduced by an explicit annotation, a declared dynamic
 result, or a dynamic operation. Mixed array literals are allowed in a
@@ -125,6 +128,11 @@ An object array similarly needs an explicit model conversion function that
 checks required fields, nullability, and field types. Casting a decoded map to
 `User` does not instantiate a User. Typed decoding and generated model converters
 are outside the first version.
+
+Dynamic `map` derives the result array's element type from the callback's retained
+result signature. Dynamic `reduce` preserves the initial accumulator's actual
+type; a null initial value requires a nullable or dynamic accumulator in the
+callback signature. Callback contracts are checked even when the array is empty.
 
 Dynamic array elements and dynamic Map/Set slots use tagged storage. Each value
 retains the information needed by existing equality and hashing rules, including
@@ -267,11 +275,12 @@ cannot violate the int64 contract. Runtime does not depend on compiler/tooling.
 | Tooling | Share checked signatures and dynamic facts with completion, hover, diagnostics, formatting, documentation, debugger, and persistent REPL |
 | Delivery | Add `examples/json.vela`, update the feature checklist only after all production paths and required checks pass |
 
-The current [runtime type constraints](../../compiler/type_constraints.cc) merge
-enum storage with integers and do not retain full function or Future signatures.
-Those checks are insufficient after general dynamic erasure. Complete runtime
-type identity is a prerequisite, not a later optimization. Adding Dynamic to the
-checker or allowing all assignments alone does not implement this design.
+The [runtime layout producer](../../compiler/runtime_layouts.cc) retains nominal
+class, interface and enum identities, structural function and Expected signatures,
+and Future/Completer payload signatures. Arrays and collections retain their full
+element constraints. Boxed enums preserve identity in erased slots while typed
+enum arrays retain integer storage. Isolate-owned metadata survives compilation
+results and is rebuilt and validated when a bytecode image is loaded.
 
 Required validation covers all JSON root kinds, heterogeneous and object arrays,
 missing versus null entries, duplicate-key order, escaped Unicode and embedded
@@ -286,8 +295,8 @@ calls, dynamic slots, images loaded in a fresh Isolate, and retained REPL values
 At implementation completion, run relevant Debug/Release regressions, tooling
 tests, repository static checks, and Release benchmarks. Measure parse and encode
 throughput, allocations and retained memory, dynamic dispatch, typed-boundary
-checks, and regressions in ordinary typed code. This specification records no
-implementation or performance results.
+checks, and regressions in ordinary typed code. Completed aggregate measurements
+are retained in [the rolling benchmark summary](../../benchmarks/results/rolling_summary.json).
 
 ## References
 

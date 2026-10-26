@@ -77,6 +77,12 @@ Reading `handle.value()` does not create another root. Native parameters remain
 rooted only for the duration of invocation; persistent host references need their
 own `RootedValue`.
 
+Script callable values refer to function indices in their producing Program.
+Invocation requires the producing code identity, shared across REPL submissions; independently compiled
+programs cannot invoke each other's callable values received through native Future payloads. Such
+invocations fail with a type error. Retaining a callable's heap value preserves
+its type identity; retain the producing Program or FunctionHandle to execute its code.
+
 ## Source mappings and errors
 
 Every compiled instruction retains its source identity, line and column through

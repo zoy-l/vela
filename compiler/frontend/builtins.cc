@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/array_algorithm.h"
 #include "base/builtin.h"
 #include "base/byte_access.h"
 #include "base/regexp.h"
@@ -88,7 +89,7 @@ static_assert(kSignatures.size() == static_cast<std::size_t>(Builtin::Collection
 
 bool CanFormatString(const TypeDescriptor& type) noexcept {
   return type.kind == Kind::String || type.kind == Kind::Int || type.kind == Kind::Double ||
-         type.kind == Kind::Bool || type.kind == Kind::Null;
+         type.kind == Kind::Bool || type.kind == Kind::Null || type.kind == Kind::Dynamic;
 }
 
 std::span<const std::pair<std::string_view, ArrayAlgorithm>> ArrayAlgorithms() noexcept {
@@ -133,9 +134,8 @@ std::span<const std::pair<std::string_view, Builtin>> ArrayMethods() noexcept {
   return kMethods;
 }
 
-FunctionDescriptor ArrayMethodSignature(Builtin builtin,
-                                        const TypeDescriptor& receiver,
-                                        const TypeDescriptor& element) {
+FunctionDescriptor ArrayMethodSignature(Builtin builtin, const TypeDescriptor& element) {
+  const auto receiver = MakeArrayType(element);
   FunctionDescriptor signature;
   signature.return_type = {.kind = Kind::Void, .name = "void"};
   const TypeDescriptor integer{.kind = Kind::Int, .name = "int"};
@@ -159,13 +159,7 @@ FunctionDescriptor ArrayMethodSignature(Builtin builtin,
       break;
     case Builtin::ArrayPop:
     case Builtin::ArrayShift:
-      signature.return_type = element;
-      if (!element.nullable) {
-        auto& result = signature.return_type;
-        result.nullable = true;
-        result.name =
-            element.kind == Kind::Function ? "(" + element.name + ")?" : element.name + '?';
-      }
+      signature.return_type = MakeNullableType(element);
       break;
     case Builtin::ArraySplice:
       signature.return_type = receiver;
@@ -275,6 +269,9 @@ FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
 }
 
 const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
+  if (builtin == Builtin::ArrayCapacity || builtin == Builtin::CollectionSize) {
+    return kSignatures.at(static_cast<std::size_t>(Builtin::ArrayLength));
+  }
   if (IsRegExpBuiltin(builtin)) {
     return RegExpBuiltinSignature(builtin);
   }
@@ -324,11 +321,12 @@ std::optional<Builtin> FindBuiltinProperty(Kind receiver, std::string_view name)
 }
 
 bool IsBuiltinName(std::string_view name) {
-  return name == "int" || name == "double" || name == "bool" || name == "string" ||
-         name == "void" || name == "ok" || name == "err" || name == "Expected" || name == "Set" ||
-         name == "Map" || name == "Future" || name == "Completer" || name == "Timer" ||
-         name == "CancellationToken" || name == "ByteData" || name == "RegExpMatch" ||
-         name == "sleep" || FindBuiltin(Kind::Invalid, name).has_value();
+  return name == "dynamic" || name == "int" || name == "double" || name == "bool" ||
+         name == "string" || name == "void" || name == "ok" || name == "err" ||
+         name == "Expected" || name == "Set" || name == "Map" || name == "Future" ||
+         name == "Completer" || name == "Timer" || name == "CancellationToken" ||
+         name == "ByteData" || name == "RegExpMatch" || name == "sleep" ||
+         FindBuiltin(Kind::Invalid, name).has_value();
 }
 
 std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {

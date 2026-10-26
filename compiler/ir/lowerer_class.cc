@@ -14,6 +14,22 @@
 
 namespace vela::ir {
 
+ClassId Lowerer::RegisterEnumType(const frontend::TypeDescriptor& type) {
+  const auto name = type.nullable ? type.name.substr(0, type.name.size() - 1) : type.name;
+  if (const auto existing = class_ids_.find(name); existing != class_ids_.end()) {
+    return existing->second;
+  }
+  const auto index = static_cast<ClassId>(program_.classes.size());
+  Class layout;
+  layout.name = name;
+  layout.kind = Class::Kind::Enum;
+  layout.field_order = {"$value"};
+  layout.field_types = {{.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"}};
+  program_.classes.push_back(std::move(layout));
+  class_ids_.emplace(name, index);
+  return index;
+}
+
 std::uint32_t Lowerer::RegisterRuntimeType(const frontend::TypeDescriptor& type) {
   auto found = runtime_type_ids_.find(type.name);
   std::uint32_t index = 0;
@@ -21,6 +37,9 @@ std::uint32_t Lowerer::RegisterRuntimeType(const frontend::TypeDescriptor& type)
     index = static_cast<std::uint32_t>(program_.runtime_types.size());
     program_.runtime_types.push_back(type);
     runtime_type_ids_.emplace(type.name, index);
+    if (type.kind == frontend::TypeDescriptor::Kind::Enum) {
+      static_cast<void>(RegisterEnumType(type));
+    }
     if (type.kind == frontend::TypeDescriptor::Kind::Array) {
       static_cast<void>(RegisterArrayType(type));
     }
@@ -38,8 +57,17 @@ std::uint32_t Lowerer::RegisterRuntimeType(const frontend::TypeDescriptor& type)
 }
 
 Lowerer::LoweredValue Lowerer::LowerTypeOperation(const frontend::Expression& expression) {
-  const auto index = RegisterRuntimeType(model_.type_operands.at(&expression));
-  const auto value = LowerExpression(*expression.operand);
+  const auto& target = model_.type_operands.at(&expression);
+  auto value = LowerExpression(*expression.operand);
+  if (expression.kind == frontend::Expression::Kind::TypeCast) {
+    return LowerConversion(std::move(value), target, expression.location);
+  }
+  if (value.type.kind == frontend::TypeDescriptor::Kind::Enum) {
+    value = LowerConversion(std::move(value),
+                            {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},
+                            expression.location);
+  }
+  const auto index = RegisterRuntimeType(target);
   const auto result = AllocateTemporary(expression.location);
   Emit({
       .opcode = expression.kind == frontend::Expression::Kind::TypeTest ? Opcode::IsType

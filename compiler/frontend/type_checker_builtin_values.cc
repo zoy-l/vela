@@ -44,7 +44,7 @@ std::optional<TypeChecker::FunctionInfo> TypeChecker::InferBuiltinMethod(const T
     const auto found =
         std::ranges::find_if(methods, [name](const auto& method) { return method.first == name; });
     if (found != methods.end()) {
-      return ArrayMethodSignature(found->second, receiver, array_elements_.at(receiver.name));
+      return ArrayMethodSignature(found->second, array_elements_.at(receiver.name));
     }
   }
   if (receiver.kind == Type::Kind::Set || receiver.kind == Type::Kind::Map) {

@@ -1,5 +1,6 @@
 source_set("base") {
   sources = [
+    "array_algorithm.h",
     "async_operation.h",
     "binary.cc",
     "binary.h",
@@ -16,6 +17,7 @@ source_set("base") {
     "file_publication.h",
     "fingerprint.cc",
     "fingerprint.h",
+    "member.h",
     "opcode.h",
     "path.cc",
     "path.h",

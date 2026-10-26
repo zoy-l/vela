@@ -42,21 +42,27 @@ void TypeChecker::CheckGeneratedFunction(std::size_t index) {
   switch_depth_ = switching;
 }
 
-TypeChecker::Type TypeChecker::FunctionType(const FunctionInfo& signature) {
+TypeDescriptor MakeFunctionType(const FunctionDescriptor& signature) {
   std::string name = "(";
+  for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
+    name += (index == 0 ? "" : ", ") + signature.parameters.at(index).type.name;
+  }
+  name += ") => " + signature.return_type.name;
+  return {.kind = TypeDescriptor::Kind::Function, .name = std::move(name)};
+}
+
+TypeChecker::Type TypeChecker::FunctionType(const FunctionInfo& signature) {
+  auto result = MakeFunctionType(signature);
   FunctionInfo positional;
   positional.return_type = signature.return_type;
   for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
     const auto& parameter = signature.parameters.at(index).type;
-    name += (index == 0 ? "" : ", ") + parameter.name;
     const auto key = std::to_string(index);
     positional.parameter_indices.emplace(key, static_cast<std::uint32_t>(index));
     positional.parameters.push_back({.name = key, .type = parameter});
   }
-  name += ") => " + signature.return_type.name;
-  Type result{.kind = Type::Kind::Function, .name = name};
-  function_types_.try_emplace(name, std::move(positional));
-  types_.try_emplace(name, result);
+  function_types_.try_emplace(result.name, std::move(positional));
+  types_.try_emplace(result.name, result);
   return result;
 }
 

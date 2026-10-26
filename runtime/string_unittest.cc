@@ -96,7 +96,7 @@ TEST(StringGcTest, CollectsCycleContainingStringsAndArrays) {
   constexpr std::array<std::uint32_t, 2> kReferences = {0, 1};
   auto* layout = isolate.CreateClassLayout(2, kReferences);
   const auto* arrays =
-      isolate.CreateArrayLayout({.element_kind = ValueKind::Object, .element_class = layout});
+      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = layout}});
   Value root = Value::Object(heap.AllocateInstance(*layout));
   RootRange roots(heap, &root, 1);
   auto* string = heap.AllocateString("inside cycle");
@@ -117,7 +117,7 @@ class StringBarrierTest : public testing::TestWithParam<std::size_t> {};
 TEST_P(StringBarrierTest, ArrayStoreMarksWhiteStringDuringMarkAndSweep) {
   Isolate isolate;
   auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateArrayLayout({.element_kind = ValueKind::String});
+  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = ValueKind::String}});
   auto* string = heap.AllocateString("retained");
   Value root = Value::Object(heap.AllocateArray(*layout, 1));
   RootRange roots(heap, &root, 1);

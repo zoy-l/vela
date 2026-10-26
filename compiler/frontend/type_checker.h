@@ -14,6 +14,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
+#include "base/array_algorithm.h"
 #include "base/async_operation.h"
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
@@ -31,6 +32,7 @@ struct TypeDescriptor final {
     Invalid,
     Null,
     Void,
+    Dynamic,
     Bool,
     Int,
     Double,
@@ -60,6 +62,7 @@ struct TypeDescriptor final {
 };
 
 [[nodiscard]] TypeDescriptor MakeArrayType(const TypeDescriptor& element);
+[[nodiscard]] TypeDescriptor MakeNullableType(TypeDescriptor type);
 
 struct FunctionDescriptor final {
   struct Parameter final {
@@ -79,6 +82,8 @@ struct FunctionDescriptor final {
   std::optional<TypeDescriptor> setter_parameter_type;
   std::optional<TypeDescriptor> setter_return_type;
 };
+
+[[nodiscard]] TypeDescriptor MakeFunctionType(const FunctionDescriptor& signature);
 
 struct GeneratedFunction final {
   std::unique_ptr<Function> declaration;
@@ -139,14 +144,10 @@ struct MemberReference final {
 };
 
 enum class ExpectedOperation : std::uint8_t { Ok, Err, HasValue, Value, Error };
-enum class ArrayAlgorithm : std::uint8_t {
-  Sort,
-  ForEach,
-  Some,
-  Every,
-  FindIndex,
-  Reduce,
-  Map,
+
+struct ExpectedMethod final {
+  ExpectedOperation operation = ExpectedOperation::Value;
+  FunctionDescriptor signature;
 };
 
 struct SemanticModel final {
@@ -160,6 +161,7 @@ struct SemanticModel final {
   absl::flat_hash_set<std::uint32_t> captured_mutables;
   // 借用受检 AST 的节点地址；模型只在该 AST 存活期间使用。
   absl::flat_hash_map<const Expression*, TypeDescriptor> expression_types;
+  absl::flat_hash_map<const Expression*, TypeDescriptor> checked_conversions;
   absl::flat_hash_map<const Expression*, ConstantValue> case_values;
   absl::flat_hash_map<std::string, std::int64_t> enum_values;
   absl::flat_hash_map<const Expression*, Builtin> builtin_calls;
@@ -205,10 +207,6 @@ class TypeChecker final {
     Builtin operation = Builtin::Count;
     FunctionInfo signature;
   };
-  struct ExpectedMethod final {
-    ExpectedOperation operation = ExpectedOperation::Value;
-    FunctionInfo signature;
-  };
   struct LocalBinding final {
     Type type;
     BindingKind kind = BindingKind::Mutable;
@@ -219,6 +217,9 @@ class TypeChecker final {
 
   [[nodiscard]] static Type InvalidType();
   void AddDiagnostic(SourceLocation location, std::string message);
+  void CheckBooleanOperand(const Expression& expression,
+                           const Type& type,
+                           std::string_view message);
   void CollectTypes(const Program& program);
   void ResolveDeclarations(const Program& program);
   void ResolveGlobals(const Program& program);
@@ -317,6 +318,7 @@ class TypeChecker final {
                          std::span<const std::optional<Type>> checked = {});
   Type CheckSleepCall(const Expression& expression);
   Type CheckIndirectCall(const Expression& expression, const Type& type);
+  Type CheckDynamicCall(const Expression& expression);
   Type CheckStaticCall(const Expression& expression, const ClassInfo& owner);
   Type CheckSuperMethodCall(const Expression& expression);
   Type CheckMethodReceiver(const Expression& expression,
@@ -356,6 +358,7 @@ class TypeChecker final {
   [[nodiscard]] static bool IsAssignable(const Expression& expression);
   [[nodiscard]] static bool IsSameType(const Type& left, const Type& right);
   [[nodiscard]] bool CanAssign(const Type& target, const Type& value) const;
+  void RecordConversion(const Expression& expression, const Type& target, const Type& actual);
   [[nodiscard]] static Type NonNullable(Type type);
   void RefineCondition(const Expression& condition, ConditionTruth outcome);
   void InvalidateAssignments(const Statement& statement);
@@ -370,6 +373,7 @@ class TypeChecker final {
   void CheckVariableDeclaration(const Statement& statement);
 
   void CheckReturn(const Statement& statement, const Type& return_type);
+  void CheckVoidReturn(const Statement& statement, const Type& return_type);
 
   StatementFlow CheckIf(const Statement& statement, const Type& return_type);
 
@@ -434,6 +438,7 @@ class TypeChecker final {
   absl::flat_hash_set<std::uint32_t> captured_mutables_;
   absl::flat_hash_set<const void*> captured_declarations_;
   absl::flat_hash_map<const Expression*, Type> expression_types_;
+  absl::flat_hash_map<const Expression*, Type> checked_conversions_;
   absl::flat_hash_map<const Expression*, ConstantValue> case_values_;
   absl::flat_hash_map<std::uint32_t, ConstantValue> constant_bindings_;
   absl::flat_hash_map<std::string, std::int64_t> enum_values_;

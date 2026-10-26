@@ -146,6 +146,11 @@ std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
 }
 
 std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
+  if (receiver == Kind::Invalid && name == "dynamic") {
+    return "Retains the actual language type, including null. Assignments to concrete types and "
+           "member, call, index, and operator use are checked at runtime. Containers retain "
+           "their declared element types.";
+  }
   if (const auto regexp = RegExpDocumentation(receiver, name); !regexp.empty()) {
     return regexp;
   }
@@ -578,6 +583,7 @@ std::string_view BuiltinTypeDetail(std::string_view name) {
       {"bool", "bool"},
       {"string", "string"},
       {"void", "void"},
+      {"dynamic", "dynamic"},
       {"String", "class String {\n  constructor();\n}"},
       {"ByteArray", "class ByteArray {\n  constructor(length: int);\n}"},
       {"ByteData", "type ByteData"},

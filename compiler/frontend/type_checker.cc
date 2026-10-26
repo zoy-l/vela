@@ -70,6 +70,7 @@ TypeCheckResult TypeChecker::Check(const Program& program) {
   captured_declarations_ = FindCapturedMutableDeclarations(program);
   next_binding_id_ = 0;
   expression_types_.clear();
+  checked_conversions_.clear();
   case_values_.clear();
   enum_values_.clear();
   builtin_calls_.clear();
@@ -157,6 +158,7 @@ TypeCheckResult TypeChecker::Check(const Program& program) {
   model.bindings = std::move(bindings_);
   model.captured_mutables = std::move(captured_mutables_);
   model.expression_types = std::move(expression_types_);
+  model.checked_conversions = std::move(checked_conversions_);
   model.case_values = std::move(case_values_);
   model.enum_values = std::move(enum_values_);
   model.builtin_calls = std::move(builtin_calls_);
@@ -445,6 +447,9 @@ TypeChecker::Type TypeChecker::CheckCall(const Expression& expression, const Typ
 }
 
 TypeChecker::Type TypeChecker::CheckIndirectCall(const Expression& expression, const Type& type) {
+  if (type.kind == Type::Kind::Dynamic) {
+    return CheckDynamicCall(expression);
+  }
   const auto& callee = *expression.callee;
   if (type.kind != Type::Kind::Function || type.nullable) {
     AddDiagnostic(callee.location,
@@ -459,6 +464,24 @@ TypeChecker::Type TypeChecker::CheckIndirectCall(const Expression& expression, c
   // 检查参数时可能解析新的函数类型，不能跨 rehash 借用描述表内的元素。
   const auto signature = function_types_.at(type.name);
   return CheckFunctionCall(signature, expression);
+}
+
+TypeChecker::Type TypeChecker::CheckDynamicCall(const Expression& expression) {
+  const Type dynamic{.kind = Type::Kind::Dynamic, .name = "dynamic"};
+  if (!expression.callee->type_arguments.empty()) {
+    AddDiagnostic(expression.callee->location,
+                  "dynamic calls require generic callables to be instantiated before erasure");
+  }
+  static_cast<void>(ArrayType(dynamic));
+  static_cast<void>(ArrayType({.kind = Type::Kind::String, .name = "string"}));
+  for (const auto& argument : expression.arguments) {
+    const auto actual = CheckExpression(*argument.value, &dynamic);
+    RecordConversion(*argument.value, dynamic, actual);
+    if (actual.kind == Type::Kind::Void) {
+      AddDiagnostic(argument.location, "call argument requires a value");
+    }
+  }
+  return dynamic;
 }
 
 TypeChecker::Type TypeChecker::CheckNamedCall(const Expression& expression, const Type* expected) {
@@ -530,6 +553,11 @@ TypeChecker::Type TypeChecker::CheckMethodCall(const Expression& expression, con
     context = ArrayType({.kind = Type::Kind::String, .name = "string"});
   }
   const Type object = CheckExpression(receiver, IsValid(context) ? &context : nullptr);
+  if (object.kind == Type::Kind::Dynamic) {
+    expression_types_.insert_or_assign(expression.callee.get(), object);
+    InvalidateCapturedRefinements();
+    return CheckDynamicCall(expression);
+  }
   if (object.nullable) {
     if (!expression.callee->null_safe) {
       AddDiagnostic(expression.callee->object->location,
@@ -712,6 +740,7 @@ TypeChecker::Type TypeChecker::CheckFunctionCall(
     const auto checked =
         checked_arguments.empty() ? std::nullopt : checked_arguments.subspan(source_index).front();
     const Type actual = checked ? *checked : CheckExpression(*argument.value, &expected);
+    RecordConversion(*argument.value, expected, actual);
     if (IsValid(actual) && !CanAssign(expected, actual)) {
       AddDiagnostic(argument.location, "call argument type does not match parameter type");
     }
@@ -803,6 +832,9 @@ void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
   const bool inferred = statement.type.name.empty();
   Type type = inferred ? InvalidType() : ResolveType(statement.type, false);
   const Type initializer = CheckExpression(*statement.expression, inferred ? nullptr : &type);
+  if (!inferred) {
+    RecordConversion(*statement.expression, type, initializer);
+  }
   if (inferred) {
     type = initializer;
     if (type.kind == Type::Kind::Null) {
@@ -847,17 +879,17 @@ void TypeChecker::CheckReturn(const Statement& statement, const Type& return_typ
     }
   }
   if (expected_type.kind == Type::Kind::Void) {
-    if (statement.expression) {
-      const auto value = CheckExpression(*statement.expression, &expected_type);
-      if (IsValid(value) && value.kind != Type::Kind::Void) {
-        AddDiagnostic(statement.location, "void function cannot return a value");
-      }
-    }
-  } else if (!statement.expression) {
+    CheckVoidReturn(statement, return_type);
+    return;
+  }
+  if (!statement.expression) {
     AddDiagnostic(statement.location, "non-void function must return a value");
   } else {
     const Type value =
         CheckExpression(*statement.expression, in_async_function_ ? nullptr : &expected_type);
+    if (!in_async_function_ || value.kind != Type::Kind::Dynamic) {
+      RecordConversion(*statement.expression, expected_type, value);
+    }
     const bool adopts_future = in_async_function_ && return_type.kind == Type::Kind::Future &&
                                CanAssign(return_type, value);
     if (IsValid(value) && !CanAssign(expected_type, value) && !adopts_future) {
@@ -865,6 +897,19 @@ void TypeChecker::CheckReturn(const Statement& statement, const Type& return_typ
                                             "' from function returning '" +
                                             TypeNameFor(expected_type) + "'");
     }
+  }
+}
+
+void TypeChecker::CheckVoidReturn(const Statement& statement, const Type& return_type) {
+  if (!statement.expression) {
+    return;
+  }
+  const Type expected{.kind = Type::Kind::Void, .name = "void"};
+  const auto value = CheckExpression(*statement.expression, &expected);
+  const bool async_payload =
+      in_async_function_ && (value.kind == Type::Kind::Dynamic || CanAssign(return_type, value));
+  if (IsValid(value) && value.kind != Type::Kind::Void && !async_payload) {
+    AddDiagnostic(statement.location, "void function cannot return a value");
   }
 }
 
@@ -882,6 +927,14 @@ TypeChecker::Type TypeChecker::CheckIntegerLiteral(const Expression& expression)
 TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
   Type object = CheckExpression(*expression.object, nullptr);
   const Type index = CheckExpression(*expression.index, nullptr);
+  const Type integer{.kind = Type::Kind::Int, .name = "int"};
+  RecordConversion(*expression.index, integer, index);
+  if (object.kind == Type::Kind::Dynamic) {
+    if (!CanAssign(integer, index)) {
+      AddDiagnostic(expression.index->location, "index must be int");
+    }
+    return object;
+  }
   if (object.nullable) {
     if (!expression.null_safe) {
       AddDiagnostic(expression.object->location, "nullable receiver requires a non-null check");
@@ -894,7 +947,7 @@ TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
     AddDiagnostic(expression.location,
                   "indexing requires an array, ByteArray, string, or RegExpMatch");
   }
-  if (index.kind != Type::Kind::Int || index.nullable) {
+  if (!CanAssign(integer, index)) {
     AddDiagnostic(expression.index->location, "index must be int");
   }
   if (object.kind == Type::Kind::String) {
@@ -922,12 +975,18 @@ TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
 TypeChecker::Type TypeChecker::CheckArrayLiteral(const Expression& expression,
                                                  const Type* expected) {
   Type element_type;
+  if (expected != nullptr && expected->kind == Type::Kind::Dynamic) {
+    element_type = *expected;
+  }
   if (expected != nullptr && expected->kind == Type::Kind::Array) {
     const auto array = NonNullable(*expected);
     element_type = array_elements_.at(array.name);
   }
   for (const auto& element : expression.elements) {
     const Type actual = CheckExpression(*element, IsValid(element_type) ? &element_type : nullptr);
+    if (IsValid(element_type)) {
+      RecordConversion(*element, element_type, actual);
+    }
     if (!IsValid(actual)) {
       continue;
     }
@@ -961,9 +1020,17 @@ TypeChecker::Type TypeChecker::CheckUnary(const Expression& expression) {
   if ((expression.text == "++" || expression.text == "--") && !IsAssignable(*expression.operand)) {
     AddDiagnostic(expression.operand->location, "increment operand is not assignable");
   }
-  if (expression.text == "!" && (operand.kind != Type::Kind::Bool || operand.nullable)) {
-    AddDiagnostic(expression.location, "'!' requires a bool operand");
-    return InvalidType();
+  if (expression.text == "!") {
+    CheckBooleanOperand(*expression.operand, operand, "'!' requires a bool operand");
+    return {.kind = Type::Kind::Bool, .name = "bool"};
+  }
+  if (operand.kind == Type::Kind::Dynamic) {
+    if (expression.text == "-") {
+      return operand;
+    }
+    const Type integer{.kind = Type::Kind::Int, .name = "int"};
+    RecordConversion(*expression.operand, integer, operand);
+    return integer;
   }
   if ((expression.text == "~" || expression.text == "++" || expression.text == "--") &&
       (operand.kind != Type::Kind::Int || operand.nullable)) {
@@ -979,11 +1046,16 @@ TypeChecker::Type TypeChecker::CheckUnary(const Expression& expression) {
 
 TypeChecker::Type TypeChecker::CheckConditional(const Expression& expression) {
   const auto condition = CheckExpression(*expression.operand, nullptr);
-  if (condition.kind != Type::Kind::Bool || condition.nullable) {
-    AddDiagnostic(expression.operand->location, "conditional condition must be bool");
-  }
+  CheckBooleanOperand(*expression.operand, condition, "conditional condition must be bool");
   auto when_true = CheckExpression(*expression.left, nullptr);
   auto when_false = CheckExpression(*expression.right, nullptr);
+  if ((when_true.kind == Type::Kind::Dynamic || when_false.kind == Type::Kind::Dynamic) &&
+      when_true.kind != Type::Kind::Void && when_false.kind != Type::Kind::Void) {
+    const Type dynamic{.kind = Type::Kind::Dynamic, .name = "dynamic"};
+    RecordConversion(*expression.left, dynamic, when_true);
+    RecordConversion(*expression.right, dynamic, when_false);
+    return dynamic;
+  }
   if (CanAssign(when_true, when_false)) {
     return when_true;
   }
@@ -1014,6 +1086,20 @@ TypeChecker::Type TypeChecker::CheckCompoundAssignment(const Expression& express
   }
   const auto left = CheckExpression(*expression.left, nullptr);
   const auto right = CheckExpression(*expression.right, &left);
+  if (expression.left->kind == Expression::Kind::Member) {
+    CheckMemberAssignment(*expression.left);
+  }
+  if (left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) {
+    RecordConversion(*expression.right, left, right);
+    if (expression.left->kind == Expression::Kind::Name) {
+      if (const auto* binding = LookupLocal(expression.left->text)) {
+        refinements_.erase(binding->id);
+      }
+    }
+    return left.kind == Type::Kind::Dynamic
+               ? left
+               : CheckCompoundAssignmentTypes(expression, *operation, left, left);
+  }
   if (builtin_calls_.contains(expression.left.get())) {
     AddDiagnostic(expression.left->location, "builtin properties and indexed values are immutable");
   }
@@ -1095,6 +1181,12 @@ TypeChecker::Type TypeChecker::CheckEquality(const Expression& expression,
   if (null_comparison) {
     return {.kind = Type::Kind::Bool, .name = "bool"};
   }
+  if (left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) {
+    const Type dynamic{.kind = Type::Kind::Dynamic, .name = "dynamic"};
+    RecordConversion(*expression.left, dynamic, left);
+    RecordConversion(*expression.right, dynamic, right);
+    return {.kind = Type::Kind::Bool, .name = "bool"};
+  }
   if (left.kind == Type::Kind::Array || left.kind == Type::Kind::MutableString ||
       left.kind == Type::Kind::Function || left.kind == Type::Kind::Expected ||
       left.kind == Type::Kind::Set || left.kind == Type::Kind::Map) {
@@ -1120,6 +1212,15 @@ TypeChecker::Type TypeChecker::CheckBinaryTypes(const Expression& expression,
   if (expression.text == "??") {
     return CheckCoalesceTypes(expression, left, right);
   }
+  if ((left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) &&
+      left.kind != Type::Kind::Void && right.kind != Type::Kind::Void) {
+    const Type dynamic{.kind = Type::Kind::Dynamic, .name = "dynamic"};
+    RecordConversion(*expression.left, dynamic, left);
+    RecordConversion(*expression.right, dynamic, right);
+    const bool comparison = expression.text == "<" || expression.text == "<=" ||
+                            expression.text == ">" || expression.text == ">=";
+    return comparison ? Type{.kind = Type::Kind::Bool, .name = "bool"} : dynamic;
+  }
   if (expression.text == "&" || expression.text == "|" || expression.text == "^" ||
       expression.text == "<<" || expression.text == ">>" || expression.text == ">>>") {
     return CheckBitwiseTypes(expression, left, right);
@@ -1143,19 +1244,22 @@ TypeChecker::Type TypeChecker::CheckBinaryTypes(const Expression& expression,
 TypeChecker::Type TypeChecker::CheckLogicalTypes(const Expression& expression,
                                                  const Type& left,
                                                  const Type& right) {
-  if (left.kind != Type::Kind::Bool || right.kind != Type::Kind::Bool || left.nullable ||
-      right.nullable) {
-    AddDiagnostic(expression.location, "logical operands must be bool");
-    return InvalidType();
-  }
+  CheckBooleanOperand(*expression.left, left, "logical operands must be bool");
+  CheckBooleanOperand(*expression.right, right, "logical operands must be bool");
   return {.kind = Type::Kind::Bool, .name = "bool"};
 }
 
 TypeChecker::Type TypeChecker::CheckCoalesceTypes(const Expression& expression,
                                                   const Type& left,
                                                   const Type& right) {
-  if (!left.nullable && left.kind != Type::Kind::Null) {
+  if (!left.nullable && left.kind != Type::Kind::Null && left.kind != Type::Kind::Dynamic) {
     AddDiagnostic(expression.left->location, "left operand of coalesce must be nullable");
+  }
+  if (left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) {
+    const Type dynamic{.kind = Type::Kind::Dynamic, .name = "dynamic"};
+    RecordConversion(*expression.left, dynamic, left);
+    RecordConversion(*expression.right, dynamic, right);
+    return dynamic;
   }
   if (CanAssign(left, right)) {
     auto result = right;
@@ -1224,6 +1328,7 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
     AddDiagnostic(expression.left->location, "builtin properties and indexed values are immutable");
   }
   const Type right = CheckExpression(*expression.right, &left);
+  RecordConversion(*expression.right, left, right);
   if (binding != nullptr) {
     refinements_.erase(binding->id);
     if (IsValid(right) && right.kind != Type::Kind::Null && !right.nullable) {

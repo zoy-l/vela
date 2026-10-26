@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "base/callable.h"
@@ -15,11 +16,19 @@ class Isolate;
 class Future;
 class Timer;
 class CancellationToken;
+struct TypeSignature;
+// Isolate 持有的名义接口身份；不占用可分配类的字节码索引。
+struct InterfaceType final {};
+// 同一增量会话共享代码身份；函数编号只在该身份内有意义。
+struct CodeIdentity final {};
 
 struct ClassLayoutOptions final {
   std::optional<CallableTarget> callable;
-  std::vector<std::uint32_t> interfaces;
+  std::vector<const InterfaceType*> interfaces;
   std::vector<std::uint32_t> dispatch_targets;
+  bool is_enum = false;
+  const TypeSignature* callable_type = nullptr;
+  const TypeSignature* expected_type = nullptr;
 };
 
 class ClassLayout final {
@@ -32,11 +41,20 @@ class ClassLayout final {
 
   [[nodiscard]] std::uint32_t field_count() const noexcept { return field_count_; }
   [[nodiscard]] const std::optional<CallableTarget>& callable() const noexcept { return callable_; }
-  [[nodiscard]] std::span<const std::uint32_t> interfaces() const noexcept { return interfaces_; }
+  [[nodiscard]] std::span<const InterfaceType* const> interfaces() const noexcept {
+    return interfaces_;
+  }
   [[nodiscard]] std::span<const std::uint32_t> dispatch_targets() const noexcept {
     return dispatch_targets_;
   }
-  [[nodiscard]] bool IsImplementing(std::uint32_t interface) const noexcept;
+  [[nodiscard]] bool IsImplementing(const InterfaceType& interface) const noexcept;
+  [[nodiscard]] bool IsEnum() const noexcept { return is_enum_; }
+  [[nodiscard]] const TypeSignature* callable_type() const noexcept { return callable_type_; }
+  void BindCallableType(const TypeSignature& type) noexcept;
+  [[nodiscard]] const TypeSignature* expected_type() const noexcept { return expected_type_; }
+  [[nodiscard]] const CodeIdentity* code_identity() const noexcept { return code_identity_; }
+  void BindCodeIdentity(const CodeIdentity& identity) noexcept;
+  void BindExpectedType(const TypeSignature& type) noexcept;
   [[nodiscard]] std::span<const std::uint32_t> reference_fields() const noexcept {
     return reference_fields_;
   }
@@ -49,8 +67,12 @@ class ClassLayout final {
   std::uint32_t field_count_;
   std::vector<std::uint32_t> reference_fields_;
   std::optional<CallableTarget> callable_;
-  std::vector<std::uint32_t> interfaces_;
+  std::vector<const InterfaceType*> interfaces_;
   std::vector<std::uint32_t> dispatch_targets_;
+  bool is_enum_ = false;
+  const TypeSignature* callable_type_ = nullptr;
+  const TypeSignature* expected_type_ = nullptr;
+  const CodeIdentity* code_identity_ = nullptr;
 };
 
 enum class ObjectKind : std::uint8_t {
@@ -73,32 +95,88 @@ enum class ObjectKind : std::uint8_t {
 };
 
 struct CollectionLayout;
-struct TypeConstraint;
+struct ArrayLayout;
+
+struct TypeConstraint final {
+  ValueKind kind = ValueKind::Null;
+  ObjectKind object_kind = ObjectKind::Instance;
+  const ClassLayout* instance = nullptr;
+  const ArrayLayout* array = nullptr;
+  const CollectionLayout* collection = nullptr;
+  const InterfaceType* interface = nullptr;
+  bool nullable = false;
+  bool callable = false;
+  bool dynamic = false;
+  const TypeSignature* signature = nullptr;
+
+  [[nodiscard]] bool IsSubtypeOf(const TypeConstraint& target) const noexcept;
+
+  bool operator==(const TypeConstraint&) const = default;
+  template <typename H>
+  friend H AbslHashValue(H hash, const TypeConstraint& type) {
+    return H::combine(std::move(hash), type.kind, type.object_kind, type.instance, type.array,
+                      type.collection, type.interface, type.nullable, type.callable, type.dynamic,
+                      type.signature);
+  }
+};
+
+// 结构中的名义类型借用同一个 Isolate 的类布局；规范指针同时用于函数和 Future 载荷身份。
+struct TypeSignature final {
+  struct Parameter final {
+    TypeConstraint type;
+    bool optional = false;
+    bool rest = false;
+    bool operator==(const Parameter&) const = default;
+    template <typename H>
+    friend H AbslHashValue(H hash, const Parameter& parameter) {
+      return H::combine(std::move(hash), parameter.type, parameter.optional, parameter.rest);
+    }
+  };
+  std::vector<Parameter> parameters;
+  std::optional<TypeConstraint> result = std::nullopt;
+  [[nodiscard]] std::optional<TypeConstraint> FlattenedResult() const noexcept;
+  bool operator==(const TypeSignature&) const = default;
+  template <typename H>
+  friend H AbslHashValue(H hash, const TypeSignature& signature) {
+    return H::combine(std::move(hash), signature.parameters, signature.result);
+  }
+};
 
 // layout 由 Isolate 持有，生命周期覆盖所有数组与编译结果。
 struct ArrayLayout final {
-  ValueKind element_kind = ValueKind::Integer;
-  ClassLayout* element_class = nullptr;
-  const ArrayLayout* element_array = nullptr;
-  ObjectKind element_object_kind = ObjectKind::Instance;
-  std::optional<std::uint32_t> element_interface = std::nullopt;
-  const CollectionLayout* element_collection = nullptr;
-  bool callable_elements = false;
-  // 可空基本类型使用 Value 槽位；引用元素仍以原生指针保存空值。
-  bool nullable_elements = false;
+  TypeConstraint element{.kind = ValueKind::Integer};
 
   [[nodiscard]] bool HasTaggedElements() const noexcept {
-    return nullable_elements && element_kind != ValueKind::Object &&
-           element_kind != ValueKind::String;
+    if (element.kind == ValueKind::Object || element.kind == ValueKind::String) {
+      return element.dynamic;
+    }
+    return element.nullable || element.dynamic;
   }
 
   [[nodiscard]] std::size_t element_size() const noexcept;
-  [[nodiscard]] TypeConstraint element_type() const noexcept;
+  [[nodiscard]] const TypeConstraint& element_type() const noexcept { return element; }
+  [[nodiscard]] TypeConstraint value_type() const noexcept {
+    auto type = element;
+    if (type.instance != nullptr && type.instance->IsEnum()) {
+      type.kind = ValueKind::Object;
+    }
+    return type;
+  }
+  bool operator==(const ArrayLayout&) const = default;
+  template <typename H>
+  friend H AbslHashValue(H hash, const ArrayLayout& layout) {
+    return H::combine(std::move(hash), layout.element);
+  }
 };
 
 struct CollectionLayout final {
   ArrayLayout keys;
   std::optional<ArrayLayout> values = std::nullopt;
+  bool operator==(const CollectionLayout&) const = default;
+  template <typename H>
+  friend H AbslHashValue(H hash, const CollectionLayout& layout) {
+    return H::combine(std::move(hash), layout.keys, layout.values);
+  }
 };
 
 struct HeapObject final {
@@ -123,17 +201,6 @@ struct HeapObject final {
   std::uint32_t length = 0;
   // kind 确定 native_payload 的类型；底层存储由 Heap 按该类型销毁。
   void* native_payload = nullptr;
-};
-
-struct TypeConstraint final {
-  ValueKind kind = ValueKind::Null;
-  ObjectKind object_kind = ObjectKind::Instance;
-  const ClassLayout* instance = nullptr;
-  const ArrayLayout* array = nullptr;
-  const CollectionLayout* collection = nullptr;
-  std::optional<std::uint32_t> interface = std::nullopt;
-  bool nullable = false;
-  bool callable = false;
 };
 
 static_assert(alignof(HeapObject) >= alignof(Value));

@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "base/binary.h"
@@ -21,8 +22,27 @@ enum class StandardClass : std::uint8_t { None, Error, DateParts };
 
 inline constexpr auto kNoImageId = std::numeric_limits<std::uint64_t>::max();
 inline constexpr std::string_view kImageMagic = "VELABC01";
-inline constexpr std::size_t kElementBytes =
-    3 + sizeof(std::uint32_t) + (3 * sizeof(std::uint64_t));
+inline constexpr std::size_t kElementBytes = 3 + (5 * sizeof(std::uint64_t));
+
+template <class T, class RecordReader>
+std::expected<std::vector<T>, BinaryError> ReadRecords(BinaryReader& reader,
+                                                       std::size_t minimum_bytes,
+                                                       RecordReader read_record) {
+  const auto count = reader.Count(minimum_bytes);
+  if (!count) {
+    return std::unexpected(count.error());
+  }
+  std::vector<T> records;
+  records.reserve(*count);
+  for (std::size_t index = 0; index < *count; ++index) {
+    auto record = read_record(reader);
+    if (!record) {
+      return std::unexpected(record.error());
+    }
+    records.push_back(std::move(*record));
+  }
+  return records;
+}
 
 template <class T>
 using ImageUnsigned = std::conditional_t<
@@ -71,10 +91,11 @@ struct ImageElement final {
   std::uint8_t kind = 0;
   std::uint8_t object_kind = 0;
   std::uint8_t flags = 0;
-  std::uint32_t interface = 0;
+  std::uint64_t interface = kNoImageId;
   std::uint64_t instance = kNoImageId;
   std::uint64_t array = kNoImageId;
   std::uint64_t collection = kNoImageId;
+  std::uint64_t signature = kNoImageId;
 };
 
 struct ImageCollection final {
@@ -82,15 +103,28 @@ struct ImageCollection final {
   std::optional<ImageElement> values;
 };
 
+struct ImageSignature final {
+  struct Parameter final {
+    ImageElement type;
+    bool optional = false;
+    bool rest = false;
+  };
+  std::vector<Parameter> parameters;
+  std::optional<ImageElement> result = std::nullopt;
+};
+
 struct LoadedLayouts final {
+  std::vector<const runtime::InterfaceType*> interfaces;
   std::vector<runtime::ClassLayout*> classes;
   std::vector<const runtime::ArrayLayout*> arrays;
   std::vector<const runtime::CollectionLayout*> collections;
+  std::vector<const runtime::TypeSignature*> signatures;
 };
 
 inline constexpr std::uint8_t kNullableImageFlag = 1;
 inline constexpr std::uint8_t kCallableImageFlag = 2;
 inline constexpr std::uint8_t kInterfaceImageFlag = 4;
+inline constexpr std::uint8_t kDynamicImageFlag = 8;
 
 [[nodiscard]] std::expected<ImageElement, BinaryError> ReadElement(BinaryReader& reader);
 [[nodiscard]] std::expected<std::vector<std::string>, BinaryError> ReadTexts(BinaryReader& reader);

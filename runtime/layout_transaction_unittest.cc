@@ -19,18 +19,27 @@ TEST(LayoutTransactionTest, RollbackReleasesOnlyNewMetadataAndPreservesExistingO
   const auto initial = isolate.layout_counts();
   {
     LayoutTransaction transaction(isolate);
+    static_cast<void>(isolate.CreateCodeIdentity());
     auto* added = isolate.CreateClassLayout(1, {});
     const auto* array =
-        isolate.CreateArrayLayout({.element_kind = ValueKind::Object, .element_class = added});
+        isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = added}});
     const auto* collection = isolate.CreateCollectionLayout({
         .keys =
             {
-                .element_kind = ValueKind::Object,
-                .element_array = array,
-                .element_object_kind = ObjectKind::Array,
+                .element =
+                    {
+                        .kind = ValueKind::Object,
+                        .object_kind = ObjectKind::Array,
+                        .array = array,
+                    },
             },
     });
     ASSERT_NE(collection, nullptr);
+    const auto* signature = isolate.CreateTypeSignature({
+        .parameters = {{.type = {.kind = ValueKind::Object, .instance = added}}},
+        .result = runtime::TypeConstraint{.kind = ValueKind::Integer},
+    });
+    EXPECT_EQ(isolate.CreateTypeSignature(*signature), signature);
     EXPECT_GT(isolate.layout_counts().classes, initial.classes);
   }
   EXPECT_EQ(isolate.layout_counts(), initial);

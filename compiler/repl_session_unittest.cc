@@ -48,6 +48,20 @@ TEST_F(ReplSessionTest, PersistsValuesAndInitializesOnceWithoutReplayingHistory)
   EXPECT_EQ(output().str(), "once\n42\ndone\n");
 }
 
+TEST_F(ReplSessionTest, DynamicJsonValuesAndBoundMethodsSurviveGcAndLaterSubmissions) {
+  session().isolate().heap().SetGcThreshold(1);
+  Execute(R"(const root: dynamic = Json.parse('{"name":"Vela","items":[40,2]}');)");
+  Execute("const read = root.get;");
+  session().isolate().heap().Collect();
+  Execute("const name: string = read('name');");
+  Execute("const values: dynamic[] = root.get('items');");
+  Execute("values[0] + values[1]");
+  Execute("root.set('name', name.toUpperCase());");
+  session().isolate().heap().Collect();
+  Execute("Json.stringify(root)");
+  EXPECT_EQ(output().str(), "42\n{\"name\":\"VELA\",\"items\":[40,2]}\n");
+}
+
 TEST_F(ReplSessionTest, ByteViewsAndMethodsRetainTheirOwnersAcrossSubmissions) {
   session().isolate().heap().SetGcThreshold(1);
   Execute("const bytes = ByteArray.from([0,0,0,0]);");

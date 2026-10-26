@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "base/callable.h"
+#include "base/member.h"
 #include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_checker.h"
@@ -30,7 +31,7 @@ struct Instruction final {
 };
 
 struct Class final {
-  enum class Kind : std::uint8_t { Instance, Expected, RuntimeError, DateParts };
+  enum class Kind : std::uint8_t { Instance, Expected, RuntimeError, DateParts, Enum };
   std::string name;
   std::vector<std::string> field_order;
   std::vector<frontend::TypeDescriptor> field_types;
@@ -38,6 +39,7 @@ struct Class final {
   std::vector<std::uint32_t> interfaces;
   std::vector<std::uint32_t> dispatch_targets;
   Kind kind = Kind::Instance;
+  std::string callable_type;
 };
 
 struct Function final {
@@ -54,6 +56,7 @@ struct Function final {
   std::string native_symbol;
   std::vector<Handler> handlers;
   bool is_async = false;
+  std::optional<CallSignature> signature = std::nullopt;
 };
 
 struct Program final {
@@ -64,6 +67,7 @@ struct Program final {
   std::vector<std::uint32_t> global_initializers;
   std::vector<frontend::TypeDescriptor> runtime_types;
   std::vector<frontend::TypeDescriptor> collection_types;
+  std::vector<MemberDefinition> members;
 };
 
 }  // namespace vela::ir

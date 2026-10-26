@@ -39,10 +39,10 @@ StepResult Execution::ExecuteRegExp(ActiveFrame& active, Instruction instruction
     layout = arrays.subspan(static_cast<std::size_t>(index.AsInteger())).front();
     const auto expected_kind = builtin == Builtin::RegExpAllMatches ? runtime::ValueKind::Object
                                                                     : runtime::ValueKind::String;
-    if (layout->element_kind != expected_kind ||
+    if (layout->element.kind != expected_kind ||
         (expected_kind == runtime::ValueKind::Object &&
-         layout->element_object_kind != runtime::ObjectKind::RegExpMatch) ||
-        layout->nullable_elements != (builtin == Builtin::RegExpMatchGroups)) {
+         layout->element.object_kind != runtime::ObjectKind::RegExpMatch) ||
+        layout->element.nullable != (builtin == Builtin::RegExpMatchGroups)) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
   }

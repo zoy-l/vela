@@ -1,3 +1,5 @@
+#include "base/callable.h"
+#include "base/member.h"
 #include "vm/bytecode_image.h"
 
 #include <algorithm>
@@ -5,6 +7,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -48,10 +51,105 @@ std::expected<std::vector<T*>, BinaryError> ReadReferences(BinaryReader& reader,
   return result;
 }
 
+std::expected<runtime::TypeConstraint, BinaryError> ReadType(
+    BinaryReader& reader,
+    const internal::LoadedLayouts& layouts) {
+  const auto input = internal::ReadElement(reader);
+  if (!input) {
+    return std::unexpected(input.error());
+  }
+  const auto type = internal::ResolveType(*input, layouts);
+  if (!type) {
+    return std::unexpected(reader.Error(type.error()));
+  }
+  return *type;
+}
+
+std::expected<MemberDefinition, BinaryError> ReadMember(BinaryReader& reader) {
+  const auto receiver = reader.Read<std::uint32_t>();
+  auto name = reader.Text();
+  const auto record = reader.Record<std::uint8_t, std::uint32_t, std::uint32_t, std::uint32_t>();
+  if (!receiver) {
+    return std::unexpected(receiver.error());
+  }
+  if (!name) {
+    return std::unexpected(name.error());
+  }
+  if (!record) {
+    return std::unexpected(record.error());
+  }
+  const auto [kind, target, type, setter] = *record;
+  if (kind > static_cast<std::uint8_t>(MemberKind::Property)) {
+    return std::unexpected(reader.Error("invalid member kind"));
+  }
+  return MemberDefinition{
+      .receiver_type = *receiver,
+      .name = std::move(*name),
+      .kind = static_cast<MemberKind>(kind),
+      .target = target,
+      .type = type == kInvalidFunctionTarget ? std::nullopt : std::optional(type),
+      .setter = setter == kInvalidFunctionTarget ? std::nullopt : std::optional(setter),
+  };
+}
+
+std::expected<CallSignature::Parameter, BinaryError> ReadCallParameter(BinaryReader& reader) {
+  auto name = reader.Text();
+  const auto fields = reader.Record<std::uint32_t, std::uint8_t, std::uint8_t>();
+  if (!name) {
+    return std::unexpected(name.error());
+  }
+  if (!fields) {
+    return std::unexpected(fields.error());
+  }
+  const auto [type, optional, rest] = *fields;
+  if (optional > 1 || rest > 1) {
+    return std::unexpected(reader.Error("invalid call parameter flags"));
+  }
+  return CallSignature::Parameter{
+      .name = std::move(*name),
+      .type = type,
+      .optional = optional != 0,
+      .rest = rest != 0,
+  };
+}
+
+std::expected<std::optional<CallSignature>, BinaryError> ReadCallSignature(BinaryReader& reader) {
+  const auto present = reader.Read<std::uint8_t>();
+  if (!present) {
+    return std::unexpected(present.error());
+  }
+  if (*present > 1) {
+    return std::unexpected(reader.Error("invalid call signature flag"));
+  }
+  if (*present == 0) {
+    return std::optional<CallSignature>{};
+  }
+  const auto header = reader.Record<std::uint8_t, std::uint32_t>();
+  if (!header) {
+    return std::unexpected(header.error());
+  }
+  constexpr auto kParameterBytes = sizeof(std::uint64_t) + sizeof(std::uint32_t) + 2;
+  auto parameters =
+      internal::ReadRecords<CallSignature::Parameter>(reader, kParameterBytes, ReadCallParameter);
+  if (!parameters) {
+    return std::unexpected(parameters.error());
+  }
+  const auto [hidden, result] = *header;
+  CallSignature signature{
+      .parameters = std::move(*parameters),
+      .hidden_parameters = hidden,
+      .parameter_name_order = {},
+  };
+  if (result != kInvalidFunctionTarget) {
+    signature.result = result;
+  }
+  return std::optional(std::move(signature));
+}
+
 std::expected<std::vector<std::shared_ptr<const LayoutTables>>, BinaryError> ReadTables(
     BinaryReader& reader,
     const internal::LoadedLayouts& layouts) {
-  const auto count = reader.Count(4 * sizeof(std::uint64_t));
+  const auto count = reader.Count(5 * sizeof(std::uint64_t));
   if (!count) {
     return std::unexpected(count.error());
   }
@@ -69,24 +167,20 @@ std::expected<std::vector<std::shared_ptr<const LayoutTables>>, BinaryError> Rea
     if (!collections) {
       return std::unexpected(collections.error());
     }
-    const auto type_count = reader.Count(internal::kElementBytes);
-    if (!type_count) {
-      return std::unexpected(type_count.error());
+    auto types = internal::ReadRecords<runtime::TypeConstraint>(
+        reader, internal::kElementBytes,
+        [&layouts](BinaryReader& input) { return ReadType(input, layouts); });
+    if (!types) {
+      return std::unexpected(types.error());
     }
-    std::vector<runtime::TypeConstraint> types;
-    for (std::size_t type = 0; type < *type_count; ++type) {
-      const auto input = internal::ReadElement(reader);
-      if (!input) {
-        return std::unexpected(input.error());
-      }
-      const auto resolved = internal::ResolveType(*input, layouts);
-      if (!resolved) {
-        return std::unexpected(reader.Error(resolved.error()));
-      }
-      types.push_back(*resolved);
+    constexpr auto kMemberBytes = sizeof(std::uint64_t) + (4 * sizeof(std::uint32_t)) + 1;
+    auto members = internal::ReadRecords<MemberDefinition>(reader, kMemberBytes, ReadMember);
+    if (!members) {
+      return std::unexpected(members.error());
     }
-    tables.push_back(std::make_shared<const LayoutTables>(
-        std::move(*classes), std::move(*arrays), std::move(*collections), std::move(types)));
+    tables.push_back(std::make_shared<const LayoutTables>(std::move(*classes), std::move(*arrays),
+                                                          std::move(*collections),
+                                                          std::move(*types), std::move(*members)));
   }
   return tables;
 }
@@ -266,6 +360,11 @@ std::expected<FunctionStorage, BinaryError> ImageReader::ReadFunction() const {
     return std::unexpected(reader->Error("invalid async function flag"));
   }
   function.is_async = async != 0;
+  auto signature = ReadCallSignature(*reader);
+  if (!signature) {
+    return std::unexpected(signature.error());
+  }
+  function.signature = std::move(*signature);
   auto code = ReadNumbers<std::uint32_t>(*reader);
   auto integers = ReadNumbers<std::int64_t>(*reader);
   auto doubles = ReadNumbers<double>(*reader);

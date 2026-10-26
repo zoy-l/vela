@@ -6,6 +6,7 @@
 namespace vela {
 
 inline constexpr std::size_t kUtcComponentCount = 7;
+inline constexpr std::size_t kDynamicOperationArity = 5;
 
 // 编译器与 VM 共享的内建调用编号，不携带前端或运行时对象。
 enum class Builtin : std::uint8_t {
@@ -113,6 +114,25 @@ enum class Builtin : std::uint8_t {
   RegExpMatchGroup,
   RegExpMatchGroups,
   RegExpMatchNamedGroup,
+  JsonParse,
+  JsonStringify,
+  DynamicBinary,
+  DynamicNegate,
+  DynamicIndexRead,
+  DynamicIndexWrite,
+  BindRuntimeType,
+  DynamicCall,
+  DynamicMemberGet,
+  DynamicMemberSet,
+  DynamicResolveCall,
+  DynamicMethodCall,
+  DynamicArrayPrepare,
+  DynamicArrayCallback,
+  DynamicArrayOutput,
+  DynamicArrayInvoke,
+  DynamicArrayValidate,
+  DynamicAsync,
+  CheckFuturePayload,
   Count,
 };
 
@@ -121,6 +141,11 @@ enum class Builtin : std::uint8_t {
     case Builtin::NewMutableString:
       return 0;
     case Builtin::ScalarToString:
+    case Builtin::DynamicArrayCallback:
+    case Builtin::DynamicArrayOutput:
+    case Builtin::JsonParse:
+    case Builtin::JsonStringify:
+    case Builtin::DynamicNegate:
     case Builtin::RegExpEscape:
     case Builtin::RegExpPattern:
     case Builtin::RegExpIsMultiLine:
@@ -159,6 +184,12 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayMutation:
       return 1;
     case Builtin::ArrayJoin:
+    case Builtin::DynamicIndexRead:
+    case Builtin::DynamicMemberGet:
+    case Builtin::DynamicArrayValidate:
+    case Builtin::DynamicResolveCall:
+    case Builtin::BindRuntimeType:
+    case Builtin::CheckFuturePayload:
     case Builtin::RegExpHasMatch:
     case Builtin::RegExpFirstMatch:
     case Builtin::RegExpStringMatch:
@@ -196,6 +227,11 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayCheckMutation:
       return 2;
     case Builtin::StringSlice:
+    case Builtin::DynamicBinary:
+    case Builtin::DynamicCall:
+    case Builtin::DynamicMemberSet:
+    case Builtin::DynamicMethodCall:
+    case Builtin::DynamicIndexWrite:
     case Builtin::RegExpMatchAsPrefix:
     case Builtin::RegExpMatchGroups:
     case Builtin::ByteArraySlice:
@@ -228,6 +264,10 @@ enum class Builtin : std::uint8_t {
       return 4;
     case Builtin::DateFromUTC:
       return kUtcComponentCount;
+    case Builtin::DynamicArrayPrepare:
+    case Builtin::DynamicArrayInvoke:
+    case Builtin::DynamicAsync:
+      return kDynamicOperationArity;
     case Builtin::Count:
       return 0;
   }

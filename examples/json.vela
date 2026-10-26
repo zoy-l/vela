@@ -1,0 +1,29 @@
+class User {
+  public param name: string;
+  public param age: int;
+
+  public toJson(): Map<string, dynamic> {
+    const fields = Map<string, dynamic>();
+    fields.set('name', this.name);
+    fields.set('age', this.age);
+    return fields;
+  }
+}
+
+func main(): int {
+  const root: dynamic = Json.parse('{"name":"Vela","items":[7,true,null]}');
+  const name: string = root.get('name');
+  const items: dynamic[] = root.get('items');
+  const first: int = items[0];
+  print(name);
+  print(Json.stringify(items));
+
+  const users = [User(name: name, age: first)];
+  const output = Json.stringify(users);
+  print(output);
+
+  const numbers: dynamic[] = Json.parse('[20,22]');
+  const integers: int[] = numbers.map(value => value as int);
+  print(integers.reduce((total, value) => total + value, 0));
+  return output == '[{"name":"Vela","age":7}]' && integers[0] + integers[1] == 42 ? 0 : 1;
+}

@@ -135,7 +135,7 @@ TEST(VmTest, JoinAllowsDestinationToOverwriteRootedInputArray) {
   std::array<runtime::StringObject*, 1> constants{};
   RootRange roots(isolate.heap(), constants);
   constants.front() = isolate.heap().AllocateString("x");
-  const auto* layout = isolate.CreateArrayLayout({.element_kind = runtime::ValueKind::String});
+  const auto* layout = isolate.CreateArrayLayout({.element = {.kind = runtime::ValueKind::String}});
   const std::array<const runtime::ArrayLayout*, 1> arrays = {layout};
   constexpr auto kCode = std::to_array<Instruction>({
       EncodeABC(OpCode::NewArray, 0, 0, 2),
@@ -258,7 +258,8 @@ TEST(VmTest, DivisionRejectsInvalidSourceRegister) {
 
 TEST(VmTest, RejectsInvalidArrayLayoutIndices) {
   runtime::Isolate isolate;
-  const auto* layout = isolate.CreateArrayLayout({.element_kind = runtime::ValueKind::Integer});
+  const auto* layout =
+      isolate.CreateArrayLayout({.element = {.kind = runtime::ValueKind::Integer}});
   const std::array<const runtime::ArrayLayout*, 1> layouts = {layout};
   const auto code = std::to_array<Instruction>({
       EncodeABC(OpCode::NewArray, 0, 1, 1),
@@ -282,7 +283,8 @@ TEST(VmTest, RejectsInvalidArrayLayoutIndices) {
 
 TEST(VmTest, RejectsWrongArrayStoreAndNonArrayIndexing) {
   runtime::Isolate isolate;
-  const auto* layout = isolate.CreateArrayLayout({.element_kind = runtime::ValueKind::Integer});
+  const auto* layout =
+      isolate.CreateArrayLayout({.element = {.kind = runtime::ValueKind::Integer}});
   const std::array<const runtime::ArrayLayout*, 1> layouts = {layout};
   const auto code = std::to_array<Instruction>({
       EncodeABC(OpCode::NewArray, 0, 0, 1),

@@ -168,8 +168,7 @@ TEST_F(RegExpTest, AllMatchesFailureDoesNotExposePartialArray) {
   Compile("(*NO_START_OPT)(*LIMIT_MATCH=10)a|(?R)");
   Input("a!");
   const ArrayLayout layout{
-      .element_kind = ValueKind::Object,
-      .element_object_kind = ObjectKind::RegExpMatch,
+      .element = {.kind = ValueKind::Object, .object_kind = ObjectKind::RegExpMatch},
   };
   const auto result =
       Call(Builtin::RegExpAllMatches,

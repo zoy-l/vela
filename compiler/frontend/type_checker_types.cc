@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "compiler/frontend/ast.h"
@@ -21,7 +22,7 @@ TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, bool allow
     if (type_name.kind == TypeName::Kind::Array) {
       return ArrayType(element);
     }
-    if (element.nullable) {
+    if (element.nullable || element.kind == Type::Kind::Dynamic) {
       AddDiagnostic(type_name.location, "type is already nullable");
       return InvalidType();
     }
@@ -78,6 +79,15 @@ TypeDescriptor MakeArrayType(const TypeDescriptor& element) {
   };
 }
 
+TypeDescriptor MakeNullableType(TypeDescriptor type) {
+  if (!type.nullable && type.kind != TypeDescriptor::Kind::Dynamic) {
+    type.nullable = true;
+    type.name =
+        type.kind == TypeDescriptor::Kind::Function ? "(" + type.name + ")?" : type.name + '?';
+  }
+  return type;
+}
+
 TypeChecker::Type TypeChecker::ArrayType(const Type& element) {
   const auto result = MakeArrayType(element);
   array_elements_.try_emplace(result.name, element);
@@ -101,6 +111,11 @@ TypeChecker::Type TypeChecker::NonNullable(Type type) {
 }
 
 bool TypeChecker::CanAssign(const Type& target, const Type& value) const {
+  if ((target.kind == Type::Kind::Dynamic || value.kind == Type::Kind::Dynamic) &&
+      IsValid(target) && IsValid(value) && target.kind != Type::Kind::Void &&
+      value.kind != Type::Kind::Void) {
+    return true;
+  }
   if (IsSameType(target, value) || (target.nullable && (value.kind == Type::Kind::Null ||
                                                         IsSameType(NonNullable(target), value)))) {
     return true;
@@ -112,10 +127,32 @@ bool TypeChecker::CanAssign(const Type& target, const Type& value) const {
   }
   if (target.kind == Type::Kind::Future && value.kind == Type::Kind::Future &&
       (target.nullable || !value.nullable)) {
-    return CanAssign(generic_arguments_.at(NonNullable(target).name).front(),
-                     generic_arguments_.at(NonNullable(value).name).front());
+    const auto& payload = generic_arguments_.at(NonNullable(value).name).front();
+    const auto& expected = generic_arguments_.at(NonNullable(target).name).front();
+    return (payload.kind != Type::Kind::Dynamic || expected.kind == Type::Kind::Dynamic) &&
+           CanAssign(expected, payload);
   }
   return false;
+}
+
+void TypeChecker::RecordConversion(const Expression& expression,
+                                   const Type& target,
+                                   const Type& actual) {
+  if ((actual.kind == Type::Kind::Dynamic && target.kind != Type::Kind::Dynamic &&
+       IsValid(target) && target.kind != Type::Kind::Void) ||
+      (target.kind == Type::Kind::Dynamic && actual.kind == Type::Kind::Enum)) {
+    checked_conversions_.insert_or_assign(&expression, target);
+  }
+}
+
+void TypeChecker::CheckBooleanOperand(const Expression& expression,
+                                      const Type& type,
+                                      std::string_view message) {
+  const Type boolean{.kind = Type::Kind::Bool, .name = "bool"};
+  RecordConversion(expression, boolean, type);
+  if (!CanAssign(boolean, type)) {
+    AddDiagnostic(expression.location, std::string(message));
+  }
 }
 
 bool TypeChecker::IsNumeric(const Type& type) {

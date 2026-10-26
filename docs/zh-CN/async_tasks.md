@@ -55,7 +55,7 @@ const answer: int = await result;
 
 示例在 async 函数内执行。`Completer<T>()` 也可从上下文推导 `Completer<T>`。其只读属性为 `future: Future<T>` 和 `isCompleted: bool`；提出完成请求时 `isCompleted` 即为 true，包括采用尚未完成的 Future。`complete(value)` 接受 `T` 或 `Future<T>`；`Completer<void>.complete()` 不接收实参。`completeError(error)` 要求非空的类或接口实例。重复完成抛出 `Error(code: 'FutureAlreadyCompleted')`，直接或间接采用自身抛出 `Error(code: 'FutureSelfAdoption')`。
 
-`then` 从回调返回值推导结果类型；源为 `Future<void>` 时，成功回调不接收值参数。错误回调必须有一个非空的类或接口参数，未标注的 lambda 参数默认为 `Error`。回调只处理匹配该参数类型的异常，其余错误原样传播。`catchError` 必须返回源值类型或相同值类型的 Future。`whenComplete` 的无参 action 返回 `void` 或 `Future<void>`，异步 action 完成后才转发结果。可选回调可以为空。这些 API 使用静态回调类型，不引入 `dynamic` 或 `unknown`。
+`then` 从回调返回值推导结果类型；源为 `Future<void>` 时，成功回调不接收值参数。错误回调必须有一个非空的类或接口参数，未标注的 lambda 参数默认为 `Error`。回调只处理匹配该参数类型的异常，其余错误原样传播。`catchError` 必须返回源值类型或相同值类型的 Future。`whenComplete` 的无参 action 返回 `void` 或 `Future<void>`，异步 action 完成后才转发结果。可选回调可以为空。擦除后的接收者使用同一调度器，在注册续执行前检查保留的回调签名；回调结果进入具体类型的 Future 载荷时，在完成前进行检查，详见[动态值](json.md)。
 
 `Future<T>` 的结果类型支持协变，`Completer<T>` 保持不变性。工厂和回调 API 会采用返回的 Future，类型实参不允许嵌套的 Future 载荷。值任务的 `Future.wait` 返回 `Future<T[]>`；`Future<void>[]` 聚合为 `Future<void>`，因为 Vela 没有 `void[]` 值类型。后一种情况的 cleanUp 为无参回调，且不会被调用。工厂的显式类型实参和上下文结果类型都必须与载荷或计算结果匹配。
 
