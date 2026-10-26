@@ -1,0 +1,531 @@
+{
+  "schema_version": 1,
+  "previous": {
+    "source": {
+      "revision": "5db2c8ca4b28a66d5003a6154b51ee7570fff00d",
+      "working_tree": "dirty",
+      "description": "The recorded revision plus the original dirty workspace snapshot, before this goal.",
+      "build_inputs_sha256": "8591af925404e3d47d8f23ec9dba782c9605dc929f62aba14a2584c24f2e9476",
+      "build_input_count": 351,
+      "fingerprint_algorithm": "SHA256 over sorted UTF-8 repository-relative build-input paths, each followed by NUL and the binary SHA256 of its file bytes; includes .gn, DEPS, BUILD.gn, base/benchmarks/build/compiler/runtime/tools/vm source, and third_party GN files. Dependency source revisions are pinned by DEPS; generated outputs and docs are excluded."
+    },
+    "machine": {
+      "os": "Windows 11 Pro",
+      "os_version": "10.0.26300",
+      "architecture": "x64",
+      "cpu": "AMD Ryzen 9 7900X",
+      "physical_cores": 12,
+      "logical_cpus": 24
+    },
+    "toolchain": {
+      "compiler": "Fuchsia clang 23.0.0git (clang-cl)",
+      "llvm_revision": "80743bd43fd5b38fedc503308e7a652e23d3ec93",
+      "target": "x86_64-pc-windows-msvc",
+      "google_benchmark_version": "1.9.5",
+      "google_benchmark_revision": "192ef10025eb2c4cdd392bc502f0c852196baa48"
+    },
+    "build": {
+      "variant": "release",
+      "language_standard": "C++23",
+      "optimization": "/O2",
+      "runtime_library": "/MD",
+      "defines": [
+        "NDEBUG",
+        "_HAS_EXCEPTIONS=0"
+      ],
+      "target": "//benchmarks:vela_benchmarks"
+    },
+    "suite": {
+      "id": "vm-sync-regression-v1",
+      "run_date": "2026-10-26T17:37:12+08:00",
+      "working_directory": "C:/Users/zoy/Documents/Vela",
+      "command_argv": [
+        "C:/Users/zoy/AppData/Local/Temp/vela-api-contracts-ou43x4eh/baseline-source/out/release/vela_benchmarks.exe",
+        "--benchmark_filter=^vm/(integer_loop|function_calls|field_access)$",
+        "--benchmark_min_time=0.3s",
+        "--benchmark_repetitions=7",
+        "--benchmark_enable_random_interleaving=true",
+        "--benchmark_report_aggregates_only=true",
+        "--benchmark_out=C:/Users/zoy/AppData/Local/Temp/vela-api-contracts-ou43x4eh/baseline-sync-final.json",
+        "--benchmark_out_format=json"
+      ],
+      "settings": {
+        "minimum_cpu_time_seconds": 0.3,
+        "repetitions": 7,
+        "random_interleaving": true,
+        "threads": 1,
+        "time_unit": "ns",
+        "variation": "sample standard deviation and coefficient of variation (fraction)"
+      },
+      "expected_cases": [
+        "vm/integer_loop",
+        "vm/function_calls",
+        "vm/field_access"
+      ],
+      "all_expected_cases_passed": true,
+      "correctness_checks_passed": true,
+      "cases": {
+        "vm/integer_loop": {
+          "median_wall_ns": 18635.200893705976,
+          "stddev_wall_ns": 1211.6684044231072,
+          "cv_wall": 0.06396785628381672,
+          "median_cpu_ns": 18833.70535714286,
+          "stddev_cpu_ns": 1273.5364525324553,
+          "cv_cpu": 0.06762006882779732,
+          "counters": {
+            "allocated_bytes": 0.0,
+            "committed_bytes": 0.0,
+            "heap_objects": 0.0,
+            "register_bytes": 27.0,
+            "result": 499500.0,
+            "retained_bytes": 0.0,
+            "retained_objects": 0.0
+          }
+        },
+        "vm/function_calls": {
+          "median_wall_ns": 36175.29017944997,
+          "stddev_wall_ns": 2715.5986362693075,
+          "cv_wall": 0.07637530672874862,
+          "median_cpu_ns": 36039.806547619046,
+          "stddev_cpu_ns": 2720.570785347921,
+          "cv_cpu": 0.07763451737949799,
+          "counters": {
+            "allocated_bytes": 0.0,
+            "committed_bytes": 0.0,
+            "heap_objects": 0.0,
+            "register_bytes": 36.0,
+            "result": 1000.0,
+            "retained_bytes": 0.0,
+            "retained_objects": 0.0
+          }
+        },
+        "vm/field_access": {
+          "median_wall_ns": 29565.05186009757,
+          "stddev_wall_ns": 2347.129942976709,
+          "cv_wall": 0.08102939553287947,
+          "median_cpu_ns": 29645.206172527196,
+          "stddev_cpu_ns": 2667.2841755147642,
+          "cv_cpu": 0.09172060013442367,
+          "counters": {
+            "allocated_bytes": 57984.0,
+            "committed_bytes": 65536.0,
+            "heap_objects": 453.0,
+            "register_bytes": 36.0,
+            "result": 1000.0,
+            "retained_bytes": 0.0,
+            "retained_objects": 0.0
+          }
+        }
+      }
+    }
+  },
+  "latest": {
+    "source": {
+      "revision": "5db2c8ca4b28a66d5003a6154b51ee7570fff00d",
+      "working_tree": "dirty",
+      "description": "Completed API contracts in the preserved dirty workspace at measurement time; the build inputs were subsequently committed unchanged.",
+      "subsequently_committed_as": "77c2d2dda93059678e4d225305034e32f42a3d1f",
+      "build_inputs_sha256": "60e5c4462409d5ebff8992055063921aa8a97adab0a99e2c4a59871adedb21aa",
+      "build_input_count": 361,
+      "fingerprint_algorithm": "SHA256 over sorted UTF-8 repository-relative build-input paths, each followed by NUL and the binary SHA256 of its file bytes; includes .gn, DEPS, BUILD.gn, base/benchmarks/build/compiler/runtime/tools/vm source, and third_party GN files. Dependency source revisions are pinned by DEPS; generated outputs and docs are excluded."
+    },
+    "machine": {
+      "os": "Windows 11 Pro",
+      "os_version": "10.0.26300",
+      "architecture": "x64",
+      "cpu": "AMD Ryzen 9 7900X",
+      "physical_cores": 12,
+      "logical_cpus": 24
+    },
+    "toolchain": {
+      "compiler": "Fuchsia clang 23.0.0git (clang-cl)",
+      "llvm_revision": "80743bd43fd5b38fedc503308e7a652e23d3ec93",
+      "target": "x86_64-pc-windows-msvc",
+      "google_benchmark_version": "1.9.5",
+      "google_benchmark_revision": "192ef10025eb2c4cdd392bc502f0c852196baa48"
+    },
+    "build": {
+      "variant": "release",
+      "language_standard": "C++23",
+      "optimization": "/O2",
+      "runtime_library": "/MD",
+      "defines": [
+        "NDEBUG",
+        "_HAS_EXCEPTIONS=0"
+      ],
+      "target": "//benchmarks:vela_benchmarks"
+    },
+    "suite": {
+      "id": "vm-sync-regression-v1",
+      "run_date": "2026-10-26T17:56:05+08:00",
+      "working_directory": "C:/Users/zoy/Documents/Vela",
+      "command_argv": [
+        "C:/Users/zoy/Documents/Vela/out/contracts-release/vela_benchmarks.exe",
+        "--benchmark_filter=^vm/(integer_loop|function_calls|field_access)$",
+        "--benchmark_min_time=0.3s",
+        "--benchmark_repetitions=7",
+        "--benchmark_enable_random_interleaving=true",
+        "--benchmark_report_aggregates_only=true",
+        "--benchmark_out=C:/Users/zoy/AppData/Local/Temp/vela-api-contracts-ou43x4eh/current-sync-final.json",
+        "--benchmark_out_format=json"
+      ],
+      "settings": {
+        "minimum_cpu_time_seconds": 0.3,
+        "repetitions": 7,
+        "random_interleaving": true,
+        "threads": 1,
+        "time_unit": "ns",
+        "variation": "sample standard deviation and coefficient of variation (fraction)"
+      },
+      "expected_cases": [
+        "vm/integer_loop",
+        "vm/function_calls",
+        "vm/field_access"
+      ],
+      "all_expected_cases_passed": true,
+      "correctness_checks_passed": true,
+      "cases": {
+        "vm/integer_loop": {
+          "median_wall_ns": 17550.781631691632,
+          "stddev_wall_ns": 442.010755868425,
+          "cv_wall": 0.02491908416326751,
+          "median_cpu_ns": 17264.486822720577,
+          "stddev_cpu_ns": 341.78727327566907,
+          "cv_cpu": 0.01948779888944992,
+          "counters": {
+            "allocated_bytes": 0.0,
+            "committed_bytes": 0.0,
+            "heap_objects": 0.0,
+            "register_bytes": 27.0,
+            "result": 499500.0,
+            "retained_bytes": 0.0,
+            "retained_objects": 0.0
+          }
+        },
+        "vm/function_calls": {
+          "median_wall_ns": 28058.02827684342,
+          "stddev_wall_ns": 242.56224525243974,
+          "cv_wall": 0.008621130944986174,
+          "median_cpu_ns": 27901.785714285714,
+          "stddev_cpu_ns": 439.4118222297994,
+          "cv_cpu": 0.015655333201563846,
+          "counters": {
+            "allocated_bytes": 0.0,
+            "committed_bytes": 0.0,
+            "heap_objects": 0.0,
+            "register_bytes": 36.0,
+            "result": 1000.0,
+            "retained_bytes": 0.0,
+            "retained_objects": 0.0
+          }
+        },
+        "vm/field_access": {
+          "median_wall_ns": 24618.809523720607,
+          "stddev_wall_ns": 240.50776728952152,
+          "cv_wall": 0.009760414554577658,
+          "median_cpu_ns": 24414.0625,
+          "stddev_cpu_ns": 567.2782232076347,
+          "cv_cpu": 0.02292382721691244,
+          "counters": {
+            "allocated_bytes": 16512.0,
+            "committed_bytes": 65536.0,
+            "heap_objects": 129.0,
+            "register_bytes": 36.0,
+            "result": 1000.0,
+            "retained_bytes": 0.0,
+            "retained_objects": 0.0
+          }
+        }
+      }
+    },
+    "supplemental_suites": [
+      {
+        "id": "async-contracts-v1",
+        "run_date": "2026-10-26T17:49:42+08:00",
+        "working_directory": "C:/Users/zoy/Documents/Vela",
+        "command_argv": [
+          "C:/Users/zoy/Documents/Vela/out/contracts-release/vela_benchmarks.exe",
+          "--benchmark_filter=^async/",
+          "--benchmark_min_time=0.3s",
+          "--benchmark_repetitions=7",
+          "--benchmark_enable_random_interleaving=true",
+          "--benchmark_report_aggregates_only=true",
+          "--benchmark_out=C:/Users/zoy/AppData/Local/Temp/vela-api-contracts-ou43x4eh/current-async-final.json",
+          "--benchmark_out_format=json"
+        ],
+        "settings": {
+          "minimum_cpu_time_seconds": 0.3,
+          "repetitions": 7,
+          "random_interleaving": true,
+          "threads": 1,
+          "time_unit": "ns",
+          "variation": "sample standard deviation and coefficient of variation (fraction)",
+          "first_call_override": {
+            "case": "async/first_call/iterations:1000/real_time",
+            "iterations": 1000,
+            "clock": "wall"
+          }
+        },
+        "expected_cases": [
+          "async/no_await",
+          "async/completed_await",
+          "async/suspend_resume",
+          "async/no_await_loop",
+          "async/first_call/iterations:1000/real_time",
+          "async/concurrent/1",
+          "async/concurrent/100",
+          "async/concurrent/1000",
+          "async/suspended_gc/1",
+          "async/suspended_gc/100",
+          "async/suspended_gc/1000",
+          "async/timers/1",
+          "async/timers/100",
+          "async/timers/1000"
+        ],
+        "all_expected_cases_passed": true,
+        "correctness_checks_passed": true,
+        "cases": {
+          "async/no_await": {
+            "median_wall_ns": 351.1686755657484,
+            "stddev_wall_ns": 7.445774728752357,
+            "cv_wall": 0.02111144529876599,
+            "median_cpu_ns": 348.77232142857144,
+            "stddev_cpu_ns": 11.058288355786983,
+            "cv_cpu": 0.03140720810603591,
+            "counters": {
+              "first_async_bytes": 64.0,
+              "register_bytes": 18.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 0.0,
+              "saved_state_bytes": 0.0,
+              "suspended_frames": 0.0
+            }
+          },
+          "async/completed_await": {
+            "median_wall_ns": 1237.791666686202,
+            "stddev_wall_ns": 8.386040527954103,
+            "cv_wall": 0.006772803161004288,
+            "median_cpu_ns": 1209.077380952381,
+            "stddev_cpu_ns": 22.69112892830855,
+            "cv_cpu": 0.018563316605002333,
+            "counters": {
+              "first_async_bytes": 128.0,
+              "register_bytes": 9.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 193.0,
+              "saved_state_bytes": 193.0,
+              "suspended_frames": 1.0
+            }
+          },
+          "async/suspend_resume": {
+            "median_wall_ns": 1964.2199753938228,
+            "stddev_wall_ns": 20.378055000718682,
+            "cv_wall": 0.010429856315768444,
+            "median_cpu_ns": 1964.752936852236,
+            "stddev_cpu_ns": 40.39248538109799,
+            "cv_cpu": 0.02090311389259433,
+            "counters": {
+              "first_async_bytes": 192.0,
+              "register_bytes": 9.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 193.0,
+              "saved_state_bytes": 193.0,
+              "suspended_frames": 1.0
+            }
+          },
+          "async/no_await_loop": {
+            "median_wall_ns": 131153.39284662955,
+            "stddev_wall_ns": 1359.4338873993163,
+            "cv_wall": 0.010330763664342674,
+            "median_cpu_ns": 130208.33333333334,
+            "stddev_cpu_ns": 2269.112892830223,
+            "cv_cpu": 0.01725075886524989,
+            "counters": {
+              "first_async_bytes": 64064.0,
+              "register_bytes": 27.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 0.0,
+              "saved_state_bytes": 0.0,
+              "suspended_frames": 0.0
+            }
+          },
+          "async/first_call/iterations:1000/real_time": {
+            "median_wall_ns": 1695.3995218500497,
+            "stddev_wall_ns": 245.37694003291395,
+            "cv_wall": 0.15405936760905242,
+            "median_cpu_ns": 0.0,
+            "stddev_cpu_ns": 0.0,
+            "cv_cpu": 0.0,
+            "counters": {}
+          },
+          "async/concurrent/1": {
+            "median_wall_ns": 3956.2209825644027,
+            "stddev_wall_ns": 28.68665131914369,
+            "cv_wall": 0.007268728517082371,
+            "median_cpu_ns": 3952.7529761904766,
+            "stddev_cpu_ns": 0.0,
+            "cv_cpu": 0.0,
+            "counters": {
+              "first_async_bytes": 944.0,
+              "register_bytes": 90.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 201.5,
+              "saved_state_bytes": 403.0,
+              "suspended_frames": 2.0
+            }
+          },
+          "async/concurrent/100": {
+            "median_wall_ns": 152441.5467050429,
+            "stddev_wall_ns": 1599.1826243780426,
+            "cv_wall": 0.010511487408711998,
+            "median_cpu_ns": 156930.03013056578,
+            "stddev_cpu_ns": 4115.729580628151,
+            "cv_cpu": 0.02673577935576047,
+            "counters": {
+              "first_async_bytes": 28896.0,
+              "register_bytes": 90.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 209.83168316831683,
+              "saved_state_bytes": 21193.0,
+              "suspended_frames": 101.0
+            }
+          },
+          "async/concurrent/1000": {
+            "median_wall_ns": 2186105.297477484,
+            "stddev_wall_ns": 61109.834842114746,
+            "cv_wall": 0.027499342425645015,
+            "median_cpu_ns": 2173013.2450331124,
+            "stddev_cpu_ns": 50491.518674904706,
+            "cv_cpu": 0.02292382721691244,
+            "counters": {
+              "first_async_bytes": 280864.0,
+              "register_bytes": 90.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 209.983016983017,
+              "saved_state_bytes": 210193.0,
+              "suspended_frames": 1001.0
+            }
+          },
+          "async/suspended_gc/1": {
+            "median_wall_ns": 3879.938616851827,
+            "stddev_wall_ns": 42.03840416737548,
+            "cv_wall": 0.010835919078689445,
+            "median_cpu_ns": 3836.495535714286,
+            "stddev_cpu_ns": 65.91177333446991,
+            "cv_cpu": 0.017069363297188965,
+            "counters": {
+              "first_async_bytes": 944.0,
+              "register_bytes": 90.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 201.5,
+              "saved_state_bytes": 403.0,
+              "suspended_frames": 2.0
+            }
+          },
+          "async/suspended_gc/100": {
+            "median_wall_ns": 187118.24622170208,
+            "stddev_wall_ns": 2834.0819237176506,
+            "cv_wall": 0.015154222695338884,
+            "median_cpu_ns": 186835.6953055802,
+            "stddev_cpu_ns": 4775.143651340151,
+            "cv_cpu": 0.02569393040104934,
+            "counters": {
+              "first_async_bytes": 28896.0,
+              "register_bytes": 90.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 209.83168316831683,
+              "saved_state_bytes": 21193.0,
+              "suspended_frames": 101.0
+            }
+          },
+          "async/suspended_gc/1000": {
+            "median_wall_ns": 8797404.444259074,
+            "stddev_wall_ns": 161560.09717497838,
+            "cv_wall": 0.01827555654969794,
+            "median_cpu_ns": 8680555.555555556,
+            "stddev_cpu_ns": 262475.3284786307,
+            "cv_cpu": 0.029895495040277935,
+            "counters": {
+              "first_async_bytes": 280864.0,
+              "register_bytes": 90.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 209.983016983017,
+              "saved_state_bytes": 210193.0,
+              "suspended_frames": 1001.0
+            }
+          },
+          "async/timers/1": {
+            "median_wall_ns": 2308.524404985032,
+            "stddev_wall_ns": 24.072610062826993,
+            "cv_wall": 0.010466273262201951,
+            "median_cpu_ns": 2325.1488095238096,
+            "stddev_cpu_ns": 35.152945778416594,
+            "cv_cpu": 0.015205467304981303,
+            "counters": {
+              "first_async_bytes": 448.0,
+              "register_bytes": 45.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 210.0,
+              "saved_state_bytes": 210.0,
+              "suspended_frames": 1.0
+            }
+          },
+          "async/timers/100": {
+            "median_wall_ns": 78255.01486963949,
+            "stddev_wall_ns": 501.4011172309479,
+            "cv_wall": 0.006418128154194426,
+            "median_cpu_ns": 79055.05952380951,
+            "stddev_cpu_ns": 1134.5564464151114,
+            "cv_cpu": 0.014473094302201178,
+            "counters": {
+              "first_async_bytes": 19456.0,
+              "register_bytes": 45.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 210.0,
+              "saved_state_bytes": 210.0,
+              "suspended_frames": 1.0
+            }
+          },
+          "async/timers/1000": {
+            "median_wall_ns": 809995.3125305807,
+            "stddev_wall_ns": 15390.658451353987,
+            "cv_wall": 0.01901186903204622,
+            "median_cpu_ns": 802176.3392857143,
+            "stddev_cpu_ns": 17018.346696231412,
+            "cv_cpu": 0.021482077077486977,
+            "counters": {
+              "first_async_bytes": 151680.0,
+              "register_bytes": 45.0,
+              "retained_bytes": 0.0,
+              "saved_bytes_per_frame": 210.0,
+              "saved_state_bytes": 210.0,
+              "suspended_frames": 1.0
+            }
+          }
+        },
+        "comparison_to_previous": {
+          "comparable": false,
+          "reason": "The original workspace had no equivalent compiler/VM async benchmark suite."
+        },
+        "measurement_limits": [
+          "First-call timing excludes compilation and destruction, and includes Benchmark pause/resume overhead.",
+          "Steady timing includes VM execution, scheduling, allocation and automatic GC; suspended_gc also performs an explicit collection before resuming.",
+          "Suspended-state counters are sampled before the first pump. They include native frame metadata and saved-value/register-index capacity, not allocator bookkeeping or native Future control blocks.",
+          "first_async_bytes counts GC-accounted heap allocation before the first pump, not total process memory or native allocation cost.",
+          "Every steady case verifies the result and checks after its final collection that suspended-frame count is zero and retained heap allocation equals its post-warm-up baseline."
+        ]
+      }
+    ],
+    "comparison_to_previous": {
+      "comparable": true,
+      "basis": "Same machine, pinned toolchain, Release flags, workload source, suite and measurement settings.",
+      "ratio_definition": "latest median wall time / previous median wall time; lower is faster",
+      "wall_time_ratios": {
+        "vm/integer_loop": 0.9418080186953818,
+        "vm/function_calls": 0.7756130811296793,
+        "vm/field_access": 0.8326996901685584
+      },
+      "conclusion": "No synchronous regression observed in these three workloads; this is not a claim about all programs."
+    }
+  }
+}

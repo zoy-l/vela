@@ -118,6 +118,27 @@ async 语义贯通 AST、类型检查、Typed IR、优化、寄存器分配、�
 
 Release 基准分别测量无 await 的 async 调用、已完成 Future 的 await、挂起/恢复、并发 Future 数量、挂起状态的 GC 压力和大量 timer。报告同步 VM 回归、每个挂起执行保留的内存和首次异步分配成本。
 
+2026-10-26，在 Ryzen 9 7900X 上使用固定 Clang 工具链构建的 Windows x64
+Release 版本通过了全部 14 个异步基准，每项重复七次。墙钟时间中位数如下：
+
+| 场景 | 时间（µs） |
+| --- | ---: |
+| 不含 await 的异步调用 | 0.351 |
+| await 已完成的 Future | 1.238 |
+| 待执行微任务与续延 | 1.964 |
+| 新 Isolate 中的首次异步调用 | 1.695 |
+
+首次调用不计编译和销毁，包含计时暂停与恢复的开销。规模为 1,000 时，并发任务耗时
+2.186 ms，挂起期间显式执行 GC 的任务耗时 8.797 ms，零延迟 timer 耗时 0.810 ms。
+所有稳态场景在最终回收后均无挂起帧，也未额外保留 GC 堆值。
+
+非零的挂起状态测量值为每帧 193 至 210 字节。不含 await 的首次调用在驱动事件循环前
+分配了 64 字节的 GC 计费内存；这些计数不包含原生 Future 控制块和分配器元数据，
+不能视作进程总内存。同步场景 `integer_loop`、`function_calls` 和 `field_access`
+相对原始工作区快照的墙钟中位数比值分别为 0.942、0.776 和 0.833，这三个场景未观察到
+性能回退。完整命令、源码指纹、波动、内存计数与测量边界保存在
+[基准摘要](../../benchmarks/results/rolling_summary.json)。
+
 ## 实现参考
 
 - Dart async/await 与 Future API：[语言指南](https://dart.dev/language/async)、[Future API](https://api.dart.dev/dart-async/Future-class.html)、[Future 实现](https://github.com/dart-lang/sdk/blob/main/sdk/lib/async/future_impl.dart)。

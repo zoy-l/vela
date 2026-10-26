@@ -116,6 +116,33 @@ Required regressions cover synchronous effects before the first await, completio
 
 Release benchmarks separately measure async calls without await, awaiting a completed Future, suspend/resume, concurrent Future count, GC pressure from suspended state, and timer scale. Report synchronous VM regression, retained memory per suspended execution, and first async allocation cost.
 
+On 2026-10-26, the Windows x64 Release build with the pinned Clang toolchain on a
+Ryzen 9 7900X passed all 14 async benchmark cases, with seven repetitions each.
+Median wall times were:
+
+| Workload | Time (µs) |
+| --- | ---: |
+| Async call without await | 0.351 |
+| Await an already completed Future | 1.238 |
+| Pending microtask and continuation | 1.964 |
+| First async call in a fresh Isolate | 1.695 |
+
+The first-call case excludes compilation and destruction and includes timing
+pause/resume overhead. At 1,000 instances, concurrent tasks took 2.186 ms,
+tasks with an explicit collection while suspended took 8.797 ms, and zero-delay
+timers took 0.810 ms. All steady cases ended with zero suspended frames and no
+additional retained GC heap values after collection.
+
+Nonzero saved-state measurements ranged from 193 to 210 bytes per suspended
+frame. The first call without await allocated 64 GC-accounted bytes before
+pumping; these counters exclude native Future control blocks and allocator
+bookkeeping, so they do not measure total process memory. The synchronous
+`integer_loop`, `function_calls`, and `field_access` cases had median wall-time
+ratios of 0.942, 0.776, and 0.833 against the original workspace snapshot. No
+regression was observed in those three workloads. Full commands, source
+fingerprints, variation, counters, and measurement limits are retained in the
+[benchmark summary](../../benchmarks/results/rolling_summary.json).
+
 ## Implementation References
 
 - Dart async/await and Future API: [language guide](https://dart.dev/language/async), [Future API](https://api.dart.dev/dart-async/Future-class.html), [Future implementation](https://github.com/dart-lang/sdk/blob/main/sdk/lib/async/future_impl.dart).
