@@ -3,7 +3,7 @@
 [**English**](standard_library.md) | [简体中文](../zh-CN/standard_library.md)
 
 
-`Math`, `Random`, `performance`, `Date` and `Error` are default global declarations;
+`Math`, `Random`, `performance`, `Date`, `DateParts` and `Error` are default global declarations;
 they require no import. Native calls remain statically checked and linked.
 Only referenced standard objects contribute declarations and native functions;
 ordinary scripts do not load the entire standard environment. These global
@@ -43,9 +43,19 @@ Vela does not expose the full Date or Performance browser interfaces.
 The old `Time` object and microsecond APIs are removed. Numeric types remain exact:
 use `0.0` in a comparison with `performance.now()`, or explicit numeric conversion.
 
-UTC calendar construction/decomposition and strict ISO date-time parsing/output
-are proposed in [UTC date and time API](time.md). The four conversion methods and
-DateParts are not implemented; the clock APIs above remain the current surface.
+`Date.parse(source)` and `Date.toISOString(timestamp)` convert strict ISO
+date-time text and Unix milliseconds. `Date.fromUTC(year, month, day, ...)`
+constructs an instant, and `Date.toUTC(timestamp)` returns a read-only DateParts
+snapshot. Calendar conversion supports years 1..9999 and uses explicit UTC,
+independent of the host time zone. See [UTC date and time API](time.md) for the
+accepted grammar, defaults, ranges, and error codes.
+
+## Numeric parsing
+
+`int.parse` / `int.tryParse` and `double.parse` / `double.tryParse` parse complete
+strings without implicit conversion. Invalid text throws a domain Error or
+returns null with tryParse; an invalid explicit radix still throws. Integer
+results must fit signed int64. See [numeric parsing](numeric_parse.md).
 
 ## Random
 

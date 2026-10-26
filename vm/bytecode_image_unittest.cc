@@ -15,6 +15,7 @@
 #include "runtime/isolate.h"
 #include "vm/bytecode.h"
 #include "vm/bytecode_image.h"
+#include "vm/bytecode_image_internal.h"
 
 namespace vela::vm {
 namespace {
@@ -108,6 +109,23 @@ TEST(BytecodeImageBoundaryTest, LoadsMinimalValidImageAndRejectsExtraDataAndHuge
   changed.Write(std::span(valid).subspan(kHeaderBytes));
   changed.Write(trailing);
   EXPECT_FALSE(LoadBytecode(Image(changed.bytes()), isolate));
+}
+
+TEST(BytecodeImageBoundaryTest, RejectsMalformedStandardDatePartsLayouts) {
+  for (const auto fields : {0U, 6U, 8U}) {
+    BinaryWriter body;
+    body.Write(std::uint64_t{1});
+    body.Write(static_cast<std::uint8_t>(internal::StandardClass::DateParts));
+    body.Write(fields);
+    body.Write(std::uint64_t{0});
+    body.Write(std::uint8_t{0});
+    body.Write(std::uint64_t{0});
+    body.Write(std::uint64_t{0});
+    runtime::Isolate isolate;
+    const auto loaded = LoadBytecode(Image(body.bytes()), isolate);
+    ASSERT_FALSE(loaded);
+    EXPECT_NE(loaded.error().message.find("invalid standard DateParts layout"), std::string::npos);
+  }
 }
 
 TEST(BytecodeImageBoundaryTest, FailedLoadingReleasesPartiallyCreatedLayoutMetadata) {

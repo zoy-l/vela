@@ -94,3 +94,9 @@ deps = {
     "condition": "host_os == 'mac' and host_cpu == 'arm64'",
   },
 }
+
+hooks = [{
+  "name": "unicode_case_data",
+  "pattern": ".",
+  "action": ["python3", "tools/unicode_case.py", "--sync"],
+}]

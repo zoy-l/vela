@@ -181,6 +181,9 @@ bool IsOperator(const FormatItem& item) {
 bool NeedsSpace(const FormatItem& left, const FormatItem& right) {
   const auto previous = left.kind;
   const auto current = right.kind;
+  if (left.role == TokenRole::ConditionalOperator || right.role == TokenRole::ConditionalOperator) {
+    return true;
+  }
   if (current == TokenKind::Dot || current == TokenKind::Comma || current == TokenKind::Semicolon ||
       current == TokenKind::Colon || current == TokenKind::Question ||
       current == TokenKind::RightParen || current == TokenKind::RightBracket ||
@@ -439,7 +442,7 @@ void Formatter::Emit(std::size_t index) {
     return;
   }
   Text(item.spelling());
-  if (kind == TokenKind::Colon && case_label_) {
+  if (kind == TokenKind::Colon && item.role != TokenRole::ConditionalOperator && case_label_) {
     case_label_ = false;
     scopes_.back().case_indented = true;
     ++indent_;

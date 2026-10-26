@@ -15,6 +15,7 @@ source_set("vm") {
     "exception_handler.h",
     "execution.h",
     "execution_async.cc",
+    "execution_calendar.cc",
     "execution_exception.cc",
     "execution_status.h",
     "frame.h",

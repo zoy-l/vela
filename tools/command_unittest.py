@@ -51,6 +51,25 @@ class CommandTest(unittest.TestCase):
         self.entry.unlink()
         self.assertEqual(self.command("exec", image, expected=42).stdout, "timer\n")
 
+    def test_full_case_mappings_match_pinned_ucd_inputs(self) -> None:
+        data = (ROOT / "third_party/unicode_data/inputs/SpecialCasing.txt").read_text(encoding="utf-8")
+        statements = []
+        for line in data.splitlines():
+            fields = [field.strip() for field in line.split("#", 1)[0].split(";")]
+            if len(fields) < 5 or fields[4]:
+                continue
+            source = chr(int(fields[0], 16))
+            for method, index in [("toLowerCase", 1), ("toUpperCase", 3)]:
+                expected = "".join(chr(int(point, 16)) for point in fields[index].split())
+                statements.append(f"if ('{source}'.{method}() != '{expected}') {{ return 1; }}")
+        self.assertGreater(len(statements), 200)
+        self.write("func main(): int {\n" + "\n".join(statements) + "\nreturn 0; }")
+        self.command("run", self.entry)
+        image = self.directory / "case.vbc"
+        self.command("compile", self.entry, image)
+        self.entry.unlink()
+        self.command("exec", image)
+
     def test_async_idle_and_background_errors_are_failures(self) -> None:
         self.write("func main(): Future<int> { return Future.race<int>([]); }")
         self.assertIn("idle/deadlock", self.command("run", self.entry, expected=70).stderr)

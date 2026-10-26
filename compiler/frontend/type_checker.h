@@ -67,6 +67,7 @@ struct FunctionDescriptor final {
   std::vector<Parameter> parameters;
   absl::flat_hash_map<std::string, std::uint32_t> parameter_indices;
   absl::flat_hash_set<std::string> optional_parameters;
+  std::optional<Builtin> intrinsic;
   Visibility visibility = Visibility::Public;
   MemberStorage storage = MemberStorage::Instance;
   bool is_getter = false;

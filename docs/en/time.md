@@ -2,10 +2,8 @@
 
 [**English**](time.md) | [简体中文](../zh-CN/time.md)
 
-> Status: design specification. Date.now and performance.now already exist. Date.parse, Date.toISOString, Date.fromUTC, Date.toUTC, and DateParts below are proposed and are not implemented.
-
 Vela represents instants as signed int Unix timestamps in milliseconds. The
-existing Date static class gains four conversion methods; DateParts is a
+Date static class provides four conversion methods; DateParts is a
 read-only UTC calendar snapshot. Calendar conversion reuses the Abseil Time
 implementation already included in the repository's build source list.
 
@@ -146,8 +144,8 @@ canonicalizes its offset and precision instead of preserving the original text.
 
 DateParts is a fixed-layout standard class with seven int fields, not a Map or
 an instant object. Its constructor is not public; Date.toUTC publishes a fully
-initialized snapshot. Properties are not writable through typed or dynamic
-access. It supports ordinary references, nullable annotations, fields, captures,
+initialized snapshot. Properties are not writable from Vela code.
+It supports ordinary references, nullable annotations, fields, captures,
 and typed containers, using the normal class/GC model. Each toUTC call returns
 a new instance, and ordinary reference-identity equality applies.
 
@@ -162,7 +160,7 @@ backend calendar objects.
 | --- | --- |
 | Invalid parse syntax, field, date, precision, or offset | Error with code `DateParseError` and a clear reason |
 | Invalid fromUTC component, out-of-range timestamp, or normalized UTC result | Error with code `DateRangeError`, identifying the component or supported range |
-| Wrong static argument, DateParts construction, or property write | Frontend diagnostic; dynamic calls preserve runtime checks |
+| Wrong static argument, DateParts construction, or property write | Frontend diagnostic; checked builtin calls also validate runtime operands |
 | Result/error allocation failure | Existing recoverable OutOfMemory path |
 
 A parse input with valid in-range civil fields and an offset that moves the
@@ -178,7 +176,7 @@ class instance. Root source strings, arguments, and new results across allocatio
 safepoints, and publish destinations only after successful completion. A failed
 operation does not expose partial strings or objects or modify its inputs.
 
-## Backend and completion criteria
+## Backend and integration
 
 Reuse [Abseil Time](../../third_party/abseil-cpp/absl/time/time.h), already listed
 in the [managed build sources](../../third_party/abseil_sources.gni), including
@@ -208,14 +206,21 @@ DateParts class layout from its standard declaration to the runtime consumer
 and validate it at compilation/loading, rather than guessing a layout at use.
 No new primitive Value kind or calendar object representation is required.
 
-| Stage | Required completion |
-| --- | --- |
-| Standard environment | Add the exact methods and DateParts declarations/dependency closure; preserve name, overlay, and cache contracts |
-| Frontend/tooling | Check defaults, seven-argument fromUTC calls, readonly properties, construction, and nullable/class uses; share signatures with LSP, formatting, and documentation |
-| Runtime | Implement strict parse/range checks, Abseil conversion, fixed output, and seven-field snapshots with existing class allocation/rooting |
-| IR/compiler/VM | Connect builtin IDs, DateParts layout, source-order evaluation, argument windows, errors, and allocation/throwing effects; clocks remain observable external reads |
-| Images and REPL | Validate builtin arities/operands and the DateParts layout, retain layout lifetimes, include declarations and code in cache identity, and update the format when required |
-| Delivery | Add `examples/time.vela`; complete all paths and checks before marking the calendar extension implemented |
+The protected standard environment supplies the checked signatures and
+DateParts dependency closure. Standard static methods carry intrinsic markers
+through specialization and lowering into ordinary builtin wrapper functions.
+LSP, documentation, and source tools consume the same checked signatures.
+Method values have fixed full parameter lists; call-site omission supplies
+zero defaults for the four optional time fields.
+
+The Isolate owns the canonical DateParts layout. Compilation binds the checked
+standard declaration to it; version 5 images encode and validate the standard
+class role and shape. The VM validates the toUTC wrapper's class-pool operand
+against this layout. Programs and REPL submissions borrow layouts from their
+owning Isolate. See [bytecode images](compilation_cache.md) and the runnable
+[`examples/time.vela`](../../examples/time.vela).
+
+## Validation
 
 Required regressions cover epoch zero, -1 millisecond, the earliest/latest
 supported instants and one millisecond beyond, years below 100, month lengths,
@@ -228,11 +233,21 @@ identity, aliased VM destinations, GC/rooting, domain-error propagation and VM
 reuse, tooling, fresh-Isolate images, and persistent REPL lifetimes. Results must
 be invariant under host time-zone and locale changes.
 
-At implementation completion run relevant Debug/Release regressions, tooling
-tests, and repository static checks. Release benchmarks separately measure
-parsing, canonical formatting, UTC construction/decomposition, allocations, and
-regressions in existing clock calls. This specification records no completed
-implementation or benchmark results.
+Release benchmarks separately measure parsing, canonical formatting, UTC
+construction/decomposition, allocations, and regressions in existing clock
+calls. See [measurement boundaries and retained results](../../benchmarks/README.md).
+
+The recorded Windows x64 Ryzen 9 7900X Release run measured median steady
+latencies of 276 ns for parsing, 438 ns for formatting, 280 ns for fromUTC,
+and 338 ns for toUTC, including VM execution. Parse/fromUTC reported zero
+first-call GC bytes, formatting 128, and toUTC 256; these are heap-accounted
+byte deltas, not allocation counts, and exclude backend/native overhead.
+All cases retained zero additional heap bytes after collection. In a separate
+matching seven-repetition regression suite, wall/monotonic clock ratios were
+0.929/0.891 and three synchronous VM ratios were 0.991..1.022 relative to the
+baseline. These are workload-specific measurements, not latency guarantees;
+exact variation and settings are retained in
+[`rolling_summary.json`](../../benchmarks/results/rolling_summary.json).
 
 ## References
 

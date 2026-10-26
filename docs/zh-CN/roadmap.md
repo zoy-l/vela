@@ -86,9 +86,10 @@ P0 行为详见[基础语言契约](language_basics.md)。
 - [x] 添加控制台输出
 - [ ] 控制台输入不属于当前标准 API，见[标准库范围](standard_library.md)。
 - [x] 添加时间、随机数和数学库
-- [ ] 添加轻量 UTC 日历转换及严格 ISO 日期时间输入/输出（[设计](time.md)）
+- [x] 添加轻量 UTC 日历转换及严格 ISO 日期时间输入/输出（[契约](time.md)）
 - [x] 添加基础字符串标准库 API（[契约说明](strings.md)）
-- [ ] 添加 Unicode 字符串大小写转换（[设计](string_case.md)）
+- [x] 添加受检查的字符串数值解析 int/double parse 与 tryParse（[契约](numeric_parse.md)）
+- [x] 添加 Unicode 字符串大小写转换（[契约](string_case.md)）
 - [ ] 添加基于 PCRE2 的 Dart 风格正则 API 与带类型匹配结果（[设计](regexp.md)）
 - [x] 添加集合标准库 API
 - [ ] 添加基于原生值的 JSON 解析与序列化（[设计](json.md)）

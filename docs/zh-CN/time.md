@@ -2,9 +2,7 @@
 
 [English](../en/time.md) | [**简体中文**](time.md)
 
-> 状态：设计规格。Date.now 和 performance.now 已实现。下述 Date.parse、Date.toISOString、Date.fromUTC、Date.toUTC 与 DateParts 尚未实现。
-
-Vela 用有符号 int 表示 Unix 毫秒时间戳。在现有 Date 静态类上增加四个转换方法，通过只读 DateParts 返回 UTC 日历快照。日历转换复用仓库构建源码清单中已有的 Abseil Time 实现。
+Vela 用有符号 int 表示 Unix 毫秒时间戳。Date 静态类提供四个转换方法，通过只读 DateParts 返回 UTC 日历快照。日历转换复用仓库构建源码清单中已有的 Abseil Time 实现。
 
 ```vela
 func main(): void {
@@ -95,7 +93,7 @@ Date.toISOString 始终返回 24 字符 ASCII 形式 `YYYY-MM-DDTHH:mm:ss.SSSZ`�
 | `parts.second: int` | UTC 秒 |
 | `parts.millisecond: int` | 该秒内的毫秒，0..999 |
 
-DateParts 是含七个 int 字段的固定布局标准类，不是 Map 或时刻对象。构造器不公开，Date.toUTC 只发布完整初始化的快照。静态或动态访问均不能修改属性。支持普通引用、可空标注、字段、捕获和强类型容器，使用正常类/GC 模型。每次 toUTC 返回新实例，相等性沿用普通引用身份规则。
+DateParts 是含七个 int 字段的固定布局标准类，不是 Map 或时刻对象。构造器不公开，Date.toUTC 只发布完整初始化的快照。Vela 代码不能修改属性。支持普通引用、可空标注、字段、捕获和强类型容器，使用正常类/GC 模型。每次 toUTC 返回新实例，相等性沿用普通引用身份规则。
 
 不隐式转换为 string、时间戳、Map 或 JSON。持久化时刻时显式选择时间戳或 Date.toISOString 的结果。DateParts 不保留时区、原生指针、解析缓冲区或后端日历对象引用。
 
@@ -105,14 +103,14 @@ DateParts 是含七个 int 字段的固定布局标准类，不是 Map 或时刻
 | --- | --- |
 | 非法解析语法、字段、日期、精度或偏移 | code 为 `DateParseError` 的 Error，消息给出明确原因 |
 | 非法 fromUTC 字段、越界时间戳或归一化 UTC 结果 | code 为 `DateRangeError` 的 Error，指出字段或支持范围 |
-| 静态实参类型错误、构造 DateParts 或修改属性 | 前端诊断，动态调用保留运行时检查 |
+| 静态实参类型错误、构造 DateParts 或修改属性 | 前端诊断，受检查的 builtin 调用也验证运行时操作数 |
 | 结果或错误对象分配失败 | 现有可恢复 OutOfMemory 路径 |
 
 输入日历字段合法且位于范围内，但偏移使 UTC 结果越界时，parse 产生 DateRangeError；输入字段本身非法或越界时产生 DateParseError。错误可经普通 VM catch/finally 捕获，保留源码调用栈，不能转为 NaN、null、零、被修正的日期或通用原生调用失败。可读消息的具体措辞不构成程序契约，Error.code 才是稳定标识。
 
 解析和字段构造返回整数，不需要结果包装。格式化返回普通不可变字符串，toUTC 分配普通类实例。分配安全点期间保根源字符串、实参及新结果，成功后才发布目标。失败不暴露部分字符串或对象，也不修改输入。
 
-## 后端与完成条件
+## 后端与集成
 
 复用 [Abseil Time](../../third_party/abseil-cpp/absl/time/time.h)，相关源码已位于[受管理构建清单](../../third_party/abseil_sources.gni)，包括 UTC 日历转换与固定数字解析/格式化能力。新增方法不查找时区数据库，不发现本地时区、不查询 locale 或读取时钟，无需增加时间库依赖。
 
@@ -120,18 +118,17 @@ DateParts 是含七个 int 字段的固定布局标准类，不是 Map 或时刻
 
 现有[时钟原生绑定](../../runtime/standard_library.cc)保留当前职责。四个新转换方法接入标准 intrinsic/builtin 路径，由 runtime/VM 拥有带类型 DateParts 分配与领域错误。当前[原生 codec](../../runtime/native_function.h)不返回任意类实例，不为这个结果类型引入未检查 Value 返回或通用对象绑定功能。把经过检查的标准 DateParts 类布局传给运行时消费者，并在编译/加载边界验证，不能在使用处猜布局。无需增加原始 Value 种类或新的日历对象表示。
 
-| 阶段 | 必须完成的工作 |
-| --- | --- |
-| 标准环境 | 增加准确方法与 DateParts 声明/依赖闭包，保留名称、overlay 与缓存契约 |
-| 前端/工具 | 检查默认值、七参数 fromUTC 调用、只读属性、构造及可空/类使用，LSP、格式化和文档共享签名 |
-| 运行时 | 接通严格解析/范围检查、Abseil 转换、固定输出及七字段快照，复用类分配与保根 |
-| IR/编译器/VM | 接通 builtin ID、DateParts 布局、源码求值顺序、参数窗口、错误和分配/可抛出效果；时钟保持可观察外部读取 |
-| 镜像与 REPL | 验证 builtin 参数数量/操作数及 DateParts 布局，保留布局生命周期，声明与代码计入缓存身份，必要时更新格式 |
-| 交付 | 增加 `examples/time.vela`，全部路径与检查完成后才勾选日历扩展 |
+受保护的标准环境提供受检查的签名和 DateParts 依赖闭包。标准静态方法的 intrinsic 标记经特化与 lowering 生成普通 builtin 包装函数。LSP、文档和源码工具消费相同的受检查签名。方法值具有完整的固定参数列表；直接调用时，四个可选时间字段省略后补零。
+
+Isolate 拥有规范 DateParts 布局，编译将受检查的标准声明绑定到该布局。版本 5 镜像编码并验证标准类角色和形状，VM 验证 toUTC 包装函数的类池操作数确实指向该布局。程序和 REPL 提交从所属 Isolate 借用布局。参见[字节码镜像](compilation_cache.md)与可运行的 [`examples/time.vela`](../../examples/time.vela)。
+
+## 验证
 
 必要回归覆盖纪元零点、负一毫秒、最早/最晚时刻及越界一毫秒、低于 100 的年份、月份天数、公历整百闰年规则、全部默认值、命名实参求值顺序和全部字段/类型错误。解析覆盖每种精度、正负偏移及跨日/跨年、归一化后越界、拒绝未知偏移、缺失时区、空白/NUL/尾随文本、过高精度及闰秒。验证两项往返恒等式、DateParts 不可修改与新实例身份、VM 目标别名、GC/保根、领域错误传播与 VM 复用、工具、新 Isolate 镜像和持久化 REPL 生命周期。宿主时区或 locale 改变不能改变结果。
 
-实现完成边界执行相关 Debug/Release 回归、工具测试和仓库静态检查。Release benchmark 分别测量解析、规范格式化、UTC 构造/分解、分配及现有时钟调用回退。本文不声称已有实现或基准结果。
+Release benchmark 分别测量解析、规范格式化、UTC 构造/分解、分配及现有时钟调用回归。[基准指南](../../benchmarks/README.md)定义测量边界及保留结果。
+
+已记录的 Windows x64 / Ryzen 9 7900X Release 测量中，稳态中位数为：解析 276 ns、格式化 438 ns、fromUTC 280 ns、toUTC 338 ns，包含 VM 执行。parse/fromUTC 首次调用 GC 字节为零，格式化为 128，toUTC 为 256；这些是计入堆的字节增量，并非分配次数，也不包含后端/原生分配开销。所有用例完整回收后额外保留堆字节为零。另一个配置一致、重复七次的回归组中，墙钟/单调时钟耗时相对基线为 0.929/0.891，三个同步 VM 用例为 0.991..1.022。这些是特定负载的测量，不是延迟保证；确切波动和配置见[保留结果](../../benchmarks/results/rolling_summary.json)。
 
 ## 参考
 

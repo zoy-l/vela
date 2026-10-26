@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 #include "base/utf8.h"
+#include "runtime/date.h"
 #include "runtime/error.h"
 #include "runtime/native_function.h"
 #include "runtime/object.h"
@@ -42,6 +43,7 @@ std::shared_ptr<const NativeFunction> Isolate::FindNative(std::string_view name)
 Isolate::Isolate(std::size_t gc_threshold) noexcept : heap_(gc_threshold) {
   constexpr auto references = std::to_array({kErrorMessageField, kErrorCodeField});
   error_layout_ = CreateClassLayout(kErrorFieldCount, references);
+  date_parts_layout_ = CreateClassLayout(kDatePartsFieldCount, {});
 }
 
 Isolate::~Isolate() {

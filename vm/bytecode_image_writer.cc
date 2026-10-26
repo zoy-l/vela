@@ -26,6 +26,7 @@ namespace vela::vm {
 namespace {
 
 using internal::kNoImageId;
+using internal::StandardClass;
 using internal::WriteNumbers;
 
 template <class T>
@@ -137,7 +138,13 @@ void ImageWriter::WriteType(const runtime::TypeConstraint& type) {
 }
 
 void ImageWriter::WriteClass(const runtime::ClassLayout& layout) {
-  writer.Write(static_cast<std::uint8_t>(&layout == &isolate->error_layout()));
+  auto standard = StandardClass::None;
+  if (&layout == &isolate->error_layout()) {
+    standard = StandardClass::Error;
+  } else if (&layout == &isolate->date_parts_layout()) {
+    standard = StandardClass::DateParts;
+  }
+  writer.Write(static_cast<std::uint8_t>(standard));
   writer.Write(layout.field_count());
   WriteNumbers(writer, layout.reference_fields());
   writer.Write(static_cast<std::uint8_t>(layout.callable().has_value()));

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <span>
 #include <string_view>
 #include <type_traits>
@@ -35,5 +38,8 @@ class StringObject final {
 static_assert(std::is_standard_layout_v<StringObject>);
 static_assert(std::is_trivially_destructible_v<StringObject>);
 static_assert(sizeof(StringObject) == sizeof(HeapObject));
+
+inline constexpr std::size_t kMaximumStringLength =
+    std::numeric_limits<std::uint32_t>::max() - sizeof(StringObject);
 
 }  // namespace vela::runtime

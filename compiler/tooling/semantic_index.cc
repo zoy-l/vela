@@ -24,6 +24,7 @@
 #include "compiler/frontend/standard_environment.h"
 #include "compiler/frontend/token.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/tooling/builtin_documentation.h"
 #include "compiler/tooling/source_text.h"
 
 namespace vela::tooling {
@@ -382,7 +383,8 @@ void SemanticIndex::CollectDeclarations() {
                 TypeText(declaration.target));
   }
   for (const auto& declaration : program_.classes) {
-    const auto class_symbol = declare(declaration, CompletionKind::Class, ClassDetail(declaration));
+    const auto completion = ClassCompletion(declaration);
+    const auto class_symbol = declare(declaration, completion.kind, completion.detail);
     for (const auto& field : declaration.fields) {
       const auto field_symbol =
           member(declaration.name, field, CompletionKind::Field, TypeText(field.type));
@@ -395,6 +397,7 @@ void SemanticIndex::CollectDeclarations() {
     for (const auto& method : declaration.methods) {
       const auto method_symbol =
           member(declaration.name, method, CompletionKind::Method, Signature(method));
+      BindIntrinsicSignature(method_symbol, declaration, method);
       CollectParameters(method_symbol, method);
     }
     if (declaration.constructor &&
@@ -413,6 +416,17 @@ void SemanticIndex::CollectDeclarations() {
   for (const auto& declaration : program_.enums) {
     declare(declaration, CompletionKind::Enum, "enum");
     CollectEnumMembers(declaration);
+  }
+}
+
+void SemanticIndex::BindIntrinsicSignature(std::size_t symbol,
+                                           const frontend::Class& owner,
+                                           const frontend::Function& method) {
+  if (!method.intrinsic) {
+    return;
+  }
+  if (const auto checked = model_.classes.find(owner.name); checked != model_.classes.end()) {
+    symbols_.at(symbol).completion.detail = BuiltinDetail(checked->second.methods.at(method.name));
   }
 }
 
@@ -918,7 +932,15 @@ std::string SemanticIndex::DefaultValue(const Expression& expression) const {
   }
 }
 
-std::string SemanticIndex::ClassDetail(const frontend::Class& declaration) const {
+Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration) const {
+  if (frontend::IsStandardScalarNamespace(program_, declaration)) {
+    return {
+        .label = declaration.name,
+        .detail = declaration.name,
+        .kind = CompletionKind::Type,
+        .documentation = {},
+    };
+  }
   auto text = "class " + GenericName(declaration.name, declaration.type_parameters) + " {\n  ";
   if (declaration.constructor &&
       declaration.constructor->visibility == frontend::Visibility::Private) {
@@ -940,7 +962,12 @@ std::string SemanticIndex::ClassDetail(const frontend::Class& declaration) const
       }
     }
   }
-  return text + ");\n}";
+  return {
+      .label = declaration.name,
+      .detail = text + ");\n}",
+      .kind = CompletionKind::Class,
+      .documentation = {},
+  };
 }
 
 void SemanticIndex::MarkTypeParameters(SourceLocation location,

@@ -87,9 +87,10 @@ P1 contracts are specified in [Core language specification](core_language.md).
 - [x] Add console output
 - [ ] Console input is outside the current standard API; see [standard library scope](standard_library.md).
 - [x] Add time, random, and math libraries
-- [ ] Add lightweight UTC calendar conversion and strict ISO date-time input/output ([design](time.md))
+- [x] Add lightweight UTC calendar conversion and strict ISO date-time input/output ([contract](time.md))
 - [x] Add basic string standard library APIs ([contracts](strings.md))
-- [ ] Add Unicode string case conversion ([design](string_case.md))
+- [x] Add checked string numeric parsing with int/double parse and tryParse ([contract](numeric_parse.md))
+- [x] Add Unicode string case conversion ([contract](string_case.md))
 - [ ] Add PCRE2-backed regular expressions with Dart-style APIs and typed matches ([design](regexp.md))
 - [x] Add collection standard library APIs
 - [ ] Add JSON parsing and serialization over native values ([design](json.md))

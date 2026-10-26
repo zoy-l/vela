@@ -135,12 +135,15 @@ Low-level heap string/builder interfaces accept valid UTF-8; untrusted native
 input must first use `InvalidUtf8Offset`. The source lexer is the current
 external text validation boundary.
 
-## Planned string APIs
+## Case conversion and planned matching APIs
 
-Unicode `toLowerCase()` / `toUpperCase()` are specified in
-[string case conversion](string_case.md). Dart-style RegExp and RegExpMatch are
-specified in [regular expressions](regexp.md). Both are design specifications;
-the APIs are not part of the implemented methods listed above.
+`text.toLowerCase(): string` and `text.toUpperCase(): string` implement Unicode
+18.0.0 default full case conversion, including expansions and Final_Sigma.
+They are locale-independent and do not normalize text. See
+[string case conversion](string_case.md).
+
+Dart-style RegExp and RegExpMatch remain a
+[regular-expression design](regexp.md) and are not implemented.
 
 ## Examples
 

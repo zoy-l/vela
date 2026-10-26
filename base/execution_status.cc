@@ -67,6 +67,22 @@ StatusDescription DescribeStatus(ExecutionStatus status) noexcept {
       return {.code = "FutureSelfAdoption", .message = "Future cannot adopt itself"};
     case ExecutionStatus::AsyncIdle:
       return {.code = "AsyncIdle", .message = "async root has no pending producer"};
+    case ExecutionStatus::IntParseError:
+      return {.code = "IntParseError", .message = "invalid integer text or int64 overflow"};
+    case ExecutionStatus::DoubleParseError:
+      return {.code = "DoubleParseError", .message = "invalid floating-point text"};
+    case ExecutionStatus::InvalidRadix:
+      return {.code = "InvalidRadix", .message = "integer radix must be between 2 and 36"};
+    case ExecutionStatus::DateParseError:
+      return {
+          .code = "DateParseError",
+          .message = "invalid ISO date-time syntax or calendar field",
+      };
+    case ExecutionStatus::DateRangeError:
+      return {
+          .code = "DateRangeError",
+          .message = "date field or timestamp outside the supported range",
+      };
   }
   std::unreachable();
 }

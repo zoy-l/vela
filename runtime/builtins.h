@@ -16,6 +16,9 @@ enum class BuiltinError : std::uint8_t {
   IndexOutOfBounds,
   InvalidNumericConversion,
   ConcurrentModification,
+  IntParseError,
+  DoubleParseError,
+  InvalidRadix,
 };
 
 enum class NumericConversion : std::uint8_t { ToInt, ToDouble };

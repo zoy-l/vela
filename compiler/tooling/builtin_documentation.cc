@@ -1,5 +1,6 @@
 #include "compiler/tooling/builtin_documentation.h"
 
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -13,6 +14,24 @@ namespace {
 using Kind = frontend::TypeDescriptor::Kind;
 
 }  // namespace
+
+std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
+  std::string text = "(";
+  for (const auto& parameter : signature.parameters) {
+    if (text.back() != '(') {
+      text += ", ";
+    }
+    text += parameter.rest ? "..." : "";
+    text += parameter.name;
+    if (signature.optional_parameters.contains(parameter.name)) {
+      text += '?';
+    }
+    const auto type_name =
+        parameter.rest ? frontend::MakeArrayType(parameter.type).name : parameter.type.name;
+    text += ": " + type_name;
+  }
+  return text + "): " + signature.return_type.name;
+}
 
 std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
   if (receiver == Kind::Future) {
@@ -68,6 +87,16 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
   }
   static const absl::flat_hash_map<std::pair<Kind, std::string_view>, std::string_view>
       kDocumentation = {
+          {
+              {Kind::String, "toLowerCase"},
+              "Returns Unicode default lowercase, including full and contextual mappings. "
+              "Independent of locale; leaves the receiver unchanged and performs no normalization.",
+          },
+          {
+              {Kind::String, "toUpperCase"},
+              "Returns Unicode default uppercase, including full mappings. "
+              "Independent of locale; leaves the receiver unchanged and performs no normalization.",
+          },
           {
               {Kind::Invalid, "print"},
               "Writes a value followed by a newline. Returns void.\n\n"
@@ -361,7 +390,8 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
               {Kind::Array, "reduce"},
               "Calls callbackFn(accumulator, value, index, array) in index order. Unused trailing "
               "parameters may be omitted. initialValue is required and determines R. Traversal "
-              "starts at index zero; an empty array returns initialValue without calling callbackFn.\n\n"
+              "starts at index zero; an empty array returns initialValue without calling "
+              "callbackFn.\n\n"
               "```vela\nvalues.reduce((sum, value) => sum + value, 0);\n```",
           },
           {

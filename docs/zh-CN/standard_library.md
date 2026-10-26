@@ -21,7 +21,11 @@ const sum = values.reduce((total, value) => total + value, 0);
 
 `performance.now(): double` 读取单调时钟时间（单位：毫秒），保留亚毫秒级小数精度。计算耗时只需将两次读取结果相减；其时间零点未作规定，连续两次读取返回相同数值属于正常合法情况。`Date.now(): int` 读取自 Unix 纪元以来的整数毫秒数；系统时钟被调整时该墙钟时间可能发生跃变。这些名称与单位严格对标 JavaScript 的 [performance.now](https://developer.mozilla.org/en-US/docs/Web/API/Performance/now) 与 [Date.now](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/now)。Vela 未引入完整的浏览器 Date 或 Performance 复杂对象模型。旧有的 `Time` 对象与微秒 API 已被废除。数值类型保持严格强类型：与 `performance.now()` 比较时必须使用 `0.0`，或显式进行数值类型转换。
 
-UTC 日历构造/分解及严格 ISO 日期时间解析/输出见 [UTC 日期与时间 API 设计](time.md)。四个转换方法与 DateParts 尚未实现，当前已提供的时间接口仍为上述时钟 API。
+`Date.parse(source)` 与 `Date.toISOString(timestamp)` 转换严格 ISO 日期时间文本和 Unix 毫秒。`Date.fromUTC(year, month, day, ...)` 构造时刻，`Date.toUTC(timestamp)` 返回只读 DateParts 快照。日历转换支持 1..9999 年，始终显式使用 UTC，不受宿主时区影响。DateParts 无需导入，名称保护和局部遮蔽规则与其它标准声明一致。完整语法、默认值、范围和错误码见 [UTC 日期与时间 API](time.md)。
+
+## 数值解析
+
+`int.parse` / `int.tryParse` 和 `double.parse` / `double.tryParse` 解析完整字符串，不做隐式转换。非法文本抛出领域 Error，tryParse 则返回 null；显式 radix 非法时仍抛出错误。整数结果必须位于有符号 int64 范围内。详见[字符串数值解析](numeric_parse.md)。
 
 ## 随机数生成
 

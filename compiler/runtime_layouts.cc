@@ -34,6 +34,10 @@ std::vector<runtime::ClassLayout*> CreateClassLayouts(const ir::Program& program
       class_layouts.push_back(&isolate.error_layout());
       continue;
     }
+    if (class_info.kind == ir::Class::Kind::DateParts) {
+      class_layouts.push_back(&isolate.date_parts_layout());
+      continue;
+    }
     std::vector<std::uint32_t> reference_fields;
     for (std::size_t index = 0; index < class_info.field_types.size(); ++index) {
       const auto kind = class_info.field_types.at(index).kind;

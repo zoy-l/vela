@@ -30,7 +30,7 @@ struct Instruction final {
 };
 
 struct Class final {
-  enum class Kind : std::uint8_t { Instance, Expected, RuntimeError };
+  enum class Kind : std::uint8_t { Instance, Expected, RuntimeError, DateParts };
   std::string name;
   std::vector<std::string> field_order;
   std::vector<frontend::TypeDescriptor> field_types;

@@ -45,6 +45,7 @@ executable("base_tests") {
     "file_unittest.cc",
     "fingerprint_unittest.cc",
     "json_unittest.cc",
+    "utf8_unittest.cc",
   ]
   deps = [
     ":base",

@@ -1,0 +1,7 @@
+func main(): void {
+  print('Vela'.toLowerCase());
+  print('Vela'.toUpperCase());
+  print('straße'.toUpperCase());
+  print('ΟΣ'.toLowerCase());
+  print('İ'.toLowerCase());
+}

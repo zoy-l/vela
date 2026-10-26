@@ -15,6 +15,7 @@
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/standard_environment.h"
 #include "compiler/frontend/type_limits.h"
 
 namespace vela::frontend {
@@ -132,6 +133,7 @@ Function CloneFunction(const Function& source) {
   result.storage = source.storage;
   result.export_kind = source.export_kind;
   result.native_symbol = source.native_symbol;
+  result.intrinsic = source.intrinsic;
   result.role = source.role;
   result.is_async = source.is_async;
   return result;
@@ -570,7 +572,7 @@ void Specializer::CollectTemplates() {
     }
   }
   for (auto& owner : program_.classes) {
-    if (IsBuiltinName(owner.name)) {
+    if (IsBuiltinName(owner.name) && !IsStandardScalarNamespace(program_, owner)) {
       Error(owner.location, "type name is reserved for a builtin");
     }
     if (owner.type_parameters.empty()) {

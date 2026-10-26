@@ -27,6 +27,11 @@ enum class ExecutionStatus : std::uint8_t {
   FutureAlreadyCompleted,
   FutureSelfAdoption,
   AsyncIdle,
+  IntParseError,
+  DoubleParseError,
+  InvalidRadix,
+  DateParseError,
+  DateRangeError,
 };
 
 [[nodiscard]] std::string_view ExecutionStatusName(ExecutionStatus status) noexcept;

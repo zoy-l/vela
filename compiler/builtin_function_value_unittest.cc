@@ -59,6 +59,89 @@ INSTANTIATE_TEST_SUITE_P(ProductionPaths,
                          BuiltinFunctionValueTest,
                          testing::Values(
                              R"(
+type Count = int;
+type Ratio = double;
+func main(): int {
+  return Count.parse('42') == 42 && Ratio.parse('0.5') == 0.5 ? 42 : 0;
+})",
+                             R"(
+func main(): int {
+  const parse: (string, int?) => int = int.parse;
+  const attempt: (string) => double? = double.tryParse;
+  const typed: int?[] = [int.tryParse('x'), int.tryParse('40')];
+  if (typed[0] != null || attempt('x') != null) { return 0; }
+  return parse('2a', 16) + int.parse('0x10') - 16;
+})",
+                             R"(
+let order = 0;
+func mark(value: int): int { order = order * 10 + value; return value; }
+func text(): string { order = order * 10 + 2; return '10'; }
+func main(): int {
+  const result = int.parse(radix: mark(3), source: text());
+  if (result == 3 && order == 32 && int.tryParse('9223372036854775808') == null) { return 42; }
+  return 0;
+})",
+                             R"(
+func main(): int {
+  let caught = 0;
+  try { int.parse('wrong'); } catch (error: Error) { if (error.code == 'IntParseError') { caught++; } }
+  try { double.parse('wrong'); } catch (error: Error) { if (error.code == 'DoubleParseError') { caught++; } }
+  try { int.tryParse('1', radix: 1); } catch (error: Error) { if (error.code == 'InvalidRadix') { caught++; } }
+  return caught == 3 ? int.parse('42') : 0;
+})",
+                             R"(
+func main(): int {
+  const date = Date.parse('1969-12-31T23:59:59.999Z');
+  const parts = Date.toUTC(date);
+  const values: DateParts[] = [parts];
+  const read = (): int => values[0].millisecond;
+  const restored = Date.fromUTC(parts.year, parts.month, parts.day, hour: parts.hour,
+                               minute: parts.minute, second: parts.second,
+                               millisecond: parts.millisecond);
+  if (date == -1 && restored == date && read() == 999 && parts != Date.toUTC(date)) { return 42; }
+  return 0;
+})",
+                             R"(
+func main(): int {
+  const format: (int) => string = Date.toISOString;
+  const decode: (int) => DateParts = Date.toUTC;
+  const date = Date.fromUTC(year: 99, month: 1, day: 1);
+  if (format(date) == '0099-01-01T00:00:00.000Z' && decode(date).year == 99) { return 42; }
+  return 0;
+})",
+                             R"(
+let order = 0;
+func mark(value: int): int { order = order * 10 + value; return value; }
+func main(): int {
+  const result = Date.fromUTC(day: mark(1), month: mark(2), year: mark(3), millisecond: mark(4));
+  const parts = Date.toUTC(result);
+  if (order == 1234 && parts.year == 3 && parts.month == 2 && parts.day == 1 &&
+      parts.hour == 0 && parts.minute == 0 && parts.second == 0 && parts.millisecond == 4) { return 42; }
+  return 0;
+})",
+                             R"(
+func main(): int {
+  let caught = 0;
+  try { Date.parse('1900-02-29T00:00:00Z'); }
+  catch (error: Error) { if (error.code == 'DateParseError') { caught++; } }
+  try { Date.parse('0001-01-01T00:00:00+00:01'); }
+  catch (error: Error) { if (error.code == 'DateRangeError') { caught++; } }
+  try { Date.fromUTC(2000, 2, 30); }
+  catch (error: Error) { if (error.code == 'DateRangeError') { caught++; } }
+  try { Date.toISOString(253402300800000); }
+  catch (error: Error) { if (error.code == 'DateRangeError') { caught++; } }
+  return caught == 4 && Date.toUTC(0).year == 1970 ? 42 : 0;
+})",
+                             R"(
+func main(): int {
+  let text = 'straße';
+  const upper = text.toUpperCase;
+  text = 'changed';
+  const results: string[] = [upper(), 'ΟΣ'.toLowerCase()];
+  if (results[0] == 'STRASSE' && results[1] == 'ος') { return 42; }
+  return 0;
+})",
+                             R"(
 func main(): int {
   let value = 42;
   const render = value.toString;
@@ -210,6 +293,18 @@ INSTANTIATE_TEST_SUITE_P(
     StrictTypes,
     InvalidBuiltinFunctionValueTest,
     testing::Values(
+        "func main(): void { int.parse(42); }",
+        "func main(): void { int.parse('42', radix: 10.0); }",
+        "func main(): void { const value: int = int.tryParse('42'); }",
+        "func main(): void { const value: double = double.tryParse('42'); }",
+        "func main(): void { double.parse('42', radix: 10); }",
+        "func main(): void { 'Vela'.toLowerCase(1); }",
+        "func main(): void { const text: string? = null; text.toUpperCase(); }",
+        "func main(): void { DateParts(); }",
+        "func main(): void { Date.toUTC(0).year = 2026; }",
+        "func main(): void { print(Date.toUTC(0).yearValue); }",
+        "func main(): void { Date.fromUTC(2026, 1, 1, hour: null); }",
+        "func main(): void { Date.toISOString(0.0); }",
         "func main(): void { const values = [1]; const append = values.push; }",
         "func main(): void { const values = [1]; const map = values.map; }",
         "func main(): void { const has: (string) => int = 'Vela'.includes; }",

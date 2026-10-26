@@ -14,12 +14,13 @@ English and Simplified Chinese editions are listed side by side below. Entries m
 | **Type Inference** / 类型推导 | [type_inference.md](en/type_inference.md) | [type_inference.md](zh-CN/type_inference.md) |
 | **Modules & Namespaces** / 模块系统 | [modules.md](en/modules.md) | [modules.md](zh-CN/modules.md) |
 | **Strings** / 字符串系统 | [strings.md](en/strings.md) | [strings.md](zh-CN/strings.md) |
-| **String Case Conversion (Design)** / 字符串大小写转换（设计） | [string_case.md](en/string_case.md) | [string_case.md](zh-CN/string_case.md) |
+| **Numeric Parsing** / 字符串数值解析 | [numeric_parse.md](en/numeric_parse.md) | [numeric_parse.md](zh-CN/numeric_parse.md) |
+| **String Case Conversion** / 字符串大小写转换 | [string_case.md](en/string_case.md) | [string_case.md](zh-CN/string_case.md) |
 | **Regular Expressions (Design)** / 正则表达式（设计） | [regexp.md](en/regexp.md) | [regexp.md](zh-CN/regexp.md) |
 | **Typed Arrays** / 强类型动态数组 | [arrays.md](en/arrays.md) | [arrays.md](zh-CN/arrays.md) |
 | **Exceptions & Errors** / 异常与错误处理 | [exceptions.md](en/exceptions.md) | [exceptions.md](zh-CN/exceptions.md) |
 | **Standard Library** / 标准库 | [standard_library.md](en/standard_library.md) | [standard_library.md](zh-CN/standard_library.md) |
-| **UTC Date & Time (Design)** / UTC 日期与时间（设计） | [time.md](en/time.md) | [time.md](zh-CN/time.md) |
+| **UTC Date & Time** / UTC 日期与时间 | [time.md](en/time.md) | [time.md](zh-CN/time.md) |
 | **JSON & Dynamic Values (Design)** / JSON 与动态值（设计） | [json.md](en/json.md) | [json.md](zh-CN/json.md) |
 | **Byte Storage & Typed Views (Design)** / 字节存储与带类型视图（设计） | [byte_data.md](en/byte_data.md) | [byte_data.md](zh-CN/byte_data.md) |
 | **Toolchain Contracts** / 工具链契约 | [toolchain.md](en/toolchain.md) | [toolchain.md](zh-CN/toolchain.md) |

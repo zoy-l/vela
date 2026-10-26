@@ -67,6 +67,8 @@ enum class ArrayAccessError : std::uint8_t {
 
 enum class MutableStringError : std::uint8_t { NotMutableString, OutOfMemory };
 enum class StringJoinError : std::uint8_t { TypeMismatch, OutOfMemory };
+
+enum class StringCase : std::uint8_t { Lower, Upper };
 enum class ExpectedAlternative : std::uint8_t { Ok, Err };
 enum class ExpectedAccessError : std::uint8_t { NotExpected, InactiveAlternative };
 enum class CollectionError : std::uint8_t { NotCollection, TypeMismatch, OutOfMemory };
@@ -77,6 +79,8 @@ enum class SetOperation : std::uint8_t { Union, Intersection, Difference };
 
 class Heap final {
  public:
+  [[nodiscard]] StringObject* ConvertStringCase(StringObject& source,
+                                                StringCase conversion) noexcept;
   explicit Heap(std::size_t gc_threshold = kDefaultGcThreshold) noexcept;
   ~Heap();
 

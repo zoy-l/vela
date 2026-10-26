@@ -10,6 +10,7 @@
 #include <utf8proc.h>
 
 #include "base/builtin.h"
+#include "base/utf8.h"
 #include "runtime/builtins.h"
 #include "runtime/heap.h"
 #include "runtime/string.h"
@@ -23,10 +24,9 @@ using Step = std::expected<void, BuiltinError>;
 
 std::size_t Decode(std::string_view text, utf8proc_int32_t& point) {
   // 字符串在输入边界已验证；这里读取非空 UTF-8 后缀，不重复做全串验证。
-  const void* storage = text.data();
-  const auto* bytes = static_cast<const utf8proc_uint8_t*>(storage);
-  return static_cast<std::size_t>(
-      utf8proc_iterate(bytes, static_cast<utf8proc_ssize_t>(text.size()), &point));
+  const auto decoded = DecodeUtf8Prefix(text);
+  point = static_cast<utf8proc_int32_t>(decoded.value);
+  return decoded.width;
 }
 
 template <typename Visitor>

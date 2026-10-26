@@ -17,6 +17,8 @@
 
 namespace vela::vm::internal {
 
+enum class StandardClass : std::uint8_t { None, Error, DateParts };
+
 inline constexpr auto kNoImageId = std::numeric_limits<std::uint64_t>::max();
 inline constexpr std::string_view kImageMagic = "VELABC01";
 inline constexpr std::size_t kElementBytes =
@@ -57,7 +59,7 @@ std::expected<std::vector<T>, BinaryError> ReadNumbers(BinaryReader& reader) {
     ImageUnsigned<T> value = 0;
     for (std::size_t byte = 0; byte < sizeof(T); ++byte) {
       value |= static_cast<ImageUnsigned<T>>(std::to_integer<std::uint8_t>(
-                    bytes->subspan((index * sizeof(T)) + byte).front()))
+                   bytes->subspan((index * sizeof(T)) + byte).front()))
                << (byte * kByteBits);
     }
     result.at(index) = std::bit_cast<T>(value);

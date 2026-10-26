@@ -271,6 +271,10 @@ FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
 }
 
 const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
+  if (builtin == Builtin::StringToLowerCase || builtin == Builtin::StringToUpperCase) {
+    static const auto signature = Signature(Kind::String, "string", {});
+    return signature;
+  }
   return kSignatures.at(static_cast<std::size_t>(builtin));
 }
 
@@ -312,6 +316,8 @@ std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {
         {"codePoints", Builtin::StringCodePoints},
         {"graphemes", Builtin::StringGraphemes},
         {"graphemeSlice", Builtin::StringGraphemeSlice},
+        {"toLowerCase", Builtin::StringToLowerCase},
+        {"toUpperCase", Builtin::StringToUpperCase},
         {"slice", Builtin::StringSlice},
         {"indexOf", Builtin::StringIndexOf},
         {"includes", Builtin::StringIncludes},

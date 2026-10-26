@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <limits>
 #include <memory>
 #include <new>
 #include <span>
@@ -22,8 +21,6 @@
 namespace vela::runtime {
 namespace {
 
-constexpr std::size_t kMaximumStringLength =
-    std::numeric_limits<std::uint32_t>::max() - sizeof(StringObject);
 constexpr std::size_t kInitialMutableStringCapacity = 64;
 enum class TextContext : std::uint8_t { Interpolation, ArrayElement };
 

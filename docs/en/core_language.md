@@ -392,6 +392,11 @@ the value, including signed zero. These operations allocate no GC objects.
 Arithmetic, assignment, arguments, and results still forbid implicit numeric
 conversion. `is` and `as` do not perform numeric conversion.
 
+`int.parse` / `int.tryParse` and `double.parse` / `double.tryParse` explicitly
+convert complete strings to numbers. Integer parsing checks signed int64 bounds;
+tryParse returns null for invalid text. See [numeric parsing](numeric_parse.md)
+for radix selection, floating-point grammar, and errors.
+
 ## Ordered Set and Map
 
 ```typescript

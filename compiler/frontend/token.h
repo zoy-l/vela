@@ -116,7 +116,12 @@ enum class TokenKind : std::uint8_t {
   RightBracket,
 };
 
-enum class TokenRole : std::uint8_t { Ordinary, TypeDelimiter, PrefixOperator };
+enum class TokenRole : std::uint8_t {
+  Ordinary,
+  TypeDelimiter,
+  PrefixOperator,
+  ConditionalOperator,
+};
 
 struct Token final {
   // 字符串 token 保存已解码的 UTF-8 内容，其他 token 保存源码文本。

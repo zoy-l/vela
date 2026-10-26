@@ -280,6 +280,8 @@ const fraction: double = whole.toDouble();
 
 `int` 和 `double` 暴露 `toInt()` 与 `toDouble()` 方法。Double 转 int 向零截断；非有限数值（NaN/Infinity）以及超出 `[-2^63, 2^63)` 范围的数值抛出 `InvalidNumericConversion` 异常。Int 转 double 遵循 IEEE binary64 舍入规则，超过 53 位有效位时可能损失精度。同类型转换保持原值不变（包括带符号零）。这些转换操作不分配任何 GC 对象。算术运算、赋值、函数参数及返回值依然严禁隐式数值转换。`is` 和 `as` 运算符不执行数值转换。
 
+`int.parse` / `int.tryParse` 与 `double.parse` / `double.tryParse` 将完整字符串显式解析为数值。整数解析检查有符号 int64 边界，tryParse 对非法文本返回 null。进制选择、浮点语法和错误见[字符串数值解析](numeric_parse.md)。
+
 ## 有序 Set 与 Map
 
 ```typescript

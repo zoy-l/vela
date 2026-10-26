@@ -1110,6 +1110,29 @@ class LanguageServerTest(unittest.TestCase):
         self.assertIn("() => int[]", self.reply(messages, "value")["result"]["contents"]["value"])
         self.assertIn("shallow copy", self.reply(messages, "method")["result"]["contents"]["value"])
 
+    def test_numeric_case_and_date_members_share_checked_signatures(self) -> None:
+        source = ("func main(): int { const parsed = int.parse('42'); "
+                  "const text = 'Vela'.toLowerCase(); const parts = Date.toUTC(0); "
+                  "return parsed + parts.year; }")
+        messages = self.session([self.open(source),
+            self.symbol_query("completion", source, source.index("int.parse") + len("int."), "numbers"),
+            self.symbol_query("hover", source, source.index("int.parse") + len("int.p"), "parse"),
+            self.symbol_query("hover", source, source.index(".toLowerCase") + 2, "case"),
+            self.symbol_query("completion", source, source.index("Date.toUTC") + len("Date."), "date"),
+            self.symbol_query("completion", source, source.index("parts.year") + len("parts."), "parts")])
+        numbers = {item["label"] for item in self.reply(messages, "numbers")["result"]}
+        self.assertTrue({"parse", "tryParse"} <= numbers)
+        parse = self.reply(messages, "parse")["result"]["contents"]["value"]
+        self.assertIn("radix", parse)
+        self.assertIn("radix?: int?", parse)
+        self.assertIn("int", parse)
+        self.assertIn("Unicode", self.reply(messages, "case")["result"]["contents"]["value"])
+        date = {item["label"] for item in self.reply(messages, "date")["result"]}
+        self.assertTrue({"parse", "toISOString", "fromUTC", "toUTC", "now"} <= date)
+        parts = {item["label"] for item in self.reply(messages, "parts")["result"]}
+        self.assertTrue({"year", "month", "day", "hour", "minute", "second", "millisecond"} <= parts)
+        self.assertNotIn("yearValue", parts)
+
     def test_definition_accepts_identifier_end_before_punctuation_and_whitespace(self) -> None:
         source = ("class Box { public param value: int; }\n"
                   "func answer(): int { return 42; }\n"

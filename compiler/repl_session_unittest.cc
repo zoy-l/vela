@@ -60,6 +60,21 @@ TEST_F(ReplSessionTest, BuiltinMethodValuesKeepReceiversAndTargetsAcrossSubmissi
   EXPECT_EQ(output().str(), "42\n");
 }
 
+TEST_F(ReplSessionTest, ScalarIntrinsicsAndDatePartsPersistAcrossSubmissions) {
+  session().isolate().heap().SetGcThreshold(1);
+  Execute("const parse = int.parse;");
+  Execute("const upper = 'straße'.toUpperCase;");
+  Execute("const parts = Date.toUTC(-1);");
+  Execute("const format = Date.toISOString;");
+  Execute("func unrelated(): int { return 100; }");
+  session().isolate().heap().Collect();
+  Execute("parse('2a', 16)");
+  Execute("upper()");
+  Execute("parts.millisecond");
+  Execute("format(Date.fromUTC(1970, 1, 1))");
+  EXPECT_EQ(output().str(), "42\nSTRASSE\n999\n1970-01-01T00:00:00.000Z\n");
+}
+
 TEST_F(ReplSessionTest, ExistingClosuresKeepTargetsAndCapturesAfterNewFunctionsAndGlobals) {
   session().isolate().heap().SetGcThreshold(1);
   Execute(R"(func counter(): () => int {

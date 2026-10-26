@@ -1,8 +1,10 @@
 #include "base/utf8.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -65,25 +67,54 @@ std::optional<std::size_t> InvalidUtf8Offset(std::string_view text) noexcept {
   return std::nullopt;
 }
 
-void AppendUtf8(std::uint32_t point, std::string& text) {
-  if (point < kContinuationTag) {
-    text.push_back(static_cast<char>(point));
-  } else if (point < kThreeByteMinimum) {
-    text.push_back(static_cast<char>(kContinuationMask | (point >> kContinuationBits)));
-    text.push_back(static_cast<char>(kContinuationTag | (point & kContinuationPayload)));
-  } else if (point < kSupplementaryFirst) {
-    text.push_back(static_cast<char>(kThreeByteTag | (point >> (2 * kContinuationBits))));
-    text.push_back(static_cast<char>(kContinuationTag |
-                                     ((point >> kContinuationBits) & kContinuationPayload)));
-    text.push_back(static_cast<char>(kContinuationTag | (point & kContinuationPayload)));
-  } else {
-    text.push_back(static_cast<char>(kFourByteTag | (point >> (3 * kContinuationBits))));
-    text.push_back(static_cast<char>(kContinuationTag |
-                                     ((point >> (2 * kContinuationBits)) & kContinuationPayload)));
-    text.push_back(static_cast<char>(kContinuationTag |
-                                     ((point >> kContinuationBits) & kContinuationPayload)));
-    text.push_back(static_cast<char>(kContinuationTag | (point & kContinuationPayload)));
+Utf8Point DecodeUtf8Prefix(std::string_view text) noexcept {
+  const auto first = static_cast<unsigned char>(text.front());
+  if (first < kContinuationTag) {
+    return {.value = first, .width = 1};
   }
+  std::size_t width = 4;
+  auto mask = kFourBytePayload;
+  if (first < kThreeByteTag) {
+    width = 2;
+    mask = kTwoBytePayload;
+  } else if (first < kFourByteTag) {
+    width = 3;
+    mask = kThreeBytePayload;
+  }
+  std::uint32_t point = first & mask;
+  for (std::size_t index = 1; index < width; ++index) {
+    point = (point << kContinuationBits) |
+            (static_cast<unsigned char>(text.substr(index).front()) & kContinuationPayload);
+  }
+  return {.value = point, .width = width};
+}
+
+std::size_t EncodeUtf8(std::uint32_t point, std::span<char> output) noexcept {
+  const auto put = [&output](std::size_t index, std::uint32_t byte) {
+    output.subspan(index).front() = static_cast<char>(byte);
+  };
+  if (point < kContinuationTag) {
+    put(0, point);
+  } else if (point < kThreeByteMinimum) {
+    put(0, kContinuationMask | (point >> kContinuationBits));
+    put(1, kContinuationTag | (point & kContinuationPayload));
+  } else if (point < kSupplementaryFirst) {
+    put(0, kThreeByteTag | (point >> (2 * kContinuationBits)));
+    put(1, kContinuationTag | ((point >> kContinuationBits) & kContinuationPayload));
+    put(2, kContinuationTag | (point & kContinuationPayload));
+  } else {
+    put(0, kFourByteTag | (point >> (3 * kContinuationBits)));
+    put(1, kContinuationTag | ((point >> (2 * kContinuationBits)) & kContinuationPayload));
+    put(2, kContinuationTag | ((point >> kContinuationBits) & kContinuationPayload));
+    put(3, kContinuationTag | (point & kContinuationPayload));
+  }
+  return Utf8EncodedWidth(point);
+}
+
+void AppendUtf8(std::uint32_t point, std::string& text) {
+  std::array<char, 4> buffer{};
+  const auto width = EncodeUtf8(point, buffer);
+  text.append(buffer.data(), width);
 }
 
 std::size_t Utf8Length(std::string_view text) noexcept {

@@ -24,24 +24,6 @@ namespace {
 
 using Kind = frontend::TypeDescriptor::Kind;
 
-std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
-  std::string text = "(";
-  for (const auto& parameter : signature.parameters) {
-    if (text.back() != '(') {
-      text += ", ";
-    }
-    text += parameter.rest ? "..." : "";
-    text += parameter.name;
-    if (signature.optional_parameters.contains(parameter.name)) {
-      text += '?';
-    }
-    const auto type_name =
-        parameter.rest ? frontend::MakeArrayType(parameter.type).name : parameter.type.name;
-    text += ": " + type_name;
-  }
-  return text + "): " + signature.return_type.name;
-}
-
 void AddBuiltins(std::vector<Completion>& result, Kind kind) {
   if (kind == Kind::Invalid) {
     result.push_back({
@@ -83,6 +65,8 @@ void AddBuiltins(std::vector<Completion>& result, Kind kind) {
       "codePoints",
       "graphemes",
       "graphemeSlice",
+      "toLowerCase",
+      "toUpperCase",
   });
   for (const auto name : kNames) {
     if (const auto builtin = frontend::FindBuiltin(kind, name)) {

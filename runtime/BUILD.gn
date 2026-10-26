@@ -1,5 +1,25 @@
+action("unicode_case_data") {
+  script = "//tools/unicode_case.py"
+  inputs = [
+    "//third_party/unicode_data/manifest.json",
+    "//third_party/unicode_data/inputs/SpecialCasing.txt",
+    "//third_party/unicode_data/inputs/DerivedCoreProperties.txt",
+    "//third_party/unicode_data/LICENSE",
+    "//third_party/utf8proc/data/Makefile",
+  ]
+  outputs = [ "$target_gen_dir/unicode_case_data.h" ]
+  args = [
+    "--output",
+    rebase_path(outputs[0], root_build_dir),
+  ]
+}
+
 source_set("runtime") {
-  deps = [ "//third_party:utf8proc" ]
+  deps = [
+    ":unicode_case_data",
+    "//third_party:utf8proc",
+  ]
+  include_dirs = [ root_gen_dir ]
   public_deps = [
     "//base",
     "//third_party:abseil",
@@ -12,6 +32,8 @@ source_set("runtime") {
     "builtins.h",
     "collection_operations.cc",
     "collection_operations.h",
+    "date.cc",
+    "date.h",
     "element_storage.h",
     "error.cc",
     "error.h",
@@ -24,6 +46,7 @@ source_set("runtime") {
     "heap_collection.cc",
     "heap_exception.cc",
     "heap_string.cc",
+    "heap_string_case.cc",
     "heap_value_slots.cc",
     "isolate.cc",
     "isolate.h",
@@ -31,6 +54,8 @@ source_set("runtime") {
     "layout_transaction.h",
     "native_function.cc",
     "native_function.h",
+    "numeric_parse.cc",
+    "numeric_parse.h",
     "object.h",
     "random.cc",
     "random.h",
@@ -53,17 +78,21 @@ executable("runtime_tests") {
   sources = [
     "array_unittest.cc",
     "collection_unittest.cc",
+    "date_unittest.cc",
     "exception_unittest.cc",
     "future_unittest.cc",
     "layout_transaction_unittest.cc",
     "numeric_conversion_unittest.cc",
+    "numeric_parse_unittest.cc",
     "random_unittest.cc",
     "rooted_value_unittest.cc",
     "runtime_unittest.cc",
+    "string_case_unittest.cc",
     "string_unittest.cc",
   ]
   deps = [
     ":runtime",
     "//third_party:gtest_main",
+    "//third_party:utf8proc",
   ]
 }

@@ -207,6 +207,12 @@ void TypeChecker::AddDiagnostic(SourceLocation location, std::string message) {
 TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function,
                                                         const FunctionInfo* context) {
   FunctionInfo info;
+  info.intrinsic = function.intrinsic;
+  if (function.intrinsic == Builtin::IntParse || function.intrinsic == Builtin::IntTryParse) {
+    info.optional_parameters.insert("radix");
+  } else if (function.intrinsic == Builtin::DateFromUTC) {
+    info.optional_parameters = {"hour", "minute", "second", "millisecond"};
+  }
   info.visibility = function.visibility;
   info.storage = function.storage;
   info.is_getter = function.is_getter;

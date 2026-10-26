@@ -5,6 +5,8 @@
 
 namespace vela {
 
+inline constexpr std::size_t kUtcComponentCount = 7;
+
 // 编译器与 VM 共享的内建调用编号，不携带前端或运行时对象。
 enum class Builtin : std::uint8_t {
   ScalarToString,
@@ -54,6 +56,16 @@ enum class Builtin : std::uint8_t {
   ArrayReserve,
   ArrayMutation,
   ArrayCheckMutation,
+  StringToLowerCase,
+  StringToUpperCase,
+  IntParse,
+  IntTryParse,
+  DoubleParse,
+  DoubleTryParse,
+  DateParse,
+  DateToISOString,
+  DateFromUTC,
+  DateToUTC,
   Count,
 };
 
@@ -62,6 +74,12 @@ enum class Builtin : std::uint8_t {
     case Builtin::NewMutableString:
       return 0;
     case Builtin::ScalarToString:
+    case Builtin::StringToLowerCase:
+    case Builtin::StringToUpperCase:
+    case Builtin::DoubleParse:
+    case Builtin::DoubleTryParse:
+    case Builtin::DateParse:
+    case Builtin::DateToISOString:
     case Builtin::MutableStringToString:
     case Builtin::StringLength:
     case Builtin::StringByteLength:
@@ -79,6 +97,9 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayMutation:
       return 1;
     case Builtin::ArrayJoin:
+    case Builtin::IntParse:
+    case Builtin::IntTryParse:
+    case Builtin::DateToUTC:
     case Builtin::MutableStringAppend:
     case Builtin::StringIndexOf:
     case Builtin::StringIncludes:
@@ -111,6 +132,8 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayFill:
     case Builtin::ArraySplice:
       return 4;
+    case Builtin::DateFromUTC:
+      return kUtcComponentCount;
     case Builtin::Count:
       return 0;
   }

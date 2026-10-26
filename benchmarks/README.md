@@ -174,3 +174,21 @@ from any working directory while the source checkout remains available. To add
 a small workload, place its `.vela` file here and register its applicable cases
 with an expected result in `vm_benchmark.cc`. Paired workloads belong in
 `workloads/`, with matching kernels and size/checksum records.
+
+`standard_value_benchmark.cc` measures the production compiler/VM paths for
+`case/*`, `parse/*`, `date/*`, and `clock/*`. Casing covers unchanged ASCII,
+changing ASCII, simple Unicode, expanding mappings, and contextual runs at
+8, 256, and 4096 input units. Parsing covers decimal/hexadecimal integers,
+floating point, and an invalid tryParse. Calendar cases separate strict parsing,
+canonical formatting, UTC construction, and decomposition. Clock cases isolate
+the existing wall and monotonic APIs.
+
+Compilation and setup are excluded from steady timing. Every iteration checks
+its integer result; cases that return strings check output byte count, with
+content correctness covered by the regression fixtures. `first_call_gc_bytes`
+reports the first execution's GC-accounted allocation, `input_bytes` and
+`output_bytes` describe casing size, and `register_bytes` reports retained VM
+register capacity. Native allocator bookkeeping and temporary backend allocations
+are excluded. A final collection verifies zero additional retained heap bytes.
+The rolling summary retains aggregate timings, variation, these counters, and
+the before/after synchronous and clock regression comparison.

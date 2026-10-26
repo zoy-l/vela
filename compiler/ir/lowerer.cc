@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 #include "base/async_operation.h"
+#include "base/builtin.h"
 #include "base/callable.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
@@ -278,6 +279,10 @@ Class Lowerer::BuildClass(const frontend::Class& source_class,
       source_.sources.at(source_class.location.source_id).path == frontend::kErrorSourceName) {
     output_class.kind = Class::Kind::RuntimeError;
   }
+  if (!source_.sources.empty() &&
+      source_.sources.at(source_class.location.source_id).path == "builtin:DateParts") {
+    output_class.kind = Class::Kind::DateParts;
+  }
   if (!class_info.interfaces.empty()) {
     output_class.dispatch_targets.resize(interface_method_ids_.size(), kInvalidFunctionTarget);
   }
@@ -512,6 +517,31 @@ void Lowerer::LowerFunction(const frontend::Function& source,
   const bool has_receiver = owner != nullptr && source.storage == frontend::MemberStorage::Instance;
   function.parameter_count = static_cast<std::uint32_t>(
       source.parameters.size() + ((has_receiver || lambda != nullptr) ? 1 : 0));
+  if (source.intrinsic) {
+    const auto builtin = *source.intrinsic;
+    auto result = function.parameter_count;
+    if (builtin == Builtin::DateToUTC) {
+      function.instructions.push_back({
+          .opcode = Opcode::LoadInt,
+          .dst = result,
+          .immediate = class_ids_.at("DateParts"),
+          .location = source.location,
+      });
+      ++result;
+    }
+    function.instructions.push_back({
+        .opcode = Opcode::BuiltinCall,
+        .dst = result,
+        .lhs = 0,
+        .index = static_cast<std::uint32_t>(builtin),
+        .location = source.location,
+    });
+    function.instructions.push_back(
+        {.opcode = Opcode::Return, .dst = result, .location = source.location});
+    function.register_count = result + 1;
+    StoreFunction(std::move(function));
+    return;
+  }
   if (!source.native_symbol.empty()) {
     LowerNativeFunction(source, function);
     StoreFunction(std::move(function));
@@ -907,9 +937,10 @@ Lowerer::LoweredValue Lowerer::LowerObjectMember(const frontend::Expression& exp
     AddDiagnostic(expression.location, "member access requires a class value");
     return {.reg = 0, .type = InvalidType()};
   }
-  const auto object_type = object.type.nullable
-                               ? model_.types.at(object.type.name.substr(0, object.type.name.size() - 1))
-                               : object.type;
+  const auto object_type =
+      object.type.nullable
+          ? model_.types.at(object.type.name.substr(0, object.type.name.size() - 1))
+          : object.type;
   const frontend::ClassDescriptor* class_info = FindClass(object_type.name);
   const std::optional<FieldId> field =
       class_info == nullptr ? std::nullopt : FindField(*class_info, expression.text);
@@ -1024,8 +1055,7 @@ Lowerer::LoweredValue Lowerer::LowerSpecialCall(const frontend::Expression& expr
       const auto& base = model_.classes.at(*owner.base_class);
       const auto* receiver = FindLocal("this");
       if (receiver != nullptr) {
-        return LowerConstructorCall(expression.arguments,
-                                    model_.argument_order.at(&expression),
+        return LowerConstructorCall(expression.arguments, model_.argument_order.at(&expression),
                                     expression.location, base, receiver->reg);
       }
     }
@@ -1041,7 +1071,8 @@ Lowerer::LoweredValue Lowerer::LowerSpecialCall(const frontend::Expression& expr
       expression.callee->object->text == "super") {
     const auto member = model_.super_members.find(expression.callee.get());
     if (member != model_.super_members.end()) {
-      const auto& signature = model_.classes.at(member->second.owner).methods.at(member->second.member);
+      const auto& signature =
+          model_.classes.at(member->second.owner).methods.at(member->second.member);
       const auto* receiver = FindLocal("this");
       if (receiver != nullptr) {
         const LoweredValue receiver_value{.reg = receiver->reg, .type = receiver->type};
@@ -1212,6 +1243,18 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
     });
   }
   const auto& order = model_.argument_order.at(&expression);
+  if (function.intrinsic) {
+    for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+      if (function.optional_parameters.contains(function.parameters.at(index).name)) {
+        Emit({
+            .opcode =
+                function.intrinsic == Builtin::DateFromUTC ? Opcode::LoadInt : Opcode::LoadNull,
+            .dst = static_cast<RegisterId>(base + receiver_count + index),
+            .location = expression.location,
+        });
+      }
+    }
+  }
   for (std::size_t source_index = 0; source_index < expression.arguments.size(); ++source_index) {
     const auto& argument = expression.arguments.at(source_index);
     const auto index = order.at(source_index);
@@ -1679,8 +1722,8 @@ Lowerer::LoweredValue Lowerer::LowerCompoundAssignment(const frontend::Expressio
     }
     const auto object = LowerExpression(*left_expression.object);
     const auto* class_info = FindClass(object.type.name);
-    const auto field = class_info == nullptr ? std::nullopt
-                                             : FindField(*class_info, left_expression.text);
+    const auto field =
+        class_info == nullptr ? std::nullopt : FindField(*class_info, left_expression.text);
     if (!field || class_info == nullptr) {
       AddDiagnostic(left_expression.location, "unknown field during compound assignment lowering");
       return {.reg = 0, .type = InvalidType()};

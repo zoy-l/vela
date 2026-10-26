@@ -41,6 +41,8 @@ Finally 块在正常完成、return、break、continue 以及异常传播时均�
 
 未捕获的执行结果会保留原始运行时状态（对于脚本显式 throw 则记录为 `Thrown`）以及带源码感知的位置调用栈。自动穿过 finally 向上冒泡会完整保留原始抛出异常的栈帧，即使 finally 中调用了其它函数或处理了另一个嵌套错误。显式的 `throw value` 会开启一个新的抛出点。失败的惰性全局初始化器仅重置实际展开的栈帧，以便捕获该错误的调用者能够重新尝试初始化。
 
+[数值解析](numeric_parse.md)定义 `IntParseError`、`DoubleParseError` 和 `InvalidRadix`，[UTC 转换](time.md)定义 `DateParseError` 与 `DateRangeError`，均沿用相同的 Error/catch 机制。tryParse 仅将非法数字文本或 int64 溢出转为 null，非法进制仍会抛出错误。
+
 ## 表示法与性能
 
 底层实现遵循 JVM 的[异常表与显式栈展开机制](https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-2.html#jvms-2.10)。中间表示（IR）指令记录其所属的最内层异常处理器。控制流图（CFG）构建在活跃变量分析、死代码消除和寄存器分配之前就已经纳入了异常后继边。指令紧凑化过程会将异常处理器目标与普通跳转统一重映射。字节码编码生成已排序且互不重叠的受保护地址区间；字节码加载器会严密校验每个区间与 Catch 条目。虚拟机仅在发生错误时通过二分查找检索这些表。普通指令分派既无需压入/弹出处理器记录，也不注册待处理异常根。

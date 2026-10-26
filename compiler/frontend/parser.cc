@@ -316,15 +316,17 @@ std::unique_ptr<Statement> Parser::ParseForEachStatement() {
   statement->location = Previous().location;
   statement->binding = BindingKind::Constant;
   if (Match(TokenKind::LeftBracket)) {
-    const auto first = Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)
-                           ? std::optional<Token>(tokens_.subspan(current_++).front())
-                           : std::nullopt;
+    const auto first =
+        Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)
+            ? std::optional<Token>(tokens_.subspan(current_++).front())
+            : std::nullopt;
     if (!first || !Expect(TokenKind::Comma, "expected ',' in dictionary binding")) {
       return nullptr;
     }
-    const auto second = Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)
-                            ? std::optional<Token>(tokens_.subspan(current_++).front())
-                            : std::nullopt;
+    const auto second =
+        Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)
+            ? std::optional<Token>(tokens_.subspan(current_++).front())
+            : std::nullopt;
     if (!second || !Expect(TokenKind::RightBracket, "expected ']' after dictionary binding")) {
       return nullptr;
     }
@@ -344,7 +346,8 @@ std::unique_ptr<Statement> Parser::ParseForEachStatement() {
     return nullptr;
   }
   statement->iterable = ParseExpression();
-  if (!statement->iterable || !Expect(TokenKind::RightParen, "expected ')' after collection loop")) {
+  if (!statement->iterable ||
+      !Expect(TokenKind::RightParen, "expected ')' after collection loop")) {
     return nullptr;
   }
   statement->then_branch = ParseStatement();
@@ -527,12 +530,12 @@ std::unique_ptr<Expression> Parser::ParseExpression() {
 std::unique_ptr<Expression> Parser::ParseAssignment() {
   std::unique_ptr<Expression> expression = ParseConditional();
   const auto is_assignment = [this]() {
-    return Check(TokenKind::Equal) || Check(TokenKind::PlusEqual) ||
-           Check(TokenKind::MinusEqual) || Check(TokenKind::StarEqual) ||
-           Check(TokenKind::SlashEqual) || Check(TokenKind::PercentEqual) ||
-           Check(TokenKind::AmpersandEqual) || Check(TokenKind::PipeEqual) ||
-           Check(TokenKind::CaretEqual) || Check(TokenKind::ShiftLeftEqual) ||
-           Check(TokenKind::ShiftRightEqual) || Check(TokenKind::ShiftUnsignedRightEqual);
+    return Check(TokenKind::Equal) || Check(TokenKind::PlusEqual) || Check(TokenKind::MinusEqual) ||
+           Check(TokenKind::StarEqual) || Check(TokenKind::SlashEqual) ||
+           Check(TokenKind::PercentEqual) || Check(TokenKind::AmpersandEqual) ||
+           Check(TokenKind::PipeEqual) || Check(TokenKind::CaretEqual) ||
+           Check(TokenKind::ShiftLeftEqual) || Check(TokenKind::ShiftRightEqual) ||
+           Check(TokenKind::ShiftUnsignedRightEqual);
   };
   if (is_assignment()) {
     const Token operator_token = tokens_.subspan(current_++).front();
@@ -555,11 +558,13 @@ std::unique_ptr<Expression> Parser::ParseConditional() {
   if (!Match(TokenKind::Question)) {
     return expression;
   }
+  AnnotatePrevious(TokenRole::ConditionalOperator);
   const auto location = Previous().location;
   auto when_true = ParseExpression();
   if (!when_true || !Expect(TokenKind::Colon, "expected ':' in conditional expression")) {
     return nullptr;
   }
+  AnnotatePrevious(TokenRole::ConditionalOperator);
   auto when_false = ParseConditional();
   if (!when_false) {
     return nullptr;

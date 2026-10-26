@@ -46,6 +46,11 @@ the code. Domain APIs document their own named codes. An explicitly constructed
 Error retains its supplied code unchanged. Custom error types require no inheritance or common
 base class. Native failures and runtime checked operations use the same catch path.
 
+[Numeric parsing](numeric_parse.md) defines `IntParseError`, `DoubleParseError`,
+and `InvalidRadix`; [UTC conversion](time.md) defines `DateParseError` and
+`DateRangeError`. These use the same Error/catch mechanism. tryParse turns only
+invalid numeric text or int64 overflow into null; invalid radix still throws.
+
 Async completion errors use `FutureAlreadyCompleted` for a second completion request
 and `FutureSelfAdoption` for a direct or indirect adoption cycle. `TimeoutException`
 is an independent throwable class whose default code is `Timeout`. An external

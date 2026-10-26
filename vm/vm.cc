@@ -122,8 +122,8 @@ bool IsEqualValue(runtime::Value left, runtime::Value right) noexcept {
       result = left ^ right;
       break;
     case OpCode::ShiftLeftInt:
-      result = static_cast<std::int64_t>(static_cast<std::uint64_t>(left) <<
-                                         (static_cast<std::uint64_t>(right) & kIntShiftMask));
+      result = static_cast<std::int64_t>(static_cast<std::uint64_t>(left)
+                                         << (static_cast<std::uint64_t>(right) & kIntShiftMask));
       break;
     case OpCode::ShiftRightInt:
       result = left >> (static_cast<std::uint64_t>(right) & kIntShiftMask);
@@ -957,6 +957,10 @@ StepResult Execution::AllocateCollection(ActiveFrame& active, FutureRegisters re
 
 StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) {
   const auto builtin = static_cast<Builtin>(DecodeB(instruction));
+  if (builtin == Builtin::DateParse || builtin == Builtin::DateToISOString ||
+      builtin == Builtin::DateFromUTC || builtin == Builtin::DateToUTC) {
+    return ExecuteCalendar(active, instruction);
+  }
   auto values = active.frame.registers();
   const auto arguments = values.subspan(DecodeC(instruction), BuiltinArity(builtin));
   const auto result = [&]() -> std::expected<runtime::Value, runtime::BuiltinError> {
@@ -984,6 +988,12 @@ StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instructio
         return std::unexpected(ExecutionStatus::InvalidNumericConversion);
       case runtime::BuiltinError::ConcurrentModification:
         return std::unexpected(ExecutionStatus::ConcurrentModification);
+      case runtime::BuiltinError::IntParseError:
+        return std::unexpected(ExecutionStatus::IntParseError);
+      case runtime::BuiltinError::DoubleParseError:
+        return std::unexpected(ExecutionStatus::DoubleParseError);
+      case runtime::BuiltinError::InvalidRadix:
+        return std::unexpected(ExecutionStatus::InvalidRadix);
     }
   }
   values.subspan(DecodeA(instruction)).front() = *result;

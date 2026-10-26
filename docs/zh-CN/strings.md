@@ -57,9 +57,9 @@ const emoji = '\u{1F600}';
 
 由 GC 堆支持的每个分配输入必须始终保持被保根状态，直至该次分配完成。虚拟机确保接收者、实参、插值片段、数组元素以及分隔符均从已注册的栈帧中保持可达。目标寄存器在分配完成后才被写入，即使裸字节码中目标寄存器与输入寄存器存在别名冲突也能安全执行。宿主环境必须在下一次内存分配或垃圾回收前对 VM 返回的值进行保根。底层堆字符串/构建器接口接收合法的 UTF-8 序列；来自外部不受信任的原生输入必须先通过 `InvalidUtf8Offset` 进行校验。当前源文件词法分析器是外部文本进入系统的安全校验边界。
 
-## 规划中的字符串 API
+## 大小写转换与规划中的匹配 API
 
-Unicode `toLowerCase()` / `toUpperCase()` 见[字符串大小写转换设计](string_case.md)。Dart 风格 RegExp 与 RegExpMatch 见[正则表达式设计](regexp.md)。两者均为设计规格，尚不属于上文列出的已实现方法。
+`text.toLowerCase(): string` 与 `text.toUpperCase(): string` 实现 Unicode 18.0.0 默认完整大小写转换，包括展开映射及 Final_Sigma，不依赖 locale，也不做规范化。详见[字符串大小写转换](string_case.md)。Dart 风格 RegExp 与 RegExpMatch 仍为尚未实现的[正则表达式设计](regexp.md)。
 
 ## 示例
 

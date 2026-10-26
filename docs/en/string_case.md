@@ -2,9 +2,7 @@
 
 [**English**](string_case.md) | [简体中文](../zh-CN/string_case.md)
 
-> Status: design specification. The two case-conversion methods below are not implemented. Existing string APIs are documented in [Vela strings](strings.md).
-
-Vela adds Dart-style `toLowerCase()` and `toUpperCase()` instance methods to
+Vela provides Dart-style `toLowerCase()` and `toUpperCase()` instance methods on
 immutable `string`. Both use locale-independent Unicode default case conversion,
 including multi-code-point mappings and language-independent contextual rules.
 They return strings and do not modify the receiver.
@@ -33,11 +31,11 @@ comparison APIs. These methods require neither dynamic nor JSON. The
 
 The receiver must be a non-null string; nullable receivers use existing
 null-safe access or refinement. Neither method takes arguments. Wrong static
-receivers or arguments are diagnosed by the frontend; dynamic calls perform
-the same runtime checks. Results are ordinary immutable UTF-8 strings usable
+receivers or arguments are diagnosed by the frontend. Checked builtin calls
+also validate runtime operand types. Results are ordinary immutable UTF-8 strings usable
 in fields, arrays, captures, and native string calls.
 
-Apply the Unicode default conversion for the pinned Unicode data version:
+Apply the Unicode default conversion for pinned Unicode 18.0.0:
 unconditional full mappings plus language-independent contextual mappings,
 including Final_Sigma. Do not apply Turkish, Azerbaijani, Lithuanian, or other
 locale-specific rules. In particular, default lowercase I becomes i, while
@@ -59,7 +57,7 @@ immutable string; object allocation identity is not part of the API contract.
 
 RegExp ignore-case matching must not implement comparison by converting the
 whole input with these methods. Expansions change offsets and do not implement
-PCRE2's caseless matching rules.
+the proposed RegExp API's caseless matching rules.
 
 ## Unicode data and implementation
 
@@ -87,8 +85,8 @@ not in each runtime conversion.
 
 Record the UCD release, input identities, generated output, generator, and
 Unicode data license in the existing dependency/build records. Require the
-supplement and utf8proc Unicode versions to agree. PCRE2's own Unicode table
-version is separately pinned and need not be identical; it implements regex
+supplement and utf8proc Unicode versions to agree. The planned PCRE2-backed
+RegExp engine will pin its Unicode tables separately; they need not be identical because they implement regex
 matching, not this conversion API. A Unicode update is observable, participates
 in build/cache identity, and requires fixture review. Never select mappings
 from the host OS, browser, or locale or download data at runtime. Host C/C++
@@ -110,19 +108,22 @@ existing external boundaries; conversion does not repeat full UTF-8 validation
 for every internal call. Unicode table and algorithm invariants are internal
 development contracts, not user-triggerable fatal checks.
 
-## Implementation and completion
+## Integration and validation
 
-| Stage | Required completion |
-| --- | --- |
-| Dependencies and data | Reuse pinned utf8proc; manage matching-version UCD inputs, Unicode license, deterministic generation, and generated full/context tables through the dependency/GN workflow |
-| Frontend and signatures | Register both methods as string builtins and share their zero-argument string signatures with editor/documentation consumers |
-| Runtime | Implement full mappings, contextual casing, output sizing, allocation/rooting, and ordinary allocation errors |
-| IR and VM | Connect both builtin IDs, allocation/throwing effects, source-order evaluation, and register-alias safety |
-| Images and caches | Validate the new builtin IDs and operands; include code and Unicode data in build/cache identity, updating the image version when required |
-| Tooling | Complete member completion, hover, diagnostics, generated documentation, formatting, debugger evaluation, and persistent REPL use |
-| Delivery | Add `examples/string_case.vela`; mark the roadmap implemented only after all paths and required checks pass |
+The methods use checked string builtin signatures shared by the frontend, IR,
+VM, and tooling. Method values, member completion, hover, documentation,
+formatting, debugger queries, and persistent REPL use follow the existing
+string-method paths. Bytecode images validate builtin IDs and operands;
+cache identity includes the generator and pinned input manifest.
 
-Required tests cover ASCII, empty/already-converted text, uncased scripts, sharp
+`DEPS` synchronizes checksummed UCD inputs through
+[`tools/unicode_case.py`](../../tools/unicode_case.py). GN generates
+`gen/runtime/unicode_case_data.h` offline for each output directory.
+[`third_party/unicode_data/manifest.json`](../../third_party/unicode_data/manifest.json)
+records input identities and the Unicode data license. Run
+[`examples/string_case.vela`](../../examples/string_case.vela) for the public API.
+
+Tests cover ASCII, empty/already-converted text, uncased scripts, sharp
 s expansion, dotted I expansion, sigma in final/non-final positions, sigma with
 Case_Ignorable context, supplementary-plane mappings, combining sequences,
 NUL, non-normalization, idempotence, receiver immutability, and wrong-argument
@@ -132,11 +133,20 @@ mapping coverage, and contextual-property ranges. Stress allocation, output-size
 checks, GC during conversion,
 aliased VM registers, typed containers, fresh-Isolate images, and REPL reuse.
 
-At implementation completion run relevant Debug/Release regressions, tooling
-tests, and repository static checks. Release benchmarks measure unchanged ASCII,
-changing ASCII, non-ASCII mappings, expanding mappings, and contextual runs;
-report allocations, output bytes, and scaling with input size. No implementation
-or benchmark results are claimed by this specification.
+Release benchmarks measure unchanged ASCII, changing ASCII, non-ASCII mappings,
+expanding mappings, and contextual runs at three input sizes. Measurement
+boundaries and retained results are documented in
+[the benchmark guide](../../benchmarks/README.md).
+
+On the recorded Windows x64 Ryzen 9 7900X Release run, 16,384 input bytes took
+302 µs for unchanged ASCII (zero first-call GC bytes), 582 µs for changing ASCII,
+and 311 µs for simple Unicode mappings. The 20,480-byte contextual case took
+612 µs; the 8,192-byte expanding case produced 24,576 bytes in 81 µs. Across
+256 and 4096 input units, time increased approximately with input size. These
+measurements include VM execution and GC; counters exclude native allocation
+overhead. All cases retained zero additional heap bytes after collection.
+Exact medians, variation, sizes, and machine/toolchain settings are in
+[`rolling_summary.json`](../../benchmarks/results/rolling_summary.json).
 
 ## References
 

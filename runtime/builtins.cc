@@ -1,4 +1,5 @@
 #include "runtime/builtins.h"
+#include "runtime/numeric_parse.h"
 
 #include <array>
 #include <cmath>
@@ -178,6 +179,25 @@ Result ConvertNumber(NumericConversion conversion, Value value) {
 
 Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   switch (builtin) {
+    case Builtin::IntParse:
+    case Builtin::IntTryParse:
+    case Builtin::DoubleParse:
+    case Builtin::DoubleTryParse:
+      return ExecuteNumericParse(builtin, arguments);
+    case Builtin::StringToLowerCase:
+    case Builtin::StringToUpperCase: {
+      const auto source = arguments.front();
+      if (!source.IsString()) {
+        return std::unexpected(BuiltinError::TypeError);
+      }
+      auto* converted = heap.ConvertStringCase(
+          *source.AsString(),
+          builtin == Builtin::StringToLowerCase ? StringCase::Lower : StringCase::Upper);
+      if (converted == nullptr) {
+        return std::unexpected(BuiltinError::OutOfMemory);
+      }
+      return Value::String(converted);
+    }
     case Builtin::ArraySlice:
     case Builtin::ArrayFill:
     case Builtin::ArrayReverse:

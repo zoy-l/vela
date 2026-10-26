@@ -14,6 +14,7 @@
 
 #include "base/binary.h"
 #include "base/callable.h"
+#include "runtime/date.h"
 #include "runtime/error.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
@@ -35,10 +36,13 @@ std::expected<bool, BinaryError> ReadFlag(BinaryReader& reader) {
 
 std::expected<runtime::ClassLayout*, BinaryError> ReadClass(BinaryReader& reader,
                                                             runtime::Isolate& isolate) {
-  const auto standard_error = ReadFlag(reader);
+  const auto standard = reader.Read<std::uint8_t>();
   const auto fields = reader.Read<std::uint32_t>();
-  if (!standard_error) {
-    return std::unexpected(standard_error.error());
+  if (!standard) {
+    return std::unexpected(standard.error());
+  }
+  if (*standard > static_cast<std::uint8_t>(StandardClass::DateParts)) {
+    return std::unexpected(reader.Error("invalid standard class kind"));
   }
   if (!fields) {
     return std::unexpected(fields.error());
@@ -79,7 +83,7 @@ std::expected<runtime::ClassLayout*, BinaryError> ReadClass(BinaryReader& reader
   }
   options.interfaces = std::move(*interfaces);
   options.dispatch_targets = std::move(*dispatch);
-  if (*standard_error) {
+  if (*standard == static_cast<std::uint8_t>(StandardClass::Error)) {
     constexpr auto error_fields =
         std::to_array({runtime::kErrorMessageField, runtime::kErrorCodeField});
     if (*fields != runtime::kErrorFieldCount || !std::ranges::equal(*references, error_fields) ||
@@ -87,6 +91,13 @@ std::expected<runtime::ClassLayout*, BinaryError> ReadClass(BinaryReader& reader
       return std::unexpected(reader.Error("invalid standard Error layout"));
     }
     return &isolate.error_layout();
+  }
+  if (*standard == static_cast<std::uint8_t>(StandardClass::DateParts)) {
+    if (*fields != runtime::kDatePartsFieldCount || !references->empty() || options.callable ||
+        !options.interfaces.empty() || !options.dispatch_targets.empty()) {
+      return std::unexpected(reader.Error("invalid standard DateParts layout"));
+    }
+    return &isolate.date_parts_layout();
   }
   return isolate.CreateClassLayout(*fields, *references, std::move(options));
 }

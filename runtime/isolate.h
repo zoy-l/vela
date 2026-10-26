@@ -12,8 +12,8 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include "runtime/heap.h"
 #include "runtime/future.h"
+#include "runtime/heap.h"
 #include "runtime/native_function.h"
 #include "runtime/object.h"
 #include "runtime/random.h"
@@ -41,6 +41,10 @@ class Isolate final {
   [[nodiscard]] const Heap& heap() const noexcept { return heap_; }
   [[nodiscard]] ClassLayout& error_layout() noexcept { return *error_layout_; }
   [[nodiscard]] const ClassLayout& error_layout() const noexcept { return *error_layout_; }
+  [[nodiscard]] ClassLayout& date_parts_layout() noexcept { return *date_parts_layout_; }
+  [[nodiscard]] const ClassLayout& date_parts_layout() const noexcept {
+    return *date_parts_layout_;
+  }
   [[nodiscard]] Random& random() noexcept { return random_; }
   [[nodiscard]] FutureScheduler& scheduler() noexcept { return scheduler_; }
   [[nodiscard]] std::ostream& output() noexcept;
@@ -63,6 +67,7 @@ class Isolate final {
   std::vector<std::unique_ptr<CollectionLayout>> collection_layouts_;
   absl::flat_hash_map<std::string, std::shared_ptr<const NativeFunction>> natives_;
   ClassLayout* error_layout_ = nullptr;
+  ClassLayout* date_parts_layout_ = nullptr;
   Random random_;
   FutureScheduler scheduler_;
   std::ostream* output_ = nullptr;

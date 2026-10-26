@@ -30,6 +30,29 @@ TEST(FormatterTest, UsesParserRolesForGenericsAndPrefixOperators) {
   EXPECT_TRUE(result->contains("return -a.a;"));
 }
 
+TEST(FormatterTest, SpacesConditionalOperatorsWithoutChangingNullableTypesOrNamedArguments) {
+  const auto result = FormatSource(
+      "func choose(value:int?,flag:bool):int?{return flag?(value??0):flag?null:-1;}"
+      "func main():int{return choose(value:true?1:2,flag:true)??0;}");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(*result,
+            "func choose(value: int?, flag: bool): int? {\n"
+            "  return flag ? (value ?? 0) : flag ? null : -1;\n}\n\n"
+            "func main(): int {\n  return choose(value: true ? 1 : 2, flag: true) ?? 0;\n}\n");
+  const auto repeated = FormatSource(*result);
+  ASSERT_TRUE(repeated);
+  EXPECT_EQ(*repeated, *result);
+}
+
+TEST(FormatterTest, ConditionalColonDoesNotEndASwitchCaseLabel) {
+  const auto result =
+      FormatSource("func main():int{switch(1){case true?1:2:return 42;default:return 0;}}");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(*result,
+            "func main(): int {\n  switch (1) {\n    case true ? 1 : 2:\n"
+            "      return 42;\n    default:\n      return 0;\n  }\n}\n");
+}
+
 TEST(FormatterTest, RetainsCommentPlacementAndEscapeSpellings) {
   constexpr std::string_view kSource =
       "// header\r\nfunc main():void{const text=\"你好\\u0041 ${\"x\" /*inside*/}\"; // tail\r\n"

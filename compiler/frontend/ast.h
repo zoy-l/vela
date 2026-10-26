@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "base/builtin.h"
+
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_file.h"
 
@@ -174,6 +176,8 @@ struct Function final {
   MemberStorage storage = MemberStorage::Instance;
   ExportKind export_kind = ExportKind::Local;
   std::string native_symbol;
+  // 仅标准声明生产者设置；源码不能声明或覆盖 intrinsic。
+  std::optional<Builtin> intrinsic;
   Role role = Role::Ordinary;
   bool is_async = false;
   bool is_override = false;

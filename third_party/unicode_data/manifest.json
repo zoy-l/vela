@@ -1,0 +1,15 @@
+{
+  "unicode_version": "18.0.0",
+  "license": "Unicode-3.0",
+  "license_sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96",
+  "files": {
+    "SpecialCasing.txt": {
+      "url": "https://www.unicode.org/Public/18.0.0/ucd/SpecialCasing.txt",
+      "sha256": "8538dea57c184f1ef3783885ea79677b10f6efa06423717157e63712f14d1ad2"
+    },
+    "DerivedCoreProperties.txt": {
+      "url": "https://www.unicode.org/Public/18.0.0/ucd/DerivedCoreProperties.txt",
+      "sha256": "09c928886a178fcafd93c29e4bd59073a058e5a100b716d425cb563ab50f68c9"
+    }
+  }
+}

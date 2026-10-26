@@ -149,7 +149,7 @@ class SemanticIndex final {
   [[nodiscard]] std::size_t TokenAt(SourceLocation location) const;
   [[nodiscard]] const frontend::Token* QueryToken(std::size_t offset) const;
   [[nodiscard]] std::string DocumentationAt(SourceLocation location) const;
-  [[nodiscard]] std::string ClassDetail(const frontend::Class& declaration) const;
+  [[nodiscard]] Completion ClassCompletion(const frontend::Class& declaration) const;
   [[nodiscard]] std::string DefaultValue(const frontend::Expression& expression) const;
   void MarkTypeParameters(SourceLocation location, std::span<const std::string> parameters);
   [[nodiscard]] std::optional<Completion> BuiltinCompletion(const frontend::Token& token) const;
@@ -160,6 +160,9 @@ class SemanticIndex final {
   std::size_t AddSymbol(SourceLocation location, Completion completion);
   void AddReference(SourceLocation location, std::string_view name);
   void CollectDeclarations();
+  void BindIntrinsicSignature(std::size_t symbol,
+                              const frontend::Class& owner,
+                              const frontend::Function& method);
   void CollectEnumMembers(const frontend::Enum& declaration);
   void CollectParameters(std::size_t symbol, const frontend::Function& function);
   void CollectImports();

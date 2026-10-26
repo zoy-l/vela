@@ -1,0 +1,11 @@
+func main(): int {
+  const count = int.parse('42');
+  const mask = int.parse('ff', radix: 16);
+  const missing: int? = int.tryParse('not a number');
+  const fraction = double.parse(' 1.25e2 ');
+  print(count);
+  print(mask);
+  print(missing ?? 0);
+  print(fraction);
+  return count == 42 && mask == 255 && missing == null && fraction == 125.0 ? 0 : 1;
+}

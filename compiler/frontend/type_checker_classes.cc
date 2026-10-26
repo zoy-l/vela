@@ -8,6 +8,7 @@
 #include "compiler/frontend/ast.h"
 
 #include "compiler/frontend/builtins.h"
+#include "compiler/frontend/standard_environment.h"
 
 namespace vela::frontend {
 
@@ -52,6 +53,13 @@ void TypeChecker::CollectTypes(const Program& program) {
   }
 
   for (const Class& class_declaration : program.classes) {
+    const auto& name = class_declaration.name;
+    if (IsStandardScalarNamespace(program, class_declaration)) {
+      ClassInfo info;
+      info.type = types_.at(name);
+      classes_.emplace(name, std::move(info));
+      continue;
+    }
     if (IsBuiltinName(class_declaration.name)) {
       AddDiagnostic(class_declaration.location, "type name is reserved for a builtin");
       continue;
@@ -390,7 +398,7 @@ const TypeChecker::ClassInfo* TypeChecker::StaticOwner(const Expression& member)
     return nullptr;
   }
   const auto type = types_.find(object.text);
-  if (type == types_.end() || type->second.kind != Type::Kind::Class || type->second.nullable) {
+  if (type == types_.end() || type->second.nullable) {
     return nullptr;
   }
   const auto owner = classes_.find(type->second.name);

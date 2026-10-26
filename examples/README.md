@@ -20,6 +20,9 @@ output and where evaluation stops.
 | [inheritance.vela](inheritance.vela) | Single inheritance, implicit and explicit `super(...)`, two interfaces, inherited fields, and `override` | `2`, `40`, `2`, `42`, `42`, `bonus counter` |
 | [accessors.vela](accessors.vela) | Getter/setter property access and a computed read-only property | `10`, `21`, `42` |
 | [async_tasks.vela](async_tasks.vela) | Async main, `await`, `sleep`, `Future.wait`, `Future.value`, and `Future.microtask` | `42`, `7`, `8` |
+| [numeric_parse.vela](numeric_parse.vela) | Decimal/hexadecimal integers, nullable tryParse, and decimal exponents | `42`, `255`, `0`, `125` |
+| [string_case.vela](string_case.vela) | Unicode full mappings, expansion, and contextual lowercasing | `vela`, `VELA`, `STRASSE`, `ος`, `i̇` |
+| [time.vela](time.vela) | Explicit-offset parsing, canonical UTC output, readonly calendar parts, and reconstruction | `2026-10-26T04:30:45.123Z`, `true`, `1970-01-01T00:00:00.000Z` |
 
 For example:
 

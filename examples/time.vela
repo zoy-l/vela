@@ -1,0 +1,17 @@
+func main(): int {
+  const timestamp = Date.parse('2026-10-26T12:30:45.123+08:00');
+  print(Date.toISOString(timestamp));
+  const parts = Date.toUTC(timestamp);
+  const restored = Date.fromUTC(
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: parts.hour,
+    minute: parts.minute,
+    second: parts.second,
+    millisecond: parts.millisecond
+  );
+  print(restored == timestamp);
+  print(Date.toISOString(Date.fromUTC(1970, 1, 1)));
+  return restored == timestamp ? 0 : 1;
+}

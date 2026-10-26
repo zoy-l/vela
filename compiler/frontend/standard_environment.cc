@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include "base/builtin.h"
 
 #include <absl/container/flat_hash_set.h>
 
@@ -18,15 +20,145 @@
 
 namespace vela::frontend {
 namespace {
-constexpr auto kNames = std::to_array<std::string_view>(
-    {"Math", "Random", "performance", "Date", "Error", "TimeoutException"});
+constexpr auto kNames = std::to_array<std::string_view>({
+    "Math",
+    "Random",
+    "performance",
+    "Date",
+    "DateParts",
+    "int",
+    "double",
+    "Error",
+    "TimeoutException",
+});
+
+std::optional<Builtin> Intrinsic(std::string_view owner, const Function& declaration) {
+  const auto& member = declaration.name;
+  if (owner == "int") {
+    if (member == "parse") {
+      return Builtin::IntParse;
+    }
+    if (member == "tryParse") {
+      return Builtin::IntTryParse;
+    }
+  } else if (owner == "double") {
+    if (member == "parse") {
+      return Builtin::DoubleParse;
+    }
+    if (member == "tryParse") {
+      return Builtin::DoubleTryParse;
+    }
+  } else if (owner == "Date") {
+    if (member == "parse") {
+      return Builtin::DateParse;
+    }
+    if (member == "toISOString") {
+      return Builtin::DateToISOString;
+    }
+    if (member == "fromUTC") {
+      return Builtin::DateFromUTC;
+    }
+    if (member == "toUTC") {
+      return Builtin::DateToUTC;
+    }
+  }
+  return std::nullopt;
+}
+
+bool HasStandardReferences(std::string_view text) {
+  if (text.contains("Future") || text.contains("Completer") || text.contains("Timer")) {
+    return true;
+  }
+  return std::ranges::any_of(kNames, [text](std::string_view name) {
+    return text.contains(name) && ((name != "int" && name != "double") || text.contains('.'));
+  });
+}
+
+void CollectSourceStandardNames(std::string_view text, absl::flat_hash_set<std::string>& used) {
+  // 数字类型的普通标注不加载静态解析命名空间；只在成员访问或别名依赖时加入。
+  if (!HasStandardReferences(text)) {
+    return;
+  }
+  constexpr auto kAsyncNames =
+      std::to_array<std::string_view>({"Future", "Completer", "Timer", "TimeoutException"});
+  const auto tokens = Lexer(text).Tokenize().tokens;
+  for (std::size_t index = 0; index < tokens.size(); ++index) {
+    const auto& token = tokens.at(index);
+    if (token.kind != TokenKind::Identifier) {
+      continue;
+    }
+    if ((token.lexeme == "int" || token.lexeme == "double") &&
+        (index + 1 == tokens.size() || tokens.at(index + 1).kind != TokenKind::Dot)) {
+      continue;
+    }
+    if (IsStandardName(token.lexeme)) {
+      used.insert(token.lexeme);
+    }
+    if (std::ranges::find(kAsyncNames, token.lexeme) != kAsyncNames.end()) {
+      used.insert("Error");
+      used.insert("TimeoutException");
+    }
+  }
+}
+
 }
 
 bool IsStandardName(std::string_view name) noexcept {
   return std::ranges::find(kNames, name) != kNames.end();
 }
 
+bool IsStandardScalarNamespace(const Program& program, const Class& declaration) {
+  const auto& name = declaration.name;
+  return (name == "int" || name == "double") &&
+         declaration.location.source_id < program.sources.size() &&
+         program.sources.at(declaration.location.source_id).path ==
+             std::string(kStandardSourcePrefix) + name;
+}
+
 std::optional<std::string_view> StandardDeclarationSource(std::string_view name) noexcept {
+  if (name == "int") {
+    return R"(/// Signed 64-bit integers and explicit string parsing.
+class int {
+  private constructor() {}
+  /// Parses the complete string as int64. radix is 2..36; omitted or null recognizes 0x.
+  static external func parse(source: string, radix: int?): int;
+  /// Returns null for invalid or overflowing text; an invalid radix still throws InvalidRadix.
+  static external func tryParse(source: string, radix: int?): int?;
+}
+)";
+  }
+  if (name == "double") {
+    return R"(/// IEEE 754 binary64 numbers and explicit string parsing.
+class double {
+  private constructor() {}
+  /// Parses a complete decimal, NaN or Infinity, independently of locale.
+  static external func parse(source: string): double;
+  /// Returns null when the complete string is not a supported floating-point literal.
+  static external func tryParse(source: string): double?;
+}
+)";
+  }
+  if (name == "DateParts") {
+    return R"(/// An immutable UTC calendar snapshot, created by Date.toUTC.
+class DateParts {
+  private yearValue: int = 0;
+  private monthValue: int = 0;
+  private dayValue: int = 0;
+  private hourValue: int = 0;
+  private minuteValue: int = 0;
+  private secondValue: int = 0;
+  private millisecondValue: int = 0;
+  private constructor() {}
+  public get year(): int { return this.yearValue; }
+  public get month(): int { return this.monthValue; }
+  public get day(): int { return this.dayValue; }
+  public get hour(): int { return this.hourValue; }
+  public get minute(): int { return this.minuteValue; }
+  public get second(): int { return this.secondValue; }
+  public get millisecond(): int { return this.millisecondValue; }
+}
+)";
+  }
   if (name == "TimeoutException") {
     return R"(/// The source Future did not complete before its timeout.
 class TimeoutException {
@@ -65,6 +197,15 @@ class Date {
   /// Returns integer milliseconds since 1970-01-01T00:00:00Z as int.
   /// Use performance.now() to measure elapsed time.
   static external func now(): int = 'Date.now';
+  /// Parses strict ISO date-time text with an explicit offset; returns Unix milliseconds.
+  static external func parse(source: string): int;
+  /// Formats a supported Unix millisecond timestamp as YYYY-MM-DDTHH:mm:ss.SSSZ.
+  static external func toISOString(timestamp: int): string;
+  /// Validates UTC components and returns Unix milliseconds; omitted time fields are zero.
+  static external func fromUTC(year: int, month: int, day: int, hour: int,
+                              minute: int, second: int, millisecond: int): int;
+  /// Returns a new immutable UTC calendar snapshot for a supported timestamp.
+  static external func toUTC(timestamp: int): DateParts;
 }
 )";
   }
@@ -142,30 +283,16 @@ class Math {
 
 void AddStandardEnvironment(Program& program) {
   absl::flat_hash_set<std::string> used;
+  for (const auto& alias : program.aliases) {
+    if (alias.target.name == "int" || alias.target.name == "double") {
+      used.insert(alias.target.name);
+    }
+  }
   for (const auto& source : program.sources) {
-    // 大多数文件不使用标准对象，先用字符串搜索避开额外的 tokenize。
-    bool candidate = source.text.contains("Future") || source.text.contains("Completer") ||
-                     source.text.contains("Timer");
-    for (const auto name : kNames) {
-      if (source.text.contains(name)) {
-        candidate = true;
-        break;
-      }
-    }
-    if (!candidate) {
-      continue;
-    }
-    for (const auto& token : Lexer(source.text).Tokenize().tokens) {
-      if (token.kind == TokenKind::Identifier && IsStandardName(token.lexeme)) {
-        used.insert(token.lexeme);
-      }
-      if (token.kind == TokenKind::Identifier &&
-          (token.lexeme == "Future" || token.lexeme == "Completer" || token.lexeme == "Timer" ||
-           token.lexeme == "TimeoutException")) {
-        used.insert("Error");
-        used.insert("TimeoutException");
-      }
-    }
+    CollectSourceStandardNames(source.text, used);
+  }
+  if (used.contains("Date")) {
+    used.insert("DateParts");
   }
   for (const auto name : kNames) {
     if (!used.contains(name)) {
@@ -176,6 +303,14 @@ void AddStandardEnvironment(Program& program) {
     const auto source_id = static_cast<std::uint32_t>(program.sources.size());
     auto parsed = ParseSource(*source, source_id);
     assert(parsed.diagnostics.empty());
+    for (auto& declaration : parsed.program.classes) {
+      for (auto& method : declaration.methods) {
+        method.intrinsic = Intrinsic(declaration.name, method);
+        if (method.intrinsic) {
+          method.native_symbol.clear();
+        }
+      }
+    }
     AppendProgram(program, std::move(parsed.program));
     program.sources.push_back({
         .path = std::string(kStandardSourcePrefix) + std::string(name),
