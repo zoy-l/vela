@@ -297,7 +297,8 @@ void TransferLiveness(const Function& function,
   if (instruction.handler && AnalyzeEffects(instruction).may_fail) {
     const auto target = function.handlers.at(*instruction.handler).target;
     const auto handler = graph.instruction_blocks.at(target);
-    const auto& exceptional = blocks[handler].live_in;
+    const auto exceptional_block = blocks.subspan(handler, 1);
+    const auto& exceptional = exceptional_block.front().live_in;
     live.insert(exceptional.begin(), exceptional.end());
   }
   ForEachUse(instruction, access, [&](RegisterId reg) { live.insert(reg); });
@@ -408,18 +409,22 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
     case Opcode::AsyncCall:
       // 全局读取可能执行惰性初始化器，内建操作可能调用 getter/toJson/动态目标。
       // 没有叶调用证明时统一保留副作用，不能根据 opcode 的名字假设无 GC。
-      return {.may_fail = true,
-              .may_allocate = true,
-              .may_call = true,
-              .reads_state = true,
-              .writes_state = true};
+      return {
+          .may_fail = true,
+          .may_allocate = true,
+          .may_call = true,
+          .reads_state = true,
+          .writes_state = true,
+      };
     case Opcode::Await:
-      return {.may_fail = true,
-              .may_allocate = true,
-              .may_suspend = true,
-              .reads_state = true,
-              .writes_state = true,
-              .changes_control = true};
+      return {
+          .may_fail = true,
+          .may_allocate = true,
+          .may_suspend = true,
+          .reads_state = true,
+          .writes_state = true,
+          .changes_control = true,
+      };
     case Opcode::SetField:
     case Opcode::SetIndex:
       return {.may_fail = true, .writes_state = true};
@@ -429,20 +434,31 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
       return {.writes_state = true};
     case Opcode::Throw:
       return {
-          .may_fail = true, .may_allocate = true, .writes_state = true, .changes_control = true};
+          .may_fail = true,
+          .may_allocate = true,
+          .writes_state = true,
+          .changes_control = true,
+      };
     case Opcode::Rethrow:
-      return {.may_fail = true, .reads_state = true, .writes_state = true, .changes_control = true};
+      return {
+          .may_fail = true,
+          .reads_state = true,
+          .writes_state = true,
+          .changes_control = true,
+      };
     case Opcode::Jump:
     case Opcode::JumpIfFalse:
     case Opcode::JumpIfNull:
       return {.changes_control = true};
     case Opcode::Return:
       // 异步完成、擦除返回值装箱和载荷绑定可能失败。不能丢掉 return 的异常后继。
-      return {.may_fail = true,
-              .may_allocate = true,
-              .reads_state = true,
-              .writes_state = true,
-              .changes_control = true};
+      return {
+          .may_fail = true,
+          .may_allocate = true,
+          .reads_state = true,
+          .writes_state = true,
+          .changes_control = true,
+      };
   }
   std::unreachable();
 }

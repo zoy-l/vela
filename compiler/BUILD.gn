@@ -212,6 +212,18 @@ source_set("compiler") {
   ]
 }
 
+source_set("aot") {
+  sources = [
+    "aot/native_compiler.cc",
+    "aot/native_compiler.h",
+  ]
+  public_deps = [ ":ir" ]
+  deps = [
+    "//runtime",
+    "//third_party:llvm",
+  ]
+}
+
 executable("vela") {
   sources = [ "vela_main.cc" ]
   deps = [

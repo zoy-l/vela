@@ -5,7 +5,9 @@
 #include <utility>
 #include <vector>
 
+#include "base/layout_description.h"
 #include "runtime/isolate.h"
+#include "runtime/object.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -14,9 +16,9 @@ namespace {
 class LayoutInstantiation final {
  public:
   LayoutInstantiation(const layout::Program& description, Isolate& isolate, LayoutCache& cache)
-      : description_(description),
-        isolate_(isolate),
-        cache_(cache),
+      : description_(&description),
+        isolate_(&isolate),
+        cache_(&cache),
         arrays_(description.arrays.size()),
         collections_(description.collections.size()),
         signatures_(description.signatures.size()) {}
@@ -31,9 +33,9 @@ class LayoutInstantiation final {
   const TypeSignature* Signature(std::uint32_t index);
   ClassLayout* Class(const layout::Class& description);
 
-  const layout::Program& description_;
-  Isolate& isolate_;
-  LayoutCache& cache_;
+  const layout::Program* description_;
+  Isolate* isolate_;
+  LayoutCache* cache_;
   std::vector<const InterfaceType*> interfaces_;
   std::vector<ClassLayout*> classes_;
   std::vector<const ArrayLayout*> arrays_;
@@ -129,12 +131,12 @@ const ArrayLayout* LayoutInstantiation::Array(std::uint32_t index) {
   if (stored != nullptr) {
     return stored;
   }
-  const auto& description = description_.arrays.at(index);
-  if (const auto found = cache_.arrays.find(description.name); found != cache_.arrays.end()) {
+  const auto& description = description_->arrays.at(index);
+  if (const auto found = cache_->arrays.find(description.name); found != cache_->arrays.end()) {
     stored = found->second;
   } else {
-    stored = isolate_.CreateArrayLayout(Element(description.element));
-    cache_.arrays.emplace(description.name, stored);
+    stored = isolate_->CreateArrayLayout(Element(description.element));
+    cache_->arrays.emplace(description.name, stored);
   }
   return stored;
 }
@@ -144,17 +146,17 @@ const CollectionLayout* LayoutInstantiation::Collection(std::uint32_t index) {
   if (stored != nullptr) {
     return stored;
   }
-  const auto& description = description_.collections.at(index);
-  if (const auto found = cache_.collections.find(description.name);
-      found != cache_.collections.end()) {
+  const auto& description = description_->collections.at(index);
+  if (const auto found = cache_->collections.find(description.name);
+      found != cache_->collections.end()) {
     stored = found->second;
   } else {
     CollectionLayout result{.keys = Element(description.key)};
     if (description.value) {
       result.values = Element(*description.value);
     }
-    stored = isolate_.CreateCollectionLayout(std::move(result));
-    cache_.collections.emplace(description.name, stored);
+    stored = isolate_->CreateCollectionLayout(result);
+    cache_->collections.emplace(description.name, stored);
   }
   return stored;
 }
@@ -164,10 +166,10 @@ const TypeSignature* LayoutInstantiation::Signature(std::uint32_t index) {
   if (stored != nullptr) {
     return stored;
   }
-  const auto& description = description_.signatures.at(index);
+  const auto& description = description_->signatures.at(index);
   if (!description.name.empty()) {
-    if (const auto found = cache_.signatures.find(description.name);
-        found != cache_.signatures.end()) {
+    if (const auto found = cache_->signatures.find(description.name);
+        found != cache_->signatures.end()) {
       stored = found->second;
       return stored;
     }
@@ -183,60 +185,61 @@ const TypeSignature* LayoutInstantiation::Signature(std::uint32_t index) {
   if (description.result) {
     result.result = Constraint(*description.result);
   }
-  stored = isolate_.CreateTypeSignature(std::move(result));
+  stored = isolate_->CreateTypeSignature(std::move(result));
   if (!description.name.empty()) {
-    cache_.signatures.emplace(description.name, stored);
+    cache_->signatures.emplace(description.name, stored);
   }
   return stored;
 }
 
 ClassLayout* LayoutInstantiation::Class(const layout::Class& description) {
-  if (const auto found = cache_.classes.find(description.name); found != cache_.classes.end()) {
+  if (const auto found = cache_->classes.find(description.name); found != cache_->classes.end()) {
     return found->second;
   }
   if (description.kind == layout::Class::Kind::RuntimeError) {
-    return &isolate_.error_layout();
+    return &isolate_->error_layout();
   }
   if (description.kind == layout::Class::Kind::DateParts) {
-    return &isolate_.date_parts_layout();
+    return &isolate_->date_parts_layout();
   }
   std::vector<const InterfaceType*> interfaces;
+  interfaces.reserve(description.interfaces.size());
   for (const auto index : description.interfaces) {
     interfaces.push_back(interfaces_.at(index));
   }
   auto* stored =
-      isolate_.CreateClassLayout(description.field_count, description.reference_fields,
-                                 {
-                                     .callable = description.callable,
-                                     .interfaces = std::move(interfaces),
-                                     .dispatch_targets = description.dispatch_targets,
-                                     .is_enum = description.kind == layout::Class::Kind::Enum,
-                                 });
-  cache_.classes.emplace(description.name, stored);
+      isolate_->CreateClassLayout(description.field_count, description.reference_fields,
+                                  {
+                                      .callable = description.callable,
+                                      .interfaces = std::move(interfaces),
+                                      .dispatch_targets = description.dispatch_targets,
+                                      .is_enum = description.kind == layout::Class::Kind::Enum,
+                                  });
+  cache_->classes.emplace(description.name, stored);
   return stored;
 }
 
 ProgramLayouts LayoutInstantiation::Build() {
-  interfaces_.reserve(description_.interfaces.size());
-  for (const auto& name : description_.interfaces) {
+  interfaces_.reserve(description_->interfaces.size());
+  classes_.reserve(description_->classes.size());
+  for (const auto& name : description_->interfaces) {
     // 增量会话的接口编号可能有空洞；空槽不创建新的名义身份。
     if (name.empty()) {
       interfaces_.push_back(nullptr);
       continue;
     }
-    const auto [entry, inserted] = cache_.interfaces.try_emplace(name, nullptr);
+    const auto [entry, inserted] = cache_->interfaces.try_emplace(name, nullptr);
     if (inserted) {
-      entry->second = isolate_.CreateInterfaceType();
+      entry->second = isolate_->CreateInterfaceType();
     }
     interfaces_.push_back(entry->second);
   }
-  classes_.reserve(description_.classes.size());
-  for (const auto& description : description_.classes) {
+  for (const auto& description : description_->classes) {
     classes_.push_back(Class(description));
   }
   // 先创建全部名义布局，再建立结构签名；允许类的签名引用自身或后声明的类。
-  for (std::size_t index = 0; index < description_.classes.size(); ++index) {
-    const auto& description = description_.classes.at(index);
+  for (std::size_t index = 0; index < description_->classes.size(); ++index) {
+    const auto& description = description_->classes.at(index);
     auto* stored = classes_.at(index);
     if (description.expected_type) {
       stored->BindExpectedType(*Signature(*description.expected_type));
@@ -246,13 +249,13 @@ ProgramLayouts LayoutInstantiation::Build() {
     }
   }
   ProgramLayouts result;
-  for (const auto index : description_.array_types) {
+  for (const auto index : description_->array_types) {
     result.arrays.push_back(Array(index));
   }
-  for (const auto index : description_.collection_types) {
+  for (const auto index : description_->collection_types) {
     result.collections.push_back(Collection(index));
   }
-  for (const auto& type : description_.types) {
+  for (const auto& type : description_->types) {
     result.types.push_back(Constraint(type));
   }
   result.classes = std::move(classes_);

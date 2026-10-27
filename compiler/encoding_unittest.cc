@@ -2,11 +2,13 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "gtest/gtest.h"
 
 #include "base/execution_limits.h"
 
+#include "compiler/compilation_state.h"
 #include "compiler/compiler.h"
 #include "compiler/frontend/source_loader.h"
 #include "compiler/frontend/type_checker.h"
@@ -103,7 +105,7 @@ TEST(EncodingTest, RejectsArrayLayoutIndex256) {
   EXPECT_TRUE(compiled.diagnostics.front().message.contains("encoding"));
 }
 
-TEST(EncodingTest, FailedEncodingDoesNotPublishSessionLayouts) {
+CompileResult CompileArrayLayoutOverflow(CompilationState& state, runtime::Isolate& isolate) {
   std::string source;
   for (std::size_t index = 0; index < kBeyondByteIndex; ++index) {
     const auto type = "Element" + std::to_string(index);
@@ -112,14 +114,21 @@ TEST(EncodingTest, FailedEncodingDoesNotPublishSessionLayouts) {
   }
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
-  ASSERT_TRUE(parsed.diagnostics.empty());
+  if (!parsed.diagnostics.empty()) {
+    return {.program = {}, .diagnostics = std::move(parsed.diagnostics)};
+  }
   auto checked = frontend::TypeChecker().Check(parsed.program);
-  ASSERT_TRUE(checked.diagnostics.empty());
+  if (!checked.diagnostics.empty()) {
+    return {.program = {}, .diagnostics = std::move(checked.diagnostics)};
+  }
+  return CompileProgram(parsed.program, checked.model, isolate, &state);
+}
 
+TEST(EncodingTest, FailedEncodingDoesNotPublishSessionLayouts) {
   runtime::Isolate isolate;
   CompilationState state;
   const auto before = isolate.layout_counts();
-  const auto compiled = CompileProgram(parsed.program, checked.model, isolate, &state);
+  const auto compiled = CompileArrayLayoutOverflow(state, isolate);
   ASSERT_FALSE(compiled.Succeeded());
   EXPECT_TRUE(compiled.diagnostics.front().message.contains("encoding"));
   EXPECT_EQ(isolate.layout_counts(), before);

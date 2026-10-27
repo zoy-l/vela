@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -17,6 +18,11 @@
 namespace vela::runtime {
 
 class Isolate;
+class NativeFrame;
+class NativeContext;
+extern "C" std::uint8_t vela_native_frame_enter(NativeContext* context,
+                                                std::uint64_t root_count) noexcept;
+extern "C" void vela_native_frame_exit(NativeContext* context) noexcept;
 class Future;
 class Completer;
 class CancellationToken;
@@ -42,15 +48,28 @@ using NativeResult = std::expected<Value, NativeError>;
 
 class NativeContext final {
  public:
-  explicit NativeContext(Isolate& isolate) noexcept : isolate_(&isolate) {}
+  explicit NativeContext(Isolate& isolate) noexcept;
+  ~NativeContext();
+
+  NativeContext(const NativeContext&) = delete;
+  NativeContext& operator=(const NativeContext&) = delete;
+  NativeContext(NativeContext&&) = delete;
+  NativeContext& operator=(NativeContext&&) = delete;
   [[nodiscard]] Isolate& isolate() const noexcept { return *isolate_; }
+  [[nodiscard]] std::size_t frame_count() const noexcept;
+  [[nodiscard]] std::span<Value> current_roots() noexcept;
   [[nodiscard]] NativeResult String(std::string_view text) const;
   [[nodiscard]] std::expected<Value, NativeError> FutureValue(const Future& future) const;
   [[nodiscard]] Completer CreateCompleter() const;
   [[nodiscard]] NativeResult CancellationValue(const CancellationToken& token) const;
 
  private:
+  friend class NativeFrame;
+  friend std::uint8_t vela_native_frame_enter(NativeContext* context,
+                                              std::uint64_t root_count) noexcept;
+  friend void vela_native_frame_exit(NativeContext* context) noexcept;
   Isolate* isolate_;
+  std::vector<std::unique_ptr<NativeFrame>> frames_;
 };
 
 namespace internal {

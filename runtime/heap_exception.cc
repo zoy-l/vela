@@ -1,7 +1,6 @@
 #include "runtime/exception.h"
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
