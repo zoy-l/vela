@@ -11,7 +11,7 @@
 #include <absl/strings/numbers.h>
 
 #include "base/builtin.h"
-#include "runtime/builtins.h"
+#include "base/execution_status.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
 
@@ -33,14 +33,14 @@ int Digit(char byte) {
   return byte >= 'A' && byte <= 'Z' ? byte - 'A' + static_cast<int>(kDecimalRadix) : -1;
 }
 
-std::expected<std::int64_t, BuiltinError> ParseInt(std::string_view source, Value radix_value) {
+std::expected<std::int64_t, ExecutionStatus> ParseInt(std::string_view source, Value radix_value) {
   if (!radix_value.IsNull() && !radix_value.IsInteger()) {
-    return std::unexpected(BuiltinError::TypeError);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto explicit_radix = !radix_value.IsNull();
   auto radix = explicit_radix ? radix_value.AsInteger() : kDecimalRadix;
   if (radix < kMinimumRadix || radix > kMaximumRadix) {
-    return std::unexpected(BuiltinError::InvalidRadix);
+    return std::unexpected(ExecutionStatus::InvalidRadix);
   }
   auto text = absl::StripAsciiWhitespace(source);
   bool negative = false;
@@ -53,7 +53,7 @@ std::expected<std::int64_t, BuiltinError> ParseInt(std::string_view source, Valu
     text.remove_prefix(2);
   }
   if (text.empty()) {
-    return std::unexpected(BuiltinError::IntParseError);
+    return std::unexpected(ExecutionStatus::IntParseError);
   }
   const auto limit =
       static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) + (negative ? 1U : 0U);
@@ -62,11 +62,11 @@ std::expected<std::int64_t, BuiltinError> ParseInt(std::string_view source, Valu
   for (const auto byte : text) {
     const auto digit = Digit(byte);
     if (digit < 0 || digit >= radix) {
-      return std::unexpected(BuiltinError::IntParseError);
+      return std::unexpected(ExecutionStatus::IntParseError);
     }
     const auto value = static_cast<std::uint64_t>(digit);
     if (magnitude > (limit - value) / base) {
-      return std::unexpected(BuiltinError::IntParseError);
+      return std::unexpected(ExecutionStatus::IntParseError);
     }
     magnitude = (magnitude * base) + value;
   }
@@ -108,7 +108,7 @@ bool IsDecimal(std::string_view text) {
   return text.empty();
 }
 
-std::expected<double, BuiltinError> ParseDouble(std::string_view source) {
+std::expected<double, ExecutionStatus> ParseDouble(std::string_view source) {
   const auto text = absl::StripAsciiWhitespace(source);
   auto payload = text;
   bool negative = false;
@@ -125,18 +125,18 @@ std::expected<double, BuiltinError> ParseDouble(std::string_view source) {
   }
   double result = 0.0;
   if (!IsDecimal(text) || !absl::SimpleAtod(text, &result)) {
-    return std::unexpected(BuiltinError::DoubleParseError);
+    return std::unexpected(ExecutionStatus::DoubleParseError);
   }
   return result;
 }
 
 }  // namespace
 
-std::expected<Value, BuiltinError> ExecuteNumericParse(Builtin builtin,
-                                                       std::span<const Value> arguments) {
+std::expected<Value, ExecutionStatus> ExecuteNumericParse(Builtin builtin,
+                                                          std::span<const Value> arguments) {
   const auto source = arguments.front();
   if (!source.IsString()) {
-    return std::unexpected(BuiltinError::TypeError);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto text = source.AsString()->value();
   if (builtin == Builtin::IntParse || builtin == Builtin::IntTryParse) {
@@ -144,7 +144,7 @@ std::expected<Value, BuiltinError> ExecuteNumericParse(Builtin builtin,
     if (result) {
       return Value::Integer(*result);
     }
-    if (builtin == Builtin::IntTryParse && result.error() == BuiltinError::IntParseError) {
+    if (builtin == Builtin::IntTryParse && result.error() == ExecutionStatus::IntParseError) {
       return Value::Null();
     }
     return std::unexpected(result.error());

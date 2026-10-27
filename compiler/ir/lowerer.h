@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/array_algorithm.h"
+#include "base/async_operation.h"
 #include "base/builtin.h"
 
 #include <cstddef>
@@ -255,6 +256,10 @@ class Lowerer final {
                             const frontend::Expression& expression,
                             RegisterId base);
   LoweredValue LowerAsyncCall(const frontend::Expression& expression);
+  void LowerAsyncArguments(const frontend::Expression& expression,
+                           AsyncOperation operation,
+                           RegisterId base,
+                           const std::optional<LoweredValue>& receiver);
   LoweredValue LowerSnapshotArray(const frontend::Expression& expression);
   LoweredValue LowerCollectionConstruction(const frontend::Expression& expression);
   std::uint32_t RegisterCollectionType(frontend::TypeDescriptor type);

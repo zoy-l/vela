@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <span>
+#include <tuple>
 
 #include "base/array_algorithm.h"
 #include "base/builtin.h"
@@ -168,8 +169,7 @@ StepResult InitializeArguments(runtime::Isolate& isolate,
       return std::unexpected(ExecutionStatus::OutOfMemory);
     }
     for (std::uint32_t index = 0; index < count; ++index) {
-      const auto stored = heap.SetElement(*names, index, runtime::Value::String(empty));
-      assert(stored.has_value());
+      std::ignore = heap.SetElement(*names, index, runtime::Value::String(empty));
     }
   }
   return {};
@@ -292,9 +292,7 @@ StepResult Execution::InvokeDynamicArray(ActiveFrame& active, Instruction instru
     const auto result =
         runtime::ExecuteBuiltin(Builtin::ArrayDefaultCompare, values, isolate_.heap());
     if (!result) {
-      return std::unexpected(result.error() == runtime::BuiltinError::OutOfMemory
-                                 ? ExecutionStatus::OutOfMemory
-                                 : ExecutionStatus::TypeError);
+      return std::unexpected(result.error());
     }
     active.frame.registers().subspan(DecodeA(instruction)).front() = *result;
     return {};
@@ -313,8 +311,7 @@ StepResult Execution::InvokeDynamicArray(ActiveFrame& active, Instruction instru
       }
       value = *boxed;
     }
-    const auto stored = isolate_.heap().SetElement(arguments, index, value);
-    assert(stored.has_value());
+    std::ignore = isolate_.heap().SetElement(arguments, index, value);
   }
   const auto callable = ResolveCallable(callback);
   if (!callable) {

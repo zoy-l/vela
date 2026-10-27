@@ -229,7 +229,7 @@ class ConsoleDebugger final : public vm::Debugger {
                                std::string_view arguments,
                                const vm::DebugContext& context,
                                vm::DebugFrame& selected);
-  std::expected<std::string, std::string> ResolveSource(std::string_view text) const;
+  [[nodiscard]] std::expected<std::string, std::string> ResolveSource(std::string_view text) const;
   void AddBreakpoint(std::string_view text, const vm::DebugFrame& frame);
   void AddSourceBreakpoint(std::string_view path, std::uint32_t line);
   void DeleteBreakpoint(std::string_view text);

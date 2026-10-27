@@ -4,12 +4,12 @@
 #include <span>
 
 #include "base/builtin.h"
-#include "runtime/builtins.h"
+#include "base/execution_status.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
 
-[[nodiscard]] std::expected<Value, BuiltinError> ExecuteNumericParse(
+[[nodiscard]] std::expected<Value, ExecutionStatus> ExecuteNumericParse(
     Builtin builtin,
     std::span<const Value> arguments);
 

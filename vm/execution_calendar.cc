@@ -2,10 +2,10 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <span>
 #include <string>
+#include <utility>
 
 #include "base/builtin.h"
 #include "runtime/date.h"
@@ -28,7 +28,7 @@ StepResult Execution::ExecuteCalendar(ActiveFrame& active, Instruction instructi
     const auto index = arguments.subspan(1).front();
     const auto classes = active.function->layouts->classes();
     if (!index.IsInteger() || index.AsInteger() < 0 ||
-        static_cast<std::uint64_t>(index.AsInteger()) >= classes.size()) {
+        std::cmp_greater_equal(index.AsInteger(), classes.size())) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
     layout = classes.subspan(static_cast<std::size_t>(index.AsInteger())).front();

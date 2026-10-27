@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -119,7 +120,7 @@ std::optional<Opcode> SelectBinaryOpcode(std::string_view operation,
           {">=", Opcode::GreaterEqualInt},
       },
   };
-  const auto found = std::ranges::find_if(
+  const auto* found = std::ranges::find_if(
       integer_operations, [&](const auto& entry) { return entry.first == operation; });
   if (found != integer_operations.end()) {
     return found->second;
@@ -164,7 +165,7 @@ std::optional<std::string_view> CompoundOperation(std::string_view text) {
       ">>=",
       ">>>=",
   });
-  const auto found = std::ranges::find(operations, text);
+  const auto* found = std::ranges::find(operations, text);
   if (found == operations.end()) {
     return std::nullopt;
   }
@@ -1731,6 +1732,7 @@ void Lowerer::StoreMutationTarget(const frontend::Expression& target,
     return;
   }
   if (destination.setter) {
+    assert(destination.object.has_value());
     const auto base = AllocateRegister(location);
     const auto argument = AllocateRegister(location);
     Emit({.opcode = Opcode::Move, .dst = base, .lhs = *destination.object, .location = location});
@@ -1919,9 +1921,13 @@ Lowerer::LoweredValue Lowerer::LowerCompoundAssignment(const frontend::Expressio
                                                        std::string_view operation) {
   const auto& left = *expression.left;
   if (model_.expression_types.at(&left).kind == frontend::TypeDescriptor::Kind::Dynamic) {
-    return LowerDynamicCompoundAssignment(
-        expression, *SelectBinaryOpcode(
-                        operation, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"}));
+    const auto opcode =
+        SelectBinaryOpcode(operation, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
+    if (!opcode) {
+      AddDiagnostic(expression.location, "unsupported compound assignment operation");
+      return {.reg = 0, .type = InvalidType()};
+    }
+    return LowerDynamicCompoundAssignment(expression, *opcode);
   }
   auto target = LowerMutationTarget(left);
   target.value = SnapshotBefore(target.value, *expression.right);
@@ -1946,10 +1952,14 @@ Lowerer::LoweredValue Lowerer::LowerBinaryValue(const frontend::Expression& expr
   const LoweredValue right = LowerExpression(*expression.right);
   using Kind = frontend::TypeDescriptor::Kind;
   if (left.type.kind == Kind::Dynamic || right.type.kind == Kind::Dynamic) {
-    const auto operation = *SelectBinaryOpcode(expression.text, {.kind = Kind::Int, .name = "int"});
+    const auto operation = SelectBinaryOpcode(expression.text, {.kind = Kind::Int, .name = "int"});
+    if (!operation) {
+      AddDiagnostic(expression.location, "unsupported binary operation in bootstrap VM");
+      return {.reg = 0, .type = InvalidType()};
+    }
     const auto selector = EmitTemporary({
         .opcode = Opcode::LoadInt,
-        .immediate = static_cast<std::int64_t>(operation),
+        .immediate = static_cast<std::int64_t>(*operation),
         .location = expression.location,
     });
     const auto result = AllocateTemporary(expression.location);

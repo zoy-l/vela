@@ -356,7 +356,7 @@ std::expected<void, ValidationError> ValidateFunctionCode(std::size_t index,
     const auto opcode = DecodeOp(instruction);
     if (opcode == OpCode::Jump || opcode == OpCode::JumpIfFalse) {
       const auto target = static_cast<std::int64_t>(position) + 1 + DecodeImm16(instruction);
-      if (target < 0 || static_cast<std::uint64_t>(target) >= function.code.size()) {
+      if (target < 0 || std::cmp_greater_equal(target, function.code.size())) {
         return std::unexpected(ValidationError{
             .function = index,
             .instruction = position,

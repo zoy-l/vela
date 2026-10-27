@@ -38,6 +38,9 @@ constraints.
 
 - During implementation, run targeted validation only when it can reveal a concrete current error.
   Once the implementation is complete, run the relevant builds, regression tests, and static checks.
+- For tasks that require lint, run repository-wide `vl lint` and fix every reported diagnostic,
+  including pre-existing findings outside the initial change scope. Existing lint failures are not
+  an acceptable completion state.
 - Validate behavior and performance separately. Performance conclusions require measurements from
   a Release build; compilation or static reasoning cannot replace benchmarks.
 - Retain benchmark evidence according to [Benchmark Result Retention](benchmark_results.md).

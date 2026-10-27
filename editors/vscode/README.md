@@ -1,7 +1,7 @@
 # Vela for Visual Studio Code
 
 Adds `.vela` syntax highlighting, comments/brackets, code completion, go to
-definition, hover information, diagnostics and document formatting. Semantic features use the native
+definition, hover information, diagnostics, document formatting and file execution. Semantic features use the native
 `vela lsp` server and its production compiler frontend. The extension has no npm dependencies.
 
 Build Vela, then package the extension from the repository root:
@@ -12,10 +12,19 @@ python -m tools.vl editor package
 ```
 
 In VS Code, run **Extensions: Install from VSIX...** and select the generated
-`out/editor/vela-language-0.1.17.vsix`. Open the Vela workspace. The default server
+`out/editor/vela-language-0.1.18.vsix`. Open the Vela workspace. The default server
 is `out/debug/vela.exe` on Windows or `out/debug/vela` elsewhere. Set
 `vela.serverPath` to use another build or an installed executable; it must expose
-the `lsp` command. No global PATH changes are needed.
+the `lsp` and `run` commands. No global PATH changes are needed.
+
+Open a workspace folder, then click the play button in the editor title bar, choose **Vela: Run File** from
+the command palette, or use the editor context menu to run the current saved
+`.vela` file. Run File saves pending edits to that file, then executes `vela run FILE`
+using `vela.serverPath`. Imported files are read from disk; save their changes before
+running. Output, diagnostics and the process exit code appear in a VS Code task terminal.
+Use **Tasks: Terminate Task** or the task terminal's stop control to stop the program.
+The working directory is the file's workspace folder, or its parent directory for
+a file outside the workspace.
 
 **Format Document** uses Vela's two-space formatter with single-quoted strings,
 spaces after colons and around operators, and blank lines between declarations.

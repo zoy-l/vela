@@ -5,24 +5,19 @@
 #include <utility>
 
 #include "base/builtin.h"
-#include "runtime/builtins.h"
+#include "base/execution_status.h"
 #include "runtime/heap.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
 namespace {
 
-BuiltinError BuiltinFailure(CollectionError error) {
-  return error == CollectionError::OutOfMemory ? BuiltinError::OutOfMemory
-                                               : BuiltinError::TypeError;
-}
-
-std::expected<Value, BuiltinError> ExecuteSetOperation(Builtin builtin,
-                                                       HeapObject& receiver,
-                                                       Value other,
-                                                       Heap& heap) {
+std::expected<Value, ExecutionStatus> ExecuteSetOperation(Builtin builtin,
+                                                          HeapObject& receiver,
+                                                          Value other,
+                                                          Heap& heap) {
   if (!other.IsObject() || other.AsObject() == nullptr) {
-    return std::unexpected(BuiltinError::TypeError);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   auto operation = SetOperation::Difference;
   if (builtin == Builtin::SetUnion) {
@@ -31,18 +26,17 @@ std::expected<Value, BuiltinError> ExecuteSetOperation(Builtin builtin,
     operation = SetOperation::Intersection;
   }
   return heap.CombineSets(receiver, *other.AsObject(), operation)
-      .transform([](HeapObject* result) -> Value { return Value::Object(result); })
-      .transform_error(BuiltinFailure);
+      .transform([](HeapObject* result) -> Value { return Value::Object(result); });
 }
 
 }  // namespace
 
-std::expected<Value, BuiltinError> ExecuteCollectionBuiltin(Builtin builtin,
-                                                            std::span<const Value> arguments,
-                                                            Heap& heap) {
+std::expected<Value, ExecutionStatus> ExecuteCollectionBuiltin(Builtin builtin,
+                                                               std::span<const Value> arguments,
+                                                               Heap& heap) {
   const auto receiver = arguments.front();
   if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
-    return std::unexpected(BuiltinError::TypeError);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   auto& object = *receiver.AsObject();
   switch (builtin) {
@@ -53,14 +47,14 @@ std::expected<Value, BuiltinError> ExecuteCollectionBuiltin(Builtin builtin,
     case Builtin::CollectionSize: {
       const auto length = Heap::CollectionLength(object);
       if (!length) {
-        return std::unexpected(BuiltinFailure(length.error()));
+        return std::unexpected(length.error());
       }
       return Value::Integer(*length);
     }
     case Builtin::CollectionClear: {
       const auto cleared = Heap::ClearCollection(object);
       if (!cleared) {
-        return std::unexpected(BuiltinFailure(cleared.error()));
+        return std::unexpected(cleared.error());
       }
       return Value::Null();
     }
@@ -70,7 +64,7 @@ std::expected<Value, BuiltinError> ExecuteCollectionBuiltin(Builtin builtin,
       const auto value = builtin == Builtin::MapSet ? arguments.subspan(2).front() : Value::Null();
       const auto inserted = heap.InsertCollection(object, key, value);
       if (!inserted) {
-        return std::unexpected(BuiltinFailure(inserted.error()));
+        return std::unexpected(inserted.error());
       }
       return builtin == Builtin::SetAdd ? Value::Boolean(*inserted == CollectionInsert::Inserted)
                                         : Value::Null();
@@ -78,18 +72,17 @@ std::expected<Value, BuiltinError> ExecuteCollectionBuiltin(Builtin builtin,
     case Builtin::CollectionHas: {
       const auto found = Heap::HasCollectionKey(object, arguments.subspan(1).front());
       if (!found) {
-        return std::unexpected(BuiltinFailure(found.error()));
+        return std::unexpected(found.error());
       }
       return Value::Boolean(*found);
     }
     case Builtin::MapGet: {
-      return Heap::GetCollectionValue(object, arguments.subspan(1).front())
-          .transform_error(BuiltinFailure);
+      return Heap::GetCollectionValue(object, arguments.subspan(1).front());
     }
     case Builtin::CollectionDelete: {
       const auto removed = Heap::RemoveCollection(object, arguments.subspan(1).front());
       if (!removed) {
-        return std::unexpected(BuiltinFailure(removed.error()));
+        return std::unexpected(removed.error());
       }
       return Value::Boolean(*removed == CollectionRemove::Removed);
     }
@@ -97,14 +90,14 @@ std::expected<Value, BuiltinError> ExecuteCollectionBuiltin(Builtin builtin,
     case Builtin::CollectionValues: {
       const auto target = arguments.subspan(1).front();
       if (!target.IsObject() || target.AsObject() == nullptr) {
-        return std::unexpected(BuiltinError::TypeError);
+        return std::unexpected(ExecutionStatus::TypeError);
       }
       const auto copied =
           heap.CopyCollection(object, *target.AsObject(),
                               builtin == Builtin::CollectionKeys ? CollectionProjection::Keys
                                                                  : CollectionProjection::Values);
       if (!copied) {
-        return std::unexpected(BuiltinFailure(copied.error()));
+        return std::unexpected(copied.error());
       }
       return target;
     }

@@ -1,5 +1,6 @@
 #include "compiler/frontend/type_checker.h"
 
+#include <ranges>
 #include <string>
 #include <vector>
 
@@ -56,10 +57,10 @@ StatementFlow TypeChecker::CheckSwitch(const Statement& statement, const Type& r
   refinements_ = before;
   StatementFlow result{.can_fall_through = !has_default};
   bool tail_falls_through = true;
-  for (auto branch = branches.rbegin(); branch != branches.rend(); ++branch) {
-    tail_falls_through = branch->can_break || (branch->can_fall_through && tail_falls_through);
+  for (const auto& branch : std::views::reverse(branches)) {
+    tail_falls_through = branch.can_break || (branch.can_fall_through && tail_falls_through);
     result.can_fall_through = result.can_fall_through || tail_falls_through;
-    result.can_continue = result.can_continue || branch->can_continue;
+    result.can_continue = result.can_continue || branch.can_continue;
   }
   return result;
 }

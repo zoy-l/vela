@@ -323,7 +323,7 @@ struct ImageReader final {
   std::span<const std::shared_ptr<const LayoutTables>> tables;
   std::span<const std::shared_ptr<const StringConstants>> strings;
   std::span<const std::shared_ptr<const std::vector<std::string>>> paths;
-  std::expected<FunctionStorage, BinaryError> ReadFunction() const;
+  [[nodiscard]] std::expected<FunctionStorage, BinaryError> ReadFunction() const;
 };
 
 std::expected<FunctionStorage, BinaryError> ImageReader::ReadFunction() const {

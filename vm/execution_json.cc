@@ -6,6 +6,7 @@
 #include <string>
 
 #include "base/builtin.h"
+#include "base/execution_status.h"
 #include "runtime/error.h"
 #include "runtime/json.h"
 #include "runtime/object.h"
@@ -17,18 +18,16 @@
 namespace vela::vm::internal {
 
 StepResult Execution::JsonError(const runtime::JsonRuntimeError& error) {
-  if (error.failure == runtime::JsonFailure::OutOfMemory) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
+  if (error.status != ExecutionStatus::JsonDecodeError &&
+      error.status != ExecutionStatus::JsonEncodeError) {
+    return std::unexpected(error.status);
   }
-  if (error.failure == runtime::JsonFailure::ConcurrentModification) {
-    return std::unexpected(ExecutionStatus::ConcurrentModification);
-  }
-  const auto decoding = error.failure == runtime::JsonFailure::Decode;
+  const auto decoding = error.status == ExecutionStatus::JsonDecodeError;
   const auto message =
       decoding ? error.message + " at byte " + std::to_string(error.offset) : error.message;
-  const auto payload = runtime::CreateError(
-      isolate_.heap(), isolate_.error_layout(),
-      {.message = message, .code = decoding ? "JsonDecodeError" : "JsonEncodeError"});
+  const auto payload =
+      runtime::CreateError(isolate_.heap(), isolate_.error_layout(),
+                           {.message = message, .code = ExecutionStatusCode(error.status)});
   if (!payload) {
     return std::unexpected(payload.error());
   }
@@ -52,16 +51,15 @@ StepResult Execution::ExecuteJson(ActiveFrame& active, Instruction instruction) 
     values.subspan(DecodeA(instruction)).front() = *parsed;
     return {};
   }
-  active.json_encoder = runtime::JsonEncoder::Create(isolate_, input);
-  if (!active.json_encoder) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
+  active.json_encoder.emplace(isolate_, input);
   active.json_destination = DecodeA(instruction);
   return ContinueJson(active);
 }
 
 StepResult Execution::ContinueJson(ActiveFrame& active) {
-  const auto step = active.json_encoder->Advance();
+  assert(active.json_encoder.has_value());
+  auto& encoder = *active.json_encoder;
+  const auto step = encoder.Advance();
   if (!step) {
     return JsonError(step.error());
   }
@@ -72,7 +70,7 @@ StepResult Execution::ContinueJson(ActiveFrame& active) {
   }
   const auto* method = active.function->layouts->FindMember(step->value, "toJson");
   if (method == nullptr || method->kind != MemberKind::Method) {
-    return JsonError(active.json_encoder->ConversionError(
+    return JsonError(encoder.ConversionError(
         "JSON object requires a public zero-argument toJson() returning a value"));
   }
   const auto callable =
@@ -82,7 +80,7 @@ StepResult Execution::ContinueJson(ActiveFrame& active) {
   const auto& function = functions_.subspan(target).front();
   const auto& signature = function.signature;
   if (!signature || !signature->parameters.empty() || !signature->result) {
-    return JsonError(active.json_encoder->ConversionError(
+    return JsonError(encoder.ConversionError(
         "JSON object requires a public zero-argument toJson() returning a value"));
   }
   // 参数和返回值经普通帧传递；JSON builtin 不重入解释器，不改写用户异常与 trace。

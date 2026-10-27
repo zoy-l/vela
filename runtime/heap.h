@@ -75,12 +75,6 @@ enum class StringJoinError : std::uint8_t { TypeMismatch, OutOfMemory };
 enum class StringCase : std::uint8_t { Lower, Upper };
 enum class ExpectedAlternative : std::uint8_t { Ok, Err };
 enum class ExpectedAccessError : std::uint8_t { NotExpected, InactiveAlternative };
-enum class CollectionError : std::uint8_t {
-  NotCollection,
-  TypeMismatch,
-  OutOfMemory,
-  ConcurrentModification,
-};
 
 struct CollectionCursor final {
   std::uint64_t mutation = 0;
@@ -159,32 +153,32 @@ class Heap final {
       ExpectedAlternative alternative) noexcept;
   [[nodiscard]] HeapObject* AllocateCollection(const CollectionLayout& layout) noexcept;
   // 输入在整个运算期间须保根；结果独立分配并保持插入顺序。
-  [[nodiscard]] std::expected<HeapObject*, CollectionError>
+  [[nodiscard]] std::expected<HeapObject*, ExecutionStatus>
   CombineSets(const HeapObject& left, const HeapObject& right, SetOperation operation) noexcept;
   // 扩容可能触发 GC；原生调用者须在调用期间保根 object、key 和 value。
-  [[nodiscard]] std::expected<CollectionInsert, CollectionError>
+  [[nodiscard]] std::expected<CollectionInsert, ExecutionStatus>
   InsertCollection(HeapObject& object, Value key, Value value = Value::Null()) noexcept;
-  [[nodiscard]] static std::expected<bool, CollectionError> HasCollectionKey(
+  [[nodiscard]] static std::expected<bool, ExecutionStatus> HasCollectionKey(
       const HeapObject& object,
       Value key) noexcept;
-  [[nodiscard]] static std::expected<Value, CollectionError> GetCollectionValue(
+  [[nodiscard]] static std::expected<Value, ExecutionStatus> GetCollectionValue(
       const HeapObject& object,
       Value key) noexcept;
-  [[nodiscard]] static std::expected<CollectionRemove, CollectionError> RemoveCollection(
+  [[nodiscard]] static std::expected<CollectionRemove, ExecutionStatus> RemoveCollection(
       HeapObject& object,
       Value key) noexcept;
-  [[nodiscard]] static std::expected<void, CollectionError> ClearCollection(
+  [[nodiscard]] static std::expected<void, ExecutionStatus> ClearCollection(
       HeapObject& object) noexcept;
-  [[nodiscard]] static std::expected<std::uint32_t, CollectionError> CollectionLength(
+  [[nodiscard]] static std::expected<std::uint32_t, ExecutionStatus> CollectionLength(
       const HeapObject& object) noexcept;
-  [[nodiscard]] static std::expected<CollectionCursor, CollectionError> IterateCollection(
+  [[nodiscard]] static std::expected<CollectionCursor, ExecutionStatus> IterateCollection(
       const HeapObject& object) noexcept;
-  [[nodiscard]] static std::expected<void, CollectionError> CheckCollectionMutation(
+  [[nodiscard]] static std::expected<void, ExecutionStatus> CheckCollectionMutation(
       const HeapObject& object,
       const CollectionCursor& cursor) noexcept;
-  [[nodiscard]] static std::expected<std::optional<CollectionEntry>, CollectionError>
+  [[nodiscard]] static std::expected<std::optional<CollectionEntry>, ExecutionStatus>
   NextCollectionEntry(const HeapObject& object, CollectionCursor& cursor) noexcept;
-  [[nodiscard]] std::expected<void, CollectionError> CopyCollection(
+  [[nodiscard]] std::expected<void, ExecutionStatus> CopyCollection(
       const HeapObject& object,
       HeapObject& array,
       CollectionProjection projection) noexcept;
@@ -357,7 +351,7 @@ class Heap final {
   std::expected<void, ArrayAccessError> GrowArray(HeapObject& array, Value value) noexcept;
   void MarkCollection(HeapObject& object) noexcept;
   void ReleaseCollection(HeapObject& object) noexcept;
-  std::expected<void, CollectionError> GrowCollection(HeapObject& object) noexcept;
+  std::expected<void, ExecutionStatus> GrowCollection(HeapObject& object) noexcept;
 
   HeapObject* objects_ = nullptr;
   HeapObject* gray_ = nullptr;

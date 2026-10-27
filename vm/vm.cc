@@ -267,8 +267,9 @@ bool IsEqualValue(runtime::Value left, runtime::Value right) noexcept {
   return {};
 }
 
-std::expected<runtime::Value, runtime::BuiltinError>
-ExecuteValueBuiltin(Builtin builtin, runtime::RegisterView arguments, runtime::Heap& heap) {
+std::expected<runtime::Value, ExecutionStatus> ExecuteValueBuiltin(Builtin builtin,
+                                                                   runtime::RegisterView arguments,
+                                                                   runtime::Heap& heap) {
   if (builtin == Builtin::NumericToInt || builtin == Builtin::NumericToDouble) {
     return runtime::ConvertNumber(builtin == Builtin::NumericToInt
                                       ? runtime::NumericConversion::ToInt
@@ -1039,24 +1040,7 @@ StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instructio
   const auto arguments = values.subspan(DecodeC(instruction), BuiltinArity(builtin));
   const auto result = ExecuteValueBuiltin(builtin, arguments, isolate_.heap());
   if (!result) {
-    switch (result.error()) {
-      case runtime::BuiltinError::OutOfMemory:
-        return std::unexpected(ExecutionStatus::OutOfMemory);
-      case runtime::BuiltinError::IndexOutOfBounds:
-        return std::unexpected(ExecutionStatus::IndexOutOfBounds);
-      case runtime::BuiltinError::TypeError:
-        return std::unexpected(ExecutionStatus::TypeError);
-      case runtime::BuiltinError::InvalidNumericConversion:
-        return std::unexpected(ExecutionStatus::InvalidNumericConversion);
-      case runtime::BuiltinError::ConcurrentModification:
-        return std::unexpected(ExecutionStatus::ConcurrentModification);
-      case runtime::BuiltinError::IntParseError:
-        return std::unexpected(ExecutionStatus::IntParseError);
-      case runtime::BuiltinError::DoubleParseError:
-        return std::unexpected(ExecutionStatus::DoubleParseError);
-      case runtime::BuiltinError::InvalidRadix:
-        return std::unexpected(ExecutionStatus::InvalidRadix);
-    }
+    return std::unexpected(result.error());
   }
   values.subspan(DecodeA(instruction)).front() = *result;
   return {};
@@ -1176,12 +1160,7 @@ StepResult Execution::ExecuteDynamicIndex(ActiveFrame& active, Instruction instr
     const std::array input{receiver, arguments.subspan(1).front().Read()};
     const auto result = runtime::ExecuteBuiltin(Builtin::StringIndex, input, isolate_.heap());
     if (!result) {
-      if (result.error() == runtime::BuiltinError::OutOfMemory) {
-        return std::unexpected(ExecutionStatus::OutOfMemory);
-      }
-      return std::unexpected(result.error() == runtime::BuiltinError::IndexOutOfBounds
-                                 ? ExecutionStatus::IndexOutOfBounds
-                                 : ExecutionStatus::TypeError);
+      return std::unexpected(result.error());
     }
     destination = *result;
     return {};

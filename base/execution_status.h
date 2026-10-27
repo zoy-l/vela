@@ -24,6 +24,8 @@ enum class ExecutionStatus : std::uint8_t {
   Thrown,
   DebuggerStopped,
   ConcurrentModification,
+  JsonDecodeError,
+  JsonEncodeError,
   FutureAlreadyCompleted,
   FutureSelfAdoption,
   AsyncIdle,

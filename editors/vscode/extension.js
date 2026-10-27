@@ -248,19 +248,52 @@ function registerSymbolProviders(context, client, flush) {
   return () => { linksChanged.fire(); tokensChanged.fire(); };
 }
 
+function resolveRuntime() {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const configured = vscode.workspace.getConfiguration("vela").get("serverPath", "");
+  if (!folder && !path.isAbsolute(configured)) return undefined;
+  const root = folder || path.dirname(configured);
+  const executable = configured ? path.resolve(root, configured) : path.join(root, "out", "debug", process.platform === "win32" ? "vela.exe" : "vela");
+  return { root, executable };
+}
+
+async function runFile() {
+  const document = vscode.window.activeTextEditor?.document;
+  if (!document || document.languageId !== "vela" || document.uri.scheme !== "file") {
+    await vscode.window.showErrorMessage("Open a saved Vela file before running it.");
+    return;
+  }
+  if (!vscode.workspace.workspaceFolders?.length) {
+    await vscode.window.showErrorMessage("Open a workspace folder before running a Vela file.");
+    return;
+  }
+  if (document.isDirty && !await document.save()) return;
+  const runtime = resolveRuntime();
+  const file = document.uri.fsPath;
+  const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+  const args = ["run", file];
+  const task = new vscode.Task({ type: "process", command: runtime.executable, args },
+    folder || vscode.TaskScope.Workspace, `Run ${path.basename(file)}`, "Vela",
+    new vscode.ProcessExecution(runtime.executable, args, { cwd: folder?.uri.fsPath || path.dirname(file) }), []);
+  task.presentationOptions = {
+    reveal: vscode.TaskRevealKind.Always, focus: true, panel: vscode.TaskPanelKind.Dedicated, clear: true
+  };
+  try { return await vscode.tasks.executeTask(task); }
+  catch (error) { await vscode.window.showErrorMessage(`Unable to run Vela: ${error.message}`); }
+}
+
 function activate(context) {
   const output = vscode.window.createOutputChannel("Vela");
   const diagnostics = vscode.languages.createDiagnosticCollection("vela");
   context.subscriptions.push(output, diagnostics,
-    vscode.commands.registerCommand("vela.showOutput", () => output.show()));
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  const configured = vscode.workspace.getConfiguration("vela").get("serverPath", "");
-  if (!folder && !path.isAbsolute(configured)) {
+    vscode.commands.registerCommand("vela.showOutput", () => output.show()),
+    vscode.commands.registerCommand("vela.runFile", runFile));
+  const runtime = resolveRuntime();
+  if (!runtime) {
     output.appendLine("Set an absolute vela.serverPath when no workspace folder is open.");
     return;
   }
-  const root = folder || path.dirname(configured);
-  const executable = configured ? path.resolve(root, configured) : path.join(root, "out", "debug", process.platform === "win32" ? "vela.exe" : "vela");
+  const { root, executable } = runtime;
   connection = new Connection(executable, root, output, diagnostics);
   const opened = new Map();
   const timers = new Map();

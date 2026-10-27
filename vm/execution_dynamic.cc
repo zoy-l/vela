@@ -11,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <tuple>
 
 #include "base/callable.h"
 #include "runtime/heap.h"
@@ -117,17 +118,16 @@ std::expected<Execution::ResolvedCallable, ExecutionStatus> Execution::ResolveCa
 }
 
 std::expected<Execution::BoundArguments, ExecutionStatus> Execution::BindDynamicArguments(
-    const FunctionStorage& function,
+    const CallSignature& signature,
     const ResolvedCallable& callable,
     const runtime::HeapObject& arguments,
     const runtime::HeapObject& names,
     DynamicCallStyle style) {
   const auto count = runtime::Heap::ArrayLength(arguments);
   const auto names_count = runtime::Heap::ArrayLength(names);
-  if (!count || !names_count || *count != *names_count || !function.signature) {
+  if (!count || !names_count || *count != *names_count) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto& signature = *function.signature;
   const auto hidden = callable.implicit ? 1U : 0U;
   if (hidden < signature.hidden_parameters) {
     return std::unexpected(ExecutionStatus::TypeError);
@@ -201,11 +201,17 @@ StepResult Execution::EnterDynamicCall(ActiveFrame& active,
                                        std::uint8_t destination,
                                        DynamicCallStyle style) {
   const auto& function = functions_.subspan(callable.function).front();
-  const auto bound = BindDynamicArguments(function, callable, arguments, names, style);
+  const auto& signature = function.signature;
+  if (!signature) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto& call_signature = *signature;
+  const auto types = function.View().types;
+  const auto bound = BindDynamicArguments(call_signature, callable, arguments, names, style);
   if (!bound) {
     return std::unexpected(bound.error());
   }
-  if (auto checked = CheckDynamicArguments(function, arguments, *bound); !checked) {
+  if (auto checked = CheckDynamicArguments(call_signature, types, arguments, *bound); !checked) {
     return checked;
   }
   const auto entered = EnterFrame({.function = callable.function, .destination = destination});
@@ -217,18 +223,18 @@ StepResult Execution::EnterDynamicCall(ActiveFrame& active,
     parameters.front() = *callable.implicit;
     parameters = parameters.subspan(1);
   }
-  if (auto copied = CopyDynamicArguments(function, arguments, *bound, parameters); !copied) {
+  if (auto copied = CopyDynamicArguments(call_signature, types, arguments, *bound, parameters);
+      !copied) {
     return copied;
   }
   active.dynamic_return = true;
   return {};
 }
 
-StepResult Execution::CheckDynamicArguments(const FunctionStorage& function,
+StepResult Execution::CheckDynamicArguments(const CallSignature& signature,
+                                            std::span<const runtime::TypeConstraint> types,
                                             const runtime::HeapObject& arguments,
                                             const BoundArguments& bound) {
-  const auto& signature = *function.signature;
-  const auto types = function.View().types;
   for (std::uint32_t index = 0; index < bound.count; ++index) {
     const auto& parameter = signature.parameters.at(bound.skipped + index);
     const auto& type = types.subspan(parameter.type).front();
@@ -253,12 +259,11 @@ StepResult Execution::CheckDynamicArguments(const FunctionStorage& function,
   return {};
 }
 
-StepResult Execution::CopyDynamicArguments(const FunctionStorage& function,
+StepResult Execution::CopyDynamicArguments(const CallSignature& signature,
+                                           std::span<const runtime::TypeConstraint> types,
                                            const runtime::HeapObject& arguments,
                                            const BoundArguments& bound,
                                            runtime::RegisterView parameters) {
-  const auto& signature = *function.signature;
-  const auto types = function.View().types;
   for (std::uint32_t index = 0; index < bound.count; ++index) {
     const auto& parameter = signature.parameters.at(bound.skipped + index);
     const auto& type = types.subspan(parameter.type).front();
@@ -299,8 +304,7 @@ std::expected<runtime::HeapObject*, ExecutionStatus> Execution::PackDynamicRest(
     if (!value.IsNull() && instance != nullptr && instance->IsEnum()) {
       value = *runtime::Heap::GetField(*value.AsObject(), 0);
     }
-    const auto stored = isolate_.heap().SetElement(*array, item, value);
-    assert(stored.has_value());
+    std::ignore = isolate_.heap().SetElement(*array, item, value);
   }
   return array;
 }

@@ -35,7 +35,6 @@
 #include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "vm/bytecode.h"
-#include "vm/exception_handler.h"
 #include "vm/program.h"
 
 namespace vela::compiler {

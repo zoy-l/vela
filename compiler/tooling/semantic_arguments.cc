@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -133,12 +134,12 @@ std::string ArgumentSource(std::string_view source,
       closing.pop_back();
     }
   }
-  for (auto iterator = closing.rbegin(); iterator != closing.rend(); ++iterator) {
-    if (*iterator == TokenKind::RightBrace) {
+  for (const auto kind : std::views::reverse(closing)) {
+    if (kind == TokenKind::RightBrace) {
       text += ";}";
-    } else if (*iterator == TokenKind::RightParen) {
+    } else if (kind == TokenKind::RightParen) {
       text += ')';
-    } else if (*iterator == TokenKind::RightBracket) {
+    } else if (kind == TokenKind::RightBracket) {
       text += ']';
     }
   }

@@ -19,6 +19,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -37,27 +38,25 @@ using runtime::FutureState;
 using runtime::Value;
 
 void Forward(Future& target, const FutureResult& result) {
-  const auto completed = result.state == FutureState::Succeeded
-                             ? target.Complete(result.value)
-                             : target.CompleteError(result.value, result.diagnostic);
-  // 只有获胜分支调用此函数；重复完成是内部调度错误，不是脚本输入检查。
-  assert(completed.has_value());
-  static_cast<void>(completed);
+  std::ignore = result.state == FutureState::Succeeded
+                    ? target.Complete(result.value)
+                    : target.CompleteError(result.value, result.diagnostic);
 }
 
 std::expected<std::size_t, ExecutionStatus> CallbackArity(const Program& program, Value callback) {
-  if (!runtime::Heap::IsValueOfType(callback,
-                                    {.kind = runtime::ValueKind::Object, .callable = true})) {
+  const auto* object = callback.IsObject() ? callback.AsObject() : nullptr;
+  const auto* callable_layout = object != nullptr ? runtime::Heap::ClassOf(*object) : nullptr;
+  if (callable_layout == nullptr || !program.HasCallable(*callable_layout)) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto* callable_layout = runtime::Heap::ClassOf(*callback.AsObject());
-  if (!program.HasCallable(*callable_layout)) {
+  const auto callable = callable_layout->callable();
+  if (!callable) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto target = *callable_layout->callable();
+  const auto target = *callable;
   auto function = target.function;
   if (target.mode == CallableMode::InterfaceMethod) {
-    const auto receiver = *runtime::Heap::GetField(*callback.AsObject(), 0);
+    const auto receiver = *runtime::Heap::GetField(*object, 0);
     const auto* layout =
         receiver.IsObject() ? runtime::Heap::ClassOf(*receiver.AsObject()) : nullptr;
     if (layout == nullptr || function >= layout->dispatch_targets().size()) {
@@ -769,8 +768,7 @@ StepResult Execution::ExecuteAsyncComposition(const AsyncArguments& call) {
                 .signature = result_type,
             },
     });
-    const auto bound = runtime::Heap::BindRuntimeType(*object, *layout);
-    assert(bound.has_value());
+    std::ignore = runtime::Heap::BindRuntimeType(*object, *layout);
   }
   auto references = std::make_shared<std::vector<Value>>(arguments.size() + 1);
   arguments.CopyTo(std::span(*references).first(arguments.size()));

@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -125,7 +124,7 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
   const auto& source = *info.declaration;
   const auto& signature = info.constructor;
   const bool generated = source.constructor_kind == frontend::ConstructorKind::Generated;
-  std::vector<std::optional<RegisterId>> arguments(generated ? 0 : signature.parameters.size());
+  std::vector<RegisterId> arguments(generated ? 0 : signature.parameters.size());
   std::vector<bool> provided(info.field_order.size(), false);
   // param 实参依源码顺序直接写入尚未逸出的对象，避免为全部字段保留寄存器。
   for (std::size_t index = 0; index < call_arguments.size(); ++index) {
@@ -149,30 +148,25 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
     }
   }
   for (const auto& field : source.fields) {
-    if (field.storage == frontend::MemberStorage::Static) {
+    if (field.storage == frontend::MemberStorage::Static || !field.initializer) {
       continue;
     }
     const auto field_index = info.fields.at(field.name).index;
     if (provided.at(field_index)) {
       continue;
     }
-    std::optional<RegisterId> value;
-    if (field.initializer) {
-      // 字段初始化器在声明处检查，不可意外读取构造调用者的同名局部变量。
-      auto caller_scopes = std::move(scopes_);
-      scopes_.clear();
-      value = LowerExpression(*field.initializer).reg;
-      scopes_ = std::move(caller_scopes);
-    }
-    if (value) {
-      Emit({
-          .opcode = Opcode::SetField,
-          .dst = object,
-          .lhs = *value,
-          .index = field_index,
-          .location = field.location,
-      });
-    }
+    // 字段初始化器在声明处检查，不可意外读取构造调用者的同名局部变量。
+    auto caller_scopes = std::move(scopes_);
+    scopes_.clear();
+    const auto value = LowerExpression(*field.initializer);
+    scopes_ = std::move(caller_scopes);
+    Emit({
+        .opcode = Opcode::SetField,
+        .dst = object,
+        .lhs = value.reg,
+        .index = field_index,
+        .location = field.location,
+    });
   }
   if (source.base_class && !model_.explicit_super_constructors.contains(info.type.name)) {
     const auto& base = model_.classes.at(source.base_class->name);
@@ -190,7 +184,7 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
       Emit({
           .opcode = Opcode::Move,
           .dst = static_cast<RegisterId>(base + index + 1),
-          .lhs = *arguments.at(index),
+          .lhs = arguments.at(index),
           .location = location,
       });
     }

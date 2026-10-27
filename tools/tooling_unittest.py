@@ -31,7 +31,7 @@ class LanguageServerTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="vela-lsp-")
         self.addCleanup(self.temporary.cleanup)
-        self.directory = Path(self.temporary.name)
+        self.directory = Path(self.temporary.name).resolve()
         self.entry = self.directory / "main.vela"
         self.uri = self.entry.as_uri()
         self.executable = Path(os.environ.get(

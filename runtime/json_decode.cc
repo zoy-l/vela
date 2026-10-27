@@ -13,6 +13,7 @@
 #include <absl/strings/numbers.h>
 #include <yyjson.h>
 
+#include "base/execution_status.h"
 #include "base/json.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -23,7 +24,7 @@ namespace vela::runtime {
 namespace {
 
 JsonRuntimeError OutOfMemory() {
-  return {.failure = JsonFailure::OutOfMemory, .message = "JSON allocation failed"};
+  return {.status = ExecutionStatus::OutOfMemory, .message = "JSON allocation failed"};
 }
 
 void* Allocate(void* context, std::size_t size) {
@@ -239,7 +240,8 @@ std::expected<Value, JsonRuntimeError> ParseJson(std::string_view source, Isolat
   if (!document) {
     const auto& error = document.error();
     return std::unexpected(JsonRuntimeError{
-        .failure = error.out_of_memory ? JsonFailure::OutOfMemory : JsonFailure::Decode,
+        .status =
+            error.out_of_memory ? ExecutionStatus::OutOfMemory : ExecutionStatus::JsonDecodeError,
         .offset = error.offset,
         .message = error.message,
     });

@@ -7,7 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "base/builtin.h"
-#include "runtime/builtins.h"
+#include "base/execution_status.h"
 #include "runtime/heap.h"
 #include "runtime/numeric_parse.h"
 #include "runtime/value.h"
@@ -84,7 +84,7 @@ TEST(NumericParseTest, InvalidAndOverflowingIntegersAreNotTruncated) {
     const std::array<Value, 2> arguments{Value::String(heap.AllocateString(text)), Value::Null()};
     const auto result = ExecuteNumericParse(Builtin::IntParse, arguments);
     ASSERT_FALSE(result) << text;
-    EXPECT_EQ(result.error(), BuiltinError::IntParseError);
+    EXPECT_EQ(result.error(), ExecutionStatus::IntParseError);
     const auto tried = ExecuteNumericParse(Builtin::IntTryParse, arguments);
     ASSERT_TRUE(tried);
     EXPECT_TRUE(tried->IsNull());
@@ -107,7 +107,7 @@ TEST(NumericParseTest, InvalidRadixIsAnErrorEvenForTryParse) {
     };
     const auto tried = ExecuteNumericParse(Builtin::IntTryParse, arguments);
     ASSERT_FALSE(tried);
-    EXPECT_EQ(tried.error(), BuiltinError::InvalidRadix);
+    EXPECT_EQ(tried.error(), ExecutionStatus::InvalidRadix);
   }
 }
 
@@ -175,7 +175,7 @@ TEST(NumericParseTest, DoublesRequireTheCompleteDecimalGrammar) {
     const std::array<Value, 1> arguments{Value::String(heap.AllocateString(text))};
     const auto parsed = ExecuteNumericParse(Builtin::DoubleParse, arguments);
     ASSERT_FALSE(parsed) << text;
-    EXPECT_EQ(parsed.error(), BuiltinError::DoubleParseError);
+    EXPECT_EQ(parsed.error(), ExecutionStatus::DoubleParseError);
     const auto tried = ExecuteNumericParse(Builtin::DoubleTryParse, arguments);
     ASSERT_TRUE(tried);
     EXPECT_TRUE(tried->IsNull());

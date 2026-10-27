@@ -25,16 +25,20 @@ struct Initialized final {
 };
 using Path = std::optional<Initialized>;
 
+void Intersect(Initialized& left, const Initialized& right) {
+  absl::erase_if(left.fields,
+                 [&](const auto& name) -> bool { return !right.fields.contains(name); });
+  if (left.base != right.base) {
+    left.base = Initialized::Base::Maybe;
+  }
+}
+
 Path Merge(Path left, const Path& right) {
   if (!left) {
     return right;
   }
   if (right) {
-    absl::erase_if(left->fields,
-                   [&](const auto& name) -> bool { return !right->fields.contains(name); });
-    if (left->base != right->base) {
-      left->base = Initialized::Base::Maybe;
-    }
+    Intersect(*left, *right);
   }
   return left;
 }
@@ -164,7 +168,7 @@ bool Initialization::WalkSpecial(const Expression& expression, Initialized& init
     Walk(expression.left.get(), initialized);
     auto right = initialized;
     Walk(expression.right.get(), right);
-    initialized = *Merge(initialized, right);
+    Intersect(initialized, right);
     return true;
   }
   return false;
@@ -239,7 +243,11 @@ Path Initialization::Switch(const Statement& statement, Initialized initialized)
   bool has_default = false;
   for (const auto& branch : statement.cases) {
     has_default = has_default || !branch.label;
-    previous = Walk(*branch.body, *Merge(initialized, previous));
+    auto entry = initialized;
+    if (previous) {
+      Intersect(entry, *previous);
+    }
+    previous = Walk(*branch.body, std::move(entry));
   }
   auto exits = Merge(std::move(previous), controls_.at(control).breaks);
   controls_.pop_back();

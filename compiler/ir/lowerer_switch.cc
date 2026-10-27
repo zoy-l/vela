@@ -83,8 +83,8 @@ void Lowerer::LowerSwitch(const frontend::Statement& statement) {
   });
   for (std::size_t index = 0; index < statement.cases.size(); ++index) {
     const auto target = static_cast<std::uint32_t>(current_function_->instructions.size());
-    if (entries.at(index)) {
-      current_function_->instructions.at(*entries.at(index)).index = target;
+    if (const auto entry = entries.at(index)) {
+      current_function_->instructions.at(*entry).index = target;
     }
     if (default_branch == index) {
       current_function_->instructions.at(unmatched).index = target;

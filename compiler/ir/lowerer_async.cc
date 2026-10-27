@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -137,7 +138,7 @@ void Lowerer::RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std:
           .second = {},
       },
   });
-  const auto member = std::ranges::find_if(kMembers, [&receiver, name](const auto& entry) {
+  const auto* member = std::ranges::find_if(kMembers, [&receiver, name](const auto& entry) {
     return entry.receiver == receiver.kind && entry.name == name;
   });
   if (member == kMembers.end()) {
@@ -187,6 +188,43 @@ void Lowerer::RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std:
   PublishMemberFunction(receiver, name, member->kind, signature, std::move(function));
 }
 
+void Lowerer::LowerAsyncArguments(const frontend::Expression& expression,
+                                  AsyncOperation operation,
+                                  RegisterId base,
+                                  const std::optional<LoweredValue>& receiver) {
+  if (expression.kind != frontend::Expression::Kind::Call) {
+    return;
+  }
+  const auto hidden = static_cast<RegisterId>(receiver.has_value());
+  const frontend::TypeDescriptor* payload = nullptr;
+  if (operation == AsyncOperation::CompleterComplete) {
+    assert(receiver.has_value());
+    const auto& element = model_.generic_arguments.at(receiver->type.name).front();
+    payload = &model_.types.at("Future<" + element.name + ">");
+  }
+  const auto& order = model_.argument_order.at(&expression);
+  for (std::size_t index = 0; index < expression.arguments.size(); ++index) {
+    const auto& argument = expression.arguments.at(index);
+    auto value = LowerExpression(*argument.value);
+    if (operation == AsyncOperation::CompleterComplete &&
+        value.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+      value.reg = LowerFuturePayload(value, *payload, argument.location);
+    }
+    if (operation == AsyncOperation::CompleterComplete &&
+        value.type.kind == frontend::TypeDescriptor::Kind::Enum) {
+      value = LowerConversion(value,
+                              {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},
+                              argument.location);
+    }
+    Emit({
+        .opcode = Opcode::Move,
+        .dst = base + hidden + order.at(index),
+        .lhs = value.reg,
+        .location = argument.location,
+    });
+  }
+}
+
 Lowerer::LoweredValue Lowerer::LowerAsyncCall(const frontend::Expression& expression) {
   const auto& descriptor = model_.async_calls.at(&expression);
   const auto operation = descriptor.operation;
@@ -207,7 +245,6 @@ Lowerer::LoweredValue Lowerer::LowerAsyncCall(const frontend::Expression& expres
     const auto reg = AllocateRegister(expression.location);
     Emit({.opcode = Opcode::LoadNull, .dst = reg, .location = expression.location});
   }
-  const auto hidden = receiver ? 1U : 0U;
   if (receiver) {
     Emit({
         .opcode = Opcode::Move,
@@ -230,31 +267,7 @@ Lowerer::LoweredValue Lowerer::LowerAsyncCall(const frontend::Expression& expres
         .location = expression.location,
     });
   }
-  if (expression.kind == frontend::Expression::Kind::Call) {
-    const auto& order = model_.argument_order.at(&expression);
-    for (std::size_t index = 0; index < expression.arguments.size(); ++index) {
-      const auto& argument = expression.arguments.at(index);
-      auto value = LowerExpression(*argument.value);
-      if (operation == AsyncOperation::CompleterComplete &&
-          value.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
-        const auto& element = model_.generic_arguments.at((*receiver).type.name).front();
-        const auto& future = model_.types.at("Future<" + element.name + ">");
-        value.reg = LowerFuturePayload(value, future, argument.location);
-      }
-      if (operation == AsyncOperation::CompleterComplete &&
-          value.type.kind == frontend::TypeDescriptor::Kind::Enum) {
-        value = LowerConversion(
-            value, {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},
-            argument.location);
-      }
-      Emit({
-          .opcode = Opcode::Move,
-          .dst = base + hidden + order.at(index),
-          .lhs = value.reg,
-          .location = argument.location,
-      });
-    }
-  }
+  LowerAsyncArguments(expression, operation, base, receiver);
   if (descriptor.runtime_type) {
     const auto type_index = operation == AsyncOperation::Wait
                                 ? RegisterArrayType(*descriptor.runtime_type)

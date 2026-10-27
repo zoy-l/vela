@@ -46,7 +46,7 @@ void DecodeJson(benchmark::State& state) {
   heap.Collect();
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    const auto value = runtime::ParseJson(source, isolate);
+    auto value = runtime::ParseJson(source, isolate);
     if (!value || runtime::Heap::ArrayLength(*value->AsObject()) != count) {
       state.SkipWithError("JSON decoding returned an unexpected value");
       return;
@@ -76,12 +76,8 @@ void EncodeJson(benchmark::State& state) {
   heap.Collect();
   const auto baseline = heap.allocated_bytes();
   {
-    const auto warm = runtime::JsonEncoder::Create(isolate, root.value());
-    if (!warm) {
-      state.SkipWithError("JSON encoding warm-up allocation failed");
-      return;
-    }
-    const auto encoded = warm->Advance();
+    runtime::JsonEncoder warm(isolate, root.value());
+    const auto encoded = warm.Advance();
     if (!encoded || encoded->action != runtime::JsonEncodeAction::Complete) {
       state.SkipWithError("JSON encoding warm-up failed");
       return;
@@ -92,12 +88,8 @@ void EncodeJson(benchmark::State& state) {
   heap.Collect();
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    const auto encoder = runtime::JsonEncoder::Create(isolate, root.value());
-    if (!encoder) {
-      state.SkipWithError("JSON encoder allocation failed");
-      return;
-    }
-    const auto result = encoder->Advance();
+    runtime::JsonEncoder encoder(isolate, root.value());
+    auto result = encoder.Advance();
     if (!result || result->action != runtime::JsonEncodeAction::Complete ||
         !result->value.IsString() || result->value.AsString()->value() != source) {
       state.SkipWithError("JSON encoding returned an unexpected value");

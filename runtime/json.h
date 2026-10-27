@@ -4,11 +4,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 
+#include "base/execution_status.h"
 #include "runtime/heap.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
@@ -17,10 +17,8 @@ namespace vela::runtime {
 
 class Isolate;
 
-enum class JsonFailure : std::uint8_t { Decode, Encode, OutOfMemory, ConcurrentModification };
-
 struct JsonRuntimeError final {
-  JsonFailure failure = JsonFailure::Decode;
+  ExecutionStatus status = ExecutionStatus::JsonDecodeError;
   std::size_t offset = 0;
   std::string message;
 };
@@ -30,11 +28,6 @@ struct JsonRuntimeError final {
                                                                Isolate& isolate);
 
 struct JsonEncodeFrame;
-class JsonEncoder;
-struct JsonEncoderDeleter final {
-  void operator()(JsonEncoder* encoder) const;
-};
-using JsonEncoderPtr = std::unique_ptr<JsonEncoder, JsonEncoderDeleter>;
 
 enum class JsonEncodeAction : std::uint8_t { Complete, Convert };
 
@@ -47,7 +40,6 @@ struct JsonEncodeStep final {
 class JsonEncoder final {
  public:
   JsonEncoder(Isolate& isolate, Value input);
-  [[nodiscard]] static JsonEncoderPtr Create(Isolate& isolate, Value input);
   ~JsonEncoder();
   JsonEncoder(const JsonEncoder&) = delete;
   JsonEncoder& operator=(const JsonEncoder&) = delete;
@@ -59,7 +51,6 @@ class JsonEncoder final {
   [[nodiscard]] JsonRuntimeError ConversionError(std::string_view message) const;
 
  private:
-  friend struct JsonEncoderDeleter;
   [[nodiscard]] std::expected<void, JsonRuntimeError> Append(std::string_view text);
   [[nodiscard]] std::expected<void, JsonRuntimeError> Quote(std::string_view text);
   [[nodiscard]] std::expected<void, JsonRuntimeError> Push(Value value);
@@ -72,12 +63,16 @@ class JsonEncoder final {
   [[nodiscard]] std::expected<void, JsonRuntimeError> AdvanceMap();
   [[nodiscard]] std::expected<void, JsonRuntimeError> CheckElement(const ArrayLayout& layout) const;
   void Pop();
-  [[nodiscard]] JsonRuntimeError Error(JsonFailure failure, std::string_view message) const;
+  [[nodiscard]] JsonRuntimeError Error(ExecutionStatus status, std::string_view message) const;
 
+  static constexpr std::size_t kPending = 0;
+  static constexpr std::size_t kOutput = 1;
+  static constexpr std::size_t kActive = 2;
+  static constexpr std::size_t kRootCount = 3;
   Heap* heap_;
   const CollectionLayout* active_type_;
   // pending、输出 builder、当前路径的身份集合均跨越 GC 和 VM 调用保根。
-  std::array<Value, 3> values_;
+  std::array<Value, kRootCount> values_;
   RootRange roots_;
   JsonEncodeFrame* frame_ = nullptr;
   bool pending_ = true;

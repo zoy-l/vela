@@ -103,6 +103,10 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   actionable diagnostics or failure results at the actual boundary.
 - Assert runtime invariants once at their actual boundary. Do not repeatedly check state guaranteed
   by contract in every leaf function.
+- Do not use runtime assertions inside loops. Do not add calculations, traversals, lookups, or
+  temporary results solely to support an assertion. Rely on established contracts and required
+  data types; handle real input failures at their boundary. Do not move assertions into helpers
+  merely to bypass this rule.
 - Use `static_assert` for compile-time type, constant, and layout constraints.
 
 ## Files, comments, and cleanup

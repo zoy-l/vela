@@ -7,6 +7,7 @@
 
 #include "gtest/gtest.h"
 
+#include "base/execution_status.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/json.h"
@@ -45,7 +46,7 @@ TEST_P(JsonNumberRangeTest, RejectsOutOfRangeNumberAtItsOriginalOffset) {
   Isolate isolate;
   const auto value = ParseJson(GetParam(), isolate);
   ASSERT_FALSE(value);
-  EXPECT_EQ(value.error().failure, JsonFailure::Decode);
+  EXPECT_EQ(value.error().status, ExecutionStatus::JsonDecodeError);
   EXPECT_EQ(value.error().offset, 0U);
 }
 INSTANTIATE_TEST_SUITE_P(InvalidNumberRanges,
@@ -112,6 +113,24 @@ TEST(JsonRuntimeTest, TraversesDeepValuesWithoutCppRecursionAndReleasesNativeMem
   isolate.heap().FinishCollection();
   isolate.heap().Collect();
   EXPECT_EQ(isolate.heap().allocated_bytes(), baseline);
+}
+
+TEST(JsonRuntimeTest, RootsPendingInputBeforeAdvancingAndReleasesItOnDestruction) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  {
+    auto* input = heap.AllocateString("pending 😀");
+    ASSERT_NE(input, nullptr);
+    JsonEncoder encoder(isolate, Value::String(input));
+    heap.Collect();
+    const auto result = encoder.Advance();
+    ASSERT_TRUE(result);
+    ASSERT_EQ(result->action, JsonEncodeAction::Complete);
+    EXPECT_EQ(result->value.AsString()->value(), "\"pending 😀\"");
+  }
+  heap.FinishCollection();
+  heap.Collect();
+  EXPECT_EQ(heap.allocated_bytes(), 0U);
 }
 
 }  // namespace

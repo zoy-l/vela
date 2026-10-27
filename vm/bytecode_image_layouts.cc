@@ -327,8 +327,8 @@ std::expected<void, std::string> LayoutLoader::CollectDependencies() {
         return built;
       }
     }
-    if (input.result) {
-      if (auto built = AddDependencies(owner, *input.result); !built) {
+    if (const auto result = input.result) {
+      if (auto built = AddDependencies(owner, *result); !built) {
         return built;
       }
     }

@@ -47,7 +47,7 @@ void SteadyRegExp(benchmark::State& state, std::string_view source, std::int64_t
   state.counters["persistent_bytes"] = static_cast<double>(baseline);
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    const auto result = machine.Execute(entry);
+    auto result = machine.Execute(entry);
     if (!result.Succeeded() || !result.value.IsInteger() || result.value.AsInteger() != expected) {
       state.SkipWithError("RegExp execution returned an unexpected result");
       return;
@@ -115,7 +115,7 @@ void SearchRegExp(benchmark::State& state, Builtin builtin) {
   const auto objects = heap.object_count();
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    const auto result = runtime::ExecuteRegExpBuiltin(
+    auto result = runtime::ExecuteRegExpBuiltin(
         builtin, std::span(arguments).first(BuiltinArity(builtin)), heap, &layout);
     if (!result) {
       state.SkipWithError(result.error().message);

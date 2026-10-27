@@ -47,7 +47,8 @@ struct ActiveFrame final {
   std::size_t program_counter = 0;
   std::uint8_t return_register = 0;
   std::optional<std::size_t> initialized_global;
-  runtime::JsonEncoderPtr json_encoder;
+  // 固定帧数组为 encoder 及其 intrusive roots 提供稳定地址；只在 stringify 期间构造。
+  std::optional<runtime::JsonEncoder> json_encoder;
   std::uint8_t json_destination = 0;
   bool dynamic_return = false;
   bool dynamic_call_plan = false;
@@ -150,10 +151,13 @@ class Execution final {
                                                       std::uint32_t index,
                                                       DynamicCallStyle style,
                                                       ArgumentBinding& binding);
-  [[nodiscard]] static StepResult CheckDynamicArguments(const FunctionStorage& function,
-                                                        const runtime::HeapObject& arguments,
-                                                        const BoundArguments& bound);
-  [[nodiscard]] StepResult CopyDynamicArguments(const FunctionStorage& function,
+  [[nodiscard]] static StepResult CheckDynamicArguments(
+      const CallSignature& signature,
+      std::span<const runtime::TypeConstraint> types,
+      const runtime::HeapObject& arguments,
+      const BoundArguments& bound);
+  [[nodiscard]] StepResult CopyDynamicArguments(const CallSignature& signature,
+                                                std::span<const runtime::TypeConstraint> types,
                                                 const runtime::HeapObject& arguments,
                                                 const BoundArguments& bound,
                                                 runtime::RegisterView parameters);
@@ -164,7 +168,7 @@ class Execution final {
   [[nodiscard]] std::expected<ResolvedCallable, ExecutionStatus> ResolveCallable(
       runtime::Value value) const;
   [[nodiscard]] static std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
-      const FunctionStorage& function,
+      const CallSignature& signature,
       const ResolvedCallable& callable,
       const runtime::HeapObject& arguments,
       const runtime::HeapObject& names,

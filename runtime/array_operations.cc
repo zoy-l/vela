@@ -13,7 +13,7 @@
 #include <utf8proc.h>
 
 #include "base/builtin.h"
-#include "runtime/builtins.h"
+#include "base/execution_status.h"
 #include "runtime/heap.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
@@ -28,29 +28,29 @@ constexpr std::uint32_t kLowSurrogateBase = 0xdc00;
 constexpr std::uint32_t kSurrogatePayloadBits = 10;
 constexpr std::uint32_t kSurrogatePayloadMask = (1U << kSurrogatePayloadBits) - 1;
 
-BuiltinError Error(ArrayAccessError error) {
+ExecutionStatus Error(ArrayAccessError error) {
   switch (error) {
     case ArrayAccessError::NotArray:
     case ArrayAccessError::ElementTypeMismatch:
-      return BuiltinError::TypeError;
+      return ExecutionStatus::TypeError;
     case ArrayAccessError::OutOfBounds:
-      return BuiltinError::IndexOutOfBounds;
+      return ExecutionStatus::IndexOutOfBounds;
     case ArrayAccessError::OutOfMemory:
-      return BuiltinError::OutOfMemory;
+      return ExecutionStatus::OutOfMemory;
   }
   std::unreachable();
 }
 
 template <class T, class Convert>
-std::expected<Value, BuiltinError> Result(std::expected<T, ArrayAccessError> result,
-                                          const Convert& convert) {
+std::expected<Value, ExecutionStatus> Result(std::expected<T, ArrayAccessError> result,
+                                             const Convert& convert) {
   if (!result) {
     return std::unexpected(Error(result.error()));
   }
   return convert(*result);
 }
 
-std::expected<Value, BuiltinError> MutationResult(std::expected<void, ArrayAccessError> result) {
+std::expected<Value, ExecutionStatus> MutationResult(std::expected<void, ArrayAccessError> result) {
   if (!result) {
     return std::unexpected(Error(result.error()));
   }
@@ -64,9 +64,9 @@ std::uint32_t RelativeIndex(Value value, std::uint32_t length) {
                                               : std::min(index, size));
 }
 
-std::expected<Value, BuiltinError> CopyArray(HeapObject& array,
-                                             std::span<const Value> arguments,
-                                             Heap& heap) {
+std::expected<Value, ExecutionStatus> CopyArray(HeapObject& array,
+                                                std::span<const Value> arguments,
+                                                Heap& heap) {
   const auto length = Heap::ArrayLength(array);
   if (!length) {
     return std::unexpected(Error(length.error()));
@@ -74,7 +74,7 @@ std::expected<Value, BuiltinError> CopyArray(HeapObject& array,
   const auto first = arguments.subspan(1).front();
   const auto last = arguments.subspan(2).front();
   if (!first.IsInteger() || !last.IsInteger()) {
-    return std::unexpected(BuiltinError::TypeError);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto start = RelativeIndex(first, *length);
   const auto end = std::max(start, RelativeIndex(last, *length));
@@ -82,10 +82,10 @@ std::expected<Value, BuiltinError> CopyArray(HeapObject& array,
                 [](HeapObject* copy) -> Value { return Value::Object(copy); });
 }
 
-std::expected<Value, BuiltinError> ReplaceRange(Builtin builtin,
-                                                HeapObject& array,
-                                                std::span<const Value> arguments,
-                                                Heap& heap) {
+std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
+                                                   HeapObject& array,
+                                                   std::span<const Value> arguments,
+                                                   Heap& heap) {
   const auto length = Heap::ArrayLength(array);
   if (!length) {
     return std::unexpected(Error(length.error()));
@@ -93,7 +93,7 @@ std::expected<Value, BuiltinError> ReplaceRange(Builtin builtin,
   const bool splice = builtin == Builtin::ArraySplice;
   const auto input = arguments.subspan(splice ? 3 : 1).front();
   if (!input.IsObject() || input.AsObject() == nullptr) {
-    return std::unexpected(BuiltinError::TypeError);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   std::uint32_t start = builtin == Builtin::ArrayPushMany ? *length : 0;
   std::uint32_t count = 0;
@@ -101,7 +101,7 @@ std::expected<Value, BuiltinError> ReplaceRange(Builtin builtin,
     const auto position = arguments.subspan(1).front();
     const auto deleted = arguments.subspan(2).front();
     if (!position.IsInteger() || !deleted.IsInteger()) {
-      return std::unexpected(BuiltinError::TypeError);
+      return std::unexpected(ExecutionStatus::TypeError);
     }
     start = RelativeIndex(position, *length);
     count = static_cast<std::uint32_t>(
@@ -162,11 +162,11 @@ std::uint32_t NextUnit(std::string_view& text, std::uint32_t& pending) {
   return kHighSurrogateBase + (payload >> kSurrogatePayloadBits);
 }
 
-std::expected<Value, BuiltinError> DefaultCompare(std::span<const Value> arguments) {
+std::expected<Value, ExecutionStatus> DefaultCompare(std::span<const Value> arguments) {
   const auto left = arguments.front();
   const auto right = arguments.subspan(1).front();
   if (left.IsObject() || right.IsObject()) {
-    return std::unexpected(BuiltinError::TypeError);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   std::array<char, kScalarTextCapacity> left_buffer{};
   std::array<char, kScalarTextCapacity> right_buffer{};
@@ -191,15 +191,15 @@ std::expected<Value, BuiltinError> DefaultCompare(std::span<const Value> argumen
 
 }  // namespace
 
-std::expected<Value, BuiltinError> ExecuteArrayBuiltin(Builtin builtin,
-                                                       std::span<const Value> arguments,
-                                                       Heap& heap) {
+std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
+                                                          std::span<const Value> arguments,
+                                                          Heap& heap) {
   if (builtin == Builtin::ArrayDefaultCompare) {
     return DefaultCompare(arguments);
   }
   const auto receiver = arguments.front();
   if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
-    return std::unexpected(BuiltinError::TypeError);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   auto& array = *receiver.AsObject();
   const auto integer = [](auto value) -> Value {
@@ -216,7 +216,7 @@ std::expected<Value, BuiltinError> ExecuteArrayBuiltin(Builtin builtin,
       const auto first = arguments.subspan(2).front();
       const auto last = arguments.subspan(3).front();
       if (!length || !first.IsInteger() || !last.IsInteger()) {
-        return std::unexpected(BuiltinError::TypeError);
+        return std::unexpected(ExecutionStatus::TypeError);
       }
       const auto start = RelativeIndex(first, *length);
       const auto end = std::max(start, RelativeIndex(last, *length));
@@ -254,10 +254,10 @@ std::expected<Value, BuiltinError> ExecuteArrayBuiltin(Builtin builtin,
     case Builtin::ArrayReserve: {
       const auto capacity = arguments.subspan(1).front();
       if (!capacity.IsInteger()) {
-        return std::unexpected(BuiltinError::TypeError);
+        return std::unexpected(ExecutionStatus::TypeError);
       }
       if (capacity.AsInteger() < 0) {
-        return std::unexpected(BuiltinError::IndexOutOfBounds);
+        return std::unexpected(ExecutionStatus::IndexOutOfBounds);
       }
       return MutationResult(
           heap.ReserveArray(array, static_cast<std::size_t>(capacity.AsInteger())));
@@ -274,10 +274,10 @@ std::expected<Value, BuiltinError> ExecuteArrayBuiltin(Builtin builtin,
       const auto mutation = Heap::ArrayMutation(array);
       const auto expected = arguments.subspan(1).front();
       if (!mutation || !expected.IsInteger()) {
-        return std::unexpected(BuiltinError::TypeError);
+        return std::unexpected(ExecutionStatus::TypeError);
       }
       if (*mutation != std::bit_cast<std::uint64_t>(expected.AsInteger())) {
-        return std::unexpected(BuiltinError::ConcurrentModification);
+        return std::unexpected(ExecutionStatus::ConcurrentModification);
       }
       return Value::Null();
     }

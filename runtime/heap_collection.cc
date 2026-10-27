@@ -15,6 +15,7 @@
 
 #include <absl/hash/hash.h>
 
+#include "base/execution_status.h"
 #include "runtime/element_storage.h"
 #include "runtime/object.h"
 #include "runtime/string.h"
@@ -228,7 +229,7 @@ HeapObject* Heap::AllocateCollection(const CollectionLayout& layout) noexcept {
   return object;
 }
 
-std::expected<void, CollectionError> Heap::GrowCollection(HeapObject& object) noexcept {
+std::expected<void, ExecutionStatus> Heap::GrowCollection(HeapObject& object) noexcept {
   auto& current = Storage(object);
   const auto& layout = *object.collection_layout();
   auto capacity = current.capacity;
@@ -236,7 +237,7 @@ std::expected<void, CollectionError> Heap::GrowCollection(HeapObject& object) no
     capacity = kInitialCapacity;
   } else if (current.size >= capacity / 2) {
     if (capacity >= kMaximumCapacity) {
-      return std::unexpected(CollectionError::OutOfMemory);
+      return std::unexpected(ExecutionStatus::OutOfMemory);
     }
     capacity *= 2;
   }
@@ -244,7 +245,7 @@ std::expected<void, CollectionError> Heap::GrowCollection(HeapObject& object) no
   MaybeCollect(bytes);
   auto* memory = static_cast<std::byte*>(::operator new(bytes, std::nothrow));
   if (memory == nullptr) {
-    return std::unexpected(CollectionError::OutOfMemory);
+    return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   CollectionStorage replacement{
       .mutation = current.mutation,
@@ -283,16 +284,16 @@ std::expected<void, CollectionError> Heap::GrowCollection(HeapObject& object) no
   return {};
 }
 
-std::expected<CollectionInsert, CollectionError> Heap::InsertCollection(HeapObject& object,
+std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollection(HeapObject& object,
                                                                         Value key,
                                                                         Value value) noexcept {
   if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(CollectionError::NotCollection);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& layout = *object.collection_layout();
   if (!IsValueOfType(key, layout.keys.element_type()) ||
       (layout.values && !IsValueOfType(value, layout.values->element_type()))) {
-    return std::unexpected(CollectionError::TypeMismatch);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   auto& storage = Storage(object);
   const auto hash = HashKey(key);
@@ -336,27 +337,27 @@ std::expected<CollectionInsert, CollectionError> Heap::InsertCollection(HeapObje
   return CollectionInsert::Inserted;
 }
 
-std::expected<bool, CollectionError> Heap::HasCollectionKey(const HeapObject& object,
+std::expected<bool, ExecutionStatus> Heap::HasCollectionKey(const HeapObject& object,
                                                             Value key) noexcept {
   if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(CollectionError::NotCollection);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& layout = *object.collection_layout();
   if (!IsValueOfType(key, layout.keys.element_type())) {
-    return std::unexpected(CollectionError::TypeMismatch);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& storage = Storage(object);
   return storage.size != 0 && FindSlot(View(storage, layout), layout, key, HashKey(key)).found;
 }
 
-std::expected<Value, CollectionError> Heap::GetCollectionValue(const HeapObject& object,
+std::expected<Value, ExecutionStatus> Heap::GetCollectionValue(const HeapObject& object,
                                                                Value key) noexcept {
   if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(CollectionError::NotCollection);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& layout = *object.collection_layout();
   if (!layout.values || !IsValueOfType(key, layout.keys.element_type())) {
-    return std::unexpected(CollectionError::TypeMismatch);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& storage = Storage(object);
   if (storage.size == 0) {
@@ -367,14 +368,14 @@ std::expected<Value, CollectionError> Heap::GetCollectionValue(const HeapObject&
   return slot.found ? LoadElementStorage(*layout.values, table.values, slot.entry) : Value::Null();
 }
 
-std::expected<CollectionRemove, CollectionError> Heap::RemoveCollection(HeapObject& object,
+std::expected<CollectionRemove, ExecutionStatus> Heap::RemoveCollection(HeapObject& object,
                                                                         Value key) noexcept {
   if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(CollectionError::NotCollection);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& layout = *object.collection_layout();
   if (!IsValueOfType(key, layout.keys.element_type())) {
-    return std::unexpected(CollectionError::TypeMismatch);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   auto& storage = Storage(object);
   if (storage.size == 0) {
@@ -407,9 +408,9 @@ std::expected<CollectionRemove, CollectionError> Heap::RemoveCollection(HeapObje
   return CollectionRemove::Removed;
 }
 
-std::expected<void, CollectionError> Heap::ClearCollection(HeapObject& object) noexcept {
+std::expected<void, ExecutionStatus> Heap::ClearCollection(HeapObject& object) noexcept {
   if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(CollectionError::NotCollection);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   auto& storage = Storage(object);
   if (storage.size != 0) {
@@ -425,23 +426,23 @@ std::expected<void, CollectionError> Heap::ClearCollection(HeapObject& object) n
   return {};
 }
 
-std::expected<HeapObject*, CollectionError> Heap::CombineSets(const HeapObject& left,
+std::expected<HeapObject*, ExecutionStatus> Heap::CombineSets(const HeapObject& left,
                                                               const HeapObject& right,
                                                               SetOperation operation) noexcept {
   if (left.kind != ObjectKind::Collection || right.kind != ObjectKind::Collection) {
-    return std::unexpected(CollectionError::NotCollection);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& layout = *left.collection_layout();
   if (layout.values || left.collection_layout() != right.collection_layout()) {
-    return std::unexpected(CollectionError::TypeMismatch);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   auto* result = AllocateCollection(layout);
   if (result == nullptr) {
-    return std::unexpected(CollectionError::OutOfMemory);
+    return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto rooted = Value::Object(result);
   RootRange root(*this, &rooted, 1);
-  const auto append = [&](const HeapObject& input) -> std::expected<void, CollectionError> {
+  const auto append = [&](const HeapObject& input) -> std::expected<void, ExecutionStatus> {
     const auto& storage = Storage(input);
     if (storage.size == 0) {
       return {};
@@ -475,36 +476,36 @@ std::expected<HeapObject*, CollectionError> Heap::CombineSets(const HeapObject& 
   return result;
 }
 
-std::expected<std::uint32_t, CollectionError> Heap::CollectionLength(
+std::expected<std::uint32_t, ExecutionStatus> Heap::CollectionLength(
     const HeapObject& object) noexcept {
   if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(CollectionError::NotCollection);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   return Storage(object).size;
 }
 
-std::expected<CollectionCursor, CollectionError> Heap::IterateCollection(
+std::expected<CollectionCursor, ExecutionStatus> Heap::IterateCollection(
     const HeapObject& object) noexcept {
   if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(CollectionError::NotCollection);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& storage = Storage(object);
   return CollectionCursor{.mutation = storage.mutation, .next = storage.head};
 }
 
-std::expected<void, CollectionError> Heap::CheckCollectionMutation(
+std::expected<void, ExecutionStatus> Heap::CheckCollectionMutation(
     const HeapObject& object,
     const CollectionCursor& cursor) noexcept {
   if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(CollectionError::NotCollection);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   if (Storage(object).mutation != cursor.mutation) {
-    return std::unexpected(CollectionError::ConcurrentModification);
+    return std::unexpected(ExecutionStatus::ConcurrentModification);
   }
   return {};
 }
 
-std::expected<std::optional<CollectionEntry>, CollectionError> Heap::NextCollectionEntry(
+std::expected<std::optional<CollectionEntry>, ExecutionStatus> Heap::NextCollectionEntry(
     const HeapObject& object,
     CollectionCursor& cursor) noexcept {
   if (const auto checked = CheckCollectionMutation(object, cursor); !checked) {
@@ -524,31 +525,36 @@ std::expected<std::optional<CollectionEntry>, CollectionError> Heap::NextCollect
   };
 }
 
-std::expected<void, CollectionError> Heap::CopyCollection(
+std::expected<void, ExecutionStatus> Heap::CopyCollection(
     const HeapObject& object,
     HeapObject& array,
     CollectionProjection projection) noexcept {
   if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(CollectionError::NotCollection);
+    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& layout = *object.collection_layout();
   const auto& storage = Storage(object);
   const auto length = ArrayLength(array);
-  if (!length || *length != storage.size ||
-      (projection == CollectionProjection::Values && !layout.values)) {
-    return std::unexpected(CollectionError::TypeMismatch);
+  if (!length || *length != storage.size) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto* element_layout = &layout.keys;
+  if (projection == CollectionProjection::Values) {
+    if (!layout.values) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    element_layout = &*layout.values;
   }
   if (storage.size == 0) {
     return {};
   }
   const auto table = View(storage, layout);
+  const auto elements = projection == CollectionProjection::Keys ? table.keys : table.values;
   std::uint32_t index = 0;
   for (auto entry = storage.head; entry != kEmpty; entry = table.next.subspan(entry).front()) {
-    const auto value = projection == CollectionProjection::Keys
-                           ? LoadElementStorage(layout.keys, table.keys, entry)
-                           : LoadElementStorage(*layout.values, table.values, entry);
+    const auto value = LoadElementStorage(*element_layout, elements, entry);
     if (!SetElement(array, index++, value)) {
-      return std::unexpected(CollectionError::TypeMismatch);
+      return std::unexpected(ExecutionStatus::TypeError);
     }
   }
   return {};

@@ -7,6 +7,35 @@ const os = require("node:os");
 const path = require("node:path");
 const vscode = require("vscode");
 
+async function runVelaTask(file, stop = false) {
+  let listener, started, timer;
+  const matches = event => event.execution.task.source === "Vela"
+    && event.execution.task.execution.args[1] === file;
+  const finished = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("Vela run task did not finish")), 20000);
+    listener = vscode.tasks.onDidEndTaskProcess(event => { if (matches(event)) resolve(event); });
+    if (stop) started = vscode.tasks.onDidStartTaskProcess(event => {
+      if (matches(event)) event.execution.terminate();
+    });
+  });
+  try {
+    const [execution, event] = await Promise.all([vscode.commands.executeCommand("vela.runFile"), finished]);
+    assert.ok(execution, "Run File must return an actual task execution");
+    assert.equal(event.execution, execution);
+    assert.ok(execution.task.execution instanceof vscode.ProcessExecution);
+    return event.exitCode;
+  } catch (error) {
+    for (const execution of vscode.tasks.taskExecutions) {
+      if (matches({ execution })) execution.terminate();
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    listener.dispose();
+    started?.dispose();
+  }
+}
+
 async function runEditorTests() {
   const extension = vscode.extensions.getExtension("vela.vela-language");
   assert.ok(extension, "Vela extension must be available in the real extension host");
@@ -50,14 +79,50 @@ async function runEditorTests() {
   const caret = document.positionAt(offset + "validate".length);
   editor.selection = new vscode.Selection(caret, caret);
   await vscode.commands.executeCommand("editor.action.revealDefinition");
+  for (let attempt = 0; attempt < 50
+    && vscode.window.activeTextEditor.selection.active.line !== definitions[0].range.start.line; ++attempt) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
   assert.equal(vscode.window.activeTextEditor.selection.active.line, definitions[0].range.start.line,
     "the real F12 command must navigate to validate's declaration");
   console.log("PASS: exceptions.vela F12 command navigates to the declaration");
 
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "vela-vscode-"));
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "vela-vscode-")));
   const uri = vscode.Uri.file(path.join(directory, "exceptions.vela"));
   const temporaryDocuments = [];
   try {
+    const runUri = vscode.Uri.file(path.join(directory, "run $shell; 中文.vela"));
+    await fs.writeFile(runUri.fsPath, "func main(): int { return 1; }\n");
+    const runDocument = await vscode.workspace.openTextDocument(runUri);
+    temporaryDocuments.push(runDocument);
+    await vscode.window.showTextDocument(runDocument);
+    const runEdit = new vscode.WorkspaceEdit();
+    const runText = "func main(): int { print('Run File works'); return 23; }\n";
+    runEdit.replace(runUri, new vscode.Range(0, 0, runDocument.lineCount, 0), runText);
+    assert.equal(await vscode.workspace.applyEdit(runEdit), true);
+    assert.ok(runDocument.isDirty);
+    assert.equal(await runVelaTask(runUri.fsPath), 23,
+      "the task must execute the current edits and preserve the program exit code");
+    assert.equal(await fs.readFile(runUri.fsPath, "utf8"), runText);
+    assert.equal(runDocument.isDirty, false);
+    console.log("PASS: Run File saves edits and executes paths containing spaces, Unicode and shell characters");
+
+    const invalidUri = vscode.Uri.file(path.join(directory, "run-invalid.vela"));
+    await fs.writeFile(invalidUri.fsPath, "func main(): int { return true; }\n");
+    const invalidDocument = await vscode.workspace.openTextDocument(invalidUri);
+    temporaryDocuments.push(invalidDocument);
+    await vscode.window.showTextDocument(invalidDocument);
+    assert.equal(await runVelaTask(invalidUri.fsPath), 65, "compile errors must reach the task terminal");
+    console.log("PASS: Run File preserves compilation failure status");
+
+    const waitingUri = vscode.Uri.file(path.join(directory, "run-waiting.vela"));
+    await fs.writeFile(waitingUri.fsPath, "async func main(): Future<void> { await sleep(60000); }\n");
+    const waitingDocument = await vscode.workspace.openTextDocument(waitingUri);
+    temporaryDocuments.push(waitingDocument);
+    await vscode.window.showTextDocument(waitingDocument);
+    await runVelaTask(waitingUri.fsPath, true);
+    console.log("PASS: a running Vela task can be terminated");
+
     const standardUri = vscode.Uri.file(path.join(directory, "standard.vela"));
     const standardText = "func main(): void { const values = [2, 1]; values.sort((a: int, b: int): int => a - b); print(Math.sqrt(9.0)); }";
     await fs.writeFile(standardUri.fsPath, standardText);

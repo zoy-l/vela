@@ -354,6 +354,9 @@ void LayoutBuilder::BindCallableTypes() {
           Signature({.kind = frontend::TypeDescriptor::Kind::Function, .name = type.callable_type});
     } else {
       const auto& function = program_.functions.at(type.callable->function);
+      if (!function.signature) {
+        std::unreachable();
+      }
       const auto& call = *function.signature;
       runtime::TypeSignature descriptor;
       const auto skipped =

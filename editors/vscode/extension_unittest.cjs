@@ -30,9 +30,68 @@ const mock = {
   DiagnosticSeverity: { Error: 0 }
 };
 const source = fs.readFileSync(path.join(__dirname, "extension.js"), "utf8");
-const { ByteQueue, Connection, registerSymbolProviders } = vm.runInNewContext(`${source}\n({ ByteQueue, Connection, registerSymbolProviders });`, {
+const { ByteQueue, Connection, registerSymbolProviders, runFile } = vm.runInNewContext(`${source}\n({ ByteQueue, Connection, registerSymbolProviders, runFile });`, {
   require: name => name === "vscode" ? mock : require(name), module: { exports: {} },
   Buffer, process, setTimeout, clearTimeout
+});
+
+test("Run File saves edits and launches the configured executable without shell quoting", async context => {
+  const originalWorkspace = mock.workspace;
+  context.after(() => { mock.workspace = originalWorkspace; });
+  const folder = { uri: { fsPath: path.join(os.tmpdir(), "Vela workspace") } };
+  const file = path.join(folder.uri.fsPath, "run $shell; 中文.vela");
+  let saved = false;
+  const document = { languageId: "vela", uri: { scheme: "file", fsPath: file }, isDirty: true,
+    async save() { saved = true; return true; } };
+  mock.workspace = {
+    workspaceFolders: [folder], getWorkspaceFolder: () => folder,
+    getConfiguration: () => ({ get: () => path.join("bin", "vela runner") })
+  };
+  const errors = [];
+  mock.window = { activeTextEditor: { document }, showErrorMessage: async message => errors.push(message) };
+  mock.TaskScope = { Workspace: 2 };
+  mock.TaskRevealKind = { Always: 1 };
+  mock.TaskPanelKind = { Dedicated: 2 };
+  mock.Task = class {
+    constructor(definition, scope, name, source, execution, problemMatchers) {
+      Object.assign(this, { definition, scope, name, source, execution, problemMatchers });
+    }
+  };
+  mock.ProcessExecution = class {
+    constructor(process, args, options) { Object.assign(this, { process, args, options }); }
+  };
+  const tasks = [];
+  const execution = { terminate() {} };
+  mock.tasks = { async executeTask(task) {
+    assert.ok(saved, "the disk entry must contain current edits before launching");
+    tasks.push(task);
+    return execution;
+  } };
+  assert.equal(await runFile(), execution);
+  const task = tasks[0];
+  assert.equal(task.execution.process, path.join(folder.uri.fsPath, "bin", "vela runner"));
+  assert.deepEqual(Array.from(task.execution.args), ["run", file]);
+  assert.equal(task.execution.options.cwd, folder.uri.fsPath);
+  assert.equal(task.scope, folder);
+
+  document.save = async () => false;
+  assert.equal(await runFile(), undefined);
+  assert.equal(tasks.length, 1, "cancelling a save must not run stale disk contents");
+  document.isDirty = false;
+  mock.workspace.workspaceFolders = undefined;
+  assert.equal(await runFile(), undefined);
+  assert.match(errors.pop(), /workspace folder/);
+  assert.equal(tasks.length, 1);
+  mock.workspace.workspaceFolders = [folder];
+  mock.workspace.getConfiguration = () => ({ get: () => path.join(folder.uri.fsPath, "vela") });
+  mock.workspace.getWorkspaceFolder = () => undefined;
+  assert.equal(await runFile(), execution);
+  assert.equal(tasks[1].scope, mock.TaskScope.Workspace);
+  assert.equal(tasks[1].execution.options.cwd, path.dirname(file));
+  mock.window.activeTextEditor = undefined;
+  assert.equal(await runFile(), undefined);
+  assert.match(errors.pop(), /saved Vela file/);
+  assert.equal(tasks.length, 2);
 });
 
 test("byte queue preserves fragmented UTF-8 and releases consumed chunks", () => {
@@ -70,7 +129,7 @@ test("client decodes byte-at-a-time headers and multiple Unicode frames", () => 
 test("extension connection initializes, formats, publishes diagnostics and shuts down", { timeout: 10000 }, async context => {
   const root = path.resolve(__dirname, "../..");
   const executable = process.env.VELA_TEST_EXECUTABLE || path.join(root, "out", "debug", process.platform === "win32" ? "vela.exe" : "vela");
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "vela-editor-"));
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "vela-editor-")));
   const uri = pathToFileURL(path.join(directory, "你好.vela")).toString();
   const logs = [];
   const diagnostics = new Map();

@@ -1,8 +1,8 @@
 {
   "name": "vela-language",
   "displayName": "Vela",
-  "description": "Vela syntax, completion, hover, import links, go to definition, diagnostics and formatting using the native language server.",
-  "version": "0.1.17",
+  "description": "Vela syntax, completion, hover, import links, go to definition, diagnostics, formatting and running files.",
+  "version": "0.1.18",
   "publisher": "vela",
   "license": "MIT",
   "engines": { "vscode": "^1.143.0" },
@@ -29,7 +29,16 @@
       "icon": { "light": "./icons/vela-light.svg", "dark": "./icons/vela-dark.svg" }
     }],
     "grammars": [{ "language": "vela", "scopeName": "source.vela", "path": "./syntaxes/vela.tmLanguage.json" }],
-    "commands": [{ "command": "vela.showOutput", "title": "Vela: Show Language Server Output" }],
+    "commands": [
+      { "command": "vela.showOutput", "title": "Vela: Show Language Server Output" },
+      { "command": "vela.runFile", "title": "Vela: Run File", "icon": "$(play)",
+        "enablement": "editorLangId == vela && resourceScheme == file && workspaceFolderCount != 0" }
+    ],
+    "menus": {
+      "editor/title": [{ "command": "vela.runFile", "when": "resourceLangId == vela && resourceScheme == file", "group": "navigation@10" }],
+      "editor/context": [{ "command": "vela.runFile", "when": "editorLangId == vela && resourceScheme == file", "group": "navigation@10" }],
+      "commandPalette": [{ "command": "vela.runFile", "when": "editorLangId == vela" }]
+    },
     "keybindings": [{
       "command": "editor.action.triggerSuggest",
       "key": "alt+/",
@@ -41,7 +50,7 @@
         "vela.serverPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the Vela executable. Relative paths use the first workspace folder; the default is out/debug/vela (.exe on Windows)."
+          "description": "Path to the Vela executable for the language server and Run File. Relative paths use the first workspace folder; the default is out/debug/vela (.exe on Windows)."
         },
         "vela.diagnosticsDelay": {
           "type": "number",

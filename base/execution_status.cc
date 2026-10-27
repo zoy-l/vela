@@ -64,8 +64,12 @@ StatusDescription DescribeStatus(ExecutionStatus status) noexcept {
     case ExecutionStatus::ConcurrentModification:
       return {
           .code = "ConcurrentModification",
-          .message = "array structurally modified during callback",
+          .message = "collection structurally modified during callback",
       };
+    case ExecutionStatus::JsonDecodeError:
+      return {.code = "JsonDecodeError", .message = "invalid JSON input"};
+    case ExecutionStatus::JsonEncodeError:
+      return {.code = "JsonEncodeError", .message = "value is not JSON encodable"};
     case ExecutionStatus::FutureAlreadyCompleted:
       return {
           .code = "FutureAlreadyCompleted",

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <iterator>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -137,8 +138,8 @@ void CloseCompletionDelimiters(std::string& text, std::span<const frontend::Toke
       closing.pop_back();
     }
   }
-  for (auto item = closing.rbegin(); item != closing.rend(); ++item) {
-    switch (*item) {
+  for (const auto kind : std::views::reverse(closing)) {
+    switch (kind) {
       case TokenKind::RightBrace:
         text += '}';
         break;

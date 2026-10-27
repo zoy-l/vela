@@ -57,8 +57,8 @@ class ModuleLoader final {
  private:
   [[nodiscard]] std::expected<std::filesystem::path, std::string> Normalize(
       const std::filesystem::path& path) const;
-  std::expected<std::string, std::string> Read(const std::filesystem::path& path,
-                                               const std::string& key) const;
+  [[nodiscard]] std::expected<std::string, std::string> Read(const std::filesystem::path& path,
+                                                             const std::string& key) const;
   std::optional<std::uint32_t> Load(const std::filesystem::path& file,
                                     SourceLocation location,
                                     const std::string& importer);
@@ -245,7 +245,9 @@ ParseResult ModuleLoader::Finish() {
     return {.program = std::move(failed), .diagnostics = std::move(diagnostics_)};
   }
   auto result = BindModules(std::move(modules_), std::move(sources_));
-  AddStandardEnvironment(result.program);
+  for (auto& diagnostic : AddStandardEnvironment(result.program)) {
+    result.diagnostics.push_back(std::move(diagnostic));
+  }
   for (auto& diagnostic : syntax_diagnostics_) {
     result.diagnostics.push_back(std::move(diagnostic));
   }

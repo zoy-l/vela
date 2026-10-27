@@ -38,7 +38,7 @@ void SteadyValue(benchmark::State& state, std::string_view source, std::int64_t 
   state.counters["register_bytes"] = static_cast<double>(machine.register_bytes());
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    const auto result = machine.Execute(entry);
+    auto result = machine.Execute(entry);
     if (!result.Succeeded() || !result.value.IsInteger() || result.value.AsInteger() != expected) {
       state.SkipWithError("Standard API execution returned an unexpected result");
       return;

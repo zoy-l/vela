@@ -3,9 +3,9 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <span>
+#include <utility>
 
 #include "base/builtin.h"
 #include "base/regexp.h"
@@ -33,7 +33,7 @@ StepResult Execution::ExecuteRegExp(ActiveFrame& active, Instruction instruction
     const auto index = arguments.back();
     const auto arrays = tables->arrays();
     if (!index.IsInteger() || index.AsInteger() < 0 ||
-        static_cast<std::uint64_t>(index.AsInteger()) >= arrays.size()) {
+        std::cmp_greater_equal(index.AsInteger(), arrays.size())) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
     layout = arrays.subspan(static_cast<std::size_t>(index.AsInteger())).front();
