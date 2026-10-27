@@ -24,6 +24,7 @@ English and Simplified Chinese editions are listed side by side below. Entries m
 | **JSON & Dynamic Values (Design)** / JSON 与动态值（设计） | [json.md](en/json.md) | [json.md](zh-CN/json.md) |
 | **Byte Storage & Typed Views** / 字节存储与带类型视图 | [byte_data.md](en/byte_data.md) | [byte_data.md](zh-CN/byte_data.md) |
 | **Toolchain Contracts** / 工具链契约 | [toolchain.md](en/toolchain.md) | [toolchain.md](zh-CN/toolchain.md) |
+| **Native AOT Compilation (Design)** / 原生 AOT 编译（设计） | [aot.md](en/aot.md) | [aot.md](zh-CN/aot.md) |
 | **VM Execution Contracts** / VM 执行契约 | [vm_execution.md](en/vm_execution.md) | [vm_execution.md](zh-CN/vm_execution.md) |
 | **VM Storage & Dispatch** / 虚拟机存储与分派 | [vm_storage.md](en/vm_storage.md) | [vm_storage.md](zh-CN/vm_storage.md) |
 | **Garbage Collection** / 垃圾回收架构 | [garbage_collection.md](en/garbage_collection.md) | [garbage_collection.md](zh-CN/garbage_collection.md) |

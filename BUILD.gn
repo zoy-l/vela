@@ -17,6 +17,7 @@ group("tests") {
     "//compiler:vela_compiler_tests",
     "//compiler:vela_environment_tests",
     "//compiler:vela_frontend_tests",
+    "//compiler:vela_ir_tests",
     "//runtime:runtime_tests",
     "//vm:vm_tests",
   ]

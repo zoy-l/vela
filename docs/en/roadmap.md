@@ -147,3 +147,12 @@ Async APIs, scheduling, host ownership, and performance boundaries are specified
 Class inheritance, method overriding, and async tasks now run through the source,
 type checker, Typed IR, bytecode, VM, and CLI paths. JIT remains outside the basic
 language milestone.
+
+## Later: native AOT
+
+Native AOT is not implemented. The [AOT design](aot.md#implementation-stages-and-completion-criteria)
+defines the complete A1–A5 sequence and acceptance criteria: shared compilation
+boundaries, synchronous native execution, async and dynamic paths, user builds
+and distribution, and release acceptance. Emitting the first object file is not
+completion. Every language path and the distribution workflow without a separate
+user installation of Clang/LLVM must be connected.

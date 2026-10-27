@@ -22,12 +22,10 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/parser.h"
 #include "compiler/frontend/source_loader.h"
-#include "compiler/frontend/specialization.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
-#include "compiler/ir/lowerer.h"
-#include "compiler/ir/optimizer.h"
+#include "compiler/ir/preparation.h"
 #include "compiler/native_linker.h"
 #include "compiler/register_allocator.h"
 #include "compiler/runtime_layouts.h"
@@ -351,12 +349,10 @@ std::expected<vm::FunctionStorage, frontend::Diagnostic> EncodeFunction(
   return compiled;
 }
 
-std::optional<frontend::Diagnostic> OptimizeAndAllocate(ir::Program& program,
-                                                        std::span<const std::string> source_paths) {
+std::optional<frontend::Diagnostic> AllocateBytecodeRegisters(
+    ir::Program& program,
+    std::span<const std::string> source_paths) {
   for (auto& function : program.functions) {
-    if (function.native_symbol.empty()) {
-      ir::Optimize(function, program.functions);
-    }
     auto failure = AllocateRegisters(function, program.functions);
     if (failure) {
       if (!source_paths.empty()) {
@@ -368,21 +364,113 @@ std::optional<frontend::Diagnostic> OptimizeAndAllocate(ir::Program& program,
   return std::nullopt;
 }
 
+CompileResult EncodeProgram(ir::Program program,
+                            const frontend::Program& source,
+                            const frontend::SemanticModel& model,
+                            runtime::Isolate& isolate,
+                            CompilationState* state) {
+  auto native_diagnostics = CheckNativeBindings(source, model, isolate);
+  if (!native_diagnostics.empty()) {
+    return {.program = {}, .diagnostics = std::move(native_diagnostics)};
+  }
+  std::vector<std::string> paths;
+  paths.reserve(source.sources.size());
+  for (const auto& file : source.sources) {
+    paths.push_back(file.path);
+  }
+  if (auto failure = AllocateBytecodeRegisters(program, paths)) {
+    return {.program = {}, .diagnostics = {std::move(*failure)}};
+  }
+
+  CompileResult result;
+  runtime::LayoutTransaction layout_transaction(isolate);
+  LayoutCache local_cache;
+  auto* cache = state == nullptr ? &local_cache : &state->layouts;
+  if (cache->code_identity == nullptr) {
+    cache->code_identity = isolate.CreateCodeIdentity();
+  }
+  const auto interfaces = CreateInterfaceTypes(model, isolate, cache);
+  auto class_layouts = CreateClassLayouts(program, interfaces, isolate, cache);
+
+  auto layouts = CreateRuntimeLayouts(program, model, class_layouts, interfaces, isolate, cache);
+
+  std::vector<vm::FunctionStorage> functions;
+  auto shared_layouts = std::make_shared<const vm::LayoutTables>(
+      std::move(class_layouts), std::move(layouts.arrays), std::move(layouts.collections),
+      std::move(layouts.types), std::move(program.members));
+  functions.reserve(program.functions.size());
+  const auto source_paths = std::make_shared<const std::vector<std::string>>(std::move(paths));
+  std::shared_ptr<vm::StringConstants> strings;
+  const auto& literals = program.strings;
+  if (!literals.empty()) {
+    strings = std::make_shared<vm::StringConstants>(isolate.heap(), literals.size());
+    for (std::size_t index = 0; index < literals.size(); ++index) {
+      auto* string = isolate.heap().AllocateString(literals.at(index));
+      if (string == nullptr) {
+        AddDiagnostic(result.diagnostics, frontend::SourceLocation(),
+                      "out of memory allocating string constant");
+        return result;
+      }
+      strings->values.at(index) = string;
+    }
+  }
+  for (const ir::Function& function : program.functions) {
+    vm::FunctionStorage compiled;
+    compiled.name = function.name;
+    if (!function.native_symbol.empty()) {
+      compiled.native = isolate.FindNative(function.native_symbol);
+    }
+    compiled.layouts = shared_layouts;
+    compiled.strings = strings;
+    compiled.doubles = function.doubles;
+    compiled.register_count = static_cast<std::uint16_t>(function.register_count);
+    compiled.parameter_count = static_cast<std::uint16_t>(function.parameter_count);
+    compiled.is_async = function.is_async;
+    compiled.signature = function.signature;
+    compiled.source_paths = source_paths;
+    auto encoded = EncodeFunction(function,
+                                  EncodingContext{
+                                      .function = &function,
+                                      .function_count = program.functions.size(),
+                                      .class_count = shared_layouts->classes().size(),
+                                      .source_paths = *source_paths,
+                                  },
+                                  std::move(compiled));
+    if (!encoded) {
+      result.diagnostics.push_back(std::move(encoded.error()));
+      return result;
+    }
+    functions.push_back(std::move(*encoded));
+  }
+  auto prepared =
+      vm::Program::Create(std::move(functions), isolate, std::move(program.global_initializers),
+                          state != nullptr ? state->globals : nullptr, cache->code_identity);
+  if (!prepared) {
+    const auto& error = prepared.error();
+    const auto& function = program.functions.at(error.function);
+    const auto location = function.instructions.empty()
+                              ? function.location
+                              : function.instructions.at(error.instruction).location;
+    AddDiagnostic(result.diagnostics, location, error.message);
+    return result;
+  }
+  result.program = std::move(*prepared);
+  if (state != nullptr) {
+    state->globals = result.program.shared_globals();
+  }
+  layout_transaction.Commit();
+  return result;
+}
+
 }  // namespace
 
 CompileResult CompileParsed(frontend::ParseResult parsed, runtime::Isolate& isolate) {
-  if (!parsed.diagnostics.empty()) {
-    return {.program = {}, .diagnostics = std::move(parsed.diagnostics)};
+  auto prepared = ir::PrepareParsed(std::move(parsed));
+  if (!prepared) {
+    return {.program = {}, .diagnostics = std::move(prepared.error())};
   }
-  auto specialized = frontend::SpecializeGenerics(parsed.program);
-  if (!specialized.empty()) {
-    return {.program = {}, .diagnostics = std::move(specialized)};
-  }
-  auto checked = frontend::TypeChecker().Check(parsed.program);
-  if (!checked.diagnostics.empty()) {
-    return {.program = {}, .diagnostics = std::move(checked.diagnostics)};
-  }
-  return CompileProgram(parsed.program, checked.model, isolate);
+  return EncodeProgram(std::move(prepared->program), prepared->source, prepared->model, isolate,
+                       nullptr);
 }
 
 CompileResult CompileSource(std::string_view source, runtime::Isolate& isolate) {
@@ -404,106 +492,11 @@ CompileResult CompileProgram(const frontend::Program& source,
                              const frontend::SemanticModel& model,
                              runtime::Isolate& isolate,
                              CompilationState* state) {
-  auto native_diagnostics = CheckNativeBindings(source, model, isolate);
-  if (!native_diagnostics.empty()) {
-    return {.program = {}, .diagnostics = std::move(native_diagnostics)};
-  }
-  ir::LoweringResult lowered =
-      ir::Lowerer(source, model, state == nullptr ? nullptr : &state->ids).Lower();
+  auto lowered = ir::PrepareProgram(source, model, state == nullptr ? nullptr : &state->ids);
   if (!lowered.Succeeded()) {
-    CompileResult result;
-    result.diagnostics = std::move(lowered.diagnostics);
-    return result;
+    return {.program = {}, .diagnostics = std::move(lowered.diagnostics)};
   }
-
-  std::vector<std::string> paths;
-  paths.reserve(source.sources.size());
-  for (const auto& file : source.sources) {
-    paths.push_back(file.path);
-  }
-  if (auto failure = OptimizeAndAllocate(lowered.program, paths)) {
-    return {.program = {}, .diagnostics = {std::move(*failure)}};
-  }
-
-  CompileResult result;
-  runtime::LayoutTransaction layout_transaction(isolate);
-  LayoutCache local_cache;
-  auto* cache = state == nullptr ? &local_cache : &state->layouts;
-  if (cache->code_identity == nullptr) {
-    cache->code_identity = isolate.CreateCodeIdentity();
-  }
-  const auto interfaces = CreateInterfaceTypes(model, isolate, cache);
-  auto class_layouts = CreateClassLayouts(lowered.program, interfaces, isolate, cache);
-
-  auto layouts =
-      CreateRuntimeLayouts(lowered.program, model, class_layouts, interfaces, isolate, cache);
-
-  std::vector<vm::FunctionStorage> functions;
-  auto shared_layouts = std::make_shared<const vm::LayoutTables>(
-      std::move(class_layouts), std::move(layouts.arrays), std::move(layouts.collections),
-      std::move(layouts.types), std::move(lowered.program.members));
-  functions.reserve(lowered.program.functions.size());
-  const auto source_paths = std::make_shared<const std::vector<std::string>>(std::move(paths));
-  std::shared_ptr<vm::StringConstants> strings;
-  const auto& literals = lowered.program.strings;
-  if (!literals.empty()) {
-    strings = std::make_shared<vm::StringConstants>(isolate.heap(), literals.size());
-    for (std::size_t index = 0; index < literals.size(); ++index) {
-      auto* string = isolate.heap().AllocateString(literals.at(index));
-      if (string == nullptr) {
-        AddDiagnostic(result.diagnostics, frontend::SourceLocation(),
-                      "out of memory allocating string constant");
-        return result;
-      }
-      strings->values.at(index) = string;
-    }
-  }
-  for (const ir::Function& function : lowered.program.functions) {
-    vm::FunctionStorage compiled;
-    compiled.name = function.name;
-    if (!function.native_symbol.empty()) {
-      compiled.native = isolate.FindNative(function.native_symbol);
-    }
-    compiled.layouts = shared_layouts;
-    compiled.strings = strings;
-    compiled.doubles = function.doubles;
-    compiled.register_count = static_cast<std::uint16_t>(function.register_count);
-    compiled.parameter_count = static_cast<std::uint16_t>(function.parameter_count);
-    compiled.is_async = function.is_async;
-    compiled.signature = function.signature;
-    compiled.source_paths = source_paths;
-    auto encoded = EncodeFunction(function,
-                                  EncodingContext{
-                                      .function = &function,
-                                      .function_count = lowered.program.functions.size(),
-                                      .class_count = shared_layouts->classes().size(),
-                                      .source_paths = *source_paths,
-                                  },
-                                  std::move(compiled));
-    if (!encoded) {
-      result.diagnostics.push_back(std::move(encoded.error()));
-      return result;
-    }
-    functions.push_back(std::move(*encoded));
-  }
-  auto prepared = vm::Program::Create(
-      std::move(functions), isolate, std::move(lowered.program.global_initializers),
-      state != nullptr ? state->globals : nullptr, cache->code_identity);
-  if (!prepared) {
-    const auto& error = prepared.error();
-    const auto& function = lowered.program.functions.at(error.function);
-    const auto location = function.instructions.empty()
-                              ? function.location
-                              : function.instructions.at(error.instruction).location;
-    AddDiagnostic(result.diagnostics, location, error.message);
-    return result;
-  }
-  result.program = std::move(*prepared);
-  if (state != nullptr) {
-    state->globals = result.program.shared_globals();
-  }
-  layout_transaction.Commit();
-  return result;
+  return EncodeProgram(std::move(lowered.program), source, model, isolate, state);
 }
 
 }  // namespace vela::compiler

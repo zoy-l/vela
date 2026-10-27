@@ -131,8 +131,10 @@ def toolchain_tools() -> dict[str, Path]:
     return tools
 
 
-def _gn_value(value: str) -> str:
-    return json.dumps(value.replace("\\", "/"))
+def _gn_value(value: str | list[str]) -> str:
+    normalized = ([item.replace("\\", "/") for item in value] if isinstance(value, list)
+                  else value.replace("\\", "/"))
+    return json.dumps(normalized)
 
 
 def compiler_build_identity() -> str:
@@ -157,6 +159,8 @@ def compiler_build_identity() -> str:
 
 
 def configure(variant: str) -> Path:
+    from tools.llvm import link_configuration
+
     tools = toolchain_tools()
     output = output_directory(variant)
     args = {
@@ -170,6 +174,7 @@ def configure(variant: str) -> Path:
         "vela_linker": tools["linker"].as_posix(),
         "vela_python": Path(sys.executable).resolve().as_posix(),
     }
+    args.update(link_configuration())
     if platform.system() == "Darwin":
         args["vela_sysroot"] = tools["sysroot"].as_posix()
         args["vela_linker_version"] = _xcode_linker_version(tools["linker"])

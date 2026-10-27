@@ -1,5 +1,65 @@
 import("abseil_sources.gni")
 
+config("llvm_headers") {
+  llvm_include = "$vela_llvm_root/include"
+  if (target_os == "win") {
+    cflags = [ "/external:I$llvm_include" ]
+  } else {
+    cflags = [
+      "-isystem",
+      llvm_include,
+    ]
+  }
+}
+
+config("llvm_libraries") {
+  libs = vela_llvm_libraries + vela_llvm_system_libraries
+}
+
+source_set("llvm") {
+  public_configs = [
+    ":llvm_headers",
+    ":llvm_libraries",
+  ]
+  public_deps = [ ":zstd" ]
+}
+
+static_library("zstd") {
+  configs -= [ "//build/config:vela_warnings" ]
+  defines = [
+    "ZSTD_DISABLE_ASM",
+    "ZSTD_LEGACY_SUPPORT=0",
+  ]
+  sources = [
+    "zstd/lib/common/debug.c",
+    "zstd/lib/common/entropy_common.c",
+    "zstd/lib/common/error_private.c",
+    "zstd/lib/common/fse_decompress.c",
+    "zstd/lib/common/pool.c",
+    "zstd/lib/common/threading.c",
+    "zstd/lib/common/xxhash.c",
+    "zstd/lib/common/zstd_common.c",
+    "zstd/lib/compress/fse_compress.c",
+    "zstd/lib/compress/hist.c",
+    "zstd/lib/compress/huf_compress.c",
+    "zstd/lib/compress/zstd_compress.c",
+    "zstd/lib/compress/zstd_compress_literals.c",
+    "zstd/lib/compress/zstd_compress_sequences.c",
+    "zstd/lib/compress/zstd_compress_superblock.c",
+    "zstd/lib/compress/zstd_double_fast.c",
+    "zstd/lib/compress/zstd_fast.c",
+    "zstd/lib/compress/zstd_lazy.c",
+    "zstd/lib/compress/zstd_ldm.c",
+    "zstd/lib/compress/zstd_opt.c",
+    "zstd/lib/compress/zstd_preSplit.c",
+    "zstd/lib/compress/zstdmt_compress.c",
+    "zstd/lib/decompress/huf_decompress.c",
+    "zstd/lib/decompress/zstd_ddict.c",
+    "zstd/lib/decompress/zstd_decompress.c",
+    "zstd/lib/decompress/zstd_decompress_block.c",
+  ]
+}
+
 copy("pcre2_config") {
   sources = [ "pcre2/src/config.h.generic" ]
   outputs = [ "$target_gen_dir/pcre2/config.h" ]

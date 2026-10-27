@@ -1,5 +1,19 @@
 # Third-party dependencies
 
+The AOT backend uses the LLVM 21.1.8 development SDK. Host archive names and SHA-256
+identities are pinned in `DEPS`; its `llvm_sdk` hook runs `python -m tools.llvm sync`.
+For an existing checkout, `python -m tools.vl llvm sync` acquires the same package.
+The acquisition keeps LLVM headers, static libraries, linking/archive tools, and
+the checked Apache-2.0 WITH LLVM-exception license. These are compiler development
+inputs, not prerequisites users must install alongside a Vela distribution.
+`llvm-config` supplies the native backend library closure to GN. The SDK's absolute
+zstd installation path is replaced by the repository-built zstd 1.5.7 dependency,
+pinned at `f8745da6ff1ad1e7bab384bd1f9d742439278e99` and used under its
+[BSD license](https://github.com/facebook/zstd/blob/f8745da6ff1ad1e7bab384bd1f9d742439278e99/LICENSE).
+The LLVM license is retained at `third_party/build_tools/llvm/21.1.8/<host>/LICENSE.TXT`;
+distribution packaging must include it. LLVM is a compiler dependency and must not
+enter the generated application's runtime closure.
+
 `gclient sync --no-history` obtains source dependencies and host tools from the
 immutable revisions in the root `DEPS`. Vela's GN integration lives in
 `third_party/BUILD.gn`; upstream sources are not modified. All required sources

@@ -6,6 +6,7 @@
 /third_party/googletest/
 /third_party/utf8proc/
 /third_party/pcre2/
+/third_party/zstd/
 /third_party/unicode_data/inputs/
 /third_party/yyjson/
 /third_party/xxhash/

@@ -107,9 +107,22 @@ source_set("ir") {
     "ir/optimizer.cc",
     "ir/optimizer.h",
     "ir/persistent_ids.h",
+    "ir/preparation.cc",
+    "ir/preparation.h",
   ]
-  deps = [ ":frontend" ]
-  public_deps = [ "//third_party:abseil" ]
+  public_deps = [
+    ":frontend",
+    "//third_party:abseil",
+  ]
+}
+
+executable("vela_ir_tests") {
+  testonly = true
+  sources = [ "ir/preparation_unittest.cc" ]
+  deps = [
+    ":ir",
+    "//third_party:gtest_main",
+  ]
 }
 
 source_set("tooling") {

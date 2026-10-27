@@ -8,6 +8,9 @@ declare_args() {
   vela_linker_version = ""
   vela_sysroot = ""
   vela_python = ""
+  vela_llvm_root = ""
+  vela_llvm_libraries = []
+  vela_llvm_system_libraries = []
 }
 
 assert(vela_build_config == "debug" || vela_build_config == "release",

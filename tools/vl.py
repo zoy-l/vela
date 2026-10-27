@@ -16,6 +16,7 @@ COMMAND_MODULES = {
     "editor": "tools.editor",
     "format": "tools.format",
     "lint": "tools.lint",
+    "llvm": "tools.llvm",
     "test": "tools.test",
 }
 
@@ -32,6 +33,7 @@ def print_help() -> None:
     print("  editor      Package the VS Code extension")
     print("  format      Format C++ and GN sources")
     print("  lint        Run project clang-tidy checks")
+    print("  llvm sync   Acquire the pinned LLVM development SDK")
     print("  test        Run GoogleTest suites")
 
 

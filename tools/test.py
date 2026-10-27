@@ -16,6 +16,7 @@ TEST_EXECUTABLES = {
     "base": "base_tests",
     "environment": "vela_environment_tests",
     "frontend": "vela_frontend_tests",
+    "ir": "vela_ir_tests",
     "compiler": "vela_compiler_tests",
     "runtime": "runtime_tests",
     "vm": "vm_tests",

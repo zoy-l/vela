@@ -92,6 +92,11 @@ backends. Bytecode is a separate execution representation optimized for dense
 decoding and predictable register access; it is not used as the compiler's
 general optimization graph.
 
+The [native AOT design](aot.md) specifies the LLVM backend, native execution,
+GC/async contracts, and distribution without a separate user installation of
+Clang/LLVM. It is not implemented yet. AOT branches after common IR optimization,
+before VM register allocation and bytecode encoding.
+
 The VM bootstrap now consumes the runtime root contract directly: each frame
 register span is registered as a root range for the duration of execution.
 Register slots stay contiguous, and allocation instructions can trigger GC
