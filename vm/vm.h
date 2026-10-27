@@ -63,7 +63,7 @@ class VirtualMachine final {
                                                        Debugger* debugger) noexcept;
   runtime::Isolate& isolate_;
   std::array<RegisterFile, kMaxCallFrames> registers_;
-  std::vector<runtime::Value> native_arguments_;
+  bool executing_ = false;
 };
 
 }  // namespace vela::vm

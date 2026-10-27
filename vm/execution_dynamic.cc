@@ -227,7 +227,7 @@ StepResult Execution::EnterDynamicCall(ActiveFrame& active,
     return copied;
   }
   active.dynamic_return = true;
-  return {};
+  return CompleteCallSetup();
 }
 
 StepResult Execution::CheckDynamicArguments(const CallSignature& signature,
@@ -418,7 +418,7 @@ StepResult Execution::ReadDynamicMember(ActiveFrame& active,
       parameters->front() = receiver;
       active.dynamic_return = true;
       active.dynamic_call_plan = resolving;
-      return {};
+      return CompleteCallSetup();
     }
     default:
       return std::unexpected(ExecutionStatus::TypeError);
@@ -481,7 +481,7 @@ StepResult Execution::WriteDynamicMember(ActiveFrame& active,
   parameters->front() = receiver;
   parameters->subspan(1).front() = value;
   active.dynamic_assignment = static_cast<std::uint8_t>(input_register + 2);
-  return {};
+  return CompleteCallSetup();
 }
 
 StepResult Execution::ExecuteDynamicMethodCall(ActiveFrame& active, Instruction instruction) {

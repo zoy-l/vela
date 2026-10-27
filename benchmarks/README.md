@@ -103,7 +103,7 @@ call; it performs no application work. C++ baselines use the same kernels and
 VM cases use the production compiler, external declaration, native binding and
 execution path. Registration, compilation and one warm-up batch are excluded.
 Normal execution, loop work, checksum accumulation, host entry/exit and native
-wrappers remain timed. Controls replace the native operation with the matching
+binding adapters remain timed. Controls replace the native operation with the matching
 script arithmetic, or the known kernel result for the string case. Reported
 nanoseconds divide the complete batch time by its call count. `VM minus control`
 subtracts independent medians; it includes changes in bytecode and register
@@ -114,12 +114,12 @@ native calls; their normalized times are per loop iteration.
 The memory table records live GC heap bytes/objects before and after timing,
 plus register capacity after warm-up. Register growth after warm-up fails the
 case. These snapshots do not count cumulative allocations or host allocator
-calls, and register capacity excludes the native argument buffer. Measure those
-separately with allocator instrumentation; equal snapshots do not prove zero
-allocations. Performance work targets a native path with no argument-buffer
-materialization, extra script frame or repeated checks for facts already proven
-at a real validation boundary. These are optimization goals, not properties
-established by this benchmark addition.
+calls. Measure those separately with allocator instrumentation; equal snapshots
+do not prove zero allocations. Direct native calls borrow the caller's rooted
+register window without a callee register file or intermediate argument buffer;
+dynamic argument binding has its own window. Native diagnostic frames and payload
+checks remain part of execution. See [native embedding](../docs/en/native_embedding.md)
+for the invocation, rooting and reentry contracts.
 
 The original small workloads use these timing boundaries:
 

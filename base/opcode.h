@@ -51,7 +51,6 @@ enum class Opcode : std::uint8_t {
   StringConcat,
   StringInterpolate,
   BuiltinCall,
-  NativeCall,
   AsyncCall,
   Catch,
   ExceptionValue,

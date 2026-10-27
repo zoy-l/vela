@@ -54,13 +54,24 @@ mismatches. Ordinary source checking can check external declarations without
 executing or registering host code. Native function values support indirect calls.
 Duplicate registrations fail rather than replacing existing contracts.
 
-The VM executes a native invocation inside its own explicit frame, so failures
-show both the external declaration and the script call site. Name lookup happens
-at linking; a VM-owned argument buffer is reused and grows only for a newly larger
-native call window. Arguments are checked at the
-native input boundary and a single intrusive root range protects the borrowed
-argument window while the host runs. Returned strings are validated as UTF-8 and
-copied into the isolate heap. Invalid text is an error, not replacement text.
+Native declarations contain an immutable binding and no wrapper bytecode. Direct
+and resolved indirect calls borrow the caller's rooted register window; the
+adapter reads typed payloads in place. They allocate no callee register file or
+intermediate `Value` argument buffer and register no duplicate argument roots.
+Dynamic argument binding prepares its own rooted parameter window. A lightweight
+logical frame preserves the external declaration in diagnostics and debugger
+callbacks, including when the host triggers collection. Name lookup and arity
+validation happen at linking/loading. Payload types are checked by the generated
+binding adapter because structural bytecode validation does not prove value types.
+Returned strings are validated as UTF-8 and copied into the isolate heap. Invalid
+text is an error, not replacement text. Native Future results retain declaration
+validation for successful payloads and error values, including pending completion.
+
+The low-level `NativeFunction::Invoke` borrows a `RegisterView`: its caller must
+provide the exact declared argument count and keep that window rooted throughout
+the invocation. Reference results must be rooted before subsequent allocation.
+Reentering the same VM uses independent register storage, preserving the outer
+invocation's slots and borrowed strings across nested execution and collection.
 
 ## Host roots and lifetime
 
@@ -91,6 +102,8 @@ functions share one immutable source-path table. Lookup uses binary search and
 only runs when a trace or tooling requests it. Bytecode loading snapshots and
 validates external mappings, including ordering, instruction bounds and source
 identity. Bytecode without mappings remains a valid source-independent program.
+Native declarations use logical position zero for their source mapping and
+debugger callback; they have no executable bytecode instructions.
 
 Runtime failures capture all live explicit frames, innermost first. Caller PCs
 identify the call instruction rather than the following instruction. Trace text

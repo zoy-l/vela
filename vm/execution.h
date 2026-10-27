@@ -90,14 +90,12 @@ class Execution final {
   Execution(runtime::Isolate& isolate,
             const Program& program,
             std::span<RegisterFile> registers,
-            std::vector<runtime::Value>& native_arguments,
             std::shared_ptr<DebugSession> debug_session = {})
       : isolate_(isolate),
         program_(program),
         functions_(program.functions()),
         registers_(registers),
         globals_(program.globals()),
-        native_arguments_(&native_arguments),
         debug_session_(std::move(debug_session)) {}
 
   ExecutionResult Run(std::uint32_t entry_function) noexcept;
@@ -259,7 +257,11 @@ class Execution final {
   StepResult ExecuteAsyncComputation(const AsyncArguments& call);
   StepResult ExecuteAsyncAggregation(ActiveFrame& active, const AsyncArguments& call);
   StepResult ExecuteAsyncComposition(const AsyncArguments& call);
-  StepResult ExecuteNative(ActiveFrame& active, Instruction instruction);
+  StepResult ExecuteNative(ActiveFrame& active);
+  StepResult CompleteCallSetup();
+  [[nodiscard]] std::expected<runtime::Value, ExecutionStatus> ValidateNativeFuture(
+      runtime::Value value,
+      std::optional<runtime::TypeConstraint> payload_type);
   StepResult Interpolate(ActiveFrame& active, Instruction instruction);
   static void Jump(ActiveFrame& active, std::int16_t offset) noexcept;
   [[clang::always_inline]] StepResult Call(ActiveFrame& active, Instruction instruction);
@@ -268,10 +270,12 @@ class Execution final {
   [[nodiscard]] std::expected<std::uint32_t, ExecutionStatus> InterfaceTarget(
       runtime::Value receiver,
       std::uint32_t selector) const;
-  [[clang::always_inline]] StepResult EnterCall(std::uint32_t target,
-                                                ActiveFrame& active,
-                                                Instruction instruction,
-                                                std::optional<runtime::Value> implicit);
+  [[clang::always_inline]] StepResult EnterCall(
+      std::uint32_t target,
+      ActiveFrame& active,
+      Instruction instruction,
+      std::optional<runtime::Value> implicit,
+      std::optional<std::size_t> initialized_global = std::nullopt);
   StepResult AccessGlobal(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteExpected(ActiveFrame& active, Instruction instruction);
   [[clang::always_inline]] StepResult Return(ActiveFrame& active, runtime::Value value);
@@ -303,7 +307,6 @@ class Execution final {
   std::string error_message_;
   runtime::Value pending_exception_;
   runtime::RootRange exception_root_;
-  std::vector<runtime::Value>* native_arguments_;
   std::shared_ptr<DebugSession> debug_session_;
 };
 

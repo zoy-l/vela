@@ -1,5 +1,6 @@
 #include "vm/vm.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -305,6 +306,16 @@ ExecutionResult Execution::RunImpl(std::uint32_t entry_function, Debugger* debug
 
 template <bool Debugging>
 ExecutionResult Execution::Continue(Debugger* debugger) noexcept {
+  const auto prepared = frame_count_ != 0 ? CompleteCallSetup() : StepResult{};
+  if (!prepared) {
+    if (prepared.error() == ExecutionStatus::DebuggerStopped) {
+      AbortInitializers();
+      return {.status = prepared.error(), .stack_trace = {}, .message = {}};
+    }
+    if (auto failure = HandleError(prepared.error())) {
+      return std::move(*failure);
+    }
+  }
   while (frame_count_ != 0) {
     if constexpr (Debugging) {
       const DebugContext context(frames_.data(), frame_count_);
@@ -323,6 +334,10 @@ ExecutionResult Execution::Continue(Debugger* debugger) noexcept {
         std::span(active.function->code).subspan(active.program_counter++).front();
     const auto step = ExecuteInstruction(active, instruction);
     if (!step) {
+      if (step.error() == ExecutionStatus::DebuggerStopped) {
+        AbortInitializers();
+        return {.status = step.error(), .stack_trace = {}, .message = {}};
+      }
       if (auto failure = HandleError(step.error())) {
         return std::move(*failure);
       }
@@ -425,8 +440,7 @@ runtime::Future Execution::InvokeFuture(runtime::Isolate& isolate,
                                         std::span<const runtime::Value> arguments,
                                         std::shared_ptr<DebugSession> debug_session) {
   std::array<RegisterFile, kMaxCallFrames> registers;
-  std::vector<runtime::Value> native_arguments;
-  Execution execution(isolate, program, registers, native_arguments, std::move(debug_session));
+  Execution execution(isolate, program, registers, std::move(debug_session));
   const auto invoked = execution.Invoke(callable, arguments);
   if (invoked.Succeeded() && invoked.value.IsObject()) {
     if (const auto* source = runtime::Heap::GetFuture(*invoked.value.AsObject())) {
@@ -469,8 +483,7 @@ class SuspendedFrame final {
 
   void Resume(const runtime::FutureResult& completion) {
     std::array<RegisterFile, kMaxCallFrames> registers;
-    std::vector<runtime::Value> native_arguments;
-    Execution execution(*isolate_, program_, registers, native_arguments, debug_session_);
+    Execution execution(*isolate_, program_, registers, debug_session_);
     const auto saved = std::span(*values_).first(indices_.size());
     Execution::CompleteFuture(*isolate_, result_,
                               execution.ResumeFrame(point_, indices_, saved, completion));
@@ -820,8 +833,6 @@ StepResult Execution::ExecuteObject(ActiveFrame& active,
       runtime::WriteValue(isolate_.output(), values.subspan(operand_b).front());
       isolate_.output() << '\n';
       return {};
-    case OpCode::NativeCall:
-      return ExecuteNative(active, instruction);
     case OpCode::AsyncCall:
       return ExecuteAsync(active, instruction);
     case OpCode::Catch:
@@ -1229,27 +1240,44 @@ StepResult Execution::ExecuteDynamicArrayIndex(Builtin builtin,
   return {};
 }
 
-StepResult Execution::ExecuteNative(ActiveFrame& active, Instruction instruction) {
-  auto values = active.frame.registers();
-  // 缓冲由 VM 持有，仅遇到更大的调用窗口时增长；只物化实际实参，不注册未用尾部。
-  const auto count = DecodeC(instruction);
-  if (native_arguments_->size() < count) {
-    native_arguments_->resize(count);
+StepResult Execution::CompleteCallSetup() {
+  auto& active = std::span(frames_).subspan(frame_count_ - 1).front();
+  return active.function->native != nullptr ? ExecuteNative(active) : StepResult{};
+}
+
+StepResult Execution::ExecuteNative(ActiveFrame& active) {
+  if (debug_session_ != nullptr && debug_session_->debugger != nullptr &&
+      debug_session_->debugger->BeforeInstruction(DebugContext(frames_.data(), frame_count_)) ==
+          DebugAction::Stop) {
+    return std::unexpected(ExecutionStatus::DebuggerStopped);
   }
-  const auto arguments = std::span(*native_arguments_).first(count);
-  const auto source = values.subspan(DecodeB(instruction), arguments.size());
-  for (std::size_t index = 0; index < arguments.size(); ++index) {
-    arguments.subspan(index).front() = source.subspan(index).front().Read();
-  }
-  const auto result = active.function->native->Invoke(isolate_, arguments);
+  active.program_counter = 1;
+  const auto& function = *active.function;
+  auto result = function.native->Invoke(
+      isolate_, active.frame.registers().subspan(0, function.parameter_count));
   if (!result) {
     error_message_ = result.error().message;
     return std::unexpected(result.error().kind == runtime::NativeErrorKind::OutOfMemory
                                ? ExecutionStatus::OutOfMemory
                                : ExecutionStatus::NativeFailure);
   }
-  values.subspan(DecodeA(instruction)).front() = *result;
-  return {};
+  auto value = *result;
+  runtime::RootRange result_root;
+  if (value.IsReference()) {
+    // 返回引用尚未写入调用者；后续 Future 验证或返回类型转换可能触发 GC。
+    result_root.Attach(isolate_.heap(), &value, 1);
+  }
+  if (function.signature && function.signature->result) {
+    const auto& type = function.layouts->types().subspan(*function.signature->result).front();
+    if (type.object_kind == runtime::ObjectKind::Future) {
+      auto checked = ValidateNativeFuture(value, type.signature->result);
+      if (!checked) {
+        return std::unexpected(checked.error());
+      }
+      value = *checked;
+    }
+  }
+  return Return(active, value);
 }
 
 StepResult Execution::Interpolate(ActiveFrame& active, Instruction instruction) {
@@ -1427,12 +1455,8 @@ StepResult Execution::AccessGlobal(ActiveFrame& active, Instruction instruction)
       break;
   }
   state = GlobalState::Initializing;
-  const auto entered = EnterCall(std::span(globals_->initializers).subspan(index).front(), active,
-                                 instruction, std::nullopt);
-  if (entered) {
-    std::span(frames_).subspan(frame_count_ - 1).front().initialized_global = index;
-  }
-  return entered;
+  return EnterCall(std::span(globals_->initializers).subspan(index).front(), active, instruction,
+                   std::nullopt, index);
 }
 
 std::expected<std::uint32_t, ExecutionStatus> Execution::InterfaceTarget(
@@ -1488,13 +1512,29 @@ StepResult Execution::CallIndirect(ActiveFrame& active, Instruction instruction)
 StepResult Execution::EnterCall(std::uint32_t target,
                                 ActiveFrame& active,
                                 Instruction instruction,
-                                std::optional<runtime::Value> implicit) {
+                                std::optional<runtime::Value> implicit,
+                                std::optional<std::size_t> initialized_global) {
+  const auto& callee = functions_.subspan(target).front();
+  if (callee.native != nullptr && !implicit) {
+    if (frame_count_ == kMaxCallFrames) {
+      return std::unexpected(ExecutionStatus::StackOverflow);
+    }
+    auto& next = std::span(frames_).subspan(frame_count_).front();
+    next.function = &callee;
+    next.program_counter = 0;
+    next.return_register = DecodeA(instruction);
+    next.initialized_global = initialized_global;
+    next.frame.Borrow(
+        active.frame.registers().subspan(DecodeC(instruction), callee.parameter_count));
+    ++frame_count_;
+    return ExecuteNative(next);
+  }
   const auto entered = EnterFrame({.function = target, .destination = DecodeA(instruction)});
   if (!entered) {
     return std::unexpected(entered.error());
   }
   const auto callee_values = *entered;
-  const auto& callee = functions_.subspan(target).front();
+  std::span(frames_).subspan(frame_count_ - 1).front().initialized_global = initialized_global;
   const std::size_t hidden = implicit.has_value() ? 1 : 0;
   if (implicit) {
     callee_values.front() = *implicit;
@@ -1502,7 +1542,7 @@ StepResult Execution::EnterCall(std::uint32_t target,
   callee_values.subspan(hidden, callee.parameter_count - hidden)
       .CopyFrom(
           active.frame.registers().subspan(DecodeC(instruction), callee.parameter_count - hidden));
-  return {};
+  return CompleteCallSetup();
 }
 
 std::expected<runtime::RegisterView, ExecutionStatus> Execution::EnterFrame(FrameEntry entry) {
@@ -1655,12 +1695,19 @@ ExecutionResult VirtualMachine::ExecuteImpl(const Program& program,
         .message = {},
     };
   }
+  if (executing_) {
+    // 同一 VM 的重入调用不能清空或扩容外层仍在借用的寄存器窗口。
+    VirtualMachine nested(isolate_);
+    return nested.ExecuteImpl(program, entry_function, debugger);
+  }
+  executing_ = true;
+  const absl::Cleanup execution_finished = [this] { executing_ = false; };
   if (debugger == nullptr) {
-    internal::Execution execution(isolate_, program, registers_, native_arguments_);
+    internal::Execution execution(isolate_, program, registers_);
     return execution.Run(entry_function);
   }
   auto session = std::make_shared<internal::DebugSession>(internal::DebugSession{debugger});
-  internal::Execution execution(isolate_, program, registers_, native_arguments_, session);
+  internal::Execution execution(isolate_, program, registers_, session);
   auto result = execution.DebugRun(entry_function, *debugger);
   runtime::RootRange result_root(isolate_.heap(), &result.value, 1);
   if (result.Succeeded() && result.value.IsObject()) {

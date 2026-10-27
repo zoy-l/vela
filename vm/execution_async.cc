@@ -262,13 +262,13 @@ struct FutureContinuation final {
   runtime::FutureDiagnostic type_error;
 };
 
-void ObserveCheckedCompletion(const FutureContinuation& context,
+void ObserveCheckedCompletion(runtime::Isolate& owner,
+                              Future target,
                               Future& source,
                               std::optional<runtime::TypeConstraint> type,
-                              const runtime::FutureDiagnostic& diagnostic) {
-  auto* isolate = context.isolate;
-  auto target = context.target;
-  const auto references = context.references;
+                              const runtime::FutureDiagnostic& diagnostic,
+                              const std::shared_ptr<std::vector<Value>>& references) {
+  auto* isolate = &owner;
   source.ObserveResult(
       [isolate, target, type, diagnostic](const FutureResult& input) mutable {
         bool matches = runtime::Heap::IsThrowable(input.value);
@@ -291,16 +291,10 @@ void ObserveCheckedCompletion(const FutureContinuation& context,
       references);
 }
 
-StepResult ValidateNativeFuture(const FutureContinuation& context,
-                                const AsyncArguments& call,
-                                const runtime::FutureDiagnostic& diagnostic) {
-  ObserveCheckedCompletion(context, *context.source, call.runtime_type, diagnostic);
-  return {};
-}
-
 void CompleteCallback(const FutureContinuation& context, Future& source) {
   assert(context.result_type != nullptr);
-  ObserveCheckedCompletion(context, source, context.result_type->result, context.type_error);
+  ObserveCheckedCompletion(*context.isolate, context.target, source, context.result_type->result,
+                           context.type_error, context.references);
 }
 
 StepResult ScheduleTimeout(const FutureContinuation& context,
@@ -484,17 +478,14 @@ StepResult Execution::ExecuteAsync(ActiveFrame& active, Instruction instruction)
       .destination = registers.subspan(DecodeA(instruction)).front(),
   };
   if (operation == AsyncOperation::Then || operation == AsyncOperation::CatchError ||
-      operation == AsyncOperation::Timeout || operation == AsyncOperation::ValidateFuture) {
+      operation == AsyncOperation::Timeout) {
     const auto index = call.At(AsyncArity(operation) - 1);
     const auto types = active.function->layouts->types();
-    if (!index.IsInteger() || index.AsInteger() < -1 ||
-        (index.AsInteger() == -1 && operation != AsyncOperation::ValidateFuture) ||
-        (index.AsInteger() >= 0 && static_cast<std::size_t>(index.AsInteger()) >= types.size())) {
+    if (!index.IsInteger() || index.AsInteger() < 0 ||
+        static_cast<std::size_t>(index.AsInteger()) >= types.size()) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    if (index.AsInteger() >= 0) {
-      call.runtime_type = types.subspan(static_cast<std::size_t>(index.AsInteger())).front();
-    }
+    call.runtime_type = types.subspan(static_cast<std::size_t>(index.AsInteger())).front();
   }
   switch (operation) {
     case AsyncOperation::NewCompleter:
@@ -729,6 +720,33 @@ StepResult Execution::ExecuteAsyncAggregation(ActiveFrame& active, const AsyncAr
   return {};
 }
 
+std::expected<Value, ExecutionStatus> Execution::ValidateNativeFuture(
+    Value value,
+    std::optional<runtime::TypeConstraint> payload_type) {
+  auto& heap = isolate_.heap();
+  auto* source = runtime::Heap::GetFuture(*value.AsObject());
+  Future result(&isolate_.scheduler());
+  auto* object = heap.AllocateFuture(result);
+  if (object == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  auto references = std::make_shared<std::vector<Value>>();
+  references->push_back(value);
+  references->push_back(Value::Object(object));
+  if (globals_ != nullptr) {
+    references->push_back(globals_->storage);
+  }
+  result.KeepAlive(references);
+  const auto diagnostic = Diagnostic({
+      .status = ExecutionStatus::TypeError,
+      .stack_trace = CaptureStack(),
+      .message = "native Future completion does not match its external declaration",
+  });
+  ObserveCheckedCompletion(isolate_, result.Internal(), *source, payload_type, diagnostic,
+                           references);
+  return Value::Object(object);
+}
+
 StepResult Execution::ExecuteAsyncComposition(const AsyncArguments& call) {
   const auto operation = call.operation;
   const auto arguments = call.values;
@@ -746,29 +764,26 @@ StepResult Execution::ExecuteAsyncComposition(const AsyncArguments& call) {
   if (object == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  const runtime::TypeSignature* result_type = nullptr;
-  if (operation != AsyncOperation::ValidateFuture) {
-    const auto receiver_type = runtime::Heap::TypeOf(first);
-    result_type = receiver_type.signature;
-    if (operation == AsyncOperation::Then) {
-      const auto callback = runtime::Heap::TypeOf(argument(1));
-      if (!callback.callable || callback.signature == nullptr) {
-        return std::unexpected(ExecutionStatus::TypeError);
-      }
-      runtime::TypeSignature output;
-      output.result = callback.signature->FlattenedResult();
-      result_type = isolate_.CreateTypeSignature(std::move(output));
-    }
-    if (result_type == nullptr) {
+  const auto receiver_type = runtime::Heap::TypeOf(first);
+  const runtime::TypeSignature* result_type = receiver_type.signature;
+  if (operation == AsyncOperation::Then) {
+    const auto callback = runtime::Heap::TypeOf(argument(1));
+    if (!callback.callable || callback.signature == nullptr) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    std::ignore =
-        runtime::Heap::BindRuntimeType(*object, {
-                                                    .kind = runtime::ValueKind::Object,
-                                                    .object_kind = runtime::ObjectKind::Future,
-                                                    .signature = result_type,
-                                                });
+    runtime::TypeSignature output;
+    output.result = callback.signature->FlattenedResult();
+    result_type = isolate_.CreateTypeSignature(std::move(output));
   }
+  if (result_type == nullptr) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  std::ignore =
+      runtime::Heap::BindRuntimeType(*object, {
+                                                  .kind = runtime::ValueKind::Object,
+                                                  .object_kind = runtime::ObjectKind::Future,
+                                                  .signature = result_type,
+                                              });
   auto references = std::make_shared<std::vector<Value>>(arguments.size() + 1);
   arguments.CopyTo(std::span(*references).first(arguments.size()));
   references->back() = Value::Object(object);
@@ -795,14 +810,7 @@ StepResult Execution::ExecuteAsyncComposition(const AsyncArguments& call) {
       }),
   };
   StepResult observed;
-  if (operation == AsyncOperation::ValidateFuture) {
-    const auto diagnostic = Diagnostic({
-        .status = ExecutionStatus::TypeError,
-        .stack_trace = CaptureStack(),
-        .message = "native Future completion does not match its external declaration",
-    });
-    observed = ValidateNativeFuture(context, call, diagnostic);
-  } else if (operation == AsyncOperation::Timeout) {
+  if (operation == AsyncOperation::Timeout) {
     const auto diagnostic = Diagnostic({
         .status = ExecutionStatus::Thrown,
         .stack_trace = CaptureStack(),

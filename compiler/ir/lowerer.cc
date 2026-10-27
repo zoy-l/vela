@@ -14,7 +14,6 @@
 #include <system_error>
 #include <utility>
 #include <vector>
-#include "base/async_operation.h"
 #include "base/builtin.h"
 #include "base/callable.h"
 #include "compiler/frontend/ast.h"
@@ -440,46 +439,6 @@ void Lowerer::LowerCaptures(const frontend::Function& source,
   }
 }
 
-void Lowerer::LowerNativeFunction(const frontend::Function& source, Function& function) {
-  function.native_symbol = source.native_symbol;
-  function.register_count = function.parameter_count + 1;
-  function.instructions = {
-      {
-          .opcode = Opcode::NativeCall,
-          .dst = function.parameter_count,
-          .immediate = function.parameter_count,
-          .location = source.location,
-      },
-      {.opcode = Opcode::Return, .dst = function.parameter_count, .location = source.location},
-  };
-  if (function.return_type.kind == frontend::TypeDescriptor::Kind::Future) {
-    const auto& payload = model_.generic_arguments.at(function.return_type.name).front();
-    const auto type_index = payload.kind == frontend::TypeDescriptor::Kind::Void
-                                ? -1
-                                : static_cast<std::int64_t>(RegisterRuntimeType(payload));
-    function.instructions.pop_back();
-    function.instructions.push_back({
-        .opcode = Opcode::LoadInt,
-        .dst = function.parameter_count + 1,
-        .immediate = type_index,
-        .location = source.location,
-    });
-    function.instructions.push_back({
-        .opcode = Opcode::AsyncCall,
-        .dst = function.parameter_count + 2,
-        .lhs = function.parameter_count,
-        .index = static_cast<std::uint32_t>(AsyncOperation::ValidateFuture),
-        .location = source.location,
-    });
-    function.instructions.push_back({
-        .opcode = Opcode::Return,
-        .dst = function.parameter_count + 2,
-        .location = source.location,
-    });
-    function.register_count = function.parameter_count + 3;
-  }
-}
-
 void Lowerer::LowerFunctionParameters(const frontend::Function& source,
                                       const frontend::FunctionDescriptor& function_info,
                                       const frontend::Class* owner,
@@ -536,6 +495,7 @@ void Lowerer::LowerFunction(const frontend::Function& source,
                             const frontend::Class* owner,
                             const frontend::LambdaDescriptor* lambda) {
   Function function;
+  function.location = source.location;
   function.name = owner == nullptr ? source.name : MethodKey(owner->name, source);
   function.is_async = source.is_async;
   function.owner_class = owner == nullptr ? std::string() : owner->name;
@@ -582,7 +542,8 @@ void Lowerer::LowerFunction(const frontend::Function& source,
     return;
   }
   if (!source.native_symbol.empty()) {
-    LowerNativeFunction(source, function);
+    function.native_symbol = source.native_symbol;
+    function.register_count = std::max(function.parameter_count, 1U);
     StoreFunction(std::move(function));
     return;
   }

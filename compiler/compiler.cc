@@ -229,17 +229,6 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
     case ir::Opcode::CallIndirect:
       return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.rhs),
                            Byte(instruction.lhs));
-    case ir::Opcode::NativeCall:
-      if (instruction.immediate < 0 ||
-          std::cmp_greater(instruction.immediate, std::numeric_limits<std::uint8_t>::max())) {
-        return std::unexpected(frontend::Diagnostic{
-            .location = instruction.location,
-            .message = "native parameter count exceeds bytecode encoding",
-            .source_path = std::string(source_path),
-        });
-      }
-      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs),
-                           Byte(static_cast<std::uint32_t>(instruction.immediate)));
     case ir::Opcode::CallInterface:
       return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.index),
                            Byte(instruction.lhs));
@@ -317,6 +306,10 @@ std::expected<vm::FunctionStorage, frontend::Diagnostic> EncodeFunction(
     const ir::Function& function,
     EncodingContext context,
     vm::FunctionStorage compiled) {
+  if (compiled.native != nullptr && !context.source_paths.empty()) {
+    // 原生声明的逻辑调用位置为 0，不构造仅为调用宿主而存在的字节码函数体。
+    compiled.source_mappings.push_back({.instruction = 0, .location = function.location});
+  }
   compiled.code.reserve(function.instructions.size());
   absl::flat_hash_map<std::int64_t, std::uint32_t> integer_ids;
   for (auto instruction : function.instructions) {
@@ -361,7 +354,9 @@ std::expected<vm::FunctionStorage, frontend::Diagnostic> EncodeFunction(
 std::optional<frontend::Diagnostic> OptimizeAndAllocate(ir::Program& program,
                                                         std::span<const std::string> source_paths) {
   for (auto& function : program.functions) {
-    ir::Optimize(function, program.functions);
+    if (function.native_symbol.empty()) {
+      ir::Optimize(function, program.functions);
+    }
     auto failure = AllocateRegisters(function, program.functions);
     if (failure) {
       if (!source_paths.empty()) {
@@ -496,8 +491,10 @@ CompileResult CompileProgram(const frontend::Program& source,
       state != nullptr ? state->globals : nullptr, cache->code_identity);
   if (!prepared) {
     const auto& error = prepared.error();
-    const auto location =
-        lowered.program.functions.at(error.function).instructions.at(error.instruction).location;
+    const auto& function = lowered.program.functions.at(error.function);
+    const auto location = function.instructions.empty()
+                              ? function.location
+                              : function.instructions.at(error.instruction).location;
     AddDiagnostic(result.diagnostics, location, error.message);
     return result;
   }

@@ -20,6 +20,9 @@ class Frame final {
     roots_.Attach(heap, registers);
   }
 
+  // 原生直接调用借用调用者已保根的窗口，不为同一组参数重复挂接根。
+  void Borrow(runtime::RegisterView registers) noexcept { registers_ = registers; }
+
   void Detach() noexcept {
     roots_.Detach();
     registers_ = {};

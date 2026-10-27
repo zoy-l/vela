@@ -1,47 +1,18 @@
 #include "runtime/native_function.h"
 #include "runtime/future.h"
 
-#include <cstddef>
 #include <expected>
-#include <span>
 #include <string_view>
 #include <utility>
 
 #include "base/utf8.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/register_storage.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
-namespace {
-
-bool MatchesType(Value value, NativeType type) {
-  switch (type) {
-    case NativeType::Void:
-      return value.IsNull();
-    case NativeType::Boolean:
-      return value.IsBoolean();
-    case NativeType::Integer:
-      return value.IsInteger();
-    case NativeType::Double:
-      return value.IsDouble();
-    case NativeType::String:
-      return value.IsString();
-    case NativeType::NullableString:
-      return value.IsNull() || value.IsString();
-    case NativeType::Future:
-      return value.IsObject() && value.AsObject() != nullptr &&
-             Heap::GetFuture(*value.AsObject()) != nullptr;
-    case NativeType::CancellationToken:
-      return value.IsObject() && value.AsObject() != nullptr &&
-             Heap::GetCancellationToken(*value.AsObject()) != nullptr;
-  }
-  std::unreachable();
-}
-
-}  // namespace
-
 NativeResult NativeContext::String(std::string_view text) const {
   if (InvalidUtf8Offset(text)) {
     return std::unexpected(NativeError{
@@ -92,7 +63,12 @@ NativeResult NativeContext::CancellationValue(const CancellationToken& token) co
   return Value::Object(object);
 }
 
-CancellationToken internal::NativeCodec<CancellationToken>::Decode(Value value) {
+bool internal::NativeCodec<CancellationToken>::IsCompatible(RegisterReference value) {
+  return value.IsObject() && value.AsObject() != nullptr &&
+         Heap::GetCancellationToken(*value.AsObject()) != nullptr;
+}
+
+CancellationToken internal::NativeCodec<CancellationToken>::Decode(RegisterReference value) {
   return *Heap::GetCancellationToken(*value.AsObject());
 }
 
@@ -101,11 +77,16 @@ NativeResult internal::NativeCodec<CancellationToken>::Encode(NativeContext& con
   return context.CancellationValue(token);
 }
 
-std::string_view internal::NativeCodec<std::string_view>::Decode(Value value) {
+std::string_view internal::NativeCodec<std::string_view>::Decode(RegisterReference value) {
   return value.AsString()->value();
 }
 
-Future internal::NativeCodec<Future>::Decode(Value value) {
+bool internal::NativeCodec<Future>::IsCompatible(RegisterReference value) {
+  return value.IsObject() && value.AsObject() != nullptr &&
+         Heap::GetFuture(*value.AsObject()) != nullptr;
+}
+
+Future internal::NativeCodec<Future>::Decode(RegisterReference value) {
   return Heap::GetFuture(*value.AsObject())->Rooted();
 }
 
@@ -113,24 +94,7 @@ NativeResult internal::NativeCodec<Future>::Encode(NativeContext& context, const
   return context.FutureValue(future);
 }
 
-NativeResult NativeFunction::Invoke(Isolate& isolate, std::span<const Value> arguments) const {
-  if (arguments.size() != parameters_.size()) {
-    return std::unexpected(NativeError{
-        .kind = NativeErrorKind::TypeMismatch,
-        .message = "native argument count mismatch",
-    });
-  }
-  for (std::size_t index = 0; index < arguments.size(); ++index) {
-    if (!MatchesType(arguments.subspan(index).front(),
-                     std::span(parameters_).subspan(index).front())) {
-      return std::unexpected(NativeError{
-          .kind = NativeErrorKind::TypeMismatch,
-          .message = "native argument type mismatch",
-      });
-    }
-  }
-  // 边界也允许宿主直接调用；根一次覆盖完整参数窗口，不为每个参数重复注册。
-  RootRange roots(isolate.heap(), arguments.data(), arguments.size());
+NativeResult NativeFunction::Invoke(Isolate& isolate, RegisterView arguments) const {
   NativeContext context(isolate);
   auto result = callback_(context, arguments);
   if (!result && InvalidUtf8Offset(result.error().message)) {

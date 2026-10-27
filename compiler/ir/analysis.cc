@@ -92,11 +92,6 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
       };
     case Opcode::StringInterpolate:
       return {.defines_value = true, .argument_count = instruction.rhs};
-    case Opcode::NativeCall:
-      return {
-          .defines_value = true,
-          .argument_count = static_cast<std::uint32_t>(instruction.immediate),
-      };
     case Opcode::AddInt:
     case Opcode::SubInt:
     case Opcode::MulInt:
@@ -186,8 +181,7 @@ std::vector<std::uint8_t> FindBlockStarts(const Function& function) {
       }
     }
     if ((opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse || opcode == Opcode::JumpIfNull ||
-         opcode == Opcode::Return ||
-         opcode == Opcode::Throw || opcode == Opcode::Rethrow ||
+         opcode == Opcode::Return || opcode == Opcode::Throw || opcode == Opcode::Rethrow ||
          (instruction.handler && MayThrow(opcode))) &&
         index + 1 < code.size()) {
       starts.at(index + 1) = 1;

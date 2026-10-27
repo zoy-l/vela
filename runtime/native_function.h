@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "runtime/register_storage.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -60,7 +61,8 @@ struct NativeCodec;
 template <>
 struct NativeCodec<std::int64_t> final {
   static constexpr auto kType = NativeType::Integer;
-  static std::int64_t Decode(Value value) { return value.AsInteger(); }
+  static bool IsCompatible(RegisterReference value) { return value.IsInteger(); }
+  static std::int64_t Decode(RegisterReference value) { return value.AsInteger(); }
   static NativeResult Encode(NativeContext& /*unused*/, std::int64_t value) {
     return Value::Integer(value);
   }
@@ -69,7 +71,8 @@ struct NativeCodec<std::int64_t> final {
 template <>
 struct NativeCodec<double> final {
   static constexpr auto kType = NativeType::Double;
-  static double Decode(Value value) { return value.AsDouble(); }
+  static bool IsCompatible(RegisterReference value) { return value.IsDouble(); }
+  static double Decode(RegisterReference value) { return value.AsDouble(); }
   static NativeResult Encode(NativeContext& /*unused*/, double value) {
     return Value::Double(value);
   }
@@ -78,7 +81,8 @@ struct NativeCodec<double> final {
 template <>
 struct NativeCodec<bool> final {
   static constexpr auto kType = NativeType::Boolean;
-  static bool Decode(Value value) { return value.AsBoolean(); }
+  static bool IsCompatible(RegisterReference value) { return value.IsBoolean(); }
+  static bool Decode(RegisterReference value) { return value.AsBoolean(); }
   static NativeResult Encode(NativeContext& /*unused*/, bool value) {
     return Value::Boolean(value);
   }
@@ -87,7 +91,8 @@ struct NativeCodec<bool> final {
 template <>
 struct NativeCodec<std::string_view> final {
   static constexpr auto kType = NativeType::String;
-  static std::string_view Decode(Value value);
+  static bool IsCompatible(RegisterReference value) { return value.IsString(); }
+  static std::string_view Decode(RegisterReference value);
   static NativeResult Encode(NativeContext& context, std::string_view text) {
     return context.String(text);
   }
@@ -117,14 +122,16 @@ struct NativeCodec<std::optional<std::string>> final {
 template <>
 struct NativeCodec<Future> final {
   static constexpr auto kType = NativeType::Future;
-  static Future Decode(Value value);
+  static bool IsCompatible(RegisterReference value);
+  static Future Decode(RegisterReference value);
   static NativeResult Encode(NativeContext& context, const Future& future);
 };
 
 template <>
 struct NativeCodec<CancellationToken> final {
   static constexpr auto kType = NativeType::CancellationToken;
-  static CancellationToken Decode(Value value);
+  static bool IsCompatible(RegisterReference value);
+  static CancellationToken Decode(RegisterReference value);
   static NativeResult Encode(NativeContext& context, const CancellationToken& token);
 };
 
@@ -147,8 +154,15 @@ struct NativeAdapter<Function> final {
 
   template <std::size_t... Indices>
   static NativeResult Invoke(NativeContext& context,
-                             std::span<const Value> values,
+                             RegisterView values,
                              std::index_sequence<Indices...> /*unused*/) {
+    // Program 验证实参数量；载荷类型仍须在宿主边界检查，原始字节码不保证类型流正确。
+    if (!(NativeCodec<Args>::IsCompatible(values.subspan(Indices).front()) && ...)) {
+      return std::unexpected(NativeError{
+          .kind = NativeErrorKind::TypeMismatch,
+          .message = "native argument type mismatch",
+      });
+    }
     if constexpr (std::is_void_v<R>) {
       Function(context, NativeCodec<Args>::Decode(values.subspan(Indices).front())...);
       return Value::Null();
@@ -170,7 +184,7 @@ struct NativeAdapter<Function> final {
     }
   }
 
-  static NativeResult Call(NativeContext& context, std::span<const Value> values) {
+  static NativeResult Call(NativeContext& context, RegisterView values) {
     return Invoke(context, values, std::index_sequence_for<Args...>());
   }
 };
@@ -188,8 +202,9 @@ class NativeFunction final {
   [[nodiscard]] std::string_view name() const noexcept { return name_; }
   [[nodiscard]] std::span<const NativeType> parameters() const noexcept { return parameters_; }
   [[nodiscard]] NativeType result_type() const noexcept { return result_type_; }
-  // 参数借用调用帧的根槽；返回值必须在下一次分配之前写入根槽或 RootedValue。
-  [[nodiscard]] NativeResult Invoke(Isolate& isolate, std::span<const Value> arguments) const;
+  // 实参数量须等于 parameters().size()，参数窗口须由调用者持续保根。
+  // 不复制参数或重复注册根；返回引用须在下一次分配前写入根槽或 RootedValue。
+  [[nodiscard]] NativeResult Invoke(Isolate& isolate, RegisterView arguments) const;
 
  private:
   template <auto Function, class R, class... Args>
@@ -200,7 +215,7 @@ class NativeFunction final {
                           internal::NativeCodec<typename Adapter::Result>::kType, &Adapter::Call);
   }
 
-  using Callback = NativeResult (*)(NativeContext&, std::span<const Value>);
+  using Callback = NativeResult (*)(NativeContext&, RegisterView);
   NativeFunction(std::string name,
                  std::vector<NativeType> parameters,
                  NativeType result_type,

@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <sstream>
@@ -18,6 +19,7 @@
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/native_function.h"
 #include "runtime/object.h"
 #include "runtime/register_storage.h"
 #include "runtime/value.h"
@@ -36,6 +38,102 @@ constexpr auto kInvalidOpcode = static_cast<OpCode>(0xff);
 constexpr std::int16_t kOutsideJump = 5;
 constexpr std::uint32_t kOriginalLine = 7;
 constexpr std::uint32_t kChangedLine = 99;
+
+std::int64_t NativeIncrement(runtime::NativeContext& /*context*/, std::int64_t value) noexcept {
+  return value + 1;
+}
+
+std::int64_t NativeInitializer(runtime::NativeContext& /*context*/) noexcept {
+  return kExpectedResult;
+}
+
+TEST(ProgramTest, RejectsNativeBytecodeBodiesAndMismatchedParameterCounts) {
+  runtime::Isolate isolate;
+  FunctionStorage native;
+  native.native = std::make_shared<const runtime::NativeFunction>(
+      runtime::NativeFunction::Bind<NativeIncrement>("increment"));
+  native.parameter_count = 1;
+  native.register_count = 1;
+  EXPECT_TRUE(Program::Create({native}, isolate));
+  native.code = {EncodeABC(OpCode::Return, 0, 0, 0)};
+  EXPECT_FALSE(Program::Create({native}, isolate));
+  native.code.clear();
+  native.parameter_count = 0;
+  EXPECT_FALSE(Program::Create({native}, isolate));
+  native.parameter_count = 1;
+  native.is_async = true;
+  EXPECT_FALSE(Program::Create({native}, isolate));
+}
+
+TEST(ProgramTest, RawBytecodeNativeCallsStillCheckArgumentPayloadTypes) {
+  runtime::Isolate isolate;
+  FunctionStorage native;
+  native.name = "increment";
+  native.native = std::make_shared<const runtime::NativeFunction>(
+      runtime::NativeFunction::Bind<NativeIncrement>("increment"));
+  native.parameter_count = 1;
+  native.register_count = 1;
+  FunctionStorage caller;
+  caller.name = "caller";
+  caller.register_count = 1;
+  caller.code = {
+      EncodeABC(OpCode::LoadBool, 0, 1, 0),
+      EncodeABC(OpCode::Call, 0, 1, 0),
+      EncodeABC(OpCode::Return, 0, 0, 0),
+  };
+  const auto program = Program::Create({caller, native}, isolate);
+  ASSERT_TRUE(program);
+  const auto result = VirtualMachine(isolate).Execute(*program, 0);
+  EXPECT_EQ(result.status, ExecutionStatus::NativeFailure);
+  EXPECT_EQ(result.message, "native argument type mismatch");
+  ASSERT_EQ(result.stack_trace.size(), 2U);
+  EXPECT_EQ(result.stack_trace.front().function, "increment");
+  EXPECT_EQ(result.stack_trace.back().function, "caller");
+}
+
+TEST(ProgramTest, RejectsNativeTypeSignaturesThatDisagreeWithBinding) {
+  runtime::Isolate isolate;
+  FunctionStorage native;
+  native.native = std::make_shared<const runtime::NativeFunction>(
+      runtime::NativeFunction::Bind<NativeIncrement>("increment"));
+  native.parameter_count = 1;
+  native.register_count = 1;
+  native.layouts = std::make_shared<const LayoutTables>(
+      std::vector<runtime::ClassLayout*>(), std::vector<const runtime::ArrayLayout*>(),
+      std::vector<const runtime::CollectionLayout*>(),
+      std::vector<runtime::TypeConstraint>{
+          {.kind = runtime::ValueKind::Integer},
+          {.kind = runtime::ValueKind::Double},
+      });
+  native.signature = CallSignature{
+      .parameters = {{.name = "value", .type = 0}},
+      .result = 0,
+      .parameter_name_order = {},
+  };
+  EXPECT_TRUE(Program::Create({native}, isolate));
+  native.signature->parameters.front().type = 1;
+  EXPECT_FALSE(Program::Create({native}, isolate));
+  native.signature->parameters.front().type = 0;
+  native.signature->result = 1;
+  EXPECT_FALSE(Program::Create({native}, isolate));
+}
+
+TEST(ProgramTest, NativeGlobalInitializerPublishesValueBeforeReturningToCaller) {
+  runtime::Isolate isolate;
+  FunctionStorage native;
+  native.native = std::make_shared<const runtime::NativeFunction>(
+      runtime::NativeFunction::Bind<NativeInitializer>("initialize"));
+  native.register_count = 1;
+  FunctionStorage caller;
+  caller.register_count = 1;
+  caller.code = {EncodeABC(OpCode::GetGlobal, 0, 0, 0), EncodeABC(OpCode::Return, 0, 0, 0)};
+  const auto program = Program::Create({caller, native}, isolate, {1});
+  ASSERT_TRUE(program);
+  const auto result = VirtualMachine(isolate).Execute(*program, 0);
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), kExpectedResult);
+  EXPECT_EQ(program->globals()->states.front(), GlobalState::Ready);
+}
 
 TEST(ProgramTest, BorrowedAsyncFunctionKeepsAwaitSemanticsAndRejectsSynchronousAwait) {
   runtime::Isolate isolate;

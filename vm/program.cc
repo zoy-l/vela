@@ -94,10 +94,6 @@ bool IsValidInstruction(Instruction instruction,
     case OpCode::NewArray:
       return IsRegister(operand_a, function) && operand_b < function.arrays.size() &&
              function.arrays.subspan(operand_b).front() != nullptr;
-    case OpCode::NativeCall:
-      return function.native != nullptr && IsRegister(operand_a, function) &&
-             operand_c == function.native->parameters().size() &&
-             static_cast<std::size_t>(operand_b) + operand_c <= function.register_count;
     case OpCode::NewDynamicArray:
       return IsRegister(operand_a, function) && IsRegister(operand_c, function) &&
              operand_b < function.arrays.size() &&
@@ -331,7 +327,8 @@ std::expected<void, ValidationError> ValidateFunctionCode(std::size_t index,
   }
   std::optional<std::uint32_t> previous;
   for (const auto& mapping : function.debug.mappings) {
-    if (mapping.instruction >= function.code.size() ||
+    const auto location_count = function.native != nullptr ? 1U : function.code.size();
+    if (mapping.instruction >= location_count ||
         mapping.location.source_id >= function.debug.source_paths.size() ||
         mapping.location.line == 0 || mapping.location.column == 0 ||
         (previous ? mapping.instruction <= *previous : mapping.instruction != 0)) {
@@ -363,6 +360,9 @@ std::expected<void, ValidationError> ValidateFunctionCode(std::size_t index,
         });
       }
     }
+  }
+  if (function.native != nullptr) {
+    return {};
   }
   const auto last = DecodeOp(function.code.back());
   if (last != OpCode::Return && last != OpCode::Jump && last != OpCode::Throw &&
@@ -496,6 +496,68 @@ std::expected<void, ValidationError> ValidateCallSignature(const FunctionStorage
   return {};
 }
 
+bool IsNativeType(const runtime::TypeConstraint& type, runtime::NativeType native) {
+  if (native == runtime::NativeType::NullableString) {
+    return type.kind == runtime::ValueKind::String && type.nullable;
+  }
+  if (type.nullable) {
+    return false;
+  }
+  switch (native) {
+    case runtime::NativeType::Boolean:
+      return type.kind == runtime::ValueKind::Boolean;
+    case runtime::NativeType::Integer:
+      return type.kind == runtime::ValueKind::Integer;
+    case runtime::NativeType::Double:
+      return type.kind == runtime::ValueKind::Double;
+    case runtime::NativeType::String:
+      return type.kind == runtime::ValueKind::String;
+    case runtime::NativeType::Future:
+      return type.kind == runtime::ValueKind::Object &&
+             type.object_kind == runtime::ObjectKind::Future && type.signature != nullptr;
+    case runtime::NativeType::CancellationToken:
+      return type.kind == runtime::ValueKind::Object &&
+             type.object_kind == runtime::ObjectKind::CancellationToken;
+    case runtime::NativeType::Void:
+    case runtime::NativeType::NullableString:
+      return false;
+  }
+  return false;
+}
+
+std::expected<void, ValidationError> ValidateNativeSignature(const FunctionStorage& stored,
+                                                             std::size_t index) {
+  if (stored.native == nullptr || !stored.signature) {
+    return {};
+  }
+  const auto& signature = *stored.signature;
+  const auto types = stored.View().types;
+  const auto& native = *stored.native;
+  const auto result_matches =
+      signature.result
+          ? IsNativeType(types.subspan(*signature.result).front(), native.result_type())
+          : native.result_type() == runtime::NativeType::Void;
+  if (signature.hidden_parameters != 0 || !result_matches) {
+    return std::unexpected(ValidationError{
+        .function = index,
+        .instruction = 0,
+        .message = "native call signature mismatch",
+    });
+  }
+  const auto parameters = native.parameters();
+  for (std::size_t parameter = 0; parameter < parameters.size(); ++parameter) {
+    const auto& type = types.subspan(signature.parameters.at(parameter).type).front();
+    if (!IsNativeType(type, parameters.subspan(parameter).front())) {
+      return std::unexpected(ValidationError{
+          .function = index,
+          .instruction = 0,
+          .message = "native parameter signature mismatch",
+      });
+    }
+  }
+  return {};
+}
+
 std::expected<void, ValidationError> ValidateFunctionMetadata(
     const FunctionStorage& stored,
     std::size_t index,
@@ -516,7 +578,12 @@ std::expected<void, ValidationError> ValidateFunctionMetadata(
         .message = "program metadata is not valid UTF-8",
     });
   }
-  if (function.code.empty() || function.register_count == 0 ||
+  const auto invalid_body =
+      function.native != nullptr
+          ? !function.code.empty() || !function.handlers.empty() || function.is_async ||
+                function.parameter_count != function.native->parameters().size()
+          : function.code.empty();
+  if (invalid_body || function.register_count == 0 ||
       function.register_count > kMaxFrameRegisters ||
       function.parameter_count > function.register_count) {
     return std::unexpected(ValidationError{
@@ -528,7 +595,7 @@ std::expected<void, ValidationError> ValidateFunctionMetadata(
   if (auto valid = ValidateCallSignature(stored, index); !valid) {
     return valid;
   }
-  return {};
+  return ValidateNativeSignature(stored, index);
 }
 
 std::expected<void, ValidationError> ValidateInterfaceSignatures(

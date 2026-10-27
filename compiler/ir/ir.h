@@ -47,6 +47,7 @@ struct Function final {
     std::uint32_t target = 0;
   };
   std::string name;
+  frontend::SourceLocation location;
   std::string owner_class;
   frontend::TypeDescriptor return_type;
   std::uint32_t parameter_count = 0;

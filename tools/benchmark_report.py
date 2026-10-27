@@ -164,7 +164,7 @@ def native_call_report(report: dict, expected_cases: list[str], repetitions: int
              f"Every selected case passed all {repetitions} repetitions.",
              "C++ uses the same non-inlined kernels and NativeContext as the VM. "
              "The indirect target is hidden from the compiler before timing.",
-             "VM totals include loop work, checksum accumulation, native wrappers and entry/exit "
+             "VM totals include loop work, checksum accumulation, native binding adapters and entry/exit "
              "amortized over the batch. Registration, compilation and warm-up are excluded.",
              "VM minus control subtracts independent medians, not paired samples. It estimates "
              "the additional native path including changed bytecode/register work, not an isolated "
@@ -184,7 +184,7 @@ def native_call_report(report: dict, expected_cases: list[str], repetitions: int
         lines.append("| " + " | ".join([workload, str(count), *elapsed, delta, counts, cvs]) + " |")
     lines.extend(["", "VM GC heap snapshots and retained register capacity, in bytes/objects. "
                   "These are live snapshots, not cumulative allocation counts, host malloc counts "
-                  "or process RSS. Native argument-buffer capacity is not included in registers.", "",
+                  "or process RSS.", "",
                   "| Workload | Calls/batch | Backend | Baseline heap bytes | End heap bytes | "
                   "Baseline objects | End objects | Register bytes |",
                   "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |"])

@@ -23,7 +23,9 @@ std::optional<DebugLocation> DebugFrame::location() const noexcept {
                                 ? std::span<const std::string>(*function.source_paths)
                                 : std::span<const std::string>();
   const DebugInfo debug{
-      .name = function.name, .source_paths = source_paths, .mappings = function.source_mappings,
+      .name = function.name,
+      .source_paths = source_paths,
+      .mappings = function.source_mappings,
   };
   const auto* mapping = debug.Locate(instruction_);
   if (mapping == nullptr) {
@@ -37,7 +39,7 @@ std::optional<DebugLocation> DebugFrame::location() const noexcept {
 }
 
 std::size_t DebugFrame::register_count() const noexcept {
-  return frame_->function->register_count;
+  return frame_->frame.registers().size();
 }
 
 std::optional<runtime::Value> DebugFrame::ReadRegister(std::size_t index) const noexcept {

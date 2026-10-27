@@ -106,7 +106,6 @@ class Lowerer final {
   void RegisterFunctionSignature(Function& function,
                                  const frontend::Function& source,
                                  const frontend::FunctionDescriptor& function_info);
-  void LowerNativeFunction(const frontend::Function& source, Function& function);
   std::optional<LoweredValue> LowerSuperGetter(const frontend::Expression& expression);
   void LowerCaptures(const frontend::Function& source, const frontend::LambdaDescriptor& lambda);
   void LowerStatement(const frontend::Statement& statement);

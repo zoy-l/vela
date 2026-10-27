@@ -177,8 +177,7 @@ void Rewrite(ir::Function& function,
     if (original.opcode == ir::Opcode::Call || original.opcode == ir::Opcode::CallInterface ||
         original.opcode == ir::Opcode::CallIndirect || original.opcode == ir::Opcode::BuiltinCall ||
         original.opcode == ir::Opcode::AsyncCall ||
-        original.opcode == ir::Opcode::StringInterpolate ||
-        original.opcode == ir::Opcode::NativeCall) {
+        original.opcode == ir::Opcode::StringInterpolate) {
       instruction.lhs = access.argument_count != 0 ? mapping.at(original.lhs) : 0;
     }
   }
@@ -264,10 +263,13 @@ std::optional<frontend::Diagnostic> AllocateRegisters(ir::Function& function,
                                                       std::span<const ir::Function> functions) {
   if (function.parameter_count > kMaxFrameRegisters) {
     return frontend::Diagnostic{
-        .location = function.instructions.front().location,
+        .location = function.location,
         .message = "function parameter count exceeds the VM limit of 256",
         .source_path = {},
     };
+  }
+  if (!function.native_symbol.empty()) {
+    return std::nullopt;
   }
   const auto intervals = LiveIntervals(function, functions);
   auto allocations = BuildAllocations(function, functions, intervals);

@@ -26,7 +26,6 @@ enum class AsyncOperation : std::uint8_t {
   NewCancellationToken,
   CancellationCancel,
   CancellationIsCancelled,
-  ValidateFuture,
   Count,
 };
 
@@ -49,7 +48,6 @@ enum class AsyncOperation : std::uint8_t {
     case AsyncOperation::CompleterError:
     case AsyncOperation::TimerAfter:
     case AsyncOperation::TimerPeriodic:
-    case AsyncOperation::ValidateFuture:
       return 2;
     case AsyncOperation::CatchError:
       return 3;

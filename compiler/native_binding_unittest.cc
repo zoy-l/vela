@@ -19,11 +19,14 @@
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_function.h"
+#include "runtime/register_storage.h"
 #include "runtime/rooted_value.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
 #include "vm/bytecode_image.h"
+#include "vm/debugger.h"
 #include "vm/execution_status.h"
+#include "vm/program.h"
 #include "vm/vm.h"
 
 namespace vela::compiler {
@@ -53,6 +56,62 @@ double Scale(NativeContext& /*unused*/, double value) noexcept {
 bool Invert(NativeContext& /*unused*/, bool value) noexcept {
   return !value;
 }
+
+struct Reentry final {
+  vm::VirtualMachine* machine = nullptr;
+  vm::FunctionHandle nested;
+};
+
+Reentry*& ActiveReentry() {
+  static Reentry* active = nullptr;
+  return active;
+}
+
+std::expected<std::string, NativeError> ReenterWithBorrowedString(NativeContext& context,
+                                                                  std::string_view text) noexcept {
+  auto& active = *ActiveReentry();
+  const auto result = active.machine->Execute(active.nested);
+  if (!result.Succeeded()) {
+    return std::unexpected(NativeError{.message = "nested execution failed"});
+  }
+  context.isolate().heap().Collect();
+  return std::string(text);
+}
+
+class NativeDebugger final : public vm::Debugger {
+ public:
+  NativeDebugger(runtime::Isolate& isolate, vm::DebugAction action)
+      : isolate_(isolate), action_(action) {}
+
+  vm::DebugAction BeforeInstruction(const vm::DebugContext& context) noexcept override {
+    const auto frame = context.current_frame();
+    if (frame.name() != "copy") {
+      return vm::DebugAction::Continue;
+    }
+    saw_native_ = true;
+    const auto value = frame.ReadRegister(0);
+    isolate_.heap().Collect();
+    if (value && value->IsString()) {
+      argument_ = value->AsString()->value();
+    }
+    const auto caller = context.Frame(1);
+    if (caller) {
+      caller_name_ = caller->name();
+    }
+    return action_;
+  }
+
+  [[nodiscard]] bool saw_native() const noexcept { return saw_native_; }
+  [[nodiscard]] std::string_view argument() const noexcept { return argument_; }
+  [[nodiscard]] std::string_view caller_name() const noexcept { return caller_name_; }
+
+ private:
+  bool saw_native_ = false;
+  std::string argument_;
+  std::string caller_name_;
+  runtime::Isolate& isolate_;
+  vm::DebugAction action_;
+};
 
 std::string CopyWithCollection(NativeContext& context, std::string_view text) noexcept {
   context.isolate().heap().Collect();
@@ -336,6 +395,99 @@ func main(): string {
   EXPECT_EQ(result.value.AsString()->value(), "host rejected request");
 }
 
+TEST(NativeBindingTest, DirectNativeCallsRetainOnlyCallerRegisterCapacity) {
+  runtime::Isolate isolate;
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Add>("add")));
+  const auto compiled = CompileSource(R"(
+external func add(left: int, right: int): int;
+func main(): int { return add(add(10, 20), 12); }
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto entry = compiled.program.FindFunction("main");
+  vm::VirtualMachine machine(isolate);
+  const auto result = machine.Execute(entry);
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsInteger(), kHostAnswer);
+  EXPECT_EQ(machine.register_bytes(),
+            compiled.program.functions().subspan(entry.index()).front().register_count *
+                runtime::kRegisterSlotBytes);
+}
+
+TEST(NativeBindingTest, ReentryOnSameVmPreservesBorrowedArgumentsAndOuterRegisters) {
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(
+      isolate.RegisterNative(runtime::NativeFunction::Bind<ReenterWithBorrowedString>("reenter")));
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Collect>("collect")));
+  const auto compiled = CompileSource(R"(
+external func reenter(text: string): string;
+external func collect(): void;
+func nested(): int {
+  const values = [10, 20, 12];
+  const text = 'nested' + ' allocations';
+  collect();
+  return values[0] + values[1] + values[2] + text.length;
+}
+func main(): string {
+  const text = 'outer' + ' argument';
+  const copied = reenter(text);
+  collect();
+  return text + ':' + copied;
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  vm::VirtualMachine machine(isolate);
+  Reentry reentry{.machine = &machine, .nested = compiled.program.FindFunction("nested")};
+  ActiveReentry() = &reentry;
+  const auto result = machine.Execute(compiled.program.FindFunction("main"));
+  ActiveReentry() = nullptr;
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsString()->value(), "outer argument:outer argument");
+}
+
+TEST(NativeBindingTest, DynamicNativeCallsUseValidatedParametersAcrossCollection) {
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<CopyWithCollection>("copy")));
+  const auto compiled = CompileSource(R"(
+external func copy(text: string): string;
+func main(): string {
+  const callable: dynamic = copy;
+  return callable('borrowed' + ' value') as string;
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsString()->value(), "borrowed value");
+}
+
+TEST(NativeBindingTest, DebuggerSeesNativeDeclarationAndCanCollectBorrowedArguments) {
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<CopyWithCollection>("copy")));
+  const auto compiled = CompileSource(R"(
+external func copy(text: string): string;
+func main(): string { return copy('first' + ' second'); }
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  NativeDebugger debugger(isolate, vm::DebugAction::Continue);
+  const auto result =
+      vm::VirtualMachine(isolate).Debug(compiled.program.FindFunction("main"), debugger);
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_TRUE(debugger.saw_native());
+  EXPECT_EQ(debugger.argument(), "first second");
+  EXPECT_EQ(debugger.caller_name(), "main");
+  EXPECT_EQ(result.value.AsString()->value(), "first second");
+
+  NativeDebugger stopping(isolate, vm::DebugAction::Stop);
+  const auto stopped =
+      vm::VirtualMachine(isolate).Debug(compiled.program.FindFunction("main"), stopping);
+  EXPECT_EQ(stopped.status, vm::ExecutionStatus::DebuggerStopped);
+  EXPECT_TRUE(stopping.saw_native());
+}
+
 TEST(NativeBindingTest, RegistrationRejectsDuplicatesAndHostCallsKeepArgumentsRooted) {
   runtime::Isolate isolate;
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<CopyWithCollection>("copy")));
@@ -348,12 +500,17 @@ TEST(NativeBindingTest, RegistrationRejectsDuplicatesAndHostCallsKeepArgumentsRo
   const auto binding = isolate.FindNative("copy");
   ASSERT_NE(binding, nullptr);
   auto* string = isolate.heap().AllocateString("retained argument");
-  const std::array<runtime::Value, 1> input = {runtime::Value::String(string)};
+  std::array<runtime::RegisterPayload, 1> payloads{};
+  std::array<runtime::ValueKind, 1> kinds{};
+  const runtime::RegisterView input(payloads, kinds);
+  input.front().SetString(string);
+  runtime::RootRange roots;
+  roots.Attach(isolate.heap(), input);
   const auto result = binding->Invoke(isolate, input);
   ASSERT_TRUE(result);
   EXPECT_EQ(result->AsString()->value(), "retained argument");
-  const std::array<runtime::Value, 1> wrong = {runtime::Value::Integer(1)};
-  const auto mismatched = binding->Invoke(isolate, wrong);
+  input.front().SetInteger(1);
+  const auto mismatched = binding->Invoke(isolate, input);
   ASSERT_FALSE(mismatched);
   EXPECT_EQ(mismatched.error().kind, runtime::NativeErrorKind::TypeMismatch);
 }
