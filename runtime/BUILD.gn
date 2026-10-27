@@ -74,6 +74,8 @@ source_set("runtime") {
     "numeric_parse.cc",
     "numeric_parse.h",
     "object.h",
+    "program_layouts.cc",
+    "program_layouts.h",
     "random.cc",
     "random.h",
     "regexp.cc",

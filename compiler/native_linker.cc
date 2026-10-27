@@ -5,16 +5,17 @@
 #include <string>
 #include <utility>
 
-#include "compiler/frontend/ast.h"
+#include "base/callable.h"
+#include "base/layout_description.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/type_checker.h"
+#include "compiler/ir/ir.h"
 #include "runtime/native_function.h"
 
 namespace vela::compiler {
 namespace {
 
-bool MatchesNativeType(const frontend::TypeDescriptor& type, runtime::NativeType native) {
-  using Kind = frontend::TypeDescriptor::Kind;
+bool MatchesNativeType(const layout::Type& type, runtime::NativeType native) {
+  using Kind = layout::Type::Kind;
   if (native == runtime::NativeType::NullableString) {
     return type.kind == Kind::String && type.nullable;
   }
@@ -23,11 +24,11 @@ bool MatchesNativeType(const frontend::TypeDescriptor& type, runtime::NativeType
   }
   switch (native) {
     case runtime::NativeType::Void:
-      return type.kind == Kind::Void;
+      return false;
     case runtime::NativeType::Boolean:
-      return type.kind == Kind::Bool;
+      return type.kind == Kind::Boolean;
     case runtime::NativeType::Integer:
-      return type.kind == Kind::Int;
+      return type.kind == Kind::Integer;
     case runtime::NativeType::Double:
       return type.kind == Kind::Double;
     case runtime::NativeType::String:
@@ -42,15 +43,19 @@ bool MatchesNativeType(const frontend::TypeDescriptor& type, runtime::NativeType
   std::unreachable();
 }
 
-bool SignatureMatches(const frontend::FunctionDescriptor& signature,
+bool SignatureMatches(const CallSignature& signature,
+                      std::span<const layout::Type> types,
                       const runtime::NativeFunction& native) {
   const auto parameters = native.parameters();
-  if (signature.parameters.size() != parameters.size() ||
-      !MatchesNativeType(signature.return_type, native.result_type())) {
+  const auto result_type = native.result_type();
+  const bool matches_result =
+      signature.result ? MatchesNativeType(types.subspan(*signature.result).front(), result_type)
+                       : result_type == runtime::NativeType::Void;
+  if (signature.parameters.size() != parameters.size() || !matches_result) {
     return false;
   }
   for (std::size_t index = 0; index < parameters.size(); ++index) {
-    if (!MatchesNativeType(signature.parameters.at(index).type,
+    if (!MatchesNativeType(types.subspan(signature.parameters.at(index).type).front(),
                            parameters.subspan(index).front())) {
       return false;
     }
@@ -60,41 +65,30 @@ bool SignatureMatches(const frontend::FunctionDescriptor& signature,
 
 }  // namespace
 
-frontend::Diagnostics CheckNativeBindings(const frontend::Program& program,
-                                          const frontend::SemanticModel& model,
+frontend::Diagnostics CheckNativeBindings(const ir::Program& program,
                                           const runtime::Isolate& isolate) {
   frontend::Diagnostics diagnostics;
-  const auto check = [&](const frontend::Function& function,
-                         const frontend::FunctionDescriptor& signature) -> void {
+  for (const auto& function : program.functions) {
     if (function.native_symbol.empty()) {
-      return;
+      continue;
     }
     const auto binding = isolate.FindNative(function.native_symbol);
     std::string message;
     if (binding == nullptr) {
       message = "unregistered native function '" + function.native_symbol + "'";
-    } else if (!SignatureMatches(signature, *binding)) {
+    } else if (!SignatureMatches(*function.signature, program.layouts.types, *binding)) {
       message = "external declaration does not match native signature for '" +
                 function.native_symbol + "'";
     } else {
-      return;
+      continue;
     }
     diagnostics.push_back({
         .location = function.location,
         .message = std::move(message),
-        .source_path = program.sources.empty()
+        .source_path = program.source_paths.empty()
                            ? std::string()
-                           : program.sources.at(function.location.source_id).path,
+                           : program.source_paths.at(function.location.source_id),
     });
-  };
-  for (const auto& function : program.functions) {
-    check(function, model.functions.at(function.name));
-  }
-  for (const auto& owner : program.classes) {
-    const auto& methods = model.classes.at(owner.name).methods;
-    for (const auto& method : owner.methods) {
-      check(method, methods.at(method.name));
-    }
   }
   return diagnostics;
 }

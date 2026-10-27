@@ -13,7 +13,7 @@
 namespace vela::ir {
 namespace {
 
-std::expected<PreparedProgram, frontend::Diagnostics> Prepare(std::string_view source) {
+std::expected<Program, frontend::Diagnostics> Prepare(std::string_view source) {
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   return PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
 }
@@ -24,7 +24,7 @@ external func read(): int = "host.read";
 func main(): int { return read() + 2; }
 )");
   ASSERT_TRUE(result.has_value());
-  const auto& functions = result->program.functions;
+  const auto& functions = result->functions;
   const auto found = std::ranges::find(functions, "host.read", &Function::native_symbol);
   ASSERT_NE(found, functions.end());
   ASSERT_TRUE(found->signature.has_value());
@@ -43,7 +43,7 @@ TEST(PreparationTest, KeepsWideVirtualRegistersBeforeBackendAllocation) {
   source += "]; return values[299]; }";
   auto result = Prepare(source);
   ASSERT_TRUE(result.has_value());
-  const auto& functions = result->program.functions;
+  const auto& functions = result->functions;
   const auto main = std::ranges::find(functions, "main", &Function::name);
   ASSERT_NE(main, functions.end());
   EXPECT_GT(main->register_count, 256U);
@@ -52,7 +52,7 @@ TEST(PreparationTest, KeepsWideVirtualRegistersBeforeBackendAllocation) {
   }));
 }
 
-TEST(PreparationTest, OwnsSemanticReferencesAfterSourceAndResultMoves) {
+TEST(PreparationTest, OwnsLayoutsAndSourcePathsAfterFrontendDestructionAndResultMoves) {
   auto first = Prepare(R"(
 class Box { param value: int; }
 func main(): int { return Box(value: 42).value; }
@@ -60,11 +60,14 @@ func main(): int { return Box(value: 42).value; }
   ASSERT_TRUE(first.has_value());
   auto prepared = std::move(*first);
   first = std::unexpected(frontend::Diagnostics{});
-  const auto& descriptor = prepared.model.classes.at("Box");
-  ASSERT_NE(descriptor.declaration, nullptr);
-  EXPECT_EQ(descriptor.declaration->name, "Box");
-  EXPECT_EQ(descriptor.field_order.front(), "value");
-  EXPECT_FALSE(prepared.program.classes.empty());
+  const auto& classes = prepared.layouts.classes;
+  const auto found = std::ranges::find(classes, "Box", &layout::Class::name);
+  ASSERT_NE(found, classes.end());
+  EXPECT_EQ(found->field_count, 1U);
+  EXPECT_TRUE(found->reference_fields.empty());
+  EXPECT_FALSE(prepared.classes.empty());
+  EXPECT_TRUE(std::ranges::any_of(
+      prepared.source_paths, [](const std::string& path) { return path.ends_with("main.vela"); }));
 }
 
 TEST(PreparationTest, ReportsImportedTypeErrorsBeforeLowering) {

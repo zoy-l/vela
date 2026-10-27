@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "compiler/frontend/specialization.h"
+#include "compiler/ir/layout_description.h"
 #include "compiler/ir/optimizer.h"
 
 namespace vela::ir {
@@ -16,6 +17,11 @@ LoweringResult PrepareProgram(const frontend::Program& source,
     return lowered;
   }
   auto& program = lowered.program;
+  program.source_paths.reserve(source.sources.size());
+  for (const auto& file : source.sources) {
+    program.source_paths.push_back(file.path);
+  }
+  program.layouts = DescribeLayouts(program, model);
   for (auto& function : program.functions) {
     if (function.native_symbol.empty()) {
       Optimize(function, program.functions);
@@ -24,7 +30,7 @@ LoweringResult PrepareProgram(const frontend::Program& source,
   return lowered;
 }
 
-std::expected<PreparedProgram, frontend::Diagnostics> PrepareParsed(frontend::ParseResult parsed) {
+std::expected<Program, frontend::Diagnostics> PrepareParsed(frontend::ParseResult parsed) {
   if (!parsed.diagnostics.empty()) {
     return std::unexpected(std::move(parsed.diagnostics));
   }
@@ -40,11 +46,7 @@ std::expected<PreparedProgram, frontend::Diagnostics> PrepareParsed(frontend::Pa
   if (!lowered.Succeeded()) {
     return std::unexpected(std::move(lowered.diagnostics));
   }
-  return PreparedProgram{
-      .source = std::move(parsed.program),
-      .model = std::move(checked.model),
-      .program = std::move(lowered.program),
-  };
+  return std::move(lowered.program);
 }
 
 }  // namespace vela::ir

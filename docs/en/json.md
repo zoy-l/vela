@@ -275,7 +275,8 @@ cannot violate the int64 contract. Runtime does not depend on compiler/tooling.
 | Tooling | Share checked signatures and dynamic facts with completion, hover, diagnostics, formatting, documentation, debugger, and persistent REPL |
 | Delivery | Add `examples/json.vela`, update the feature checklist only after all production paths and required checks pass |
 
-The [runtime layout producer](../../compiler/runtime_layouts.cc) retains nominal
+The [offline layout descriptions](../../compiler/ir/layout_description.cc) and
+[runtime instantiation](../../runtime/program_layouts.cc) retain nominal
 class, interface and enum identities, structural function and Expected signatures,
 and Future/Completer payload signatures. Arrays and collections retain their full
 element constraints. Boxed enums preserve identity in erased slots while typed

@@ -314,15 +314,12 @@ void RemoveUnusedValues(Function& function, std::span<const Function> functions)
       --index;
       const auto& instruction = function.instructions.at(index);
       const auto access = AnalyzeRegisters(instruction, functions);
-      if (access.defines_value && IsRemovableInstruction(instruction.opcode) &&
+      if (access.defines_value && AnalyzeEffects(instruction).IsRemovable() &&
           !live.contains(instruction.dst)) {
         keep.at(index) = 0;
         continue;
       }
-      if (access.defines_value) {
-        live.erase(instruction.dst);
-      }
-      ForEachUse(instruction, access, [&](RegisterId reg) -> void { live.insert(reg); });
+      TransferLiveness(function, graph, blocks, instruction, access, live);
     }
   }
   CompactInstructions(function, keep);

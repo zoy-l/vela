@@ -21,6 +21,28 @@ struct RegisterAccess final {
   std::uint32_t argument_count = 0;
 };
 
+struct InstructionEffects final {
+  bool may_fail = false;
+  // 成功路径上的托管分配；失败封套的分配由 may_fail 单独覆盖。
+  bool may_allocate = false;
+  // 可进入脚本或宿主代码，尚未证明无分配的调用必须视为 GC 安全点。
+  bool may_call = false;
+  // 挂起当前激活帧；创建 Future 或注册回调本身不挂起调用者。
+  bool may_suspend = false;
+  bool reads_state = false;
+  bool writes_state = false;
+  bool changes_control = false;
+
+  [[nodiscard]] bool MayCollect() const noexcept {
+    return may_fail || may_allocate || may_call || may_suspend;
+  }
+  [[nodiscard]] bool IsRemovable() const noexcept {
+    return !MayCollect() && !writes_state && !changes_control;
+  }
+};
+
+[[nodiscard]] InstructionEffects AnalyzeEffects(const Instruction& instruction);
+
 [[nodiscard]] RegisterAccess AnalyzeRegisters(const Instruction& instruction,
                                               std::span<const Function> functions);
 [[nodiscard]] RegisterId ReadOperand(const Instruction& instruction, Operand operand);
@@ -65,8 +87,13 @@ enum class LivenessMode : std::uint8_t { AllInstructions, NecessaryInstructions 
     const FlowGraph& graph,
     std::span<const Function> functions,
     LivenessMode mode = LivenessMode::AllInstructions);
+// 成功边上的定义覆盖旧值，异常边上的定义不生效；两个后端共用此传递规则。
+void TransferLiveness(const Function& function,
+                      const FlowGraph& graph,
+                      std::span<const BlockLiveness> blocks,
+                      const Instruction& instruction,
+                      const RegisterAccess& access,
+                      RegisterSet& live);
 void CompactInstructions(Function& function, std::span<const std::uint8_t> keep);
-[[nodiscard]] bool IsRemovableInstruction(Opcode opcode);
-[[nodiscard]] bool MayThrow(Opcode opcode);
 
 }  // namespace vela::ir

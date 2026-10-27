@@ -2,7 +2,7 @@
 
 [**English**](aot.md) | [简体中文](../zh-CN/aot.md)
 
-> Status: design, not implemented. `vela build`, artifact formats, and the native ABI below are proposed contracts.
+> Status: shared compilation boundaries are being implemented; the native backend is not implemented. `vela build`, artifact formats, and the native ABI below are proposed contracts.
 
 Vela AOT generates native object files from the shared Typed IR and uses linking tools shipped with the toolchain to produce executables or static libraries. LLVM is an internal compiler dependency; users of an official distribution do not install Clang or LLVM separately. Generated applications depend on the Vela runtime and target platform libraries, not LLVM, the Vela compiler, or the bytecode interpreter.
 
@@ -41,9 +41,9 @@ The first release supports native compilation for the existing bootstrap host ma
 
 | Verified implementation | Required AOT change |
 | --- | --- |
-| [IR](../../compiler/ir/ir.h) uses 32-bit virtual register IDs, source locations, and exception handlers; it shares `base/opcode.h` with the VM | Preserve semantic operations and origins, supply backend type/effect facts, and keep bytecode field widths out of native capability limits |
-| The [compiler entry](../../compiler/compiler.cc) runs common optimization and VM physical register allocation together in `OptimizeAndAllocate` | Branch after common optimization; VM allocation and encoding belong only to the bytecode backend |
-| `CompileProgram` checks the current Isolate's native bindings and creates layouts, rooted string constants, and `vm::Program` | Produce descriptors without an Isolate during compilation; resolve bindings and create isolate-local state during instantiation |
+| [IR](../../compiler/ir/ir.h) uses 32-bit virtual register IDs, source locations, and exception handlers; [shared analysis](../../compiler/ir/analysis.h) supplies instruction effects and liveness across exception and resume edges | Supply type facts for every value definition to generate typed native values and root slots; keep bytecode field widths out of native capability limits |
+| [Compilation preparation](../../compiler/ir/preparation.cc) runs the frontend, layout description, and common optimization offline, returning IR that borrows neither AST nor Isolate state; VM allocation and encoding belong to a separate backend | Branch from the same IR into LLVM lowering and code generation |
+| [Layout instantiation](../../runtime/program_layouts.cc) consumes pointer-free descriptions; VM native-binding checks consume IR signatures | Reuse layout instantiation for native instances and connect native imports, constant roots, and global state |
 | [NativeFunction](../../runtime/native_function.h) generates adapters from C++ signatures and invokes them with `RegisterView` | Reuse declarations and codecs to generate typed AOT entries; never cast the existing callback into a machine-code function pointer |
 | The [Future scheduler](../../runtime/future.h) already belongs to runtime, while suspended frames and callback execution remain in `vm` | Share Future state and scheduling semantics, and supply native continuations and callback execution without a VM executor dependency |
 | [GC](garbage_collection.md) already provides precise roots, a non-moving heap, and reference write barriers | Generate native root slots and safepoints, reusing the heap and barriers without conservative stack scanning |

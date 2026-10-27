@@ -224,10 +224,7 @@ void ClearDeadSuspendedRegisters(ir::Function& function, std::span<const ir::Fun
       const auto index = --position;
       const auto& instruction = function.instructions.at(index);
       const auto access = ir::AnalyzeRegisters(instruction, functions);
-      if (access.defines_value) {
-        live.erase(instruction.dst);
-      }
-      ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) { live.insert(reg); });
+      ir::TransferLiveness(function, graph, liveness, instruction, access, live);
       if (instruction.opcode == ir::Opcode::Await) {
         clear.at(index) = DeadRegisters(function.register_count, live);
       }

@@ -84,6 +84,8 @@ source_set("ir") {
     "ir/analysis.cc",
     "ir/analysis.h",
     "ir/ir.h",
+    "ir/layout_description.cc",
+    "ir/layout_description.h",
     "ir/lowerer.cc",
     "ir/lowerer.h",
     "ir/lowerer_array.cc",
@@ -118,7 +120,10 @@ source_set("ir") {
 
 executable("vela_ir_tests") {
   testonly = true
-  sources = [ "ir/preparation_unittest.cc" ]
+  sources = [
+    "ir/analysis_unittest.cc",
+    "ir/preparation_unittest.cc",
+  ]
   deps = [
     ":ir",
     "//third_party:gtest_main",
@@ -194,8 +199,6 @@ source_set("compiler") {
     "repl_identity.h",
     "repl_session.cc",
     "repl_session.h",
-    "runtime_layouts.cc",
-    "runtime_layouts.h",
   ]
   public_deps = [
     ":frontend",
@@ -277,6 +280,7 @@ executable("vela_compiler_tests") {
     "json_unittest.cc",
     "lambda_inference_unittest.cc",
     "language_basics_unittest.cc",
+    "layout_instantiation_unittest.cc",
     "match_unittest.cc",
     "module_unittest.cc",
     "native_binding_unittest.cc",

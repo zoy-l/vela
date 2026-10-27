@@ -17,6 +17,7 @@ source_set("base") {
     "file_publication.h",
     "fingerprint.cc",
     "fingerprint.h",
+    "layout_description.h",
     "member.h",
     "opcode.h",
     "path.cc",

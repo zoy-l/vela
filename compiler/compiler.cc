@@ -28,10 +28,10 @@
 #include "compiler/ir/preparation.h"
 #include "compiler/native_linker.h"
 #include "compiler/register_allocator.h"
-#include "compiler/runtime_layouts.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
+#include "runtime/program_layouts.h"
 #include "vm/bytecode.h"
 #include "vm/program.h"
 
@@ -335,7 +335,7 @@ std::expected<vm::FunctionStorage, frontend::Diagnostic> EncodeFunction(
     }
     const auto begin = static_cast<std::uint32_t>(compiled.code.size());
     compiled.code.push_back(*encoded);
-    if (!instruction.handler || !ir::MayThrow(instruction.opcode)) {
+    if (!instruction.handler || !ir::AnalyzeEffects(instruction).may_fail) {
       continue;
     }
     const auto target = function.handlers.at(*instruction.handler).target;
@@ -365,38 +365,29 @@ std::optional<frontend::Diagnostic> AllocateBytecodeRegisters(
 }
 
 CompileResult EncodeProgram(ir::Program program,
-                            const frontend::Program& source,
-                            const frontend::SemanticModel& model,
                             runtime::Isolate& isolate,
                             CompilationState* state) {
-  auto native_diagnostics = CheckNativeBindings(source, model, isolate);
+  auto native_diagnostics = CheckNativeBindings(program, isolate);
   if (!native_diagnostics.empty()) {
     return {.program = {}, .diagnostics = std::move(native_diagnostics)};
   }
-  std::vector<std::string> paths;
-  paths.reserve(source.sources.size());
-  for (const auto& file : source.sources) {
-    paths.push_back(file.path);
-  }
+  auto paths = std::move(program.source_paths);
   if (auto failure = AllocateBytecodeRegisters(program, paths)) {
     return {.program = {}, .diagnostics = {std::move(*failure)}};
   }
 
   CompileResult result;
   runtime::LayoutTransaction layout_transaction(isolate);
-  LayoutCache local_cache;
+  runtime::LayoutCache local_cache;
   auto* cache = state == nullptr ? &local_cache : &state->layouts;
   if (cache->code_identity == nullptr) {
     cache->code_identity = isolate.CreateCodeIdentity();
   }
-  const auto interfaces = CreateInterfaceTypes(model, isolate, cache);
-  auto class_layouts = CreateClassLayouts(program, interfaces, isolate, cache);
-
-  auto layouts = CreateRuntimeLayouts(program, model, class_layouts, interfaces, isolate, cache);
+  auto layouts = runtime::InstantiateLayouts(program.layouts, isolate, *cache);
 
   std::vector<vm::FunctionStorage> functions;
   auto shared_layouts = std::make_shared<const vm::LayoutTables>(
-      std::move(class_layouts), std::move(layouts.arrays), std::move(layouts.collections),
+      std::move(layouts.classes), std::move(layouts.arrays), std::move(layouts.collections),
       std::move(layouts.types), std::move(program.members));
   functions.reserve(program.functions.size());
   const auto source_paths = std::make_shared<const std::vector<std::string>>(std::move(paths));
@@ -469,8 +460,7 @@ CompileResult CompileParsed(frontend::ParseResult parsed, runtime::Isolate& isol
   if (!prepared) {
     return {.program = {}, .diagnostics = std::move(prepared.error())};
   }
-  return EncodeProgram(std::move(prepared->program), prepared->source, prepared->model, isolate,
-                       nullptr);
+  return EncodeProgram(std::move(*prepared), isolate, nullptr);
 }
 
 CompileResult CompileSource(std::string_view source, runtime::Isolate& isolate) {
@@ -496,7 +486,7 @@ CompileResult CompileProgram(const frontend::Program& source,
   if (!lowered.Succeeded()) {
     return {.program = {}, .diagnostics = std::move(lowered.diagnostics)};
   }
-  return EncodeProgram(std::move(lowered.program), source, model, isolate, state);
+  return EncodeProgram(std::move(lowered.program), isolate, state);
 }
 
 }  // namespace vela::compiler

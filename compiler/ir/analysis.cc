@@ -175,6 +175,7 @@ std::vector<std::uint8_t> FindBlockStarts(const Function& function) {
   for (std::size_t index = 0; index < code.size(); ++index) {
     const auto& instruction = code.subspan(index).front();
     const auto opcode = instruction.opcode;
+    const auto effects = AnalyzeEffects(instruction);
     if (opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse || opcode == Opcode::JumpIfNull) {
       if (instruction.index < code.size()) {
         starts.at(instruction.index) = 1;
@@ -182,7 +183,7 @@ std::vector<std::uint8_t> FindBlockStarts(const Function& function) {
     }
     if ((opcode == Opcode::Jump || opcode == Opcode::JumpIfFalse || opcode == Opcode::JumpIfNull ||
          opcode == Opcode::Return || opcode == Opcode::Throw || opcode == Opcode::Rethrow ||
-         (instruction.handler && MayThrow(opcode))) &&
+         effects.may_suspend || (instruction.handler && effects.may_fail)) &&
         index + 1 < code.size()) {
       starts.at(index + 1) = 1;
     }
@@ -226,7 +227,7 @@ FlowGraph BuildFlowGraph(const Function& function) {
         index + 1 < graph.blocks.size()) {
       block.successors.push_back(index + 1);
     }
-    if (last.handler && MayThrow(last.opcode)) {
+    if (last.handler && AnalyzeEffects(last).may_fail) {
       const auto target = function.handlers.at(*last.handler).target;
       block.successors.push_back(graph.instruction_blocks.at(target));
     }
@@ -264,13 +265,10 @@ std::vector<BlockLiveness> AnalyzeLiveness(const Function& function,
       const auto& instruction = function.instructions.at(--position);
       const auto access = AnalyzeRegisters(instruction, functions);
       if (mode == LivenessMode::NecessaryInstructions && access.defines_value &&
-          IsRemovableInstruction(instruction.opcode) && !live_in.contains(instruction.dst)) {
+          AnalyzeEffects(instruction).IsRemovable() && !live_in.contains(instruction.dst)) {
         continue;
       }
-      if (access.defines_value) {
-        live_in.erase(instruction.dst);
-      }
-      ForEachUse(instruction, access, [&](RegisterId reg) -> void { live_in.insert(reg); });
+      TransferLiveness(function, graph, live, instruction, access, live_in);
     }
     current.live_out = std::move(live_out);
     if (current.live_in == live_in) {
@@ -285,6 +283,24 @@ std::vector<BlockLiveness> AnalyzeLiveness(const Function& function,
     }
   }
   return live;
+}
+
+void TransferLiveness(const Function& function,
+                      const FlowGraph& graph,
+                      std::span<const BlockLiveness> blocks,
+                      const Instruction& instruction,
+                      const RegisterAccess& access,
+                      RegisterSet& live) {
+  if (access.defines_value) {
+    live.erase(instruction.dst);
+  }
+  if (instruction.handler && AnalyzeEffects(instruction).may_fail) {
+    const auto target = function.handlers.at(*instruction.handler).target;
+    const auto handler = graph.instruction_blocks.at(target);
+    const auto& exceptional = blocks.subspan(handler).front().live_in;
+    live.insert(exceptional.begin(), exceptional.end());
+  }
+  ForEachUse(instruction, access, [&](RegisterId reg) { live.insert(reg); });
 }
 
 void CompactInstructions(Function& function, std::span<const std::uint8_t> keep) {
@@ -314,26 +330,8 @@ void CompactInstructions(Function& function, std::span<const std::uint8_t> keep)
   }
 }
 
-bool MayThrow(Opcode opcode) {
-  if (IsRemovableInstruction(opcode)) {
-    return false;
-  }
-  switch (opcode) {
-    case Opcode::Jump:
-    case Opcode::JumpIfFalse:
-    case Opcode::JumpIfNull:
-    case Opcode::Return:
-    case Opcode::Print:
-    case Opcode::Catch:
-    case Opcode::ExceptionValue:
-      return false;
-    default:
-      return true;
-  }
-}
-
-bool IsRemovableInstruction(Opcode opcode) {
-  switch (opcode) {
+InstructionEffects AnalyzeEffects(const Instruction& instruction) {
+  switch (instruction.opcode) {
     case Opcode::LoadNull:
     case Opcode::LoadBool:
     case Opcode::LoadInt:
@@ -341,7 +339,6 @@ bool IsRemovableInstruction(Opcode opcode) {
     case Opcode::LoadDouble:
     case Opcode::LoadString:
     case Opcode::Move:
-    case Opcode::IsType:
     case Opcode::NotBool:
     case Opcode::NegDouble:
     case Opcode::EqualInt:
@@ -364,10 +361,90 @@ bool IsRemovableInstruction(Opcode opcode) {
     case Opcode::GreaterEqualDouble:
     case Opcode::AndBool:
     case Opcode::OrBool:
-      return true;
-    default:
-      return false;
+      return {};
+    case Opcode::IsType:
+    case Opcode::ExceptionValue:
+      return {.reads_state = true};
+    case Opcode::AddInt:
+    case Opcode::SubInt:
+    case Opcode::MulInt:
+    case Opcode::DivInt:
+    case Opcode::ModInt:
+    case Opcode::NegInt:
+    case Opcode::BitNotInt:
+    case Opcode::BitAndInt:
+    case Opcode::BitOrInt:
+    case Opcode::BitXorInt:
+    case Opcode::ShiftLeftInt:
+    case Opcode::ShiftRightInt:
+    case Opcode::ShiftUnsignedRightInt:
+    case Opcode::AddDouble:
+    case Opcode::SubDouble:
+    case Opcode::MulDouble:
+    case Opcode::DivDouble:
+      return {.may_fail = true};
+    case Opcode::CheckedCast:
+    case Opcode::GetIndex:
+    case Opcode::GetField:
+    case Opcode::ExpectedHasValue:
+    case Opcode::ExpectedValue:
+      return {.may_fail = true, .reads_state = true};
+    case Opcode::StringConcat:
+    case Opcode::StringInterpolate:
+    case Opcode::NewArray:
+    case Opcode::NewDynamicArray:
+    case Opcode::NewCollection:
+    case Opcode::NewInstance:
+    case Opcode::NewOk:
+    case Opcode::NewErr:
+    case Opcode::NewFuture:
+    case Opcode::SleepFuture:
+      return {.may_fail = true, .may_allocate = true, .reads_state = true, .writes_state = true};
+    case Opcode::Call:
+    case Opcode::CallIndirect:
+    case Opcode::CallInterface:
+    case Opcode::GetGlobal:
+    case Opcode::BuiltinCall:
+    case Opcode::AsyncCall:
+      // 全局读取可能执行惰性初始化器，内建操作可能调用 getter/toJson/动态目标。
+      // 没有叶调用证明时统一保留副作用，不能根据 opcode 的名字假设无 GC。
+      return {.may_fail = true,
+              .may_allocate = true,
+              .may_call = true,
+              .reads_state = true,
+              .writes_state = true};
+    case Opcode::Await:
+      return {.may_fail = true,
+              .may_allocate = true,
+              .may_suspend = true,
+              .reads_state = true,
+              .writes_state = true,
+              .changes_control = true};
+    case Opcode::SetField:
+    case Opcode::SetIndex:
+      return {.may_fail = true, .writes_state = true};
+    case Opcode::SetGlobal:
+    case Opcode::Print:
+    case Opcode::Catch:
+      return {.writes_state = true};
+    case Opcode::Throw:
+      return {
+          .may_fail = true, .may_allocate = true, .writes_state = true, .changes_control = true};
+    case Opcode::Rethrow:
+      return {.may_fail = true, .reads_state = true, .writes_state = true, .changes_control = true};
+    case Opcode::Jump:
+    case Opcode::JumpIfFalse:
+    case Opcode::JumpIfNull:
+      return {.changes_control = true};
+    case Opcode::Return:
+      // 异步完成、擦除返回值装箱和载荷绑定可能失败。不能丢掉 return 的异常后继。
+      return {.may_fail = true,
+              .may_allocate = true,
+              .reads_state = true,
+              .writes_state = true,
+              .changes_control = true};
   }
+  std::unreachable();
 }
 
 }  // namespace vela::ir

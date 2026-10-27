@@ -2,7 +2,7 @@
 
 [English](../en/aot.md) | [**简体中文**](aot.md)
 
-> 状态：设计，尚未实现。本文中的 `vela build`、产物格式和原生 ABI 是拟议契约。
+> 状态：共享编译边界实现中，原生后端尚未实现。本文中的 `vela build`、产物格式和原生 ABI 是拟议契约。
 
 Vela AOT 从共享的 Typed IR 生成原生目标文件，通过随工具链分发的链接工具生成可执行文件或静态库。LLVM 作为编译器内部依赖集成；使用官方发行包的用户无需单独安装 Clang 或 LLVM。生成的程序依赖 Vela 运行时和目标平台库，不依赖 LLVM、Vela 编译器或字节码解释器。
 
@@ -41,9 +41,9 @@ vela build math.vela --emit=staticlib --export=add -o libmath.a
 
 | 已核实的实现 | AOT 所需变化 |
 | --- | --- |
-| [IR](../../compiler/ir/ir.h) 使用 32 位虚拟寄存器 ID，指令携带源码位置及异常处理器；与 VM 共用 `base/opcode.h` | 保留语义操作及来源信息，补齐后端需要的类型与效果事实；不能按字节码字段宽度定义原生能力 |
-| [编译入口](../../compiler/compiler.cc) 在 `OptimizeAndAllocate` 中连续执行公共优化和 VM 物理寄存器分配 | 公共优化完成后分流；VM 分配与编码只属于字节码后端 |
-| `CompileProgram` 检查当前 Isolate 原生绑定，创建布局、字符串根池及 `vm::Program` | 无 Isolate 的编译阶段产生描述数据；实例化阶段才解析绑定、创建 Isolate 内状态 |
+| [IR](../../compiler/ir/ir.h) 使用 32 位虚拟寄存器 ID，携带源码位置及异常处理器；[公共分析](../../compiler/ir/analysis.h)提供指令效果和异常/恢复边活跃性 | 补齐每个值定义的类型事实，并据此生成类型化原生值与根槽；不能按字节码字段宽度定义原生能力 |
+| [编译准备](../../compiler/ir/preparation.cc)离线完成前端、布局描述与公共优化，返回不借用 AST 或 Isolate 的 IR；VM 分配和编码位于独立后端 | AOT 从同一 IR 分流，接入 LLVM lowering 与代码生成 |
+| [布局实例化](../../runtime/program_layouts.cc)消费无指针描述表；VM 的原生绑定检查消费 IR 签名 | 原生实例复用布局实例化，接入原生导入表、常量根池与全局状态 |
 | [NativeFunction](../../runtime/native_function.h) 由 C++ 签名生成适配器，调用入口消费 `RegisterView` | 复用声明和类型编解码规则，生成类型化 AOT 入口，不能把现有回调强转为机器码函数指针 |
 | [Future 调度器](../../runtime/future.h) 已属于 runtime，VM 挂起帧与回调执行仍在 `vm` 内 | 复用 Future 状态和调度语义，提供原生续延与原生回调执行，消除对 VM 执行器的依赖 |
 | [GC](garbage_collection.md) 已有精确根、非移动堆和引用写屏障 | 生成原生根槽和安全点，复用堆与屏障，不引入保守栈扫描 |

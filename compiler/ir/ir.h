@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "base/callable.h"
+#include "base/layout_description.h"
 #include "base/member.h"
 #include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
@@ -61,6 +62,7 @@ struct Function final {
 };
 
 struct Program final {
+  std::vector<std::string> source_paths;
   std::vector<Class> classes;
   std::vector<Function> functions;
   std::vector<std::string> strings;
@@ -69,6 +71,7 @@ struct Program final {
   std::vector<frontend::TypeDescriptor> runtime_types;
   std::vector<frontend::TypeDescriptor> collection_types;
   std::vector<MemberDefinition> members;
+  layout::Program layouts;
 };
 
 }  // namespace vela::ir

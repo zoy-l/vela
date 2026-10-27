@@ -1,0 +1,117 @@
+#include <algorithm>
+#include <cstddef>
+#include <span>
+#include <utility>
+
+#include <gtest/gtest.h>
+
+#include "base/layout_description.h"
+#include "compiler/frontend/source_loader.h"
+#include "compiler/ir/preparation.h"
+#include "runtime/isolate.h"
+#include "runtime/layout_transaction.h"
+#include "runtime/object.h"
+#include "runtime/program_layouts.h"
+#include "runtime/value.h"
+
+namespace vela::compiler {
+namespace {
+
+TEST(LayoutInstantiationTest, OwnsNestedTypesAfterFrontendDestructionAndBindsPerIsolate) {
+  const frontend::SourceInput input{
+      .path = "main.vela",
+      .text = R"(
+interface Readable { read(): int; }
+class Node implements Readable {
+  public param next: Node?;
+  read(): int { return 42; }
+}
+func identity(value: Future<Expected<Node[], string>>): Future<Expected<Node[], string>> {
+  return value;
+}
+func main(): void {
+  const callback: (Future<Expected<Node[], string>>) => Future<Expected<Node[], string>> = identity;
+  const nodes: Node[][] = [];
+  const view: Readable = Node(next: null);
+}
+)",
+  };
+  layout::Program description;
+  {
+    auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
+    if (!prepared) {
+      for (const auto& diagnostic : prepared.error()) {
+        ADD_FAILURE() << diagnostic.message;
+      }
+    }
+    ASSERT_TRUE(prepared.has_value());
+    description = std::move(prepared->layouts);
+  }
+  const auto node = std::ranges::find(description.classes, "Node", &layout::Class::name);
+  ASSERT_NE(node, description.classes.end());
+  const auto node_index = static_cast<std::size_t>(node - description.classes.begin());
+  ASSERT_EQ(node->reference_fields.size(), 1U);
+  EXPECT_EQ(node->reference_fields.front(), 0U);
+
+  runtime::Isolate first;
+  runtime::Isolate second;
+  runtime::LayoutCache first_cache;
+  runtime::LayoutCache second_cache;
+  runtime::LayoutTransaction first_transaction(first);
+  runtime::LayoutTransaction second_transaction(second);
+  const auto first_layouts = runtime::InstantiateLayouts(description, first, first_cache);
+  const auto second_layouts = runtime::InstantiateLayouts(description, second, second_cache);
+  auto* first_node = first_layouts.classes.at(node_index);
+  auto* second_node = second_layouts.classes.at(node_index);
+  EXPECT_NE(first_node, second_node);
+  ASSERT_EQ(first_node->interfaces().size(), 1U);
+  ASSERT_EQ(second_node->interfaces().size(), 1U);
+  EXPECT_NE(first_node->interfaces().front(), second_node->interfaces().front());
+
+  const auto nested = std::ranges::find_if(
+      first_layouts.arrays, [](const auto* array) { return array->element.array != nullptr; });
+  ASSERT_NE(nested, first_layouts.arrays.end());
+  EXPECT_EQ((*nested)->element.array->element.instance, first_node);
+
+  const auto* future = first_cache.signatures.at("Future<Expected<Node[], string>>");
+  ASSERT_TRUE(future->result.has_value());
+  const auto* expected = future->result->signature;
+  ASSERT_NE(expected, nullptr);
+  ASSERT_TRUE(expected->result.has_value());
+  ASSERT_NE(expected->result->array, nullptr);
+  EXPECT_EQ(expected->result->array->element.instance, first_node);
+  ASSERT_EQ(expected->parameters.size(), 1U);
+  EXPECT_EQ(expected->parameters.front().type.kind, runtime::ValueKind::String);
+
+  const auto before = first.layout_counts();
+  const auto reused = runtime::InstantiateLayouts(description, first, first_cache);
+  EXPECT_EQ(reused.classes.at(node_index), first_node);
+  EXPECT_EQ(first.layout_counts(), before);
+  first_transaction.Commit();
+  second_transaction.Commit();
+}
+
+TEST(LayoutInstantiationTest, RollsBackUnpublishedLayoutsWithoutChangingSessionCache) {
+  const frontend::SourceInput input{
+      .path = "main.vela",
+      .text = "class Box { param value: string; } func main(values: Box[]): void {}",
+  };
+  auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
+  ASSERT_TRUE(prepared.has_value());
+  runtime::Isolate isolate;
+  runtime::LayoutCache committed;
+  const auto before = isolate.layout_counts();
+  {
+    auto pending = committed;
+    runtime::LayoutTransaction transaction(isolate);
+    const auto layouts = runtime::InstantiateLayouts(prepared->layouts, isolate, pending);
+    EXPECT_FALSE(layouts.classes.empty());
+    EXPECT_GT(isolate.layout_counts().classes, before.classes);
+  }
+  EXPECT_EQ(isolate.layout_counts(), before);
+  EXPECT_TRUE(committed.classes.empty());
+  EXPECT_TRUE(committed.arrays.empty());
+}
+
+}  // namespace
+}  // namespace vela::compiler
