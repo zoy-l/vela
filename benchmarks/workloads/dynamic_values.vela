@@ -1,0 +1,39 @@
+import 'input' as data;
+
+func run(): int {
+  const values: dynamic[] = [];
+  const size = data.values.length;
+  values.reserve(size);
+  for (let index = 0; index < size; index ++) {
+    const value = data.values[index];
+    const remainder = value - value / 3 * 3;
+    if (remainder == 0) {
+      values.push(value);
+    } else if (remainder == 1) {
+      values.push('Vela');
+    } else {
+      values.push(true);
+    }
+  }
+  let checksum = 0;
+  for (let index = 0; index < size; index ++) {
+    const value: dynamic = values[index];
+    if (value is int) {
+      checksum += value;
+    } else if (value is string) {
+      checksum += value.length;
+    } else if (value is bool) {
+      if (value) {
+        checksum ++;
+      }
+    } else {
+      return -1;
+    }
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(256);
+  print(run());
+}

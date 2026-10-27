@@ -1,0 +1,21 @@
+import 'input' as data;
+
+func run(): int {
+  let checksum = 0;
+  const size = data.values.length;
+  for (let index = 0; index < size; index ++) {
+    const text = '${data.values[index]}';
+    const integer = int.parse(text);
+    const decimal = double.parse('${text}.25');
+    if (decimal != integer.toDouble() + 0.25) {
+      return -1;
+    }
+    checksum += integer + decimal.toInt();
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(256);
+  print(run());
+}

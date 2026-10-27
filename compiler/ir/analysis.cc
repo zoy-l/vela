@@ -297,7 +297,7 @@ void TransferLiveness(const Function& function,
   if (instruction.handler && AnalyzeEffects(instruction).may_fail) {
     const auto target = function.handlers.at(*instruction.handler).target;
     const auto handler = graph.instruction_blocks.at(target);
-    const auto& exceptional = blocks.subspan(handler).front().live_in;
+    const auto& exceptional = blocks[handler].live_in;
     live.insert(exceptional.begin(), exceptional.end());
   }
   ForEachUse(instruction, access, [&](RegisterId reg) { live.insert(reg); });

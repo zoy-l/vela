@@ -1,0 +1,23 @@
+import 'input' as data;
+
+func run(): int {
+  const base = Date.fromUTC(2026, 1, 1);
+  let checksum = 0;
+  const size = data.values.length;
+  for (let index = 0; index < size; index ++) {
+    const timestamp = base + data.values[index] * 1001;
+    const text = Date.toISOString(timestamp);
+    const parsed = Date.parse(text);
+    if (parsed != timestamp) {
+      return -1;
+    }
+    const parts = Date.toUTC(parsed);
+    checksum += parsed - base + parts.millisecond + parts.second + text.byteLength;
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(64);
+  print(run());
+}

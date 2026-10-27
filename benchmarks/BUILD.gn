@@ -9,6 +9,8 @@ executable("vela_benchmarks") {
     "native_call_benchmark.cc",
     "native_call_kernels.cc",
     "native_call_kernels.h",
+    "native_standard_workloads.cc",
+    "native_standard_workloads.h",
     "native_workloads.cc",
     "native_workloads.h",
     "regexp_benchmark.cc",
@@ -22,8 +24,10 @@ executable("vela_benchmarks") {
   benchmark_source_dir = rebase_path("//benchmarks", "")
   defines = [ "VELA_BENCHMARK_SOURCE_DIR=\"$benchmark_source_dir\"" ]
   deps = [
+    "//base:json",
     "//compiler",
     "//third_party:benchmark_main",
     "//third_party:luajit",
+    "//third_party:pcre2",
   ]
 }

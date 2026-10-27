@@ -380,10 +380,11 @@ CompileResult EncodeProgram(ir::Program program,
   runtime::LayoutTransaction layout_transaction(isolate);
   runtime::LayoutCache local_cache;
   auto* cache = state == nullptr ? &local_cache : &state->layouts;
-  if (cache->code_identity == nullptr) {
-    cache->code_identity = isolate.CreateCodeIdentity();
+  runtime::LayoutCache pending_cache = *cache;
+  if (pending_cache.code_identity == nullptr) {
+    pending_cache.code_identity = isolate.CreateCodeIdentity();
   }
-  auto layouts = runtime::InstantiateLayouts(program.layouts, isolate, *cache);
+  auto layouts = runtime::InstantiateLayouts(program.layouts, isolate, pending_cache);
 
   std::vector<vm::FunctionStorage> functions;
   auto shared_layouts = std::make_shared<const vm::LayoutTables>(
@@ -435,7 +436,7 @@ CompileResult EncodeProgram(ir::Program program,
   }
   auto prepared =
       vm::Program::Create(std::move(functions), isolate, std::move(program.global_initializers),
-                          state != nullptr ? state->globals : nullptr, cache->code_identity);
+                          state != nullptr ? state->globals : nullptr, pending_cache.code_identity);
   if (!prepared) {
     const auto& error = prepared.error();
     const auto& function = program.functions.at(error.function);
@@ -449,6 +450,7 @@ CompileResult EncodeProgram(ir::Program program,
   if (state != nullptr) {
     state->globals = result.program.shared_globals();
   }
+  *cache = std::move(pending_cache);
   layout_transaction.Commit();
   return result;
 }

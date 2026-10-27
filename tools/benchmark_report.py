@@ -16,6 +16,17 @@ LABELS = {"cpp": "C++", "vm": "Vela", "luajit_interp": "Lua interpreter",
           "luajit": "LuaJIT", "representative": "Vela compile"}
 NATIVE_CASE = re.compile(
     r"^native/(cpp|cpp_indirect|vm|vm_control)/(empty|integer|double|string_borrow)/(\d+)/real_time$")
+NATIVE_BASELINES = {
+    "dynamic_values": "Mixed arrays: C++ std::variant<int64_t, string, bool>; Vela dynamic[] with is checks and typed reads.",
+    "dynamic_dispatch": "Bound calls: C++ std::function with a statically typed signature; Vela resolves a public method on a dynamic receiver and checks the int result. C++ has no runtime member-name lookup.",
+    "json_roundtrip": "Construct, encode, decode and validate ordered records containing Unicode and mixed arrays. C++ uses pinned yyjson DOM arenas; Vela uses native Map/dynamic[] graphs, runtime checks and GC. The ratio includes these representation and contract differences, not only bytecode execution.",
+    "byte_data_little": "Zeroed byte buffer, unaligned 64-bit stores/loads and an owner-alias check; C++ vector<byte>/memcpy with explicit little endian.",
+    "byte_data_big": "Zeroed byte buffer, unaligned 64-bit stores/loads and an owner-alias check; C++ vector<byte>/memcpy with explicit big endian.",
+    "regexp_records": "Both compile pinned PCRE2 with UTF/UCP, matching newline/BSR settings, interpreter budgets and no JIT. Build Unicode input, collect nonempty matches, convert coordinates to code points, copy captures and parse numbers inside timing.",
+    "numeric_parse": "Format integers, parse decimal int/double values, verify the fraction and accumulate. C++ uses from_chars and pinned Abseil SimpleAtod; inputs are valid decimal strings.",
+    "ascii_case": "Construct ASCII strings and verify upper/lower round trips. C++ uses ASCII character mapping; this workload makes no Unicode-casing comparison.",
+    "utc_roundtrip": "Construct UTC timestamps, format canonical milliseconds, parse and inspect calendar fields. C++ uses pinned Abseil Time; inputs are valid canonical UTC strings, not the complete Vela error/range contract.",
+}
 
 
 def variation(values: list[float]) -> str:
@@ -132,6 +143,12 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
                                                                                      item[0][0])):
         numbers = [f"{median(values[field]):.0f}" if field in values else "-" for field in fields]
         lines.append("| " + " | ".join([workload, str(size), LABELS[backend], *numbers]) + " |")
+    notes = [(name, note) for name, note in NATIVE_BASELINES.items()
+             if any(workload == name for _, _, workload, _ in samples)]
+    if notes:
+        lines.extend(["", "Native baseline contracts (workload-local construction and ordinary VM GC are timed; final collection is excluded).",
+                      "C++ may inline or vectorize these implementations; ratios compare complete workloads.", ""])
+        lines.extend(f"- `{name}`: {note}" for name, note in notes)
     return "\n".join(lines) + "\n"
 
 

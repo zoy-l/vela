@@ -29,181 +29,6 @@
     },
     "source": {
       "revision": "3aa33a6305552e4d9b674ae5b5bdc6e40ec0cbde",
-      "working_tree": "clean",
-      "description": "Clean HEAD archive before dynamic/JSON; pinned dependency directories shared through junctions.",
-      "build_inputs_sha256": "791b72fdf54d3ca288b68d7b8a15984a5a8f118903550808a928f7c1e4df05b9",
-      "build_input_count": 400,
-      "compiler_build_identity": "2fb203a3cfeb1459765a9a4f0c9650f95ea025f21d174b74783fc532f3307e5c",
-      "fingerprint_algorithm": "SHA256 over UTF-8 repository-relative paths sorted by encoded byte order, NUL, then binary SHA256 of file bytes. Includes .gn/DEPS/BUILD.gn, .cc/.h/.gn/.gni/.py/.vela under base/benchmarks/build/compiler/runtime/tools/vm, third_party top-level GN files and Unicode manifest/license. Generated files, docs, raw dependency inputs and result JSON are excluded.",
-      "standard_value_harness_sha256": "08806d4d82a1fa0b4690074112f925db9c1134123502237f1dc2d58c26936ff0",
-      "vm_driver_sha256": "9e246bbff8e1d566159a1c3f6a634ee5e6f3b852fcb3922320d876615fe78f25"
-    },
-    "suite": {
-      "id": "dynamic-json-vm-regression-v1",
-      "run_date": "2026-10-27T06:08:03+08:00",
-      "working_directory": "C:/Users/zoy/AppData/Local/Temp/vela-dynamic-json-final-0pg75bz6/baseline-source",
-      "command_argv": [
-        "C:/Users/zoy/AppData/Local/Temp/vela-dynamic-json-final-0pg75bz6/baseline-source/out/release/vela_benchmarks.exe",
-        "--benchmark_filter=^vm/(integer_loop|function_calls|field_access|array_traversal|array_allocation)$",
-        "--benchmark_min_time=1s",
-        "--benchmark_repetitions=9",
-        "--benchmark_enable_random_interleaving=true",
-        "--benchmark_out=C:/Users/zoy/AppData/Local/Temp/vela-dynamic-json-final-0pg75bz6/baseline-vm.json",
-        "--benchmark_out_format=json"
-      ],
-      "settings": {
-        "minimum_cpu_time_seconds": 1,
-        "repetitions": 9,
-        "random_interleaving": true,
-        "threads": 1,
-        "time_unit": "ns",
-        "variation": "sample standard deviation and coefficient of variation (fraction)"
-      },
-      "expected_cases": [
-        "vm/integer_loop",
-        "vm/function_calls",
-        "vm/field_access",
-        "vm/array_traversal",
-        "vm/array_allocation"
-      ],
-      "all_expected_cases_passed": true,
-      "correctness_checks_passed": true,
-      "cases": {
-        "vm/integer_loop": {
-          "median_wall_ns": 20087.736216820587,
-          "stddev_wall_ns": 3050.7808920520697,
-          "cv_wall": 0.14519843748210884,
-          "median_cpu_ns": 19670.671113075387,
-          "stddev_cpu_ns": 3077.2967747324665,
-          "cv_cpu": 0.15108329969026787,
-          "counters": {
-            "allocated_bytes": 0.0,
-            "committed_bytes": 0.0,
-            "first_allocated_bytes": 0.0,
-            "first_committed_bytes": 0.0,
-            "heap_objects": 0.0,
-            "register_bytes": 27.0,
-            "result": 499500.0,
-            "retained_bytes": 0.0,
-            "retained_objects": 0.0
-          }
-        },
-        "vm/function_calls": {
-          "median_wall_ns": 33870.69754288469,
-          "stddev_wall_ns": 2542.194255285305,
-          "cv_wall": 0.0751655306842014,
-          "median_cpu_ns": 33133.37053571428,
-          "stddev_cpu_ns": 2476.873568443563,
-          "cv_cpu": 0.07530512760998226,
-          "counters": {
-            "allocated_bytes": 0.0,
-            "committed_bytes": 0.0,
-            "first_allocated_bytes": 0.0,
-            "first_committed_bytes": 0.0,
-            "heap_objects": 0.0,
-            "register_bytes": 36.0,
-            "result": 1000.0,
-            "retained_bytes": 0.0,
-            "retained_objects": 0.0
-          }
-        },
-        "vm/field_access": {
-          "median_wall_ns": 29927.451785105015,
-          "stddev_wall_ns": 2137.1090663425935,
-          "cv_wall": 0.07362534185582034,
-          "median_cpu_ns": 29296.875,
-          "stddev_cpu_ns": 2238.431277261671,
-          "cv_cpu": 0.07934377942785985,
-          "counters": {
-            "allocated_bytes": 24704.0,
-            "committed_bytes": 65536.0,
-            "first_allocated_bytes": 128.0,
-            "first_committed_bytes": 128.0,
-            "heap_objects": 193.0,
-            "register_bytes": 36.0,
-            "result": 1000.0,
-            "retained_bytes": 0.0,
-            "retained_objects": 0.0
-          }
-        },
-        "vm/array_traversal": {
-          "median_wall_ns": 546746.214261345,
-          "stddev_wall_ns": 36217.340617103124,
-          "cv_wall": 0.0647782112969828,
-          "median_cpu_ns": 530133.9285714285,
-          "stddev_cpu_ns": 35816.349542354365,
-          "cv_cpu": 0.06564160061580582,
-          "counters": {
-            "allocated_bytes": 61696.0,
-            "committed_bytes": 63616.0,
-            "first_allocated_bytes": 256.0,
-            "first_committed_bytes": 256.0,
-            "heap_objects": 241.0,
-            "register_bytes": 45.0,
-            "result": 120000.0,
-            "retained_bytes": 0.0,
-            "retained_objects": 0.0
-          }
-        },
-        "vm/array_allocation": {
-          "median_wall_ns": 400704.29687537916,
-          "stddev_wall_ns": 41588.329732858765,
-          "cv_wall": 0.09681234302842756,
-          "median_cpu_ns": 383649.5535714286,
-          "stddev_cpu_ns": 44323.14918154762,
-          "cv_cpu": 0.1060254924681344,
-          "counters": {
-            "allocated_bytes": 59392.0,
-            "committed_bytes": 62464.0,
-            "first_allocated_bytes": 59392.0,
-            "first_committed_bytes": 62464.0,
-            "heap_objects": 232.0,
-            "register_bytes": 45.0,
-            "result": 499500.0,
-            "retained_bytes": 0.0,
-            "retained_objects": 0.0
-          }
-        }
-      }
-    },
-    "supplemental_suites": [],
-    "comparison_to_previous": {
-      "comparable": false,
-      "basis": "Fresh clean HEAD baseline for the dynamic/JSON suite; earlier rolling entries used different measurement settings."
-    },
-    "measurement_limits": [
-      "Single Windows x64 machine; scheduling and CPU frequency contribute to variation."
-    ]
-  },
-  "latest": {
-    "machine": {
-      "os": "Windows 11 Pro",
-      "os_version": "10.0.26300",
-      "architecture": "x64",
-      "cpu": "AMD Ryzen 9 7900X",
-      "physical_cores": 12,
-      "logical_cpus": 24
-    },
-    "toolchain": {
-      "compiler": "Fuchsia clang 23.0.0git (clang-cl)",
-      "llvm_revision": "80743bd43fd5b38fedc503308e7a652e23d3ec93",
-      "target": "x86_64-pc-windows-msvc",
-      "google_benchmark_version": "1.9.5",
-      "google_benchmark_revision": "192ef10025eb2c4cdd392bc502f0c852196baa48"
-    },
-    "build": {
-      "variant": "release",
-      "language_standard": "C++23",
-      "optimization": "/O2",
-      "runtime_library": "/MD",
-      "defines": [
-        "NDEBUG",
-        "_HAS_EXCEPTIONS=0"
-      ],
-      "target": "//benchmarks:vela_benchmarks"
-    },
-    "source": {
-      "revision": "3aa33a6305552e4d9b674ae5b5bdc6e40ec0cbde",
       "working_tree": "dirty",
       "description": "Revision plus checked dynamic and native-value JSON implementation, tooling and verification.",
       "build_inputs_sha256": "e9471ce072dd0ec8d3b904159e79695e9d5f430af59e54df7d1660b38491240e",
@@ -523,6 +348,1628 @@
       "toJson and dynamic workloads include ordinary VM dispatch and GC; dynamic/member_calls and dynamic/typed_boundaries perform 1000 operations per invocation.",
       "All temporary retained_bytes counters are zero after collection; JSON encoding input_heap_bytes remains rooted during measurement.",
       "New JSON/dynamic cases have no pre-feature counterpart. Primitive arrays remain compact; measured ordinary typed-code regressions are retained without normalization."
+    ]
+  },
+  "latest": {
+    "machine": {
+      "os": "Windows 11 Pro",
+      "os_version": "10.0.26300",
+      "architecture": "x64",
+      "cpu": "AMD Ryzen 9 7900X",
+      "physical_cores": 12,
+      "logical_cpus": 24
+    },
+    "toolchain": {
+      "compiler": "Fuchsia clang 23.0.0git (clang-cl)",
+      "llvm_revision": "80743bd43fd5b38fedc503308e7a652e23d3ec93",
+      "target": "x86_64-pc-windows-msvc",
+      "google_benchmark_version": "1.9.5",
+      "google_benchmark_revision": "192ef10025eb2c4cdd392bc502f0c852196baa48"
+    },
+    "build": {
+      "variant": "release",
+      "language_standard": "C++23",
+      "optimization": "/O2",
+      "runtime_library": "/MD",
+      "defines": [
+        "NDEBUG",
+        "_HAS_EXCEPTIONS=0"
+      ],
+      "target": "//benchmarks:vela_benchmarks"
+    },
+    "source": {
+      "revision": "9baa86cad22fafc8875c3e7f37f094fa2443324c",
+      "working_tree": "dirty",
+      "description": "Revision plus expanded C++/Vela comparison workloads, correctness/retention checks and baseline documentation in the generated report.",
+      "build_inputs_sha256": "bf26f80d267cfa8fa8eae7f015a6ef3057aeb9ef335e80f41afbcccdb427e416",
+      "build_input_count": 424,
+      "compiler_build_identity": "d5faad3227cf1882726e5ccef0239f5bd6606219d69c60027cdffed9b8b7dfb4",
+      "fingerprint_algorithm": "SHA256 over UTF-8 repository-relative paths sorted by encoded byte order, NUL, then binary SHA256 of file bytes. Includes .gn/DEPS/BUILD.gn, .cc/.h/.gn/.gni/.py/.vela under base/benchmarks/build/compiler/runtime/tools/vm, third_party top-level GN files and Unicode manifest/license. Generated files, docs, raw dependency inputs and result JSON are excluded.",
+      "standard_value_harness_sha256": "08806d4d82a1fa0b4690074112f925db9c1134123502237f1dc2d58c26936ff0",
+      "vm_driver_sha256": "9e246bbff8e1d566159a1c3f6a634ee5e6f3b852fcb3922320d876615fe78f25",
+      "representative_driver_sha256": "a0e636a67126485ab6f977e26c84d3d95aeb00d19fd1cb070f5a1e76c0d62e6c"
+    },
+    "suite": {
+      "id": "paired-cpp-vm-standard-workloads-v2",
+      "run_date": "2026-10-27T08:45:20+08:00",
+      "working_directory": "C:/Users/zoy/Documents/Vela",
+      "invocation_argv": [
+        "python",
+        "-m",
+        "tools.vl",
+        "bench",
+        "--compare",
+        "--report",
+        "out/benchmarks/comparison.json"
+      ],
+      "command_argv": [
+        "C:\\Users\\zoy\\Documents\\Vela\\out\\release\\vela_benchmarks.exe",
+        "--benchmark_filter=^(compare/|compile/representative/)",
+        "--benchmark_min_time=0.2s",
+        "--benchmark_repetitions=7",
+        "--benchmark_enable_random_interleaving=true",
+        "--benchmark_out=C:\\Users\\zoy\\Documents\\Vela\\out\\benchmarks\\comparison.json",
+        "--benchmark_out_format=json"
+      ],
+      "settings": {
+        "minimum_wall_time_seconds": 0.2,
+        "repetitions": 7,
+        "random_interleaving": true,
+        "threads": 1,
+        "time_unit": "ns",
+        "ratio_metric": "median wall time",
+        "variation": "sample standard deviation and coefficient of variation (fraction)"
+      },
+      "expected_cases": [
+        "compare/cpp/sieve/10000/real_time",
+        "compare/vm/sieve/10000/real_time",
+        "compile/representative/sieve/10000/real_time",
+        "compare/cpp/sieve/100000/real_time",
+        "compare/vm/sieve/100000/real_time",
+        "compile/representative/sieve/100000/real_time",
+        "compare/cpp/mandelbrot/64/real_time",
+        "compare/vm/mandelbrot/64/real_time",
+        "compile/representative/mandelbrot/64/real_time",
+        "compare/cpp/mandelbrot/128/real_time",
+        "compare/vm/mandelbrot/128/real_time",
+        "compile/representative/mandelbrot/128/real_time",
+        "compare/cpp/quicksort/1024/real_time",
+        "compare/vm/quicksort/1024/real_time",
+        "compile/representative/quicksort/1024/real_time",
+        "compare/cpp/quicksort/8192/real_time",
+        "compare/vm/quicksort/8192/real_time",
+        "compile/representative/quicksort/8192/real_time",
+        "compare/cpp/binary_trees/6/real_time",
+        "compare/vm/binary_trees/6/real_time",
+        "compile/representative/binary_trees/6/real_time",
+        "compare/cpp/binary_trees/9/real_time",
+        "compare/vm/binary_trees/9/real_time",
+        "compile/representative/binary_trees/9/real_time",
+        "compare/cpp/particles/128/real_time",
+        "compare/vm/particles/128/real_time",
+        "compile/representative/particles/128/real_time",
+        "compare/cpp/particles/1024/real_time",
+        "compare/vm/particles/1024/real_time",
+        "compile/representative/particles/1024/real_time",
+        "compare/cpp/word_count/256/real_time",
+        "compare/vm/word_count/256/real_time",
+        "compile/representative/word_count/256/real_time",
+        "compare/cpp/word_count/2048/real_time",
+        "compare/vm/word_count/2048/real_time",
+        "compile/representative/word_count/2048/real_time",
+        "compare/cpp/closure_pipeline/1024/real_time",
+        "compare/vm/closure_pipeline/1024/real_time",
+        "compile/representative/closure_pipeline/1024/real_time",
+        "compare/cpp/closure_pipeline/8192/real_time",
+        "compare/vm/closure_pipeline/8192/real_time",
+        "compile/representative/closure_pipeline/8192/real_time",
+        "compare/cpp/array_growth/1024/real_time",
+        "compare/vm/array_growth/1024/real_time",
+        "compile/representative/array_growth/1024/real_time",
+        "compare/cpp/array_growth/65536/real_time",
+        "compare/vm/array_growth/65536/real_time",
+        "compile/representative/array_growth/65536/real_time",
+        "compare/cpp/array_growth_reserved/1024/real_time",
+        "compare/vm/array_growth_reserved/1024/real_time",
+        "compile/representative/array_growth_reserved/1024/real_time",
+        "compare/cpp/array_growth_reserved/65536/real_time",
+        "compare/vm/array_growth_reserved/65536/real_time",
+        "compile/representative/array_growth_reserved/65536/real_time",
+        "compare/cpp/dynamic_values/256/real_time",
+        "compare/vm/dynamic_values/256/real_time",
+        "compile/representative/dynamic_values/256/real_time",
+        "compare/cpp/dynamic_values/2048/real_time",
+        "compare/vm/dynamic_values/2048/real_time",
+        "compile/representative/dynamic_values/2048/real_time",
+        "compare/cpp/dynamic_dispatch/256/real_time",
+        "compare/vm/dynamic_dispatch/256/real_time",
+        "compile/representative/dynamic_dispatch/256/real_time",
+        "compare/cpp/dynamic_dispatch/2048/real_time",
+        "compare/vm/dynamic_dispatch/2048/real_time",
+        "compile/representative/dynamic_dispatch/2048/real_time",
+        "compare/cpp/json_roundtrip/64/real_time",
+        "compare/vm/json_roundtrip/64/real_time",
+        "compile/representative/json_roundtrip/64/real_time",
+        "compare/cpp/json_roundtrip/1024/real_time",
+        "compare/vm/json_roundtrip/1024/real_time",
+        "compile/representative/json_roundtrip/1024/real_time",
+        "compare/cpp/byte_data_little/128/real_time",
+        "compare/vm/byte_data_little/128/real_time",
+        "compile/representative/byte_data_little/128/real_time",
+        "compare/cpp/byte_data_little/2048/real_time",
+        "compare/vm/byte_data_little/2048/real_time",
+        "compile/representative/byte_data_little/2048/real_time",
+        "compare/cpp/byte_data_big/128/real_time",
+        "compare/vm/byte_data_big/128/real_time",
+        "compile/representative/byte_data_big/128/real_time",
+        "compare/cpp/byte_data_big/2048/real_time",
+        "compare/vm/byte_data_big/2048/real_time",
+        "compile/representative/byte_data_big/2048/real_time",
+        "compare/cpp/regexp_records/32/real_time",
+        "compare/vm/regexp_records/32/real_time",
+        "compile/representative/regexp_records/32/real_time",
+        "compare/cpp/regexp_records/1024/real_time",
+        "compare/vm/regexp_records/1024/real_time",
+        "compile/representative/regexp_records/1024/real_time",
+        "compare/cpp/numeric_parse/256/real_time",
+        "compare/vm/numeric_parse/256/real_time",
+        "compile/representative/numeric_parse/256/real_time",
+        "compare/cpp/numeric_parse/2048/real_time",
+        "compare/vm/numeric_parse/2048/real_time",
+        "compile/representative/numeric_parse/2048/real_time",
+        "compare/cpp/ascii_case/64/real_time",
+        "compare/vm/ascii_case/64/real_time",
+        "compile/representative/ascii_case/64/real_time",
+        "compare/cpp/ascii_case/1024/real_time",
+        "compare/vm/ascii_case/1024/real_time",
+        "compile/representative/ascii_case/1024/real_time",
+        "compare/cpp/utc_roundtrip/64/real_time",
+        "compare/vm/utc_roundtrip/64/real_time",
+        "compile/representative/utc_roundtrip/64/real_time",
+        "compare/cpp/utc_roundtrip/1024/real_time",
+        "compare/vm/utc_roundtrip/1024/real_time",
+        "compile/representative/utc_roundtrip/1024/real_time"
+      ],
+      "all_expected_cases_passed": true,
+      "correctness_checks_passed": true,
+      "temporary_retention_checks_passed": true,
+      "cases": {
+        "compare/cpp/sieve/10000/real_time": {
+          "median_wall_ns": 6758.3077409647985,
+          "stddev_wall_ns": 111.68653105484164,
+          "cv_wall": 0.016623510244690342,
+          "median_cpu_ns": 6593.908986472229,
+          "stddev_cpu_ns": 178.74989613650655,
+          "cv_cpu": 0.02668476761968645,
+          "counters": {
+            "result": 1229.0
+          }
+        },
+        "compare/vm/sieve/10000/real_time": {
+          "median_wall_ns": 1588295.652062534,
+          "stddev_wall_ns": 54897.76865999707,
+          "cv_wall": 0.03399275511644215,
+          "median_cpu_ns": 1552795.0310559007,
+          "stddev_cpu_ns": 47355.399502549066,
+          "cv_cpu": 0.029961844344911042,
+          "counters": {
+            "allocated_bytes": 160400.0,
+            "baseline_bytes": 80208.0,
+            "committed_bytes": 160400.0,
+            "register_bytes": 126.0,
+            "result": 1229.0,
+            "retained_bytes": 80208.0
+          }
+        },
+        "compile/representative/sieve/10000/real_time": {
+          "median_wall_ns": 139984.0260788231,
+          "stddev_wall_ns": 7425.1692960462915,
+          "cv_wall": 0.05347024051566921,
+          "median_cpu_ns": 133012.01802704055,
+          "stddev_cpu_ns": 7635.672829154153,
+          "cv_cpu": 0.055994266480653594,
+          "counters": {
+            "source_bytes": 977.0
+          }
+        },
+        "compare/cpp/sieve/100000/real_time": {
+          "median_wall_ns": 78914.64424055014,
+          "stddev_wall_ns": 2083.409613465721,
+          "cv_wall": 0.026131986218330534,
+          "median_cpu_ns": 77564.80970766685,
+          "stddev_cpu_ns": 2102.652873665312,
+          "cv_cpu": 0.026684767619686477,
+          "counters": {
+            "result": 9592.0
+          }
+        },
+        "compare/vm/sieve/100000/real_time": {
+          "median_wall_ns": 16490994.117167942,
+          "stddev_wall_ns": 416441.4233151255,
+          "cv_wall": 0.025080578458467135,
+          "median_cpu_ns": 16544117.647058824,
+          "stddev_cpu_ns": 347393.81710406934,
+          "cv_cpu": 0.020832687488697575,
+          "counters": {
+            "allocated_bytes": 1600400.0,
+            "baseline_bytes": 800208.0,
+            "committed_bytes": 1600400.0,
+            "register_bytes": 126.0,
+            "result": 9592.0,
+            "retained_bytes": 800208.0
+          }
+        },
+        "compile/representative/sieve/100000/real_time": {
+          "median_wall_ns": 145749.21136128507,
+          "stddev_wall_ns": 14117.872956823947,
+          "cv_wall": 0.09699190254387326,
+          "median_cpu_ns": 131440.58885383807,
+          "stddev_cpu_ns": 17006.74190019603,
+          "cv_cpu": 0.12492566160508135,
+          "counters": {
+            "source_bytes": 978.0
+          }
+        },
+        "compare/cpp/mandelbrot/64/real_time": {
+          "median_wall_ns": 163487.80773455606,
+          "stddev_wall_ns": 6386.188918036034,
+          "cv_wall": 0.03863747251701238,
+          "median_cpu_ns": 164859.32004689332,
+          "stddev_cpu_ns": 4895.611846285611,
+          "cv_cpu": 0.030419978754259648,
+          "counters": {
+            "result": 99673.0
+          }
+        },
+        "compare/vm/mandelbrot/64/real_time": {
+          "median_wall_ns": 5665685.997810215,
+          "stddev_wall_ns": 217546.03188231526,
+          "cv_wall": 0.03857590964358077,
+          "median_cpu_ns": 5625000.0,
+          "stddev_cpu_ns": 304968.7727964166,
+          "cv_cpu": 0.05553902854178644,
+          "counters": {
+            "allocated_bytes": 720.0,
+            "baseline_bytes": 720.0,
+            "committed_bytes": 720.0,
+            "register_bytes": 117.0,
+            "result": 99673.0,
+            "retained_bytes": 720.0
+          }
+        },
+        "compile/representative/mandelbrot/64/real_time": {
+          "median_wall_ns": 150546.84736563996,
+          "stddev_wall_ns": 7917.677370356841,
+          "cv_wall": 0.05157382939280681,
+          "median_cpu_ns": 146916.48230088496,
+          "stddev_cpu_ns": 6532.848330496869,
+          "cv_cpu": 0.04373142662916674,
+          "counters": {
+            "source_bytes": 1138.0
+          }
+        },
+        "compare/cpp/mandelbrot/128/real_time": {
+          "median_wall_ns": 664544.3924337138,
+          "stddev_wall_ns": 28928.995056284875,
+          "cv_wall": 0.042812368982205536,
+          "median_cpu_ns": 657126.1682242991,
+          "stddev_cpu_ns": 13798.352548526087,
+          "cv_cpu": 0.020832687488697526,
+          "counters": {
+            "result": 399752.0
+          }
+        },
+        "compare/vm/mandelbrot/128/real_time": {
+          "median_wall_ns": 22702500.000237845,
+          "stddev_wall_ns": 732201.2452363466,
+          "cv_wall": 0.032513203854920236,
+          "median_cpu_ns": 21634615.384615384,
+          "stddev_cpu_ns": 945668.0197950043,
+          "cv_cpu": 0.04236592728681619,
+          "counters": {
+            "allocated_bytes": 1232.0,
+            "baseline_bytes": 1232.0,
+            "committed_bytes": 1232.0,
+            "register_bytes": 117.0,
+            "result": 399752.0,
+            "retained_bytes": 1232.0
+          }
+        },
+        "compile/representative/mandelbrot/128/real_time": {
+          "median_wall_ns": 147905.6583779521,
+          "stddev_wall_ns": 8258.705573802623,
+          "cv_wall": 0.05402459219230348,
+          "median_cpu_ns": 148730.83024854574,
+          "stddev_cpu_ns": 5701.890198161967,
+          "cv_cpu": 0.03864367132317182,
+          "counters": {
+            "source_bytes": 1139.0
+          }
+        },
+        "compare/cpp/quicksort/1024/real_time": {
+          "median_wall_ns": 9359.959477839178,
+          "stddev_wall_ns": 247.56663855820338,
+          "cv_wall": 0.026283134438177435,
+          "median_cpu_ns": 9341.681336566247,
+          "stddev_cpu_ns": 358.13180870642304,
+          "cv_cpu": 0.038035109570051,
+          "counters": {
+            "result": 21409011239.0
+          }
+        },
+        "compare/vm/quicksort/1024/real_time": {
+          "median_wall_ns": 1104049.1226594895,
+          "stddev_wall_ns": 21644.846798104598,
+          "cv_wall": 0.019558495736789965,
+          "median_cpu_ns": 1096491.2280701755,
+          "stddev_cpu_ns": 39566.21910564869,
+          "cv_cpu": 0.0360843918243516,
+          "counters": {
+            "allocated_bytes": 58704.0,
+            "baseline_bytes": 8400.0,
+            "committed_bytes": 58768.0,
+            "register_bytes": 603.0,
+            "result": 21409011239.0,
+            "retained_bytes": 8400.0
+          }
+        },
+        "compile/representative/quicksort/1024/real_time": {
+          "median_wall_ns": 234025.4902593964,
+          "stddev_wall_ns": 6139.968915648794,
+          "cv_wall": 0.02581821758664265,
+          "median_cpu_ns": 236742.42424242425,
+          "stddev_cpu_ns": 13246.291934204299,
+          "cv_cpu": 0.05690878733743074,
+          "counters": {
+            "source_bytes": 1858.0
+          }
+        },
+        "compare/cpp/quicksort/8192/real_time": {
+          "median_wall_ns": 109915.51406597027,
+          "stddev_wall_ns": 6315.539156942413,
+          "cv_wall": 0.05828562754456931,
+          "median_cpu_ns": 108626.0519575558,
+          "stddev_cpu_ns": 10363.233708092821,
+          "cv_cpu": 0.09836106620503504,
+          "counters": {
+            "result": 1455713821118.0
+          }
+        },
+        "compare/vm/quicksort/8192/real_time": {
+          "median_wall_ns": 7807410.812961894,
+          "stddev_wall_ns": 119722.61638462289,
+          "cv_wall": 0.015419206878648638,
+          "median_cpu_ns": 8023648.6486486485,
+          "stddev_cpu_ns": 225727.40026387182,
+          "cv_cpu": 0.028781979898261072,
+          "counters": {
+            "allocated_bytes": 131472.0,
+            "baseline_bytes": 65744.0,
+            "committed_bytes": 131472.0,
+            "register_bytes": 819.0,
+            "result": 1455713821118.0,
+            "retained_bytes": 65744.0
+          }
+        },
+        "compile/representative/quicksort/8192/real_time": {
+          "median_wall_ns": 234760.70829260384,
+          "stddev_wall_ns": 10256.428599839252,
+          "cv_wall": 0.04259473789814886,
+          "median_cpu_ns": 237141.652613828,
+          "stddev_cpu_ns": 9091.29373079619,
+          "cv_cpu": 0.03864367132317182,
+          "counters": {
+            "source_bytes": 1858.0
+          }
+        },
+        "compare/cpp/binary_trees/6/real_time": {
+          "median_wall_ns": 57616.99467689691,
+          "stddev_wall_ns": 2422.259280551468,
+          "cv_wall": 0.04142567913178733,
+          "median_cpu_ns": 57656.826568265686,
+          "stddev_cpu_ns": 1562.980590387538,
+          "cv_cpu": 0.026684767619686436,
+          "counters": {
+            "result": 2159.0
+          }
+        },
+        "compare/vm/binary_trees/6/real_time": {
+          "median_wall_ns": 223100.79678343944,
+          "stddev_wall_ns": 3872.0006695391794,
+          "cv_wall": 0.017388091803909007,
+          "median_cpu_ns": 224103.5856573705,
+          "stddev_cpu_ns": 6654.911402201802,
+          "cv_cpu": 0.030419978754259686,
+          "counters": {
+            "allocated_bytes": 32768.0,
+            "baseline_bytes": 256.0,
+            "committed_bytes": 66688.0,
+            "register_bytes": 306.0,
+            "result": 2159.0,
+            "retained_bytes": 256.0
+          }
+        },
+        "compile/representative/binary_trees/6/real_time": {
+          "median_wall_ns": 149001.2800637623,
+          "stddev_wall_ns": 6224.341196560651,
+          "cv_wall": 0.04109286126425078,
+          "median_cpu_ns": 144009.21658986175,
+          "stddev_cpu_ns": 6294.769204984665,
+          "cv_cpu": 0.04236592728681617,
+          "counters": {
+            "source_bytes": 1171.0
+          }
+        },
+        "compare/cpp/binary_trees/9/real_time": {
+          "median_wall_ns": 447299.68252044823,
+          "stddev_wall_ns": 11551.122340983376,
+          "cv_wall": 0.025717325830901732,
+          "median_cpu_ns": 446428.5714285714,
+          "stddev_cpu_ns": 18748.237748473573,
+          "cv_cpu": 0.042673408242977266,
+          "counters": {
+            "result": 17391.0
+          }
+        },
+        "compare/vm/binary_trees/9/real_time": {
+          "median_wall_ns": 1941489.6821780573,
+          "stddev_wall_ns": 65151.43830994737,
+          "cv_wall": 0.033148081672631786,
+          "median_cpu_ns": 1860119.0476190476,
+          "stddev_cpu_ns": 60509.67714214618,
+          "cv_cpu": 0.03192196500298942,
+          "counters": {
+            "allocated_bytes": 524056.0,
+            "baseline_bytes": 280.0,
+            "committed_bytes": 649368.0,
+            "register_bytes": 414.0,
+            "result": 17391.0,
+            "retained_bytes": 280.0
+          }
+        },
+        "compile/representative/binary_trees/9/real_time": {
+          "median_wall_ns": 151473.27538276176,
+          "stddev_wall_ns": 8850.103057342949,
+          "cv_wall": 0.05690892737534083,
+          "median_cpu_ns": 152770.23356871266,
+          "stddev_cpu_ns": 9073.236077961177,
+          "cv_cpu": 0.058923738374392784,
+          "counters": {
+            "source_bytes": 1171.0
+          }
+        },
+        "compare/cpp/particles/128/real_time": {
+          "median_wall_ns": 10215.345740920464,
+          "stddev_wall_ns": 258.0709156982704,
+          "cv_wall": 0.02515797731089624,
+          "median_cpu_ns": 10009.252998327343,
+          "stddev_cpu_ns": 420.3491149698692,
+          "cv_cpu": 0.041339864235384244,
+          "counters": {
+            "result": 8411000.0
+          }
+        },
+        "compare/vm/particles/128/real_time": {
+          "median_wall_ns": 925831.229076334,
+          "stddev_wall_ns": 25479.216542881644,
+          "cv_wall": 0.027298124108201496,
+          "median_cpu_ns": 934385.3820598007,
+          "stddev_cpu_ns": 35821.509517356426,
+          "cv_cpu": 0.038643671323171834,
+          "counters": {
+            "allocated_bytes": 18832.0,
+            "baseline_bytes": 1232.0,
+            "committed_bytes": 63824.0,
+            "register_bytes": 135.0,
+            "result": 8411000.0,
+            "retained_bytes": 1232.0
+          }
+        },
+        "compile/representative/particles/128/real_time": {
+          "median_wall_ns": 242009.18544745605,
+          "stddev_wall_ns": 17598.551660605335,
+          "cv_wall": 0.07213561651020885,
+          "median_cpu_ns": 230177.64298093587,
+          "stddev_cpu_ns": 15352.759681375685,
+          "cv_cpu": 0.06505945846880146,
+          "counters": {
+            "source_bytes": 1657.0
+          }
+        },
+        "compare/cpp/particles/1024/real_time": {
+          "median_wall_ns": 85366.27042878082,
+          "stddev_wall_ns": 3082.035812628763,
+          "cv_wall": 0.03587930511328701,
+          "median_cpu_ns": 83580.98068350668,
+          "stddev_cpu_ns": 3204.242010319251,
+          "cv_cpu": 0.03864367132317182,
+          "counters": {
+            "result": 74921000.0
+          }
+        },
+        "compare/vm/particles/1024/real_time": {
+          "median_wall_ns": 7602618.74893331,
+          "stddev_wall_ns": 295847.6515211568,
+          "cv_wall": 0.03881331302495787,
+          "median_cpu_ns": 7324218.75,
+          "stddev_cpu_ns": 336946.0738976339,
+          "cv_cpu": 0.04557036712638188,
+          "counters": {
+            "allocated_bytes": 287312.0,
+            "baseline_bytes": 8400.0,
+            "committed_bytes": 335248.0,
+            "register_bytes": 135.0,
+            "result": 74921000.0,
+            "retained_bytes": 8400.0
+          }
+        },
+        "compile/representative/particles/1024/real_time": {
+          "median_wall_ns": 227979.62811021865,
+          "stddev_wall_ns": 9831.451248786563,
+          "cv_wall": 0.04237399620142488,
+          "median_cpu_ns": 227364.59175424415,
+          "stddev_cpu_ns": 8716.47078797436,
+          "cv_cpu": 0.038643671323171834,
+          "counters": {
+            "source_bytes": 1658.0
+          }
+        },
+        "compare/cpp/word_count/256/real_time": {
+          "median_wall_ns": 6883.287067719698,
+          "stddev_wall_ns": 277.34920734533415,
+          "cv_wall": 0.03976840474319777,
+          "median_cpu_ns": 6730.401072078109,
+          "stddev_cpu_ns": 215.8777150399134,
+          "cv_cpu": 0.0320750149549792,
+          "counters": {
+            "result": 1088.0
+          }
+        },
+        "compare/vm/word_count/256/real_time": {
+          "median_wall_ns": 68417.7029790799,
+          "stddev_wall_ns": 3424.2174410474704,
+          "cv_wall": 0.04887593762940828,
+          "median_cpu_ns": 68248.9722507708,
+          "stddev_cpu_ns": 3818.689504156533,
+          "cv_cpu": 0.05502750511139998,
+          "counters": {
+            "allocated_bytes": 21072.0,
+            "baseline_bytes": 2448.0,
+            "committed_bytes": 68176.0,
+            "register_bytes": 90.0,
+            "result": 1088.0,
+            "retained_bytes": 2448.0
+          }
+        },
+        "compile/representative/word_count/256/real_time": {
+          "median_wall_ns": 151001.31005020282,
+          "stddev_wall_ns": 7364.706764976305,
+          "cv_wall": 0.048477925337008246,
+          "median_cpu_ns": 144991.81222707423,
+          "stddev_cpu_ns": 4558.904917993047,
+          "cv_cpu": 0.03066932284240936,
+          "counters": {
+            "source_bytes": 1164.0
+          }
+        },
+        "compare/cpp/word_count/2048/real_time": {
+          "median_wall_ns": 44191.7127150953,
+          "stddev_wall_ns": 1525.9858163672413,
+          "cv_wall": 0.034022272426499425,
+          "median_cpu_ns": 45560.926949048495,
+          "stddev_cpu_ns": 1281.7547283246254,
+          "cv_cpu": 0.028781979898261076,
+          "counters": {
+            "result": 65600.0
+          }
+        },
+        "compare/vm/word_count/2048/real_time": {
+          "median_wall_ns": 532063.8490224378,
+          "stddev_wall_ns": 18651.402337105625,
+          "cv_wall": 0.034984988087019005,
+          "median_cpu_ns": 533947.8417266187,
+          "stddev_cpu_ns": 25284.830565491135,
+          "cv_cpu": 0.04771324148406861,
+          "counters": {
+            "allocated_bytes": 49360.0,
+            "baseline_bytes": 16784.0,
+            "committed_bytes": 68752.0,
+            "register_bytes": 90.0,
+            "result": 65600.0,
+            "retained_bytes": 16784.0
+          }
+        },
+        "compile/representative/word_count/2048/real_time": {
+          "median_wall_ns": 148885.6056635306,
+          "stddev_wall_ns": 10221.979067337514,
+          "cv_wall": 0.06698319801441491,
+          "median_cpu_ns": 152770.23356871266,
+          "stddev_cpu_ns": 10639.3123731669,
+          "cv_cpu": 0.06855440927650092,
+          "counters": {
+            "source_bytes": 1165.0
+          }
+        },
+        "compare/cpp/closure_pipeline/1024/real_time": {
+          "median_wall_ns": 2358.5970501371903,
+          "stddev_wall_ns": 90.40853554266025,
+          "cv_wall": 0.03806293415328055,
+          "median_cpu_ns": 2262.1014443384656,
+          "stddev_cpu_ns": 64.9289695454969,
+          "cv_cpu": 0.028228514506775798,
+          "counters": {
+            "result": 28986399.0
+          }
+        },
+        "compare/vm/closure_pipeline/1024/real_time": {
+          "median_wall_ns": 231167.45657212503,
+          "stddev_wall_ns": 8127.801101399944,
+          "cv_wall": 0.03555640551145507,
+          "median_cpu_ns": 222156.3981042654,
+          "stddev_cpu_ns": 4664.845885283716,
+          "cv_cpu": 0.020832687488697595,
+          "counters": {
+            "allocated_bytes": 61008.0,
+            "baseline_bytes": 8400.0,
+            "committed_bytes": 61392.0,
+            "register_bytes": 171.0,
+            "result": 28986399.0,
+            "retained_bytes": 8400.0
+          }
+        },
+        "compile/representative/closure_pipeline/1024/real_time": {
+          "median_wall_ns": 145933.7191967454,
+          "stddev_wall_ns": 5846.37030997619,
+          "cv_wall": 0.039454461740615794,
+          "median_cpu_ns": 149408.65626572722,
+          "stddev_cpu_ns": 7479.788399686572,
+          "cv_cpu": 0.05082693220213278,
+          "counters": {
+            "source_bytes": 870.0
+          }
+        },
+        "compare/cpp/closure_pipeline/8192/real_time": {
+          "median_wall_ns": 18780.487483705987,
+          "stddev_wall_ns": 221.48713562693726,
+          "cv_wall": 0.011744894541504024,
+          "median_cpu_ns": 18527.667984189724,
+          "stddev_cpu_ns": 550.1919505772898,
+          "cv_cpu": 0.02900509602150341,
+          "counters": {
+            "result": 264132249.0
+          }
+        },
+        "compare/vm/closure_pipeline/8192/real_time": {
+          "median_wall_ns": 1749958.787960085,
+          "stddev_wall_ns": 98792.45401722322,
+          "cv_wall": 0.05519329329359686,
+          "median_cpu_ns": 1799242.4242424243,
+          "stddev_cpu_ns": 94696.96969696965,
+          "cv_cpu": 0.0526315789473684,
+          "counters": {
+            "allocated_bytes": 131856.0,
+            "baseline_bytes": 65744.0,
+            "committed_bytes": 132240.0,
+            "register_bytes": 171.0,
+            "result": 264132249.0,
+            "retained_bytes": 65744.0
+          }
+        },
+        "compile/representative/closure_pipeline/8192/real_time": {
+          "median_wall_ns": 154213.83154546822,
+          "stddev_wall_ns": 7485.523226823829,
+          "cv_wall": 0.04849209555516053,
+          "median_cpu_ns": 148145.56609035138,
+          "stddev_cpu_ns": 11722.544428585983,
+          "cv_cpu": 0.07846914939903075,
+          "counters": {
+            "source_bytes": 870.0
+          }
+        },
+        "compare/cpp/array_growth/1024/real_time": {
+          "median_wall_ns": 1732.5923480034005,
+          "stddev_wall_ns": 110.99717839942275,
+          "cv_wall": 0.06403749006998025,
+          "median_cpu_ns": 1717.2514721364198,
+          "stddev_cpu_ns": 68.32211028319587,
+          "cv_cpu": 0.040393149787245605,
+          "counters": {
+            "result": 1047552.0
+          }
+        },
+        "compare/vm/array_growth/1024/real_time": {
+          "median_wall_ns": 165716.6371979149,
+          "stddev_wall_ns": 3469.9914209110552,
+          "cv_wall": 0.020902385845010762,
+          "median_cpu_ns": 165929.203539823,
+          "stddev_cpu_ns": 5322.181685007612,
+          "cv_cpu": 0.032075014954979206,
+          "counters": {
+            "allocated_bytes": 33360.0,
+            "baseline_bytes": 8400.0,
+            "committed_bytes": 33872.0,
+            "register_bytes": 63.0,
+            "result": 1047552.0,
+            "retained_bytes": 8400.0
+          }
+        },
+        "compile/representative/array_growth/1024/real_time": {
+          "median_wall_ns": 129729.6244025825,
+          "stddev_wall_ns": 4736.869203932331,
+          "cv_wall": 0.03637929696285721,
+          "median_cpu_ns": 132042.25352112675,
+          "stddev_cpu_ns": 6600.171734466239,
+          "cv_cpu": 0.05038518300717651,
+          "counters": {
+            "source_bytes": 1019.0
+          }
+        },
+        "compare/cpp/array_growth/65536/real_time": {
+          "median_wall_ns": 94329.38193427118,
+          "stddev_wall_ns": 21327.170067321113,
+          "cv_wall": 0.21095819091258794,
+          "median_cpu_ns": 94096.67194928684,
+          "stddev_cpu_ns": 19780.32479987075,
+          "cv_cpu": 0.19551260339251267,
+          "counters": {
+            "result": 4294901760.0
+          }
+        },
+        "compare/vm/array_growth/65536/real_time": {
+          "median_wall_ns": 10830323.077523364,
+          "stddev_wall_ns": 655545.1130629166,
+          "cv_wall": 0.05911528766086293,
+          "median_cpu_ns": 10817307.692307692,
+          "stddev_cpu_ns": 668688.269548301,
+          "cv_cpu": 0.06281355615885975,
+          "counters": {
+            "allocated_bytes": 1048912.0,
+            "baseline_bytes": 524496.0,
+            "committed_bytes": 1049040.0,
+            "register_bytes": 63.0,
+            "result": 4294901760.0,
+            "retained_bytes": 524496.0
+          }
+        },
+        "compile/representative/array_growth/65536/real_time": {
+          "median_wall_ns": 129698.37866667035,
+          "stddev_wall_ns": 7319.202924024338,
+          "cv_wall": 0.055295108747810746,
+          "median_cpu_ns": 130753.13807531381,
+          "stddev_cpu_ns": 10550.098463126027,
+          "cv_cpu": 0.08068715304598785,
+          "counters": {
+            "source_bytes": 1020.0
+          }
+        },
+        "compare/cpp/array_growth_reserved/1024/real_time": {
+          "median_wall_ns": 956.456033186857,
+          "stddev_wall_ns": 26.489120228698493,
+          "cv_wall": 0.027444172907808068,
+          "median_cpu_ns": 935.3798057735798,
+          "stddev_cpu_ns": 51.96554476519888,
+          "cv_cpu": 0.05555555555555555,
+          "counters": {
+            "result": 1047552.0
+          }
+        },
+        "compare/vm/array_growth_reserved/1024/real_time": {
+          "median_wall_ns": 171125.59907808944,
+          "stddev_wall_ns": 8242.922622966182,
+          "cv_wall": 0.047796329743913034,
+          "median_cpu_ns": 164377.55698421976,
+          "stddev_cpu_ns": 7456.31740327043,
+          "cv_cpu": 0.0453609211626514,
+          "counters": {
+            "allocated_bytes": 16720.0,
+            "baseline_bytes": 8400.0,
+            "committed_bytes": 17488.0,
+            "register_bytes": 63.0,
+            "result": 1047552.0,
+            "retained_bytes": 8400.0
+          }
+        },
+        "compile/representative/array_growth_reserved/1024/real_time": {
+          "median_wall_ns": 131017.34022944255,
+          "stddev_wall_ns": 2635.686138193905,
+          "cv_wall": 0.020053306026457024,
+          "median_cpu_ns": 132166.35338345866,
+          "stddev_cpu_ns": 4239.237761319507,
+          "cv_cpu": 0.032075014954979233,
+          "counters": {
+            "source_bytes": 1043.0
+          }
+        },
+        "compare/cpp/array_growth_reserved/65536/real_time": {
+          "median_wall_ns": 58915.779704770546,
+          "stddev_wall_ns": 2093.1459500329884,
+          "cv_wall": 0.03496080202738937,
+          "median_cpu_ns": 58013.61386138614,
+          "stddev_cpu_ns": 1860.7875321963495,
+          "cv_cpu": 0.032075014954979206,
+          "counters": {
+            "result": 4294901760.0
+          }
+        },
+        "compare/vm/array_growth_reserved/65536/real_time": {
+          "median_wall_ns": 10781678.26483917,
+          "stddev_wall_ns": 356771.46888806164,
+          "cv_wall": 0.032854308755114685,
+          "median_cpu_ns": 10869565.217391305,
+          "stddev_cpu_ns": 256769.34307692086,
+          "cv_cpu": 0.02383559739697831,
+          "counters": {
+            "allocated_bytes": 1048912.0,
+            "baseline_bytes": 524496.0,
+            "committed_bytes": 1048912.0,
+            "register_bytes": 63.0,
+            "result": 4294901760.0,
+            "retained_bytes": 524496.0
+          }
+        },
+        "compile/representative/array_growth_reserved/65536/real_time": {
+          "median_wall_ns": 133106.82253586838,
+          "stddev_wall_ns": 3325.568340959306,
+          "cv_wall": 0.024684225679115435,
+          "median_cpu_ns": 134184.1603053435,
+          "stddev_cpu_ns": 0.0,
+          "cv_cpu": 0.0,
+          "counters": {
+            "source_bytes": 1044.0
+          }
+        },
+        "compare/cpp/dynamic_values/256/real_time": {
+          "median_wall_ns": 730.0723725794812,
+          "stddev_wall_ns": 12.416378569056825,
+          "cv_wall": 0.016890502387821953,
+          "median_cpu_ns": 721.8016168356218,
+          "stddev_cpu_ns": 0.0,
+          "cv_cpu": 0.0,
+          "counters": {
+            "result": 11390.0
+          }
+        },
+        "compare/vm/dynamic_values/256/real_time": {
+          "median_wall_ns": 39117.33652941847,
+          "stddev_wall_ns": 1451.1546770302755,
+          "cv_wall": 0.03658293916294395,
+          "median_cpu_ns": 39872.408293460925,
+          "stddev_cpu_ns": 1332.0436698187034,
+          "cv_cpu": 0.034327131988751786,
+          "counters": {
+            "allocated_bytes": 54544.0,
+            "baseline_bytes": 2320.0,
+            "committed_bytes": 55312.0,
+            "register_bytes": 81.0,
+            "result": 11390.0,
+            "retained_bytes": 2320.0
+          }
+        },
+        "compile/representative/dynamic_values/256/real_time": {
+          "median_wall_ns": 172513.4615508768,
+          "stddev_wall_ns": 16907.523125031803,
+          "cv_wall": 0.09647070249611363,
+          "median_cpu_ns": 162760.41666666666,
+          "stddev_cpu_ns": 20076.715888853993,
+          "cv_cpu": 0.12069862537980454,
+          "counters": {
+            "source_bytes": 1265.0
+          }
+        },
+        "compare/cpp/dynamic_values/2048/real_time": {
+          "median_wall_ns": 5668.828079263211,
+          "stddev_wall_ns": 151.4860005175927,
+          "cv_wall": 0.026415061209076912,
+          "median_cpu_ns": 5494.022503516175,
+          "stddev_cpu_ns": 172.7457973393575,
+          "cv_cpu": 0.030669322842409336,
+          "counters": {
+            "result": 702123.0
+          }
+        },
+        "compare/vm/dynamic_values/2048/real_time": {
+          "median_wall_ns": 302886.0992344562,
+          "stddev_wall_ns": 4550.1280857309375,
+          "cv_wall": 0.014984794764595716,
+          "median_cpu_ns": 303071.1206896552,
+          "stddev_cpu_ns": 6363.8953564322965,
+          "cv_cpu": 0.020832687488697547,
+          "counters": {
+            "allocated_bytes": 49680.0,
+            "baseline_bytes": 16656.0,
+            "committed_bytes": 49936.0,
+            "register_bytes": 81.0,
+            "result": 702123.0,
+            "retained_bytes": 16656.0
+          }
+        },
+        "compile/representative/dynamic_values/2048/real_time": {
+          "median_wall_ns": 162231.9533747591,
+          "stddev_wall_ns": 5349.498509648079,
+          "cv_wall": 0.032708137083593214,
+          "median_cpu_ns": 163994.16909620992,
+          "stddev_cpu_ns": 5260.115426290326,
+          "cv_cpu": 0.03207501495497923,
+          "counters": {
+            "source_bytes": 1266.0
+          }
+        },
+        "compare/cpp/dynamic_dispatch/256/real_time": {
+          "median_wall_ns": 304.05961813578875,
+          "stddev_wall_ns": 15.172193397047614,
+          "cv_wall": 0.049565805191530435,
+          "median_cpu_ns": 298.845103137422,
+          "stddev_cpu_ns": 13.555889163261035,
+          "cv_cpu": 0.04536092116265144,
+          "counters": {
+            "result": 2796160.0
+          }
+        },
+        "compare/vm/dynamic_dispatch/256/real_time": {
+          "median_wall_ns": 88740.8137864648,
+          "stddev_wall_ns": 5413.93428221232,
+          "cv_wall": 0.06122276070268495,
+          "median_cpu_ns": 86698.52034525278,
+          "stddev_cpu_ns": 3932.7247462995456,
+          "cv_cpu": 0.04536092116265147,
+          "counters": {
+            "allocated_bytes": 22352.0,
+            "baseline_bytes": 2384.0,
+            "committed_bytes": 61328.0,
+            "register_bytes": 126.0,
+            "result": 2796160.0,
+            "retained_bytes": 2384.0
+          }
+        },
+        "compile/representative/dynamic_dispatch/256/real_time": {
+          "median_wall_ns": 124612.04714512119,
+          "stddev_wall_ns": 6333.10443534234,
+          "cv_wall": 0.05193723258771632,
+          "median_cpu_ns": 115942.81972937581,
+          "stddev_cpu_ns": 7733.341192626595,
+          "cv_cpu": 0.0645305197820632,
+          "counters": {
+            "source_bytes": 901.0
+          }
+        },
+        "compare/cpp/dynamic_dispatch/2048/real_time": {
+          "median_wall_ns": 2351.153053983654,
+          "stddev_wall_ns": 162.33800510239948,
+          "cv_wall": 0.06712745680225368,
+          "median_cpu_ns": 2456.4967357037062,
+          "stddev_cpu_ns": 97.73352570096189,
+          "cv_cpu": 0.04039314978724565,
+          "counters": {
+            "result": 1431655424.0
+          }
+        },
+        "compare/vm/dynamic_dispatch/2048/real_time": {
+          "median_wall_ns": 682097.6742283376,
+          "stddev_wall_ns": 19137.18265199443,
+          "cv_wall": 0.027993274462631505,
+          "median_cpu_ns": 654069.7674418605,
+          "stddev_cpu_ns": 35461.485208885635,
+          "cv_cpu": 0.05295581791193588,
+          "counters": {
+            "allocated_bytes": 20816.0,
+            "baseline_bytes": 16720.0,
+            "committed_bytes": 61264.0,
+            "register_bytes": 126.0,
+            "result": 1431655424.0,
+            "retained_bytes": 16720.0
+          }
+        },
+        "compile/representative/dynamic_dispatch/2048/real_time": {
+          "median_wall_ns": 119926.7617694021,
+          "stddev_wall_ns": 3058.9269963181287,
+          "cv_wall": 0.025568236951756414,
+          "median_cpu_ns": 117973.9932885906,
+          "stddev_cpu_ns": 5896.965517790722,
+          "cv_cpu": 0.050385183007176475,
+          "counters": {
+            "source_bytes": 902.0
+          }
+        },
+        "compare/cpp/json_roundtrip/64/real_time": {
+          "median_wall_ns": 7279.573889599414,
+          "stddev_wall_ns": 342.02919280331014,
+          "cv_wall": 0.04640784413901244,
+          "median_cpu_ns": 7100.75384944397,
+          "stddev_cpu_ns": 223.2654461549201,
+          "cv_cpu": 0.030669322842409315,
+          "counters": {
+            "result": 5911.0
+          }
+        },
+        "compare/vm/json_roundtrip/64/real_time": {
+          "median_wall_ns": 174458.43409210976,
+          "stddev_wall_ns": 6939.815956283018,
+          "cv_wall": 0.03972897089153386,
+          "median_cpu_ns": 169080.203691916,
+          "stddev_cpu_ns": 3759.1947108651652,
+          "cv_cpu": 0.02204792759220492,
+          "counters": {
+            "allocated_bytes": 134384.0,
+            "baseline_bytes": 1104.0,
+            "committed_bytes": 148720.0,
+            "register_bytes": 162.0,
+            "result": 5911.0,
+            "retained_bytes": 1104.0
+          }
+        },
+        "compile/representative/json_roundtrip/64/real_time": {
+          "median_wall_ns": 274220.20341987984,
+          "stddev_wall_ns": 22682.920607135176,
+          "cv_wall": 0.08052972800634228,
+          "median_cpu_ns": 277954.25667090213,
+          "stddev_cpu_ns": 21224.6856664886,
+          "cv_cpu": 0.0755890381166453,
+          "counters": {
+            "source_bytes": 1521.0
+          }
+        },
+        "compare/cpp/json_roundtrip/1024/real_time": {
+          "median_wall_ns": 112659.61172184678,
+          "stddev_wall_ns": 2280.6294106625983,
+          "cv_wall": 0.02025413341659172,
+          "median_cpu_ns": 107061.28663875142,
+          "stddev_cpu_ns": 7226.55234457028,
+          "cv_cpu": 0.06696772085130225,
+          "counters": {
+            "result": 587179.0
+          }
+        },
+        "compare/vm/json_roundtrip/1024/real_time": {
+          "median_wall_ns": 3036149.473566758,
+          "stddev_wall_ns": 112040.98126981866,
+          "cv_wall": 0.03630325426844467,
+          "median_cpu_ns": 2960526.3157894737,
+          "stddev_cpu_ns": 199833.1895703802,
+          "cv_cpu": 0.06696772085130222,
+          "counters": {
+            "allocated_bytes": 1588112.0,
+            "baseline_bytes": 8784.0,
+            "committed_bytes": 2807056.0,
+            "register_bytes": 162.0,
+            "result": 587179.0,
+            "retained_bytes": 8784.0
+          }
+        },
+        "compile/representative/json_roundtrip/1024/real_time": {
+          "median_wall_ns": 269411.5421854892,
+          "stddev_wall_ns": 9367.42431943399,
+          "cv_wall": 0.03442886475982587,
+          "median_cpu_ns": 272793.40446168766,
+          "stddev_cpu_ns": 7394.975092056644,
+          "cv_cpu": 0.027545566575160156,
+          "counters": {
+            "source_bytes": 1523.0
+          }
+        },
+        "compare/cpp/byte_data_little/128/real_time": {
+          "median_wall_ns": 46.640206984378125,
+          "stddev_wall_ns": 1.6642007449554468,
+          "cv_wall": 0.03571350922095779,
+          "median_cpu_ns": 48.03217515306253,
+          "stddev_cpu_ns": 1.4263487536847315,
+          "cv_cpu": 0.030419978754259683,
+          "counters": {
+            "result": 8255.0
+          }
+        },
+        "compare/vm/byte_data_little/128/real_time": {
+          "median_wall_ns": 14871.910108236083,
+          "stddev_wall_ns": 676.898052166085,
+          "cv_wall": 0.04478915256723585,
+          "median_cpu_ns": 15317.47228715783,
+          "stddev_cpu_ns": 813.0815447345058,
+          "cv_cpu": 0.05367176572662753,
+          "counters": {
+            "allocated_bytes": 18640.0,
+            "baseline_bytes": 1232.0,
+            "committed_bytes": 66384.0,
+            "register_bytes": 117.0,
+            "result": 8255.0,
+            "retained_bytes": 1232.0
+          }
+        },
+        "compile/representative/byte_data_little/128/real_time": {
+          "median_wall_ns": 156451.58140266195,
+          "stddev_wall_ns": 6430.904760932265,
+          "cv_wall": 0.04063316658364429,
+          "median_cpu_ns": 152745.8309373203,
+          "stddev_cpu_ns": 7336.261688899203,
+          "cv_cpu": 0.04802921064280739,
+          "counters": {
+            "source_bytes": 952.0
+          }
+        },
+        "compare/cpp/byte_data_little/2048/real_time": {
+          "median_wall_ns": 544.5620356516469,
+          "stddev_wall_ns": 19.567087520981723,
+          "cv_wall": 0.03533612297935399,
+          "median_cpu_ns": 546.8122774152376,
+          "stddev_cpu_ns": 12.157389074601502,
+          "cv_cpu": 0.022047927592204905,
+          "counters": {
+            "result": 2096383.0
+          }
+        },
+        "compare/vm/byte_data_little/2048/real_time": {
+          "median_wall_ns": 230349.34429680838,
+          "stddev_wall_ns": 4134.203145130162,
+          "cv_wall": 0.017957504345519938,
+          "median_cpu_ns": 230532.7868852459,
+          "stddev_cpu_ns": 6249.360098287227,
+          "cv_cpu": 0.027545566575160215,
+          "counters": {
+            "allocated_bytes": 49730.0,
+            "baseline_bytes": 16592.0,
+            "committed_bytes": 49730.0,
+            "register_bytes": 117.0,
+            "result": 2096383.0,
+            "retained_bytes": 16592.0
+          }
+        },
+        "compile/representative/byte_data_little/2048/real_time": {
+          "median_wall_ns": 162133.50790081988,
+          "stddev_wall_ns": 6250.579868605228,
+          "cv_wall": 0.03865583758151075,
+          "median_cpu_ns": 163612.56544502618,
+          "stddev_cpu_ns": 4858.588603701727,
+          "cv_cpu": 0.030419978754259714,
+          "counters": {
+            "source_bytes": 953.0
+          }
+        },
+        "compare/cpp/byte_data_big/128/real_time": {
+          "median_wall_ns": 115.0494507805232,
+          "stddev_wall_ns": 2.7781251800936317,
+          "cv_wall": 0.02392812679377986,
+          "median_cpu_ns": 113.19364418334732,
+          "stddev_cpu_ns": 6.601587389889478,
+          "cv_cpu": 0.05832118435198045,
+          "counters": {
+            "result": 8128.0
+          }
+        },
+        "compare/vm/byte_data_big/128/real_time": {
+          "median_wall_ns": 15004.106141459608,
+          "stddev_wall_ns": 696.707582155478,
+          "cv_wall": 0.045665628251406756,
+          "median_cpu_ns": 14749.069169856835,
+          "stddev_cpu_ns": 309.70134200897706,
+          "cv_cpu": 0.020832687488697592,
+          "counters": {
+            "allocated_bytes": 36048.0,
+            "baseline_bytes": 1232.0,
+            "committed_bytes": 66384.0,
+            "register_bytes": 117.0,
+            "result": 8128.0,
+            "retained_bytes": 1232.0
+          }
+        },
+        "compile/representative/byte_data_big/128/real_time": {
+          "median_wall_ns": 158336.75121021573,
+          "stddev_wall_ns": 8967.967185288158,
+          "cv_wall": 0.05557663658745646,
+          "median_cpu_ns": 162010.36866359448,
+          "stddev_cpu_ns": 8783.662810956701,
+          "cv_cpu": 0.055539028541786446,
+          "counters": {
+            "source_bytes": 946.0
+          }
+        },
+        "compare/cpp/byte_data_big/2048/real_time": {
+          "median_wall_ns": 1705.044835766681,
+          "stddev_wall_ns": 31.67389690391658,
+          "cv_wall": 0.01849384014156937,
+          "median_cpu_ns": 1666.8938581258483,
+          "stddev_cpu_ns": 72.86139300369857,
+          "cv_cpu": 0.042365927286816166,
+          "counters": {
+            "result": 2096128.0
+          }
+        },
+        "compare/vm/byte_data_big/2048/real_time": {
+          "median_wall_ns": 241770.5444812701,
+          "stddev_wall_ns": 7517.310101982618,
+          "cv_wall": 0.031191776719623646,
+          "median_cpu_ns": 232054.45544554456,
+          "stddev_cpu_ns": 6290.609999926086,
+          "cv_cpu": 0.026684767619686457,
+          "counters": {
+            "allocated_bytes": 49730.0,
+            "baseline_bytes": 16592.0,
+            "committed_bytes": 49730.0,
+            "register_bytes": 117.0,
+            "result": 2096128.0,
+            "retained_bytes": 16592.0
+          }
+        },
+        "compile/representative/byte_data_big/2048/real_time": {
+          "median_wall_ns": 156647.73804712153,
+          "stddev_wall_ns": 9218.930430993654,
+          "cv_wall": 0.057497291592396485,
+          "median_cpu_ns": 158110.11904761905,
+          "stddev_cpu_ns": 11658.913142262065,
+          "cv_cpu": 0.07499969561873607,
+          "counters": {
+            "source_bytes": 947.0
+          }
+        },
+        "compare/cpp/regexp_records/32/real_time": {
+          "median_wall_ns": 4148.68449692921,
+          "stddev_wall_ns": 242.4966260288862,
+          "cv_wall": 0.05744592923943137,
+          "median_cpu_ns": 4130.384077126419,
+          "stddev_cpu_ns": 259.73919483014345,
+          "cv_cpu": 0.06341792180972781,
+          "counters": {
+            "result": 6304.0
+          }
+        },
+        "compare/vm/regexp_records/32/real_time": {
+          "median_wall_ns": 16486.4499639268,
+          "stddev_wall_ns": 1388.3466896491248,
+          "cv_wall": 0.08190436317614366,
+          "median_cpu_ns": 16169.040662283905,
+          "stddev_cpu_ns": 1539.242439951392,
+          "cv_cpu": 0.09210105944697251,
+          "counters": {
+            "allocated_bytes": 42751.0,
+            "baseline_bytes": 848.0,
+            "committed_bytes": 44031.0,
+            "register_bytes": 117.0,
+            "result": 6304.0,
+            "retained_bytes": 848.0
+          }
+        },
+        "compile/representative/regexp_records/32/real_time": {
+          "median_wall_ns": 176509.55609985653,
+          "stddev_wall_ns": 11259.791276165686,
+          "cv_wall": 0.06118920229137064,
+          "median_cpu_ns": 176354.40180586907,
+          "stddev_cpu_ns": 11183.099736777442,
+          "cv_cpu": 0.06222736559326537,
+          "counters": {
+            "source_bytes": 1104.0
+          }
+        },
+        "compare/cpp/regexp_records/1024/real_time": {
+          "median_wall_ns": 95721.7974073917,
+          "stddev_wall_ns": 3348.572076349518,
+          "cv_wall": 0.03552299433635464,
+          "median_cpu_ns": 91911.76470588235,
+          "stddev_cpu_ns": 4169.202312743697,
+          "cv_cpu": 0.045360921162651426,
+          "counters": {
+            "result": 6296576.0
+          }
+        },
+        "compare/vm/regexp_records/1024/real_time": {
+          "median_wall_ns": 492782.4661386897,
+          "stddev_wall_ns": 14634.91442981899,
+          "cv_wall": 0.029426077848753278,
+          "median_cpu_ns": 511801.54142581887,
+          "stddev_cpu_ns": 22757.976457684686,
+          "cv_cpu": 0.045226518137856254,
+          "counters": {
+            "allocated_bytes": 421997.0,
+            "baseline_bytes": 8784.0,
+            "committed_bytes": 621805.0,
+            "register_bytes": 117.0,
+            "result": 6296576.0,
+            "retained_bytes": 8784.0
+          }
+        },
+        "compile/representative/regexp_records/1024/real_time": {
+          "median_wall_ns": 177597.12834565624,
+          "stddev_wall_ns": 15588.241151208278,
+          "cv_wall": 0.0844348222418581,
+          "median_cpu_ns": 171558.27702702704,
+          "stddev_cpu_ns": 10383.17927139784,
+          "cv_cpu": 0.05797442681353788,
+          "counters": {
+            "source_bytes": 1106.0
+          }
+        },
+        "compare/cpp/numeric_parse/256/real_time": {
+          "median_wall_ns": 7918.0664628821705,
+          "stddev_wall_ns": 281.907612210732,
+          "cv_wall": 0.03501838923786375,
+          "median_cpu_ns": 8001.877773984295,
+          "stddev_cpu_ns": 237.62131016738536,
+          "cv_cpu": 0.03041997875425968,
+          "counters": {
+            "result": 65280.0
+          }
+        },
+        "compare/vm/numeric_parse/256/real_time": {
+          "median_wall_ns": 60471.86399684457,
+          "stddev_wall_ns": 2462.789353425078,
+          "cv_wall": 0.04047206960864539,
+          "median_cpu_ns": 58616.647127784294,
+          "stddev_cpu_ns": 2528.083086687991,
+          "cv_cpu": 0.043517647886454756,
+          "counters": {
+            "allocated_bytes": 45584.0,
+            "baseline_bytes": 2320.0,
+            "committed_bytes": 65488.0,
+            "register_bytes": 99.0,
+            "result": 65280.0,
+            "retained_bytes": 2320.0
+          }
+        },
+        "compile/representative/numeric_parse/256/real_time": {
+          "median_wall_ns": 147691.89918359797,
+          "stddev_wall_ns": 4995.945515930824,
+          "cv_wall": 0.03367703298838618,
+          "median_cpu_ns": 150885.1931330472,
+          "stddev_cpu_ns": 3168.2912504126402,
+          "cv_cpu": 0.021166010488516674,
+          "counters": {
+            "source_bytes": 886.0
+          }
+        },
+        "compare/cpp/numeric_parse/2048/real_time": {
+          "median_wall_ns": 65724.3643098537,
+          "stddev_wall_ns": 2412.3267891033324,
+          "cv_wall": 0.03619928616136854,
+          "median_cpu_ns": 65013.869625520114,
+          "stddev_cpu_ns": 1930.6319486276589,
+          "cv_cpu": 0.02900509602150339,
+          "counters": {
+            "result": 4192256.0
+          }
+        },
+        "compare/vm/numeric_parse/2048/real_time": {
+          "median_wall_ns": 491462.323878577,
+          "stddev_wall_ns": 10857.681897156597,
+          "cv_wall": 0.022088610196321,
+          "median_cpu_ns": 495158.45070422534,
+          "stddev_cpu_ns": 14704.073608738141,
+          "cv_cpu": 0.030419978754259693,
+          "counters": {
+            "allocated_bytes": 25744.0,
+            "baseline_bytes": 16656.0,
+            "committed_bytes": 65488.0,
+            "register_bytes": 99.0,
+            "result": 4192256.0,
+            "retained_bytes": 16656.0
+          }
+        },
+        "compile/representative/numeric_parse/2048/real_time": {
+          "median_wall_ns": 152522.23459473037,
+          "stddev_wall_ns": 7173.573103362657,
+          "cv_wall": 0.04790034145582274,
+          "median_cpu_ns": 148393.85474860336,
+          "stddev_cpu_ns": 6598.541777395725,
+          "cv_cpu": 0.045226518137856234,
+          "counters": {
+            "source_bytes": 887.0
+          }
+        },
+        "compare/cpp/ascii_case/64/real_time": {
+          "median_wall_ns": 3279.429800487996,
+          "stddev_wall_ns": 57.0452621650977,
+          "cv_wall": 0.017244381604500786,
+          "median_cpu_ns": 3254.229051442853,
+          "stddev_cpu_ns": 104.37944549195727,
+          "cv_cpu": 0.0320750149549792,
+          "counters": {
+            "result": 438.0
+          }
+        },
+        "compare/vm/ascii_case/64/real_time": {
+          "median_wall_ns": 33539.84962964581,
+          "stddev_wall_ns": 756.8701133447995,
+          "cv_wall": 0.022500470533388845,
+          "median_cpu_ns": 33041.588345864664,
+          "stddev_cpu_ns": 895.7024576962423,
+          "cv_cpu": 0.026684767619686446,
+          "counters": {
+            "allocated_bytes": 60432.0,
+            "baseline_bytes": 848.0,
+            "committed_bytes": 65488.0,
+            "register_bytes": 81.0,
+            "result": 438.0,
+            "retained_bytes": 848.0
+          }
+        },
+        "compile/representative/ascii_case/64/real_time": {
+          "median_wall_ns": 111506.58143079732,
+          "stddev_wall_ns": 7482.7016962093,
+          "cv_wall": 0.06797581249828412,
+          "median_cpu_ns": 105772.84693493794,
+          "stddev_cpu_ns": 7904.671741427103,
+          "cv_cpu": 0.07414407817231253,
+          "counters": {
+            "source_bytes": 885.0
+          }
+        },
+        "compare/cpp/ascii_case/1024/real_time": {
+          "median_wall_ns": 53603.17491037939,
+          "stddev_wall_ns": 614.7538935173474,
+          "cv_wall": 0.011440030042778628,
+          "median_cpu_ns": 54117.76024629594,
+          "stddev_cpu_ns": 0.0,
+          "cv_cpu": 0.0,
+          "counters": {
+            "result": 8106.0
+          }
+        },
+        "compare/vm/ascii_case/1024/real_time": {
+          "median_wall_ns": 602229.2529368055,
+          "stddev_wall_ns": 17348.232693138954,
+          "cv_wall": 0.029047576187881896,
+          "median_cpu_ns": 583506.2240663901,
+          "stddev_cpu_ns": 22369.863827228808,
+          "cv_cpu": 0.03803510957005102,
+          "counters": {
+            "allocated_bytes": 48784.0,
+            "baseline_bytes": 8528.0,
+            "committed_bytes": 77776.0,
+            "register_bytes": 81.0,
+            "result": 8106.0,
+            "retained_bytes": 8528.0
+          }
+        },
+        "compile/representative/ascii_case/1024/real_time": {
+          "median_wall_ns": 110594.99568305106,
+          "stddev_wall_ns": 6357.991848809893,
+          "cv_wall": 0.056706968230898366,
+          "median_cpu_ns": 107851.59620362382,
+          "stddev_cpu_ns": 2547.7544826441654,
+          "cv_cpu": 0.0234137284165008,
+          "counters": {
+            "source_bytes": 887.0
+          }
+        },
+        "compare/cpp/utc_roundtrip/64/real_time": {
+          "median_wall_ns": 25586.90640450725,
+          "stddev_wall_ns": 1428.6608642891154,
+          "cv_wall": 0.05626014300538617,
+          "median_cpu_ns": 24371.750433275563,
+          "stddev_cpu_ns": 1065.3105942231414,
+          "cv_cpu": 0.04236592728681618,
+          "counters": {
+            "result": 2023344.0
+          }
+        },
+        "compare/vm/utc_roundtrip/64/real_time": {
+          "median_wall_ns": 32036.718929859075,
+          "stddev_wall_ns": 1361.352045653401,
+          "cv_wall": 0.041693547850259256,
+          "median_cpu_ns": 31081.79265153288,
+          "stddev_cpu_ns": 1438.5308047431608,
+          "cv_cpu": 0.04477699631939922,
+          "counters": {
+            "allocated_bytes": 54864.0,
+            "baseline_bytes": 720.0,
+            "committed_bytes": 65744.0,
+            "register_bytes": 144.0,
+            "result": 2023344.0,
+            "retained_bytes": 720.0
+          }
+        },
+        "compile/representative/utc_roundtrip/64/real_time": {
+          "median_wall_ns": 209277.8104310205,
+          "stddev_wall_ns": 9988.818413764364,
+          "cv_wall": 0.047689435952839594,
+          "median_cpu_ns": 206649.52240999264,
+          "stddev_cpu_ns": 9373.812694339247,
+          "cv_cpu": 0.04536092116265143,
+          "counters": {
+            "source_bytes": 999.0
+          }
+        },
+        "compare/cpp/utc_roundtrip/1024/real_time": {
+          "median_wall_ns": 408544.42835678975,
+          "stddev_wall_ns": 17019.162848162177,
+          "cv_wall": 0.04108103311917046,
+          "median_cpu_ns": 407018.81331403763,
+          "stddev_cpu_ns": 15603.87028180071,
+          "cv_cpu": 0.03803510957005104,
+          "counters": {
+            "result": 524854188.0
+          }
+        },
+        "compare/vm/utc_roundtrip/1024/real_time": {
+          "median_wall_ns": 500382.80713028816,
+          "stddev_wall_ns": 14354.263893220363,
+          "cv_wall": 0.028460856985640194,
+          "median_cpu_ns": 493421.05263157893,
+          "stddev_cpu_ns": 10360.868229419604,
+          "cv_cpu": 0.021166010488516723,
+          "counters": {
+            "allocated_bytes": 36560.0,
+            "baseline_bytes": 8400.0,
+            "committed_bytes": 65744.0,
+            "register_bytes": 144.0,
+            "result": 524854188.0,
+            "retained_bytes": 8400.0
+          }
+        },
+        "compile/representative/utc_roundtrip/1024/real_time": {
+          "median_wall_ns": 207054.74777567235,
+          "stddev_wall_ns": 7798.195499203733,
+          "cv_wall": 0.03724012149849233,
+          "median_cpu_ns": 208642.43323442136,
+          "stddev_cpu_ns": 10429.054743629878,
+          "cv_cpu": 0.05038518300717647,
+          "counters": {
+            "source_bytes": 1001.0
+          }
+        }
+      }
+    },
+    "supplemental_suites": [],
+    "paired_comparison": {
+      "metric": "median VM wall time / median optimized C++ wall time",
+      "median_vm_over_cpp": {
+        "sieve/10000": 235.01381010444973,
+        "sieve/100000": 208.97254591808797,
+        "mandelbrot/64": 34.65509799366324,
+        "mandelbrot/128": 34.162503301090375,
+        "quicksort/1024": 117.9544767553169,
+        "quicksort/8192": 71.03101758934557,
+        "binary_trees/6": 3.872135262079154,
+        "binary_trees/9": 4.34046738248982,
+        "particles/128": 90.6314140076194,
+        "particles/1024": 89.05881340190452,
+        "word_count/256": 9.93968467477347,
+        "word_count/2048": 12.039901065900347,
+        "closure_pipeline/1024": 98.01057648176017,
+        "closure_pipeline/8192": 93.17962536799725,
+        "array_growth/1024": 95.64664035881432,
+        "array_growth/65536": 114.81388784111768,
+        "array_growth_reserved/1024": 178.91632562336264,
+        "array_growth_reserved/65536": 183.00153742964304,
+        "dynamic_values/256": 53.58008054901414,
+        "dynamic_values/2048": 53.430108480873685,
+        "dynamic_dispatch/256": 291.8533356403625,
+        "dynamic_dispatch/2048": 290.1119827450756,
+        "json_roundtrip/64": 23.965473355709012,
+        "json_roundtrip/1024": 26.94975978670085,
+        "byte_data_little/128": 318.86458208080734,
+        "byte_data_little/2048": 422.9992713707305,
+        "byte_data_big/128": 130.41440910554667,
+        "byte_data_big/2048": 141.79717706517488,
+        "regexp_records/32": 3.973898226324467,
+        "regexp_records/1024": 5.148069504393121,
+        "numeric_parse/256": 7.637200859619061,
+        "numeric_parse/2048": 7.477627650555985,
+        "ascii_case/64": 10.22734184602912,
+        "ascii_case/1024": 11.234954906004896,
+        "utc_roundtrip/64": 1.252074730074272,
+        "utc_roundtrip/1024": 1.2247941041391321
+      },
+      "native_baselines": {
+        "dynamic_values": "Mixed arrays: C++ std::variant<int64_t, string, bool>; Vela dynamic[] with is checks and typed reads.",
+        "dynamic_dispatch": "Bound calls: C++ std::function with a statically typed signature; Vela resolves a public method on a dynamic receiver and checks the int result. C++ has no runtime member-name lookup.",
+        "json_roundtrip": "Construct, encode, decode and validate ordered records containing Unicode and mixed arrays. C++ uses pinned yyjson DOM arenas; Vela uses native Map/dynamic[] graphs, runtime checks and GC. The ratio includes these representation and contract differences, not only bytecode execution.",
+        "byte_data_little": "Zeroed byte buffer, unaligned 64-bit stores/loads and an owner-alias check; C++ vector<byte>/memcpy with explicit little endian.",
+        "byte_data_big": "Zeroed byte buffer, unaligned 64-bit stores/loads and an owner-alias check; C++ vector<byte>/memcpy with explicit big endian.",
+        "regexp_records": "Both compile pinned PCRE2 with UTF/UCP, matching newline/BSR settings, interpreter budgets and no JIT. Build Unicode input, collect nonempty matches, convert coordinates to code points, copy captures and parse numbers inside timing.",
+        "numeric_parse": "Format integers, parse decimal int/double values, verify the fraction and accumulate. C++ uses from_chars and pinned Abseil SimpleAtod; inputs are valid decimal strings.",
+        "ascii_case": "Construct ASCII strings and verify upper/lower round trips. C++ uses ASCII character mapping; this workload makes no Unicode-casing comparison.",
+        "utc_roundtrip": "Construct UTC timestamps, format canonical milliseconds, parse and inspect calendar fields. C++ uses pinned Abseil Time; inputs are valid canonical UTC strings, not the complete Vela error/range contract."
+      }
+    },
+    "comparison_to_previous": {
+      "comparable": false,
+      "basis": "The previous entry measures five CPU-time VM microbenchmarks and standalone JSON/dynamic APIs; this entry measures complete C++/VM paired workloads using wall time. No cross-suite regression ratio is computed."
+    },
+    "measurement_limits": [
+      "Eighteen workloads at two input sizes: 36 C++/VM pairs and 36 separate Vela compilation cases; every case has seven randomly interleaved repetitions.",
+      "Execution excludes Vela compilation and shared integer-input preparation; workload-local containers, strings, library compilation, checksums, cleanup and ordinary GC are included.",
+      "C++ kernels use the same logical inputs and expected results, compile in separate translation units with Release /O2, and may inline or vectorize native work.",
+      "JSON, dynamic and API ratios include the documented native representation and validation differences; they are not isolated measurements of VM instruction dispatch.",
+      "The ASCII casing case does not compare full Unicode casing. Date input is canonical UTC, not the full invalid-input or range-checking contract.",
+      "VM baseline and retained counters include rooted input and constants. Every VM sample returns to its baseline after collection; snapshots are not peak memory, RSS or C++ allocator accounting.",
+      "Single Windows x64 machine. Scheduling, frequency and allocation noise affect ratios; use the retained per-case variation and do not infer a language-wide average.",
+      "Prior standalone parse/encode/dynamic measurements remain in the previous entry; they are not presented as measurements of the new paired suite."
     ]
   }
 }

@@ -1,0 +1,26 @@
+import 'input' as data;
+
+class Counter {
+  public param value: int = 0;
+
+  public next(value: int): int {
+    this.value += value;
+    return this.value;
+  }
+}
+
+func run(): int {
+  const receiver: dynamic = Counter();
+  let checksum = 0;
+  const size = data.values.length;
+  for (let index = 0; index < size; index ++) {
+    const value: int = receiver.next(data.values[index]);
+    checksum += value;
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(256);
+  print(run());
+}

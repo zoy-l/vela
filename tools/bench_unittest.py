@@ -117,6 +117,20 @@ class BenchmarkReportTest(unittest.TestCase):
         result = comparison_report({"benchmarks": rows}, [row["name"] for row in rows], 1)
         self.assertIn("| 1.000 | 2.000 | - | - | 2.00x |", result)
 
+    def test_documents_api_baseline_differences_only_for_selected_workloads(self) -> None:
+        entries = [sample("cpp", 1000), sample("vm", 5000)]
+        for entry in entries:
+            entry["name"] = entry["name"].replace("sieve", "json_roundtrip")
+        names = [entry["name"] for entry in entries]
+        result = comparison_report({"benchmarks": entries}, names, 1)
+        self.assertIn("pinned yyjson DOM arenas", result)
+        self.assertIn("representation and contract differences", result)
+        self.assertNotIn("ASCII character mapping", result)
+        ordinary_entries = [sample("cpp", 1000), sample("vm", 5000)]
+        ordinary = comparison_report({"benchmarks": ordinary_entries},
+                                     [entry["name"] for entry in ordinary_entries], 1)
+        self.assertNotIn("Native baseline contracts", ordinary)
+
     def test_comparison_options_preserve_google_benchmark_arguments(self) -> None:
         parsed = parse_arguments(["--compare", "--report", "out/test.json", "--",
                                   "--benchmark_repetitions=3"])

@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -7,6 +8,8 @@
 #include "base/execution_limits.h"
 
 #include "compiler/compiler.h"
+#include "compiler/frontend/source_loader.h"
+#include "compiler/frontend/type_checker.h"
 #include "runtime/isolate.h"
 #include "runtime/string.h"
 #include "vm/program.h"
@@ -98,6 +101,31 @@ TEST(EncodingTest, RejectsArrayLayoutIndex256) {
   const auto compiled = CompileSource(source, isolate);
   ASSERT_FALSE(compiled.Succeeded());
   EXPECT_TRUE(compiled.diagnostics.front().message.contains("encoding"));
+}
+
+TEST(EncodingTest, FailedEncodingDoesNotPublishSessionLayouts) {
+  std::string source;
+  for (std::size_t index = 0; index < kBeyondByteIndex; ++index) {
+    const auto type = "Element" + std::to_string(index);
+    source += "class " + type + " {}\n";
+    source += "func f" + std::to_string(index) + "(): " + type + "[] { return []; }\n";
+  }
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  auto checked = frontend::TypeChecker().Check(parsed.program);
+  ASSERT_TRUE(checked.diagnostics.empty());
+
+  runtime::Isolate isolate;
+  CompilationState state;
+  const auto before = isolate.layout_counts();
+  const auto compiled = CompileProgram(parsed.program, checked.model, isolate, &state);
+  ASSERT_FALSE(compiled.Succeeded());
+  EXPECT_TRUE(compiled.diagnostics.front().message.contains("encoding"));
+  EXPECT_EQ(isolate.layout_counts(), before);
+  EXPECT_TRUE(state.layouts.classes.empty());
+  EXPECT_TRUE(state.layouts.arrays.empty());
+  EXPECT_TRUE(state.layouts.signatures.empty());
 }
 
 std::string FieldsSource(std::size_t count) {

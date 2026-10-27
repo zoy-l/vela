@@ -1,0 +1,27 @@
+import 'input' as data;
+
+func run(): int {
+  const size = data.values.length;
+  const text = String();
+  for (let index = 0; index < size; index ++) {
+    text.append('中=7;😀 ');
+  }
+  const pattern = RegExp('(?<key>中)=([0-9]+)');
+  const matches = pattern.allMatches(text.toString());
+  if (matches.length != size) {
+    return -1;
+  }
+  let checksum = 0;
+  for (let index = 0; index < size; index ++) {
+    const found = matches[index];
+    const key = found.namedGroup('key') ?? '';
+    const number = int.parse(found.group(2) ?? '');
+    checksum += found.start + found.end + key.length + number;
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(32);
+  print(run());
+}

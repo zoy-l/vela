@@ -343,7 +343,7 @@ bool IsStandardTypeNamespace(const Program& program, const Class& declaration) {
 }
 
 std::optional<std::string_view> StandardDeclarationSource(std::string_view name) noexcept {
-  const auto* declaration = std::ranges::find(kDeclarations, name, &StandardDeclaration::name);
+  const auto declaration = std::ranges::find(kDeclarations, name, &StandardDeclaration::name);
   return declaration == kDeclarations.end() ? std::nullopt : std::optional(declaration->source);
 }
 

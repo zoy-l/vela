@@ -23,7 +23,7 @@ extern "C" {
 #include <lualib.h>
 }
 #include <luajit_build.h>
-
+#include "benchmarks/native_standard_workloads.h"
 #include "benchmarks/native_workloads.h"
 #include "compiler/compiler.h"
 #include "compiler/frontend/source_loader.h"
@@ -113,6 +113,51 @@ constexpr auto kWorkloads = std::to_array<Workload>({
                 },
             },
         .capacity = ArrayCapacity::Reserved,
+    },
+    {
+        .name = "dynamic_values",
+        .native = DynamicValues,
+        .problems = {{{.size = 256, .expected = 11390}, {.size = 2048, .expected = 702123}}},
+    },
+    {
+        .name = "dynamic_dispatch",
+        .native = DynamicDispatch,
+        .problems = {{{.size = 256, .expected = 2796160}, {.size = 2048, .expected = 1431655424}}},
+    },
+    {
+        .name = "json_roundtrip",
+        .native = JsonRoundtrip,
+        .problems = {{{.size = 64, .expected = 5911}, {.size = 1024, .expected = 587179}}},
+    },
+    {
+        .name = "byte_data_little",
+        .native = ByteDataLittle,
+        .problems = {{{.size = 128, .expected = 8255}, {.size = 2048, .expected = 2096383}}},
+    },
+    {
+        .name = "byte_data_big",
+        .native = ByteDataBig,
+        .problems = {{{.size = 128, .expected = 8128}, {.size = 2048, .expected = 2096128}}},
+    },
+    {
+        .name = "regexp_records",
+        .native = RegExpRecords,
+        .problems = {{{.size = 32, .expected = 6304}, {.size = 1024, .expected = 6296576}}},
+    },
+    {
+        .name = "numeric_parse",
+        .native = NumericParse,
+        .problems = {{{.size = 256, .expected = 65280}, {.size = 2048, .expected = 4192256}}},
+    },
+    {
+        .name = "ascii_case",
+        .native = AsciiCase,
+        .problems = {{{.size = 64, .expected = 438}, {.size = 1024, .expected = 8106}}},
+    },
+    {
+        .name = "utc_roundtrip",
+        .native = UtcRoundtrip,
+        .problems = {{{.size = 64, .expected = 2023344}, {.size = 1024, .expected = 524854188}}},
     },
 });
 
@@ -380,6 +425,10 @@ void Vm(benchmark::State& state, Workload workload, Problem problem) {
   heap.FinishCollection();
   heap.Collect();
   state.counters["retained_bytes"] = static_cast<double>(heap.allocated_bytes());
+  if (heap.allocated_bytes() != baseline_bytes) {
+    state.SkipWithError("Execution retained temporary heap values after collection");
+    return;
+  }
   state.counters["result"] = static_cast<double>(problem.expected);
 }
 

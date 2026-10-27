@@ -1,0 +1,38 @@
+import 'input' as data;
+
+func run(): int {
+  const records: Map<string, dynamic>[] = [];
+  const size = data.values.length;
+  for (let index = 0; index < size; index ++) {
+    const record = Map<string, dynamic>();
+    record.set('id', data.values[index]);
+    record.set('text', 'Vela😀');
+    const items: dynamic[] = [true, null, 1.25];
+    record.set('items', items);
+    records.push(record);
+  }
+  const text = Json.stringify(records);
+  const decoded: dynamic[] = Json.parse(text);
+  if (decoded.length != size) {
+    return -1;
+  }
+  let checksum = text.byteLength;
+  for (let index = 0; index < size; index ++) {
+    const record: dynamic = decoded[index];
+    const id: int = record.get('id');
+    const name: string = record.get('text');
+    const items: dynamic[] = record.get('items');
+    if (
+      id != data.values[index] || name != 'Vela😀' || items.length != 3 || items[0] != true || items[1] != null || items[2] != 1.25
+    ) {
+      return -1;
+    }
+    checksum += id + name.length + items.length;
+  }
+  return checksum;
+}
+
+func main(): void {
+  data.prepare(64);
+  print(run());
+}

@@ -1,0 +1,20 @@
+import 'input' as data;
+
+func run(): int {
+  const size = data.values.length;
+  const bytes = ByteArray(size * 8 + 1);
+  const view = ByteData.view(bytes, offset: 1);
+  for (let index = 0; index < size; index ++) {
+    view.setInt64(index * 8, data.values[index], endian: Endian.little);
+  }
+  let checksum = 0;
+  for (let index = 0; index < size; index ++) {
+    checksum += view.getInt64(index * 8, endian: Endian.little);
+  }
+  return checksum + bytes[1 + (size - 1) * 8];
+}
+
+func main(): void {
+  data.prepare(128);
+  print(run());
+}
