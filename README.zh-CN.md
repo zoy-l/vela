@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Standard: C++23](https://img.shields.io/badge/C%2B%2B-23-purple.svg)](https://en.cppreference.com/w/cpp/23)
 
-[English](README.md) | [**简体中文**](README.zh-CN.md)
+[English](README.md)
 
 Vela 是一个专为原生 C++ 应用设计的静态类型嵌入式脚本语言。
 
