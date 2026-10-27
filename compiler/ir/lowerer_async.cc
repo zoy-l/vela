@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -198,7 +197,9 @@ void Lowerer::LowerAsyncArguments(const frontend::Expression& expression,
   const auto hidden = static_cast<RegisterId>(receiver.has_value());
   const frontend::TypeDescriptor* payload = nullptr;
   if (operation == AsyncOperation::CompleterComplete) {
-    assert(receiver.has_value());
+    if (!receiver) {
+      std::unreachable();
+    }
     const auto& element = model_.generic_arguments.at(receiver->type.name).front();
     payload = &model_.types.at("Future<" + element.name + ">");
   }

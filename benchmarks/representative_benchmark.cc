@@ -1,10 +1,12 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <ios>
 #include <iterator>
+#include <memory>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -13,6 +15,14 @@
 #include <vector>
 
 #include "benchmark/benchmark.h"
+
+extern "C" {
+#include <lauxlib.h>
+#include <lua.h>
+#include <luajit.h>
+#include <lualib.h>
+}
+#include <luajit_build.h>
 
 #include "benchmarks/native_workloads.h"
 #include "compiler/compiler.h"
@@ -29,10 +39,14 @@ struct Problem final {
   std::int64_t expected;
 };
 
+enum class ArrayCapacity : std::uint8_t { Growing, Reserved };
+enum class LuaMode : std::uint8_t { Interpreter, Jit };
+
 struct Workload final {
   std::string_view name;
   NativeWorkload native;
   std::array<Problem, 2> problems;
+  ArrayCapacity capacity = ArrayCapacity::Growing;
 };
 
 constexpr auto kWorkloads = std::to_array<Workload>({
@@ -98,8 +112,159 @@ constexpr auto kWorkloads = std::to_array<Workload>({
                     {.size = 65536, .expected = 4294901760},
                 },
             },
+        .capacity = ArrayCapacity::Reserved,
     },
 });
+
+constexpr int kTraceLimit = 1000;
+constexpr int kMinimumWarmup = 128;
+constexpr int kMaximumWarmup = 1024;
+constexpr int kWarmupBatch = 16;
+constexpr int kStableBatches = 2;
+constexpr std::size_t kKilobyte = 1024;
+constexpr std::string_view kTraceInspector = R"(
+local limit = ...
+jit.opt.start("maxtrace=" .. limit)
+local util = require("jit.util")
+local function snapshot()
+  local count, bytes = 0, 0
+  for trace = 1, limit do
+    if util.traceinfo(trace) ~= nil then
+      count = count + 1
+      local code = util.tracemc(trace)
+      bytes = bytes + #code
+    end
+  end
+  return count, bytes
+end
+jit.off(snapshot, true)
+return snapshot
+)";
+
+using LuaState = std::unique_ptr<lua_State, decltype(&lua_close)>;
+
+struct LuaSnapshot final {
+  std::size_t traces = 0;
+  std::size_t code_bytes = 0;
+  bool operator==(const LuaSnapshot&) const = default;
+};
+
+std::string LuaError(lua_State* lua) {
+  const auto* message = lua_tostring(lua, -1);
+  return message != nullptr ? std::string(message)
+                            : "Lua error object: " + std::string(luaL_typename(lua, -1));
+}
+
+class LuaProgram final {
+ public:
+  std::expected<void, std::string> Prepare(std::string_view source,
+                                           const std::string& name,
+                                           Problem problem,
+                                           ArrayCapacity capacity,
+                                           LuaMode mode) {
+    if (lua_ == nullptr) {
+      return std::unexpected("LuaJIT state allocation failed");
+    }
+    capacity_ = capacity == ArrayCapacity::Reserved ? static_cast<int>(problem.size) : 0;
+    Setup setup{
+        .program = this,
+        .source = source,
+        .name = name.c_str(),
+        .size = static_cast<int>(problem.size),
+        .mode = mode,
+    };
+    // 初始化可能通过 Lua 的错误机制退出；受保护的 C 回调内没有需要析构的 C++ 局部对象。
+    if (lua_cpcall(lua_.get(), Initialize, &setup) != 0) {
+      return std::unexpected(LuaError(lua_.get()));
+    }
+    return {};
+  }
+
+  std::expected<lua_Number, std::string> Run() {
+    auto* lua = lua_.get();
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, run_);
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, input_);
+    lua_pushinteger(lua, capacity_);
+    if (lua_pcall(lua, 2, 1, 0) != 0) {
+      return std::unexpected(LuaError(lua));
+    }
+    if (lua_type(lua, -1) != LUA_TNUMBER) {
+      return std::unexpected("Lua workload returned a non-number");
+    }
+    const auto result = lua_tonumber(lua, -1);
+    lua_pop(lua, 1);
+    return result;
+  }
+
+  std::expected<LuaSnapshot, std::string> Snapshot() {
+    auto* lua = lua_.get();
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, snapshot_);
+    if (lua_pcall(lua, 0, 2, 0) != 0) {
+      return std::unexpected(LuaError(lua));
+    }
+    const LuaSnapshot result{
+        .traces = static_cast<std::size_t>(lua_tonumber(lua, -2)),
+        .code_bytes = static_cast<std::size_t>(lua_tonumber(lua, -1)),
+    };
+    lua_pop(lua, 2);
+    return result;
+  }
+
+  void Collect() { lua_gc(lua_.get(), LUA_GCCOLLECT, 0); }
+  [[nodiscard]] std::size_t heap_bytes() const {
+    return (static_cast<std::size_t>(lua_gc(lua_.get(), LUA_GCCOUNT, 0)) * kKilobyte) +
+           static_cast<std::size_t>(lua_gc(lua_.get(), LUA_GCCOUNTB, 0));
+  }
+
+ private:
+  struct Setup final {
+    LuaProgram* program;
+    std::string_view source;
+    const char* name;
+    int size;
+    LuaMode mode;
+  };
+
+  static int Initialize(lua_State* lua) {
+    auto* setup = static_cast<Setup*>(lua_touserdata(lua, 1));
+    auto& program = *setup->program;
+    luaL_openlibs(lua);
+    const auto mode = setup->mode == LuaMode::Jit ? LUAJIT_MODE_ON : LUAJIT_MODE_OFF;
+    if (luaJIT_setmode(lua, 0, LUAJIT_MODE_ENGINE | mode) == 0) {
+      lua_pushliteral(lua, "Cannot select requested LuaJIT engine mode");
+      return lua_error(lua);
+    }
+    if (luaL_loadbuffer(lua, setup->source.data(), setup->source.size(), setup->name) != 0) {
+      return lua_error(lua);
+    }
+    lua_call(lua, 0, 1);
+    if (lua_type(lua, -1) != LUA_TFUNCTION) {
+      lua_pushliteral(lua, "Lua workload must return its entry function");
+      return lua_error(lua);
+    }
+    program.run_ = luaL_ref(lua, LUA_REGISTRYINDEX);
+    lua_createtable(lua, setup->size, 0);
+    for (int index = 0; index < setup->size; ++index) {
+      lua_pushinteger(lua, index);
+      lua_rawseti(lua, -2, index + 1);
+    }
+    program.input_ = luaL_ref(lua, LUA_REGISTRYINDEX);
+    if (luaL_loadbuffer(lua, kTraceInspector.data(), kTraceInspector.size(), "trace inspector") !=
+        0) {
+      return lua_error(lua);
+    }
+    lua_pushinteger(lua, kTraceLimit);
+    lua_call(lua, 1, 1);
+    program.snapshot_ = luaL_ref(lua, LUA_REGISTRYINDEX);
+    return 0;
+  }
+
+  LuaState lua_{luaL_newstate(), lua_close};
+  int run_ = LUA_NOREF;
+  int input_ = LUA_NOREF;
+  int snapshot_ = LUA_NOREF;
+  int capacity_ = 0;
+};
 
 struct Sources final {
   std::string path;
@@ -218,6 +383,190 @@ void Vm(benchmark::State& state, Workload workload, Problem problem) {
   state.counters["result"] = static_cast<double>(problem.expected);
 }
 
+std::optional<std::string> ReadLuaSource(benchmark::State& state, const Workload& workload) {
+  const auto name = workload.capacity == ArrayCapacity::Reserved ? "array_growth" : workload.name;
+  return ReadSource(state, "workloads/" + std::string(name) + ".lua");
+}
+
+std::expected<void, std::string> CheckLua(LuaProgram& program, Problem problem) {
+  auto result = program.Run();
+  if (!result) {
+    return std::unexpected(result.error());
+  }
+  benchmark::DoNotOptimize(*result);
+  if (*result != static_cast<lua_Number>(problem.expected)) {
+    return std::unexpected("Lua checksum mismatch");
+  }
+  return {};
+}
+
+struct LuaWarmup final {
+  LuaSnapshot snapshot;
+  int calls = 0;
+};
+
+std::expected<LuaWarmup, std::string> WarmLua(LuaProgram& program, Problem problem, LuaMode mode) {
+  LuaWarmup warm;
+  int stable = 0;
+  const auto minimum = mode == LuaMode::Jit ? kMinimumWarmup : 1;
+  const auto batch = mode == LuaMode::Jit ? kWarmupBatch : 1;
+  while (warm.calls < kMaximumWarmup &&
+         (warm.calls < minimum || (mode == LuaMode::Jit && stable < kStableBatches))) {
+    for (int index = 0; index < batch; ++index) {
+      if (const auto result = CheckLua(program, problem); !result) {
+        return std::unexpected(result.error());
+      }
+      ++warm.calls;
+    }
+    const auto snapshot = program.Snapshot();
+    if (!snapshot) {
+      return std::unexpected(snapshot.error());
+    }
+    stable = *snapshot == warm.snapshot ? stable + 1 : 0;
+    warm.snapshot = *snapshot;
+  }
+  if (mode == LuaMode::Jit && (stable < kStableBatches || warm.snapshot.traces == 0)) {
+    return std::unexpected("LuaJIT warm-up did not produce stable compiled traces");
+  }
+  if (mode == LuaMode::Interpreter && warm.snapshot.traces != 0) {
+    return std::unexpected("LuaJIT interpreter unexpectedly compiled traces");
+  }
+  return warm;
+}
+
+void Lua(benchmark::State& state, Workload workload, Problem problem, LuaMode mode) {
+  const auto source = ReadLuaSource(state, workload);
+  if (!source) {
+    return;
+  }
+  LuaProgram program;
+  if (const auto ready =
+          program.Prepare(*source, std::string(workload.name), problem, workload.capacity, mode);
+      !ready) {
+    state.SkipWithError(ready.error());
+    return;
+  }
+  const auto warm = WarmLua(program, problem, mode);
+  if (!warm) {
+    state.SkipWithError(warm.error());
+    return;
+  }
+  program.Collect();
+  state.counters["baseline_bytes"] = static_cast<double>(program.heap_bytes());
+  state.counters["warmup_calls"] = warm->calls;
+  state.counters["warm_traces"] = static_cast<double>(warm->snapshot.traces);
+  state.counters["warm_jit_code_bytes"] = static_cast<double>(warm->snapshot.code_bytes);
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    if (const auto result = CheckLua(program, problem); !result) {
+      state.SkipWithError(result.error());
+      return;
+    }
+  }
+  const auto allocated = program.heap_bytes();
+  const auto final = program.Snapshot();
+  if (!final) {
+    state.SkipWithError(final.error());
+    return;
+  }
+  state.counters["traces"] = static_cast<double>(final->traces);
+  state.counters["jit_code_bytes"] = static_cast<double>(final->code_bytes);
+  state.counters["allocated_bytes"] = static_cast<double>(allocated);
+  program.Collect();
+  state.counters["retained_bytes"] = static_cast<double>(program.heap_bytes());
+  state.counters["result"] = static_cast<double>(problem.expected);
+}
+
+void FirstLua(benchmark::State& state, Workload workload, Problem problem, LuaMode mode) {
+  const auto source = ReadLuaSource(state, workload);
+  if (!source) {
+    return;
+  }
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    state.PauseTiming();
+    {
+      LuaProgram program;
+      if (const auto ready = program.Prepare(*source, std::string(workload.name), problem,
+                                             workload.capacity, mode);
+          !ready) {
+        state.ResumeTiming();
+        state.SkipWithError(ready.error());
+        return;
+      }
+      state.ResumeTiming();
+      const auto result = CheckLua(program, problem);
+      state.PauseTiming();
+      if (!result) {
+        state.ResumeTiming();
+        state.SkipWithError(result.error());
+        return;
+      }
+    }
+    state.ResumeTiming();
+  }
+}
+
+void CompileLua(benchmark::State& state, Workload workload, Problem /*problem*/) {
+  const auto source = ReadLuaSource(state, workload);
+  if (!source) {
+    return;
+  }
+  const auto name = std::string(workload.name);
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    const LuaState lua(luaL_newstate(), lua_close);
+    if (lua == nullptr) {
+      state.SkipWithError("LuaJIT state allocation failed");
+      return;
+    }
+    if (luaL_loadbuffer(lua.get(), source->data(), source->size(), name.c_str()) != 0) {
+      state.SkipWithError(LuaError(lua.get()));
+      return;
+    }
+    benchmark::DoNotOptimize(lua.get());
+  }
+  state.counters["source_bytes"] = static_cast<double>(source->size());
+}
+
+void FirstVm(benchmark::State& state, Workload workload, Problem problem) {
+  const auto sources = LoadSources(state, workload, problem);
+  if (!sources) {
+    return;
+  }
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    state.PauseTiming();
+    {
+      runtime::Isolate isolate;
+      const auto compiled = sources->Compile(isolate);
+      if (!compiled.Succeeded()) {
+        state.ResumeTiming();
+        ReportDiagnostics(state, compiled);
+        return;
+      }
+      vm::VirtualMachine machine(isolate);
+      const auto setup = machine.Execute(compiled.program.FindFunction("benchmarkSetup"));
+      if (!setup.Succeeded()) {
+        state.ResumeTiming();
+        state.SkipWithError("Input preparation failed: " + setup.message);
+        return;
+      }
+      const auto entry = compiled.program.FindFunction("benchmarkEntry");
+      state.ResumeTiming();
+      auto result = machine.Execute(entry);
+      benchmark::DoNotOptimize(result);
+      state.PauseTiming();
+      if (!IsExpected(result, problem)) {
+        state.ResumeTiming();
+        state.SkipWithError("First execution failed or checksum mismatched: " + result.message);
+        return;
+      }
+    }
+    state.ResumeTiming();
+  }
+}
+
 void Cpp(benchmark::State& state, Workload workload, Problem problem) {
   std::vector<std::int64_t> input(static_cast<std::size_t>(problem.size));
   std::ranges::iota(input, std::int64_t{0});
@@ -239,12 +588,36 @@ void Cpp(benchmark::State& state, Workload workload, Problem problem) {
 }
 
 int RegisterWorkloads() {
+  benchmark::AddCustomContext("luajit_revision", VELA_LUAJIT_REVISION);
+  benchmark::AddCustomContext("luajit_version", LUAJIT_VERSION);
+  benchmark::AddCustomContext("luajit_arch", VELA_LUAJIT_ARCH);
+  benchmark::AddCustomContext("luajit_dualnum", VELA_LUAJIT_DUALNUM);
+  benchmark::AddCustomContext("luajit_gc64", VELA_LUAJIT_GC64);
+  benchmark::AddCustomContext("luajit_build",
+                              "upstream amalgamation; default allocator; no FFI workloads");
+  benchmark::AddCustomContext("luajit_trace_limit", std::to_string(kTraceLimit));
+  benchmark::AddCustomContext("luajit_minimum_warmup", std::to_string(kMinimumWarmup));
+  benchmark::AddCustomContext("luajit_maximum_warmup", std::to_string(kMaximumWarmup));
   for (const auto& workload : kWorkloads) {
     for (const auto problem : workload.problems) {
       const auto suffix = std::string(workload.name) + "/" + std::to_string(problem.size);
       benchmark::RegisterBenchmark("compare/cpp/" + suffix, Cpp, workload, problem)->UseRealTime();
       benchmark::RegisterBenchmark("compare/vm/" + suffix, Vm, workload, problem)->UseRealTime();
+      benchmark::RegisterBenchmark("compare/luajit/" + suffix, Lua, workload, problem, LuaMode::Jit)
+          ->UseRealTime();
+      benchmark::RegisterBenchmark("compare/luajit_interp/" + suffix, Lua, workload, problem,
+                                   LuaMode::Interpreter)
+          ->UseRealTime();
       benchmark::RegisterBenchmark("compile/representative/" + suffix, Compile, workload, problem)
+          ->UseRealTime();
+      benchmark::RegisterBenchmark("compile/luajit/" + suffix, CompileLua, workload, problem)
+          ->UseRealTime();
+      benchmark::RegisterBenchmark("first/vm/" + suffix, FirstVm, workload, problem)->UseRealTime();
+      benchmark::RegisterBenchmark("first/luajit/" + suffix, FirstLua, workload, problem,
+                                   LuaMode::Jit)
+          ->UseRealTime();
+      benchmark::RegisterBenchmark("first/luajit_interp/" + suffix, FirstLua, workload, problem,
+                                   LuaMode::Interpreter)
           ->UseRealTime();
     }
   }

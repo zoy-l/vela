@@ -3,7 +3,6 @@
 #include "vm/execution.h"
 
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -12,6 +11,7 @@
 #include <span>
 #include <string_view>
 #include <tuple>
+#include <utility>
 
 #include "base/callable.h"
 #include "runtime/heap.h"
@@ -373,7 +373,9 @@ StepResult Execution::ReadDynamicMember(ActiveFrame& active,
   switch (member.kind) {
     case MemberKind::Field: {
       const auto type = member.type;
-      assert(type.has_value());
+      if (!type) {
+        std::unreachable();
+      }
       const auto value = *runtime::Heap::GetField(*receiver.AsObject(), member.target);
       const auto boxed = BoxDynamicValue(value, layouts.types().subspan(*type).front());
       if (!boxed) {
@@ -385,10 +387,12 @@ StepResult Execution::ReadDynamicMember(ActiveFrame& active,
     case MemberKind::Method: {
       const auto& wrapper = *layouts.classes().subspan(member.target).front();
       const auto target = wrapper.callable();
-      assert(target.has_value());
+      if (!target) {
+        std::unreachable();
+      }
       if (resolving) {
         const auto plan =
-            CreateDynamicCallPlan(receiver, DynamicCallStyle::Method, (*target).function);
+            CreateDynamicCallPlan(receiver, DynamicCallStyle::Method, target->function);
         if (!plan) {
           return std::unexpected(plan.error());
         }
@@ -440,13 +444,17 @@ StepResult Execution::WriteDynamicMember(ActiveFrame& active,
   const runtime::TypeConstraint* type = nullptr;
   if (member.kind == MemberKind::Field) {
     const auto index = member.type;
-    assert(index.has_value());
+    if (!index) {
+      std::unreachable();
+    }
     type = &active.function->layouts->types().subspan(*index).front();
   } else if (member.kind == MemberKind::Property && member.setter) {
     const auto& setter = functions_.subspan(*member.setter).front();
     const auto& signature = setter.signature;
-    assert(signature.has_value());
-    const auto parameter = (*signature).parameters.front().type;
+    if (!signature) {
+      std::unreachable();
+    }
+    const auto parameter = signature->parameters.front().type;
     type = &setter.layouts->types().subspan(parameter).front();
   } else {
     return std::unexpected(ExecutionStatus::TypeError);
@@ -462,9 +470,11 @@ StepResult Execution::WriteDynamicMember(ActiveFrame& active,
     values.subspan(DecodeA(instruction)).front() = input.subspan(2).front();
     return {};
   }
-  assert(member.setter.has_value());
-  const auto parameters =
-      EnterFrame({.function = *member.setter, .destination = DecodeA(instruction)});
+  const auto setter = member.setter;
+  if (!setter) {
+    std::unreachable();
+  }
+  const auto parameters = EnterFrame({.function = *setter, .destination = DecodeA(instruction)});
   if (!parameters) {
     return std::unexpected(parameters.error());
   }

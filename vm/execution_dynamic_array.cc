@@ -1,12 +1,12 @@
 #include "vm/execution.h"
 
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <span>
 #include <tuple>
+#include <utility>
 
 #include "base/array_algorithm.h"
 #include "base/builtin.h"
@@ -176,8 +176,10 @@ StepResult InitializeOutput(runtime::Isolate& isolate,
   const auto algorithm = static_cast<ArrayAlgorithm>(slots.subspan(kAlgorithm).front().AsInteger());
   auto& heap = isolate.heap();
   if (algorithm == ArrayAlgorithm::Map) {
-    const auto type = signature->result;
-    assert(type.has_value());
+    const auto& type = signature->result;
+    if (!type) {
+      std::unreachable();
+    }
     const auto output = AllocateOutput(isolate, *type, length);
     if (!output) {
       return std::unexpected(output.error());

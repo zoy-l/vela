@@ -1,9 +1,10 @@
 #include "base/member.h"
 #include "vm/execution.h"
 
-#include <cassert>
 #include <expected>
+#include <optional>
 #include <string>
+#include <utility>
 
 #include "base/builtin.h"
 #include "base/execution_status.h"
@@ -57,7 +58,9 @@ StepResult Execution::ExecuteJson(ActiveFrame& active, Instruction instruction) 
 }
 
 StepResult Execution::ContinueJson(ActiveFrame& active) {
-  assert(active.json_encoder.has_value());
+  if (!active.json_encoder) {
+    std::unreachable();
+  }
   auto& encoder = *active.json_encoder;
   const auto step = encoder.Advance();
   if (!step) {
@@ -75,8 +78,10 @@ StepResult Execution::ContinueJson(ActiveFrame& active) {
   }
   const auto callable =
       active.function->layouts->classes().subspan(method->target).front()->callable();
-  assert(callable.has_value());
-  const auto target = (*callable).function;
+  if (!callable) {
+    std::unreachable();
+  }
+  const auto target = callable->function;
   const auto& function = functions_.subspan(target).front();
   const auto& signature = function.signature;
   if (!signature || !signature->parameters.empty() || !signature->result) {

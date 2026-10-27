@@ -321,7 +321,9 @@ StepResult ScheduleTimeout(const FutureContinuation& context,
       !runtime::FutureScheduler::CanSchedule(std::chrono::milliseconds(delay.AsInteger()))) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  assert(call.runtime_type.has_value());
+  if (!call.runtime_type) {
+    std::unreachable();
+  }
   const auto timeout_type = *call.runtime_type;
   const auto& error_layout = isolate->error_layout();
   if (timeout_type.instance == nullptr ||
@@ -425,7 +427,9 @@ StepResult ObserveCallbacks(const FutureContinuation& context, const AsyncArgume
   const auto operation = call.operation;
   const auto argument = [&call](std::size_t index) { return call.At(index); };
 
-  assert(call.runtime_type.has_value());
+  if (!call.runtime_type) {
+    std::unreachable();
+  }
   const auto error_type = *call.runtime_type;
   const auto on_value = operation == AsyncOperation::Then ? argument(1) : Value::Null();
   const auto on_error = operation == AsyncOperation::Then ? argument(2) : argument(1);

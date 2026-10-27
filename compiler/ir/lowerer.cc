@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -1732,10 +1731,17 @@ void Lowerer::StoreMutationTarget(const frontend::Expression& target,
     return;
   }
   if (destination.setter) {
-    assert(destination.object.has_value());
+    if (!destination.object) {
+      std::unreachable();
+    }
     const auto base = AllocateRegister(location);
     const auto argument = AllocateRegister(location);
-    Emit({.opcode = Opcode::Move, .dst = base, .lhs = *destination.object, .location = location});
+    Emit({
+        .opcode = Opcode::Move,
+        .dst = base,
+        .lhs = *destination.object,
+        .location = location,
+    });
     Emit({.opcode = Opcode::Move, .dst = argument, .lhs = value, .location = location});
     const auto ignored = AllocateTemporary(location);
     Emit({

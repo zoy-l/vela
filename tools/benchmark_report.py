@@ -1,4 +1,4 @@
-"""Summarize paired Google Benchmark samples without mixing timing boundaries."""
+"""Summarize selected execution backends, cold calls, compilation and memory separately."""
 
 from __future__ import annotations
 
@@ -8,62 +8,187 @@ import re
 from statistics import mean, median, stdev
 
 
-CASE = re.compile(r"^(compare/(cpp|vm)|compile/representative)/([^/]+)/(\d+)(?:/real_time)?$")
+CASE = re.compile(
+    r"^(compare|first|compile)/(cpp|vm|luajit|luajit_interp|representative)/"
+    r"([^/]+)/(\d+)(?:/real_time)?$")
 MICROSECONDS = {"ns": 0.001, "us": 1.0, "ms": 1000.0, "s": 1_000_000.0}
+LABELS = {"cpp": "C++", "vm": "Vela", "luajit_interp": "Lua interpreter",
+          "luajit": "LuaJIT", "representative": "Vela compile"}
+NATIVE_CASE = re.compile(
+    r"^native/(cpp|cpp_indirect|vm|vm_control)/(empty|integer|double|string_borrow)/(\d+)/real_time$")
 
 
 def variation(values: list[float]) -> str:
     return f"{stdev(values) / mean(values):.1%}" if len(values) > 1 else "-"
 
 
-def comparison_report(report: dict) -> str:
-    samples: dict[tuple[str, int], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-    counters: dict[tuple[str, int], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+def iteration_rows(report: dict, expected_cases: list[str], repetitions: int) -> dict[str, list[dict]]:
+    expected = set(expected_cases)
+    if not expected or repetitions < 1:
+        raise ValueError("Comparison requires selected cases and positive repetitions")
+    rows: dict[str, list[dict]] = defaultdict(list)
     for entry in report["benchmarks"]:
         if entry.get("error_occurred"):
             raise ValueError(f'{entry["name"]}: {entry.get("error_message", "benchmark failed")}')
-        if entry.get("run_type", "iteration") != "iteration":
-            continue
-        match = CASE.fullmatch(entry.get("run_name", entry["name"]))
-        if match is None:
-            continue
-        group, backend, workload, size = match.groups()
-        backend = "compile" if group == "compile/representative" else backend
-        elapsed = entry["real_time"] * MICROSECONDS[entry["time_unit"]]
-        if not math.isfinite(elapsed) or elapsed <= 0:
-            raise ValueError(f'{entry["name"]}: invalid wall time')
-        key = (workload, int(size))
-        samples[key][backend].append(elapsed)
-        if backend == "vm":
-            for name in ("baseline_bytes", "retained_bytes", "committed_bytes", "register_bytes"):
-                counters[key][name].append(entry[name])
-    if not samples:
-        raise ValueError("No paired comparison samples in the benchmark report")
+        if entry.get("run_type", "iteration") == "iteration":
+            rows[entry.get("run_name", entry["name"])].append(entry)
+    if set(rows) != expected:
+        raise ValueError(f"Comparison cases differ from registry: missing {sorted(expected - rows.keys())}; "
+                         f"unexpected {sorted(rows.keys() - expected)}")
+    for name, entries in rows.items():
+        if (len(entries) != repetitions or
+                any(entry.get("repetitions", 1) != repetitions for entry in entries) or
+                {entry.get("repetition_index", 0) for entry in entries} != set(range(repetitions))):
+            raise ValueError(f"{name}: incomplete or duplicate repetitions")
+        times = [entry["real_time"] * MICROSECONDS[entry["time_unit"]] for entry in entries]
+        if any(not math.isfinite(value) or value <= 0 for value in times):
+            raise ValueError(f"{name}: invalid wall time")
+    return rows
 
-    lines = [
-        "Median wall time per complete workload; compilation and input preparation are excluded",
-        "from execution. Ratio = Vela VM / optimized C++; lower is better. Compile is separate.",
-        "",
-        "| Workload | Size | Samples C++/VM | C++ (us) | Vela (us) | Ratio | CV C++/VM | Compile (us) |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-    ]
-    for (workload, size), values in sorted(samples.items()):
-        if not values["cpp"] or not values["vm"]:
-            raise ValueError(f"{workload}/{size}: missing C++ or VM samples")
-        native, vm = median(values["cpp"]), median(values["vm"])
-        compile_time = f'{median(values["compile"]):.3f}' if values["compile"] else "-"
-        lines.append(f'| {workload} | {size} | {len(values["cpp"])}/{len(values["vm"])} | '
-                     f'{native:.3f} | {vm:.3f} | {vm / native:.2f}x | '
-                     f'{variation(values["cpp"])}/{variation(values["vm"])} | {compile_time} |')
-    lines.extend([
-        "", "VM heap snapshots in bytes (medians; committed is an end-of-run snapshot, not a peak).",
-        "Baseline and retained include the rooted input and program constants; retained is after GC.",
-        "These are Vela heap counters, not process RSS or C++ allocator measurements.", "",
-        "| Workload | Size | Baseline | After GC | Committed | Registers |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
-    ])
-    for (workload, size), values in sorted(counters.items()):
-        numbers = [f'{median(values[name]):.0f}' for name in
-                   ("baseline_bytes", "retained_bytes", "committed_bytes", "register_bytes")]
-        lines.append(f'| {workload} | {size} | ' + ' | '.join(numbers) + ' |')
+
+def comparison_report(report: dict, expected_cases: list[str], repetitions: int) -> str:
+    if not expected_cases or any(CASE.fullmatch(name) is None for name in expected_cases):
+        raise ValueError("No supported comparison cases selected")
+    rows = iteration_rows(report, expected_cases, repetitions)
+    samples: dict[tuple[str, str, str, int], list[float]] = {}
+    counters: dict[tuple[str, str, int], dict[str, list[float]]] = {}
+    for name, entries in rows.items():
+        match = CASE.fullmatch(name)
+        phase, backend, workload, size_text = match.groups()
+        size = int(size_text)
+        times = [entry["real_time"] * MICROSECONDS[entry["time_unit"]] for entry in entries]
+        samples[phase, backend, workload, size] = times
+        if phase != "compare" or backend == "cpp":
+            continue
+        fields = (("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes", "register_bytes")
+                  if backend == "vm" else
+                  ("baseline_bytes", "allocated_bytes", "retained_bytes", "warmup_calls",
+                   "warm_traces", "traces", "warm_jit_code_bytes", "jit_code_bytes"))
+        values = {}
+        for field in fields:
+            numbers = [entry[field] for entry in entries]
+            if any(not math.isfinite(value) or value < 0 for value in numbers):
+                raise ValueError(f"{name}: invalid {field}")
+            values[field] = numbers
+        if backend == "luajit" and any(value == 0 for value in values["warm_traces"]):
+            raise ValueError(f"{name}: no compiled traces after warm-up")
+        if backend == "luajit_interp" and any(
+                value != 0 for field in ("warm_traces", "traces", "jit_code_bytes")
+                for value in values[field]):
+            raise ValueError(f"{name}: interpreter reported compiled traces")
+        counters[backend, workload, size] = values
+
+    lines = ["Median wall time per complete workload (microseconds).",
+             "Ratios are Vela / the named backend; lower is better.",
+             "Execution excludes source loading, bytecode compilation, input setup and warm-up; "
+             "normal GC and subsequent JIT tracing remain timed.",
+             f"Every selected case passed all {repetitions} repetitions.", ""]
+    context = report.get("context", {})
+    for key in sorted(context):
+        if key.startswith("luajit_"):
+            lines.append(f"{key}: {context[key]}")
+    lines.append("")
+
+    def table(phase: str, backends: tuple[str, ...], title: str) -> None:
+        keys = sorted({(workload, size) for kind, _, workload, size in samples if kind == phase})
+        if not keys:
+            return
+        lines.extend([title, ""])
+        ratios = tuple(backend for backend in backends if backend != "vm") if phase != "compile" else ()
+        columns = ["Workload", "Size", *(LABELS[backend] + " (us)" for backend in backends),
+                   *("Vela/" + LABELS[backend] for backend in ratios),
+                   "Samples " + "/".join(LABELS[backend] for backend in backends),
+                   "CV " + "/".join(LABELS[backend] for backend in backends)]
+        lines.extend(["| " + " | ".join(columns) + " |",
+                      "| --- | " + " | ".join("---:" for _ in columns[1:]) + " |"])
+        for workload, size in keys:
+            values = {backend: samples.get((phase, backend, workload, size), []) for backend in backends}
+            medians = {backend: median(times) for backend, times in values.items() if times}
+            elapsed = [f"{medians[backend]:.3f}" if backend in medians else "-" for backend in backends]
+            compared = [f'{medians["vm"] / medians[backend]:.2f}x'
+                        if "vm" in medians and backend in medians else "-" for backend in ratios]
+            counts = "/".join(str(len(values[backend])) for backend in backends)
+            cvs = "/".join(variation(values[backend]) if values[backend] else "-" for backend in backends)
+            lines.append("| " + " | ".join([workload, str(size), *elapsed, *compared, counts, cvs]) + " |")
+        lines.append("")
+
+    table("compare", ("cpp", "vm", "luajit_interp", "luajit"), "Steady execution after warm-up.")
+    table("first", ("vm", "luajit_interp", "luajit"),
+          "First invocation in a fresh state. Setup, compilation and destruction are excluded; "
+          "LuaJIT tracing during this invocation is included.")
+    table("compile", ("representative", "luajit"),
+          "Compilation in a fresh state. Vela performs semantic analysis, optimization and bytecode "
+          "preparation; LuaJIT loads source into Lua bytecode. These are distinct compiler boundaries.")
+
+    lines.extend(["Heap snapshots in bytes (medians), including rooted input and program/library objects.",
+                  "Retained is after full GC; these counters are not process RSS. "
+                  "JIT code bytes sum live trace machine code, excluding unused reserved code pages.", "",
+                  "| Workload | Size | Backend | Baseline | End heap | After GC | Committed | Registers | "
+                  "Warm calls | Warm traces | Final traces | Warm JIT code | Final JIT code |",
+                  "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"])
+    fields = ("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes", "register_bytes",
+              "warmup_calls", "warm_traces", "traces", "warm_jit_code_bytes", "jit_code_bytes")
+    for (backend, workload, size), values in sorted(counters.items(), key=lambda item: (item[0][1:],
+                                                                                     item[0][0])):
+        numbers = [f"{median(values[field]):.0f}" if field in values else "-" for field in fields]
+        lines.append("| " + " | ".join([workload, str(size), LABELS[backend], *numbers]) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def native_call_report(report: dict, expected_cases: list[str], repetitions: int) -> str:
+    rows = iteration_rows(report, expected_cases, repetitions)
+    samples = {}
+    heaps = {}
+    for name, entries in rows.items():
+        match = NATIVE_CASE.fullmatch(name)
+        if match is None:
+            raise ValueError(f"Unsupported native comparison case: {name}")
+        backend, workload, count_text = match.groups()
+        count = int(count_text)
+        if count <= 0 or any(entry["calls_per_iteration"] != count for entry in entries):
+            raise ValueError(f"{name}: invalid call count")
+        samples[backend, workload, count] = [
+            entry["real_time"] * MICROSECONDS[entry["time_unit"]] * 1000 / count
+            for entry in entries]
+        if backend in {"vm", "vm_control"}:
+            fields = ("baseline_heap_bytes", "end_heap_bytes", "baseline_heap_objects",
+                      "end_heap_objects", "register_bytes")
+            values = {field: [entry[field] for entry in entries] for field in fields}
+            if any(not math.isfinite(value) or value < 0
+                   for numbers in values.values() for value in numbers):
+                raise ValueError(f"{name}: invalid heap or register counter")
+            heaps[backend, workload, count] = values
+
+    backends = ("cpp", "cpp_indirect", "vm_control", "vm")
+    lines = ["Native call comparison: median wall nanoseconds per call/loop iteration.",
+             f"Every selected case passed all {repetitions} repetitions.",
+             "C++ uses the same non-inlined kernels and NativeContext as the VM. "
+             "The indirect target is hidden from the compiler before timing.",
+             "VM totals include loop work, checksum accumulation, native wrappers and entry/exit "
+             "amortized over the batch. Registration, compilation and warm-up are excluded.",
+             "VM minus control subtracts independent medians, not paired samples. It estimates "
+             "the additional native path including changed bytecode/register work, not an isolated "
+             "ABI cost. The string control uses the known kernel result.", "",
+             "| Workload | Calls/batch | C++ direct ns | C++ indirect ns | VM control ns | VM native ns | "
+             "VM minus control ns | Samples direct/indirect/control/native | CV direct/indirect/control/native |",
+             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |"]
+    keys = sorted({(workload, count) for _, workload, count in samples})
+    for workload, count in keys:
+        values = [samples.get((backend, workload, count), []) for backend in backends]
+        medians = [median(times) if times else None for times in values]
+        elapsed = [f"{value:.3f}" if value is not None else "-" for value in medians]
+        delta = (f"{medians[3] - medians[2]:.3f}"
+                 if medians[3] is not None and medians[2] is not None else "-")
+        counts = "/".join(str(len(times)) for times in values)
+        cvs = "/".join(variation(times) if times else "-" for times in values)
+        lines.append("| " + " | ".join([workload, str(count), *elapsed, delta, counts, cvs]) + " |")
+    lines.extend(["", "VM GC heap snapshots and retained register capacity, in bytes/objects. "
+                  "These are live snapshots, not cumulative allocation counts, host malloc counts "
+                  "or process RSS. Native argument-buffer capacity is not included in registers.", "",
+                  "| Workload | Calls/batch | Backend | Baseline heap bytes | End heap bytes | "
+                  "Baseline objects | End objects | Register bytes |",
+                  "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |"])
+    for (backend, workload, count), fields in sorted(heaps.items(), key=lambda item: (item[0][1:], item[0][0])):
+        numbers = [f"{median(values):.0f}" for values in fields.values()]
+        lines.append("| " + " | ".join([workload, str(count), backend, *numbers]) + " |")
     return "\n".join(lines) + "\n"

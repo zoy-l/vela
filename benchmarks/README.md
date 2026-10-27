@@ -11,10 +11,12 @@ their union, intersection and difference through the native ordered hash tables.
 Native benchmark sources use `*_benchmark.cc`. Generated symbol-table workloads
 also measure compilation at 32, 256, and 1024 declaration groups.
 
-The representative suite adds nine
-algorithm/application workloads at two sizes, each with an optimized C++ pair.
-Run `python -m tools.vl bench --compare` to save raw samples, medians, VM/C++
-ratios, variation and Vela heap snapshots under `out/benchmarks/`.
+The representative suite contains nine algorithm/application workloads at two
+sizes, each implemented in Vela, optimized C++, LuaJIT with JIT enabled, and
+LuaJIT with JIT disabled. Run `python -m tools.vl bench --compare` to save raw
+samples and a Markdown comparison under `out/benchmarks/`. The report separates
+steady execution, first invocation, compilation and memory snapshots. It shows
+Vela/C++, Vela/LuaJIT and Vela/Lua-interpreter ratios, medians and variation.
 `array_growth` and `array_growth_reserved` compare typed push/read/pop workloads
 with geometric growth versus a single reserve; see [typed arrays](../docs/en/arrays.md).
 
@@ -29,6 +31,95 @@ The runner builds Release by default. Google Benchmark controls iteration
 calibration, timing, repetitions, aggregates, filtering, and JSON/CSV output.
 For a fixed execution count, use `--benchmark_min_time=3000x`; repetitions are
 separate samples controlled by `--benchmark_repetitions`.
+
+`--compare` defaults to seven repetitions, at least 0.2 seconds per case, and
+random interleaving. It queries the executable's filtered benchmark registry
+before execution and requires every selected case and repetition in the report;
+missing backends, missing cases, duplicate repetitions, runtime errors and
+checksum mismatches fail the command. An explicit filter selects the requested
+subset without inventing results for excluded backends. For example:
+
+```sh
+python3 -m tools.vl bench --compare -- --benchmark_filter='^compare/(cpp|vm|luajit|luajit_interp)/sieve/'
+```
+
+Run `gclient sync --no-history` after pulling the LuaJIT dependency addition.
+LuaJIT's immutable revision, version, architecture, GC64 and numeric mode are
+included in the JSON context and Markdown report. The pinned library is embedded
+in `vela_benchmarks`; the Vela runtime and CLI do not link LuaJIT.
+
+The Lua kernels use ordinary tables and the same generated input values,
+algorithm, loop counts and checksums as their Vela/C++ counterparts. Lua arrays
+use one-based positions; stored input values still start at zero. The reserved
+growth case uses LuaJIT's built-in `table.new`; it shares the growth kernel and
+passes the capacity explicitly. No FFI arrays or native algorithm replacements
+are used. Integer division is translated explicitly with `math.floor` for the
+nonnegative operands in these kernels. All integer intermediates and checksums
+fit within the exact integer range of binary64.
+
+`compare/luajit_interp/*` disables the JIT engine and checks that no traces exist.
+`compare/luajit/*` enables JIT and validates at least 128 warm-up calls, in batches
+of 16, until trace count and live code bytes remain stable for two batches.
+Warm-up fails after 1,024 calls if stability is not reached, or if no compiled
+trace exists. The trace limit is explicitly 1,000. The inspector itself has JIT
+disabled. Preparation, warm-up and the following full collection are outside
+steady timing; normal GC and any later tracing remain timed. Warm/final trace
+counts and code sizes expose subsequent compilation instead of assuming it cannot
+happen. Every invocation checks the common expected result.
+
+`first/vm/*`, `first/luajit/*` and `first/luajit_interp/*` run the workload once in
+a fresh state without workload warm-up. Source compilation, library/input setup
+and destruction are excluded; JIT compilation triggered by that first invocation
+is included. Timer pause/resume overhead makes these startup measurements
+different from steady throughput. `compile/representative/*` measures Vela's
+complete compilation/bytecode preparation in a fresh Isolate;
+`compile/luajit/*` measures source-to-Lua-bytecode loading in a fresh Lua state.
+The report keeps those distinct compiler boundaries separate from execution.
+
+Lua heap counters come from the default allocator's GC accounting, not a custom
+allocator. Baseline, end-of-execution and post-collection heap sizes include
+rooted input, libraries and program objects. Trace inspection happens after the
+end-of-execution heap snapshot. JIT code bytes sum the machine code returned by
+`jit.util.tracemc`; they exclude unused reserved code pages. Vela heap/register
+counters retain their existing definitions. None of these is process RSS, and
+Lua heap plus trace bytes must not be presented as complete process memory.
+
+## Native C++ call boundaries
+
+Run `python3 -m tools.vl bench --native-compare` to compare direct C++ calls,
+opaque C++ function-pointer calls, VM native calls and VM loop controls. It uses
+the same Release/repetition policy as `--compare` and writes
+`out/benchmarks/native_comparison.json` plus a Markdown report. Use `--report`
+to choose a different JSON path; Google Benchmark options still follow `--`.
+
+The four kernels cover a void call, integer input/result, double input/result,
+and a borrowed `std::string_view` whose length and first byte are read without
+copying or returning a new string. Each batch performs 64 or 4,096 calls and
+checks its checksum. Kernels live in a separate translation unit with inlining
+disabled. The empty kernel contains a compiler memory barrier to retain the
+call; it performs no application work. C++ baselines use the same kernels and
+`NativeContext`. The indirect target is hidden from the compiler before timing.
+
+VM cases use the production compiler, external declaration, native binding and
+execution path. Registration, compilation and one warm-up batch are excluded.
+Normal execution, loop work, checksum accumulation, host entry/exit and native
+wrappers remain timed. Controls replace the native operation with the matching
+script arithmetic, or the known kernel result for the string case. Reported
+nanoseconds divide the complete batch time by its call count. `VM minus control`
+subtracts independent medians; it includes changes in bytecode and register
+work and must not be described as an isolated ABI cost. A negative estimate
+remains visible instead of being clamped to zero. The controls perform no
+native calls; their normalized times are per loop iteration.
+
+The memory table records live GC heap bytes/objects before and after timing,
+plus register capacity after warm-up. Register growth after warm-up fails the
+case. These snapshots do not count cumulative allocations or host allocator
+calls, and register capacity excludes the native argument buffer. Measure those
+separately with allocator instrumentation; equal snapshots do not prove zero
+allocations. Performance work targets a native path with no argument-buffer
+materialization, extra script frame or repeated checks for facts already proven
+at a real validation boundary. These are optimization goals, not properties
+established by this benchmark addition.
 
 The original small workloads use these timing boundaries:
 

@@ -281,3 +281,172 @@ static_library("benchmark_main") {
   sources = [ "benchmark/src/benchmark_main.cc" ]
   public_deps = [ ":benchmark" ]
 }
+
+luajit_source = "//third_party/luajit/src"
+luajit_generated = "$root_gen_dir/third_party/luajit"
+luajit_libraries = [
+  "$luajit_source/lib_base.c",
+  "$luajit_source/lib_math.c",
+  "$luajit_source/lib_bit.c",
+  "$luajit_source/lib_string.c",
+  "$luajit_source/lib_table.c",
+  "$luajit_source/lib_io.c",
+  "$luajit_source/lib_os.c",
+  "$luajit_source/lib_package.c",
+  "$luajit_source/lib_debug.c",
+  "$luajit_source/lib_jit.c",
+  "$luajit_source/lib_ffi.c",
+  "$luajit_source/lib_buffer.c",
+]
+
+config("luajit_settings") {
+  include_dirs = [
+    luajit_source,
+    luajit_generated,
+  ]
+  defines = [
+    "_FILE_OFFSET_BITS=64",
+    "_LARGEFILE_SOURCE",
+  ]
+  if (target_os == "win") {
+    defines += [
+      "_CRT_SECURE_NO_WARNINGS",
+      "_CRT_STDIO_INLINE=__declspec(dllexport)__inline",
+    ]
+  } else {
+    defines += [ "LUAJIT_UNWIND_EXTERNAL" ]
+    cflags = [ "-fno-stack-protector" ]
+  }
+}
+
+config("luajit_headers") {
+  directories = [
+    luajit_source,
+    luajit_generated,
+  ]
+  cflags = []
+  foreach(directory, directories) {
+    include = rebase_path(directory, root_build_dir)
+    if (target_os == "win") {
+      cflags += [ "/external:I$include" ]
+    } else {
+      cflags += [
+        "-isystem",
+        include,
+      ]
+    }
+  }
+}
+
+executable("luajit_minilua") {
+  testonly = true
+  configs -= [ "//build/config:vela_warnings" ]
+  sources = [ "$luajit_source/host/minilua.c" ]
+  if (target_os != "win") {
+    libs = [ "m" ]
+  }
+}
+
+action("luajit_arch") {
+  testonly = true
+  script = "//build/scripts/luajit.py"
+  deps = [ ":luajit_minilua" ]
+  inputs = [
+    "//DEPS",
+    "$luajit_source/lj_arch.h",
+    "$luajit_source/luajit_rolling.h",
+    "$luajit_source/host/genversion.lua",
+    "//third_party/luajit/dynasm/dynasm.lua",
+    "//third_party/luajit/dynasm/dasm_arm64.lua",
+    "//third_party/luajit/dynasm/dasm_x64.lua",
+    "//third_party/luajit/dynasm/dasm_x86.lua",
+    "$luajit_source/vm_arm64.dasc",
+    "$luajit_source/vm_x64.dasc",
+  ]
+  outputs = [
+    "$luajit_generated/buildvm_arch.h",
+    "$luajit_generated/luajit.h",
+    "$luajit_generated/luajit_build.h",
+    "$luajit_generated/luajit_relver.txt",
+  ]
+  minilua =
+      get_label_info(":luajit_minilua", "root_out_dir") + "/luajit_minilua"
+  if (target_os == "win") {
+    minilua += ".exe"
+  }
+  args = [
+    "arch",
+    "--os=$target_os",
+    "--cc=$vela_cc",
+    "--minilua=" + rebase_path(minilua),
+    "--output=" + rebase_path(outputs[0]),
+  ]
+  if (target_os == "mac") {
+    args += [ "--sysroot=$vela_sysroot" ]
+  }
+}
+
+executable("luajit_buildvm") {
+  testonly = true
+  configs -= [ "//build/config:vela_warnings" ]
+  configs += [ ":luajit_settings" ]
+  deps = [ ":luajit_arch" ]
+  sources = [
+    "$luajit_source/host/buildvm.c",
+    "$luajit_source/host/buildvm_asm.c",
+    "$luajit_source/host/buildvm_fold.c",
+    "$luajit_source/host/buildvm_lib.c",
+    "$luajit_source/host/buildvm_peobj.c",
+  ]
+}
+
+action("luajit_runtime") {
+  testonly = true
+  script = "//build/scripts/luajit.py"
+  deps = [ ":luajit_buildvm" ]
+  inputs = luajit_libraries + [ "$luajit_source/lj_opt_fold.c" ]
+  outputs = [
+    "$luajit_generated/lj_bcdef.h",
+    "$luajit_generated/lj_ffdef.h",
+    "$luajit_generated/lj_libdef.h",
+    "$luajit_generated/lj_recdef.h",
+    "$luajit_generated/lj_folddef.h",
+  ]
+  if (target_os == "win") {
+    outputs += [ "$luajit_generated/lj_vm.obj" ]
+  } else {
+    outputs += [ "$luajit_generated/lj_vm.S" ]
+  }
+  buildvm =
+      get_label_info(":luajit_buildvm", "root_out_dir") + "/luajit_buildvm"
+  if (target_os == "win") {
+    buildvm += ".exe"
+  }
+  args = [
+    "runtime",
+    "--os=$target_os",
+    "--buildvm=" + rebase_path(buildvm),
+    "--output=" + rebase_path(luajit_generated),
+  ]
+  foreach(library, luajit_libraries) {
+    args += [ "--library=" + rebase_path(library) ]
+  }
+}
+
+static_library("luajit") {
+  testonly = true
+  configs -= [ "//build/config:vela_warnings" ]
+  configs += [ ":luajit_settings" ]
+  public_configs = [ ":luajit_headers" ]
+  deps = [ ":luajit_runtime" ]
+  sources = [ "$luajit_source/ljamalg.c" ]
+  if (target_os == "win") {
+    sources += [ "$luajit_generated/lj_vm.obj" ]
+  } else {
+    sources += [ "$luajit_generated/lj_vm.S" ]
+    libs = [ "m" ]
+    if (target_os == "linux") {
+      libs += [ "dl" ]
+    }
+  }
+}

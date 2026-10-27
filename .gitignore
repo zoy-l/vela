@@ -9,6 +9,7 @@
 /third_party/unicode_data/inputs/
 /third_party/yyjson/
 /third_party/xxhash/
+/third_party/luajit/
 /.cipd/
 /.gclient_entries
 /.gclient_previous_sync_commits

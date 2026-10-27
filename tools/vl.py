@@ -25,7 +25,7 @@ def print_help() -> None:
     print()
     print("Commands:")
     print("  build       Configure and build a target")
-    print("  bench       Run Release benchmarks; --compare adds C++ comparisons")
+    print("  bench       Run Release benchmarks; --compare for backends, --native-compare for C++ calls")
     print("  clangd      Generate compile_commands.json")
     print("  config      Generate a GN output directory")
     print("  doctor      Check the project toolchain")

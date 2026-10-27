@@ -1,4 +1,5 @@
 vars = {
+  "luajit_revision": "a4c064539ea931274d407e1249b4bb575424a0f4",
   "abseil_revision": "76bb24329e8bf5f39704eb10d21b9a80befa7c81",
   "benchmark_revision": "192ef10025eb2c4cdd392bc502f0c852196baa48",
   "googletest_revision": "52eb8108c5bdec04579160ae17225d66034bd723",
@@ -16,6 +17,7 @@ vars = {
 }
 
 deps = {
+  "third_party/luajit": "https://github.com/LuaJIT/LuaJIT.git@" + Var("luajit_revision"),
   "third_party/abseil-cpp": "https://github.com/abseil/abseil-cpp.git@" + Var("abseil_revision"),
   "third_party/benchmark": "https://github.com/google/benchmark.git@" + Var("benchmark_revision"),
   "third_party/googletest": "https://github.com/google/googletest.git@" + Var("googletest_revision"),

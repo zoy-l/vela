@@ -39,6 +39,14 @@ toolchain("clang") {
       outputs = [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.$object_extension" ]
     }
   } else {
+    tool("asm") {
+      depfile = "{{output}}.d"
+      depsformat = "gcc"
+      command = "\"$cc\" -MD -MF {{output}}.d -c {{source}} -o {{output}} {{defines}} {{include_dirs}} {{cflags}} {{asmflags}}"
+      description = "ASM {{output}}"
+      outputs = [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.$object_extension" ]
+    }
+
     # Clang 输出 Make 格式依赖；-MD
     # 同时跟踪第三方系统头，防止依赖更新后沿用旧 ABI。
     tool("cc") {

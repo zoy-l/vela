@@ -4,7 +4,6 @@
 #include "runtime/value.h"
 
 #include <atomic>
-#include <cassert>
 #include <chrono>
 #include <cstddef>
 #include <expected>
@@ -12,7 +11,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -58,12 +56,8 @@ struct Future::SharedState final {
   std::vector<Waiter> waiters;
   FutureScheduler* scheduler = nullptr;
   Heap* heap = nullptr;
-  std::thread::id owner = std::this_thread::get_id();
   std::atomic<FutureResult*> incoming{nullptr};
   ~SharedState() { const std::unique_ptr<FutureResult> owned(incoming.load()); }
-  void RequireOwner() const {
-    assert(scheduler != nullptr ? scheduler->IsOwnerThread() : owner == std::this_thread::get_id());
-  }
   std::shared_ptr<std::vector<::vela::runtime::Value>> retained;
   std::weak_ptr<SharedState> adopted;
 };
@@ -160,7 +154,6 @@ void Future::MakeHeapOwned() noexcept {
 }
 
 void Future::KeepAlive(std::shared_ptr<std::vector<::vela::runtime::Value>> references) {
-  state_->RequireOwner();
   state_->retained = std::move(references);
   if (auto* heap = state_->heap; heap != nullptr && heap->IsCollecting()) {
     Trace(*heap);
@@ -213,7 +206,6 @@ void Future::Trace(Heap& heap) const noexcept {
 }
 
 void Future::AttachHeap(Heap& heap) {
-  state_->RequireOwner();
   if (state_->heap == nullptr) {
     state_->heap = &heap;
     heap.future_roots_.push_back(Root(state_));
@@ -250,7 +242,6 @@ Future Future::Sleep(std::chrono::milliseconds delay, FutureScheduler& scheduler
 }
 
 FutureState Future::state() const noexcept {
-  state_->RequireOwner();
   return state_->completion.state;
 }
 
@@ -259,20 +250,17 @@ bool Future::IsCompleted() const noexcept {
 }
 
 std::optional<::vela::runtime::Value> Future::value() const {
-  state_->RequireOwner();
   return state_->completion.state == FutureState::Succeeded
              ? std::optional(state_->completion.value)
              : std::nullopt;
 }
 
 std::optional<::vela::runtime::Value> Future::error() const {
-  state_->RequireOwner();
   return state_->completion.state == FutureState::Failed ? std::optional(state_->completion.value)
                                                          : std::nullopt;
 }
 
 std::optional<FutureDiagnostic> Future::error_diagnostic() const {
-  state_->RequireOwner();
   return state_->completion.state == FutureState::Failed
              ? std::optional(state_->completion.diagnostic)
              : std::nullopt;
@@ -286,7 +274,6 @@ void Future::Observe(Callback callback) const {
 
 void Future::ObserveResult(std::function<void(const FutureResult&)> callback,
                            std::shared_ptr<std::vector<::vela::runtime::Value>> references) const {
-  state_->RequireOwner();
   if (auto* heap = state_->heap; heap != nullptr && heap->IsCollecting() && references != nullptr) {
     const RootRange roots(*heap, references->data(), references->size());
   }
@@ -342,9 +329,6 @@ std::expected<void, FutureCompletionError> Future::CompleteError(::vela::runtime
 }
 
 std::expected<void, FutureCompletionError> Future::Settle(FutureResult result) {
-  if (state_->scheduler == nullptr) {
-    state_->RequireOwner();
-  }
   if (state_->completion_requested.exchange(true, std::memory_order_acq_rel)) {
     return std::unexpected(FutureCompletionError::AlreadyCompleted);
   }
@@ -363,7 +347,6 @@ std::expected<void, FutureCompletionError> Future::Settle(FutureResult result) {
 }
 
 void Future::Publish(FutureResult result) {
-  state_->RequireOwner();
   if (result.state == FutureState::Succeeded && result.value.IsObject()) {
     if (const auto* source = Heap::GetFuture(*result.value.AsObject())) {
       if (const auto checked = CheckAdoption(*source); checked) {
@@ -406,7 +389,6 @@ void Future::Publish(FutureResult result) {
 }
 
 std::expected<void, FutureCompletionError> Future::Adopt(const Future& source) {
-  state_->RequireOwner();
   if (const auto checked = CheckAdoption(source); !checked) {
     return checked;
   }

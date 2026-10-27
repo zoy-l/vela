@@ -88,9 +88,9 @@ def _path_files(paths: list[Path], build_files: list[Path]) -> list[Path]:
     return sorted(files)
 
 
-def _check_source(clang_tidy: Path, source: Path, *, fix: bool) -> LintResult:
+def _check_source(clang_tidy: Path, source: Path, database: Path, *, fix: bool) -> LintResult:
     command = [
-        str(clang_tidy), str(source), "-p", str(ROOT), "--quiet", "--warnings-as-errors=*",
+        str(clang_tidy), str(source), "-p", str(database), "--quiet", "--warnings-as-errors=*",
     ]
     if fix:
         command.extend(["--fix", "--format-style=file"])
@@ -121,6 +121,7 @@ def run(parsed: argparse.Namespace) -> int:
     if parsed.jobs < 1:
         raise RuntimeError("--jobs must be greater than zero")
     generate_compilation_database(parsed.variant)
+    database = output_directory(parsed.variant)
     tools = toolchain_tools()
     build_files = _build_files(tools["gn"], parsed.variant)
     files = _path_files(parsed.paths, build_files) if parsed.paths else build_files
@@ -129,7 +130,7 @@ def run(parsed: argparse.Namespace) -> int:
 
     if parsed.fix:
         # 不并行修复：多个翻译单元可能同时改写共享头文件。
-        results = [_check_source(tools["clang_tidy"], source, fix=True) for source in files]
+        results = [_check_source(tools["clang_tidy"], source, database, fix=True) for source in files]
     else:
         worker_count = min(parsed.jobs, len(files))
         print(
@@ -140,7 +141,7 @@ def run(parsed: argparse.Namespace) -> int:
         results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as pool:
             pending = {
-                pool.submit(_check_source, tools["clang_tidy"], source, fix=False)
+                pool.submit(_check_source, tools["clang_tidy"], source, database, fix=False)
                 for source in files
             }
             completed = 0

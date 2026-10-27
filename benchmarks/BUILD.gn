@@ -6,6 +6,9 @@ executable("vela_benchmarks") {
     "compilation_cache_benchmark.cc",
     "gc_strategy_benchmark.cc",
     "json_benchmark.cc",
+    "native_call_benchmark.cc",
+    "native_call_kernels.cc",
+    "native_call_kernels.h",
     "native_workloads.cc",
     "native_workloads.h",
     "regexp_benchmark.cc",
@@ -21,5 +24,6 @@ executable("vela_benchmarks") {
   deps = [
     "//compiler",
     "//third_party:benchmark_main",
+    "//third_party:luajit",
   ]
 }

@@ -4,7 +4,6 @@
 #include <absl/container/flat_hash_set.h>
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -226,7 +225,8 @@ bool IsValidInstruction(Instruction instruction,
 }
 
 bool HasMatchingCallableSignature(const runtime::ClassLayout& layout,
-                                  const FunctionStorage& function) {
+                                  const FunctionStorage& function,
+                                  CallableMode mode) {
   const auto* expected = layout.callable_type();
   if (expected == nullptr) {
     return true;
@@ -235,9 +235,7 @@ bool HasMatchingCallableSignature(const runtime::ClassLayout& layout,
     return false;
   }
   const auto& signature = *function.signature;
-  const auto callable = layout.callable();
-  assert(callable.has_value());
-  const auto hidden = (*callable).mode == CallableMode::Plain ? 0U : 1U;
+  const auto hidden = mode == CallableMode::Plain ? 0U : 1U;
   if (signature.hidden_parameters > hidden ||
       expected->result.has_value() != signature.result.has_value()) {
     return false;
@@ -306,7 +304,8 @@ std::expected<void, ValidationError> ValidateClassLayout(const runtime::ClassLay
              (callable.mode != CallableMode::Plain &&
               storage.subspan(callable.function).front().parameter_count == 0) ||
              (callable.mode == CallableMode::BoundMethod && layout->field_count() == 0) ||
-             !HasMatchingCallableSignature(*layout, storage.subspan(callable.function).front())) {
+             !HasMatchingCallableSignature(*layout, storage.subspan(callable.function).front(),
+                                           callable.mode)) {
     return std::unexpected(
         ValidationError{.function = index, .instruction = 0, .message = "invalid callable layout"});
   }
@@ -557,7 +556,8 @@ std::expected<void, ValidationError> ValidateInterfaceSignatures(
       const auto target = targets.subspan(selector).front();
       const auto callable = selectors.find(selector);
       if (target != kInvalidFunctionTarget && callable != selectors.end() &&
-          !HasMatchingCallableSignature(*callable->second, functions.subspan(target).front())) {
+          !HasMatchingCallableSignature(*callable->second, functions.subspan(target).front(),
+                                        CallableMode::InterfaceMethod)) {
         return std::unexpected(ValidationError{
             .function = target,
             .instruction = 0,
