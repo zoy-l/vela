@@ -224,9 +224,30 @@ source_set("aot") {
   ]
 }
 
+source_set("aot_driver") {
+  sources = [
+    "aot/build_command.cc",
+    "aot/build_command.h",
+  ]
+  deps = [
+    ":aot",
+    ":compiler",
+  ]
+}
+
+executable("vela_aot_tests") {
+  testonly = true
+  sources = [ "aot/native_compiler_unittest.cc" ]
+  deps = [
+    ":aot",
+    "//third_party:gtest_main",
+  ]
+}
+
 executable("vela") {
   sources = [ "vela_main.cc" ]
   deps = [
+    ":aot_driver",
     ":build_info",
     ":compiler",
     ":interactive",

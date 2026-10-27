@@ -1,43 +1,42 @@
 #include "runtime/native_abi.h"
 
-#include <bit>
-#include <cstdint>
+#include <cstddef>
+#include <limits>
 
-#include "gtest/gtest.h"
+#include <gtest/gtest.h>
 
+#include "base/execution_limits.h"
 #include "base/execution_status.h"
 #include "runtime/isolate.h"
-#include "runtime/native_function.h"
+#include "runtime/string.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
 
-TEST(NativeAbiTest, CheckedHelpersPreserveLanguageFailures) {
-  constexpr std::int64_t kExpectedSum = 12;
-  NativeValue left;
-  NativeValue right;
-  NativeValue result;
-  ASSERT_EQ(vela_native_store_int(&left, 7), static_cast<std::uint8_t>(ExecutionStatus::Returned));
-  ASSERT_EQ(vela_native_store_int(&right, 5), static_cast<std::uint8_t>(ExecutionStatus::Returned));
-  EXPECT_EQ(vela_native_int_binary(&result, &left, &right, 0),
-            static_cast<std::uint8_t>(ExecutionStatus::Returned));
-  EXPECT_EQ(result.kind, NativeValueKind::Integer);
-  EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), kExpectedSum);
-  ASSERT_EQ(vela_native_store_int(&right, 0), static_cast<std::uint8_t>(ExecutionStatus::Returned));
-  EXPECT_EQ(vela_native_int_binary(&result, &left, &right, 3),
-            static_cast<std::uint8_t>(ExecutionStatus::DivisionByZero));
+TEST(NativeAbiTest, RootsSurviveCollectionAndFramesReleaseThem) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  NativeExecution execution(isolate);
+  ASSERT_EQ(execution.Enter(1), ExecutionStatus::Returned);
+  auto* string = heap.AllocateString("rooted");
+  ASSERT_NE(string, nullptr);
+  execution.current_roots().front() = Value::String(string);
+  heap.Collect();
+  EXPECT_EQ(string->value(), "rooted");
+  execution.Exit();
+  EXPECT_EQ(execution.frame_count(), 0U);
 }
 
-TEST(NativeAbiTest, NativeFramesRegisterTaggedRoots) {
-  constexpr std::int64_t kRootValue = 11;
+TEST(NativeAbiTest, CallDepthAndAllocationFailuresPreserveExistingFrames) {
   Isolate isolate;
-  NativeContext context(isolate);
-  ASSERT_EQ(vela_native_frame_enter(&context, 1),
-            static_cast<std::uint8_t>(ExecutionStatus::Returned));
-  ASSERT_EQ(context.frame_count(), 1U);
-  context.current_roots().front() = Value::Integer(kRootValue);
-  vela_native_frame_exit(&context);
-  EXPECT_EQ(context.frame_count(), 0U);
+  NativeExecution execution(isolate);
+  EXPECT_EQ(execution.Enter(std::numeric_limits<std::size_t>::max()), ExecutionStatus::OutOfMemory);
+  EXPECT_EQ(execution.frame_count(), 0U);
+  for (std::size_t index = 0; index < kMaxCallFrames; ++index) {
+    ASSERT_EQ(execution.Enter(0), ExecutionStatus::Returned);
+  }
+  EXPECT_EQ(execution.Enter(0), ExecutionStatus::StackOverflow);
+  EXPECT_EQ(execution.frame_count(), kMaxCallFrames);
 }
 
 }  // namespace vela::runtime

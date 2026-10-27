@@ -11,6 +11,7 @@
 #include "base/file.h"
 #include "base/path.h"
 #include "base/source_location.h"
+#include "compiler/aot/build_command.h"
 #include "compiler/build_info.h"
 #include "compiler/compilation_cache.h"
 #include "compiler/compiler.h"
@@ -46,6 +47,7 @@ void PrintUsage(std::ostream& output) {
          << "  --version    Show the compiler version\n"
          << "  check FILE   Parse and statically check a Vela source file\n"
          << "  run FILE     Compile with a local content cache and run main\n"
+         << "  build FILE --emit=obj --export=NAME -o OUTPUT   Build a native object\n"
          << "  compile FILE OUTPUT   Write a validated bytecode image\n"
          << "  exec IMAGE   Load a bytecode image and run main\n"
          << "  fmt [--write|--check] FILE   Format Vela source\n"
@@ -348,6 +350,9 @@ int main(int argc, char** argv) {
 
   if (command == "fmt") {
     return FormatCommand(arguments.subspan(2));
+  }
+  if (command == "build") {
+    return vela::compiler::aot::BuildCommand(arguments.subspan(2), std::cerr);
   }
   if (command == "lsp") {
     return LanguageServerCommand(arguments.subspan(2));

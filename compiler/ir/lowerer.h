@@ -213,6 +213,7 @@ class Lowerer final {
   [[nodiscard]] static std::optional<FieldId> FindField(const frontend::ClassDescriptor& class_info,
                                                         std::string_view name);
   void Emit(Instruction instruction);
+  void RecordValueType(RegisterId reg, const frontend::TypeDescriptor& type);
   void PushScope();
   void PopScope();
   bool DeclareLocal(std::string_view name,

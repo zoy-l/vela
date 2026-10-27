@@ -10,27 +10,32 @@ config("vela_defaults") {
       "UNICODE",
       "_UNICODE",
       "_HAS_EXCEPTIONS=0",
+      "_ITERATOR_DEBUG_LEVEL=0",
     ]
+
+    # 官方 LLVM SDK 使用静态 Release CRT；同一进程的所有 C++
+    # 边界必须使用相同 ABI。 Debug
+    # 仍保留断言、源码调试信息与禁用优化，只不切换 CRT/STL
+    # 的二进制布局。
     cflags_cc = [ "/clang:-std=c++23" ]
     if (vela_build_config == "debug") {
-      defines += [ "_DEBUG" ]
       cflags = [
-        "/MDd",
+        "/MT",
         "/Od",
         "/Z7",
       ]
       ldflags = [
-        "/MDd",
+        "/MT",
         "-Xlinker",
         "/DEBUG",
       ]
     } else {
       defines += [ "NDEBUG" ]
       cflags = [
-        "/MD",
+        "/MT",
         "/O2",
       ]
-      ldflags = [ "/MD" ]
+      ldflags = [ "/MT" ]
     }
   } else {
     cflags_cc = [

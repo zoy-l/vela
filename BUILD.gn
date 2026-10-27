@@ -5,7 +5,7 @@ pool("console") {
 group("default") {
   deps = [
     "//compiler:vela",
-    "//runtime",
+    "//runtime:vela_runtime",
     "//vm",
   ]
 }
@@ -14,6 +14,7 @@ group("tests") {
   testonly = true
   deps = [
     "//base:base_tests",
+    "//compiler:vela_aot_tests",
     "//compiler:vela_compiler_tests",
     "//compiler:vela_environment_tests",
     "//compiler:vela_frontend_tests",

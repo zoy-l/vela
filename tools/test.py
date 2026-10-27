@@ -17,6 +17,7 @@ TEST_EXECUTABLES = {
     "environment": "vela_environment_tests",
     "frontend": "vela_frontend_tests",
     "ir": "vela_ir_tests",
+    "aot": "vela_aot_tests",
     "compiler": "vela_compiler_tests",
     "runtime": "runtime_tests",
     "vm": "vm_tests",
@@ -65,7 +66,7 @@ def run_tests(variant: str, selection: str, gtest_arguments: list[str]) -> None:
     if selection in {"all", "tooling"}:
         environment = os.environ.copy()
         environment["VELA_TEST_EXECUTABLE"] = str(output / executable_name("vela"))
-        subprocess.run([sys.executable, "-m", "unittest", "tools.tooling_unittest", "tools.editor_unittest", "tools.command_unittest", "tools.bench_unittest", "tools.toolchain_unittest", "tools.unicode_case_unittest"],
+        subprocess.run([sys.executable, "-m", "unittest", "tools.tooling_unittest", "tools.editor_unittest", "tools.command_unittest", "tools.bench_unittest", "tools.toolchain_unittest", "tools.unicode_case_unittest", "tools.aot_unittest"],
                        cwd=output.parent.parent, env=environment, check=True)
 
     version = subprocess.run(

@@ -3,20 +3,20 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
-#include <vector>
 
+#include "base/execution_limits.h"
+#include "base/execution_status.h"
 #include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/native_function.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
 
+class Isolate;
+
 inline constexpr std::uint32_t kNativeAbiVersion = 1;
 inline constexpr std::size_t kNativeValueBytes = 16;
-inline constexpr std::size_t kNativeValuePayloadOffset = 0;
-inline constexpr std::size_t kNativeValueKindOffset = 8;
 inline constexpr std::size_t kNativeValueReservedBytes = 7;
 
 enum class NativeValueKind : std::uint8_t {
@@ -28,76 +28,56 @@ enum class NativeValueKind : std::uint8_t {
   String,
 };
 
-// This is the only value representation visible to generated code. The payload is
-// deliberately fixed-width; the kind byte is checked at every host boundary.
+// 仅跨宿主包装边界使用；编译单元内部的参数和局部值保持类型化。
 struct NativeValue final {
   std::uint64_t payload = 0;
   NativeValueKind kind = NativeValueKind::Null;
   std::array<std::uint8_t, kNativeValueReservedBytes> reserved = {};
 };
 static_assert(sizeof(NativeValue) == kNativeValueBytes);
-static_assert(offsetof(NativeValue, payload) == kNativeValuePayloadOffset);
-static_assert(offsetof(NativeValue, kind) == kNativeValueKindOffset);
 
 class NativeFrame final {
  public:
-  NativeFrame(Isolate& isolate, std::size_t root_count);
-  ~NativeFrame() = default;
-
+  NativeFrame(Isolate& isolate, std::size_t root_count) noexcept;
+  ~NativeFrame();
   NativeFrame(const NativeFrame&) = delete;
   NativeFrame& operator=(const NativeFrame&) = delete;
   NativeFrame(NativeFrame&&) = delete;
   NativeFrame& operator=(NativeFrame&&) = delete;
 
-  [[nodiscard]] std::span<Value> roots() noexcept { return roots_; }
+  [[nodiscard]] std::span<Value> roots() noexcept { return {roots_, root_count_}; }
 
  private:
-  std::vector<Value> roots_;
+  Value* roots_ = nullptr;
+  std::size_t root_count_ = 0;
   RootRange root_range_;
 };
 
-// Helpers below are the stable C ABI used by generated code. They never allocate.
-extern "C" std::uint8_t vela_native_frame_enter(NativeContext* context,
-                                                std::uint64_t root_count) noexcept;
-extern "C" void vela_native_frame_exit(NativeContext* context) noexcept;
-extern "C" std::uint8_t vela_native_copy_argument(NativeValue* destination,
-                                                  const NativeValue* arguments,
-                                                  std::uint64_t argument_count,
-                                                  std::uint64_t index,
-                                                  NativeValueKind expected) noexcept;
-extern "C" std::uint8_t vela_native_copy(NativeValue* destination,
-                                         const NativeValue* source) noexcept;
-extern "C" std::uint8_t vela_native_store_null(NativeValue* destination) noexcept;
-extern "C" std::uint8_t vela_native_store_bool(NativeValue* destination, bool value) noexcept;
-extern "C" std::uint8_t vela_native_store_int(NativeValue* destination,
-                                              std::int64_t value) noexcept;
-extern "C" std::uint8_t vela_native_store_double(NativeValue* destination, double value) noexcept;
-extern "C" std::uint8_t vela_native_store_result(NativeValue* destination,
-                                                 const NativeValue* source,
-                                                 NativeValueKind expected) noexcept;
-extern "C" std::uint8_t vela_native_int_binary(NativeValue* destination,
-                                               const NativeValue* left,
-                                               const NativeValue* right,
-                                               std::uint8_t operation) noexcept;
-extern "C" std::uint8_t vela_native_int_unary(NativeValue* destination,
-                                              const NativeValue* operand,
-                                              std::uint8_t operation) noexcept;
-extern "C" std::uint8_t vela_native_double_binary(NativeValue* destination,
-                                                  const NativeValue* left,
-                                                  const NativeValue* right,
-                                                  std::uint8_t operation) noexcept;
-extern "C" std::uint8_t vela_native_double_unary(NativeValue* destination,
-                                                 const NativeValue* operand,
-                                                 std::uint8_t operation) noexcept;
-extern "C" std::uint8_t vela_native_bool_binary(NativeValue* destination,
-                                                const NativeValue* left,
-                                                const NativeValue* right,
-                                                std::uint8_t operation) noexcept;
-extern "C" std::uint8_t vela_native_compare(NativeValue* destination,
-                                            const NativeValue* left,
-                                            const NativeValue* right,
-                                            std::uint8_t operation) noexcept;
-extern "C" std::uint8_t vela_native_is_false(const NativeValue* value, bool* result) noexcept;
-extern "C" std::uint8_t vela_native_is_null(const NativeValue* value, bool* result) noexcept;
+// 每次执行独占；不改变宿主 NativeContext 的生命周期和责任。
+// Isolate 必须晚于此对象销毁，所有操作发生在 Isolate 所属线程。
+class NativeExecution final {
+ public:
+  explicit NativeExecution(Isolate& isolate) noexcept : isolate_(&isolate) {}
+  ~NativeExecution();
+  NativeExecution(const NativeExecution&) = delete;
+  NativeExecution& operator=(const NativeExecution&) = delete;
+  NativeExecution(NativeExecution&&) = delete;
+  NativeExecution& operator=(NativeExecution&&) = delete;
+
+  [[nodiscard]] ExecutionStatus Enter(std::size_t root_count) noexcept;
+  void Exit() noexcept;
+  [[nodiscard]] std::size_t frame_count() const noexcept { return frame_count_; }
+  [[nodiscard]] std::span<Value> current_roots() noexcept;
+
+ private:
+  Isolate* isolate_;
+  std::array<std::unique_ptr<NativeFrame>, kMaxCallFrames> frames_;
+  std::size_t frame_count_ = 0;
+};
+
+// 版本化符号使错误 ABI 的静态产物在链接时即被拒绝。
+extern "C" std::uint8_t vela_native_v1_frame_enter(NativeExecution* execution,
+                                                   std::uint64_t root_count) noexcept;
+extern "C" void vela_native_v1_frame_exit(NativeExecution* execution) noexcept;
 
 }  // namespace vela::runtime

@@ -97,6 +97,11 @@ source_set("runtime") {
   ]
 }
 
+static_library("vela_runtime") {
+  complete_static_lib = true
+  deps = [ ":runtime" ]
+}
+
 executable("runtime_tests") {
   testonly = true
   sources = [

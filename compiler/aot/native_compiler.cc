@@ -1,613 +1,847 @@
 #include "compiler/aot/native_compiler.h"
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
+
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Analysis/CGSCCPassManager.h>
+#include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/PassManager.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
+#include <llvm/Passes/OptimizationLevel.h>
+#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/CodeGen.h>
+#include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/TargetParser/Host.h>
+#include <llvm/TargetParser/Triple.h>
 
 #include "base/execution_status.h"
-#include "base/layout_description.h"
 #include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/type_checker.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "runtime/native_abi.h"
 
 namespace vela::compiler::aot {
 namespace {
 
-using runtime::NativeValueKind;
+using SourceType = frontend::TypeDescriptor;
+using Kind = SourceType::Kind;
+using Builder = llvm::IRBuilder<>;
 
-constexpr std::size_t kNativeValueBytes = sizeof(runtime::NativeValue);
-constexpr std::uint8_t kReturned = static_cast<std::uint8_t>(ExecutionStatus::Returned);
+constexpr std::size_t kMaximumNativeStackBytes = 4096;
+constexpr unsigned kIntegerShiftMask = 63;
 
-struct FunctionTypes final {
-  std::vector<layout::Type::Kind> parameters;
-  std::optional<layout::Type::Kind> result;
-};
-
-struct Generated final {
-  llvm::Function* body = nullptr;
-  llvm::Function* entry = nullptr;
-  FunctionTypes types;
-};
-
-struct ModuleBuilder final {
-  llvm::LLVMContext context;
-  std::unique_ptr<llvm::Module> module;
-  llvm::Type* byte = nullptr;
-  llvm::Type* byte_pointer = nullptr;
-  llvm::Type* word = nullptr;
-  llvm::Type* native_value_pointer = nullptr;
-  llvm::FunctionCallee frame_enter;
-  llvm::FunctionCallee frame_exit;
-  llvm::FunctionCallee copy_argument;
-  llvm::FunctionCallee copy;
-  llvm::FunctionCallee store_null;
-  llvm::FunctionCallee store_bool;
-  llvm::FunctionCallee store_int;
-  llvm::FunctionCallee store_double;
-  llvm::FunctionCallee store_result;
-  llvm::FunctionCallee int_binary;
-  llvm::FunctionCallee int_unary;
-  llvm::FunctionCallee double_binary;
-  llvm::FunctionCallee double_unary;
-  llvm::FunctionCallee bool_binary;
-  llvm::FunctionCallee compare;
-  llvm::FunctionCallee is_false;
-  llvm::FunctionCallee is_null;
-
-  explicit ModuleBuilder(std::string name) : module(std::make_unique<llvm::Module>(name, context)) {
-    byte = llvm::Type::getInt8Ty(context);
-    byte_pointer = llvm::PointerType::getUnqual(context);
-    word = llvm::Type::getInt64Ty(context);
-    native_value_pointer = byte_pointer;
-    const auto status = byte;
-    const auto kind = byte;
-    const auto boolean = llvm::Type::getInt1Ty(context);
-    const auto void_type = llvm::Type::getVoidTy(context);
-    const auto context_pointer = byte_pointer;
-    frame_enter = module->getOrInsertFunction(
-        "vela_native_frame_enter", llvm::FunctionType::get(status, {context_pointer, word}, false));
-    frame_exit = module->getOrInsertFunction(
-        "vela_native_frame_exit", llvm::FunctionType::get(void_type, {context_pointer}, false));
-    copy_argument = module->getOrInsertFunction(
-        "vela_native_copy_argument",
-        llvm::FunctionType::get(
-            status, {native_value_pointer, native_value_pointer, word, word, kind}, false));
-    copy = module->getOrInsertFunction(
-        "vela_native_copy",
-        llvm::FunctionType::get(status, {native_value_pointer, native_value_pointer}, false));
-    store_null = module->getOrInsertFunction(
-        "vela_native_store_null", llvm::FunctionType::get(status, {native_value_pointer}, false));
-    store_bool = module->getOrInsertFunction(
-        "vela_native_store_bool",
-        llvm::FunctionType::get(status, {native_value_pointer, boolean}, false));
-    store_int = module->getOrInsertFunction(
-        "vela_native_store_int",
-        llvm::FunctionType::get(status, {native_value_pointer, word}, false));
-    store_double = module->getOrInsertFunction(
-        "vela_native_store_double",
-        llvm::FunctionType::get(status, {native_value_pointer, llvm::Type::getDoubleTy(context)},
-                                false));
-    store_result = module->getOrInsertFunction(
-        "vela_native_store_result",
-        llvm::FunctionType::get(status, {native_value_pointer, native_value_pointer, kind}, false));
-    const auto operation = byte;
-    int_binary = module->getOrInsertFunction(
-        "vela_native_int_binary",
-        llvm::FunctionType::get(
-            status, {native_value_pointer, native_value_pointer, native_value_pointer, operation},
-            false));
-    int_unary = module->getOrInsertFunction(
-        "vela_native_int_unary",
-        llvm::FunctionType::get(status, {native_value_pointer, native_value_pointer, operation},
-                                false));
-    double_binary = module->getOrInsertFunction(
-        "vela_native_double_binary",
-        llvm::FunctionType::get(
-            status, {native_value_pointer, native_value_pointer, native_value_pointer, operation},
-            false));
-    double_unary = module->getOrInsertFunction(
-        "vela_native_double_unary",
-        llvm::FunctionType::get(status, {native_value_pointer, native_value_pointer, operation},
-                                false));
-    bool_binary = module->getOrInsertFunction(
-        "vela_native_bool_binary",
-        llvm::FunctionType::get(
-            status, {native_value_pointer, native_value_pointer, native_value_pointer, operation},
-            false));
-    compare = module->getOrInsertFunction(
-        "vela_native_compare",
-        llvm::FunctionType::get(
-            status, {native_value_pointer, native_value_pointer, native_value_pointer, operation},
-            false));
-    is_false = module->getOrInsertFunction(
-        "vela_native_is_false",
-        llvm::FunctionType::get(status, {native_value_pointer, byte_pointer}, false));
-    is_null = module->getOrInsertFunction(
-        "vela_native_is_null",
-        llvm::FunctionType::get(status, {native_value_pointer, byte_pointer}, false));
-  }
-};
-
-frontend::Diagnostic Diagnostic(const ir::Function& function,
-                                std::span<const std::string> paths,
-                                std::string message) {
-  return {.location = function.location,
-          .message = std::move(message),
-          .source_path = paths.empty() ? std::string() : paths[function.location.source_id]};
+bool IsScalar(const SourceType& type) {
+  return type.kind == Kind::Int || type.kind == Kind::Enum || type.kind == Kind::Double ||
+         type.kind == Kind::Bool || type.kind == Kind::Null || type.kind == Kind::Void;
 }
 
-std::optional<NativeValueKind> Kind(const layout::Type& type) {
-  switch (type.kind) {
-    case layout::Type::Kind::Boolean:
-      return NativeValueKind::Boolean;
-    case layout::Type::Kind::Integer:
-    case layout::Type::Kind::Enum:
-      return NativeValueKind::Integer;
-    case layout::Type::Kind::Double:
-      return NativeValueKind::Double;
-    case layout::Type::Kind::Dynamic:
-      return std::nullopt;
-    default:
-      return std::nullopt;
+llvm::Type* PayloadType(llvm::LLVMContext& context, Kind kind) {
+  if (kind == Kind::Double) {
+    return llvm::Type::getDoubleTy(context);
   }
+  return kind == Kind::Bool || kind == Kind::Null || kind == Kind::Void
+             ? llvm::Type::getInt1Ty(context)
+             : llvm::Type::getInt64Ty(context);
 }
 
-std::expected<FunctionTypes, frontend::Diagnostic> Types(const ir::Program& program,
-                                                         const ir::Function& function) {
-  if (function.is_async || function.signature == std::nullopt) {
-    return std::unexpected(Diagnostic(function, program.source_paths,
-                                      "AOT synchronous backend requires a typed sync function"));
-  }
-  if (function.signature->hidden_parameters != 0 ||
-      function.parameter_count != function.signature->parameters.size()) {
-    return std::unexpected(
-        Diagnostic(function, program.source_paths,
-                   "AOT synchronous backend requires a plain function signature"));
-  }
-  FunctionTypes result;
-  result.parameters.reserve(function.signature->parameters.size());
-  for (const auto& parameter : function.signature->parameters) {
-    const auto& type = program.layouts.types.at(parameter.type);
-    if (type.nullable || !Kind(type)) {
-      return std::unexpected(
-          Diagnostic(function, program.source_paths,
-                     "AOT synchronous backend supports only non-null scalar parameters"));
-    }
-    result.parameters.push_back(type.kind);
-  }
-  if (function.signature->result) {
-    const auto& type = program.layouts.types.at(*function.signature->result);
-    if (type.nullable || !Kind(type)) {
-      return std::unexpected(
-          Diagnostic(function, program.source_paths,
-                     "AOT synchronous backend supports only non-null scalar results"));
-    }
-    result.result = type.kind;
-  }
-  return result;
+llvm::Type* ValueType(llvm::LLVMContext& context, const SourceType& type) {
+  auto* payload = PayloadType(context, type.kind);
+  return type.nullable ? llvm::StructType::get(llvm::Type::getInt1Ty(context), payload) : payload;
 }
 
-std::uint8_t KindValue(layout::Type::Kind kind) {
+llvm::ConstantInt* Status(Builder& builder, ExecutionStatus status) {
+  return builder.getInt8(static_cast<std::uint8_t>(status));
+}
+
+std::uint8_t NativeKind(Kind kind) {
+  using runtime::NativeValueKind;
   switch (kind) {
-    case layout::Type::Kind::Boolean:
+    case Kind::Bool:
       return static_cast<std::uint8_t>(NativeValueKind::Boolean);
-    case layout::Type::Kind::Integer:
-    case layout::Type::Kind::Enum:
+    case Kind::Int:
+    case Kind::Enum:
       return static_cast<std::uint8_t>(NativeValueKind::Integer);
-    case layout::Type::Kind::Double:
+    case Kind::Double:
       return static_cast<std::uint8_t>(NativeValueKind::Double);
     default:
       return static_cast<std::uint8_t>(NativeValueKind::Null);
   }
 }
 
-std::uint8_t CompareCode(Opcode opcode) {
-  switch (opcode) {
-    case Opcode::EqualInt:
-    case Opcode::EqualDouble:
-    case Opcode::EqualBool:
-    case Opcode::EqualValue:
-      return 0;
-    case Opcode::NotEqualInt:
-    case Opcode::NotEqualDouble:
-    case Opcode::NotEqualBool:
-    case Opcode::NotEqualValue:
-      return 1;
-    case Opcode::LessInt:
-    case Opcode::LessDouble:
-      return 2;
-    case Opcode::LessEqualInt:
-    case Opcode::LessEqualDouble:
-      return 3;
-    case Opcode::GreaterInt:
-    case Opcode::GreaterDouble:
-      return 4;
-    case Opcode::GreaterEqualInt:
-    case Opcode::GreaterEqualDouble:
-      return 5;
-    default:
-      return 0;
+llvm::Value* Convert(Builder& builder,
+                     llvm::Value* value,
+                     const SourceType& source,
+                     const SourceType& target) {
+  auto* target_type = ValueType(builder.getContext(), target);
+  if (source.kind == Kind::Null || source.kind == Kind::Void) {
+    return llvm::Constant::getNullValue(target_type);
   }
+  auto* payload = source.nullable ? builder.CreateExtractValue(value, 1) : value;
+  if (!target.nullable) {
+    return payload;
+  }
+  auto* present = source.nullable ? builder.CreateExtractValue(value, 0) : builder.getTrue();
+  auto* result = builder.CreateInsertValue(llvm::PoisonValue::get(target_type), present, 0);
+  return builder.CreateInsertValue(result, payload, 1);
 }
 
-llvm::Value* Slot(llvm::IRBuilder<>& builder,
-                  llvm::Value* registers,
-                  std::size_t index,
-                  llvm::Type* word) {
-  return builder.CreateInBoundsGEP(word, registers, builder.getInt64(index));
+struct Generated final {
+  llvm::Function* body = nullptr;
+  llvm::Function* entry = nullptr;
+};
+
+class FunctionEmitter final {
+ public:
+  FunctionEmitter(llvm::Module& module,
+                  const ir::Program& program,
+                  std::size_t function_index,
+                  std::span<const Generated> generated)
+      : module_(module),
+        program_(program),
+        source_(program.functions.at(function_index)),
+        generated_(generated),
+        body_(generated.subspan(function_index).front().body),
+        builder_(module.getContext()) {}
+
+  std::expected<void, std::string> Emit();
+
+ private:
+  llvm::Value* Load(ir::RegisterId reg);
+  llvm::Value* Payload(ir::RegisterId reg);
+  void Store(ir::RegisterId reg, llvm::Value* value, const SourceType& type);
+  void Check(llvm::Value* condition, ExecutionStatus failure);
+  void CheckStatus(llvm::Value* status);
+  void Finish(llvm::Value* status);
+  void EmitInteger(const ir::Instruction& instruction);
+  void EmitDouble(const ir::Instruction& instruction);
+  void EmitComparison(const ir::Instruction& instruction);
+  void EmitValueEquality(const ir::Instruction& instruction);
+  std::expected<void, std::string> EmitInstruction(const ir::Instruction& instruction);
+
+  llvm::Module& module_;
+  const ir::Program& program_;
+  const ir::Function& source_;
+  std::span<const Generated> generated_;
+  llvm::Function* body_;
+  Builder builder_;
+  std::vector<llvm::AllocaInst*> slots_;
+  std::vector<llvm::BasicBlock*> blocks_;
+  llvm::BasicBlock* cleanup_ = nullptr;
+  llvm::PHINode* status_ = nullptr;
+};
+
+llvm::Value* FunctionEmitter::Load(ir::RegisterId reg) {
+  return builder_.CreateLoad(ValueType(module_.getContext(), source_.value_types.at(reg)),
+                             slots_.at(reg));
 }
 
-llvm::Value* Status(llvm::IRBuilder<>& builder, std::uint8_t status) {
-  return builder.getInt8(status);
+llvm::Value* FunctionEmitter::Payload(ir::RegisterId reg) {
+  auto* value = Load(reg);
+  return source_.value_types.at(reg).nullable ? builder_.CreateExtractValue(value, 1) : value;
 }
 
-std::expected<Generated, frontend::Diagnostic> GenerateFunction(
-    ModuleBuilder& builder,
-    const ir::Program& program,
-    const ir::Function& function,
-    std::size_t function_index,
-    std::span<const Generated> generated) {
-  auto types = Types(program, function);
-  if (!types)
-    return std::unexpected(types.error());
-  const auto& declaration = generated[function_index];
-  auto* body = declaration.body;
-  auto* entry = declaration.entry;
-  auto* entry_context = entry->arg_begin();
-  auto* entry_arguments = std::next(entry->arg_begin());
-  auto* entry_count = std::next(entry->arg_begin(), 2);
-  auto* entry_result = std::next(entry->arg_begin(), 3);
-  auto* entry_block = llvm::BasicBlock::Create(builder.context, "entry", entry);
-  llvm::IRBuilder<> entry_builder(entry_block);
-  auto* entered =
-      entry_builder.CreateCall(builder.frame_enter, {entry_context, entry_builder.getInt64(0)});
-  auto* enter_ok = entry_builder.CreateICmpEQ(entered, Status(entry_builder, kReturned));
-  auto* invoke = llvm::BasicBlock::Create(builder.context, "invoke", entry);
-  auto* enter_fail = llvm::BasicBlock::Create(builder.context, "enter_fail", entry);
-  entry_builder.CreateCondBr(enter_ok, invoke, enter_fail);
-  llvm::IRBuilder<> fail_builder(enter_fail);
-  fail_builder.CreateRet(entered);
-  llvm::IRBuilder<> invoke_builder(invoke);
-  auto* body_result =
-      invoke_builder.CreateCall(body, {entry_context, entry_arguments, entry_count, entry_result});
-  invoke_builder.CreateCall(builder.frame_exit, {entry_context});
-  invoke_builder.CreateRet(body_result);
+void FunctionEmitter::Store(ir::RegisterId reg, llvm::Value* value, const SourceType& type) {
+  builder_.CreateStore(Convert(builder_, value, type, source_.value_types.at(reg)), slots_.at(reg));
+}
 
-  auto* body_entry = llvm::BasicBlock::Create(builder.context, "body_entry", body);
-  llvm::IRBuilder<> ir(builder.context);
-  ir.SetInsertPoint(body_entry);
-  auto* registers =
-      ir.CreateAlloca(builder.byte, ir.getInt64(function.register_count * kNativeValueBytes));
-  auto* return_block = llvm::BasicBlock::Create(builder.context, "return", body);
-  llvm::IRBuilder<> return_builder(return_block);
-  return_builder.CreateRet(Status(return_builder, kReturned));
-  auto* failure = llvm::BasicBlock::Create(builder.context, "failure", body);
-  llvm::IRBuilder<> failure_builder(failure);
-  // Each operation branches to the shared failure block after writing its status.
-  auto* status_phi = failure_builder.CreatePHI(builder.byte, 8, "status");
-  failure_builder.CreateRet(status_phi);
-  for (std::size_t index = 0; index < function.parameter_count; ++index) {
-    const auto expected = KindValue(types->parameters.at(index));
-    auto* status = ir.CreateCall(
-        builder.copy_argument,
-        {Slot(ir, registers, index * kNativeValueBytes, builder.byte), std::next(body->arg_begin()),
-         std::next(body->arg_begin(), 2), ir.getInt64(index), ir.getInt8(expected)});
-    auto* okay = llvm::BasicBlock::Create(builder.context, "argument_ok", body);
-    auto* failed = llvm::BasicBlock::Create(builder.context, "argument_fail", body);
-    ir.CreateCondBr(ir.CreateICmpEQ(status, Status(ir, kReturned)), okay, failed);
-    llvm::IRBuilder<> failed_builder(failed);
-    failed_builder.CreateBr(failure);
-    status_phi->addIncoming(status, failed);
-    ir.SetInsertPoint(okay);
-  }
+void FunctionEmitter::Finish(llvm::Value* status) {
+  status_->addIncoming(status, builder_.GetInsertBlock());
+  builder_.CreateBr(cleanup_);
+}
 
-  auto* context = body->arg_begin();
-  std::vector<llvm::BasicBlock*> blocks(function.instructions.size());
-  for (std::size_t index = 0; index < blocks.size(); ++index) {
-    blocks[index] =
-        llvm::BasicBlock::Create(builder.context, "block" + std::to_string(index), body);
-  }
-  const auto next_block = [&](std::size_t index) {
-    return index + 1 < blocks.size() ? blocks[index + 1] : return_block;
-  };
-  const auto target_block = [&](std::uint32_t index) {
-    return index < blocks.size() ? blocks[index] : return_block;
-  };
-  auto emit_status = [&](llvm::IRBuilder<>& current, llvm::Value* status, llvm::BasicBlock* next) {
-    auto* okay = llvm::BasicBlock::Create(builder.context, "op_ok", body);
-    current.CreateCondBr(current.CreateICmpEQ(status, Status(current, kReturned)), okay, failure);
-    status_phi->addIncoming(status, current.GetInsertBlock());
-    current.SetInsertPoint(okay);
-    current.CreateBr(next);
-    return okay;
-  };
-  // The initial argument chain enters the first IR block.
-  ir.CreateBr(function.instructions.empty() ? return_block : blocks.front());
+void FunctionEmitter::Check(llvm::Value* condition, ExecutionStatus failure) {
+  auto* failed = llvm::BasicBlock::Create(module_.getContext(), "failed", body_);
+  auto* next = llvm::BasicBlock::Create(module_.getContext(), "checked", body_);
+  builder_.CreateCondBr(condition, next, failed);
+  builder_.SetInsertPoint(failed);
+  Finish(Status(builder_, failure));
+  builder_.SetInsertPoint(next);
+}
 
-  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
-    ir.SetInsertPoint(blocks.at(index));
-    const auto& instruction = function.instructions.at(index);
-    const auto dst = Slot(ir, registers, instruction.dst * kNativeValueBytes, builder.byte);
-    const auto lhs = Slot(ir, registers, instruction.lhs * kNativeValueBytes, builder.byte);
-    const auto rhs = Slot(ir, registers, instruction.rhs * kNativeValueBytes, builder.byte);
-    switch (instruction.opcode) {
-      case Opcode::LoadNull:
-        emit_status(ir, ir.CreateCall(builder.store_null, {dst}), next_block(index));
-        break;
-      case Opcode::LoadBool:
-        emit_status(
-            ir, ir.CreateCall(builder.store_bool, {dst, ir.getInt1(instruction.immediate != 0)}),
-            next_block(index));
-        break;
-      case Opcode::LoadInt:
-        emit_status(
-            ir,
-            ir.CreateCall(builder.store_int,
-                          {dst, ir.getInt64(static_cast<std::uint64_t>(instruction.immediate))}),
-            next_block(index));
-        break;
-      case Opcode::LoadIntConstant:
-        return std::unexpected(
-            Diagnostic(function, program.source_paths,
-                       "integer constants must be lowered before AOT compilation"));
-      case Opcode::LoadDouble:
-        if (instruction.index >= function.doubles.size()) {
-          return std::unexpected(
-              Diagnostic(function, program.source_paths, "invalid double constant in AOT IR"));
-        }
-        emit_status(
-            ir,
-            ir.CreateCall(builder.store_double,
-                          {dst, llvm::ConstantFP::get(llvm::Type::getDoubleTy(builder.context),
-                                                      function.doubles.at(instruction.index))}),
-            next_block(index));
-        break;
-      case Opcode::Move:
-        emit_status(ir, ir.CreateCall(builder.copy, {dst, lhs}), next_block(index));
-        break;
+void FunctionEmitter::CheckStatus(llvm::Value* status) {
+  auto* failed = llvm::BasicBlock::Create(module_.getContext(), "call.failed", body_);
+  auto* next = llvm::BasicBlock::Create(module_.getContext(), "call.returned", body_);
+  builder_.CreateCondBr(builder_.CreateICmpEQ(status, Status(builder_, ExecutionStatus::Returned)),
+                        next, failed);
+  builder_.SetInsertPoint(failed);
+  Finish(status);
+  builder_.SetInsertPoint(next);
+}
+
+void FunctionEmitter::EmitInteger(const ir::Instruction& instruction) {
+  auto* left = Payload(instruction.lhs);
+  llvm::Value* result = nullptr;
+  const auto opcode = instruction.opcode;
+  if (opcode == Opcode::NegInt) {
+    Check(builder_.CreateICmpNE(left, builder_.getInt64(std::bit_cast<std::uint64_t>(
+                                          std::numeric_limits<std::int64_t>::min()))),
+          ExecutionStatus::IntegerOverflow);
+    result = builder_.CreateNeg(left);
+  } else if (opcode == Opcode::BitNotInt) {
+    result = builder_.CreateNot(left);
+  } else {
+    auto* right = Payload(instruction.rhs);
+    switch (opcode) {
       case Opcode::AddInt:
       case Opcode::SubInt:
-      case Opcode::MulInt:
+      case Opcode::MulInt: {
+        auto intrinsic = llvm::Intrinsic::sadd_with_overflow;
+        if (opcode == Opcode::SubInt) {
+          intrinsic = llvm::Intrinsic::ssub_with_overflow;
+        } else if (opcode == Opcode::MulInt) {
+          intrinsic = llvm::Intrinsic::smul_with_overflow;
+        }
+        auto* checked = builder_.CreateBinaryIntrinsic(intrinsic, left, right);
+        Check(builder_.CreateNot(builder_.CreateExtractValue(checked, 1)),
+              ExecutionStatus::IntegerOverflow);
+        result = builder_.CreateExtractValue(checked, 0);
+        break;
+      }
       case Opcode::DivInt:
-      case Opcode::ModInt:
+      case Opcode::ModInt: {
+        Check(builder_.CreateICmpNE(right, builder_.getInt64(0)), ExecutionStatus::DivisionByZero);
+        auto* minimum = builder_.CreateICmpEQ(left, builder_.getInt64(std::bit_cast<std::uint64_t>(
+                                                        std::numeric_limits<std::int64_t>::min())));
+        auto* negative_one = builder_.CreateICmpEQ(
+            right, builder_.getInt64(std::numeric_limits<std::uint64_t>::max()));
+        Check(builder_.CreateNot(builder_.CreateAnd(minimum, negative_one)),
+              ExecutionStatus::IntegerOverflow);
+        result = opcode == Opcode::DivInt ? builder_.CreateSDiv(left, right)
+                                          : builder_.CreateSRem(left, right);
+        break;
+      }
       case Opcode::BitAndInt:
+        result = builder_.CreateAnd(left, right);
+        break;
       case Opcode::BitOrInt:
+        result = builder_.CreateOr(left, right);
+        break;
       case Opcode::BitXorInt:
+        result = builder_.CreateXor(left, right);
+        break;
       case Opcode::ShiftLeftInt:
+        result = builder_.CreateShl(left, builder_.CreateAnd(right, kIntegerShiftMask));
+        break;
       case Opcode::ShiftRightInt:
+        result = builder_.CreateAShr(left, builder_.CreateAnd(right, kIntegerShiftMask));
+        break;
       case Opcode::ShiftUnsignedRightInt:
-        emit_status(ir,
-                    ir.CreateCall(builder.int_binary,
-                                  {dst, lhs, rhs,
-                                   ir.getInt8(static_cast<std::uint8_t>(instruction.opcode) -
-                                              static_cast<std::uint8_t>(Opcode::AddInt))}),
-                    next_block(index));
-        break;
-      case Opcode::NegInt:
-      case Opcode::BitNotInt:
-        emit_status(
-            ir,
-            ir.CreateCall(builder.int_unary,
-                          {dst, lhs, ir.getInt8(instruction.opcode == Opcode::NegInt ? 0 : 1)}),
-            next_block(index));
-        break;
-      case Opcode::AddDouble:
-      case Opcode::SubDouble:
-      case Opcode::MulDouble:
-      case Opcode::DivDouble:
-        emit_status(ir,
-                    ir.CreateCall(builder.double_binary,
-                                  {dst, lhs, rhs,
-                                   ir.getInt8(static_cast<std::uint8_t>(instruction.opcode) -
-                                              static_cast<std::uint8_t>(Opcode::AddDouble))}),
-                    next_block(index));
-        break;
-      case Opcode::NegDouble:
-        emit_status(ir, ir.CreateCall(builder.double_unary, {dst, lhs, ir.getInt8(0)}),
-                    next_block(index));
-        break;
-      case Opcode::AndBool:
-      case Opcode::OrBool:
-        emit_status(ir,
-                    ir.CreateCall(
-                        builder.bool_binary,
-                        {dst, lhs, rhs, ir.getInt8(instruction.opcode == Opcode::AndBool ? 0 : 1)}),
-                    next_block(index));
-        break;
-      case Opcode::EqualInt:
-      case Opcode::NotEqualInt:
-      case Opcode::LessInt:
-      case Opcode::LessEqualInt:
-      case Opcode::GreaterInt:
-      case Opcode::GreaterEqualInt:
-      case Opcode::EqualDouble:
-      case Opcode::NotEqualDouble:
-      case Opcode::LessDouble:
-      case Opcode::LessEqualDouble:
-      case Opcode::GreaterDouble:
-      case Opcode::GreaterEqualDouble:
-      case Opcode::EqualBool:
-      case Opcode::NotEqualBool:
-      case Opcode::EqualValue:
-      case Opcode::NotEqualValue:
-        emit_status(ir,
-                    ir.CreateCall(builder.compare,
-                                  {dst, lhs, rhs, ir.getInt8(CompareCode(instruction.opcode))}),
-                    next_block(index));
-        break;
-      case Opcode::NotBool: {
-        auto* temporary = ir.CreateAlloca(builder.byte);
-        auto* status = ir.CreateCall(builder.is_false, {lhs, temporary});
-        auto* next = llvm::BasicBlock::Create(builder.context, "not_ok", body);
-        ir.CreateCondBr(ir.CreateICmpEQ(status, Status(ir, kReturned)), next, failure);
-        status_phi->addIncoming(status, ir.GetInsertBlock());
-        ir.SetInsertPoint(next);
-        auto* store_status =
-            ir.CreateCall(builder.store_bool, {dst, ir.CreateLoad(builder.byte, temporary)});
-        emit_status(ir, store_status, next_block(index));
-        break;
-      }
-      case Opcode::Jump:
-        ir.CreateBr(target_block(instruction.index));
-        break;
-      case Opcode::JumpIfFalse:
-      case Opcode::JumpIfNull: {
-        auto* temporary = ir.CreateAlloca(builder.byte);
-        auto* status = ir.CreateCall(
-            instruction.opcode == Opcode::JumpIfFalse ? builder.is_false : builder.is_null,
-            {lhs, temporary});
-        auto* okay = llvm::BasicBlock::Create(builder.context, "branch_ok", body);
-        ir.CreateCondBr(ir.CreateICmpEQ(status, Status(ir, kReturned)), okay, failure);
-        status_phi->addIncoming(status, ir.GetInsertBlock());
-        ir.SetInsertPoint(okay);
-        auto* condition = ir.CreateLoad(builder.byte, temporary);
-        ir.CreateCondBr(ir.CreateICmpNE(condition, ir.getInt8(0)), target_block(instruction.index),
-                        next_block(index));
-        break;
-      }
-      case Opcode::Call: {
-        if (instruction.index >= generated.size()) {
-          return std::unexpected(
-              Diagnostic(function, program.source_paths, "invalid AOT call target"));
-        }
-        const auto& callee = generated[instruction.index];
-        auto* called =
-            ir.CreateCall(callee.entry->getFunctionType(), callee.entry,
-                          {context, lhs, ir.getInt64(callee.types.parameters.size()), dst});
-        emit_status(ir, called, next_block(index));
-        break;
-      }
-      case Opcode::Return:
-        if (types->result) {
-          emit_status(ir,
-                      ir.CreateCall(builder.store_result, {std::next(body->arg_begin(), 3), dst,
-                                                           ir.getInt8(KindValue(*types->result))}),
-                      return_block);
-        } else {
-          emit_status(ir, ir.CreateCall(builder.store_null, {std::next(body->arg_begin(), 3)}),
-                      return_block);
-        }
+        result = builder_.CreateLShr(left, builder_.CreateAnd(right, kIntegerShiftMask));
         break;
       default:
-        return std::unexpected(Diagnostic(function, program.source_paths,
-                                          "instruction is outside the synchronous native backend"));
+        llvm_unreachable("integer opcode dispatch must be exhaustive");
     }
   }
-  if (function.instructions.empty()) {
-    ir.CreateBr(return_block);
-  }
-  for (auto* block : blocks) {
-    if (block->getTerminator() == nullptr) {
-      llvm::IRBuilder<> repair(block);
-      repair.CreateBr(return_block);
-    }
-  }
-  return Generated{.body = body, .entry = entry, .types = std::move(*types)};
+  Store(instruction.dst, result, {.kind = Kind::Int, .name = "int"});
 }
 
-std::expected<std::vector<std::byte>, std::string> EmitObject(llvm::Module& module,
-                                                              std::string* target_name) {
-  llvm::InitializeNativeTarget();
-  llvm::InitializeNativeTargetAsmPrinter();
+void FunctionEmitter::EmitDouble(const ir::Instruction& instruction) {
+  auto* left = Payload(instruction.lhs);
+  llvm::Value* result = nullptr;
+  if (instruction.opcode == Opcode::NegDouble) {
+    result = builder_.CreateFNeg(left);
+  } else {
+    auto* right = Payload(instruction.rhs);
+    switch (instruction.opcode) {
+      case Opcode::AddDouble:
+        result = builder_.CreateFAdd(left, right);
+        break;
+      case Opcode::SubDouble:
+        result = builder_.CreateFSub(left, right);
+        break;
+      case Opcode::MulDouble:
+        result = builder_.CreateFMul(left, right);
+        break;
+      case Opcode::DivDouble:
+        Check(builder_.CreateFCmpUNE(right, llvm::ConstantFP::get(right->getType(), 0)),
+              ExecutionStatus::DivisionByZero);
+        result = builder_.CreateFDiv(left, right);
+        break;
+      default:
+        llvm_unreachable("double opcode dispatch must be exhaustive");
+    }
+  }
+  Store(instruction.dst, result, {.kind = Kind::Double, .name = "double"});
+}
+
+void FunctionEmitter::EmitComparison(const ir::Instruction& instruction) {
+  auto* left = Payload(instruction.lhs);
+  auto* right = Payload(instruction.rhs);
+  llvm::Value* result = nullptr;
+  switch (instruction.opcode) {
+    case Opcode::EqualInt:
+    case Opcode::EqualBool:
+      result = builder_.CreateICmpEQ(left, right);
+      break;
+    case Opcode::NotEqualInt:
+    case Opcode::NotEqualBool:
+      result = builder_.CreateICmpNE(left, right);
+      break;
+    case Opcode::LessInt:
+      result = builder_.CreateICmpSLT(left, right);
+      break;
+    case Opcode::LessEqualInt:
+      result = builder_.CreateICmpSLE(left, right);
+      break;
+    case Opcode::GreaterInt:
+      result = builder_.CreateICmpSGT(left, right);
+      break;
+    case Opcode::GreaterEqualInt:
+      result = builder_.CreateICmpSGE(left, right);
+      break;
+    case Opcode::EqualDouble:
+      result = builder_.CreateFCmpOEQ(left, right);
+      break;
+    case Opcode::NotEqualDouble:
+      result = builder_.CreateFCmpUNE(left, right);
+      break;
+    case Opcode::LessDouble:
+      result = builder_.CreateFCmpOLT(left, right);
+      break;
+    case Opcode::LessEqualDouble:
+      result = builder_.CreateFCmpOLE(left, right);
+      break;
+    case Opcode::GreaterDouble:
+      result = builder_.CreateFCmpOGT(left, right);
+      break;
+    case Opcode::GreaterEqualDouble:
+      result = builder_.CreateFCmpOGE(left, right);
+      break;
+    default:
+      llvm_unreachable("comparison opcode dispatch must be exhaustive");
+  }
+  Store(instruction.dst, result, {.kind = Kind::Bool, .name = "bool"});
+}
+
+void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
+  const auto& left_type = source_.value_types.at(instruction.lhs);
+  const auto& right_type = source_.value_types.at(instruction.rhs);
+  auto* left = Load(instruction.lhs);
+  auto* right = Load(instruction.rhs);
+  auto* left_present = left_type.nullable ? builder_.CreateExtractValue(left, 0)
+                                          : builder_.getInt1(left_type.kind != Kind::Null);
+  auto* right_present = right_type.nullable ? builder_.CreateExtractValue(right, 0)
+                                            : builder_.getInt1(right_type.kind != Kind::Null);
+  llvm::Value* payload_equal = builder_.getFalse();
+  if (left_type.kind == right_type.kind && left_type.kind != Kind::Null) {
+    auto* left_payload = left_type.nullable ? builder_.CreateExtractValue(left, 1) : left;
+    auto* right_payload = right_type.nullable ? builder_.CreateExtractValue(right, 1) : right;
+    payload_equal = left_type.kind == Kind::Double
+                        ? builder_.CreateFCmpOEQ(left_payload, right_payload)
+                        : builder_.CreateICmpEQ(left_payload, right_payload);
+  }
+  auto* both_null = builder_.CreateNot(builder_.CreateOr(left_present, right_present));
+  auto* both_present = builder_.CreateAnd(left_present, right_present);
+  auto* equal = builder_.CreateOr(both_null, builder_.CreateAnd(both_present, payload_equal));
+  auto* result = instruction.opcode == Opcode::EqualValue ? equal : builder_.CreateNot(equal);
+  Store(instruction.dst, result, {.kind = Kind::Bool, .name = "bool"});
+}
+
+std::expected<void, std::string> FunctionEmitter::EmitInstruction(
+    const ir::Instruction& instruction) {
+  switch (instruction.opcode) {
+    case Opcode::LoadNull:
+      Store(instruction.dst, builder_.getFalse(), {.kind = Kind::Null, .name = "null"});
+      break;
+    case Opcode::LoadBool:
+      Store(instruction.dst, builder_.getInt1(instruction.immediate != 0),
+            {.kind = Kind::Bool, .name = "bool"});
+      break;
+    case Opcode::LoadInt:
+      Store(instruction.dst, builder_.getInt64(std::bit_cast<std::uint64_t>(instruction.immediate)),
+            {.kind = Kind::Int, .name = "int"});
+      break;
+    case Opcode::LoadDouble:
+      Store(instruction.dst,
+            llvm::ConstantFP::get(builder_.getDoubleTy(), source_.doubles.at(instruction.index)),
+            {.kind = Kind::Double, .name = "double"});
+      break;
+    case Opcode::Move:
+      Store(instruction.dst, Load(instruction.lhs), source_.value_types.at(instruction.lhs));
+      break;
+    case Opcode::AddInt:
+    case Opcode::SubInt:
+    case Opcode::MulInt:
+    case Opcode::DivInt:
+    case Opcode::ModInt:
+    case Opcode::NegInt:
+    case Opcode::BitNotInt:
+    case Opcode::BitAndInt:
+    case Opcode::BitOrInt:
+    case Opcode::BitXorInt:
+    case Opcode::ShiftLeftInt:
+    case Opcode::ShiftRightInt:
+    case Opcode::ShiftUnsignedRightInt:
+      EmitInteger(instruction);
+      break;
+    case Opcode::AddDouble:
+    case Opcode::SubDouble:
+    case Opcode::MulDouble:
+    case Opcode::DivDouble:
+    case Opcode::NegDouble:
+      EmitDouble(instruction);
+      break;
+    case Opcode::EqualInt:
+    case Opcode::NotEqualInt:
+    case Opcode::LessInt:
+    case Opcode::LessEqualInt:
+    case Opcode::GreaterInt:
+    case Opcode::GreaterEqualInt:
+    case Opcode::EqualBool:
+    case Opcode::NotEqualBool:
+    case Opcode::EqualDouble:
+    case Opcode::NotEqualDouble:
+    case Opcode::LessDouble:
+    case Opcode::LessEqualDouble:
+    case Opcode::GreaterDouble:
+    case Opcode::GreaterEqualDouble:
+      EmitComparison(instruction);
+      break;
+    case Opcode::EqualValue:
+    case Opcode::NotEqualValue:
+      EmitValueEquality(instruction);
+      break;
+    case Opcode::AndBool:
+    case Opcode::OrBool: {
+      auto* left = Payload(instruction.lhs);
+      auto* right = Payload(instruction.rhs);
+      auto* result = instruction.opcode == Opcode::AndBool ? builder_.CreateAnd(left, right)
+                                                           : builder_.CreateOr(left, right);
+      Store(instruction.dst, result, {.kind = Kind::Bool, .name = "bool"});
+      break;
+    }
+    case Opcode::NotBool:
+      Store(instruction.dst, builder_.CreateNot(Payload(instruction.lhs)),
+            {.kind = Kind::Bool, .name = "bool"});
+      break;
+    case Opcode::Jump:
+      builder_.CreateBr(blocks_.at(instruction.index));
+      break;
+    case Opcode::JumpIfFalse:
+    case Opcode::JumpIfNull: {
+      llvm::Value* condition = nullptr;
+      if (instruction.opcode == Opcode::JumpIfFalse) {
+        condition = builder_.CreateNot(Payload(instruction.lhs));
+      } else {
+        const auto& type = source_.value_types.at(instruction.lhs);
+        condition = type.nullable
+                        ? builder_.CreateNot(builder_.CreateExtractValue(Load(instruction.lhs), 0))
+                        : builder_.getInt1(type.kind == Kind::Null);
+      }
+      const auto position = static_cast<std::size_t>(&instruction - source_.instructions.data());
+      auto* next = blocks_.at(position + 1);
+      builder_.CreateCondBr(condition, blocks_.at(instruction.index), next);
+      break;
+    }
+    case Opcode::Call: {
+      const auto& callee = program_.functions.at(instruction.index);
+      std::vector<llvm::Value*> arguments{body_->getArg(0)};
+      for (std::size_t index = 0; index < callee.parameter_count; ++index) {
+        const auto reg = static_cast<ir::RegisterId>(instruction.lhs + index);
+        arguments.push_back(Convert(builder_, Load(reg), source_.value_types.at(reg),
+                                    callee.value_types.at(index)));
+      }
+      // 结果槽在入口分配，循环内调用不会持续增长原生栈。
+      Builder entry(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+      auto* result = entry.CreateAlloca(ValueType(module_.getContext(), callee.return_type));
+      arguments.push_back(result);
+      auto* status =
+          builder_.CreateCall(generated_.subspan(instruction.index).front().body, arguments);
+      CheckStatus(status);
+      if (callee.return_type.kind == Kind::Void) {
+        Store(instruction.dst, builder_.getFalse(), callee.return_type);
+      } else {
+        Store(instruction.dst,
+              builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result),
+              callee.return_type);
+      }
+      break;
+    }
+    case Opcode::Return: {
+      if (source_.return_type.kind != Kind::Void) {
+        auto* result = Convert(builder_, Load(instruction.dst),
+                               source_.value_types.at(instruction.dst), source_.return_type);
+        builder_.CreateStore(result, body_->getArg(source_.parameter_count + 1));
+      }
+      Finish(Status(builder_, ExecutionStatus::Returned));
+      break;
+    }
+    default:
+      return std::unexpected("AOT lowering is not implemented for opcode " +
+                             std::to_string(static_cast<unsigned>(instruction.opcode)));
+  }
+  return {};
+}
+
+std::expected<void, std::string> FunctionEmitter::Emit() {
+  auto& context = module_.getContext();
+  if (source_.value_types.size() != source_.register_count) {
+    return std::unexpected("AOT requires upstream virtual value types");
+  }
+  auto* entry = llvm::BasicBlock::Create(context, "entry", body_);
+  builder_.SetInsertPoint(entry);
+  slots_.resize(source_.register_count);
+  std::size_t stack_bytes = 0;
+  for (std::size_t index = 0; index < slots_.size(); ++index) {
+    const auto& type = source_.value_types.at(index);
+    if (type.kind == Kind::Invalid) {
+      continue;
+    }
+    if (!IsScalar(type)) {
+      return std::unexpected("AOT reference lowering is not implemented for " + type.name);
+    }
+    auto* native_type = ValueType(context, type);
+    stack_bytes += module_.getDataLayout().getTypeAllocSize(native_type);
+    slots_.at(index) = builder_.CreateAlloca(native_type);
+  }
+  for (const auto& instruction : source_.instructions) {
+    if (instruction.opcode == Opcode::Call) {
+      const auto& callee = program_.functions.at(instruction.index);
+      stack_bytes +=
+          module_.getDataLayout().getTypeAllocSize(ValueType(context, callee.return_type));
+    }
+    const auto access = ir::AnalyzeRegisters(instruction, program_.functions);
+    bool has_type = !access.defines_value || slots_.at(instruction.dst) != nullptr;
+    ir::ForEachUse(instruction, access,
+                   [&](ir::RegisterId reg) { has_type = has_type && slots_.at(reg) != nullptr; });
+    if (!has_type) {
+      return std::unexpected("AOT instruction is missing an upstream virtual value type");
+    }
+  }
+  if (stack_bytes > kMaximumNativeStackBytes) {
+    return std::unexpected("AOT function exceeds the native stack frame limit");
+  }
+  cleanup_ = llvm::BasicBlock::Create(context, "cleanup", body_);
+  Builder cleanup(cleanup_);
+  status_ = cleanup.CreatePHI(builder_.getInt8Ty(), 0, "status");
+  auto exit = module_.getOrInsertFunction("vela_native_v1_frame_exit", cleanup.getVoidTy(),
+                                          cleanup.getPtrTy());
+  cleanup.CreateCall(exit, {body_->getArg(0)});
+  cleanup.CreateRet(status_);
+  auto enter = module_.getOrInsertFunction("vela_native_v1_frame_enter", builder_.getInt8Ty(),
+                                           builder_.getPtrTy(), builder_.getInt64Ty());
+  auto* entered = builder_.CreateCall(enter, {body_->getArg(0), builder_.getInt64(0)});
+  auto* failed = llvm::BasicBlock::Create(context, "enter.failed", body_);
+  auto* initialize = llvm::BasicBlock::Create(context, "initialize", body_);
+  builder_.CreateCondBr(builder_.CreateICmpEQ(entered, Status(builder_, ExecutionStatus::Returned)),
+                        initialize, failed);
+  Builder failure(failed);
+  failure.CreateRet(entered);
+  builder_.SetInsertPoint(initialize);
+  for (std::size_t index = 0; index < source_.parameter_count; ++index) {
+    builder_.CreateStore(body_->getArg(static_cast<unsigned>(index + 1)), slots_.at(index));
+  }
+  for (std::size_t index = 0; index <= source_.instructions.size(); ++index) {
+    blocks_.push_back(llvm::BasicBlock::Create(context, "instruction", body_));
+  }
+  builder_.CreateBr(blocks_.front());
+  for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
+    const auto& instruction = source_.instructions.at(index);
+    if (instruction.handler) {
+      return std::unexpected("AOT exception handler lowering is not implemented");
+    }
+    builder_.SetInsertPoint(blocks_.at(index));
+    auto emitted = EmitInstruction(instruction);
+    if (!emitted) {
+      return emitted;
+    }
+    if (builder_.GetInsertBlock()->getTerminator() == nullptr) {
+      builder_.CreateBr(blocks_.at(index + 1));
+    }
+  }
+  builder_.SetInsertPoint(blocks_.back());
+  Finish(Status(builder_, ExecutionStatus::InvalidEntry));
+  return {};
+}
+
+void EmitWrapper(llvm::Module& module, const ir::Function& source, const Generated& function) {
+  auto& context = module.getContext();
+  auto* wrapper = function.entry;
+  Builder builder(llvm::BasicBlock::Create(context, "entry", wrapper));
+  auto* invalid = llvm::BasicBlock::Create(context, "invalid", wrapper);
+  auto* unpack = llvm::BasicBlock::Create(context, "unpack", wrapper);
+  auto* count_matches =
+      builder.CreateICmpEQ(wrapper->getArg(2), builder.getInt64(source.parameter_count));
+  auto* has_output = builder.CreateIsNotNull(wrapper->getArg(3));
+  auto* valid = builder.CreateAnd(count_matches, has_output);
+  if (source.parameter_count != 0) {
+    valid = builder.CreateAnd(valid, builder.CreateIsNotNull(wrapper->getArg(1)));
+  }
+  builder.CreateCondBr(valid, unpack, invalid);
+  Builder invalid_builder(invalid);
+  invalid_builder.CreateRet(Status(invalid_builder, ExecutionStatus::InvalidEntry));
+  builder.SetInsertPoint(unpack);
+  std::vector<llvm::Value*> arguments{wrapper->getArg(0)};
+  for (std::size_t index = 0; index < source.parameter_count; ++index) {
+    const auto& type = source.value_types.at(index);
+    auto* address = builder.CreateConstGEP1_64(builder.getInt8Ty(), wrapper->getArg(1),
+                                               index * sizeof(runtime::NativeValue));
+    auto* kind_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), address,
+                                                    offsetof(runtime::NativeValue, kind));
+    auto* kind = builder.CreateLoad(builder.getInt8Ty(), kind_address);
+    auto* present = builder.CreateICmpEQ(kind, builder.getInt8(NativeKind(type.kind)));
+    auto* matches = present;
+    if (type.nullable) {
+      matches = builder.CreateOr(
+          matches, builder.CreateICmpEQ(kind, builder.getInt8(NativeKind(Kind::Null))));
+    }
+    auto* next = llvm::BasicBlock::Create(context, "argument", wrapper);
+    auto* wrong_type = llvm::BasicBlock::Create(context, "type.error", wrapper);
+    builder.CreateCondBr(matches, next, wrong_type);
+    Builder wrong(wrong_type);
+    wrong.CreateRet(Status(wrong, ExecutionStatus::TypeError));
+    builder.SetInsertPoint(next);
+    auto* bits = builder.CreateLoad(builder.getInt64Ty(), address);
+    llvm::Value* payload = bits;
+    if (type.kind == Kind::Double) {
+      payload = builder.CreateBitCast(bits, builder.getDoubleTy());
+    } else if (type.kind == Kind::Bool) {
+      auto* canonical = builder.CreateICmpULE(bits, builder.getInt64(1));
+      if (type.nullable) {
+        canonical = builder.CreateOr(builder.CreateNot(present), canonical);
+      }
+      auto* checked = llvm::BasicBlock::Create(context, "boolean", wrapper);
+      builder.CreateCondBr(canonical, checked, wrong_type);
+      builder.SetInsertPoint(checked);
+      payload = builder.CreateICmpNE(bits, builder.getInt64(0));
+    }
+    llvm::Value* argument = payload;
+    if (type.nullable) {
+      argument =
+          builder.CreateInsertValue(llvm::PoisonValue::get(ValueType(context, type)), present, 0);
+      argument = builder.CreateInsertValue(argument, payload, 1);
+    }
+    arguments.push_back(argument);
+  }
+  auto* result_type = ValueType(context, source.return_type);
+  auto* result = builder.CreateAlloca(result_type);
+  arguments.push_back(result);
+  auto* status = builder.CreateCall(function.body, arguments);
+  auto* returned = llvm::BasicBlock::Create(context, "returned", wrapper);
+  auto* failed = llvm::BasicBlock::Create(context, "failed", wrapper);
+  builder.CreateCondBr(builder.CreateICmpEQ(status, Status(builder, ExecutionStatus::Returned)),
+                       returned, failed);
+  Builder failure(failed);
+  failure.CreateRet(status);
+  builder.SetInsertPoint(returned);
+  auto* output = wrapper->getArg(3);
+  builder.CreateMemSet(output, builder.getInt8(0), sizeof(runtime::NativeValue),
+                       llvm::MaybeAlign());
+  if (source.return_type.kind != Kind::Void) {
+    auto* value = builder.CreateLoad(result_type, result);
+    auto* payload = source.return_type.nullable ? builder.CreateExtractValue(value, 1) : value;
+    if (source.return_type.kind == Kind::Double) {
+      payload = builder.CreateBitCast(payload, builder.getInt64Ty());
+    } else if (source.return_type.kind == Kind::Bool) {
+      payload = builder.CreateZExt(payload, builder.getInt64Ty());
+    }
+    builder.CreateStore(payload, output);
+    llvm::Value* kind = builder.getInt8(NativeKind(source.return_type.kind));
+    if (source.return_type.nullable) {
+      kind = builder.CreateSelect(builder.CreateExtractValue(value, 0), kind,
+                                  builder.getInt8(NativeKind(Kind::Null)));
+    }
+    builder.CreateStore(kind, builder.CreateConstGEP1_64(builder.getInt8Ty(), output,
+                                                         offsetof(runtime::NativeValue, kind)));
+  }
+  builder.CreateRet(status);
+}
+
+std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget() {
+  static const bool initialized = [] {
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    return true;
+  }();
+  static_cast<void>(initialized);
   const auto triple = llvm::sys::getDefaultTargetTriple();
   std::string error;
   const auto* target = llvm::TargetRegistry::lookupTarget(triple, error);
-  if (target == nullptr)
+  if (target == nullptr) {
     return std::unexpected(std::move(error));
-  llvm::TargetOptions options;
-  auto machine = std::unique_ptr<llvm::TargetMachine>(
-      target->createTargetMachine(llvm::Triple(triple), "generic", "", options, llvm::Reloc::PIC_));
-  if (machine == nullptr)
-    return std::unexpected("unable to create native target machine");
-  module.setTargetTriple(llvm::Triple(triple));
-  module.setDataLayout(machine->createDataLayout());
-  llvm::SmallVector<char, 0> bytes;
-  llvm::raw_svector_ostream stream(bytes);
-  llvm::legacy::PassManager pass;
-  if (machine->addPassesToEmitFile(pass, stream, nullptr, llvm::CodeGenFileType::ObjectFile)) {
-    return std::unexpected("native target cannot emit object files");
   }
-  pass.run(module);
-  if (target_name != nullptr)
-    *target_name = triple;
-  std::vector<std::byte> result(bytes.size());
-  std::transform(bytes.begin(), bytes.end(), result.begin(), [](char value) {
-    return static_cast<std::byte>(static_cast<unsigned char>(value));
-  });
-  return result;
+  llvm::TargetOptions options;
+  std::unique_ptr<llvm::TargetMachine> machine(
+      target->createTargetMachine(llvm::Triple(triple), "generic", "", options, llvm::Reloc::PIC_));
+  if (machine == nullptr) {
+    return std::unexpected("unable to create native target machine");
+  }
+  return machine;
+}
+
+void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
+  llvm::LoopAnalysisManager loops;
+  llvm::FunctionAnalysisManager functions;
+  llvm::CGSCCAnalysisManager calls;
+  llvm::ModuleAnalysisManager modules;
+  llvm::PassBuilder passes(&machine);
+  passes.registerModuleAnalyses(modules);
+  passes.registerCGSCCAnalyses(calls);
+  passes.registerFunctionAnalyses(functions);
+  passes.registerLoopAnalyses(loops);
+  passes.crossRegisterProxies(loops, functions, calls, modules);
+  auto pipeline = passes.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+  pipeline.run(module, modules);
+}
+
+frontend::Diagnostics MakeDiagnostics(const ir::Program& program,
+                                      std::string message,
+                                      const ir::Function* function) {
+  frontend::Diagnostic result{.location = {}, .message = std::move(message), .source_path = {}};
+  if (function != nullptr) {
+    result.location = function->location;
+    if (!program.source_paths.empty()) {
+      result.source_path = program.source_paths.at(result.location.source_id);
+    }
+  }
+  return {std::move(result)};
+}
+
+std::expected<absl::flat_hash_set<std::string>, std::string> SelectExports(
+    const ir::Program& program,
+    std::span<const std::string> names) {
+  absl::flat_hash_map<std::string_view, bool> functions;
+  for (const auto& function : program.functions) {
+    functions.emplace(function.name, function.is_exported);
+  }
+  absl::flat_hash_set<std::string> selected;
+  for (const auto& name : names) {
+    const auto found = functions.find(name);
+    if (found == functions.end() || !found->second) {
+      return std::unexpected("AOT export must name a public entry-module function: " + name);
+    }
+    selected.insert(name);
+  }
+  return selected;
 }
 
 }  // namespace
 
 std::expected<NativeArtifact, frontend::Diagnostics> Compile(const ir::Program& program,
-                                                             NativeOptions options) {
-  ModuleBuilder builder(std::move(options.module_name));
+                                                             const NativeOptions& options) {
+  const auto diagnostic = [&](std::string message, const ir::Function* function = nullptr) {
+    return std::unexpected(MakeDiagnostics(program, std::move(message), function));
+  };
+  auto target = CreateTarget();
+  if (!target) {
+    return diagnostic(target.error());
+  }
+  auto& machine = **target;
+  const auto selected = SelectExports(program, options.exports);
+  if (!selected) {
+    return diagnostic(selected.error());
+  }
+  llvm::LLVMContext context;
+  llvm::Module module(options.module_name, context);
+  module.setTargetTriple(machine.getTargetTriple());
+  module.setDataLayout(machine.createDataLayout());
   std::vector<Generated> generated;
-  generated.reserve(program.functions.size());
+  std::vector<NativeExport> exports;
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
-    auto types = Types(program, program.functions.at(index));
-    if (!types)
-      return std::unexpected(frontend::Diagnostics{std::move(types.error())});
-    const auto wrapper_type = llvm::FunctionType::get(
-        builder.byte,
-        {builder.byte_pointer, builder.byte_pointer, builder.word, builder.byte_pointer}, false);
+    const auto& function = program.functions.at(index);
+    if (function.is_async || !function.native_symbol.empty() || !IsScalar(function.return_type)) {
+      return diagnostic("AOT asynchronous, native import or reference lowering is not implemented",
+                        &function);
+    }
+    std::vector<llvm::Type*> parameters{llvm::PointerType::getUnqual(context)};
+    for (std::size_t parameter = 0; parameter < function.parameter_count; ++parameter) {
+      if (parameter >= function.value_types.size() ||
+          !IsScalar(function.value_types.at(parameter))) {
+        return diagnostic("AOT requires a supported upstream parameter type", &function);
+      }
+      parameters.push_back(ValueType(context, function.value_types.at(parameter)));
+    }
+    parameters.push_back(llvm::PointerType::getUnqual(context));
+    auto* body_type = llvm::FunctionType::get(llvm::Type::getInt8Ty(context), parameters, false);
     auto* body =
-        llvm::Function::Create(wrapper_type, llvm::GlobalValue::InternalLinkage,
-                               "vela_aot_body_" + std::to_string(index), builder.module.get());
-    auto* entry =
-        llvm::Function::Create(wrapper_type, llvm::GlobalValue::ExternalLinkage,
-                               "vela_aot_entry_" + std::to_string(index), builder.module.get());
-    generated.push_back({.body = body, .entry = entry, .types = std::move(*types)});
+        llvm::Function::Create(body_type, llvm::GlobalValue::InternalLinkage,
+                               options.module_name + "_body_" + std::to_string(index), module);
+    auto* pointer = llvm::PointerType::getUnqual(context);
+    auto* wrapper_type = llvm::FunctionType::get(
+        llvm::Type::getInt8Ty(context),
+        {pointer, pointer, llvm::Type::getInt64Ty(context), pointer}, false);
+    llvm::Function* entry = nullptr;
+    if (selected->contains(function.name)) {
+      const auto symbol = options.module_name + "_entry_" + std::to_string(index);
+      entry =
+          llvm::Function::Create(wrapper_type, llvm::GlobalValue::ExternalLinkage, symbol, module);
+      exports.push_back({.name = function.name, .symbol = symbol});
+    }
+    generated.push_back({.body = body, .entry = entry});
   }
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
-    auto result = GenerateFunction(builder, program, program.functions.at(index), index, generated);
-    if (!result)
-      return std::unexpected(frontend::Diagnostics{std::move(result.error())});
-    generated[index].types = std::move(result->types);
+    const auto& function = program.functions.at(index);
+    auto emitted = FunctionEmitter(module, program, index, generated).Emit();
+    if (!emitted) {
+      return diagnostic(emitted.error(), &function);
+    }
+    const auto& native_function = generated.at(index);
+    if (native_function.entry != nullptr) {
+      EmitWrapper(module, function, native_function);
+    }
   }
   std::string verification;
-  llvm::raw_string_ostream verifier_output(verification);
-  if (llvm::verifyModule(*builder.module, &verifier_output)) {
-    return std::unexpected(frontend::Diagnostics{
-        {.location = {}, .message = verifier_output.str(), .source_path = {}}});
+  llvm::raw_string_ostream verifier(verification);
+  if (llvm::verifyModule(module, &verifier)) {
+    return diagnostic(verification);
+  }
+  if (options.optimization == NativeOptimization::Release) {
+    Optimize(module, machine);
+  }
+  if (llvm::verifyModule(module, &verifier)) {
+    return diagnostic(verification);
   }
   std::string llvm_ir;
   llvm::raw_string_ostream ir_output(llvm_ir);
-  builder.module->print(ir_output, nullptr);
-  std::string target;
-  auto object = EmitObject(*builder.module, &target);
-  if (!object) {
-    return std::unexpected(
-        frontend::Diagnostics{{.location = {}, .message = object.error(), .source_path = {}}});
+  module.print(ir_output, nullptr);
+  llvm::SmallVector<char, 0> bytes;
+  llvm::raw_svector_ostream stream(bytes);
+  llvm::legacy::PassManager codegen;
+  if (machine.addPassesToEmitFile(codegen, stream, nullptr, llvm::CodeGenFileType::ObjectFile)) {
+    return diagnostic("native target cannot emit object files");
   }
+  codegen.run(module);
+  std::vector<std::byte> object(bytes.size());
+  std::ranges::transform(bytes, object.begin(), [](char value) {
+    return static_cast<std::byte>(static_cast<unsigned char>(value));
+  });
   return NativeArtifact{
-      .object = std::move(*object), .llvm_ir = std::move(llvm_ir), .target = std::move(target)};
+      .object = std::move(object),
+      .llvm_ir = std::move(llvm_ir),
+      .target = machine.getTargetTriple().str(),
+      .exports = std::move(exports),
+  };
 }
 
 }  // namespace vela::compiler::aot

@@ -154,14 +154,20 @@ def link_configuration() -> dict[str, str | list[str]]:
                                 capture_output=True, text=True, encoding="utf-8")
         return shlex.split(result.stdout, posix=True)
 
+    components = ("core", "passes", "nativecodegen")
     libraries = [directory / "lib" / name
-                 for name in query("--libnames", "core", "passes", "nativecodegen")]
+                 for name in query("--libnames", *components)]
     for library in libraries:
         if not library.is_file():
             raise RuntimeError(f"Missing LLVM static library: {library}")
     system = []
-    for argument in query("--system-libs"):
+    for argument in query("--system-libs", *components):
         name = Path(argument).name
+        if name == "libxml2s.lib" and not any(
+                library.stem == "LLVMWindowsManifest" for library in libraries):
+            # llvm-config 汇总了全部组件的系统库；libxml2 只属于 WindowsManifest，
+            # 当前代码生成组件闭包不包含它。此处按组件归属筛选，不按文件缺失降级。
+            continue
         if name in {"libzstd.a", "zstd.lib", "-lzstd"}:
             # 发布方的绝对安装路径不是本地依赖；zstd 由本仓库的固定源码构建。
             continue

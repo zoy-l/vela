@@ -282,6 +282,7 @@ std::optional<frontend::Diagnostic> AllocateRegisters(ir::Function& function,
         .source_path = {},
     };
   }
+  function.value_types.clear();
   Rewrite(function, functions, allocations);
   RemoveSelfMoves(function);
   ClearDeadSuspendedRegisters(function, functions);
