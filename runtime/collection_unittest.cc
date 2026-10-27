@@ -4,6 +4,7 @@
 #include <span>
 #include <string>
 
+#include "base/execution_status.h"
 #include "gtest/gtest.h"
 
 #include "runtime/heap.h"
@@ -75,6 +76,51 @@ TEST_F(OrderedCollectionTest, PreservesOrderAcrossGrowthDeletionAndReinsertion) 
             CollectionInsert::Updated);
   EXPECT_EQ(Heap::GetCollectionValue(map(), Value::Integer(1))->AsInteger(), 42);
   VerifySnapshotOrder();
+}
+
+TEST_F(OrderedCollectionTest, IteratorRejectsGrowthBeforeReadingCachedStorage) {
+  InsertEntries(EntryPass::Initial);
+  ASSERT_FALSE(HasFatalFailure());
+  auto iterator = Heap::IterateCollection(map());
+  ASSERT_TRUE(iterator);
+  ASSERT_TRUE(heap().InsertCollection(map(), Value::Integer(kEntryCount), Value::Integer(42)));
+  EXPECT_EQ(iterator->Next().error(), ExecutionStatus::ConcurrentModification);
+}
+
+TEST(CollectionTest, IteratorSeesValueUpdates) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateCollectionLayout({
+      .keys = {.element = {.kind = ValueKind::Integer}},
+      .values = ArrayLayout{.element = {.kind = ValueKind::Integer}},
+  });
+  const auto value = Value::Object(heap.AllocateCollection(*layout));
+  RootRange root(heap, &value, 1);
+  auto& map = *value.AsObject();
+  ASSERT_TRUE(heap.InsertCollection(map, Value::Integer(1), Value::Integer(10)));
+  auto iterator = Heap::IterateCollection(map);
+  ASSERT_TRUE(iterator);
+  ASSERT_EQ(heap.InsertCollection(map, Value::Integer(1), Value::Integer(42)),
+            CollectionInsert::Updated);
+  const auto entry = iterator->Next();
+  ASSERT_TRUE(entry);
+  const auto current = entry.value();
+  if (!current) {
+    FAIL() << "iterator ended before returning the updated entry";
+    return;
+  }
+  EXPECT_EQ(current->key.AsInteger(), 1);
+  EXPECT_EQ(current->value.AsInteger(), 42);
+}
+
+TEST_F(OrderedCollectionTest, IteratorRejectsStructuralChangesAfterEnd) {
+  auto iterator = Heap::IterateCollection(map());
+  ASSERT_TRUE(iterator);
+  const auto end = iterator->Next();
+  ASSERT_TRUE(end);
+  EXPECT_FALSE(*end);
+  ASSERT_TRUE(heap().InsertCollection(map(), Value::Integer(1), Value::Integer(10)));
+  EXPECT_EQ(iterator->Next().error(), ExecutionStatus::ConcurrentModification);
 }
 
 TEST(CollectionTest, ClearsEntriesAndAllowsReuse) {

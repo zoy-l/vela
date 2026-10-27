@@ -10,6 +10,9 @@
 #include <span>
 #include <string_view>
 
+#include <absl/container/inlined_vector.h>
+
+#include "base/execution_status.h"
 #include "runtime/array_storage.h"
 #include "runtime/element_storage.h"
 #include "runtime/object.h"
@@ -29,34 +32,35 @@ struct MutableStringBuffer final {
   std::size_t capacity = 0;
 };
 
+constexpr std::size_t kInlineFormattedParts = 8;
+
 MutableStringBuffer& Buffer(HeapObject& object) noexcept {
-  void* storage = std::span(&object, 1).last(0).data();
-  return *static_cast<MutableStringBuffer*>(storage);
+  return *StorageAfter<MutableStringBuffer>(object);
 }
 
 const MutableStringBuffer& Buffer(const HeapObject& object) noexcept {
-  const void* storage = std::span(&object, 1).last(0).data();
-  return *static_cast<const MutableStringBuffer*>(storage);
+  return *StorageAfter<MutableStringBuffer>(object);
 }
 
 std::span<char> StringStorage(StringObject& string, std::size_t length) noexcept {
-  void* storage = std::span(&string, 1).last(0).data();
-  return {static_cast<char*>(storage), length};
+  return {StorageAfter<char>(string), length};
 }
 
 std::expected<std::string_view, StringJoinError>
 StringText(Value value, std::span<char, kScalarTextCapacity> buffer, TextContext context) {
+  if (value.IsObject()) {
+    return std::unexpected(StringJoinError::TypeMismatch);
+  }
+  if (context == TextContext::ArrayElement) {
+    return value.IsNull() ? "" : FormatArrayValue(value, buffer);
+  }
   if (value.IsNull()) {
-    return context == TextContext::ArrayElement ? "" : "null";
+    return "null";
   }
   if (value.IsString()) {
     return value.AsString()->value();
   }
-  if (value.IsInteger() || value.IsDouble() || value.IsBoolean()) {
-    return context == TextContext::ArrayElement ? FormatArrayScalar(value, buffer)
-                                                : FormatScalar(value, buffer);
-  }
-  return std::unexpected(StringJoinError::TypeMismatch);
+  return FormatScalar(value, buffer);
 }
 
 template <class Read, class Allocate>
@@ -73,9 +77,12 @@ std::expected<StringObject*, StringJoinError> JoinFormatted(std::size_t count,
     }
     length = gaps * separator.size();
   }
+  absl::InlinedVector<char, kInlineFormattedParts * kScalarTextCapacity> scalars;
+  absl::InlinedVector<std::size_t, kInlineFormattedParts> scalar_lengths;
   std::array<char, kScalarTextCapacity> buffer{};
   for (std::size_t index = 0; index < count; ++index) {
-    const auto text = StringText(read(index), buffer, context);
+    const auto value = read(index);
+    const auto text = StringText(value, buffer, context);
     if (!text) {
       return std::unexpected(text.error());
     }
@@ -83,19 +90,34 @@ std::expected<StringObject*, StringJoinError> JoinFormatted(std::size_t count,
       return std::unexpected(StringJoinError::OutOfMemory);
     }
     length += text->size();
+    if (!value.IsString() && !value.IsNull()) {
+      scalars.insert(scalars.end(), text->begin(), text->end());
+      scalar_lengths.push_back(text->size());
+    }
   }
   auto* string = allocate(length);
   if (string == nullptr) {
     return std::unexpected(StringJoinError::OutOfMemory);
   }
   auto remaining = StringStorage(*string, length);
+  auto cached = std::span<const char>(scalars);
+  auto lengths = std::span<const std::size_t>(scalar_lengths);
   for (std::size_t index = 0; index < count; ++index) {
     if (index != 0) {
       std::ranges::copy(separator, remaining.begin());
       remaining = remaining.subspan(separator.size());
     }
-    // read 只读取稳定值，不求值脚本表达式；分配前已检查所有值的可格式化性。
-    const auto text = *StringText(read(index), buffer, context);
+    // read 只读取保根的稳定值；字符串直接借用原视图，标量使用首轮格式化的缓存。
+    const auto value = read(index);
+    std::string_view text;
+    if (value.IsString() || value.IsNull()) {
+      text = *StringText(value, buffer, context);
+    } else {
+      const auto size = lengths.front();
+      lengths = lengths.subspan(1);
+      text = {cached.data(), size};
+      cached = cached.subspan(size);
+    }
     std::ranges::copy(text, remaining.begin());
     remaining = remaining.subspan(text.size());
   }
@@ -119,7 +141,7 @@ StringObject* Heap::AllocateStringStorage(std::size_t length) noexcept {
   auto& header = string->header_;
   header.kind = ObjectKind::String;
   header.length = static_cast<std::uint32_t>(length);
-  Publish(header, allocation.size);
+  Publish(header, allocation);
   return string;
 }
 
@@ -177,7 +199,8 @@ std::expected<std::span<StringObject* const>, ArrayAccessError> Heap::StringElem
   if (array.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }
-  if (array.array_layout()->element.kind != ValueKind::String) {
+  const auto& layout = *array.array_layout();
+  if (layout.element.kind != ValueKind::String || layout.HasTaggedElements()) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
   const void* storage = internal::ArrayBuffer(array).data;
@@ -233,33 +256,33 @@ std::expected<StringObject*, StringJoinError> Heap::JoinValues(RegisterView part
 
 HeapObject* Heap::AllocateMutableString() noexcept {
   const auto size = sizeof(HeapObject) + sizeof(MutableStringBuffer);
-  MaybeCollect(size);
-  const auto allocation = AllocateRaw(size);
-  if (allocation.memory == nullptr) {
-    return nullptr;
-  }
-  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
-  object->kind = ObjectKind::MutableString;
-  void* storage = std::span(object, 1).last(0).data();
-  std::construct_at(static_cast<MutableStringBuffer*>(storage));
-  Publish(*object, allocation.size);
-  return object;
+  return AllocateObject(ObjectKind::MutableString, size, [](HeapObject& object) {
+    std::construct_at(StorageAfter<MutableStringBuffer>(object));
+  });
 }
 
 bool Heap::IsMutableString(const HeapObject& object) noexcept {
   return object.kind == ObjectKind::MutableString;
 }
 
-std::expected<void, MutableStringError> Heap::AppendString(HeapObject& builder,
-                                                           std::string_view text) noexcept {
-  if (!IsMutableString(builder)) {
-    return std::unexpected(MutableStringError::NotMutableString);
+std::expected<void, ExecutionStatus> Heap::AppendString(HeapObject& builder,
+                                                        std::string_view text) noexcept {
+  const auto output = AppendStringStorage(builder, text.size());
+  if (!output) {
+    return std::unexpected(output.error());
   }
+  std::ranges::copy(text, output->begin());
+  return {};
+}
+
+std::expected<std::span<char>, ExecutionStatus> Heap::AppendStringStorage(
+    HeapObject& builder,
+    std::size_t count) noexcept {
   const auto length = builder.length;
-  if (text.size() > kMaximumStringLength - length) {
-    return std::unexpected(MutableStringError::OutOfMemory);
+  if (count > kMaximumStringLength - length) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  const auto new_length = length + text.size();
+  const auto new_length = length + count;
   auto& buffer = Buffer(builder);
   if (new_length > buffer.capacity) {
     const auto capacity = std::max({
@@ -270,7 +293,7 @@ std::expected<void, MutableStringError> Heap::AppendString(HeapObject& builder,
     MaybeCollect(capacity);
     auto* memory = static_cast<char*>(::operator new(capacity, std::nothrow));
     if (memory == nullptr) {
-      return std::unexpected(MutableStringError::OutOfMemory);
+      return std::unexpected(ExecutionStatus::OutOfMemory);
     }
     std::ranges::copy(std::span(buffer.data, length), memory);
     const auto old_capacity = buffer.capacity;
@@ -279,11 +302,8 @@ std::expected<void, MutableStringError> Heap::AppendString(HeapObject& builder,
     committed_bytes_ += capacity - old_capacity;
     buffer = {.data = memory, .capacity = capacity};
   }
-  if (!text.empty()) {
-    std::ranges::copy(text, std::span(buffer.data, buffer.capacity).subspan(length).begin());
-  }
   builder.length = static_cast<std::uint32_t>(new_length);
-  return {};
+  return std::span(buffer.data, buffer.capacity).subspan(length, count);
 }
 
 StringObject* Heap::BuildString(const HeapObject& builder) noexcept {

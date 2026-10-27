@@ -3,86 +3,48 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
-#include <utility>
+#include <type_traits>
 
 #include "runtime/object.h"
-#include "runtime/string.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
-namespace {
 
-template <typename T>
-std::span<T> Slots(std::span<std::byte> bytes) noexcept {
-  void* storage = bytes.data();
-  return {static_cast<T*>(storage), bytes.size() / sizeof(T)};
+std::size_t ArrayLayout::element_size() const noexcept {
+  if (element.kind == ValueKind::Null && !HasTaggedElements()) {
+    return 0;
+  }
+  return VisitElementType(*this, []<class T> { return sizeof(T); });
 }
-
-template <typename T>
-std::span<const T> Slots(std::span<const std::byte> bytes) noexcept {
-  const void* storage = bytes.data();
-  return {static_cast<const T*>(storage), bytes.size() / sizeof(T)};
-}
-
-}  // namespace
 
 Value LoadElementStorage(const ArrayLayout& layout,
                          std::span<const std::byte> storage,
                          std::size_t index) noexcept {
-  if (layout.HasTaggedElements()) {
-    return Slots<Value>(storage).subspan(index).front();
-  }
-  switch (layout.element.kind) {
-    case ValueKind::Boolean:
-      return Value::Boolean(Slots<bool>(storage).subspan(index).front());
-    case ValueKind::Integer:
-      return Value::Integer(Slots<std::int64_t>(storage).subspan(index).front());
-    case ValueKind::Double:
-      return Value::Double(Slots<double>(storage).subspan(index).front());
-    case ValueKind::String: {
-      auto* value = Slots<StringObject*>(storage).subspan(index).front();
+  return VisitElementStorage(layout, storage, [index]<class T>(std::span<const T> elements) {
+    const auto value = elements.subspan(index).front();
+    if constexpr (std::is_same_v<T, Value>) {
+      return value;
+    } else if constexpr (std::is_same_v<T, bool>) {
+      return Value::Boolean(value);
+    } else if constexpr (std::is_same_v<T, std::int64_t>) {
+      return Value::Integer(value);
+    } else if constexpr (std::is_same_v<T, double>) {
+      return Value::Double(value);
+    } else if constexpr (std::is_same_v<T, StringObject*>) {
       return value == nullptr ? Value::Null() : Value::String(value);
-    }
-    case ValueKind::Object: {
-      auto* value = Slots<HeapObject*>(storage).subspan(index).front();
+    } else {
       return value == nullptr ? Value::Null() : Value::Object(value);
     }
-    case ValueKind::Null:
-      std::unreachable();
-  }
-  std::unreachable();
+  });
 }
 
 void StoreElementStorage(const ArrayLayout& layout,
                          std::span<std::byte> storage,
                          std::size_t index,
                          Value value) noexcept {
-  if (layout.HasTaggedElements()) {
-    Slots<Value>(storage).subspan(index).front() = value;
-    return;
-  }
-  switch (layout.element.kind) {
-    case ValueKind::Boolean:
-      Slots<bool>(storage).subspan(index).front() = value.AsBoolean();
-      return;
-    case ValueKind::Integer:
-      Slots<std::int64_t>(storage).subspan(index).front() = value.AsInteger();
-      return;
-    case ValueKind::Double:
-      Slots<double>(storage).subspan(index).front() = value.AsDouble();
-      return;
-    case ValueKind::String:
-      Slots<StringObject*>(storage).subspan(index).front() =
-          value.IsNull() ? nullptr : value.AsString();
-      return;
-    case ValueKind::Object:
-      Slots<HeapObject*>(storage).subspan(index).front() =
-          value.IsNull() ? nullptr : value.AsObject();
-      return;
-    case ValueKind::Null:
-      std::unreachable();
-  }
-  std::unreachable();
+  VisitElementStorage(layout, storage, [index, value]<class T>(std::span<T> elements) {
+    elements.subspan(index).front() = ElementValue<T>(value);
+  });
 }
 
 }  // namespace vela::runtime

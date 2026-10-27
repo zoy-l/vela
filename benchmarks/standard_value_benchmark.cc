@@ -63,6 +63,32 @@ enum class CaseWorkload : std::uint8_t {
   Context,
 };
 
+enum class SortDispatch : std::uint8_t { Static, Dynamic };
+
+void DefaultSort(benchmark::State& state, SortDispatch dispatch) {
+  constexpr std::int64_t kExpected = 42;
+  const auto count = state.range(0);
+  std::string source =
+      "func main(): int { const values: double[] = []; let value = 1.0; "
+      "for (let index = 0; index < " +
+      std::to_string(count) +
+      "; index++) { values.push(value); value = value == 3.0 ? 1.0 : value + 1.0; } ";
+  source += dispatch == SortDispatch::Static ? "values.sort(); "
+                                             : "const erased: dynamic = values; erased.sort(); ";
+  source += "return values.length == " + std::to_string(count) +
+            " && values[0] == 1.0 && values[values.length - 1] == 3.0 ? 42 : 0; }";
+  SteadyValue(state, source, kExpected);
+}
+
+BENCHMARK_CAPTURE(DefaultSort, Static, SortDispatch::Static)
+    ->Name("array/default_sort")
+    ->Arg(64)
+    ->Arg(4096);
+BENCHMARK_CAPTURE(DefaultSort, Dynamic, SortDispatch::Dynamic)
+    ->Name("array/dynamic_sort")
+    ->Arg(64)
+    ->Arg(4096);
+
 void ConvertCase(benchmark::State& state, CaseWorkload workload) {
   const auto count = state.range(0);
   std::string_view part;

@@ -18,8 +18,7 @@ namespace vela::runtime {
 namespace {
 
 std::span<TracePosition> TraceStorage(ExceptionData& exception) {
-  void* storage = std::span(&exception, 1).last(0).data();
-  return {static_cast<TracePosition*>(storage), exception.trace_count};
+  return {StorageAfter<TracePosition>(exception), exception.trace_count};
 }
 
 }  // namespace
@@ -30,8 +29,7 @@ static_assert(sizeof(HeapObject) % alignof(ExceptionData) == 0);
 static_assert(sizeof(ExceptionData) % alignof(TracePosition) == 0);
 
 std::span<const TracePosition> ExceptionData::trace() const noexcept {
-  const void* storage = std::span(this, 1).last(0).data();
-  return {static_cast<const TracePosition*>(storage), trace_count};
+  return {StorageAfter<TracePosition>(*this), trace_count};
 }
 
 std::string_view ExceptionData::message() const noexcept {
@@ -40,8 +38,7 @@ std::string_view ExceptionData::message() const noexcept {
 }
 
 ExceptionData& ExceptionData::From(HeapObject& object) noexcept {
-  void* storage = std::span(&object, 1).last(0).data();
-  return *static_cast<ExceptionData*>(storage);
+  return *StorageAfter<ExceptionData>(object);
 }
 
 HeapObject* Heap::AllocateException(HeapObject& payload,
@@ -55,26 +52,17 @@ HeapObject* Heap::AllocateException(HeapObject& payload,
   }
   const auto rooted_payload = Value::Object(&payload);
   RootRange roots(*this, &rooted_payload, 1);
-  MaybeCollect(size);
-  const auto allocation = AllocateRaw(size);
-  if (allocation.memory == nullptr) {
-    return nullptr;
-  }
-  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
-  object->kind = ObjectKind::Exception;
-  void* storage = std::span(object, 1).last(0).data();
-  auto* exception = std::construct_at(static_cast<ExceptionData*>(storage));
-  exception->payload = &payload;
-  exception->status = status;
-  exception->trace_count = static_cast<std::uint32_t>(trace.size());
-  exception->message_length = static_cast<std::uint32_t>(message.size());
-  std::ranges::uninitialized_copy(trace, TraceStorage(*exception));
-  auto bytes = std::span(static_cast<std::byte*>(allocation.memory), allocation.size);
-  auto text = bytes.subspan(sizeof(HeapObject) + sizeof(ExceptionData) + trace.size_bytes(),
-                            message.size());
-  std::ranges::copy(std::as_bytes(std::span(message.data(), message.size())), text.begin());
-  Publish(*object, allocation.size);
-  return object;
+  return AllocateObject(
+      ObjectKind::Exception, size, [&payload, status, trace, message](HeapObject& object) {
+        auto* exception = std::construct_at(StorageAfter<ExceptionData>(object));
+        exception->payload = &payload;
+        exception->status = status;
+        exception->trace_count = static_cast<std::uint32_t>(trace.size());
+        exception->message_length = static_cast<std::uint32_t>(message.size());
+        std::ranges::uninitialized_copy(trace, TraceStorage(*exception));
+        auto bytes = std::span(StorageAfter<char>(*exception), trace.size_bytes() + message.size());
+        std::ranges::copy(message, bytes.subspan(trace.size_bytes()).begin());
+      });
 }
 
 }  // namespace vela::runtime

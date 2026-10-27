@@ -1,7 +1,6 @@
 #include "vm/bytecode_image_internal.h"
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -137,22 +136,24 @@ std::expected<ImageClass, BinaryError> ReadClass(
     return std::unexpected(reader.Error("invalid enum identity layout"));
   }
   if (*standard == static_cast<std::uint8_t>(StandardClass::Error)) {
-    constexpr auto error_fields =
-        std::to_array({runtime::kErrorMessageField, runtime::kErrorCodeField});
-    if (*fields != runtime::kErrorFieldCount || !std::ranges::equal(*references, error_fields) ||
-        options.callable || !options.interfaces.empty() || !options.dispatch_targets.empty() ||
-        options.is_enum || *expected_type != kNoImageId) {
+    auto& layout = isolate.error_layout();
+    if (*fields != layout.field_count() ||
+        !std::ranges::equal(*references, layout.reference_fields()) || options.callable ||
+        !options.interfaces.empty() || !options.dispatch_targets.empty() || options.is_enum ||
+        *expected_type != kNoImageId) {
       return std::unexpected(reader.Error("invalid standard Error layout"));
     }
-    return ImageClass{.layout = &isolate.error_layout()};
+    return ImageClass{.layout = &layout};
   }
   if (*standard == static_cast<std::uint8_t>(StandardClass::DateParts)) {
-    if (*fields != runtime::kDatePartsFieldCount || !references->empty() || options.callable ||
+    auto& layout = isolate.date_parts_layout();
+    if (*fields != layout.field_count() ||
+        !std::ranges::equal(*references, layout.reference_fields()) || options.callable ||
         !options.interfaces.empty() || !options.dispatch_targets.empty() || options.is_enum ||
         *expected_type != kNoImageId) {
       return std::unexpected(reader.Error("invalid standard DateParts layout"));
     }
-    return ImageClass{.layout = &isolate.date_parts_layout()};
+    return ImageClass{.layout = &layout};
   }
   return ImageClass{
       .layout = isolate.CreateClassLayout(*fields, *references, std::move(options)),

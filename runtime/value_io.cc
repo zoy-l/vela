@@ -61,7 +61,13 @@ std::span<char> WriteArrayNumberDigits(std::span<const char> digits,
 
 }  // namespace
 
-std::string_view FormatArrayScalar(Value value, std::span<char, kScalarTextCapacity> buffer) {
+std::string_view FormatArrayValue(Value value, std::span<char, kScalarTextCapacity> buffer) {
+  if (value.IsString()) {
+    return value.AsString()->value();
+  }
+  if (value.IsNull()) {
+    return "null";
+  }
   if (!value.IsDouble()) {
     return FormatScalar(value, buffer);
   }
@@ -75,12 +81,14 @@ std::string_view FormatArrayScalar(Value value, std::span<char, kScalarTextCapac
   if (number == 0) {
     return "0";
   }
-  std::array<char, kScalarTextCapacity> scientific{};
-  const auto converted = std::to_chars(scientific.data(), std::to_address(scientific.end()),
-                                       std::abs(number), std::chars_format::scientific);
-  const std::string_view text(scientific.data(),
-                              static_cast<std::size_t>(converted.ptr - scientific.data()));
+  const auto converted = std::to_chars(buffer.data(), std::to_address(buffer.end()), number,
+                                       std::chars_format::general);
+  const std::string_view text(buffer.data(),
+                              static_cast<std::size_t>(converted.ptr - buffer.data()));
   const auto marker = text.find('e');
+  if (marker == std::string_view::npos) {
+    return text;
+  }
   auto exponent_text = text.substr(marker + 1);
   if (exponent_text.front() == '+') {
     exponent_text.remove_prefix(1);
@@ -90,7 +98,8 @@ std::string_view FormatArrayScalar(Value value, std::span<char, kScalarTextCapac
                                     std::to_address(exponent_text.end()), exponent));
   std::array<char, kScalarTextCapacity> digits{};
   std::size_t count = 0;
-  for (const auto digit : text.substr(0, marker)) {
+  const auto sign = number < 0 ? 1U : 0U;
+  for (const auto digit : text.substr(sign, marker - sign)) {
     if (digit != '.') {
       digits.at(count++) = digit;
     }
@@ -126,6 +135,17 @@ void WriteValue(std::ostream& output, Value value) {
   } else {
     output << "object";
   }
+}
+
+std::string_view FormatJsonScalar(Value value, std::span<char, kScalarTextCapacity> buffer) {
+  const auto text = FormatScalar(value, buffer);
+  if (!value.IsDouble() || text.find_first_of(".eE") != std::string_view::npos) {
+    return text;
+  }
+  auto remaining = buffer.subspan(text.size());
+  remaining.front() = '.';
+  remaining.subspan(1).front() = '0';
+  return {buffer.data(), text.size() + 2};
 }
 
 }  // namespace vela::runtime

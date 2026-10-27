@@ -40,6 +40,7 @@ class Value final {
   [[nodiscard]] constexpr bool IsDouble() const noexcept { return kind() == ValueKind::Double; }
   [[nodiscard]] constexpr bool IsObject() const noexcept { return kind() == ValueKind::Object; }
   [[nodiscard]] constexpr bool IsString() const noexcept { return kind() == ValueKind::String; }
+  [[nodiscard]] constexpr bool IsReference() const noexcept { return IsObject() || IsString(); }
 
   [[nodiscard]] constexpr bool AsBoolean() const noexcept { return std::get<bool>(payload_); }
   [[nodiscard]] constexpr std::int64_t AsInteger() const noexcept {

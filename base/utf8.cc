@@ -14,7 +14,6 @@ namespace {
 constexpr std::uint32_t kTwoByteFirst = 0xC2;
 constexpr std::uint32_t kTwoByteLast = 0xDF;
 constexpr std::uint32_t kTwoBytePayload = 0x1F;
-constexpr std::uint32_t kContinuationTag = 0x80;
 constexpr std::uint32_t kThreeByteTag = 0xE0;
 constexpr std::uint32_t kThreeByteLast = 0xEF;
 constexpr std::uint32_t kThreeBytePayload = 0x0F;
@@ -22,7 +21,6 @@ constexpr std::uint32_t kThreeByteMinimum = 0x800;
 constexpr std::uint32_t kFourByteTag = 0xF0;
 constexpr std::uint32_t kFourByteLast = 0xF4;
 constexpr std::uint32_t kFourBytePayload = 0x07;
-constexpr std::uint32_t kContinuationMask = 0xC0;
 constexpr std::uint32_t kContinuationPayload = 0x3F;
 constexpr unsigned kContinuationBits = 6;
 }  // namespace

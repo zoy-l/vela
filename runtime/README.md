@@ -41,8 +41,10 @@ one allocation. GC-owned string builders account for their growing native
 buffers and release them during sweeping. Their snapshots own independent
 immutable storage; see [string contracts](../docs/en/strings.md).
 
-`RootRange` accepts VM `Value` slots or a fixed native string-pointer span. Its
-storage and owning Isolate must outlive registration. Roots are rescanned before
+`RootRange` accepts `Value` slots, VM register storage, or fixed string-pointer spans. Its
+storage and owning Isolate must outlive registration. Hosts and benchmarks can request a full
+collection with `Heap::Collect()`, or drive an incremental cycle with `StartCollection`, `Step`,
+and `FinishCollection`. Roots are rescanned before
 sweep; registration and field/array stores preserve references during both mark
 and sweep. Hosts must root returned VM values before the next allocation or
 collection. Unreachable small blocks remain cached for reuse; `allocated_bytes`

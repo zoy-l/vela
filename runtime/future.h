@@ -11,11 +11,12 @@
 #include <optional>
 #include <queue>
 #include <semaphore>
-#include <span>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
+
+#include <absl/functional/any_invocable.h>
 
 #include "base/execution_status.h"
 #include "runtime/value.h"
@@ -34,7 +35,6 @@ enum class FutureCompletionError : std::uint8_t {
 };
 enum class FutureBindingError : std::uint8_t { DifferentIsolate };
 [[nodiscard]] ExecutionStatus FutureCompletionStatus(FutureCompletionError error) noexcept;
-enum class FutureWaitMode : std::uint8_t { WaitAll, EagerError };
 enum class FuturePumpMode : std::uint8_t { AvailableWork, WaitForHost };
 
 class HostEventSource final {
@@ -75,10 +75,10 @@ struct FutureResult final {
 // Future 的状态只允许由所属 Isolate 线程推进；Complete 可由宿主线程安全投递。
 class Future final {
   struct SharedState;
+  struct Observer;
 
  public:
   using Callback = std::function<void(FutureState, ::vela::runtime::Value)>;
-  using Continuation = std::function<Future(::vela::runtime::Value)>;
 
   explicit Future(FutureScheduler* scheduler = nullptr);
   ~Future();
@@ -101,14 +101,7 @@ class Future final {
     explicit Root(const std::shared_ptr<SharedState>& state) : state_(state) {}
     std::weak_ptr<SharedState> state_;
   };
-  [[nodiscard]] static Future Delayed(std::chrono::milliseconds delay,
-                                      FutureScheduler& scheduler,
-                                      std::function<Future()> computation = {});
   [[nodiscard]] static Future Sleep(std::chrono::milliseconds delay, FutureScheduler& scheduler);
-  [[nodiscard]] static Future Wait(std::span<const Future> values,
-                                   FutureScheduler& scheduler,
-                                   FutureWaitMode mode = FutureWaitMode::WaitAll);
-  [[nodiscard]] static Future Race(std::span<const Future> values, FutureScheduler& scheduler);
   [[nodiscard]] FutureState state() const noexcept;
   [[nodiscard]] bool is_pending() const noexcept { return state() == FutureState::Pending; }
   [[nodiscard]] bool IsCompleted() const noexcept;
@@ -119,16 +112,12 @@ class Future final {
   void ObserveResult(std::function<void(const FutureResult&)> callback,
                      std::shared_ptr<std::vector<::vela::runtime::Value>> references = {}) const;
   std::expected<void, FutureCompletionError> Adopt(const Future& source);
+  // 所属线程同步检查 adoption；跨线程返回投递是否成功，adoption 失败发布为 Future 错误。
+  // 跨线程传入的堆值必须属于该 Isolate，且在所属线程接收前持续保根。
   std::expected<void, FutureCompletionError> Complete(::vela::runtime::Value value);
   std::expected<void, FutureCompletionError> CompleteError(::vela::runtime::Value error);
   std::expected<void, FutureCompletionError> CompleteError(::vela::runtime::Value error,
                                                            FutureDiagnostic diagnostic);
-  [[nodiscard]] Future Then(Continuation on_value, Continuation on_error = {}) const;
-  [[nodiscard]] Future CatchError(Continuation on_error) const;
-  [[nodiscard]] Future WhenComplete(const std::function<void()>& action) const;
-  [[nodiscard]] Future Timeout(std::chrono::milliseconds duration,
-                               FutureScheduler& scheduler,
-                               Continuation on_timeout = {}) const;
   [[nodiscard]] static Future Value(::vela::runtime::Value value,
                                     FutureScheduler* scheduler = nullptr);
   [[nodiscard]] static Future Error(::vela::runtime::Value error,
@@ -145,10 +134,12 @@ class Future final {
   void ReportHandledError() const;
   explicit Future(std::shared_ptr<SharedState> state, Rooting rooting);
   std::expected<void, FutureCompletionError> Settle(FutureResult result);
-  void Publish(const FutureResult& result);
-  [[nodiscard]] bool CanAdopt(const Future& source) const;
+  void Publish(FutureResult result);
+  void NotifyObserver(std::function<void(const FutureResult&)> callback,
+                      std::shared_ptr<std::vector<::vela::runtime::Value>> references) const;
+  [[nodiscard]] std::expected<void, FutureCompletionError> CheckAdoption(
+      const Future& source) const;
   void Follow(const Future& source);
-  void AdoptComputation(const Future& source);
   void Release() noexcept;
   friend class Completer;
   friend class FutureScheduler;
@@ -189,7 +180,6 @@ class Timer final {
  public:
   Timer() = default;
   void Cancel() noexcept;
-  [[nodiscard]] bool IsCancelled() const noexcept;
 
  private:
   friend class FutureScheduler;
@@ -215,7 +205,7 @@ class FutureScheduler final {
   FutureScheduler(FutureScheduler&&) = delete;
   FutureScheduler& operator=(FutureScheduler&&) = delete;
 
-  void PostMicrotask(std::function<void()> task);
+  void PostMicrotask(absl::AnyInvocable<void()> task);
   void SetUnhandledErrorHandler(ErrorCallback callback);
   void SetHandledErrorHandler(ErrorCallback callback);
   [[nodiscard]] Completer CreateCompleter();
@@ -225,7 +215,6 @@ class FutureScheduler final {
   // 执行一个宿主事件及其产生的全部微任务；返回 false 表示当前没有可推进的工作。
   [[nodiscard]] bool PumpOne(FuturePumpMode mode = FuturePumpMode::AvailableWork);
   [[nodiscard]] bool PumpUntil(Future& root, FuturePumpMode mode = FuturePumpMode::AvailableWork);
-  [[nodiscard]] std::size_t pending_microtasks() const noexcept;
   [[nodiscard]] bool IsOwnerThread() const noexcept;
   [[nodiscard]] static bool CanSchedule(std::chrono::milliseconds duration) noexcept;
   void AddSuspendedFrame(std::size_t saved_bytes) noexcept;
@@ -256,18 +245,18 @@ class FutureScheduler final {
   // 生产者只发布不可变消息；消费者独占本地队列与 Future/GC 状态。
   struct Message final {
     Message* next = nullptr;
-    std::function<void()> action;
+    absl::AnyInvocable<void()> action;
   };
   static_assert(std::atomic<Message*>::is_always_lock_free);
   void ReceiveMessages();
   std::atomic<Message*> incoming_{nullptr};
-  std::deque<std::function<void()>> host_events_;
+  std::deque<absl::AnyInvocable<void()>> host_events_;
   std::counting_semaphore<> wakeup_{0};
   std::atomic_size_t host_sources_{0};
   std::size_t suspended_frames_ = 0;
   std::size_t saved_state_bytes_ = 0;
-  std::deque<std::function<void()>> microtasks_;
-  std::deque<std::function<void()>> checkpoints_;
+  std::deque<absl::AnyInvocable<void()>> microtasks_;
+  std::deque<absl::AnyInvocable<void()>> checkpoints_;
   std::priority_queue<Event, std::vector<Event>, EventOrder> events_;
   std::uint64_t next_sequence_ = 0;
   ErrorCallback unhandled_error_handler_;

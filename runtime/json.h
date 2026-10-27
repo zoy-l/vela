@@ -28,13 +28,7 @@ struct JsonRuntimeError final {
                                                                Isolate& isolate);
 
 struct JsonEncodeFrame;
-
-enum class JsonEncodeAction : std::uint8_t { Complete, Convert };
-
-struct JsonEncodeStep final {
-  JsonEncodeAction action = JsonEncodeAction::Complete;
-  Value value;
-};
+enum class JsonFrameKind : std::uint8_t;
 
 // Convert 将控制权交回 VM，由普通调用帧执行公开的 toJson，再恢复同一个遍历状态。
 class JsonEncoder final {
@@ -46,19 +40,21 @@ class JsonEncoder final {
   JsonEncoder(JsonEncoder&&) = delete;
   JsonEncoder& operator=(JsonEncoder&&) = delete;
 
-  [[nodiscard]] std::expected<JsonEncodeStep, JsonRuntimeError> Advance();
+  // string 是最终结果；object 是需要 VM 调用 toJson 的接收者。
+  [[nodiscard]] std::expected<Value, JsonRuntimeError> Advance();
   void ResumeConversion(Value result);
   [[nodiscard]] JsonRuntimeError ConversionError(std::string_view message) const;
 
  private:
   [[nodiscard]] std::expected<void, JsonRuntimeError> Append(std::string_view text);
   [[nodiscard]] std::expected<void, JsonRuntimeError> Quote(std::string_view text);
-  [[nodiscard]] std::expected<void, JsonRuntimeError> Push(Value value);
+  [[nodiscard]] std::expected<void, JsonRuntimeError> Push(Value value,
+                                                           JsonFrameKind kind,
+                                                           const ArrayLayout* elements);
   [[nodiscard]] std::expected<void, JsonRuntimeError> Initialize();
   [[nodiscard]] std::expected<void, JsonRuntimeError> EncodeScalar(Value value);
-  [[nodiscard]] std::expected<std::optional<JsonEncodeStep>, JsonRuntimeError> EncodeValue();
-  [[nodiscard]] std::expected<std::optional<JsonEncodeStep>, JsonRuntimeError> EnterObject(
-      Value value);
+  [[nodiscard]] std::expected<std::optional<Value>, JsonRuntimeError> EncodeValue();
+  [[nodiscard]] std::expected<std::optional<Value>, JsonRuntimeError> EnterObject(Value value);
   [[nodiscard]] std::expected<void, JsonRuntimeError> AdvanceArray();
   [[nodiscard]] std::expected<void, JsonRuntimeError> AdvanceMap();
   [[nodiscard]] std::expected<void, JsonRuntimeError> CheckElement(const ArrayLayout& layout) const;
@@ -75,6 +71,7 @@ class JsonEncoder final {
   std::array<Value, kRootCount> values_;
   RootRange roots_;
   JsonEncodeFrame* frame_ = nullptr;
+  JsonEncodeFrame* spare_ = nullptr;
   bool pending_ = true;
 };
 

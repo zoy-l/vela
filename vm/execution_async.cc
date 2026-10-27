@@ -323,13 +323,11 @@ StepResult ScheduleTimeout(const FutureContinuation& context,
   }
   assert(call.runtime_type.has_value());
   const auto timeout_type = *call.runtime_type;
-  constexpr std::array<std::uint32_t, 2> kErrorReferences{
-      runtime::kErrorMessageField,
-      runtime::kErrorCodeField,
-  };
+  const auto& error_layout = isolate->error_layout();
   if (timeout_type.instance == nullptr ||
-      timeout_type.instance->field_count() != runtime::kErrorFieldCount ||
-      !std::ranges::equal(timeout_type.instance->reference_fields(), kErrorReferences)) {
+      timeout_type.instance->field_count() != error_layout.field_count() ||
+      !std::ranges::equal(timeout_type.instance->reference_fields(),
+                          error_layout.reference_fields())) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto callback = argument(2);
@@ -760,15 +758,12 @@ StepResult Execution::ExecuteAsyncComposition(const AsyncArguments& call) {
     if (result_type == nullptr) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    const auto* layout = isolate_.CreateArrayLayout({
-        .element =
-            {
-                .kind = runtime::ValueKind::Object,
-                .object_kind = runtime::ObjectKind::Future,
-                .signature = result_type,
-            },
-    });
-    std::ignore = runtime::Heap::BindRuntimeType(*object, *layout);
+    std::ignore =
+        runtime::Heap::BindRuntimeType(*object, {
+                                                    .kind = runtime::ValueKind::Object,
+                                                    .object_kind = runtime::ObjectKind::Future,
+                                                    .signature = result_type,
+                                                });
   }
   auto references = std::make_shared<std::vector<Value>>(arguments.size() + 1);
   arguments.CopyTo(std::span(*references).first(arguments.size()));

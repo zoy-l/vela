@@ -12,34 +12,12 @@
 
 #include "base/execution_status.h"
 #include "runtime/object.h"
-#include "runtime/string.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
 
 ClassLayout::ClassLayout(std::uint32_t field_count, std::vector<std::uint32_t> reference_fields)
     : field_count_(field_count), reference_fields_(std::move(reference_fields)) {}
-
-std::size_t ArrayLayout::element_size() const noexcept {
-  if (HasTaggedElements()) {
-    return sizeof(Value);
-  }
-  switch (element.kind) {
-    case ValueKind::Boolean:
-      return sizeof(bool);
-    case ValueKind::Integer:
-      return sizeof(std::int64_t);
-    case ValueKind::Double:
-      return sizeof(double);
-    case ValueKind::Object:
-      return sizeof(HeapObject*);
-    case ValueKind::String:
-      return sizeof(StringObject*);
-    case ValueKind::Null:
-      return 0;
-  }
-  return 0;
-}
 
 bool ClassLayout::IsImplementing(const InterfaceType& interface) const noexcept {
   return std::ranges::binary_search(interfaces_, &interface, std::less{});
@@ -85,10 +63,11 @@ TypeConstraint Heap::TypeOf(Value value) noexcept {
     type.nullable = true;
   } else if (value.IsObject()) {
     const auto& object = *value.AsObject();
-    if (const auto* bound = RuntimeTypeOf(object)) {
-      return *bound;
-    }
     type.object_kind = KindOf(object);
+    if (object.kind == ObjectKind::Future || object.kind == ObjectKind::Completer) {
+      type.signature = object.future_signature();
+      return type;
+    }
     type.instance = ClassOf(object);
     type.array = ArrayTypeOf(object);
     type.collection = CollectionTypeOf(object);
@@ -176,17 +155,18 @@ bool Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept {
 }
 
 std::expected<void, ExecutionStatus> Heap::BindRuntimeType(HeapObject& object,
-                                                           const ArrayLayout& type) noexcept {
+                                                           const TypeConstraint& type) noexcept {
   if ((object.kind != ObjectKind::Future && object.kind != ObjectKind::Completer) ||
-      object.kind != type.element.object_kind) {
+      type.kind != ValueKind::Object || object.kind != type.object_kind ||
+      type.signature == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  if (object.indexed_layout != nullptr) {
-    return object.array_layout()->element.IsSubtypeOf(type.element)
+  if (object.future_signature() != nullptr) {
+    return TypeOf(Value::Object(&object)).IsSubtypeOf(type)
                ? std::expected<void, ExecutionStatus>{}
                : std::unexpected(ExecutionStatus::InvalidCast);
   }
-  object.indexed_layout = &type;
+  object.type_metadata = type.signature;
   return {};
 }
 

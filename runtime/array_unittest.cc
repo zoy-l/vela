@@ -1,3 +1,4 @@
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -240,6 +241,45 @@ TEST(DynamicArrayTest, ReplacesReferenceRangesDuringSweep) {
   EXPECT_EQ(heap.object_count(), 3U);
   EXPECT_EQ(Heap::GetElement(*root.AsObject(), 0)->AsObject(), child);
 }
+
+class ArraySliceBarrierTest : public testing::TestWithParam<GcPhase> {};
+
+TEST_P(ArraySliceBarrierTest, PublishesInitializedCopyDuringIncrementalCollection) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  auto* record = isolate.CreateClassLayout(0, {});
+  const auto* layout =
+      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = record}});
+  constexpr std::size_t kBallast = 64;
+  std::array<Value, kBallast> ballast;
+  RootRange ballast_roots(heap, ballast.data(), ballast.size());
+  for (auto& value : ballast) {
+    value = Value::Object(heap.AllocateInstance(*record));
+  }
+  auto* child = heap.AllocateInstance(*record);
+  std::array<Value, 2> values;
+  RootRange roots(heap, values.data(), values.size());
+  values.front() = Value::Object(heap.AllocateArray(*layout, 1));
+  ASSERT_TRUE(heap.SetElement(*values.front().AsObject(), 0, Value::Object(child)));
+  heap.StartCollection();
+  if (GetParam() == GcPhase::Sweep) {
+    heap.Step(heap.object_count() + 1);
+  }
+  ASSERT_EQ(heap.phase(), GetParam());
+  const auto copy = heap.SliceArray(*values.front().AsObject(), 0, 1);
+  ASSERT_TRUE(copy);
+  values.back() = Value::Object(*copy);
+  values.front() = Value::Null();
+  ballast.fill(Value::Null());
+  heap.FinishCollection();
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 2U);
+  EXPECT_EQ(Heap::GetElement(**copy, 0)->AsObject(), child);
+}
+
+INSTANTIATE_TEST_SUITE_P(MarkingAndSweeping,
+                         ArraySliceBarrierTest,
+                         testing::Values(GcPhase::Mark, GcPhase::Sweep));
 
 }  // namespace
 }  // namespace vela::runtime

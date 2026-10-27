@@ -16,6 +16,8 @@ inline constexpr std::uint32_t kLowSurrogateFirst = 0xDC00;
 inline constexpr std::uint32_t kLowSurrogateLast = 0xDFFF;
 inline constexpr std::uint32_t kSupplementaryFirst = 0x10000;
 inline constexpr unsigned kSurrogatePayloadBits = 10;
+inline constexpr std::uint32_t kContinuationTag = 0x80;
+inline constexpr std::uint32_t kContinuationMask = 0xC0;
 
 struct Utf8Point final {
   std::uint32_t value;

@@ -11,13 +11,10 @@
 #include <memory>
 #include <new>
 #include <span>
-#include <type_traits>
-#include <utility>
 
 #include "runtime/array_storage.h"
 #include "runtime/element_storage.h"
 #include "runtime/object.h"
-#include "runtime/string.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -27,60 +24,15 @@ std::span<std::byte> Storage(HeapObject& array, const ArrayLayout& layout, std::
   return internal::ArrayBytes(array, layout).first(layout.element_size() * length);
 }
 
-template <class T>
-std::span<T> Elements(std::span<std::byte> storage) {
-  void* bytes = storage.data();
-  return {static_cast<T*>(bytes), storage.size() / sizeof(T)};
-}
-
-template <class Visitor>
-void VisitStorage(const ArrayLayout& layout, std::span<std::byte> storage, const Visitor& visitor) {
-  if (layout.HasTaggedElements()) {
-    visitor(Elements<Value>(storage));
-    return;
-  }
-  switch (layout.element.kind) {
-    case ValueKind::Boolean:
-      visitor(Elements<bool>(storage));
-      return;
-    case ValueKind::Integer:
-      visitor(Elements<std::int64_t>(storage));
-      return;
-    case ValueKind::Double:
-      visitor(Elements<double>(storage));
-      return;
-    case ValueKind::String:
-      visitor(Elements<StringObject*>(storage));
-      return;
-    case ValueKind::Object:
-      visitor(Elements<HeapObject*>(storage));
-      return;
-    case ValueKind::Null:
-      std::unreachable();
-  }
-  std::unreachable();
-}
-
-template <class T>
-T ElementValue(Value value) {
-  if constexpr (std::is_same_v<T, Value>) {
-    return value;
-  } else if constexpr (std::is_same_v<T, bool>) {
-    return value.AsBoolean();
-  } else if constexpr (std::is_same_v<T, std::int64_t>) {
-    return value.AsInteger();
-  } else if constexpr (std::is_same_v<T, double>) {
-    return value.AsDouble();
-  } else if constexpr (std::is_same_v<T, StringObject*>) {
-    return value.IsNull() ? nullptr : value.AsString();
-  } else {
-    return value.IsNull() ? nullptr : value.AsObject();
-  }
-}
-
 }  // namespace
 
 HeapObject* Heap::AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept {
+  return AllocateArrayStorage(layout, length, {});
+}
+
+HeapObject* Heap::AllocateArrayStorage(const ArrayLayout& layout,
+                                       std::size_t length,
+                                       std::span<const std::byte> contents) noexcept {
   const auto element_size = layout.element_size();
   if (element_size == 0 || length > std::numeric_limits<std::uint32_t>::max() ||
       length > std::numeric_limits<std::size_t>::max() / element_size) {
@@ -108,18 +60,22 @@ HeapObject* Heap::AllocateArray(const ArrayLayout& layout, std::size_t length) n
   }
   auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
   object->kind = ObjectKind::Array;
-  object->indexed_layout = &layout;
+  object->type_metadata = &layout;
   object->length = static_cast<std::uint32_t>(length);
   auto& buffer = *std::construct_at(&internal::ArrayBuffer(*object));
   buffer.capacity = inline_capacity == 0 ? object->length : inline_capacity;
   buffer.data = inline_capacity == 0 ? memory : internal::InlineArrayData(buffer);
   const auto storage = Storage(*object, layout, length);
-  VisitStorage(layout, storage, [](auto elements) -> void {
-    std::uninitialized_value_construct_n(elements.data(), elements.size());
-  });
+  if (contents.empty()) {
+    VisitElementStorage(layout, storage, [](auto elements) {
+      std::uninitialized_value_construct_n(elements.data(), elements.size());
+    });
+  } else {
+    std::memcpy(storage.data(), contents.data(), contents.size());
+  }
   allocated_bytes_ += external_bytes;
   committed_bytes_ += external_bytes;
-  Publish(*object, allocation.size);
+  Publish(*object, allocation);
   return object;
 }
 
@@ -152,7 +108,7 @@ std::expected<std::span<std::int64_t>, ArrayAccessError> Heap::IntegerElements(
       array.array_layout()->HasTaggedElements()) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
-  return Elements<std::int64_t>(Storage(array, *array.array_layout(), array.length));
+  return ElementSlots<std::int64_t>(Storage(array, *array.array_layout(), array.length));
 }
 
 std::expected<Value, ArrayAccessError> Heap::GetElement(const HeapObject& array,
@@ -181,7 +137,7 @@ std::expected<void, ArrayAccessError> Heap::SetElement(HeapObject& array,
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
   StoreElementStorage(layout, internal::ArrayBytes(array, layout), index, value);
-  if (value.IsObject() || value.IsString()) {
+  if (value.IsReference()) {
     WriteBarrier(array, value);
   }
   return {};
@@ -192,6 +148,11 @@ std::expected<void, ArrayAccessError> Heap::ReserveArray(HeapObject& array,
   if (array.kind != ObjectKind::Array) {
     return std::unexpected(ArrayAccessError::NotArray);
   }
+  return ReserveArrayStorage(array, capacity);
+}
+
+std::expected<void, ArrayAccessError> Heap::ReserveArrayStorage(HeapObject& array,
+                                                                std::size_t capacity) noexcept {
   auto& buffer = internal::ArrayBuffer(array);
   if (capacity <= buffer.capacity) {
     return {};
@@ -237,7 +198,7 @@ std::expected<void, ArrayAccessError> Heap::GrowArray(HeapObject& array, Value v
   const auto next = std::min<std::size_t>(kMaximum, static_cast<std::size_t>(capacity) * 2);
   // receiver 由 ReserveArray 保根；待插入值还没有进入数组，必须单独跨 GC 保存。
   RootRange pending(*this, &value, 1);
-  return ReserveArray(array, std::max(next, static_cast<std::size_t>(array.length) + 1));
+  return ReserveArrayStorage(array, std::max(next, static_cast<std::size_t>(array.length) + 1));
 }
 
 std::expected<std::uint32_t, ArrayAccessError> Heap::PushArray(HeapObject& array,
@@ -256,7 +217,7 @@ std::expected<std::uint32_t, ArrayAccessError> Heap::PushArray(HeapObject& array
   StoreElementStorage(layout, internal::ArrayBytes(array, layout), array.length, value);
   ++array.length;
   ++internal::ArrayBuffer(array).mutation;
-  if (value.IsObject() || value.IsString()) {
+  if (value.IsReference()) {
     WriteBarrier(array, value);
   }
   return array.length;
@@ -269,7 +230,7 @@ std::expected<Value, ArrayAccessError> Heap::PopArray(HeapObject& array) noexcep
   if (array.length == 0) {
     return Value::Null();
   }
-  return RemoveArrayElement(array, array.length - 1);
+  return RemoveArrayStorage(array, array.length - 1);
 }
 
 std::expected<void, ArrayAccessError> Heap::ReplaceArrayRange(HeapObject& array,
@@ -305,7 +266,7 @@ std::expected<void, ArrayAccessError> Heap::ReplaceArrayRange(HeapObject& array,
   if (next_length > capacity) {
     const auto next_capacity = std::max<std::size_t>(
         next_length, std::min<std::size_t>(kMaximum, static_cast<std::size_t>(capacity) * 2));
-    if (auto grown = ReserveArray(array, next_capacity); !grown) {
+    if (auto grown = ReserveArrayStorage(array, next_capacity); !grown) {
       return grown;
     }
   }
@@ -322,18 +283,11 @@ std::expected<void, ArrayAccessError> Heap::ReplaceArrayRange(HeapObject& array,
     std::memcpy(storage.subspan(static_cast<std::size_t>(start) * element_size).data(),
                 input.data(), input.size());
   }
-  if (next_length < length) {
-    std::memset(storage.subspan(static_cast<std::size_t>(next_length) * element_size).data(), 0,
-                static_cast<std::size_t>(length - next_length) * element_size);
-  }
   array.length = next_length;
   ++internal::ArrayBuffer(array).mutation;
-  if (layout.element.dynamic || layout.element.kind == ValueKind::Object ||
-      layout.element.kind == ValueKind::String) {
-    for (std::uint32_t index = 0; index < inserted; ++index) {
-      WriteBarrier(array, LoadElementStorage(layout, storage, start + index));
-    }
-  }
+  WriteBarrier(array, layout,
+               storage.subspan(static_cast<std::size_t>(start) * element_size,
+                               static_cast<std::size_t>(inserted) * element_size));
   return {};
 }
 
@@ -345,6 +299,10 @@ std::expected<Value, ArrayAccessError> Heap::RemoveArrayElement(HeapObject& arra
   if (index >= array.length) {
     return std::unexpected(ArrayAccessError::OutOfBounds);
   }
+  return RemoveArrayStorage(array, index);
+}
+
+Value Heap::RemoveArrayStorage(HeapObject& array, std::uint32_t index) noexcept {
   const auto& layout = *array.array_layout();
   const auto storage = internal::ArrayBytes(array, layout);
   const auto value = LoadElementStorage(layout, storage, index);
@@ -357,7 +315,6 @@ std::expected<Value, ArrayAccessError> Heap::RemoveArrayElement(HeapObject& arra
   }
   --array.length;
   ++internal::ArrayBuffer(array).mutation;
-  std::memset(storage.subspan(array.length * element_size).data(), 0, element_size);
   return value;
 }
 
@@ -374,23 +331,26 @@ std::expected<void, ArrayAccessError> Heap::ClearArray(HeapObject& array) noexce
 
 void Heap::MarkArray(HeapObject& array) noexcept {
   const auto& layout = *array.array_layout();
-  const auto storage = Storage(array, layout, array.length);
-  if (layout.element.dynamic) {
-    for (const auto value : Elements<Value>(storage)) {
-      MarkValue(value);
+  MarkElements(layout, Storage(array, layout, array.length));
+}
+
+void Heap::MarkElements(const ArrayLayout& layout, std::span<const std::byte> storage) noexcept {
+  VisitReferenceStorage(layout, storage, [this](auto elements) {
+    for (const auto element : elements) {
+      MarkReference(element);
     }
-  } else if (layout.element.kind == ValueKind::Object) {
-    for (auto* child : Elements<HeapObject*>(storage)) {
-      if (child != nullptr) {
-        MarkObject(*child);
-      }
-    }
-  } else if (layout.element.kind == ValueKind::String) {
-    for (auto* string : Elements<StringObject*>(storage)) {
-      if (string != nullptr) {
-        MarkObject(string->header_);
-      }
-    }
+  });
+}
+
+void Heap::WriteBarrier(HeapObject& source,
+                        const ArrayLayout& layout,
+                        std::span<const std::byte> storage) noexcept {
+  if (phase_ == GcPhase::Idle || source.mark_bit != current_mark_bit_) {
+    return;
+  }
+  MarkElements(layout, storage);
+  if (phase_ == GcPhase::Sweep) {
+    DrainGray();
   }
 }
 
@@ -417,19 +377,13 @@ std::expected<HeapObject*, ArrayAccessError> Heap::SliceArray(HeapObject& array,
   const auto source = Value::Object(&array);
   RootRange roots(*this, &source, 1);
   const auto& layout = *array.array_layout();
-  auto* copy = AllocateArray(layout, end - start);
+  const auto element_size = layout.element_size();
+  const auto input = Storage(array, layout, array.length)
+                         .subspan(static_cast<std::size_t>(start) * element_size,
+                                  static_cast<std::size_t>(end - start) * element_size);
+  auto* copy = AllocateArrayStorage(layout, end - start, input);
   if (copy == nullptr) {
     return std::unexpected(ArrayAccessError::OutOfMemory);
-  }
-  const auto count = static_cast<std::size_t>(end - start);
-  if (count != 0) {
-    const auto input = Storage(array, layout, array.length)
-                           .subspan(start * layout.element_size(), count * layout.element_size());
-    const auto output = Storage(*copy, layout, count);
-    std::memcpy(output.data(), input.data(), input.size());
-    if (phase_ != GcPhase::Idle) {
-      ProcessGrayObject(*copy);
-    }
   }
   return copy;
 }
@@ -452,7 +406,7 @@ std::expected<void, ArrayAccessError> Heap::FillArray(HeapObject& array,
   const auto storage = Storage(array, layout, array.length)
                            .subspan(static_cast<std::size_t>(start) * size,
                                     static_cast<std::size_t>(end - start) * size);
-  VisitStorage(layout, storage, [value]<class T>(std::span<T> elements) -> void {
+  VisitElementStorage(layout, storage, [value]<class T>(std::span<T> elements) -> void {
     std::ranges::fill(elements, ElementValue<T>(value));
   });
   WriteBarrier(array, value);
@@ -465,7 +419,8 @@ std::expected<void, ArrayAccessError> Heap::ReverseArray(HeapObject& array) noex
   }
   const auto& layout = *array.array_layout();
   const auto storage = Storage(array, layout, array.length);
-  VisitStorage(layout, storage, [](auto elements) -> void { std::ranges::reverse(elements); });
+  VisitElementStorage(layout, storage,
+                      [](auto elements) -> void { std::ranges::reverse(elements); });
   return {};
 }
 

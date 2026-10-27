@@ -252,6 +252,20 @@ func main(): int {
   const b = [Math.pow(-1.0, 0.5), Math.exp(1000.0), -Math.exp(1000.0)];
   if (b.join() != 'NaN,Infinity,-Infinity') { return 0; }
   return 42;
+})",
+                             R"(func main(): int {
+  const values: dynamic[] = ['z', 10.0, 2.0, 1.0, null, false, '😀', '\uE000'];
+  const erased: dynamic = values;
+  erased.sort();
+  if (values.join() != '1,10,2,false,,z,😀,\uE000') { return 0; }
+  const tied: dynamic[] = [1.0, 1];
+  const sort: () => dynamic[] = tied.sort;
+  sort();
+  if (!(tied[0] is double) || !(tied[1] is int)) { return 0; }
+  const numbers = [1e21, 1e20, 1e-7, 1e-6];
+  numbers.sort();
+  if (numbers.join() != '0.000001,100000000000000000000,1e+21,1e-7') { return 0; }
+  return 42;
 })"));
 
 class ArrayCallbackMutationTest : public testing::TestWithParam<std::string_view> {};

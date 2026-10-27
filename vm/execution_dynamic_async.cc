@@ -9,7 +9,6 @@
 
 #include "base/async_operation.h"
 #include "runtime/heap.h"
-#include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
 #include "vm/bytecode.h"
@@ -175,8 +174,7 @@ StepResult Execution::ExecuteDynamicAsync(ActiveFrame& active, Instruction instr
     }
     auto future = type;
     future.object_kind = runtime::ObjectKind::Future;
-    const auto* layout = isolate_.CreateArrayLayout({.element = future});
-    return Heap::BindRuntimeType(*call.destination.AsObject(), *layout);
+    return Heap::BindRuntimeType(*call.destination.AsObject(), future);
   }
   if ((type.object_kind == runtime::ObjectKind::Timer &&
        operation == AsyncOperation::TimerCancel) ||

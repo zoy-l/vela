@@ -1552,8 +1552,7 @@ StepResult Execution::Return(ActiveFrame& active, runtime::Value value) {
         active.function->layouts->types().subspan(*active.function->signature->result).front();
     if (type.object_kind == runtime::ObjectKind::Future ||
         type.object_kind == runtime::ObjectKind::Completer) {
-      const auto* layout = isolate_.CreateArrayLayout({.element = type});
-      if (auto bound = runtime::Heap::BindRuntimeType(*value.AsObject(), *layout); !bound) {
+      if (auto bound = runtime::Heap::BindRuntimeType(*value.AsObject(), type); !bound) {
         return bound;
       }
     }

@@ -46,7 +46,7 @@ void* Reallocate(void* context, void* pointer, std::size_t old_size, std::size_t
   return replacement;
 }
 
-std::expected<Value, JsonRuntimeError> Number(std::string_view token, std::size_t offset) {
+std::expected<Value, JsonRuntimeError> Number(std::string_view token) {
   if (token.find_first_of(".eE") == std::string_view::npos) {
     std::int64_t integer = 0;
     const auto parsed =
@@ -54,57 +54,38 @@ std::expected<Value, JsonRuntimeError> Number(std::string_view token, std::size_
     if (parsed.ec == std::errc()) {
       return Value::Integer(integer);
     }
-    return std::unexpected(
-        JsonRuntimeError{.offset = offset, .message = "JSON integer exceeds signed 64-bit range"});
+    return std::unexpected(JsonRuntimeError{.message = "JSON integer exceeds signed 64-bit range"});
   }
   double number = 0;
   if (!absl::SimpleAtod(token, &number) || !std::isfinite(number)) {
-    return std::unexpected(
-        JsonRuntimeError{.offset = offset, .message = "JSON number exceeds finite double range"});
+    return std::unexpected(JsonRuntimeError{.message = "JSON number exceeds finite double range"});
   }
   return Value::Double(number);
 }
 
-// 语法已由 yyjson 验证；此游标只负责从原文恢复数值偏移，不参与字符串解码。
-std::size_t NextNumberOffset(std::string_view source, std::size_t& cursor) {
-  while (cursor < source.size()) {
-    const auto byte = source.substr(cursor++, 1).front();
-    if (byte == '"') {
-      while (cursor < source.size()) {
-        const auto quoted = source.substr(cursor++, 1).front();
-        if (quoted == '\\') {
-          ++cursor;
-        } else if (quoted == '"') {
-          break;
-        }
-      }
-    } else if (byte == '-' || (byte >= '0' && byte <= '9')) {
-      return cursor - 1;
-    }
-  }
-  return source.size();
-}
-
 struct DecodeFrame final {
   DecodeFrame(Heap& heap, DecodeFrame* parent, yyjson_val* node, Value value)
-      : parent(parent),
-        value(value),
-        roots(heap, &this->value, 1),
-        key_roots(heap, &key, 1),
-        object(yyjson_is_obj(node)) {
+      : roots(heap, &this->value, 1), key_roots(heap, &key, 1) {
+    Reset(parent, node, value);
+  }
+  void Reset(DecodeFrame* next_parent, yyjson_val* node, Value next_value) {
+    parent = next_parent;
+    value = next_value;
+    object = yyjson_is_obj(node);
+    index = 0;
     if (object) {
       map = yyjson_obj_iter_with(node);
     } else {
       array = yyjson_arr_iter_with(node);
     }
   }
-  DecodeFrame* parent;
+  DecodeFrame* parent = nullptr;
   // key 在分配子值时保持存活，根区间不跨越不同的 C++ 成员。
   Value value;
   Value key;
   RootRange roots;
   RootRange key_roots;
-  bool object;
+  bool object = false;
   yyjson_obj_iter map{};
   yyjson_arr_iter array{};
   std::uint32_t index = 0;
@@ -112,9 +93,9 @@ struct DecodeFrame final {
 
 class Decoder final {
  public:
-  Decoder(Isolate& isolate, std::string_view source)
+  Decoder(Isolate& isolate, const JsonDocument& document)
       : heap_(&isolate.heap()),
-        source_(source),
+        document_(document),
         array_(isolate.CreateArrayLayout({.element = {.dynamic = true}})),
         map_(isolate.CreateCollectionLayout({
             .keys = {.element = {.kind = ValueKind::String}},
@@ -123,6 +104,12 @@ class Decoder final {
   ~Decoder() {
     while (frame_ != nullptr) {
       Pop();
+    }
+    while (spare_ != nullptr) {
+      auto* frame = spare_;
+      spare_ = frame->parent;
+      std::destroy_at(frame);
+      heap_->FreeNative(frame);
     }
   }
   Decoder(const Decoder&) = delete;
@@ -183,6 +170,15 @@ class Decoder final {
     if (!yyjson_is_ctn(node)) {
       return {};
     }
+    if (spare_ != nullptr) {
+      auto* frame = spare_;
+      spare_ = frame->parent;
+      frame->Reset(frame_, node, value);
+      frame->roots.Attach(*heap_, &frame->value, 1);
+      frame->key_roots.Attach(*heap_, &frame->key, 1);
+      frame_ = frame;
+      return {};
+    }
     auto* storage = static_cast<DecodeFrame*>(heap_->AllocateNative(sizeof(DecodeFrame)));
     if (storage == nullptr) {
       return std::unexpected(OutOfMemory());
@@ -193,8 +189,13 @@ class Decoder final {
   void Pop() {
     auto* frame = frame_;
     frame_ = frame->parent;
-    std::destroy_at(frame);
-    heap_->FreeNative(frame);
+    // 保留稳定地址供同层后续容器复用；空闲帧不保根已完成的值。
+    frame->roots.Detach();
+    frame->key_roots.Detach();
+    frame->value = Value::Null();
+    frame->key = Value::Null();
+    frame->parent = spare_;
+    spare_ = frame;
   }
   std::expected<Value, JsonRuntimeError> Convert(yyjson_val* node) {
     if (yyjson_is_null(node)) {
@@ -205,9 +206,11 @@ class Decoder final {
     }
     if (yyjson_is_raw(node)) {
       const std::string_view token(yyjson_get_raw(node), yyjson_get_len(node));
-      const auto offset = NextNumberOffset(source_, cursor_);
-      cursor_ = offset + token.size();
-      return Number(token, offset);
+      auto number = Number(token);
+      if (!number) {
+        number.error().offset = document_.RawOffset(*node);
+      }
+      return number;
     }
     if (yyjson_is_str(node)) {
       auto* string = heap_->AllocateString({yyjson_get_str(node), yyjson_get_len(node)});
@@ -220,11 +223,11 @@ class Decoder final {
                              : std::unexpected(OutOfMemory());
   }
   Heap* heap_;
-  std::string_view source_;
+  const JsonDocument& document_;
   const ArrayLayout* array_;
   const CollectionLayout* map_;
   DecodeFrame* frame_ = nullptr;
-  std::size_t cursor_ = 0;
+  DecodeFrame* spare_ = nullptr;
 };
 
 }  // namespace
@@ -246,7 +249,7 @@ std::expected<Value, JsonRuntimeError> ParseJson(std::string_view source, Isolat
         .message = error.message,
     });
   }
-  return Decoder(isolate, source).Decode(document->root());
+  return Decoder(isolate, *document).Decode(document->root());
 }
 
 }  // namespace vela::runtime

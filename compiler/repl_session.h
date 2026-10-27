@@ -13,6 +13,7 @@
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
+#include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "vm/program.h"
 #include "vm/vm.h"
@@ -32,7 +33,8 @@ struct SubmissionResult final {
 // 会话独占 isolate 和最新程序；返回值中的引用只借用至下次提交或 Reset。
 class ReplSession final {
  public:
-  explicit ReplSession(const std::filesystem::path& directory);
+  explicit ReplSession(const std::filesystem::path& directory,
+                       std::size_t gc_threshold = runtime::kDefaultGcThreshold);
   ~ReplSession() = default;
   ReplSession(const ReplSession&) = delete;
   ReplSession& operator=(const ReplSession&) = delete;
@@ -69,6 +71,7 @@ class ReplSession final {
   [[nodiscard]] Entry Locate(std::uint32_t line, const Entry& current) const;
 
   std::filesystem::path path_;
+  const std::size_t gc_threshold_;
   std::unique_ptr<runtime::Isolate> isolate_;
   std::unique_ptr<vm::VirtualMachine> machine_;
   vm::Program program_;

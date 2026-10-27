@@ -24,7 +24,7 @@ constexpr std::int64_t kDecimalRadix = 10;
 constexpr std::int64_t kHexadecimalRadix = 16;
 
 int Digit(char byte) {
-  if (byte >= '0' && byte <= '9') {
+  if (absl::ascii_isdigit(static_cast<std::uint8_t>(byte))) {
     return byte - '0';
   }
   if (byte >= 'a' && byte <= 'z') {
@@ -83,7 +83,7 @@ bool IsDecimal(std::string_view text) {
   }
   const auto digits = [&text]() {
     const auto size = text.size();
-    while (!text.empty() && text.front() >= '0' && text.front() <= '9') {
+    while (!text.empty() && absl::ascii_isdigit(static_cast<std::uint8_t>(text.front()))) {
       text.remove_prefix(1);
     }
     return size - text.size();

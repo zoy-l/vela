@@ -6,15 +6,18 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
+#include <memory>
 #include <span>
 #include <string_view>
+#include <tuple>
 #include <utility>
-
-#include <utf8proc.h>
 
 #include "base/builtin.h"
 #include "base/execution_status.h"
+#include "base/utf8.h"
 #include "runtime/heap.h"
+#include "runtime/index_range.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
 #include "runtime/value_io.h"
@@ -22,10 +25,6 @@
 namespace vela::runtime {
 namespace {
 
-constexpr std::uint32_t kSupplementaryPlaneStart = 0x10000;
-constexpr std::uint32_t kHighSurrogateBase = 0xd800;
-constexpr std::uint32_t kLowSurrogateBase = 0xdc00;
-constexpr std::uint32_t kSurrogatePayloadBits = 10;
 constexpr std::uint32_t kSurrogatePayloadMask = (1U << kSurrogatePayloadBits) - 1;
 
 ExecutionStatus Error(ArrayAccessError error) {
@@ -57,13 +56,6 @@ std::expected<Value, ExecutionStatus> MutationResult(std::expected<void, ArrayAc
   return Value::Null();
 }
 
-std::uint32_t RelativeIndex(Value value, std::uint32_t length) {
-  const auto index = value.AsInteger();
-  const auto size = static_cast<std::int64_t>(length);
-  return static_cast<std::uint32_t>(index < 0 ? std::max(size + index, std::int64_t{0})
-                                              : std::min(index, size));
-}
-
 std::expected<Value, ExecutionStatus> CopyArray(HeapObject& array,
                                                 std::span<const Value> arguments,
                                                 Heap& heap) {
@@ -76,8 +68,7 @@ std::expected<Value, ExecutionStatus> CopyArray(HeapObject& array,
   if (!first.IsInteger() || !last.IsInteger()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto start = RelativeIndex(first, *length);
-  const auto end = std::max(start, RelativeIndex(last, *length));
+  const auto [start, end] = ClampIndexRange(first.AsInteger(), last.AsInteger(), *length);
   return Result(heap.SliceArray(array, start, end),
                 [](HeapObject* copy) -> Value { return Value::Object(copy); });
 }
@@ -103,7 +94,7 @@ std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
     if (!position.IsInteger() || !deleted.IsInteger()) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    start = RelativeIndex(position, *length);
+    start = RelativeIndex(position.AsInteger(), *length);
     count = static_cast<std::uint32_t>(
         std::clamp<std::int64_t>(deleted.AsInteger(), 0, *length - start));
   }
@@ -133,45 +124,23 @@ std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
   return splice ? roots.back() : Value::Integer(*Heap::ArrayLength(array));
 }
 
-std::string_view SortText(Value value, std::span<char, kScalarTextCapacity> buffer) {
-  if (value.IsString()) {
-    return value.AsString()->value();
-  }
-  if (value.IsNull()) {
-    return "null";
-  }
-  return FormatArrayScalar(value, buffer);
-}
-
 // 默认排序按 UTF-16 code unit 比较；Vela 字符串内部仍保持 UTF-8。
 std::uint32_t NextUnit(std::string_view& text, std::uint32_t& pending) {
   if (pending != 0) {
     return std::exchange(pending, 0);
   }
-  utf8proc_int32_t point = 0;
-  const void* data = text.data();
-  const auto consumed = utf8proc_iterate(static_cast<const utf8proc_uint8_t*>(data),
-                                         static_cast<utf8proc_ssize_t>(text.size()), &point);
-  text.remove_prefix(static_cast<std::size_t>(consumed));
-  const auto scalar = static_cast<std::uint32_t>(point);
-  if (scalar < kSupplementaryPlaneStart) {
+  const auto decoded = DecodeUtf8Prefix(text);
+  text.remove_prefix(decoded.width);
+  const auto scalar = decoded.value;
+  if (scalar < kSupplementaryFirst) {
     return scalar;
   }
-  const auto payload = scalar - kSupplementaryPlaneStart;
-  pending = kLowSurrogateBase + (payload & kSurrogatePayloadMask);
-  return kHighSurrogateBase + (payload >> kSurrogatePayloadBits);
+  const auto payload = scalar - kSupplementaryFirst;
+  pending = kLowSurrogateFirst + (payload & kSurrogatePayloadMask);
+  return kHighSurrogateFirst + (payload >> kSurrogatePayloadBits);
 }
 
-std::expected<Value, ExecutionStatus> DefaultCompare(std::span<const Value> arguments) {
-  const auto left = arguments.front();
-  const auto right = arguments.subspan(1).front();
-  if (left.IsObject() || right.IsObject()) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  std::array<char, kScalarTextCapacity> left_buffer{};
-  std::array<char, kScalarTextCapacity> right_buffer{};
-  auto first = SortText(left, left_buffer);
-  auto second = SortText(right, right_buffer);
+Value CompareText(std::string_view first, std::string_view second) {
   std::uint32_t first_pending = 0;
   std::uint32_t second_pending = 0;
   while ((!first.empty() || first_pending != 0) && (!second.empty() || second_pending != 0)) {
@@ -189,14 +158,73 @@ std::expected<Value, ExecutionStatus> DefaultCompare(std::span<const Value> argu
   return Value::Integer(first_done ? -1 : 1);
 }
 
+std::expected<Value, ExecutionStatus> SortByDefault(HeapObject& array, Heap& heap) {
+  const auto* layout = Heap::ArrayTypeOf(array);
+  if (layout == nullptr) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto& type = layout->element;
+  if (type.instance != nullptr ||
+      (!type.dynamic && type.kind != ValueKind::Integer && type.kind != ValueKind::Double &&
+       type.kind != ValueKind::Boolean && type.kind != ValueKind::String)) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto count = static_cast<std::size_t>(*Heap::ArrayLength(array));
+  if (count == 0) {
+    return Value::Object(&array);
+  }
+  struct Entry final {
+    Value value;
+    std::uint32_t position = 0;
+    std::array<char, kScalarTextCapacity> buffer{};
+    std::size_t length = 0;
+
+    [[nodiscard]] std::string_view text() const {
+      return value.IsString() ? value.AsString()->value() : std::string_view(buffer.data(), length);
+    }
+  };
+  if (count > std::numeric_limits<std::size_t>::max() / sizeof(Entry)) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  const auto release = [&heap](Entry* entries) { heap.FreeNative(entries); };
+  const std::unique_ptr<Entry, decltype(release)> storage(
+      static_cast<Entry*>(heap.AllocateNative(count * sizeof(Entry))), release);
+  if (storage == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  const auto entries = std::span(storage.get(), count);
+  // 格式化仅执行一次；排序只移动值及其文本，不分配 GC 对象，原数组保根所有引用。
+  for (std::uint32_t index = 0; index < count; ++index) {
+    const auto value = *Heap::GetElement(array, index);
+    if (value.IsObject()) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    auto& entry = *std::construct_at(&entries.subspan(index).front());
+    entry.value = value;
+    entry.position = index;
+    if (!value.IsString()) {
+      const auto text = FormatArrayValue(value, entry.buffer);
+      if (text.data() != entry.buffer.data()) {
+        std::ranges::copy(text, entry.buffer.begin());
+      }
+      entry.length = text.size();
+    }
+  }
+  std::ranges::sort(entries, [](const Entry& left, const Entry& right) {
+    const auto comparison = CompareText(left.text(), right.text()).AsInteger();
+    return comparison == 0 ? left.position < right.position : comparison < 0;
+  });
+  for (std::uint32_t index = 0; index < count; ++index) {
+    std::ignore = heap.SetElement(array, index, entries.subspan(index).front().value);
+  }
+  return Value::Object(&array);
+}
+
 }  // namespace
 
 std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
                                                           std::span<const Value> arguments,
                                                           Heap& heap) {
-  if (builtin == Builtin::ArrayDefaultCompare) {
-    return DefaultCompare(arguments);
-  }
   const auto receiver = arguments.front();
   if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
@@ -207,6 +235,8 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
   };
   const auto identity = [](Value value) -> Value { return value; };
   switch (builtin) {
+    case Builtin::ArraySortDefault:
+      return SortByDefault(array, heap);
     case Builtin::ArrayLength:
       return Result(Heap::ArrayLength(array), integer);
     case Builtin::ArraySlice:
@@ -218,8 +248,7 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
       if (!length || !first.IsInteger() || !last.IsInteger()) {
         return std::unexpected(ExecutionStatus::TypeError);
       }
-      const auto start = RelativeIndex(first, *length);
-      const auto end = std::max(start, RelativeIndex(last, *length));
+      const auto [start, end] = ClampIndexRange(first.AsInteger(), last.AsInteger(), *length);
       const auto filled = heap.FillArray(array, arguments.subspan(1).front(), start, end);
       if (!filled) {
         return std::unexpected(Error(filled.error()));

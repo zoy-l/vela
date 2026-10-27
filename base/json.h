@@ -67,6 +67,8 @@ class JsonDocument final {
 
   [[nodiscard]] const yyjson_val* root() const noexcept;
   [[nodiscard]] yyjson_val* root() noexcept;
+  // value 须为本 document 的 raw 数值节点；INSITU 保留 token 在独占原文缓冲区中的位置。
+  [[nodiscard]] std::size_t RawOffset(const yyjson_val& value) const noexcept;
 
  private:
   JsonDocument() = default;

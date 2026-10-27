@@ -17,7 +17,6 @@
 
 #include "base/builtin.h"
 #include "base/execution_status.h"
-#include "base/regexp.h"
 #include "base/utf8.h"
 #include "runtime/heap.h"
 #include "runtime/object.h"
@@ -74,32 +73,42 @@ class NativeBlock final {
 
 class Boundaries final {
  public:
-  Boundaries(Heap& heap, std::string_view text)
-      : count_(Utf8Length(text)), storage_(heap, (count_ + 1) * sizeof(std::size_t)) {
-    if (storage_.data() == nullptr) {
-      return;
+  Boundaries(Heap& heap, std::string_view text) : heap_(heap), text_(text) {}
+  ~Boundaries() { heap_.FreeNative(points_.data()); }
+  Boundaries(const Boundaries&) = delete;
+  Boundaries& operator=(const Boundaries&) = delete;
+  Boundaries(Boundaries&&) = delete;
+  Boundaries& operator=(Boundaries&&) = delete;
+  [[nodiscard]] std::expected<void, ExecutionStatus> Initialize() {
+    if (!points_.empty()) {
+      return {};
     }
-    auto points = values();
+    const auto count = Utf8Length(text_);
+    auto* storage =
+        static_cast<std::size_t*>(heap_.AllocateNative((count + 1) * sizeof(std::size_t)));
+    if (storage == nullptr) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
+    }
+    points_ = {storage, count + 1};
     std::size_t index = 0;
-    for (std::size_t byte = 0; byte < text.size();) {
-      points.subspan(index++).front() = byte;
-      byte += DecodeUtf8Prefix(text.substr(byte)).width;
+    // 输入已验证 UTF-8，每个非续字节就是一个码点边界；无需再次解码标量。
+    for (std::size_t byte = 0; byte < text_.size(); ++byte) {
+      if ((static_cast<unsigned char>(text_.substr(byte).front()) & kContinuationMask) !=
+          kContinuationTag) {
+        points_.subspan(index++).front() = byte;
+      }
     }
-    points.subspan(index).front() = text.size();
-  }
-  [[nodiscard]] bool HasStorage() const noexcept { return storage_.data() != nullptr; }
-  [[nodiscard]] std::size_t count() const noexcept { return count_; }
-  [[nodiscard]] std::span<std::size_t> values() const noexcept {
-    return {static_cast<std::size_t*>(storage_.data()), count_ + 1};
+    points_.subspan(index).front() = text_.size();
+    return {};
   }
   [[nodiscard]] std::size_t Point(std::size_t byte) const noexcept {
-    const auto points = values();
-    return static_cast<std::size_t>(std::ranges::lower_bound(points, byte) - points.begin());
+    return static_cast<std::size_t>(std::ranges::lower_bound(points_, byte) - points_.begin());
   }
 
  private:
-  std::size_t count_;
-  NativeBlock storage_;
+  Heap& heap_;
+  std::string_view text_;
+  std::span<std::size_t> points_;
 };
 
 std::string EngineMessage(int code) {
@@ -209,13 +218,17 @@ Result Materialize(Heap& heap,
                    HeapObject& pattern,
                    StringObject& input,
                    pcre2_match_data& data,
-                   const Boundaries& boundaries) {
+                   Boundaries& boundaries) {
+  if (const auto initialized = boundaries.Initialize(); !initialized) {
+    return Failure(initialized.error());
+  }
   const auto count = pcre2_get_ovector_count(&data);
-  NativeBlock storage(heap, static_cast<std::size_t>(count) * sizeof(RegExpCapture));
-  if (storage.data() == nullptr) {
+  auto* object =
+      heap.AllocateRegExpMatch({.pattern = &pattern, .input = &input, .capture_count = count});
+  if (object == nullptr) {
     return Failure(ExecutionStatus::OutOfMemory);
   }
-  auto captures = std::span(static_cast<RegExpCapture*>(storage.data()), count);
+  const auto captures = Heap::RegExpMatchOf(*object).captures();
   const auto offsets =
       std::span(pcre2_get_ovector_pointer(&data), static_cast<std::size_t>(count) * 2);
   for (std::size_t index = 0; index < count; ++index) {
@@ -228,8 +241,7 @@ Result Materialize(Heap& heap,
         .end = end == PCRE2_UNSET ? PCRE2_UNSET : boundaries.Point(end),
     };
   }
-  return Allocated(heap.AllocateRegExpMatch(
-      {.pattern = &pattern, .input = &input, .capture_count = count}, captures));
+  return Value::Object(object);
 }
 
 struct SearchState final {
@@ -237,7 +249,7 @@ struct SearchState final {
   HeapObject* pattern;
   StringObject* input;
   pcre2_match_data* data;
-  const Boundaries* boundaries;
+  Boundaries* boundaries;
 };
 
 Result MatchedValue(Builtin builtin, const SearchState& search) {
@@ -298,7 +310,7 @@ Result Enumerate(Builtin builtin,
       if (end == text.size()) {
         return output;
       }
-      start = search.boundaries->values().subspan(search.boundaries->Point(end) + 1).front();
+      start = end + DecodeUtf8Prefix(text.substr(end)).width;
     } else {
       start = end;
     }
@@ -307,7 +319,7 @@ Result Enumerate(Builtin builtin,
 
 std::expected<std::size_t, RegExpFailure> SearchStart(Builtin builtin,
                                                       std::span<const Value> arguments,
-                                                      const Boundaries& boundaries) {
+                                                      std::string_view text) {
   if (builtin != Builtin::RegExpAllMatches && builtin != Builtin::RegExpMatchAsPrefix) {
     return 0;
   }
@@ -316,10 +328,14 @@ std::expected<std::size_t, RegExpFailure> SearchStart(Builtin builtin,
     return Failure(ExecutionStatus::TypeError);
   }
   const auto index = position.AsInteger();
-  if (index < 0 || std::cmp_greater(index, boundaries.count())) {
+  if (index < 0) {
     return Failure(ExecutionStatus::IndexOutOfBounds);
   }
-  return boundaries.values().subspan(static_cast<std::size_t>(index)).front();
+  const auto offset = Utf8Offset(text, static_cast<std::size_t>(index));
+  if (!offset) {
+    return Failure(ExecutionStatus::IndexOutOfBounds);
+  }
+  return *offset;
 }
 
 Result Search(Builtin builtin,
@@ -332,11 +348,8 @@ Result Search(Builtin builtin,
   }
   auto& pattern = *arguments.front().AsObject();
   auto& input = *subject.AsString();
-  const Boundaries boundaries(heap, input.value());
-  if (!boundaries.HasStorage()) {
-    return Failure(ExecutionStatus::OutOfMemory);
-  }
-  const auto start = SearchStart(builtin, arguments, boundaries);
+  Boundaries boundaries(heap, input.value());
+  const auto start = SearchStart(builtin, arguments, input.value());
   if (!start) {
     return std::unexpected(start.error());
   }
@@ -496,7 +509,7 @@ Result PatternProperty(Builtin builtin, RegExpStorage& pattern) {
     case Builtin::RegExpIsUnicode:
       return Value::Boolean(true);
     default:
-      return Failure(ExecutionStatus::TypeError);
+      std::unreachable();
   }
 }
 
@@ -527,7 +540,7 @@ Result MatchOperation(Builtin builtin,
                                : Failure(ExecutionStatus::TypeError);
     }
     default:
-      return Failure(ExecutionStatus::TypeError);
+      std::unreachable();
   }
 }
 
@@ -548,10 +561,6 @@ Result ExecuteRegExpBuiltin(Builtin builtin,
                             std::span<const Value> arguments,
                             Heap& heap,
                             const ArrayLayout* output_layout) {
-  if (!IsRegExpBuiltin(builtin) || arguments.size() != BuiltinArity(builtin) ||
-      (HasRegExpArrayLayout(builtin) && output_layout == nullptr)) {
-    return Failure(ExecutionStatus::TypeError);
-  }
   RootRange roots(heap, arguments.data(), arguments.size());
   if (builtin == Builtin::NewRegExp) {
     return Compile(arguments, heap);

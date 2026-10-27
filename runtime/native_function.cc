@@ -27,9 +27,9 @@ bool MatchesType(Value value, NativeType type) {
     case NativeType::Double:
       return value.IsDouble();
     case NativeType::String:
-      return value.IsString() && value.AsString() != nullptr;
+      return value.IsString();
     case NativeType::NullableString:
-      return value.IsNull() || (value.IsString() && value.AsString() != nullptr);
+      return value.IsNull() || value.IsString();
     case NativeType::Future:
       return value.IsObject() && value.AsObject() != nullptr &&
              Heap::GetFuture(*value.AsObject()) != nullptr;
@@ -121,7 +121,8 @@ NativeResult NativeFunction::Invoke(Isolate& isolate, std::span<const Value> arg
     });
   }
   for (std::size_t index = 0; index < arguments.size(); ++index) {
-    if (!MatchesType(arguments.subspan(index).front(), parameters_.at(index))) {
+    if (!MatchesType(arguments.subspan(index).front(),
+                     std::span(parameters_).subspan(index).front())) {
       return std::unexpected(NativeError{
           .kind = NativeErrorKind::TypeMismatch,
           .message = "native argument type mismatch",
@@ -139,28 +140,6 @@ NativeResult NativeFunction::Invoke(Isolate& isolate, std::span<const Value> arg
     });
   }
   return result;
-}
-
-std::string_view NativeTypeName(NativeType type) noexcept {
-  switch (type) {
-    case NativeType::Void:
-      return "void";
-    case NativeType::Boolean:
-      return "bool";
-    case NativeType::Integer:
-      return "int";
-    case NativeType::Double:
-      return "double";
-    case NativeType::String:
-      return "string";
-    case NativeType::NullableString:
-      return "string?";
-    case NativeType::Future:
-      return "Future";
-    case NativeType::CancellationToken:
-      return "CancellationToken";
-  }
-  std::unreachable();
 }
 
 }  // namespace vela::runtime

@@ -1,4 +1,5 @@
 #include "runtime/heap.h"
+#include "runtime/object.h"
 
 #include <algorithm>
 #include <array>
@@ -108,7 +109,7 @@ StringObject* Heap::ConvertStringCase(StringObject& source, StringCase conversio
   if (output == nullptr) {
     return nullptr;
   }
-  void* storage = std::span(output, 1).last(0).data();
+  void* storage = StorageAfter<char>(*output);
   auto remaining = std::span(static_cast<char*>(storage), *length);
   WalkCase(text, conversion, [&](std::int32_t, std::span<const std::int32_t> mapping) {
     for (const auto result : mapping) {

@@ -13,7 +13,11 @@
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/utf8.h"
+#include "runtime/array_storage.h"
+#include "runtime/element_storage.h"
 #include "runtime/heap.h"
+#include "runtime/index_buffer.h"
+#include "runtime/object.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
 
@@ -21,7 +25,8 @@ namespace vela::runtime {
 namespace {
 
 using Result = std::expected<Value, ExecutionStatus>;
-using Step = std::expected<void, ExecutionStatus>;
+enum class GraphemeStep : std::uint8_t { Continue, Stop };
+using GraphemeResult = std::expected<GraphemeStep, ExecutionStatus>;
 
 std::size_t Decode(std::string_view text, utf8proc_int32_t& point) {
   // 字符串在输入边界已验证；这里读取非空 UTF-8 后缀，不重复做全串验证。
@@ -46,6 +51,9 @@ std::expected<std::size_t, ExecutionStatus> WalkGraphemes(std::string_view text,
       if (!delivered) {
         return std::unexpected(delivered.error());
       }
+      if (*delivered == GraphemeStep::Stop) {
+        return count;
+      }
       begin = offset;
     }
     previous = point;
@@ -62,40 +70,15 @@ std::expected<std::size_t, ExecutionStatus> WalkGraphemes(std::string_view text,
 
 Result FillCodePoints(std::string_view text, HeapObject& array) {
   const auto numbers = Heap::IntegerElements(array);
-  if (!numbers) {
+  if (!numbers || Utf8Length(text) != numbers->size()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   std::size_t offset = 0;
   std::size_t index = 0;
-  while (offset < text.size() && index < numbers->size()) {
+  while (offset < text.size()) {
     utf8proc_int32_t point = 0;
     offset += Decode(text.substr(offset), point);
     numbers->subspan(index++).front() = point;
-  }
-  if (offset != text.size() || index != numbers->size()) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  return Value::Object(&array);
-}
-
-Result FillGraphemes(std::string_view text, HeapObject& array, Heap& heap) {
-  const auto count =
-      WalkGraphemes(text, [&](std::size_t index, std::size_t begin, std::size_t end) -> Step {
-        auto* segment = heap.AllocateString(text.substr(begin, end - begin));
-        if (segment == nullptr) {
-          return std::unexpected(ExecutionStatus::OutOfMemory);
-        }
-        if (!heap.SetElement(array, static_cast<std::uint32_t>(index), Value::String(segment))) {
-          return std::unexpected(ExecutionStatus::TypeError);
-        }
-        return {};
-      });
-  if (!count) {
-    return std::unexpected(count.error());
-  }
-  const auto length = Heap::ArrayLength(array);
-  if (!length || *count != *length) {
-    return std::unexpected(ExecutionStatus::TypeError);
   }
   return Value::Object(&array);
 }
@@ -113,19 +96,21 @@ Result GraphemeSlice(std::string_view text, std::span<const Value> arguments, He
   }
   std::optional<std::size_t> first = start == 0 ? std::optional<std::size_t>(0) : std::nullopt;
   std::optional<std::size_t> last = end == 0 ? std::optional<std::size_t>(0) : std::nullopt;
-  const auto count = WalkGraphemes(
-      text, [&](std::size_t index, std::size_t /*begin*/, std::size_t finish) -> Step {
-        const auto boundary = index + 1;
-        if (std::cmp_equal(boundary, start)) {
-          first = finish;
-        }
-        if (std::cmp_equal(boundary, end)) {
-          last = finish;
-        }
-        return {};
-      });
-  if (!count) {
-    return std::unexpected(count.error());
+  if (end != 0) {
+    const auto count = WalkGraphemes(
+        text, [&](std::size_t index, std::size_t /*begin*/, std::size_t finish) -> GraphemeResult {
+          const auto boundary = index + 1;
+          if (std::cmp_equal(boundary, start)) {
+            first = finish;
+          }
+          if (std::cmp_equal(boundary, end)) {
+            last = finish;
+          }
+          return last ? GraphemeStep::Stop : GraphemeStep::Continue;
+        });
+    if (!count) {
+      return std::unexpected(count.error());
+    }
   }
   if (!first || !last) {
     return std::unexpected(ExecutionStatus::IndexOutOfBounds);
@@ -137,6 +122,46 @@ Result GraphemeSlice(std::string_view text, std::span<const Value> arguments, He
 
 }  // namespace
 
+std::expected<void, ExecutionStatus> Heap::FillGraphemes(HeapObject& array, std::string_view text) {
+  const auto strings = StringElements(array);
+  if (!strings) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  IndexBuffer storage(strings->size());
+  const auto allocated = storage.values();
+  if (!allocated) {
+    return std::unexpected(allocated.error());
+  }
+  const auto boundaries = *allocated;
+  const auto count =
+      WalkGraphemes(text, [&](std::size_t index, std::size_t, std::size_t end) -> GraphemeResult {
+        if (index == boundaries.size()) {
+          return std::unexpected(ExecutionStatus::TypeError);
+        }
+        boundaries.subspan(index).front() = end;
+        return GraphemeStep::Continue;
+      });
+  if (!count) {
+    return std::unexpected(count.error());
+  }
+  if (*count != strings->size()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  auto slots = ElementSlots<StringObject*>(internal::ArrayBytes(array, *array.array_layout()));
+  std::size_t begin = 0;
+  for (const auto end : boundaries) {
+    auto* segment = AllocateString(text.substr(begin, end - begin));
+    if (segment == nullptr) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
+    }
+    slots.front() = segment;
+    WriteBarrier(array, Value::String(segment));
+    slots = slots.subspan(1);
+    begin = end;
+  }
+  return {};
+}
+
 Result ExecuteUnicodeBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   const auto receiver = arguments.front();
   if (!receiver.IsString()) {
@@ -145,7 +170,9 @@ Result ExecuteUnicodeBuiltin(Builtin builtin, std::span<const Value> arguments, 
   const auto text = receiver.AsString()->value();
   if (builtin == Builtin::StringGraphemeLength) {
     const auto count =
-        WalkGraphemes(text, [](std::size_t, std::size_t, std::size_t) -> Step { return {}; });
+        WalkGraphemes(text, [](std::size_t, std::size_t, std::size_t) -> GraphemeResult {
+          return GraphemeStep::Continue;
+        });
     return count ? Result(Value::Integer(static_cast<std::int64_t>(*count)))
                  : Result(std::unexpected(count.error()));
   }
@@ -156,8 +183,10 @@ Result ExecuteUnicodeBuiltin(Builtin builtin, std::span<const Value> arguments, 
   if (!target.IsObject() || target.AsObject() == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  return builtin == Builtin::StringCodePoints ? FillCodePoints(text, *target.AsObject())
-                                              : FillGraphemes(text, *target.AsObject(), heap);
+  if (builtin == Builtin::StringCodePoints) {
+    return FillCodePoints(text, *target.AsObject());
+  }
+  return heap.FillGraphemes(*target.AsObject(), text).transform([&]() { return target; });
 }
 
 }  // namespace vela::runtime

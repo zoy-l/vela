@@ -7,7 +7,6 @@
 #include <limits>
 #include <memory>
 #include <new>
-#include <span>
 
 #include <pcre2.h>
 
@@ -21,12 +20,6 @@ namespace {
 struct alignas(std::max_align_t) NativeHeader final {
   std::size_t size;
 };
-
-template <typename T>
-T& Storage(HeapObject& object) noexcept {
-  void* storage = std::span(&object, 1).last(0).data();
-  return *static_cast<T*>(storage);
-}
 
 }  // namespace
 
@@ -43,7 +36,7 @@ void* Heap::AllocateNative(std::size_t size) noexcept {
   std::construct_at(header, total);
   allocated_bytes_ += total;
   committed_bytes_ += total;
-  return std::span(header, 1).last(0).data();
+  return StorageAfter<std::byte>(*header);
 }
 
 void Heap::FreeNative(void* pointer) noexcept {
@@ -67,49 +60,34 @@ bool Heap::IsRegExpMatch(const HeapObject& object) noexcept {
 
 RegExpStorage& Heap::RegExpOf(HeapObject& object) noexcept {
   assert(IsRegExp(object));
-  return Storage<RegExpStorage>(object);
+  return *StorageAfter<RegExpStorage>(object);
 }
 
 RegExpMatchStorage& Heap::RegExpMatchOf(HeapObject& object) noexcept {
   assert(IsRegExpMatch(object));
-  return Storage<RegExpMatchStorage>(object);
+  return *StorageAfter<RegExpMatchStorage>(object);
 }
 
 HeapObject* Heap::AllocateRegExp(const RegExpStorage& storage) noexcept {
   const auto source = Value::String(storage.source);
   RootRange root(*this, &source, 1);
   const auto size = sizeof(HeapObject) + sizeof(RegExpStorage);
-  MaybeCollect(size);
-  const auto allocation = AllocateRaw(size);
-  if (allocation.memory == nullptr) {
-    return nullptr;
-  }
-  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
-  object->kind = ObjectKind::RegExp;
-  std::construct_at(&Storage<RegExpStorage>(*object), storage);
-  Publish(*object, allocation.size);
-  return object;
+  return AllocateObject(ObjectKind::RegExp, size, [&storage](HeapObject& object) {
+    std::construct_at(StorageAfter<RegExpStorage>(object), storage);
+  });
 }
 
-HeapObject* Heap::AllocateRegExpMatch(const RegExpMatchStorage& storage,
-                                      std::span<const RegExpCapture> captures) noexcept {
+HeapObject* Heap::AllocateRegExpMatch(const RegExpMatchStorage& storage) noexcept {
   constexpr auto kHeader = sizeof(HeapObject) + sizeof(RegExpMatchStorage);
-  if (captures.size() >
+  if (storage.capture_count >
       (std::numeric_limits<std::uint32_t>::max() - kHeader) / sizeof(RegExpCapture)) {
     return nullptr;
   }
-  const auto size = kHeader + captures.size_bytes();
-  MaybeCollect(size);
-  const auto allocation = AllocateRaw(size);
-  if (allocation.memory == nullptr) {
-    return nullptr;
-  }
-  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
-  object->kind = ObjectKind::RegExpMatch;
-  auto* match = std::construct_at(&Storage<RegExpMatchStorage>(*object), storage);
-  std::ranges::uninitialized_copy(captures, match->captures());
-  Publish(*object, allocation.size);
-  return object;
+  const auto size = kHeader + (storage.capture_count * sizeof(RegExpCapture));
+  return AllocateObject(ObjectKind::RegExpMatch, size, [&storage](HeapObject& object) {
+    auto* match = std::construct_at(StorageAfter<RegExpMatchStorage>(object), storage);
+    std::ranges::uninitialized_default_construct(match->captures());
+  });
 }
 
 void Heap::MarkRegExp(HeapObject& object) noexcept {

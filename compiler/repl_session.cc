@@ -1,6 +1,7 @@
 #include "compiler/repl_session.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -125,15 +126,15 @@ InputBody NormalizeBody(std::string_view source, const frontend::LexResult& lexe
 
 }  // namespace
 
-ReplSession::ReplSession(const std::filesystem::path& directory)
-    : path_(directory / "__vela_repl__.vela") {
+ReplSession::ReplSession(const std::filesystem::path& directory, std::size_t gc_threshold)
+    : path_(directory / "__vela_repl__.vela"), gc_threshold_(gc_threshold) {
   Reset();
 }
 
 void ReplSession::Reset() {
   program_ = {};
   machine_.reset();
-  isolate_ = std::make_unique<runtime::Isolate>();
+  isolate_ = std::make_unique<runtime::Isolate>(gc_threshold_);
   machine_ = std::make_unique<vm::VirtualMachine>(*isolate_);
   compilation_ = {};
   modules_ = {};

@@ -61,6 +61,11 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   current_function_ = &function;
   current_handler_.reset();
   next_register_ = function.parameter_count;
+  std::optional<std::size_t> default_sort;
+  if (algorithm == ArrayAlgorithm::Sort) {
+    default_sort = function.instructions.size();
+    Emit({.opcode = Opcode::JumpIfNull, .lhs = 1, .location = {}});
+  }
   const auto initial = algorithm == ArrayAlgorithm::Reduce
                            ? RegisterId{2}
                            : EmitTemporary({.opcode = Opcode::LoadNull, .location = {}});
@@ -112,6 +117,17 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
       },
       algorithm, receiver, signature.return_type, {}, output);
   Emit({.opcode = Opcode::Return, .dst = result.reg, .location = {}});
+  if (default_sort) {
+    current_function_->instructions.at(*default_sort).index =
+        static_cast<std::uint32_t>(current_function_->instructions.size());
+    const auto sorted = EmitTemporary({
+        .opcode = Opcode::BuiltinCall,
+        .lhs = 0,
+        .index = static_cast<std::uint32_t>(Builtin::ArraySortDefault),
+        .location = {},
+    });
+    Emit({.opcode = Opcode::Return, .dst = sorted, .location = {}});
+  }
   function.register_count = next_register_;
   PublishMemberFunction(receiver, name, MemberKind::Method, signature, std::move(function));
 }

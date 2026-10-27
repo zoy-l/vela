@@ -41,13 +41,11 @@ struct CollectionStorage final {
 };
 
 CollectionStorage& Storage(HeapObject& object) noexcept {
-  void* data = std::span(&object, 1).last(0).data();
-  return *static_cast<CollectionStorage*>(data);
+  return *StorageAfter<CollectionStorage>(object);
 }
 
 const CollectionStorage& Storage(const HeapObject& object) noexcept {
-  const void* data = std::span(&object, 1).last(0).data();
-  return *static_cast<const CollectionStorage*>(data);
+  return *StorageAfter<CollectionStorage>(object);
 }
 
 constexpr std::size_t Align(std::size_t offset, std::size_t alignment) noexcept {
@@ -215,18 +213,10 @@ void LinkTail(CollectionStorage& storage, const Table& table, std::uint32_t entr
 
 HeapObject* Heap::AllocateCollection(const CollectionLayout& layout) noexcept {
   const auto size = sizeof(HeapObject) + sizeof(CollectionStorage);
-  MaybeCollect(size);
-  const auto allocation = AllocateRaw(size);
-  if (allocation.memory == nullptr) {
-    return nullptr;
-  }
-  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
-  object->kind = ObjectKind::Collection;
-  object->indexed_layout = &layout;
-  void* data = std::span(object, 1).last(0).data();
-  std::construct_at(static_cast<CollectionStorage*>(data));
-  Publish(*object, allocation.size);
-  return object;
+  return AllocateObject(ObjectKind::Collection, size, [&layout](HeapObject& object) {
+    object.type_metadata = &layout;
+    std::construct_at(StorageAfter<CollectionStorage>(object));
+  });
 }
 
 std::expected<void, ExecutionStatus> Heap::GrowCollection(HeapObject& object) noexcept {
@@ -295,15 +285,25 @@ std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollection(HeapObje
       (layout.values && !IsValueOfType(value, layout.values->element_type()))) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
+  return InsertCollectionHashed(object, key, HashKey(key), value);
+}
+
+std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollectionHashed(
+    HeapObject& object,
+    Value key,
+    std::size_t hash,
+    Value value) noexcept {
+  const auto& layout = *object.collection_layout();
   auto& storage = Storage(object);
-  const auto hash = HashKey(key);
+  Table table;
+  Slot slot;
   if (storage.capacity != 0) {
-    const auto table = View(storage, layout);
-    const auto slot = FindSlot(table, layout, key, hash);
+    table = View(storage, layout);
+    slot = FindSlot(table, layout, key, hash);
     if (slot.found) {
       if (layout.values) {
         StoreElementStorage(*layout.values, table.values, slot.entry, value);
-        if (value.IsObject() || value.IsString()) {
+        if (value.IsReference()) {
           WriteBarrier(object, value);
         }
       }
@@ -315,9 +315,9 @@ std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollection(HeapObje
     if (!grown) {
       return std::unexpected(grown.error());
     }
+    table = View(storage, layout);
+    slot = FindSlot(table, layout, key, hash);
   }
-  const auto table = View(storage, layout);
-  const auto slot = FindSlot(table, layout, key, hash);
   const auto entry = storage.used++;
   StoreElementStorage(layout.keys, table.keys, entry, key);
   if (layout.values) {
@@ -328,10 +328,10 @@ std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollection(HeapObje
   LinkTail(storage, table, entry);
   ++storage.size;
   ++storage.mutation;
-  if (key.IsObject() || key.IsString()) {
+  if (key.IsReference()) {
     WriteBarrier(object, key);
   }
-  if (layout.values && (value.IsObject() || value.IsString())) {
+  if (layout.values && value.IsReference()) {
     WriteBarrier(object, value);
   }
   return CollectionInsert::Inserted;
@@ -442,6 +442,8 @@ std::expected<HeapObject*, ExecutionStatus> Heap::CombineSets(const HeapObject& 
   }
   const auto rooted = Value::Object(result);
   RootRange root(*this, &rooted, 1);
+  const auto& right_storage = Storage(right);
+  const auto right_table = View(right_storage, layout);
   const auto append = [&](const HeapObject& input) -> std::expected<void, ExecutionStatus> {
     const auto& storage = Storage(input);
     if (storage.size == 0) {
@@ -450,13 +452,15 @@ std::expected<HeapObject*, ExecutionStatus> Heap::CombineSets(const HeapObject& 
     const auto table = View(storage, layout);
     for (auto entry = storage.head; entry != kEmpty; entry = table.next.subspan(entry).front()) {
       const auto key = LoadElementStorage(layout.keys, table.keys, entry);
+      const auto hash = table.hashes.subspan(entry).front();
       if (operation != SetOperation::Union) {
-        const auto found = HasCollectionKey(right, key).value();
+        const auto found =
+            right_storage.size != 0 && FindSlot(right_table, layout, key, hash).found;
         if (found != (operation == SetOperation::Intersection)) {
           continue;
         }
       }
-      const auto inserted = InsertCollection(*result, key);
+      const auto inserted = InsertCollectionHashed(*result, key, hash, Value::Null());
       if (!inserted) {
         return std::unexpected(inserted.error());
       }
@@ -484,44 +488,39 @@ std::expected<std::uint32_t, ExecutionStatus> Heap::CollectionLength(
   return Storage(object).size;
 }
 
-std::expected<CollectionCursor, ExecutionStatus> Heap::IterateCollection(
+std::expected<CollectionIterator, ExecutionStatus> Heap::IterateCollection(
     const HeapObject& object) noexcept {
   if (object.kind != ObjectKind::Collection) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& storage = Storage(object);
-  return CollectionCursor{.mutation = storage.mutation, .next = storage.head};
+  const auto table = View(storage, *object.collection_layout());
+  CollectionIterator iterator;
+  iterator.object_ = &object;
+  iterator.mutation_ = storage.mutation;
+  iterator.next_ = storage.head;
+  iterator.keys_ = table.keys;
+  iterator.values_ = table.values;
+  iterator.links_ = table.next;
+  return iterator;
 }
 
-std::expected<void, ExecutionStatus> Heap::CheckCollectionMutation(
-    const HeapObject& object,
-    const CollectionCursor& cursor) noexcept {
-  if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  if (Storage(object).mutation != cursor.mutation) {
-    return std::unexpected(ExecutionStatus::ConcurrentModification);
-  }
-  return {};
-}
-
-std::expected<std::optional<CollectionEntry>, ExecutionStatus> Heap::NextCollectionEntry(
-    const HeapObject& object,
-    CollectionCursor& cursor) noexcept {
-  if (const auto checked = CheckCollectionMutation(object, cursor); !checked) {
-    return std::unexpected(checked.error());
-  }
-  if (cursor.next == kEmpty) {
+std::expected<std::optional<CollectionEntry>, ExecutionStatus> CollectionIterator::Next() noexcept {
+  if (object_ == nullptr) {
     return std::nullopt;
   }
-  const auto& layout = *object.collection_layout();
-  const auto table = View(Storage(object), layout);
-  const auto index = cursor.next;
-  cursor.next = table.next.subspan(index).front();
+  if (Storage(*object_).mutation != mutation_) {
+    return std::unexpected(ExecutionStatus::ConcurrentModification);
+  }
+  if (next_ == kEmpty) {
+    return std::nullopt;
+  }
+  const auto& layout = *Heap::CollectionTypeOf(*object_);
+  const auto index = next_;
+  next_ = links_.subspan(index).front();
   return CollectionEntry{
-      .key = LoadElementStorage(layout.keys, table.keys, index),
-      .value =
-          layout.values ? LoadElementStorage(*layout.values, table.values, index) : Value::Null(),
+      .key = LoadElementStorage(layout.keys, keys_, index),
+      .value = layout.values ? LoadElementStorage(*layout.values, values_, index) : Value::Null(),
   };
 }
 
@@ -562,24 +561,19 @@ std::expected<void, ExecutionStatus> Heap::CopyCollection(
 
 void Heap::MarkCollection(HeapObject& object) noexcept {
   const auto& layout = *object.collection_layout();
-  const auto references = [](const ArrayLayout& type) -> bool {
-    return type.element.dynamic || type.element.kind == ValueKind::Object ||
-           type.element.kind == ValueKind::String;
-  };
-  const bool key_references = references(layout.keys);
-  const bool value_references = layout.values && references(*layout.values);
   const auto& storage = Storage(object);
-  if (storage.size == 0 || (!key_references && !value_references)) {
+  if (storage.size == 0) {
     return;
   }
   const auto table = View(storage, layout);
-  for (auto entry = storage.head; entry != kEmpty; entry = table.next.subspan(entry).front()) {
-    if (key_references) {
-      MarkValue(LoadElementStorage(layout.keys, table.keys, entry));
+  const auto mark = [this, &storage, &table](auto elements) {
+    for (auto entry = storage.head; entry != kEmpty; entry = table.next.subspan(entry).front()) {
+      MarkReference(elements.subspan(entry).front());
     }
-    if (value_references) {
-      MarkValue(LoadElementStorage(*layout.values, table.values, entry));
-    }
+  };
+  VisitReferenceStorage(layout.keys, table.keys, mark);
+  if (layout.values) {
+    VisitReferenceStorage(*layout.values, table.values, mark);
   }
 }
 

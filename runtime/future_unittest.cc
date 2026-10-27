@@ -6,12 +6,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
+#include "base/execution_status.h"
 #include "gtest/gtest.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/string.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -119,40 +124,6 @@ TEST(FutureTest, CancellationTokenRunsCallbacksOnce) {
   token.Cancel();
   EXPECT_TRUE(token.IsCancelled());
   EXPECT_EQ(calls, 1);
-}
-
-TEST(FutureTest, WaitAndRaceObserveAllCompletionPaths) {
-  FutureScheduler scheduler;
-  auto first = scheduler.CreateCompleter();
-  auto second = scheduler.CreateCompleter();
-  const std::array<Future, 2> inputs = {first.future(), second.future()};
-  auto waited = Future::Wait(inputs, scheduler);
-  auto raced = Future::Race(inputs, scheduler);
-  constexpr auto kFirst = 1;
-  constexpr auto kSecond = 2;
-  const auto first_completion = first.Complete(Value::Integer(kFirst));
-  ASSERT_TRUE(first_completion.has_value());
-  ASSERT_TRUE(scheduler.PumpOne());
-  EXPECT_EQ(raced.state(), FutureState::Succeeded);
-  EXPECT_EQ(waited.state(), FutureState::Pending);
-  const auto second_completion = second.Complete(Value::Integer(kSecond));
-  ASSERT_TRUE(second_completion.has_value());
-  ASSERT_TRUE(scheduler.PumpOne());
-  EXPECT_EQ(waited.state(), FutureState::Succeeded);
-}
-
-TEST(FutureTest, TimeoutUsesReplacementFuture) {
-  constexpr auto kTimeoutResult = 8;
-  FutureScheduler scheduler;
-  auto source = scheduler.CreateCompleter();
-  const auto timeout = source.future().Timeout(std::chrono::milliseconds(0), scheduler, [](Value) {
-    return Future::Value(Value::Integer(kTimeoutResult));
-  });
-  ASSERT_TRUE(scheduler.PumpOne());
-  EXPECT_EQ(timeout.state(), FutureState::Succeeded);
-  const auto timeout_value = timeout.value();
-  ASSERT_TRUE(timeout_value.has_value());
-  EXPECT_EQ(timeout_value.value_or(Value::Null()).AsInteger(), kTimeoutResult);
 }
 
 TEST(FutureTest, CrossThreadCompletionOnlyPublishesOnOwnerThread) {
@@ -328,6 +299,173 @@ TEST(FutureTest, BindingSchedulesUnboundNativeCompletion) {
   ASSERT_TRUE(first.scheduler().PumpOne());
   EXPECT_TRUE(notified);
   EXPECT_EQ(observed.AsInteger(), kExpectedValue);
+}
+
+TEST(FutureTest, ObserversBorrowOneCompletion) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  Future future(&isolate.scheduler());
+  future.AttachHeap(heap);
+  const FutureResult* first = nullptr;
+  const FutureResult* second = nullptr;
+  const FutureResult* late = nullptr;
+  future.ObserveResult([&](const FutureResult& result) { first = &result; });
+  future.ObserveResult([&](const FutureResult& result) { second = &result; });
+  ASSERT_TRUE(
+      future.CompleteError(Value::Integer(kErrorValue),
+                           {
+                               .message = "failure",
+                               .stack_trace = {{.function = "host", .source_path = "input.vela"}},
+                           }));
+  ASSERT_TRUE(isolate.scheduler().PumpOne());
+  future.ObserveResult([&](const FutureResult& result) { late = &result; });
+  ASSERT_TRUE(isolate.scheduler().PumpOne());
+  EXPECT_EQ(first, second);
+  EXPECT_EQ(first, late);
+}
+
+TEST(FutureTest, ObserverReferencesSurviveQueuedAndActiveCollection) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  Future future(&isolate.scheduler());
+  future.AttachHeap(heap);
+  auto references = std::make_shared<std::vector<Value>>();
+  references->push_back(Value::String(heap.AllocateString("listener")));
+  std::string observed;
+  future.ObserveResult(
+      [&](const FutureResult&) {
+        heap.Collect();
+        observed = references->front().AsString()->value();
+      },
+      references);
+  ASSERT_TRUE(future.Complete(Value::Null()));
+  heap.Collect();
+  ASSERT_TRUE(isolate.scheduler().PumpOne());
+  EXPECT_EQ(observed, "listener");
+  references.reset();
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 0);
+}
+
+TEST(FutureTest, DiscardingQueuedObserversReleasesRootsAndSelfCaptures) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  Future future(&isolate.scheduler());
+  future.AttachHeap(heap);
+  auto references = std::make_shared<std::vector<Value>>();
+  references->push_back(Value::String(heap.AllocateString("queued")));
+  auto marker = std::make_shared<int>(kExpectedValue);
+  const std::weak_ptr<int> lifetime = marker;
+  future.ObserveResult([self = future.Internal(), marker](const FutureResult&) {}, references);
+  references.reset();
+  marker.reset();
+  ASSERT_TRUE(future.Complete(Value::Null()));
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 1);
+  isolate.scheduler().Shutdown();
+  heap.Collect();
+  EXPECT_TRUE(lifetime.expired());
+  EXPECT_EQ(heap.object_count(), 0);
+}
+
+TEST(FutureTest, DroppingNonfinalHostHandleDoesNotPostAnEmptyEvent) {
+  FutureScheduler scheduler;
+  Future future(&scheduler);
+  std::thread host([copy = future] {});
+  host.join();
+  EXPECT_FALSE(scheduler.PumpOne());
+}
+
+TEST(FutureTest, HostProducerAllowsIdlePumpAndBlockingPumpToHaveDifferentBehavior) {
+  FutureScheduler scheduler;
+  auto producer = scheduler.CreateHostCompleter();
+  auto root = producer.future();
+  EXPECT_FALSE(scheduler.PumpUntil(root));
+  std::atomic_bool accepted = false;
+  std::thread host(
+      [&] { accepted = producer.Complete(Value::Integer(kExpectedValue)).has_value(); });
+  const auto completed = scheduler.PumpUntil(root, FuturePumpMode::WaitForHost);
+  host.join();
+  EXPECT_TRUE(accepted.load());
+  EXPECT_TRUE(completed);
+  const auto result = root.value();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_TRUE(result.value_or(Value::Null()).IsInteger());
+  EXPECT_EQ(result.value_or(Value::Null()).AsInteger(), kExpectedValue);
+}
+
+TEST(FutureTest, FinalHostHandleDestroysPendingCallbacksOnOwnerThread) {
+  struct Resource final {
+    explicit Resource(std::thread::id& output) : destroyed_on(&output) {}
+    ~Resource() { *destroyed_on = std::this_thread::get_id(); }
+    Resource(const Resource&) = delete;
+    Resource& operator=(const Resource&) = delete;
+    Resource(Resource&&) = delete;
+    Resource& operator=(Resource&&) = delete;
+    std::thread::id* destroyed_on;
+  };
+  FutureScheduler scheduler;
+  std::thread::id destroyed_on;
+  auto resource = std::make_shared<Resource>(destroyed_on);
+  Future future(&scheduler);
+  future.ObserveResult([resource](const FutureResult&) {});
+  resource.reset();
+  std::thread host([owned = std::move(future)] {});
+  host.join();
+  EXPECT_EQ(destroyed_on, std::thread::id{});
+  ASSERT_TRUE(scheduler.PumpOne());
+  EXPECT_EQ(destroyed_on, std::this_thread::get_id());
+}
+
+TEST(FutureTest, PostedSelfAdoptionFailsOnOwnerThreadWithTheSameReason) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  Future future(&isolate.scheduler());
+  const auto value = Value::Object(heap.AllocateFuture(future));
+  RootRange root(heap, &value, 1);
+  const auto immediate = future.Complete(value);
+  ASSERT_FALSE(immediate);
+  EXPECT_EQ(immediate.error(), FutureCompletionError::SelfAdoption);
+  std::atomic_bool accepted = false;
+  std::thread host([&] { accepted = future.Complete(value).has_value(); });
+  host.join();
+  ASSERT_TRUE(accepted.load());
+  ASSERT_TRUE(isolate.scheduler().PumpOne());
+  const auto diagnostic = future.error_diagnostic();
+  ASSERT_TRUE(diagnostic.has_value());
+  EXPECT_EQ(diagnostic.value_or(FutureDiagnostic{}).status, ExecutionStatus::FutureSelfAdoption);
+}
+
+TEST(FutureTest, PostedForeignAdoptionReportsInvalidIsolate) {
+  Isolate isolate;
+  Isolate other;
+  Future future(&isolate.scheduler());
+  future.AttachHeap(isolate.heap());
+  const auto source = Value::Object(other.heap().AllocateFuture(Future(&other.scheduler())));
+  RootRange root(other.heap(), &source, 1);
+  const auto immediate = future.Complete(source);
+  ASSERT_FALSE(immediate);
+  EXPECT_EQ(immediate.error(), FutureCompletionError::DifferentIsolate);
+  std::atomic_bool accepted = false;
+  std::thread host([&] { accepted = future.Complete(source).has_value(); });
+  host.join();
+  ASSERT_TRUE(accepted.load());
+  ASSERT_TRUE(isolate.scheduler().PumpOne());
+  const auto diagnostic = future.error_diagnostic();
+  ASSERT_TRUE(diagnostic.has_value());
+  EXPECT_EQ(diagnostic.value_or(FutureDiagnostic{}).status, ExecutionStatus::InvalidIsolate);
+}
+
+TEST(FutureTest, UnboundReentrantObserversKeepSynchronousNotificationOrder) {
+  Future future;
+  std::vector<int> notifications;
+  future.ObserveResult([&](const FutureResult&) {
+    notifications.push_back(1);
+    future.ObserveResult([&](const FutureResult&) { notifications.push_back(3); });
+  });
+  future.ObserveResult([&](const FutureResult&) { notifications.push_back(2); });
+  ASSERT_TRUE(future.Complete(Value::Null()));
+  EXPECT_EQ(notifications, (std::vector<int>{1, 3, 2}));
 }
 
 }  // namespace

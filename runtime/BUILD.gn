@@ -49,6 +49,7 @@ source_set("runtime") {
     "future_scheduler.cc",
     "heap.cc",
     "heap.h",
+    "heap_allocation.h",
     "heap_array.cc",
     "heap_bytes.cc",
     "heap_collection.cc",
@@ -58,6 +59,9 @@ source_set("runtime") {
     "heap_string_case.cc",
     "heap_type.cc",
     "heap_value_slots.cc",
+    "index_buffer.cc",
+    "index_buffer.h",
+    "index_range.h",
     "isolate.cc",
     "isolate.h",
     "json.h",
@@ -108,6 +112,7 @@ executable("runtime_tests") {
     "runtime_unittest.cc",
     "string_case_unittest.cc",
     "string_unittest.cc",
+    "unicode_operations_unittest.cc",
   ]
   deps = [
     ":runtime",

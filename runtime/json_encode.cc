@@ -27,15 +27,21 @@ enum class JsonFrameKind : std::uint8_t { Array, Map, Conversion };
 
 struct JsonEncodeFrame final {
   JsonEncodeFrame(Heap& heap, JsonEncodeFrame* parent, Value value, JsonFrameKind kind)
-      : parent(parent),
-        values{value, Value::Null()},
-        roots(heap, values.data(), values.size()),
-        kind(kind) {}
-  JsonEncodeFrame* parent;
-  std::array<Value, 2> values;
+      : roots(heap, values.data(), values.size()) {
+    Reset(parent, value, kind);
+  }
+  void Reset(JsonEncodeFrame* next_parent, Value value, JsonFrameKind next_kind) {
+    parent = next_parent;
+    values.front() = value;
+    kind = next_kind;
+    index = 0;
+  }
+  JsonEncodeFrame* parent = nullptr;
+  std::array<Value, 2> values{};
   RootRange roots;
-  JsonFrameKind kind;
-  CollectionCursor cursor;
+  JsonFrameKind kind = JsonFrameKind::Conversion;
+  const ArrayLayout* elements = nullptr;
+  CollectionIterator iterator;
   std::uint64_t mutation = 0;
   std::uint32_t index = 0;
 };
@@ -49,6 +55,12 @@ JsonEncoder::JsonEncoder(Isolate& isolate, Value input)
 JsonEncoder::~JsonEncoder() {
   while (frame_ != nullptr) {
     Pop();
+  }
+  while (spare_ != nullptr) {
+    auto* frame = spare_;
+    spare_ = frame->parent;
+    std::destroy_at(frame);
+    heap_->FreeNative(frame);
   }
 }
 
@@ -86,20 +98,39 @@ std::expected<void, JsonRuntimeError> JsonEncoder::Append(std::string_view text)
 }
 
 std::expected<void, JsonRuntimeError> JsonEncoder::Quote(std::string_view text) {
-  if (auto written = Append("\""); !written) {
-    return written;
-  }
-  constexpr std::string_view kHex = "0123456789abcdef";
   constexpr std::size_t kUnicodeEscapeLength = 6;
-  constexpr unsigned kHexDigitMask = 15;
-  std::size_t start = 0;
-  for (std::size_t index = 0; index < text.size(); ++index) {
-    const auto byte = static_cast<unsigned char>(text.substr(index, 1).front());
-    if (byte >= ' ' && byte != '"' && byte != '\\') {
-      continue;
+  if (text.size() > kMaximumStringLength - 2) {
+    return std::unexpected(Error(ExecutionStatus::OutOfMemory, "JSON output allocation failed"));
+  }
+  auto length = text.size() + 2;
+  for (const auto character : text) {
+    const auto byte = static_cast<unsigned char>(character);
+    std::size_t extra = 0;
+    if (byte < ' ') {
+      extra = kUnicodeEscapeLength - 1;
+    } else if (byte == '"' || byte == '\\') {
+      extra = 1;
     }
-    if (auto written = Append(text.substr(start, index - start)); !written) {
-      return written;
+    if (extra > kMaximumStringLength - length) {
+      return std::unexpected(Error(ExecutionStatus::OutOfMemory, "JSON output allocation failed"));
+    }
+    length += extra;
+  }
+  const auto storage = heap_->AppendStringStorage(*values_.at(kOutput).AsObject(), length);
+  if (!storage) {
+    return std::unexpected(Error(storage.error(), "JSON output allocation failed"));
+  }
+  auto output = *storage;
+  output.front() = '"';
+  output = output.subspan(1);
+  constexpr std::string_view kHex = "0123456789abcdef";
+  constexpr unsigned kHexDigitMask = 15;
+  for (const auto character : text) {
+    const auto byte = static_cast<unsigned char>(character);
+    if (byte >= ' ' && byte != '"' && byte != '\\') {
+      output.front() = character;
+      output = output.subspan(1);
+      continue;
     }
     std::array<char, kUnicodeEscapeLength> escape{
         '\\',
@@ -114,18 +145,16 @@ std::expected<void, JsonRuntimeError> JsonEncoder::Quote(std::string_view text) 
       escape.at(1) = static_cast<char>(byte);
       encoded = encoded.substr(0, 2);
     }
-    if (auto written = Append(encoded); !written) {
-      return written;
-    }
-    start = index + 1;
+    std::ranges::copy(encoded, output.begin());
+    output = output.subspan(encoded.size());
   }
-  if (auto written = Append(text.substr(start)); !written) {
-    return written;
-  }
-  return Append("\"");
+  output.front() = '"';
+  return {};
 }
 
-std::expected<void, JsonRuntimeError> JsonEncoder::Push(Value value) {
+std::expected<void, JsonRuntimeError> JsonEncoder::Push(Value value,
+                                                        JsonFrameKind kind,
+                                                        const ArrayLayout* elements) {
   auto& active = *values_.at(kActive).AsObject();
   const auto inserted = heap_->InsertCollection(active, value);
   if (!inserted) {
@@ -134,23 +163,26 @@ std::expected<void, JsonRuntimeError> JsonEncoder::Push(Value value) {
   if (*inserted == CollectionInsert::Updated) {
     return std::unexpected(Error(ExecutionStatus::JsonEncodeError, "cyclic JSON value"));
   }
-  const auto object_kind = Heap::KindOf(*value.AsObject());
-  auto kind = JsonFrameKind::Conversion;
-  if (object_kind == ObjectKind::Array) {
-    kind = JsonFrameKind::Array;
-  } else if (object_kind == ObjectKind::Collection) {
-    kind = JsonFrameKind::Map;
+  if (spare_ != nullptr) {
+    auto* frame = spare_;
+    spare_ = frame->parent;
+    frame->Reset(frame_, value, kind);
+    frame->roots.Attach(*heap_, frame->values.data(), frame->values.size());
+    frame_ = frame;
+  } else {
+    auto* storage = static_cast<JsonEncodeFrame*>(heap_->AllocateNative(sizeof(JsonEncodeFrame)));
+    if (storage == nullptr) {
+      return std::unexpected(
+          Error(ExecutionStatus::OutOfMemory, "JSON traversal allocation failed"));
+    }
+    frame_ = std::construct_at(storage, *heap_, frame_, value, kind);
   }
-  auto* storage = static_cast<JsonEncodeFrame*>(heap_->AllocateNative(sizeof(JsonEncodeFrame)));
-  if (storage == nullptr) {
-    return std::unexpected(Error(ExecutionStatus::OutOfMemory, "JSON traversal allocation failed"));
-  }
-  frame_ = std::construct_at(storage, *heap_, frame_, value, kind);
+  frame_->elements = elements;
   auto& object = *value.AsObject();
   if (kind == JsonFrameKind::Array) {
     frame_->mutation = *Heap::ArrayMutation(object);
   } else if (kind == JsonFrameKind::Map) {
-    frame_->cursor = *Heap::IterateCollection(object);
+    frame_->iterator = *Heap::IterateCollection(object);
   }
   return {};
 }
@@ -159,8 +191,11 @@ void JsonEncoder::Pop() {
   auto* frame = frame_;
   frame_ = frame->parent;
   std::ignore = Heap::RemoveCollection(*values_.at(kActive).AsObject(), frame->values.at(0));
-  std::destroy_at(frame);
-  heap_->FreeNative(frame);
+  frame->roots.Detach();
+  frame->values.fill(Value::Null());
+  frame->iterator = {};
+  frame->parent = spare_;
+  spare_ = frame;
 }
 
 void JsonEncoder::ResumeConversion(Value result) {
@@ -194,34 +229,43 @@ std::expected<void, JsonRuntimeError> JsonEncoder::EncodeScalar(Value value) {
     return std::unexpected(Error(ExecutionStatus::JsonEncodeError, "non-finite JSON number"));
   }
   std::array<char, kScalarTextCapacity> buffer{};
-  const auto text = FormatScalar(value, buffer);
-  if (auto written = Append(text); !written) {
-    return written;
-  }
-  return value.IsDouble() && text.find_first_of(".eE") == std::string_view::npos
-             ? Append(".0")
-             : std::expected<void, JsonRuntimeError>{};
+  return Append(FormatJsonScalar(value, buffer));
 }
 
-std::expected<std::optional<JsonEncodeStep>, JsonRuntimeError> JsonEncoder::EnterObject(
-    Value value) {
+std::expected<std::optional<Value>, JsonRuntimeError> JsonEncoder::EnterObject(Value value) {
   auto& object = *value.AsObject();
   const auto kind = Heap::KindOf(object);
-  const auto* layout = Heap::ClassOf(object);
-  if (layout != nullptr && layout->IsEnum()) {
-    return std::unexpected(Error(ExecutionStatus::JsonEncodeError, "enum is not JSON encodable"));
+  const ArrayLayout* elements = nullptr;
+  auto frame_kind = JsonFrameKind::Conversion;
+  switch (kind) {
+    case ObjectKind::Array:
+      frame_kind = JsonFrameKind::Array;
+      elements = Heap::ArrayTypeOf(object);
+      break;
+    case ObjectKind::Collection: {
+      const auto& values = Heap::CollectionTypeOf(object)->values;
+      if (!values) {
+        return std::unexpected(
+            Error(ExecutionStatus::JsonEncodeError, "Set is not JSON encodable"));
+      }
+      frame_kind = JsonFrameKind::Map;
+      elements = &*values;
+      break;
+    }
+    case ObjectKind::Instance:
+      if (Heap::ClassOf(object)->IsEnum()) {
+        return std::unexpected(
+            Error(ExecutionStatus::JsonEncodeError, "enum is not JSON encodable"));
+      }
+      break;
+    default:
+      return std::unexpected(Error(ExecutionStatus::JsonEncodeError, "unsupported JSON value"));
   }
-  if (kind == ObjectKind::Collection && !Heap::CollectionTypeOf(object)->values) {
-    return std::unexpected(Error(ExecutionStatus::JsonEncodeError, "Set is not JSON encodable"));
-  }
-  if (kind != ObjectKind::Array && kind != ObjectKind::Collection && kind != ObjectKind::Instance) {
-    return std::unexpected(Error(ExecutionStatus::JsonEncodeError, "unsupported JSON value"));
-  }
-  if (auto pushed = Push(value); !pushed) {
+  if (auto pushed = Push(value, frame_kind, elements); !pushed) {
     return std::unexpected(pushed.error());
   }
   if (kind == ObjectKind::Instance) {
-    return JsonEncodeStep{.action = JsonEncodeAction::Convert, .value = value};
+    return value;
   }
   if (auto written = Append(kind == ObjectKind::Array ? "[" : "{"); !written) {
     return std::unexpected(written.error());
@@ -229,7 +273,7 @@ std::expected<std::optional<JsonEncodeStep>, JsonRuntimeError> JsonEncoder::Ente
   return std::nullopt;
 }
 
-std::expected<std::optional<JsonEncodeStep>, JsonRuntimeError> JsonEncoder::EncodeValue() {
+std::expected<std::optional<Value>, JsonRuntimeError> JsonEncoder::EncodeValue() {
   const auto value = values_.at(kPending);
   if (value.IsObject()) {
     return EnterObject(value);
@@ -269,13 +313,12 @@ std::expected<void, JsonRuntimeError> JsonEncoder::AdvanceArray() {
   }
   values_.at(kPending) = *Heap::GetElement(object, frame.index++);
   pending_ = true;
-  return CheckElement(*Heap::ArrayTypeOf(object));
+  return CheckElement(*frame.elements);
 }
 
 std::expected<void, JsonRuntimeError> JsonEncoder::AdvanceMap() {
   auto& frame = *frame_;
-  auto& object = *frame.values.front().AsObject();
-  const auto entry = Heap::NextCollectionEntry(object, frame.cursor);
+  const auto entry = frame.iterator.Next();
   if (!entry) {
     return std::unexpected(Error(entry.error(), "map changed during JSON conversion"));
   }
@@ -288,9 +331,7 @@ std::expected<void, JsonRuntimeError> JsonEncoder::AdvanceMap() {
   }
   frame.values.at(1) = (**entry).key;
   values_.at(kPending) = (**entry).value;
-  const auto& layout = *Heap::CollectionTypeOf(object);
-  assert(layout.values.has_value());
-  if (auto checked = CheckElement(*layout.values); !checked) {
+  if (auto checked = CheckElement(*frame.elements); !checked) {
     return checked;
   }
   if (!frame.values.at(1).IsString()) {
@@ -309,7 +350,7 @@ std::expected<void, JsonRuntimeError> JsonEncoder::AdvanceMap() {
   return Append(":");
 }
 
-std::expected<JsonEncodeStep, JsonRuntimeError> JsonEncoder::Advance() {
+std::expected<Value, JsonRuntimeError> JsonEncoder::Advance() {
   if (values_.at(kOutput).IsNull()) {
     if (auto initialized = Initialize(); !initialized) {
       return std::unexpected(initialized.error());
@@ -333,7 +374,7 @@ std::expected<JsonEncodeStep, JsonRuntimeError> JsonEncoder::Advance() {
         return std::unexpected(
             Error(ExecutionStatus::OutOfMemory, "JSON output allocation failed"));
       }
-      return JsonEncodeStep{.action = JsonEncodeAction::Complete, .value = Value::String(output)};
+      return Value::String(output);
     }
     if (frame_->kind == JsonFrameKind::Conversion) {
       Pop();

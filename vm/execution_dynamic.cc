@@ -56,8 +56,7 @@ StepResult Execution::ExecuteTypeBinding(ActiveFrame& active, Instruction instru
   if (!value.IsObject()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto* layout = isolate_.CreateArrayLayout({.element = type});
-  if (auto bound = runtime::Heap::BindRuntimeType(*value.AsObject(), *layout); !bound) {
+  if (auto bound = runtime::Heap::BindRuntimeType(*value.AsObject(), type); !bound) {
     return bound;
   }
   values.subspan(DecodeA(instruction)).front() = value;

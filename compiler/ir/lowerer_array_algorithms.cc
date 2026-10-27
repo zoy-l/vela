@@ -90,8 +90,17 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
         .location = location,
     });
   }
+  if (algorithm == ArrayAlgorithm::Sort && signature == nullptr) {
+    const auto result = EmitTemporary({
+        .opcode = Opcode::BuiltinCall,
+        .lhs = base,
+        .index = static_cast<std::uint32_t>(Builtin::ArraySortDefault),
+        .location = location,
+    });
+    return {.reg = result, .type = model_.expression_types.at(&expression)};
+  }
   using Comparison = ArrayAlgorithmRegisters::Comparison;
-  auto comparison = Comparison::Default;
+  auto comparison = Comparison::Integer;
   std::size_t callback_arity = 0;
   if (signature != nullptr) {
     callback_arity = signature->parameters.size();
@@ -338,32 +347,18 @@ RegisterId Lowerer::EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
       {.opcode = Opcode::GetIndex, .lhs = inputs.array, .rhs = left, .location = location});
   const auto right_value = EmitTemporary(
       {.opcode = Opcode::GetIndex, .lhs = inputs.array, .rhs = right, .location = location});
-  RegisterId comparison = 0;
-  using Comparison = ArrayAlgorithmRegisters::Comparison;
-  if (inputs.comparison == Comparison::Default) {
-    const auto base = next_register_;
-    static_cast<void>(AllocateRegister(location));
-    static_cast<void>(AllocateRegister(location));
-    Emit({.opcode = Opcode::Move, .dst = base, .lhs = left_value, .location = location});
-    Emit({.opcode = Opcode::Move, .dst = base + 1, .lhs = right_value, .location = location});
-    comparison = EmitTemporary({
-        .opcode = Opcode::BuiltinCall,
-        .lhs = base,
-        .index = static_cast<std::uint32_t>(Builtin::ArrayDefaultCompare),
-        .location = location,
-    });
-  } else {
-    const auto values = std::array{left_value, right_value};
-    const std::array types{inputs.element_type, inputs.element_type};
-    comparison = EmitArrayCallback(inputs.callback, std::span(values).first(inputs.callback_arity),
-                                   *inputs.signature, types, inputs.guard, location);
-    if (inputs.validation_plan) {
-      const std::array arguments{*inputs.validation_plan, comparison};
-      const auto result = AllocateTemporary(location);
-      EmitBuiltinCall(Builtin::DynamicArrayValidate, result, arguments, location);
-      comparison = result;
-    }
+  const auto values = std::array{left_value, right_value};
+  const std::array types{inputs.element_type, inputs.element_type};
+  auto comparison =
+      EmitArrayCallback(inputs.callback, std::span(values).first(inputs.callback_arity),
+                        *inputs.signature, types, inputs.guard, location);
+  if (inputs.validation_plan) {
+    const std::array arguments{*inputs.validation_plan, comparison};
+    const auto result = AllocateTemporary(location);
+    EmitBuiltinCall(Builtin::DynamicArrayValidate, result, arguments, location);
+    comparison = result;
   }
+  using Comparison = ArrayAlgorithmRegisters::Comparison;
   auto zero = EmitTemporary({.opcode = Opcode::LoadInt, .location = location});
   const bool floating = inputs.comparison == Comparison::Double;
   if (floating) {

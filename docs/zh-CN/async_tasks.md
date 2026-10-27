@@ -96,6 +96,8 @@ Future 值、监听器、VM 帧、GC 状态和 timer 队列由 Isolate 线程独
 
 `NativeContext::CreateCompleter()` 登记一个存活的宿主生产者；完成操作或释放全部生产者句柄会注销事件源。`NativeContext` 将返回的原生 Future 绑定到自己的调度器，拒绝已属于其他 Isolate 的 Future。原生 Future 完成时检查 external 声明中的 `Future<T>` 载荷；值类型不符或错误不可抛出时，检查后的 Future 以 `TypeError` 失败。跨线程投递的堆值必须已属于该 Isolate，并在发布前保持保根；分配和编码在所属线程完成。
 
+C++ `Future::Complete` 在所属线程调用时同步检查 Future adoption；跨线程调用只返回完成请求是否被接受，由所属线程应用请求时检查 adoption。检查失败时，Future 以对应诊断完成，包括 `FutureSelfAdoption` 或 `InvalidIsolate`。跨线程调用方必须观察 Future 才能取得最终结果。
+
 `FutureScheduler::PumpOne()` 和 `PumpUntil()` 在没有可执行工作或 timer 时返回 idle；`WaitForHost` 模式还会等待已登记的宿主事件源。挂起状态只保存活跃寄存器值，全局槽通过 Future 引用图追踪；不可达的未完成任务及 Future 结果循环仍可回收。REPL 的后续提交共享同一份可增长的全局存储，早先提交的续延能读取和更新当前全局值。
 
 CLI 等待根 main Future 与所有仍存活的宿主事件源。单独一个没有生产者的未完成 Future 不保持进程存活；若根 Future 仍未完成且没有可推进它的工作，CLI 报告 async idle/deadlock，嵌入式 pump 则返回 idle，供宿主稍后继续。

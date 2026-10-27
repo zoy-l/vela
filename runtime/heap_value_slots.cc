@@ -39,7 +39,7 @@ HeapObject* Heap::AllocateValueSlots(std::size_t count) noexcept {
   object->native_payload = slots;
   allocated_bytes_ += bytes;
   committed_bytes_ += bytes;
-  Publish(*object, allocation.size);
+  Publish(*object, allocation);
   return object;
 }
 

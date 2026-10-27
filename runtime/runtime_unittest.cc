@@ -4,7 +4,9 @@
 #include <span>
 #include <sstream>
 
+#include "base/execution_status.h"
 #include "gtest/gtest.h"
+#include "runtime/future.h"
 
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -221,6 +223,43 @@ TEST(RuntimeTest, WritesDoubleWithRoundTripPrecisionAndSignedZero) {
   output << ' ';
   WriteValue(output, Value::Double(kShortestDecimal));
   EXPECT_EQ(output.str(), "1.2345678901234567 -0 0.1");
+}
+
+TEST(RuntimeTest, FutureBindingStoresThePayloadSignatureAndRejectsRetyping) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  const auto* integer = isolate.CreateTypeSignature(
+      {.parameters = {}, .result = TypeConstraint{.kind = ValueKind::Integer}});
+  const auto* text = isolate.CreateTypeSignature(
+      {.parameters = {}, .result = TypeConstraint{.kind = ValueKind::String}});
+  const TypeConstraint type{
+      .kind = ValueKind::Object,
+      .object_kind = ObjectKind::Future,
+      .signature = integer,
+  };
+  const auto value = Value::Object(heap.AllocateFuture(Future(&isolate.scheduler())));
+  RootRange root(heap, &value, 1);
+  auto& object = *value.AsObject();
+  EXPECT_EQ(Heap::TypeOf(value).signature, nullptr);
+  ASSERT_TRUE(Heap::BindRuntimeType(object, type));
+  EXPECT_EQ(Heap::TypeOf(value), type);
+  EXPECT_EQ(isolate.layout_counts().arrays, 0U);
+  ASSERT_TRUE(Heap::BindRuntimeType(object, type));
+  EXPECT_EQ(
+      Heap::BindRuntimeType(
+          object, {.kind = ValueKind::Object, .object_kind = ObjectKind::Future, .signature = text})
+          .error(),
+      ExecutionStatus::InvalidCast);
+  EXPECT_EQ(Heap::BindRuntimeType(object, {.kind = ValueKind::Integer}).error(),
+            ExecutionStatus::TypeError);
+}
+
+TEST(RuntimeTest, ExpectedAllocationRejectsLayoutsWithoutPayloadStorage) {
+  Isolate isolate;
+  auto* empty = isolate.CreateClassLayout(0, {});
+  EXPECT_EQ(isolate.heap().AllocateExpected(*empty, Value::Integer(42), ExpectedAlternative::Ok),
+            nullptr);
+  EXPECT_EQ(isolate.heap().object_count(), 0U);
 }
 
 }  // namespace

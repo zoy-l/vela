@@ -280,8 +280,8 @@ class Lowerer final {
     RegisterId guard = 0;
     RegisterId positions = 0;
     std::size_t callback_arity = 0;
-    enum class Comparison : std::uint8_t { Default, Integer, Double };
-    Comparison comparison = Comparison::Default;
+    enum class Comparison : std::uint8_t { Integer, Double };
+    Comparison comparison = Comparison::Integer;
     frontend::TypeDescriptor element_type;
     const frontend::FunctionDescriptor* signature = nullptr;
     std::optional<RegisterId> validation_plan = std::nullopt;

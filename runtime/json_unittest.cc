@@ -92,8 +92,47 @@ TEST(JsonRuntimeTest, OwnsUnicodeAndEmbeddedNullAndRetainsDuplicateOrder) {
   JsonEncoder encoder(isolate, *parsed);
   const auto result = encoder.Advance();
   ASSERT_TRUE(result);
-  ASSERT_EQ(result->action, JsonEncodeAction::Complete);
-  EXPECT_EQ(result->value.AsString()->value(), "{\"a\":2,\"\\u0000\":\"😀\"}");
+  ASSERT_TRUE(result->IsString());
+  EXPECT_EQ(result->AsString()->value(), "{\"a\":2,\"\\u0000\":\"😀\"}");
+}
+
+TEST(JsonRuntimeTest, NumericErrorUsesRawTokenOffsetAfterEscapedAndUnicodeStrings) {
+  Isolate isolate(1);
+  constexpr std::string_view kSource =
+      R"({"escaped":"\u0031\"2","items":[3,{"😀":4,"overflow":1e9999}]})";
+  const auto parsed = ParseJson(kSource, isolate);
+  ASSERT_FALSE(parsed);
+  EXPECT_EQ(parsed.error().status, ExecutionStatus::JsonDecodeError);
+  EXPECT_EQ(parsed.error().offset, kSource.find("1e9999"));
+}
+
+TEST(JsonRuntimeTest, QuotesAllControlBytesAndUnicodeWithoutLosingContent) {
+  Isolate isolate(1);
+  std::string source;
+  constexpr int kFirstPrintableByte = 32;
+  for (int byte = 0; byte < kFirstPrintableByte; ++byte) {
+    source += static_cast<char>(byte);
+  }
+  source += "\"\\中😀";
+  auto& heap = isolate.heap();
+  JsonEncoder encoder(isolate, Value::String(heap.AllocateString(source)));
+  const auto encoded = encoder.Advance();
+  ASSERT_TRUE(encoded);
+  RootRange roots(heap, &*encoded, 1);
+  const auto decoded = ParseJson(encoded->AsString()->value(), isolate);
+  ASSERT_TRUE(decoded);
+  EXPECT_EQ(decoded->AsString()->value(), source);
+}
+
+TEST(JsonRuntimeTest, ReusesTraversalFramesAcrossSiblingsWithDifferentContainerKinds) {
+  Isolate isolate(1);
+  constexpr std::string_view kSource = R"([[1],{"a":[2,3]},[],{"b":{}},[4]])";
+  const auto parsed = ParseJson(kSource, isolate);
+  ASSERT_TRUE(parsed);
+  JsonEncoder encoder(isolate, *parsed);
+  const auto encoded = encoder.Advance();
+  ASSERT_TRUE(encoded);
+  EXPECT_EQ(encoded->AsString()->value(), kSource);
 }
 
 TEST(JsonRuntimeTest, TraversesDeepValuesWithoutCppRecursionAndReleasesNativeMemory) {
@@ -108,7 +147,7 @@ TEST(JsonRuntimeTest, TraversesDeepValuesWithoutCppRecursionAndReleasesNativeMem
     JsonEncoder encoder(isolate, *value);
     const auto result = encoder.Advance();
     ASSERT_TRUE(result);
-    EXPECT_EQ(result->value.AsString()->value(), source);
+    EXPECT_EQ(result->AsString()->value(), source);
   }
   isolate.heap().FinishCollection();
   isolate.heap().Collect();
@@ -125,8 +164,8 @@ TEST(JsonRuntimeTest, RootsPendingInputBeforeAdvancingAndReleasesItOnDestruction
     heap.Collect();
     const auto result = encoder.Advance();
     ASSERT_TRUE(result);
-    ASSERT_EQ(result->action, JsonEncodeAction::Complete);
-    EXPECT_EQ(result->value.AsString()->value(), "\"pending 😀\"");
+    ASSERT_TRUE(result->IsString());
+    EXPECT_EQ(result->AsString()->value(), "\"pending 😀\"");
   }
   heap.FinishCollection();
   heap.Collect();

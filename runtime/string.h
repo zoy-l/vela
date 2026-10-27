@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <span>
 #include <string_view>
 #include <type_traits>
 
@@ -24,8 +23,7 @@ class StringObject final {
   StringObject& operator=(StringObject&&) = delete;
 
   [[nodiscard]] std::string_view value() const noexcept {
-    const void* bytes = std::span(this, 1).last(0).data();
-    return {static_cast<const char*>(bytes), header_.length};
+    return {StorageAfter<char>(*this), header_.length};
   }
 
  private:

@@ -1,7 +1,6 @@
 #include "runtime/heap.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -17,14 +16,6 @@
 #include "runtime/value.h"
 
 namespace vela::runtime {
-namespace {
-
-constexpr std::size_t AlignUp(std::size_t value, std::size_t alignment) noexcept {
-  return (value + alignment - 1) & ~(alignment - 1);
-}
-
-}  // namespace
-
 RootRange::RootRange(Heap& heap, const Value* values, std::size_t count) noexcept {
   Attach(heap, values, count);
 }
@@ -77,29 +68,11 @@ Heap::~Heap() {
 
 HeapObject* Heap::AllocateFuture(Future future) noexcept {
   future.AttachHeap(*this);
-  const std::size_t requested_size = AlignUp(sizeof(HeapObject), alignof(Value));
-  MaybeCollect(requested_size);
-  const auto allocation = AllocateRaw(requested_size);
-  if (allocation.memory == nullptr) {
-    return nullptr;
-  }
-  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
-  object->kind = ObjectKind::Future;
-  auto storage = std::unique_ptr<Future>(new (std::nothrow) Future(std::move(future)));
-  if (storage == nullptr) {
-    std::destroy_at(object);
-    allocated_bytes_ -= allocation.size;
-    ::operator delete(allocation.memory);
-    return nullptr;
-  }
-  storage->MakeHeapOwned();
-  object->native_payload = storage.release();
-  Publish(*object, allocation.size);
-  return object;
+  return AllocateNativeObject(ObjectKind::Future, std::move(future));
 }
 
 Future* Heap::GetFuture(const HeapObject& object) noexcept {
-  return object.kind == ObjectKind::Future ? static_cast<Future*>(object.native_payload) : nullptr;
+  return NativeOf<ObjectKind::Future, Future>(object);
 }
 
 HeapObject* Heap::AllocateCompleter(Future future) noexcept {
@@ -111,44 +84,23 @@ HeapObject* Heap::AllocateCompleter(Future future) noexcept {
 }
 
 Future* Heap::GetCompleter(const HeapObject& object) noexcept {
-  return object.kind == ObjectKind::Completer ? static_cast<Future*>(object.native_payload)
-                                              : nullptr;
+  return NativeOf<ObjectKind::Completer, Future>(object);
 }
 
 HeapObject* Heap::AllocateTimer(Timer timer) noexcept {
-  MaybeCollect(sizeof(HeapObject));
-  const auto allocation = AllocateRaw(sizeof(HeapObject));
-  if (allocation.memory == nullptr) {
-    return nullptr;
-  }
-  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
-  object->kind = ObjectKind::Timer;
-  object->native_payload = std::make_unique<Timer>(std::move(timer)).release();
-  Publish(*object, allocation.size);
-  return object;
+  return AllocateNativeObject(ObjectKind::Timer, std::move(timer));
 }
 
 Timer* Heap::GetTimer(const HeapObject& object) noexcept {
-  return object.kind == ObjectKind::Timer ? static_cast<Timer*>(object.native_payload) : nullptr;
+  return NativeOf<ObjectKind::Timer, Timer>(object);
 }
 
 HeapObject* Heap::AllocateCancellationToken(CancellationToken token) noexcept {
-  MaybeCollect(sizeof(HeapObject));
-  const auto allocation = AllocateRaw(sizeof(HeapObject));
-  if (allocation.memory == nullptr) {
-    return nullptr;
-  }
-  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
-  object->kind = ObjectKind::CancellationToken;
-  object->native_payload = std::make_unique<CancellationToken>(std::move(token)).release();
-  Publish(*object, allocation.size);
-  return object;
+  return AllocateNativeObject(ObjectKind::CancellationToken, std::move(token));
 }
 
 CancellationToken* Heap::GetCancellationToken(const HeapObject& object) noexcept {
-  return object.kind == ObjectKind::CancellationToken
-             ? static_cast<CancellationToken*>(object.native_payload)
-             : nullptr;
+  return NativeOf<ObjectKind::CancellationToken, CancellationToken>(object);
 }
 
 HeapObject* Heap::AllocateInstance(const ClassLayout& layout,
@@ -157,26 +109,17 @@ HeapObject* Heap::AllocateInstance(const ClassLayout& layout,
     return nullptr;
   }
 
-  const std::size_t requested_size =
-      AlignUp(sizeof(HeapObject) + (sizeof(Value) * layout.field_count()), alignof(Value));
+  const std::size_t requested_size = sizeof(HeapObject) + (sizeof(Value) * layout.field_count());
   if (requested_size > std::numeric_limits<std::uint32_t>::max()) {
     return nullptr;
   }
-  MaybeCollect(requested_size);
-
-  const auto allocation = AllocateRaw(requested_size);
-  if (allocation.memory == nullptr) {
-    return nullptr;
-  }
-  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
-  object->layout = &layout;
-
-  Value* fields = ObjectFields(object);
-  std::uninitialized_fill_n(fields, layout.field_count(), Value::Null());
-  std::ranges::copy(initial_fields, fields);
-
-  Publish(*object, allocation.size);
-  return object;
+  return AllocateObject(ObjectKind::Instance, requested_size,
+                        [&layout, initial_fields](HeapObject& object) {
+                          object.layout = &layout;
+                          auto* fields = ObjectFields(&object);
+                          std::uninitialized_fill_n(fields, layout.field_count(), Value::Null());
+                          std::ranges::copy(initial_fields, fields);
+                        });
 }
 
 HeapObject* Heap::AllocateExpected(ClassLayout& layout,
@@ -211,12 +154,12 @@ std::expected<Value, ExpectedAccessError> Heap::ReadExpectedValue(
   return *GetField(object, 0);
 }
 
-void Heap::Publish(HeapObject& object, std::uint32_t allocation_size) noexcept {
+void Heap::Publish(HeapObject& object, const Allocation& allocation) noexcept {
   object.mark_bit = current_mark_bit_;
-  object.allocation_size = allocation_size;
+  object.allocation_size = allocation.size;
+  object.size_class = allocation.size_class;
   object.next = objects_;
-  if (phase_ == GcPhase::Mark && object.kind != ObjectKind::String &&
-      object.kind != ObjectKind::MutableString && object.kind != ObjectKind::ByteArray) {
+  if (phase_ == GcPhase::Mark && !IsLeafObject(object.kind)) {
     object.gray_next = gray_;
     gray_ = &object;
   } else if (phase_ == GcPhase::Sweep) {
@@ -297,11 +240,6 @@ void Heap::Collect() noexcept {
   FinishCollection();
 }
 
-void Heap::SetGcThreshold(std::size_t threshold) noexcept {
-  minimum_gc_threshold_ = std::max<std::size_t>(threshold, 1);
-  gc_threshold_ = minimum_gc_threshold_;
-}
-
 void Heap::RegisterRoot(RootRange& root) noexcept {
   root.previous_link_ = &roots_;
   root.next_ = roots_;
@@ -363,12 +301,21 @@ void Heap::MarkRoot(const RootRange& root) noexcept {
       MarkValue(value);
     }
   } else {
-    for (StringObject* string :
-         std::span(static_cast<StringObject* const*>(root.data_), root.count_)) {
-      if (string != nullptr) {
-        MarkObject(string->header_);
-      }
+    for (auto* string : std::span(static_cast<StringObject* const*>(root.data_), root.count_)) {
+      MarkReference(string);
     }
+  }
+}
+
+void Heap::MarkReference(HeapObject* object) noexcept {
+  if (object != nullptr) {
+    MarkObject(*object);
+  }
+}
+
+void Heap::MarkReference(StringObject* string) noexcept {
+  if (string != nullptr) {
+    MarkObject(string->header_);
   }
 }
 
@@ -385,8 +332,7 @@ void Heap::MarkObject(HeapObject& object) noexcept {
     return;
   }
   object.mark_bit = current_mark_bit_;
-  if (object.kind == ObjectKind::String || object.kind == ObjectKind::MutableString ||
-      object.kind == ObjectKind::ByteArray) {
+  if (IsLeafObject(object.kind)) {
     return;
   }
   object.gray_next = gray_;
@@ -475,11 +421,16 @@ Heap::Allocation Heap::AllocateRaw(std::size_t requested_size) noexcept {
   }
 
   allocated_bytes_ += block_size;
-  return {.memory = memory, .size = static_cast<std::uint32_t>(block_size)};
+  return {
+      .memory = memory,
+      .size = static_cast<std::uint32_t>(block_size),
+      .size_class = static_cast<std::uint8_t>(class_index),
+  };
 }
 
 void Heap::ReleaseRaw(HeapObject& object) noexcept {
   const std::size_t block_size = object.allocation_size;
+  const auto class_index = object.size_class;
   allocated_bytes_ -= block_size;
 
   if (object.kind == ObjectKind::RegExp) {
@@ -512,7 +463,6 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   void* memory = &object;
   // StringObject 仅含可平凡析构的对象头；复用或释放存储即结束其生命周期。
   std::destroy_at(&object);
-  const auto class_index = SelectBlockClass(block_size).second;
   if (class_index < free_blocks_.size()) {
     auto* block = std::construct_at(static_cast<HeapObject*>(memory));
     auto& free_block = std::span(free_blocks_).subspan(class_index).front();

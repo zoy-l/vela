@@ -11,7 +11,6 @@
 #include <functional>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <thread>
 #include <utility>
@@ -52,9 +51,7 @@ struct Future::SharedState final {
   };
   std::atomic_size_t external_count{0};
   std::atomic_bool completion_requested{false};
-  FutureState state = FutureState::Pending;
-  ::vela::runtime::Value result = Value::Null();
-  std::optional<FutureDiagnostic> diagnostic;
+  FutureResult completion{.value = Value::Null(), .diagnostic = {}};
   bool error_observed = false;
   bool unhandled_reported = false;
   bool handled_reported = false;
@@ -71,7 +68,35 @@ struct Future::SharedState final {
   std::weak_ptr<SharedState> adopted;
 };
 
-Future::Future(FutureScheduler* scheduler) : state_(std::make_shared<SharedState>()) {
+// 微任务独占监听器：回调、稳定根及结果句柄共用一次分配，取消排队也能立即释放根。
+struct Future::Observer final {
+  Observer(Future source,
+           std::function<void(const FutureResult&)> action,
+           std::shared_ptr<std::vector<::vela::runtime::Value>> values)
+      : future(std::move(source)), callback(std::move(action)), references(std::move(values)) {
+    if (auto* heap = future.state_->heap; heap != nullptr && references != nullptr) {
+      roots.Attach(*heap, references->data(), references->size());
+    }
+  }
+
+  void Invoke() const { callback(future.state_->completion); }
+
+  Future future;
+  std::function<void(const FutureResult&)> callback;
+  std::shared_ptr<std::vector<::vela::runtime::Value>> references;
+  RootRange roots;
+};
+
+Future::Future(FutureScheduler* scheduler)
+    : state_(new SharedState, [](SharedState* state) {
+        // 只有最后一个句柄在宿主线程释放时才转移销毁，捕获资源始终在所属线程析构。
+        auto* owner = state->scheduler;
+        if (owner != nullptr && !owner->IsOwnerThread()) {
+          owner->PostMicrotask([state] { const std::unique_ptr<SharedState> owned(state); });
+        } else {
+          const std::unique_ptr<SharedState> owned(state);
+        }
+      }) {
   state_->scheduler = scheduler;
   ++state_->external_count;
 }
@@ -90,10 +115,6 @@ Future::~Future() {
 void Future::Release() noexcept {
   if (state_ != nullptr && external_) {
     --state_->external_count;
-  }
-  if (state_ != nullptr && state_->scheduler != nullptr && !state_->scheduler->IsOwnerThread()) {
-    auto* scheduler = state_->scheduler;
-    scheduler->PostMicrotask([state = std::move(state_)] {});
   }
 }
 
@@ -168,8 +189,8 @@ Future Future::Error(::vela::runtime::Value error, FutureScheduler* scheduler) {
 }
 
 void Future::Trace(Heap& heap) const noexcept {
-  if (state_->state != FutureState::Pending) {
-    heap.MarkValue(state_->result);
+  if (state_->completion.state != FutureState::Pending) {
+    heap.MarkValue(state_->completion.value);
   }
   if (const auto* incoming = state_->incoming.load(std::memory_order_acquire)) {
     heap.MarkValue(incoming->value);
@@ -213,90 +234,24 @@ std::expected<void, FutureBindingError> Future::Bind(FutureScheduler& scheduler,
   const auto newly_bound = state_->scheduler == nullptr;
   state_->scheduler = &scheduler;
   AttachHeap(heap);
-  if (newly_bound && state_->state == FutureState::Failed && !state_->error_observed) {
+  if (newly_bound && state_->completion.state == FutureState::Failed && !state_->error_observed) {
     const auto self = Rooted();
     scheduler.checkpoints_.emplace_back([self] { self.ReportUnhandledError(); });
   }
   return {};
 }
 
-Future Future::Delayed(std::chrono::milliseconds delay,
-                       FutureScheduler& scheduler,
-                       std::function<Future()> computation) {
-  Future result(&scheduler);
-  static_cast<void>(
-      scheduler.After(delay, [result, computation = std::move(computation)]() mutable {
-        if (computation) {
-          result.AdoptComputation(computation());
-        } else {
-          ConsumeCompletion(result.Complete(::vela::runtime::Value::Null()));
-        }
-      }));
-  return result;
-}
-
 Future Future::Sleep(std::chrono::milliseconds delay, FutureScheduler& scheduler) {
-  return Delayed(delay, scheduler);
-}
-
-Future Future::Wait(std::span<const Future> values,
-                    FutureScheduler& scheduler,
-                    FutureWaitMode mode) {
   Future result(&scheduler);
-  if (values.empty()) {
+  static_cast<void>(scheduler.After(delay, [result]() mutable {
     ConsumeCompletion(result.Complete(::vela::runtime::Value::Null()));
-    return result;
-  }
-  struct Aggregate final {
-    std::size_t remaining;
-    std::optional<FutureResult> failure;
-  };
-  auto aggregate =
-      std::make_shared<Aggregate>(Aggregate{.remaining = values.size(), .failure = {}});
-  auto references = std::make_shared<std::vector<::vela::runtime::Value>>(1);
-  result.KeepAlive(references);
-  for (const auto& source : values) {
-    source.ObserveResult(
-        [target = result.Internal(), aggregate, references,
-         mode](const FutureResult& input) mutable {
-          if (input.state == FutureState::Failed && !aggregate->failure) {
-            aggregate->failure = input;
-            references->front() = input.value;
-            if (mode == FutureWaitMode::EagerError) {
-              ConsumeCompletion(target.CompleteError(input.value, input.diagnostic));
-            }
-          }
-          if (--aggregate->remaining == 0 && target.is_pending()) {
-            if (aggregate->failure) {
-              ConsumeCompletion(
-                  target.CompleteError(aggregate->failure->value, aggregate->failure->diagnostic));
-            } else {
-              ConsumeCompletion(target.Complete(::vela::runtime::Value::Null()));
-            }
-          }
-        },
-        references);
-  }
-  return result;
-}
-
-Future Future::Race(std::span<const Future> values, FutureScheduler& scheduler) {
-  Future result(&scheduler);
-  for (const auto& source : values) {
-    source.ObserveResult([target = result.Internal()](const FutureResult& input) mutable {
-      if (target.is_pending()) {
-        ConsumeCompletion(input.state == FutureState::Succeeded
-                              ? target.Complete(input.value)
-                              : target.CompleteError(input.value, input.diagnostic));
-      }
-    });
-  }
+  }));
   return result;
 }
 
 FutureState Future::state() const noexcept {
   state_->RequireOwner();
-  return state_->state;
+  return state_->completion.state;
 }
 
 bool Future::IsCompleted() const noexcept {
@@ -305,17 +260,22 @@ bool Future::IsCompleted() const noexcept {
 
 std::optional<::vela::runtime::Value> Future::value() const {
   state_->RequireOwner();
-  return state_->state == FutureState::Succeeded ? std::optional(state_->result) : std::nullopt;
+  return state_->completion.state == FutureState::Succeeded
+             ? std::optional(state_->completion.value)
+             : std::nullopt;
 }
 
 std::optional<::vela::runtime::Value> Future::error() const {
   state_->RequireOwner();
-  return state_->state == FutureState::Failed ? std::optional(state_->result) : std::nullopt;
+  return state_->completion.state == FutureState::Failed ? std::optional(state_->completion.value)
+                                                         : std::nullopt;
 }
 
 std::optional<FutureDiagnostic> Future::error_diagnostic() const {
   state_->RequireOwner();
-  return state_->state == FutureState::Failed ? state_->diagnostic : std::nullopt;
+  return state_->completion.state == FutureState::Failed
+             ? std::optional(state_->completion.diagnostic)
+             : std::nullopt;
 }
 
 void Future::Observe(Callback callback) const {
@@ -327,43 +287,38 @@ void Future::Observe(Callback callback) const {
 void Future::ObserveResult(std::function<void(const FutureResult&)> callback,
                            std::shared_ptr<std::vector<::vela::runtime::Value>> references) const {
   state_->RequireOwner();
-  std::optional<FutureResult> completed;
-  bool notify_handled = false;
-  {
-    if (state_->state == FutureState::Pending) {
-      state_->waiters.push_back(
-          {.callback = std::move(callback), .references = std::move(references)});
-      return;
-    }
-    if (state_->state == FutureState::Failed) {
-      state_->error_observed = true;
-      notify_handled = state_->unhandled_reported && !state_->handled_reported;
-      state_->handled_reported = state_->handled_reported || notify_handled;
-    }
-    completed = FutureResult{
-        .state = state_->state,
-        .value = state_->result,
-        .diagnostic = state_->diagnostic.value_or(FutureDiagnostic{}),
-    };
+  if (auto* heap = state_->heap; heap != nullptr && heap->IsCollecting() && references != nullptr) {
+    const RootRange roots(*heap, references->data(), references->size());
   }
-  auto roots =
-      state_->heap != nullptr && references != nullptr
-          ? std::make_shared<RootRange>(*state_->heap, references->data(), references->size())
-          : nullptr;
-  if (state_->scheduler != nullptr) {
-    const Future keep_alive(state_, Rooting::External);
-    state_->scheduler->PostMicrotask([callback = std::move(callback), result = *completed,
-                                      keep_alive, references = std::move(references),
-                                      roots = std::move(roots)]() mutable { callback(result); });
-    if (notify_handled) {
-      const auto self = *this;
-      state_->scheduler->PostMicrotask([self]() mutable { self.ReportHandledError(); });
-    }
-  } else {
-    callback(*completed);
-    if (notify_handled) {
+  if (state_->completion.state == FutureState::Pending) {
+    state_->waiters.push_back(
+        {.callback = std::move(callback), .references = std::move(references)});
+    return;
+  }
+  bool notify_handled = false;
+  if (state_->completion.state == FutureState::Failed) {
+    state_->error_observed = true;
+    notify_handled = state_->unhandled_reported && !state_->handled_reported;
+    state_->handled_reported = state_->handled_reported || notify_handled;
+  }
+  NotifyObserver(std::move(callback), std::move(references));
+  if (notify_handled) {
+    if (state_->scheduler != nullptr) {
+      const auto self = Rooted();
+      state_->scheduler->PostMicrotask([self] { self.ReportHandledError(); });
+    } else {
       ReportHandledError();
     }
+  }
+}
+
+void Future::NotifyObserver(std::function<void(const FutureResult&)> callback,
+                            std::shared_ptr<std::vector<::vela::runtime::Value>> references) const {
+  auto observer = std::make_unique<Observer>(Rooted(), std::move(callback), std::move(references));
+  if (state_->scheduler != nullptr) {
+    state_->scheduler->PostMicrotask([observer = std::move(observer)] { observer->Invoke(); });
+  } else {
+    observer->Invoke();
   }
 }
 
@@ -399,84 +354,61 @@ std::expected<void, FutureCompletionError> Future::Settle(FutureResult result) {
     Future self(state_, Rooting::External);
     state_->scheduler->PostMicrotask([self = std::move(self)]() mutable {
       std::unique_ptr<FutureResult> incoming(self.state_->incoming.exchange(nullptr));
-      self.Publish(*incoming);
+      self.Publish(std::move(*incoming));
     });
     return {};
   }
-  Publish(result);
+  Publish(std::move(result));
   return {};
 }
 
-void Future::Publish(const FutureResult& result) {
+void Future::Publish(FutureResult result) {
   state_->RequireOwner();
   if (result.state == FutureState::Succeeded && result.value.IsObject()) {
     if (const auto* source = Heap::GetFuture(*result.value.AsObject())) {
-      if (CanAdopt(*source)) {
+      if (const auto checked = CheckAdoption(*source); checked) {
         Follow(*source);
       } else {
+        const auto status = FutureCompletionStatus(checked.error());
         Publish({
             .state = FutureState::Failed,
             .value = ::vela::runtime::Value::Null(),
             .diagnostic =
                 {
-                    .message = "Future cannot adopt itself",
+                    .message = std::string(ExecutionStatusName(status)),
                     .stack_trace = {},
-                    .status = ExecutionStatus::FutureSelfAdoption,
+                    .status = status,
                 },
         });
       }
       return;
     }
   }
-  std::vector<SharedState::Waiter> waiters;
-  bool report_unhandled = false;
-  {
-    state_->state = result.state;
-    state_->result = result.value;
-    state_->diagnostic = result.diagnostic;
-    state_->error_observed = result.state != FutureState::Failed || !state_->waiters.empty();
-    report_unhandled = !state_->error_observed;
-    waiters = std::move(state_->waiters);
-    state_->retained.reset();
-    state_->adopted.reset();
-  }
+  state_->completion = std::move(result);
+  state_->error_observed =
+      state_->completion.state != FutureState::Failed || !state_->waiters.empty();
+  state_->retained.reset();
+  state_->adopted.reset();
   if (auto* heap = state_->heap; heap != nullptr && heap->IsCollecting()) {
-    heap->MarkValue(result.value);
+    heap->MarkValue(state_->completion.value);
     if (heap->phase() == GcPhase::Sweep) {
       heap->DrainGray();
     }
   }
+  auto waiters = std::move(state_->waiters);
   for (auto& waiter : waiters) {
-    auto roots = state_->heap != nullptr && waiter.references != nullptr
-                     ? std::make_shared<RootRange>(*state_->heap, waiter.references->data(),
-                                                   waiter.references->size())
-                     : nullptr;
-    if (state_->scheduler != nullptr) {
-      const Future keep_alive(state_, Rooting::External);
-      state_->scheduler->PostMicrotask(
-          [waiter = std::move(waiter), result, keep_alive, roots = std::move(roots)]() mutable {
-            waiter.callback(result);
-          });
-    } else {
-      waiter.callback(result);
-    }
+    NotifyObserver(std::move(waiter.callback), std::move(waiter.references));
   }
-  if (state_->scheduler != nullptr && report_unhandled) {
-    const Future self(state_, Rooting::External);
-    state_->scheduler->checkpoints_.emplace_back([self]() mutable { self.ReportUnhandledError(); });
+  if (state_->scheduler != nullptr && !state_->error_observed) {
+    const auto self = Rooted();
+    state_->scheduler->checkpoints_.emplace_back([self] { self.ReportUnhandledError(); });
   }
 }
 
 std::expected<void, FutureCompletionError> Future::Adopt(const Future& source) {
   state_->RequireOwner();
-  if ((state_->scheduler != nullptr && source.state_->scheduler != nullptr &&
-       state_->scheduler != source.state_->scheduler) ||
-      (state_->heap != nullptr && source.state_->heap != nullptr &&
-       state_->heap != source.state_->heap)) {
-    return std::unexpected(FutureCompletionError::DifferentIsolate);
-  }
-  if (!CanAdopt(source)) {
-    return std::unexpected(FutureCompletionError::SelfAdoption);
+  if (const auto checked = CheckAdoption(source); !checked) {
+    return checked;
   }
   if (state_->completion_requested.exchange(true, std::memory_order_acq_rel)) {
     return std::unexpected(FutureCompletionError::AlreadyCompleted);
@@ -485,15 +417,21 @@ std::expected<void, FutureCompletionError> Future::Adopt(const Future& source) {
   return {};
 }
 
-bool Future::CanAdopt(const Future& source) const {
+std::expected<void, FutureCompletionError> Future::CheckAdoption(const Future& source) const {
+  if ((state_->scheduler != nullptr && source.state_->scheduler != nullptr &&
+       state_->scheduler != source.state_->scheduler) ||
+      (state_->heap != nullptr && source.state_->heap != nullptr &&
+       state_->heap != source.state_->heap)) {
+    return std::unexpected(FutureCompletionError::DifferentIsolate);
+  }
   auto dependency = source.state_;
   while (dependency != nullptr) {
     if (state_ == dependency) {
-      return false;
+      return std::unexpected(FutureCompletionError::SelfAdoption);
     }
     dependency = dependency->adopted.lock();
   }
-  return true;
+  return {};
 }
 
 void Future::Follow(const Future& source) {
@@ -503,32 +441,17 @@ void Future::Follow(const Future& source) {
   source.ObserveResult([target](const FutureResult& result) mutable { target.Publish(result); });
 }
 
-void Future::AdoptComputation(const Future& source) {
-  const auto adopted = Adopt(source);
-  if (!adopted && adopted.error() != FutureCompletionError::AlreadyCompleted) {
-    const auto status = adopted.error() == FutureCompletionError::SelfAdoption
-                            ? ExecutionStatus::FutureSelfAdoption
-                            : ExecutionStatus::InvalidIsolate;
-    ConsumeCompletion(CompleteError(::vela::runtime::Value::Null(),
-                                    {
-                                        .message = std::string(ExecutionStatusName(status)),
-                                        .stack_trace = {},
-                                        .status = status,
-                                    }));
-  }
-}
-
 void Future::ReportUnhandledError() const {
   FutureScheduler* scheduler = nullptr;
   ::vela::runtime::Value error = Value::Null();
   {
-    if (state_->state != FutureState::Failed || state_->error_observed ||
+    if (state_->completion.state != FutureState::Failed || state_->error_observed ||
         state_->unhandled_reported) {
       return;
     }
     state_->unhandled_reported = true;
     scheduler = state_->scheduler;
-    error = state_->result;
+    error = state_->completion.value;
   }
   if (scheduler != nullptr) {
     scheduler->NotifyUnhandledError(*this, error);
@@ -539,79 +462,16 @@ void Future::ReportHandledError() const {
   FutureScheduler* scheduler = nullptr;
   ::vela::runtime::Value error = Value::Null();
   {
-    if (state_->state != FutureState::Failed || !state_->error_observed ||
+    if (state_->completion.state != FutureState::Failed || !state_->error_observed ||
         !state_->unhandled_reported) {
       return;
     }
     scheduler = state_->scheduler;
-    error = state_->result;
+    error = state_->completion.value;
   }
   if (scheduler != nullptr) {
     scheduler->NotifyHandledError(*this, error);
   }
-}
-
-Future Future::Then(Continuation on_value, Continuation on_error) const {
-  state_->RequireOwner();
-  Future result(state_->scheduler);
-  result.state_->adopted = state_;
-  ObserveResult([target = result.Internal(), on_value = std::move(on_value),
-                 on_error = std::move(on_error)](const FutureResult& input) mutable {
-    auto& callback = input.state == FutureState::Succeeded ? on_value : on_error;
-    if (callback) {
-      target.AdoptComputation(callback(input.value));
-    } else {
-      ConsumeCompletion(input.state == FutureState::Succeeded
-                            ? target.Complete(input.value)
-                            : target.CompleteError(input.value, input.diagnostic));
-    }
-  });
-  return result;
-}
-
-Future Future::CatchError(Continuation on_error) const {
-  return Then({}, std::move(on_error));
-}
-
-Future Future::WhenComplete(const std::function<void()>& action) const {
-  state_->RequireOwner();
-  Future result(state_->scheduler);
-  result.state_->adopted = state_;
-  ObserveResult([target = result.Internal(), action](const FutureResult& input) mutable {
-    action();
-    ConsumeCompletion(input.state == FutureState::Succeeded
-                          ? target.Complete(input.value)
-                          : target.CompleteError(input.value, input.diagnostic));
-  });
-  return result;
-}
-
-Future Future::Timeout(std::chrono::milliseconds duration,
-                       FutureScheduler& scheduler,
-                       Continuation on_timeout) const {
-  Future result(&scheduler);
-  result.state_->adopted = state_;
-  auto settled = std::make_shared<bool>(false);
-  auto timer =
-      scheduler.After(duration, [result, settled, on_timeout = std::move(on_timeout)]() mutable {
-        if (std::exchange(*settled, true)) {
-          return;
-        }
-        if (on_timeout) {
-          result.AdoptComputation(on_timeout(::vela::runtime::Value::Null()));
-        } else {
-          ConsumeCompletion(result.CompleteError(::vela::runtime::Value::Null()));
-        }
-      });
-  ObserveResult([target = result.Internal(), settled, timer](const FutureResult& input) mutable {
-    if (!std::exchange(*settled, true)) {
-      timer.Cancel();
-      ConsumeCompletion(input.state == FutureState::Succeeded
-                            ? target.Complete(input.value)
-                            : target.CompleteError(input.value, input.diagnostic));
-    }
-  });
-  return result;
 }
 
 std::expected<void, FutureCompletionError> Completer::Complete(::vela::runtime::Value value) {

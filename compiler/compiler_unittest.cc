@@ -162,7 +162,7 @@ async func main(): Future<int> {
   ASSERT_TRUE(function.is_async());
   auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, function.index());
   EXPECT_EQ(root.state(), runtime::FutureState::Succeeded);
-  EXPECT_EQ(isolate.scheduler().pending_microtasks(), 0);
+  EXPECT_FALSE(isolate.scheduler().PumpOne());
   ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
   ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
   const auto value = root.value();

@@ -217,6 +217,4 @@ class NativeFunction final {
 
 enum class NativeRegistrationError : std::uint8_t { InvalidName, DuplicateName };
 
-[[nodiscard]] std::string_view NativeTypeName(NativeType type) noexcept;
-
 }  // namespace vela::runtime

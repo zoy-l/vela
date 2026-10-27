@@ -21,10 +21,10 @@ TEST(RandomTest, MatchesXoroshiro128PlusPlusReferenceSequenceAfterSplitMixSeedin
       0xc4eec1f605c9e5fc,
   });
   for (const auto value : expected) {
-    EXPECT_EQ(random.Next(), value);
+    EXPECT_DOUBLE_EQ(random.NextDouble(), static_cast<double>(value >> 11) * 0x1.0p-53);
   }
   random.Seed(kSeed);
-  EXPECT_EQ(random.Next(), expected.front());
+  EXPECT_DOUBLE_EQ(random.NextDouble(), static_cast<double>(expected.front() >> 11) * 0x1.0p-53);
 }
 
 TEST(RandomTest, RejectsNonPositiveBounds) {

@@ -52,7 +52,7 @@ enum class Builtin : std::uint8_t {
   ArrayShift,
   ArrayUnshift,
   ArraySplice,
-  ArrayDefaultCompare,
+  ArraySortDefault,
   ArrayClear,
   ArrayReserve,
   ArrayMutation,
@@ -182,6 +182,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayShift:
     case Builtin::ArrayClear:
     case Builtin::ArrayMutation:
+    case Builtin::ArraySortDefault:
       return 1;
     case Builtin::ArrayJoin:
     case Builtin::DynamicIndexRead:
@@ -222,7 +223,6 @@ enum class Builtin : std::uint8_t {
     case Builtin::ArrayPush:
     case Builtin::ArrayPushMany:
     case Builtin::ArrayUnshift:
-    case Builtin::ArrayDefaultCompare:
     case Builtin::ArrayReserve:
     case Builtin::ArrayCheckMutation:
       return 2;

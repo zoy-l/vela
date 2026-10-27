@@ -21,18 +21,15 @@ struct ArrayStorage final {
 static_assert(sizeof(ArrayStorage) % alignof(Value) == 0);
 
 inline ArrayStorage& ArrayBuffer(HeapObject& array) noexcept {
-  void* storage = std::span(&array, 1).last(0).data();
-  return *static_cast<ArrayStorage*>(storage);
+  return *StorageAfter<ArrayStorage>(array);
 }
 
 inline const ArrayStorage& ArrayBuffer(const HeapObject& array) noexcept {
-  const void* storage = std::span(&array, 1).last(0).data();
-  return *static_cast<const ArrayStorage*>(storage);
+  return *StorageAfter<ArrayStorage>(array);
 }
 
 inline std::byte* InlineArrayData(ArrayStorage& buffer) noexcept {
-  void* storage = std::span(&buffer, 1).last(0).data();
-  return static_cast<std::byte*>(storage);
+  return StorageAfter<std::byte>(buffer);
 }
 
 inline std::span<std::byte> ArrayBytes(HeapObject& array, const ArrayLayout& layout) noexcept {

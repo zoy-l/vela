@@ -6,8 +6,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <memory>
-#include <new>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -18,6 +16,7 @@
 #include "runtime/array_operations.h"
 #include "runtime/collection_operations.h"
 #include "runtime/heap.h"
+#include "runtime/index_buffer.h"
 #include "runtime/string.h"
 #include "runtime/unicode_operations.h"
 #include "runtime/value.h"
@@ -27,11 +26,6 @@ namespace vela::runtime {
 namespace {
 
 using Result = std::expected<Value, ExecutionStatus>;
-constexpr std::size_t kStackSearchLength = 64;
-
-struct PrefixDeleter final {
-  void operator()(void* memory) const noexcept { ::operator delete(memory); }
-};
 
 Result StringResult(StringObject* string) {
   if (string == nullptr) {
@@ -114,24 +108,23 @@ Result Slice(Builtin builtin, std::string_view text, std::span<const Value> argu
   return StringResult(heap.AllocateString(suffix.substr(0, *size)));
 }
 
-std::expected<std::size_t, ExecutionStatus> Find(std::string_view text_view,
-                                                 std::string_view part_view) {
-  if (part_view.size() <= 1 || part_view.size() > text_view.size()) {
-    return text_view.find(part_view);
+std::expected<std::int64_t, ExecutionStatus> Find(std::string_view text_view,
+                                                  std::string_view part_view) {
+  if (part_view.empty()) {
+    return 0;
+  }
+  if (part_view.size() > text_view.size()) {
+    return -1;
   }
   const auto text = std::span(text_view);
   const auto part = std::span(part_view);
   // KMP 保证重复前缀等最坏输入仍为线性时间；常用短模式无需分配临时堆存储。
-  std::array<std::size_t, kStackSearchLength> local{};
-  std::unique_ptr<void, PrefixDeleter> storage;
-  std::span<std::size_t> prefix(local);
-  if (part.size() > local.size()) {
-    storage.reset(::operator new(part.size() * sizeof(std::size_t), std::nothrow));
-    if (storage == nullptr) {
-      return std::unexpected(ExecutionStatus::OutOfMemory);
-    }
-    prefix = {static_cast<std::size_t*>(storage.get()), part.size()};
+  IndexBuffer storage(part.size());
+  const auto allocated = storage.values();
+  if (!allocated) {
+    return std::unexpected(allocated.error());
   }
+  const auto prefix = *allocated;
   prefix.subspan(0).front() = 0;
   for (std::size_t index = 1, matched = 0; index < part.size(); ++index) {
     while (matched != 0 && part.subspan(index).front() != part.subspan(matched).front()) {
@@ -142,18 +135,25 @@ std::expected<std::size_t, ExecutionStatus> Find(std::string_view text_view,
     }
     prefix.subspan(index).front() = matched;
   }
+  const auto part_length = Utf8Length(part_view);
+  std::size_t points = 0;
   for (std::size_t index = 0, matched = 0; index < text.size(); ++index) {
-    while (matched != 0 && text.subspan(index).front() != part.subspan(matched).front()) {
+    const auto byte = text.subspan(index).front();
+    // 合法 UTF-8 中每个非续字节恰好开始一个码点；不再回扫命中前缀。
+    if ((static_cast<std::uint8_t>(byte) & kContinuationMask) != kContinuationTag) {
+      ++points;
+    }
+    while (matched != 0 && byte != part.subspan(matched).front()) {
       matched = prefix.subspan(matched - 1).front();
     }
-    if (text.subspan(index).front() == part.subspan(matched).front()) {
+    if (byte == part.subspan(matched).front()) {
       ++matched;
     }
     if (matched == part.size()) {
-      return index + 1 - matched;
+      return static_cast<std::int64_t>(points - part_length);
     }
   }
-  return std::string_view::npos;
+  return -1;
 }
 
 }  // namespace
@@ -209,7 +209,7 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
     case Builtin::ArrayShift:
     case Builtin::ArrayUnshift:
     case Builtin::ArraySplice:
-    case Builtin::ArrayDefaultCompare:
+    case Builtin::ArraySortDefault:
     case Builtin::ArrayClear:
     case Builtin::ArrayReserve:
     case Builtin::ArrayMutation:
@@ -234,11 +234,6 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
     case Builtin::StringGraphemeLength:
     case Builtin::StringGraphemeSlice:
       return ExecuteUnicodeBuiltin(builtin, arguments, heap);
-    case Builtin::NumericToInt:
-    case Builtin::NumericToDouble:
-      return ConvertNumber(builtin == Builtin::NumericToDouble ? NumericConversion::ToDouble
-                                                               : NumericConversion::ToInt,
-                           arguments.front());
     case Builtin::ScalarToString:
       return ScalarToString(arguments.front(), heap);
     case Builtin::ArrayJoin:
@@ -276,11 +271,9 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
     return std::unexpected(found.error());
   }
   if (builtin == Builtin::StringIncludes) {
-    return Value::Boolean(*found != std::string_view::npos);
+    return Value::Boolean(*found >= 0);
   }
-  return Value::Integer(*found == std::string_view::npos
-                            ? -1
-                            : static_cast<std::int64_t>(Utf8Length(text.substr(0, *found))));
+  return Value::Integer(*found);
 }
 
 }  // namespace vela::runtime

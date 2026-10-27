@@ -10,6 +10,8 @@
 #include <tuple>
 #include <utility>
 
+#include <absl/functional/any_invocable.h>
+
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -24,10 +26,6 @@ void Timer::Cancel() noexcept {
   } else {
     state_->callback = {};
   }
-}
-
-bool Timer::IsCancelled() const noexcept {
-  return state_->cancelled.load();
 }
 
 FutureScheduler::~FutureScheduler() {
@@ -55,7 +53,7 @@ void FutureScheduler::RemoveSuspendedFrame(std::size_t saved_bytes) noexcept {
   saved_state_bytes_ -= saved_bytes;
 }
 
-void FutureScheduler::PostMicrotask(std::function<void()> task) {
+void FutureScheduler::PostMicrotask(absl::AnyInvocable<void()> task) {
   if (IsOwnerThread()) {
     microtasks_.push_back(std::move(task));
     return;
@@ -222,11 +220,6 @@ void FutureScheduler::Fire(Event event) {
     event.sequence = next_sequence_++;
     events_.push(std::move(event));
   }
-}
-
-std::size_t FutureScheduler::pending_microtasks() const noexcept {
-  assert(IsOwnerThread());
-  return microtasks_.size();
 }
 
 bool FutureScheduler::IsOwnerThread() const noexcept {

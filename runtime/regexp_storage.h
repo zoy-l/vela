@@ -36,8 +36,7 @@ struct RegExpMatchStorage final {
   std::uint32_t capture_count;
 
   [[nodiscard]] std::span<RegExpCapture> captures() noexcept {
-    void* storage = std::span(this, 1).last(0).data();
-    return {static_cast<RegExpCapture*>(storage), capture_count};
+    return {StorageAfter<RegExpCapture>(*this), capture_count};
   }
 };
 

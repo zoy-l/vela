@@ -19,6 +19,8 @@ namespace {
 
 class StringLanguageTest : public testing::Test {
  protected:
+  explicit StringLanguageTest(std::size_t gc_threshold = 1) : isolate_(gc_threshold) {}
+
   vm::ExecutionResult Run(std::string_view source) {
     compiled_ = CompileSource(source, isolate_);
     if (!compiled_.Succeeded()) {
@@ -50,8 +52,13 @@ class StringLanguageTest : public testing::Test {
   CompileResult& compilation() { return compiled_; }
 
  private:
-  runtime::Isolate isolate_{1};
+  runtime::Isolate isolate_;
   CompileResult compiled_;
+};
+
+class StringAllocationTest : public StringLanguageTest {
+ protected:
+  StringAllocationTest() : StringLanguageTest(runtime::kDefaultGcThreshold) {}
 };
 
 TEST_F(StringLanguageTest, DecodesEscapesUnicodeAndEmbeddedNull) {
@@ -181,10 +188,9 @@ func main(): string {
             "null|null|null|a,,b|1,,2|true,,false|1.5,,0");
 }
 
-TEST_F(StringLanguageTest, PrimitiveFormattingAllocatesOnlyTheFinalString) {
+TEST_F(StringAllocationTest, PrimitiveFormattingAllocatesOnlyTheFinalString) {
   auto& isolate = this->isolate();
   auto& compiled = compilation();
-  isolate.heap().SetGcThreshold(runtime::kDefaultGcThreshold);
   struct Case final {
     std::string_view source;
     std::size_t allocations;
@@ -294,10 +300,9 @@ func main(): string {
             "0,,,0,-1,true,true,true");
 }
 
-TEST_F(StringLanguageTest, InterpolationAllocatesOnlyTheFinalString) {
+TEST_F(StringAllocationTest, InterpolationAllocatesOnlyTheFinalString) {
   auto& isolate = this->isolate();
   auto& compiled = compilation();
-  isolate.heap().SetGcThreshold(runtime::kDefaultGcThreshold);
   EXPECT_EQ(Text(R"(func main(): string { return "a${"b"}c${"d"}e${"f"}g"; })"), "abcdefg");
   auto& heap = isolate.heap();
   heap.Collect();
@@ -308,10 +313,9 @@ TEST_F(StringLanguageTest, InterpolationAllocatesOnlyTheFinalString) {
   EXPECT_EQ(result.value.AsString()->value(), "abcdefg");
 }
 
-TEST_F(StringLanguageTest, JoinAllocatesOnlyTheInputArrayAndFinalString) {
+TEST_F(StringAllocationTest, JoinAllocatesOnlyTheInputArrayAndFinalString) {
   auto& isolate = this->isolate();
   auto& compiled = compilation();
-  isolate.heap().SetGcThreshold(runtime::kDefaultGcThreshold);
   EXPECT_EQ(Text(R"(func main(): string { return ["a", "b", "c", "d"].join("-"); })"), "a-b-c-d");
   auto& heap = isolate.heap();
   heap.Collect();

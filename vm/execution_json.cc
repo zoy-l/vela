@@ -63,12 +63,12 @@ StepResult Execution::ContinueJson(ActiveFrame& active) {
   if (!step) {
     return JsonError(step.error());
   }
-  if (step->action == runtime::JsonEncodeAction::Complete) {
-    active.frame.registers().subspan(active.json_destination).front() = step->value;
+  if (step->IsString()) {
+    active.frame.registers().subspan(active.json_destination).front() = *step;
     active.json_encoder.reset();
     return {};
   }
-  const auto* method = active.function->layouts->FindMember(step->value, "toJson");
+  const auto* method = active.function->layouts->FindMember(*step, "toJson");
   if (method == nullptr || method->kind != MemberKind::Method) {
     return JsonError(encoder.ConversionError(
         "JSON object requires a public zero-argument toJson() returning a value"));
@@ -84,8 +84,7 @@ StepResult Execution::ContinueJson(ActiveFrame& active) {
         "JSON object requires a public zero-argument toJson() returning a value"));
   }
   // 参数和返回值经普通帧传递；JSON builtin 不重入解释器，不改写用户异常与 trace。
-  return EnterCall(target, active, EncodeABC(OpCode::Call, active.json_destination, 0, 0),
-                   step->value);
+  return EnterCall(target, active, EncodeABC(OpCode::Call, active.json_destination, 0, 0), *step);
 }
 
 }  // namespace vela::vm::internal

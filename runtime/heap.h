@@ -4,9 +4,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -22,7 +24,6 @@ namespace vela::runtime {
 class Heap;
 struct RegExpStorage;
 struct RegExpMatchStorage;
-struct RegExpCapture;
 
 class RootRange final {
  public:
@@ -61,6 +62,8 @@ enum class GcPhase : std::uint8_t {
 };
 
 inline constexpr std::size_t kDefaultGcThreshold = 65536;
+inline constexpr std::size_t kMaximumByteArrayLength =
+    std::numeric_limits<std::uint32_t>::max() - sizeof(HeapObject);
 
 enum class ArrayAccessError : std::uint8_t {
   NotArray,
@@ -69,21 +72,31 @@ enum class ArrayAccessError : std::uint8_t {
   OutOfMemory,
 };
 
-enum class MutableStringError : std::uint8_t { NotMutableString, OutOfMemory };
 enum class StringJoinError : std::uint8_t { TypeMismatch, OutOfMemory };
 
 enum class StringCase : std::uint8_t { Lower, Upper };
 enum class ExpectedAlternative : std::uint8_t { Ok, Err };
 enum class ExpectedAccessError : std::uint8_t { NotExpected, InactiveAlternative };
 
-struct CollectionCursor final {
-  std::uint64_t mutation = 0;
-  std::uint32_t next = 0;
-};
-
 struct CollectionEntry final {
   Value key;
   Value value;
+};
+
+// 借用集合；调用者保根对象。结构变更使迭代失效，Next 先检查 mutation 再访问缓存视图。
+class CollectionIterator final {
+ public:
+  CollectionIterator() noexcept = default;
+  [[nodiscard]] std::expected<std::optional<CollectionEntry>, ExecutionStatus> Next() noexcept;
+
+ private:
+  friend class Heap;
+  const HeapObject* object_ = nullptr;
+  std::uint64_t mutation_ = 0;
+  std::uint32_t next_ = 0;
+  std::span<const std::byte> keys_;
+  std::span<const std::byte> values_;
+  std::span<const std::uint32_t> links_;
 };
 enum class CollectionInsert : std::uint8_t { Inserted, Updated };
 enum class CollectionRemove : std::uint8_t { Removed, Missing };
@@ -129,8 +142,8 @@ class Heap final {
   [[nodiscard]] void* AllocateNative(std::size_t size) noexcept;
   void FreeNative(void* pointer) noexcept;
   [[nodiscard]] HeapObject* AllocateRegExp(const RegExpStorage& storage) noexcept;
-  [[nodiscard]] HeapObject* AllocateRegExpMatch(const RegExpMatchStorage& storage,
-                                                std::span<const RegExpCapture> captures) noexcept;
+  // 引用在发布前初始化；调用者随后填充不含引用的 captures，完成前不得暴露给消费者。
+  [[nodiscard]] HeapObject* AllocateRegExpMatch(const RegExpMatchStorage& storage) noexcept;
   [[nodiscard]] static RegExpStorage& RegExpOf(HeapObject& object) noexcept;
   [[nodiscard]] static RegExpMatchStorage& RegExpMatchOf(HeapObject& object) noexcept;
   [[nodiscard]] static bool IsRegExp(const HeapObject& object) noexcept;
@@ -139,7 +152,6 @@ class Heap final {
   [[nodiscard]] HeapObject* AllocateByteData(HeapObject& owner, ByteViewRange range) noexcept;
   [[nodiscard]] static bool IsByteArray(const HeapObject& object) noexcept;
   [[nodiscard]] static bool IsByteData(const HeapObject& object) noexcept;
-  [[nodiscard]] static bool IsIntegerArray(const HeapObject& object) noexcept;
   // 借用对象的固定原始存储；调用者先验证对象种类并在借用期间保根。
   [[nodiscard]] static std::span<std::uint8_t> ByteArrayBytes(HeapObject& object) noexcept;
   [[nodiscard]] static std::span<std::uint8_t> ByteDataBytes(HeapObject& object) noexcept;
@@ -171,13 +183,8 @@ class Heap final {
       HeapObject& object) noexcept;
   [[nodiscard]] static std::expected<std::uint32_t, ExecutionStatus> CollectionLength(
       const HeapObject& object) noexcept;
-  [[nodiscard]] static std::expected<CollectionCursor, ExecutionStatus> IterateCollection(
+  [[nodiscard]] static std::expected<CollectionIterator, ExecutionStatus> IterateCollection(
       const HeapObject& object) noexcept;
-  [[nodiscard]] static std::expected<void, ExecutionStatus> CheckCollectionMutation(
-      const HeapObject& object,
-      const CollectionCursor& cursor) noexcept;
-  [[nodiscard]] static std::expected<std::optional<CollectionEntry>, ExecutionStatus>
-  NextCollectionEntry(const HeapObject& object, CollectionCursor& cursor) noexcept;
   [[nodiscard]] std::expected<void, ExecutionStatus> CopyCollection(
       const HeapObject& object,
       HeapObject& array,
@@ -185,6 +192,9 @@ class Heap final {
   // 输入必须是合法 UTF-8；堆字符串须由调用者保根，分配可触发 GC。
   [[nodiscard]] StringObject* AllocateString(std::string_view first,
                                              std::string_view second = {}) noexcept;
+  // text 须为合法 UTF-8；输入及目标须保根，string 数组长度须等于 grapheme 数量。
+  [[nodiscard]] std::expected<void, ExecutionStatus> FillGraphemes(HeapObject& array,
+                                                                   std::string_view text);
   // parts 不含空指针；所有输入及 separator 的堆存储须保根，最终结果只分配一次。
   [[nodiscard]] StringObject* JoinStrings(std::span<StringObject* const> parts,
                                           std::string_view separator = {}) noexcept;
@@ -235,30 +245,31 @@ class Heap final {
                                               ExecutionStatus status,
                                               std::span<const TracePosition> trace,
                                               std::string_view message) noexcept;
-  // builder 与 text 的堆存储须在扩容期间保根；text 必须是合法 UTF-8。
-  [[nodiscard]] std::expected<void, MutableStringError> AppendString(
+  // builder 来自本 Heap 的 AllocateMutableString；builder 与 text 须保根，text 为合法 UTF-8。
+  [[nodiscard]] std::expected<void, ExecutionStatus> AppendString(HeapObject& builder,
+                                                                  std::string_view text) noexcept;
+  // 追加未初始化字节，调用者须立即填充；视图不得跨越 builder 的下一次追加或扩容。
+  [[nodiscard]] std::expected<std::span<char>, ExecutionStatus> AppendStringStorage(
       HeapObject& builder,
-      std::string_view text) noexcept;
+      std::size_t count) noexcept;
   // builder 必须来自本 Heap 的 AllocateMutableString，且调用期间保根。
   [[nodiscard]] StringObject* BuildString(const HeapObject& builder) noexcept;
   [[nodiscard]] static bool IsMutableString(const HeapObject& object) noexcept;
 
-  [[nodiscard]] static Value* GetField(HeapObject& object, std::uint32_t index) noexcept {
-    if (object.layout == nullptr || index >= object.layout->field_count()) {
+  template <class Object>
+    requires std::is_same_v<std::remove_const_t<Object>, HeapObject>
+  [[nodiscard]] static std::conditional_t<std::is_const_v<Object>, const Value*, Value*> GetField(
+      Object& object,
+      std::uint32_t index) noexcept {
+    const auto* layout = object.layout;
+    if (layout == nullptr || index >= layout->field_count()) {
       return nullptr;
     }
-    return std::span(ObjectFields(&object), object.layout->field_count()).subspan(index).data();
+    return std::span(ObjectFields(&object), layout->field_count()).subspan(index).data();
   }
   [[nodiscard]] static const ClassLayout* ClassOf(const HeapObject& object) noexcept;
   [[nodiscard]] static ObjectKind KindOf(const HeapObject& object) noexcept { return object.kind; }
   [[nodiscard]] static TypeConstraint TypeOf(Value value) noexcept;
-  [[nodiscard]] static const TypeConstraint* RuntimeTypeOf(const HeapObject& object) noexcept {
-    if ((object.kind != ObjectKind::Future && object.kind != ObjectKind::Completer) ||
-        object.indexed_layout == nullptr) {
-      return nullptr;
-    }
-    return &object.array_layout()->element;
-  }
   [[nodiscard]] static const ArrayLayout* ArrayTypeOf(const HeapObject& object) noexcept {
     return object.kind == ObjectKind::Array ? object.array_layout() : nullptr;
   }
@@ -267,24 +278,17 @@ class Heap final {
   }
   [[nodiscard]] static bool IsValueOfType(Value value, const TypeConstraint& type) noexcept;
   [[nodiscard]] static bool IsThrowable(Value value) noexcept;
-  // Future/Completer 的类型身份由生产者绑定，布局由 Isolate 持有；禁止重标已有身份。
+  // Future/Completer 的类型身份由生产者绑定；签名由 Isolate 持有，禁止重标已有身份。
   [[nodiscard]] static std::expected<void, ExecutionStatus> BindRuntimeType(
       HeapObject& object,
-      const ArrayLayout& type) noexcept;
-  [[nodiscard]] static const Value* GetField(const HeapObject& object,
-                                             std::uint32_t index) noexcept {
-    if (object.layout == nullptr || index >= object.layout->field_count()) {
-      return nullptr;
-    }
-    return std::span(ObjectFields(&object), object.layout->field_count()).subspan(index).data();
-  }
+      const TypeConstraint& type) noexcept;
   [[nodiscard]] bool SetField(HeapObject& object, std::uint32_t index, Value value) noexcept {
     auto* field = GetField(object, index);
     if (field == nullptr) {
       return false;
     }
     *field = value;
-    if (value.IsObject() || value.IsString()) {
+    if (value.IsReference()) {
       WriteBarrier(object, value);
     }
     return true;
@@ -300,8 +304,6 @@ class Heap final {
   void Step(std::size_t work_budget) noexcept;
   void FinishCollection() noexcept;
   void Collect() noexcept;
-
-  void SetGcThreshold(std::size_t threshold) noexcept;
 
   [[nodiscard]] GcPhase phase() const noexcept { return phase_; }
   [[nodiscard]] bool IsCollecting() const noexcept { return phase_ != GcPhase::Idle; }
@@ -325,18 +327,37 @@ class Heap final {
   void MarkRoots() noexcept;
   void MarkRoot(const RootRange& root) noexcept;
   void MarkValue(Value value) noexcept;
+  void MarkReference(Value value) noexcept { MarkValue(value); }
+  void MarkReference(HeapObject* object) noexcept;
+  void MarkReference(StringObject* string) noexcept;
   void MarkObject(HeapObject& object) noexcept;
   void ProcessGrayObject(HeapObject& object) noexcept;
   void DrainGray() noexcept;
   void WriteBarrier(HeapObject& source, Value value) noexcept;
+  void WriteBarrier(HeapObject& source,
+                    const ArrayLayout& layout,
+                    std::span<const std::byte> storage) noexcept;
+  void MarkElements(const ArrayLayout& layout, std::span<const std::byte> storage) noexcept;
 
   struct Allocation final {
     void* memory = nullptr;
     std::uint32_t size = 0;
+    std::uint8_t size_class = 0;
   };
 
+  template <class Initialize>
+  [[nodiscard]] HeapObject* AllocateObject(ObjectKind kind,
+                                           std::size_t size,
+                                           const Initialize& initialize) noexcept;
+  template <class T>
+  [[nodiscard]] HeapObject* AllocateNativeObject(ObjectKind kind, T payload) noexcept;
+  template <ObjectKind kind, class T>
+  [[nodiscard]] static T* NativeOf(const HeapObject& object) noexcept {
+    return object.kind == kind ? static_cast<T*>(object.native_payload) : nullptr;
+  }
+
   [[nodiscard]] Allocation AllocateRaw(std::size_t requested_size) noexcept;
-  void Publish(HeapObject& object, std::uint32_t allocation_size) noexcept;
+  void Publish(HeapObject& object, const Allocation& allocation) noexcept;
   void ReleaseRaw(HeapObject& object) noexcept;
   [[nodiscard]] static std::pair<std::size_t, std::size_t> SelectBlockClass(
       std::size_t requested_size) noexcept;
@@ -348,10 +369,21 @@ class Heap final {
   void ReleaseMutableString(HeapObject& object) noexcept;
   void MarkArray(HeapObject& array) noexcept;
   void ReleaseArray(HeapObject& array) noexcept;
+  [[nodiscard]] HeapObject* AllocateArrayStorage(const ArrayLayout& layout,
+                                                 std::size_t length,
+                                                 std::span<const std::byte> contents) noexcept;
+  [[nodiscard]] std::expected<void, ArrayAccessError> ReserveArrayStorage(
+      HeapObject& array,
+      std::size_t capacity) noexcept;
+  [[nodiscard]] static Value RemoveArrayStorage(HeapObject& array, std::uint32_t index) noexcept;
   std::expected<void, ArrayAccessError> GrowArray(HeapObject& array, Value value) noexcept;
   void MarkCollection(HeapObject& object) noexcept;
   void ReleaseCollection(HeapObject& object) noexcept;
   std::expected<void, ExecutionStatus> GrowCollection(HeapObject& object) noexcept;
+  std::expected<CollectionInsert, ExecutionStatus> InsertCollectionHashed(HeapObject& object,
+                                                                          Value key,
+                                                                          std::size_t hash,
+                                                                          Value value) noexcept;
 
   HeapObject* objects_ = nullptr;
   HeapObject* gray_ = nullptr;
@@ -370,3 +402,5 @@ class Heap final {
 };
 
 }  // namespace vela::runtime
+
+#include "runtime/heap_allocation.h"  // IWYU pragma: export

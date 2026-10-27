@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -97,6 +98,21 @@ enum class ObjectKind : std::uint8_t {
 struct CollectionLayout;
 struct ArrayLayout;
 
+[[nodiscard]] constexpr bool IsLeafObject(ObjectKind kind) noexcept {
+  return kind == ObjectKind::String || kind == ObjectKind::MutableString ||
+         kind == ObjectKind::ByteArray;
+}
+
+// 尾部存储与头部在同一次分配中；调用者负责容量、对象生命周期及动态长度。
+template <class T, class Header>
+[[nodiscard]] auto* StorageAfter(Header& header) noexcept {
+  using Element = std::conditional_t<std::is_const_v<Header>, const T, T>;
+  using Bytes = std::conditional_t<std::is_const_v<Header>, const void, void>;
+  static_assert(sizeof(Header) % alignof(T) == 0);
+  Bytes* storage = std::span(&header, 1).last(0).data();
+  return static_cast<Element*>(storage);
+}
+
 struct TypeConstraint final {
   ValueKind kind = ValueKind::Null;
   ObjectKind object_kind = ObjectKind::Instance;
@@ -154,6 +170,10 @@ struct ArrayLayout final {
   }
 
   [[nodiscard]] std::size_t element_size() const noexcept;
+  [[nodiscard]] bool HasReferences() const noexcept {
+    return element.dynamic || element.kind == ValueKind::Object ||
+           element.kind == ValueKind::String;
+  }
   [[nodiscard]] const TypeConstraint& element_type() const noexcept { return element; }
   [[nodiscard]] TypeConstraint value_type() const noexcept {
     auto type = element;
@@ -186,17 +206,21 @@ struct HeapObject final {
 
   ObjectKind kind = ObjectKind::Instance;
   std::uint8_t mark_bit = 0;
+  std::uint8_t size_class = 0;
   std::uint32_t allocation_size = 0;
   const ClassLayout* layout = nullptr;
   HeapObject* next = nullptr;
   HeapObject* gray_next = nullptr;
-  // kind 已区分数组与集合；单一布局指针避免为互斥布局增加对象头开销。
-  const void* indexed_layout = nullptr;
+  // kind 区分互斥的元数据；Future/Completer 直接借用载荷签名，不占用数组布局。
+  const void* type_metadata = nullptr;
   [[nodiscard]] const ArrayLayout* array_layout() const noexcept {
-    return static_cast<const ArrayLayout*>(indexed_layout);
+    return static_cast<const ArrayLayout*>(type_metadata);
   }
   [[nodiscard]] const CollectionLayout* collection_layout() const noexcept {
-    return static_cast<const CollectionLayout*>(indexed_layout);
+    return static_cast<const CollectionLayout*>(type_metadata);
+  }
+  [[nodiscard]] const TypeSignature* future_signature() const noexcept {
+    return static_cast<const TypeSignature*>(type_metadata);
   }
   std::uint32_t length = 0;
   // kind 确定 native_payload 的类型；底层存储由 Heap 按该类型销毁。
@@ -208,12 +232,10 @@ static_assert(alignof(HeapObject) >= alignof(Value));
 // 实例字段紧接对象头，二者在同一次分配中保持连续存储。
 static_assert(sizeof(HeapObject) % alignof(Value) == 0);
 [[nodiscard]] inline Value* ObjectFields(HeapObject* object) noexcept {
-  void* storage = std::span(object, 1).last(0).data();
-  return static_cast<Value*>(storage);
+  return StorageAfter<Value>(*object);
 }
 [[nodiscard]] inline const Value* ObjectFields(const HeapObject* object) noexcept {
-  const void* storage = std::span(object, 1).last(0).data();
-  return static_cast<const Value*>(storage);
+  return StorageAfter<Value>(*object);
 }
 
 }  // namespace vela::runtime

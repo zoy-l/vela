@@ -80,6 +80,9 @@ INSTANTIATE_TEST_SUITE_P(
         "let value = 40; func main(): int { value=value+2; return value; }",
         "func main(): int { const values = [2, 40]; values.sort((a: int, b: int): int => a - b); "
         "return values.reduce((total: int, value: int): int => total + value, 0); }",
+        "func main(): int { const values = [2.0, 10.0, 1.0]; values.sort(); "
+        "const erased: dynamic = values; erased.sort(); "
+        "return values.join() == '1,10,2' ? 42 : 0; }",
         "func main(): int { const a = Set<int>(); const b = Set<int>(); a.add(40); b.add(2); "
         "const values = a.union(b).values(); return values[0] + values[1]; }"));
 

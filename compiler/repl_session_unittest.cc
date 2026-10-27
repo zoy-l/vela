@@ -18,7 +18,7 @@ namespace {
 
 class ReplSessionTest : public testing::Test {
  protected:
-  ReplSessionTest() : session_(std::filesystem::path(".")) {
+  ReplSessionTest() : session_(std::filesystem::path("."), 1) {
     session_.isolate().SetOutput(output_);
   }
 
@@ -49,7 +49,6 @@ TEST_F(ReplSessionTest, PersistsValuesAndInitializesOnceWithoutReplayingHistory)
 }
 
 TEST_F(ReplSessionTest, DynamicJsonValuesAndBoundMethodsSurviveGcAndLaterSubmissions) {
-  session().isolate().heap().SetGcThreshold(1);
   Execute(R"(const root: dynamic = Json.parse('{"name":"Vela","items":[40,2]}');)");
   Execute("const read = root.get;");
   session().isolate().heap().Collect();
@@ -63,7 +62,6 @@ TEST_F(ReplSessionTest, DynamicJsonValuesAndBoundMethodsSurviveGcAndLaterSubmiss
 }
 
 TEST_F(ReplSessionTest, ByteViewsAndMethodsRetainTheirOwnersAcrossSubmissions) {
-  session().isolate().heap().SetGcThreshold(1);
   Execute("const bytes = ByteArray.from([0,0,0,0]);");
   Execute("const view = ByteData.view(bytes);");
   Execute("const write: (int,int) => void = view.setInt32;");
@@ -78,7 +76,6 @@ TEST_F(ReplSessionTest, ByteViewsAndMethodsRetainTheirOwnersAcrossSubmissions) {
 }
 
 TEST_F(ReplSessionTest, RegExpCapturesAndBoundMethodsRetainOwnersAcrossSubmissions) {
-  session().isolate().heap().SetGcThreshold(1);
   Execute("const re = RegExp('(?<digits>[0-9]+)');");
   Execute("const found = re.firstMatch('😀42');");
   Execute("const all: (string) => RegExpMatch[] = re.allMatches;");
@@ -90,7 +87,6 @@ TEST_F(ReplSessionTest, RegExpCapturesAndBoundMethodsRetainOwnersAcrossSubmissio
 }
 
 TEST_F(ReplSessionTest, BuiltinMethodValuesKeepReceiversAndTargetsAcrossSubmissions) {
-  session().isolate().heap().SetGcThreshold(1);
   Execute("const values = [20];");
   Execute("const append: (int) => int = values.push;");
   Execute("const copy: () => int[] = values.slice;");
@@ -102,7 +98,6 @@ TEST_F(ReplSessionTest, BuiltinMethodValuesKeepReceiversAndTargetsAcrossSubmissi
 }
 
 TEST_F(ReplSessionTest, ScalarIntrinsicsAndDatePartsPersistAcrossSubmissions) {
-  session().isolate().heap().SetGcThreshold(1);
   Execute("const parse = int.parse;");
   Execute("const upper = 'straße'.toUpperCase;");
   Execute("const parts = Date.toUTC(-1);");
@@ -117,7 +112,6 @@ TEST_F(ReplSessionTest, ScalarIntrinsicsAndDatePartsPersistAcrossSubmissions) {
 }
 
 TEST_F(ReplSessionTest, ExistingClosuresKeepTargetsAndCapturesAfterNewFunctionsAndGlobals) {
-  session().isolate().heap().SetGcThreshold(1);
   Execute(R"(func counter(): () => int {
     let value = 40;
     return (): int => { value = value + 1; return value; };
@@ -148,7 +142,6 @@ TEST_F(ReplSessionTest, RetiredEntryLambdasRemainCallableAndEntriesReuseOneSlot)
 }
 
 TEST_F(ReplSessionTest, KeepsClassArrayCollectionAndInterfaceIdentityForOldValues) {
-  session().isolate().heap().SetGcThreshold(1);
   Execute("interface Readable { read(): int; }");
   Execute("class Box implements Readable { param value: int; read(): int { return this.value; } }");
   Execute("const box = Box(value: 42);");

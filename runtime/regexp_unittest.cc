@@ -100,6 +100,25 @@ TEST_F(RegExpTest, MatchAloneKeepsInputPatternAndCapturesAlive) {
   EXPECT_EQ(heap().object_count(), 0);
 }
 
+TEST_F(RegExpTest, EmptyMatchesAdvanceOneUnicodeScalarAndIncludeTheEndBoundary) {
+  Compile("(?=.)|$");
+  Input("😀中");
+  const ArrayLayout layout{
+      .element = {.kind = ValueKind::Object, .object_kind = ObjectKind::RegExpMatch},
+  };
+  const auto matched =
+      Call(Builtin::RegExpAllMatches,
+           {roots().at(0), roots().at(1), Value::Integer(0), Value::Integer(0)}, &layout);
+  ASSERT_TRUE(matched);
+  roots().at(2) = *matched;
+  auto& array = *matched->AsObject();
+  ASSERT_EQ(Heap::ArrayLength(array), 3U);
+  const auto middle = Heap::GetElement(array, 1).value();
+  EXPECT_EQ(Call(Builtin::RegExpMatchStart, {middle})->AsInteger(), 1);
+  const auto end = Heap::GetElement(array, 2).value();
+  EXPECT_EQ(Call(Builtin::RegExpMatchStart, {end})->AsInteger(), 2);
+}
+
 TEST_F(RegExpTest, DebugDescriptionsExposeSourceAndCodePointRange) {
   Compile("(中)");
   Input("😀中");

@@ -8,6 +8,7 @@
 #include <span>
 #include <string_view>
 
+#include <absl/strings/ascii.h>
 #include <absl/time/civil_time.h>
 #include <absl/time/time.h>
 
@@ -67,7 +68,7 @@ TimeResult FromFields(const Fields& fields, ExecutionStatus invalid) {
 }
 
 bool IsDigits(std::string_view text) {
-  return std::ranges::all_of(text, [](char byte) { return byte >= '0' && byte <= '9'; });
+  return std::ranges::all_of(text, absl::ascii_isdigit);
 }
 
 constexpr std::int64_t kDecimalRadix = 10;

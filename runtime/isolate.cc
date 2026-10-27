@@ -14,6 +14,8 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include <absl/container/flat_hash_map.h>
 #include "base/utf8.h"
 #include "runtime/date.h"
 #include "runtime/error.h"
@@ -22,6 +24,22 @@
 #include "runtime/standard_library.h"
 
 namespace vela::runtime {
+namespace {
+
+template <class T>
+const T* InternLayout(T layout,
+                      absl::flat_hash_map<T, const T*>& index,
+                      std::vector<std::unique_ptr<T>>& storage) {
+  const auto [entry, inserted] = index.try_emplace(layout, nullptr);
+  if (inserted) {
+    auto owned = std::make_unique<T>(std::move(layout));
+    entry->second = owned.get();
+    storage.push_back(std::move(owned));
+  }
+  return entry->second;
+}
+
+}  // namespace
 
 std::expected<void, NativeRegistrationError> Isolate::RegisterNative(NativeFunction function) {
   const auto name = function.name();
@@ -87,39 +105,15 @@ const ArrayLayout* Isolate::CreateArrayLayout(ArrayLayout layout) {
   if (layout.element.array != nullptr) {
     layout.element.object_kind = ObjectKind::Array;
   }
-  const auto existing = array_layout_index_.find(layout);
-  if (existing != array_layout_index_.end()) {
-    return existing->second;
-  }
-  auto stored = std::make_unique<ArrayLayout>(layout);
-  const auto* result = stored.get();
-  array_layout_index_.emplace(layout, result);
-  array_layouts_.push_back(std::move(stored));
-  return result;
+  return InternLayout(layout, array_layout_index_, array_layouts_);
 }
 
 const CollectionLayout* Isolate::CreateCollectionLayout(CollectionLayout layout) {
-  const auto existing = collection_layout_index_.find(layout);
-  if (existing != collection_layout_index_.end()) {
-    return existing->second;
-  }
-  auto stored = std::make_unique<CollectionLayout>(layout);
-  const auto* result = stored.get();
-  collection_layout_index_.emplace(layout, result);
-  collection_layouts_.push_back(std::move(stored));
-  return result;
+  return InternLayout(layout, collection_layout_index_, collection_layouts_);
 }
 
 const TypeSignature* Isolate::CreateTypeSignature(TypeSignature signature) {
-  const auto existing = type_signature_index_.find(signature);
-  if (existing != type_signature_index_.end()) {
-    return existing->second;
-  }
-  auto stored = std::make_unique<TypeSignature>(std::move(signature));
-  const auto* result = stored.get();
-  type_signature_index_.emplace(*result, result);
-  type_signatures_.push_back(std::move(stored));
-  return result;
+  return InternLayout(std::move(signature), type_signature_index_, type_signatures_);
 }
 
 const InterfaceType* Isolate::CreateInterfaceType() {

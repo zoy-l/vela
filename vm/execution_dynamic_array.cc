@@ -11,7 +11,6 @@
 #include "base/array_algorithm.h"
 #include "base/builtin.h"
 #include "base/callable.h"
-#include "runtime/builtins.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
@@ -30,13 +29,6 @@ constexpr std::size_t kOutput = 4;
 constexpr std::size_t kAlgorithm = 5;
 constexpr std::size_t kThunk = 6;
 constexpr std::size_t kSlotCount = 7;
-
-bool CanSortByDefault(const runtime::TypeConstraint& type) {
-  return type.instance == nullptr &&
-         (type.dynamic || type.kind == runtime::ValueKind::Integer ||
-          type.kind == runtime::ValueKind::Double || type.kind == runtime::ValueKind::Boolean ||
-          type.kind == runtime::ValueKind::String);
-}
 
 std::expected<std::int64_t, ExecutionStatus> ComparatorSign(runtime::Value value) {
   if (value.IsInteger()) {
@@ -229,27 +221,20 @@ StepResult Execution::PrepareDynamicArray(ActiveFrame& active, Instruction instr
   const auto algorithm = static_cast<ArrayAlgorithm>(selector.AsInteger());
   auto accumulator = runtime::Heap::TypeOf(initial);
   const runtime::TypeSignature* signature = nullptr;
-  if (callback.IsNull() && algorithm == ArrayAlgorithm::Sort) {
-    const auto& type = runtime::Heap::ArrayTypeOf(*receiver.AsObject())->element;
-    if (!CanSortByDefault(type)) {
-      return std::unexpected(ExecutionStatus::TypeError);
-    }
-  } else {
-    if (const auto callable = ResolveCallable(callback); !callable) {
-      return std::unexpected(callable.error());
-    }
-    signature = runtime::Heap::ClassOf(*callback.AsObject())->callable_type();
-    if (signature == nullptr) {
-      return std::unexpected(ExecutionStatus::TypeError);
-    }
-    const auto type = AccumulatorType(initial, algorithm, *signature);
-    if (!type) {
-      return std::unexpected(type.error());
-    }
-    accumulator = *type;
-    if (auto checked = CheckCallback(*signature, algorithm, receiver, accumulator); !checked) {
-      return checked;
-    }
+  if (const auto callable = ResolveCallable(callback); !callable) {
+    return std::unexpected(callable.error());
+  }
+  signature = runtime::Heap::ClassOf(*callback.AsObject())->callable_type();
+  if (signature == nullptr) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto type = AccumulatorType(initial, algorithm, *signature);
+  if (!type) {
+    return std::unexpected(type.error());
+  }
+  accumulator = *type;
+  if (auto checked = CheckCallback(*signature, algorithm, receiver, accumulator); !checked) {
+    return checked;
   }
   auto& heap = isolate_.heap();
   auto* plan = heap.AllocateValueSlots(kSlotCount);
@@ -260,8 +245,7 @@ StepResult Execution::PrepareDynamicArray(ActiveFrame& active, Instruction instr
   heap.SetValueSlot(*plan, kReceiver, receiver);
   heap.SetValueSlot(*plan, kCallback, callback);
   heap.SetValueSlot(*plan, kAlgorithm, selector);
-  const auto count =
-      signature == nullptr ? 0U : static_cast<std::uint32_t>(signature->parameters.size());
+  const auto count = static_cast<std::uint32_t>(signature->parameters.size());
   if (auto initialized = InitializeArguments(isolate_, *plan, count); !initialized) {
     return initialized;
   }
@@ -287,16 +271,6 @@ StepResult Execution::InvokeDynamicArray(ActiveFrame& active, Instruction instru
   const auto slots = *plan;
   const auto algorithm = static_cast<ArrayAlgorithm>(slots.subspan(kAlgorithm).front().AsInteger());
   const auto callback = slots.subspan(kCallback).front();
-  if (callback.IsNull()) {
-    const std::array values{input.subspan(1).front().Read(), input.subspan(2).front().Read()};
-    const auto result =
-        runtime::ExecuteBuiltin(Builtin::ArrayDefaultCompare, values, isolate_.heap());
-    if (!result) {
-      return std::unexpected(result.error());
-    }
-    active.frame.registers().subspan(DecodeA(instruction)).front() = *result;
-    return {};
-  }
   const auto* source = runtime::Heap::ArrayTypeOf(*slots.subspan(kReceiver).front().AsObject());
   auto& arguments = *slots.subspan(kArguments).front().AsObject();
   const auto count = *runtime::Heap::ArrayLength(arguments);

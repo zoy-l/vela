@@ -34,6 +34,16 @@ TEST(JsonDocumentTest, RejectsMalformedJsonAndReportsItsBytePosition) {
   EXPECT_FALSE(JsonDocument::Parse(R"({"value":NaN})").has_value());
 }
 
+TEST(JsonDocumentTest, RawNumbersKeepOriginalOffsetsAfterDocumentMove) {
+  constexpr std::string_view kSource = R"({"text":"\u4e2d😀","value":42})";
+  auto parsed = JsonDocument::Parse(kSource, YYJSON_READ_NUMBER_AS_RAW);
+  ASSERT_TRUE(parsed);
+  auto document = std::move(*parsed);
+  const auto* number = GetJsonField(document.root(), "value");
+  ASSERT_TRUE(yyjson_is_raw(number));
+  EXPECT_EQ(document.RawOffset(*number), kSource.find("42"));
+}
+
 TEST(JsonOutputTest, CopiesEscapedUnicodeTextAndMovesItsOwnedArena) {
   JsonOutput output;
   constexpr std::string_view kOwnedKey = "owned key";

@@ -78,7 +78,7 @@ void EncodeJson(benchmark::State& state) {
   {
     runtime::JsonEncoder warm(isolate, root.value());
     const auto encoded = warm.Advance();
-    if (!encoded || encoded->action != runtime::JsonEncodeAction::Complete) {
+    if (!encoded || !encoded->IsString()) {
       state.SkipWithError("JSON encoding warm-up failed");
       return;
     }
@@ -90,12 +90,11 @@ void EncodeJson(benchmark::State& state) {
     benchmark::DoNotOptimize(iteration);
     runtime::JsonEncoder encoder(isolate, root.value());
     auto result = encoder.Advance();
-    if (!result || result->action != runtime::JsonEncodeAction::Complete ||
-        !result->value.IsString() || result->value.AsString()->value() != source) {
+    if (!result || !result->IsString() || result->AsString()->value() != source) {
       state.SkipWithError("JSON encoding returned an unexpected value");
       return;
     }
-    benchmark::DoNotOptimize(result->value);
+    benchmark::DoNotOptimize(*result);
   }
   heap.FinishCollection();
   heap.Collect();
