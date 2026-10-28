@@ -98,6 +98,24 @@ TEST_F(FileTest, FailingReplacementLeavesNoTemporaryFiles) {
   EXPECT_EQ(std::distance(entries, std::filesystem::directory_iterator()), 1);
 }
 
+TEST_F(FileTest, PublishesExecutablePermissionsBeforeReplacement) {
+  const auto path = directory() / "application";
+  ASSERT_TRUE(WriteFileAtomically(path, {}, FileMode::kExecutable));
+#ifndef _WIN32
+  constexpr auto kExecute = std::filesystem::perms::owner_exec |
+                            std::filesystem::perms::group_exec |
+                            std::filesystem::perms::others_exec;
+  std::error_code error;
+  EXPECT_EQ(std::filesystem::status(path, error).permissions() & kExecute, kExecute);
+  EXPECT_FALSE(error);
+  ASSERT_TRUE(WriteFileAtomically(path, {}));
+  EXPECT_EQ(std::filesystem::status(path, error).permissions() & kExecute,
+            std::filesystem::perms::none);
+  EXPECT_FALSE(error);
+#endif
+  ExpectFileCount(1);
+}
+
 TEST_F(FileTest, ConcurrentReplacementsPublishOnlyWholeFiles) {
   const auto path = directory() / "shared";
   const std::vector<std::byte> first(4096, std::byte{1});

@@ -3,10 +3,11 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/exit_code.h"
+#include "base/process_exit.h"
+#include "runtime/process_exit.h"
 #include "runtime/value.h"
 
-namespace vela::compiler {
+namespace vela::runtime {
 namespace {
 
 TEST(ExitCodeTest, UsesExplicitIntResultAndVoidWithoutConversion) {
@@ -22,4 +23,4 @@ TEST(ExitCodeTest, UsesExplicitIntResultAndVoidWithoutConversion) {
 }
 
 }  // namespace
-}  // namespace vela::compiler
+}  // namespace vela::runtime

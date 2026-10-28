@@ -2,7 +2,7 @@
 
 [**English**](aot.md) | [简体中文](../zh-CN/aot.md)
 
-> Status: shared compilation boundaries are being implemented; the native backend is not implemented. `vela build`, artifact formats, and the native ABI below are proposed contracts.
+> Status: A2/A3 native execution and the A4 `exe`/`obj`/`staticlib` interfaces are implemented. Windows x64 Debug/Release regression, native-only host linking, explicit-SDK package tests, static checks, and Release measurements pass. Linux/macOS target packages and clean-host acceptance remain open, so A4/A5 are not fully accepted and no official three-platform release is certified.
 
 Vela AOT generates native object files from the shared Typed IR and uses linking tools shipped with the toolchain to produce executables or static libraries. LLVM is an internal compiler dependency; users of an official distribution do not install Clang or LLVM separately. Generated applications depend on the Vela runtime and target platform libraries, not LLVM, the Vela compiler, or the bytecode interpreter.
 
@@ -10,7 +10,7 @@ This design covers compilation, native execution, GC, exceptions, async, embeddi
 
 ## User interface and scope
 
-The proposed standalone build interface is:
+The standalone build interface is:
 
 ```sh
 vela build main.vela -o app
@@ -34,6 +34,12 @@ vela build math.vela --emit=staticlib --export=add -o libmath.a
 Executables use the existing zero-argument `main` contract, including synchronous or Future results, exit codes, unhandled errors, and `AsyncIdle`. Libraries do not require `main`, and instantiation does not execute a user entry function. An object file covers the entry file's complete import graph. A static library packages that compilation unit; it does not establish independent binary linking of Vela modules.
 
 Library artifacts also generate `<output-path>.h` and `<output-path>.aot.json`, containing export wrapper declarations and a link manifest. Windows object files, static libraries, and executables use `.obj`, `.lib`, and `.exe`. Example paths do not define automatic extension conversion across platforms.
+
+`vela build --verify-manifest=math.o.aot.json` validates the target, runtime/toolchain identities, binary/header fingerprints, and publication generation before a build tool consumes a library. It rejects mixed or modified files. The manifest records generic CPU/PIC code generation, optimization, function frame/root-slot metrics, signatures, and the matching target-support identity when available.
+
+Executable and archive builds load `share/vela/target.json` relative to the installed compiler. `--target-support=FILE` selects an explicit configuration. Object emission needs no final SDK or linker inputs. The configuration pins packaged tools and runtime by SHA-256 and records SDK versions, provenance, licenses, required inputs, and link arguments; tools are never selected from `PATH`.
+
+Developers can create a Windows development package with `python -m tools.vl package release OUTPUT`. Its manifest supplies the exact MSVC and Windows SDK/UCRT versions and installation instructions. Set `VELA_MSVC_TOOLS` to the versioned MSVC tools directory and `VELA_WINDOWS_SDK` to the Windows Kits root specified by that manifest. The Visual Studio IDE is not required. SDK link inputs remain external to the package. Other host packages currently require an audited `--support-spec` describing their SDK/sysroot inputs and any bundled files; platform acceptance is still required.
 
 The first release supports native compilation for the existing bootstrap host matrix: Windows x64, Linux x64, and macOS arm64. Each platform must pass its own distribution acceptance before support is advertised. JIT, hot replacement, native dynamic-library loading, ABI compatibility across releases, independently distributed binary modules, and VM/AOT calls into each other are outside this release. REPL and the existing VM debugger continue to serve bytecode. Unsupported AOT operations must produce explicit diagnostics, never execute embedded bytecode as a fallback.
 
@@ -177,6 +183,12 @@ LLVM and LLD versions are pinned with the distribution, including only backends 
 
 Each target support manifest records whether every system input comes from the distribution or SDK, how it is located, supported versions, and redistribution rights. SDKs may be configured explicitly or discovered through platform-defined locations. Do not silently switch to other compilers/linkers on PATH. Missing or unsupported inputs produce a pre-compilation diagnostic with installation/configuration instructions. A package is not officially supported until its SDK, linking, signing, and clean-environment tests pass.
 
+Package maintainers supply `--support-spec=FILE` for an audited SDK/sysroot. The JSON specifies `target`, `minimum_os`, `object_format`, `runtime_variant`, `application_dependencies`, `archive_arguments`, and `link_arguments`. Each `external_roots` entry identifies a named SDK root, its environment variable, exact version, source, license, and installation instructions. Each `files` entry records its expanded path, SHA-256, role, source, license, and redistribution terms. Optional `bundled_files` entries provide a `source_path` relative to the specification, a package-relative `destination`, source, and license; the packager copies and fingerprints those files. Arguments use `{package}`, named SDK roots, `{object}`, `{output}`, and `{runtime}`. SDK files with role `link` are required only for executables; object and archive emission remain independent of final SDK inputs.
+
+Before publishing a package directory, the packager uses the staged compiler and declared SDK inputs to build and run an async native application with build-tool and library-search environment variables cleared. Missing link inputs or a runtime ABI mismatch reject the package without leaving a published directory. This check establishes a usable local package; each platform still requires the full distribution acceptance matrix.
+
+On each configured host, `VELA_TEST_TARGET_SUPPORT_SPEC` selects that audited specification for `python -m tools.vl test release tooling`. The distribution tests clear build-tool environment variables, use Unicode/space paths, compare VM/native programs, link two libraries against one runtime, reject inconsistent publication, and rerun applications after removing sources and the package. Windows can instead use the built-in development SDK probe. A skipped platform test is not release acceptance.
+
 Object-only generation does not require final system link inputs. Hosts embedding a Vela library in C++ still need their own C++ development environment; that does not contradict compiling Vela without separately installing Clang/LLVM. Generated application dynamic dependencies must be listed in the distribution manifest. Statically linking the Vela runtime does not imply an application without system dynamic-library dependencies.
 
 Cross-compilation is a later extension requiring target code generation, runtime, linker capability, SDK/sysroot, and a test environment together. Enabling an LLVM target alone is not complete support.
@@ -190,6 +202,8 @@ Native objects and executables are trusted code artifacts. ABI checks are neithe
 ## Implementation stages and completion criteria
 
 These stages define dependencies. A working integer example is not complete AOT delivery.
+
+Windows verification covers 1,563 C++ tests, 114 tooling tests, 396 VM/AOT corpus comparisons, and 30 linked native host contracts. Repository-wide clang-tidy checks 431 C++ files without diagnostics. Release execution, compilation, link/archive probes, package sizes, RSS, roots, and continuation costs are retained in the [rolling aggregate evidence](../../benchmarks/results/rolling_summary.json). These results do not substitute for Linux/macOS execution or SDK/signing acceptance.
 
 | Stage | Scope | Completion criteria |
 | --- | --- | --- |

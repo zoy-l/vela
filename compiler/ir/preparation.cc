@@ -3,9 +3,15 @@
 #include <expected>
 #include <utility>
 
+#include "compiler/frontend/ast.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/parser.h"
 #include "compiler/frontend/specialization.h"
+#include "compiler/frontend/type_checker.h"
 #include "compiler/ir/layout_description.h"
+#include "compiler/ir/lowerer.h"
 #include "compiler/ir/optimizer.h"
+#include "compiler/ir/persistent_ids.h"
 
 namespace vela::ir {
 

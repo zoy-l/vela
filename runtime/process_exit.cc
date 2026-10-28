@@ -1,13 +1,14 @@
-#include "compiler/exit_code.h"
+#include "runtime/process_exit.h"
 
 #include <expected>
 #include <string_view>
 
+#include "base/process_exit.h"
 #include "runtime/value.h"
 
-namespace vela::compiler {
+namespace vela::runtime {
 
-std::expected<int, std::string_view> ProcessExitCode(runtime::Value value) noexcept {
+std::expected<int, std::string_view> ProcessExitCode(Value value) noexcept {
   if (value.IsNull()) {
     return 0;
   }
@@ -21,4 +22,4 @@ std::expected<int, std::string_view> ProcessExitCode(runtime::Value value) noexc
   return static_cast<int>(code);
 }
 
-}  // namespace vela::compiler
+}  // namespace vela::runtime

@@ -178,6 +178,7 @@ def link_configuration() -> dict[str, str | list[str]]:
         else:
             raise RuntimeError(f"Unmanaged LLVM system library: {argument}")
     return {"vela_llvm_root": directory.as_posix(),
+            "vela_llvm_target": query("--host-target")[0],
             "vela_llvm_libraries": [path.as_posix() for path in libraries],
             "vela_llvm_system_libraries": system}
 

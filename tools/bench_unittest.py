@@ -12,7 +12,7 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from tools.bench import parse_arguments, run
-from tools.benchmark_report import comparison_report, native_call_report
+from tools.benchmark_report import aot_comparison_report, comparison_report, native_call_report
 
 
 BACKENDS = ("cpp", "vm", "luajit_interp", "luajit")
@@ -51,6 +51,33 @@ def native_samples(repetitions: int = 1) -> list[dict]:
 
 
 class BenchmarkReportTest(unittest.TestCase):
+    def test_aot_report_rejects_incomplete_samples_wrong_results_and_retained_tasks(self) -> None:
+        rows = []
+        names = []
+        for backend in ("native", "vm", "cpp"):
+            name = f"aot/{backend}/arithmetic/1000/real_time"
+            names.append(name)
+            rows.append({"name": name, "real_time": 1000, "time_unit": "ns", "result": 499500,
+                         "baseline_bytes": 100, "retained_bytes": 100, "allocated_bytes": 200,
+                         "committed_bytes": 200, "suspended_frames": 0, "saved_state_bytes": 0,
+                         "remaining_suspended_frames": 0, "remaining_saved_bytes": 0,
+                         "process_resident_bytes": 4096, "entry_frame_bytes": 256,
+                         "entry_shadow_slots": 2, "entry_static_root_stores": 3, "register_bytes": 128})
+        report = aot_comparison_report({"benchmarks": rows}, names, 1)
+        self.assertIn("AOT/VM", report)
+        self.assertIn("| arithmetic | 1000 | 256 | 2 | 3 | 128 |", report)
+        self.assertIn("| arithmetic | 1000 | cpp | 4096 |", report)
+        self.assertIn("not measured machine-stack usage", report)
+        with self.assertRaisesRegex(ValueError, "missing"):
+            aot_comparison_report({"benchmarks": rows[:-1]}, names, 1)
+        rows[-1]["result"] = 0
+        with self.assertRaisesRegex(ValueError, "checksums differ"):
+            aot_comparison_report({"benchmarks": rows}, names, 1)
+        rows[-1]["result"] = 499500
+        rows[0]["remaining_suspended_frames"] = 1
+        with self.assertRaisesRegex(ValueError, "retained temporary"):
+            aot_comparison_report({"benchmarks": rows}, names, 1)
+
     def test_uses_wall_time_medians_and_separates_cold_compilation_and_memory(self) -> None:
         rows = []
         for backend, values in zip(BACKENDS, ((1, 3, 2), (8, 10, 12), (4, 5, 6), (1, 2, 3))):

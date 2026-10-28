@@ -21,6 +21,8 @@ struct ErrorFields final {
   std::string_view code;
 };
 
+[[nodiscard]] std::string_view ErrorMessage(Value value, const ClassLayout& layout) noexcept;
+
 [[nodiscard]] std::expected<Value, ExecutionStatus> CreateError(Heap& heap,
                                                                 const ClassLayout& layout,
                                                                 ErrorFields fields);

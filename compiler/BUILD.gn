@@ -106,6 +106,7 @@ source_set("ir") {
     "ir/lowerer_match.cc",
     "ir/lowerer_string.cc",
     "ir/lowerer_switch.cc",
+    "ir/lowerer_types.cc",
     "ir/optimizer.cc",
     "ir/optimizer.h",
     "ir/persistent_ids.h",
@@ -189,8 +190,6 @@ source_set("compiler") {
     "compilation_state.h",
     "compiler.cc",
     "compiler.h",
-    "exit_code.cc",
-    "exit_code.h",
     "native_linker.cc",
     "native_linker.h",
     "register_allocator.cc",
@@ -214,24 +213,47 @@ source_set("compiler") {
 
 source_set("aot") {
   sources = [
+    "aot/async_emitter.cc",
+    "aot/function_emitter.cc",
+    "aot/function_emitter.h",
     "aot/native_compiler.cc",
     "aot/native_compiler.h",
+    "aot/native_export_emitter.cc",
+    "aot/native_export_emitter.h",
+    "aot/native_image_emitter.cc",
+    "aot/native_image_emitter.h",
+    "aot/native_roots.cc",
+    "aot/native_roots.h",
+    "aot/native_values.cc",
+    "aot/native_values.h",
+    "aot/reachability.cc",
+    "aot/reachability.h",
+    "aot/reference_emitter.cc",
+    "aot/scalar_emitter.cc",
   ]
   public_deps = [ ":ir" ]
+  include_dirs = [ root_gen_dir ]
   deps = [
     "//runtime",
+    "//runtime:native_build_identity",
     "//third_party:llvm",
   ]
 }
 
 source_set("aot_driver") {
   sources = [
+    "aot/artifact_publication.cc",
+    "aot/artifact_publication.h",
     "aot/build_command.cc",
     "aot/build_command.h",
+    "aot/target_support.cc",
+    "aot/target_support.h",
   ]
   deps = [
     ":aot",
     ":compiler",
+    "//base:json",
+    "//third_party:llvm",
   ]
 }
 
@@ -303,7 +325,6 @@ executable("vela_compiler_tests") {
     "dynamic_array_unittest.cc",
     "encoding_unittest.cc",
     "exception_unittest.cc",
-    "exit_code_unittest.cc",
     "expected_unittest.cc",
     "function_value_unittest.cc",
     "generic_unittest.cc",

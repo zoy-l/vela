@@ -8,7 +8,7 @@
 #include <string_view>
 
 #include "base/diagnostic.h"
-#include "compiler/exit_code.h"
+#include "base/process_exit.h"
 #include "compiler/repl_session.h"
 #include "vm/vm.h"
 
@@ -52,9 +52,9 @@ int RunRepl(const std::filesystem::path& directory, ReplStreams streams) {
     if (!std::getline(input, line)) {
       if (!pending.empty()) {
         errors << "vela: incomplete submission at end of input\n";
-        return compiler::kSourceErrorExitCode;
+        return kSourceErrorExitCode;
       }
-      return input.bad() ? compiler::kIoErrorExitCode : 0;
+      return input.bad() ? kIoErrorExitCode : 0;
     }
     if (pending.empty() && line.starts_with('.')) {
       if (Command(line, session, streams) == CommandResult::Quit) {

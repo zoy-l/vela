@@ -41,6 +41,17 @@ void Lowerer::EmitIndexRead(RegisterId result,
                             const LoweredValue& receiver,
                             RegisterId index,
                             frontend::SourceLocation location) {
+  using Kind = frontend::TypeDescriptor::Kind;
+  if (receiver.type.kind == Kind::Array) {
+    const auto name = receiver.type.nullable
+                          ? receiver.type.name.substr(0, receiver.type.name.size() - 1)
+                          : receiver.type.name;
+    RecordValueType(result, model_.array_elements.at(name));
+  } else if (receiver.type.kind == Kind::ByteArray) {
+    RecordValueType(result, {.kind = Kind::Int, .name = "int"});
+  } else if (receiver.type.kind == Kind::Dynamic) {
+    RecordValueType(result, {.kind = Kind::Dynamic, .name = "dynamic"});
+  }
   if (receiver.type.kind == frontend::TypeDescriptor::Kind::ByteArray ||
       receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
     const std::array values{receiver.reg, index};

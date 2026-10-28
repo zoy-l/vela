@@ -26,11 +26,13 @@ struct JsonRuntimeError final {
 // source 的借用由调用者保根；返回图由 Isolate 拥有，不借用 source 或解析 arena。
 [[nodiscard]] std::expected<Value, JsonRuntimeError> ParseJson(std::string_view source,
                                                                Isolate& isolate);
+[[nodiscard]] std::expected<Value, ExecutionStatus> CreateJsonError(Isolate& isolate,
+                                                                    const JsonRuntimeError& error);
 
 struct JsonEncodeFrame;
 enum class JsonFrameKind : std::uint8_t;
 
-// Convert 将控制权交回 VM，由普通调用帧执行公开的 toJson，再恢复同一个遍历状态。
+// 转换请求交回执行后端，由普通调用帧执行公开的 toJson，再恢复同一个遍历状态。
 class JsonEncoder final {
  public:
   JsonEncoder(Isolate& isolate, Value input);
@@ -40,7 +42,7 @@ class JsonEncoder final {
   JsonEncoder(JsonEncoder&&) = delete;
   JsonEncoder& operator=(JsonEncoder&&) = delete;
 
-  // string 是最终结果；object 是需要 VM 调用 toJson 的接收者。
+  // string 是最终结果；object 是需要调用 toJson 的接收者。
   [[nodiscard]] std::expected<Value, JsonRuntimeError> Advance();
   void ResumeConversion(Value result);
   [[nodiscard]] JsonRuntimeError ConversionError(std::string_view message) const;
@@ -67,7 +69,7 @@ class JsonEncoder final {
   static constexpr std::size_t kRootCount = 3;
   Heap* heap_;
   const CollectionLayout* active_type_;
-  // pending、输出 builder、当前路径的身份集合均跨越 GC 和 VM 调用保根。
+  // pending、输出 builder、当前路径的身份集合均跨越 GC 和脚本调用保根。
   std::array<Value, kRootCount> values_;
   RootRange roots_;
   JsonEncodeFrame* frame_ = nullptr;

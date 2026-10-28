@@ -86,6 +86,8 @@ void Lowerer::LowerInitializer(std::string name,
   Function function;
   function.name = std::move(name);
   function.return_type = type;
+  function.signature.emplace();
+  function.signature->result = RegisterRuntimeType(type);
   current_function_ = &function;
   binding_registers_.clear();
   next_register_ = 0;

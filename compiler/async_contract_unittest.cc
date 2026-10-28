@@ -436,6 +436,15 @@ async func main(): Future<int> {
   return await completer.future;
 })",
                               42},
+                    AsyncCase{"DynamicMemberGenerationPreservesSyncFutureIdentity", R"(
+enum Choice { first, second }
+async func main(): Future<int> {
+  const selected = await Future.sync((): Choice => Choice.second);
+  const token: dynamic = CancellationToken();
+  token.cancel();
+  return selected == Choice.second && token.isCancelled ? 42 : 0;
+})",
+                              42},
                     AsyncCase{"ExplicitComputationFactories", R"(
 async func main(): Future<int> {
   const first = await Future.sync<int>(() => 10);

@@ -20,7 +20,6 @@
 #include "runtime/exception.h"
 #include "runtime/heap.h"
 #include "runtime/object.h"
-#include "runtime/string.h"
 #include "runtime/value.h"
 #include "vm/bytecode.h"
 #include "vm/debug_info.h"
@@ -242,14 +241,7 @@ StepResult Execution::ExecuteException(ActiveFrame& active, Instruction instruct
   if (!runtime::Heap::IsThrowable(value.Read())) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  std::string_view message;
-  if (runtime::Heap::IsValueOfType(
-          value, {.kind = runtime::ValueKind::Object, .instance = &isolate_.error_layout()})) {
-    const auto* text = runtime::Heap::GetField(*value.AsObject(), runtime::kErrorMessageField);
-    if (text != nullptr && text->IsString()) {
-      message = text->AsString()->value();
-    }
-  }
+  const auto message = runtime::ErrorMessage(value, isolate_.error_layout());
   const auto created = CreateException(value, ExecutionStatus::Thrown, message);
   return std::unexpected(created ? ExecutionStatus::Thrown : created.error());
 }

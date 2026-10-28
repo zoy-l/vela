@@ -93,6 +93,7 @@ enum class ObjectKind : std::uint8_t {
   RegExp,
   RegExpMatch,
   ValueSlots,
+  NativeProgram,
 };
 
 struct CollectionLayout;

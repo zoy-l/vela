@@ -57,6 +57,7 @@ abseil_container_sources = [
   "abseil-cpp/absl/strings/internal/cordz_handle.cc",
   "abseil-cpp/absl/strings/internal/cordz_info.cc",
   "abseil-cpp/absl/strings/internal/damerau_levenshtein_distance.cc",
+  "abseil-cpp/absl/strings/internal/escaping.cc",
   "abseil-cpp/absl/strings/internal/memutil.cc",
   "abseil-cpp/absl/strings/internal/ostringstream.cc",
   "abseil-cpp/absl/strings/internal/str_format/arg.cc",

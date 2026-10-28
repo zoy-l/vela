@@ -354,6 +354,10 @@ void Heap::ProcessGrayObject(HeapObject& object) noexcept {
     }
     return;
   }
+  if (object.kind == ObjectKind::NativeProgram) {
+    MarkNativeProgram(object);
+    return;
+  }
   if (object.kind == ObjectKind::Future || object.kind == ObjectKind::Completer) {
     if (static_cast<Future*>(object.native_payload) != nullptr) {
       static_cast<Future*>(object.native_payload)->Trace(*this);
@@ -374,6 +378,9 @@ void Heap::ProcessGrayObject(HeapObject& object) noexcept {
   }
   if (object.layout == nullptr) {
     return;
+  }
+  if (auto* environment = NativeEnvironment(object)) {
+    MarkObject(*environment);
   }
   const Value* fields = ObjectFields(&object);
   for (std::uint32_t index : object.layout->reference_fields()) {
@@ -435,6 +442,8 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
 
   if (object.kind == ObjectKind::RegExp) {
     ReleaseRegExp(object);
+  } else if (object.kind == ObjectKind::NativeProgram) {
+    ReleaseNativeProgram(object);
   } else if (object.layout != nullptr) {
     std::destroy_n(ObjectFields(&object), object.layout->field_count());
   } else if (object.kind == ObjectKind::MutableString) {

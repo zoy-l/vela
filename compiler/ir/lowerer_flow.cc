@@ -146,7 +146,8 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
     const auto& arguments = model_.generic_arguments.at(iterable.type.name);
     element_type = arguments.front();
     const auto base = AllocateRegister(statement.location);
-    Emit({.opcode = Opcode::Move, .dst = base, .lhs = iterable.reg, .location = statement.location});
+    Emit(
+        {.opcode = Opcode::Move, .dst = base, .lhs = iterable.reg, .location = statement.location});
     const auto keys_array = AllocateRegister(statement.location);
     RegisterId value_base = base;
     if (is_map && statement.destructuring) {
@@ -221,6 +222,7 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
       .rhs = index,
       .location = statement.location,
   });
+  RecordValueType(value, element_type);
   const auto binding = AllocateRegister(statement.location);
   Emit({.opcode = Opcode::Move, .dst = binding, .lhs = value, .location = statement.location});
   DeclareLocal(statement.name, binding, element_type, statement.location, &statement);
@@ -231,6 +233,7 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
         .rhs = index,
         .location = statement.location,
     });
+    RecordValueType(second, value_type);
     const auto second_binding = AllocateRegister(statement.location);
     Emit({
         .opcode = Opcode::Move,

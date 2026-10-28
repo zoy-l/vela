@@ -55,6 +55,11 @@ def executable_name(name: str) -> str:
     return f"{name}.exe" if platform.system() == "Windows" else name
 
 
+def static_library_name(name: str) -> str:
+    """Return the archive name emitted by the repository's GN toolchain."""
+    return name + (".lib" if platform.system() == "Windows" else ".a")
+
+
 def _xcode_path(arguments: list[str], description: str) -> Path:
     result = subprocess.run(
         ["/usr/bin/xcrun", "--sdk", "macosx", *arguments],
@@ -142,6 +147,7 @@ def compiler_build_identity() -> str:
     paths = {ROOT / "DEPS", ROOT / "BUILD.gn", ROOT / "tools" / "config.py",
              ROOT / "third_party" / "BUILD.gn"}
     paths.update({ROOT / "third_party/unicode_data/manifest.json", ROOT / "tools/unicode_case.py"})
+    paths.update((ROOT / "third_party").glob("*.gni"))
     for directory in ("base", "compiler", "runtime", "vm", "build"):
         paths.update(path for path in (ROOT / directory).rglob("*")
                      if path.suffix in {".h", ".cc", ".gn", ".gni"}

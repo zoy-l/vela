@@ -31,3 +31,64 @@ executable("vela_benchmarks") {
     "//third_party:pcre2",
   ]
 }
+
+aot_native_directory = "$target_gen_dir/aot_native"
+aot_object = "$aot_native_directory/workload.o"
+aot_compiler = "$root_out_dir/vela"
+if (target_os == "win") {
+  aot_object = "$aot_native_directory/workload.obj"
+  aot_compiler += ".exe"
+}
+
+action("aot_native_inputs") {
+  testonly = true
+  script = "//tools/aot_benchmarks.py"
+  inputs = [
+    "aot_workloads.vela",
+    "aot_cases.json",
+  ]
+  outputs = [
+    aot_object,
+    "$aot_object.h",
+    "$aot_object.aot.json",
+    "$aot_native_directory/entries.h",
+    "$aot_native_directory/build_metrics.json",
+  ]
+  args = [
+    "--compiler",
+    rebase_path(aot_compiler, root_build_dir),
+    "--source",
+    rebase_path("aot_workloads.vela", root_build_dir),
+    "--cases",
+    rebase_path("aot_cases.json", root_build_dir),
+    "--output",
+    rebase_path(aot_native_directory, root_build_dir),
+  ]
+  deps = [ "//compiler:vela" ]
+}
+
+executable("vela_aot_benchmarks") {
+  testonly = true
+  sources = [
+    "aot_benchmark.cc",
+    "aot_benchmark_types.h",
+    "process_memory.h",
+    aot_object,
+  ]
+  if (target_os == "win") {
+    sources += [ "process_memory_win.cc" ]
+  } else if (target_os == "mac") {
+    sources += [ "process_memory_mac.cc" ]
+  } else {
+    sources += [ "process_memory_linux.cc" ]
+  }
+  include_dirs = [ root_gen_dir ]
+  benchmark_source = rebase_path("aot_workloads.vela", "")
+  defines = [ "VELA_AOT_BENCHMARK_SOURCE=\"$benchmark_source\"" ]
+  deps = [
+    ":aot_native_inputs",
+    "//compiler",
+    "//runtime",
+    "//third_party:benchmark_main",
+  ]
+}

@@ -40,6 +40,7 @@ RegisterId Lowerer::EmitArrayCallback(RegisterId callback,
         .reg = arguments.subspan(index).front(),
         .type = argument_types.subspan(index).front(),
     };
+    RecordValueType(argument.reg, argument.type);
     const auto& target = signature.parameters.at(index).type;
     if (argument.type.kind == frontend::TypeDescriptor::Kind::Dynamic ||
         target.kind == frontend::TypeDescriptor::Kind::Dynamic) {
@@ -55,6 +56,7 @@ RegisterId Lowerer::EmitArrayCallback(RegisterId callback,
       .index = static_cast<std::uint32_t>(arguments.size()),
       .location = location,
   });
+  RecordValueType(result, signature.return_type);
   // 同一个已求值的 receiver/version 调用窗口跨所有迭代复用，避免逐次物化检查参数。
   static_cast<void>(EmitTemporary({
       .opcode = Opcode::BuiltinCall,
@@ -159,6 +161,7 @@ Lowerer::LoweredValue Lowerer::LowerArraySortTraversal(const ArrayAlgorithmRegis
       .index = static_cast<std::uint32_t>(Builtin::ArraySlice),
       .location = location,
   });
+  RecordValueType(work, result_type);
   const auto positions = EmitTemporary({
       .opcode = Opcode::NewDynamicArray,
       .lhs = length,
@@ -198,6 +201,7 @@ Lowerer::LoweredValue Lowerer::LowerArraySortTraversal(const ArrayAlgorithmRegis
   Emit({.opcode = Opcode::JumpIfFalse, .lhs = more, .location = location});
   const auto value =
       EmitTemporary({.opcode = Opcode::GetIndex, .lhs = work, .rhs = index, .location = location});
+  RecordValueType(value, inputs.element_type);
   Emit({
       .opcode = Opcode::SetIndex,
       .dst = base,
@@ -223,6 +227,14 @@ RegisterId Lowerer::CheckArrayCallbackResult(RegisterId value,
   if (inputs.validation_plan) {
     const std::array checked{*inputs.validation_plan, value};
     const auto validated = AllocateTemporary(location);
+    if (algorithm != ArrayAlgorithm::Map && algorithm != ArrayAlgorithm::ForEach) {
+      RecordValueType(validated, algorithm == ArrayAlgorithm::Reduce
+                                     ? result_type
+                                     : frontend::TypeDescriptor{
+                                           .kind = frontend::TypeDescriptor::Kind::Bool,
+                                           .name = "bool",
+                                       });
+    }
     EmitBuiltinCall(Builtin::DynamicArrayValidate, validated, checked, location);
     value = validated;
   }
@@ -284,6 +296,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayTraversal(const ArrayAlgorithmRegisters
     initial.immediate = algorithm == Algorithm::Every ? 1 : 0;
   }
   const auto result = EmitTemporary(initial);
+  RecordValueType(result, result_type);
   const auto loop = static_cast<std::uint32_t>(current_function_->instructions.size());
   const auto condition =
       EmitTemporary({.opcode = Opcode::LessInt, .lhs = index, .rhs = length, .location = location});
@@ -291,6 +304,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayTraversal(const ArrayAlgorithmRegisters
   Emit({.opcode = Opcode::JumpIfFalse, .lhs = condition, .location = location});
   const auto element =
       EmitTemporary({.opcode = Opcode::GetIndex, .lhs = base, .rhs = index, .location = location});
+  RecordValueType(element, inputs.element_type);
   auto arguments = algorithm == Algorithm::Reduce ? std::vector{result, element, index, base}
                                                   : std::vector{element, index, base};
   arguments.resize(callback_arity);
@@ -347,6 +361,8 @@ RegisterId Lowerer::EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
       {.opcode = Opcode::GetIndex, .lhs = inputs.array, .rhs = left, .location = location});
   const auto right_value = EmitTemporary(
       {.opcode = Opcode::GetIndex, .lhs = inputs.array, .rhs = right, .location = location});
+  RecordValueType(left_value, inputs.element_type);
+  RecordValueType(right_value, inputs.element_type);
   const auto values = std::array{left_value, right_value};
   const std::array types{inputs.element_type, inputs.element_type};
   auto comparison =
@@ -355,6 +371,7 @@ RegisterId Lowerer::EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
   if (inputs.validation_plan) {
     const std::array arguments{*inputs.validation_plan, comparison};
     const auto result = AllocateTemporary(location);
+    RecordValueType(result, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
     EmitBuiltinCall(Builtin::DynamicArrayValidate, result, arguments, location);
     comparison = result;
   }
@@ -394,6 +411,8 @@ RegisterId Lowerer::EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
       {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = left, .location = location});
   const auto right_position = EmitTemporary(
       {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = right, .location = location});
+  RecordValueType(left_position, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
+  RecordValueType(right_position, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
   Emit({
       .opcode = Opcode::LessInt,
       .dst = less,
@@ -442,12 +461,16 @@ void Lowerer::LowerArraySiftDown(RegisterId root,
       EmitTemporary({.opcode = Opcode::GetIndex, .lhs = array, .rhs = root, .location = location});
   const auto child_value =
       EmitTemporary({.opcode = Opcode::GetIndex, .lhs = array, .rhs = child, .location = location});
+  RecordValueType(root_value, inputs.element_type);
+  RecordValueType(child_value, inputs.element_type);
   const auto ordered = current_function_->instructions.size();
   Emit({.opcode = Opcode::JumpIfFalse, .lhs = needs_swap, .location = location});
   const auto root_position = EmitTemporary(
       {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = root, .location = location});
   const auto child_position = EmitTemporary(
       {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = child, .location = location});
+  RecordValueType(root_position, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
+  RecordValueType(child_position, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
   Emit({
       .opcode = Opcode::SetIndex,
       .dst = inputs.positions,
@@ -514,6 +537,8 @@ void Lowerer::LowerArraySort(const ArrayAlgorithmRegisters& inputs,
       {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = zero, .location = location});
   const auto last_position = EmitTemporary(
       {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = end, .location = location});
+  RecordValueType(first_position, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
+  RecordValueType(last_position, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
   Emit({
       .opcode = Opcode::SetIndex,
       .dst = inputs.positions,
@@ -532,6 +557,8 @@ void Lowerer::LowerArraySort(const ArrayAlgorithmRegisters& inputs,
       EmitTemporary({.opcode = Opcode::GetIndex, .lhs = array, .rhs = zero, .location = location});
   const auto last =
       EmitTemporary({.opcode = Opcode::GetIndex, .lhs = array, .rhs = end, .location = location});
+  RecordValueType(first, inputs.element_type);
+  RecordValueType(last, inputs.element_type);
   Emit({.opcode = Opcode::SetIndex, .dst = array, .lhs = zero, .rhs = last, .location = location});
   Emit({.opcode = Opcode::SetIndex, .dst = array, .lhs = end, .rhs = first, .location = location});
   const auto start = EmitTemporary({.opcode = Opcode::Move, .lhs = zero, .location = location});

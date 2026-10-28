@@ -153,7 +153,10 @@ void Lowerer::LowerTry(const frontend::Statement& statement) {
     current_handler_ = catch_finalizer ? catch_finalizer : outer_handler;
     PushScope();
     if (!clause.name.empty()) {
-      DeclareLocal(clause.name, payload, model_.catch_types.at(&clause), clause.location, &clause);
+      // 各 catch 的局部绑定具有各自的类型，不能改写共享异常载荷寄存器的类型。
+      const auto bound = AllocateTemporary(clause.location);
+      Emit({.opcode = Opcode::Move, .dst = bound, .lhs = payload, .location = clause.location});
+      DeclareLocal(clause.name, bound, model_.catch_types.at(&clause), clause.location, &clause);
     }
     LowerStatement(*clause.body);
     PopScope();

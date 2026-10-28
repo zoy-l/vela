@@ -731,41 +731,15 @@ LayoutTables::LayoutTables(std::vector<runtime::ClassLayout*> classes,
       arrays_(std::move(arrays)),
       collections_(std::move(collections)),
       types_(std::move(types)),
-      members_(std::move(members)) {
-  for (std::size_t index = 0; index < types_.size(); ++index) {
-    const auto& type = types_.at(index);
-    if (!type.nullable && !type.dynamic && type.interface == nullptr && !type.callable) {
-      receiver_indices_.try_emplace(Key(type), static_cast<std::uint32_t>(index));
-    }
-  }
-  for (std::size_t index = 0; index < members_.size(); ++index) {
-    const auto& member = members_.at(index);
-    member_indices_.try_emplace(std::pair(member.receiver_type, std::string_view(member.name)),
-                                index);
-  }
-}
-
-LayoutTables::ReceiverKey LayoutTables::Key(const runtime::TypeConstraint& type) {
-  return {type.kind, type.object_kind, type.instance, type.array, type.collection, type.signature};
-}
+      members_(types_, std::move(members)) {}
 
 bool LayoutTables::IsCanonicalReceiverType(std::uint32_t index) const {
-  if (index >= types_.size()) {
-    return false;
-  }
-  const auto found = receiver_indices_.find(Key(types_.at(index)));
-  return found != receiver_indices_.end() && found->second == index;
+  return members_.IsCanonicalReceiverType(index);
 }
 
 const MemberDefinition* LayoutTables::FindMember(runtime::Value receiver,
                                                  std::string_view name) const {
-  const auto key = Key(runtime::Heap::TypeOf(receiver));
-  const auto type = receiver_indices_.find(key);
-  if (type == receiver_indices_.end()) {
-    return nullptr;
-  }
-  const auto member = member_indices_.find(std::pair(type->second, name));
-  return member == member_indices_.end() ? nullptr : &members_.at(member->second);
+  return members_.Find(receiver, name);
 }
 
 Function FunctionStorage::View() const noexcept {
@@ -861,10 +835,6 @@ std::expected<Program, ValidationError> Program::Create(
       .isolate = &isolate,
       .globals = std::move(globals),
   }));
-}
-
-bool Program::HasCallable(const runtime::ClassLayout& layout) const noexcept {
-  return layout.code_identity() == storage_->code_identity;
 }
 
 GlobalStorage::GlobalStorage(runtime::Heap& heap, std::vector<std::uint32_t> functions)

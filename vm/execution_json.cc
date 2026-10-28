@@ -3,11 +3,9 @@
 
 #include <expected>
 #include <optional>
-#include <string>
 #include <utility>
 
 #include "base/builtin.h"
-#include "base/execution_status.h"
 #include "runtime/error.h"
 #include "runtime/json.h"
 #include "runtime/object.h"
@@ -19,19 +17,13 @@
 namespace vela::vm::internal {
 
 StepResult Execution::JsonError(const runtime::JsonRuntimeError& error) {
-  if (error.status != ExecutionStatus::JsonDecodeError &&
-      error.status != ExecutionStatus::JsonEncodeError) {
-    return std::unexpected(error.status);
-  }
-  const auto decoding = error.status == ExecutionStatus::JsonDecodeError;
-  const auto message =
-      decoding ? error.message + " at byte " + std::to_string(error.offset) : error.message;
-  const auto payload =
-      runtime::CreateError(isolate_.heap(), isolate_.error_layout(),
-                           {.message = message, .code = ExecutionStatusCode(error.status)});
+  const auto payload = runtime::CreateJsonError(isolate_, error);
   if (!payload) {
     return std::unexpected(payload.error());
   }
+  const auto message = runtime::Heap::GetField(*payload->AsObject(), runtime::kErrorMessageField)
+                           ->AsString()
+                           ->value();
   if (auto created = CreateException(*payload, ExecutionStatus::Thrown, message); !created) {
     return created;
   }

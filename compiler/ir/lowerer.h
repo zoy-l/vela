@@ -159,7 +159,8 @@ class Lowerer final {
   [[nodiscard]] LoweredValue LowerNamedCall(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerMethodCall(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerFutureCall(const frontend::Expression& expression);
-  [[nodiscard]] std::uint32_t AddSyncFutureFunction(const frontend::TypeDescriptor& return_type);
+  [[nodiscard]] std::uint32_t AddSyncFutureFunction(const frontend::TypeDescriptor& return_type,
+                                                    const frontend::TypeDescriptor& callback_type);
   LoweredValue LowerFunctionValue(const frontend::Expression& expression);
   LoweredValue LowerIndirectCall(const frontend::Expression& expression);
   LoweredValue LowerInterfaceCall(const frontend::Expression& expression);
@@ -214,6 +215,8 @@ class Lowerer final {
                                                         std::string_view name);
   void Emit(Instruction instruction);
   void RecordValueType(RegisterId reg, const frontend::TypeDescriptor& type);
+  void RecordInstructionValueType(const Instruction& instruction);
+  void RecordProgramValueTypes();
   void PushScope();
   void PopScope();
   bool DeclareLocal(std::string_view name,

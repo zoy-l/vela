@@ -20,6 +20,7 @@ Lowerer::LoweredValue Lowerer::ReadLocal(const Local& local, frontend::SourceLoc
     return {.reg = local.reg, .type = local.type};
   }
   const auto value = AllocateTemporary(location);
+  RecordValueType(value, local.type);
   Emit({.opcode = Opcode::GetField, .dst = value, .lhs = local.reg, .location = location});
   return {.reg = value, .type = local.type};
 }

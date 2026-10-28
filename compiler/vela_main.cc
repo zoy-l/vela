@@ -10,12 +10,12 @@
 #include "base/diagnostic.h"
 #include "base/file.h"
 #include "base/path.h"
+#include "base/process_exit.h"
 #include "base/source_location.h"
 #include "compiler/aot/build_command.h"
 #include "compiler/build_info.h"
 #include "compiler/compilation_cache.h"
 #include "compiler/compiler.h"
-#include "compiler/exit_code.h"
 #include "compiler/frontend/checker.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/tooling/debug_console.h"
@@ -24,8 +24,9 @@
 #include "compiler/tooling/language_server.h"
 #include "compiler/tooling/repl_console.h"
 #include "compiler/tooling/standard_streams.h"
-#include "runtime/future.h"
 #include "runtime/isolate.h"
+#include "runtime/process_entry.h"
+#include "runtime/process_exit.h"
 #include "runtime/value.h"
 #include "vm/bytecode_image.h"
 #include "vm/execution_status.h"
@@ -34,27 +35,29 @@
 
 namespace {
 
-using vela::compiler::kIoErrorExitCode;
-using vela::compiler::kRuntimeErrorExitCode;
-using vela::compiler::kSourceErrorExitCode;
-using vela::compiler::kUsageExitCode;
+using vela::kIoErrorExitCode;
+using vela::kRuntimeErrorExitCode;
+using vela::kSourceErrorExitCode;
+using vela::kUsageExitCode;
 
 void PrintUsage(std::ostream& output) {
-  output << "Usage: vela <command> [arguments]\n"
-         << "\n"
-         << "Commands:\n"
-         << "  --help       Show this message\n"
-         << "  --version    Show the compiler version\n"
-         << "  check FILE   Parse and statically check a Vela source file\n"
-         << "  run FILE     Compile with a local content cache and run main\n"
-         << "  build FILE --emit=obj --export=NAME -o OUTPUT   Build a native object\n"
-         << "  compile FILE OUTPUT   Write a validated bytecode image\n"
-         << "  exec IMAGE   Load a bytecode image and run main\n"
-         << "  fmt [--write|--check] FILE   Format Vela source\n"
-         << "  doc FILE OUTPUT   Generate exported API Markdown\n"
-         << "  lsp          Run the language server over stdio\n"
-         << "  debug FILE   Debug main with source breakpoints and stepping\n"
-         << "  repl         Start a persistent interactive session\n";
+  output
+      << "Usage: vela <command> [arguments]\n"
+      << "\n"
+      << "Commands:\n"
+      << "  --help       Show this message\n"
+      << "  --version    Show the compiler version\n"
+      << "  check FILE   Parse and statically check a Vela source file\n"
+      << "  run FILE     Compile with a local content cache and run main\n"
+      << "  build FILE [--emit=exe|obj|staticlib] [--export=NAME] -o OUTPUT   Build native code\n"
+      << "  build --verify-manifest=FILE   Verify a native library and its header\n"
+      << "  compile FILE OUTPUT   Write a validated bytecode image\n"
+      << "  exec IMAGE   Load a bytecode image and run main\n"
+      << "  fmt [--write|--check] FILE   Format Vela source\n"
+      << "  doc FILE OUTPUT   Generate exported API Markdown\n"
+      << "  lsp          Run the language server over stdio\n"
+      << "  debug FILE   Debug main with source breakpoints and stepping\n"
+      << "  repl         Start a persistent interactive session\n";
 }
 
 void PrintDiagnostics(std::string_view path, const vela::frontend::Diagnostics& diagnostics) {
@@ -77,74 +80,17 @@ int CheckFile(std::string_view path_text) {
 
 enum class ExecutionMode : std::uint8_t { Run, Debug };
 
-void PrintAsyncFailure(const vela::runtime::Future& root,
-                       std::string_view label = "async main failed") {
-  const auto diagnostic = root.error_diagnostic();
-  if (!diagnostic || diagnostic->message.empty()) {
-    std::cerr << "vela: " << label << '\n';
-  } else {
-    std::cerr << "vela: " << label << ": " << diagnostic->message << '\n';
-  }
-  if (!diagnostic) {
-    return;
-  }
-  for (const auto& frame : diagnostic->stack_trace) {
-    std::cerr << "  at " << (frame.function.empty() ? "<anonymous>" : frame.function);
-    if (!frame.source_path.empty()) {
-      std::cerr << " (" << frame.source_path << ':' << frame.line << ':' << frame.column << ')';
-    } else {
-      std::cerr << " (instruction " << frame.instruction << ')';
-    }
-    std::cerr << '\n';
-  }
-}
-
 int ExecuteAsync(const vela::vm::Program& program,
                  vela::runtime::Isolate& isolate,
                  const vela::vm::FunctionHandle& function) {
+  vela::runtime::ProcessEntry process(isolate, std::cerr);
   vela::vm::VirtualMachine machine(isolate);
-  auto& scheduler = isolate.scheduler();
-  bool background_failed = false;
-  scheduler.SetUnhandledErrorHandler(
-      [&](const vela::runtime::Future& future, vela::runtime::Value) {
-        background_failed = true;
-        PrintAsyncFailure(future, "unhandled Future error");
-      });
   const auto executed = machine.Execute(program, function.index());
   if (!executed.Succeeded()) {
-    scheduler.SetUnhandledErrorHandler({});
     vela::vm::WriteRuntimeError(std::cerr, executed);
     return kRuntimeErrorExitCode;
   }
-  const auto* future = executed.value.IsObject()
-                           ? vela::runtime::Heap::GetFuture(*executed.value.AsObject())
-                           : nullptr;
-  auto root = future != nullptr ? future->Rooted()
-                                : vela::runtime::Future::Value(executed.value, &scheduler);
-  root.AttachHeap(isolate.heap());
-  root.Observe([](vela::runtime::FutureState, vela::runtime::Value) {});
-  if (!scheduler.PumpUntil(root, vela::runtime::FuturePumpMode::WaitForHost)) {
-    scheduler.SetUnhandledErrorHandler({});
-    std::cerr << "vela: async idle/deadlock: main has no pending work\n";
-    return kRuntimeErrorExitCode;
-  }
-  while (scheduler.PumpOne(vela::runtime::FuturePumpMode::WaitForHost)) {
-  }
-  scheduler.SetUnhandledErrorHandler({});
-  if (root.state() == vela::runtime::FutureState::Failed) {
-    PrintAsyncFailure(root);
-    return kRuntimeErrorExitCode;
-  }
-  if (background_failed) {
-    return kRuntimeErrorExitCode;
-  }
-  const auto exit_code =
-      vela::compiler::ProcessExitCode(root.value().value_or(vela::runtime::Value::Null()));
-  if (!exit_code) {
-    std::cerr << "vela: error: " << exit_code.error() << '\n';
-    return kRuntimeErrorExitCode;
-  }
-  return *exit_code;
+  return process.Finish(executed.value);
 }
 
 int Execute(const vela::vm::Program& program,
@@ -173,7 +119,7 @@ int Execute(const vela::vm::Program& program,
     vela::vm::WriteRuntimeError(std::cerr, result);
     return kRuntimeErrorExitCode;
   }
-  const auto exit_code = vela::compiler::ProcessExitCode(result.value);
+  const auto exit_code = vela::runtime::ProcessExitCode(result.value);
   if (!exit_code) {
     std::cerr << "vela: error: " << exit_code.error() << '\n';
     return kRuntimeErrorExitCode;

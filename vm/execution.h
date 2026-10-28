@@ -13,12 +13,14 @@
 #include <vector>
 
 #include "base/async_operation.h"
-#include "base/builtin.h"
 #include "base/callable.h"
 #include "base/execution_limits.h"
 #include "base/member.h"
+#include "runtime/callable.h"
+#include "runtime/dynamic_call.h"
 #include "runtime/exception.h"
 #include "runtime/future.h"
+#include "runtime/future_composition.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/json.h"
@@ -69,14 +71,6 @@ struct AsyncArguments final {
   [[nodiscard]] runtime::Value At(std::size_t index) const {
     return values.subspan(index).front().Read();
   }
-  StepResult StoreObject(runtime::HeapObject* object) const {
-    if (object == nullptr) {
-      return std::unexpected(ExecutionStatus::OutOfMemory);
-    }
-    auto result = destination;
-    result.SetObject(object);
-    return {};
-  }
 };
 
 struct SuspensionPoint final {
@@ -110,9 +104,6 @@ class Execution final {
   static void CompleteFuture(runtime::Isolate& isolate,
                              runtime::Future& future,
                              const ExecutionResult& result);
-  static void CompleteFuture(runtime::Isolate& isolate,
-                             runtime::Future& future,
-                             const runtime::Future& source);
   [[nodiscard]] runtime::FutureDiagnostic ThrowDiagnostic(runtime::Value payload) const;
   [[nodiscard]] static runtime::Future InvokeFuture(
       runtime::Isolate& isolate,
@@ -122,55 +113,19 @@ class Execution final {
       std::shared_ptr<DebugSession> debug_session = {});
 
  private:
-  enum class DynamicCallStyle : std::uint8_t { Function, Method };
-  struct ResolvedCallable final {
-    std::uint32_t function = 0;
-    std::optional<runtime::Value> implicit = std::nullopt;
-  };
+  using DynamicCallStyle = runtime::DynamicCallStyle;
+  using ResolvedCallable = runtime::ResolvedCallable;
   struct FrameEntry final {
     std::uint32_t function = 0;
     std::uint8_t destination = 0;
   };
-  struct BoundArguments final {
-    std::array<std::uint32_t, kMaxFrameRegisters> source_indices{};
-    std::uint32_t count = 0;
-    std::uint32_t skipped = 0;
-    std::uint32_t rest_start = 0;
-    std::uint32_t rest_count = 0;
-  };
-  struct ArgumentBinding final {
-    BoundArguments bound;
-    std::array<bool, kMaxFrameRegisters> assigned{};
-    std::uint32_t positional = 0;
-    bool named = false;
-  };
-  [[nodiscard]] static StepResult BindDynamicArgument(const CallSignature& signature,
-                                                      std::string_view name,
-                                                      std::uint32_t index,
-                                                      DynamicCallStyle style,
-                                                      ArgumentBinding& binding);
-  [[nodiscard]] static StepResult CheckDynamicArguments(
-      const CallSignature& signature,
-      std::span<const runtime::TypeConstraint> types,
-      const runtime::HeapObject& arguments,
-      const BoundArguments& bound);
-  [[nodiscard]] StepResult CopyDynamicArguments(const CallSignature& signature,
-                                                std::span<const runtime::TypeConstraint> types,
-                                                const runtime::HeapObject& arguments,
-                                                const BoundArguments& bound,
-                                                runtime::RegisterView parameters);
-  [[nodiscard]] std::expected<runtime::HeapObject*, ExecutionStatus> PackDynamicRest(
-      const runtime::HeapObject& arguments,
-      const BoundArguments& bound,
-      const runtime::ArrayLayout& type);
+  StepResult CopyDynamicArguments(const CallSignature& signature,
+                                  std::span<const runtime::TypeConstraint> types,
+                                  const runtime::HeapObject& arguments,
+                                  const runtime::BoundArguments& bound,
+                                  runtime::RegisterView parameters);
   [[nodiscard]] std::expected<ResolvedCallable, ExecutionStatus> ResolveCallable(
       runtime::Value value) const;
-  [[nodiscard]] static std::expected<BoundArguments, ExecutionStatus> BindDynamicArguments(
-      const CallSignature& signature,
-      const ResolvedCallable& callable,
-      const runtime::HeapObject& arguments,
-      const runtime::HeapObject& names,
-      DynamicCallStyle style);
   StepResult EnterDynamicCall(ActiveFrame& active,
                               const ResolvedCallable& callable,
                               const runtime::HeapObject& arguments,
@@ -215,22 +170,10 @@ class Execution final {
   StepResult ExecuteCalendar(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteJson(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteDynamic(ActiveFrame& active, Instruction instruction);
-  StepResult ExecuteDynamicBinary(runtime::RegisterReference destination,
-                                  runtime::RegisterView arguments);
-  static StepResult ExecuteDynamicEquality(OpCode operation,
-                                           runtime::RegisterReference destination,
-                                           runtime::Value left,
-                                           runtime::Value right);
-  StepResult ExecuteDynamicIndex(ActiveFrame& active, Instruction instruction);
-  StepResult ExecuteDynamicArrayIndex(Builtin builtin,
-                                      runtime::RegisterReference destination,
-                                      runtime::RegisterView arguments);
   StepResult ExecuteDynamicCall(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteDynamicMember(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteDynamicMethodCall(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteDynamicArray(ActiveFrame& active, Instruction instruction);
-  StepResult PrepareDynamicArray(ActiveFrame& active, Instruction instruction);
-  StepResult InvokeDynamicArray(ActiveFrame& active, Instruction instruction);
   StepResult ReadDynamicMember(ActiveFrame& active,
                                Instruction instruction,
                                const MemberDefinition& member);
@@ -239,7 +182,6 @@ class Execution final {
                                 const MemberDefinition& member);
   [[nodiscard]] std::expected<runtime::Value, ExecutionStatus> CreateDynamicCallPlan(
       runtime::Value value,
-      DynamicCallStyle style,
       std::optional<std::uint32_t> target = std::nullopt);
   [[nodiscard, clang::always_inline]] std::expected<runtime::RegisterView, ExecutionStatus>
   EnterFrame(FrameEntry entry);
@@ -252,11 +194,13 @@ class Execution final {
   StepResult ExecuteRegExp(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteAsync(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteDynamicAsync(ActiveFrame& active, Instruction instruction);
-  StepResult ExecuteCompleter(const AsyncArguments& call);
   StepResult ExecuteAsyncState(const AsyncArguments& call);
-  StepResult ExecuteAsyncComputation(const AsyncArguments& call);
-  StepResult ExecuteAsyncAggregation(ActiveFrame& active, const AsyncArguments& call);
-  StepResult ExecuteAsyncComposition(const AsyncArguments& call);
+  StepResult ExecuteFutureCall(const AsyncArguments& call,
+                               const runtime::ArrayLayout* wait_layout = nullptr);
+  [[nodiscard]] runtime::FutureCallbacks MakeFutureCallbacks();
+  [[nodiscard]] runtime::FutureCall DescribeFutureCall(
+      AsyncOperation operation,
+      std::span<const runtime::Value> values) const;
   StepResult ExecuteNative(ActiveFrame& active);
   StepResult CompleteCallSetup();
   [[nodiscard]] std::expected<runtime::Value, ExecutionStatus> ValidateNativeFuture(

@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <expected>
 #include <limits>
+#include <memory>
+#include <new>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -24,6 +26,7 @@ namespace vela::runtime {
 class Heap;
 struct RegExpStorage;
 struct RegExpMatchStorage;
+struct NativeProgramState;
 
 class RootRange final {
  public:
@@ -122,6 +125,12 @@ class Heap final {
 
   [[nodiscard]] HeapObject* AllocateInstance(const ClassLayout& layout,
                                              std::span<const Value> initial_fields = {}) noexcept;
+  [[nodiscard]] HeapObject* AllocateNativeProgram(
+      std::unique_ptr<NativeProgramState> state) noexcept;
+  [[nodiscard]] static NativeProgramState& NativeProgram(HeapObject& object) noexcept;
+  void SetNativeProgramSlot(HeapObject& object, std::size_t index, Value value) noexcept;
+  void SetNativeEnvironment(HeapObject& callable, HeapObject& state) noexcept;
+  [[nodiscard]] static HeapObject* NativeEnvironment(const HeapObject& callable) noexcept;
   [[nodiscard]] HeapObject* AllocateFuture(Future future) noexcept;
   [[nodiscard]] static Future* GetFuture(const HeapObject& object) noexcept;
   [[nodiscard]] HeapObject* AllocateCompleter(Future future) noexcept;
@@ -313,6 +322,8 @@ class Heap final {
 
  private:
   void MarkByteData(HeapObject& object) noexcept;
+  void MarkNativeProgram(HeapObject& object) noexcept;
+  static void ReleaseNativeProgram(HeapObject& object) noexcept;
   void MarkRegExp(HeapObject& object) noexcept;
   static void ReleaseRegExp(HeapObject& object) noexcept;
   friend class RootRange;
@@ -401,6 +412,35 @@ class Heap final {
   GcPhase phase_ = GcPhase::Idle;
 };
 
-}  // namespace vela::runtime
+// 初始化不得分配或失败；对象的引用及有效长度全部就绪后才发布给 GC。
+template <class Initialize>
+HeapObject* Heap::AllocateObject(ObjectKind kind,
+                                 std::size_t size,
+                                 const Initialize& initialize) noexcept {
+  MaybeCollect(size);
+  const auto allocation = AllocateRaw(size);
+  if (allocation.memory == nullptr) {
+    return nullptr;
+  }
+  auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
+  object->kind = kind;
+  initialize(*object);
+  Publish(*object, allocation);
+  return object;
+}
 
-#include "runtime/heap_allocation.h"  // IWYU pragma: export
+template <class T>
+HeapObject* Heap::AllocateNativeObject(ObjectKind kind, T payload) noexcept {
+  auto owned = std::unique_ptr<T>(new (std::nothrow) T(std::move(payload)));
+  if (owned == nullptr) {
+    return nullptr;
+  }
+  return AllocateObject(kind, sizeof(HeapObject), [&owned](HeapObject& object) {
+    if constexpr (std::is_same_v<T, Future>) {
+      owned->MakeHeapOwned();
+    }
+    object.native_payload = owned.release();
+  });
+}
+
+}  // namespace vela::runtime

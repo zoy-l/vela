@@ -8,6 +8,9 @@
 #include <absl/container/flat_hash_map.h>
 
 #include "base/callable.h"
+#include "base/layout_description.h"
+#include "compiler/frontend/type_checker.h"
+#include "compiler/ir/ir.h"
 
 namespace vela::ir {
 namespace {
@@ -31,7 +34,7 @@ bool HasReference(SourceType::Kind kind) {
 class LayoutDescription final {
  public:
   LayoutDescription(const Program& program, const frontend::SemanticModel& model)
-      : program_(program), model_(model) {}
+      : program_(&program), model_(&model) {}
 
   layout::Program Build();
 
@@ -41,9 +44,10 @@ class LayoutDescription final {
   std::uint32_t Collection(const SourceType& type);
   std::uint32_t Signature(const SourceType& type);
   std::uint32_t CallableSignature(const Class& type);
+  layout::Class DescribeClass(const Class& type);
 
-  const Program& program_;
-  const frontend::SemanticModel& model_;
+  const Program* program_;
+  const frontend::SemanticModel* model_;
   layout::Program result_;
   absl::flat_hash_map<std::string, std::uint32_t> classes_;
   absl::flat_hash_map<std::string, std::uint32_t> arrays_;
@@ -93,7 +97,7 @@ layout::Type LayoutDescription::Type(const SourceType& type) {
       break;
     case Source::Interface:
       result.kind = Kind::Interface;
-      result.index = model_.interfaces.at(TypeKey(type)).index;
+      result.index = model_->interfaces.at(TypeKey(type)).index;
       break;
     case Source::Array:
       result.kind = Kind::Array;
@@ -139,7 +143,7 @@ std::uint32_t LayoutDescription::Array(const SourceType& type) {
   if (const auto found = arrays_.find(key); found != arrays_.end()) {
     return found->second;
   }
-  const auto element = Type(model_.array_elements.at(key));
+  const auto element = Type(model_->array_elements.at(key));
   const auto index = static_cast<std::uint32_t>(result_.arrays.size());
   result_.arrays.push_back({.name = key, .element = element});
   arrays_.emplace(key, index);
@@ -151,7 +155,7 @@ std::uint32_t LayoutDescription::Collection(const SourceType& type) {
   if (const auto found = collections_.find(key); found != collections_.end()) {
     return found->second;
   }
-  const auto& arguments = model_.generic_arguments.at(key);
+  const auto& arguments = model_->generic_arguments.at(key);
   layout::Collection descriptor{.name = key, .key = Type(arguments.front())};
   if (type.kind == SourceType::Kind::Map) {
     descriptor.value = Type(arguments.back());
@@ -169,7 +173,7 @@ std::uint32_t LayoutDescription::Signature(const SourceType& type) {
   }
   layout::Signature descriptor{.name = key, .parameters = {}};
   if (type.kind == SourceType::Kind::Function) {
-    const auto& function = model_.function_types.at(key);
+    const auto& function = model_->function_types.at(key);
     for (const auto& parameter : function.parameters) {
       descriptor.parameters.push_back({.type = Type(parameter.type)});
     }
@@ -177,7 +181,7 @@ std::uint32_t LayoutDescription::Signature(const SourceType& type) {
       descriptor.result = Type(function.return_type);
     }
   } else {
-    const auto& arguments = model_.generic_arguments.at(key);
+    const auto& arguments = model_->generic_arguments.at(key);
     const auto& payload = arguments.front();
     if (payload.kind != SourceType::Kind::Void) {
       descriptor.result = Type(payload);
@@ -197,7 +201,8 @@ std::uint32_t LayoutDescription::CallableSignature(const Class& type) {
   if (callable.mode == CallableMode::InterfaceMethod) {
     return Signature({.kind = SourceType::Kind::Function, .name = type.callable_type});
   }
-  const auto& call = *program_.functions.at(callable.function).signature;
+  const auto& program = *program_;
+  const auto& call = *program.functions.at(callable.function).signature;
   // 绑定方法的接收者不属于宿主可见参数。其余参数标志直接沿用 lowering 的事实。
   const auto skipped =
       callable.mode == CallableMode::BoundMethod && call.hidden_parameters == 0 ? 1U : 0U;
@@ -205,75 +210,80 @@ std::uint32_t LayoutDescription::CallableSignature(const Class& type) {
   for (std::size_t index = skipped; index < call.parameters.size(); ++index) {
     const auto& parameter = call.parameters.at(index);
     descriptor.parameters.push_back({
-        .type = Type(program_.runtime_types.at(parameter.type)),
+        .type = Type(program.runtime_types.at(parameter.type)),
         .optional = parameter.optional,
         .rest = parameter.rest,
     });
   }
   if (call.result) {
-    descriptor.result = Type(program_.runtime_types.at(*call.result));
+    descriptor.result = Type(program.runtime_types.at(*call.result));
   }
   const auto index = static_cast<std::uint32_t>(result_.signatures.size());
   result_.signatures.push_back(std::move(descriptor));
   return index;
 }
 
+layout::Class LayoutDescription::DescribeClass(const Class& type) {
+  layout::Class descriptor{
+      .name = type.name,
+      .field_count = type.kind == Class::Kind::Expected
+                         ? 1U
+                         : static_cast<std::uint32_t>(type.field_types.size()),
+      .reference_fields = {},
+      .callable = type.callable,
+      .interfaces = type.interfaces,
+      .dispatch_targets = type.dispatch_targets,
+  };
+  switch (type.kind) {
+    case Class::Kind::Instance:
+    case Class::Kind::Expected:
+      break;
+    case Class::Kind::RuntimeError:
+      descriptor.kind = layout::Class::Kind::RuntimeError;
+      break;
+    case Class::Kind::DateParts:
+      descriptor.kind = layout::Class::Kind::DateParts;
+      break;
+    case Class::Kind::Enum:
+      descriptor.kind = layout::Class::Kind::Enum;
+      break;
+  }
+  for (std::size_t index = 0; index < type.field_types.size(); ++index) {
+    if (HasReference(type.field_types.at(index).kind)) {
+      descriptor.reference_fields.push_back(
+          type.kind == Class::Kind::Expected ? 0U : static_cast<std::uint32_t>(index));
+    }
+  }
+  if (type.kind == Class::Kind::Expected) {
+    descriptor.expected_type = Signature({.kind = SourceType::Kind::Expected, .name = type.name});
+  }
+  if (type.callable && !type.callable_type.empty()) {
+    descriptor.callable_type = CallableSignature(type);
+  }
+  return descriptor;
+}
+
 layout::Program LayoutDescription::Build() {
-  for (const auto& [name, descriptor] : model_.interfaces) {
+  const auto& program = *program_;
+  for (const auto& [name, descriptor] : model_->interfaces) {
     if (result_.interfaces.size() <= descriptor.index) {
       result_.interfaces.resize(static_cast<std::size_t>(descriptor.index) + 1);
     }
     result_.interfaces.at(descriptor.index) = name;
   }
-  for (std::size_t index = 0; index < program_.classes.size(); ++index) {
-    classes_.emplace(program_.classes.at(index).name, static_cast<std::uint32_t>(index));
+  for (std::size_t index = 0; index < program.classes.size(); ++index) {
+    classes_.emplace(program.classes.at(index).name, static_cast<std::uint32_t>(index));
   }
-  for (const auto& type : program_.classes) {
-    layout::Class descriptor{
-        .name = type.name,
-        .field_count = type.kind == Class::Kind::Expected
-                           ? 1U
-                           : static_cast<std::uint32_t>(type.field_types.size()),
-        .reference_fields = {},
-        .callable = type.callable,
-        .interfaces = type.interfaces,
-        .dispatch_targets = type.dispatch_targets,
-    };
-    switch (type.kind) {
-      case Class::Kind::Instance:
-      case Class::Kind::Expected:
-        break;
-      case Class::Kind::RuntimeError:
-        descriptor.kind = layout::Class::Kind::RuntimeError;
-        break;
-      case Class::Kind::DateParts:
-        descriptor.kind = layout::Class::Kind::DateParts;
-        break;
-      case Class::Kind::Enum:
-        descriptor.kind = layout::Class::Kind::Enum;
-        break;
-    }
-    for (std::size_t index = 0; index < type.field_types.size(); ++index) {
-      if (HasReference(type.field_types.at(index).kind)) {
-        descriptor.reference_fields.push_back(
-            type.kind == Class::Kind::Expected ? 0U : static_cast<std::uint32_t>(index));
-      }
-    }
-    if (type.kind == Class::Kind::Expected) {
-      descriptor.expected_type = Signature({.kind = SourceType::Kind::Expected, .name = type.name});
-    }
-    if (type.callable && !type.callable_type.empty()) {
-      descriptor.callable_type = CallableSignature(type);
-    }
-    result_.classes.push_back(std::move(descriptor));
+  for (const auto& type : program.classes) {
+    result_.classes.push_back(DescribeClass(type));
   }
-  for (const auto& type : program_.array_types) {
+  for (const auto& type : program.array_types) {
     result_.array_types.push_back(Array(type));
   }
-  for (const auto& type : program_.collection_types) {
+  for (const auto& type : program.collection_types) {
     result_.collection_types.push_back(Collection(type));
   }
-  for (const auto& type : program_.runtime_types) {
+  for (const auto& type : program.runtime_types) {
     result_.types.push_back(Type(type));
   }
   return std::move(result_);

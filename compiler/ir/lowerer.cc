@@ -231,6 +231,7 @@ LoweringResult Lowerer::Lower() {
     LowerFunction(*generated.declaration, generated.signature);
   }
   RegisterBuiltinMembers();
+  RecordProgramValueTypes();
   return {.program = std::move(program_), .diagnostics = std::move(diagnostics_)};
 }
 
@@ -418,8 +419,12 @@ void Lowerer::StoreFunction(Function function) {
   if (function.signature) {
     const auto& signature = *function.signature;
     for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
-      function.value_types.at(index + signature.hidden_parameters) =
-          program_.runtime_types.at(signature.parameters.at(index).type);
+      const auto& parameter = signature.parameters.at(index);
+      auto type = program_.runtime_types.at(parameter.type);
+      if (parameter.optional) {
+        type.nullable = true;
+      }
+      function.value_types.at(index + signature.hidden_parameters) = std::move(type);
     }
   }
   const auto target = function_ids_.at(function.name);
@@ -431,6 +436,11 @@ void Lowerer::LowerCaptures(const frontend::Function& source,
   for (std::size_t index = 0; index < lambda.captures.size(); ++index) {
     const auto& capture = lambda.captures.at(index);
     const auto reg = AllocateTemporary(source.location);
+    RecordValueType(reg,
+                    capture.kind == frontend::BindingKind::Mutable
+                        ? frontend::TypeDescriptor{.kind = frontend::TypeDescriptor::Kind::Class,
+                                                   .name = "$Cell",}
+                        : capture.type);
     Emit({
         .opcode = Opcode::GetField,
         .dst = reg,
@@ -454,6 +464,7 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
   const bool has_receiver = owner != nullptr && source.storage == frontend::MemberStorage::Instance;
   if (lambda != nullptr) {
     static_cast<void>(AllocateRegister(source.location));
+    RecordValueType(0, model_.expression_types.at(lambda->expression));
   }
 
   if (has_receiver) {
@@ -489,9 +500,14 @@ void Lowerer::RegisterFunctionSignature(Function& function,
   signature.hidden_parameters =
       static_cast<std::uint8_t>(function.parameter_count - source.parameters.size());
   for (const auto& parameter : source.parameters) {
-    const auto& type =
-        function_info.parameters.at(function_info.parameter_indices.at(parameter.name)).type;
-    signature.parameters.push_back({.name = parameter.name, .type = RegisterRuntimeType(type)});
+    const auto& descriptor =
+        function_info.parameters.at(function_info.parameter_indices.at(parameter.name));
+    signature.parameters.push_back({
+        .name = parameter.name,
+        .type = RegisterRuntimeType(descriptor.type),
+        .optional = function_info.optional_parameters.contains(parameter.name),
+        .rest = descriptor.rest,
+    });
   }
   if (function.return_type.kind != frontend::TypeDescriptor::Kind::Void) {
     signature.result = RegisterRuntimeType(function.return_type);
@@ -652,6 +668,13 @@ void Lowerer::LowerBlock(const frontend::Statement& statement) {
 Lowerer::LoweredValue Lowerer::LowerExpression(const frontend::Expression& expression) {
   const auto first_temporary = next_register_;
   auto value = LowerExpressionValue(expression);
+  const auto record_definition = [&] {
+    if (value.reg >= first_temporary) {
+      RecordValueType(value.reg, value.type);
+      current_function_->value_types.at(value.reg) = value.type;
+    }
+  };
+  record_definition();
   using Kind = frontend::TypeDescriptor::Kind;
   using Expression = frontend::Expression;
   if ((value.type.kind == Kind::Future || value.type.kind == Kind::Completer) &&
@@ -669,10 +692,7 @@ Lowerer::LoweredValue Lowerer::LowerExpression(const frontend::Expression& expre
   if (conversion != model_.checked_conversions.end()) {
     value = LowerConversion(std::move(value), conversion->second, expression.location);
   }
-  if (value.reg >= first_temporary) {
-    RecordValueType(value.reg, value.type);
-    current_function_->value_types.at(value.reg) = value.type;
-  }
+  record_definition();
   return value;
 }
 
@@ -705,7 +725,7 @@ Lowerer::LoweredValue Lowerer::LowerConversion(LoweredValue value,
                             location);
   }
   const auto index = RegisterRuntimeType(target);
-  const auto result = AllocateTemporary(location);
+  auto result = AllocateTemporary(location);
   Emit({
       .opcode = Opcode::CheckedCast,
       .dst = result,
@@ -714,12 +734,16 @@ Lowerer::LoweredValue Lowerer::LowerConversion(LoweredValue value,
       .location = location,
   });
   if (target.kind == frontend::TypeDescriptor::Kind::Enum) {
+    const auto boxed = result;
+    result = AllocateTemporary(location);
+    RecordValueType(result, target);
     std::optional<std::size_t> null_jump;
     if (target.nullable) {
+      Emit({.opcode = Opcode::LoadNull, .dst = result, .location = location});
       null_jump = current_function_->instructions.size();
-      Emit({.opcode = Opcode::JumpIfNull, .lhs = result, .location = location});
+      Emit({.opcode = Opcode::JumpIfNull, .lhs = boxed, .location = location});
     }
-    Emit({.opcode = Opcode::GetField, .dst = result, .lhs = result, .location = location});
+    Emit({.opcode = Opcode::GetField, .dst = result, .lhs = boxed, .location = location});
     if (null_jump) {
       current_function_->instructions.at(*null_jump).index =
           static_cast<std::uint32_t>(current_function_->instructions.size());
@@ -806,13 +830,19 @@ Lowerer::LoweredValue Lowerer::LowerExpressionValue(const frontend::Expression& 
     case frontend::Expression::Kind::Await: {
       const auto operand = LowerExpression(*expression.operand);
       const auto result = AllocateTemporary(expression.location);
+      const auto& type = model_.expression_types.at(&expression);
+      if (type.kind == frontend::TypeDescriptor::Kind::Enum &&
+          (operand.type.kind == frontend::TypeDescriptor::Kind::Future ||
+           operand.type.kind == frontend::TypeDescriptor::Kind::Dynamic)) {
+        RecordValueType(result,
+                        {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"});
+      }
       Emit({
           .opcode = Opcode::Await,
           .dst = result,
           .lhs = operand.reg,
           .location = expression.location,
       });
-      const auto& type = model_.expression_types.at(&expression);
       if (type.kind == frontend::TypeDescriptor::Kind::Enum &&
           (operand.type.kind == frontend::TypeDescriptor::Kind::Future ||
            operand.type.kind == frontend::TypeDescriptor::Kind::Dynamic)) {
@@ -1323,7 +1353,7 @@ Lowerer::LoweredValue Lowerer::LowerFutureCall(const frontend::Expression& expre
         .dst = result,
         .lhs = base,
         .immediate = 1,
-        .index = AddSyncFutureFunction(model_.expression_types.at(&expression)),
+        .index = AddSyncFutureFunction(model_.expression_types.at(&expression), payload.type),
         .location = expression.location,
     });
   } else {
@@ -1338,19 +1368,27 @@ Lowerer::LoweredValue Lowerer::LowerFutureCall(const frontend::Expression& expre
   return {.reg = result, .type = model_.expression_types.at(&expression)};
 }
 
-std::uint32_t Lowerer::AddSyncFutureFunction(const frontend::TypeDescriptor& return_type) {
-  const auto index = static_cast<std::uint32_t>(program_.functions.size());
+std::uint32_t Lowerer::AddSyncFutureFunction(const frontend::TypeDescriptor& return_type,
+                                             const frontend::TypeDescriptor& callback_type) {
   Function function;
-  function.name = "$future.sync." + std::to_string(index);
+  function.name = "$future.sync." + std::to_string(program_.functions.size());
+  const auto index = AddFunctionId(function.name);
+  program_.functions.resize(persistent_ == nullptr ? function_ids_.size()
+                                                   : persistent_->functions.size());
   function.return_type = return_type;
   function.parameter_count = 1;
   function.register_count = 2;
   function.is_async = true;
+  function.signature.emplace();
+  function.signature->parameters.push_back(
+      {.name = "callback", .type = RegisterRuntimeType(callback_type)});
+  function.signature->result = RegisterRuntimeType(return_type);
   function.instructions = {
       {.opcode = Opcode::CallIndirect, .dst = 1, .lhs = 2, .rhs = 0, .index = 0, .location = {}},
       {.opcode = Opcode::Return, .dst = 1, .location = {}},
   };
   const auto& payload = model_.generic_arguments.at(return_type.name).front();
+  function.value_types = {callback_type, payload};
   if (payload.kind == frontend::TypeDescriptor::Kind::Enum) {
     function.instructions.pop_back();
     if (payload.nullable) {
@@ -1371,8 +1409,10 @@ std::uint32_t Lowerer::AddSyncFutureFunction(const frontend::TypeDescriptor& ret
       function.instructions.push_back({.opcode = Opcode::Return, .dst = 1, .location = {}});
     }
     function.register_count = 3;
+    function.value_types.push_back(
+        {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"});
   }
-  program_.functions.push_back(std::move(function));
+  StoreFunction(std::move(function));
   return index;
 }
 
@@ -1480,95 +1520,9 @@ std::optional<FieldId> Lowerer::FindField(const frontend::ClassDescriptor& class
 
 void Lowerer::Emit(Instruction instruction) {
   if (current_function_ != nullptr) {
-    using Kind = frontend::TypeDescriptor::Kind;
-    switch (instruction.opcode) {
-      case Opcode::LoadInt:
-      case Opcode::AddInt:
-      case Opcode::SubInt:
-      case Opcode::MulInt:
-      case Opcode::DivInt:
-      case Opcode::ModInt:
-      case Opcode::NegInt:
-      case Opcode::BitNotInt:
-      case Opcode::BitAndInt:
-      case Opcode::BitOrInt:
-      case Opcode::BitXorInt:
-      case Opcode::ShiftLeftInt:
-      case Opcode::ShiftRightInt:
-      case Opcode::ShiftUnsignedRightInt:
-        RecordValueType(instruction.dst, {.kind = Kind::Int, .name = "int"});
-        break;
-      case Opcode::LoadDouble:
-      case Opcode::AddDouble:
-      case Opcode::SubDouble:
-      case Opcode::MulDouble:
-      case Opcode::DivDouble:
-      case Opcode::NegDouble:
-        RecordValueType(instruction.dst, {.kind = Kind::Double, .name = "double"});
-        break;
-      case Opcode::LoadBool:
-      case Opcode::NotBool:
-      case Opcode::AndBool:
-      case Opcode::OrBool:
-      case Opcode::EqualInt:
-      case Opcode::NotEqualInt:
-      case Opcode::LessInt:
-      case Opcode::LessEqualInt:
-      case Opcode::GreaterInt:
-      case Opcode::GreaterEqualInt:
-      case Opcode::EqualDouble:
-      case Opcode::NotEqualDouble:
-      case Opcode::LessDouble:
-      case Opcode::LessEqualDouble:
-      case Opcode::GreaterDouble:
-      case Opcode::GreaterEqualDouble:
-      case Opcode::EqualBool:
-      case Opcode::NotEqualBool:
-      case Opcode::EqualString:
-      case Opcode::NotEqualString:
-      case Opcode::EqualValue:
-      case Opcode::NotEqualValue:
-      case Opcode::IsType:
-      case Opcode::ExpectedHasValue:
-        RecordValueType(instruction.dst, {.kind = Kind::Bool, .name = "bool"});
-        break;
-      case Opcode::LoadString:
-      case Opcode::StringConcat:
-      case Opcode::StringInterpolate:
-        RecordValueType(instruction.dst, {.kind = Kind::String, .name = "string"});
-        break;
-      case Opcode::LoadNull:
-        RecordValueType(instruction.dst, {.kind = Kind::Null, .name = "null"});
-        break;
-      case Opcode::NewInstance:
-        RecordValueType(instruction.dst,
-                        {.kind = Kind::Class, .name = program_.classes.at(instruction.index).name});
-        break;
-      case Opcode::Move: {
-        const auto& types = current_function_->value_types;
-        if (instruction.lhs < types.size()) {
-          const auto type = types.at(instruction.lhs);
-          RecordValueType(instruction.dst, type);
-        }
-        break;
-      }
-      default:
-        break;
-    }
+    RecordInstructionValueType(instruction);
     instruction.handler = current_handler_;
     current_function_->instructions.push_back(instruction);
-  }
-}
-
-void Lowerer::RecordValueType(RegisterId reg, const frontend::TypeDescriptor& type) {
-  auto& types = current_function_->value_types;
-  if (types.size() <= reg) {
-    types.resize(static_cast<std::size_t>(reg) + 1);
-  }
-  auto& recorded = types.at(reg);
-  using Kind = frontend::TypeDescriptor::Kind;
-  if (recorded.kind == Kind::Invalid || recorded.kind == Kind::Null) {
-    recorded = type;
   }
 }
 
@@ -1714,6 +1668,7 @@ Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression&
     const auto& member = static_member->second;
     destination.global = global_ids_.at(member.owner + "." + member.member);
     destination.value = LowerMember(target);
+    RecordValueType(destination.value.reg, destination.value.type);
     return destination;
   }
   if (target.kind == frontend::Expression::Kind::Member) {
@@ -1761,6 +1716,7 @@ Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression&
         }),
         .type = model_.expression_types.at(&target),
     };
+    RecordValueType(destination.value.reg, destination.value.type);
     return destination;
   }
   if (target.kind == frontend::Expression::Kind::Index) {

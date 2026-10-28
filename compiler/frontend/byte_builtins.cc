@@ -55,6 +55,14 @@ const FunctionDescriptor& ByteBuiltinSignature(Builtin builtin) {
     result.at(Index(Builtin::ByteArrayFrom)) =
         Signature(bytes, {{.name = "values", .type = {.kind = Kind::Array, .name = "int[]"}}});
     result.at(Index(Builtin::ByteArrayLength)) = Signature(integer, {});
+    result.at(Index(Builtin::ByteArrayGetIndex)) =
+        Signature(integer, {{.name = "bytes", .type = bytes}, {.name = "index", .type = integer}});
+    result.at(Index(Builtin::ByteArraySetIndex)) =
+        Signature(nothing, {
+                               {.name = "bytes", .type = bytes},
+                               {.name = "index", .type = integer},
+                               {.name = "value", .type = integer},
+                           });
     result.at(Index(Builtin::ByteArraySlice)) =
         Signature(bytes, {{.name = "start", .type = integer}, {.name = "end", .type = integer}});
     result.at(Index(Builtin::ByteArraySlice)).optional_parameters = {"start", "end"};

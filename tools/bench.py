@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from tools.benchmark_report import comparison_report, native_call_report
+from tools.benchmark_report import aot_comparison_report, comparison_report, native_call_report
 from tools.build import build
 from tools.config import BUILD_VARIANTS, ROOT, executable_name, output_directory
 
@@ -20,14 +20,15 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     comparison = parser.add_mutually_exclusive_group()
     comparison.add_argument("--compare", action="store_true", help="Compare Vela, C++, LuaJIT and LuaJIT interpreter")
     comparison.add_argument("--native-compare", action="store_true", help="Compare VM native calls with direct and indirect C++ calls")
+    comparison.add_argument("--aot-compare", action="store_true", help="Compare offline AOT, VM and C++ workloads")
     parser.add_argument("--report", type=Path, help="Comparison JSON output (default: out/benchmarks/comparison.json)")
     values = list(sys.argv[1:] if arguments is None else arguments)
     separator = values.index("--") if "--" in values else len(values)
     parsed = parser.parse_args(values[:separator])
     parsed.benchmark_arguments = values[separator + 1:]
-    comparing = parsed.compare or parsed.native_compare
+    comparing = parsed.compare or parsed.native_compare or parsed.aot_compare
     if parsed.report and not comparing:
-        parser.error("--report requires --compare or --native-compare")
+        parser.error("--report requires --compare, --native-compare or --aot-compare")
     if parsed.report and parsed.report.suffix != ".json":
         parser.error("--report must name a .json file")
     if comparing and parsed.variant != "release":
@@ -53,19 +54,24 @@ def benchmark_option(arguments: list[str], name: str, default: str) -> str:
 
 def run(parsed: argparse.Namespace) -> None:
     build(parsed.variant, "benchmarks")
-    executable = output_directory(parsed.variant) / executable_name("vela_benchmarks")
+    name = "vela_aot_benchmarks" if parsed.aot_compare else "vela_benchmarks"
+    executable = output_directory(parsed.variant) / executable_name(name)
     arguments = list(parsed.benchmark_arguments)
-    comparing = parsed.compare or parsed.native_compare
+    comparing = parsed.compare or parsed.native_compare or parsed.aot_compare
     if comparing:
-        filename = "native_comparison.json" if parsed.native_compare else "comparison.json"
+        filename = "comparison.json"
+        filter_pattern = "^(compare/|first/(vm|luajit|luajit_interp)/|compile/(representative|luajit)/)"
+        if parsed.native_compare:
+            filename, filter_pattern = "native_comparison.json", "^native/"
+        elif parsed.aot_compare:
+            filename, filter_pattern = "aot_comparison.json", "^aot/"
         report = (parsed.report or ROOT / "out" / "benchmarks" / filename).resolve()
         report.parent.mkdir(parents=True, exist_ok=True)
         # A failed invocation must never reuse an earlier successful report.
         report.unlink(missing_ok=True)
         report.with_suffix(".md").unlink(missing_ok=True)
         defaults = {
-            "benchmark_filter": ("^native/" if parsed.native_compare else
-                                 "^(compare/|first/(vm|luajit|luajit_interp)/|compile/(representative|luajit)/)"),
+            "benchmark_filter": filter_pattern,
             "benchmark_min_time": "0.2s",
             "benchmark_repetitions": "7",
             "benchmark_enable_random_interleaving": "true",
@@ -90,7 +96,11 @@ def run(parsed: argparse.Namespace) -> None:
         check=True,
     )
     if comparing:
-        summarize = native_call_report if parsed.native_compare else comparison_report
+        summarize = comparison_report
+        if parsed.native_compare:
+            summarize = native_call_report
+        elif parsed.aot_compare:
+            summarize = aot_comparison_report
         text = summarize(
             json.loads(report.read_text(encoding="utf-8")), expected_cases, repetitions)
         report.with_suffix(".md").write_text(text, encoding="utf-8", newline="\n")

@@ -2,7 +2,6 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -11,14 +10,12 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 #include "base/builtin.h"
 #include "base/byte_access.h"
 #include "base/callable.h"
 #include "base/execution_limits.h"
-#include "base/execution_status.h"
 #include "base/regexp.h"
 #include "runtime/byte_operations.h"
 #include "runtime/exception.h"
@@ -29,16 +26,21 @@
 #include "vm/register_file.h"
 
 #include "runtime/builtins.h"
+#include "runtime/callable.h"
+#include "runtime/dynamic_value.h"
 #include "runtime/error.h"
 #include "runtime/future.h"
+#include "runtime/future_operations.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_function.h"
+#include "runtime/numeric_operations_internal.h"
 #include "runtime/object.h"
 #include "runtime/register_storage.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
 #include "runtime/value_io.h"
+#include "runtime/value_operations.h"
 #include "vm/bytecode.h"
 #include "vm/frame.h"
 
@@ -47,7 +49,6 @@ namespace internal {
 namespace {
 
 inline constexpr std::size_t kInlineInterpolationParts = 8;
-inline constexpr std::uint64_t kIntShiftMask = 63U;
 
 struct BinaryOperands final {
   runtime::RegisterReference left;
@@ -61,180 +62,27 @@ void ConsumeFutureCompletion(std::expected<void, T> completion) {
   }
 }
 
-bool IsEqualValue(runtime::Value left, runtime::Value right) noexcept {
-  if (left.kind() != right.kind()) {
-    return false;
-  }
-  switch (left.kind()) {
-    case runtime::ValueKind::Null:
-      return true;
-    case runtime::ValueKind::Boolean:
-      return left.AsBoolean() == right.AsBoolean();
-    case runtime::ValueKind::Integer:
-      return left.AsInteger() == right.AsInteger();
-    case runtime::ValueKind::Double:
-      return left.AsDouble() == right.AsDouble();
-    case runtime::ValueKind::String:
-      return left.AsString()->value() == right.AsString()->value();
-    case runtime::ValueKind::Object: {
-      const auto* layout = runtime::Heap::ClassOf(*left.AsObject());
-      if (layout != nullptr && layout->IsEnum()) {
-        return layout == runtime::Heap::ClassOf(*right.AsObject()) &&
-               runtime::Heap::GetField(*left.AsObject(), 0)->AsInteger() ==
-                   runtime::Heap::GetField(*right.AsObject(), 0)->AsInteger();
-      }
-      return left.AsObject() == right.AsObject();
-    }
-  }
-  return false;
-}
-
-[[clang::always_inline]] StepResult IntegerArithmetic(OpCode opcode,
-                                                      runtime::RegisterReference destination,
-                                                      std::int64_t left,
-                                                      std::int64_t right) noexcept {
-  std::int64_t result = 0;
-  bool overflow = false;
-  switch (opcode) {
-    case OpCode::AddInt:
-      overflow = __builtin_add_overflow(left, right, &result);
-      break;
-    case OpCode::SubInt:
-      overflow = __builtin_sub_overflow(left, right, &result);
-      break;
-    case OpCode::MulInt:
-      overflow = __builtin_mul_overflow(left, right, &result);
-      break;
-    case OpCode::DivInt:
-      if (right == 0) {
-        return std::unexpected(ExecutionStatus::DivisionByZero);
-      }
-      overflow = left == std::numeric_limits<std::int64_t>::min() && right == -1;
-      if (!overflow) {
-        result = left / right;
-      }
-      break;
-    case OpCode::ModInt:
-      if (right == 0) {
-        return std::unexpected(ExecutionStatus::DivisionByZero);
-      }
-      overflow = left == std::numeric_limits<std::int64_t>::min() && right == -1;
-      if (!overflow) {
-        result = left % right;
-      }
-      break;
-    case OpCode::BitAndInt:
-      result = left & right;
-      break;
-    case OpCode::BitOrInt:
-      result = left | right;
-      break;
-    case OpCode::BitXorInt:
-      result = left ^ right;
-      break;
-    case OpCode::ShiftLeftInt:
-      result = static_cast<std::int64_t>(static_cast<std::uint64_t>(left)
-                                         << (static_cast<std::uint64_t>(right) & kIntShiftMask));
-      break;
-    case OpCode::ShiftRightInt:
-      result = left >> (static_cast<std::uint64_t>(right) & kIntShiftMask);
-      break;
-    case OpCode::ShiftUnsignedRightInt:
-      result = static_cast<std::int64_t>(static_cast<std::uint64_t>(left) >>
-                                         (static_cast<std::uint64_t>(right) & kIntShiftMask));
-      break;
-    default:
-      std::unreachable();
-  }
-  if (overflow) {
-    return std::unexpected(ExecutionStatus::IntegerOverflow);
-  }
-  destination.SetInteger(result);
-  return {};
-}
-
 [[clang::always_inline]] StepResult IntegerOperation(OpCode opcode,
                                                      runtime::RegisterReference destination,
                                                      BinaryOperands operands) noexcept {
-  const auto& [left_value, right_value] = operands;
-  if (!left_value.IsInteger() || !right_value.IsInteger()) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  const auto result = runtime::internal::IntegerOperation(
+      opcode, {.left = operands.left.Read(), .right = operands.right.Read()});
+  if (!result) {
+    return std::unexpected(result.error());
   }
-  const auto left = left_value.AsInteger();
-  const auto right = right_value.AsInteger();
-  bool result = false;
-  switch (opcode) {
-    case OpCode::EqualInt:
-      result = left == right;
-      break;
-    case OpCode::NotEqualInt:
-      result = left != right;
-      break;
-    case OpCode::LessInt:
-      result = left < right;
-      break;
-    case OpCode::LessEqualInt:
-      result = left <= right;
-      break;
-    case OpCode::GreaterInt:
-      result = left > right;
-      break;
-    case OpCode::GreaterEqualInt:
-      result = left >= right;
-      break;
-    default:
-      return IntegerArithmetic(opcode, destination, left, right);
-  }
-  destination.SetBoolean(result);
+  destination = *result;
   return {};
 }
 
 [[clang::always_inline]] StepResult DoubleOperation(OpCode opcode,
                                                     runtime::RegisterReference destination,
                                                     BinaryOperands operands) noexcept {
-  const auto& [left_value, right_value] = operands;
-  if (!left_value.IsDouble() || !right_value.IsDouble()) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  const auto result = runtime::internal::DoubleOperation(
+      opcode, {.left = operands.left.Read(), .right = operands.right.Read()});
+  if (!result) {
+    return std::unexpected(result.error());
   }
-  const double left = left_value.AsDouble();
-  const double right = right_value.AsDouble();
-  switch (opcode) {
-    case OpCode::AddDouble:
-      destination.SetDouble(left + right);
-      break;
-    case OpCode::SubDouble:
-      destination.SetDouble(left - right);
-      break;
-    case OpCode::MulDouble:
-      destination.SetDouble(left * right);
-      break;
-    case OpCode::DivDouble:
-      if (right == 0.0) {
-        return std::unexpected(ExecutionStatus::DivisionByZero);
-      }
-      destination.SetDouble(left / right);
-      break;
-    case OpCode::EqualDouble:
-      destination.SetBoolean(left == right);
-      break;
-    case OpCode::NotEqualDouble:
-      destination.SetBoolean(left != right);
-      break;
-    case OpCode::LessDouble:
-      destination.SetBoolean(left < right);
-      break;
-    case OpCode::LessEqualDouble:
-      destination.SetBoolean(left <= right);
-      break;
-    case OpCode::GreaterDouble:
-      destination.SetBoolean(left > right);
-      break;
-    case OpCode::GreaterEqualDouble:
-      destination.SetBoolean(left >= right);
-      break;
-    default:
-      std::unreachable();
-  }
+  destination = *result;
   return {};
 }
 
@@ -271,12 +119,6 @@ bool IsEqualValue(runtime::Value left, runtime::Value right) noexcept {
 std::expected<runtime::Value, ExecutionStatus> ExecuteValueBuiltin(Builtin builtin,
                                                                    runtime::RegisterView arguments,
                                                                    runtime::Heap& heap) {
-  if (builtin == Builtin::NumericToInt || builtin == Builtin::NumericToDouble) {
-    return runtime::ConvertNumber(builtin == Builtin::NumericToInt
-                                      ? runtime::NumericConversion::ToInt
-                                      : runtime::NumericConversion::ToDouble,
-                                  arguments.front().Read());
-  }
   constexpr std::size_t kMaxBuiltinArguments = 4;
   std::array<runtime::Value, kMaxBuiltinArguments> materialized;
   const auto input = std::span(materialized).first(arguments.size());
@@ -373,38 +215,12 @@ runtime::FutureDiagnostic Execution::Diagnostic(const ExecutionResult& result) {
 }
 
 runtime::FutureDiagnostic Execution::ThrowDiagnostic(runtime::Value payload) const {
-  std::string message;
-  if (runtime::Heap::IsValueOfType(
-          payload, {.kind = runtime::ValueKind::Object, .instance = &isolate_.error_layout()})) {
-    message = runtime::Heap::GetField(*payload.AsObject(), runtime::kErrorMessageField)
-                  ->AsString()
-                  ->value();
-  }
   return Diagnostic({
       .value = payload,
       .status = ExecutionStatus::Thrown,
       .stack_trace = CaptureStack(),
-      .message = std::move(message),
+      .message = std::string(runtime::ErrorMessage(payload, isolate_.error_layout())),
   });
-}
-
-void Execution::CompleteFuture(runtime::Isolate& isolate,
-                               runtime::Future& future,
-                               const runtime::Future& source) {
-  const auto adopted = future.Adopt(source);
-  if (!adopted) {
-    const auto status = runtime::FutureCompletionStatus(adopted.error());
-    const auto payload = runtime::CreateError(
-        isolate.heap(), isolate.error_layout(),
-        {.message = ExecutionStatusName(status), .code = ExecutionStatusCode(status)});
-    ConsumeFutureCompletion(
-        future.CompleteError(payload.value_or(runtime::Value::Null()),
-                             {
-                                 .message = std::string(ExecutionStatusName(status)),
-                                 .stack_trace = {},
-                                 .status = status,
-                             }));
-  }
 }
 
 void Execution::CompleteFuture(runtime::Isolate& isolate,
@@ -413,24 +229,13 @@ void Execution::CompleteFuture(runtime::Isolate& isolate,
   if (result.Succeeded()) {
     if (result.value.IsObject()) {
       if (const auto* nested = runtime::Heap::GetFuture(*result.value.AsObject())) {
-        CompleteFuture(isolate, future, *nested);
+        runtime::CompleteFuture(isolate, future, *nested);
         return;
       }
     }
     ConsumeFutureCompletion(future.Complete(result.value));
   } else {
-    auto payload = result.value;
-    if (payload.IsNull() && result.status != ExecutionStatus::DebuggerStopped) {
-      payload = runtime::CreateError(
-                    isolate.heap(), isolate.error_layout(),
-                    {
-                        .message = result.message.empty() ? ExecutionStatusName(result.status)
-                                                          : std::string_view(result.message),
-                        .code = ExecutionStatusCode(result.status),
-                    })
-                    .value_or(runtime::Value::Null());
-    }
-    ConsumeFutureCompletion(future.CompleteError(payload, Execution::Diagnostic(result)));
+    runtime::CompleteFutureError(isolate, future, result.value, Execution::Diagnostic(result));
   }
 }
 
@@ -747,8 +552,8 @@ StepResult Execution::ExecuteObject(ActiveFrame& active,
       return {};
     case OpCode::EqualValue:
     case OpCode::NotEqualValue: {
-      const auto equal =
-          IsEqualValue(values.subspan(operand_b).front(), values.subspan(operand_c).front());
+      const auto equal = runtime::IsEqualValue(values.subspan(operand_b).front(),
+                                               values.subspan(operand_c).front());
       values.subspan(operand_a).front().SetBoolean(opcode == OpCode::EqualValue ? equal : !equal);
       return {};
     }
@@ -950,43 +755,26 @@ StepResult Execution::AllocateFuture(ActiveFrame& active,
                                      FutureRegisters registers,
                                      std::uint8_t error_flag) {
   const auto payload = active.frame.registers().subspan(registers.source).front().Read();
-  if (error_flag != 0 && !runtime::Heap::IsThrowable(payload)) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  const auto value = error_flag != 0
+                         ? runtime::AllocateFutureError(isolate_, payload, ThrowDiagnostic(payload))
+                         : runtime::AllocateFutureValue(isolate_, payload);
+  if (!value) {
+    return std::unexpected(value.error());
   }
-  runtime::Future future(&isolate_.scheduler());
-  if (payload.IsObject() && payload.AsObject() != nullptr) {
-    if (auto* source = runtime::Heap::GetFuture(*payload.AsObject());
-        error_flag == 0 && source != nullptr) {
-      future = *source;
-    } else if (error_flag != 0) {
-      ConsumeFutureCompletion(future.CompleteError(payload, ThrowDiagnostic(payload)));
-    } else {
-      ConsumeFutureCompletion(future.Complete(payload));
-    }
-  } else {
-    ConsumeFutureCompletion(future.Complete(payload));
-  }
-  auto* object = isolate_.heap().AllocateFuture(std::move(future));
-  if (object == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  active.frame.registers().subspan(registers.destination).front().SetObject(object);
+  active.frame.registers().subspan(registers.destination).front() = *value;
   return {};
 }
 
 StepResult Execution::AllocateSleep(ActiveFrame& active, FutureRegisters registers) {
   const auto delay = active.frame.registers().subspan(registers.source).front();
-  if (!delay.IsInteger() ||
-      !runtime::FutureScheduler::CanSchedule(std::chrono::milliseconds(delay.AsInteger()))) {
+  if (!delay.IsInteger()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  auto future =
-      runtime::Future::Sleep(std::chrono::milliseconds(delay.AsInteger()), isolate_.scheduler());
-  auto* object = isolate_.heap().AllocateFuture(std::move(future));
-  if (object == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
+  const auto value = runtime::AllocateSleepFuture(isolate_, delay.AsInteger());
+  if (!value) {
+    return std::unexpected(value.error());
   }
-  active.frame.registers().subspan(registers.destination).front().SetObject(object);
+  active.frame.registers().subspan(registers.destination).front() = *value;
   return {};
 }
 
@@ -1059,184 +847,16 @@ StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instructio
 
 StepResult Execution::ExecuteDynamic(ActiveFrame& active, Instruction instruction) {
   const auto builtin = static_cast<Builtin>(DecodeB(instruction));
+  const auto count = BuiltinArity(builtin);
+  std::array<runtime::Value, 3> storage;
+  const auto arguments = std::span(storage).first(count);
   const auto values = active.frame.registers();
-  const auto arguments = values.subspan(DecodeC(instruction), BuiltinArity(builtin));
-  auto destination = values.subspan(DecodeA(instruction)).front();
-  if (builtin == Builtin::DynamicNegate) {
-    const auto operand = arguments.front();
-    if (operand.IsInteger()) {
-      return IntegerArithmetic(OpCode::SubInt, destination, 0, operand.AsInteger());
-    }
-    if (!operand.IsDouble()) {
-      return std::unexpected(ExecutionStatus::TypeError);
-    }
-    destination.SetDouble(-operand.AsDouble());
-    return {};
+  values.subspan(DecodeC(instruction), count).CopyTo(arguments);
+  const auto result = runtime::ExecuteDynamicValue(builtin, arguments, isolate_.heap());
+  if (!result) {
+    return std::unexpected(result.error());
   }
-  if (builtin == Builtin::DynamicBinary) {
-    return ExecuteDynamicBinary(destination, arguments);
-  }
-  return ExecuteDynamicIndex(active, instruction);
-}
-
-StepResult Execution::ExecuteDynamicBinary(runtime::RegisterReference destination,
-                                           runtime::RegisterView arguments) {
-  const auto selector = arguments.front();
-  if (!selector.IsInteger() || selector.AsInteger() < 0 ||
-      selector.AsInteger() > static_cast<std::int64_t>(OpCode::Return)) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto operation = static_cast<OpCode>(selector.AsInteger());
-  const auto left = arguments.subspan(1).front();
-  const auto right = arguments.subspan(2).front();
-  if (operation == OpCode::EqualInt || operation == OpCode::NotEqualInt) {
-    return ExecuteDynamicEquality(operation, destination, left.Read(), right.Read());
-  }
-  if (operation == OpCode::AddInt && (left.IsString() || right.IsString())) {
-    return StringOperation(OpCode::StringConcat, destination, left, right);
-  }
-  std::optional<OpCode> double_operation;
-  switch (operation) {
-    case OpCode::AddInt:
-      double_operation = OpCode::AddDouble;
-      break;
-    case OpCode::SubInt:
-      double_operation = OpCode::SubDouble;
-      break;
-    case OpCode::MulInt:
-      double_operation = OpCode::MulDouble;
-      break;
-    case OpCode::DivInt:
-      double_operation = OpCode::DivDouble;
-      break;
-    case OpCode::LessInt:
-      double_operation = OpCode::LessDouble;
-      break;
-    case OpCode::LessEqualInt:
-      double_operation = OpCode::LessEqualDouble;
-      break;
-    case OpCode::GreaterInt:
-      double_operation = OpCode::GreaterDouble;
-      break;
-    case OpCode::GreaterEqualInt:
-      double_operation = OpCode::GreaterEqualDouble;
-      break;
-    case OpCode::ModInt:
-    case OpCode::BitAndInt:
-    case OpCode::BitOrInt:
-    case OpCode::BitXorInt:
-    case OpCode::ShiftLeftInt:
-    case OpCode::ShiftRightInt:
-    case OpCode::ShiftUnsignedRightInt:
-      break;
-    default:
-      return std::unexpected(ExecutionStatus::TypeError);
-  }
-  if (left.IsDouble() && right.IsDouble() && double_operation) {
-    return DoubleOperation(*double_operation, destination, {.left = left, .right = right});
-  }
-  return IntegerOperation(operation, destination, {.left = left, .right = right});
-}
-
-StepResult Execution::ExecuteDynamicEquality(OpCode operation,
-                                             runtime::RegisterReference destination,
-                                             runtime::Value left,
-                                             runtime::Value right) {
-  if (!left.IsNull() && !right.IsNull()) {
-    if (left.kind() != right.kind()) {
-      return std::unexpected(ExecutionStatus::TypeError);
-    }
-    if (left.IsObject()) {
-      const auto kind = runtime::Heap::KindOf(*left.AsObject());
-      const auto* layout = runtime::Heap::ClassOf(*left.AsObject());
-      if (kind == runtime::ObjectKind::Array || kind == runtime::ObjectKind::MutableString ||
-          kind == runtime::ObjectKind::Expected || kind == runtime::ObjectKind::Collection ||
-          (layout != nullptr && layout->callable())) {
-        return std::unexpected(ExecutionStatus::TypeError);
-      }
-    }
-  }
-  const auto equal = IsEqualValue(left, right);
-  destination.SetBoolean(operation == OpCode::EqualInt ? equal : !equal);
-  return {};
-}
-
-StepResult Execution::ExecuteDynamicIndex(ActiveFrame& active, Instruction instruction) {
-  const auto builtin = static_cast<Builtin>(DecodeB(instruction));
-  const auto values = active.frame.registers();
-  const auto arguments = values.subspan(DecodeC(instruction), BuiltinArity(builtin));
-  auto destination = values.subspan(DecodeA(instruction)).front();
-  const auto receiver = arguments.front().Read();
-  if (builtin == Builtin::DynamicIndexRead && receiver.IsString()) {
-    const std::array input{receiver, arguments.subspan(1).front().Read()};
-    const auto result = runtime::ExecuteBuiltin(Builtin::StringIndex, input, isolate_.heap());
-    if (!result) {
-      return std::unexpected(result.error());
-    }
-    destination = *result;
-    return {};
-  }
-  if (!receiver.IsObject()) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  auto& object = *receiver.AsObject();
-  const auto kind = runtime::Heap::KindOf(object);
-  if (kind == runtime::ObjectKind::ByteArray) {
-    const auto writing = builtin == Builtin::DynamicIndexWrite;
-    std::array<runtime::Value, 3> input;
-    const auto materialized = std::span(input).first(arguments.size());
-    arguments.CopyTo(materialized);
-    const auto result = runtime::ExecuteByteBuiltin(
-        writing ? Builtin::ByteArraySetIndex : Builtin::ByteArrayGetIndex, materialized,
-        isolate_.heap());
-    if (!result) {
-      return std::unexpected(result.error());
-    }
-    destination = writing ? arguments.subspan(2).front().Read() : *result;
-    return {};
-  }
-  if (kind == runtime::ObjectKind::RegExpMatch && builtin == Builtin::DynamicIndexRead) {
-    return ExecuteRegExp(active, EncodeABC(OpCode::BuiltinCall, DecodeA(instruction),
-                                           static_cast<std::uint8_t>(Builtin::RegExpMatchGroup),
-                                           DecodeC(instruction)));
-  }
-  if (kind != runtime::ObjectKind::Array) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  return ExecuteDynamicArrayIndex(builtin, destination, arguments);
-}
-
-StepResult Execution::ExecuteDynamicArrayIndex(Builtin builtin,
-                                               runtime::RegisterReference destination,
-                                               runtime::RegisterView arguments) {
-  const auto receiver = arguments.front().Read();
-  const auto index = arguments.subspan(1).front();
-  const auto& layout = *runtime::Heap::ArrayTypeOf(*receiver.AsObject());
-  if (builtin == Builtin::DynamicIndexWrite) {
-    const auto original = arguments.subspan(2).front().Read();
-    if (!runtime::Heap::IsValueOfType(original, layout.value_type())) {
-      return std::unexpected(ExecutionStatus::TypeError);
-    }
-    auto value = original;
-    const auto* element = layout.element.instance;
-    if (!value.IsNull() && element != nullptr && element->IsEnum()) {
-      value = *runtime::Heap::GetField(*value.AsObject(), 0);
-    }
-    if (auto written = ArrayOperation(OpCode::SetIndex, arguments.front(), index, value);
-        !written) {
-      return written;
-    }
-    destination = original;
-    return {};
-  }
-  if (auto read = ArrayOperation(OpCode::GetIndex, destination, receiver, index); !read) {
-    return read;
-  }
-  const auto boxed = BoxDynamicValue(destination.Read(), layout.element);
-  if (!boxed) {
-    return std::unexpected(boxed.error());
-  }
-  destination = *boxed;
+  values.subspan(DecodeA(instruction)).front() = *result;
   return {};
 }
 
@@ -1322,31 +942,17 @@ StepResult Execution::StringOperation(OpCode opcode,
                                       runtime::Value left,
                                       runtime::Value right) {
   if (opcode == OpCode::StringConcat) {
-    if (left.IsString() && right.IsString()) {
-      auto* string =
-          isolate_.heap().AllocateString(left.AsString()->value(), right.AsString()->value());
-      if (string == nullptr) {
-        return std::unexpected(ExecutionStatus::OutOfMemory);
-      }
-      destination = runtime::Value::String(string);
-      return {};
+    const auto result = runtime::ConcatenateValues(isolate_.heap(), left, right);
+    if (!result) {
+      return std::unexpected(result.error());
     }
-    const std::array parts = {left, right};
-    const auto string = isolate_.heap().JoinValues(parts);
-    if (!string) {
-      return std::unexpected(string.error() == runtime::StringJoinError::TypeMismatch
-                                 ? ExecutionStatus::TypeError
-                                 : ExecutionStatus::OutOfMemory);
-    }
-    destination = runtime::Value::String(*string);
+    destination = *result;
   } else {
-    if (!left.IsString() || !right.IsString()) {
-      return std::unexpected(ExecutionStatus::TypeError);
+    const auto equal = runtime::CompareStrings(left, right);
+    if (!equal) {
+      return std::unexpected(equal.error());
     }
-    const auto left_text = left.AsString()->value();
-    const auto right_text = right.AsString()->value();
-    const bool equal = left_text == right_text;
-    destination = runtime::Value::Boolean(opcode == OpCode::EqualString ? equal : !equal);
+    destination.SetBoolean(opcode == OpCode::EqualString ? *equal : !*equal);
   }
   return {};
 }
@@ -1355,34 +961,19 @@ StepResult Execution::ArrayOperation(OpCode opcode,
                                      runtime::RegisterReference destination,
                                      runtime::Value left,
                                      runtime::Value right) {
-  const auto object = opcode == OpCode::GetIndex ? left : destination;
+  const auto object = opcode == OpCode::GetIndex ? left : destination.Read();
   const auto index = opcode == OpCode::GetIndex ? right : left;
-  if (!object.IsObject() || object.AsObject() == nullptr || !index.IsInteger()) {
+  if (!object.IsObject() || !index.IsInteger()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto integer_index = index.AsInteger();
-  if (integer_index < 0 ||
-      std::cmp_greater(integer_index, std::numeric_limits<std::uint32_t>::max())) {
-    return std::unexpected(ExecutionStatus::IndexOutOfBounds);
-  }
-  const auto offset = static_cast<std::uint32_t>(integer_index);
-  auto& heap = isolate_.heap();
   if (opcode == OpCode::SetIndex) {
-    const auto stored = heap.SetElement(*object.AsObject(), offset, right);
-    if (!stored) {
-      return std::unexpected(stored.error() == runtime::ArrayAccessError::OutOfBounds
-                                 ? ExecutionStatus::IndexOutOfBounds
-                                 : ExecutionStatus::TypeError);
-    }
-  } else {
-    const auto element = runtime::Heap::GetElement(*object.AsObject(), offset);
-    if (!element) {
-      return std::unexpected(element.error() == runtime::ArrayAccessError::OutOfBounds
-                                 ? ExecutionStatus::IndexOutOfBounds
-                                 : ExecutionStatus::TypeError);
-    }
-    destination = *element;
+    return runtime::WriteIndex(isolate_.heap(), object.AsObject(), index.AsInteger(), right);
   }
+  const auto result = runtime::ReadIndex(object.AsObject(), index.AsInteger());
+  if (!result) {
+    return std::unexpected(result.error());
+  }
+  destination = *result;
   return {};
 }
 
@@ -1412,20 +1003,13 @@ StepResult Execution::ExecuteExpected(ActiveFrame& active, Instruction instructi
   if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  if (opcode == OpCode::ExpectedHasValue) {
-    const auto alternative = runtime::Heap::ExpectedAlternativeOf(*receiver.AsObject());
-    if (!alternative) {
-      return std::unexpected(ExecutionStatus::TypeError);
-    }
-    destination = runtime::Value::Boolean(*alternative == runtime::ExpectedAlternative::Ok);
-    return {};
-  }
-  const auto payload = runtime::Heap::ReadExpectedValue(
-      *receiver.AsObject(), static_cast<runtime::ExpectedAlternative>(DecodeC(instruction)));
+  const auto payload =
+      opcode == OpCode::ExpectedHasValue
+          ? runtime::ExpectedHasValue(receiver.AsObject())
+          : runtime::ExpectedValue(receiver.AsObject(),
+                                   static_cast<runtime::ExpectedAlternative>(DecodeC(instruction)));
   if (!payload) {
-    return std::unexpected(payload.error() == runtime::ExpectedAccessError::InactiveAlternative
-                               ? ExecutionStatus::InactiveExpectedAlternative
-                               : ExecutionStatus::TypeError);
+    return std::unexpected(payload.error());
   }
   destination = *payload;
   return {};
@@ -1462,18 +1046,7 @@ StepResult Execution::AccessGlobal(ActiveFrame& active, Instruction instruction)
 std::expected<std::uint32_t, ExecutionStatus> Execution::InterfaceTarget(
     runtime::Value receiver,
     std::uint32_t selector) const {
-  if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto* layout = runtime::Heap::ClassOf(*receiver.AsObject());
-  if (layout == nullptr || selector >= layout->dispatch_targets().size()) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto target = layout->dispatch_targets().subspan(selector).front();
-  if (target >= functions_.size()) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  return target;
+  return runtime::ResolveInterfaceTarget(selector, receiver, functions_.size());
 }
 
 StepResult Execution::CallInterface(ActiveFrame& active, Instruction instruction) {
@@ -1628,7 +1201,7 @@ StepResult Execution::Return(ActiveFrame& active, runtime::Value value) {
   }
   if (caller.dynamic_call_plan) {
     caller.dynamic_call_plan = false;
-    const auto plan = CreateDynamicCallPlan(value, DynamicCallStyle::Function);
+    const auto plan = CreateDynamicCallPlan(value);
     if (!plan) {
       return std::unexpected(plan.error());
     }

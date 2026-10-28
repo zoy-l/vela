@@ -2,7 +2,7 @@
 
 [English](../en/aot.md) | [**简体中文**](aot.md)
 
-> 状态：共享编译边界实现中，原生后端尚未实现。本文中的 `vela build`、产物格式和原生 ABI 是拟议契约。
+> 状态：A2/A3 原生执行及 A4 的 `exe`/`obj`/`staticlib` 接口已实现。Windows x64 的 Debug/Release 回归、仅链接原生运行时的宿主测试、显式 SDK 发行包测试、静态检查及 Release 测量已通过。Linux/macOS 目标包和干净主机验收仍未完成，因此 A4/A5 尚未全部验收，不宣称三平台正式发行已获认证。
 
 Vela AOT 从共享的 Typed IR 生成原生目标文件，通过随工具链分发的链接工具生成可执行文件或静态库。LLVM 作为编译器内部依赖集成；使用官方发行包的用户无需单独安装 Clang 或 LLVM。生成的程序依赖 Vela 运行时和目标平台库，不依赖 LLVM、Vela 编译器或字节码解释器。
 
@@ -10,7 +10,7 @@ Vela AOT 从共享的 Typed IR 生成原生目标文件，通过随工具链分�
 
 ## 用户接口与范围
 
-拟议的独立程序构建接口：
+独立程序构建接口：
 
 ```sh
 vela build main.vela -o app
@@ -34,6 +34,12 @@ vela build math.vela --emit=staticlib --export=add -o libmath.a
 可执行文件使用现有无参 `main` 契约，沿用同步或 Future 结果、退出码、未处理错误和 `AsyncIdle` 行为。库不要求 `main`，实例化不执行用户入口函数。目标文件覆盖入口文件的完整导入图；静态库封装同一编译单元，不表示各 Vela 模块可以独立二进制链接。
 
 库产物同时生成 `<输出路径>.h` 和 `<输出路径>.aot.json`，提供导出包装声明与链接清单。Windows 的目标文件、静态库与可执行文件分别使用 `.obj`、`.lib` 与 `.exe`。路径示例不规定跨平台文件后缀转换规则。
+
+构建工具消费库之前，可以运行 `vela build --verify-manifest=math.o.aot.json`，检查目标、运行时和工具链身份、二进制与头文件指纹，以及发布代次；混用或修改过的文件会被拒绝。清单记录 generic CPU/PIC 代码生成、优化等级、函数帧与根槽成本、签名，以及可用时的配套目标支持身份。
+
+可执行文件和归档构建从安装的编译器相对路径读取 `share/vela/target.json`，也可用 `--target-support=FILE` 显式选择配置。仅生成目标文件时，不需要最终 SDK 或链接输入。配置通过 SHA-256 固定包内工具与运行时，并记录 SDK 版本、来源、许可、必需输入和链接参数；不从 `PATH` 选择工具。
+
+开发者可以运行 `python -m tools.vl package release OUTPUT` 创建 Windows 开发包。清单提供精确的 MSVC、Windows SDK/UCRT 版本及安装说明；按清单将 `VELA_MSVC_TOOLS` 设为带版本的 MSVC 工具目录，将 `VELA_WINDOWS_SDK` 设为 Windows Kits 根目录，无需 Visual Studio IDE。SDK 链接输入保留在外部。其他主机目前需要通过经过审计的 `--support-spec` 描述 SDK/sysroot 输入及随包文件，仍须完成各平台验收。
 
 首期支持本机编译本机，目标发行矩阵与现有引导主机一致：Windows x64、Linux x64、macOS arm64；每个平台必须独立通过发行验收后才能宣称支持。首期不包含 JIT、热替换、原生动态库装载、跨发行版本 ABI 兼容、独立模块二进制分发或 VM/AOT 相互调用。REPL 和现有 VM 调试器继续服务字节码路径。未支持的 AOT 操作必须明确报错，不能执行内嵌字节码兜底。
 
@@ -177,6 +183,12 @@ LLVM 与 LLD 版本随发行包固定，只包含该发行矩阵所需后端。�
 
 目标支持清单必须记录每项系统输入由发行包提供还是由 SDK 提供、定位方法、支持版本和分发许可。SDK 可以显式配置，或通过平台规定的位置发现；不得静默换用 PATH 上其它编译器/链接器。缺失或不受支持时，在编译前诊断并给出安装/配置路径。没有通过该平台 SDK、链接、签名及干净环境验证的发行包不得标为正式支持。
 
+发行维护者通过 `--support-spec=FILE` 提供已审计的 SDK/sysroot 配置。JSON 指定 `target`、`minimum_os`、`object_format`、`runtime_variant`、`application_dependencies`、`archive_arguments` 和 `link_arguments`。每个 `external_roots` 项记录 SDK 根目录名称、环境变量、精确版本、来源、许可证及安装说明；每个 `files` 项记录展开路径、SHA-256、用途、来源、许可证及分发条件。可选的 `bundled_files` 项包含相对配置文件的 `source_path`、包内相对路径 `destination`、来源和许可证，由打包工具复制并计算指纹。参数可使用 `{package}`、具名 SDK 根目录、`{object}`、`{output}` 和 `{runtime}`。用途为 `link` 的 SDK 文件仅在生成可执行文件时必需；目标文件和归档输出不依赖最终 SDK 输入。
+
+发布包目录前，打包工具使用暂存包内的编译器及声明的 SDK 输入构建、运行异步原生程序，并清除构建工具和库搜索环境变量。缺少链接输入或运行时 ABI 不匹配时，拒绝发布且不留下已发布目录。该检查确认包在本机可用；各平台仍须完成完整发行验收矩阵。
+
+各主机配置好 SDK 后，用 `VELA_TEST_TARGET_SUPPORT_SPEC` 为 `python -m tools.vl test release tooling` 指定上述审计配置。发行测试会清除构建工具环境变量，覆盖含中文和空格的路径、VM/原生程序对照、两个库共享同一运行时、不一致发布拒绝，以及删除源码与发行包后再次运行产物。Windows 也可使用内置开发 SDK 探测。跳过某平台测试不代表该平台发布验收通过。
+
 只生成目标文件不需要最终系统链接输入。宿主选择将 Vela 库嵌入 C++ 应用时仍需要自己的 C++ 开发环境，这与编译 Vela 源码不要求另装 Clang/LLVM 并不冲突。生成程序的动态依赖必须列入发行清单；静态链接 Vela 运行时不意味着整个程序没有系统动态库依赖。
 
 交叉编译作为后续扩展，必须同时提供目标代码生成、目标运行时、链接器能力、SDK/sysroot 和测试环境；仅启用 LLVM target 不构成完整支持。
@@ -190,6 +202,8 @@ LLVM 与 LLD 版本随发行包固定，只包含该发行矩阵所需后端。�
 ## 实施阶段与完成条件
 
 各阶段是依赖顺序，不能把整数示例可运行当作完整 AOT 交付。
+
+Windows 验证覆盖 1,563 项 C++ 测试、114 项工具测试、396 个 VM/AOT 语料对照及 30 项链接后的原生宿主契约。仓库级 clang-tidy 检查 431 个 C++ 文件，未报告诊断。Release 执行、编译、链接/归档探针、包体积、RSS、根槽及续延成本保存在[滚动聚合证据](../../benchmarks/results/rolling_summary.json)中。这些结果不能代替 Linux/macOS 实机执行及 SDK/签名验收。
 
 | 阶段 | 实现范围 | 完成条件 |
 | --- | --- | --- |

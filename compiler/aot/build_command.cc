@@ -1,80 +1,159 @@
 #include "compiler/aot/build_command.h"
 
 #include <cstddef>
+#include <expected>
+#include <filesystem>
+#include <optional>
 #include <ostream>
 #include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/binary.h"
 #include "base/diagnostic.h"
 #include "base/file.h"
 #include "base/fingerprint.h"
 #include "base/path.h"
+#include "base/process_exit.h"
 #include "base/source_location.h"
+#include "compiler/aot/artifact_publication.h"
 #include "compiler/aot/native_compiler.h"
-#include "compiler/exit_code.h"
+#include "compiler/aot/target_support.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
 #include "compiler/ir/preparation.h"
 
 namespace vela::compiler::aot {
+namespace {
 
-int BuildCommand(std::span<char*> arguments, std::ostream& errors) {
+struct BuildArguments final {
   NativeOptions options;
   std::string_view source;
   std::string_view output;
+  NativeOutputKind kind = NativeOutputKind::Executable;
+  std::filesystem::path support_path = DefaultTargetSupportPath();
+};
+
+std::expected<BuildArguments, std::string> ParseArguments(std::span<char*> arguments) {
+  BuildArguments result;
   std::string_view emit = "exe";
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     const std::string_view argument = arguments.subspan(index).front();
     if (argument == "-o" && index + 1 < arguments.size()) {
-      output = arguments.subspan(++index).front();
+      result.output = arguments.subspan(++index).front();
     } else if (argument.starts_with("--emit=")) {
       emit = argument.substr(std::string_view("--emit=").size());
     } else if (argument.starts_with("--export=")) {
-      options.exports.emplace_back(argument.substr(std::string_view("--export=").size()));
-    } else if (!argument.starts_with('-') && source.empty()) {
-      source = argument;
+      result.options.exports.emplace_back(argument.substr(std::string_view("--export=").size()));
+    } else if (argument.starts_with("--target-support=")) {
+      result.support_path = Utf8Path(argument.substr(std::string_view("--target-support=").size()));
+    } else if (!argument.starts_with('-') && result.source.empty()) {
+      result.source = argument;
     } else {
-      errors << "vela: invalid build argument: " << argument << '\n';
-      return kUsageExitCode;
+      return std::unexpected("invalid build argument: " + std::string(argument));
     }
   }
-  if (source.empty() || output.empty()) {
-    errors << "vela: build requires a source file and -o OUTPUT\n";
-    return kUsageExitCode;
+  if (result.source.empty() || result.output.empty()) {
+    return std::unexpected("build requires a source file and -o OUTPUT");
   }
-  if (emit != "obj") {
-    errors << "vela: AOT output kind is not implemented: " << emit << '\n';
-    return kUsageExitCode;
+  if (emit == "obj") {
+    result.kind = NativeOutputKind::Object;
+  } else if (emit == "staticlib") {
+    result.kind = NativeOutputKind::StaticLibrary;
+  } else if (emit != "exe") {
+    return std::unexpected("unsupported AOT output kind: " + std::string(emit));
   }
-  auto parsed = frontend::LoadProgram(source);
+  result.options.entry_mode = result.kind == NativeOutputKind::Executable
+                                  ? NativeEntryMode::Executable
+                                  : NativeEntryMode::Library;
+  return result;
+}
+
+void PrintDiagnostics(std::ostream& errors, const frontend::Diagnostics& diagnostics) {
+  for (const auto& diagnostic : diagnostics) {
+    WriteError(errors, diagnostic.source_path, diagnostic.location, diagnostic.message);
+  }
+}
+
+std::expected<void, std::string> PublishBuild(const BuildArguments& arguments,
+                                              const NativeArtifact& artifact,
+                                              std::span<const std::byte> binary,
+                                              const TargetSupport* support) {
+  const auto output = Utf8Path(arguments.output);
+  if (arguments.kind == NativeOutputKind::Executable) {
+    return WriteFileAtomically(output, binary, FileMode::kExecutable);
+  }
+  const auto kind = arguments.kind == NativeOutputKind::Object ? LibraryArtifactKind::Object
+                                                               : LibraryArtifactKind::StaticLibrary;
+  return PublishNativeLibrary(output, artifact, binary, kind, support);
+}
+
+int ExecuteBuild(BuildArguments arguments, std::ostream& errors) {
+  const auto kind = arguments.kind;
+  std::optional<TargetSupport> support;
+  if (kind != NativeOutputKind::Object) {
+    auto loaded = LoadTargetSupport(arguments.support_path, kind);
+    if (!loaded) {
+      errors << "vela: " << loaded.error() << '\n';
+      return kIoErrorExitCode;
+    }
+    support = std::move(*loaded);
+  }
+  auto parsed = frontend::LoadProgram(arguments.source);
   BinaryWriter identity;
   for (const auto& file : parsed.program.sources) {
     identity.Write(file.path);
     identity.Write(file.text);
   }
+  auto& options = arguments.options;
   options.module_name += '_' + ContentFingerprint(identity.bytes()).Hex();
   auto prepared = ir::PrepareParsed(std::move(parsed));
   if (!prepared) {
-    for (const auto& diagnostic : prepared.error()) {
-      WriteError(errors, diagnostic.source_path, diagnostic.location, diagnostic.message);
-    }
+    PrintDiagnostics(errors, prepared.error());
     return kSourceErrorExitCode;
   }
-  auto artifact = Compile(*prepared, options);
+  auto artifact = Compile(std::move(*prepared), options);
   if (!artifact) {
-    for (const auto& diagnostic : artifact.error()) {
-      WriteError(errors, diagnostic.source_path, diagnostic.location, diagnostic.message);
-    }
+    PrintDiagnostics(errors, artifact.error());
     return kSourceErrorExitCode;
   }
-  const auto written = WriteFileAtomically(Utf8Path(output), artifact->object);
+  auto binary =
+      kind == NativeOutputKind::Object
+          ? std::expected<std::vector<std::byte>, std::string>(std::move(artifact->object))
+          : LinkNativeArtifact(*support, artifact->object, kind);
+  if (!binary) {
+    errors << "vela: " << binary.error() << '\n';
+    return kIoErrorExitCode;
+  }
+  const auto written = PublishBuild(arguments, *artifact, *binary, support ? &*support : nullptr);
   if (!written) {
-    WriteError(errors, output, SourceLocation(), written.error());
+    WriteError(errors, arguments.output, SourceLocation(), written.error());
     return kIoErrorExitCode;
   }
   return 0;
+}
+
+}  // namespace
+
+int BuildCommand(std::span<char*> arguments, std::ostream& errors) {
+  constexpr std::string_view kVerify = "--verify-manifest=";
+  if (arguments.size() == 1 && std::string_view(arguments.front()).starts_with(kVerify)) {
+    const auto verified =
+        VerifyNativeLibrary(Utf8Path(std::string_view(arguments.front()).substr(kVerify.size())));
+    if (!verified) {
+      errors << "vela: " << verified.error() << '\n';
+      return kSourceErrorExitCode;
+    }
+    return 0;
+  }
+  auto parsed = ParseArguments(arguments);
+  if (!parsed) {
+    errors << "vela: " << parsed.error() << '\n';
+    return kUsageExitCode;
+  }
+  return ExecuteBuild(std::move(*parsed), errors);
 }
 
 }  // namespace vela::compiler::aot

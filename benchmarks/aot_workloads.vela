@@ -1,0 +1,67 @@
+external func workloadSize(): int = 'benchmark.size';
+external func hostStep(value: int): int = 'benchmark.step';
+let count = workloadSize();
+
+class Box {
+  public param value: int;
+  public param text: string;
+}
+
+func step(value: int): int { return value + 1; }
+
+export func arithmetic(): int {
+  const size = count;
+  let sum = 0;
+  for (let index = 0; index < size; index++) { sum += index; }
+  return sum;
+}
+
+export func calls(): int {
+  const size = count;
+  let sum = 0;
+  for (let index = 0; index < size; index++) { sum += step(index); }
+  return sum;
+}
+
+export func fields(): int {
+  const size = count;
+  const box = Box(value: 0, text: '');
+  for (let index = 0; index < size; index++) { box.value += 1; }
+  return box.value;
+}
+
+export func arrays(): int {
+  const size = count;
+  const values: int[] = [];
+  values.reserve(size);
+  for (let index = 0; index < size; index++) { values.push(index); }
+  let sum = 0;
+  for (let index = 0; index < size; index++) { sum += values[index]; }
+  return sum;
+}
+
+export func host(): int {
+  const size = count;
+  let sum = 0;
+  for (let index = 0; index < size; index++) { sum += hostStep(index); }
+  return sum;
+}
+
+export func gc(): int {
+  const size = count;
+  let sum = 0;
+  for (let index = 0; index < size; index++) {
+    const box = Box(value: index, text: index.toString());
+    sum += box.text.length;
+  }
+  return sum;
+}
+
+async func segment(value: int): Future<int> { return await Future.value(value + 1); }
+
+export async func asyncWork(): Future<int> {
+  const size = 64;
+  let sum = 0;
+  for (let index = 0; index < size; index++) { sum += await segment(index); }
+  return sum;
+}

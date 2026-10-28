@@ -138,6 +138,7 @@ Function Lowerer::CreateMemberFunction(const frontend::TypeDescriptor& receiver,
                                                    : persistent_->functions.size());
   function.return_type = signature.return_type;
   function.parameter_count = static_cast<std::uint32_t>(signature.parameters.size() + 1);
+  function.value_types.push_back(receiver);
   function.signature.emplace();
   auto& call = *function.signature;
   call.hidden_parameters = 1;

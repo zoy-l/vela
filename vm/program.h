@@ -8,17 +8,15 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <tuple>
 #include <utility>
 #include <vector>
-
-#include <absl/container/flat_hash_map.h>
 
 #include "base/callable.h"
 #include "base/execution_status.h"
 #include "base/member.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/member_table.h"
 #include "runtime/native_function.h"
 #include "runtime/object.h"
 #include "runtime/string.h"
@@ -64,7 +62,9 @@ class LayoutTables final {
     return collections_;
   }
   [[nodiscard]] std::span<const runtime::TypeConstraint> types() const noexcept { return types_; }
-  [[nodiscard]] const std::vector<MemberDefinition>& members() const noexcept { return members_; }
+  [[nodiscard]] const std::vector<MemberDefinition>& members() const noexcept {
+    return members_.members();
+  }
   [[nodiscard]] const MemberDefinition* FindMember(runtime::Value receiver,
                                                    std::string_view name) const;
   [[nodiscard]] bool IsCanonicalReceiverType(std::uint32_t index) const;
@@ -74,17 +74,7 @@ class LayoutTables final {
   std::vector<const runtime::ArrayLayout*> arrays_;
   std::vector<const runtime::CollectionLayout*> collections_;
   std::vector<runtime::TypeConstraint> types_;
-  using ReceiverKey = std::tuple<runtime::ValueKind,
-                                 runtime::ObjectKind,
-                                 const runtime::ClassLayout*,
-                                 const runtime::ArrayLayout*,
-                                 const runtime::CollectionLayout*,
-                                 const runtime::TypeSignature*>;
-  [[nodiscard]] static ReceiverKey Key(const runtime::TypeConstraint& type);
-  std::vector<MemberDefinition> members_;
-  absl::flat_hash_map<ReceiverKey, std::uint32_t> receiver_indices_;
-  // name 视图只借用 members_；构造索引后成员描述不再移动或修改。
-  absl::flat_hash_map<std::pair<std::uint32_t, std::string_view>, std::size_t> member_indices_;
+  runtime::MemberTable members_;
 };
 
 // 可变构建输入只在创建程序时使用，成功后所有权移入不可变共享存储。
@@ -165,7 +155,9 @@ class Program final {
   [[nodiscard]] FunctionHandle FindFunction(std::string_view name) const noexcept;
   [[nodiscard]] bool IsForIsolate(const runtime::Isolate& isolate) const noexcept;
   [[nodiscard]] GlobalStorage* globals() const noexcept;
-  [[nodiscard]] bool HasCallable(const runtime::ClassLayout& layout) const noexcept;
+  [[nodiscard]] const runtime::CodeIdentity& code_identity() const noexcept {
+    return *storage_->code_identity;
+  }
 
  private:
   friend class FunctionHandle;

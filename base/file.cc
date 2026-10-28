@@ -20,7 +20,8 @@
 namespace vela {
 
 std::expected<void, std::string> WriteFileAtomically(const std::filesystem::path& path,
-                                                     std::span<const std::byte> bytes) {
+                                                     std::span<const std::byte> bytes,
+                                                     [[maybe_unused]] FileMode mode) {
   if (std::cmp_greater(bytes.size(), std::numeric_limits<std::streamsize>::max())) {
     return std::unexpected("output exceeds stream size limit");
   }
@@ -46,6 +47,20 @@ std::expected<void, std::string> WriteFileAtomically(const std::filesystem::path
     remove_temporary();
     return std::unexpected("cannot write complete output '" + PathText(path) + "'");
   }
+#ifndef _WIN32
+  if (mode == FileMode::kExecutable) {
+    std::error_code error;
+    constexpr auto kExecute = std::filesystem::perms::owner_exec |
+                              std::filesystem::perms::group_exec |
+                              std::filesystem::perms::others_exec;
+    std::filesystem::permissions(temporary, kExecute, std::filesystem::perm_options::add, error);
+    if (error) {
+      remove_temporary();
+      return std::unexpected("cannot set executable permissions for '" + PathText(path) +
+                             "': " + error.message());
+    }
+  }
+#endif
   const auto error = internal::PublishFile({.temporary = temporary, .destination = path});
   if (error) {
     remove_temporary();

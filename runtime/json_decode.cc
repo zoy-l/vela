@@ -7,6 +7,7 @@
 #include <cstring>
 #include <expected>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <system_error>
 
@@ -15,6 +16,7 @@
 
 #include "base/execution_status.h"
 #include "base/json.h"
+#include "runtime/error.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
@@ -250,6 +252,19 @@ std::expected<Value, JsonRuntimeError> ParseJson(std::string_view source, Isolat
     });
   }
   return Decoder(isolate, *document).Decode(document->root());
+}
+
+std::expected<Value, ExecutionStatus> CreateJsonError(Isolate& isolate,
+                                                      const JsonRuntimeError& error) {
+  if (error.status != ExecutionStatus::JsonDecodeError &&
+      error.status != ExecutionStatus::JsonEncodeError) {
+    return std::unexpected(error.status);
+  }
+  const auto message = error.status == ExecutionStatus::JsonDecodeError
+                           ? error.message + " at byte " + std::to_string(error.offset)
+                           : error.message;
+  return CreateError(isolate.heap(), isolate.error_layout(),
+                     {.message = message, .code = ExecutionStatusCode(error.status)});
 }
 
 }  // namespace vela::runtime

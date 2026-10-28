@@ -6,9 +6,18 @@
 
 #include "base/execution_status.h"
 #include "runtime/heap.h"
+#include "runtime/string.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
+
+std::string_view ErrorMessage(Value value, const ClassLayout& layout) noexcept {
+  if (!Heap::IsValueOfType(value, {.kind = ValueKind::Object, .instance = &layout})) {
+    return {};
+  }
+  const auto* field = Heap::GetField(*value.AsObject(), kErrorMessageField);
+  return field != nullptr && field->IsString() ? field->AsString()->value() : std::string_view();
+}
 
 std::expected<Value, ExecutionStatus> CreateError(Heap& heap,
                                                   const ClassLayout& layout,

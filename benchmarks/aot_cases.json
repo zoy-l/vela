@@ -1,0 +1,9 @@
+[
+  {"name": "arithmetic", "kernel": "Arithmetic", "size": 1000, "expected": 499500, "completion": "Immediate"},
+  {"name": "calls", "kernel": "Calls", "size": 1000, "expected": 500500, "completion": "Immediate"},
+  {"name": "fields", "kernel": "Fields", "size": 1000, "expected": 1000, "completion": "Immediate"},
+  {"name": "arrays", "kernel": "Arrays", "size": 1000, "expected": 499500, "completion": "Immediate"},
+  {"name": "host", "kernel": "Host", "size": 1000, "expected": 500500, "completion": "Immediate"},
+  {"name": "gc", "kernel": "Gc", "size": 1000, "expected": 2890, "completion": "Immediate"},
+  {"name": "asyncWork", "kernel": "Async", "size": 64, "expected": 2080, "completion": "Future"}
+]

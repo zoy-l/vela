@@ -1,6 +1,8 @@
 #include "compiler/ir/preparation.h"
 
 #include <algorithm>
+#include <array>
+#include <expected>
 #include <span>
 #include <string>
 #include <string_view>
@@ -8,7 +10,11 @@
 
 #include <gtest/gtest.h>
 
+#include "base/layout_description.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
+#include "compiler/frontend/type_checker.h"
+#include "compiler/ir/ir.h"
 
 namespace vela::ir {
 namespace {
@@ -33,8 +39,9 @@ func main(): int { return read() + 2; }
 }
 
 TEST(PreparationTest, KeepsWideVirtualRegistersBeforeBackendAllocation) {
+  constexpr int kArrayLength = 300;
   std::string source = "func main(): int { const values = [";
-  for (int index = 0; index < 300; ++index) {
+  for (int index = 0; index < kArrayLength; ++index) {
     if (index != 0) {
       source += ',';
     }
@@ -48,7 +55,7 @@ TEST(PreparationTest, KeepsWideVirtualRegistersBeforeBackendAllocation) {
   ASSERT_NE(main, functions.end());
   EXPECT_GT(main->register_count, 256U);
   EXPECT_TRUE(std::ranges::any_of(main->instructions, [](const Instruction& instruction) {
-    return instruction.opcode == Opcode::NewArray && instruction.immediate == 300;
+    return instruction.opcode == Opcode::NewArray && instruction.immediate == kArrayLength;
   }));
 }
 
@@ -71,10 +78,10 @@ func main(): int { return Box(value: 42).value; }
 }
 
 TEST(PreparationTest, ReportsImportedTypeErrorsBeforeLowering) {
-  const frontend::SourceInput sources[] = {
+  const auto sources = std::to_array<frontend::SourceInput>({
       {.path = "main.vela", .text = "import 'library'; func main(): int { return answer(); }"},
       {.path = "library.vela", .text = "export func answer(): int { return true; }"},
-  };
+  });
   const auto result = PrepareParsed(frontend::LoadSources(sources, "main.vela"));
   ASSERT_FALSE(result.has_value());
   ASSERT_FALSE(result.error().empty());

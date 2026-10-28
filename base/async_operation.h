@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
@@ -60,5 +61,31 @@ enum class AsyncOperation : std::uint8_t {
   }
   return 0;
 }
+
+[[nodiscard]] constexpr bool IsAsyncStateOperation(AsyncOperation operation) noexcept {
+  switch (operation) {
+    case AsyncOperation::NewCompleter:
+    case AsyncOperation::CompleterFuture:
+    case AsyncOperation::CompleterIsCompleted:
+    case AsyncOperation::CompleterComplete:
+    case AsyncOperation::CompleterError:
+    case AsyncOperation::TimerCancel:
+    case AsyncOperation::NewCancellationToken:
+    case AsyncOperation::CancellationCancel:
+    case AsyncOperation::CancellationIsCancelled:
+      return true;
+    default:
+      return false;
+  }
+}
+
+inline constexpr std::size_t kMaximumAsyncArity = [] {
+  std::size_t maximum = 0;
+  for (std::uint32_t index = 0; index < static_cast<std::uint32_t>(AsyncOperation::Count);
+       ++index) {
+    maximum = std::max(maximum, AsyncArity(static_cast<AsyncOperation>(index)));
+  }
+  return maximum;
+}();
 
 }  // namespace vela

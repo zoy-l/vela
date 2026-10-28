@@ -17,6 +17,46 @@
 namespace vela::compiler {
 namespace {
 
+void ExpectIsolatedNodeLayouts(const runtime::ProgramLayouts& first,
+                               const runtime::ProgramLayouts& second,
+                               std::size_t node_index) {
+  auto* first_node = first.classes.at(node_index);
+  auto* second_node = second.classes.at(node_index);
+  EXPECT_NE(first_node, second_node);
+  ASSERT_EQ(first_node->interfaces().size(), 1U);
+  ASSERT_EQ(second_node->interfaces().size(), 1U);
+  EXPECT_NE(first_node->interfaces().front(), second_node->interfaces().front());
+  const auto nested = std::ranges::find_if(
+      first.arrays, [](const auto* array) { return array->element.array != nullptr; });
+  ASSERT_NE(nested, first.arrays.end());
+  EXPECT_EQ((*nested)->element.array->element.instance, first_node);
+}
+
+void ExpectExpectedNodeArray(const runtime::TypeSignature& expected,
+                             const runtime::ClassLayout* node) {
+  const auto& result = expected.result;
+  if (!result.has_value()) {
+    ADD_FAILURE() << "Expected must retain its success payload";
+    return;
+  }
+  ASSERT_NE(result->array, nullptr);
+  EXPECT_EQ(result->array->element.instance, node);
+  ASSERT_EQ(expected.parameters.size(), 1U);
+  EXPECT_EQ(expected.parameters.front().type.kind, runtime::ValueKind::String);
+}
+
+void ExpectNestedFuture(const runtime::LayoutCache& cache, const runtime::ClassLayout* node) {
+  const auto* future = cache.signatures.at("Future<Expected<Node[], string>>");
+  const auto& payload = future->result;
+  if (!payload.has_value()) {
+    ADD_FAILURE() << "Future must retain its result type";
+    return;
+  }
+  const auto* expected = payload->signature;
+  ASSERT_NE(expected, nullptr);
+  ExpectExpectedNodeArray(*expected, node);
+}
+
 TEST(LayoutInstantiationTest, OwnsNestedTypesAfterFrontendDestructionAndBindsPerIsolate) {
   const frontend::SourceInput input{
       .path = "main.vela",
@@ -39,11 +79,6 @@ func main(): void {
   layout::Program description;
   {
     auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
-    if (!prepared) {
-      for (const auto& diagnostic : prepared.error()) {
-        ADD_FAILURE() << diagnostic.message;
-      }
-    }
     ASSERT_TRUE(prepared.has_value());
     description = std::move(prepared->layouts);
   }
@@ -62,26 +97,8 @@ func main(): void {
   const auto first_layouts = runtime::InstantiateLayouts(description, first, first_cache);
   const auto second_layouts = runtime::InstantiateLayouts(description, second, second_cache);
   auto* first_node = first_layouts.classes.at(node_index);
-  auto* second_node = second_layouts.classes.at(node_index);
-  EXPECT_NE(first_node, second_node);
-  ASSERT_EQ(first_node->interfaces().size(), 1U);
-  ASSERT_EQ(second_node->interfaces().size(), 1U);
-  EXPECT_NE(first_node->interfaces().front(), second_node->interfaces().front());
-
-  const auto nested = std::ranges::find_if(
-      first_layouts.arrays, [](const auto* array) { return array->element.array != nullptr; });
-  ASSERT_NE(nested, first_layouts.arrays.end());
-  EXPECT_EQ((*nested)->element.array->element.instance, first_node);
-
-  const auto* future = first_cache.signatures.at("Future<Expected<Node[], string>>");
-  ASSERT_TRUE(future->result.has_value());
-  const auto* expected = future->result->signature;
-  ASSERT_NE(expected, nullptr);
-  ASSERT_TRUE(expected->result.has_value());
-  ASSERT_NE(expected->result->array, nullptr);
-  EXPECT_EQ(expected->result->array->element.instance, first_node);
-  ASSERT_EQ(expected->parameters.size(), 1U);
-  EXPECT_EQ(expected->parameters.front().type.kind, runtime::ValueKind::String);
+  ExpectIsolatedNodeLayouts(first_layouts, second_layouts, node_index);
+  ExpectNestedFuture(first_cache, first_node);
 
   const auto before = first.layout_counts();
   const auto reused = runtime::InstantiateLayouts(description, first, first_cache);

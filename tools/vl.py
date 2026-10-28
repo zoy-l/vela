@@ -17,6 +17,7 @@ COMMAND_MODULES = {
     "format": "tools.format",
     "lint": "tools.lint",
     "llvm": "tools.llvm",
+    "package": "tools.package",
     "test": "tools.test",
 }
 
@@ -26,7 +27,7 @@ def print_help() -> None:
     print()
     print("Commands:")
     print("  build       Configure and build a target")
-    print("  bench       Run Release benchmarks; --compare for backends, --native-compare for C++ calls")
+    print("  bench       Run Release benchmarks; --compare, --native-compare or --aot-compare")
     print("  clangd      Generate compile_commands.json")
     print("  config      Generate a GN output directory")
     print("  doctor      Check the project toolchain")
@@ -34,6 +35,7 @@ def print_help() -> None:
     print("  format      Format C++ and GN sources")
     print("  lint        Run project clang-tidy checks")
     print("  llvm sync   Acquire the pinned LLVM development SDK")
+    print("  package     Build a distribution with audited native target support")
     print("  test        Run GoogleTest suites")
 
 

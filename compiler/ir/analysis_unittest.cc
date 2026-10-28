@@ -76,7 +76,7 @@ TEST(AnalysisTest, ReturnCompletionRetainsItsExceptionHandler) {
   function.register_count = 2;
   function.handlers = {{.target = 2}};
   function.instructions = {
-      {.opcode = Opcode::LoadInt, .dst = 0, .immediate = 42},
+      {.opcode = Opcode::LoadInt, .dst = 0, .immediate = 1},
       {.opcode = Opcode::Return, .dst = 0, .handler = 0},
       {.opcode = Opcode::Catch, .dst = 1},
       {.opcode = Opcode::Return, .dst = 1},

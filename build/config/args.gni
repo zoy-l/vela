@@ -11,6 +11,7 @@ declare_args() {
   vela_llvm_root = ""
   vela_llvm_libraries = []
   vela_llvm_system_libraries = []
+  vela_llvm_target = ""
 }
 
 assert(vela_build_config == "debug" || vela_build_config == "release",

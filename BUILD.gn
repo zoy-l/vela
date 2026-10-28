@@ -26,5 +26,8 @@ group("tests") {
 
 group("benchmarks") {
   testonly = true
-  deps = [ "//benchmarks:vela_benchmarks" ]
+  deps = [
+    "//benchmarks:vela_aot_benchmarks",
+    "//benchmarks:vela_benchmarks",
+  ]
 }

@@ -3,6 +3,28 @@
 Google Benchmark runs Vela workloads through the production compiler
 and VM. Versions are pinned in `DEPS`; `//benchmarks:vela_benchmarks` links the
 upstream `benchmark_main` and is separate from the language executable.
+`python -m tools.vl bench --aot-compare` builds offline native objects through
+`vela build` and runs `vela_aot_benchmarks` against the same VM sources and C++
+workloads. It covers arithmetic, calls, fields, reserved arrays, host bindings,
+allocation/collection, and async continuations. The report separates steady and
+first native execution and records heap, frame, shadow-slot, saved-state and
+process resident-memory costs. Resident snapshots share the benchmark process;
+run backend filters in separate processes when comparing their RSS. Generated
+`out/release/gen/benchmarks/aot_native/build_metrics.json` records the production
+CLI compilation/publication time, object size, target and build identities.
+The async C++ baseline uses the same scheduler and two queued observation
+boundaries per element; its locals use ordinary C++ ownership.
+The [rolling aggregate evidence](results/rolling_summary.json) retains all 28
+AOT comparison cases with seven repetitions, plus RSS runs that select one
+backend per process. Native frame bytes describe the declared LLVM frame
+aggregate before optimization; root-store counts describe planned safepoint
+writes. They do not measure the final machine stack or executed store count.
+Compilation includes production object/header/manifest publication. Separate
+link/archive probes use a checked arithmetic library and a precompiled C host;
+their timings exclude compilation and package creation. Variation, exact
+commands, identities, package sizes and system dependencies remain in the
+summary. C++ can collapse arithmetic and field loops; several native workloads
+currently take longer than the VM.
 `vm/standard_api` covers default global APIs, sorting and reduction without imports.
 `vm/array_algorithms` covers sorting, repeated reduction and mapping; both
 use the normal compiler and VM and report the existing heap/register counters.

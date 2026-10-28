@@ -1,0 +1,528 @@
+#include "compiler/aot/native_image_emitter.h"
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <expected>
+#include <initializer_list>
+#include <ranges>
+#include <span>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <vector>
+
+#include <llvm/ADT/ArrayRef.h>
+#include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DataLayout.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/GlobalValue.h>
+#include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/Type.h>
+
+#include "base/callable.h"
+#include "base/layout_description.h"
+#include "base/member.h"
+#include "base/source_location.h"
+#include "compiler/ir/ir.h"
+#include "runtime/native_abi.h"
+#include "runtime/native_build_identity.h"
+#include "runtime/native_image.h"
+
+namespace vela::compiler::aot {
+namespace {
+
+using runtime::NativeArrayDescription;
+using runtime::NativeCallParameter;
+using runtime::NativeClassDescription;
+using runtime::NativeCollectionDescription;
+using runtime::NativeFunctionDescription;
+using runtime::NativeImage;
+using runtime::NativeMemberDescription;
+using runtime::NativeSignatureDescription;
+using runtime::NativeSignatureParameter;
+using runtime::NativeTable;
+using runtime::NativeText;
+using runtime::NativeTypeDescription;
+
+class ImageEmitter final {
+ public:
+  explicit ImageEmitter(llvm::Module& module);
+  ~ImageEmitter() = default;
+  ImageEmitter(const ImageEmitter&) = delete;
+  ImageEmitter& operator=(const ImageEmitter&) = delete;
+  ImageEmitter(ImageEmitter&&) = delete;
+  ImageEmitter& operator=(ImageEmitter&&) = delete;
+  std::expected<llvm::Constant*, std::string> Emit(const ir::Program& program,
+                                                   std::span<llvm::Function* const> entries,
+                                                   std::span<const std::uint8_t> exports);
+
+ private:
+  template <class Record, std::size_t Count>
+  llvm::StructType* RecordType(std::string_view name,
+                               const std::array<llvm::Type*, Count>& fields,
+                               const std::array<std::size_t, Count>& offsets) {
+    static_assert(std::is_standard_layout_v<Record>);
+    auto* type = llvm::StructType::create(context_, fields, name);
+    const auto* layout = module_.getDataLayout().getStructLayout(type);
+    const auto indices = std::views::iota(std::size_t{0}, Count);
+    const bool matches =
+        module_.getDataLayout().getTypeAllocSize(type) == sizeof(Record) &&
+        std::ranges::all_of(indices, [&](std::size_t index) {
+          return layout->getElementOffset(static_cast<unsigned>(index)) == offsets.at(index);
+        });
+    has_compatible_layout_ = has_compatible_layout_ && matches;
+    return type;
+  }
+  static llvm::Constant* Record(llvm::StructType* type,
+                                std::initializer_list<llvm::Constant*> fields);
+  llvm::Constant* Word(std::uint32_t value);
+  llvm::Constant* Text(std::string_view value);
+  llvm::Constant* Table(llvm::Type* element, llvm::ArrayRef<llvm::Constant*> values);
+  llvm::Constant* Numbers(std::span<const std::uint32_t> values);
+  llvm::Constant* Texts(std::span<const std::string> values);
+  llvm::Constant* Type(const layout::Type& type);
+  llvm::Constant* Classes(std::span<const layout::Class> classes);
+  llvm::Constant* Arrays(std::span<const layout::Array> arrays);
+  llvm::Constant* Collections(std::span<const layout::Collection> collections);
+  llvm::Constant* Signatures(std::span<const layout::Signature> signatures);
+  llvm::Constant* Functions(std::span<const ir::Function> functions,
+                            std::span<llvm::Function* const> entries,
+                            std::span<const std::uint8_t> exports);
+  llvm::Constant* Members(std::span<const MemberDefinition> members);
+
+  llvm::Module& module_;
+  llvm::LLVMContext& context_;
+  llvm::Type* word_;
+  llvm::Type* pointer_;
+  llvm::StructType* text_;
+  llvm::StructType* table_;
+  llvm::StructType* type_;
+  llvm::StructType* class_;
+  llvm::StructType* array_;
+  llvm::StructType* collection_;
+  llvm::StructType* signature_parameter_;
+  llvm::StructType* signature_;
+  llvm::StructType* call_parameter_;
+  llvm::StructType* location_;
+  llvm::StructType* function_;
+  llvm::StructType* member_;
+  llvm::StructType* image_;
+  bool has_compatible_layout_ = true;
+};
+
+ImageEmitter::ImageEmitter(llvm::Module& module)
+    : module_(module),
+      context_(module.getContext()),
+      word_(llvm::Type::getInt32Ty(context_)),
+      pointer_(llvm::PointerType::getUnqual(context_)) {
+  llvm::Type* count = llvm::Type::getInt64Ty(context_);
+  text_ =
+      RecordType<NativeText>("vela.text", std::array{pointer_, count},
+                             std::array{offsetof(NativeText, data), offsetof(NativeText, size)});
+  table_ = RecordType<NativeTable<std::uint32_t>>("vela.table", std::array{pointer_, count},
+                                                  std::array{
+                                                      offsetof(NativeTable<std::uint32_t>, data),
+                                                      offsetof(NativeTable<std::uint32_t>, size),
+                                                  });
+  type_ = RecordType<NativeTypeDescription>("vela.type", std::array{word_, word_, word_},
+                                            std::array{
+                                                offsetof(NativeTypeDescription, kind),
+                                                offsetof(NativeTypeDescription, nullable),
+                                                offsetof(NativeTypeDescription, index),
+                                            });
+  class_ =
+      RecordType<NativeClassDescription>("vela.class",
+                                         std::to_array<llvm::Type*>({
+                                             text_,
+                                             table_,
+                                             table_,
+                                             table_,
+                                             word_,
+                                             word_,
+                                             word_,
+                                             word_,
+                                             word_,
+                                             word_,
+                                         }),
+                                         std::array{
+                                             offsetof(NativeClassDescription, name),
+                                             offsetof(NativeClassDescription, reference_fields),
+                                             offsetof(NativeClassDescription, interfaces),
+                                             offsetof(NativeClassDescription, dispatch_targets),
+                                             offsetof(NativeClassDescription, field_count),
+                                             offsetof(NativeClassDescription, kind),
+                                             offsetof(NativeClassDescription, callable_function),
+                                             offsetof(NativeClassDescription, callable_mode),
+                                             offsetof(NativeClassDescription, callable_type),
+                                             offsetof(NativeClassDescription, expected_type),
+                                         });
+  array_ =
+      RecordType<NativeArrayDescription>("vela.array", std::to_array<llvm::Type*>({text_, type_}),
+                                         std::array{
+                                             offsetof(NativeArrayDescription, name),
+                                             offsetof(NativeArrayDescription, element),
+                                         });
+  collection_ = RecordType<NativeCollectionDescription>(
+      "vela.collection", std::to_array<llvm::Type*>({text_, type_, type_, word_}),
+      std::array{
+          offsetof(NativeCollectionDescription, name),
+          offsetof(NativeCollectionDescription, key),
+          offsetof(NativeCollectionDescription, value),
+          offsetof(NativeCollectionDescription, has_value),
+      });
+  signature_parameter_ = RecordType<NativeSignatureParameter>(
+      "vela.signature.parameter", std::to_array<llvm::Type*>({type_, word_}),
+      std::array{
+          offsetof(NativeSignatureParameter, type),
+          offsetof(NativeSignatureParameter, flags),
+      });
+  signature_ = RecordType<NativeSignatureDescription>(
+      "vela.signature", std::to_array<llvm::Type*>({text_, table_, type_, word_}),
+      std::array{
+          offsetof(NativeSignatureDescription, name),
+          offsetof(NativeSignatureDescription, parameters),
+          offsetof(NativeSignatureDescription, result),
+          offsetof(NativeSignatureDescription, has_result),
+      });
+  call_parameter_ = RecordType<NativeCallParameter>(
+      "vela.call.parameter", std::to_array<llvm::Type*>({text_, word_, word_}),
+      std::array{
+          offsetof(NativeCallParameter, name),
+          offsetof(NativeCallParameter, type),
+          offsetof(NativeCallParameter, flags),
+      });
+  location_ = RecordType<SourceLocation>("vela.location", std::array{word_, word_, word_},
+                                         std::array{
+                                             offsetof(SourceLocation, line),
+                                             offsetof(SourceLocation, column),
+                                             offsetof(SourceLocation, source_id),
+                                         });
+  function_ = RecordType<NativeFunctionDescription>(
+      "vela.function",
+      std::to_array<llvm::Type*>({
+          text_,
+          text_,
+          table_,
+          table_,
+          pointer_,
+          word_,
+          word_,
+          word_,
+          word_,
+      }),
+      std::array{
+          offsetof(NativeFunctionDescription, name),
+          offsetof(NativeFunctionDescription, native_symbol),
+          offsetof(NativeFunctionDescription, parameters),
+          offsetof(NativeFunctionDescription, locations),
+          offsetof(NativeFunctionDescription, entry),
+          offsetof(NativeFunctionDescription, parameter_count),
+          offsetof(NativeFunctionDescription, result_type),
+          offsetof(NativeFunctionDescription, hidden_parameters),
+          offsetof(NativeFunctionDescription, flags),
+      });
+  member_ = RecordType<NativeMemberDescription>(
+      "vela.member", std::to_array<llvm::Type*>({text_, word_, word_, word_, word_, word_}),
+      std::array{
+          offsetof(NativeMemberDescription, name),
+          offsetof(NativeMemberDescription, receiver_type),
+          offsetof(NativeMemberDescription, target),
+          offsetof(NativeMemberDescription, type),
+          offsetof(NativeMemberDescription, setter),
+          offsetof(NativeMemberDescription, kind),
+      });
+  image_ = RecordType<NativeImage>("vela.image",
+                                   std::to_array<llvm::Type*>({
+                                       word_,
+                                       word_,
+                                       text_,
+                                       text_,
+                                       table_,
+                                       table_,
+                                       table_,
+                                       table_,
+                                       table_,
+                                       table_,
+                                       table_,
+                                       table_,
+                                       table_,
+                                       table_,
+                                       table_,
+                                       table_,
+                                       table_,
+                                   }),
+                                   std::array{
+                                       offsetof(NativeImage, abi_version),
+                                       offsetof(NativeImage, record_bytes),
+                                       offsetof(NativeImage, abi_identity),
+                                       offsetof(NativeImage, target),
+                                       offsetof(NativeImage, interfaces),
+                                       offsetof(NativeImage, classes),
+                                       offsetof(NativeImage, arrays),
+                                       offsetof(NativeImage, collections),
+                                       offsetof(NativeImage, signatures),
+                                       offsetof(NativeImage, types),
+                                       offsetof(NativeImage, array_types),
+                                       offsetof(NativeImage, collection_types),
+                                       offsetof(NativeImage, strings),
+                                       offsetof(NativeImage, source_paths),
+                                       offsetof(NativeImage, functions),
+                                       offsetof(NativeImage, members),
+                                       offsetof(NativeImage, global_initializers),
+                                   });
+}
+
+llvm::Constant* ImageEmitter::Record(llvm::StructType* type,
+                                     std::initializer_list<llvm::Constant*> fields) {
+  return llvm::ConstantStruct::get(type, llvm::ArrayRef(fields));
+}
+
+llvm::Constant* ImageEmitter::Word(std::uint32_t value) {
+  return llvm::ConstantInt::get(word_, value);
+}
+
+llvm::Constant* ImageEmitter::Text(std::string_view value) {
+  auto* bytes = llvm::ConstantDataArray::getString(context_, value, false);
+  auto* storage = new llvm::GlobalVariable(module_, bytes->getType(), true,
+                                           llvm::GlobalValue::PrivateLinkage, bytes, "vela.utf8");
+  storage->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  return Record(text_,
+                {storage, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), value.size())});
+}
+
+llvm::Constant* ImageEmitter::Table(llvm::Type* element, llvm::ArrayRef<llvm::Constant*> values) {
+  llvm::Constant* storage = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_));
+  if (!values.empty()) {
+    auto* array = llvm::ConstantArray::get(llvm::ArrayType::get(element, values.size()), values);
+    auto* global = new llvm::GlobalVariable(module_, array->getType(), true,
+                                            llvm::GlobalValue::PrivateLinkage, array, "vela.table");
+    storage = global;
+  }
+  return Record(table_,
+                {storage, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), values.size())});
+}
+
+llvm::Constant* ImageEmitter::Numbers(std::span<const std::uint32_t> values) {
+  std::vector<llvm::Constant*> constants;
+  constants.reserve(values.size());
+  for (const auto value : values) {
+    constants.push_back(Word(value));
+  }
+  return Table(word_, constants);
+}
+
+llvm::Constant* ImageEmitter::Texts(std::span<const std::string> values) {
+  std::vector<llvm::Constant*> constants;
+  constants.reserve(values.size());
+  for (const auto& value : values) {
+    constants.push_back(Text(value));
+  }
+  return Table(text_, constants);
+}
+
+llvm::Constant* ImageEmitter::Type(const layout::Type& type) {
+  return Record(type_, {
+                           Word(static_cast<std::uint32_t>(type.kind)),
+                           Word(static_cast<std::uint32_t>(type.nullable)),
+                           Word(type.index),
+                       });
+}
+
+llvm::Constant* ImageEmitter::Classes(std::span<const layout::Class> classes) {
+  std::vector<llvm::Constant*> constants;
+  for (const auto& type : classes) {
+    constants.push_back(Record(
+        class_, {
+                    Text(type.name),
+                    Numbers(type.reference_fields),
+                    Numbers(type.interfaces),
+                    Numbers(type.dispatch_targets),
+                    Word(type.field_count),
+                    Word(static_cast<std::uint32_t>(type.kind)),
+                    Word(type.callable ? type.callable->function : runtime::kNoNativeIndex),
+                    Word(type.callable ? static_cast<std::uint32_t>(type.callable->mode) : 0),
+                    Word(type.callable_type.value_or(runtime::kNoNativeIndex)),
+                    Word(type.expected_type.value_or(runtime::kNoNativeIndex)),
+                }));
+  }
+  return Table(class_, constants);
+}
+
+llvm::Constant* ImageEmitter::Arrays(std::span<const layout::Array> arrays) {
+  std::vector<llvm::Constant*> constants;
+  for (const auto& type : arrays) {
+    constants.push_back(Record(array_, {Text(type.name), Type(type.element)}));
+  }
+  return Table(array_, constants);
+}
+
+llvm::Constant* ImageEmitter::Collections(std::span<const layout::Collection> collections) {
+  std::vector<llvm::Constant*> constants;
+  for (const auto& type : collections) {
+    constants.push_back(
+        Record(collection_, {
+                                Text(type.name),
+                                Type(type.key),
+                                Type(type.value.value_or(layout::Type())),
+                                Word(static_cast<std::uint32_t>(type.value.has_value())),
+                            }));
+  }
+  return Table(collection_, constants);
+}
+
+llvm::Constant* ImageEmitter::Signatures(std::span<const layout::Signature> signatures) {
+  std::vector<llvm::Constant*> constants;
+  for (const auto& type : signatures) {
+    std::vector<llvm::Constant*> parameters;
+    for (const auto& parameter : type.parameters) {
+      const auto flags = (parameter.optional ? runtime::kNativeOptionalParameter : 0U) |
+                         (parameter.rest ? runtime::kNativeRestParameter : 0U);
+      parameters.push_back(Record(signature_parameter_, {Type(parameter.type), Word(flags)}));
+    }
+    constants.push_back(
+        Record(signature_, {
+                               Text(type.name),
+                               Table(signature_parameter_, parameters),
+                               Type(type.result.value_or(layout::Type())),
+                               Word(static_cast<std::uint32_t>(type.result.has_value())),
+                           }));
+  }
+  return Table(signature_, constants);
+}
+
+llvm::Constant* ImageEmitter::Functions(std::span<const ir::Function> functions,
+                                        std::span<llvm::Function* const> entries,
+                                        std::span<const std::uint8_t> exports) {
+  std::vector<llvm::Constant*> constants;
+  for (std::size_t index = 0; index < functions.size(); ++index) {
+    const auto& function = functions.subspan(index).front();
+    auto* entry = entries.subspan(index).front();
+    std::vector<llvm::Constant*> parameters;
+    std::uint32_t result = runtime::kNoNativeIndex;
+    std::uint32_t hidden = 0;
+    std::uint32_t flags = function.is_async ? runtime::kNativeAsyncFunction : 0;
+    if (exports.subspan(index).front() != 0) {
+      flags |= runtime::kNativeExportedFunction;
+    }
+    if (function.signature) {
+      const auto& signature = *function.signature;
+      flags |= runtime::kNativeTypedFunction;
+      hidden = signature.hidden_parameters;
+      result = signature.result.value_or(runtime::kNoNativeIndex);
+      for (const auto& parameter : signature.parameters) {
+        const auto parameter_flags = (parameter.optional ? runtime::kNativeOptionalParameter : 0U) |
+                                     (parameter.rest ? runtime::kNativeRestParameter : 0U);
+        parameters.push_back(Record(
+            call_parameter_, {Text(parameter.name), Word(parameter.type), Word(parameter_flags)}));
+      }
+    }
+    std::vector<llvm::Constant*> locations;
+    if (!function.native_symbol.empty()) {
+      const auto location = function.location;
+      locations.push_back(Record(location_, {
+                                                Word(location.line),
+                                                Word(location.column),
+                                                Word(location.source_id),
+                                            }));
+    }
+    for (const auto& instruction : function.instructions) {
+      const auto& location = instruction.location;
+      locations.push_back(Record(
+          location_, {Word(location.line), Word(location.column), Word(location.source_id)}));
+    }
+    constants.push_back(Record(function_, {
+                                              Text(function.name),
+                                              Text(function.native_symbol),
+                                              Table(call_parameter_, parameters),
+                                              Table(location_, locations),
+                                              entry,
+                                              Word(function.parameter_count),
+                                              Word(result),
+                                              Word(hidden),
+                                              Word(flags),
+                                          }));
+  }
+  return Table(function_, constants);
+}
+
+llvm::Constant* ImageEmitter::Members(std::span<const MemberDefinition> members) {
+  std::vector<llvm::Constant*> constants;
+  for (const auto& member : members) {
+    constants.push_back(Record(member_, {
+                                            Text(member.name),
+                                            Word(member.receiver_type),
+                                            Word(member.target),
+                                            Word(member.type.value_or(runtime::kNoNativeIndex)),
+                                            Word(member.setter.value_or(runtime::kNoNativeIndex)),
+                                            Word(static_cast<std::uint32_t>(member.kind)),
+                                        }));
+  }
+  return Table(member_, constants);
+}
+
+std::expected<llvm::Constant*, std::string> ImageEmitter::Emit(
+    const ir::Program& program,
+    std::span<llvm::Function* const> entries,
+    std::span<const std::uint8_t> exports) {
+  if (!has_compatible_layout_) {
+    return std::unexpected(
+        "LLVM target data layout does not match the native runtime descriptor ABI");
+  }
+  const auto& layouts = program.layouts;
+  std::vector<llvm::Constant*> types;
+  types.reserve(layouts.types.size());
+  for (const auto& type : layouts.types) {
+    types.push_back(Type(type));
+  }
+  auto* description = Record(image_, {
+                                         Word(runtime::kNativeAbiVersion),
+                                         Word(sizeof(NativeImage)),
+                                         Text(runtime::kNativeBuildIdentity),
+                                         Text(module_.getTargetTriple().str()),
+                                         Texts(layouts.interfaces),
+                                         Classes(layouts.classes),
+                                         Arrays(layouts.arrays),
+                                         Collections(layouts.collections),
+                                         Signatures(layouts.signatures),
+                                         Table(type_, types),
+                                         Numbers(layouts.array_types),
+                                         Numbers(layouts.collection_types),
+                                         Texts(program.strings),
+                                         Texts(program.source_paths),
+                                         Functions(program.functions, entries, exports),
+                                         Members(program.members),
+                                         Numbers(program.global_initializers),
+                                     });
+  auto* storage = new llvm::GlobalVariable(module_, image_, true, llvm::GlobalValue::PrivateLinkage,
+                                           description, "vela.image");
+  return storage;
+}
+
+}  // namespace
+
+std::expected<std::string, std::string> EmitNativeImage(llvm::Module& module,
+                                                        const ir::Program& program,
+                                                        std::span<llvm::Function* const> entries,
+                                                        std::span<const std::uint8_t> exports,
+                                                        std::string_view module_name) {
+  const auto image = ImageEmitter(module).Emit(program, entries, exports);
+  if (!image) {
+    return std::unexpected(image.error());
+  }
+  auto& context = module.getContext();
+  auto name = std::string(module_name) + "_image";
+  auto* signature = llvm::FunctionType::get(llvm::PointerType::getUnqual(context), {}, false);
+  auto* entry = llvm::Function::Create(signature, llvm::GlobalValue::ExternalLinkage, name, module);
+  llvm::IRBuilder<> builder(llvm::BasicBlock::Create(context, "entry", entry));
+  builder.CreateRet(*image);
+  return name;
+}
+
+}  // namespace vela::compiler::aot

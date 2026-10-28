@@ -16,9 +16,13 @@
 #include "runtime/heap.h"
 #include "runtime/native_function.h"
 #include "runtime/object.h"
+#include "runtime/program_layouts.h"
 #include "runtime/random.h"
 
 namespace vela::runtime {
+
+struct NativeImage;
+class NativeInstance;
 
 struct LayoutCounts final {
   std::size_t classes = 0;
@@ -68,6 +72,7 @@ class Isolate final {
 
  private:
   friend class LayoutTransaction;
+  friend class NativeInstance;
   std::vector<std::unique_ptr<ClassLayout>> class_layouts_;
   std::vector<std::unique_ptr<ArrayLayout>> array_layouts_;
   std::vector<std::unique_ptr<CollectionLayout>> collection_layouts_;
@@ -78,6 +83,7 @@ class Isolate final {
   absl::flat_hash_map<CollectionLayout, const CollectionLayout*> collection_layout_index_;
   absl::flat_hash_map<TypeSignature, const TypeSignature*> type_signature_index_;
   absl::flat_hash_map<std::string, std::shared_ptr<const NativeFunction>> natives_;
+  absl::flat_hash_map<const NativeImage*, LayoutCache> native_images_;
   ClassLayout* error_layout_ = nullptr;
   ClassLayout* date_parts_layout_ = nullptr;
   Random random_;

@@ -180,6 +180,11 @@ Result ConvertNumber(NumericConversion conversion, Value value) {
 
 Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   switch (builtin) {
+    case Builtin::NumericToInt:
+    case Builtin::NumericToDouble:
+      return ConvertNumber(
+          builtin == Builtin::NumericToInt ? NumericConversion::ToInt : NumericConversion::ToDouble,
+          arguments.front());
     case Builtin::IntParse:
     case Builtin::IntTryParse:
     case Builtin::DoubleParse:

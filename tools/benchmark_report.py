@@ -57,6 +57,89 @@ def iteration_rows(report: dict, expected_cases: list[str], repetitions: int) ->
     return rows
 
 
+def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: int) -> str:
+    pattern = re.compile(r"^aot/(native|vm|cpp|first_native)/([^/]+)/(\d+)/real_time$")
+    if not expected_cases or any(pattern.fullmatch(name) is None for name in expected_cases):
+        raise ValueError("No supported AOT comparison cases selected")
+    rows = iteration_rows(report, expected_cases, repetitions)
+    samples = {}
+    counters = {}
+    residents = {}
+    checksums = defaultdict(set)
+    for name, entries in rows.items():
+        backend, workload, size = pattern.fullmatch(name).groups()
+        key = workload, int(size)
+        samples[backend, *key] = [entry["real_time"] * MICROSECONDS[entry["time_unit"]] for entry in entries]
+        if backend == "first_native":
+            continue
+        for entry in entries:
+            checksums[key].add(entry["result"])
+        resident = [entry["process_resident_bytes"] for entry in entries]
+        if any(not math.isfinite(value) or value <= 0 for value in resident):
+            raise ValueError(f"{name}: invalid process resident-memory counter")
+        residents[backend, *key] = resident
+        if backend == "cpp":
+            continue
+        fields = ("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes",
+                  "suspended_frames", "saved_state_bytes", "remaining_suspended_frames", "remaining_saved_bytes")
+        fields += (("entry_frame_bytes", "entry_shadow_slots", "entry_static_root_stores")
+                   if backend == "native" else ("register_bytes",))
+        values = {field: [entry[field] for entry in entries] for field in fields}
+        if any(not math.isfinite(value) or value < 0 for numbers in values.values() for value in numbers):
+            raise ValueError(f"{name}: invalid memory or suspended-state counter")
+        for entry in entries:
+            if (entry["baseline_bytes"] != entry["retained_bytes"] or
+                    entry["remaining_suspended_frames"] != 0 or entry["remaining_saved_bytes"] != 0):
+                raise ValueError(f"{name}: retained temporary state after completion and GC")
+        counters[backend, *key] = values
+    if any(len(values) != 1 for values in checksums.values()):
+        raise ValueError("AOT, VM, and C++ checksums differ")
+    lines = ["Offline AOT, VM and C++: median wall microseconds per workload.",
+             f"Every selected case passed all {repetitions} repetitions and checksum checks.",
+             "Steady execution excludes compilation, instantiation and warm-up. First native execution "
+             "uses a fresh instance and includes lazy initialization, with instantiation excluded.",
+             "C++ uses ordinary values, vector/string/unique_ptr ownership, and the same host kernel. "
+             "Its async case queues two Future observation boundaries per element on the shared scheduler.",
+             "Memory counters describe the Vela GC heap and saved continuations; they are not process RSS.", "",
+             "| Workload | Size | AOT us | VM us | C++ us | First AOT us | AOT/VM | AOT/C++ | CV AOT/VM/C++ |",
+             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
+    keys = sorted({(workload, size) for _, workload, size in samples})
+    for workload, size in keys:
+        values = {backend: samples.get((backend, workload, size), [])
+                  for backend in ("native", "vm", "cpp", "first_native")}
+        medians = {backend: median(times) for backend, times in values.items() if times}
+        elapsed = [f"{medians[backend]:.3f}" if backend in medians else "-" for backend in values]
+        ratios = [f"{medians['native'] / medians[backend]:.3f}" if "native" in medians and backend in medians
+                  else "-" for backend in ("vm", "cpp")]
+        cvs = "/".join(variation(values[backend]) if values[backend] else "-" for backend in ("native", "vm", "cpp"))
+        lines.append("| " + " | ".join([workload, str(size), *elapsed, *ratios, cvs]) + " |")
+    lines.extend(["", "| Workload | Size | Backend | Baseline bytes | End bytes | Retained bytes | Committed bytes | Suspended frames | Saved bytes |",
+                  "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |"])
+    for (backend, workload, size), fields in sorted(counters.items()):
+        values = [f"{median(fields[field]):.0f}" for field in
+                  ("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes", "suspended_frames", "saved_state_bytes")]
+        lines.append("| " + " | ".join([workload, str(size), backend, *values]) + " |")
+    lines.extend(["", "Native frame storage is the declared LLVM frame aggregate before optimization; "
+                  "it is not measured machine-stack usage. Root stores count planned safepoint writes before LLVM optimization.", "",
+                  "| Workload | Size | AOT frame storage bytes | AOT shadow slots | AOT static root stores | VM register bytes |",
+                  "| --- | ---: | ---: | ---: | ---: | ---: |"])
+    for workload, size in keys:
+        columns = []
+        for backend, field in (("native", "entry_frame_bytes"), ("native", "entry_shadow_slots"),
+                               ("native", "entry_static_root_stores"), ("vm", "register_bytes")):
+            values = counters.get((backend, workload, size), {}).get(field)
+            columns.append(f"{median(values):.0f}" if values else "-")
+        lines.append("| " + " | ".join([workload, str(size), *columns]) + " |")
+    lines.extend(["", "Process resident snapshots include the complete comparison executable and prior "
+                  "work in this process. Run one backend filter per process to compare resident costs. "
+                  "These are not peak RSS or the footprint of a standalone AOT application.", "",
+                  "| Workload | Size | Backend | Process resident bytes |",
+                  "| --- | ---: | --- | ---: |"])
+    for (backend, workload, size), values in sorted(residents.items()):
+        lines.append("| " + " | ".join([workload, str(size), backend, f"{median(values):.0f}"]) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def comparison_report(report: dict, expected_cases: list[str], repetitions: int) -> str:
     if not expected_cases or any(CASE.fullmatch(name) is None for name in expected_cases):
         raise ValueError("No supported comparison cases selected")

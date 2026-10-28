@@ -35,6 +35,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   current_handler_.reset();
   next_register_ = callback.parameter_count;
   const auto context = EmitTemporary({.opcode = Opcode::GetField, .lhs = 0, .location = {}});
+  RecordValueType(context, dynamic);
   const auto empty = EmitTemporary({.opcode = Opcode::LoadNull, .location = {}});
   std::array<RegisterId, kDynamicOperationArity> arguments{context, empty, empty, empty, empty};
   for (std::size_t index = 0; index < callback_signature.parameters.size(); ++index) {
@@ -51,6 +52,10 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   };
   const auto closure = CallableClass(callback_target, CallableMode::Closure, captures,
                                      frontend::MakeFunctionType(callback_signature));
+  program_.functions.at(callback_target).value_types.front() = {
+      .kind = Kind::Class,
+      .name = program_.classes.at(closure).name,
+  };
 
   auto signature = frontend::ArrayAlgorithmSignature(algorithm, element, dynamic);
   signature.parameters.front().type = dynamic;

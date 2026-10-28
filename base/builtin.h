@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
@@ -273,5 +274,14 @@ enum class Builtin : std::uint8_t {
   }
   return 0;
 }
+
+inline constexpr std::size_t kMaximumBuiltinArity = [] {
+  std::size_t maximum = 0;
+  for (std::uint32_t index = 0; index < static_cast<std::uint32_t>(Builtin::Count); ++index) {
+    const auto arity = BuiltinArity(static_cast<Builtin>(index));
+    maximum = std::max(arity, maximum);
+  }
+  return maximum;
+}();
 
 }  // namespace vela
