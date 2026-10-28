@@ -141,6 +141,10 @@ class SemanticIndex final {
     Scope scope;
     std::size_t available = 0;
   };
+  struct Reference final {
+    std::size_t symbol = 0;
+    const frontend::Expression* expression = nullptr;
+  };
   struct Receiver final {
     frontend::TypeDescriptor type;
     frontend::MemberStorage storage = frontend::MemberStorage::Instance;
@@ -158,7 +162,9 @@ class SemanticIndex final {
   [[nodiscard]] Key KeyAt(SourceLocation location) const;
   [[nodiscard]] Scope Extent(const frontend::Statement& statement) const;
   std::size_t AddSymbol(SourceLocation location, Completion completion);
-  void AddReference(SourceLocation location, std::string_view name);
+  void AddReference(SourceLocation location,
+                    std::string_view name,
+                    const frontend::Expression* expression = nullptr);
   void CollectDeclarations();
   void BindIntrinsicSignature(std::size_t symbol,
                               const frontend::Class& owner,
@@ -205,7 +211,7 @@ class SemanticIndex final {
   absl::flat_hash_map<std::string, std::string> resolutions_;
   std::vector<Symbol> symbols_;
   absl::flat_hash_map<Key, std::size_t> declarations_;
-  absl::flat_hash_map<Key, std::size_t> references_;
+  absl::flat_hash_map<Key, Reference> references_;
   absl::flat_hash_map<std::string, std::size_t> names_;
   absl::flat_hash_map<std::string, absl::flat_hash_map<std::string, std::size_t>> members_;
   absl::flat_hash_map<std::size_t, absl::flat_hash_map<std::string, std::size_t>> parameters_;

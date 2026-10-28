@@ -46,7 +46,7 @@ std::vector<SemanticToken> SemanticIndex::SemanticTokens(PositionEncoding encodi
       kind = SemanticTokenKind::TypeParameter;
       modifiers = parameter->second;
     } else if (const auto found = references_.find(key); found != references_.end()) {
-      const auto& symbol = symbols_.at(found->second);
+      const auto& symbol = symbols_.at(found->second.symbol);
       kind = TokenKindFor(symbol.completion.kind);
       if (sources_.at(symbol.key.first).path.starts_with(frontend::kStandardSourcePrefix)) {
         modifiers |= kSemanticDefaultLibrary;

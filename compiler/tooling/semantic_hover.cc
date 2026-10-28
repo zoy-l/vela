@@ -19,10 +19,21 @@ std::optional<Hover> SemanticIndex::FindHover(std::size_t offset, PositionEncodi
   auto role = Symbol::Role::Ordinary;
   const auto symbol = references_.find(Key{0, token->offset});
   if (symbol != references_.end()) {
-    const auto& declaration = symbols_.at(symbol->second);
+    const auto& reference = symbol->second;
+    const auto& declaration = symbols_.at(reference.symbol);
     completion = declaration.completion;
     owner = declaration.owner;
     role = declaration.role;
+    const auto kind = completion.kind;
+    if (reference.expression != nullptr &&
+        (kind == CompletionKind::Variable || kind == CompletionKind::Constant ||
+         kind == CompletionKind::Field || kind == CompletionKind::Property)) {
+      const auto type = model_.expression_types.find(reference.expression);
+      if (type != model_.expression_types.end() &&
+          type->second.kind != frontend::TypeDescriptor::Kind::Invalid) {
+        completion.detail = DisplaySymbolName(type->second.name);
+      }
+    }
   } else if (const auto builtin = BuiltinCompletion(*token)) {
     completion = *builtin;
   } else {

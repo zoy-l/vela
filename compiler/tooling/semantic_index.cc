@@ -334,7 +334,7 @@ std::size_t SemanticIndex::AddSymbol(SourceLocation location, Completion complet
         .key = key,
         .length = name.length,
     });
-    references_.try_emplace(key, found->second);
+    references_.try_emplace(key, Reference{.symbol = found->second});
   }
   return found->second;
 }
@@ -461,12 +461,15 @@ void SemanticIndex::CollectParameters(std::size_t symbol, const frontend::Functi
   }
 }
 
-void SemanticIndex::AddReference(SourceLocation location, std::string_view name) {
+void SemanticIndex::AddReference(SourceLocation location,
+                                 std::string_view name,
+                                 const Expression* expression) {
   const auto found = names_.find(name);
   if (found == names_.end()) {
     return;
   }
-  references_.try_emplace(KeyAt(location), found->second);
+  references_.try_emplace(KeyAt(location),
+                          Reference{.symbol = found->second, .expression = expression});
 }
 
 void SemanticIndex::VisitType(const TypeName& type) {
@@ -624,10 +627,12 @@ void SemanticIndex::IndexExpression(const Expression& expression) {
     const auto binding = model_.bindings.find(&expression);
     if (binding != model_.bindings.end()) {
       if (const auto symbol = bindings_.find(binding->second); symbol != bindings_.end()) {
-        references_.insert_or_assign(KeyAt(expression.location), symbol->second);
+        references_.insert_or_assign(
+            KeyAt(expression.location),
+            Reference{.symbol = symbol->second, .expression = &expression});
       }
     } else {
-      AddReference(expression.location, expression.text);
+      AddReference(expression.location, expression.text, &expression);
     }
   } else if (expression.kind == Expression::Kind::Member) {
     auto receiver = ReceiverFor(*expression.object);
@@ -640,7 +645,8 @@ void SemanticIndex::IndexExpression(const Expression& expression) {
     if (found != members_.end()) {
       const auto member = found->second.find(expression.text);
       if (member != found->second.end()) {
-        references_.insert_or_assign(key, member->second);
+        references_.insert_or_assign(
+            key, Reference{.symbol = member->second, .expression = &expression});
       }
     }
     receivers_.insert_or_assign(key, std::move(receiver));
@@ -675,12 +681,13 @@ void SemanticIndex::VisitExpression(const Expression* expression, const Scope& s
     calls_.insert_or_assign(KeyAt(expression->callee->location), expression);
   }
   const auto parameters =
-      target != references_.end() ? parameters_.find(target->second) : parameters_.end();
+      target != references_.end() ? parameters_.find(target->second.symbol) : parameters_.end();
   for (const auto& argument : expression->arguments) {
     if (parameters != parameters_.end() && !argument.name.empty()) {
       const auto parameter = parameters->second.find(argument.name);
       if (parameter != parameters->second.end()) {
-        references_.insert_or_assign(KeyAt(argument.location), parameter->second);
+        references_.insert_or_assign(KeyAt(argument.location),
+                                     Reference{.symbol = parameter->second});
       }
     }
     VisitExpression(argument.value.get(), scope);
@@ -863,7 +870,7 @@ std::optional<Definition> SemanticIndex::FindDefinition(std::size_t offset,
   if (found == references_.end()) {
     return std::nullopt;
   }
-  const auto& symbol = symbols_.at(found->second);
+  const auto& symbol = symbols_.at(found->second.symbol);
   const auto& source = sources_.at(symbol.key.first);
   if (source.path.starts_with(frontend::kStandardSourcePrefix)) {
     return std::nullopt;

@@ -124,6 +124,134 @@ class LanguageServerTest(unittest.TestCase):
         self.assertIn("Adds two values.\nEvaluates each argument once.",
                       self.reply(messages, "0")["result"]["contents"]["value"])
 
+    def test_hover_uses_flow_types_at_each_reference(self) -> None:
+        for binding, prefix in (("let", ""), ("const", "const ")):
+            with self.subTest(binding=binding):
+                source = ("func main(): void {\n"
+                          "  /// The nullable value.\n"
+                          f"  {binding} value: int? = 1;\n"
+                          "  if (value != null) { print(value); }\n"
+                          "  print(value);\n"
+                          "}\n")
+                declaration = source.index("value: int?")
+                inside = source.index("print(value)") + len("print(")
+                outside = source.rindex("print(value)") + len("print(")
+                queries = ((declaration, "int?"), (inside, "int"), (outside, "int?"))
+                messages = self.session([self.open(source), *[
+                    self.symbol_query("hover", source, offset, str(index))
+                    for index, (offset, _) in enumerate(queries)],
+                    self.symbol_query("definition", source, inside, "definition")])
+                self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+                for index, (offset, expected) in enumerate(queries):
+                    hover = self.reply(messages, str(index))["result"]
+                    self.assertTrue(hover["contents"]["value"].startswith(
+                        f"```vela\n{prefix}value: {expected}\n```"), hover)
+                    self.assertIn("The nullable value.", hover["contents"]["value"])
+                    line = source[:offset].count("\n")
+                    character = len(source[:offset].rsplit("\n", 1)[-1])
+                    self.assertEqual(hover["range"], {
+                        "start": {"line": line, "character": character},
+                        "end": {"line": line, "character": character + len("value")}})
+                self.assertEqual(self.reply(messages, "definition")["result"]["range"]["start"],
+                                 {"line": 2, "character": len(f"  {binding} ")})
+
+    def test_hover_refines_parameters_after_early_returns(self) -> None:
+        for condition in ("value == null", "!(value != null)"):
+            with self.subTest(condition=condition):
+                source = ("func main(value: int?): void {\n"
+                          f"  if ({condition}) {{ return; }}\n"
+                          "  print(value);\n"
+                          "}\n")
+                queries = ((source.index("value: int?"), "int?"),
+                           (source.index(condition) + condition.index("value"), "int?"),
+                           (source.index("print(value)") + len("print("), "int"))
+                messages = self.session([self.open(source), *[
+                    self.symbol_query("hover", source, offset, str(index))
+                    for index, (offset, _) in enumerate(queries)]])
+                self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+                for index, (_, expected) in enumerate(queries):
+                    hover = self.reply(messages, str(index))["result"]
+                    self.assertEqual(hover["contents"]["value"],
+                                     f"```vela\n(parameter) value: {expected}\n```")
+
+    def test_hover_respects_reassignment_shadowing_and_capture_invalidation(self) -> None:
+        cases = (
+            ("func main(value: int?): void {\n"
+             "  if (value == null) { return; }\n"
+             "  print(value);\n"
+             "  value = null;\n"
+             "  print(value);\n"
+             "}\n", ("int", "int?")),
+            ("func main(value: int?): void {\n"
+             "  if (value == null) { return; }\n"
+             "  { let value: int? = null; print(value); }\n"
+             "  print(value);\n"
+             "}\n", ("int?", "int")),
+            ("func main(value: int?): void {\n"
+             "  const clear = (): void => { value = null; };\n"
+             "  if (value == null) { return; }\n"
+             "  print(value);\n"
+             "  clear();\n"
+             "  print(value);\n"
+             "}\n", ("int", "int?")))
+        for source, expected in cases:
+            with self.subTest(source=source):
+                offsets = (source.index("print(value)") + len("print("),
+                           source.rindex("print(value)") + len("print("))
+                messages = self.session([self.open(source), *[
+                    self.symbol_query("hover", source, offset, str(index))
+                    for index, offset in enumerate(offsets)]])
+                self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+                for index, type_name in enumerate(expected):
+                    hover = self.reply(messages, str(index))["result"]
+                    self.assertIn(f"value: {type_name}\n```", hover["contents"]["value"])
+
+    def test_hover_uses_type_test_refinements_and_keeps_member_signatures(self) -> None:
+        source = ("class Box {\n"
+                  "  /// Stored value.\n"
+                  "  value: int;\n"
+                  "  read(): int { return this.value; }\n"
+                  "}\n"
+                  "func main(value: dynamic): void {\n"
+                  "  if (!(value is Box)) { return; }\n"
+                  "  print(value.value);\n"
+                  "  print(value.read());\n"
+                  "}\n")
+        offset = source.index("value.value")
+        queries = ((offset, "(parameter) value: Box"),
+                   (offset + len("value."), "(property) Box.value: int"),
+                   (source.index("read()", source.index("func main")), "(method) Box.read(): int"))
+        messages = self.session([self.open(source), *[
+            self.symbol_query("hover", source, cursor, str(index))
+            for index, (cursor, _) in enumerate(queries)]])
+        self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+        for index, (_, signature) in enumerate(queries):
+            self.assertTrue(self.reply(messages, str(index))["result"]["contents"]["value"].startswith(
+                f"```vela\n{signature}\n```"))
+        self.assertIn("Stored value.", self.reply(messages, "1")["result"]["contents"]["value"])
+
+    def test_hover_keeps_named_argument_labels_distinct_from_narrowed_values(self) -> None:
+        source = ("func accept(value: int?): void {}\n"
+                  "func main(value: int?): void {\n"
+                  "  if (value == null) { return; }\n"
+                  "  accept(value: value);\n"
+                  "}\n")
+        label = source.rindex("accept(value:") + len("accept(")
+        argument = label + len("value: ")
+        messages = self.session([self.open(source),
+            self.symbol_query("hover", source, label, "label"),
+            self.symbol_query("hover", source, argument, "argument"),
+            self.symbol_query("definition", source, label, "label-definition"),
+            self.symbol_query("definition", source, argument, "argument-definition")])
+        self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+        for identity, type_name in (("label", "int?"), ("argument", "int")):
+            self.assertEqual(self.reply(messages, identity)["result"]["contents"]["value"],
+                             f"```vela\n(parameter) value: {type_name}\n```")
+        for identity, line, character in (("label-definition", 0, len("func accept(")),
+                                         ("argument-definition", 1, len("func main("))):
+            self.assertEqual(self.reply(messages, identity)["result"]["range"]["start"],
+                             {"line": line, "character": character})
+
     def test_json_and_checked_dynamic_share_types_hover_tokens_and_completion(self) -> None:
         source = ("func main(): void {\n"
                   "  const root: dynamic = Json.parse('[1,true,null]');\n"
