@@ -99,10 +99,10 @@ const integers: int[] = values.map(value => value as int);
 
 ```vela
 class User {
-  public param name: string;
-  public param age: int;
+  name: string;
+  age: int;
 
-  public toJson(): Map<string, dynamic> {
+  toJson(): Map<string, dynamic> {
     const result: Map<string, dynamic> = Map<string, dynamic>();
     result.set('name', this.name);
     result.set('age', this.age);

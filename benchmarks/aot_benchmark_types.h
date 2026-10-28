@@ -9,7 +9,16 @@ struct NativeImage;
 
 namespace vela::benchmarks {
 
-enum class AotKernel : std::uint8_t { Arithmetic, Calls, Fields, Arrays, Host, Gc, Async };
+enum class AotKernel : std::uint8_t {
+  Arithmetic,
+  Calls,
+  Fields,
+  Arrays,
+  Host,
+  Gc,
+  Async,
+  SpectralNorm,
+};
 enum class AotCompletion : std::uint8_t { Immediate, Future };
 
 struct AotBenchmarkCase final {

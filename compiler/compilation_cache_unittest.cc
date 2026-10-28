@@ -125,7 +125,7 @@ TEST_F(CompilationCacheTest, InvalidSourceCannotExecuteOrReplaceOldImage) {
 
 TEST_F(CompilationCacheTest, JsonAndDynamicDispatchRetainMetadataInFreshIsolateCacheHit) {
   Write("main.vela", R"(class Payload {
-  public toJson(): int[] { return [40, 2]; }
+  toJson(): int[] { return [40, 2]; }
 }
 func main(): int {
   const root: dynamic = Json.parse(Json.stringify(Payload()));

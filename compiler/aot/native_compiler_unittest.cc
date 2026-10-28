@@ -64,6 +64,104 @@ export func negate(value: bool): bool { return !value; }
   EXPECT_FALSE(result->object.empty());
 }
 
+TEST(NativeCompilerTest, ReferenceLeafFunctionsRegisterRootsOnlyAtFailure) {
+  const auto prepared = Prepare(R"(
+export func read(values: int[], index: int): int { return values[index]; }
+)");
+  ASSERT_TRUE(prepared.has_value());
+  const auto result = Compile(*prepared, {.exports = {"read"}});
+  ASSERT_TRUE(result.has_value()) << result.error().front().message;
+  const auto& text = result->llvm_ir;
+  EXPECT_EQ(text.find("@vela_native_v1_frame_storage"), std::string::npos);
+  EXPECT_EQ(text.find("@vela_native_v1_frame_release"), std::string::npos);
+  EXPECT_NE(text.find("@vela_native_v1_leaf_failure"), std::string::npos);
+}
+
+TEST(NativeCompilerTest, NullComparisonsUsePresenceForReferencesScalarsAndDynamicValues) {
+  const auto prepared = Prepare(R"(
+class Box { value: int = 0; }
+export func object(value: Box?): bool { return value == null; }
+export func text(value: string?): bool { return null == value; }
+export func integer(value: int?): bool { return value != null; }
+export func erased(value: dynamic): bool { return value == null; }
+)");
+  ASSERT_TRUE(prepared.has_value());
+  const auto result = Compile(*prepared, {.exports = {"object", "text", "integer", "erased"}});
+  ASSERT_TRUE(result.has_value()) << result.error().front().message;
+  EXPECT_EQ(result->llvm_ir.find("@vela_native_v1_equal"), std::string::npos);
+}
+
+TEST(NativeCompilerTest, KnownLocalClosuresCallTheirTypedBodiesDirectlyInsideSort) {
+  const auto prepared = Prepare(R"(
+export func order(values: int[], direction: int): void {
+  values.sort((left, right): int => left > right ? direction : (left < right ? -direction : 0));
+}
+)");
+  ASSERT_TRUE(prepared.has_value());
+  const auto result = Compile(*prepared, {.exports = {"order"}});
+  ASSERT_TRUE(result.has_value()) << result.error().front().message;
+  EXPECT_EQ(result->llvm_ir.find("@vela_native_v1_call_indirect"), std::string::npos);
+  bool direct_comparator = false;
+  for (const auto& function : result->program.functions) {
+    for (const auto& instruction : function.instructions) {
+      if (instruction.opcode == Opcode::Call) {
+        const auto& target = result->program.functions.at(instruction.index);
+        direct_comparator = direct_comparator || target.parameter_count == 3;
+      }
+    }
+  }
+  EXPECT_TRUE(direct_comparator);
+}
+
+TEST(NativeCompilerTest, NumericConversionsUseTypedInstructionsWithoutRuntimeDispatch) {
+  const auto prepared = Prepare(R"(
+export func widen(value: int): double { return value.toDouble(); }
+export func truncate(value: double): int { return value.toInt(); }
+export func integer(value: int): int { return value.toInt(); }
+export func decimal(value: double): double { return value.toDouble(); }
+export func sum(values: double[]): double {
+  let sum = 0.0;
+  for (let index = 0; index < 500; index++) { sum += values[index] / (index + 1).toDouble(); }
+  return sum;
+}
+)");
+  ASSERT_TRUE(prepared.has_value());
+  const auto result =
+      Compile(*prepared, {.exports = {"widen", "truncate", "integer", "decimal", "sum"}});
+  ASSERT_TRUE(result.has_value()) << result.error().front().message;
+  const auto& text = result->llvm_ir;
+  EXPECT_EQ(text.find("@vela_native_v1_builtin"), std::string::npos);
+  EXPECT_EQ(text.find("@llvm.sadd.with.overflow"), std::string::npos);
+  EXPECT_NE(text.find("sitofp i64"), std::string::npos);
+  EXPECT_NE(text.find("fptosi double"), std::string::npos);
+  EXPECT_NE(text.find("@vela_native_v1_leaf_failure"), std::string::npos);
+  llvm::LLVMContext context;
+  llvm::SMDiagnostic diagnostic;
+  const auto module = llvm::parseAssemblyString(text, diagnostic, context);
+  ASSERT_NE(module, nullptr);
+  std::size_t loop_blocks = 0;
+  for (auto& function : *module) {
+    if (function.isDeclaration()) {
+      continue;
+    }
+    llvm::DominatorTree dominators(function);
+    const llvm::LoopInfo loops(dominators);
+    for (auto* loop : loops.getLoopsInPreorder()) {
+      for (const auto* block : loop->blocks()) {
+        ++loop_blocks;
+        for (const auto& instruction : *block) {
+          if (const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+            const auto* callee = call->getCalledFunction();
+            EXPECT_TRUE(callee != nullptr && callee->isIntrinsic()) << text;
+          }
+          EXPECT_FALSE(llvm::isa<llvm::StoreInst>(instruction)) << text;
+        }
+      }
+    }
+  }
+  EXPECT_GT(loop_blocks, 0U);
+}
+
 TEST(NativeCompilerTest, ReadsReadyGlobalsDirectlyAndInitializesOnlyOnTheOtherBranch) {
   const auto prepared = Prepare(R"(
 let count = 42;
@@ -146,7 +244,7 @@ TEST(NativeCompilerTest, EliminatesMonotoneIntegerReductionsWithDynamicBounds) {
 
 TEST(NativeCompilerTest, FoldsUnobservedUnitFieldUpdates) {
   const auto prepared = Prepare(R"(
-class Box { public param value: int; }
+class Box { value: int; }
 export func fields(bound: int): int {
   const box = Box(value: 0);
   for (let index = 0; index < bound; index++) { box.value += 1; }

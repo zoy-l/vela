@@ -13,7 +13,7 @@ Vela 保留熟悉的 `async` / `await` 语法，并以 `Future<T>` 表示异步�
 ## API 示例
 
 ```vela
-class User { public param name: string; }
+class User { name: string; }
 
 external func fetchUser(id: int): Future<User>;
 

@@ -176,7 +176,7 @@ async function runEditorTests() {
     assert.ok(mutableStringCompletion.items.some(item => item.label === "toString"));
     console.log("PASS: String constructor hover and mutable string member completion use the renamed API");
     const argumentUri = vscode.Uri.file(path.join(directory, "arguments.vela"));
-    const argumentText = "class Counter { public param value: int; param step: int = 1; }\nfunc main(): void { Counter(); }\n";
+    const argumentText = "class Counter { value: int; step: int = 1; }\nfunc main(): void { Counter(); }\n";
     await fs.writeFile(argumentUri.fsPath, argumentText);
     const argumentDocument = await vscode.workspace.openTextDocument(argumentUri);
     temporaryDocuments.push(argumentDocument);

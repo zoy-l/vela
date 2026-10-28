@@ -95,7 +95,7 @@ and CLI results share the shortest round-trip double formatting. `double[]`
 elements occupy eight bytes and require no GC element scan.
 
 Generic specialization precedes checking; aliases are transparent and concrete
-specializations preserve primitive storage. Classes use `param` fields or an
+specializations preserve primitive storage. Classes use public instance fields or an
 explicit constructor. Function values, shared mutable captures, interfaces,
 Expected, match, and ordered collections pass through the same typed IR and
 validated bytecode paths. See [core language specification](../docs/en/core_language.md).

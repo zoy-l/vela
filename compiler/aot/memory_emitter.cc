@@ -105,14 +105,32 @@ void FunctionEmitter::WriteHeapValue(llvm::Value* address, ir::RegisterId reg) {
 }
 
 void FunctionEmitter::EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg) {
-  const auto kind = source_.value_types.at(reg).kind;
+  const auto& type = source_.value_types.at(reg);
+  const auto kind = type.kind;
   if (kind != Kind::Dynamic && !IsReferenceKind(kind)) {
     return;
   }
+  auto* value = Load(reg);
+  auto* encoded = EncodeValue(builder_, value, type);
+  llvm::Value* reference = nullptr;
+  if (kind == Kind::Dynamic) {
+    auto* tag = builder_.CreateExtractValue(encoded, 1);
+    reference =
+        builder_.CreateOr(builder_.CreateICmpEQ(tag, builder_.getInt8(NativeKind(Kind::Class))),
+                          builder_.CreateICmpEQ(tag, builder_.getInt8(NativeKind(Kind::String))));
+  } else {
+    reference = builder_.CreateIsNotNull(value);
+  }
+  auto* barrier = llvm::BasicBlock::Create(module_.getContext(), "write.barrier", body_);
+  auto* written = llvm::BasicBlock::Create(module_.getContext(), "write.done", body_);
+  builder_.CreateCondBr(reference, barrier, written);
+  builder_.SetInsertPoint(barrier);
   auto helper =
       module_.getOrInsertFunction("vela_native_v1_write_barrier", builder_.getVoidTy(),
                                   builder_.getPtrTy(), builder_.getPtrTy(), builder_.getPtrTy());
-  builder_.CreateCall(helper, {body_->getArg(0), object, Pack(Encode(reg), 0)});
+  builder_.CreateCall(helper, {body_->getArg(0), object, Pack(encoded, 0)});
+  builder_.CreateBr(written);
+  builder_.SetInsertPoint(written);
 }
 
 void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
@@ -171,6 +189,28 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
   Unpack(instruction.dst);
   builder_.CreateBr(loaded);
   builder_.SetInsertPoint(loaded);
+}
+
+void FunctionEmitter::EmitGlobalStore(const ir::Instruction& instruction) {
+  using runtime::NativeMemoryLayout;
+  auto* pointer = builder_.getPtrTy();
+  auto* instance = builder_.CreateLoad(
+      pointer, ByteAddress(body_->getArg(0), NativeMemoryLayout::kExecutionInstance));
+  auto* data =
+      builder_.CreateLoad(pointer, ByteAddress(instance, NativeMemoryLayout::kInstanceData));
+  auto* globals = builder_.CreateLoad(
+      pointer,
+      ByteAddress(data, NativeMemoryLayout::kProgramGlobals + NativeMemoryLayout::kValuePayload));
+  auto* values =
+      builder_.CreateLoad(pointer, ByteAddress(globals, NativeMemoryLayout::kObjectNativePayload));
+  WriteHeapValue(ByteAddress(values, instruction.index * sizeof(runtime::Value)), instruction.lhs);
+  EmitWriteBarrier(globals, instruction.lhs);
+  // 赋值直接建立 Ready 状态，不执行原初始化器；写屏障仍由槽所属对象承担。
+  auto* states =
+      builder_.CreateLoad(pointer, ByteAddress(data, NativeMemoryLayout::kProgramGlobalStates));
+  builder_.CreateStore(
+      builder_.getInt8(static_cast<std::uint8_t>(runtime::NativeProgramState::GlobalState::Ready)),
+      ByteAddress(states, instruction.index));
 }
 
 const layout::Type& FunctionEmitter::ArrayElement(const ir::Instruction& instruction) const {
@@ -255,6 +295,14 @@ void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Built
   using runtime::NativeMemoryLayout;
   auto* array = Reference(instruction.lhs);
   Check(builder_.CreateIsNotNull(array), ExecutionStatus::TypeError);
+  if (builtin == Builtin::ArrayCheckMutation) {
+    auto* mutation = builder_.CreateLoad(builder_.getInt64Ty(),
+                                         ByteAddress(array, NativeMemoryLayout::kArrayMutation));
+    Check(builder_.CreateICmpEQ(mutation, Payload(instruction.lhs + 1)),
+          ExecutionStatus::ConcurrentModification);
+    Store(instruction.dst, builder_.getFalse(), {.kind = Kind::Null, .name = "null"});
+    return;
+  }
   if (builtin != Builtin::ArrayPush) {
     auto offset = NativeMemoryLayout::kObjectLength;
     if (builtin == Builtin::ArrayCapacity) {

@@ -5,5 +5,6 @@
   {"name": "arrays", "kernel": "Arrays", "size": 1000, "expected": 499500, "completion": "Immediate"},
   {"name": "host", "kernel": "Host", "size": 1000, "expected": 500500, "completion": "Immediate"},
   {"name": "gc", "kernel": "Gc", "size": 1000, "expected": 2890, "completion": "Immediate"},
-  {"name": "asyncWork", "kernel": "Async", "size": 64, "expected": 2080, "completion": "Future"}
+  {"name": "asyncWork", "kernel": "Async", "size": 64, "expected": 2080, "completion": "Future"},
+  {"name": "spectralNorm", "kernel": "SpectralNorm", "size": 500, "expected": 1274224115, "completion": "Immediate"}
 ]

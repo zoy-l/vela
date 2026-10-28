@@ -108,7 +108,7 @@ void EncodeJson(benchmark::State& state) {
 
 void ConvertObject(benchmark::State& state) {
   SteadyValue(state, R"(class Payload {
-  public toJson(): int[] { return [20, 22]; }
+  toJson(): int[] { return [20, 22]; }
 }
 func main(): int { return Json.stringify(Payload()) == '[20,22]' ? 42 : 0; })",
               kAnswer);
@@ -116,8 +116,8 @@ func main(): int { return Json.stringify(Payload()) == '[20,22]' ? 42 : 0; })",
 
 void DynamicMembers(benchmark::State& state) {
   SteadyValue(state, R"(class Counter {
-  public param count: int = 0;
-  public next(): int { this.count += 1; return this.count; }
+  count: int = 0;
+  next(): int { this.count += 1; return this.count; }
 }
 func main(): int {
   const receiver: dynamic = Counter();

@@ -90,16 +90,15 @@ Parser::MemberModifiers Parser::ParseMemberModifiers() {
     return (Check(TokenKind::Get) || Check(TokenKind::Set)) && current_ + 1 < tokens_.size() &&
            tokens_.subspan(current_ + 1).front().kind == TokenKind::Identifier;
   };
-  while (Check(TokenKind::Public) || Check(TokenKind::Private) || Check(TokenKind::Static) ||
-         Check(TokenKind::Param) || Check(TokenKind::Override) || is_accessor_modifier()) {
+  while (Check(TokenKind::Private) || Check(TokenKind::Static) || Check(TokenKind::Override) ||
+         is_accessor_modifier()) {
     const auto modifier = tokens_.subspan(current_++).front();
-    if (modifier.kind == TokenKind::Public || modifier.kind == TokenKind::Private) {
+    if (modifier.kind == TokenKind::Private) {
       if (has_visibility) {
         AddDiagnostic(modifier.location, "duplicate visibility modifier");
       }
       has_visibility = true;
-      modifiers.visibility =
-          modifier.kind == TokenKind::Public ? Visibility::Public : Visibility::Private;
+      modifiers.visibility = Visibility::Private;
     } else if (modifier.kind == TokenKind::Static) {
       if (has_storage) {
         AddDiagnostic(modifier.location, "duplicate static modifier");
@@ -112,11 +111,6 @@ Parser::MemberModifiers Parser::ParseMemberModifiers() {
       modifiers.is_getter = true;
     } else if (modifier.kind == TokenKind::Set) {
       modifiers.is_setter = true;
-    } else {
-      if (modifiers.role == FieldRole::Parameter) {
-        AddDiagnostic(modifier.location, "duplicate param modifier");
-      }
-      modifiers.role = FieldRole::Parameter;
     }
   }
   return modifiers;
@@ -125,8 +119,7 @@ Parser::MemberModifiers Parser::ParseMemberModifiers() {
 std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberModifiers modifiers) {
   const auto visibility = modifiers.visibility;
   const auto storage = modifiers.storage;
-  const auto role = modifiers.role;
-  if (declaration.constructor || storage == MemberStorage::Static || role == FieldRole::Parameter) {
+  if (declaration.constructor || storage == MemberStorage::Static) {
     AddDiagnostic(Previous().location, "invalid or duplicate constructor declaration");
     return nullptr;
   }
@@ -167,8 +160,8 @@ Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
     if (!method) {
       return MemberParseResult::Failed;
     }
-    if (modifiers.role == FieldRole::Parameter || modifiers.storage != MemberStorage::Static) {
-      AddDiagnostic(method->location, "external methods must be static and cannot use param");
+    if (modifiers.storage != MemberStorage::Static) {
+      AddDiagnostic(method->location, "external methods must be static");
       return MemberParseResult::Failed;
     }
     method->visibility = modifiers.visibility;
@@ -206,9 +199,6 @@ Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
     method->is_override = modifiers.is_override;
     method->is_getter = modifiers.is_getter;
     method->is_setter = modifiers.is_setter;
-    if (modifiers.role == FieldRole::Parameter) {
-      AddDiagnostic(member->location, "param applies only to instance fields");
-    }
     declaration.methods.push_back(std::move(*method));
     return MemberParseResult::Parsed;
   }
@@ -244,7 +234,6 @@ std::optional<Field> Parser::ParseField(const Token& name, MemberModifiers modif
       .location = name.location,
       .visibility = modifiers.visibility,
       .storage = modifiers.storage,
-      .role = modifiers.role,
       .initializer = std::move(initializer),
   };
 }

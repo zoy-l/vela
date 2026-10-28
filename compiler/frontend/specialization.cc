@@ -146,7 +146,6 @@ Field CloneField(const Field& source) {
       .location = source.location,
       .visibility = source.visibility,
       .storage = source.storage,
-      .role = source.role,
       .initializer = CloneExpression(source.initializer.get()),
   };
 }

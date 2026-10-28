@@ -4,7 +4,7 @@ interface Counter {
 
 class Increment implements Counter {
   private count: int = 0;
-  public next(): int { this.count = this.count + 1; return this.count; }
+  next(): int { this.count = this.count + 1; return this.count; }
 }
 
 func run(counter: Counter): int {

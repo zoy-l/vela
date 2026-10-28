@@ -411,6 +411,9 @@ llvm::Constant* ImageEmitter::Functions(std::span<const ir::Function> functions,
     if (exports.subspan(index).front() != 0) {
       flags |= runtime::kNativeExportedFunction;
     }
+    if (function.return_type.kind == frontend::TypeDescriptor::Kind::Enum) {
+      flags |= runtime::kNativeEnumResult;
+    }
     if (function.signature) {
       const auto& signature = *function.signature;
       flags |= runtime::kNativeTypedFunction;

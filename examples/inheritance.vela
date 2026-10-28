@@ -7,42 +7,42 @@ interface Named {
 }
 
 class DefaultCounter {
-  public value: int = 0;
+  value: int = 0;
 }
 
 class DefaultBonusCounter extends DefaultCounter {
-  public param bonus: int;
+  bonus: int;
 
-  public total(): int {
+  total(): int {
     return this.value + this.bonus;
   }
 }
 
 class Counter {
-  public value: int;
+  value: int;
 
   constructor(value: int) {
     this.value = value;
   }
 
-  public measure(): int {
+  measure(): int {
     return this.value;
   }
 }
 
 class BonusCounter extends Counter implements Measurable, Named {
-  public bonus: int;
+  bonus: int;
 
   constructor(value: int, bonus: int) {
     super(value);
     this.bonus = bonus;
   }
 
-  public override measure(): int {
+  override measure(): int {
     return super.measure() + this.bonus;
   }
 
-  public name(): string {
+  name(): string {
     return 'bonus counter';
   }
 }

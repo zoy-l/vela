@@ -136,7 +136,7 @@ func main(): int {
 })",
                              R"(
 func make(): ByteData { return ByteData.view(ByteArray.from([40,2]), offset: 0); }
-class Box { public param data: ByteData; public param bytes: ByteArray; }
+class Box { data: ByteData; bytes: ByteArray; }
 func identity<T>(value: T): T { return value; }
 func main(): int {
   const box = Box(data: make(), bytes: ByteArray(0));

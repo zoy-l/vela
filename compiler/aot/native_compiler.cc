@@ -45,6 +45,7 @@
 
 #include "base/fingerprint.h"
 #include "base/opcode.h"
+#include "compiler/aot/native_call_optimizer.h"
 #include "compiler/aot/native_export_emitter.h"
 #include "compiler/aot/native_image_emitter.h"
 #include "compiler/aot/native_roots.h"
@@ -227,6 +228,7 @@ std::expected<std::optional<std::uint32_t>, std::string> PrepareNativeProgram(
   }
   PruneNativeProgram(program, options.exports, main);
   ElideNativeResultBindings(program);
+  DevirtualizeNativeCalls(program);
   if (main) {
     if (const auto imports = CheckStandaloneImports(program); !imports) {
       return std::unexpected(imports.error());

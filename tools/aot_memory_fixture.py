@@ -4,15 +4,15 @@ SOURCE = """
 external func collect(): void;
 enum Choice { first, second }
 class Record {
-  public param number: int = 0;
-  public param decimal: double = 0.0;
-  public param enabled: bool = false;
-  public param maybe: int? = null;
-  public param maybeDouble: double? = null;
-  public param maybeBool: bool? = null;
-  public param choice: Choice? = null;
-  public param text: string? = null;
-  public param any: dynamic = null;
+  number: int = 0;
+  decimal: double = 0.0;
+  enabled: bool = false;
+  maybe: int? = null;
+  maybeDouble: double? = null;
+  maybeBool: bool? = null;
+  choice: Choice? = null;
+  text: string? = null;
+  any: dynamic = null;
 }
 let effect = 0;
 func next(): int { effect += 1; return effect; }

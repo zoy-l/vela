@@ -185,7 +185,7 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(self.entry.read_text(encoding="utf-8"), "func broken(")
 
     def test_single_quote_formatting_preserves_execution_and_nested_interpolation(self) -> None:
-        self.write(r'''class Item { public param text: string; }
+        self.write(r'''class Item { text: string; }
 func main(): void {
   print("it's \"quoted\" \u{1F600}");
   print("${Item(text: "${"nested"}").text}");
@@ -247,7 +247,7 @@ func main(): void {
         self.assertIn("child pc=", stepped.stderr)
 
     def test_inspects_object_fields_and_array_elements(self) -> None:
-        self.write("class Box { param value: int; }\n"
+        self.write("class Box { value: int; }\n"
                    "func inspect(box: Box, values: int[]): int { return box.value + values[0]; }\n"
                    "func main(): int { return inspect(Box(value: 40), [2]); }\n")
         result = self.command("debug", self.entry,

@@ -13,7 +13,7 @@ The design covers async functions, Future composition, error propagation, async 
 ## API Example
 
 ```vela
-class User { public param name: string; }
+class User { name: string; }
 
 external func fetchUser(id: int): Future<User>;
 

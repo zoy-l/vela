@@ -2,7 +2,7 @@
 
 SOURCE = """
 external func collect(): void;
-class Box { public param text: string = 'retained'; }
+class Box { text: string = 'retained'; }
 export func calculate(value: Box?): Box {
   collect();
   if (value != null) {

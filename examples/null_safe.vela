@@ -1,7 +1,7 @@
 class Label {
-  public param text: string;
+  text: string;
 
-  public display(): string {
+  display(): string {
     return 'label: ${this.text}';
   }
 }

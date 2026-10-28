@@ -1,15 +1,15 @@
 class Account {
   private storedBalance: int = 10;
 
-  public get balance(): int {
+  get balance(): int {
     return this.storedBalance;
   }
 
-  public set balance(value: int): void {
+  set balance(value: int): void {
     this.storedBalance = value;
   }
 
-  public get doubled(): int {
+  get doubled(): int {
     return this.storedBalance * 2;
   }
 }

@@ -220,6 +220,8 @@ source_set("aot") {
     "aot/integer_loop_optimizer.cc",
     "aot/integer_loop_optimizer.h",
     "aot/memory_emitter.cc",
+    "aot/native_call_optimizer.cc",
+    "aot/native_call_optimizer.h",
     "aot/native_compiler.cc",
     "aot/native_compiler.h",
     "aot/native_export_emitter.cc",

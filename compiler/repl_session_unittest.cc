@@ -143,7 +143,7 @@ TEST_F(ReplSessionTest, RetiredEntryLambdasRemainCallableAndEntriesReuseOneSlot)
 
 TEST_F(ReplSessionTest, KeepsClassArrayCollectionAndInterfaceIdentityForOldValues) {
   Execute("interface Readable { read(): int; }");
-  Execute("class Box implements Readable { param value: int; read(): int { return this.value; } }");
+  Execute("class Box implements Readable { value: int; read(): int { return this.value; } }");
   Execute("const box = Box(value: 42);");
   Execute("const items: Box[][] = [[box]];");
   Execute("const map: Map<string, Box> = Map<string, Box>();");
@@ -280,7 +280,7 @@ class ReplModuleSessionTest : public testing::Test {
 
 TEST_F(ReplModuleSessionTest, PinsAcceptedModulesAndKeepsBindingsWhenNewImportsChangeLoadOrder) {
   Write("leaf.vela",
-        "export class Box { param value: int; } "
+        "export class Box { value: int; } "
         "export func read(): int { return 40; }");
   Write("parent.vela",
         "import \"leaf.vela\" as leaf; "

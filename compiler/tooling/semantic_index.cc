@@ -389,8 +389,7 @@ void SemanticIndex::CollectDeclarations() {
     for (const auto& field : declaration.fields) {
       const auto field_symbol =
           member(declaration.name, field, CompletionKind::Field, TypeText(field.type));
-      if (declaration.constructor_kind == frontend::ConstructorKind::Generated &&
-          field.role == frontend::FieldRole::Parameter) {
+      if (declaration.IsConstructorField(field)) {
         parameters_.try_emplace(class_symbol)
             .first->second.insert_or_assign(field.name, field_symbol);
       }
@@ -961,7 +960,7 @@ Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration) co
     }
   } else {
     for (const auto& field : declaration.fields) {
-      if (field.role != frontend::FieldRole::Parameter) {
+      if (!declaration.IsConstructorField(field)) {
         continue;
       }
       text += (text.back() == '(' ? "" : ", ") + field.name + ": " + TypeText(field.type);

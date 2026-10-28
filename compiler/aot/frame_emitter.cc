@@ -61,20 +61,28 @@ void FunctionEmitter::EmitFrameEntry() {
     return storage;
   };
   llvm::Value* resources = nullptr;
+  llvm::Value* root_range = nullptr;
   const bool on_stack = frame_bytes_ <= kMaximumNativeStackBytes;
-  if (roots_.count != 0 || !on_stack) {
+  if (leaf_entry_ && roots_.count != 0) {
+    // 成功路径没有 GC 安全点；根槽只在失败分支写入并由 leaf_failure 临时登记。
+    root_slots_ = allocate(roots_.count * sizeof(runtime::Value), alignof(runtime::Value));
+  } else if (on_stack && roots_.count != 0) {
+    // 栈上根只借用 RootRange，不构造拥有堆存储的 NativeFrame。
+    root_slots_ = allocate(roots_.count * sizeof(runtime::Value), alignof(runtime::Value));
+    root_range = allocate(sizeof(runtime::RootRange), alignof(runtime::RootRange));
+    auto enter = module_.getOrInsertFunction("vela_native_v1_roots_enter", builder_.getVoidTy(),
+                                             pointer, pointer, word, pointer);
+    builder_.CreateCall(enter,
+                        {execution, root_slots_, builder_.getInt64(roots_.count), root_range});
+  } else if (!on_stack) {
     resources = allocate(sizeof(runtime::NativeFrame), alignof(runtime::NativeFrame));
     auto* access =
         allocate(sizeof(runtime::NativeFrameAccess), alignof(runtime::NativeFrameAccess));
-    llvm::Value* stack_roots = llvm::ConstantPointerNull::get(pointer);
-    if (on_stack && roots_.count != 0) {
-      stack_roots = allocate(roots_.count * sizeof(runtime::Value), alignof(runtime::Value));
-    }
     auto storage = module_.getOrInsertFunction("vela_native_v1_frame_storage", builder_.getInt8Ty(),
-                                               pointer, word, word, pointer, pointer, pointer);
-    auto* entered = builder_.CreateCall(storage, {execution, builder_.getInt64(roots_.count),
-                                                  builder_.getInt64(on_stack ? 0 : storage_bytes_),
-                                                  stack_roots, resources, access});
+                                               pointer, word, word, pointer, pointer);
+    auto* entered =
+        builder_.CreateCall(storage, {execution, builder_.getInt64(roots_.count),
+                                      builder_.getInt64(storage_bytes_), resources, access});
     auto* allocated = llvm::BasicBlock::Create(context, "storage.ready", body_);
     error->addIncoming(entered, builder_.GetInsertBlock());
     builder_.CreateCondBr(
@@ -104,7 +112,11 @@ void FunctionEmitter::EmitFrameEntry() {
     cleanup.CreateStore(previous, frame_address);
     cleanup.CreateStore(depth, depth_address);
   }
-  if (resources != nullptr) {
+  if (root_range != nullptr) {
+    auto exit =
+        module_.getOrInsertFunction("vela_native_v1_roots_exit", cleanup.getVoidTy(), pointer);
+    cleanup.CreateCall(exit, {root_range});
+  } else if (resources != nullptr) {
     auto release =
         module_.getOrInsertFunction("vela_native_v1_frame_release", cleanup.getVoidTy(), pointer);
     cleanup.CreateCall(release, {resources});

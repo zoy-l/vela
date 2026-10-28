@@ -45,7 +45,6 @@ class Parser final {
   struct MemberModifiers final {
     Visibility visibility = Visibility::Public;
     MemberStorage storage = MemberStorage::Instance;
-    FieldRole role = FieldRole::Ordinary;
     bool is_override = false;
     bool is_getter = false;
     bool is_setter = false;

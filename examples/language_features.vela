@@ -1,5 +1,5 @@
 class Counter {
-  param value: int;
+  value: int;
   add(amount: int): int {
     this.value = this.value + amount;
     return this.value;

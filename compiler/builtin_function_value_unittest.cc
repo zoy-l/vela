@@ -250,7 +250,7 @@ func main(): int {
   return contains('Vela');
 })",
                              R"(
-class Reader { public read(): int { return 42; } }
+class Reader { read(): int { return 42; } }
 func bind(reader: Reader?): (() => int)? { return reader?.read; }
 func main(): int {
   if (bind(null) != null) { return 0; }
@@ -259,9 +259,9 @@ func main(): int {
   return 0;
 })",
                              R"(
-class Base { public read(): int { return 40; } }
+class Base { read(): int { return 40; } }
 class Derived extends Base {
-  public readBase(): () => int { return super.read; }
+  readBase(): () => int { return super.read; }
 }
 func main(): int {
   const object = Derived();

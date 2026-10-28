@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <span>
 #include <string_view>
 
@@ -60,14 +61,14 @@ struct NativeTraceFrame final {
 
 class NativeFrame final {
  public:
-  NativeFrame(Isolate& isolate, NativeFrameSize size, Value* stack_roots) noexcept;
+  NativeFrame(Isolate& isolate, NativeFrameSize size) noexcept;
   ~NativeFrame();
   NativeFrame(const NativeFrame&) = delete;
   NativeFrame& operator=(const NativeFrame&) = delete;
   NativeFrame(NativeFrame&&) = delete;
   NativeFrame& operator=(NativeFrame&&) = delete;
 
-  [[nodiscard]] std::span<Value> roots() noexcept { return roots_; }
+  [[nodiscard]] std::span<Value> roots() noexcept { return allocated_roots_.values(); }
   [[nodiscard]] bool IsAllocated() const noexcept {
     return allocated_roots_.IsAllocated() && (storage_bytes_ == 0 || storage_ != nullptr);
   }
@@ -75,15 +76,24 @@ class NativeFrame final {
 
  private:
   ValueBuffer allocated_roots_;
-  std::span<Value> roots_;
   RootRange root_range_;
   std::size_t storage_bytes_;
   void* storage_;
 };
 
 // 仅消费由编译器或运行时按 NativeValue 契约构造的值，不验证任意外部位模式。
-[[nodiscard]] NativeValue EncodeNativeValue(Value value) noexcept;
-[[nodiscard]] Value DecodeNativeValue(const NativeValue& value) noexcept;
+[[nodiscard]] inline NativeValue EncodeNativeValue(Value value) noexcept {
+  NativeValue result;
+  // NativeMemoryLayout 断言两种表示的载荷和标签布局一致；不复制 Value 的尾部 padding。
+  std::memcpy(&result, &value, offsetof(NativeValue, kind) + sizeof(NativeValueKind));
+  return result;
+}
+
+[[nodiscard]] inline Value DecodeNativeValue(const NativeValue& value) noexcept {
+  Value result;
+  std::memcpy(&result, &value, offsetof(NativeValue, kind) + sizeof(NativeValueKind));
+  return result;
+}
 
 // 每次执行独占；不改变宿主 NativeContext 的生命周期和责任。
 // Isolate 必须晚于此对象销毁，所有操作发生在 Isolate 所属线程。
@@ -156,14 +166,20 @@ class NativeInstanceScope final {
 extern "C" std::uint8_t vela_native_v1_frame_storage(NativeExecution* execution,
                                                      std::uint64_t root_count,
                                                      std::uint64_t storage_bytes,
-                                                     Value* stack_roots,
                                                      NativeFrame* frame,
                                                      NativeFrameAccess* access) noexcept;
 extern "C" void vela_native_v1_frame_release(NativeFrame* frame) noexcept;
-// 标量叶函数成功时无需逻辑帧；失败时补建逻辑帧捕获栈。
+extern "C" void vela_native_v1_roots_enter(NativeExecution* execution,
+                                           Value* roots,
+                                           std::uint64_t count,
+                                           RootRange* range) noexcept;
+extern "C" void vela_native_v1_roots_exit(RootRange* range) noexcept;
+// 无成功路径安全点的叶函数在失败时临时登记活动根和逻辑帧。
 extern "C" std::uint8_t vela_native_v1_leaf_failure(NativeExecution* execution,
                                                     const TracePosition* position,
-                                                    std::uint8_t status);
+                                                    std::uint8_t status,
+                                                    const Value* roots,
+                                                    std::uint64_t root_count);
 extern "C" std::uint8_t vela_native_v1_failure(NativeExecution* execution, std::uint8_t status);
 extern "C" std::uint8_t vela_native_v1_has_exception(NativeExecution* execution) noexcept;
 extern "C" void vela_native_v1_catch(NativeExecution* execution, NativeValue* result) noexcept;

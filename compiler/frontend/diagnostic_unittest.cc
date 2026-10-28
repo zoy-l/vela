@@ -64,7 +64,7 @@ INSTANTIATE_TEST_SUITE_P(
                      "unknown named", "other"},
         LocatedError{"func read(value: int): void {}\nfunc f(): void { read(); }",
                      "missing argument", "read"},
-        LocatedError{"class A { param x: int; }\nfunc f(): A { return A(other: 1); }",
+        LocatedError{"class A { x: int; }\nfunc f(): A { return A(other: 1); }",
                      "unknown named", "other"},
         LocatedError{"func f(): int {\n  return 1 + true;\n}", "arithmetic operands", "+"},
         LocatedError{"func f(): int {\n  return [1][true];\n}", "index must be int", "true"},

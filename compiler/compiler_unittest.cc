@@ -75,8 +75,8 @@ func main(): int {
 TEST(CompilerTest, NullSafeAccessCoalescesAndSkipsArgumentsAndIndices) {
   constexpr std::string_view source = R"(
 class Item {
-  public param value: int;
-  public read(unused: int): int { return this.value; }
+  value: int;
+  read(unused: int): int { return this.value; }
 }
 func fail(): int { return 1 / 0; }
 func main(): int {
@@ -111,7 +111,7 @@ TEST(CompilerTest, CoalescePreservesStorageAndSkipsUnneededDefaults) {
   constexpr std::string_view source = R"(
 let fallback_calls: int = 0;
 let global_value: int? = null;
-class Box { public param value: int?; }
+class Box { value: int?; }
 func fallback(): int {
   fallback_calls += 1;
   return 42;
@@ -323,11 +323,11 @@ async func main(): Future<int> {
 TEST(CompilerTest, CompilesNestedClassConstruction) {
   constexpr std::string_view source = R"(
 class Theme {
-  param brightness: int;
+  brightness: int;
 }
 
 class App {
-  param theme: Theme;
+  theme: Theme;
 }
 
 func main(): App {
@@ -412,7 +412,7 @@ func main(): int {
 TEST(CompilerTest, ExecutesLanguageFeaturesAndNamedMethodArguments) {
   constexpr std::string_view source = R"(
 class Counter {
-  param value: int;
+  value: int;
   add(amount: int): int {
     this.value = this.value + amount;
     return this.value;
@@ -475,7 +475,7 @@ TEST(CompilerTest, PreservesSymbolsAndShadowingAcrossTableGrowth) {
     const std::string suffix = std::to_string(index);
     source += "enum SymbolEnum" + suffix + " { first, second }\n";
     source += "class SymbolClass" + suffix +
-              " { param value: int; read(): int { return this.value; } }\n";
+              " { value: int; read(): int { return this.value; } }\n";
     source += "func symbol_function_" + suffix + "(value: int): int { return value; }\n";
   }
   source += "func main(): int { let sum: int = 0;\n";
@@ -518,14 +518,14 @@ TEST(CompilerTest, ExecutesTypedArraysAcrossCallsMethodsAndAssignments) {
   constexpr std::string_view source = R"(
 enum Shade { light, dark }
 class Item {
-  param value: int;
+  value: int;
   read(): int { return this.value; }
 }
 class Store {
-  param items: Item[][];
-  param labels: string[];
-  param flags: bool[];
-  param shades: Shade[];
+  items: Item[][];
+  labels: string[];
+  flags: bool[];
+  shades: Shade[];
   read(): int { return this.items[0][0].read(); }
   replace(items: Item[]): Item[] {
     this.items[0] = items;
@@ -571,8 +571,8 @@ func main(): bool {
 
 TEST(CompilerTest, ArrayFieldsAndNestedArraysRetainTheirObjects) {
   constexpr std::string_view source = R"(
-class Item { param value: int; }
-class Store { param items: Item[][]; param flags: bool[]; param labels: string[]; }
+class Item { value: int; }
+class Store { items: Item[][]; flags: bool[]; labels: string[]; }
 func main(): Store {
   return Store(items: [[Item(value: 42)]], flags: [true], labels: ["alive"]);
 }

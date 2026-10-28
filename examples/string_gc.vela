@@ -1,5 +1,5 @@
 class Message {
-  param text: string;
+  text: string;
   append(suffix: string): void {
     this.text = this.text + suffix;
   }

@@ -158,8 +158,8 @@ INSTANTIATE_TEST_SUITE_P(ProductionContracts,
   return b == 3 && Json.stringify(payload) == '{"b":3,"a":2}' ? 42 : 0;
 })",
                              R"(class User {
-  public param name: string;
-  public toJson(): Map<string, dynamic> {
+  name: string;
+  toJson(): Map<string, dynamic> {
     const result = Map<string, dynamic>();
     result.set('name', this.name);
     result.set('items', [1, true, null]);
@@ -173,7 +173,7 @@ func main(): int {
     ? 42 : 0;
 })",
                              R"(class Bad {
-  public toJson(): int { throw Error(message: 'original', code: 'UserError'); }
+  toJson(): int { throw Error(message: 'original', code: 'UserError'); }
 }
 func main(): int {
   try { Json.stringify(Bad()); } catch (error: Error) {
@@ -183,7 +183,7 @@ func main(): int {
   return 0;
 })",
                              R"(class Cycle {
-  public toJson(): Cycle { return this; }
+  toJson(): Cycle { return this; }
 }
 func main(): int {
   try { Json.stringify(Cycle()); } catch (error: Error) {
@@ -198,8 +198,8 @@ func main(): int {
   return 0;
 })",
                              R"(class Mutator {
-  public param parent: dynamic[];
-  public toJson(): int {
+  parent: dynamic[];
+  toJson(): int {
     this.parent.push(7);
     this.parent.pop();
     return 1;
@@ -247,8 +247,8 @@ func main(): int {
   return 0;
 })",
                              R"(class Mutator {
-  public param parent: Map<string, dynamic>;
-  public toJson(): int {
+  parent: Map<string, dynamic>;
+  toJson(): int {
     this.parent.set('temp', 7);
     this.parent.delete('temp');
     return 1;
@@ -325,8 +325,8 @@ func main(): int {
   return 0;
 })",
                              R"(class Adder {
-  public param base: int;
-  public add(value: int): int { return this.base + value; }
+  base: int;
+  add(value: int): int { return this.base + value; }
 }
 func main(): int {
   const method: dynamic = Adder(base: 40).add;
@@ -345,7 +345,7 @@ func main(): int {
   return actual == 42 ? 42 : 0;
 })",
                              R"(enum Flag { yes }
-class Model { public toJson(): Flag { return Flag.yes; } }
+class Model { toJson(): Flag { return Flag.yes; } }
 func main(): int {
   try { Json.stringify(Model()); } catch (error: Error) {
     return error.code == 'JsonEncodeError' ? 42 : 0;
@@ -354,12 +354,12 @@ func main(): int {
 })",
                              R"(enum Flag { yes }
 class Item {
-  public param value: int;
-  public param flag: Flag = Flag.yes;
-  private param secret: int = 9;
-  public add(first: int, second: int): int { return this.value + first + second; }
-  public get twice(): int { return this.value * 2; }
-  public set twice(value: int): void { this.value = value / 2; }
+  value: int;
+  flag: Flag = Flag.yes;
+  private secret: int = 9;
+  add(first: int, second: int): int { return this.value + first + second; }
+  get twice(): int { return this.value * 2; }
+  set twice(value: int): void { this.value = value / 2; }
 }
 func main(): int {
   const item: dynamic = Item(value: 20);
@@ -377,8 +377,8 @@ func main(): int {
                              R"(func first(value: int): int { return value + 40; }
 func second(value: int): int { return value; }
 class Item {
-  public param callback: (int) => int;
-  public get action(): (int) => int { return this.callback; }
+  callback: (int) => int;
+  get action(): (int) => int { return this.callback; }
 }
 func main(): int {
   const actual = Item(callback: first);
@@ -418,9 +418,9 @@ func main(): int {
   return 0;
 })",
                              R"(class Item {
-  public param stored: int;
-  public get value(): int { return this.stored; }
-  public set value(next: int): void { this.stored = next; }
+  stored: int;
+  get value(): int { return this.stored; }
+  set value(next: int): void { this.stored = next; }
 }
 func main(): int {
   const original = Item(stored: 20);
@@ -483,8 +483,8 @@ async func main(): Future<int> {
   return 0;
 })",
                              R"(class Reader {
-  public param action: () => int;
-  public get value(): int { return this.action(); }
+  action: () => int;
+  get value(): int { return this.action(); }
 }
 func main(): int {
   let value: dynamic = 42;
@@ -500,7 +500,7 @@ func main(): int {
   return 0;
 })",
                              R"(enum Flag { yes }
-class Item { public param value: int = 7; }
+class Item { value: int = 7; }
 func main(): int {
   const values: dynamic[] = [1, 'bad'];
   const item = Item();
@@ -542,8 +542,8 @@ func main(): int {
 })",
                              R"(enum Flag { yes }
 class Adder {
-  public param base: int;
-  public add(value: int): int { return this.base + value; }
+  base: int;
+  add(value: int): int { return this.base + value; }
 }
 func main(): int {
   const flags = [Flag.yes];
@@ -685,12 +685,12 @@ async func main(): Future<int> {
   return 0;
 })",
                              R"(class Box {
-  public param stored: dynamic = 20;
-  public param reads: int = 0;
-  public param writes: int = 0;
-  public get value(): dynamic { this.reads += 1; return this.stored; }
-  public set value(input: dynamic): void { this.writes += 1; this.stored = input; }
-  public static total: dynamic = 40;
+  stored: dynamic = 20;
+  reads: int = 0;
+  writes: int = 0;
+  get value(): dynamic { this.reads += 1; return this.stored; }
+  set value(input: dynamic): void { this.writes += 1; this.stored = input; }
+  static total: dynamic = 40;
 }
 func main(): int {
   const box = Box();

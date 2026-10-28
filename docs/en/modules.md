@@ -5,8 +5,8 @@
 
 Every source file has a separate top-level scope. Functions, classes, enums,
 interfaces, aliases, and module-level `let`/`const` bindings are private to that
-file unless marked `export`. Class member `public`/`private` rules remain
-independent of whether the class is exported.
+file unless marked `export`. Class members are public by default, with `private`
+restricting access to the declaring class, independently of whether the class is exported.
 
 ```typescript
 // counters.vela

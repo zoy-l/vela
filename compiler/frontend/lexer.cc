@@ -18,10 +18,8 @@ constexpr std::size_t kBracedUnicodeDigits = 6;
 
 const absl::flat_hash_map<std::string_view, TokenKind> kKeywords = {
     {"type", TokenKind::Type},
-    {"public", TokenKind::Public},
     {"private", TokenKind::Private},
     {"static", TokenKind::Static},
-    {"param", TokenKind::Param},
     {"constructor", TokenKind::Constructor},
     {"extends", TokenKind::Extends},
     {"super", TokenKind::Super},

@@ -1,7 +1,7 @@
 """Field loop folding preserves aliases and observable overflow prefixes."""
 
 SOURCE = """
-class Box { public param value: int; }
+class Box { value: int; }
 func increase(box: Box, bound: int): void {
   for (let index = 0; index < bound; index++) { box.value += 1; }
 }

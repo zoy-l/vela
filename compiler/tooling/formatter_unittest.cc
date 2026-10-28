@@ -21,7 +21,7 @@ TEST(FormatterTest, FormatsBlocksDeclarationsAndControlFlow) {
 
 TEST(FormatterTest, UsesParserRolesForGenericsAndPrefixOperators) {
   const auto result = FormatSource(
-      "class Pair<T,U>{param a:T;param b:U;}func main():int{const a:Pair<int,int> ="
+      "class Pair<T,U>{a:T;b:U;}func main():int{const a:Pair<int,int> ="
       "Pair<int,int>(a:-1,b:- -2);if(a.a<a.b){return -a.a;}return 0;}");
   ASSERT_TRUE(result) << result.error().front().message;
   EXPECT_TRUE(result->contains("class Pair<T, U>"));
@@ -109,10 +109,10 @@ TEST(FormatterTest, DefaultsToSingleQuotesWithoutChangingEscapedValues) {
 TEST(FormatterTest, SeparatesTopLevelDeclarationsAndPreservesAnInnerBlankLine) {
   const auto result = FormatSource(
       "import \"one.vela\";import \"two.vela\";"
-      "class A{param value:int;}func main():void{let value=1;\n\n\nprint(value);}");
+      "class A{value:int;}func main():void{let value=1;\n\n\nprint(value);}");
   ASSERT_TRUE(result);
   EXPECT_EQ(*result,
-            "import 'one.vela';\nimport 'two.vela';\n\nclass A {\n  param value: int;\n}\n\n"
+            "import 'one.vela';\nimport 'two.vela';\n\nclass A {\n  value: int;\n}\n\n"
             "func main(): void {\n  let value = 1;\n\n  print(value);\n}\n");
 }
 
@@ -153,13 +153,13 @@ INSTANTIATE_TEST_SUITE_P(
         "enum Mode{light,dark,}",
         "import \"math.vela\" as math; export func root(value:double):double{return "
         "math.sqrt(value);}",
-        "class Counter{public param value:int;private "
+        "class Counter{value:int;private "
         "step:int=1;constructor{this.value=this.value+step;}"
         "next():int{this.value=this.value+1;return this.value;}}",
         "func main():int{const op:(int,int)=>int=(x:int,y:int):int=>{return x+y;};return "
         "op(40,2);}",
         "func main():int{switch(2){case 1:case 2:return 42;default:return 0;}}",
-        "class E{param message:string;}func main():void{try{throw "
+        "class E{message:string;}func main():void{try{throw "
         "E(message:\"x\");}catch(e:E){print(e.message);}"
         "catch{print(\"other\");}finally{print(\"done\");}}",
         "func main():int{const x:Expected<int,string> =ok(42);return match(x.value()){"

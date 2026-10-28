@@ -12,17 +12,17 @@ export interface Readable {
 /// A counter with named construction parameters.
 export class Counter implements Readable {
   /// The initial value.
-  public param value: int;
+  value: int;
   /// The amount added by next().
-  public param step: int = 1;
+  step: int = 1;
 
   /// Returns the current value.
-  public read(): int {
+  read(): int {
     return this.value;
   }
 
   /// Advances and returns the value.
-  public next(): int {
+  next(): int {
     this.value = this.value + this.step;
     return this.value;
   }

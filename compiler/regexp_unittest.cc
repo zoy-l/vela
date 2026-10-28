@@ -151,7 +151,7 @@ func main(): int {
                              R"(
 type Pattern = RegExp;
 type Match = RegExpMatch;
-class Box { public param re: Pattern; public param found: Match?; }
+class Box { re: Pattern; found: Match?; }
 async func lookup(re: RegExp): Future<RegExpMatch?> { return re.firstMatch('42'); }
 async func main(): Future<int> {
   const re = Pattern('(?<digits>\\d+)');

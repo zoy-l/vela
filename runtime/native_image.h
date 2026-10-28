@@ -16,6 +16,8 @@ inline constexpr std::uint32_t kNativeRestParameter = 2;
 inline constexpr std::uint32_t kNativeAsyncFunction = 1;
 inline constexpr std::uint32_t kNativeExportedFunction = 2;
 inline constexpr std::uint32_t kNativeTypedFunction = 4;
+// 内部入口返回 enum 的标量载荷；进入 runtime Value 表示时需要盒装。
+inline constexpr std::uint32_t kNativeEnumResult = 8;
 
 // 这些记录是生成代码可见的内部 ABI：仅包含固定宽度字段、重定位指针和长度。
 // 目标文件静态链接后保持只读；描述表及所有借用字节必须覆盖实例的生命周期。

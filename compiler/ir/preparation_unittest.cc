@@ -61,7 +61,7 @@ TEST(PreparationTest, KeepsWideVirtualRegistersBeforeBackendAllocation) {
 
 TEST(PreparationTest, OwnsLayoutsAndSourcePathsAfterFrontendDestructionAndResultMoves) {
   auto first = Prepare(R"(
-class Box { param value: int; }
+class Box { value: int; }
 func main(): int { return Box(value: 42).value; }
 )");
   ASSERT_TRUE(first.has_value());

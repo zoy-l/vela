@@ -16,8 +16,8 @@ TEST(TypeOperationTest, TestsAndNarrowsInterfacesWithoutChangingObjectIdentity) 
 interface Measurable { measure(): int; }
 interface Named { name(): string; }
 class Rectangle implements Measurable, Named {
-  public param width: int;
-  public param height: int;
+  width: int;
+  height: int;
   measure(): int { return this.width * this.height; }
   name(): string { return "rectangle"; }
 }
@@ -91,7 +91,7 @@ INSTANTIATE_TEST_SUITE_P(StrictTypes,
                                          "func main(): int { return 42.5 as int; }",
                                          R"(
 interface I {}
-class A implements I { param value: int; }
+class A implements I { value: int; }
 class B implements I {}
 func main(): int {
   let value: I = A(value: 42);

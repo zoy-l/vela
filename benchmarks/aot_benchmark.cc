@@ -1,5 +1,6 @@
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -59,11 +60,10 @@ struct Sample final {
 std::expected<Sample, std::string> ResolveResult(runtime::Isolate& isolate,
                                                  runtime::Value value,
                                                  AotCompletion completion) {
-  auto& heap = isolate.heap();
-  runtime::RootRange root(heap, &value, 1);
   Sample sample;
   auto& scheduler = isolate.scheduler();
   if (completion == AotCompletion::Future) {
+    runtime::RootRange root(isolate.heap(), &value, 1);
     auto* future = value.IsObject() ? runtime::Heap::GetFuture(*value.AsObject()) : nullptr;
     if (future == nullptr) {
       return std::unexpected("async benchmark returned a non-Future");
@@ -234,6 +234,40 @@ std::expected<Sample, std::string> CppAsync(runtime::Isolate& isolate, std::int6
   return Sample{.value = value.AsInteger()};
 }
 
+std::int64_t CppSpectralNorm() {
+  // 与 Vela 相同的 binary64、int64 索引、500 阶矩阵和两次幂迭代。
+  constexpr std::int64_t kDimension = 500;
+  std::vector<double> u(kDimension, 1.0);
+  std::vector<double> v(kDimension, 0.0);
+  std::vector<double> temporary(kDimension, 0.0);
+  const auto multiply = [](const std::vector<double>& input, std::vector<double>& output,
+                           bool transpose) {
+    for (std::int64_t i = 0; i < kDimension; ++i) {
+      double sum = 0.0;
+      for (std::int64_t j = 0; j < kDimension; ++j) {
+        const auto index = transpose ? j : i;
+        const auto denominator = (i + j) * (i + j + 1) / 2 + index + 1;
+        sum += input[static_cast<std::size_t>(j)] / static_cast<double>(denominator);
+      }
+      output[static_cast<std::size_t>(i)] = sum;
+    }
+  };
+  for (std::int64_t round = 0; round < 2; ++round) {
+    multiply(u, temporary, false);
+    multiply(temporary, v, true);
+    multiply(v, temporary, false);
+    multiply(temporary, u, true);
+  }
+  double numerator = 0.0;
+  double denominator = 0.0;
+  for (std::int64_t i = 0; i < kDimension; ++i) {
+    const auto index = static_cast<std::size_t>(i);
+    numerator += u[index] * v[index];
+    denominator += v[index] * v[index];
+  }
+  return static_cast<std::int64_t>(std::sqrt(numerator / denominator) * 1000000000.0);
+}
+
 std::expected<Sample, std::string> CppRun(runtime::Isolate& isolate, AotBenchmarkCase problem) {
   auto size = problem.size;
   benchmark::DoNotOptimize(size);
@@ -295,6 +329,8 @@ std::expected<Sample, std::string> CppRun(runtime::Isolate& isolate, AotBenchmar
     }
     case AotKernel::Async:
       return CppAsync(isolate, size);
+    case AotKernel::SpectralNorm:
+      return Sample{.value = CppSpectralNorm()};
   }
   return Sample{.value = sum};
 }

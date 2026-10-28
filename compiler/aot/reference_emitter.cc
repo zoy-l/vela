@@ -47,6 +47,9 @@ void FunctionEmitter::StoreRoots(std::size_t index) {
 }
 
 void FunctionEmitter::ClearRoots(std::size_t index) {
+  if (leaf_entry_) {
+    return;
+  }
   for (const auto reg : roots_.clears.at(index)) {
     const auto& slot = roots_.slots.at(reg);
     if (!slot) {
@@ -135,9 +138,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       return {};
     }
     case Opcode::SetGlobal: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_set_global", builder_.getVoidTy(),
-                                                pointer, word, pointer);
-      builder_.CreateCall(helper, {context, index, Pack(Encode(instruction.lhs), 0)});
+      EmitGlobalStore(instruction);
       return {};
     }
     case Opcode::NewOk:
@@ -221,8 +222,17 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       return {};
     case Opcode::BuiltinCall: {
       const auto builtin = static_cast<Builtin>(instruction.index);
+      if (builtin == Builtin::NumericToInt || builtin == Builtin::NumericToDouble) {
+        const auto& type = source_.value_types.at(instruction.lhs);
+        if (type.nullable || (type.kind != Kind::Int && type.kind != Kind::Double)) {
+          return std::unexpected("AOT numeric conversion requires a non-null numeric operand");
+        }
+        EmitNumericConversion(instruction, builtin);
+        return {};
+      }
       if (builtin == Builtin::ArrayLength || builtin == Builtin::ArrayCapacity ||
-          builtin == Builtin::ArrayMutation || builtin == Builtin::ArrayPush) {
+          builtin == Builtin::ArrayMutation || builtin == Builtin::ArrayCheckMutation ||
+          builtin == Builtin::ArrayPush) {
         EmitArrayBuiltin(instruction, builtin);
         return {};
       }

@@ -7,6 +7,7 @@
 #include <bit>
 #include <cstdint>
 #include <limits>
+#include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/opcode.h"
 #include "compiler/aot/native_values.h"
@@ -113,6 +114,29 @@ void FunctionEmitter::EmitDouble(const ir::Instruction& instruction) {
   Store(instruction.dst, result, {.kind = Kind::Double, .name = "double"});
 }
 
+void FunctionEmitter::EmitNumericConversion(const ir::Instruction& instruction, Builtin builtin) {
+  const auto kind = source_.value_types.at(instruction.lhs).kind;
+  auto* value = Payload(instruction.lhs);
+  if (builtin == Builtin::NumericToDouble) {
+    auto* converted =
+        kind == Kind::Int ? builder_.CreateSIToFP(value, builder_.getDoubleTy()) : value;
+    Store(instruction.dst, converted, {.kind = Kind::Double, .name = "double"});
+    return;
+  }
+  if (kind == Kind::Double) {
+    value = builder_.CreateUnaryIntrinsic(llvm::Intrinsic::trunc, value);
+    // 与 ConvertNumber 共用半开范围语义；ordered 比较同时拒绝 NaN 和无穷。
+    // 必须先检查再生成 fptosi，越界转换会产生 poison，不能用转换结果反查范围。
+    auto* lower = llvm::ConstantFP::get(builder_.getDoubleTy(), -0x1p63);
+    auto* upper = llvm::ConstantFP::get(builder_.getDoubleTy(), 0x1p63);
+    Check(builder_.CreateAnd(builder_.CreateFCmpOGE(value, lower),
+                             builder_.CreateFCmpOLT(value, upper)),
+          ExecutionStatus::InvalidNumericConversion);
+    value = builder_.CreateFPToSI(value, builder_.getInt64Ty());
+  }
+  Store(instruction.dst, value, {.kind = Kind::Int, .name = "int"});
+}
+
 void FunctionEmitter::EmitComparison(const ir::Instruction& instruction) {
   auto* left = Payload(instruction.lhs);
   auto* right = Payload(instruction.rhs);
@@ -165,6 +189,13 @@ void FunctionEmitter::EmitComparison(const ir::Instruction& instruction) {
 void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
   const auto& left_type = source_.value_types.at(instruction.lhs);
   const auto& right_type = source_.value_types.at(instruction.rhs);
+  if (left_type.kind == Kind::Null || right_type.kind == Kind::Null) {
+    const auto reg = left_type.kind == Kind::Null ? instruction.rhs : instruction.lhs;
+    auto* present = IsPresent(builder_, Load(reg), source_.value_types.at(reg));
+    auto* result = instruction.opcode == Opcode::EqualValue ? builder_.CreateNot(present) : present;
+    Store(instruction.dst, result, {.kind = Kind::Bool, .name = "bool"});
+    return;
+  }
   if (!IsScalar(left_type) || !IsScalar(right_type)) {
     auto equal = module_.getOrInsertFunction("vela_native_v1_equal", builder_.getInt8Ty(),
                                              builder_.getPtrTy(), builder_.getPtrTy());

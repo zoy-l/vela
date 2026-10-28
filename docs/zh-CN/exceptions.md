@@ -6,7 +6,7 @@
 
 ```typescript
 class ValidationError {
-  public param message: string;
+  message: string;
 }
 
 func validate(value: int): int {

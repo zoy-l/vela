@@ -19,9 +19,6 @@ extern "C" std::uint8_t vela_native_v1_initialize_global(NativeExecution* execut
                                                          std::uint32_t index,
                                                          const TracePosition* position,
                                                          NativeValue* result);
-extern "C" void vela_native_v1_set_global(NativeExecution* execution,
-                                          std::uint32_t index,
-                                          const NativeValue* value) noexcept;
 extern "C" std::uint8_t vela_native_v1_new_expected(NativeExecution* execution,
                                                     std::uint32_t layout,
                                                     const NativeValue* payload,

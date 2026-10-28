@@ -68,7 +68,7 @@ INSTANTIATE_TEST_SUITE_P(ProductionPaths,
   const value = doubles.pop(); if (value == null || value != 2.5) { return 0; }
   return first;
 })",
-                             R"(class Item { param value: int; }
+                             R"(class Item { value: int; }
 func main(): int {
   const items: Item[] = [];
   for (let i = 0; i < 1000; i = i + 1) { items.push(Item(value: i)); }
@@ -220,7 +220,7 @@ INSTANTIATE_TEST_SUITE_P(JavaScriptContracts,
       a.findIndex((value, index, array) => array[index] == 20) != 1) { return 0; }
   return a.map(() => 42)[0];
 })",
-                             R"(class Item { param key: int; param id: int; }
+                             R"(class Item { key: int; id: int; }
 func main(): int {
   const a = [Item(key: 1, id: 1), Item(key: 0, id: 2), Item(key: 1, id: 3), Item(key: 0, id: 4)];
   if (a.sort((x, y) => x.key - y.key).map(x => x.id).join() != '2,4,1,3') { return 0; }

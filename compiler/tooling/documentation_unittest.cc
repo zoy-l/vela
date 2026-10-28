@@ -29,19 +29,22 @@ TEST(DocumentationTest, DescribesClassVisibilityConstructorDefaultsAndMethods) {
 /// A counter.
 export class Counter<T> {
   /// Initial value.
-  public param value: T;
-  private param secret: int = 1;
-  public static count: int = 0;
+  value: T;
+  private secret: int = 1;
+  static count: int = 0;
   private internal: int = 0;
-  constructor { this.internal = secret; }
+  constructor { this.internal = this.secret; }
   /// Read the stored value.
-  public read(): T { return this.value; }
+  read(): T { return this.value; }
   private reset(): void {}
 }
 )");
   ASSERT_TRUE(result);
   EXPECT_TRUE(result->contains("class Counter<T>"));
-  EXPECT_TRUE(result->contains("Counter(value: T, secret: int = …);"));
+  EXPECT_TRUE(result->contains("Counter(value: T);"));
+  EXPECT_FALSE(result->contains("secret"));
+  EXPECT_FALSE(result->contains("public "));
+  EXPECT_FALSE(result->contains("param "));
   EXPECT_TRUE(result->contains("Initial value."));
   EXPECT_TRUE(result->contains("Read the stored value."));
   EXPECT_TRUE(result->contains("read(): T;"));
@@ -61,6 +64,27 @@ export class Box implements Reader { read(): int[]?[] { return []; } }
   EXPECT_TRUE(result->contains("enum Mode {\n  light,\n  dark,"));
   EXPECT_TRUE(result->contains("read(): int[]?[];"));
   EXPECT_TRUE(result->contains("class Box implements Reader"));
+}
+
+TEST(DocumentationTest, ExplicitConstructorsOwnSignaturesAndPrivateConstructorsAreNotCallable) {
+  const auto result = GenerateModuleDocumentation(R"(
+export class Box {
+  value: int;
+  label: string = '';
+  constructor(initial: int) { this.value = initial; }
+}
+export class Hidden { private constructor() {} }
+export class GeneratedHidden { value: int; private constructor {} }
+)");
+  ASSERT_TRUE(result);
+  EXPECT_TRUE(result->contains("constructor(initial: int) { … }"));
+  EXPECT_TRUE(result->contains("Box(initial: int);"));
+  EXPECT_FALSE(result->contains("Box(value:"));
+  EXPECT_FALSE(result->contains("named constructor parameter"));
+  EXPECT_TRUE(result->contains("private constructor() { … }"));
+  EXPECT_TRUE(result->contains("private constructor { … }"));
+  EXPECT_FALSE(result->contains("Hidden();"));
+  EXPECT_FALSE(result->contains("GeneratedHidden(value:"));
 }
 
 TEST(DocumentationTest, DocumentsEmptyPublicSurfaceAndRejectsSyntaxErrors) {

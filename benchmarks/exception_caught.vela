@@ -1,5 +1,5 @@
 class Failure {
-  public param value: int;
+  value: int;
 }
 
 func main(): int {

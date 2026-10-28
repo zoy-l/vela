@@ -159,13 +159,13 @@ class DateParts {
   private secondValue: int = 0;
   private millisecondValue: int = 0;
   private constructor() {}
-  public get year(): int { return this.yearValue; }
-  public get month(): int { return this.monthValue; }
-  public get day(): int { return this.dayValue; }
-  public get hour(): int { return this.hourValue; }
-  public get minute(): int { return this.minuteValue; }
-  public get second(): int { return this.secondValue; }
-  public get millisecond(): int { return this.millisecondValue; }
+  get year(): int { return this.yearValue; }
+  get month(): int { return this.monthValue; }
+  get day(): int { return this.dayValue; }
+  get hour(): int { return this.hourValue; }
+  get minute(): int { return this.minuteValue; }
+  get second(): int { return this.secondValue; }
+  get millisecond(): int { return this.millisecondValue; }
 }
 )",
     },
@@ -249,9 +249,9 @@ class double {
 /// message describes the failure; code is a program-readable identifier, defaulting to 'Error'.
 class Error {
   /// A human-readable description of the failure.
-  public param message: string;
+  message: string;
   /// A program-readable error identifier, defaulting to 'Error'.
-  public param code: string = 'Error';
+  code: string = 'Error';
 }
 )",
     },
@@ -259,8 +259,8 @@ class Error {
         .name = "TimeoutException",
         .source = R"(/// The source Future did not complete before its timeout.
 class TimeoutException {
-  public param message: string = 'Future timed out';
-  public param code: string = 'Timeout';
+  message: string = 'Future timed out';
+  code: string = 'Timeout';
 }
 )",
     },

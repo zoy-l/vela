@@ -70,18 +70,23 @@ void TypeParameters(std::ostream& output, const std::vector<std::string>& parame
   output << '>';
 }
 
-void Signature(std::ostream& output, const frontend::Function& function) {
-  output << function.name;
-  TypeParameters(output, function.type_parameters);
+void Parameters(std::ostream& output, const std::vector<frontend::Parameter>& parameters) {
   output << '(';
-  for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
     if (index != 0) {
       output << ", ";
     }
-    const auto& parameter = function.parameters.at(index);
+    const auto& parameter = parameters.at(index);
     output << parameter.name << ": " << TypeText(parameter.type);
   }
-  output << "): " << TypeText(function.return_type);
+  output << ')';
+}
+
+void Signature(std::ostream& output, const frontend::Function& function) {
+  output << function.name;
+  TypeParameters(output, function.type_parameters);
+  Parameters(output, function.parameters);
+  output << ": " << TypeText(function.return_type);
 }
 
 struct Declaration final {
@@ -177,6 +182,9 @@ void Documentation::Method(const frontend::Function& method) {
 }
 
 void Documentation::Class(const frontend::Class& declaration) {
+  const auto* constructor = declaration.constructor.get();
+  const bool public_constructor =
+      constructor == nullptr || constructor->visibility == frontend::Visibility::Public;
   output_ << "class " << declaration.name;
   TypeParameters(output_, declaration.type_parameters);
   if (!declaration.interfaces.empty()) {
@@ -195,8 +203,16 @@ void Documentation::Class(const frontend::Class& declaration) {
     }
     FieldDeclaration(field);
   }
-  if (declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
-    output_ << "  constructor { … }\n";
+  if (constructor != nullptr) {
+    output_ << "  ";
+    if (!public_constructor) {
+      output_ << "private ";
+    }
+    output_ << "constructor";
+    if (declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
+      Parameters(output_, constructor->parameters);
+    }
+    output_ << " { … }\n";
   }
   output_ << "}\n```\n\n";
   Constructor(declaration);
@@ -207,7 +223,7 @@ void Documentation::Class(const frontend::Class& declaration) {
     output_ << "### `" << field.name << "`\n\n";
     Comment(field.location);
     output_ << "Type: `" << TypeText(field.type) << "`";
-    if (field.role == frontend::FieldRole::Parameter) {
+    if (public_constructor && declaration.IsConstructorField(field)) {
       output_ << "; named constructor parameter";
     }
     if (field.initializer) {
@@ -223,12 +239,9 @@ void Documentation::Class(const frontend::Class& declaration) {
 }
 
 void Documentation::FieldDeclaration(const frontend::Field& field) {
-  output_ << "  public ";
+  output_ << "  ";
   if (field.storage == frontend::MemberStorage::Static) {
     output_ << "static ";
-  }
-  if (field.role == frontend::FieldRole::Parameter) {
-    output_ << "param ";
   }
   output_ << field.name << ": " << TypeText(field.type);
   if (field.initializer) {
@@ -238,10 +251,20 @@ void Documentation::FieldDeclaration(const frontend::Field& field) {
 }
 
 void Documentation::Constructor(const frontend::Class& declaration) {
+  if (declaration.constructor &&
+      declaration.constructor->visibility == frontend::Visibility::Private) {
+    return;
+  }
+  if (declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
+    output_ << "### Constructor\n\n```vela\n" << declaration.name;
+    Parameters(output_, declaration.constructor->parameters);
+    output_ << ";\n```\n\n";
+    return;
+  }
   output_ << "### Constructor\n\n```vela\n" << declaration.name << '(';
   std::size_t parameter_index = 0;
   for (const auto& field : declaration.fields) {
-    if (field.role != frontend::FieldRole::Parameter) {
+    if (!declaration.IsConstructorField(field)) {
       continue;
     }
     if (parameter_index++ != 0) {

@@ -1,5 +1,5 @@
 class Label {
-  param text: string?;
+  text: string?;
 
   display(): string {
     const text = this.text;

@@ -5,9 +5,9 @@ func identity<T>(value: T): T {
 }
 
 class Box<T> {
-  public param value: T;
+  value: T;
 
-  public get(): T {
+  get(): T {
     return this.value;
   }
 }

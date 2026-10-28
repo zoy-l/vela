@@ -1,32 +1,42 @@
 external func workloadSize(): int = 'benchmark.size';
+
 external func hostStep(value: int): int = 'benchmark.step';
+
 let count = workloadSize();
 
 class Box {
-  public param value: int;
-  public param text: string;
+  value: int;
+  text: string;
 }
 
-func step(value: int): int { return value + 1; }
+func step(value: int): int {
+  return value + 1;
+}
 
 export func arithmetic(): int {
   const size = count;
   let sum = 0;
-  for (let index = 0; index < size; index++) { sum += index; }
+  for (let index = 0; index < size; index ++) {
+    sum += index;
+  }
   return sum;
 }
 
 export func calls(): int {
   const size = count;
   let sum = 0;
-  for (let index = 0; index < size; index++) { sum += step(index); }
+  for (let index = 0; index < size; index ++) {
+    sum += step(index);
+  }
   return sum;
 }
 
 export func fields(): int {
   const size = count;
   const box = Box(value: 0, text: '');
-  for (let index = 0; index < size; index++) { box.value += 1; }
+  for (let index = 0; index < size; index ++) {
+    box.value += 1;
+  }
   return box.value;
 }
 
@@ -34,34 +44,83 @@ export func arrays(): int {
   const size = count;
   const values: int[] = [];
   values.reserve(size);
-  for (let index = 0; index < size; index++) { values.push(index); }
+  for (let index = 0; index < size; index ++) {
+    values.push(index);
+  }
   let sum = 0;
-  for (let index = 0; index < size; index++) { sum += values[index]; }
+  for (let index = 0; index < size; index ++) {
+    sum += values[index];
+  }
   return sum;
 }
 
 export func host(): int {
   const size = count;
   let sum = 0;
-  for (let index = 0; index < size; index++) { sum += hostStep(index); }
+  for (let index = 0; index < size; index ++) {
+    sum += hostStep(index);
+  }
   return sum;
 }
 
 export func gc(): int {
   const size = count;
   let sum = 0;
-  for (let index = 0; index < size; index++) {
+  for (let index = 0; index < size; index ++) {
     const box = Box(value: index, text: index.toString());
     sum += box.text.length;
   }
   return sum;
 }
 
-async func segment(value: int): Future<int> { return await Future.value(value + 1); }
+async func segment(value: int): Future<int> {
+  return await Future.value(value + 1);
+}
 
 export async func asyncWork(): Future<int> {
   const size = 64;
   let sum = 0;
-  for (let index = 0; index < size; index++) { sum += await segment(index); }
+  for (let index = 0; index < size; index ++) {
+    sum += await segment(index);
+  }
   return sum;
+}
+
+func matrixMultiply(input: double[], output: double[], transpose: bool): void {
+  for (let i = 0; i < 500; i ++) {
+    let sum = 0.0;
+    for (let j = 0; j < 500; j ++) {
+      const index = transpose ? j : i;
+      const denominator = (i + j) * (i + j + 1) / 2 + index + 1;
+      sum += input[j] / denominator.toDouble();
+    }
+    output[i] = sum;
+  }
+}
+
+export func spectralNorm(): int {
+  const u: double[] = [];
+  const v: double[] = [];
+  const temporary: double[] = [];
+  u.reserve(500);
+  v.reserve(500);
+  temporary.reserve(500);
+  for (let i = 0; i < 500; i ++) {
+    u.push(1.0);
+    v.push(0.0);
+    temporary.push(0.0);
+  }
+  for (let round = 0; round < 2; round ++) {
+    matrixMultiply(u, temporary, false);
+    matrixMultiply(temporary, v, true);
+    matrixMultiply(v, temporary, false);
+    matrixMultiply(temporary, u, true);
+  }
+  let numerator = 0.0;
+  let denominator = 0.0;
+  for (let i = 0; i < 500; i ++) {
+    numerator += u[i] * v[i];
+    denominator += v[i] * v[i];
+  }
+  return (Math.sqrt(numerator / denominator) * 1000000000.0).toInt();
 }

@@ -488,12 +488,12 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
     }
     AddBuiltins(result, Kind::Invalid);
     constexpr auto kKeywords = std::to_array<std::string_view>({
-        "func",   "let",     "const",    "class", "enum",        "interface",  "type",
-        "public", "private", "static",   "param", "constructor", "implements", "return",
-        "if",     "else",    "for",      "while", "break",       "continue",   "switch",
-        "case",   "default", "match",    "try",   "catch",       "finally",    "throw",
-        "import", "export",  "external", "is",    "as",          "true",       "false",
-        "null",   "async",   "await",
+        "func",    "let",     "const",   "class",       "enum",       "interface",
+        "type",    "private", "static",  "constructor", "implements", "return",
+        "if",      "else",    "for",     "while",       "break",      "continue",
+        "switch",  "case",    "default", "match",       "try",        "catch",
+        "finally", "throw",   "import",  "export",      "external",   "is",
+        "as",      "true",    "false",   "null",        "async",      "await",
     });
     for (const auto keyword : kKeywords) {
       result.push_back({

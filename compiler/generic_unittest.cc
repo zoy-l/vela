@@ -23,7 +23,7 @@ func repeat<T>(value: T, count: int): T {
 }
 func capture<T>(value: T): () => T { return (): T => value; }
 class Box<T> {
-  param value: T;
+  value: T;
   get(): T { return this.value; }
 }
 func main(): int {
@@ -76,7 +76,7 @@ TEST(GenericTest, ConstructsGenericAliasesAndKeepsTemplateBodiesInTheirDeclarati
   const auto compiled = CompileSource(R"(
 func identity<T>(value: T): T { return value; }
 func forward<T>(value: T): T { return identity<T>(value); }
-class Box<T> { public param value: T; }
+class Box<T> { value: T; }
 type Alias<T> = Box<T>;
 func main(): int {
   const identity: int = 0;

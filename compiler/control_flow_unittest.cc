@@ -49,13 +49,13 @@ INSTANTIATE_TEST_SUITE_P(
         R"(func main(): bool { let count = 0; while (true) {
              while (true) { break; } count = count + 1; if (count == 3) break;
            } return count == 3; })",
-        R"(class State { param value: int; bump(): bool { this.value = this.value + 1; return false; } }
+        R"(class State { value: int; bump(): bool { this.value = this.value + 1; return false; } }
            func main(): bool { const state = State(value: 0); if (state.bump() || true) {
              const values = [state.value]; values[0] = 2; state.value = values[0];
            } return state.value == 2; })",
         R"(func main(): bool { const value = 1; { let value = 2; value = 3; }
            return value == 1; })",
-        R"(class State { param value: int; bump(): bool { this.value = this.value + 1; return false; } }
+        R"(class State { value: int; bump(): bool { this.value = this.value + 1; return false; } }
            func main(): bool { const state = State(value: 0); while (state.bump() || true) {
              break;
            } return state.value == 1; })"));

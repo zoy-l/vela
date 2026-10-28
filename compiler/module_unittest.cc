@@ -77,13 +77,13 @@ func main(): int {
           .text = R"(
 export func identity<T>(value: T): T { return value; }
 export enum Color { light, dark }
-export class Box<T> { param value: T; get(): T { return this.value; } }
+export class Box<T> { value: T; get(): T { return this.value; } }
 )",
       },
       {
           .path = "right.vela",
           .text = R"(
-class Hidden { param value: int; }
+class Hidden { value: int; }
 export type Box = Hidden;
 export func read(value: Box): int { return value.value; }
 )",
@@ -139,7 +139,7 @@ TEST(ModuleTest, LocalVariablesShadowImportPrefixesAndImportedFunctions) {
           .text = R"(
 import "lib.vela" as lib;
 import "lib.vela";
-class Local { param value: int; }
+class Local { value: int; }
 func main(): int {
   const lib = Local(value: 40);
   const value = (input: int): int => input + 1;
@@ -167,7 +167,7 @@ TEST_P(ModuleVisibilityTest, RejectsAccessOutsideTheExplicitModuleScope) {
           .text = R"(
 import "leaf.vela";
 func hidden(): int { return 42; }
-class Hidden { param value: int; }
+class Hidden { value: int; }
 export func visible(): int { return leaf(); }
 )",
       },
@@ -197,7 +197,7 @@ TEST(ModuleTest, DependenciesCannotReadPrivateEntrySymbolsThroughTheLinkedProgra
           .text = R"(
 import "lib.vela";
 func secret(): int { return 42; }
-class Secret { param value: int; }
+class Secret { value: int; }
 func main(): int { return read(); }
 )",
       },

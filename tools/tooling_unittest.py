@@ -170,7 +170,7 @@ class LanguageServerTest(unittest.TestCase):
         source = ("interface Readable { read(): int; }\n"
                   "enum Mode { light, dark }\n"
                   "type Count = int;\n"
-                  "class Counter {\n  /// Current count.\n  public param value: int;\n"
+                  "class Counter {\n  /// Current count.\n  value: int;\n"
                   "  read(): int { return this.value; }\n}\n"
                   "func main(): void { const counter = Counter(value: 42);\n"
                   "const mode: Mode = Mode.light; const count: Count = counter.read();\n"
@@ -217,8 +217,8 @@ class LanguageServerTest(unittest.TestCase):
         self.assertIn('(method) Math.sqrt(value: double): double', self.reply(messages, 'sqrt')['result']['contents']['value'])
 
     def test_class_hover_displays_constructor_parameters_defaults_and_documentation(self) -> None:
-        source = ("/// A counter.\nclass Counter { param value: int; private param step: int = -1; "
-                  "param label: string = 'Vela'; static other: int = 0; hidden: bool = true; }\n"
+        source = ("/// A counter.\nclass Counter { value: int; step: int = -1; "
+                  "label: string = 'Vela'; static other: int = 0; private hidden: bool = true; }\n"
                   "class Pair { value: int; constructor(value: int) { this.value = value; } }\n"
                   "func main(): void { Counter(value: 40); Pair(42); print(Error(message: 'bad')); }")
         messages = self.session([self.open(source),
@@ -410,7 +410,7 @@ class LanguageServerTest(unittest.TestCase):
         return result
 
     def test_semantic_tokens_color_type_declarations_uses_and_generic_parameters(self) -> None:
-        source = ("class Box<T> { param value: T; }\ninterface Readable { read(): int; }\n"
+        source = ("class Box<T> { value: T; }\ninterface Readable { read(): int; }\n"
                   "enum Mode { light, dark }\ntype IntBox = Box<int>;\n"
                   "func main(): void { const text = 'Box'; const value: IntBox = Box<int>(value: 42); "
                   "const mode: Mode = Mode.light; print(Math.PI); { const Box = 1; print(Box); } }")
@@ -434,7 +434,7 @@ class LanguageServerTest(unittest.TestCase):
 
     def test_semantic_tokens_use_import_overlays_and_invalidate_on_changes(self) -> None:
         library = self.directory / 'library.vela'
-        library.write_text('export class Item { param value: int; }', encoding='utf-8')
+        library.write_text('export class Item { value: int; }', encoding='utf-8')
         source = "import 'library' as lib; func main(): void { const text = '中😀'; lib.Item(value: 1); }"
         for encoding in ('utf-8', 'utf-16'):
             with self.subTest(encoding=encoding):
@@ -456,8 +456,8 @@ class LanguageServerTest(unittest.TestCase):
 
     def test_constructor_argument_completion_inserts_names_and_shows_types_and_defaults(self) -> None:
         items = self.argument_completions(
-            'class Counter { public param value: int; private param step: int = 1; '
-            'static other: int = 0; unused: int = 0; constructor {} }\n'
+            'class Counter { value: int; step: int = 1; '
+            'static other: int = 0; private unused: int = 0; constructor {} }\n'
             'func main(): void { const initial = 40; Counter(¦); }')
         parameters = {item['label']: item for item in items if item['label'].endswith(':')}
         self.assertEqual(parameters.keys(), {'value:', 'step:'})
@@ -469,7 +469,7 @@ class LanguageServerTest(unittest.TestCase):
         self.assertLess(parameters['value:']['sortText'], initial['sortText'])
 
     def test_constructor_completes_unfinished_names_and_omits_supplied_arguments(self) -> None:
-        header = 'class Counter { param value: int; param step: int = 1; }\nfunc main(): void { '
+        header = 'class Counter { value: int; step: int = 1; }\nfunc main(): void { '
         for text, labels, insertion in (
                 ('Counter(¦', {'value:', 'step:'}, 'value: '),
                 ('Counter(¦); }', {'value:', 'step:'}, 'value: '),
@@ -491,9 +491,26 @@ class LanguageServerTest(unittest.TestCase):
                 end = edit['range']['end']['character'] - len('func main(): void { ')
                 self.assertNotIn('valuevalue', line[:begin] + edit['newText'] + line[end:])
 
+    def test_explicit_constructor_completion_uses_only_declared_parameters(self) -> None:
+        items = self.argument_completions(
+            'class Box { value: int; text: string = ""; private cache: int = 0; '
+            'constructor(initial: int) { this.value = initial; } }\n'
+            'func main(): void { Box(¦); }')
+        parameters = {item['label'] for item in items if item['label'].endswith(':')}
+        self.assertEqual(parameters, {'initial:'})
+
+    def test_completion_excludes_removed_member_modifiers(self) -> None:
+        source = 'func main(): void { print(42); }'
+        messages = self.session([self.open(source),
+            self.symbol_query('completion', source, source.index('print('), 'keywords')])
+        labels = {item['label'] for item in self.reply(messages, 'keywords')['result']}
+        self.assertIn('private', labels)
+        self.assertNotIn('public', labels)
+        self.assertNotIn('param', labels)
+
     def test_argument_completion_resolves_explicit_generic_imported_and_alias_constructors(self) -> None:
         library = self.directory / 'library.vela'
-        library.write_text('export class Box<T> { param value: T; }\n'
+        library.write_text('export class Box<T> { value: T; }\n'
                            'export class Pair { first: int; second: string; '
                            'constructor(first: int, second: string) { '
                            'this.first = first; this.second = second; } }\n', encoding='utf-8')
@@ -507,7 +524,7 @@ class LanguageServerTest(unittest.TestCase):
                 self.assertEqual(parameters, details)
 
     def test_named_argument_completion_preserves_function_value_and_lexical_semantics(self) -> None:
-        header = ('class Box { param value: int; add(left: int, right: int): int { return left + right; } }\n'
+        header = ('class Box { value: int; add(left: int, right: int): int { return left + right; } }\n'
                   'func sum(left: int, right: int): int { return left + right; }\n'
                   'func main(): void { const box = Box(value: 1); const operation = sum; ')
         for call, labels in (('sum(¦)', {'left:', 'right:'}), ('box.add(1, ¦)', {'right:'}),
@@ -518,7 +535,7 @@ class LanguageServerTest(unittest.TestCase):
                 self.assertIn('box', {item['label'] for item in items})
 
     def test_argument_completion_ignores_nested_commas_and_respects_encoding(self) -> None:
-        header = ('class Box<T, U> { param value: T; }\n'
+        header = ('class Box<T, U> { value: T; }\n'
                   'func pair(left: int, right: int): int { return left + right; }\n'
                   'func run(values: int[], callback: (int, int) => int, value: Box<int, string>): void {}\n'
                   "func main(): void { const label = '中文😀'; ")
@@ -532,11 +549,11 @@ class LanguageServerTest(unittest.TestCase):
 
     def test_argument_names_are_not_suggested_in_values_comments_or_shadowed_calls(self) -> None:
         for source in (
-                "class Box { param value: string; } func main(): void { Box(value: 'hel¦lo'); }",
-                'class Box { param value: int; } func main(): void { const Box = 42; Box(¦); }',
-                'class Box { param value: int; } func main(): void { Box(value: ¦); }',
-                'class Box { param value: int[]; } func main(): void { Box(value: [¦]); }',
-                'class Box { param value: int; } func main(): void { // Box(¦\n}'):
+                "class Box { value: string; } func main(): void { Box(value: 'hel¦lo'); }",
+                'class Box { value: int; } func main(): void { const Box = 42; Box(¦); }',
+                'class Box { value: int; } func main(): void { Box(value: ¦); }',
+                'class Box { value: int[]; } func main(): void { Box(value: [¦]); }',
+                'class Box { value: int; } func main(): void { // Box(¦\n}'):
             with self.subTest(source=source):
                 items = self.argument_completions(source)
                 self.assertFalse(any(item['label'].endswith(':') for item in items))
@@ -625,7 +642,7 @@ class LanguageServerTest(unittest.TestCase):
         self.assertNotIn('items:', arguments)
 
     def test_inferred_lambda_parameters_expose_hover_members_and_definitions(self) -> None:
-        source = ("class Item { param value: int; }\n"
+        source = ("class Item { value: int; }\n"
                   "func main(): void { const values = [Item(value: 42)];\n"
                   "values.forEach(item => { print(item.value); });\n"
                   "const add: (int, int) => int = (left, right) => left + right; print(add(20, 22)); }")
@@ -858,8 +875,8 @@ class LanguageServerTest(unittest.TestCase):
         self.assertFalse({"hidden", "after"} & labels)
 
     def test_completes_incomplete_members_with_correct_visibility_and_storage(self) -> None:
-        header = ("class Counter {\n  public param value: int;\n"
-                  "  private secret: int = 1;\n  public static total: int = 0;\n"
+        header = ("class Counter {\n  value: int;\n"
+                  "  private secret: int = 1;\n  static total: int = 0;\n"
                   "  increment(): int { return this.value + 1; }\n}\n")
         for receiver, expected in (("counter", {"value", "increment"}), ("Counter", {"total"})):
             with self.subTest(receiver=receiver):
@@ -1010,7 +1027,7 @@ class LanguageServerTest(unittest.TestCase):
 
     def test_definition_resolves_members_enums_and_type_annotations(self) -> None:
         source = ("enum Color { red, blue }\n"
-                  "class Box { public param value: int; get(): int { return this.value; } }\n"
+                  "class Box { value: int; get(): int { return this.value; } }\n"
                   "func main(): int { const box: Box = Box(value: 4); print(Color.red); return box.get(); }")
         queries = [("this.value", "value", 1, source.splitlines()[1].index("value:")),
                    ("box.get", "get", 1, source.splitlines()[1].index("get()")),
@@ -1073,7 +1090,7 @@ class LanguageServerTest(unittest.TestCase):
                 self.assertEqual(self.reply(messages, "query")["result"], [])
 
     def test_named_arguments_jump_to_parameters_and_constructor_fields(self) -> None:
-        source = ("class Box { public param value: int; }\n"
+        source = ("class Box { value: int; }\n"
                   "func add(left: int, right: int): int { return left + right; }\n"
                   "func main(): int { const box = Box(value: 1); return add(left: box.value, right: 2); }")
         queries = [(source.index("value: 1"), 0, source.index("value:")),
@@ -1087,7 +1104,7 @@ class LanguageServerTest(unittest.TestCase):
             self.assertEqual(target["range"]["start"], {"line": line, "character": character})
 
     def test_for_catch_and_match_bindings_stay_in_their_scopes(self) -> None:
-        source = ("class Failure { public param message: string; }\n"
+        source = ("class Failure { message: string; }\n"
                   "func main(): void {\n"
                   "  for (let index = 0; index < 2; index = index + 1) { print(index); }\n"
                   "  try { throw Failure(message: \"error\"); } catch (caught: Failure) { print(caught.message); }\n"
@@ -1109,7 +1126,7 @@ class LanguageServerTest(unittest.TestCase):
 
     def test_generic_alias_interface_and_chained_member_queries(self) -> None:
         source = ("interface Readable { read(): int; }\n"
-                  "class Box<T> { public param value: T; }\n"
+                  "class Box<T> { value: T; }\n"
                   "type IntBox = Box<int>;\n"
                   "func main(reader: Readable): void { const box = IntBox(value: 42); box.value.; print(reader.read()); }")
         offset = source.index("box.value.;") + len("box.value.")
@@ -1225,7 +1242,7 @@ class LanguageServerTest(unittest.TestCase):
         self.assertIn("dotAll:", {item["label"] for item in self.reply(messages, "args")["result"]})
 
     def test_definition_accepts_identifier_end_before_punctuation_and_whitespace(self) -> None:
-        source = ("class Box { public param value: int; }\n"
+        source = ("class Box { value: int; }\n"
                   "func answer(): int { return 42; }\n"
                   "func main(): int { const box = Box(value: 1); print(box.value); return answer(); }")
         queries = [(source.index("answer();") + len("answer"), 1, len("func ")),

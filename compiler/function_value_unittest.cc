@@ -71,7 +71,7 @@ func main(): int {
 )",
                              R"(
 class Counter {
-  param value: int;
+  value: int;
   next(): int { this.value = this.value + 1; return this.value; }
 }
 func main(): int {
@@ -88,7 +88,7 @@ func make(): () => int {
 func main(): int { const f = make(); return f(); }
 )",
                              R"(
-class Callback { param operation: (int) => int; }
+class Callback { operation: (int) => int; }
 func main(): int {
   const object = Callback(operation: (value: int): int => value + 1);
   return object.operation(41);

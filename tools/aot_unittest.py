@@ -15,6 +15,9 @@ from tools.config import ROOT, executable_name, static_library_name, toolchain_t
 from tools.aot_async_fixture import HOST_TESTS as ASYNC_COMPOSITION_TESTS, SOURCE as ASYNC_COMPOSITION_SOURCE
 from tools.aot_api_fixture import HOST_TESTS as PUBLIC_API_TESTS, SOURCE as PUBLIC_API_SOURCE
 from tools.aot_memory_fixture import HOST_TESTS as MEMORY_TESTS, SOURCE as MEMORY_SOURCE
+from tools.aot_numeric_fixture import HOST_TESTS as NUMERIC_TESTS, SOURCE as NUMERIC_SOURCE
+from tools.aot_callback_fixture import HOST_TESTS as CALLBACK_TESTS, SOURCE as CALLBACK_SOURCE
+from tools.aot_class_fixture import HOST_TESTS as CLASS_TESTS, SOURCE as CLASS_SOURCE
 from tools.aot_integer_loop_fixture import HOST_TESTS as INTEGER_LOOP_TESTS, SOURCE as INTEGER_LOOP_SOURCE
 from tools.aot_field_loop_fixture import HOST_TESTS as FIELD_LOOP_TESTS, SOURCE as FIELD_LOOP_SOURCE
 from tools.aot_global_fixture import (HOST_TESTS as GLOBAL_STORAGE_TESTS,
@@ -750,7 +753,7 @@ export func calculate(operation: int, left: int, right: int): int {
             "NULLABLE_ENTRY": "export func calculate(value: int?): int? { return value; }",
             "NULL_TEST_ENTRY": "export func calculate(value: int?): bool { return value == null; }",
             "REFERENCE_ENTRY": """
-class Box { param text: string; }
+class Box { text: string; }
 func make(value: int): string { return 'item:${value}'; }
 func churn(): void {
   for (let index = 0; index < 1000; index++) { const garbage = Box(text: 'temporary'); }
@@ -767,7 +770,7 @@ export func calculate(): int {
 """,
             "EXCEPTION_ENTRY": """
 class First {}
-class Failure { param message: string; }
+class Failure { message: string; }
 enum Choice { first, second }
 func fail(): int { let zero = 0; return 1 / zero; }
 func original(): int {
@@ -954,15 +957,15 @@ export func calculate(operation: int): int {
 }
 """,
             "JSON_ENTRY": """
-class Box { public toJson(): int { return 42; } }
+class Box { toJson(): int { return 42; } }
 class Failure {}
-class Throwing { public toJson(): int { throw Failure(); } }
+class Throwing { toJson(): int { throw Failure(); } }
 class Missing {}
 enum Choice { first }
-class EnumBox { public toJson(): Choice { return Choice.first; } }
+class EnumBox { toJson(): Choice { return Choice.first; } }
 class Text {
-  public param text: string;
-  public toJson(): string {
+  text: string;
+  toJson(): string {
     const saved = this.text;
     for (let index = 0; index < 200; index++) { const garbage = 'item:${index}'; }
     return saved;
@@ -1025,11 +1028,11 @@ func reference(): () => int {
 }
 interface Measurable { measure(): int; }
 class Rectangle implements Measurable {
-  public param width: int;
-  public param height: int;
-  public measure(): int { return this.width * this.height; }
+  width: int;
+  height: int;
+  measure(): int { return this.width * this.height; }
 }
-class Constant implements Measurable { public measure(): int { return 2; } }
+class Constant implements Measurable { measure(): int { return 2; } }
 func area(value: Measurable): int { return value.measure(); }
 export func calculate(operation: int): int {
   if (operation == 0) { const f = add; return f(20, 22); }
@@ -1048,7 +1051,7 @@ export func calculate(operation: int): int {
 }
 """,
             "ASYNC_ENTRY": """
-class Failure { public param message: string; }
+class Failure { message: string; }
 enum Choice { first, second }
 let trace = 0;
 export func readTrace(): int { return trace; }
@@ -1131,12 +1134,16 @@ export async func calculate(): Future<int> {
         fixtures["COMPOSITION_ENTRY"] = ASYNC_COMPOSITION_SOURCE
         fixtures["PUBLIC_ENTRY"] = PUBLIC_API_SOURCE
         fixtures["MEMORY_ENTRY"] = MEMORY_SOURCE
+        fixtures["NUMERIC_ENTRY"] = NUMERIC_SOURCE
+        fixtures["CALLBACK_ENTRY"] = CALLBACK_SOURCE
+        fixtures["CLASS_ENTRY"] = CLASS_SOURCE
         fixtures["INTEGER_LOOP_ENTRY"] = INTEGER_LOOP_SOURCE
         fixtures["FIELD_LOOP_ENTRY"] = FIELD_LOOP_SOURCE
         fixtures["GLOBAL_STORAGE_ENTRY"] = GLOBAL_STORAGE_SOURCE
         fixtures["GLOBAL_LEAF_ENTRY"] = GLOBAL_LEAF_SOURCE
         fixtures["VOID_ENTRY"] = "export func calculate(): void {}"
         host = (HOST_TESTS + ASYNC_COMPOSITION_TESTS + PUBLIC_API_TESTS + MEMORY_TESTS
+                + NUMERIC_TESTS + CALLBACK_TESTS + CLASS_TESTS
                 + INTEGER_LOOP_TESTS + FIELD_LOOP_TESTS + GLOBAL_STORAGE_TESTS)
         loop_lines = [index for index, line in enumerate(INTEGER_LOOP_SOURCE.splitlines(), 1)
                       if "for (let index" in line][:5]
@@ -1190,7 +1197,7 @@ export async func calculate(): Future<int> {
                               "-framework", "CoreFoundation"])
             self.command([self.tools["cxx"], *flags, source_file, *objects, runtime, *gtest])
         executed = self.command([executable])
-        self.assertIn("[  PASSED  ] 41 tests.", executed.stdout)
+        self.assertIn("[  PASSED  ] 50 tests.", executed.stdout)
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
         symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout
         self.assertNotIn("vela::vm::", symbols)

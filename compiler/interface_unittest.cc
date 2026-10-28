@@ -34,12 +34,12 @@ TEST(InterfaceTest, DispatchesConcreteImplementationsAndBindsMethodValues) {
   const auto compiled = CompileSource(R"(
 interface Measurable { measure(): int; }
 class Rectangle implements Measurable {
-  public param width: int;
-  public param height: int;
-  public measure(): int { return this.width * this.height; }
+  width: int;
+  height: int;
+  measure(): int { return this.width * this.height; }
 }
 class Constant implements Measurable {
-  public measure(): int { return 2; }
+  measure(): int { return 2; }
 }
 func area(value: Measurable): int { return value.measure(); }
 func main(): int {

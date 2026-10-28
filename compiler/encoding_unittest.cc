@@ -140,7 +140,7 @@ TEST(EncodingTest, FailedEncodingDoesNotPublishSessionLayouts) {
 std::string FieldsSource(std::size_t count) {
   std::string source = "class Record {\n";
   for (std::size_t index = 0; index < count; ++index) {
-    source += "param f" + std::to_string(index) + ": int;\n";
+    source += "f" + std::to_string(index) + ": int;\n";
   }
   source += "}\nfunc main(): int { const record = Record(";
   for (std::size_t index = 0; index < count; ++index) {
@@ -193,7 +193,7 @@ TEST(EncodingTest, DiagnosesJumpOffsetsOutsideInt16) {
 
 TEST(EncodingTest, ReusesDeadTemporariesInLongFunctions) {
   std::string source =
-      "class Counter { param value: int; next(): int { this.value=this.value+1; return this.value; "
+      "class Counter { value: int; next(): int { this.value=this.value+1; return this.value; "
       "} "
       "}\nfunc main(): int { const counter=Counter(value: 0); let total=0;\n";
   for (std::size_t index = 0; index < kLongFunctionCalls; ++index) {
@@ -212,7 +212,7 @@ TEST(EncodingTest, ReusesDeadTemporariesInLongFunctions) {
 }
 
 TEST(EncodingTest, ReportsLiveRegisterPressureInsteadOfTotalExpressionCount) {
-  std::string source = "class Box { param value: int; } func main(): int {\n";
+  std::string source = "class Box { value: int; } func main(): int {\n";
   for (std::size_t index = 0; index < kBeyondByteIndex; ++index) {
     source += "const b" + std::to_string(index) + "=Box(value: " + std::to_string(index) + ");\n";
   }

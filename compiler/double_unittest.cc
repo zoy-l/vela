@@ -17,7 +17,7 @@ constexpr double kRoundTripValue = 1.2345678901234567;
 TEST(DoubleTest, ExecutesArithmeticComparisonsMethodsAndArrays) {
   constexpr std::string_view source = R"(
 class Accumulator {
-  param value: double;
+  value: double;
   add(amount: double): double {
     this.value = this.value + amount;
     return this.value;

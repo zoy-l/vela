@@ -15,7 +15,7 @@ Vela 是一个面向原生宿主应用的高性能静态类型脚本语言。其
 - `class` 声明名义类型的对象内存布局，包含静态已知的字段与方法；
 - 类支持单继承、显式 `super` 构造串联、`override` 方法重写和多接口运行时动态分派；
 - 类实例化表达式不使用 `new` 关键字；
-- 命名构造实参在编译期直接解析绑定至 `param` 字段或显式构造函数的形参 ID；
+- 命名构造实参在编译期直接解析绑定至公开实例字段或显式构造函数的形参 ID；
 - 枚举成员必须显式指明其枚举名限定（`Brightness.light`），包括在构造函数实参、变量声明、返回值、赋值及数组元素中；
 - 字段与方法均为静态声明，因此运行时的成员访问在热路径上绝非低效的字符串查找。
 
@@ -28,15 +28,15 @@ enum Brightness {
 }
 
 class CupertinoThemeData {
-    param brightness: Brightness;
+    brightness: Brightness;
 }
 
 class ActionSheetExample {
 }
 
 class CupertinoApp {
-    param theme: CupertinoThemeData;
-    param home: ActionSheetExample;
+    theme: CupertinoThemeData;
+    home: ActionSheetExample;
 }
 
 func buildApp(): CupertinoApp {

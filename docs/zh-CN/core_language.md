@@ -80,9 +80,9 @@ func identity<T>(value: T): T {
 }
 
 class Box<T> {
-  public param value: T;
+  value: T;
 
-  public get(): T {
+  get(): T {
     return this.value;
   }
 }
@@ -104,10 +104,10 @@ interface Measurable {
 }
 
 class Rectangle implements Measurable {
-  public param width: int;
-  public param height: int;
+  width: int;
+  height: int;
 
-  public measure(): int {
+  measure(): int {
     return this.width * this.height;
   }
 }
@@ -197,14 +197,14 @@ func requireRectangle(value: Measurable): Rectangle {
 
 `is` 运算符测试运行时对象类型，并在匹配的分支路径上对稳定的变量绑定进行类型细化。`as` 运算符强制检查对象类型并在类型不匹配时报告运行时类型转换失败。二者均不执行任何数值类型转换。数值转换始终为显式的 `toInt()`/`toDouble()` 操作。
 
-## 采用 Param 字段的类构造模型
+## 按字段生成的类构造模型
 
-选定的字段修饰符为 `param`，书写在访问可见性之后、字段名之前。它同时声明一个类字段以及构造函数中同名的命名参数。这替代了先前设想的 Dart 风格字段参数形式：
+类成员默认公开，仅私有成员需要标记 `private`。类没有显式构造参数列表时，每个公开实例字段都会生成同名的命名构造参数，字段不需要额外修饰符：
 
 ```typescript
 class Counter {
-  public param value: int;
-  public param step: int = 1;
+  value: int;
+  step: int = 1;
 
   private count: int = 0;
 
@@ -212,7 +212,7 @@ class Counter {
     // 在本代码块执行前，所有必需字段均已完成初始化。
   }
 
-  public next(): int {
+  next(): int {
     this.value = this.value + this.step;
     this.count = this.count + 1;
     return this.value;
@@ -231,23 +231,37 @@ func main(): void {
 }
 ```
 
-`param` 是实例字段的修饰符，而非注解。由此类字段生成的构造函数实参均为命名实参：没有默认初始值的字段为必填项，带有默认初始值的字段在实参省略时提供默认值。访问可见性修饰符独立控制类成员访问，与参数生成解耦。普通字段不生成构造参数；静态字段禁止使用 `param`。调用语法保留 `ClassName(...)`，不使用 `new`。
+自动构造的实参均为命名实参：公开实例字段没有默认值时必填，带有默认值时可以省略。可空类型仅表示允许传入 null，不表示可以省略：`text: string?` 仍为必填，`text: string? = null` 才可省略。私有字段与静态字段不生成构造参数。私有字段需要默认值或由显式构造函数赋值，静态字段必须有初始值。调用语法保留 `ClassName(...)`，不使用 `new`。
 
-`constructor { ... }` 是自动生成的构造函数的执行体，并非无参构造函数的声明。在执行该函数体之前，所有必需字段已完成赋值初始化。显式传入的实参按源码书写顺序精确求值一次；被省略的默认值表达式随后按字段声明顺序依次求值，紧接着执行 constructor 代码体。显式提供了实参的字段跳过默认值求值。默认值表达式不可访问 `this` 或调用方的局部变量。生成的构造函数将新分配的接收者实例始终保持保根，并将实参直接写入字段内存；绝不将所有字段实参暂存在独立寄存器中直至函数体启动。
+`constructor { ... }` 是自动生成的构造函数的执行体，并非无参构造函数的声明。在执行该函数体之前，所有必需字段已完成赋值初始化。显式传入的实参按源码书写顺序精确求值一次；被省略的默认值表达式随后按字段声明顺序依次求值，紧接着执行 constructor 代码体。显式提供了实参的字段跳过默认值求值。默认值表达式不可访问 `this` 或调用方的局部变量。每次构造时都会重新执行被省略字段的默认表达式，因此 `values: int[] = []` 会为每个实例创建独立数组。生成的构造函数将新分配的接收者实例始终保持保根，并将实参直接写入字段内存；绝不将所有字段实参暂存在独立寄存器中直至函数体启动。
 
-对于需要手写特殊参数列表的类，可以显式声明 `constructor(name: Type, ...) { ... }`。手写参数列表与 `param` 字段互斥。这明确了函数签名的来源，并防止参数被隐式注入到 `constructor()` 中。
+需要自定义参数的类可以声明 `constructor(name: Type, ...) { ... }`。这份列表就是完整的构造签名，字段不再自动追加参数；`constructor()` 因此表示无参构造。字段默认值仍在函数体前执行，剩余字段由函数体赋值：
 
-参数绑定与字段偏移量在编译期直接解析。运行时不执行任何注解反射，亦不维护参数名称字符串字典。对于显式构造函数，字段默认值在函数体前执行；确定性初始化分析强制要求在每条返回路径上所有字段均已完成初始化。读取未初始化的字段、调用实例方法或在初始化完成前暴露 `this` 均会被静态拦截。成员默认可见性为 `public`；`private` 仅对声明该成员的类本身可见。私有的 `param` 字段依然生成公开的命名构造参数。
+```typescript
+class Box {
+  value: int;
+  text: string = '';
+  private adjustment: int = 2;
 
-继承类的构造函数不会自动接收父类的 `param` 参数。父类有必填参数时，子类必须在构造体中显式调用 `super(...)`：
+  constructor(initial: int) {
+    this.value = initial + this.adjustment;
+  }
+}
+
+const box = Box(initial: 40); // value = 42；构造参数中没有 value 或 text
+```
+
+参数绑定与字段偏移量在编译期直接解析。运行时不执行任何注解反射，亦不维护参数名称字符串字典。对于显式构造函数，字段默认值在函数体前执行；确定性初始化分析强制要求在每条返回路径上所有字段均已完成初始化。读取未初始化的字段、调用实例方法或在初始化完成前暴露 `this` 均会被静态拦截。`private` 仅对声明该成员的类本身可见，静态访问与动态分派均遵循此限制。
+
+继承类的构造函数不会自动接收父类的构造参数。父类有必填参数时，子类必须在构造体中显式调用 `super(...)`：
 
 ```typescript
 class Counter {
-  public param value: int;
+  value: int;
 }
 
 class BonusCounter extends Counter {
-  public param bonus: int;
+  bonus: int;
 
   constructor {
     super(value: this.bonus * 20);
@@ -264,7 +278,7 @@ const counter = BonusCounter(bonus: 2); // value = 40, bonus = 2
 ```typescript
 class Counts {
   private static count: int = 0;
-  public static next(): int {
+  static next(): int {
     Counts.count = Counts.count + 1;
     return Counts.count;
   }

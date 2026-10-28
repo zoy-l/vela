@@ -30,13 +30,13 @@ INSTANTIATE_TEST_SUITE_P(Unwinding,
                          ExceptionExecutionTest,
                          testing::Values(
                              R"(
-class Failure { param value: int; }
+class Failure { value: int; }
 func main(): int {
   try { throw Failure(value: 42); } catch (error: Failure) { return error.value; }
 })",
                              R"(
 class First {}
-class Second { param value: int; }
+class Second { value: int; }
 func main(): int {
   try { throw Second(value: 42); }
   catch (error: First) { return 1; }
@@ -96,7 +96,7 @@ func main(): int {
 })",
                              R"(
 class First {}
-class Second { param value: int; }
+class Second { value: int; }
 func main(): int {
   try {
     try { throw First(); } catch (error: First) { return 1; }
@@ -114,7 +114,7 @@ func main(): int {
   } catch (error: Second) { return value + 2; }
 })",
                              R"(
-class Failure { param message: string; }
+class Failure { message: string; }
 func main(): int {
   try {
     try { throw Failure(message: "retained" + " payload"); }
@@ -125,7 +125,7 @@ func main(): int {
   } catch (error: Failure) { if (error.message == "retained payload") { return 42; } return 0; }
 })",
                              R"(
-class Failure { param value: int; }
+class Failure { value: int; }
 func main(): int {
   let saved: () => int = (): int => 0;
   try { throw Failure(value: 1); }
@@ -133,7 +133,7 @@ func main(): int {
   return saved();
 })",
                              R"(
-class Failure<T> { param value: T; }
+class Failure<T> { value: T; }
 func run<T>(value: T): T {
   try { throw Failure<T>(value: value); } catch (error: Failure<T>) { return error.value; }
 }

@@ -17,7 +17,7 @@ func divide(value: int, denominator: int): Expected<int, string> {
   if (denominator == 0) { return err("division" + " by zero"); }
   return ok(value / denominator);
 }
-class Holder { public param result: Expected<int, string>; }
+class Holder { result: Expected<int, string>; }
 func capture(value: Expected<int, string>): () => string { return (): string => value.error(); }
 func done(): Expected<void, string> { return ok(); }
 func main(): int {

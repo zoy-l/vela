@@ -1,10 +1,10 @@
 import 'input' as data;
 
 class Particle {
-  param x: double;
-  param y: double;
-  param vx: double;
-  param vy: double;
+  x: double;
+  y: double;
+  vx: double;
+  vy: double;
 
   update(): void {
     this.x = this.x + this.vx;

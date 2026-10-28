@@ -2,7 +2,7 @@
 
 SOURCE = """
 external func collect(): void;
-class Box { public param value: int; }
+class Box { value: int; }
 enum Choice { first, second }
 let enabled = true;
 let fraction = 1.5;

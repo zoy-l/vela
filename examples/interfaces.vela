@@ -3,10 +3,10 @@ interface Measurable {
 }
 
 class Rectangle implements Measurable {
-  public param width: int;
-  public param height: int;
+  width: int;
+  height: int;
 
-  public measure(): int {
+  measure(): int {
     return this.width * this.height;
   }
 }

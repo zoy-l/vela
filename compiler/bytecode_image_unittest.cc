@@ -54,13 +54,13 @@ INSTANTIATE_TEST_SUITE_P(
         "if (values.join(\" \") == \"你好 hello\") { return 42; } return 0; }",
         "func main(): int { if ('answer=' + 42 == 'answer=42' && '${true}' == 'true' && "
         "[1, 2].join(',') == '1,2') { return 42; } return 0; }",
-        "class Box { param value: int; } func main(): int { return Box(value: 42).value; }",
+        "class Box { value: int; } func main(): int { return Box(value: 42).value; }",
         "func main(): int { const values: int?[][] = [[null], [42]]; "
         "const value=values[1][0]; if(value != null) { return value; } return 0; }",
         "func main(): int { let value = 40; const next: () => int = (): int => { value=value+1; "
         "return value; }; "
         "next(); return next(); }",
-        "class Box<T> { param value: T; } func main(): int { return Box<int>(value: 42).value; }",
+        "class Box<T> { value: T; } func main(): int { return Box<int>(value: 42).value; }",
         "interface Readable { read(): int; } class Box implements Readable { read(): int { return "
         "42; } } "
         "func main(): int { const item: Readable = Box(); return item.read(); }",
@@ -73,7 +73,7 @@ INSTANTIATE_TEST_SUITE_P(
         "func main(): int { try { let zero=0; return 1/zero; } "
         "catch (error: Error) { if (error.message == \"division by zero\") { return 42; } return "
         "0; } }",
-        "class Failure { param value: int; } func main(): int { "
+        "class Failure { value: int; } func main(): int { "
         "try { try { throw Failure(value: 42); } finally { const text = \"allocated\" + \" text\"; "
         "} } "
         "catch (error: Failure) { return error.value; } }",

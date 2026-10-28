@@ -87,7 +87,7 @@ INSTANTIATE_TEST_SUITE_P(
           } return total;
         })",
                                      99},
-                    OptimizedProgram{R"(class Counter { param value: int;
+                    OptimizedProgram{R"(class Counter { value: int;
           next(): int { this.value=this.value+1; return this.value; }
         } func combine(first: int, second: int, third: int): int { return first*100+second*10+third; }
         func identity(value: int): int { return value; }
@@ -137,7 +137,7 @@ INSTANTIATE_TEST_SUITE_P(
 TEST(OptimizationTest, ReleasesFrameRootsAfterErrorsAndBeforeRegisterReuse) {
   runtime::Isolate isolate(1);
   const auto compiled = CompileSource(R"(
-class Box { param value: int; }
+class Box { value: int; }
 func fail(): int { const box=Box(value: 1); return box.value/0; }
 func main(): int { return fail(); }
 )",

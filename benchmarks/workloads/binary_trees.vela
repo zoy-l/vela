@@ -1,8 +1,8 @@
 import 'input' as data;
 
 class Node {
-  param left: Node?;
-  param right: Node?;
+  left: Node?;
+  right: Node?;
 }
 
 func build(depth: int): Node {

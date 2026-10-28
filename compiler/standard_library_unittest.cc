@@ -114,7 +114,7 @@ func main(): int {
   return 0;
 })",
                              R"(
-class Item { param value: int; }
+class Item { value: int; }
 func main(): int {
   const values: Item[] = [Item(value: 40), Item(value: 2)];
   const copy = values.slice(); copy.reverse();
@@ -296,7 +296,7 @@ INSTANTIATE_TEST_SUITE_P(TraversalSortAndReduction,
   if (values.findIndex((value: int): bool => { calls = calls + 1; return value == 1; }) != 0 || calls != 5) { return 0; }
   return 42;
 })",
-                             R"(class Item { param value: int; }
+                             R"(class Item { value: int; }
 func main(): int {
   const values = [Item(value: 40), Item(value: 1)];
   const mapped = values.map(item => Item(value: item.value + 1));
@@ -324,7 +324,7 @@ func main(): int {
     if (value == null) { return sum; } return sum + value;
   }, 0);
 })",
-                             R"(class Item { param value: int; }
+                             R"(class Item { value: int; }
 func main(): int {
   const values = [Item(value: 2), Item(value: 40), Item(value: 1), Item(value: 2)];
   values.sort((a: Item, b: Item): int => b.value - a.value);

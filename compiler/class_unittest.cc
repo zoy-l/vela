@@ -25,25 +25,25 @@ TEST_P(ClassConstructionTest, InitializesFieldsAndExecutesConstructorUnderGcPres
   EXPECT_EQ(result.value.AsInteger(), 42);
 }
 
-INSTANTIATE_TEST_SUITE_P(FieldParameters,
+INSTANTIATE_TEST_SUITE_P(GeneratedAndExplicitConstructors,
                          ClassConstructionTest,
                          testing::Values(
                              R"(
 class Counter {
-  public param value: int;
-  public param step: int = 1;
+  value: int;
+  step: int = 1;
   private count: int = 0;
   constructor { this.count = this.count + 1; }
-  public next(): int { this.value = this.value + this.step; return this.value + this.count; }
+  next(): int { this.value = this.value + this.step; return this.value + this.count; }
 }
 func main(): int { const c = Counter(value: 40); return c.next(); }
 )",
                              R"(
 func defaultStep(): int { return 2; }
 class Counter {
-  private param value: int;
-  public param step: int = defaultStep();
-  public next(): int { return this.value + this.step; }
+  value: int;
+  step: int = defaultStep();
+  next(): int { return this.value + this.step; }
 }
 func main(): int {
   const defaultStep = (): int => 99;
@@ -52,7 +52,7 @@ func main(): int {
 )",
                              R"(
 class Pair {
-  public value: int;
+  value: int;
   private label: string = "a" + "b";
   constructor(value: int, positive: bool) {
     if (positive) { this.value = value; } else { this.value = -value; }
@@ -63,8 +63,9 @@ func main(): int { return Pair(40, true).read(); }
 )",
                              R"(
 class Box<T> {
-  private param value: T;
-  public get(): T { return this.value; }
+  private value: T;
+  constructor(value: T) { this.value = value; }
+  get(): T { return this.value; }
 }
 type IntegerBox = Box<int>;
 func main(): int { return IntegerBox(value: 42).get(); }
@@ -91,13 +92,13 @@ func main(): int { return Box(42).value; }
                              R"(
 class Counter {
   private static value: int = 40;
-  public static next(): int { Counter.value = Counter.value + 1; return Counter.value; }
+  static next(): int { Counter.value = Counter.value + 1; return Counter.value; }
 }
 func main(): int { const f: () => int = Counter.next; f(); return f(); }
 )",
                              R"(
 class Callback {
-  public static operation: (int) => int = (value: int): int => value + 2;
+  static operation: (int) => int = (value: int): int => value + 2;
 }
 func main(): int { return Callback.operation(40); }
 )",
@@ -107,28 +108,47 @@ class Value {
   constructor() { if (true) { this.value = 42; } }
 }
 func main(): int { return Value().value; }
+)",
+                             R"(
+class Box {
+  value: int;
+  text: string = 'default';
+  private adjustment: int = 2;
+  constructor(initial: int) { this.value = initial + this.adjustment; }
+}
+func main(): int { return Box(initial: 40).value; }
+)",
+                             R"(
+class Box { text: string?; optional: string? = null; }
+func main(): int {
+  const box = Box(text: null);
+  return box.text == null && box.optional == null ? 42 : 0;
+}
+)",
+                             R"(
+class Box { public: int; param: int; }
+func main(): int { return Box(public: 40, param: 2).public + 2; }
 )"));
 
-INSTANTIATE_TEST_SUITE_P(
-    Inheritance,
-    ClassConstructionTest,
-    testing::Values(
-        R"(
-class Counter { public value: int = 40; }
+INSTANTIATE_TEST_SUITE_P(Inheritance,
+                         ClassConstructionTest,
+                         testing::Values(
+                             R"(
+class Counter { value: int = 40; }
 class BonusCounter extends Counter {
-  public param bonus: int;
-  public total(): int { return this.value + this.bonus; }
+  bonus: int;
+  total(): int { return this.value + this.bonus; }
 }
 func main(): int { return BonusCounter(bonus: 2).total(); }
 )",
-        R"(
+                             R"(
 class Counter {
-  public param value: int = 40;
-  public label: string = "base";
+  value: int = 40;
+  label: string = "base";
   constructor { this.value += 1; }
 }
 class BonusCounter extends Counter {
-  public param bonus: int;
+  bonus: int;
   constructor { super(); }
 }
 func main(): int {
@@ -137,10 +157,10 @@ func main(): int {
   return 0;
 }
 )",
-        R"(
-class Counter { public param value: int; }
+                             R"(
+class Counter { value: int; }
 class BonusCounter extends Counter {
-  public param bonus: int;
+  bonus: int;
   constructor { super(value: this.bonus * 20); }
 }
 func main(): int {
@@ -148,14 +168,14 @@ func main(): int {
   return counter.value + counter.bonus;
 }
 )",
-        R"(
+                             R"(
 class Counter {
-  public param value: int = 39;
-  public adjustment: int = 1;
+  value: int = 39;
+  adjustment: int = 1;
   constructor { this.value += this.adjustment; }
 }
 class BonusCounter extends Counter {
-  public param bonus: int;
+  bonus: int;
   constructor { super(); }
 }
 func main(): int {
@@ -163,14 +183,14 @@ func main(): int {
   return counter.value + counter.bonus;
 }
 )",
-        R"(
+                             R"(
 class Counter {
-  public value: int;
-  public adjustment: int = 1;
+  value: int;
+  adjustment: int = 1;
   constructor(value: int) { this.value = value + this.adjustment; }
 }
 class BonusCounter extends Counter {
-  public param bonus: int;
+  bonus: int;
   constructor { super(this.bonus * 20 - 1); }
 }
 func main(): int {
@@ -178,13 +198,13 @@ func main(): int {
   return counter.value + counter.bonus;
 }
 )",
-        R"(
+                             R"(
 class Counter {
-  public param value: int;
+  value: int;
   constructor { this.value += 1; }
 }
 class BonusCounter extends Counter {
-  public bonus: int;
+  bonus: int;
   constructor(value: int, bonus: int) {
     super(value: value);
     this.bonus = bonus;
@@ -195,17 +215,17 @@ func main(): int {
   return counter.value + counter.bonus;
 }
 )",
-        R"(
+                             R"(
 class Root {
-  public param value: int;
+  value: int;
   constructor { this.value += 1; }
 }
 class Middle extends Root {
-  public param middle: int;
+  middle: int;
   constructor { super(value: this.middle * 10 - 1); }
 }
 class Leaf extends Middle {
-  public param bonus: int;
+  bonus: int;
   constructor { super(middle: this.bonus * 2); }
 }
 func main(): int {
@@ -213,13 +233,13 @@ func main(): int {
   return counter.value + counter.bonus;
 }
 )",
-        R"(
+                             R"(
 class Counter {
-  public param value: int;
-  public label: string = "parent" + " initialized";
+  value: int;
+  label: string = "parent" + " initialized";
 }
 class BonusCounter extends Counter {
-  public param bonus: int;
+  bonus: int;
   constructor { super(value: this.bonus * 20); }
 }
 func main(): int {
@@ -250,22 +270,22 @@ INSTANTIATE_TEST_SUITE_P(
     ConstructionAndVisibility,
     ClassContractErrorTest,
     testing::Values(
-        ClassError{"class A { param x: int; constructor(x: int) { this.x = x; } }",
-                   "mutually exclusive"},
-        ClassError{"class A { public param value: int; } "
-                   "class B extends A { param bonus: int; constructor { super(); } }",
+        ClassError{"class A { x: int; constructor(initial: int) { this.x = initial; } } "
+                   "func main(): A { return A(x: 42); }",
+                   "unknown named argument 'x'"},
+        ClassError{"class A { value: int; } "
+                   "class B extends A { bonus: int; constructor { super(); } }",
                    "missing argument 'value'"},
-        ClassError{"class A { public param value: int; } "
-                   "class B extends A { param bonus: int; constructor { super(value: 40); } } "
+        ClassError{"class A { value: int; } "
+                   "class B extends A { bonus: int; constructor { super(value: 40); } } "
                    "func main(): B { return B(value: 40, bonus: 2); }",
                    "unknown named argument 'value'"},
-        ClassError{"class A { param value: int; } class B extends A { param bonus: int; }",
-                   "must call super"},
-        ClassError{"class A { param value: int; } class B extends A { constructor {} }",
+        ClassError{"class A { value: int; } class B extends A { bonus: int; }", "must call super"},
+        ClassError{"class A { value: int; } class B extends A { constructor {} }",
                    "must call super"},
         ClassError{"class A {} class B extends A { constructor { super(); super(); } }",
                    "exactly once"},
-        ClassError{"class A { param value: int; } "
+        ClassError{"class A { value: int; } "
                    "class B extends A { constructor { super(40); } }",
                    "must be named"},
         ClassError{"class A {} class B extends A { constructor { super(); } "
@@ -274,17 +294,22 @@ INSTANTIATE_TEST_SUITE_P(
         ClassError{"class A {} class B extends A { constructor { "
                    "const init = (): void => { super(); }; init(); } }",
                    "derived constructor context"},
-        ClassError{"class A { param value: int; } "
+        ClassError{"class A { value: int; } "
                    "class B extends A { constructor { super(value: this.value); } }",
                    "read before initialization"},
-        ClassError{"class A { param value: int = 1; } class B extends A { constructor(flag: bool) { "
+        ClassError{"class A { value: int = 1; } class B extends A { constructor(flag: bool) { "
                    "if (flag) { super(); } } }",
                    "must call super"},
-        ClassError{"class A { param value: int = 1; } class B extends A { constructor(flag: bool) { "
+        ClassError{"class A { value: int = 1; } class B extends A { constructor(flag: bool) { "
                    "if (flag) { super(); } super(); } }",
                    "exactly once"},
-        ClassError{"class A { param x: int; } func main(): A { return A(1); }", "must be named"},
-        ClassError{"class A { x: int; }", "requires an initializer"},
+        ClassError{"class A { x: int; } func main(): A { return A(1); }", "must be named"},
+        ClassError{"class A { x: int; } func main(): A { return A(); }", "missing argument 'x'"},
+        ClassError{"class A { private x: int; }", "requires an initializer"},
+        ClassError{"class A { private x: int = 0; } func main(): A { return A(x: 42); }",
+                   "unknown named argument 'x'"},
+        ClassError{"class A { text: string?; } func main(): A { return A(); }",
+                   "missing argument 'text'"},
         ClassError{"class A { x: int; constructor() {} }", "must be initialized"},
         ClassError{"class A { x: int; constructor(flag: bool) { if (flag) this.x = 1; } }",
                    "must be initialized"},
@@ -297,14 +322,15 @@ INSTANTIATE_TEST_SUITE_P(
                    "must be initialized"},
         ClassError{"class A { x: int; constructor() { return; } }", "must be initialized"},
         ClassError{"class A { x: int = this.x; }", "unknown name"},
-        ClassError{"class A { private param x: int; } func main(): int { return A(x: 1).x; }",
+        ClassError{"class A { private x: int = 1; } func main(): int { return A().x; }",
                    "private member"},
         ClassError{
             "class A { private get(): int { return 1; } } func main(): int { return A().get(); }",
             "private member"},
         ClassError{"class A { private constructor() {} } func main(): A { return A(); }",
                    "private member"},
-        ClassError{"class A { static param x: int = 0; }", "cannot use param"},
+        ClassError{"class A { static x: int = 0; } func main(): A { return A(x: 1); }",
+                   "unknown named argument 'x'"},
         ClassError{"class A { static read(): int { return this.x; } }", "unknown name"},
         ClassError{
             "class A { static read(): int { return 1; } } func main(): int { return A().read(); }",
@@ -369,8 +395,8 @@ class Trace {
   static mark(value: int): int { Trace.value = Trace.value * 10 + value; return value; }
 }
 class Target {
-  public param first: int = Trace.mark(9);
-  public param second: int = Trace.mark(8);
+  first: int = Trace.mark(9);
+  second: int = Trace.mark(8);
   private tail: int = Trace.mark(3);
   constructor { Trace.mark(4); }
 }
@@ -387,6 +413,34 @@ func main(): int {
   const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsInteger(), 2134);
+}
+
+TEST(ClassInitializationTest, DefaultsRunOnlyWhenOmittedAndCreateIndependentCollections) {
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(R"(
+class Trace {
+  static calls: int = 0;
+  static next(): int { Trace.calls++; return Trace.calls; }
+}
+class Box { value: int = Trace.next(); values: int[] = []; }
+func main(): int {
+  const supplied = Box(value: 40);
+  if (Trace.calls != 0) { return 0; }
+  const first = Box();
+  const second = Box();
+  first.values.push(42);
+  return supplied.value == 40 && Trace.calls == 2 && first.value == 1 && second.value == 2 &&
+         first.values[0] == 42 && second.values.length == 0 && supplied.values.length == 0 ? 42 : 0;
+}
+)",
+                                      isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsInteger(), 42);
 }
 
 }  // namespace

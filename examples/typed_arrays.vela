@@ -1,15 +1,15 @@
 enum Shade { light, dark }
 
 class Item {
-  param value: int;
+  value: int;
   read(): int { return this.value; }
 }
 
 class Inventory {
-  param items: Item[];
-  param labels: string[];
-  param enabled: bool[];
-  param shades: Shade[];
+  items: Item[];
+  labels: string[];
+  enabled: bool[];
+  shades: Shade[];
   total(): int { return this.items[0].read() + this.items[1].read(); }
 }
 

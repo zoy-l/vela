@@ -63,7 +63,7 @@ TEST(LayoutInstantiationTest, OwnsNestedTypesAfterFrontendDestructionAndBindsPer
       .text = R"(
 interface Readable { read(): int; }
 class Node implements Readable {
-  public param next: Node?;
+  next: Node?;
   read(): int { return 42; }
 }
 func identity(value: Future<Expected<Node[], string>>): Future<Expected<Node[], string>> {
@@ -111,7 +111,7 @@ func main(): void {
 TEST(LayoutInstantiationTest, RollsBackUnpublishedLayoutsWithoutChangingSessionCache) {
   const frontend::SourceInput input{
       .path = "main.vela",
-      .text = "class Box { param value: string; } func main(values: Box[]): void {}",
+      .text = "class Box { value: string; } func main(values: Box[]): void {}",
   };
   auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
   ASSERT_TRUE(prepared.has_value());

@@ -41,8 +41,9 @@ Documentation comments use consecutive `///` lines immediately above declaration
 following the convention used by Dart. They can contain Markdown. Generated output
 includes functions, aliases, enums, interfaces, globals, class fields and methods,
 generic signatures, nullable/array/function types and named construction parameters.
-Private class members are omitted; private `param` fields still appear as constructor
-parameters because they belong to the public call signature. Default expressions
+Private class members are omitted. Generated constructor signatures contain only
+public instance fields; explicit constructors expose their own parameter lists.
+Default expressions
 and executable bodies are represented by `…`, never evaluated. Inferred global
 annotations remain omitted, matching their source declarations.
 

@@ -57,7 +57,7 @@ func main(): int {
 }
 )",
                              R"(
-class Item { public param value: int; }
+class Item { value: int; }
 func main(): int {
   const key = Item(value: 40);
   const values = Map<Item, string>();

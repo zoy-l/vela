@@ -35,7 +35,7 @@ The initial class model is deliberately smaller than C++:
 - classes support single inheritance, explicit `super` constructor chaining,
   `override` method replacement, and runtime dispatch through multiple interfaces;
 - a class construction expression has no `new` keyword;
-- named construction arguments are resolved to `param` fields or explicit constructor parameter
+- named construction arguments are resolved to public instance fields or explicit constructor parameter
   IDs at compile time;
 - enum members always name their enum explicitly (`Brightness.light`), including
   constructor arguments, declarations, returns, assignments, and array elements;
@@ -51,15 +51,15 @@ enum Brightness {
 }
 
 class CupertinoThemeData {
-    param brightness: Brightness;
+    brightness: Brightness;
 }
 
 class ActionSheetExample {
 }
 
 class CupertinoApp {
-    param theme: CupertinoThemeData;
-    param home: ActionSheetExample;
+    theme: CupertinoThemeData;
+    home: ActionSheetExample;
 }
 
 func buildApp(): CupertinoApp {

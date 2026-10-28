@@ -137,10 +137,16 @@ llvm::Value* FunctionEmitter::SourcePosition() {
 
 void FunctionEmitter::Fail(llvm::Value* status) {
   if (leaf_entry_) {
-    auto failure =
-        module_.getOrInsertFunction("vela_native_v1_leaf_failure", builder_.getInt8Ty(),
-                                    builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt8Ty());
-    Finish(builder_.CreateCall(failure, {body_->getArg(0), SourcePosition(), status}));
+    const auto& live = roots_.stores.at(instruction_index_);
+    for (std::size_t index = 0; index < live.size(); ++index) {
+      WriteHeapValue(RootAddress(index), live.at(index));
+    }
+    auto failure = module_.getOrInsertFunction(
+        "vela_native_v1_leaf_failure", builder_.getInt8Ty(), builder_.getPtrTy(),
+        builder_.getPtrTy(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
+    auto* roots = live.empty() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : root_slots_;
+    Finish(builder_.CreateCall(failure, {body_->getArg(0), SourcePosition(), status, roots,
+                                         builder_.getInt64(live.size())}));
     return;
   }
   SetPosition();
@@ -403,23 +409,20 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
 
 bool FunctionEmitter::CanUseLeafEntry() const {
   if (source_.is_async || !source_.native_symbol.empty() || !source_.handlers.empty() ||
-      roots_.count != 0 || frame_bytes_ > kMaximumNativeStackBytes ||
-      !IsScalar(source_.return_type)) {
+      frame_bytes_ > kMaximumNativeStackBytes || !IsScalar(source_.return_type)) {
     return false;
   }
-  if (!std::ranges::all_of(source_.value_types, [](const SourceType& type) {
-        return type.kind == Kind::Invalid || IsScalar(type);
-      })) {
-    return false;
-  }
-  return std::ranges::all_of(source_.instructions, [](const ir::Instruction& instruction) {
-    // Ready 全局只读标量槽；惰性初始化分支在 helper 内临时登记调用者逻辑帧。
-    // 标量 return 不装箱；其余操作依赖共享效果信息，禁止调用、分配或观察状态。
-    if (instruction.opcode == Opcode::Return || instruction.opcode == Opcode::GetGlobal) {
+  return std::ranges::all_of(source_.instructions, [&](const ir::Instruction& instruction) {
+    // 标量 return 不装箱；字段和数组读写可保留副作用，但不能进入用户代码或分配。
+    if (instruction.opcode == Opcode::Return) {
       return true;
     }
+    if (instruction.opcode == Opcode::GetGlobal) {
+      // 惰性初始化器可能 GC；仅在没有活动引用时沿用延迟逻辑帧入口。
+      return roots_.count == 0;
+    }
     const auto effects = ir::AnalyzeEffects(instruction);
-    return !effects.MayCollectOnSuccess() && !effects.reads_state && !effects.writes_state;
+    return !effects.MayCollectOnSuccess();
   });
 }
 

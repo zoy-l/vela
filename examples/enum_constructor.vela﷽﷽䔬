@@ -3,7 +3,7 @@ enum Brightness {
   dark,
 }
 class Theme {
-  param brightness: Brightness;
+  brightness: Brightness;
 }
 func createTheme(): Theme {
   return Theme(brightness: Brightness.light);

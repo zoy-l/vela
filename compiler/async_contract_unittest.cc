@@ -253,7 +253,7 @@ async func main(): Future<int> {
 })",
                               42},
                     AsyncCase{"TypedErrorCallback", R"(
-class Failure { public param value: int; }
+class Failure { value: int; }
 async func main(): Future<int> {
   return await Future.error<int>(Failure(value: 42)).catchError((error: Failure) => error.value);
 })",
@@ -420,7 +420,7 @@ async func main(): Future<int> {
 })",
                               42},
                     AsyncCase{"FutureFieldsSurviveSuspension", R"(
-class Holder { public param task: Future<int>; }
+class Holder { task: Future<int>; }
 async func main(): Future<int> {
   const holder = Holder(task: Future.value(42));
   await 0;
@@ -455,7 +455,7 @@ async func main(): Future<int> {
                               42},
                     AsyncCase{"AsyncInterfaceMethodValue", R"(
 interface Worker { run(): Future<int>; }
-class Task implements Worker { public async run(): Future<int> { await 0; return 42; } }
+class Task implements Worker { async run(): Future<int> { await 0; return 42; } }
 async func main(): Future<int> {
   const worker: Worker = Task();
   const run = worker.run;
@@ -501,7 +501,7 @@ async func main(): Future<int> {
 })",
                               42},
                     AsyncCase{"RepeatedAwaitCompletesObjectWithoutForwardingTurns", R"(
-class Box { public param value: int; }
+class Box { value: int; }
 let order = 0;
 async func input(): Future<Box> {
   await 0;

@@ -4,18 +4,18 @@ SOURCE = """
 external func collect(): void;
 external func fetch(): Future<int>;
 external func record(value: int): void;
-class Failure { public param message: string; }
+class Failure { message: string; }
 enum Choice { first, second }
 interface Worker { transform(value: int): Future<int>; }
 class Task implements Worker {
-  public async transform(value: int): Future<int> { await 0; collect(); return value + 2; }
+  async transform(value: int): Future<int> { await 0; collect(); return value + 2; }
 }
 class Box {
-  public param value: int;
-  public param choice: Choice = Choice.first;
-  public get twice(): int { collect(); return this.value * 2; }
-  public set twice(value: int): void { collect(); this.value = value / 2; }
-  public add(first: int, second: int): int { collect(); return this.value + first + second; }
+  value: int;
+  choice: Choice = Choice.first;
+  get twice(): int { collect(); return this.value * 2; }
+  set twice(value: int): void { collect(); this.value = value / 2; }
+  add(first: int, second: int): int { collect(); return this.value + first + second; }
 }
 let effect = 0;
 async func add(value: int): Future<int> { await 0; collect(); return value + 2; }

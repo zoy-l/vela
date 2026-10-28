@@ -1,9 +1,9 @@
 import 'input' as data;
 
 class Counter {
-  public param value: int = 0;
+  value: int = 0;
 
-  public next(value: int): int {
+  next(value: int): int {
     this.value += value;
     return this.value;
   }

@@ -401,11 +401,23 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
     case Opcode::NewFuture:
     case Opcode::SleepFuture:
       return {.may_fail = true, .may_allocate = true, .reads_state = true, .writes_state = true};
+    case Opcode::BuiltinCall:
+      if (instruction.index == static_cast<std::uint32_t>(Builtin::NumericToInt) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::NumericToDouble)) {
+        // 数值转换不调用用户代码，只有类型或范围错误的失败封套可能分配。
+        return {.may_fail = true};
+      }
+      if (instruction.index == static_cast<std::uint32_t>(Builtin::ArrayLength) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::ArrayCapacity) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::ArrayMutation) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::ArrayCheckMutation)) {
+        return {.may_fail = true, .reads_state = true};
+      }
+      [[fallthrough]];
     case Opcode::Call:
     case Opcode::CallIndirect:
     case Opcode::CallInterface:
     case Opcode::GetGlobal:
-    case Opcode::BuiltinCall:
     case Opcode::AsyncCall:
       // 全局读取可能执行惰性初始化器，内建操作可能调用 getter/toJson/动态目标。
       // 没有叶调用证明时统一保留副作用，不能根据 opcode 的名字假设无 GC。

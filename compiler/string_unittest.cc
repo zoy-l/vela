@@ -98,7 +98,7 @@ TEST_F(StringLanguageTest, HexEscapesEncodeUnicodeScalarsAndApostrophes) {
 
 TEST_F(StringLanguageTest, NestedInterpolationCommentsAndConstructorExpressions) {
   EXPECT_EQ(Text(R"(
-class Item { param text: string; }
+class Item { text: string; }
 func main(): string {
   return "[${Item(text: "${"内" + "层"}").text /* } */}]";
 })"),
@@ -108,7 +108,7 @@ func main(): string {
 TEST_F(StringLanguageTest, InterpolationCapturesValuesLeftToRightExactlyOnce) {
   EXPECT_EQ(Text(R"(
 class Counter {
-  param value: int;
+  value: int;
   next(): string { this.value = this.value + 1; return this.value.toString(); }
 }
 func main(): string {
@@ -161,7 +161,7 @@ func main(): string {
 TEST_F(StringLanguageTest, StringFormattingSnapshotsMutableValuesBeforeFollowingEffects) {
   EXPECT_EQ(Text(R"(
 class Counter {
-  param value: int;
+  value: int;
   next(): int { this.value = this.value + 1; return this.value; }
 }
 func main(): string {
@@ -225,7 +225,7 @@ TEST_F(StringLanguageTest, JoinIsAnOrdinaryUserDeclarationName) {
 TEST_F(StringLanguageTest, JoinEvaluatesReceiverThenSeparatorExactlyOnce) {
   EXPECT_EQ(Text(R"(
 class Source {
-  param state: string;
+  state: string;
   separator(): string { this.state = this.state + "s"; return ":"; }
   parts(): string[] { this.state = this.state + "p"; return [this.state]; }
 }
@@ -256,7 +256,7 @@ TEST_F(StringLanguageTest, BuilderSurvivesFieldsArraysAliasesAndCollection) {
   auto& isolate = this->isolate();
   auto& compiled = compilation();
   const auto result = Run(R"(
-class Store { param builder: String; param builders: String[][]; }
+class Store { builder: String; builders: String[][]; }
 func grow(builder: String): void {
   for (let i = 0; i < 1000; i = i + 1) { builder.append("${i.toString()}中"); }
 }

@@ -56,7 +56,7 @@ INSTANTIATE_TEST_SUITE_P(
            func main(): int { return twice(21); })",
         R"(class Callback { operation: (int) => int = x => x * 2; }
            func main(): int { return Callback().operation(21); })",
-        R"(class Callback { param operation: (int) => int; }
+        R"(class Callback { operation: (int) => int; }
            func main(): int { return Callback(operation: x => x * 2).operation(21); })",
         R"(func main(): int {
              const f: ((int) => int)? = x => x * 2;

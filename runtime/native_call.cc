@@ -134,23 +134,11 @@ Future InvokeFutureCallback(Isolate& isolate,
 
 }  // namespace
 
-std::expected<Value, ExecutionStatus> InvokeNativeTarget(NativeExecution& execution,
-                                                         std::uint32_t function,
-                                                         std::span<const NativeValue> arguments) {
+std::expected<Value, ExecutionStatus> internal::BoxNativeEnumResult(NativeExecution& execution,
+                                                                    std::uint32_t type,
+                                                                    Value value) {
   const auto& instance = execution.instance();
-  const auto& target = instance.image().functions.values().subspan(function).front();
-  NativeValue output;
-  const auto status = static_cast<ExecutionStatus>(
-      target.entry(&execution, arguments.data(), arguments.size(), &output));
-  if (status != ExecutionStatus::Returned) {
-    return std::unexpected(status);
-  }
-  const auto value = DecodeNativeValue(output);
-  // 只有 enum 的标量载荷需要分配盒装对象；引用结果原样返回，期间没有 GC 安全点。
-  return target.result_type != kNoNativeIndex
-             ? BoxDynamicValue(execution.isolate().heap(), value,
-                               instance.layouts().types.at(target.result_type))
-             : std::expected<Value, ExecutionStatus>(value);
+  return BoxDynamicValue(execution.isolate().heap(), value, instance.layouts().types.at(type));
 }
 
 FutureCallbacks NativeFutureCallbacks(const NativeInstance& instance) {

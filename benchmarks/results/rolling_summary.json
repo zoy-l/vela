@@ -1,785 +1,7 @@
 {
   "schema_version": 1,
   "previous": {
-    "machine": {
-      "os": "macOS",
-      "os_version": "27.0.1",
-      "os_build": "26A434",
-      "architecture": "arm64",
-      "cpu": "Apple M1 Pro",
-      "physical_cores": 8,
-      "logical_cpus": 8,
-      "load_average": [
-        20.7012,
-        36.1064,
-        32.3477
-      ]
-    },
-    "toolchain": {
-      "compiler": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)",
-      "llvm_codegen": "21.1.8",
-      "target": "arm64-apple-darwin23.6.0",
-      "google_benchmark_revision": "192ef10025eb2c4cdd392bc502f0c852196baa48",
-      "google_benchmark_version": "1.9.5",
-      "linker": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld",
-      "sysroot": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
-    },
-    "build": {
-      "variant": "release",
-      "language_standard": "C++23",
-      "host_optimization": "-O3; NDEBUG; -fno-exceptions; SDK libc++",
-      "native_optimization": "LLVM O2; generic CPU; PIC; checked arithmetic; explicit roots",
-      "target": "//benchmarks:vela_aot_benchmarks"
-    },
-    "source": {
-      "revision": "53af3e1c74add44352df7e92497fec0e67223cd5",
-      "working_tree": "dirty",
-      "compiler_build_identity": "a91fd8a1624cd5d08cbab2edadc5e48b65a78169dea420bff9620df409e2f5ff",
-      "description": "Direct Ready global reads, deferred scalar frames, inline entry preparation and payload/tag codecs; checked overflow and original errors retained.",
-      "build_sources_sha256": "9456b8534b00c8d55e8831120764ac22f14c3b1da8b88606f090bb59a17abd9c",
-      "build_source_count": 542,
-      "fingerprint_algorithm": "SHA256 of relative path, NUL, binary SHA256(file); sorted within base, benchmarks, build, compiler, runtime, tools, vm.",
-      "executable_sha256": "650a85c01d86c3b933973b58dec92bacb11450c035fa2940f48f9900e1aa7b71",
-      "aot_cases_sha256": "4e1b891aa996e5568dc633a7598554d0f94479c6657c9a1dad115a5607588b37"
-    },
-    "build_phases": {
-      "command": [
-        "/Users/zoy/vela/out/release/vela",
-        "build",
-        "/Users/zoy/vela/benchmarks/aot_workloads.vela",
-        "--emit=obj",
-        "--export=arithmetic",
-        "--export=calls",
-        "--export=fields",
-        "--export=arrays",
-        "--export=host",
-        "--export=gc",
-        "--export=asyncWork",
-        "-o",
-        "/Users/zoy/vela/out/release/gen/benchmarks/aot_native/workload.o"
-      ],
-      "compilation_and_publication_seconds": 0.8748723330209032,
-      "object_bytes": 20296,
-      "runtime_abi": "a91fd8a1624cd5d08cbab2edadc5e48b65a78169dea420bff9620df409e2f5ff/release",
-      "toolchain_build": "f388ed88afa771c6c87477dd24d70ca9",
-      "target": "arm64-apple-darwin23.6.0",
-      "optimization": "O2"
-    },
-    "validation": {
-      "release_all": {
-        "command_argv": [
-          "python3",
-          "-m",
-          "tools.vl",
-          "test",
-          "release",
-          "all"
-        ],
-        "cpp_tests_passed": 1577,
-        "python_tests_passed": 112,
-        "python_tests_skipped": 2,
-        "skip_reason": "Clean-host distribution requires an audited SDK support specification."
-      },
-      "native_contracts": {
-        "linked_host_tests_passed": 41,
-        "coverage": [
-          "typed Ready global reads including nullable, dynamic, enum and managed values",
-          "lazy initialization, failed initialization retry and cyclic initialization",
-          "original initializer and caller source positions",
-          "scalar deferred frames at call-depth limits and pending exception preservation",
-          "instance switching and GC lifetime",
-          "integer endpoints, signed zero, NaN payloads and ABI reserved fields",
-          "checked arithmetic loop elimination and true overflow semantics"
-        ]
-      },
-      "machine_code": {
-        "before": {
-          "symbol": "_vela_aot_ebd2b2e439fb5e803ed600095a3e9858_entry_3",
-          "reachable_control_flow_cycle": false,
-          "instruction_count": 75,
-          "minimum_calls_on_multiply_return_path": 1,
-          "multiply_return_path_instruction_count": 49,
-          "multiply_instructions": [
-            "mul",
-            "umulh"
-          ]
-        },
-        "after": {
-          "symbol": "_vela_aot_ebd2b2e439fb5e803ed600095a3e9858_entry_3",
-          "reachable_control_flow_cycle": false,
-          "instruction_count": 75,
-          "minimum_calls_on_multiply_return_path": 0,
-          "multiply_return_path_instruction_count": 40,
-          "multiply_instructions": [
-            "mul",
-            "umulh"
-          ]
-        }
-      },
-      "lint": {
-        "run": false,
-        "reason": "User instructed not to run lint until explicitly requested."
-      },
-      "diff_and_encoding": {
-        "git_diff_check_passed": true,
-        "utf8_lf_final_newline_passed": true
-      }
-    },
-    "parameter_arithmetic_probe": {
-      "run_date": "2026-10-28T16:40:01+08:00",
-      "command_argv": [
-        "/tmp/vela-boundary-kernel/probe",
-        "--benchmark_min_time=0.2s",
-        "--benchmark_repetitions=7",
-        "--benchmark_enable_random_interleaving=true",
-        "--benchmark_out=/tmp/vela-boundary-kernel.json",
-        "--benchmark_out_format=json"
-      ],
-      "cases": {
-        "CppChecked/real_time": {
-          "wall_ns": {
-            "median": 1.4025485287044088,
-            "stddev": 0.1280851919470504,
-            "cv": 0.08791949340710276,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "RuntimeDispatch/real_time": {
-          "wall_ns": {
-            "median": 6.614484250131686,
-            "stddev": 0.5683978600197349,
-            "cv": 0.08362859169096934,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "DirectEntry/real_time": {
-          "wall_ns": {
-            "median": 2.5257889882033924,
-            "stddev": 0.25360238175496363,
-            "cv": 0.09983313385724199,
-            "repetitions": 7
-          },
-          "counters": {}
-        }
-      },
-      "all_expected_cases_and_checksums_passed": true,
-      "limits": "DirectEntry includes generic ABI checks and execution preparation; RuntimeDispatch also converts the result. CppChecked uses exact i128 reduction and final i64 overflow validation, without execution context, global state, exception envelopes or source traces.",
-      "size": 1000,
-      "expected_result": 499500,
-      "source_sha256": "c5f2ba2b27daa8fbbd224d846be9ef503992180cbd2e939705bbe3581ff836f5"
-    },
-    "suite": {
-      "id": "offline-aot-vm-cpp-v1",
-      "run_date": "2026-10-28T16:36:11+08:00",
-      "command_argv": [
-        "/Users/zoy/vela/out/release/vela_aot_benchmarks",
-        "--benchmark_filter=^aot/",
-        "--benchmark_min_time=0.2s",
-        "--benchmark_repetitions=7",
-        "--benchmark_enable_random_interleaving=true",
-        "--benchmark_out=/tmp/vela-boundary-after.json",
-        "--benchmark_out_format=json"
-      ],
-      "working_directory": "/Users/zoy/vela",
-      "settings": {
-        "minimum_wall_time": "0.2s",
-        "repetitions": 7,
-        "random_interleaving": true,
-        "threads": 1
-      },
-      "expected_cases": [
-        "aot/native/arithmetic/1000/real_time",
-        "aot/vm/arithmetic/1000/real_time",
-        "aot/cpp/arithmetic/1000/real_time",
-        "aot/first_native/arithmetic/1000/real_time",
-        "aot/native/calls/1000/real_time",
-        "aot/vm/calls/1000/real_time",
-        "aot/cpp/calls/1000/real_time",
-        "aot/first_native/calls/1000/real_time",
-        "aot/native/fields/1000/real_time",
-        "aot/vm/fields/1000/real_time",
-        "aot/cpp/fields/1000/real_time",
-        "aot/first_native/fields/1000/real_time",
-        "aot/native/arrays/1000/real_time",
-        "aot/vm/arrays/1000/real_time",
-        "aot/cpp/arrays/1000/real_time",
-        "aot/first_native/arrays/1000/real_time",
-        "aot/native/host/1000/real_time",
-        "aot/vm/host/1000/real_time",
-        "aot/cpp/host/1000/real_time",
-        "aot/first_native/host/1000/real_time",
-        "aot/native/gc/1000/real_time",
-        "aot/vm/gc/1000/real_time",
-        "aot/cpp/gc/1000/real_time",
-        "aot/first_native/gc/1000/real_time",
-        "aot/native/asyncWork/64/real_time",
-        "aot/vm/asyncWork/64/real_time",
-        "aot/cpp/asyncWork/64/real_time",
-        "aot/first_native/asyncWork/64/real_time"
-      ],
-      "all_expected_cases_passed": true,
-      "correctness_checks_passed": true,
-      "temporary_retention_checks_passed": true,
-      "cases": {
-        "aot/first_native/arrays/1000/real_time": {
-          "wall_ns": {
-            "median": 4089.4032238387717,
-            "stddev": 170.14424755436514,
-            "cv": 0.04119069615242366,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/native/gc/1000/real_time": {
-          "wall_ns": {
-            "median": 50915.884917639545,
-            "stddev": 392.8027498138148,
-            "cv": 0.007708748167701612,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 21408.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 65504.0,
-            "entry_frame_bytes": 224.0,
-            "entry_shadow_slots": 3.0,
-            "entry_static_root_stores": 6.0,
-            "process_resident_bytes": 9650176.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 2890.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/native/host/1000/real_time": {
-          "wall_ns": {
-            "median": 1992.9974991828203,
-            "stddev": 46.707293429531944,
-            "cv": 0.02339693311538144,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 288.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 288.0,
-            "entry_frame_bytes": 128.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "process_resident_bytes": 9338880.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 500500.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/first_native/host/1000/real_time": {
-          "wall_ns": {
-            "median": 3261.3149507922026,
-            "stddev": 77.1923725070643,
-            "cv": 0.02344937941769289,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/vm/arrays/1000/real_time": {
-          "wall_ns": {
-            "median": 79043.99526628491,
-            "stddev": 482.4156032779028,
-            "cv": 0.006081486565194427,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 8272.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 9296.0,
-            "process_resident_bytes": 9338880.0,
-            "register_bytes": 63.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 499500.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/cpp/fields/1000/real_time": {
-          "wall_ns": {
-            "median": 25.424129066352126,
-            "stddev": 0.19426714338059117,
-            "cv": 0.0076334880370704065,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9388032.0,
-            "result": 1000.0
-          }
-        },
-        "aot/vm/host/1000/real_time": {
-          "wall_ns": {
-            "median": 44167.76152147918,
-            "stddev": 746.036564080135,
-            "cv": 0.016933088994958694,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 144.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 144.0,
-            "process_resident_bytes": 9306112.0,
-            "register_bytes": 45.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 500500.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/cpp/arrays/1000/real_time": {
-          "wall_ns": {
-            "median": 2264.265745237585,
-            "stddev": 34.010805037196654,
-            "cv": 0.01495781858940684,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9338880.0,
-            "result": 499500.0
-          }
-        },
-        "aot/native/fields/1000/real_time": {
-          "wall_ns": {
-            "median": 38.89639877093687,
-            "stddev": 0.4820627525405938,
-            "cv": 0.012311897000236655,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 25888.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 65568.0,
-            "entry_frame_bytes": 216.0,
-            "entry_shadow_slots": 3.0,
-            "entry_static_root_stores": 8.0,
-            "process_resident_bytes": 9388032.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 1000.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/first_native/arithmetic/1000/real_time": {
-          "wall_ns": {
-            "median": 1295.5170382435022,
-            "stddev": 38.838190664772675,
-            "cv": 0.02973079729546796,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/cpp/calls/1000/real_time": {
-          "wall_ns": {
-            "median": 982.1990068610726,
-            "stddev": 15.230057885438033,
-            "cv": 0.015412797478169982,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9388032.0,
-            "result": 500500.0
-          }
-        },
-        "aot/first_native/calls/1000/real_time": {
-          "wall_ns": {
-            "median": 1969.866836065009,
-            "stddev": 37.28211746879367,
-            "cv": 0.01890554547479198,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/vm/asyncWork/64/real_time": {
-          "wall_ns": {
-            "median": 117536.81973613393,
-            "stddev": 3140.016964400449,
-            "cv": 0.026415528179005807,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 29072.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 65488.0,
-            "process_resident_bytes": 9338880.0,
-            "register_bytes": 72.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 2080.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 504.0,
-            "suspended_frames": 2.0
-          }
-        },
-        "aot/vm/calls/1000/real_time": {
-          "wall_ns": {
-            "median": 47896.23314675116,
-            "stddev": 13185.01429400248,
-            "cv": 0.25027945040537547,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 144.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 144.0,
-            "process_resident_bytes": 9355264.0,
-            "register_bytes": 54.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 500500.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/first_native/asyncWork/64/real_time": {
-          "wall_ns": {
-            "median": 39754.034762395866,
-            "stddev": 2783.2530752417138,
-            "cv": 0.06777101005895807,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/cpp/gc/1000/real_time": {
-          "wall_ns": {
-            "median": 27335.270871832094,
-            "stddev": 945.1921585689278,
-            "cv": 0.03454540253985648,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9388032.0,
-            "result": 2890.0
-          }
-        },
-        "aot/native/asyncWork/64/real_time": {
-          "wall_ns": {
-            "median": 46980.60498274495,
-            "stddev": 1340.0747712649722,
-            "cv": 0.028393410993934075,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 42144.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 65504.0,
-            "entry_frame_bytes": 232.0,
-            "entry_shadow_slots": 1.0,
-            "entry_static_root_stores": 1.0,
-            "process_resident_bytes": 9338880.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 2080.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 256.0,
-            "suspended_frames": 2.0
-          }
-        },
-        "aot/cpp/asyncWork/64/real_time": {
-          "wall_ns": {
-            "median": 19070.913709864308,
-            "stddev": 3376.5730274482894,
-            "cv": 0.16351560081594652,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9338880.0,
-            "result": 2080.0
-          }
-        },
-        "aot/first_native/fields/1000/real_time": {
-          "wall_ns": {
-            "median": 1354.70641750602,
-            "stddev": 23.97548112534842,
-            "cv": 0.017607373378318403,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/native/arithmetic/1000/real_time": {
-          "wall_ns": {
-            "median": 11.165438123409192,
-            "stddev": 3.607160225768746,
-            "cv": 0.28878093114217096,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 288.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 288.0,
-            "entry_frame_bytes": 104.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "process_resident_bytes": 9388032.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 499500.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/vm/gc/1000/real_time": {
-          "wall_ns": {
-            "median": 102145.54244703779,
-            "stddev": 2817.3455561454807,
-            "cv": 0.027268414143368332,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 53904.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 65552.0,
-            "process_resident_bytes": 9355264.0,
-            "register_bytes": 54.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 2890.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/first_native/gc/1000/real_time": {
-          "wall_ns": {
-            "median": 59033.42376375673,
-            "stddev": 2624.198804387704,
-            "cv": 0.0440245396481177,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/native/arrays/1000/real_time": {
-          "wall_ns": {
-            "median": 2780.9329539544688,
-            "stddev": 153.13073178929284,
-            "cv": 0.05383512165289527,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 24672.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 25440.0,
-            "entry_frame_bytes": 304.0,
-            "entry_shadow_slots": 3.0,
-            "entry_static_root_stores": 8.0,
-            "process_resident_bytes": 9355264.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 499500.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/vm/arithmetic/1000/real_time": {
-          "wall_ns": {
-            "median": 25388.427158622893,
-            "stddev": 270.93046111019055,
-            "cv": 0.010618721047779053,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 144.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 144.0,
-            "process_resident_bytes": 9404416.0,
-            "register_bytes": 45.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 499500.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/native/calls/1000/real_time": {
-          "wall_ns": {
-            "median": 667.3160149310771,
-            "stddev": 11.075516772256222,
-            "cv": 0.01645028751401498,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 288.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 288.0,
-            "entry_frame_bytes": 128.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "process_resident_bytes": 9355264.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 500500.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/cpp/arithmetic/1000/real_time": {
-          "wall_ns": {
-            "median": 1.3140791423010263,
-            "stddev": 0.11872013294492376,
-            "cv": 0.08687484813979265,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9355264.0,
-            "result": 499500.0
-          }
-        },
-        "aot/cpp/host/1000/real_time": {
-          "wall_ns": {
-            "median": 985.6236329210966,
-            "stddev": 33.711294680817275,
-            "cv": 0.0338330869779548,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9355264.0,
-            "result": 500500.0
-          }
-        },
-        "aot/vm/fields/1000/real_time": {
-          "wall_ns": {
-            "median": 32641.348904249186,
-            "stddev": 6663.907027026098,
-            "cv": 0.18957375122047124,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 16272.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 65552.0,
-            "process_resident_bytes": 9338880.0,
-            "register_bytes": 54.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 1000.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        }
-      }
-    },
-    "paired_comparison": {
-      "arithmetic": {
-        "aot_over_vm": 0.0004397845543423897,
-        "aot_over_cpp": 8.496777525787286
-      },
-      "calls": {
-        "aot_over_vm": 0.013932536466624864,
-        "aot_over_cpp": 0.6794101910810278
-      },
-      "fields": {
-        "aot_over_vm": 0.0011916296377651665,
-        "aot_over_cpp": 1.5299009326700903
-      },
-      "arrays": {
-        "aot_over_vm": 0.03518208998148448,
-        "aot_over_cpp": 1.228183114019892
-      },
-      "host": {
-        "aot_over_vm": 0.04512335310933989,
-        "aot_over_cpp": 2.022067483585155
-      },
-      "gc": {
-        "aot_over_vm": 0.4984640905308159,
-        "aot_over_cpp": 1.8626442429040033
-      },
-      "asyncWork": {
-        "aot_over_vm": 0.3997096832142879,
-        "aot_over_cpp": 2.4634690134665407
-      }
-    },
-    "arithmetic_machine_code": {
-      "symbol": "_vela_aot_ebd2b2e439fb5e803ed600095a3e9858_entry_3",
-      "reachable_control_flow_cycle": false,
-      "instruction_count": 75,
-      "minimum_calls_on_multiply_return_path": 0,
-      "multiply_return_path_instruction_count": 40,
-      "multiply_instructions": [
-        "mul",
-        "umulh"
-      ]
-    },
-    "measurement_limits": [
-      "Same macOS arm64 host, pinned toolchain, Release configuration, workload inputs and randomized 7-repetition 0.2s suite; runs occurred in separate processes.",
-      "Background load and per-case CV limit small regression or speedup claims. Machine-code analysis independently confirms the reduction remains loop-free and its Ready success path has no runtime calls.",
-      "AOT/C++ measures the complete workload including native dispatch, execution state, global access and result handling. C++ arithmetic uses unchecked integers; this is not a per-operation language overhead ratio.",
-      "The parameter probe excludes global access and the main suite result wrapper. Its C++ checked kernel retains exact i128 arithmetic and final overflow validation, but omits runtime execution state and exception envelopes.",
-      "First-native excludes instantiation. RSS is a resident snapshot of the combined process. Frame/root counters describe planning before LLVM optimization.",
-      "Execution was verified on macOS arm64; Windows/Linux and clean-host distribution acceptance were not repeated."
-    ],
-    "comparison_to_previous": {
-      "comparable": true,
-      "basis": "Same machine, toolchain, Release configuration, 28 cases and measurement settings; per-case variation retained.",
-      "workloads": {
-        "arithmetic": {
-          "previous_aot_over_cpp": 14.650607968348401,
-          "latest_aot_over_cpp": 8.496777525787286,
-          "aot_wall_speedup": 1.7532967144229537,
-          "cpp_normalized_speedup": 1.7242546275790505
-        },
-        "calls": {
-          "previous_aot_over_cpp": 2.073821010600873,
-          "latest_aot_over_cpp": 0.6794101910810278,
-          "aot_wall_speedup": 3.0755125063916497,
-          "cpp_normalized_speedup": 3.052384314843969
-        },
-        "fields": {
-          "previous_aot_over_cpp": 1.9377776062477057,
-          "latest_aot_over_cpp": 1.5299009326700903,
-          "aot_wall_speedup": 1.3004237989157799,
-          "cpp_normalized_speedup": 1.2666033236974112
-        },
-        "arrays": {
-          "previous_aot_over_cpp": 1.298952241187242,
-          "latest_aot_over_cpp": 1.228183114019892,
-          "aot_wall_speedup": 1.062663578856573,
-          "cpp_normalized_speedup": 1.05762099019235
-        },
-        "host": {
-          "previous_aot_over_cpp": 2.304892089884293,
-          "latest_aot_over_cpp": 2.022067483585155,
-          "aot_wall_speedup": 1.1659239491322262,
-          "cpp_normalized_speedup": 1.1398690244490188
-        },
-        "gc": {
-          "previous_aot_over_cpp": 2.033351105289254,
-          "latest_aot_over_cpp": 1.8626442429040033,
-          "aot_wall_speedup": 1.0698503442489242,
-          "cpp_normalized_speedup": 1.091647593487367
-        },
-        "asyncWork": {
-          "previous_aot_over_cpp": 2.365917978837872,
-          "latest_aot_over_cpp": 2.4634690134665407,
-          "aot_wall_speedup": 0.9631490848030642,
-          "cpp_normalized_speedup": 0.9604009491918079
-        }
-      }
-    }
-  },
-  "latest": {
-    "run_date": "2026-10-28T17:31:40.575653+08:00",
+    "run_date": "2026-10-28T19:13:29.794954+08:00",
     "machine": {
       "os": "Darwin",
       "os_version": "27.0.1",
@@ -810,74 +32,60 @@
         "-nostdinc++",
         "-isystem",
         "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/c++/v1"
-      ],
-      "das_sdk_release": "v0.6.5-RC2 (CLI reports 0.6.5)",
-      "das_sdk_url": "https://github.com/GaijinEntertainment/daScript/releases/download/v0.6.5-RC2/daslang-bundle-darwin26-arm64.zip",
-      "das_sdk_sha256": "83460499e517ec9fdb7d0e05a213170e92f61ceca0370fa2e540f8aedcd4870b"
+      ]
     },
     "source": {
-      "revision": "53af3e1c74add44352df7e92497fec0e67223cd5",
-      "git_status": " M benchmarks/results/rolling_summary.json\n M compiler/aot/frame_emitter.cc\n M compiler/aot/function_emitter.cc\n M compiler/aot/function_emitter.h\n M compiler/aot/memory_emitter.cc\n M compiler/aot/native_compiler_unittest.cc\n M compiler/aot/reference_emitter.cc\n M docs/en/aot.md\n M docs/zh-CN/aot.md\n M runtime/heap_native_program.cc\n M runtime/native_abi.cc\n M runtime/native_abi.h\n M runtime/native_abi_unittest.cc\n M runtime/native_call.cc\n M runtime/native_instance.cc\n M runtime/native_instance.h\n M runtime/native_memory_layout.h\n M runtime/native_operations.cc\n M runtime/native_operations.h\n M runtime/native_program_state.h\n M tools/aot_unittest.py\n?? tools/aot_global_fixture.py\n",
-      "diff_sha256": "90eb43c03a3dfc10647dec1cd8d86fc769e009adb3fee3e823369cf10e4a473a",
-      "binaries": {
-        "out/release/vela": "103144ca47bd3eded7740dd88d2005224134833942dcccdd6d4eb9d3a285d576",
-        "/tmp/vela-dasprofile-run/benchmarks": "5e753f033968746ac7884fa17c2b013df9f4f083d6f923bbb65462a6e1f15b48"
+      "revision": "fe72fdc6929c27f50dd476e7f0935b9b3c5d4a24",
+      "working_tree_status": " M benchmarks/aot_benchmark.cc\n M benchmarks/aot_benchmark_types.h\n M benchmarks/aot_cases.json\n M benchmarks/aot_workloads.vela\n M compiler/aot/function_emitter.h\n M compiler/aot/native_compiler_unittest.cc\n M compiler/aot/reference_emitter.cc\n M compiler/aot/scalar_emitter.cc\n M compiler/ir/analysis.cc\n M tools/aot_unittest.py\n?? tools/aot_numeric_fixture.py\n",
+      "compiler_build_identity": "b449bec4ebdd6956a6d53175a25ddb58afb4263a8b12ce055edd51a707dabbfc",
+      "changed_file_sha256": {
+        "benchmarks/aot_benchmark.cc": "f9bf5b867c2e8fc67a2fec3bdbb16f3f009ac524628947fc471886b0fb5eeb15",
+        "benchmarks/aot_benchmark_types.h": "16a6b0b9b3e6575fe95cdb478308b9d55ffa0c781d55e1fad003c2aed516cdb4",
+        "benchmarks/aot_cases.json": "54c8f16d936251511d38b4155f24948f84f4c6f90d8d0505432e0e442db31408",
+        "benchmarks/aot_workloads.vela": "b3a1272b3cef7eda7414464b8e189c009139cc10e7df542152cb63f10d00a1b9",
+        "compiler/aot/function_emitter.h": "a9905af29d8b7635e4a552fe33482039aa1fa0d57e3f5f4008212638e666764c",
+        "compiler/aot/native_compiler_unittest.cc": "6fbabef580f89eed37fc905695ad99a9626308fdd7c4379ad61a1f59dee42529",
+        "compiler/aot/reference_emitter.cc": "e4524217aa5ca2c1188cc73473dbfa2755903914951a78b887a16894caa02f8f",
+        "compiler/aot/scalar_emitter.cc": "3d731115f69cdc15e03b83073031e4ddcd9b2a4071e1633fd99c02713c194694",
+        "compiler/ir/analysis.cc": "fa1e1e2b95c4ce75724fd77e927939cafd41b8a7ea7836fa60795f297af05aa0",
+        "tools/aot_unittest.py": "6dabab3ac12da359884a9e0e939ede478aa3024fa9e8a62074978d9c047ee583",
+        "tools/aot_numeric_fixture.py": "175afaa5d3012f10be58300ab8abfe2ea30bd0b86f7f4af191425b8cadaf4b41"
       },
-      "experiment_sources_at_measurement_start": {
-        "build.py": "106f0d975267fa764bc9456a2504f1a6b5e6508f419cd56990c3e493d0b59994",
-        "cpp_9.cc": "b17c18fa4d0db606edcd1a8202c50f7f5f204ad3e45beac0496aaceae633a829",
-        "cpp_8.cc": "2e40c7b3821cb51bc3eb976da8363fe7d104a58d20b7ef6e46528a57e38a5652",
-        "cpp_7.cc": "8d4ec3bfb1e41de9539a0ed6ed9dc5ea1c7e78e81142953b392f90df3408f47f",
-        "cpp_10.cc": "47eae494361a3cf6a620021e1a3428b045e0e21bcd9d5a84bcf263a46df93df1",
-        "cpp_3.cc": "657cce7be7e9666a06b0b0ae210b391f4ee16f7985268b89f05715352b96ed43",
-        "cpp_14.cc": "818ffe16579187a8f314d485d2a343d3bce0bb14a556ea7610757e01dd405b49",
-        "cpp_2.cc": "ec6a11fe0fc59ca5f83ad5893fc7460627e6bb1ca44c127cc7aa813a2a755141",
-        "cpp_15.cc": "0b089a940b699398f8c3ebfbc8f6ba6d0e44c0175d46bd2fe47a778bc3bb4138",
-        "cpp_6.cc": "1c3279235f16956374aa8df534d1eeb8fdf4923c242a908861e786ba9c5a8064",
-        "cpp_11.cc": "7d323d3ad6ef283aa66b6fddec1f884679781305c781ab52b33f16f28d5309b3",
-        "cpp_1.cc": "040188670e2a9b3a354a33a59131f3845ab251b9060b37a907755e686539cdc5",
-        "cpp_5.cc": "7a85a9473d99d38774d373c4c81f77d8583bcc00364e6fe296a86921edede502",
-        "host.cc": "d8635301096d7288c70d711787791c27c69927383915d4101747776302b82111",
-        "cpp_12.cc": "6ba933e1bbcdc534b56765d9822899a3d8e2897ae78383ea65ff3e9efe6a6354",
-        "cpp_4.cc": "d769024df44f7d991b77d68d1defa0f9caa6c9e8190b9b1fa5bb536fdbe62b37",
-        "add_one.cc": "8c6337d8db2228634ad90131d5cbb114c3f670cbafdbf417ed42bd6aab9a4c6d",
-        "cpp_13.cc": "d34cb97532a50d43da219470d5bf40308ca2160693f7f28ac59d2472fb8b2070",
-        "cpp_0.cc": "20313a8a54948c3a422e54796af2fea4eec1ff205394769e0e0d7967289f24d1",
-        "upstream.py": "a5398139495bc12ef49f8166019c746c9e3dfeae30dfc2ab7bc77b549b3c4d99",
-        "workloads.vela": "975f63d33db99a6b20c05bfb391da276ea12d48455f88a2ff028797c595ee93a"
+      "benchmark_binary_and_input_sha256": {
+        "/tmp/vela-dasprofile-run/cpp_0.o": "a74e67d0133e8e5d9acd70e6943a0f33356a8963ec334194ac93563e79b70c36",
+        "/tmp/vela-dasprofile-run/cpp_1.o": "83b5a8d48b81a07a00a6dc520130c733a7b0d46b1232ed4f1e70cef462cfe9fa",
+        "/tmp/vela-dasprofile-run/cpp_2.o": "efaa75b35cd45208d59c292bfbc9f7601453f1397c5c47cb0a466d5b819ff91f",
+        "/tmp/vela-dasprofile-run/cpp_3.o": "aceb2caef032f60d4ed01174f0976601e692b02ddd408db82f275f9144849c57",
+        "/tmp/vela-dasprofile-run/cpp_4.o": "d2180b8fc46ed921424992472d2542962397755bd6af3f69170ccc40e7349831",
+        "/tmp/vela-dasprofile-run/cpp_5.o": "68a6e9e96d361ed37acde1f18674bc03558fbf8e9f0b43d0b26276a73c9275ee",
+        "/tmp/vela-dasprofile-run/cpp_6.o": "1ca96fc6f577777c62a842592460a04bfe0fb68472602e5e4f22b0c7e6a8d089",
+        "/tmp/vela-dasprofile-run/cpp_7.o": "4271da590fa77df2af94fa205d7ec1e4fad53a5d5b9dcea787a2926f08b85507",
+        "/tmp/vela-dasprofile-run/cpp_8.o": "1ded49530b92bffebeb1f7d30eb5050877b7b7f6c5e3149bd4d7e17c8b6d813d",
+        "/tmp/vela-dasprofile-run/cpp_9.o": "a784f4a1b6bb9fae5cde8e4f2e8c7530304e2bf408b5527f714aa4341592bc12",
+        "/tmp/vela-dasprofile-run/cpp_10.o": "9aeb60ba0d9e5e6e7fe81219efe2d2c8dd01b504220146bd6f451c795f216aa7",
+        "/tmp/vela-dasprofile-run/cpp_11.o": "7f72bd818d532f73eb034d390a8f7ec983a119ed0053d7a0896bd5e38e06578d",
+        "/tmp/vela-dasprofile-run/cpp_12.o": "6a5a37983696278bc837f5bb7971d550afe38c979ec152876de14481f716b388",
+        "/tmp/vela-dasprofile-run/cpp_13.o": "ed13cc3eee775ff1bdaf9b01e860c1e061779cc8941713d64243e33deb0bd4fa",
+        "/tmp/vela-dasprofile-run/cpp_14.o": "0b2b5101dc0653fb60236040c719a3b5462589b7f8bb414f42b08bafc9789a06",
+        "/tmp/vela-dasprofile-run/cpp_15.o": "43ae2411f0d6ec4c8bfd4ff69eec27fb0569977f45d005cecd6b9cca57e9e794",
+        "/tmp/vela-dasprofile-run/host.o": "515c9f308e68610184d1abea2d0d0a58fe7af273dbd9e80ccd9494b97ea38047",
+        "/tmp/vela-dasprofile-run/add_one.o": "89b0a0557493af43a61c59460a421fcd73c6c19751008ce9b9ef7b0afac6725c",
+        "/tmp/vela-dasprofile-run/workloads.o": "b7dda1a0200c0f19e41a4a98e16f3571c5ce0e9574760f478f63e818623c0d74",
+        "/tmp/vela-dasprofile-run/benchmarks": "03d70c24a78e09709277f2e1a1d3840e3d4d2096ef9786d05a4de52337ea28ae",
+        "/tmp/vela-dasprofile-run/workloads.vela": "975f63d33db99a6b20c05bfb391da276ea12d48455f88a2ff028797c595ee93a",
+        "/tmp/vela-numeric-rebuild.py": "9c9605fa24fb0710d24eb0aeb8bdcf76a59ebc3d6d7f387f17c2a209a3abe96e"
       },
-      "experiment_sources": {
-        "build.py": "106f0d975267fa764bc9456a2504f1a6b5e6508f419cd56990c3e493d0b59994",
-        "cpp_9.cc": "b17c18fa4d0db606edcd1a8202c50f7f5f204ad3e45beac0496aaceae633a829",
-        "cpp_8.cc": "2e40c7b3821cb51bc3eb976da8363fe7d104a58d20b7ef6e46528a57e38a5652",
-        "cpp_7.cc": "8d4ec3bfb1e41de9539a0ed6ed9dc5ea1c7e78e81142953b392f90df3408f47f",
-        "cpp_10.cc": "47eae494361a3cf6a620021e1a3428b045e0e21bcd9d5a84bcf263a46df93df1",
-        "cpp_3.cc": "657cce7be7e9666a06b0b0ae210b391f4ee16f7985268b89f05715352b96ed43",
-        "cpp_14.cc": "818ffe16579187a8f314d485d2a343d3bce0bb14a556ea7610757e01dd405b49",
-        "cpp_2.cc": "ec6a11fe0fc59ca5f83ad5893fc7460627e6bb1ca44c127cc7aa813a2a755141",
-        "cpp_15.cc": "0b089a940b699398f8c3ebfbc8f6ba6d0e44c0175d46bd2fe47a778bc3bb4138",
-        "cpp_6.cc": "1c3279235f16956374aa8df534d1eeb8fdf4923c242a908861e786ba9c5a8064",
-        "summarize.py": "17f3925e9d96d7cba368217a572a853dc8ff21cf48589b56f1e8cbfe0dfc19b8",
-        "cpp_11.cc": "7d323d3ad6ef283aa66b6fddec1f884679781305c781ab52b33f16f28d5309b3",
-        "cpp_1.cc": "040188670e2a9b3a354a33a59131f3845ab251b9060b37a907755e686539cdc5",
-        "cpp_5.cc": "7a85a9473d99d38774d373c4c81f77d8583bcc00364e6fe296a86921edede502",
-        "host.cc": "d8635301096d7288c70d711787791c27c69927383915d4101747776302b82111",
-        "cpp_12.cc": "6ba933e1bbcdc534b56765d9822899a3d8e2897ae78383ea65ff3e9efe6a6354",
-        "cpp_4.cc": "d769024df44f7d991b77d68d1defa0f9caa6c9e8190b9b1fa5bb536fdbe62b37",
-        "add_one.cc": "8c6337d8db2228634ad90131d5cbb114c3f670cbafdbf417ed42bd6aab9a4c6d",
-        "cpp_13.cc": "d34cb97532a50d43da219470d5bf40308ca2160693f7f28ac59d2472fb8b2070",
-        "cpp_0.cc": "20313a8a54948c3a422e54796af2fea4eec1ff205394769e0e0d7967289f24d1",
-        "upstream.py": "a5398139495bc12ef49f8166019c746c9e3dfeae30dfc2ab7bc77b549b3c4d99",
-        "workloads.vela": "975f63d33db99a6b20c05bfb391da276ea12d48455f88a2ff028797c595ee93a"
-      }
+      "previous_binary_sha256": "5e753f033968746ac7884fa17c2b013df9f4f083d6f923bbb65462a6e1f15b48",
+      "maintained_binary_sha256": "82b66e3eddd8a4af48bbc364906ef6b9ccdf3cf38653f585d74bbec762564e3b"
     },
     "build": {
       "variant": "release",
-      "native_optimization": "O2",
-      "runtime_abi": "a91fd8a1624cd5d08cbab2edadc5e48b65a78169dea420bff9620df409e2f5ff/release"
+      "native_optimization": "release",
+      "runtime_abi": "b449bec4ebdd6956a6d53175a25ddb58afb4263a8b12ce055edd51a707dabbfc/release",
+      "change": "Direct typed numeric conversions and non-allocating success effects"
     },
     "suite": {
-      "name": "dasProfile complete 16-workload local port",
+      "name": "AOT/C++: complete dasProfile 16 workloads and maintained 8 workloads",
       "upstream": "https://github.com/borisbat/dasProfile",
       "upstream_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
       "input_sizes": {
@@ -943,853 +151,1558 @@
           "argument": 31
         }
       },
-      "web_page": "https://daslang.io/benchmarks.html",
+      "maintained_cases": [
+        {
+          "name": "arithmetic",
+          "kernel": "Arithmetic",
+          "size": 1000,
+          "expected": 499500,
+          "completion": "Immediate"
+        },
+        {
+          "name": "calls",
+          "kernel": "Calls",
+          "size": 1000,
+          "expected": 500500,
+          "completion": "Immediate"
+        },
+        {
+          "name": "fields",
+          "kernel": "Fields",
+          "size": 1000,
+          "expected": 1000,
+          "completion": "Immediate"
+        },
+        {
+          "name": "arrays",
+          "kernel": "Arrays",
+          "size": 1000,
+          "expected": 499500,
+          "completion": "Immediate"
+        },
+        {
+          "name": "host",
+          "kernel": "Host",
+          "size": 1000,
+          "expected": 500500,
+          "completion": "Immediate"
+        },
+        {
+          "name": "gc",
+          "kernel": "Gc",
+          "size": 1000,
+          "expected": 2890,
+          "completion": "Immediate"
+        },
+        {
+          "name": "asyncWork",
+          "kernel": "Async",
+          "size": 64,
+          "expected": 2080,
+          "completion": "Future"
+        },
+        {
+          "name": "spectralNorm",
+          "kernel": "SpectralNorm",
+          "size": 500,
+          "expected": 1274224115,
+          "completion": "Immediate"
+        }
+      ],
       "repetitions": 5,
       "minimum_batch_seconds": 0.5,
-      "expected_cases": 96,
-      "actual_cases": 96,
+      "expected_cases": 48,
+      "actual_cases": 48,
+      "timed_batch_samples": 240,
+      "additional_previous_binary_cases": 4,
       "all_correctness_checks_passed": true,
-      "measured_group_cases": 48,
-      "measured_group_checksums": {
-        "sha256": 2048.0,
-        "dictionary": 13.0,
-        "nbodies": -0.16907715681664656,
-        "spectralNorm": 1.274224115941234,
-        "mandelbrot": 107699.0,
-        "expLoop": 1000015.4709149387,
-        "string2float": 199999998.0,
-        "particles": 150060.0,
-        "queen": 92.0,
-        "interop": 1000000.0,
-        "primes": 1652.0,
-        "tree": 4998.0,
-        "sort": -719320850322.0,
-        "fibonacciLoop": 1781508648.0,
-        "float2string": 351112.0,
-        "fibonacciRecursive": 1346269.0
-      },
-      "upstream_cases": 48,
-      "upstream_program_exit_codes_all_zero": true,
-      "upstream_correctness_limit": "Original assertions and exit statuses were checked; some upstream programs have no strong checksum assertion.",
-      "matched_command": [
-        "/tmp/vela-dasprofile-run/benchmarks",
-        "--benchmark_min_time=0.5s",
-        "--benchmark_repetitions=5",
-        "--benchmark_enable_random_interleaving=true",
-        "--benchmark_out=/tmp/vela-dasprofile-run/measured.json",
-        "--benchmark_out_format=json"
-      ],
-      "upstream_command": [
-        "python3",
-        "/tmp/vela-dasprofile-run/upstream.py",
-        "run",
-        "5"
+      "commands": [
+        [
+          "/tmp/vela-dasprofile-baseline",
+          "--benchmark_filter=^dasprofile/(aot|cpp_matched)/(spectralNorm|expLoop)/",
+          "--benchmark_out=/tmp/vela-numeric-before.json",
+          "--benchmark_min_time=0.5s",
+          "--benchmark_repetitions=5",
+          "--benchmark_enable_random_interleaving=true",
+          "--benchmark_out_format=json"
+        ],
+        [
+          "/tmp/vela-dasprofile-run/benchmarks",
+          "--benchmark_filter=^dasprofile/(aot|cpp_matched)/",
+          "--benchmark_out=/tmp/vela-numeric-after.json",
+          "--benchmark_min_time=0.5s",
+          "--benchmark_repetitions=5",
+          "--benchmark_enable_random_interleaving=true",
+          "--benchmark_out_format=json"
+        ],
+        [
+          "/Users/zoy/vela/out/release/vela_aot_benchmarks",
+          "--benchmark_filter=^aot/(native|cpp)/",
+          "--benchmark_out=/tmp/vela-numeric-maintained.json",
+          "--benchmark_min_time=0.5s",
+          "--benchmark_repetitions=5",
+          "--benchmark_enable_random_interleaving=true",
+          "--benchmark_out_format=json"
+        ]
       ],
       "notes": [
-        "All 16 upstream workloads retain the original kernel sizes. Vela is a port of the upstream C++ algorithm; compilation, setup and instance creation are excluded.",
-        "cpp_matched and Vela use binary64 for the floating workloads. Original C++ and DAS generally use binary32 except spectral norm. Results across those groups are not numerically equivalent.",
-        "Vela int is checked int64. SHA256 and iterative Fibonacci explicitly implement uint32 wrap. The matched C++ uses native uint32 for those wrapping kernels; Vela masks its int64 values.",
-        "string2float uses identical binary64 input values and shortest round-trip strings in the matched group; its C++ parser is from_chars. Original C++ uses atof on binary32 values.",
-        "float2string in the matched group uses shortest round-trip to_chars formatting. Original C++ uses printf %f; its output length and amount of work differ.",
-        "particles keeps state across iterations, as upstream does; the matched group validates the final position against the number of calls. binary64 positions avoid the upstream binary32 saturation issue.",
-        "n-bodies in the matched group resets the five bodies per kernel and validates final energy. Upstream C++ and DAS retain state, and the DAS implementation also rescales and vectorizes the update, so its timing is contextual.",
-        "tree in the matched group uses the same deterministic priority LCG and split/merge operation stream. Original C++ uses rand and DAS uses random_big_int. Native deletion and Vela GC remain their normal lifetime mechanisms.",
-        "sort copies 100000 identical signed int32 noise keys into int64 elements in the matched group, sorts descending and validates order and sum. Original C++ and DAS use int32 elements.",
-        "interop makes 1000000 calls to a separate translation unit without LTO. Vela and matched C++ use int64; original C++ and DAS use int32.",
-        "Vela uses managed object references, checked arrays, normal host math bindings and GC. C++ uses native structs, arrays and standard containers; storage layouts and safety costs are not made equivalent.",
-        "Google Benchmark measures the matched group with random interleaving. The original programs use their unchanged 0.5 second calibration harness, in separate processes. Process startup and compilation are not included in either reported kernel time.",
-        "The machine experienced scheduling variation: both wall and CPU medians plus variation are retained for the matched group. Results around 1x should be read as parity, not a demonstrated win.",
-        "DAS interpreter and JIT run original .das kernels with external-runtime launch flags disabled in config.das. The official SDK builds the unchanged testProfile binding for host interop. JIT cache is warmed once per kernel.",
-        "This experiment did not optimize or change Vela production compiler/runtime code. Existing uncommitted compiler/runtime optimization changes were preserved. No lint was run."
+        "Only AOT and C++ lanes measured. Builds and tests finished before timing; benchmark processes ran sequentially.",
+        "Original dasProfile port inputs, C++ adapters and flags are unchanged from the previous complete run. It retains the previously documented differences in integer widths, sorting contracts and managed/native storage.",
+        "The maintained spectral norm workload uses binary64, int64 indices, dimension 500 and two power iterations on both sides. Both validate floor(norm * 1e9) == 1274224115. The original port separately verifies the double result to relative 1e-12.",
+        "C++ dasProfile adapters retain -ffp-contract=off. Maintained benchmarks use standard GN Release flags.",
+        "Sorting still compares Vela stable snapshot sorting with C++ std::sort; its ratio does not isolate equivalent sorting contracts.",
+        "Previous binary was remeasured for spectralNorm and expLoop on this machine with the same timing options.",
+        "Full Release regression: 1578 C++ tests, 112 Python tests passed, 2 skipped; the linked native fixture includes 45 GoogleTests. No lint was run."
       ]
     },
     "aggregates": {
-      "cpp_matched": {
+      "aot": {
         "sha256": {
-          "median_seconds": 0.00020000274756536393,
-          "coefficient_of_variation": 0.09472653794349181,
-          "half_range_over_median": 0.11879967100784648,
+          "median_seconds": 0.00043222157355597143,
+          "cpu_median_seconds": 0.0004288125384142571,
+          "coefficient_of_variation": 0.005085742618499032,
+          "cpu_coefficient_of_variation": 0.0028451965471755418,
+          "half_range_over_median": 0.006297894350306623,
           "samples": 5,
-          "cpu_median_seconds": 0.00016699251207729444,
           "result": 2048.0
         },
         "dictionary": {
-          "median_seconds": 0.058637535715076544,
-          "coefficient_of_variation": 0.08684701177547875,
-          "half_range_over_median": 0.1147533581760083,
+          "median_seconds": 0.0669866969851269,
+          "cpu_median_seconds": 0.06626963636363635,
+          "coefficient_of_variation": 0.043198603286559126,
+          "cpu_coefficient_of_variation": 0.032626740002443026,
+          "half_range_over_median": 0.04838466307979872,
           "samples": 5,
-          "cpu_median_seconds": 0.05304349999999961,
           "result": 13.0
         },
         "nbodies": {
-          "median_seconds": 0.0014404992896633112,
-          "coefficient_of_variation": 0.08214486708658515,
-          "half_range_over_median": 0.0896108183686743,
+          "median_seconds": 0.005746038254640508,
+          "cpu_median_seconds": 0.00569901639344248,
+          "coefficient_of_variation": 0.0043335028410091654,
+          "cpu_coefficient_of_variation": 0.003439677343251024,
+          "half_range_over_median": 0.004739188452162667,
           "samples": 5,
-          "cpu_median_seconds": 0.00128157007575757,
           "result": -0.16907715681664656
         },
         "spectralNorm": {
-          "median_seconds": 0.0020976310938988865,
-          "coefficient_of_variation": 0.07976308347871608,
-          "half_range_over_median": 0.11026289371380799,
+          "median_seconds": 0.0018514698566967978,
+          "cpu_median_seconds": 0.0018368271276595705,
+          "coefficient_of_variation": 0.0010191015647073752,
+          "cpu_coefficient_of_variation": 0.0004907222507768187,
+          "half_range_over_median": 0.0012750739172672158,
           "samples": 5,
-          "cpu_median_seconds": 0.0018439152046783919,
           "result": 1.274224115941234
         },
         "mandelbrot": {
-          "median_seconds": 0.00041393673951960116,
-          "coefficient_of_variation": 0.05076593010500449,
-          "half_range_over_median": 0.06789525277854233,
+          "median_seconds": 0.0008557817072425856,
+          "cpu_median_seconds": 0.0008500292682926817,
+          "coefficient_of_variation": 0.0016865587958027762,
+          "cpu_coefficient_of_variation": 0.0018277740785493787,
+          "half_range_over_median": 0.0022852682973933426,
           "samples": 5,
-          "cpu_median_seconds": 0.00037021957964601264,
           "result": 107699.0
         },
         "expLoop": {
-          "median_seconds": 0.002707193199057656,
-          "coefficient_of_variation": 0.06438823469293123,
-          "half_range_over_median": 0.08563635154986848,
+          "median_seconds": 0.0037411229951396824,
+          "cpu_median_seconds": 0.0037141016042780586,
+          "coefficient_of_variation": 0.0026159113366770862,
+          "cpu_coefficient_of_variation": 0.001070925087248853,
+          "half_range_over_median": 0.003113520202104941,
           "samples": 5,
-          "cpu_median_seconds": 0.002499464843750077,
           "result": 1000015.4709149387
         },
         "string2float": {
-          "median_seconds": 0.0009718697037801714,
-          "coefficient_of_variation": 0.024960348610888743,
-          "half_range_over_median": 0.030382379699624904,
+          "median_seconds": 0.001988815745238542,
+          "cpu_median_seconds": 0.001972014164305943,
+          "coefficient_of_variation": 0.0026353085345762785,
+          "cpu_coefficient_of_variation": 0.0016751547306832252,
+          "half_range_over_median": 0.0028012527616744546,
           "samples": 5,
-          "cpu_median_seconds": 0.000891173001310629,
           "result": 199999998.0
         },
         "particles": {
-          "median_seconds": 0.0006341168429452854,
-          "coefficient_of_variation": 0.07388610917074881,
-          "half_range_over_median": 0.09930479773264721,
+          "median_seconds": 0.002202535804292751,
+          "cpu_median_seconds": 0.0021817186544342334,
+          "coefficient_of_variation": 0.015746182876754507,
+          "cpu_coefficient_of_variation": 0.009950127297437685,
+          "half_range_over_median": 0.0186641395809926,
           "samples": 5,
-          "cpu_median_seconds": 0.0005820132275132429,
           "result": 150060.0
         },
         "queen": {
-          "median_seconds": 6.304500075417642e-05,
-          "coefficient_of_variation": 0.0833369351977566,
-          "half_range_over_median": 0.09523346061784528,
+          "median_seconds": 0.0004109793130017966,
+          "cpu_median_seconds": 0.00040784407971863673,
+          "coefficient_of_variation": 0.0012065489238499449,
+          "cpu_coefficient_of_variation": 0.0008430857700384185,
+          "half_range_over_median": 0.0016118608459880996,
           "samples": 5,
-          "cpu_median_seconds": 5.809367884636541e-05,
           "result": 92.0
         },
         "interop": {
-          "median_seconds": 0.0011420835741536228,
-          "coefficient_of_variation": 0.0650300726903947,
-          "half_range_over_median": 0.07889420564538012,
+          "median_seconds": 0.00211335611782878,
+          "cpu_median_seconds": 0.0020963897280967224,
+          "coefficient_of_variation": 0.0028123126363667245,
+          "cpu_coefficient_of_variation": 0.0019305690031525822,
+          "half_range_over_median": 0.0032575268578167124,
           "samples": 5,
-          "cpu_median_seconds": 0.0009927373737373538,
           "result": 1000000.0
         },
         "primes": {
-          "median_seconds": 0.008215114362835093,
-          "coefficient_of_variation": 0.03864011540445085,
-          "half_range_over_median": 0.04781558643717273,
+          "median_seconds": 0.0070474702456243795,
+          "cpu_median_seconds": 0.007005051020408171,
+          "coefficient_of_variation": 0.007229610881641356,
+          "cpu_coefficient_of_variation": 0.005635919941293899,
+          "half_range_over_median": 0.008894523797106828,
           "samples": 5,
-          "cpu_median_seconds": 0.0073254148936171,
           "result": 1652.0
         },
         "tree": {
-          "median_seconds": 0.003069039069974015,
-          "coefficient_of_variation": 0.06509593069288395,
-          "half_range_over_median": 0.0770571061348508,
+          "median_seconds": 0.022264585939410608,
+          "cpu_median_seconds": 0.022027375000000408,
+          "coefficient_of_variation": 0.00805613652518043,
+          "cpu_coefficient_of_variation": 0.0035987906776554553,
+          "half_range_over_median": 0.009406636857068952,
           "samples": 5,
-          "cpu_median_seconds": 0.0027887800829875953,
           "result": 4998.0
         },
         "sort": {
-          "median_seconds": 0.00515330698277451,
-          "coefficient_of_variation": 0.06739345213153973,
-          "half_range_over_median": 0.07800525737942417,
+          "median_seconds": 0.08440254686865956,
+          "cpu_median_seconds": 0.08351499999999978,
+          "coefficient_of_variation": 0.005574144659391035,
+          "cpu_coefficient_of_variation": 0.004664764443668236,
+          "half_range_over_median": 0.00605546075540889,
           "samples": 5,
-          "cpu_median_seconds": 0.00475398290598296,
           "result": -719320850322.0
         },
         "fibonacciLoop": {
-          "median_seconds": 0.0023408239022037897,
-          "coefficient_of_variation": 0.024108298468907222,
-          "half_range_over_median": 0.03241440465595151,
+          "median_seconds": 0.002111504264652774,
+          "cpu_median_seconds": 0.002093506024096373,
+          "coefficient_of_variation": 0.004885356825359557,
+          "cpu_coefficient_of_variation": 0.0026004639399270467,
+          "half_range_over_median": 0.006248401066970573,
           "samples": 5,
-          "cpu_median_seconds": 0.002150581132075449,
           "result": 1781508648.0
         },
         "float2string": {
-          "median_seconds": 0.0014493942355564345,
-          "coefficient_of_variation": 0.07630464719002558,
-          "half_range_over_median": 0.0861744762311253,
+          "median_seconds": 0.003035995670799892,
+          "cpu_median_seconds": 0.003010177489177438,
+          "coefficient_of_variation": 0.0047188168428358435,
+          "cpu_coefficient_of_variation": 0.003502102646391863,
+          "half_range_over_median": 0.005994779953004102,
           "samples": 5,
-          "cpu_median_seconds": 0.0013614254032258027,
           "result": 351112.0
         },
         "fibonacciRecursive": {
-          "median_seconds": 0.004892404379251485,
-          "coefficient_of_variation": 0.26324895397729237,
-          "half_range_over_median": 0.33861036959687607,
+          "median_seconds": 0.014826987572806948,
+          "cpu_median_seconds": 0.01471372340425535,
+          "coefficient_of_variation": 0.004096605294386894,
+          "cpu_coefficient_of_variation": 0.003282349649215024,
+          "half_range_over_median": 0.005646959143292139,
           "samples": 5,
-          "cpu_median_seconds": 0.0041852820512821845,
           "result": 1346269.0
         }
       },
-      "aot": {
+      "cpp_matched": {
         "sha256": {
-          "median_seconds": 0.0004910778614141424,
-          "coefficient_of_variation": 0.3284679737330079,
-          "half_range_over_median": 0.44375688803529467,
+          "median_seconds": 0.00016251298254483368,
+          "cpu_median_seconds": 0.00016116763408404497,
+          "coefficient_of_variation": 0.0068430602908934645,
+          "cpu_coefficient_of_variation": 0.003547874999700686,
+          "half_range_over_median": 0.008982511601358718,
           "samples": 5,
-          "cpu_median_seconds": 0.00044723243598164173,
-          "result": 2048.0,
-          "reference": 2048.0
+          "result": 2048.0
         },
         "dictionary": {
-          "median_seconds": 0.08740061114076525,
-          "coefficient_of_variation": 0.1330985726906142,
-          "half_range_over_median": 0.16698983813543464,
+          "median_seconds": 0.03922453289851546,
+          "cpu_median_seconds": 0.03891784210526265,
+          "coefficient_of_variation": 0.022815247253191614,
+          "cpu_coefficient_of_variation": 0.021812252124350825,
+          "half_range_over_median": 0.030306847740758164,
           "samples": 5,
-          "cpu_median_seconds": 0.08034316666666667,
-          "result": 13.0,
-          "reference": 13.0
+          "result": 13.0
         },
         "nbodies": {
-          "median_seconds": 0.0065257237066777005,
-          "coefficient_of_variation": 0.12896104992347762,
-          "half_range_over_median": 0.1663685764427187,
+          "median_seconds": 0.0012524125810360633,
+          "cpu_median_seconds": 0.001241893048128346,
+          "coefficient_of_variation": 0.004738668547974704,
+          "cpu_coefficient_of_variation": 0.0034448180615658888,
+          "half_range_over_median": 0.005911791970161557,
           "samples": 5,
-          "cpu_median_seconds": 0.0058564951456310955,
-          "result": -0.16907715681664656,
-          "reference": -0.16907715681664656
+          "result": -0.16907715681664656
         },
         "spectralNorm": {
-          "median_seconds": 0.0217040858485482,
-          "coefficient_of_variation": 0.03800646871592109,
-          "half_range_over_median": 0.05074418111376539,
+          "median_seconds": 0.0017877094023741591,
+          "cpu_median_seconds": 0.0017745282051281977,
+          "coefficient_of_variation": 0.0043590559791758235,
+          "cpu_coefficient_of_variation": 0.0020837497633862598,
+          "half_range_over_median": 0.005052035025677171,
           "samples": 5,
-          "cpu_median_seconds": 0.020135969696969735,
-          "result": 1.274224115941234,
-          "reference": 1.274224115941234
+          "result": 1.274224115941234
         },
         "mandelbrot": {
-          "median_seconds": 0.0009976591493036674,
-          "coefficient_of_variation": 0.06521314399221412,
-          "half_range_over_median": 0.09044714536213463,
+          "median_seconds": 0.0003618673827683476,
+          "cpu_median_seconds": 0.0003593401041666685,
+          "coefficient_of_variation": 0.011730607629443762,
+          "cpu_coefficient_of_variation": 0.006545084650194259,
+          "half_range_over_median": 0.014211372825170362,
           "samples": 5,
-          "cpu_median_seconds": 0.0008834355670103305,
-          "result": 107699.0,
-          "reference": 107699.0
+          "result": 107699.0
         },
         "expLoop": {
-          "median_seconds": 0.020596762376560555,
-          "coefficient_of_variation": 0.04591890382114104,
-          "half_range_over_median": 0.06266797127112363,
+          "median_seconds": 0.0024454806218171246,
+          "cpu_median_seconds": 0.0024255279720279874,
+          "coefficient_of_variation": 0.003646419813060221,
+          "cpu_coefficient_of_variation": 0.0010357835261085892,
+          "half_range_over_median": 0.004369502308846821,
           "samples": 5,
-          "cpu_median_seconds": 0.01836797297297298,
-          "result": 1000015.4709149387,
-          "reference": 1000015.4709149387
+          "result": 1000015.4709149387
         },
         "string2float": {
-          "median_seconds": 0.002205148617010177,
-          "coefficient_of_variation": 0.1425703328088666,
-          "half_range_over_median": 0.16602112877908737,
+          "median_seconds": 0.0008616228858792768,
+          "cpu_median_seconds": 0.0008550160891089161,
+          "coefficient_of_variation": 0.001567494850814409,
+          "cpu_coefficient_of_variation": 0.0009046672426771021,
+          "half_range_over_median": 0.001962733534573323,
           "samples": 5,
-          "cpu_median_seconds": 0.0019869940652819484,
-          "result": 199999998.0,
-          "reference": 199999998.0
+          "result": 199999998.0
         },
         "particles": {
-          "median_seconds": 0.0030729707796126604,
-          "coefficient_of_variation": 0.061493763824473954,
-          "half_range_over_median": 0.07622331395805373,
+          "median_seconds": 0.0005665585353427571,
+          "cpu_median_seconds": 0.0005626842105263115,
+          "coefficient_of_variation": 0.0918389490549854,
+          "cpu_coefficient_of_variation": 0.006758020622255675,
+          "half_range_over_median": 0.11107445144890965,
           "samples": 5,
-          "cpu_median_seconds": 0.002579738589211605,
-          "result": 150060.0,
-          "reference": 150060.0
+          "result": 150060.0
         },
         "queen": {
-          "median_seconds": 0.00047974787489511077,
-          "coefficient_of_variation": 0.11952821371057298,
-          "half_range_over_median": 0.15694671710524363,
+          "median_seconds": 5.1191395800560714e-05,
+          "cpu_median_seconds": 5.076299999999919e-05,
+          "coefficient_of_variation": 0.02221059183996076,
+          "cpu_coefficient_of_variation": 0.02196066456579744,
+          "half_range_over_median": 0.02700966608971779,
           "samples": 5,
-          "cpu_median_seconds": 0.0004094320000000096,
-          "result": 92.0,
-          "reference": 92.0
+          "result": 92.0
         },
         "interop": {
-          "median_seconds": 0.0023438395331307578,
-          "coefficient_of_variation": 0.15743697848030502,
-          "half_range_over_median": 0.20158405601625498,
+          "median_seconds": 0.0009691060807515033,
+          "cpu_median_seconds": 0.0009619423868312768,
+          "coefficient_of_variation": 0.005336170658139503,
+          "cpu_coefficient_of_variation": 0.0033946569553323504,
+          "half_range_over_median": 0.006587457636273273,
           "samples": 5,
-          "cpu_median_seconds": 0.0021694636678200752,
-          "result": 1000000.0,
-          "reference": 1000000.0
+          "result": 1000000.0
         },
         "primes": {
-          "median_seconds": 0.007929091119197209,
-          "coefficient_of_variation": 0.023797606298981346,
-          "half_range_over_median": 0.030369833406227432,
+          "median_seconds": 0.007089399403393871,
+          "cpu_median_seconds": 0.00703603030303032,
+          "coefficient_of_variation": 0.0015786247606460423,
+          "cpu_coefficient_of_variation": 0.0007095171302017183,
+          "half_range_over_median": 0.0017545879527437367,
           "samples": 5,
-          "cpu_median_seconds": 0.007269780219780123,
-          "result": 1652.0,
-          "reference": 1652.0
+          "result": 1652.0
         },
         "tree": {
-          "median_seconds": 0.026808625002476303,
-          "coefficient_of_variation": 0.1984914463257697,
-          "half_range_over_median": 0.2722562361412236,
+          "median_seconds": 0.0026636916027551797,
+          "cpu_median_seconds": 0.0026398416988417128,
+          "coefficient_of_variation": 0.00503584986698472,
+          "cpu_coefficient_of_variation": 0.0014916044825727087,
+          "half_range_over_median": 0.006422826478677564,
           "samples": 5,
-          "cpu_median_seconds": 0.02417986363636389,
-          "result": 4998.0,
-          "reference": 4998.0
+          "result": 4998.0
         },
         "sort": {
-          "median_seconds": 0.10411979773614025,
-          "coefficient_of_variation": 0.06692383666854419,
-          "half_range_over_median": 0.07564649387722343,
+          "median_seconds": 0.004639768212823974,
+          "cpu_median_seconds": 0.004599099337748321,
+          "coefficient_of_variation": 0.08704215547619418,
+          "cpu_coefficient_of_variation": 0.002311109194926786,
+          "half_range_over_median": 0.10318210094745976,
           "samples": 5,
-          "cpu_median_seconds": 0.09372585714285922,
-          "result": -719320850322.0,
-          "reference": -719320850322.0
+          "result": -719320850322.0
         },
         "fibonacciLoop": {
-          "median_seconds": 0.0024247523283234223,
-          "coefficient_of_variation": 0.11478413108775597,
-          "half_range_over_median": 0.15093706298309958,
+          "median_seconds": 0.002102793294337911,
+          "cpu_median_seconds": 0.002085204204204206,
+          "coefficient_of_variation": 0.12120842507787913,
+          "cpu_coefficient_of_variation": 0.006255812707295443,
+          "half_range_over_median": 0.147953137381568,
           "samples": 5,
-          "cpu_median_seconds": 0.0021683496503495524,
-          "result": 1781508648.0,
-          "reference": 1781508648.0
+          "result": 1781508648.0
         },
         "float2string": {
-          "median_seconds": 0.004472124005506139,
-          "coefficient_of_variation": 0.10675081838493082,
-          "half_range_over_median": 0.1367095606298597,
+          "median_seconds": 0.0013309788504777703,
+          "cpu_median_seconds": 0.00131997159090909,
+          "coefficient_of_variation": 0.003200429235898333,
+          "cpu_coefficient_of_variation": 0.0013086991421576394,
+          "half_range_over_median": 0.004159303658968892,
           "samples": 5,
-          "cpu_median_seconds": 0.0037667005988024304,
-          "result": 351112.0,
-          "reference": 351112.0
+          "result": 351112.0
         },
         "fibonacciRecursive": {
-          "median_seconds": 0.017046582336271446,
-          "coefficient_of_variation": 0.04763836784642793,
-          "half_range_over_median": 0.06058818162254873,
+          "median_seconds": 0.004081948830511922,
+          "cpu_median_seconds": 0.004049350877192984,
+          "coefficient_of_variation": 0.001567327358255242,
+          "cpu_coefficient_of_variation": 0.0009452976928373922,
+          "half_range_over_median": 0.0019173167826675374,
           "samples": 5,
-          "cpu_median_seconds": 0.015242619047619144,
-          "result": 1346269.0,
-          "reference": 1346269.0
+          "result": 1346269.0
         }
       },
-      "vm": {
-        "sha256": {
-          "median_seconds": 0.030546576376461118,
-          "coefficient_of_variation": 0.03966161021534437,
-          "half_range_over_median": 0.04677289322208749,
+      "maintained": {
+        "aot/native/arithmetic/1000/real_time": {
+          "median_seconds": 1.100671640503766e-08,
+          "cpu_median_seconds": 1.091824682512309e-08,
+          "coefficient_of_variation": 0.0028640829920040917,
+          "cpu_coefficient_of_variation": 0.001694363006309168,
+          "half_range_over_median": 0.0038539219264810878,
           "samples": 5,
-          "cpu_median_seconds": 0.02797245833333406,
-          "result": 2048.0,
-          "reference": 2048.0
+          "result": 499500.0
         },
-        "dictionary": {
-          "median_seconds": 0.1550534582231194,
-          "coefficient_of_variation": 0.24655828912971184,
-          "half_range_over_median": 0.32697018808717476,
+        "aot/native/calls/1000/real_time": {
+          "median_seconds": 6.689916382799493e-07,
+          "cpu_median_seconds": 6.616275219836051e-07,
+          "coefficient_of_variation": 0.004866636988346432,
+          "cpu_coefficient_of_variation": 0.002443688560486591,
+          "half_range_over_median": 0.005721748174236032,
           "samples": 5,
-          "cpu_median_seconds": 0.12793219999999997,
-          "result": 13.0,
-          "reference": 13.0
+          "result": 500500.0
         },
-        "nbodies": {
-          "median_seconds": 0.1395542918238789,
-          "coefficient_of_variation": 0.07402359070848234,
-          "half_range_over_median": 0.07533376334109461,
+        "aot/native/fields/1000/real_time": {
+          "median_seconds": 3.839458500611017e-08,
+          "cpu_median_seconds": 3.806877666564873e-08,
+          "coefficient_of_variation": 0.005369108253733642,
+          "cpu_coefficient_of_variation": 0.0030720119381353705,
+          "half_range_over_median": 0.0065360993183276855,
           "samples": 5,
-          "cpu_median_seconds": 0.12773680000000243,
-          "result": -0.16907715681664656,
-          "reference": -0.16907715681664656
+          "result": 1000.0
         },
-        "spectralNorm": {
-          "median_seconds": 0.20831391665463647,
-          "coefficient_of_variation": 0.021868495879258303,
-          "half_range_over_median": 0.02817559150078624,
+        "aot/native/arrays/1000/real_time": {
+          "median_seconds": 2.7340262045924976e-06,
+          "cpu_median_seconds": 2.708728262724348e-06,
+          "coefficient_of_variation": 0.0036193617762436485,
+          "cpu_coefficient_of_variation": 0.0015169756542051083,
+          "half_range_over_median": 0.005085204428206023,
           "samples": 5,
-          "cpu_median_seconds": 0.194217000000009,
-          "result": 1.274224115941234,
-          "reference": 1.274224115941234
+          "result": 499500.0
         },
-        "mandelbrot": {
-          "median_seconds": 0.01339536699770878,
-          "coefficient_of_variation": 0.23794779185806858,
-          "half_range_over_median": 0.319715819724393,
+        "aot/native/host/1000/real_time": {
+          "median_seconds": 1.960472226863974e-06,
+          "cpu_median_seconds": 1.943495553191966e-06,
+          "coefficient_of_variation": 0.0059167974705003085,
+          "cpu_coefficient_of_variation": 0.0024474911918450286,
+          "half_range_over_median": 0.007522178819184038,
           "samples": 5,
-          "cpu_median_seconds": 0.011840096153846139,
-          "result": 107699.0,
-          "reference": 107699.0
+          "result": 500500.0
         },
-        "expLoop": {
-          "median_seconds": 0.08088276387813191,
-          "coefficient_of_variation": 0.05478590081235293,
-          "half_range_over_median": 0.06722927834750018,
+        "aot/native/gc/1000/real_time": {
+          "median_seconds": 5.012331733840995e-05,
+          "cpu_median_seconds": 4.970843477015602e-05,
+          "coefficient_of_variation": 0.0027104898200589057,
+          "cpu_coefficient_of_variation": 0.0015874148027035858,
+          "half_range_over_median": 0.0036034568890031204,
           "samples": 5,
-          "cpu_median_seconds": 0.07380211111111142,
-          "result": 1000015.4709149387,
-          "reference": 1000015.4709149387
+          "result": 2890.0
         },
-        "string2float": {
-          "median_seconds": 0.0045553379075741664,
-          "coefficient_of_variation": 0.018480143281122116,
-          "half_range_over_median": 0.022986779593594027,
+        "aot/native/asyncWork/64/real_time": {
+          "median_seconds": 4.440124842666735e-05,
+          "cpu_median_seconds": 4.393854349379604e-05,
+          "coefficient_of_variation": 0.017017367808124222,
+          "cpu_coefficient_of_variation": 0.008681615415963805,
+          "half_range_over_median": 0.0202604461460185,
           "samples": 5,
-          "cpu_median_seconds": 0.003968364161849701,
-          "result": 199999998.0,
-          "reference": 199999998.0
+          "result": 2080.0
         },
-        "particles": {
-          "median_seconds": 0.043633316690102224,
-          "coefficient_of_variation": 0.32032941342530497,
-          "half_range_over_median": 0.4327900335624273,
+        "aot/native/spectralNorm/500/real_time": {
+          "median_seconds": 0.0018525422207684196,
+          "cpu_median_seconds": 0.0018378989361702049,
+          "coefficient_of_variation": 0.002396940830410033,
+          "cpu_coefficient_of_variation": 0.0009583344264020796,
+          "half_range_over_median": 0.00277630861021921,
           "samples": 5,
-          "cpu_median_seconds": 0.039016200000000376,
-          "result": 150060.0,
-          "reference": 150060.0
+          "result": 1274224115.0
         },
-        "queen": {
-          "median_seconds": 0.0051986825671623054,
-          "coefficient_of_variation": 0.1639452927026476,
-          "half_range_over_median": 0.2066766930615377,
+        "aot/cpp/arithmetic/1000/real_time": {
+          "median_seconds": 1.3120706718383637e-09,
+          "cpu_median_seconds": 1.2955826067612523e-09,
+          "coefficient_of_variation": 0.09192674459792867,
+          "cpu_coefficient_of_variation": 0.005809073118928348,
+          "half_range_over_median": 0.1126848143895016,
           "samples": 5,
-          "cpu_median_seconds": 0.004743546391752508,
-          "result": 92.0,
-          "reference": 92.0
+          "result": 499500.0
         },
-        "interop": {
-          "median_seconds": 0.05076042857087617,
-          "coefficient_of_variation": 0.05841571050976204,
-          "half_range_over_median": 0.06580515072569115,
+        "aot/cpp/calls/1000/real_time": {
+          "median_seconds": 9.842148493375825e-07,
+          "cpu_median_seconds": 9.703119481707514e-07,
+          "coefficient_of_variation": 0.004250928748650796,
+          "cpu_coefficient_of_variation": 0.0016380732300466442,
+          "half_range_over_median": 0.005244927635682308,
           "samples": 5,
-          "cpu_median_seconds": 0.04351914285714287,
-          "result": 1000000.0,
-          "reference": 1000000.0
+          "result": 500500.0
         },
-        "primes": {
-          "median_seconds": 0.6967791670467705,
-          "coefficient_of_variation": 0.12356076642953909,
-          "half_range_over_median": 0.16148764831173598,
+        "aot/cpp/fields/1000/real_time": {
+          "median_seconds": 2.1324840748265825e-08,
+          "cpu_median_seconds": 2.117494274951115e-08,
+          "coefficient_of_variation": 0.005531661038270628,
+          "cpu_coefficient_of_variation": 0.002288545458090447,
+          "half_range_over_median": 0.006721713468391275,
           "samples": 5,
-          "cpu_median_seconds": 0.6125519999999939,
-          "result": 1652.0,
-          "reference": 1652.0
+          "result": 1000.0
         },
-        "tree": {
-          "median_seconds": 0.08296916199227174,
-          "coefficient_of_variation": 0.17985830828873328,
-          "half_range_over_median": 0.23066630269724445,
+        "aot/cpp/arrays/1000/real_time": {
+          "median_seconds": 2.253283909688838e-06,
+          "cpu_median_seconds": 2.234992981322968e-06,
+          "coefficient_of_variation": 0.014361104939470775,
+          "cpu_coefficient_of_variation": 0.006549457602045926,
+          "half_range_over_median": 0.016626039214801498,
           "samples": 5,
-          "cpu_median_seconds": 0.07235355555555541,
-          "result": 4998.0,
-          "reference": 4998.0
+          "result": 499500.0
         },
-        "sort": {
-          "median_seconds": 0.7039533329661936,
-          "coefficient_of_variation": 0.036470017870207955,
-          "half_range_over_median": 0.043321378738930334,
+        "aot/cpp/host/1000/real_time": {
+          "median_seconds": 9.766305984154867e-07,
+          "cpu_median_seconds": 9.680971402067117e-07,
+          "coefficient_of_variation": 0.006373803095641229,
+          "cpu_coefficient_of_variation": 0.002576966761022692,
+          "half_range_over_median": 0.007810222383299359,
           "samples": 5,
-          "cpu_median_seconds": 0.643889999999999,
-          "result": -719320850322.0,
-          "reference": -719320850322.0
+          "result": 500500.0
         },
-        "fibonacciLoop": {
-          "median_seconds": 0.2805161664728075,
-          "coefficient_of_variation": 0.032025987719603084,
-          "half_range_over_median": 0.03842124818450601,
+        "aot/cpp/gc/1000/real_time": {
+          "median_seconds": 2.4335724250287008e-05,
+          "cpu_median_seconds": 2.3773330610577798e-05,
+          "coefficient_of_variation": 0.08587777009422017,
+          "cpu_coefficient_of_variation": 0.006448086084022023,
+          "half_range_over_median": 0.10561516648289948,
           "samples": 5,
-          "cpu_median_seconds": 0.25685800000000114,
-          "result": 1781508648.0,
-          "reference": 1781508648.0
+          "result": 2890.0
         },
-        "float2string": {
-          "median_seconds": 0.0063057550694793464,
-          "coefficient_of_variation": 0.04978921641839555,
-          "half_range_over_median": 0.05963953228132993,
+        "aot/cpp/asyncWork/64/real_time": {
+          "median_seconds": 1.9007566394221945e-05,
+          "cpu_median_seconds": 1.881999515464761e-05,
+          "coefficient_of_variation": 0.011311977245123322,
+          "cpu_coefficient_of_variation": 0.00801615644597106,
+          "half_range_over_median": 0.012678670522041326,
           "samples": 5,
-          "cpu_median_seconds": 0.0058432434782608195,
-          "result": 351112.0,
-          "reference": 351112.0
+          "result": 2080.0
         },
-        "fibonacciRecursive": {
-          "median_seconds": 0.2131537395180203,
-          "coefficient_of_variation": 0.07247789444990509,
-          "half_range_over_median": 0.09060943294192879,
+        "aot/cpp/spectralNorm/500/real_time": {
+          "median_seconds": 0.00176252386925845,
+          "cpu_median_seconds": 0.0017489572864321612,
+          "coefficient_of_variation": 0.07299564462027604,
+          "cpu_coefficient_of_variation": 0.003020539338588888,
+          "half_range_over_median": 0.08561952614305227,
           "samples": 5,
-          "cpu_median_seconds": 0.1842727499999981,
-          "result": 1346269.0,
-          "reference": 1346269.0
+          "result": 1274224115.0
         }
       },
-      "cpp_original": {
-        "sha256": {
-          "median_seconds": 0.000214822,
-          "coefficient_of_variation": 0.1800413429004208,
-          "half_range_over_median": 0.24259852342869906,
-          "samples": 5
-        },
-        "dictionary": {
-          "median_seconds": 0.063570444,
-          "coefficient_of_variation": 0.3680443625478746,
-          "half_range_over_median": 0.5001968210258213,
-          "samples": 5
-        },
-        "nbodies": {
-          "median_seconds": 0.001395651,
-          "coefficient_of_variation": 0.08571519806465897,
-          "half_range_over_median": 0.10829247426469803,
-          "samples": 5
-        },
+      "remeasured_previous_binary": {
         "spectralNorm": {
-          "median_seconds": 0.002071358,
-          "coefficient_of_variation": 0.04793281049138762,
-          "half_range_over_median": 0.049141191430935705,
-          "samples": 5
-        },
-        "mandelbrot": {
-          "median_seconds": 0.000447417,
-          "coefficient_of_variation": 0.3886443965419619,
-          "half_range_over_median": 0.5475529539557058,
-          "samples": 5
+          "aot": {
+            "median_seconds": 0.01944254049643253,
+            "cpu_median_seconds": 0.019272166666666667,
+            "coefficient_of_variation": 0.004009671910692951,
+            "cpu_coefficient_of_variation": 0.0024291081120351296,
+            "half_range_over_median": 0.005014508896846211,
+            "samples": 5,
+            "result": 1.274224115941234
+          },
+          "cpp_matched": {
+            "median_seconds": 0.00179265455131381,
+            "cpu_median_seconds": 0.0017756683673469424,
+            "coefficient_of_variation": 0.0073588665600387865,
+            "cpu_coefficient_of_variation": 0.005400065606491201,
+            "half_range_over_median": 0.009335739824936146,
+            "samples": 5,
+            "result": 1.274224115941234
+          }
         },
         "expLoop": {
-          "median_seconds": 0.001944111,
-          "coefficient_of_variation": 0.2903259389578238,
-          "half_range_over_median": 0.40509723981809675,
-          "samples": 5
-        },
-        "string2float": {
-          "median_seconds": 0.000733422,
-          "coefficient_of_variation": 0.09902871146387494,
-          "half_range_over_median": 0.13266373247598248,
-          "samples": 5
-        },
-        "particles": {
-          "median_seconds": 0.00044119,
-          "coefficient_of_variation": 0.3311660246143003,
-          "half_range_over_median": 0.44489335660373086,
-          "samples": 5
-        },
-        "queen": {
-          "median_seconds": 5.3131e-05,
-          "coefficient_of_variation": 0.16287671361554554,
-          "half_range_over_median": 0.21132672074683329,
-          "samples": 5
-        },
-        "interop": {
-          "median_seconds": 0.001179853,
-          "coefficient_of_variation": 0.31017471113357054,
-          "half_range_over_median": 0.42066172650321687,
-          "samples": 5
-        },
-        "primes": {
-          "median_seconds": 0.008619893,
-          "coefficient_of_variation": 0.08109204201465393,
-          "half_range_over_median": 0.09997838720271822,
-          "samples": 5
-        },
-        "tree": {
-          "median_seconds": 0.003101328,
-          "coefficient_of_variation": 0.06336310988818786,
-          "half_range_over_median": 0.07952980142700157,
-          "samples": 5
-        },
-        "sort": {
-          "median_seconds": 0.005223572,
-          "coefficient_of_variation": 0.05929855971215927,
-          "half_range_over_median": 0.07125564651927839,
-          "samples": 5
-        },
-        "fibonacciLoop": {
-          "median_seconds": 0.002649466,
-          "coefficient_of_variation": 0.0858227043408067,
-          "half_range_over_median": 0.09111553045028699,
-          "samples": 5
-        },
-        "float2string": {
-          "median_seconds": 0.006625231,
-          "coefficient_of_variation": 0.0264460052392182,
-          "half_range_over_median": 0.035674001404630284,
-          "samples": 5
-        },
-        "fibonacciRecursive": {
-          "median_seconds": 0.00444417,
-          "coefficient_of_variation": 0.019415751132824344,
-          "half_range_over_median": 0.021266625714137823,
-          "samples": 5
-        }
-      },
-      "das_interpreter": {
-        "sha256": {
-          "median_seconds": 0.003183244,
-          "coefficient_of_variation": 0.08237147090427857,
-          "half_range_over_median": 0.10372579042008719,
-          "samples": 5
-        },
-        "dictionary": {
-          "median_seconds": 0.034774822,
-          "coefficient_of_variation": 0.4775689276735454,
-          "half_range_over_median": 0.7289692669023584,
-          "samples": 5
-        },
-        "nbodies": {
-          "median_seconds": 0.01434484,
-          "coefficient_of_variation": 0.23366311381724972,
-          "half_range_over_median": 0.31818050950725135,
-          "samples": 5
-        },
-        "spectralNorm": {
-          "median_seconds": 0.038512383,
-          "coefficient_of_variation": 0.42820527908282224,
-          "half_range_over_median": 0.6182536276708713,
-          "samples": 5
-        },
-        "mandelbrot": {
-          "median_seconds": 0.002679982,
-          "coefficient_of_variation": 0.09938509489340634,
-          "half_range_over_median": 0.12051871990185008,
-          "samples": 5
-        },
-        "expLoop": {
-          "median_seconds": 0.009056382,
-          "coefficient_of_variation": 0.16597434586471935,
-          "half_range_over_median": 0.2137102873973293,
-          "samples": 5
-        },
-        "string2float": {
-          "median_seconds": 0.000720044,
-          "coefficient_of_variation": 0.06227725986258922,
-          "half_range_over_median": 0.08327546649926948,
-          "samples": 5
-        },
-        "particles": {
-          "median_seconds": 0.001021002,
-          "coefficient_of_variation": 0.08878362946122602,
-          "half_range_over_median": 0.10957765019069497,
-          "samples": 5
-        },
-        "queen": {
-          "median_seconds": 0.001097235,
-          "coefficient_of_variation": 0.03204248722678131,
-          "half_range_over_median": 0.03636003226291535,
-          "samples": 5
-        },
-        "interop": {
-          "median_seconds": 0.002878473,
-          "coefficient_of_variation": 0.0729666068918566,
-          "half_range_over_median": 0.08802219093248399,
-          "samples": 5
-        },
-        "primes": {
-          "median_seconds": 0.027380495,
-          "coefficient_of_variation": 0.16455232871415085,
-          "half_range_over_median": 0.2197189641750451,
-          "samples": 5
-        },
-        "tree": {
-          "median_seconds": 0.033951178,
-          "coefficient_of_variation": 0.07150591765856036,
-          "half_range_over_median": 0.08288587217798453,
-          "samples": 5
-        },
-        "sort": {
-          "median_seconds": 0.017369382,
-          "coefficient_of_variation": 0.08932114498887865,
-          "half_range_over_median": 0.10138374525933042,
-          "samples": 5
-        },
-        "fibonacciLoop": {
-          "median_seconds": 0.03781085,
-          "coefficient_of_variation": 0.13815767836736415,
-          "half_range_over_median": 0.18114722361438573,
-          "samples": 5
-        },
-        "float2string": {
-          "median_seconds": 0.002168475,
-          "coefficient_of_variation": 0.1708925418082091,
-          "half_range_over_median": 0.22547550698071228,
-          "samples": 5
-        },
-        "fibonacciRecursive": {
-          "median_seconds": 0.051289333,
-          "coefficient_of_variation": 0.2787192286973015,
-          "half_range_over_median": 0.36842948415804117,
-          "samples": 5
-        }
-      },
-      "das_jit": {
-        "sha256": {
-          "median_seconds": 0.00016065,
-          "coefficient_of_variation": 0.09881721418698733,
-          "half_range_over_median": 0.12601618425147837,
-          "samples": 5
-        },
-        "dictionary": {
-          "median_seconds": 0.018746548,
-          "coefficient_of_variation": 0.18735935731525552,
-          "half_range_over_median": 0.23745806427935423,
-          "samples": 5
-        },
-        "nbodies": {
-          "median_seconds": 0.001032063,
-          "coefficient_of_variation": 0.1194060249523077,
-          "half_range_over_median": 0.14336576352412597,
-          "samples": 5
-        },
-        "spectralNorm": {
-          "median_seconds": 0.000841929,
-          "coefficient_of_variation": 0.12854545376230853,
-          "half_range_over_median": 0.14046315069322943,
-          "samples": 5
-        },
-        "mandelbrot": {
-          "median_seconds": 0.000508243,
-          "coefficient_of_variation": 0.033557803058689606,
-          "half_range_over_median": 0.036477629795196365,
-          "samples": 5
-        },
-        "expLoop": {
-          "median_seconds": 0.001718167,
-          "coefficient_of_variation": 0.0016750394555712037,
-          "half_range_over_median": 0.002133087179534887,
-          "samples": 5
-        },
-        "string2float": {
-          "median_seconds": 0.000551943,
-          "coefficient_of_variation": 0.010159065806823851,
-          "half_range_over_median": 0.012223182466305446,
-          "samples": 5
-        },
-        "particles": {
-          "median_seconds": 0.000354589,
-          "coefficient_of_variation": 0.017411824671672203,
-          "half_range_over_median": 0.019203923415560036,
-          "samples": 5
-        },
-        "queen": {
-          "median_seconds": 3.9925e-05,
-          "coefficient_of_variation": 0.10389748093682338,
-          "half_range_over_median": 0.11371321227301183,
-          "samples": 5
-        },
-        "interop": {
-          "median_seconds": 0.000699857,
-          "coefficient_of_variation": 0.040715560599951156,
-          "half_range_over_median": 0.047981944883026054,
-          "samples": 5
-        },
-        "primes": {
-          "median_seconds": 0.007196692,
-          "coefficient_of_variation": 0.03744012529840543,
-          "half_range_over_median": 0.04723698054606198,
-          "samples": 5
-        },
-        "tree": {
-          "median_seconds": 0.002657119,
-          "coefficient_of_variation": 0.03539906600138128,
-          "half_range_over_median": 0.043078048066345596,
-          "samples": 5
-        },
-        "sort": {
-          "median_seconds": 0.004515251,
-          "coefficient_of_variation": 0.006036482486744051,
-          "half_range_over_median": 0.007655720578988819,
-          "samples": 5
-        },
-        "fibonacciLoop": {
-          "median_seconds": 0.002113548,
-          "coefficient_of_variation": 0.012876752717601341,
-          "half_range_over_median": 0.01637720080168517,
-          "samples": 5
-        },
-        "float2string": {
-          "median_seconds": 0.001125581,
-          "coefficient_of_variation": 0.018050396696357413,
-          "half_range_over_median": 0.02137296205248664,
-          "samples": 5
-        },
-        "fibonacciRecursive": {
-          "median_seconds": 0.004111164,
-          "coefficient_of_variation": 0.039711015625767176,
-          "half_range_over_median": 0.047935694124583754,
-          "samples": 5
+          "aot": {
+            "median_seconds": 0.017783876054454598,
+            "cpu_median_seconds": 0.017581875000000018,
+            "coefficient_of_variation": 0.009638527670903375,
+            "cpu_coefficient_of_variation": 0.010108753016606747,
+            "half_range_over_median": 0.01207460831242444,
+            "samples": 5,
+            "result": 1000015.4709149387
+          },
+          "cpp_matched": {
+            "median_seconds": 0.0024541467102570133,
+            "cpu_median_seconds": 0.0024260314685314675,
+            "coefficient_of_variation": 0.003207713471438765,
+            "cpu_coefficient_of_variation": 0.0014342552794582347,
+            "half_range_over_median": 0.0039942678662298935,
+            "samples": 5,
+            "result": 1000015.4709149387
+          }
         }
       }
     },
     "ratios": {
       "sha256": {
-        "aot_over_cpp_matched": 2.455355575821031,
-        "vm_over_aot": 62.20312251197202
+        "aot_over_cpp_matched": 2.6596125847160006
       },
       "dictionary": {
-        "aot_over_cpp_matched": 1.4905232642355621,
-        "vm_over_aot": 1.7740546227233371
+        "aot_over_cpp_matched": 1.7077755178994662
       },
       "nbodies": {
-        "aot_over_cpp_matched": 4.530181828970538,
-        "vm_over_aot": 21.38525902974938
+        "aot_over_cpp_matched": 4.587975513538098
       },
       "spectralNorm": {
-        "aot_over_cpp_matched": 10.346950858840776,
-        "vm_over_aot": 9.597912490222237
+        "aot_over_cpp_matched": 1.035666006028699,
+        "speedup_over_remeasured_previous_binary": 10.501138015349552,
+        "previous_aot_over_cpp_matched": 10.845670451221839
       },
       "mandelbrot": {
-        "aot_over_cpp_matched": 2.4101729903499547,
-        "vm_over_aot": 13.426797125108607
+        "aot_over_cpp_matched": 2.364904238386197
       },
       "expLoop": {
-        "aot_over_cpp_matched": 7.608161243804122,
-        "vm_over_aot": 3.926964947179164
+        "aot_over_cpp_matched": 1.5298109344083968,
+        "speedup_over_remeasured_previous_binary": 4.753619722623046,
+        "previous_aot_over_cpp_matched": 7.246460034409337
       },
       "string2float": {
-        "aot_over_cpp_matched": 2.2689755719651106,
-        "vm_over_aot": 2.065773650100039
+        "aot_over_cpp_matched": 2.3082206587502343
       },
       "particles": {
-        "aot_over_cpp_matched": 4.84606396092496,
-        "vm_over_aot": 14.199066577392605
+        "aot_over_cpp_matched": 3.887569715916925
       },
       "queen": {
-        "aot_over_cpp_matched": 7.609610106370407,
-        "vm_over_aot": 10.83628055319456
+        "aot_over_cpp_matched": 8.02828886719465
       },
       "interop": {
-        "aot_over_cpp_matched": 2.052248702436452,
-        "vm_over_aot": 21.656955543826623
+        "aot_over_cpp_matched": 2.180727331924237
       },
       "primes": {
-        "aot_over_cpp_matched": 0.9651832913085369,
-        "vm_over_aot": 87.87629711554088
+        "aot_over_cpp_matched": 0.9940856544562268
       },
       "tree": {
-        "aot_over_cpp_matched": 8.735185310854739,
-        "vm_over_aot": 3.094868236793491
+        "aot_over_cpp_matched": 8.358544929293359
       },
       "sort": {
-        "aot_over_cpp_matched": 20.204462510029387,
-        "vm_over_aot": 6.760994049855415
+        "aot_over_cpp_matched": 18.191112787784785
       },
       "fibonacciLoop": {
-        "aot_over_cpp_matched": 1.0358542246773101,
-        "vm_over_aot": 115.68858526131137
+        "aot_over_cpp_matched": 1.0041425709023888
       },
       "float2string": {
-        "aot_over_cpp_matched": 3.0855124822469393,
-        "vm_over_aot": 1.4100134660209815
+        "aot_over_cpp_matched": 2.281024728311863
       },
       "fibonacciRecursive": {
-        "aot_over_cpp_matched": 3.484295453696633,
-        "vm_over_aot": 12.504192061095742
+        "aot_over_cpp_matched": 3.6323305823869125
       }
+    },
+    "aot_over_cpp_geometric_mean": 2.813619426350325,
+    "comparison_to_previous": {
+      "comparable": false,
+      "reason": "Overall suite changed from six lanes to AOT/C++ plus maintained workloads. Original AOT/C++ kernels are unchanged; focused previous-binary remeasurements are retained separately."
+    },
+    "codegen_evidence": {
+      "llvm_before": "/tmp/vela-spectral-before.ll",
+      "llvm_after": "/tmp/vela-spectral-after.ll",
+      "assembly_before": "/tmp/vela-spectral-before.s",
+      "assembly_after": "/tmp/vela-spectral-after.s",
+      "matrix_inner_loop": "Typed ucvtf; no calls or stores; input length and buffer pointer loaded outside the inner loop; no per-element overflow, division-zero or index checks."
+    }
+  },
+  "latest": {
+    "run_date": "2026-10-28T20:46:31.879494+08:00",
+    "machine": {
+      "os": "Darwin",
+      "os_version": "27.0.1",
+      "os_build": "26A434",
+      "architecture": "arm64",
+      "cpu": "Apple M1 Pro"
+    },
+    "toolchain": {
+      "cpp": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)",
+      "llvm_codegen": "21.1.8",
+      "cpp_flags": [
+        "-std=c++23",
+        "-O3",
+        "-DNDEBUG",
+        "-stdlib=libc++",
+        "-fno-exceptions",
+        "-pthread",
+        "-ffp-contract=off",
+        "-I/Users/zoy/vela",
+        "-I/tmp/vela-dasprofile-run",
+        "-I/tmp/vela-dasprofile-upstream/tests/cpp",
+        "-isystem",
+        "/Users/zoy/vela/third_party/abseil-cpp",
+        "-isystem",
+        "/Users/zoy/vela/third_party/benchmark/include",
+        "-isysroot",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+        "-nostdinc++",
+        "-isystem",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/c++/v1"
+      ]
+    },
+    "source": {
+      "revision": "fe72fdc6929c27f50dd476e7f0935b9b3c5d4a24",
+      "working_tree_status": " M benchmarks/aot_benchmark.cc\n M benchmarks/aot_benchmark_types.h\n M benchmarks/aot_cases.json\n M benchmarks/aot_workloads.vela\n M benchmarks/results/rolling_summary.json\n M compiler/BUILD.gn\n M compiler/aot/frame_emitter.cc\n M compiler/aot/function_emitter.cc\n M compiler/aot/function_emitter.h\n M compiler/aot/memory_emitter.cc\n M compiler/aot/native_compiler.cc\n M compiler/aot/native_compiler_unittest.cc\n M compiler/aot/native_image_emitter.cc\n M compiler/aot/reference_emitter.cc\n M compiler/aot/scalar_emitter.cc\n M compiler/ir/analysis.cc\n M docs/en/aot.md\n M docs/zh-CN/aot.md\n M runtime/native_abi.cc\n M runtime/native_abi.h\n M runtime/native_abi_unittest.cc\n M runtime/native_call.cc\n M runtime/native_call.h\n M runtime/native_image.h\n M runtime/native_operations.cc\n M runtime/native_operations.h\n M tools/aot_unittest.py\n?? compiler/aot/native_call_optimizer.cc\n?? compiler/aot/native_call_optimizer.h\n?? tools/aot_callback_fixture.py\n?? tools/aot_numeric_fixture.py\n",
+      "compiler_build_identity": "a0d27c36203c6d20f1558eba5fa239b063156e847e6aff8d4219657876f009f6",
+      "changed_file_sha256": {
+        "benchmarks/aot_benchmark.cc": "4dce4fe55de1f0d467b88038b54bc063a907ce615e486f39185535b377ebcac3",
+        "benchmarks/aot_benchmark_types.h": "16a6b0b9b3e6575fe95cdb478308b9d55ffa0c781d55e1fad003c2aed516cdb4",
+        "benchmarks/aot_cases.json": "54c8f16d936251511d38b4155f24948f84f4c6f90d8d0505432e0e442db31408",
+        "benchmarks/aot_workloads.vela": "b3a1272b3cef7eda7414464b8e189c009139cc10e7df542152cb63f10d00a1b9",
+        "compiler/BUILD.gn": "6a1a51a2ff9e6f15f38228caabfb79bbae0f08a5c9e3d0fd3ca1d45ac3d7c4af",
+        "compiler/aot/frame_emitter.cc": "bd28f8ab272483d3ac25634ef371544e8437ca32762a69707ad53e39f6a0b758",
+        "compiler/aot/function_emitter.cc": "435547ce988e81ea4273dc3283965e176031ce2a6fce5ad8143b9f55586be939",
+        "compiler/aot/function_emitter.h": "663af5bcd4a8b68692a7c3184998448c85aee1068adc0bc9beb4c945dca81a77",
+        "compiler/aot/memory_emitter.cc": "ea3b75c03508ab3a3f8d1c618cf3216bb98cf0999e5caf4fdbe2ed3f4b2e1aa5",
+        "compiler/aot/native_compiler.cc": "823e0dc8d0723e8e37d857ebff853b2446c244eaf4fd9bb1bfb05a519bca1e79",
+        "compiler/aot/native_compiler_unittest.cc": "461b797f88b07889ad12671564e5361c03569edc46ceefc6e44ecc48f385dc61",
+        "compiler/aot/native_image_emitter.cc": "31ad921bb52a042d617b1e29ba89eba3336cf52af0744dd461a62f4fccaac6eb",
+        "compiler/aot/reference_emitter.cc": "184ef82b7a73b6029722cd62e4d60a9703d900b0cd5aa8fc61968e6afbe6b589",
+        "compiler/aot/scalar_emitter.cc": "feab67fe406445d1b523f30085b9f654139fad1576ef3ba739356eedbb6701f5",
+        "compiler/ir/analysis.cc": "7d28332153cf22eec8d56a1b92749ab2c7b0a4a2567fa1ed28f13192b49f45b7",
+        "docs/en/aot.md": "e17a3dc6272ec4e43785fff2390f975438eb5763803fa40ece90c81c01072c1b",
+        "docs/zh-CN/aot.md": "b17a4600b81051f533d8b6a48b25dc94d347bab4a9cb4ba295ee033e7157d431",
+        "runtime/native_abi.cc": "747eded490d7c4ef61935c4e9786fe25cf4901c02b0a0590d0daf9a69533f45c",
+        "runtime/native_abi.h": "44884c1a1d5072cedf72166e71758963a4e980221e122c845ad08314296c556a",
+        "runtime/native_abi_unittest.cc": "5221b78416106de02e95bd5be154713c100846214f1629a98667d187c9d158c3",
+        "runtime/native_call.cc": "925943216722d4fe6f0746844299ef13b6af80eab34cf75b243d5ce235c55a95",
+        "runtime/native_call.h": "23c24580f2e93ca3fd2864d1a79685a8e2a6eb88cf5c063c72d2e3e70d479523",
+        "runtime/native_image.h": "8c2d4b8c95c5ace707d8a26224d1e7b1fe044a7a77100ba5c85034f97fb5e54e",
+        "runtime/native_operations.cc": "58739c225154f12bebaf6adfcff779eb7d010d29c6451e6c657d4627ea2d693b",
+        "runtime/native_operations.h": "e4c39a4ce79900e8f3e0b172a8803574364307bce1c662c147e28f69036bf4ce",
+        "tools/aot_unittest.py": "6746b98d833a87159a505f316af3b5c2ea8687752674adeee155aeb839fe1777",
+        "compiler/aot/native_call_optimizer.cc": "545ad69078540b8c6bb2e0e4af871511952195a8b3716cc71d2758b830d77efa",
+        "compiler/aot/native_call_optimizer.h": "b7f97693222de77fb968bc0611d2df2fe7fbb3a608416dbeaf7c8ca2135d8f05",
+        "tools/aot_callback_fixture.py": "d3944caa2bdb0ea243175c1af3f2acb410d1afaf780158fc4a1a32d62bc99c68",
+        "tools/aot_numeric_fixture.py": "175afaa5d3012f10be58300ab8abfe2ea30bd0b86f7f4af191425b8cadaf4b41"
+      },
+      "benchmark_binary_and_input_sha256": {
+        "/tmp/vela-dasprofile-run/cpp_0.o": "a74e67d0133e8e5d9acd70e6943a0f33356a8963ec334194ac93563e79b70c36",
+        "/tmp/vela-dasprofile-run/cpp_1.o": "83b5a8d48b81a07a00a6dc520130c733a7b0d46b1232ed4f1e70cef462cfe9fa",
+        "/tmp/vela-dasprofile-run/cpp_2.o": "efaa75b35cd45208d59c292bfbc9f7601453f1397c5c47cb0a466d5b819ff91f",
+        "/tmp/vela-dasprofile-run/cpp_3.o": "aceb2caef032f60d4ed01174f0976601e692b02ddd408db82f275f9144849c57",
+        "/tmp/vela-dasprofile-run/cpp_4.o": "d2180b8fc46ed921424992472d2542962397755bd6af3f69170ccc40e7349831",
+        "/tmp/vela-dasprofile-run/cpp_5.o": "68a6e9e96d361ed37acde1f18674bc03558fbf8e9f0b43d0b26276a73c9275ee",
+        "/tmp/vela-dasprofile-run/cpp_6.o": "1ca96fc6f577777c62a842592460a04bfe0fb68472602e5e4f22b0c7e6a8d089",
+        "/tmp/vela-dasprofile-run/cpp_7.o": "4271da590fa77df2af94fa205d7ec1e4fad53a5d5b9dcea787a2926f08b85507",
+        "/tmp/vela-dasprofile-run/cpp_8.o": "1ded49530b92bffebeb1f7d30eb5050877b7b7f6c5e3149bd4d7e17c8b6d813d",
+        "/tmp/vela-dasprofile-run/cpp_9.o": "a784f4a1b6bb9fae5cde8e4f2e8c7530304e2bf408b5527f714aa4341592bc12",
+        "/tmp/vela-dasprofile-run/cpp_10.o": "9aeb60ba0d9e5e6e7fe81219efe2d2c8dd01b504220146bd6f451c795f216aa7",
+        "/tmp/vela-dasprofile-run/cpp_11.o": "7f72bd818d532f73eb034d390a8f7ec983a119ed0053d7a0896bd5e38e06578d",
+        "/tmp/vela-dasprofile-run/cpp_12.o": "763fed89892e70f03862f4390fbdaaa3d68311caebb16c1410880fb67c724352",
+        "/tmp/vela-dasprofile-run/cpp_13.o": "ed13cc3eee775ff1bdaf9b01e860c1e061779cc8941713d64243e33deb0bd4fa",
+        "/tmp/vela-dasprofile-run/cpp_14.o": "0b2b5101dc0653fb60236040c719a3b5462589b7f8bb414f42b08bafc9789a06",
+        "/tmp/vela-dasprofile-run/cpp_15.o": "43ae2411f0d6ec4c8bfd4ff69eec27fb0569977f45d005cecd6b9cca57e9e794",
+        "/tmp/vela-dasprofile-run/host.o": "d2d8effbff017ce4092c8bdb6c64e055e2dd62f9061b583508291f330e5e09e1",
+        "/tmp/vela-dasprofile-run/add_one.o": "89b0a0557493af43a61c59460a421fcd73c6c19751008ce9b9ef7b0afac6725c",
+        "/tmp/vela-dasprofile-run/workloads.o": "c0c3611dd1aa97e351e69092b8ad1822a246e6fce7a06141020385f6b63cb921",
+        "/tmp/vela-dasprofile-run/benchmarks": "32152c898b33a0ac5d3b2495988416dde20de4e7ab9a1105787564cab29bbd1b",
+        "/tmp/vela-dasprofile-run/workloads.vela": "975f63d33db99a6b20c05bfb391da276ea12d48455f88a2ff028797c595ee93a",
+        "/tmp/vela-numeric-rebuild.py": "6759176c1a504d656c6b6d90ea40e255d01ca8f296f35eb7d10004863c86d23e"
+      },
+      "previous_binary_sha256": "03d70c24a78e09709277f2e1a1d3840e3d4d2096ef9786d05a4de52337ea28ae",
+      "maintained_binary_sha256": "8f524ebe7c76ddf9cf663e349b38c439912bcd853c29504088bdbc2c1c0f6383",
+      "cpp_sort_algorithm": "std::stable_sort; int64 elements; same deterministic signed int32 noise keys"
+    },
+    "build": {
+      "variant": "release",
+      "native_optimization": "O2",
+      "runtime_abi": "a0d27c36203c6d20f1558eba5fa239b063156e847e6aff8d4219657876f009f6/release",
+      "changes": [
+        "Deferred reference roots for leaves without success safepoints",
+        "Typed calls for statically known local plain/closure values",
+        "Direct structural mutation checks and global stores",
+        "Null presence comparisons; no barriers for null/scalar writes",
+        "Borrowed RootRange for stack roots; owning NativeFrame only for large frames",
+        "Inline native value codecs and invocation; explicit enum boxing metadata"
+      ]
+    },
+    "suite": {
+      "name": "AOT/C++: complete dasProfile 16 workloads and maintained 8 workloads",
+      "upstream": "https://github.com/borisbat/dasProfile",
+      "upstream_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
+      "input_sizes": {
+        "sha256": {
+          "input_bytes": 1024,
+          "hashes_per_call": 32
+        },
+        "dictionary": {
+          "keys": 500000
+        },
+        "nbodies": {
+          "bodies": 5,
+          "steps": 33000,
+          "dt": 0.01
+        },
+        "spectralNorm": {
+          "dimension": 500,
+          "power_iterations": 2
+        },
+        "mandelbrot": {
+          "grid": 64,
+          "maximum_iterations": 255
+        },
+        "expLoop": {
+          "terms": 1000000
+        },
+        "string2float": {
+          "numbers": 10000,
+          "rounds": 4
+        },
+        "particles": {
+          "particles": 50000,
+          "steps_per_call": 10
+        },
+        "queen": {
+          "board_size": 8
+        },
+        "interop": {
+          "calls": 1000000
+        },
+        "primes": {
+          "inclusive_limit": 14000
+        },
+        "tree": {
+          "loop_start": 1,
+          "loop_end_exclusive": 20000,
+          "key_modulus": 10007
+        },
+        "sort": {
+          "elements": 100000,
+          "noise_seed": 1,
+          "descending": true
+        },
+        "fibonacciLoop": {
+          "iterations": 6511134,
+          "arithmetic": "uint32 wrap"
+        },
+        "float2string": {
+          "numbers": 10000,
+          "rounds": 4
+        },
+        "fibonacciRecursive": {
+          "argument": 31
+        }
+      },
+      "maintained_cases": [
+        {
+          "name": "arithmetic",
+          "kernel": "Arithmetic",
+          "size": 1000,
+          "expected": 499500,
+          "completion": "Immediate"
+        },
+        {
+          "name": "calls",
+          "kernel": "Calls",
+          "size": 1000,
+          "expected": 500500,
+          "completion": "Immediate"
+        },
+        {
+          "name": "fields",
+          "kernel": "Fields",
+          "size": 1000,
+          "expected": 1000,
+          "completion": "Immediate"
+        },
+        {
+          "name": "arrays",
+          "kernel": "Arrays",
+          "size": 1000,
+          "expected": 499500,
+          "completion": "Immediate"
+        },
+        {
+          "name": "host",
+          "kernel": "Host",
+          "size": 1000,
+          "expected": 500500,
+          "completion": "Immediate"
+        },
+        {
+          "name": "gc",
+          "kernel": "Gc",
+          "size": 1000,
+          "expected": 2890,
+          "completion": "Immediate"
+        },
+        {
+          "name": "asyncWork",
+          "kernel": "Async",
+          "size": 64,
+          "expected": 2080,
+          "completion": "Future"
+        },
+        {
+          "name": "spectralNorm",
+          "kernel": "SpectralNorm",
+          "size": 500,
+          "expected": 1274224115,
+          "completion": "Immediate"
+        }
+      ],
+      "repetitions": 5,
+      "minimum_batch_seconds": 0.5,
+      "expected_cases": 48,
+      "actual_cases": 48,
+      "timed_batch_samples": 240,
+      "additional_previous_binary_cases": 6,
+      "all_correctness_checks_passed": true,
+      "commands": [
+        [
+          "/tmp/vela-five-before",
+          "--benchmark_filter=^dasprofile/(aot|cpp_matched)/(queen|tree|sort)/",
+          "--benchmark_min_time=0.5s",
+          "--benchmark_repetitions=5",
+          "--benchmark_enable_random_interleaving=true",
+          "--benchmark_out=/tmp/vela-five-before.json",
+          "--benchmark_out_format=json"
+        ],
+        [
+          "/tmp/vela-dasprofile-run/benchmarks",
+          "--benchmark_filter=^dasprofile/(aot|cpp_matched)/",
+          "--benchmark_min_time=0.5s",
+          "--benchmark_repetitions=5",
+          "--benchmark_enable_random_interleaving=true",
+          "--benchmark_out=/tmp/vela-five-after.json",
+          "--benchmark_out_format=json"
+        ],
+        [
+          "/Users/zoy/vela/out/release/vela_aot_benchmarks",
+          "--benchmark_filter=^aot/(native|cpp)/",
+          "--benchmark_min_time=0.5s",
+          "--benchmark_repetitions=5",
+          "--benchmark_enable_random_interleaving=true",
+          "--benchmark_out=/tmp/vela-five-maintained.json",
+          "--benchmark_out_format=json"
+        ]
+      ],
+      "notes": [
+        "Only AOT and C++ measured. Builds, regression tests and corpus validation finished before timing. Benchmark processes ran sequentially.",
+        "Original Vela workload source, sizes, C++ adapter input values and compiler flags are unchanged. The C++ sort adapter now uses std::stable_sort instead of std::sort.",
+        "Vela sorting still preserves rooted snapshots, callback mutations, exceptions and stable original-position tie breaking. The benchmark comparator has no side effects; callback contracts are tested separately.",
+        "Maintained immediate integer results no longer register a redundant RootRange in the benchmark harness. Future results remain rooted while pumping. Nanosecond arithmetic changes include this measurement correction and cannot all be attributed to compiler optimization.",
+        "The old binary remeasurement retains its original unstable C++ sort lane, which is historical context only. AOT speedups compare the same stable Vela sort workload; current AOT/C++ ratios use the corrected stable C++ baseline.",
+        "Prior limitations for integer widths, managed/native object layouts and normal allocation remain. The maintained spectral norm uses double and int64 indices on both sides.",
+        "The C++ calls microbenchmark explicitly keeps PlainStep noinline; its ratio is specific to that workload and is not a public C++ facade timing.",
+        "1583 C++ tests passed; 112 Python tests passed and 2 platform distribution tests skipped. The linked native fixture includes 49 GoogleTests. 85 existing programs matched VM/AOT values, output, exit status and errors; 3 invalid programs were rejected by both. No lint was run."
+      ]
+    },
+    "aggregates": {
+      "aot": {
+        "sha256": {
+          "median_seconds": 0.0003914338277020165,
+          "cpu_median_seconds": 0.00038858086177952027,
+          "coefficient_of_variation": 0.005092190736571064,
+          "cpu_coefficient_of_variation": 0.0033465012427979987,
+          "half_range_over_median": 0.006467488494472228,
+          "samples": 5,
+          "result": 2048.0
+        },
+        "dictionary": {
+          "median_seconds": 0.061632564460689376,
+          "cpu_median_seconds": 0.061104727272728296,
+          "coefficient_of_variation": 0.05838854702657117,
+          "cpu_coefficient_of_variation": 0.04909636074160109,
+          "half_range_over_median": 0.07207560724560004,
+          "samples": 5,
+          "result": 13.0
+        },
+        "nbodies": {
+          "median_seconds": 0.005753034157067781,
+          "cpu_median_seconds": 0.005697040983606539,
+          "coefficient_of_variation": 0.0021213454150738895,
+          "cpu_coefficient_of_variation": 0.0010306710731489326,
+          "half_range_over_median": 0.002314649596911176,
+          "samples": 5,
+          "result": -0.16907715681664656
+        },
+        "spectralNorm": {
+          "median_seconds": 0.001855161000043154,
+          "cpu_median_seconds": 0.0018380000000000035,
+          "coefficient_of_variation": 0.09250214033411067,
+          "cpu_coefficient_of_variation": 0.0022256076241260856,
+          "half_range_over_median": 0.1090633706894912,
+          "samples": 5,
+          "result": 1.274224115941234
+        },
+        "mandelbrot": {
+          "median_seconds": 0.0008560042341310149,
+          "cpu_median_seconds": 0.0008489206939281136,
+          "coefficient_of_variation": 0.002908873021521604,
+          "cpu_coefficient_of_variation": 0.0020576571338917935,
+          "half_range_over_median": 0.003610240535859974,
+          "samples": 5,
+          "result": 107699.0
+        },
+        "expLoop": {
+          "median_seconds": 0.003731070630461536,
+          "cpu_median_seconds": 0.003702668449197908,
+          "coefficient_of_variation": 0.0012555993716013582,
+          "cpu_coefficient_of_variation": 0.0007186261933226845,
+          "half_range_over_median": 0.0016182699336151148,
+          "samples": 5,
+          "result": 1000015.4709149387
+        },
+        "string2float": {
+          "median_seconds": 0.001654063684698106,
+          "cpu_median_seconds": 0.0016398459715639762,
+          "coefficient_of_variation": 0.0022457003452944374,
+          "cpu_coefficient_of_variation": 0.0016262316155274655,
+          "half_range_over_median": 0.0030597786009222533,
+          "samples": 5,
+          "result": 199999998.0
+        },
+        "particles": {
+          "median_seconds": 0.002212844237052717,
+          "cpu_median_seconds": 0.002195373831775679,
+          "coefficient_of_variation": 0.02136011527958875,
+          "cpu_coefficient_of_variation": 0.015692787057588094,
+          "half_range_over_median": 0.029066853436926426,
+          "samples": 5,
+          "result": 150060.0
+        },
+        "queen": {
+          "median_seconds": 0.0001817501970545765,
+          "cpu_median_seconds": 0.0001802314766158713,
+          "coefficient_of_variation": 0.00844114112664328,
+          "cpu_coefficient_of_variation": 0.0049896590383298025,
+          "half_range_over_median": 0.010210796285939325,
+          "samples": 5,
+          "result": 92.0
+        },
+        "interop": {
+          "median_seconds": 0.0021176630272025086,
+          "cpu_median_seconds": 0.0020979457831325223,
+          "coefficient_of_variation": 0.005511562463439064,
+          "cpu_coefficient_of_variation": 0.002856392075156927,
+          "half_range_over_median": 0.006784053885801842,
+          "samples": 5,
+          "result": 1000000.0
+        },
+        "primes": {
+          "median_seconds": 0.007078938129724878,
+          "cpu_median_seconds": 0.007018292929292926,
+          "coefficient_of_variation": 0.03102500681377049,
+          "cpu_coefficient_of_variation": 0.0032503968179611645,
+          "half_range_over_median": 0.03655821661423427,
+          "samples": 5,
+          "result": 1652.0
+        },
+        "tree": {
+          "median_seconds": 0.012180361577104464,
+          "cpu_median_seconds": 0.012088898305084757,
+          "coefficient_of_variation": 0.0056800674525392435,
+          "cpu_coefficient_of_variation": 0.003793407095423692,
+          "half_range_over_median": 0.007760883403622261,
+          "samples": 5,
+          "result": 4998.0
+        },
+        "sort": {
+          "median_seconds": 0.012115017241991028,
+          "cpu_median_seconds": 0.011990862068965522,
+          "coefficient_of_variation": 0.00912097446548191,
+          "cpu_coefficient_of_variation": 0.007365303334565137,
+          "half_range_over_median": 0.011137621242047792,
+          "samples": 5,
+          "result": -719320850322.0
+        },
+        "fibonacciLoop": {
+          "median_seconds": 0.002104173822564084,
+          "cpu_median_seconds": 0.0020893674698795315,
+          "coefficient_of_variation": 0.008725288172113588,
+          "cpu_coefficient_of_variation": 0.004554391943549888,
+          "half_range_over_median": 0.012142778401524003,
+          "samples": 5,
+          "result": 1781508648.0
+        },
+        "float2string": {
+          "median_seconds": 0.0030268859731482477,
+          "cpu_median_seconds": 0.002985441964285724,
+          "coefficient_of_variation": 0.0157055560095567,
+          "cpu_coefficient_of_variation": 0.015656693887557298,
+          "half_range_over_median": 0.02082136628186327,
+          "samples": 5,
+          "result": 351112.0
+        },
+        "fibonacciRecursive": {
+          "median_seconds": 0.014766824466394301,
+          "cpu_median_seconds": 0.014653659574468052,
+          "coefficient_of_variation": 0.004394019275865472,
+          "cpu_coefficient_of_variation": 0.0032508765255621027,
+          "half_range_over_median": 0.00475050202107564,
+          "samples": 5,
+          "result": 1346269.0
+        }
+      },
+      "cpp_matched": {
+        "sha256": {
+          "median_seconds": 0.00016217068201052355,
+          "cpu_median_seconds": 0.0001609206238361265,
+          "coefficient_of_variation": 0.008679299558042721,
+          "cpu_coefficient_of_variation": 0.004204879511573119,
+          "half_range_over_median": 0.008783318618450409,
+          "samples": 5,
+          "result": 2048.0
+        },
+        "dictionary": {
+          "median_seconds": 0.0394786713230941,
+          "cpu_median_seconds": 0.039077666666666275,
+          "coefficient_of_variation": 0.10955169681320868,
+          "cpu_coefficient_of_variation": 0.09842471336940091,
+          "half_range_over_median": 0.13518750735319937,
+          "samples": 5,
+          "result": 13.0
+        },
+        "nbodies": {
+          "median_seconds": 0.0012543664596901805,
+          "cpu_median_seconds": 0.0012437540106951912,
+          "coefficient_of_variation": 0.08947310255277907,
+          "cpu_coefficient_of_variation": 0.002895536760015392,
+          "half_range_over_median": 0.10584476400757219,
+          "samples": 5,
+          "result": -0.16907715681664656
+        },
+        "spectralNorm": {
+          "median_seconds": 0.0017905731023291646,
+          "cpu_median_seconds": 0.0017762762148337448,
+          "coefficient_of_variation": 0.002382367314340314,
+          "cpu_coefficient_of_variation": 0.0012948464230337232,
+          "half_range_over_median": 0.002808083609588121,
+          "samples": 5,
+          "result": 1.274224115941234
+        },
+        "mandelbrot": {
+          "median_seconds": 0.00036333292523475807,
+          "cpu_median_seconds": 0.0003596664948453565,
+          "coefficient_of_variation": 0.006694680806814861,
+          "cpu_coefficient_of_variation": 0.0040102027425858,
+          "half_range_over_median": 0.00869160670306601,
+          "samples": 5,
+          "result": 107699.0
+        },
+        "expLoop": {
+          "median_seconds": 0.0024523866913196716,
+          "cpu_median_seconds": 0.002429505928853764,
+          "coefficient_of_variation": 0.012813234820300327,
+          "cpu_coefficient_of_variation": 0.006280720038040771,
+          "half_range_over_median": 0.015482283187063958,
+          "samples": 5,
+          "result": 1000015.4709149387
+        },
+        "string2float": {
+          "median_seconds": 0.0008616485301653238,
+          "cpu_median_seconds": 0.0008549445129469773,
+          "coefficient_of_variation": 0.08078180448287059,
+          "cpu_coefficient_of_variation": 0.0033459182645641456,
+          "half_range_over_median": 0.09560731938913589,
+          "samples": 5,
+          "result": 199999998.0
+        },
+        "particles": {
+          "median_seconds": 0.0005640088730048538,
+          "cpu_median_seconds": 0.000559079443079445,
+          "coefficient_of_variation": 0.006994115827777243,
+          "cpu_coefficient_of_variation": 0.005438030583580433,
+          "half_range_over_median": 0.00848686555147281,
+          "samples": 5,
+          "result": 150060.0
+        },
+        "queen": {
+          "median_seconds": 5.2991621338644755e-05,
+          "cpu_median_seconds": 5.258327208584463e-05,
+          "coefficient_of_variation": 0.03510020379519021,
+          "cpu_coefficient_of_variation": 0.03526701452943065,
+          "half_range_over_median": 0.04766599699433775,
+          "samples": 5,
+          "result": 92.0
+        },
+        "interop": {
+          "median_seconds": 0.0009701855737587502,
+          "cpu_median_seconds": 0.0009622786206896525,
+          "coefficient_of_variation": 0.002437811475286995,
+          "cpu_coefficient_of_variation": 0.0011224489757205762,
+          "half_range_over_median": 0.0033352723072812293,
+          "samples": 5,
+          "result": 1000000.0
+        },
+        "primes": {
+          "median_seconds": 0.007086235970467786,
+          "cpu_median_seconds": 0.0070332551020408154,
+          "coefficient_of_variation": 0.0017349473022447016,
+          "cpu_coefficient_of_variation": 0.0012157680587629924,
+          "half_range_over_median": 0.0019330013291414538,
+          "samples": 5,
+          "result": 1652.0
+        },
+        "tree": {
+          "median_seconds": 0.0026553431561237963,
+          "cpu_median_seconds": 0.0026336730038022797,
+          "coefficient_of_variation": 0.0022949517140724387,
+          "cpu_coefficient_of_variation": 0.0013076782307226194,
+          "half_range_over_median": 0.0030756195038911384,
+          "samples": 5,
+          "result": 4998.0
+        },
+        "sort": {
+          "median_seconds": 0.004183738096062804,
+          "cpu_median_seconds": 0.004143422619047596,
+          "coefficient_of_variation": 0.010366568111955222,
+          "cpu_coefficient_of_variation": 0.004857386633168644,
+          "half_range_over_median": 0.011454675508722548,
+          "samples": 5,
+          "result": -719320850322.0
+        },
+        "fibonacciLoop": {
+          "median_seconds": 0.0021053837561929548,
+          "cpu_median_seconds": 0.002087729729729666,
+          "coefficient_of_variation": 0.0016117881083463183,
+          "cpu_coefficient_of_variation": 0.0007689894850353397,
+          "half_range_over_median": 0.0019204248954331434,
+          "samples": 5,
+          "result": 1781508648.0
+        },
+        "float2string": {
+          "median_seconds": 0.0013344455254131636,
+          "cpu_median_seconds": 0.0013222390891840586,
+          "coefficient_of_variation": 0.015494532517332037,
+          "cpu_coefficient_of_variation": 0.0069705406101678346,
+          "half_range_over_median": 0.018947697125891873,
+          "samples": 5,
+          "result": 351112.0
+        },
+        "fibonacciRecursive": {
+          "median_seconds": 0.004078899225934821,
+          "cpu_median_seconds": 0.0040459593023255596,
+          "coefficient_of_variation": 0.08395853446242783,
+          "cpu_coefficient_of_variation": 0.0034499931906342082,
+          "half_range_over_median": 0.09954616088214142,
+          "samples": 5,
+          "result": 1346269.0
+        }
+      },
+      "maintained": {
+        "aot/native/arithmetic/1000/real_time": {
+          "median_seconds": 5.969283984896607e-09,
+          "cpu_median_seconds": 5.915895846727803e-09,
+          "coefficient_of_variation": 0.009970112280032396,
+          "cpu_coefficient_of_variation": 0.0037646746848011654,
+          "half_range_over_median": 0.011901776244147564,
+          "samples": 5,
+          "result": 499500.0
+        },
+        "aot/native/calls/1000/real_time": {
+          "median_seconds": 6.598285827099053e-07,
+          "cpu_median_seconds": 6.548147163303167e-07,
+          "coefficient_of_variation": 0.00171856520774577,
+          "cpu_coefficient_of_variation": 0.0009877796183987372,
+          "half_range_over_median": 0.0021674027542702722,
+          "samples": 5,
+          "result": 500500.0
+        },
+        "aot/native/fields/1000/real_time": {
+          "median_seconds": 2.4934767356632568e-08,
+          "cpu_median_seconds": 2.474903108618817e-08,
+          "coefficient_of_variation": 0.004054054516535308,
+          "cpu_coefficient_of_variation": 0.002607859486165479,
+          "half_range_over_median": 0.0049065573838290395,
+          "samples": 5,
+          "result": 1000.0
+        },
+        "aot/native/arrays/1000/real_time": {
+          "median_seconds": 2.7088948614338853e-06,
+          "cpu_median_seconds": 2.68423786928963e-06,
+          "coefficient_of_variation": 0.009092924707795253,
+          "cpu_coefficient_of_variation": 0.004308389600175735,
+          "half_range_over_median": 0.010516030591462182,
+          "samples": 5,
+          "result": 499500.0
+        },
+        "aot/native/host/1000/real_time": {
+          "median_seconds": 1.954586418525011e-06,
+          "cpu_median_seconds": 1.93748240638804e-06,
+          "coefficient_of_variation": 0.022662492094266632,
+          "cpu_coefficient_of_variation": 0.009771169456480822,
+          "half_range_over_median": 0.025992775842054894,
+          "samples": 5,
+          "result": 500500.0
+        },
+        "aot/native/gc/1000/real_time": {
+          "median_seconds": 4.681832707852882e-05,
+          "cpu_median_seconds": 4.6359012114316346e-05,
+          "coefficient_of_variation": 0.003917858301869001,
+          "cpu_coefficient_of_variation": 0.002724724226055934,
+          "half_range_over_median": 0.005226704808601613,
+          "samples": 5,
+          "result": 2890.0
+        },
+        "aot/native/asyncWork/64/real_time": {
+          "median_seconds": 4.395376507625392e-05,
+          "cpu_median_seconds": 4.359744910781602e-05,
+          "coefficient_of_variation": 0.004977469354580014,
+          "cpu_coefficient_of_variation": 0.0036390724056539806,
+          "half_range_over_median": 0.00559047270547742,
+          "samples": 5,
+          "result": 2080.0
+        },
+        "aot/native/spectralNorm/500/real_time": {
+          "median_seconds": 0.0018559557985681945,
+          "cpu_median_seconds": 0.0018402777777777957,
+          "coefficient_of_variation": 0.0027707501828911443,
+          "cpu_coefficient_of_variation": 0.0011393905385563318,
+          "half_range_over_median": 0.003619508062960408,
+          "samples": 5,
+          "result": 1274224115.0
+        },
+        "aot/cpp/arithmetic/1000/real_time": {
+          "median_seconds": 1.3023504423843484e-09,
+          "cpu_median_seconds": 1.2901207486152336e-09,
+          "coefficient_of_variation": 0.015102739788628776,
+          "cpu_coefficient_of_variation": 0.005281648088506487,
+          "half_range_over_median": 0.01815713021027716,
+          "samples": 5,
+          "result": 499500.0
+        },
+        "aot/cpp/calls/1000/real_time": {
+          "median_seconds": 9.747657394619564e-07,
+          "cpu_median_seconds": 9.672859225948638e-07,
+          "coefficient_of_variation": 0.0037930504986752062,
+          "cpu_coefficient_of_variation": 0.0023018782064113826,
+          "half_range_over_median": 0.003932152357494443,
+          "samples": 5,
+          "result": 500500.0
+        },
+        "aot/cpp/fields/1000/real_time": {
+          "median_seconds": 2.1369409013807784e-08,
+          "cpu_median_seconds": 2.1192474106322455e-08,
+          "coefficient_of_variation": 0.07224245491908224,
+          "cpu_coefficient_of_variation": 0.07265339673713894,
+          "half_range_over_median": 0.08424199338461294,
+          "samples": 5,
+          "result": 1000.0
+        },
+        "aot/cpp/arrays/1000/real_time": {
+          "median_seconds": 2.2530831904553203e-06,
+          "cpu_median_seconds": 2.235019177765381e-06,
+          "coefficient_of_variation": 0.004025678657444356,
+          "cpu_coefficient_of_variation": 0.00207078441855805,
+          "half_range_over_median": 0.004835910678545832,
+          "samples": 5,
+          "result": 499500.0
+        },
+        "aot/cpp/host/1000/real_time": {
+          "median_seconds": 9.808900940381155e-07,
+          "cpu_median_seconds": 9.702813828402326e-07,
+          "coefficient_of_variation": 0.12170041783488493,
+          "cpu_coefficient_of_variation": 0.005352726144299062,
+          "half_range_over_median": 0.14696483052751963,
+          "samples": 5,
+          "result": 500500.0
+        },
+        "aot/cpp/gc/1000/real_time": {
+          "median_seconds": 2.6506815761050483e-05,
+          "cpu_median_seconds": 2.6297553365549142e-05,
+          "coefficient_of_variation": 0.010837230435764247,
+          "cpu_coefficient_of_variation": 0.005589279921717523,
+          "half_range_over_median": 0.013001902549770692,
+          "samples": 5,
+          "result": 2890.0
+        },
+        "aot/cpp/asyncWork/64/real_time": {
+          "median_seconds": 1.886156247357742e-05,
+          "cpu_median_seconds": 1.871846410137372e-05,
+          "coefficient_of_variation": 0.0074283698855222464,
+          "cpu_coefficient_of_variation": 0.003903454673762249,
+          "half_range_over_median": 0.00831895918442499,
+          "samples": 5,
+          "result": 2080.0
+        },
+        "aot/cpp/spectralNorm/500/real_time": {
+          "median_seconds": 0.0017638742627406664,
+          "cpu_median_seconds": 0.001751351010101012,
+          "coefficient_of_variation": 0.008298154622700471,
+          "cpu_coefficient_of_variation": 0.003799684078036673,
+          "half_range_over_median": 0.010002588224895713,
+          "samples": 5,
+          "result": 1274224115.0
+        }
+      },
+      "remeasured_previous_binary": {
+        "dasprofile/aot/queen/real_time": {
+          "median_seconds": 0.00041164242043430606,
+          "cpu_median_seconds": 0.0004077028772753958,
+          "coefficient_of_variation": 0.0036390590043240637,
+          "cpu_coefficient_of_variation": 0.002198767234102207,
+          "half_range_over_median": 0.004242377023296552,
+          "samples": 5,
+          "result": 92.0
+        },
+        "dasprofile/aot/tree/real_time": {
+          "median_seconds": 0.022120141940831672,
+          "cpu_median_seconds": 0.021928531249999994,
+          "coefficient_of_variation": 0.003396361935622013,
+          "cpu_coefficient_of_variation": 0.0025790138189014907,
+          "half_range_over_median": 0.0042188522510434425,
+          "samples": 5,
+          "result": 4998.0
+        },
+        "dasprofile/aot/sort/real_time": {
+          "median_seconds": 0.08472942188382149,
+          "cpu_median_seconds": 0.08392487500000012,
+          "coefficient_of_variation": 0.0031146350055370185,
+          "cpu_coefficient_of_variation": 0.0025706138840813153,
+          "half_range_over_median": 0.004100829824188225,
+          "samples": 5,
+          "result": -719320850322.0
+        },
+        "dasprofile/cpp_matched/queen/real_time": {
+          "median_seconds": 5.1546859215428336e-05,
+          "cpu_median_seconds": 5.108276807620149e-05,
+          "coefficient_of_variation": 0.02517078699080863,
+          "cpu_coefficient_of_variation": 0.024476463892960924,
+          "half_range_over_median": 0.031738198872380094,
+          "samples": 5,
+          "result": 92.0
+        },
+        "dasprofile/cpp_matched/tree/real_time": {
+          "median_seconds": 0.002670638257052016,
+          "cpu_median_seconds": 0.0026443333333333345,
+          "coefficient_of_variation": 0.09143378620858153,
+          "cpu_coefficient_of_variation": 0.008521020633591704,
+          "half_range_over_median": 0.10944634241514996,
+          "samples": 5,
+          "result": 4998.0
+        },
+        "dasprofile/cpp_matched/sort/real_time": {
+          "median_seconds": 0.004637828913967539,
+          "cpu_median_seconds": 0.004597496688741709,
+          "coefficient_of_variation": 0.0016477562776312984,
+          "cpu_coefficient_of_variation": 0.0014237350567883555,
+          "half_range_over_median": 0.0020252275249979606,
+          "samples": 5,
+          "result": -719320850322.0
+        }
+      }
+    },
+    "ratios": {
+      "sha256": {
+        "aot_over_cpp_matched": 2.4137151231602743
+      },
+      "dictionary": {
+        "aot_over_cpp_matched": 1.5611610622932937
+      },
+      "nbodies": {
+        "aot_over_cpp_matched": 4.586406239280935
+      },
+      "spectralNorm": {
+        "aot_over_cpp_matched": 1.0360710755846683
+      },
+      "mandelbrot": {
+        "aot_over_cpp_matched": 2.355977602574636
+      },
+      "expLoop": {
+        "aot_over_cpp_matched": 1.5214038812344812
+      },
+      "string2float": {
+        "aot_over_cpp_matched": 1.9196500972162538
+      },
+      "particles": {
+        "aot_over_cpp_matched": 3.9234209654600125
+      },
+      "queen": {
+        "aot_over_cpp_matched": 3.429791209691353,
+        "speedup_over_remeasured_previous_binary": 2.264880187781567
+      },
+      "interop": {
+        "aot_over_cpp_matched": 2.182740173097126
+      },
+      "primes": {
+        "aot_over_cpp_matched": 0.9989701386217843
+      },
+      "tree": {
+        "aot_over_cpp_matched": 4.587113928764316,
+        "speedup_over_remeasured_previous_binary": 1.8160496961281596
+      },
+      "sort": {
+        "aot_over_cpp_matched": 2.895739877549248,
+        "speedup_over_remeasured_previous_binary": 6.993751654776575
+      },
+      "fibonacciLoop": {
+        "aot_over_cpp_matched": 0.9994253144466838
+      },
+      "float2string": {
+        "aot_over_cpp_matched": 2.268272413900957
+      },
+      "fibonacciRecursive": {
+        "aot_over_cpp_matched": 3.6202964693274504
+      }
+    },
+    "codegen_evidence": {
+      "object_sha256": "c0c3611dd1aa97e351e69092b8ad1822a246e6fce7a06141020385f6b63cb921",
+      "assembly_before": [
+        "/tmp/vela-five-final-before-body_9.s",
+        "/tmp/vela-five-final-before-body_24.s",
+        "/tmp/vela-five-final-before-body_25.s",
+        "/tmp/vela-five-final-before-entry_15.s"
+      ],
+      "assembly_after": [
+        "/tmp/vela-five-final-after-body_9.s",
+        "/tmp/vela-five-final-after-body_24.s",
+        "/tmp/vela-five-final-after-body_25.s",
+        "/tmp/vela-five-final-after-entry_15.s"
+      ],
+      "findings": [
+        "canPlace body_9 has only a cold leaf_failure call; successful paths have no root registration or resource-frame calls. Overflow and bounds branches remain.",
+        "sort entry_15 has no call_indirect relocations; the comparator and structural-version checks are inlined into its comparison loop.",
+        "tree merge/split use roots_enter/exit for borrowed stack roots and retain write barriers for non-null references. The object has no set_global or generic equality helper imports."
+      ]
+    },
+    "maintained_ratios": {
+      "arithmetic": 4.5834698485363266,
+      "calls": 0.6769099035775635,
+      "fields": 1.1668440311344612,
+      "arrays": 1.202305743928812,
+      "host": 1.9926660799258304,
+      "gc": 1.7662750403737433,
+      "asyncWork": 2.3303353122429487,
+      "spectralNorm": 1.0522041382272078
+    },
+    "aot_over_cpp_geometric_mean": 2.2373070474051566,
+    "validation": {
+      "cpp_tests_passed": 1583,
+      "python_tests_passed": 112,
+      "python_tests_skipped": 2,
+      "linked_native_tests_passed": 49,
+      "vm_aot_corpus": {
+        "function_value": {
+          "executed": 15,
+          "rejected": 2
+        },
+        "builtin_function_value": {
+          "executed": 23,
+          "rejected": 0
+        },
+        "dynamic_array": {
+          "executed": 20,
+          "rejected": 0
+        },
+        "global": {
+          "executed": 3,
+          "rejected": 1
+        },
+        "numeric_conversion": {
+          "executed": 1,
+          "rejected": 0
+        },
+        "exception": {
+          "executed": 23,
+          "rejected": 0
+        }
+      },
+      "lint_run": false
     },
     "comparison_to_previous": {
       "comparable": false,
-      "reason": "Different benchmark suite; ratios compare lanes within this run only."
+      "reason": "C++ sort now uses stable_sort and maintained immediate-result timing excludes redundant harness rooting. Other original kernels, machine and timing options match; focused AOT old/new remeasurements are retained."
     }
   }
 }

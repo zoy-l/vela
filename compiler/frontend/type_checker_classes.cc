@@ -241,9 +241,6 @@ void TypeChecker::ResolveField(const Field& field,
       .visibility = field.visibility,
   };
   if (field.storage == MemberStorage::Static) {
-    if (field.role == FieldRole::Parameter) {
-      AddDiagnostic(field.location, "static fields cannot use param");
-    }
     if (!info.static_fields.emplace(field.name, descriptor).second ||
         info.fields.contains(field.name)) {
       AddDiagnostic(field.location, "duplicate field '" + field.name + "'");
@@ -258,12 +255,7 @@ void TypeChecker::ResolveField(const Field& field,
   } else {
     info.field_order.push_back(field.name);
   }
-  if (field.role == FieldRole::Parameter) {
-    if (class_declaration.constructor_kind == ConstructorKind::Explicit) {
-      AddDiagnostic(
-          field.location,
-          "param fields and an explicit constructor parameter list are mutually exclusive");
-    }
+  if (class_declaration.IsConstructorField(field)) {
     info.constructor.parameter_indices.emplace(
         field.name, static_cast<std::uint32_t>(info.constructor.parameters.size()));
     info.constructor.parameters.push_back({.name = field.name, .type = type});
@@ -279,7 +271,7 @@ TypeChecker::Type TypeChecker::CheckClassConstruction(const ClassInfo& class_inf
   for (const CallArgument& argument : expression.arguments) {
     if (class_info.declaration->constructor_kind == ConstructorKind::Generated &&
         argument.name.empty()) {
-      AddDiagnostic(argument.location, "param constructor arguments must be named");
+      AddDiagnostic(argument.location, "generated constructor arguments must be named");
     }
   }
   return CheckFunctionCall(class_info.constructor, expression);
@@ -445,7 +437,7 @@ void TypeChecker::CheckFieldInitializers(const Class& owner, const ClassInfo& in
       }
     } else if (field.storage == MemberStorage::Static ||
                (owner.constructor_kind == ConstructorKind::Generated &&
-                field.role != FieldRole::Parameter)) {
+                !owner.IsConstructorField(field))) {
       AddDiagnostic(field.location,
                     "field requires an initializer or explicit constructor initialization");
     }

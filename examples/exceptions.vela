@@ -1,5 +1,5 @@
 class ValidationError {
-  public param message: string;
+  message: string;
 }
 func validate(value: int): int {
   if (value < 0) {

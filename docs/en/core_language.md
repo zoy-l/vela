@@ -113,9 +113,9 @@ func identity<T>(value: T): T {
 }
 
 class Box<T> {
-  public param value: T;
+  value: T;
 
-  public get(): T {
+  get(): T {
     return this.value;
   }
 }
@@ -144,10 +144,10 @@ interface Measurable {
 }
 
 class Rectangle implements Measurable {
-  public param width: int;
-  public param height: int;
+  width: int;
+  height: int;
 
-  public measure(): int {
+  measure(): int {
     return this.width * this.height;
   }
 }
@@ -273,16 +273,16 @@ func requireRectangle(value: Measurable): Rectangle {
 performs a numeric conversion. Numeric conversions remain explicit
 `toInt()`/`toDouble()` operations.
 
-## Class construction with param fields
+## Class construction from fields
 
-The selected field modifier is `param`, written after visibility and before
-the field name. It declares a field and a same-name constructor parameter
-together. This replaces the earlier Dart field-formal constructor examples:
+Class members are public by default; only `private` needs a visibility modifier.
+When a class has no explicit constructor parameter list, each public instance
+field declares a same-name named constructor parameter. No field modifier is needed:
 
 ```typescript
 class Counter {
-  public param value: int;
-  public param step: int = 1;
+  value: int;
+  step: int = 1;
 
   private count: int = 0;
 
@@ -290,7 +290,7 @@ class Counter {
     // All required fields are initialized before this body executes.
   }
 
-  public next(): int {
+  next(): int {
     this.value = this.value + this.step;
     this.count = this.count + 1;
     return this.value;
@@ -309,26 +309,44 @@ func main(): void {
 }
 ```
 
-`param` is an instance-field modifier, not an annotation. Constructor arguments
-generated from these fields are named: a field without an initializer is
-required, and a field with an initializer supplies the default when omitted.
-Visibility controls member access independently of parameter generation.
-Ordinary fields do not create constructor parameters; static fields cannot
-use `param`. Calls retain `ClassName(...)` syntax without `new`.
+Generated constructor arguments are named: a public instance field without an
+initializer is required, and one with an initializer supplies the default when
+omitted. Nullable types allow null values but do not make arguments optional:
+`text: string?` is required, while `text: string? = null` may be omitted.
+Private and static fields do not create constructor parameters. Private fields
+need an initializer or assignment by an explicit constructor; static fields need
+an initializer. Calls retain `ClassName(...)` syntax without `new`.
 
 `constructor { ... }` is an optional body for the generated constructor, not
 a zero-argument parameter declaration. Fields must be initialized before that
 body runs. Explicit arguments evaluate once in source order. Omitted defaults
 then evaluate in field declaration order, followed by the constructor body.
 A supplied argument skips its field's default. Defaults cannot access `this`
-or caller locals. The generated constructor keeps its newly allocated receiver
+or caller locals. Each omitted default is evaluated for each construction;
+an array default such as `values: int[] = []` creates an independent array for
+each instance. The generated constructor keeps its newly allocated receiver
 rooted and stores arguments directly into fields; it does not retain every
 field argument in a separate register until the body starts.
 
 Classes requiring hand-written parameters can instead declare
-`constructor(name: Type, ...) { ... }`. Hand-written parameter lists and
-`param` fields are mutually exclusive. This makes the signature's source
-explicit and avoids silently injecting parameters into `constructor()`.
+`constructor(name: Type, ...) { ... }`. That list defines the complete constructor
+signature; fields do not add parameters. `constructor()` therefore declares a
+zero-argument constructor. Defaults still run before the body, which must assign
+any fields left uninitialized:
+
+```typescript
+class Box {
+  value: int;
+  text: string = '';
+  private adjustment: int = 2;
+
+  constructor(initial: int) {
+    this.value = initial + this.adjustment;
+  }
+}
+
+const box = Box(initial: 40); // value = 42; no value/text constructor arguments
+```
 
 Parameter binding and field offsets are resolved at compile time. There is
 no runtime annotation execution, reflection, or argument-name dictionary.
@@ -336,20 +354,20 @@ no runtime annotation execution, reflection, or argument-name dictionary.
 For explicit constructors, defaults run before the body; definite initialization
 analysis requires every field to be initialized on every returning path. Reading
 an uninitialized field, calling an instance method, or exposing `this` before
-initialization is rejected. Members default to `public`; `private` is scoped to
-the declaring class. Private `param` fields still create named parameters.
+initialization is rejected. `private` is scoped to the declaring class. Private
+members remain inaccessible through dynamic dispatch as well as static access.
 
-A derived constructor does not inherit the base class's `param` arguments. When
+A derived constructor does not inherit the base class's constructor arguments. When
 the base has required parameters, the derived constructor must pass them through
 an explicit `super(...)` call:
 
 ```typescript
 class Counter {
-  public param value: int;
+  value: int;
 }
 
 class BonusCounter extends Counter {
-  public param bonus: int;
+  bonus: int;
 
   constructor {
     super(value: this.bonus * 20);
@@ -369,7 +387,7 @@ base has a required parameter is a compile-time error.
 ```typescript
 class Counts {
   private static count: int = 0;
-  public static next(): int {
+  static next(): int {
     Counts.count = Counts.count + 1;
     return Counts.count;
   }

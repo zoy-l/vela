@@ -380,7 +380,7 @@ Diagnostics Initialization::Run() {
   }
   for (const auto& field : owner_.fields) {
     if (field.storage == MemberStorage::Instance) {
-      if (field.initializer || field.role == FieldRole::Parameter) {
+      if (field.initializer || owner_.IsConstructorField(field)) {
         initialized.fields.insert(field.name);
       }
     }

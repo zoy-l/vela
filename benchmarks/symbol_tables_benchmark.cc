@@ -18,7 +18,7 @@ std::string BuildSymbolSource(std::int64_t count) {
     const std::string class_name = "SymbolTableBenchmarkClass" + suffix;
     source += "enum SymbolTableBenchmarkEnum" + suffix + " { first, second }\n";
     source += "class " + class_name +
-              " { param value: int; "
+              " { value: int; "
               "increment(amount: int): int { return this.value + amount; } }\n";
     source += "func symbol_table_benchmark_function_" + suffix +
               "(parameter_with_a_long_name: int): int { "

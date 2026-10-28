@@ -17,7 +17,7 @@ compiler, typed IR, register VM, and isolate-local GC foundation.
 - [x] Logical negation
 - [x] `if` and `while`
 - [x] Functions and direct function calls
-- [x] Classes, fixed fields, and param/explicit construction
+- [x] Classes, fixed fields, and generated/explicit construction
 - [x] Enums with explicitly qualified members (`Enum.member`)
 - [x] Static type checking
 - [x] Typed IR and fixed-width register bytecode

@@ -59,7 +59,7 @@ type aliases include generic parameters and their complete definitions. Methods,
 properties and parameters are labeled by role, with qualified member names.
 
 Typing `(` or `,` in a call opens code completion for named arguments, including
-generated `param` constructors and explicit constructors. Selecting `value:` inserts
+generated field constructors and explicit constructors. Selecting `value:` inserts
 `value: `; supplied arguments are omitted. Typing a prefix filters parameter names,
 and their details show types and defaults. **Ctrl+Space** opens completion manually.
 

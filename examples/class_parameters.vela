@@ -1,13 +1,13 @@
 class Counter {
-  public param value: int;
-  public param step: int = 1;
+  value: int;
+  step: int = 1;
   private count: int = 0;
 
   constructor {
     this.count = this.count + 1;
   }
 
-  public next(): int {
+  next(): int {
     this.value = this.value + this.step;
     return this.value;
   }

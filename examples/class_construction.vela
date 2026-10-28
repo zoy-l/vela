@@ -1,9 +1,9 @@
 class Theme {
-  param brightness: int;
+  brightness: int;
 }
 
 class App {
-  param theme: Theme;
+  theme: Theme;
 }
 
 func createApp(): App {

@@ -128,7 +128,7 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
   const bool generated = source.constructor_kind == frontend::ConstructorKind::Generated;
   std::vector<RegisterId> arguments(generated ? 0 : signature.parameters.size());
   std::vector<bool> provided(info.field_order.size(), false);
-  // param 实参依源码顺序直接写入尚未逸出的对象，避免为全部字段保留寄存器。
+  // 自动构造的实参依源码顺序直接写入尚未逸出的对象，避免为全部字段保留寄存器。
   for (std::size_t index = 0; index < call_arguments.size(); ++index) {
     const auto& argument = call_arguments.subspan(index).front();
     const auto parameter = argument_order.subspan(index).front();

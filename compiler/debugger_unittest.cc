@@ -138,9 +138,9 @@ TEST(DebuggerTest, JsonConversionAndDynamicCallsKeepOrdinaryFramesAndGcRoots) {
   runtime::Isolate isolate(1);
   const auto compiled = CompileSource(R"(
 class Payload {
-  public param value: dynamic;
-  public toJson(): dynamic[] { return [this.value, true, null]; }
-  public read(): int { return this.value; }
+  value: dynamic;
+  toJson(): dynamic[] { return [this.value, true, null]; }
+  read(): int { return this.value; }
 }
 func main(): int {
   const object: dynamic = Payload(value: 42);
@@ -219,7 +219,7 @@ func main(): int { return value; }
 TEST(DebuggerTest, PreservesExceptionAndFinallySemantics) {
   runtime::Isolate isolate(1);
   const auto compiled = CompileSource(R"(
-class Failure { param value: int; }
+class Failure { value: int; }
 func fail(): int { throw Failure(value: 42); }
 func main(): int {
   try { return fail(); }

@@ -1,5 +1,5 @@
 class Counter {
-  param value: int;
+  value: int;
 }
 
 func main(): int {

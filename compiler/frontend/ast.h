@@ -42,7 +42,6 @@ enum class BindingKind : std::uint8_t {
 
 enum class Visibility : std::uint8_t { Public, Private };
 enum class MemberStorage : std::uint8_t { Instance, Static };
-enum class FieldRole : std::uint8_t { Ordinary, Parameter };
 enum class ConstructorKind : std::uint8_t { Generated, Explicit };
 enum class ExportKind : std::uint8_t { Local, Exported };
 
@@ -109,7 +108,6 @@ struct Field final {
   SourceLocation location;
   Visibility visibility = Visibility::Public;
   MemberStorage storage = MemberStorage::Instance;
-  FieldRole role = FieldRole::Ordinary;
   std::unique_ptr<Expression> initializer;
 };
 
@@ -207,6 +205,11 @@ struct Class final {
   std::vector<TypeName> interfaces;
   std::optional<TypeName> base_class;
   ExportKind export_kind = ExportKind::Local;
+
+  [[nodiscard]] bool IsConstructorField(const Field& field) const {
+    return constructor_kind == ConstructorKind::Generated &&
+           field.storage == MemberStorage::Instance && field.visibility == Visibility::Public;
+  }
 };
 
 struct Interface final {

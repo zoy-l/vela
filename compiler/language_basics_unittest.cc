@@ -114,7 +114,7 @@ INSTANTIATE_TEST_SUITE_P(
           return 2;
         } func main(): int { return read(true) + read(null); })",
                              42},
-        BasicLanguageProgram{R"(class Box { param value: int?;
+        BasicLanguageProgram{R"(class Box { value: int?;
           read(): int { const value = this.value; if (value != null) return value; return 2; }
         } func main(): int { let box: Box? = Box(value: 40);
           if (box == null) return 0;
@@ -162,7 +162,7 @@ INSTANTIATE_TEST_SUITE_P(
           return 0;
         })",
                              42},
-        BasicLanguageProgram{R"(class Box { param value: string?[]; }
+        BasicLanguageProgram{R"(class Box { value: string?[]; }
         func main(): int {
           const boxes: Box?[] = [null, Box(value: [null, "ab"])];
           for (let i = 0; i < 100; i = i + 1) { const garbage = Box(value: ["x" + "y"]); }
@@ -193,7 +193,7 @@ INSTANTIATE_TEST_SUITE_P(
           const result = value + (value = 2); return result;
         })",
                              42},
-        BasicLanguageProgram{R"(class Box { param value: Box?; }
+        BasicLanguageProgram{R"(class Box { value: Box?; }
         func main(): int { let box: Box? = Box(value: null); const saved = box;
           if (box != null) { box.value = (box = null); }
           if (saved != null && saved.value == null && box == null) return 42;
@@ -287,7 +287,7 @@ INSTANTIATE_TEST_SUITE_P(
         BasicLanguageError{"func g(): int { return 1; } func f(): int { const g=1; return g(); }",
                            "not callable"},
         BasicLanguageError{"func f(): void { const this = 1; }", "reserved"},
-        BasicLanguageError{"class A { param x: int; x(): int { return 1; } }", "already used"},
+        BasicLanguageError{"class A { x: int; x(): int { return 1; } }", "already used"},
         BasicLanguageError{"class A {} func A(): int { return 1; }", "duplicate"},
         BasicLanguageError{"func v(): void {} func main(): bool { return v() == v(); }",
                            "value operands"},

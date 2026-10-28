@@ -67,6 +67,7 @@ class FunctionEmitter final {
   void Finish(llvm::Value* status);
   void EmitInteger(const ir::Instruction& instruction);
   void EmitDouble(const ir::Instruction& instruction);
+  void EmitNumericConversion(const ir::Instruction& instruction, Builtin builtin);
   void EmitComparison(const ir::Instruction& instruction);
   void EmitValueEquality(const ir::Instruction& instruction);
   llvm::Value* ByteAddress(llvm::Value* object, std::uint64_t offset);
@@ -75,6 +76,7 @@ class FunctionEmitter final {
   void EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg);
   void EmitField(const ir::Instruction& instruction);
   void EmitGlobalLoad(const ir::Instruction& instruction);
+  void EmitGlobalStore(const ir::Instruction& instruction);
   const layout::Type& ArrayElement(const ir::Instruction& instruction) const;
   llvm::Type* ElementStorage(const layout::Type& element);
   void WriteElement(llvm::Value* address, const layout::Type& element, ir::RegisterId reg);

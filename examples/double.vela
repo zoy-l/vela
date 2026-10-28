@@ -1,5 +1,5 @@
 class Measurement {
-  param value: double;
+  value: double;
   
   scale(factor: double): double {
     return this.value * factor;
