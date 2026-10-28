@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -164,12 +165,20 @@ def compiler_build_identity() -> str:
     return digest.hexdigest()
 
 
-def configure(variant: str) -> Path:
+def configure(variant: str, *, cc_wrapper: str = "sccache") -> Path:
     from tools.llvm import link_configuration
 
     tools = toolchain_tools()
+    if cc_wrapper:
+        wrapper = shutil.which(cc_wrapper)
+        if wrapper is None:
+            raise RuntimeError(
+                f"Missing compiler wrapper: {cc_wrapper}; install it or pass --cc-wrapper=''"
+            )
+        cc_wrapper = Path(wrapper).resolve().as_posix()
     output = output_directory(variant)
     args = {
+        "cc_wrapper": cc_wrapper,
         "target_cpu": target_cpu(),
         "target_os": target_os(),
         "vela_archiver": tools["archiver"].as_posix(),
@@ -202,12 +211,16 @@ def configure(variant: str) -> Path:
 def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("variant", choices=BUILD_VARIANTS, default="debug", nargs="?")
+    parser.add_argument(
+        "--cc-wrapper", default="sccache",
+        help="Compiler wrapper executable (default: sccache; pass an empty string to disable)",
+    )
     return parser.parse_args(arguments)
 
 
 def main(arguments: list[str] | None = None) -> int:
     parsed = parse_arguments(arguments)
-    configure(parsed.variant)
+    configure(parsed.variant, cc_wrapper=parsed.cc_wrapper)
     return 0
 
 

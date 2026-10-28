@@ -1,4 +1,6 @@
 declare_args() {
+  # 仅用于 C/C++/汇编编译；空字符串显式关闭编译缓存。
+  cc_wrapper = "sccache"
   vela_build_config = "debug"
   vela_build_identity = ""
   vela_cc = ""

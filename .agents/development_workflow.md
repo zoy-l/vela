@@ -34,6 +34,22 @@ constraints.
 - Add third-party dependencies through `DEPS`, GN configuration, and necessary license records.
   Do not introduce CMake, FetchContent, Conan, or vcpkg.
 
+### Compiler cache
+
+Developer builds use an installed `sccache` executable by default for C, C++, and assembly
+compilation on Windows x64, Linux x64, and macOS arm64. Configuration resolves its absolute path;
+a missing wrapper is an error. Linking and archiving invoke the toolchain directly.
+
+`python -m tools.vl config debug --cc-wrapper /path/to/sccache` and
+`python -m tools.vl build release tests --cc-wrapper /path/to/sccache` select a wrapper executable.
+Quote paths containing spaces. An explicit `--cc-wrapper=""` disables the wrapper for that
+invocation. A later command that configures a build without this option selects `sccache` again.
+The wrapper is a developer build dependency; Vela distribution users do not need it.
+
+Use `sccache --show-stats` to inspect cache hits. Cache storage and remote-cache settings use
+sccache's own configuration. Changes to compiler flags, headers, or the compiler still participate
+in its cache key; enabling a wrapper does not change Debug/Release separation or runtime ABI rules.
+
 ## Validation and completion
 
 - During implementation, run targeted validation only when it can reveal a concrete current error.

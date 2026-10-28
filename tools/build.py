@@ -16,6 +16,10 @@ ROOT_TARGETS = {"default", "tests", "benchmarks"}
 def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build_arguments", nargs="*", metavar="VARIANT_OR_TARGET")
+    parser.add_argument(
+        "--cc-wrapper", default="sccache",
+        help="Compiler wrapper executable (default: sccache; pass an empty string to disable)",
+    )
     parsed = parser.parse_args(arguments)
     values = list(parsed.build_arguments)
     variant = "debug"
@@ -26,11 +30,11 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     target = values[0] if values else "default"
     if target not in ROOT_TARGETS:
         parser.error(f"unsupported build target: {target}")
-    return argparse.Namespace(variant=variant, target=target)
+    return argparse.Namespace(variant=variant, target=target, cc_wrapper=parsed.cc_wrapper)
 
 
-def build(variant: str, target: str) -> None:
-    output = configure(variant)
+def build(variant: str, target: str, *, cc_wrapper: str = "sccache") -> None:
+    output = configure(variant, cc_wrapper=cc_wrapper)
     tools = toolchain_tools()
     ninja_target = ":" + target
     subprocess.run(
@@ -42,7 +46,7 @@ def build(variant: str, target: str) -> None:
 
 def main(arguments: list[str] | None = None) -> int:
     parsed = parse_arguments(arguments)
-    build(parsed.variant, parsed.target)
+    build(parsed.variant, parsed.target, cc_wrapper=parsed.cc_wrapper)
     return 0
 
 
