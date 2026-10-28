@@ -68,10 +68,20 @@ extern "C" std::uint8_t vela_native_v1_type_test(NativeExecution* execution,
              : 0;
 }
 
-extern "C" std::uint8_t vela_native_v1_get_global(NativeExecution* execution,
-                                                  std::uint32_t index,
-                                                  NativeValue* result) {
-  return Store(result, execution->instance().LoadGlobal(*execution, index));
+extern "C" std::uint8_t vela_native_v1_initialize_global(NativeExecution* execution,
+                                                         std::uint32_t index,
+                                                         const TracePosition* position,
+                                                         NativeValue* result) {
+  NativeTraceFrame frame;
+  if (position != nullptr) {
+    execution->MaterializeFrame(frame, position->function);
+    *execution->current_instruction() = position->instruction;
+  }
+  const auto status = Store(result, execution->instance().InitializeGlobal(*execution, index));
+  if (position != nullptr) {
+    execution->Exit();
+  }
+  return status;
 }
 
 extern "C" void vela_native_v1_set_global(NativeExecution* execution,

@@ -12,6 +12,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/Dominators.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/SourceMgr.h>
@@ -61,6 +62,48 @@ export func negate(value: bool): bool { return !value; }
   const auto result = Compile(*prepared, {.exports = {"empty", "negate"}});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   EXPECT_FALSE(result->object.empty());
+}
+
+TEST(NativeCompilerTest, ReadsReadyGlobalsDirectlyAndInitializesOnlyOnTheOtherBranch) {
+  const auto prepared = Prepare(R"(
+let count = 42;
+export func read(): int { return count; }
+)");
+  ASSERT_TRUE(prepared.has_value());
+  const auto result = Compile(*prepared, {.optimization = NativeOptimization::None,
+                                        .exports = {"read"}});
+  ASSERT_TRUE(result.has_value()) << result.error().front().message;
+  llvm::LLVMContext context;
+  llvm::SMDiagnostic diagnostic;
+  const auto module = llvm::parseAssemblyString(result->llvm_ir, diagnostic, context);
+  ASSERT_NE(module, nullptr);
+  ASSERT_EQ(result->exports.size(), 1U);
+  const auto* body = module->getFunction(
+      "vela_aot_body_" + std::to_string(result->exports.front().function));
+  ASSERT_NE(body, nullptr);
+  std::size_t ready_blocks = 0;
+  std::size_t initializer_calls = 0;
+  for (const auto& block : *body) {
+    if (block.getName() == "global.ready") {
+      ++ready_blocks;
+      for (const auto& instruction : block) {
+        EXPECT_FALSE(llvm::isa<llvm::CallBase>(instruction));
+      }
+    }
+    for (const auto& instruction : block) {
+      const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+      if (call == nullptr) {
+        continue;
+      }
+      const auto* callee = call->getCalledFunction();
+      if (callee != nullptr && callee->getName() == "vela_native_v1_initialize_global") {
+        ++initializer_calls;
+        EXPECT_EQ(block.getName(), "global.initialize");
+      }
+    }
+  }
+  EXPECT_EQ(ready_blocks, 1U);
+  EXPECT_EQ(initializer_calls, 1U);
 }
 
 TEST(NativeCompilerTest, EliminatesMonotoneIntegerReductionsWithDynamicBounds) {

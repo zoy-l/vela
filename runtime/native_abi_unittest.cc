@@ -1,6 +1,7 @@
 #include "runtime/native_abi.h"
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -28,6 +29,42 @@ NativeImage EmptyImage() {
 }
 
 }  // namespace
+
+TEST(NativeAbiTest, ValueCodecsPreservePayloadBitsAndClearReservedFields) {
+  Isolate isolate;
+  auto* object = isolate.heap().AllocateValueSlots(1);
+  auto* string = isolate.heap().AllocateString("payload");
+  ASSERT_NE(object, nullptr);
+  ASSERT_NE(string, nullptr);
+  const auto nan = std::bit_cast<double>(std::uint64_t{0x7ff8000000000042});
+  const auto values = std::to_array<Value>({
+      Value::Null(), Value::Boolean(false), Value::Boolean(true),
+      Value::Integer(std::numeric_limits<std::int64_t>::min()),
+      Value::Integer(std::numeric_limits<std::int64_t>::max()),
+      Value::Double(-0.0), Value::Double(nan),
+      Value::Double(std::numeric_limits<double>::infinity()),
+      Value::Object(object), Value::String(string),
+  });
+  for (const auto value : values) {
+    auto encoded = EncodeNativeValue(value);
+    EXPECT_EQ(encoded.reserved_byte, 0U);
+    EXPECT_EQ(encoded.reserved_half, 0U);
+    EXPECT_EQ(encoded.reserved_word, 0U);
+    const auto expected = encoded;
+    // ABI 保留字段不属于 Value；解码不得将其作为载荷或标签消费。
+    encoded.reserved_byte = 0xff;
+    encoded.reserved_half = 0xffff;
+    encoded.reserved_word = 0xffffffff;
+    const auto decoded = DecodeNativeValue(encoded);
+    EXPECT_EQ(decoded.kind(), value.kind());
+    const auto roundtrip = EncodeNativeValue(decoded);
+    EXPECT_EQ(roundtrip.kind, expected.kind);
+    EXPECT_EQ(roundtrip.payload, expected.payload);
+    EXPECT_EQ(roundtrip.reserved_byte, 0U);
+    EXPECT_EQ(roundtrip.reserved_half, 0U);
+    EXPECT_EQ(roundtrip.reserved_word, 0U);
+  }
+}
 
 TEST(NativeAbiTest, RootsSurviveCollectionAndFramesReleaseThem) {
   Isolate isolate;
@@ -74,8 +111,7 @@ TEST(NativeAbiTest, CallDepthLimitPreservesExistingFrames) {
   }
   NativeTraceFrame overflow;
   EXPECT_EQ(execution.Enter(overflow, 0), ExecutionStatus::StackOverflow);
-  EXPECT_EQ(vela_native_v1_leaf_enter(&execution),
-            static_cast<std::uint8_t>(ExecutionStatus::StackOverflow));
+  EXPECT_EQ(execution.PrepareEntry(), ExecutionStatus::StackOverflow);
   EXPECT_EQ(execution.frame_count(), kMaxCallFrames);
   while (execution.frame_count() != 0) {
     execution.Exit();
@@ -145,8 +181,7 @@ TEST(NativeAbiTest, ScalarLeafEntryDoesNotMaterializeAFrame) {
   const auto instance = NativeInstance::Instantiate(isolate, image);
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
-  EXPECT_EQ(vela_native_v1_leaf_enter(&execution),
-            static_cast<std::uint8_t>(ExecutionStatus::Returned));
+  EXPECT_EQ(execution.PrepareEntry(), ExecutionStatus::Returned);
   EXPECT_EQ(execution.frame_count(), 0U);
 }
 

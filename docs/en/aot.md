@@ -101,7 +101,7 @@ Logical frame records live on the native stack and form a linked stack in the ex
 
 Resource entry initializes and registers root storage and returns borrowed addresses for roots and large temporary storage. Generated code writes and clears root slots directly, including when restoring async state, without a runtime call per slot. These addresses remain stable across nested calls and expire at frame exit. Logical frames retain the same call-depth budget and exception traces independently of resource storage.
 
-Scalar leaf functions without handlers, calls, allocation, references, or runtime-state access check the call-depth limit at entry and materialize their logical frame only on failure. A failed leaf records its original function and instruction before creating the exception envelope, then releases the frame. Functions that can expose the stack to another operation continue to register frames for their entire execution.
+Scalar leaf functions without handlers, ordinary calls, allocation, references, or state writes check the call-depth limit directly at entry and materialize their logical frame only on failure. Scalar global reads also qualify: a Ready slot is read directly, while lazy initialization temporarily registers the caller's frame before invoking its initializer. A failed leaf records its original function and instruction before creating the exception envelope, then releases the frame. Functions that can otherwise expose the stack continue to register frames for their entire execution. Entry preparation clears pending failures only at the outermost call.
 
 ## GC roots, safepoints, and write barriers
 
@@ -147,6 +147,8 @@ AOT artifacts contain machine code, immutable descriptors, and relocations. Desc
 The same read-only code can serve multiple Isolates. Each instantiation creates independent layout bindings, rooted strings, native import tables, and global state. Handles of one instance share that state; new instances do not. Code identity and program-local type IDs jointly determine nominal identity, preventing compilation-unit collisions. Inheritance and interface dispatch continue to use resolved slots.
 
 Instantiation validates target and ABI, resolves all native imports, establishes layouts, and allocates constants after registering roots. Publish the instance handle only after complete success. Failure releases temporary roots, constants, and layout transactions instead of leaving a partially usable instance. User globals retain [module](modules.md) lazy initialization, `CyclicInitialization`, and failure retry behavior; they do not become process-start C++ static initializers.
+
+Generated global reads inspect the instance's fixed initialization-state storage and read Ready values directly from their existing GC slots. Other states call the runtime initializer; failed initialization restores Uninitialized for retry. Global writes retain the shared write barrier and publish Ready afterward. These paths use offsets derived from C++ layout facts without exposing standard-library container layouts.
 
 External instance/function handles retain required code descriptors and roots. Internal async references trace globals and constants through Future graphs without permanently rooting unreachable suspended tasks. The Isolate outlives instances, managed handles, continuations, and native producers; destruction and root operations stay on its thread. Code is statically linked into the process in this release, with no runtime unloading.
 

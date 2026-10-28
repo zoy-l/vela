@@ -65,11 +65,12 @@ class NativeInstance final {
   }
   [[nodiscard]] std::span<const Value> state() const noexcept { return {&anchor_, 1}; }
   [[nodiscard]] Value constant(std::size_t index) const noexcept;
-  [[nodiscard]] std::expected<Value, ExecutionStatus> LoadGlobal(NativeExecution& execution,
-                                                                 std::size_t index);
+  [[nodiscard]] std::expected<Value, ExecutionStatus> InitializeGlobal(NativeExecution& execution,
+                                                                       std::size_t index);
   void StoreGlobal(std::size_t index, Value value) noexcept;
 
  private:
+  friend struct NativeMemoryLayout;
   NativeInstance(NativeProgramState& data, Value anchor);
   [[nodiscard]] std::expected<void, NativeInstantiationError> BindImports(
       const layout::Program& description);

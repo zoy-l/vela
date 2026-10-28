@@ -171,14 +171,11 @@ Value NativeInstance::constant(std::size_t index) const noexcept {
       .front();
 }
 
-std::expected<Value, ExecutionStatus> NativeInstance::LoadGlobal(NativeExecution& execution,
-                                                                 std::size_t index) {
-  auto& state = data_->global_states.at(index);
-  if (state == NativeProgramState::GlobalState::Ready) {
-    return Heap::ValueSlots(*data_->values.at(NativeProgramState::kGlobals).AsObject())
-        .subspan(index)
-        .front();
-  }
+std::expected<Value, ExecutionStatus> NativeInstance::InitializeGlobal(NativeExecution& execution,
+                                                                       std::size_t index) {
+  auto& state = std::span(data_->global_states, data_->image->global_initializers.size)
+                    .subspan(index)
+                    .front();
   if (state == NativeProgramState::GlobalState::Initializing) {
     return std::unexpected(ExecutionStatus::CyclicInitialization);
   }
@@ -199,7 +196,8 @@ std::expected<Value, ExecutionStatus> NativeInstance::LoadGlobal(NativeExecution
 void NativeInstance::StoreGlobal(std::size_t index, Value value) noexcept {
   data_->isolate->heap().SetValueSlot(*data_->values.at(NativeProgramState::kGlobals).AsObject(),
                                       index, value);
-  data_->global_states.at(index) = NativeProgramState::GlobalState::Ready;
+  std::span(data_->global_states, data_->image->global_initializers.size).subspan(index).front() =
+      NativeProgramState::GlobalState::Ready;
 }
 
 std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
@@ -234,8 +232,14 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
 }
 
 std::expected<void, NativeInstantiationError> NativeInstance::InitializeConstants() {
-  data_->global_states.resize(data_->image->global_initializers.size,
-                              NativeProgramState::GlobalState::Uninitialized);
+  data_->global_states =
+      new (std::nothrow) NativeProgramState::GlobalState[data_->image->global_initializers.size]{};
+  if (data_->global_states == nullptr) {
+    return std::unexpected(NativeInstantiationError{
+        .status = NativeInstantiationStatus::OutOfMemory,
+        .message = "out of memory creating native global states",
+    });
+  }
   auto& heap = data_->isolate->heap();
   auto* constants = heap.AllocateValueSlots(data_->image->strings.size);
   if (constants != nullptr) {

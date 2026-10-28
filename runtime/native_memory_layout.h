@@ -6,6 +6,8 @@
 
 #include "runtime/array_storage.h"
 #include "runtime/native_abi.h"
+#include "runtime/native_instance.h"
+#include "runtime/native_program_state.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
 
@@ -17,6 +19,7 @@ struct NativeMemoryLayout final {
   static constexpr auto kValuePayload = offsetof(Value, payload_);
   static constexpr auto kValueKind = offsetof(Value, kind_);
   static constexpr auto kObjectLength = offsetof(HeapObject, length);
+  static constexpr auto kObjectNativePayload = offsetof(HeapObject, native_payload);
   static constexpr auto kArrayData = sizeof(HeapObject) + offsetof(internal::ArrayStorage, data);
   static constexpr auto kArrayCapacity =
       sizeof(HeapObject) + offsetof(internal::ArrayStorage, capacity);
@@ -24,6 +27,14 @@ struct NativeMemoryLayout final {
       sizeof(HeapObject) + offsetof(internal::ArrayStorage, mutation);
   static constexpr auto kExecutionFrame = offsetof(NativeExecution, current_frame_);
   static constexpr auto kExecutionDepth = offsetof(NativeExecution, frame_count_);
+  static constexpr auto kExecutionInstance = offsetof(NativeExecution, instance_);
+  static constexpr auto kExecutionException = offsetof(NativeExecution, pending_exception_);
+  static constexpr auto kExecutionExceptionAllocationFailed =
+      offsetof(NativeExecution, exception_allocation_failed_);
+  static constexpr auto kInstanceData = offsetof(NativeInstance, data_);
+  static constexpr auto kProgramGlobalStates = offsetof(NativeProgramState, global_states);
+  static constexpr auto kProgramGlobals = offsetof(NativeProgramState, values) +
+                                          sizeof(Value) * NativeProgramState::kGlobals;
   static constexpr auto kFrameRoots = offsetof(NativeFrameAccess, roots);
   static constexpr auto kFrameStorage = offsetof(NativeFrameAccess, storage);
 };
@@ -33,6 +44,8 @@ static_assert(std::is_standard_layout_v<internal::ArrayStorage>);
 static_assert(std::is_standard_layout_v<NativeFrameAccess>);
 static_assert(std::is_standard_layout_v<NativeTraceFrame>);
 static_assert(std::is_standard_layout_v<NativeExecution>);
+static_assert(std::is_standard_layout_v<NativeInstance>);
+static_assert(std::is_standard_layout_v<NativeProgramState>);
 static_assert(NativeMemoryLayout::kValuePayload == offsetof(NativeValue, payload));
 static_assert(NativeMemoryLayout::kValueKind == offsetof(NativeValue, kind));
 static_assert(sizeof(Value) == sizeof(NativeValue));

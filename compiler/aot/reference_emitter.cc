@@ -131,10 +131,8 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       break;
     }
     case Opcode::GetGlobal: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_get_global", status_type, pointer,
-                                                word, pointer);
-      status = builder_.CreateCall(helper, {context, index, result_});
-      break;
+      EmitGlobalLoad(instruction);
+      return {};
     }
     case Opcode::SetGlobal: {
       auto helper = module_.getOrInsertFunction("vela_native_v1_set_global", builder_.getVoidTy(),

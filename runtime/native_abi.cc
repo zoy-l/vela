@@ -1,18 +1,18 @@
 #include "runtime/native_abi.h"
 
-#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <new>
 #include <span>
-#include <utility>
 
 #include "base/execution_limits.h"
 #include "base/execution_status.h"
 #include "runtime/exception.h"
 #include "runtime/isolate.h"
 #include "runtime/native_instance.h"
+#include "runtime/native_memory_layout.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -66,10 +66,14 @@ ExecutionStatus NativeExecution::Enter(NativeTraceFrame& frame, std::uint32_t fu
   if (prepared != ExecutionStatus::Returned) {
     return prepared;
   }
+  MaterializeFrame(frame, function);
+  return ExecutionStatus::Returned;
+}
+
+void NativeExecution::MaterializeFrame(NativeTraceFrame& frame, std::uint32_t function) noexcept {
   frame = {.position = {.function = function}, .previous = current_frame_};
   current_frame_ = &frame;
   ++frame_count_;
-  return ExecutionStatus::Returned;
 }
 
 void NativeExecution::Exit() noexcept {
@@ -99,19 +103,11 @@ extern "C" void vela_native_v1_frame_release(NativeFrame* frame) noexcept {
   std::destroy_at(frame);
 }
 
-extern "C" std::uint8_t vela_native_v1_leaf_enter(NativeExecution* execution) noexcept {
-  return static_cast<std::uint8_t>(execution != nullptr ? execution->PrepareEntry()
-                                                        : ExecutionStatus::InvalidIsolate);
-}
-
 extern "C" std::uint8_t vela_native_v1_leaf_failure(NativeExecution* execution,
                                                     const TracePosition* position,
                                                     std::uint8_t status) {
   NativeTraceFrame frame;
-  const auto entered = execution->Enter(frame, position->function);
-  if (entered != ExecutionStatus::Returned) {
-    return static_cast<std::uint8_t>(entered);
-  }
+  execution->MaterializeFrame(frame, position->function);
   *execution->current_instruction() = position->instruction;
   const auto failure = execution->HandleFailure(static_cast<ExecutionStatus>(status));
   execution->Exit();
@@ -120,49 +116,15 @@ extern "C" std::uint8_t vela_native_v1_leaf_failure(NativeExecution* execution,
 
 NativeValue EncodeNativeValue(Value value) noexcept {
   NativeValue result;
-  switch (value.kind()) {
-    case ValueKind::Null:
-      return result;
-    case ValueKind::Boolean:
-      result.kind = NativeValueKind::Boolean;
-      result.payload = value.AsBoolean() ? 1 : 0;
-      break;
-    case ValueKind::Integer:
-      result.kind = NativeValueKind::Integer;
-      result.payload = std::bit_cast<std::uint64_t>(value.AsInteger());
-      break;
-    case ValueKind::Double:
-      result.kind = NativeValueKind::Double;
-      result.payload = std::bit_cast<std::uint64_t>(value.AsDouble());
-      break;
-    case ValueKind::Object:
-      result.kind = NativeValueKind::Object;
-      result.payload = std::bit_cast<std::uint64_t>(value.AsObject());
-      break;
-    case ValueKind::String:
-      result.kind = NativeValueKind::String;
-      result.payload = std::bit_cast<std::uint64_t>(value.AsString());
-      break;
-  }
+  // 两种表示的载荷与标签已由共享布局断言约束；不复制 Value 的尾部 padding。
+  std::memcpy(&result, &value, NativeMemoryLayout::kValueKind + sizeof(ValueKind));
   return result;
 }
 
 Value DecodeNativeValue(const NativeValue& value) noexcept {
-  switch (value.kind) {
-    case NativeValueKind::Null:
-      return Value::Null();
-    case NativeValueKind::Boolean:
-      return Value::Boolean(value.payload != 0);
-    case NativeValueKind::Integer:
-      return Value::Integer(std::bit_cast<std::int64_t>(value.payload));
-    case NativeValueKind::Double:
-      return Value::Double(std::bit_cast<double>(value.payload));
-    case NativeValueKind::Object:
-      return Value::Object(std::bit_cast<HeapObject*>(value.payload));
-    case NativeValueKind::String:
-      return Value::String(std::bit_cast<StringObject*>(value.payload));
-  }
-  std::unreachable();
+  Value result;
+  std::memcpy(&result, &value, NativeMemoryLayout::kValueKind + sizeof(ValueKind));
+  return result;
 }
 
 }  // namespace vela::runtime

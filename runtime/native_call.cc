@@ -145,8 +145,8 @@ std::expected<Value, ExecutionStatus> InvokeNativeTarget(NativeExecution& execut
   if (status != ExecutionStatus::Returned) {
     return std::unexpected(status);
   }
-  auto value = DecodeNativeValue(output);
-  const RootRange root(execution.isolate().heap(), &value, 1);
+  const auto value = DecodeNativeValue(output);
+  // 只有 enum 的标量载荷需要分配盒装对象；引用结果原样返回，期间没有 GC 安全点。
   return target.result_type != kNoNativeIndex
              ? BoxDynamicValue(execution.isolate().heap(), value,
                                instance.layouts().types.at(target.result_type))

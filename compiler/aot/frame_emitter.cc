@@ -5,6 +5,7 @@
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/MDBuilder.h>
 #include <llvm/Support/Alignment.h>
 
 #include "base/execution_limits.h"
@@ -27,39 +28,30 @@ void FunctionEmitter::EmitFrameEntry() {
   Builder failure(failed);
   auto* error = failure.CreatePHI(builder_.getInt8Ty(), 0);
   failure.CreateRet(error);
-  auto check_entry = [&](llvm::Value* status) {
-    error->addIncoming(status, builder_.GetInsertBlock());
-    builder_.CreateCondBr(
-        builder_.CreateICmpEQ(status, Status(builder_, ExecutionStatus::Returned)), initialize,
-        failed);
-  };
-  auto prepare =
-      module_.getOrInsertFunction("vela_native_v1_leaf_enter", builder_.getInt8Ty(), pointer);
-  llvm::Value* depth = nullptr;
-  llvm::Value* depth_address = nullptr;
-  llvm::Value* frame_address = nullptr;
-  if (leaf_entry_) {
-    check_entry(builder_.CreateCall(prepare, {execution}));
-  } else {
-    auto* valid = llvm::BasicBlock::Create(context, "execution.valid", body_);
-    error->addIncoming(Status(builder_, ExecutionStatus::InvalidIsolate),
-                       builder_.GetInsertBlock());
-    builder_.CreateCondBr(builder_.CreateIsNotNull(execution), valid, failed);
-    builder_.SetInsertPoint(valid);
-    depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
-    frame_address = ByteAddress(execution, NativeMemoryLayout::kExecutionFrame);
-    depth = builder_.CreateLoad(word, depth_address);
-    auto* available = llvm::BasicBlock::Create(context, "depth.available", body_);
-    error->addIncoming(Status(builder_, ExecutionStatus::StackOverflow), builder_.GetInsertBlock());
-    builder_.CreateCondBr(builder_.CreateICmpULT(depth, builder_.getInt64(kMaxCallFrames)),
-                          available, failed);
-    builder_.SetInsertPoint(available);
-    auto* first = llvm::BasicBlock::Create(context, "execution.first", body_);
-    builder_.CreateCondBr(builder_.CreateICmpEQ(depth, builder_.getInt64(0)), first, initialize);
-    builder_.SetInsertPoint(first);
-    // 仅最外层入口清理上次调用的异常；嵌套调用只登记逻辑栈和深度。
-    check_entry(builder_.CreateCall(prepare, {execution}));
-  }
+  auto* valid = llvm::BasicBlock::Create(context, "execution.valid", body_);
+  error->addIncoming(Status(builder_, ExecutionStatus::InvalidIsolate), builder_.GetInsertBlock());
+  builder_.CreateCondBr(builder_.CreateIsNotNull(execution), valid, failed,
+                        llvm::MDBuilder(context).createLikelyBranchWeights());
+  builder_.SetInsertPoint(valid);
+  auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
+  auto* frame_address = ByteAddress(execution, NativeMemoryLayout::kExecutionFrame);
+  auto* depth = builder_.CreateLoad(word, depth_address);
+  auto* available = llvm::BasicBlock::Create(context, "depth.available", body_);
+  error->addIncoming(Status(builder_, ExecutionStatus::StackOverflow), builder_.GetInsertBlock());
+  builder_.CreateCondBr(builder_.CreateICmpULT(depth, builder_.getInt64(kMaxCallFrames)), available,
+                        failed, llvm::MDBuilder(context).createLikelyBranchWeights());
+  builder_.SetInsertPoint(available);
+  auto* first = llvm::BasicBlock::Create(context, "execution.first", body_);
+  builder_.CreateCondBr(builder_.CreateICmpEQ(depth, builder_.getInt64(0)), first, initialize);
+  builder_.SetInsertPoint(first);
+  // 与 NativeExecution::PrepareEntry 共用布局事实；成功入口不跨 helper 调用边界。
+  // 仅最外层清理上次异常，嵌套调用必须保留 catch 作用域中的异常状态。
+  builder_.CreateStore(llvm::Constant::getNullValue(NativeRecordType(context)),
+                       ByteAddress(execution, NativeMemoryLayout::kExecutionException));
+  builder_.CreateStore(
+      builder_.getInt8(0),
+      ByteAddress(execution, NativeMemoryLayout::kExecutionExceptionAllocationFailed));
+  builder_.CreateBr(initialize);
   builder_.SetInsertPoint(initialize);
 
   auto allocate = [&](std::size_t bytes, std::size_t alignment) {

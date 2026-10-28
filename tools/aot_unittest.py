@@ -17,6 +17,9 @@ from tools.aot_api_fixture import HOST_TESTS as PUBLIC_API_TESTS, SOURCE as PUBL
 from tools.aot_memory_fixture import HOST_TESTS as MEMORY_TESTS, SOURCE as MEMORY_SOURCE
 from tools.aot_integer_loop_fixture import HOST_TESTS as INTEGER_LOOP_TESTS, SOURCE as INTEGER_LOOP_SOURCE
 from tools.aot_field_loop_fixture import HOST_TESTS as FIELD_LOOP_TESTS, SOURCE as FIELD_LOOP_SOURCE
+from tools.aot_global_fixture import (HOST_TESTS as GLOBAL_STORAGE_TESTS,
+                                     SOURCE as GLOBAL_STORAGE_SOURCE,
+                                     LEAF_SOURCE as GLOBAL_LEAF_SOURCE)
 
 
 HOST_TESTS = r'''
@@ -33,6 +36,7 @@ HOST_TESTS = r'''
 #include <thread>
 #include <gtest/gtest.h>
 #include "base/execution_status.h"
+#include "base/execution_limits.h"
 #include "runtime/exception.h"
 #include "runtime/future.h"
 #include "runtime/isolate.h"
@@ -157,6 +161,33 @@ TEST(NativeHostTest, ErrorsAndDepthLimitsCleanUpAllNativeFrames) {
     EXPECT_EQ(Execute(INTEGER_ENTRY, execution, arguments, result), item.status);
     EXPECT_EQ(execution.frame_count(), 0U);
   }
+}
+
+TEST(NativeHostTest, ScalarEntryPreservesNestedExceptionsAndChecksDepthBeforeExecution) {
+  Isolate isolate;
+  const auto instance = NativeInstance::Instantiate(isolate, *BOOL_IMAGE());
+  ASSERT_TRUE(instance.has_value());
+  NativeExecution execution(**instance);
+  const std::array arguments{NativeValue{.payload = 1, .kind = NativeValueKind::Boolean}};
+  NativeValue result;
+  EXPECT_EQ(static_cast<ExecutionStatus>(BOOL_ENTRY(nullptr, arguments.data(), 1, &result)),
+            ExecutionStatus::InvalidIsolate);
+  std::array<NativeTraceFrame, vela::kMaxCallFrames> frames;
+  ASSERT_EQ(execution.Enter(frames.front(), 0), ExecutionStatus::Returned);
+  ASSERT_EQ(execution.HandleFailure(ExecutionStatus::DivisionByZero),
+            ExecutionStatus::DivisionByZero);
+  const auto pending = execution.pending_exception().AsObject();
+  ASSERT_EQ(Execute(BOOL_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
+  EXPECT_EQ(execution.pending_exception().AsObject(), pending);
+  for (std::size_t index = 1; index < frames.size(); ++index) {
+    ASSERT_EQ(execution.Enter(frames[index], 0), ExecutionStatus::Returned);
+  }
+  EXPECT_EQ(Execute(BOOL_ENTRY, execution, arguments, result), ExecutionStatus::StackOverflow);
+  EXPECT_EQ(execution.frame_count(), frames.size());
+  while (execution.frame_count() != 0) { execution.Exit(); }
+  ASSERT_EQ(Execute(BOOL_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
+  EXPECT_FALSE(execution.HasException());
+  EXPECT_EQ(execution.frame_count(), 0U);
 }
 
 TEST(NativeHostTest, FloatingValuesPreserveNanInfinityAndSignedZero) {
@@ -674,6 +705,7 @@ class NativeObjectTest(unittest.TestCase):
         exports = ["calculate", *{
             "callable_entry": ["globalCounter", "readGlobal", "retainCycle"],
             "async_entry": ["readTrace"],
+            "global_leaf_entry": ["repair"],
         }.get(name, [])]
         self.command([self.executable, "build", entry, "--emit=obj",
                       *["--export=" + value for value in exports], "-o", object_file])
@@ -1101,8 +1133,11 @@ export async func calculate(): Future<int> {
         fixtures["MEMORY_ENTRY"] = MEMORY_SOURCE
         fixtures["INTEGER_LOOP_ENTRY"] = INTEGER_LOOP_SOURCE
         fixtures["FIELD_LOOP_ENTRY"] = FIELD_LOOP_SOURCE
+        fixtures["GLOBAL_STORAGE_ENTRY"] = GLOBAL_STORAGE_SOURCE
+        fixtures["GLOBAL_LEAF_ENTRY"] = GLOBAL_LEAF_SOURCE
         fixtures["VOID_ENTRY"] = "export func calculate(): void {}"
-        host = HOST_TESTS + ASYNC_COMPOSITION_TESTS + PUBLIC_API_TESTS + MEMORY_TESTS + INTEGER_LOOP_TESTS + FIELD_LOOP_TESTS
+        host = (HOST_TESTS + ASYNC_COMPOSITION_TESTS + PUBLIC_API_TESTS + MEMORY_TESTS
+                + INTEGER_LOOP_TESTS + FIELD_LOOP_TESTS + GLOBAL_STORAGE_TESTS)
         loop_lines = [index for index, line in enumerate(INTEGER_LOOP_SOURCE.splitlines(), 1)
                       if "for (let index" in line][:5]
         host = host.replace("INTEGER_LOOP_TRACE_LINES", ", ".join(map(str, loop_lines)))
@@ -1155,7 +1190,7 @@ export async func calculate(): Future<int> {
                               "-framework", "CoreFoundation"])
             self.command([self.tools["cxx"], *flags, source_file, *objects, runtime, *gtest])
         executed = self.command([executable])
-        self.assertIn("[  PASSED  ] 38 tests.", executed.stdout)
+        self.assertIn("[  PASSED  ] 41 tests.", executed.stdout)
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
         symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout
         self.assertNotIn("vela::vm::", symbols)

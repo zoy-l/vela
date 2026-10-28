@@ -26,6 +26,13 @@ struct NativeProgramState final {
   static constexpr std::size_t kGlobals = 1;
   static constexpr std::size_t kStateSlots = 2;
 
+  NativeProgramState() = default;
+  ~NativeProgramState();
+  NativeProgramState(const NativeProgramState&) = delete;
+  NativeProgramState& operator=(const NativeProgramState&) = delete;
+  NativeProgramState(NativeProgramState&&) = delete;
+  NativeProgramState& operator=(NativeProgramState&&) = delete;
+
   Isolate* isolate = nullptr;
   const NativeImage* image = nullptr;
   ProgramLayouts layouts;
@@ -33,7 +40,8 @@ struct NativeProgramState final {
   const CodeIdentity* code_identity = nullptr;
   std::vector<CallSignature> signatures;
   std::vector<std::shared_ptr<const NativeFunction>> imports;
-  std::vector<GlobalState> global_states;
+  // 数量由不可变 image 确定；独占定长存储供生成代码直接读取，不依赖 vector 布局。
+  GlobalState* global_states = nullptr;
   std::array<Value, kStateSlots> values;
 };
 

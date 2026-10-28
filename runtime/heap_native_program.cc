@@ -10,6 +10,10 @@
 
 namespace vela::runtime {
 
+NativeProgramState::~NativeProgramState() {
+  delete[] global_states;
+}
+
 HeapObject* Heap::AllocateNativeProgram(std::unique_ptr<NativeProgramState> state) noexcept {
   return AllocateObject(ObjectKind::NativeProgram, sizeof(HeapObject),
                         [&state](HeapObject& object) { object.native_payload = state.release(); });

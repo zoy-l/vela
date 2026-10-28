@@ -98,6 +98,8 @@ class NativeExecution final {
 
   [[nodiscard]] ExecutionStatus Enter(NativeTraceFrame& frame, std::uint32_t function) noexcept;
   [[nodiscard]] ExecutionStatus PrepareEntry() noexcept;
+  // 实际入口已经检查深度；延迟登记不得清理被调用方刚产生的异常。
+  void MaterializeFrame(NativeTraceFrame& frame, std::uint32_t function) noexcept;
   void Exit() noexcept;
   [[nodiscard]] std::size_t frame_count() const noexcept { return frame_count_; }
   [[nodiscard]] NativeInstance& instance() const noexcept { return *instance_; }
@@ -158,8 +160,7 @@ extern "C" std::uint8_t vela_native_v1_frame_storage(NativeExecution* execution,
                                                      NativeFrame* frame,
                                                      NativeFrameAccess* access) noexcept;
 extern "C" void vela_native_v1_frame_release(NativeFrame* frame) noexcept;
-// 仅供不调用、不分配、不观察运行时状态的标量叶函数；失败时补建逻辑帧捕获栈。
-extern "C" std::uint8_t vela_native_v1_leaf_enter(NativeExecution* execution) noexcept;
+// 标量叶函数成功时无需逻辑帧；失败时补建逻辑帧捕获栈。
 extern "C" std::uint8_t vela_native_v1_leaf_failure(NativeExecution* execution,
                                                     const TracePosition* position,
                                                     std::uint8_t status);

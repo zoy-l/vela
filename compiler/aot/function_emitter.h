@@ -63,6 +63,7 @@ class FunctionEmitter final {
   void CheckStatus(llvm::Value* status);
   void Fail(llvm::Value* status);
   void SetPosition();
+  llvm::Value* SourcePosition();
   void Finish(llvm::Value* status);
   void EmitInteger(const ir::Instruction& instruction);
   void EmitDouble(const ir::Instruction& instruction);
@@ -73,6 +74,7 @@ class FunctionEmitter final {
   void WriteHeapValue(llvm::Value* address, ir::RegisterId reg);
   void EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg);
   void EmitField(const ir::Instruction& instruction);
+  void EmitGlobalLoad(const ir::Instruction& instruction);
   const layout::Type& ArrayElement(const ir::Instruction& instruction) const;
   llvm::Type* ElementStorage(const layout::Type& element);
   void WriteElement(llvm::Value* address, const layout::Type& element, ir::RegisterId reg);

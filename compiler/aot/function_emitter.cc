@@ -3,6 +3,7 @@
 #include "compiler/aot/native_values.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include <llvm/ADT/SmallVector.h>
@@ -19,9 +21,11 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
@@ -113,19 +117,30 @@ void FunctionEmitter::SetPosition() {
                        instruction_slot_);
 }
 
+llvm::Value* FunctionEmitter::SourcePosition() {
+  static_assert(std::has_unique_object_representations_v<runtime::TracePosition>);
+  const runtime::TracePosition position{
+      .function = static_cast<std::uint32_t>(function_index_),
+      .instruction = static_cast<std::uint32_t>(instruction_index_),
+  };
+  const auto bytes =
+      std::bit_cast<std::array<std::uint8_t, sizeof(runtime::TracePosition)>>(position);
+  auto* value = llvm::ConstantDataArray::get(module_.getContext(), bytes);
+  // 位置不可变且由产物持有；不用动态 alloca，避免冷分支阻止包装层内联。
+  auto* global = new llvm::GlobalVariable(module_, value->getType(), true,
+                                          llvm::GlobalValue::PrivateLinkage, value,
+                                          "source.position");
+  global->setAlignment(llvm::Align(alignof(runtime::TracePosition)));
+  global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  return global;
+}
+
 void FunctionEmitter::Fail(llvm::Value* status) {
   if (leaf_entry_) {
     auto failure =
         module_.getOrInsertFunction("vela_native_v1_leaf_failure", builder_.getInt8Ty(),
                                     builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt8Ty());
-    auto* position = builder_.CreateAlloca(
-        llvm::ArrayType::get(builder_.getInt8Ty(), sizeof(runtime::TracePosition)));
-    position->setAlignment(llvm::Align(alignof(runtime::TracePosition)));
-    builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
-                         ByteAddress(position, offsetof(runtime::TracePosition, function)));
-    builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(instruction_index_)),
-                         ByteAddress(position, offsetof(runtime::TracePosition, instruction)));
-    Finish(builder_.CreateCall(failure, {body_->getArg(0), position, status}));
+    Finish(builder_.CreateCall(failure, {body_->getArg(0), SourcePosition(), status}));
     return;
   }
   SetPosition();
@@ -164,7 +179,8 @@ void FunctionEmitter::Fail(llvm::Value* status) {
 void FunctionEmitter::Check(llvm::Value* condition, ExecutionStatus failure) {
   auto* failed = llvm::BasicBlock::Create(module_.getContext(), "failed", body_);
   auto* next = llvm::BasicBlock::Create(module_.getContext(), "checked", body_);
-  builder_.CreateCondBr(condition, next, failed);
+  builder_.CreateCondBr(condition, next, failed,
+                        llvm::MDBuilder(module_.getContext()).createLikelyBranchWeights());
   builder_.SetInsertPoint(failed);
   Fail(Status(builder_, failure));
   builder_.SetInsertPoint(next);
@@ -174,7 +190,8 @@ void FunctionEmitter::CheckStatus(llvm::Value* status) {
   auto* failed = llvm::BasicBlock::Create(module_.getContext(), "call.failed", body_);
   auto* next = llvm::BasicBlock::Create(module_.getContext(), "call.returned", body_);
   builder_.CreateCondBr(builder_.CreateICmpEQ(status, Status(builder_, ExecutionStatus::Returned)),
-                        next, failed);
+                        next, failed,
+                        llvm::MDBuilder(module_.getContext()).createLikelyBranchWeights());
   builder_.SetInsertPoint(failed);
   Fail(status);
   builder_.SetInsertPoint(next);
@@ -396,8 +413,9 @@ bool FunctionEmitter::CanUseLeafEntry() const {
     return false;
   }
   return std::ranges::all_of(source_.instructions, [](const ir::Instruction& instruction) {
-    // 标量 return 不装箱；其他操作依赖共享效果信息，禁止调用、分配或观察状态。
-    if (instruction.opcode == Opcode::Return) {
+    // Ready 全局只读标量槽；惰性初始化分支在 helper 内临时登记调用者逻辑帧。
+    // 标量 return 不装箱；其余操作依赖共享效果信息，禁止调用、分配或观察状态。
+    if (instruction.opcode == Opcode::Return || instruction.opcode == Opcode::GetGlobal) {
       return true;
     }
     const auto effects = ir::AnalyzeEffects(instruction);
