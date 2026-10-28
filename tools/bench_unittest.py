@@ -50,7 +50,47 @@ def native_samples(repetitions: int = 1) -> list[dict]:
             for index in range(repetitions)]
 
 
+def ported_aot_samples(repetitions: int = 1) -> list[dict]:
+    return [{"name": f"aot/{backend}/dasprofile.queen/8/real_time", "real_time": elapsed,
+             "time_unit": "us", "result": 92, "expected_result": 92,
+             "repetition_index": index, "repetitions": repetitions,
+             "process_resident_bytes": 4096, "baseline_bytes": 100, "retained_bytes": 100,
+             "allocated_bytes": 200, "committed_bytes": 256, "suspended_frames": 0,
+             "saved_state_bytes": 0, "remaining_suspended_frames": 0, "remaining_saved_bytes": 0,
+             "entry_frame_bytes": 128, "entry_shadow_slots": 1, "entry_static_root_stores": 2}
+            for backend, elapsed in (("native", 20), ("cpp", 10))
+            for index in range(repetitions)]
+
+
 class BenchmarkReportTest(unittest.TestCase):
+    def test_aot_report_includes_ported_cpp_pairs_and_checks_references(self) -> None:
+        rows = ported_aot_samples(3)
+        names = sorted({row["name"] for row in rows})
+        text = aot_comparison_report({"benchmarks": rows}, names, 3)
+        self.assertIn("| dasprofile.queen | 8 | 20.000 | - | 10.000 | - | - | 2.000 |", text)
+        self.assertIn("over 1 paired workloads: 2.00x", text)
+        with self.assertRaisesRegex(ValueError, "missing"):
+            aot_comparison_report({"benchmarks": rows[:3]}, names, 3)
+        with self.assertRaisesRegex(ValueError, "repetitions"):
+            aot_comparison_report({"benchmarks": rows[:-1]}, names, 3)
+        rows[-1]["result"] = 0
+        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+            aot_comparison_report({"benchmarks": rows}, names, 3)
+        rows[-1]["result"] = rows[-1]["expected_result"] = 93
+        with self.assertRaisesRegex(ValueError, "checksums differ"):
+            aot_comparison_report({"benchmarks": rows}, names, 3)
+
+    def test_aot_report_checks_floating_results_with_the_declared_tolerance(self) -> None:
+        rows = ported_aot_samples()
+        names = [row["name"] for row in rows]
+        for index, row in enumerate(rows):
+            row["expected_result"] = 1.274224115941234
+            row["result"] = row["expected_result"] + index * 1e-15
+        self.assertIn("dasprofile.queen", aot_comparison_report({"benchmarks": rows}, names, 1))
+        rows[-1]["result"] += 1e-6
+        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+            aot_comparison_report({"benchmarks": rows}, names, 1)
+
     def test_aot_report_rejects_incomplete_samples_wrong_results_and_retained_tasks(self) -> None:
         rows = []
         names = []

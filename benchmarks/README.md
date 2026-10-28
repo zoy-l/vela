@@ -3,10 +3,14 @@
 Google Benchmark runs Vela workloads through the production compiler
 and VM. Versions are pinned in `DEPS`; `//benchmarks:vela_benchmarks` links the
 upstream `benchmark_main` and is separate from the language executable.
+The [16 ported dasProfile workloads](dasprofile/README.md) are checked into
+`benchmarks/dasprofile/` with Vela and C++ implementations. Run
+`python3 -m tools.vl bench --aot-compare` to include them in the existing AOT
+comparison executable and report. The port requires no daScript installation.
 `python -m tools.vl bench --aot-compare` builds offline native objects through
 `vela build` and runs `vela_aot_benchmarks` against the same VM sources and C++
 workloads. It covers arithmetic, calls, fields, reserved arrays, host bindings,
-allocation/collection, and async continuations. The report separates steady and
+allocation/collection, async continuations, and spectral norm. The report separates steady and
 first native execution and records heap, frame, shadow-slot, saved-state and
 process resident-memory costs. Resident snapshots share the benchmark process;
 run backend filters in separate processes when comparing their RSS. Generated
@@ -14,11 +18,9 @@ run backend filters in separate processes when comparing their RSS. Generated
 CLI compilation/publication time, object size, target and build identities.
 The async C++ baseline uses the same scheduler and two queued observation
 boundaries per element; its locals use ordinary C++ ownership.
-The [rolling aggregate evidence](results/rolling_summary.json) retains all 28
-AOT comparison cases with seven repetitions. The latest run measures macOS
-arm64; the previous Windows x64 acceptance run also includes RSS runs that
-select one backend per process and package link/archive probes. Results from
-these different hosts are not compared as a performance regression.
+The [rolling aggregate evidence](results/rolling_summary.json) records each
+saved suite's cases, repetitions, source identities, host and measurement
+settings. Read those boundaries before comparing its latest and previous runs.
 Native frame bytes describe the declared LLVM frame
 aggregate before optimization; root-store counts describe planned safepoint
 writes. They do not measure the final machine stack or executed store count.

@@ -1,810 +1,6 @@
 {
   "schema_version": 1,
   "previous": {
-    "run_date": "2026-10-28T19:13:29.794954+08:00",
-    "machine": {
-      "os": "Darwin",
-      "os_version": "27.0.1",
-      "os_build": "26A434",
-      "architecture": "arm64",
-      "cpu": "Apple M1 Pro"
-    },
-    "toolchain": {
-      "cpp": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)",
-      "llvm_codegen": "21.1.8",
-      "cpp_flags": [
-        "-std=c++23",
-        "-O3",
-        "-DNDEBUG",
-        "-stdlib=libc++",
-        "-fno-exceptions",
-        "-pthread",
-        "-ffp-contract=off",
-        "-I/Users/zoy/vela",
-        "-I/tmp/vela-dasprofile-run",
-        "-I/tmp/vela-dasprofile-upstream/tests/cpp",
-        "-isystem",
-        "/Users/zoy/vela/third_party/abseil-cpp",
-        "-isystem",
-        "/Users/zoy/vela/third_party/benchmark/include",
-        "-isysroot",
-        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
-        "-nostdinc++",
-        "-isystem",
-        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/c++/v1"
-      ]
-    },
-    "source": {
-      "revision": "fe72fdc6929c27f50dd476e7f0935b9b3c5d4a24",
-      "working_tree_status": " M benchmarks/aot_benchmark.cc\n M benchmarks/aot_benchmark_types.h\n M benchmarks/aot_cases.json\n M benchmarks/aot_workloads.vela\n M compiler/aot/function_emitter.h\n M compiler/aot/native_compiler_unittest.cc\n M compiler/aot/reference_emitter.cc\n M compiler/aot/scalar_emitter.cc\n M compiler/ir/analysis.cc\n M tools/aot_unittest.py\n?? tools/aot_numeric_fixture.py\n",
-      "compiler_build_identity": "b449bec4ebdd6956a6d53175a25ddb58afb4263a8b12ce055edd51a707dabbfc",
-      "changed_file_sha256": {
-        "benchmarks/aot_benchmark.cc": "f9bf5b867c2e8fc67a2fec3bdbb16f3f009ac524628947fc471886b0fb5eeb15",
-        "benchmarks/aot_benchmark_types.h": "16a6b0b9b3e6575fe95cdb478308b9d55ffa0c781d55e1fad003c2aed516cdb4",
-        "benchmarks/aot_cases.json": "54c8f16d936251511d38b4155f24948f84f4c6f90d8d0505432e0e442db31408",
-        "benchmarks/aot_workloads.vela": "b3a1272b3cef7eda7414464b8e189c009139cc10e7df542152cb63f10d00a1b9",
-        "compiler/aot/function_emitter.h": "a9905af29d8b7635e4a552fe33482039aa1fa0d57e3f5f4008212638e666764c",
-        "compiler/aot/native_compiler_unittest.cc": "6fbabef580f89eed37fc905695ad99a9626308fdd7c4379ad61a1f59dee42529",
-        "compiler/aot/reference_emitter.cc": "e4524217aa5ca2c1188cc73473dbfa2755903914951a78b887a16894caa02f8f",
-        "compiler/aot/scalar_emitter.cc": "3d731115f69cdc15e03b83073031e4ddcd9b2a4071e1633fd99c02713c194694",
-        "compiler/ir/analysis.cc": "fa1e1e2b95c4ce75724fd77e927939cafd41b8a7ea7836fa60795f297af05aa0",
-        "tools/aot_unittest.py": "6dabab3ac12da359884a9e0e939ede478aa3024fa9e8a62074978d9c047ee583",
-        "tools/aot_numeric_fixture.py": "175afaa5d3012f10be58300ab8abfe2ea30bd0b86f7f4af191425b8cadaf4b41"
-      },
-      "benchmark_binary_and_input_sha256": {
-        "/tmp/vela-dasprofile-run/cpp_0.o": "a74e67d0133e8e5d9acd70e6943a0f33356a8963ec334194ac93563e79b70c36",
-        "/tmp/vela-dasprofile-run/cpp_1.o": "83b5a8d48b81a07a00a6dc520130c733a7b0d46b1232ed4f1e70cef462cfe9fa",
-        "/tmp/vela-dasprofile-run/cpp_2.o": "efaa75b35cd45208d59c292bfbc9f7601453f1397c5c47cb0a466d5b819ff91f",
-        "/tmp/vela-dasprofile-run/cpp_3.o": "aceb2caef032f60d4ed01174f0976601e692b02ddd408db82f275f9144849c57",
-        "/tmp/vela-dasprofile-run/cpp_4.o": "d2180b8fc46ed921424992472d2542962397755bd6af3f69170ccc40e7349831",
-        "/tmp/vela-dasprofile-run/cpp_5.o": "68a6e9e96d361ed37acde1f18674bc03558fbf8e9f0b43d0b26276a73c9275ee",
-        "/tmp/vela-dasprofile-run/cpp_6.o": "1ca96fc6f577777c62a842592460a04bfe0fb68472602e5e4f22b0c7e6a8d089",
-        "/tmp/vela-dasprofile-run/cpp_7.o": "4271da590fa77df2af94fa205d7ec1e4fad53a5d5b9dcea787a2926f08b85507",
-        "/tmp/vela-dasprofile-run/cpp_8.o": "1ded49530b92bffebeb1f7d30eb5050877b7b7f6c5e3149bd4d7e17c8b6d813d",
-        "/tmp/vela-dasprofile-run/cpp_9.o": "a784f4a1b6bb9fae5cde8e4f2e8c7530304e2bf408b5527f714aa4341592bc12",
-        "/tmp/vela-dasprofile-run/cpp_10.o": "9aeb60ba0d9e5e6e7fe81219efe2d2c8dd01b504220146bd6f451c795f216aa7",
-        "/tmp/vela-dasprofile-run/cpp_11.o": "7f72bd818d532f73eb034d390a8f7ec983a119ed0053d7a0896bd5e38e06578d",
-        "/tmp/vela-dasprofile-run/cpp_12.o": "6a5a37983696278bc837f5bb7971d550afe38c979ec152876de14481f716b388",
-        "/tmp/vela-dasprofile-run/cpp_13.o": "ed13cc3eee775ff1bdaf9b01e860c1e061779cc8941713d64243e33deb0bd4fa",
-        "/tmp/vela-dasprofile-run/cpp_14.o": "0b2b5101dc0653fb60236040c719a3b5462589b7f8bb414f42b08bafc9789a06",
-        "/tmp/vela-dasprofile-run/cpp_15.o": "43ae2411f0d6ec4c8bfd4ff69eec27fb0569977f45d005cecd6b9cca57e9e794",
-        "/tmp/vela-dasprofile-run/host.o": "515c9f308e68610184d1abea2d0d0a58fe7af273dbd9e80ccd9494b97ea38047",
-        "/tmp/vela-dasprofile-run/add_one.o": "89b0a0557493af43a61c59460a421fcd73c6c19751008ce9b9ef7b0afac6725c",
-        "/tmp/vela-dasprofile-run/workloads.o": "b7dda1a0200c0f19e41a4a98e16f3571c5ce0e9574760f478f63e818623c0d74",
-        "/tmp/vela-dasprofile-run/benchmarks": "03d70c24a78e09709277f2e1a1d3840e3d4d2096ef9786d05a4de52337ea28ae",
-        "/tmp/vela-dasprofile-run/workloads.vela": "975f63d33db99a6b20c05bfb391da276ea12d48455f88a2ff028797c595ee93a",
-        "/tmp/vela-numeric-rebuild.py": "9c9605fa24fb0710d24eb0aeb8bdcf76a59ebc3d6d7f387f17c2a209a3abe96e"
-      },
-      "previous_binary_sha256": "5e753f033968746ac7884fa17c2b013df9f4f083d6f923bbb65462a6e1f15b48",
-      "maintained_binary_sha256": "82b66e3eddd8a4af48bbc364906ef6b9ccdf3cf38653f585d74bbec762564e3b"
-    },
-    "build": {
-      "variant": "release",
-      "native_optimization": "release",
-      "runtime_abi": "b449bec4ebdd6956a6d53175a25ddb58afb4263a8b12ce055edd51a707dabbfc/release",
-      "change": "Direct typed numeric conversions and non-allocating success effects"
-    },
-    "suite": {
-      "name": "AOT/C++: complete dasProfile 16 workloads and maintained 8 workloads",
-      "upstream": "https://github.com/borisbat/dasProfile",
-      "upstream_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
-      "input_sizes": {
-        "sha256": {
-          "input_bytes": 1024,
-          "hashes_per_call": 32
-        },
-        "dictionary": {
-          "keys": 500000
-        },
-        "nbodies": {
-          "bodies": 5,
-          "steps": 33000,
-          "dt": 0.01
-        },
-        "spectralNorm": {
-          "dimension": 500,
-          "power_iterations": 2
-        },
-        "mandelbrot": {
-          "grid": 64,
-          "maximum_iterations": 255
-        },
-        "expLoop": {
-          "terms": 1000000
-        },
-        "string2float": {
-          "numbers": 10000,
-          "rounds": 4
-        },
-        "particles": {
-          "particles": 50000,
-          "steps_per_call": 10
-        },
-        "queen": {
-          "board_size": 8
-        },
-        "interop": {
-          "calls": 1000000
-        },
-        "primes": {
-          "inclusive_limit": 14000
-        },
-        "tree": {
-          "loop_start": 1,
-          "loop_end_exclusive": 20000,
-          "key_modulus": 10007
-        },
-        "sort": {
-          "elements": 100000,
-          "noise_seed": 1,
-          "descending": true
-        },
-        "fibonacciLoop": {
-          "iterations": 6511134,
-          "arithmetic": "uint32 wrap"
-        },
-        "float2string": {
-          "numbers": 10000,
-          "rounds": 4
-        },
-        "fibonacciRecursive": {
-          "argument": 31
-        }
-      },
-      "maintained_cases": [
-        {
-          "name": "arithmetic",
-          "kernel": "Arithmetic",
-          "size": 1000,
-          "expected": 499500,
-          "completion": "Immediate"
-        },
-        {
-          "name": "calls",
-          "kernel": "Calls",
-          "size": 1000,
-          "expected": 500500,
-          "completion": "Immediate"
-        },
-        {
-          "name": "fields",
-          "kernel": "Fields",
-          "size": 1000,
-          "expected": 1000,
-          "completion": "Immediate"
-        },
-        {
-          "name": "arrays",
-          "kernel": "Arrays",
-          "size": 1000,
-          "expected": 499500,
-          "completion": "Immediate"
-        },
-        {
-          "name": "host",
-          "kernel": "Host",
-          "size": 1000,
-          "expected": 500500,
-          "completion": "Immediate"
-        },
-        {
-          "name": "gc",
-          "kernel": "Gc",
-          "size": 1000,
-          "expected": 2890,
-          "completion": "Immediate"
-        },
-        {
-          "name": "asyncWork",
-          "kernel": "Async",
-          "size": 64,
-          "expected": 2080,
-          "completion": "Future"
-        },
-        {
-          "name": "spectralNorm",
-          "kernel": "SpectralNorm",
-          "size": 500,
-          "expected": 1274224115,
-          "completion": "Immediate"
-        }
-      ],
-      "repetitions": 5,
-      "minimum_batch_seconds": 0.5,
-      "expected_cases": 48,
-      "actual_cases": 48,
-      "timed_batch_samples": 240,
-      "additional_previous_binary_cases": 4,
-      "all_correctness_checks_passed": true,
-      "commands": [
-        [
-          "/tmp/vela-dasprofile-baseline",
-          "--benchmark_filter=^dasprofile/(aot|cpp_matched)/(spectralNorm|expLoop)/",
-          "--benchmark_out=/tmp/vela-numeric-before.json",
-          "--benchmark_min_time=0.5s",
-          "--benchmark_repetitions=5",
-          "--benchmark_enable_random_interleaving=true",
-          "--benchmark_out_format=json"
-        ],
-        [
-          "/tmp/vela-dasprofile-run/benchmarks",
-          "--benchmark_filter=^dasprofile/(aot|cpp_matched)/",
-          "--benchmark_out=/tmp/vela-numeric-after.json",
-          "--benchmark_min_time=0.5s",
-          "--benchmark_repetitions=5",
-          "--benchmark_enable_random_interleaving=true",
-          "--benchmark_out_format=json"
-        ],
-        [
-          "/Users/zoy/vela/out/release/vela_aot_benchmarks",
-          "--benchmark_filter=^aot/(native|cpp)/",
-          "--benchmark_out=/tmp/vela-numeric-maintained.json",
-          "--benchmark_min_time=0.5s",
-          "--benchmark_repetitions=5",
-          "--benchmark_enable_random_interleaving=true",
-          "--benchmark_out_format=json"
-        ]
-      ],
-      "notes": [
-        "Only AOT and C++ lanes measured. Builds and tests finished before timing; benchmark processes ran sequentially.",
-        "Original dasProfile port inputs, C++ adapters and flags are unchanged from the previous complete run. It retains the previously documented differences in integer widths, sorting contracts and managed/native storage.",
-        "The maintained spectral norm workload uses binary64, int64 indices, dimension 500 and two power iterations on both sides. Both validate floor(norm * 1e9) == 1274224115. The original port separately verifies the double result to relative 1e-12.",
-        "C++ dasProfile adapters retain -ffp-contract=off. Maintained benchmarks use standard GN Release flags.",
-        "Sorting still compares Vela stable snapshot sorting with C++ std::sort; its ratio does not isolate equivalent sorting contracts.",
-        "Previous binary was remeasured for spectralNorm and expLoop on this machine with the same timing options.",
-        "Full Release regression: 1578 C++ tests, 112 Python tests passed, 2 skipped; the linked native fixture includes 45 GoogleTests. No lint was run."
-      ]
-    },
-    "aggregates": {
-      "aot": {
-        "sha256": {
-          "median_seconds": 0.00043222157355597143,
-          "cpu_median_seconds": 0.0004288125384142571,
-          "coefficient_of_variation": 0.005085742618499032,
-          "cpu_coefficient_of_variation": 0.0028451965471755418,
-          "half_range_over_median": 0.006297894350306623,
-          "samples": 5,
-          "result": 2048.0
-        },
-        "dictionary": {
-          "median_seconds": 0.0669866969851269,
-          "cpu_median_seconds": 0.06626963636363635,
-          "coefficient_of_variation": 0.043198603286559126,
-          "cpu_coefficient_of_variation": 0.032626740002443026,
-          "half_range_over_median": 0.04838466307979872,
-          "samples": 5,
-          "result": 13.0
-        },
-        "nbodies": {
-          "median_seconds": 0.005746038254640508,
-          "cpu_median_seconds": 0.00569901639344248,
-          "coefficient_of_variation": 0.0043335028410091654,
-          "cpu_coefficient_of_variation": 0.003439677343251024,
-          "half_range_over_median": 0.004739188452162667,
-          "samples": 5,
-          "result": -0.16907715681664656
-        },
-        "spectralNorm": {
-          "median_seconds": 0.0018514698566967978,
-          "cpu_median_seconds": 0.0018368271276595705,
-          "coefficient_of_variation": 0.0010191015647073752,
-          "cpu_coefficient_of_variation": 0.0004907222507768187,
-          "half_range_over_median": 0.0012750739172672158,
-          "samples": 5,
-          "result": 1.274224115941234
-        },
-        "mandelbrot": {
-          "median_seconds": 0.0008557817072425856,
-          "cpu_median_seconds": 0.0008500292682926817,
-          "coefficient_of_variation": 0.0016865587958027762,
-          "cpu_coefficient_of_variation": 0.0018277740785493787,
-          "half_range_over_median": 0.0022852682973933426,
-          "samples": 5,
-          "result": 107699.0
-        },
-        "expLoop": {
-          "median_seconds": 0.0037411229951396824,
-          "cpu_median_seconds": 0.0037141016042780586,
-          "coefficient_of_variation": 0.0026159113366770862,
-          "cpu_coefficient_of_variation": 0.001070925087248853,
-          "half_range_over_median": 0.003113520202104941,
-          "samples": 5,
-          "result": 1000015.4709149387
-        },
-        "string2float": {
-          "median_seconds": 0.001988815745238542,
-          "cpu_median_seconds": 0.001972014164305943,
-          "coefficient_of_variation": 0.0026353085345762785,
-          "cpu_coefficient_of_variation": 0.0016751547306832252,
-          "half_range_over_median": 0.0028012527616744546,
-          "samples": 5,
-          "result": 199999998.0
-        },
-        "particles": {
-          "median_seconds": 0.002202535804292751,
-          "cpu_median_seconds": 0.0021817186544342334,
-          "coefficient_of_variation": 0.015746182876754507,
-          "cpu_coefficient_of_variation": 0.009950127297437685,
-          "half_range_over_median": 0.0186641395809926,
-          "samples": 5,
-          "result": 150060.0
-        },
-        "queen": {
-          "median_seconds": 0.0004109793130017966,
-          "cpu_median_seconds": 0.00040784407971863673,
-          "coefficient_of_variation": 0.0012065489238499449,
-          "cpu_coefficient_of_variation": 0.0008430857700384185,
-          "half_range_over_median": 0.0016118608459880996,
-          "samples": 5,
-          "result": 92.0
-        },
-        "interop": {
-          "median_seconds": 0.00211335611782878,
-          "cpu_median_seconds": 0.0020963897280967224,
-          "coefficient_of_variation": 0.0028123126363667245,
-          "cpu_coefficient_of_variation": 0.0019305690031525822,
-          "half_range_over_median": 0.0032575268578167124,
-          "samples": 5,
-          "result": 1000000.0
-        },
-        "primes": {
-          "median_seconds": 0.0070474702456243795,
-          "cpu_median_seconds": 0.007005051020408171,
-          "coefficient_of_variation": 0.007229610881641356,
-          "cpu_coefficient_of_variation": 0.005635919941293899,
-          "half_range_over_median": 0.008894523797106828,
-          "samples": 5,
-          "result": 1652.0
-        },
-        "tree": {
-          "median_seconds": 0.022264585939410608,
-          "cpu_median_seconds": 0.022027375000000408,
-          "coefficient_of_variation": 0.00805613652518043,
-          "cpu_coefficient_of_variation": 0.0035987906776554553,
-          "half_range_over_median": 0.009406636857068952,
-          "samples": 5,
-          "result": 4998.0
-        },
-        "sort": {
-          "median_seconds": 0.08440254686865956,
-          "cpu_median_seconds": 0.08351499999999978,
-          "coefficient_of_variation": 0.005574144659391035,
-          "cpu_coefficient_of_variation": 0.004664764443668236,
-          "half_range_over_median": 0.00605546075540889,
-          "samples": 5,
-          "result": -719320850322.0
-        },
-        "fibonacciLoop": {
-          "median_seconds": 0.002111504264652774,
-          "cpu_median_seconds": 0.002093506024096373,
-          "coefficient_of_variation": 0.004885356825359557,
-          "cpu_coefficient_of_variation": 0.0026004639399270467,
-          "half_range_over_median": 0.006248401066970573,
-          "samples": 5,
-          "result": 1781508648.0
-        },
-        "float2string": {
-          "median_seconds": 0.003035995670799892,
-          "cpu_median_seconds": 0.003010177489177438,
-          "coefficient_of_variation": 0.0047188168428358435,
-          "cpu_coefficient_of_variation": 0.003502102646391863,
-          "half_range_over_median": 0.005994779953004102,
-          "samples": 5,
-          "result": 351112.0
-        },
-        "fibonacciRecursive": {
-          "median_seconds": 0.014826987572806948,
-          "cpu_median_seconds": 0.01471372340425535,
-          "coefficient_of_variation": 0.004096605294386894,
-          "cpu_coefficient_of_variation": 0.003282349649215024,
-          "half_range_over_median": 0.005646959143292139,
-          "samples": 5,
-          "result": 1346269.0
-        }
-      },
-      "cpp_matched": {
-        "sha256": {
-          "median_seconds": 0.00016251298254483368,
-          "cpu_median_seconds": 0.00016116763408404497,
-          "coefficient_of_variation": 0.0068430602908934645,
-          "cpu_coefficient_of_variation": 0.003547874999700686,
-          "half_range_over_median": 0.008982511601358718,
-          "samples": 5,
-          "result": 2048.0
-        },
-        "dictionary": {
-          "median_seconds": 0.03922453289851546,
-          "cpu_median_seconds": 0.03891784210526265,
-          "coefficient_of_variation": 0.022815247253191614,
-          "cpu_coefficient_of_variation": 0.021812252124350825,
-          "half_range_over_median": 0.030306847740758164,
-          "samples": 5,
-          "result": 13.0
-        },
-        "nbodies": {
-          "median_seconds": 0.0012524125810360633,
-          "cpu_median_seconds": 0.001241893048128346,
-          "coefficient_of_variation": 0.004738668547974704,
-          "cpu_coefficient_of_variation": 0.0034448180615658888,
-          "half_range_over_median": 0.005911791970161557,
-          "samples": 5,
-          "result": -0.16907715681664656
-        },
-        "spectralNorm": {
-          "median_seconds": 0.0017877094023741591,
-          "cpu_median_seconds": 0.0017745282051281977,
-          "coefficient_of_variation": 0.0043590559791758235,
-          "cpu_coefficient_of_variation": 0.0020837497633862598,
-          "half_range_over_median": 0.005052035025677171,
-          "samples": 5,
-          "result": 1.274224115941234
-        },
-        "mandelbrot": {
-          "median_seconds": 0.0003618673827683476,
-          "cpu_median_seconds": 0.0003593401041666685,
-          "coefficient_of_variation": 0.011730607629443762,
-          "cpu_coefficient_of_variation": 0.006545084650194259,
-          "half_range_over_median": 0.014211372825170362,
-          "samples": 5,
-          "result": 107699.0
-        },
-        "expLoop": {
-          "median_seconds": 0.0024454806218171246,
-          "cpu_median_seconds": 0.0024255279720279874,
-          "coefficient_of_variation": 0.003646419813060221,
-          "cpu_coefficient_of_variation": 0.0010357835261085892,
-          "half_range_over_median": 0.004369502308846821,
-          "samples": 5,
-          "result": 1000015.4709149387
-        },
-        "string2float": {
-          "median_seconds": 0.0008616228858792768,
-          "cpu_median_seconds": 0.0008550160891089161,
-          "coefficient_of_variation": 0.001567494850814409,
-          "cpu_coefficient_of_variation": 0.0009046672426771021,
-          "half_range_over_median": 0.001962733534573323,
-          "samples": 5,
-          "result": 199999998.0
-        },
-        "particles": {
-          "median_seconds": 0.0005665585353427571,
-          "cpu_median_seconds": 0.0005626842105263115,
-          "coefficient_of_variation": 0.0918389490549854,
-          "cpu_coefficient_of_variation": 0.006758020622255675,
-          "half_range_over_median": 0.11107445144890965,
-          "samples": 5,
-          "result": 150060.0
-        },
-        "queen": {
-          "median_seconds": 5.1191395800560714e-05,
-          "cpu_median_seconds": 5.076299999999919e-05,
-          "coefficient_of_variation": 0.02221059183996076,
-          "cpu_coefficient_of_variation": 0.02196066456579744,
-          "half_range_over_median": 0.02700966608971779,
-          "samples": 5,
-          "result": 92.0
-        },
-        "interop": {
-          "median_seconds": 0.0009691060807515033,
-          "cpu_median_seconds": 0.0009619423868312768,
-          "coefficient_of_variation": 0.005336170658139503,
-          "cpu_coefficient_of_variation": 0.0033946569553323504,
-          "half_range_over_median": 0.006587457636273273,
-          "samples": 5,
-          "result": 1000000.0
-        },
-        "primes": {
-          "median_seconds": 0.007089399403393871,
-          "cpu_median_seconds": 0.00703603030303032,
-          "coefficient_of_variation": 0.0015786247606460423,
-          "cpu_coefficient_of_variation": 0.0007095171302017183,
-          "half_range_over_median": 0.0017545879527437367,
-          "samples": 5,
-          "result": 1652.0
-        },
-        "tree": {
-          "median_seconds": 0.0026636916027551797,
-          "cpu_median_seconds": 0.0026398416988417128,
-          "coefficient_of_variation": 0.00503584986698472,
-          "cpu_coefficient_of_variation": 0.0014916044825727087,
-          "half_range_over_median": 0.006422826478677564,
-          "samples": 5,
-          "result": 4998.0
-        },
-        "sort": {
-          "median_seconds": 0.004639768212823974,
-          "cpu_median_seconds": 0.004599099337748321,
-          "coefficient_of_variation": 0.08704215547619418,
-          "cpu_coefficient_of_variation": 0.002311109194926786,
-          "half_range_over_median": 0.10318210094745976,
-          "samples": 5,
-          "result": -719320850322.0
-        },
-        "fibonacciLoop": {
-          "median_seconds": 0.002102793294337911,
-          "cpu_median_seconds": 0.002085204204204206,
-          "coefficient_of_variation": 0.12120842507787913,
-          "cpu_coefficient_of_variation": 0.006255812707295443,
-          "half_range_over_median": 0.147953137381568,
-          "samples": 5,
-          "result": 1781508648.0
-        },
-        "float2string": {
-          "median_seconds": 0.0013309788504777703,
-          "cpu_median_seconds": 0.00131997159090909,
-          "coefficient_of_variation": 0.003200429235898333,
-          "cpu_coefficient_of_variation": 0.0013086991421576394,
-          "half_range_over_median": 0.004159303658968892,
-          "samples": 5,
-          "result": 351112.0
-        },
-        "fibonacciRecursive": {
-          "median_seconds": 0.004081948830511922,
-          "cpu_median_seconds": 0.004049350877192984,
-          "coefficient_of_variation": 0.001567327358255242,
-          "cpu_coefficient_of_variation": 0.0009452976928373922,
-          "half_range_over_median": 0.0019173167826675374,
-          "samples": 5,
-          "result": 1346269.0
-        }
-      },
-      "maintained": {
-        "aot/native/arithmetic/1000/real_time": {
-          "median_seconds": 1.100671640503766e-08,
-          "cpu_median_seconds": 1.091824682512309e-08,
-          "coefficient_of_variation": 0.0028640829920040917,
-          "cpu_coefficient_of_variation": 0.001694363006309168,
-          "half_range_over_median": 0.0038539219264810878,
-          "samples": 5,
-          "result": 499500.0
-        },
-        "aot/native/calls/1000/real_time": {
-          "median_seconds": 6.689916382799493e-07,
-          "cpu_median_seconds": 6.616275219836051e-07,
-          "coefficient_of_variation": 0.004866636988346432,
-          "cpu_coefficient_of_variation": 0.002443688560486591,
-          "half_range_over_median": 0.005721748174236032,
-          "samples": 5,
-          "result": 500500.0
-        },
-        "aot/native/fields/1000/real_time": {
-          "median_seconds": 3.839458500611017e-08,
-          "cpu_median_seconds": 3.806877666564873e-08,
-          "coefficient_of_variation": 0.005369108253733642,
-          "cpu_coefficient_of_variation": 0.0030720119381353705,
-          "half_range_over_median": 0.0065360993183276855,
-          "samples": 5,
-          "result": 1000.0
-        },
-        "aot/native/arrays/1000/real_time": {
-          "median_seconds": 2.7340262045924976e-06,
-          "cpu_median_seconds": 2.708728262724348e-06,
-          "coefficient_of_variation": 0.0036193617762436485,
-          "cpu_coefficient_of_variation": 0.0015169756542051083,
-          "half_range_over_median": 0.005085204428206023,
-          "samples": 5,
-          "result": 499500.0
-        },
-        "aot/native/host/1000/real_time": {
-          "median_seconds": 1.960472226863974e-06,
-          "cpu_median_seconds": 1.943495553191966e-06,
-          "coefficient_of_variation": 0.0059167974705003085,
-          "cpu_coefficient_of_variation": 0.0024474911918450286,
-          "half_range_over_median": 0.007522178819184038,
-          "samples": 5,
-          "result": 500500.0
-        },
-        "aot/native/gc/1000/real_time": {
-          "median_seconds": 5.012331733840995e-05,
-          "cpu_median_seconds": 4.970843477015602e-05,
-          "coefficient_of_variation": 0.0027104898200589057,
-          "cpu_coefficient_of_variation": 0.0015874148027035858,
-          "half_range_over_median": 0.0036034568890031204,
-          "samples": 5,
-          "result": 2890.0
-        },
-        "aot/native/asyncWork/64/real_time": {
-          "median_seconds": 4.440124842666735e-05,
-          "cpu_median_seconds": 4.393854349379604e-05,
-          "coefficient_of_variation": 0.017017367808124222,
-          "cpu_coefficient_of_variation": 0.008681615415963805,
-          "half_range_over_median": 0.0202604461460185,
-          "samples": 5,
-          "result": 2080.0
-        },
-        "aot/native/spectralNorm/500/real_time": {
-          "median_seconds": 0.0018525422207684196,
-          "cpu_median_seconds": 0.0018378989361702049,
-          "coefficient_of_variation": 0.002396940830410033,
-          "cpu_coefficient_of_variation": 0.0009583344264020796,
-          "half_range_over_median": 0.00277630861021921,
-          "samples": 5,
-          "result": 1274224115.0
-        },
-        "aot/cpp/arithmetic/1000/real_time": {
-          "median_seconds": 1.3120706718383637e-09,
-          "cpu_median_seconds": 1.2955826067612523e-09,
-          "coefficient_of_variation": 0.09192674459792867,
-          "cpu_coefficient_of_variation": 0.005809073118928348,
-          "half_range_over_median": 0.1126848143895016,
-          "samples": 5,
-          "result": 499500.0
-        },
-        "aot/cpp/calls/1000/real_time": {
-          "median_seconds": 9.842148493375825e-07,
-          "cpu_median_seconds": 9.703119481707514e-07,
-          "coefficient_of_variation": 0.004250928748650796,
-          "cpu_coefficient_of_variation": 0.0016380732300466442,
-          "half_range_over_median": 0.005244927635682308,
-          "samples": 5,
-          "result": 500500.0
-        },
-        "aot/cpp/fields/1000/real_time": {
-          "median_seconds": 2.1324840748265825e-08,
-          "cpu_median_seconds": 2.117494274951115e-08,
-          "coefficient_of_variation": 0.005531661038270628,
-          "cpu_coefficient_of_variation": 0.002288545458090447,
-          "half_range_over_median": 0.006721713468391275,
-          "samples": 5,
-          "result": 1000.0
-        },
-        "aot/cpp/arrays/1000/real_time": {
-          "median_seconds": 2.253283909688838e-06,
-          "cpu_median_seconds": 2.234992981322968e-06,
-          "coefficient_of_variation": 0.014361104939470775,
-          "cpu_coefficient_of_variation": 0.006549457602045926,
-          "half_range_over_median": 0.016626039214801498,
-          "samples": 5,
-          "result": 499500.0
-        },
-        "aot/cpp/host/1000/real_time": {
-          "median_seconds": 9.766305984154867e-07,
-          "cpu_median_seconds": 9.680971402067117e-07,
-          "coefficient_of_variation": 0.006373803095641229,
-          "cpu_coefficient_of_variation": 0.002576966761022692,
-          "half_range_over_median": 0.007810222383299359,
-          "samples": 5,
-          "result": 500500.0
-        },
-        "aot/cpp/gc/1000/real_time": {
-          "median_seconds": 2.4335724250287008e-05,
-          "cpu_median_seconds": 2.3773330610577798e-05,
-          "coefficient_of_variation": 0.08587777009422017,
-          "cpu_coefficient_of_variation": 0.006448086084022023,
-          "half_range_over_median": 0.10561516648289948,
-          "samples": 5,
-          "result": 2890.0
-        },
-        "aot/cpp/asyncWork/64/real_time": {
-          "median_seconds": 1.9007566394221945e-05,
-          "cpu_median_seconds": 1.881999515464761e-05,
-          "coefficient_of_variation": 0.011311977245123322,
-          "cpu_coefficient_of_variation": 0.00801615644597106,
-          "half_range_over_median": 0.012678670522041326,
-          "samples": 5,
-          "result": 2080.0
-        },
-        "aot/cpp/spectralNorm/500/real_time": {
-          "median_seconds": 0.00176252386925845,
-          "cpu_median_seconds": 0.0017489572864321612,
-          "coefficient_of_variation": 0.07299564462027604,
-          "cpu_coefficient_of_variation": 0.003020539338588888,
-          "half_range_over_median": 0.08561952614305227,
-          "samples": 5,
-          "result": 1274224115.0
-        }
-      },
-      "remeasured_previous_binary": {
-        "spectralNorm": {
-          "aot": {
-            "median_seconds": 0.01944254049643253,
-            "cpu_median_seconds": 0.019272166666666667,
-            "coefficient_of_variation": 0.004009671910692951,
-            "cpu_coefficient_of_variation": 0.0024291081120351296,
-            "half_range_over_median": 0.005014508896846211,
-            "samples": 5,
-            "result": 1.274224115941234
-          },
-          "cpp_matched": {
-            "median_seconds": 0.00179265455131381,
-            "cpu_median_seconds": 0.0017756683673469424,
-            "coefficient_of_variation": 0.0073588665600387865,
-            "cpu_coefficient_of_variation": 0.005400065606491201,
-            "half_range_over_median": 0.009335739824936146,
-            "samples": 5,
-            "result": 1.274224115941234
-          }
-        },
-        "expLoop": {
-          "aot": {
-            "median_seconds": 0.017783876054454598,
-            "cpu_median_seconds": 0.017581875000000018,
-            "coefficient_of_variation": 0.009638527670903375,
-            "cpu_coefficient_of_variation": 0.010108753016606747,
-            "half_range_over_median": 0.01207460831242444,
-            "samples": 5,
-            "result": 1000015.4709149387
-          },
-          "cpp_matched": {
-            "median_seconds": 0.0024541467102570133,
-            "cpu_median_seconds": 0.0024260314685314675,
-            "coefficient_of_variation": 0.003207713471438765,
-            "cpu_coefficient_of_variation": 0.0014342552794582347,
-            "half_range_over_median": 0.0039942678662298935,
-            "samples": 5,
-            "result": 1000015.4709149387
-          }
-        }
-      }
-    },
-    "ratios": {
-      "sha256": {
-        "aot_over_cpp_matched": 2.6596125847160006
-      },
-      "dictionary": {
-        "aot_over_cpp_matched": 1.7077755178994662
-      },
-      "nbodies": {
-        "aot_over_cpp_matched": 4.587975513538098
-      },
-      "spectralNorm": {
-        "aot_over_cpp_matched": 1.035666006028699,
-        "speedup_over_remeasured_previous_binary": 10.501138015349552,
-        "previous_aot_over_cpp_matched": 10.845670451221839
-      },
-      "mandelbrot": {
-        "aot_over_cpp_matched": 2.364904238386197
-      },
-      "expLoop": {
-        "aot_over_cpp_matched": 1.5298109344083968,
-        "speedup_over_remeasured_previous_binary": 4.753619722623046,
-        "previous_aot_over_cpp_matched": 7.246460034409337
-      },
-      "string2float": {
-        "aot_over_cpp_matched": 2.3082206587502343
-      },
-      "particles": {
-        "aot_over_cpp_matched": 3.887569715916925
-      },
-      "queen": {
-        "aot_over_cpp_matched": 8.02828886719465
-      },
-      "interop": {
-        "aot_over_cpp_matched": 2.180727331924237
-      },
-      "primes": {
-        "aot_over_cpp_matched": 0.9940856544562268
-      },
-      "tree": {
-        "aot_over_cpp_matched": 8.358544929293359
-      },
-      "sort": {
-        "aot_over_cpp_matched": 18.191112787784785
-      },
-      "fibonacciLoop": {
-        "aot_over_cpp_matched": 1.0041425709023888
-      },
-      "float2string": {
-        "aot_over_cpp_matched": 2.281024728311863
-      },
-      "fibonacciRecursive": {
-        "aot_over_cpp_matched": 3.6323305823869125
-      }
-    },
-    "aot_over_cpp_geometric_mean": 2.813619426350325,
-    "comparison_to_previous": {
-      "comparable": false,
-      "reason": "Overall suite changed from six lanes to AOT/C++ plus maintained workloads. Original AOT/C++ kernels are unchanged; focused previous-binary remeasurements are retained separately."
-    },
-    "codegen_evidence": {
-      "llvm_before": "/tmp/vela-spectral-before.ll",
-      "llvm_after": "/tmp/vela-spectral-after.ll",
-      "assembly_before": "/tmp/vela-spectral-before.s",
-      "assembly_after": "/tmp/vela-spectral-after.s",
-      "matrix_inner_loop": "Typed ucvtf; no calls or stores; input length and buffer pointer loaded outside the inner loop; no per-element overflow, division-zero or index checks."
-    }
-  },
-  "latest": {
     "run_date": "2026-10-28T20:46:31.879494+08:00",
     "machine": {
       "os": "Darwin",
@@ -1703,6 +899,1341 @@
     "comparison_to_previous": {
       "comparable": false,
       "reason": "C++ sort now uses stable_sort and maintained immediate-result timing excludes redundant harness rooting. Other original kernels, machine and timing options match; focused AOT old/new remeasurements are retained."
+    }
+  },
+  "latest": {
+    "run_date": "2026-10-28T22:59:28+08:00",
+    "machine": {
+      "os": "Darwin",
+      "os_version": "27.0.1",
+      "os_build": "27.0.0",
+      "architecture": "arm64",
+      "cpu": "Apple M1 Pro"
+    },
+    "toolchain": {
+      "cxx": "/Users/zoy/vela/third_party/build_tools/clang/mac-arm64/bin/clang++",
+      "version": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Users/zoy/vela/third_party/build_tools/clang/mac-arm64/bin",
+      "benchmark_version": "1.9.5"
+    },
+    "source": {
+      "revision": "180822e70aa94d983784bf7587ab43c246196e37",
+      "working_tree_status": " M benchmarks/BUILD.gn\n M benchmarks/README.md\n M benchmarks/aot_benchmark.cc\n M tools/aot_benchmarks.py\n M tools/bench_unittest.py\n M tools/benchmark_report.py\n?? benchmarks/aot_benchmark_memory.cc\n?? benchmarks/aot_benchmark_memory.h\n?? benchmarks/dasprofile/README.md\n?? benchmarks/dasprofile/cases.json\n?? benchmarks/dasprofile/dasprofile_benchmark.cc\n?? benchmarks/dasprofile/host_kernel.cc\n?? benchmarks/dasprofile/workloads.cc\n?? benchmarks/dasprofile/workloads.h\n?? benchmarks/dasprofile/workloads.vela\n",
+      "changed_file_sha256": {
+        "benchmarks/BUILD.gn": "7bea4ae066a9d69a55482cd7aff6a9e732bfc7046345e1b324529fd19aa51f7f",
+        "benchmarks/README.md": "1cde7520f1c9eed479017024df622efe4c3ca855da5ad8b534a8949a441b89fa",
+        "benchmarks/aot_benchmark.cc": "98199c311f48dab58ac32693fb1bca4ac7a40af72675429b54bf39687dadbb06",
+        "benchmarks/aot_benchmark_memory.cc": "98ad5dec758c03f54b5fce1b3a60300d6e045ab405e33ec634f6e20d032abcef",
+        "benchmarks/aot_benchmark_memory.h": "f5cf309a6a3d0757d2fa6f2a859ee9ef8049a5e61d7c452ae6387ef09fe4c7d3",
+        "benchmarks/dasprofile/README.md": "23f4e28f8e96e90cff322ad36d9e1507884f0419f80061a932b058fbf60d2be7",
+        "benchmarks/dasprofile/cases.json": "6e607c88412fd3d1963820dee51d2a9fe10bbd73eaca15d629562b7b209ebe70",
+        "benchmarks/dasprofile/dasprofile_benchmark.cc": "00e26ed36df11ff7fcd8487cbac7b9d2b360c0e3574f0f9154d9110cbfec617f",
+        "benchmarks/dasprofile/host_kernel.cc": "108707bc535a80fda0599c2b784da04ffa6b396c624be08880752496ea2ac0c1",
+        "benchmarks/dasprofile/workloads.cc": "21d0612e0b0ae22531e6397243d2142ddd72e7e7a23dc79214c27802518b1950",
+        "benchmarks/dasprofile/workloads.h": "46cd87f53c58a775b0eb6ca739647d39612c9aef705472c58842e1aae3d83780",
+        "benchmarks/dasprofile/workloads.vela": "efc7667d8bc1880d9fdb29afc6f8a75d93d8719366d68b3f3e50ae1ced7bf478",
+        "tools/aot_benchmarks.py": "c6bb8b53c2e2621e7b45c9969494f7ff4b29329937bd750700fb72f953398a91",
+        "tools/bench_unittest.py": "38bc00845f6ba0f7484beaf6f13840619fa7ff1ed71290a638ad4008a6856c6c",
+        "tools/benchmark_report.py": "4693be717fc483b133f7628f757467214b7e3ebced07d00c9979a24d30cb3f1b"
+      },
+      "benchmark_binary_sha256": "8370dcb9f47c98c2c5230622fba9f566d35cda3e2430f94c868058771d11bcae"
+    },
+    "build": {
+      "variant": "release",
+      "runtime_abi": "11d900273fcddae08454d83ff6a0ae7fa9a3f6b4516ffb489cd136ba364a507c/release",
+      "aot_codegen": "LLVM O2; generic CPU; PIC; checked arithmetic; explicit roots",
+      "ported_cpp": "GN Release flags; FP contraction disabled; stable_sort",
+      "aot_inputs": {
+        "aot_native": {
+          "command": [
+            "/Users/zoy/vela/out/release/vela",
+            "build",
+            "/Users/zoy/vela/benchmarks/aot_workloads.vela",
+            "--emit=obj",
+            "--export=arithmetic",
+            "--export=calls",
+            "--export=fields",
+            "--export=arrays",
+            "--export=host",
+            "--export=gc",
+            "--export=asyncWork",
+            "--export=spectralNorm",
+            "-o",
+            "/Users/zoy/vela/out/release/gen/benchmarks/aot_native/workload.o"
+          ],
+          "compilation_and_publication_seconds": 0.8245735830860212,
+          "object_bytes": 27960,
+          "runtime_abi": "11d900273fcddae08454d83ff6a0ae7fa9a3f6b4516ffb489cd136ba364a507c/release",
+          "toolchain_build": "96a0c49fa44ae2a1a704131185448620",
+          "target": "arm64-apple-darwin23.6.0",
+          "optimization": "O2"
+        },
+        "dasprofile_native": {
+          "command": [
+            "/Users/zoy/vela/out/release/vela",
+            "build",
+            "/Users/zoy/vela/benchmarks/dasprofile/workloads.vela",
+            "--emit=obj",
+            "--export=prepare",
+            "--export=sha256",
+            "--export=dictionary",
+            "--export=nbodies",
+            "--export=spectralNorm",
+            "--export=mandelbrot",
+            "--export=expLoop",
+            "--export=string2float",
+            "--export=particles",
+            "--export=queen",
+            "--export=interop",
+            "--export=primes",
+            "--export=tree",
+            "--export=sort",
+            "--export=fibonacciLoop",
+            "--export=float2string",
+            "--export=fibonacciRecursive",
+            "-o",
+            "/Users/zoy/vela/out/release/gen/benchmarks/dasprofile_native/workload.o"
+          ],
+          "compilation_and_publication_seconds": 1.043970208032988,
+          "object_bytes": 94856,
+          "runtime_abi": "11d900273fcddae08454d83ff6a0ae7fa9a3f6b4516ffb489cd136ba364a507c/release",
+          "toolchain_build": "96a0c49fa44ae2a1a704131185448620",
+          "target": "arm64-apple-darwin23.6.0",
+          "optimization": "O2"
+        }
+      }
+    },
+    "suite": {
+      "name": "Unified AOT/C++: 8 maintained and 16 ported dasProfile workloads",
+      "upstream": "https://github.com/borisbat/dasProfile",
+      "upstream_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2",
+      "maintained_cases": [
+        {
+          "name": "arithmetic",
+          "kernel": "Arithmetic",
+          "size": 1000,
+          "expected": 499500,
+          "completion": "Immediate"
+        },
+        {
+          "name": "calls",
+          "kernel": "Calls",
+          "size": 1000,
+          "expected": 500500,
+          "completion": "Immediate"
+        },
+        {
+          "name": "fields",
+          "kernel": "Fields",
+          "size": 1000,
+          "expected": 1000,
+          "completion": "Immediate"
+        },
+        {
+          "name": "arrays",
+          "kernel": "Arrays",
+          "size": 1000,
+          "expected": 499500,
+          "completion": "Immediate"
+        },
+        {
+          "name": "host",
+          "kernel": "Host",
+          "size": 1000,
+          "expected": 500500,
+          "completion": "Immediate"
+        },
+        {
+          "name": "gc",
+          "kernel": "Gc",
+          "size": 1000,
+          "expected": 2890,
+          "completion": "Immediate"
+        },
+        {
+          "name": "asyncWork",
+          "kernel": "Async",
+          "size": 64,
+          "expected": 2080,
+          "completion": "Future"
+        },
+        {
+          "name": "spectralNorm",
+          "kernel": "SpectralNorm",
+          "size": 500,
+          "expected": 1274224115,
+          "completion": "Immediate"
+        }
+      ],
+      "ported_cases": [
+        {
+          "name": "sha256",
+          "kernel": "Sha256",
+          "expected": 2048,
+          "size": 32
+        },
+        {
+          "name": "dictionary",
+          "kernel": "Dictionary",
+          "expected": 13,
+          "size": 500000
+        },
+        {
+          "name": "nbodies",
+          "kernel": "NBodies",
+          "expected": -0.16907715681664656,
+          "size": 33000
+        },
+        {
+          "name": "spectralNorm",
+          "kernel": "SpectralNorm",
+          "expected": 1.274224115941234,
+          "size": 500
+        },
+        {
+          "name": "mandelbrot",
+          "kernel": "Mandelbrot",
+          "expected": 107699,
+          "size": 64
+        },
+        {
+          "name": "expLoop",
+          "kernel": "ExpLoop",
+          "expected": 1000015.4709149387,
+          "size": 1000000
+        },
+        {
+          "name": "string2float",
+          "kernel": "String2Float",
+          "expected": 199999998,
+          "size": 10000
+        },
+        {
+          "name": "particles",
+          "kernel": "Particles",
+          "expected": 150060,
+          "increment": 60,
+          "size": 50000
+        },
+        {
+          "name": "queen",
+          "kernel": "Queen",
+          "expected": 92,
+          "size": 8
+        },
+        {
+          "name": "interop",
+          "kernel": "Interop",
+          "expected": 1000000,
+          "size": 1000000
+        },
+        {
+          "name": "primes",
+          "kernel": "Primes",
+          "expected": 1652,
+          "size": 14000
+        },
+        {
+          "name": "tree",
+          "kernel": "Tree",
+          "expected": 4998,
+          "size": 20000
+        },
+        {
+          "name": "sort",
+          "kernel": "Sort",
+          "expected": -719320850322,
+          "size": 100000
+        },
+        {
+          "name": "fibonacciLoop",
+          "kernel": "FibonacciLoop",
+          "expected": 1781508648,
+          "size": 6511134
+        },
+        {
+          "name": "float2string",
+          "kernel": "Float2String",
+          "expected": 351112,
+          "size": 10000
+        },
+        {
+          "name": "fibonacciRecursive",
+          "kernel": "FibonacciRecursive",
+          "expected": 1346269,
+          "size": 31
+        }
+      ],
+      "input_sizes": {
+        "sha256": {
+          "input_bytes": 1024,
+          "hashes_per_call": 32
+        },
+        "dictionary": {
+          "keys": 500000
+        },
+        "nbodies": {
+          "bodies": 5,
+          "steps": 33000,
+          "dt": 0.01
+        },
+        "spectralNorm": {
+          "dimension": 500,
+          "power_iterations": 2
+        },
+        "mandelbrot": {
+          "grid": 64,
+          "maximum_iterations": 255
+        },
+        "expLoop": {
+          "terms": 1000000
+        },
+        "string2float": {
+          "numbers": 10000,
+          "rounds": 4
+        },
+        "particles": {
+          "particles": 50000,
+          "steps_per_call": 10
+        },
+        "queen": {
+          "board_size": 8
+        },
+        "interop": {
+          "calls": 1000000
+        },
+        "primes": {
+          "inclusive_limit": 14000
+        },
+        "tree": {
+          "loop_start": 1,
+          "loop_end_exclusive": 20000,
+          "key_modulus": 10007
+        },
+        "sort": {
+          "elements": 100000,
+          "noise_seed": 1,
+          "descending": true
+        },
+        "fibonacciLoop": {
+          "iterations": 6511134,
+          "arithmetic": "uint32 wrap"
+        },
+        "float2string": {
+          "numbers": 10000,
+          "rounds": 4
+        },
+        "fibonacciRecursive": {
+          "argument": 31
+        }
+      },
+      "repetitions": 5,
+      "minimum_batch_seconds": 0.5,
+      "random_interleaving": true,
+      "expected_cases": 48,
+      "actual_cases": 48,
+      "timed_batch_samples": 240,
+      "commands": [
+        [
+          "python3",
+          "-m",
+          "tools.vl",
+          "bench",
+          "--aot-compare",
+          "--",
+          "--benchmark_filter=^aot/(native|cpp)/",
+          "--benchmark_min_time=0.5s",
+          "--benchmark_repetitions=5"
+        ]
+      ],
+      "all_correctness_checks_passed": true,
+      "notes": [
+        "All workloads use the existing benchmarks target, vela_aot_benchmarks executable and --aot-compare report.",
+        "Only AOT and C++ were selected for full timing. All 64 registry cases, including the existing VM and first-native cases, passed a separate one-iteration smoke run.",
+        "Compilation, preparation, instantiation and warm-up are excluded; normal allocation, GC and checksum verification remain timed.",
+        "Ported workloads use double floating-point arithmetic, deterministic inputs and stable sorting. SHA and iterative Fibonacci wrap explicitly at 32 bits.",
+        "Refactored C++ storage and validation, and the merged executable, differ from the historical temporary experiment; these ratios are not a direct compiler regression comparison.",
+        "Process resident counters share one process and include previous workloads; they are neither standalone AOT footprint nor peak RSS."
+      ]
+    },
+    "aggregates": {
+      "native": {
+        "fields": {
+          "size": 1000,
+          "median_seconds": 2.3895253321876e-08,
+          "cpu_median_seconds": 2.3889020240153937e-08,
+          "coefficient_of_variation": 0.001777355369521868,
+          "cpu_coefficient_of_variation": 0.0016752839375945153,
+          "half_range_over_median": 0.00217376545461529,
+          "samples": 5,
+          "result": 1000.0,
+          "counters": {
+            "allocated_bytes": 8384.0,
+            "baseline_bytes": 320.0,
+            "committed_bytes": 65472.0,
+            "entry_frame_bytes": 216.0,
+            "entry_shadow_slots": 3.0,
+            "entry_static_root_stores": 8.0,
+            "process_resident_bytes": 89604096.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 320.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.sha256": {
+          "size": 32,
+          "median_seconds": 0.00037451266509114613,
+          "cpu_median_seconds": 0.00037443108974359043,
+          "coefficient_of_variation": 0.0015525020736429052,
+          "cpu_coefficient_of_variation": 0.0014315025833995926,
+          "half_range_over_median": 0.002000433700256773,
+          "samples": 5,
+          "result": 2048.0,
+          "counters": {
+            "allocated_bytes": 42336.0,
+            "baseline_bytes": 3552.0,
+            "committed_bytes": 63456.0,
+            "entry_frame_bytes": 184.0,
+            "entry_shadow_slots": 1.0,
+            "entry_static_root_stores": 1.0,
+            "process_resident_bytes": 76955648.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 3552.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.interop": {
+          "size": 1000000,
+          "median_seconds": 0.00203038526604465,
+          "cpu_median_seconds": 0.002029246376811603,
+          "coefficient_of_variation": 0.003818733208694993,
+          "cpu_coefficient_of_variation": 0.003392162582877747,
+          "half_range_over_median": 0.005031320193056677,
+          "samples": 5,
+          "result": 1000000.0,
+          "counters": {
+            "allocated_bytes": 736.0,
+            "baseline_bytes": 736.0,
+            "committed_bytes": 736.0,
+            "entry_frame_bytes": 104.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "process_resident_bytes": 89718784.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 736.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.sort": {
+          "size": 100000,
+          "median_seconds": 0.011144791001690522,
+          "cpu_median_seconds": 0.01114082539682541,
+          "coefficient_of_variation": 0.0014521167342077858,
+          "cpu_coefficient_of_variation": 0.001466846629131053,
+          "half_range_over_median": 0.0015915749505138706,
+          "samples": 5,
+          "result": -719320850322.0,
+          "counters": {
+            "allocated_bytes": 3201312.0,
+            "baseline_bytes": 800864.0,
+            "committed_bytes": 3201312.0,
+            "entry_frame_bytes": 1312.0,
+            "entry_shadow_slots": 13.0,
+            "entry_static_root_stores": 414.0,
+            "process_resident_bytes": 188727296.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 800864.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.nbodies": {
+          "size": 33000,
+          "median_seconds": 0.005538156173580627,
+          "cpu_median_seconds": 0.005536535433070848,
+          "coefficient_of_variation": 0.0014240329426823978,
+          "cpu_coefficient_of_variation": 0.0012040488237913321,
+          "half_range_over_median": 0.001867353870318244,
+          "samples": 5,
+          "result": -0.16907715681664656,
+          "counters": {
+            "allocated_bytes": 57208.0,
+            "baseline_bytes": 736.0,
+            "committed_bytes": 65144.0,
+            "entry_frame_bytes": 2632.0,
+            "entry_shadow_slots": 17.0,
+            "entry_static_root_stores": 458.0,
+            "process_resident_bytes": 89718784.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 736.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.fibonacciRecursive": {
+          "size": 31,
+          "median_seconds": 0.014194792524601022,
+          "cpu_median_seconds": 0.014193125000000252,
+          "coefficient_of_variation": 0.004791775794657239,
+          "cpu_coefficient_of_variation": 0.004728045640196673,
+          "half_range_over_median": 0.006720970419447112,
+          "samples": 5,
+          "result": 1346269.0,
+          "counters": {
+            "allocated_bytes": 736.0,
+            "baseline_bytes": 736.0,
+            "committed_bytes": 736.0,
+            "entry_frame_bytes": 40.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "process_resident_bytes": 188743680.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 736.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "host": {
+          "size": 1000,
+          "median_seconds": 1.8769122431089227e-06,
+          "cpu_median_seconds": 1.8764109303775338e-06,
+          "coefficient_of_variation": 0.0010524223945462356,
+          "cpu_coefficient_of_variation": 0.0009528069331455446,
+          "half_range_over_median": 0.0014778485464923272,
+          "samples": 5,
+          "result": 500500.0,
+          "counters": {
+            "allocated_bytes": 320.0,
+            "baseline_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "entry_frame_bytes": 128.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "process_resident_bytes": 188743680.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 320.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.spectralNorm": {
+          "size": 500,
+          "median_seconds": 0.0017796113583623304,
+          "cpu_median_seconds": 0.0017792563451776557,
+          "coefficient_of_variation": 0.0008517854447812956,
+          "cpu_coefficient_of_variation": 0.0008378957145652399,
+          "half_range_over_median": 0.001177886998070823,
+          "samples": 5,
+          "result": 1.274224115941234,
+          "counters": {
+            "allocated_bytes": 50272.0,
+            "baseline_bytes": 736.0,
+            "committed_bytes": 51040.0,
+            "entry_frame_bytes": 992.0,
+            "entry_shadow_slots": 20.0,
+            "entry_static_root_stores": 77.0,
+            "process_resident_bytes": 220725248.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 736.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "arrays": {
+          "size": 1000,
+          "median_seconds": 2.5976232985019813e-06,
+          "cpu_median_seconds": 2.5942215420557285e-06,
+          "coefficient_of_variation": 0.0015004905894799743,
+          "cpu_coefficient_of_variation": 0.0011189079652977401,
+          "half_range_over_median": 0.0017066259376874236,
+          "samples": 5,
+          "result": 499500.0,
+          "counters": {
+            "allocated_bytes": 16576.0,
+            "baseline_bytes": 320.0,
+            "committed_bytes": 17472.0,
+            "entry_frame_bytes": 304.0,
+            "entry_shadow_slots": 3.0,
+            "entry_static_root_stores": 8.0,
+            "process_resident_bytes": 188743680.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 320.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.float2string": {
+          "size": 10000,
+          "median_seconds": 0.0026118677480284264,
+          "cpu_median_seconds": 0.0026116370370370713,
+          "coefficient_of_variation": 0.0027329841950042497,
+          "cpu_coefficient_of_variation": 0.0026482184537234667,
+          "half_range_over_median": 0.0034747619330320043,
+          "samples": 5,
+          "result": 351112.0,
+          "counters": {
+            "allocated_bytes": 1668384.0,
+            "baseline_bytes": 1319392.0,
+            "committed_bytes": 3077024.0,
+            "entry_frame_bytes": 240.0,
+            "entry_shadow_slots": 2.0,
+            "entry_static_root_stores": 7.0,
+            "process_resident_bytes": 170541056.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 1319392.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "arithmetic": {
+          "size": 1000,
+          "median_seconds": 5.699154371241758e-09,
+          "cpu_median_seconds": 5.698303802670503e-09,
+          "coefficient_of_variation": 0.00751318441798784,
+          "cpu_coefficient_of_variation": 0.007707439242187198,
+          "half_range_over_median": 0.008730377632516561,
+          "samples": 5,
+          "result": 499500.0,
+          "counters": {
+            "allocated_bytes": 320.0,
+            "baseline_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "entry_frame_bytes": 104.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "process_resident_bytes": 89718784.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 320.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.primes": {
+          "size": 14000,
+          "median_seconds": 0.006803400882347985,
+          "cpu_median_seconds": 0.0068018252427184105,
+          "coefficient_of_variation": 0.0004944896963617061,
+          "cpu_coefficient_of_variation": 0.0003742476997991626,
+          "half_range_over_median": 0.0006755858664965543,
+          "samples": 5,
+          "result": 1652.0,
+          "counters": {
+            "allocated_bytes": 736.0,
+            "baseline_bytes": 736.0,
+            "committed_bytes": 736.0,
+            "entry_frame_bytes": 128.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "process_resident_bytes": 89735168.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 736.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.fibonacciLoop": {
+          "size": 6511134,
+          "median_seconds": 0.002027164729106305,
+          "cpu_median_seconds": 0.002026965116279066,
+          "coefficient_of_variation": 0.0019846712519577064,
+          "cpu_coefficient_of_variation": 0.001872840926841276,
+          "half_range_over_median": 0.0023525849242720014,
+          "samples": 5,
+          "result": 1781508648.0,
+          "counters": {
+            "allocated_bytes": 736.0,
+            "baseline_bytes": 736.0,
+            "committed_bytes": 736.0,
+            "entry_frame_bytes": 176.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "process_resident_bytes": 77611008.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 736.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.expLoop": {
+          "size": 1000000,
+          "median_seconds": 0.0035845362941360048,
+          "cpu_median_seconds": 0.003583288659793774,
+          "coefficient_of_variation": 0.0012275186543088392,
+          "cpu_coefficient_of_variation": 0.0012186736396318887,
+          "half_range_over_median": 0.00135260902025227,
+          "samples": 5,
+          "result": 1000015.4709149387,
+          "counters": {
+            "allocated_bytes": 736.0,
+            "baseline_bytes": 736.0,
+            "committed_bytes": 736.0,
+            "entry_frame_bytes": 200.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "process_resident_bytes": 116801536.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 736.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "gc": {
+          "size": 1000,
+          "median_seconds": 4.411042483318252e-05,
+          "cpu_median_seconds": 4.4102738861542037e-05,
+          "coefficient_of_variation": 0.003675603431510179,
+          "cpu_coefficient_of_variation": 0.003325188089613131,
+          "half_range_over_median": 0.004534474851713335,
+          "samples": 5,
+          "result": 2890.0,
+          "counters": {
+            "allocated_bytes": 23936.0,
+            "baseline_bytes": 320.0,
+            "committed_bytes": 65536.0,
+            "entry_frame_bytes": 224.0,
+            "entry_shadow_slots": 3.0,
+            "entry_static_root_stores": 6.0,
+            "process_resident_bytes": 89718784.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 320.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "asyncWork": {
+          "size": 64,
+          "median_seconds": 4.093563308765134e-05,
+          "cpu_median_seconds": 4.09180431654673e-05,
+          "coefficient_of_variation": 0.008665252697459611,
+          "cpu_coefficient_of_variation": 0.008702549256958986,
+          "half_range_over_median": 0.011639961144562767,
+          "samples": 5,
+          "result": 2080.0,
+          "counters": {
+            "allocated_bytes": 64192.0,
+            "baseline_bytes": 320.0,
+            "committed_bytes": 65536.0,
+            "entry_frame_bytes": 232.0,
+            "entry_shadow_slots": 1.0,
+            "entry_static_root_stores": 1.0,
+            "process_resident_bytes": 77611008.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 320.0,
+            "saved_state_bytes": 256.0,
+            "suspended_frames": 2.0
+          }
+        },
+        "dasprofile.particles": {
+          "size": 50000,
+          "median_seconds": 0.0018573660472659915,
+          "cpu_median_seconds": 0.0018572705570292255,
+          "coefficient_of_variation": 0.022269930356091077,
+          "cpu_coefficient_of_variation": 0.014439109571262387,
+          "half_range_over_median": 0.026328456385996773,
+          "samples": 5,
+          "result": 150060.0,
+          "counters": {
+            "allocated_bytes": 13200864.0,
+            "baseline_bytes": 13200864.0,
+            "committed_bytes": 13200864.0,
+            "entry_frame_bytes": 480.0,
+            "entry_shadow_slots": 8.0,
+            "entry_static_root_stores": 33.0,
+            "process_resident_bytes": 76972032.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 13200864.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.string2float": {
+          "size": 10000,
+          "median_seconds": 0.0015632661468119161,
+          "cpu_median_seconds": 0.001562808463251702,
+          "coefficient_of_variation": 0.0008612212356745884,
+          "cpu_coefficient_of_variation": 0.0007720493489935697,
+          "half_range_over_median": 0.000961458588535067,
+          "samples": 5,
+          "result": 199999998.0,
+          "counters": {
+            "allocated_bytes": 1319392.0,
+            "baseline_bytes": 1319392.0,
+            "committed_bytes": 1319392.0,
+            "entry_frame_bytes": 224.0,
+            "entry_shadow_slots": 2.0,
+            "entry_static_root_stores": 6.0,
+            "process_resident_bytes": 89718784.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 1319392.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.tree": {
+          "size": 20000,
+          "median_seconds": 0.011368721772375847,
+          "cpu_median_seconds": 0.011366129032257649,
+          "coefficient_of_variation": 0.00872041523436789,
+          "cpu_coefficient_of_variation": 0.008293811474997461,
+          "half_range_over_median": 0.010426852580146792,
+          "samples": 5,
+          "result": 4998.0,
+          "counters": {
+            "allocated_bytes": 853984.0,
+            "baseline_bytes": 736.0,
+            "committed_bytes": 1090144.0,
+            "entry_frame_bytes": 928.0,
+            "entry_shadow_slots": 17.0,
+            "entry_static_root_stores": 51.0,
+            "process_resident_bytes": 76972032.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 736.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.mandelbrot": {
+          "size": 64,
+          "median_seconds": 0.0008242803297221696,
+          "cpu_median_seconds": 0.0008241236749116586,
+          "coefficient_of_variation": 0.007524440271150543,
+          "cpu_coefficient_of_variation": 0.006298583581826655,
+          "half_range_over_median": 0.008947704586355448,
+          "samples": 5,
+          "result": 107699.0,
+          "counters": {
+            "allocated_bytes": 736.0,
+            "baseline_bytes": 736.0,
+            "committed_bytes": 736.0,
+            "entry_frame_bytes": 264.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "process_resident_bytes": 77676544.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 736.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.dictionary": {
+          "size": 500000,
+          "median_seconds": 0.043782848937553354,
+          "cpu_median_seconds": 0.04377574999999978,
+          "coefficient_of_variation": 0.022057442874355637,
+          "cpu_coefficient_of_variation": 0.021601650534014614,
+          "half_range_over_median": 0.024627223260624664,
+          "samples": 5,
+          "result": 13.0,
+          "counters": {
+            "allocated_bytes": 182803296.0,
+            "baseline_bytes": 36000864.0,
+            "committed_bytes": 182803296.0,
+            "entry_frame_bytes": 368.0,
+            "entry_shadow_slots": 7.0,
+            "entry_static_root_stores": 19.0,
+            "process_resident_bytes": 208683008.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 36000864.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "calls": {
+          "size": 1000,
+          "median_seconds": 6.353305971602933e-07,
+          "cpu_median_seconds": 6.351567038230995e-07,
+          "coefficient_of_variation": 0.001727495877041376,
+          "cpu_coefficient_of_variation": 0.0012662035429853145,
+          "half_range_over_median": 0.002428564188554516,
+          "samples": 5,
+          "result": 500500.0,
+          "counters": {
+            "allocated_bytes": 320.0,
+            "baseline_bytes": 320.0,
+            "committed_bytes": 320.0,
+            "entry_frame_bytes": 128.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "process_resident_bytes": 188743680.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 320.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "dasprofile.queen": {
+          "size": 8,
+          "median_seconds": 0.00017323600841480396,
+          "cpu_median_seconds": 0.00017318713017751638,
+          "coefficient_of_variation": 0.001516956060915991,
+          "cpu_coefficient_of_variation": 0.0014201072374921244,
+          "half_range_over_median": 0.0017065872550358298,
+          "samples": 5,
+          "result": 92.0,
+          "counters": {
+            "allocated_bytes": 31648.0,
+            "baseline_bytes": 736.0,
+            "committed_bytes": 54176.0,
+            "entry_frame_bytes": 232.0,
+            "entry_shadow_slots": 2.0,
+            "entry_static_root_stores": 9.0,
+            "process_resident_bytes": 211812352.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 736.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "spectralNorm": {
+          "size": 500,
+          "median_seconds": 0.001782764101865448,
+          "cpu_median_seconds": 0.0017825343511450374,
+          "coefficient_of_variation": 0.002274969621424147,
+          "cpu_coefficient_of_variation": 0.002080731404055357,
+          "half_range_over_median": 0.0027003225378639177,
+          "samples": 5,
+          "result": 1274224115.0,
+          "counters": {
+            "allocated_bytes": 37472.0,
+            "baseline_bytes": 320.0,
+            "committed_bytes": 38624.0,
+            "entry_frame_bytes": 1024.0,
+            "entry_shadow_slots": 20.0,
+            "entry_static_root_stores": 77.0,
+            "process_resident_bytes": 89718784.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "retained_bytes": 320.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        }
+      },
+      "cpp": {
+        "dasprofile.interop": {
+          "size": 1000000,
+          "median_seconds": 0.0009325635517288516,
+          "cpu_median_seconds": 0.000932448138297869,
+          "coefficient_of_variation": 0.0011314687188805224,
+          "cpu_coefficient_of_variation": 0.0010201334993311076,
+          "half_range_over_median": 0.0015146834960714404,
+          "samples": 5,
+          "result": 1000000.0,
+          "counters": {
+            "process_resident_bytes": 77692928.0
+          }
+        },
+        "spectralNorm": {
+          "size": 500,
+          "median_seconds": 0.001694234965829129,
+          "cpu_median_seconds": 0.001693941888619876,
+          "coefficient_of_variation": 0.0010248413279274802,
+          "cpu_coefficient_of_variation": 0.001003571343043131,
+          "half_range_over_median": 0.0012296000066046133,
+          "samples": 5,
+          "result": 1274224115.0,
+          "counters": {
+            "process_resident_bytes": 77627392.0
+          }
+        },
+        "dasprofile.particles": {
+          "size": 50000,
+          "median_seconds": 0.0005394301070380753,
+          "cpu_median_seconds": 0.0005392494226327949,
+          "coefficient_of_variation": 0.0035360610551274326,
+          "cpu_coefficient_of_variation": 0.0031694309539579764,
+          "half_range_over_median": 0.004374579499897728,
+          "samples": 5,
+          "result": 150060.0,
+          "counters": {
+            "process_resident_bytes": 77709312.0
+          }
+        },
+        "dasprofile.dictionary": {
+          "size": 500000,
+          "median_seconds": 0.02665513780756066,
+          "cpu_median_seconds": 0.026644230769230913,
+          "coefficient_of_variation": 0.013048284330879048,
+          "cpu_coefficient_of_variation": 0.01289882370817164,
+          "half_range_over_median": 0.017494612551583896,
+          "samples": 5,
+          "result": 13.0,
+          "counters": {
+            "process_resident_bytes": 89718784.0
+          }
+        },
+        "dasprofile.expLoop": {
+          "size": 1000000,
+          "median_seconds": 0.002352607100514458,
+          "cpu_median_seconds": 0.0023508825503355314,
+          "coefficient_of_variation": 0.002055821102299616,
+          "cpu_coefficient_of_variation": 0.0016279228368356936,
+          "half_range_over_median": 0.0024032968581587997,
+          "samples": 5,
+          "result": 1000015.4709149387,
+          "counters": {
+            "process_resident_bytes": 188743680.0
+          }
+        },
+        "arrays": {
+          "size": 1000,
+          "median_seconds": 2.155448444782966e-06,
+          "cpu_median_seconds": 2.1546275013000477e-06,
+          "coefficient_of_variation": 0.001240442720495509,
+          "cpu_coefficient_of_variation": 0.0011882744481660507,
+          "half_range_over_median": 0.0016825073662345175,
+          "samples": 5,
+          "result": 499500.0,
+          "counters": {
+            "process_resident_bytes": 195739648.0
+          }
+        },
+        "dasprofile.primes": {
+          "size": 14000,
+          "median_seconds": 0.006816237861995848,
+          "cpu_median_seconds": 0.006814563106796067,
+          "coefficient_of_variation": 0.000676212151554064,
+          "cpu_coefficient_of_variation": 0.000625056003091632,
+          "half_range_over_median": 0.0008958000019862214,
+          "samples": 5,
+          "result": 1652.0,
+          "counters": {
+            "process_resident_bytes": 89751552.0
+          }
+        },
+        "dasprofile.queen": {
+          "size": 8,
+          "median_seconds": 4.404790081275922e-05,
+          "cpu_median_seconds": 4.402026799542028e-05,
+          "coefficient_of_variation": 0.07462382373634498,
+          "cpu_coefficient_of_variation": 0.07475776351639066,
+          "half_range_over_median": 0.10040176536363574,
+          "samples": 5,
+          "result": 92.0,
+          "counters": {
+            "process_resident_bytes": 188743680.0
+          }
+        },
+        "dasprofile.tree": {
+          "size": 20000,
+          "median_seconds": 0.0026792937432954596,
+          "cpu_median_seconds": 0.002677521072796909,
+          "coefficient_of_variation": 0.0014206679946371474,
+          "cpu_coefficient_of_variation": 0.001395458026203973,
+          "half_range_over_median": 0.001669119388829171,
+          "samples": 5,
+          "result": 4998.0,
+          "counters": {
+            "process_resident_bytes": 188743680.0
+          }
+        },
+        "dasprofile.mandelbrot": {
+          "size": 64,
+          "median_seconds": 0.0003465529440688813,
+          "cpu_median_seconds": 0.0003464027709054922,
+          "coefficient_of_variation": 0.0005812790258265302,
+          "cpu_coefficient_of_variation": 0.0005107151437741793,
+          "half_range_over_median": 0.000679003706584704,
+          "samples": 5,
+          "result": 107699.0,
+          "counters": {
+            "process_resident_bytes": 188743680.0
+          }
+        },
+        "arithmetic": {
+          "size": 1000,
+          "median_seconds": 1.2973305541895408e-09,
+          "cpu_median_seconds": 1.2968592367844883e-09,
+          "coefficient_of_variation": 0.0013759695315395237,
+          "cpu_coefficient_of_variation": 0.001301912029377053,
+          "half_range_over_median": 0.0017929433479429734,
+          "samples": 5,
+          "result": 499500.0,
+          "counters": {
+            "process_resident_bytes": 188743680.0
+          }
+        },
+        "dasprofile.fibonacciRecursive": {
+          "size": 31,
+          "median_seconds": 0.003925680713937356,
+          "cpu_median_seconds": 0.003923651685393074,
+          "coefficient_of_variation": 0.0007092427257360341,
+          "cpu_coefficient_of_variation": 0.0006471496494034497,
+          "half_range_over_median": 0.0009530123475871769,
+          "samples": 5,
+          "result": 1346269.0,
+          "counters": {
+            "process_resident_bytes": 188743680.0
+          }
+        },
+        "dasprofile.spectralNorm": {
+          "size": 500,
+          "median_seconds": 0.0016941689873750142,
+          "cpu_median_seconds": 0.00169396610169491,
+          "coefficient_of_variation": 0.0023681942007245144,
+          "cpu_coefficient_of_variation": 0.002092633625519151,
+          "half_range_over_median": 0.002554546997340691,
+          "samples": 5,
+          "result": 1.274224115941234,
+          "counters": {
+            "process_resident_bytes": 89718784.0
+          }
+        },
+        "dasprofile.nbodies": {
+          "size": 33000,
+          "median_seconds": 0.0013806252459826784,
+          "cpu_median_seconds": 0.001380051181102357,
+          "coefficient_of_variation": 0.0021387860587299833,
+          "cpu_coefficient_of_variation": 0.0016210531769411047,
+          "half_range_over_median": 0.0025281617428409703,
+          "samples": 5,
+          "result": -0.16907715681664656,
+          "counters": {
+            "process_resident_bytes": 116785152.0
+          }
+        },
+        "dasprofile.sha256": {
+          "size": 32,
+          "median_seconds": 0.00015089909369101937,
+          "cpu_median_seconds": 0.00015086801375752566,
+          "coefficient_of_variation": 0.0016863042861202104,
+          "cpu_coefficient_of_variation": 0.0015310271488608047,
+          "half_range_over_median": 0.002216697413456652,
+          "samples": 5,
+          "result": 2048.0,
+          "counters": {
+            "process_resident_bytes": 116801536.0
+          }
+        },
+        "host": {
+          "size": 1000,
+          "median_seconds": 9.394371292404875e-07,
+          "cpu_median_seconds": 9.393678862388378e-07,
+          "coefficient_of_variation": 0.005821859835642313,
+          "cpu_coefficient_of_variation": 0.005124329643405991,
+          "half_range_over_median": 0.006827353760556131,
+          "samples": 5,
+          "result": 500500.0,
+          "counters": {
+            "process_resident_bytes": 89718784.0
+          }
+        },
+        "dasprofile.float2string": {
+          "size": 10000,
+          "median_seconds": 0.0012763983753250273,
+          "cpu_median_seconds": 0.0012762568306011204,
+          "coefficient_of_variation": 0.0013612393136975412,
+          "cpu_coefficient_of_variation": 0.0011330731370928298,
+          "half_range_over_median": 0.001632434245099568,
+          "samples": 5,
+          "result": 351112.0,
+          "counters": {
+            "process_resident_bytes": 211812352.0
+          }
+        },
+        "dasprofile.string2float": {
+          "size": 10000,
+          "median_seconds": 0.0008404392986926888,
+          "cpu_median_seconds": 0.0008403081534772191,
+          "coefficient_of_variation": 0.0007198591059939198,
+          "cpu_coefficient_of_variation": 0.0006501992933349436,
+          "half_range_over_median": 0.0010031067195272656,
+          "samples": 5,
+          "result": 199999998.0,
+          "counters": {
+            "process_resident_bytes": 188743680.0
+          }
+        },
+        "dasprofile.fibonacciLoop": {
+          "size": 6511134,
+          "median_seconds": 0.0020252786619814837,
+          "cpu_median_seconds": 0.0020247283236993984,
+          "coefficient_of_variation": 0.001320962939912803,
+          "cpu_coefficient_of_variation": 0.0011308621941988027,
+          "half_range_over_median": 0.001777449850877073,
+          "samples": 5,
+          "result": 1781508648.0,
+          "counters": {
+            "process_resident_bytes": 195739648.0
+          }
+        },
+        "fields": {
+          "size": 1000,
+          "median_seconds": 2.0910416127066804e-08,
+          "cpu_median_seconds": 2.0908002807990355e-08,
+          "coefficient_of_variation": 0.07031921523647398,
+          "cpu_coefficient_of_variation": 0.07034781411857573,
+          "half_range_over_median": 0.08172885529434885,
+          "samples": 5,
+          "result": 1000.0,
+          "counters": {
+            "process_resident_bytes": 188743680.0
+          }
+        },
+        "dasprofile.sort": {
+          "size": 100000,
+          "median_seconds": 0.00398811576649843,
+          "cpu_median_seconds": 0.003987232954545435,
+          "coefficient_of_variation": 0.0010357695904578011,
+          "cpu_coefficient_of_variation": 0.001010035825400237,
+          "half_range_over_median": 0.0012175142620709787,
+          "samples": 5,
+          "result": -719320850322.0,
+          "counters": {
+            "process_resident_bytes": 116785152.0
+          }
+        },
+        "asyncWork": {
+          "size": 64,
+          "median_seconds": 1.8172192918341575e-05,
+          "cpu_median_seconds": 1.816910061173968e-05,
+          "coefficient_of_variation": 0.0027097631484138715,
+          "cpu_coefficient_of_variation": 0.002574527458818311,
+          "half_range_over_median": 0.003397062261037888,
+          "samples": 5,
+          "result": 2080.0,
+          "counters": {
+            "process_resident_bytes": 188743680.0
+          }
+        },
+        "gc": {
+          "size": 1000,
+          "median_seconds": 2.5285857187914514e-05,
+          "cpu_median_seconds": 2.5277954004757705e-05,
+          "coefficient_of_variation": 0.0016580653807226294,
+          "cpu_coefficient_of_variation": 0.0012767327871750335,
+          "half_range_over_median": 0.0016742864932977168,
+          "samples": 5,
+          "result": 2890.0,
+          "counters": {
+            "process_resident_bytes": 211812352.0
+          }
+        },
+        "calls": {
+          "size": 1000,
+          "median_seconds": 9.38123965105614e-07,
+          "cpu_median_seconds": 9.378641484767021e-07,
+          "coefficient_of_variation": 0.0004219964422567982,
+          "cpu_coefficient_of_variation": 0.00043523105304961684,
+          "half_range_over_median": 0.00048609254563037143,
+          "samples": 5,
+          "result": 500500.0,
+          "counters": {
+            "process_resident_bytes": 116801536.0
+          }
+        }
+      }
+    },
+    "ratios": {
+      "fields": {
+        "aot_over_cpp": 1.142744036114402
+      },
+      "dasprofile.sha256": {
+        "aot_over_cpp": 2.4818748471610927
+      },
+      "dasprofile.interop": {
+        "aot_over_cpp": 2.1772084725813907
+      },
+      "dasprofile.sort": {
+        "aot_over_cpp": 2.7945003741643286
+      },
+      "dasprofile.nbodies": {
+        "aot_over_cpp": 4.011339202796318
+      },
+      "dasprofile.fibonacciRecursive": {
+        "aot_over_cpp": 3.6158805463228854
+      },
+      "host": {
+        "aot_over_cpp": 1.9979114990125646
+      },
+      "dasprofile.spectralNorm": {
+        "aot_over_cpp": 1.050433204493787
+      },
+      "arrays": {
+        "aot_over_cpp": 1.205142857760877
+      },
+      "dasprofile.float2string": {
+        "aot_over_cpp": 2.046279436358049
+      },
+      "arithmetic": {
+        "aot_over_cpp": 4.3929855446918795
+      },
+      "dasprofile.primes": {
+        "aot_over_cpp": 0.9981167060323062
+      },
+      "dasprofile.fibonacciLoop": {
+        "aot_over_cpp": 1.0009312630208507
+      },
+      "dasprofile.expLoop": {
+        "aot_over_cpp": 1.5236442554951712
+      },
+      "gc": {
+        "aot_over_cpp": 1.7444702192759867
+      },
+      "asyncWork": {
+        "aot_over_cpp": 2.252652350302431
+      },
+      "dasprofile.particles": {
+        "aot_over_cpp": 3.4432005611709227
+      },
+      "dasprofile.string2float": {
+        "aot_over_cpp": 1.8600583638147232
+      },
+      "dasprofile.tree": {
+        "aot_over_cpp": 4.243178561822274
+      },
+      "dasprofile.mandelbrot": {
+        "aot_over_cpp": 2.378511981587248
+      },
+      "dasprofile.dictionary": {
+        "aot_over_cpp": 1.6425669697770036
+      },
+      "calls": {
+        "aot_over_cpp": 0.6772352277438811
+      },
+      "dasprofile.queen": {
+        "aot_over_cpp": 3.932900438347864
+      },
+      "spectralNorm": {
+        "aot_over_cpp": 1.0522531631219134
+      }
+    },
+    "aot_over_cpp_geometric_mean": 1.958384793216125,
+    "validation": {
+      "benchmark_targets_built": true,
+      "python_tests_passed": 37,
+      "registry_smoke_cases": 64,
+      "full_comparison_cases": 48,
+      "lint_run": false
+    },
+    "comparison_to_previous": {
+      "comparable": false,
+      "reason": "The benchmark inputs are now checked in and use one executable and one harness; C++ storage and validation differ from the temporary experiment."
     }
   }
 }

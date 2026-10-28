@@ -12,9 +12,9 @@
 
 #include <benchmark/benchmark.h>
 
+#include "benchmarks/aot_benchmark_memory.h"
 #include "benchmarks/aot_benchmark_types.h"
 #include "benchmarks/aot_native/entries.h"
-#include "benchmarks/process_memory.h"
 #include "compiler/compiler.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
@@ -92,30 +92,6 @@ std::expected<Sample, std::string> RunNative(runtime::NativeExecution& execution
   return ResolveResult(execution.isolate(), *value, problem.completion);
 }
 
-void ReportHeap(benchmark::State& state, runtime::Isolate& isolate) {
-  auto& heap = isolate.heap();
-  state.counters["allocated_bytes"] = static_cast<double>(heap.allocated_bytes());
-  state.counters["committed_bytes"] = static_cast<double>(heap.committed_bytes());
-  heap.FinishCollection();
-  heap.Collect();
-  state.counters["retained_bytes"] = static_cast<double>(heap.allocated_bytes());
-  state.counters["remaining_suspended_frames"] =
-      static_cast<double>(isolate.scheduler().suspended_frame_count());
-  state.counters["remaining_saved_bytes"] =
-      static_cast<double>(isolate.scheduler().saved_state_bytes());
-  if (state.counters["baseline_bytes"] != state.counters["retained_bytes"] ||
-      isolate.scheduler().suspended_frame_count() != 0 ||
-      isolate.scheduler().saved_state_bytes() != 0) {
-    state.SkipWithError("benchmark retained temporary state after completion and GC");
-  }
-  const auto resident = CurrentResidentBytes();
-  if (!resident) {
-    state.SkipWithError(resident.error());
-  } else {
-    state.counters["process_resident_bytes"] = static_cast<double>(*resident);
-  }
-}
-
 void ReportSample(benchmark::State& state, Sample sample) {
   state.counters["result"] = static_cast<double>(sample.value);
   state.counters["suspended_frames"] = static_cast<double>(sample.suspended_frames);
@@ -155,7 +131,7 @@ void NativeSteady(benchmark::State& state, AotBenchmarkCase problem) {
     }
     benchmark::DoNotOptimize(result->value);
   }
-  ReportHeap(state, isolate);
+  ReportAotHeap(state, isolate);
 }
 
 void VmSteady(benchmark::State& state, AotBenchmarkCase problem) {
@@ -197,7 +173,7 @@ void VmSteady(benchmark::State& state, AotBenchmarkCase problem) {
     }
     benchmark::DoNotOptimize(result->value);
   }
-  ReportHeap(state, isolate);
+  ReportAotHeap(state, isolate);
 }
 
 std::expected<Sample, std::string> CppAsync(runtime::Isolate& isolate, std::int64_t size) {
@@ -347,12 +323,7 @@ void CppSteady(benchmark::State& state, AotBenchmarkCase problem) {
     benchmark::DoNotOptimize(result->value);
   }
   state.counters["result"] = static_cast<double>(problem.expected);
-  const auto resident = CurrentResidentBytes();
-  if (!resident) {
-    state.SkipWithError(resident.error());
-  } else {
-    state.counters["process_resident_bytes"] = static_cast<double>(*resident);
-  }
+  ReportAotResident(state);
 }
 
 void NativeFirst(benchmark::State& state, AotBenchmarkCase problem) {

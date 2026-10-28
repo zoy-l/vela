@@ -55,6 +55,7 @@ action("aot_native_inputs") {
     "$aot_native_directory/build_metrics.json",
   ]
   args = [
+    "--suite=aot",
     "--compiler",
     rebase_path(aot_compiler, root_build_dir),
     "--source",
@@ -67,13 +68,26 @@ action("aot_native_inputs") {
   deps = [ "//compiler:vela" ]
 }
 
+dasprofile_directory = "$target_gen_dir/dasprofile_native"
+dasprofile_object = "$dasprofile_directory/workload.o"
+if (target_os == "win") {
+  dasprofile_object = "$dasprofile_directory/workload.obj"
+}
+
 executable("vela_aot_benchmarks") {
   testonly = true
   sources = [
     "aot_benchmark.cc",
+    "aot_benchmark_memory.cc",
+    "aot_benchmark_memory.h",
     "aot_benchmark_types.h",
+    "dasprofile/dasprofile_benchmark.cc",
+    "dasprofile/host_kernel.cc",
+    "dasprofile/workloads.cc",
+    "dasprofile/workloads.h",
     "process_memory.h",
     aot_object,
+    dasprofile_object,
   ]
   if (target_os == "win") {
     sources += [ "process_memory_win.cc" ]
@@ -87,8 +101,37 @@ executable("vela_aot_benchmarks") {
   defines = [ "VELA_AOT_BENCHMARK_SOURCE=\"$benchmark_source\"" ]
   deps = [
     ":aot_native_inputs",
+    ":dasprofile_native_inputs",
     "//compiler",
     "//runtime",
     "//third_party:benchmark_main",
   ]
+}
+
+action("dasprofile_native_inputs") {
+  testonly = true
+  script = "//tools/aot_benchmarks.py"
+  inputs = [
+    "dasprofile/cases.json",
+    "dasprofile/workloads.vela",
+  ]
+  outputs = [
+    dasprofile_object,
+    "$dasprofile_object.h",
+    "$dasprofile_object.aot.json",
+    "$dasprofile_directory/entries.h",
+    "$dasprofile_directory/build_metrics.json",
+  ]
+  args = [
+    "--suite=dasprofile",
+    "--compiler",
+    rebase_path(aot_compiler, root_build_dir),
+    "--source",
+    rebase_path("dasprofile/workloads.vela", root_build_dir),
+    "--cases",
+    rebase_path("dasprofile/cases.json", root_build_dir),
+    "--output",
+    rebase_path(dasprofile_directory, root_build_dir),
+  ]
+  deps = [ "//compiler:vela" ]
 }

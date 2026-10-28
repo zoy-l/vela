@@ -73,7 +73,12 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
         if backend == "first_native":
             continue
         for entry in entries:
-            checksums[key].add(entry["result"])
+            result = entry["result"]
+            expected = entry.get("expected_result", result)
+            if (not math.isfinite(result) or not math.isfinite(expected) or
+                    not math.isclose(result, expected, rel_tol=1e-12, abs_tol=1e-10)):
+                raise ValueError(f"{name}: checksum mismatch")
+            checksums[key].add(expected)
         resident = [entry["process_resident_bytes"] for entry in entries]
         if any(not math.isfinite(value) or value <= 0 for value in resident):
             raise ValueError(f"{name}: invalid process resident-memory counter")
@@ -104,6 +109,7 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
              "| Workload | Size | AOT us | VM us | C++ us | First AOT us | AOT/VM | AOT/C++ | CV AOT/VM/C++ |",
              "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
     keys = sorted({(workload, size) for _, workload, size in samples})
+    paired_ratios = []
     for workload, size in keys:
         values = {backend: samples.get((backend, workload, size), [])
                   for backend in ("native", "vm", "cpp", "first_native")}
@@ -113,6 +119,17 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                   else "-" for backend in ("vm", "cpp")]
         cvs = "/".join(variation(values[backend]) if values[backend] else "-" for backend in ("native", "vm", "cpp"))
         lines.append("| " + " | ".join([workload, str(size), *elapsed, *ratios, cvs]) + " |")
+        if "native" in medians and "cpp" in medians:
+            paired_ratios.append(medians["native"] / medians["cpp"])
+    if paired_ratios:
+        geometric_mean = math.exp(mean(math.log(value) for value in paired_ratios))
+        lines.extend(["", f"Geometric mean AOT/C++ over {len(paired_ratios)} paired workloads: {geometric_mean:.2f}x."])
+    if any(workload.startswith("dasprofile.") for workload, _ in keys):
+        lines.extend(["", "The ported dasProfile workloads run only AOT and C++. Input preparation is excluded; "
+                      "each timed call checks its result, and particle positions advance between calls. "
+                      "Floating-point work uses double; sorting is stable on both sides. "
+                      "Vela retains checked int64 arithmetic, managed containers and GC ownership. "
+                      "SHA and iterative Fibonacci explicitly wrap at 32 bits."])
     lines.extend(["", "| Workload | Size | Backend | Baseline bytes | End bytes | Retained bytes | Committed bytes | Suspended frames | Saved bytes |",
                   "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |"])
     for (backend, workload, size), fields in sorted(counters.items()):

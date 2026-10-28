@@ -1,0 +1,406 @@
+func remainder(value: int, divisor: int): int { let result = value; result %= divisor; return result; }
+external func addOne(value: int): int = 'dasprofile.addOne';
+
+let keys: string[] = [];
+let numbers: double[] = [];
+let texts: string[] = [];
+let sortSource: int[] = [];
+let shaInput: int[] = [];
+
+func noise(position: int): int {
+  let value = (position * 1759714724) & 4294967295;
+  value = (value + 1) & 4294967295;
+  value = value ^ (value >>> 8);
+  value = (value + 3039394381) & 4294967295;
+  value = (value ^ (value << 8)) & 4294967295;
+  value = (value * 458671337) & 4294967295;
+  value = value ^ (value >>> 8);
+  return value >= 2147483648 ? value - 4294967296 : value;
+}
+
+class Particle {
+  x: double;
+  y: double;
+  z: double;
+  vx: double;
+  vy: double;
+  vz: double;
+}
+let objects: Particle[] = [];
+
+export func prepare(which: int): int {
+  if (which == 0) {
+    shaInput.reserve(256);
+    for (let i = 0; i < 256; i++) { shaInput.push(774778414); }
+  }
+  if (which == 1) {
+    keys.reserve(500000);
+    for (let i = 0; i < 500000; i++) {
+      keys.push(remainder(271828183 ^ (i * 119), 500000).toString());
+    }
+  }
+  if (which == 6 || which == 14) {
+    numbers.reserve(10000);
+    texts.reserve(10000);
+    for (let i = 0; i < 10000; i++) {
+      const value = i.toDouble() + i.toDouble() / 10000.0;
+      numbers.push(value);
+      texts.push(value.toString());
+    }
+  }
+  if (which == 7) {
+    objects.reserve(50000);
+    for (let i = 0; i < 50000; i++) {
+      const value = i.toDouble();
+      objects.push(Particle(x: value, y: value + 1.0, z: value + 2.0,
+                            vx: 1.0, vy: 2.0, vz: 3.0));
+    }
+  }
+  if (which == 12) {
+    sortSource.reserve(100000);
+    for (let i = 0; i < 100000; i++) { sortSource.push(noise(i)); }
+  }
+  return 0;
+}
+
+export func dictionary(): int {
+  const counts = Map<string, int>();
+  let maximum = 0;
+  for (const key in keys) {
+    const count = (counts.get(key) ?? 0) + 1;
+    counts.set(key, count);
+    if (count > maximum) { maximum = count; }
+  }
+  return maximum;
+}
+
+export func expLoop(): double {
+  let sum = 0.0;
+  for (let i = 0; i < 1000000; i++) { sum += Math.exp(1.0 / (1.0 + i.toDouble())); }
+  return sum;
+}
+
+export func string2float(): double {
+  let sum = 0.0;
+  for (let round = 0; round < 4; round++) {
+    for (const text in texts) { sum += double.parse(text); }
+  }
+  return sum;
+}
+
+export func float2string(): int {
+  let sum = 0;
+  for (let round = 0; round < 4; round++) {
+    for (const value in numbers) { sum += value.toString().length; }
+  }
+  return sum;
+}
+
+export func particles(): double {
+  for (let round = 0; round < 10; round++) {
+    for (const object in objects) {
+      object.x += object.vx;
+      object.y += object.vy;
+      object.z += object.vz;
+    }
+  }
+  return objects[49999].x + objects[49999].y + objects[49999].z;
+}
+
+func canPlace(board: int[], row: int, column: int): bool {
+  for (let i = 0; i < row; i++) {
+    const placed = board[i];
+    if (placed == column || placed - i == column - row || placed + i == column + row) {
+      return false;
+    }
+  }
+  return true;
+}
+
+func addQueen(board: int[], row: int): int {
+  if (row == 8) { return 1; }
+  let solutions = 0;
+  for (let column = 0; column < 8; column++) {
+    if (canPlace(board, row, column)) {
+      board[row] = column;
+      solutions += addQueen(board, row + 1);
+    }
+  }
+  return solutions;
+}
+
+export func queen(): int { return addQueen([0, 0, 0, 0, 0, 0, 0, 0], 0); }
+
+export func interop(): int {
+  let accumulator = 0;
+  for (let i = 0; i < 1000000; i++) { accumulator = addOne(accumulator); }
+  return accumulator;
+}
+
+func isPrime(value: int): bool {
+  for (let i = 2; i < value; i++) {
+    if (remainder(value, i) == 0) { return false; }
+  }
+  return true;
+}
+
+export func primes(): int {
+  let count = 0;
+  for (let i = 2; i <= 14000; i++) { if (isPrime(i)) { count++; } }
+  return count;
+}
+
+export func sort(): int {
+  const values = sortSource.slice();
+  values.sort((left, right) => left > right ? -1 : (left < right ? 1 : 0));
+  let checksum = 0;
+  for (let i = 0; i < 100000; i++) {
+    if (i > 0 && values[i - 1] < values[i]) { return -1; }
+    checksum += values[i];
+  }
+  return checksum;
+}
+
+export func fibonacciLoop(): int {
+  let last = 1;
+  let current = 0;
+  for (let i = 0; i < 6511134; i++) {
+    const temporary = current;
+    current = (current + last) & 4294967295;
+    last = temporary;
+  }
+  return current >= 2147483648 ? current - 4294967296 : current;
+}
+
+func fibRecursive(value: int): int {
+  if (value < 2) { return value; }
+  return fibRecursive(value - 1) + fibRecursive(value - 2);
+}
+export func fibonacciRecursive(): int { return fibRecursive(31); }
+
+func matrixMultiply(input: double[], output: double[], transpose: bool): void {
+  for (let i = 0; i < 500; i++) {
+    let sum = 0.0;
+    for (let j = 0; j < 500; j++) {
+      const index = transpose ? j : i;
+      const denominator = (i + j) * (i + j + 1) / 2 + index + 1;
+      sum += input[j] / denominator.toDouble();
+    }
+    output[i] = sum;
+  }
+}
+
+export func spectralNorm(): double {
+  const u: double[] = [];
+  const v: double[] = [];
+  const temporary: double[] = [];
+  u.reserve(500); v.reserve(500); temporary.reserve(500);
+  for (let i = 0; i < 500; i++) { u.push(1.0); v.push(0.0); temporary.push(0.0); }
+  for (let round = 0; round < 2; round++) {
+    matrixMultiply(u, temporary, false);
+    matrixMultiply(temporary, v, true);
+    matrixMultiply(v, temporary, false);
+    matrixMultiply(temporary, u, true);
+  }
+  let numerator = 0.0;
+  let denominator = 0.0;
+  for (let i = 0; i < 500; i++) { numerator += u[i] * v[i]; denominator += v[i] * v[i]; }
+  return Math.sqrt(numerator / denominator);
+}
+
+func level(cx: double, cy: double): int {
+  let count = 0;
+  let zx = cx;
+  let zy = cy;
+  while (Math.sqrt(zx * zx + zy * zy) < 2.0 && count < 255) {
+    const nx = zx * zx - zy * zy;
+    const ny = zx * zy + zy * zx;
+    zx = nx + cx;
+    zy = ny + cy;
+    count++;
+  }
+  return count - 1;
+}
+
+export func mandelbrot(): int {
+  let sum = 0;
+  let x = -2.0;
+  for (let i = 0; i < 64; i++) {
+    let y = -2.0;
+    for (let j = 0; j < 64; j++) { sum += level(x, y); y += 0.0625; }
+    x += 0.0625;
+  }
+  return sum;
+}
+
+class Body {
+  x: double; y: double; z: double;
+  vx: double; vy: double; vz: double;
+  mass: double;
+}
+
+export func nbodies(): double {
+  const mass = 4.0 * Math.PI * Math.PI;
+  const days = 365.24;
+  const bodies = [
+    Body(x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0, mass: mass),
+    Body(x: 4.84143144246472090, y: -1.16032004402742839, z: -0.103622044471123109,
+         vx: 0.00166007664274403694 * days, vy: 0.00769901118419740425 * days,
+         vz: -0.0000690460016972063023 * days, mass: 0.000954791938424326609 * mass),
+    Body(x: 8.34336671824457987, y: 4.12479856412430479, z: -0.403523417114321381,
+         vx: -0.00276742510726862411 * days, vy: 0.00499852801234917238 * days,
+         vz: 0.0000230417297573763929 * days, mass: 0.000285885980666130812 * mass),
+    Body(x: 12.8943695621391310, y: -15.1111514016986312, z: -0.223307578892655734,
+         vx: 0.00296460137564761618 * days, vy: 0.00237847173959480950 * days,
+         vz: -0.0000296589568540237556 * days, mass: 0.0000436624404335156298 * mass),
+    Body(x: 15.3796971148509165, y: -25.9193146099879641, z: 0.179258772950371181,
+         vx: 0.00268067772490389322 * days, vy: 0.00162824170038242295 * days,
+         vz: -0.0000951592254519715870 * days, mass: 0.0000515138902046611451 * mass)
+  ];
+  let px = 0.0; let py = 0.0; let pz = 0.0;
+  for (const body in bodies) { px += body.vx * body.mass; py += body.vy * body.mass; pz += body.vz * body.mass; }
+  bodies[0].vx = -px / mass; bodies[0].vy = -py / mass; bodies[0].vz = -pz / mass;
+  for (let step = 0; step < 33000; step++) {
+    for (let i = 0; i < 5; i++) {
+      const a = bodies[i];
+      for (let j = i + 1; j < 5; j++) {
+        const b = bodies[j];
+        const dx = a.x - b.x; const dy = a.y - b.y; const dz = a.z - b.z;
+        const squared = dx * dx + dy * dy + dz * dz;
+        const magnitude = 0.01 / (squared * Math.sqrt(squared));
+        a.vx -= dx * b.mass * magnitude; a.vy -= dy * b.mass * magnitude; a.vz -= dz * b.mass * magnitude;
+        b.vx += dx * a.mass * magnitude; b.vy += dy * a.mass * magnitude; b.vz += dz * a.mass * magnitude;
+      }
+    }
+    for (const body in bodies) { body.x += 0.01 * body.vx; body.y += 0.01 * body.vy; body.z += 0.01 * body.vz; }
+  }
+  let energy = 0.0;
+  for (let i = 0; i < 5; i++) {
+    const a = bodies[i];
+    energy += 0.5 * a.mass * (a.vx * a.vx + a.vy * a.vy + a.vz * a.vz);
+    for (let j = i + 1; j < 5; j++) {
+      const b = bodies[j];
+      const dx = a.x - b.x; const dy = a.y - b.y; const dz = a.z - b.z;
+      energy -= a.mass * b.mass / Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+  }
+  return energy;
+}
+
+class Node {
+  x: int; priority: int;
+  left: Node? = null; right: Node? = null;
+}
+let splitLow: Node? = null;
+let splitHigh: Node? = null;
+
+func merge(low: Node?, high: Node?): Node? {
+  if (low == null) { return high; }
+  if (high == null) { return low; }
+  if (low.priority < high.priority) { low.right = merge(low.right, high); return low; }
+  high.left = merge(low, high.left);
+  return high;
+}
+
+func split(node: Node?, value: int): void {
+  if (node == null) { splitLow = null; splitHigh = null; return; }
+  if (node.x < value) {
+    split(node.right, value);
+    node.right = splitLow;
+    splitLow = node;
+  } else {
+    split(node.left, value);
+    node.left = splitHigh;
+    splitHigh = node;
+  }
+}
+
+export func tree(): int {
+  let root: Node? = null;
+  let current = 5;
+  let result = 0;
+  let seed = 1;
+  for (let i = 1; i < 20000; i++) {
+    current = remainder(current * 57 + 43, 10007);
+    split(root, current);
+    const low = splitLow;
+    split(splitHigh, current + 1);
+    let equal = splitLow;
+    const high = splitHigh;
+    const mode = remainder(i, 3);
+    if (mode == 0) {
+      if (equal == null) {
+        seed = (seed * 1103515245 + 12345) & 2147483647;
+        equal = Node(x: current, priority: seed);
+      }
+      root = merge(merge(low, equal), high);
+    } else if (mode == 1) {
+      root = merge(low, high);
+    } else {
+      if (equal != null) { result++; }
+      root = merge(merge(low, equal), high);
+    }
+  }
+  splitLow = null;
+  splitHigh = null;
+  return result;
+}
+
+const shaConstants = [
+  1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,
+  3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,
+  3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,
+  2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,
+  666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,
+  2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,
+  430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,
+  1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298
+];
+
+func rotate(value: int, bits: int): int {
+  return ((value >>> bits) | (value << (32 - bits))) & 4294967295;
+}
+
+func shaDigest(): string {
+  const hash = [1779033703,3144134277,1013904242,2773480762,1359893119,2600822924,528734635,1541459225];
+  const digest: int[] = [];
+  digest.reserve(64);
+  for (let i = 0; i < 64; i++) { digest.push(0); }
+  for (let block = 0; block < 16; block++) {
+    for (let i = 0; i < 16; i++) { digest[i] = shaInput[block * 16 + i]; }
+    for (let i = 16; i < 64; i++) {
+      const v0 = digest[i - 15]; const v1 = digest[i - 2];
+      const s0 = rotate(v0, 7) ^ rotate(v0, 18) ^ (v0 >>> 3);
+      const s1 = rotate(v1, 17) ^ rotate(v1, 19) ^ (v1 >>> 10);
+      digest[i] = (digest[i - 16] + s0 + digest[i - 7] + s1) & 4294967295;
+    }
+    let a = hash[0]; let b = hash[1]; let c = hash[2]; let d = hash[3];
+    let e = hash[4]; let f = hash[5]; let g = hash[6]; let h = hash[7];
+    for (let i = 0; i < 64; i++) {
+      const s0 = rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22);
+      const majority = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = s0 + majority;
+      const s1 = rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25);
+      const choice = (e & f) ^ ((~e) & g);
+      const t1 = h + s1 + choice + shaConstants[i] + digest[i];
+      h = g; g = f; f = e; e = (d + t1) & 4294967295;
+      d = c; c = b; b = a; a = (t1 + t2) & 4294967295;
+    }
+    hash[0] = (hash[0] + a) & 4294967295; hash[1] = (hash[1] + b) & 4294967295;
+    hash[2] = (hash[2] + c) & 4294967295; hash[3] = (hash[3] + d) & 4294967295;
+    hash[4] = (hash[4] + e) & 4294967295; hash[5] = (hash[5] + f) & 4294967295;
+    hash[6] = (hash[6] + g) & 4294967295; hash[7] = (hash[7] + h) & 4294967295;
+  }
+  const hex = '0123456789abcdef';
+  const output = String();
+  for (const word in hash) {
+    for (let shift = 28; shift >= 0; shift -= 4) { output.append(hex[(word >>> shift) & 15]); }
+  }
+  return output.toString();
+}
+
+export func sha256(): int {
+  let last = '';
+  for (let i = 0; i < 32; i++) { last = shaDigest(); }
+  return last == '8adcaee60bb05a9964a1df12d2f007adcb8f3fa20ff7d1ecfde0a2ac301ff412' ? 2048 : -1;
+}

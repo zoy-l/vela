@@ -1,0 +1,18 @@
+[
+  {"name": "sha256", "kernel": "Sha256", "expected": 2048, "size": 32},
+  {"name": "dictionary", "kernel": "Dictionary", "expected": 13, "size": 500000},
+  {"name": "nbodies", "kernel": "NBodies", "expected": -0.16907715681664656, "size": 33000},
+  {"name": "spectralNorm", "kernel": "SpectralNorm", "expected": 1.274224115941234, "size": 500},
+  {"name": "mandelbrot", "kernel": "Mandelbrot", "expected": 107699, "size": 64},
+  {"name": "expLoop", "kernel": "ExpLoop", "expected": 1000015.4709149387, "size": 1000000},
+  {"name": "string2float", "kernel": "String2Float", "expected": 199999998, "size": 10000},
+  {"name": "particles", "kernel": "Particles", "expected": 150060, "increment": 60, "size": 50000},
+  {"name": "queen", "kernel": "Queen", "expected": 92, "size": 8},
+  {"name": "interop", "kernel": "Interop", "expected": 1000000, "size": 1000000},
+  {"name": "primes", "kernel": "Primes", "expected": 1652, "size": 14000},
+  {"name": "tree", "kernel": "Tree", "expected": 4998, "size": 20000},
+  {"name": "sort", "kernel": "Sort", "expected": -719320850322, "size": 100000},
+  {"name": "fibonacciLoop", "kernel": "FibonacciLoop", "expected": 1781508648, "size": 6511134},
+  {"name": "float2string", "kernel": "Float2String", "expected": 351112, "size": 10000},
+  {"name": "fibonacciRecursive", "kernel": "FibonacciRecursive", "expected": 1346269, "size": 31}
+]
