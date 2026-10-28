@@ -28,6 +28,8 @@ source_set("vm") {
     "program.h",
     "register_file.cc",
     "register_file.h",
+    "suspended_frame.cc",
+    "suspended_frame.h",
     "vm.cc",
     "vm.h",
   ]

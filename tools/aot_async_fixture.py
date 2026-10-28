@@ -19,6 +19,16 @@ class Box {
 }
 let effect = 0;
 async func add(value: int): Future<int> { await 0; collect(); return value + 2; }
+async func fifoInput(): Future<int> { await 0; return 42; }
+async func repeatedFifoInput(order: Box): Future<Box> {
+  await 0;
+  await 0;
+  Future.microtask((): void => {
+    order.value = order.value * 10 + 1;
+    Future.microtask((): void => { order.value = order.value * 10 + 3; });
+  });
+  return Box(value: 42);
+}
 async func finalAction(): Future<void> { await 0; collect(); effect = 2; }
 func finalError(): void { throw Error(message: 'action', code: 'Action'); }
 async func hostCallback(value: int): Future<int> { await fetch(); collect(); return value + 2; }
@@ -240,6 +250,58 @@ export async func calculate(operation: int): Future<int> {
     const found: int = values.findIndex((value: int): bool => value == 21);
     return some && every && found == 2 ? 42 : 0;
   }
+  if (operation == 41) {
+    const box = Box(value: 0);
+    for (let index = 0; index < 6; index++) {
+      box.value += await Future.value(7);
+      collect();
+    }
+    return box.value;
+  }
+  if (operation == 42) {
+    const text = 'saved:' + operation.toString();
+    await 0;
+    const values = [text, 'second'];
+    await 0;
+    collect();
+    try { await Future.error<int>(Failure(message: values[0])); }
+    catch (error: Failure) {
+      await 0;
+      collect();
+      return error.message == 'saved:42' && values[1] == 'second' ? 42 : 0;
+    }
+  }
+  if (operation == 43) {
+    await 0;
+    await 0;
+    return Future.value(42);
+  }
+  if (operation == 44) {
+    for (let index = 0; index < 64; index++) { await Future.value(index); }
+    return 42;
+  }
+  if (operation == 45) {
+    let order = 0;
+    const input = fifoInput();
+    Future.microtask((): void => {
+      order = order * 10 + 1;
+      Future.microtask((): void => { order = order * 10 + 3; });
+    });
+    const value = await input;
+    order = order * 10 + 2;
+    return value == 42 && order == 12 ? 42 : 0;
+  }
+  if (operation == 46) {
+    const order = Box(value: 0);
+    const result = await repeatedFifoInput(order);
+    order.value = order.value * 10 + 2;
+    return result.value == 42 && order.value == 12 ? 42 : 0;
+  }
+  if (operation == 47) {
+    await 0;
+    await Completer<void>().future;
+    return 42;
+  }
   return 0;
 }
 """
@@ -267,7 +329,7 @@ std::string CompositionDiagnostic(const Future& future) {
 }
 
 TEST(NativeHostTest, FutureCompositionExecutesNativeCallbacksUnderGcAfterInstanceRelease) {
-  for (std::int64_t operation = 0; operation <= 40; ++operation) {
+  for (std::int64_t operation = 0; operation <= 46; ++operation) {
     if (operation >= 30 && operation <= 34) { continue; }
     SCOPED_TRACE(operation);
     Isolate isolate(1);
@@ -300,6 +362,25 @@ TEST(NativeHostTest, FutureCompositionExecutesNativeCallbacksUnderGcAfterInstanc
     EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
     EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
   }
+}
+
+TEST(NativeHostTest, RepeatedAwaitAllocatesOneResultFuturePerActivation) {
+  Isolate isolate(std::numeric_limits<std::size_t>::max());
+  RegisterComposition(isolate);
+  const auto instance = NativeInstance::Instantiate(isolate, *COMPOSITION_IMAGE());
+  ASSERT_TRUE(instance.has_value());
+  NativeExecution execution(**instance);
+  const auto baseline = isolate.heap().object_count();
+  const std::array arguments{Integer(44)};
+  NativeValue output;
+  ASSERT_EQ(Execute(COMPOSITION_ENTRY, execution, arguments, output), ExecutionStatus::Returned);
+  auto future = Heap::GetFuture(*DecodeNativeValue(output).AsObject())->Rooted();
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(future));
+  EXPECT_EQ(future.value()->AsInteger(), 42);
+  // 64 个 awaited Future + 整次函数调用的一个结果 Future；没有恢复转接 Future。
+  EXPECT_EQ(isolate.heap().object_count() - baseline, 65U);
+  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
+  EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
 }
 
 TEST(NativeHostTest, CompositionRetainsCallbackFutureAcrossHostCompletionAndGc) {
@@ -336,7 +417,7 @@ TEST(NativeHostTest, CompositionRetainsCallbackFutureAcrossHostCompletionAndGc) 
 }
 
 TEST(NativeHostTest, UnreachableCompositionGraphsReleaseCallbacksAndSuspensions) {
-  for (const auto operation : {31, 32, 34}) {
+  for (const auto operation : {31, 32, 34, 47}) {
     Isolate isolate(1);
     RegisterComposition(isolate);
     const auto baseline = isolate.heap().object_count();
@@ -347,7 +428,7 @@ TEST(NativeHostTest, UnreachableCompositionGraphsReleaseCallbacksAndSuspensions)
       const std::array arguments{Integer(operation)};
       NativeValue output;
       ASSERT_EQ(Execute(COMPOSITION_ENTRY, execution, arguments, output), ExecutionStatus::Returned);
-      if (operation == 32) { ASSERT_TRUE(isolate.scheduler().PumpOne()); }
+      if (operation == 32 || operation == 47) { ASSERT_TRUE(isolate.scheduler().PumpOne()); }
       EXPECT_GT(isolate.scheduler().suspended_frame_count(), 0U);
     }
     isolate.heap().Collect();

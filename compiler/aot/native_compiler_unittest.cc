@@ -2,11 +2,19 @@
 
 #include <array>
 #include <expected>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 
 #include <gtest/gtest.h>
+
+#include <llvm/Analysis/LoopInfo.h>
+#include <llvm/AsmParser/Parser.h>
+#include <llvm/IR/Dominators.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/Support/SourceMgr.h>
 
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
@@ -53,6 +61,70 @@ export func negate(value: bool): bool { return !value; }
   const auto result = Compile(*prepared, {.exports = {"empty", "negate"}});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   EXPECT_FALSE(result->object.empty());
+}
+
+TEST(NativeCompilerTest, EliminatesMonotoneIntegerReductionsWithDynamicBounds) {
+  const auto sources = std::to_array<std::string_view>({
+      "let sum = initial; for (let index = 0; index < bound; index++) { sum += index; }",
+      "let sum = initial; for (let index = 0; index > bound; index--) { sum += index; }",
+      "let sum = initial; for (let index = 0; index < bound; index++) { sum -= index; }",
+      "let sum = initial; for (let index = 0; index < bound; index++) { sum += term; }",
+      "let sum = initial; for (let index = 0; index < bound; index++) { sum -= term; }",
+      "let sum = initial; for (let index = start; index < bound; index++) { sum += term; }",
+      "let sum = initial; for (let index = start; index < 0; index++) { sum += index; }",
+      "let sum = initial; for (let index = start; index > 0; index--) { sum += index; }",
+      "let sum = initial; for (let index = 0; bound > index; index++) { sum += index; }",
+  });
+  for (const auto source : sources) {
+    SCOPED_TRACE(source);
+    const auto prepared =
+        Prepare("export func sum(bound: int, initial: int, term: int, start: int): int { " +
+                std::string(source) + " return sum; }");
+    ASSERT_TRUE(prepared.has_value());
+    const auto result = Compile(*prepared, {.exports = {"sum"}});
+    ASSERT_TRUE(result.has_value()) << result.error().front().message;
+    llvm::LLVMContext context;
+    llvm::SMDiagnostic diagnostic;
+    const auto module = llvm::parseAssemblyString(result->llvm_ir, diagnostic, context);
+    ASSERT_NE(module, nullptr);
+    for (auto& function : *module) {
+      if (function.isDeclaration()) {
+        continue;
+      }
+      llvm::DominatorTree dominators(function);
+      const llvm::LoopInfo loops(dominators);
+      EXPECT_TRUE(loops.empty()) << function.getName().str() << '\n' << result->llvm_ir;
+    }
+    EXPECT_EQ(result->llvm_ir.find("@llvm.sadd.with.overflow"), std::string::npos);
+    EXPECT_EQ(result->llvm_ir.find("@llvm.ssub.with.overflow"), std::string::npos);
+    EXPECT_NE(result->llvm_ir.find("@vela_native_v1_leaf_failure"), std::string::npos);
+  }
+}
+
+TEST(NativeCompilerTest, FoldsUnobservedUnitFieldUpdates) {
+  const auto prepared = Prepare(R"(
+class Box { public param value: int; }
+export func fields(bound: int): int {
+  const box = Box(value: 0);
+  for (let index = 0; index < bound; index++) { box.value += 1; }
+  return box.value;
+}
+)");
+  ASSERT_TRUE(prepared.has_value());
+  const auto result = Compile(*prepared, {.exports = {"fields"}});
+  ASSERT_TRUE(result.has_value()) << result.error().front().message;
+  llvm::LLVMContext context;
+  llvm::SMDiagnostic diagnostic;
+  const auto module = llvm::parseAssemblyString(result->llvm_ir, diagnostic, context);
+  ASSERT_NE(module, nullptr);
+  for (auto& function : *module) {
+    if (function.isDeclaration()) {
+      continue;
+    }
+    llvm::DominatorTree dominators(function);
+    const llvm::LoopInfo loops(dominators);
+    EXPECT_TRUE(loops.empty()) << result->llvm_ir;
+  }
 }
 
 TEST(NativeCompilerTest, PreservesArrayStorageWhenTemporaryValuesAreErasedToDynamic) {

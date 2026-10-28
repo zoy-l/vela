@@ -1,5 +1,6 @@
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Module.h>
@@ -89,6 +90,8 @@ class FunctionEmitter final {
   std::expected<void, std::string> PrepareFrame();
   [[nodiscard]] bool CanUseLeafEntry() const;
   void BindFrameStorage();
+  void EmitFrameEntry();
+  void CacheImports();
   void EmitImport();
   llvm::Value* Output();
   void EmitAsyncFailure(llvm::Value* status);
@@ -119,6 +122,8 @@ class FunctionEmitter final {
   bool leaf_entry_ = false;
   llvm::StructType* frame_type_ = nullptr;
   std::uint64_t frame_bytes_ = 0;
+  std::uint64_t storage_bytes_ = 0;
+  absl::flat_hash_map<std::uint32_t, llvm::Value*> imports_;
   const NativeRootPlan& roots_;
 };
 

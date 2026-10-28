@@ -1,9 +1,7 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <span>
 #include <string_view>
 
@@ -48,30 +46,36 @@ struct NativeFrameSize final {
   std::size_t storage_bytes = 0;
 };
 
-// 仅借用当前帧，直到 frame_exit；嵌套调用不改变外层帧的地址。
+// 仅借用当前资源帧，直到 frame_release；嵌套调用不改变外层帧的地址。
 struct NativeFrameAccess final {
-  std::uint32_t* instruction = nullptr;
   Value* roots = nullptr;
   void* storage = nullptr;
 };
 
+// 逻辑栈由生成代码的原生栈持有；资源帧独立按需构造。
+struct NativeTraceFrame final {
+  TracePosition position;
+  NativeTraceFrame* previous = nullptr;
+};
+
 class NativeFrame final {
  public:
-  NativeFrame(Isolate& isolate, NativeFrameSize size) noexcept;
+  NativeFrame(Isolate& isolate, NativeFrameSize size, Value* stack_roots) noexcept;
   ~NativeFrame();
   NativeFrame(const NativeFrame&) = delete;
   NativeFrame& operator=(const NativeFrame&) = delete;
   NativeFrame(NativeFrame&&) = delete;
   NativeFrame& operator=(NativeFrame&&) = delete;
 
-  [[nodiscard]] std::span<Value> roots() noexcept { return roots_.values(); }
+  [[nodiscard]] std::span<Value> roots() noexcept { return roots_; }
   [[nodiscard]] bool IsAllocated() const noexcept {
-    return roots_.IsAllocated() && (storage_bytes_ == 0 || storage_ != nullptr);
+    return allocated_roots_.IsAllocated() && (storage_bytes_ == 0 || storage_ != nullptr);
   }
   [[nodiscard]] void* storage() const noexcept { return storage_; }
 
  private:
-  ValueBuffer roots_;
+  ValueBuffer allocated_roots_;
+  std::span<Value> roots_;
   RootRange root_range_;
   std::size_t storage_bytes_;
   void* storage_;
@@ -86,21 +90,21 @@ class NativeFrame final {
 class NativeExecution final {
  public:
   explicit NativeExecution(NativeInstance& instance) noexcept;
-  ~NativeExecution();
+  ~NativeExecution() = default;
   NativeExecution(const NativeExecution&) = delete;
   NativeExecution& operator=(const NativeExecution&) = delete;
   NativeExecution(NativeExecution&&) = delete;
   NativeExecution& operator=(NativeExecution&&) = delete;
 
-  [[nodiscard]] ExecutionStatus Enter(std::uint32_t function, NativeFrameSize size) noexcept;
+  [[nodiscard]] ExecutionStatus Enter(NativeTraceFrame& frame, std::uint32_t function) noexcept;
   [[nodiscard]] ExecutionStatus PrepareEntry() noexcept;
   void Exit() noexcept;
   [[nodiscard]] std::size_t frame_count() const noexcept { return frame_count_; }
-  [[nodiscard]] std::span<Value> current_roots() noexcept;
-  [[nodiscard]] void* current_storage() const noexcept;
   [[nodiscard]] NativeInstance& instance() const noexcept { return *instance_; }
-  [[nodiscard]] Isolate& isolate() const noexcept;
-  [[nodiscard]] std::uint32_t* current_instruction() noexcept;
+  [[nodiscard]] Isolate& isolate() const noexcept { return *isolate_; }
+  [[nodiscard]] std::uint32_t* current_instruction() noexcept {
+    return &current_frame_->position.instruction;
+  }
   [[nodiscard]] ExecutionStatus HandleFailure(ExecutionStatus status,
                                               std::string_view message = {});
   [[nodiscard]] FutureDiagnostic Diagnostic(ExecutionStatus status, std::string_view message) const;
@@ -115,10 +119,10 @@ class NativeExecution final {
 
  private:
   friend class NativeInstanceScope;
+  friend struct NativeMemoryLayout;
   NativeInstance* instance_;
-  // 逻辑位置始终登记；只有需要根或大暂存区时才构造资源帧。
-  std::array<TracePosition, kMaxCallFrames> positions_;
-  std::array<std::optional<NativeFrame>, kMaxCallFrames> frames_;
+  Isolate* isolate_;
+  NativeTraceFrame* current_frame_ = nullptr;
   std::size_t frame_count_ = 0;
   Value pending_exception_;
   RootRange exception_root_;
@@ -147,12 +151,13 @@ class NativeInstanceScope final {
 };
 
 // 版本化符号使错误 ABI 的静态产物在链接时即被拒绝。
-extern "C" std::uint8_t vela_native_v1_frame_enter(NativeExecution* execution,
-                                                   std::uint64_t root_count,
-                                                   std::uint32_t function,
-                                                   std::uint64_t storage_bytes,
-                                                   NativeFrameAccess* access) noexcept;
-extern "C" void vela_native_v1_frame_exit(NativeExecution* execution) noexcept;
+extern "C" std::uint8_t vela_native_v1_frame_storage(NativeExecution* execution,
+                                                     std::uint64_t root_count,
+                                                     std::uint64_t storage_bytes,
+                                                     Value* stack_roots,
+                                                     NativeFrame* frame,
+                                                     NativeFrameAccess* access) noexcept;
+extern "C" void vela_native_v1_frame_release(NativeFrame* frame) noexcept;
 // 仅供不调用、不分配、不观察运行时状态的标量叶函数；失败时补建逻辑帧捕获栈。
 extern "C" std::uint8_t vela_native_v1_leaf_enter(NativeExecution* execution) noexcept;
 extern "C" std::uint8_t vela_native_v1_leaf_failure(NativeExecution* execution,

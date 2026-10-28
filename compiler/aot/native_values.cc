@@ -192,6 +192,7 @@ llvm::Value* Convert(Builder& builder,
 
 void EmitWrapper(llvm::Module& module,
                  const ir::Function& source,
+                 std::uint32_t function_index,
                  const GeneratedFunction& function) {
   auto* body = function.body;
   auto* entry = function.entry;
@@ -248,6 +249,18 @@ void EmitWrapper(llvm::Module& module,
   }
   auto* result_type = ValueType(context, source.return_type);
   auto* result = builder.CreateAlloca(result_type);
+  if (!source.native_symbol.empty()) {
+    auto* bound = llvm::BasicBlock::Create(context, "import.bound", entry);
+    auto* no_execution = llvm::BasicBlock::Create(context, "invalid.isolate", entry);
+    builder.CreateCondBr(builder.CreateIsNotNull(entry->getArg(0)), bound, no_execution);
+    Builder missing(no_execution);
+    missing.CreateRet(Status(missing, ExecutionStatus::InvalidIsolate));
+    builder.SetInsertPoint(bound);
+    auto lookup = module.getOrInsertFunction("vela_native_v1_import", builder.getPtrTy(),
+                                             builder.getPtrTy(), builder.getInt32Ty());
+    auto* slot = builder.CreateCall(lookup, {entry->getArg(0), builder.getInt32(function_index)});
+    arguments.push_back(builder.CreateLoad(builder.getPtrTy(), slot));
+  }
   arguments.push_back(result);
   auto* status = builder.CreateCall(body, arguments);
   auto* returned = llvm::BasicBlock::Create(context, "returned", entry);

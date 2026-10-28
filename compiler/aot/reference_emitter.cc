@@ -1,5 +1,7 @@
 #include "compiler/aot/function_emitter.h"
+#include "compiler/aot/integer_loop_optimizer.h"
 
+#include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <bit>
 #include <cstddef>
@@ -59,8 +61,10 @@ llvm::Value* FunctionEmitter::RootAddress(std::size_t slot) {
 }
 
 void FunctionEmitter::ClearRoot(std::size_t slot) {
-  builder_.CreateStore(builder_.getInt8(NativeKind(Kind::Null)),
-                       ByteAddress(RootAddress(slot), runtime::NativeMemoryLayout::kValueKind));
+  auto* clear =
+      builder_.CreateStore(builder_.getInt8(NativeKind(Kind::Null)),
+                           ByteAddress(RootAddress(slot), runtime::NativeMemoryLayout::kValueKind));
+  clear->setMetadata(kNativeRootClearMetadata, llvm::MDNode::get(module_.getContext(), {}));
 }
 
 std::expected<void, std::string> FunctionEmitter::EmitReference(

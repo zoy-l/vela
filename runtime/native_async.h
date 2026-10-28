@@ -11,10 +11,15 @@
 
 namespace vela::runtime {
 
-struct NativeResumeState;
-using NativeResumeEntry = std::uint8_t (*)(NativeExecution*,
-                                           NativeResumeState*,
-                                           HeapObject**) noexcept;
+class NativeSuspendedFrame;
+// 固定 ABI 视图；存储由整次 async 激活持有，恢复调用只借用完成结果。
+struct NativeResumeState final {
+  Value* saved = nullptr;
+  const FutureResult* completion = nullptr;
+  NativeSuspendedFrame* frame = nullptr;
+  std::uint32_t instruction = 0;
+};
+using NativeResumeEntry = std::uint8_t (*)(NativeExecution*, NativeResumeState*) noexcept;
 
 [[nodiscard]] std::expected<Value, ExecutionStatus> ExecuteNativeDynamicAsync(
     NativeExecution& execution,
@@ -45,12 +50,17 @@ extern "C" std::uint8_t vela_native_v1_suspend(NativeExecution* execution,
                                                const NativeValue* source,
                                                const NativeValue* saved,
                                                std::uint64_t count,
+                                               std::uint64_t capacity,
                                                NativeValue* result);
-extern "C" std::uint32_t vela_native_v1_resume_instruction(NativeResumeState* state) noexcept;
-extern "C" void vela_native_v1_resume_value(NativeResumeState* state,
-                                            std::uint64_t index,
-                                            NativeValue* result) noexcept;
-extern "C" void vela_native_v1_resume_release(NativeResumeState* state) noexcept;
+extern "C" void vela_native_v1_resuspend(NativeResumeState* state,
+                                         std::uint32_t instruction,
+                                         const NativeValue* source,
+                                         const NativeValue* saved,
+                                         std::uint64_t count);
+extern "C" std::uint8_t vela_native_v1_resume_return(NativeExecution* execution,
+                                                     NativeResumeState* state,
+                                                     std::uint32_t function,
+                                                     const NativeValue* payload);
 extern "C" std::uint8_t vela_native_v1_resume_outcome(NativeExecution* execution,
                                                       NativeResumeState* state,
                                                       NativeValue* result);

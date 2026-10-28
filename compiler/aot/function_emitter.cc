@@ -43,7 +43,6 @@
 #include "compiler/ir/ir.h"
 #include "runtime/exception.h"
 #include "runtime/native_abi.h"
-#include "runtime/native_memory_layout.h"
 
 namespace vela::compiler::aot {
 namespace {
@@ -284,6 +283,9 @@ std::expected<void, std::string> FunctionEmitter::EmitInstruction(
         arguments.push_back(Convert(builder_, Load(reg), source_.value_types.at(reg),
                                     callee.value_types.at(index)));
       }
+      if (!callee.native_symbol.empty()) {
+        arguments.push_back(imports_.at(instruction.index));
+      }
       // 各类结果都可放入对齐的单个 ABI 暂存槽；循环和多调用不增加帧大小。
       arguments.push_back(result_);
       auto* status =
@@ -366,7 +368,8 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
   fields.push_back(llvm::ArrayType::get(NativeRecordType(context), scratch_count));
   fields.push_back(NativeRecordType(context));
   frame_type_ = llvm::StructType::get(context, fields);
-  frame_bytes_ = module_.getDataLayout().getTypeAllocSize(frame_type_);
+  storage_bytes_ = module_.getDataLayout().getTypeAllocSize(frame_type_);
+  frame_bytes_ = storage_bytes_ + roots_.count * sizeof(runtime::Value);
   if (frame_bytes_ <= kMaximumNativeStackBytes) {
     // 局部值的地址不传给 helper；独立 alloca 可提升为 SSA。将它们与 ABI 暂存区
     // 放在同一结构中会让暂存区的地址逃逸阻止提升，导致纯算术循环持续读写栈。
@@ -438,16 +441,14 @@ void FunctionEmitter::EmitImport() {
   auto* result_type = return_type.kind == Kind::Bool || return_type.kind == Kind::Void
                           ? builder_.getInt8Ty()
                           : ValueType(module_.getContext(), return_type);
-  arguments.push_back(result_);
+  // ABI 标量结果直接写入调用者槽，避免 import 包装层再复制一次。
+  arguments.push_back(Output());
   types.push_back(builder_.getPtrTy());
-  auto lookup = module_.getOrInsertFunction("vela_native_v1_import", builder_.getPtrTy(),
-                                            builder_.getPtrTy(), builder_.getInt32Ty());
-  auto* slot = builder_.CreateCall(lookup, {context, function});
-  auto* thunk = builder_.CreateLoad(builder_.getPtrTy(), slot);
+  auto* thunk = body_->getArg(static_cast<unsigned>(source_.parameter_count + 1));
   auto* signature = llvm::FunctionType::get(builder_.getInt8Ty(), types, false);
   CheckStatus(builder_.CreateCall(signature, thunk, arguments));
   if (return_type.kind != Kind::Void) {
-    llvm::Value* value = builder_.CreateLoad(result_type, result_);
+    llvm::Value* value = builder_.CreateLoad(result_type, Output());
     if (return_type.kind == Kind::Bool) {
       value = builder_.CreateICmpNE(value, builder_.getInt8(0));
     }
@@ -465,55 +466,9 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
     return prepared;
   }
   leaf_entry_ = CanUseLeafEntry();
-  cleanup_ = llvm::BasicBlock::Create(context, "cleanup", body_);
-  Builder cleanup(cleanup_);
-  status_ = cleanup.CreatePHI(builder_.getInt8Ty(), 0, "status");
-  if (!leaf_entry_) {
-    auto exit = module_.getOrInsertFunction("vela_native_v1_frame_exit", cleanup.getVoidTy(),
-                                            cleanup.getPtrTy());
-    cleanup.CreateCall(exit, {body_->getArg(0)});
-  }
-  cleanup.CreateRet(status_);
-  llvm::Value* access = nullptr;
-  llvm::Value* entered = nullptr;
-  if (leaf_entry_) {
-    auto enter = module_.getOrInsertFunction("vela_native_v1_leaf_enter", builder_.getInt8Ty(),
-                                             builder_.getPtrTy());
-    entered = builder_.CreateCall(enter, {body_->getArg(0)});
-  } else {
-    auto enter = module_.getOrInsertFunction(
-        "vela_native_v1_frame_enter", builder_.getInt8Ty(), builder_.getPtrTy(),
-        builder_.getInt64Ty(), builder_.getInt32Ty(), builder_.getInt64Ty(), builder_.getPtrTy());
-    auto* allocation = builder_.CreateAlloca(
-        llvm::ArrayType::get(builder_.getInt8Ty(), sizeof(runtime::NativeFrameAccess)));
-    allocation->setAlignment(llvm::Align(alignof(runtime::NativeFrameAccess)));
-    access = allocation;
-    entered = builder_.CreateCall(
-        enter, {
-                   body_->getArg(0),
-                   builder_.getInt64(roots_.count),
-                   builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
-                   builder_.getInt64(frame_bytes_ > kMaximumNativeStackBytes ? frame_bytes_ : 0),
-                   access,
-               });
-  }
-  auto* failed = llvm::BasicBlock::Create(context, "enter.failed", body_);
-  auto* initialize = llvm::BasicBlock::Create(context, "initialize", body_);
-  builder_.CreateCondBr(builder_.CreateICmpEQ(entered, Status(builder_, ExecutionStatus::Returned)),
-                        initialize, failed);
-  Builder failure(failed);
-  failure.CreateRet(entered);
-  builder_.SetInsertPoint(initialize);
-  if (!leaf_entry_) {
-    using runtime::NativeMemoryLayout;
-    instruction_slot_ = builder_.CreateLoad(
-        builder_.getPtrTy(), ByteAddress(access, NativeMemoryLayout::kFrameInstruction));
-    root_slots_ = builder_.CreateLoad(builder_.getPtrTy(),
-                                      ByteAddress(access, NativeMemoryLayout::kFrameRoots));
-    frame_storage_ = builder_.CreateLoad(builder_.getPtrTy(),
-                                         ByteAddress(access, NativeMemoryLayout::kFrameStorage));
-  }
+  EmitFrameEntry();
   BindFrameStorage();
+  CacheImports();
   if (kind_ == NativeEntryKind::Initial) {
     for (std::size_t index = 0; index < source_.parameter_count; ++index) {
       builder_.CreateStore(body_->getArg(static_cast<unsigned>(index + 1)), slots_.at(index));

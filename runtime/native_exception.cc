@@ -48,8 +48,9 @@ FutureDiagnostic ResolveTrace(const NativeImage& image,
 
 std::span<const TracePosition> NativeExecution::CapturePositions(
     std::span<TracePosition> storage) const noexcept {
-  for (std::size_t index = 0; index < frame_count_; ++index) {
-    storage.subspan(index).front() = positions_.at(frame_count_ - index - 1);
+  std::size_t index = 0;
+  for (auto* frame = current_frame_; frame != nullptr; frame = frame->previous) {
+    storage.subspan(index++).front() = frame->position;
   }
   return storage.first(frame_count_);
 }

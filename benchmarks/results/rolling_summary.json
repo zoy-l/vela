@@ -10,9 +10,9 @@
       "physical_cores": 8,
       "logical_cpus": 8,
       "load_average": [
-        7.04395,
-        14.2729,
-        27.0732
+        16.4683,
+        36.3682,
+        36.9404
       ]
     },
     "toolchain": {
@@ -32,30 +32,89 @@
       "target": "//benchmarks:vela_aot_benchmarks"
     },
     "source": {
-      "revision": "7a9f2081e877b66fa3b9d35c40a69dc3dc08973c",
+      "revision": "58b8f45fdea592be05c09dd6fb69f2487592ae58",
       "working_tree": "dirty",
-      "nonbehavioral_source_overrides": [
-        "runtime/object.h: unused friend declaration",
-        "runtime/native_memory_layout.h: unused header, not included in build"
+      "compiler_build_identity": "36b6d859f9d31e0a1111cb14658501653215b1ffd4d4f95d37898481864a18e7",
+      "description": "AOT SSA induction range proofs and exact wide monotone reductions; original overflow errors retained.",
+      "build_sources_sha256": "c3287c749ba7530b826766535090c8c032f84af58ba0e074546c62f8ef34b5a1",
+      "build_source_count": 535,
+      "fingerprint_algorithm": "SHA256 of relative path, NUL, binary SHA256(file); sorted within base, benchmarks, build, compiler, runtime, tools, vm.",
+      "executable_sha256": "d6cf857492d680bcee16b5de53a4d652c36e9c92042a0c33dd13f6b8e56f10c1",
+      "aot_cases_sha256": "4e1b891aa996e5568dc633a7598554d0f94479c6657c9a1dad115a5607588b37"
+    },
+    "build_phases": {
+      "command": [
+        "/Users/zoy/vela/out/release/vela",
+        "build",
+        "/Users/zoy/vela/benchmarks/aot_workloads.vela",
+        "--emit=obj",
+        "--export=arithmetic",
+        "--export=calls",
+        "--export=fields",
+        "--export=arrays",
+        "--export=host",
+        "--export=gc",
+        "--export=asyncWork",
+        "-o",
+        "/Users/zoy/vela/out/release/gen/benchmarks/aot_native/workload.o"
       ],
-      "description": "Pre-optimization executable preserved before native memory and scalar-leaf changes. Runtime/compiler sources match HEAD behavior; unused layout declarations account for the ABI fingerprint.",
-      "compiler_build_identity": "b0457c2b0d86952af9c86ede7415d967eb93d12dded429e3ad75c736449aacda",
-      "build_inputs_sha256": "4f9856e18231cbf6d8c26df17759b4c8cff10dbd0ebf1e36feaca3f319165a6a",
-      "build_input_count": 345,
-      "fingerprint_algorithm": "SHA256 of sorted UTF-8 relative path, NUL, binary SHA256(file); compiler/runtime build inputs reconstructed and verified against the embedded ABI identity",
-      "aot_cases_sha256": "4e1b891aa996e5568dc633a7598554d0f94479c6657c9a1dad115a5607588b37",
-      "executable_sha256": "373ff50119c9842fa8de1059def1343b640f1cf802dafd4943a666ca6af686cb"
+      "compilation_and_publication_seconds": 0.2030230840900913,
+      "object_bytes": 20712,
+      "runtime_abi": "36b6d859f9d31e0a1111cb14658501653215b1ffd4d4f95d37898481864a18e7/release",
+      "toolchain_build": "1014ff77b8f8b1f99205599e05c0dcf2",
+      "target": "arm64-apple-darwin23.6.0",
+      "optimization": "O2"
+    },
+    "validation": {
+      "release_all": {
+        "command_argv": [
+          "python3",
+          "-m",
+          "tools.vl",
+          "test",
+          "release",
+          "all"
+        ],
+        "cpp_tests_passed": 1568,
+        "python_tests_passed": 112,
+        "python_tests_skipped": 2,
+        "skip_reason": "Clean-host distribution requires an audited SDK support specification."
+      },
+      "native_integer_loop_contracts": {
+        "linked_native_host_tests_passed": 36,
+        "small_range_checked_oracle_cases": 3570,
+        "coverage": [
+          "dynamic and zero-iteration bounds",
+          "positive and negative reductions",
+          "INT64 endpoints and wide intermediate cancellation",
+          "UINT64_MAX iterations in constant reductions",
+          "original overflow status, message and source location",
+          "catch-visible prefixes, side effects and inclusive-bound induction overflow"
+        ]
+      },
+      "llvm_structure": {
+        "source_variants": 9,
+        "optimized_loops": 0,
+        "per_iteration_checked_add_sub_intrinsics": 0
+      },
+      "lint": {
+        "status": "cancelled",
+        "reason": "Stopped at user request; no further lint run."
+      },
+      "executed_platforms": [
+        "macOS arm64"
+      ]
     },
     "suite": {
       "id": "offline-aot-vm-cpp-v1",
-      "run_date": "2026-10-28T13:15:03+08:00",
+      "run_date": "2026-10-28T14:13:26+08:00",
       "command_argv": [
-        "/tmp/vela-aot-before-benchmarks",
+        "/Users/zoy/vela/out/release/vela_aot_benchmarks",
         "--benchmark_filter=^aot/",
-        "--benchmark_repetitions=7",
         "--benchmark_min_time=0.2s",
+        "--benchmark_repetitions=7",
         "--benchmark_enable_random_interleaving=true",
-        "--benchmark_out=/tmp/vela-aot-baseline-final.json",
+        "--benchmark_out=/private/tmp/vela-loop-after.json",
         "--benchmark_out_format=json"
       ],
       "working_directory": "/Users/zoy/vela",
@@ -99,79 +158,11 @@
       "correctness_checks_passed": true,
       "temporary_retention_checks_passed": true,
       "cases": {
-        "aot/cpp/asyncWork/64/real_time": {
-          "wall_ns": {
-            "median": 19583.234258452405,
-            "stddev": 596.1308043846099,
-            "cv": 0.03072300820751551,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9076736.0,
-            "result": 2080.0
-          }
-        },
-        "aot/cpp/arithmetic/1000/real_time": {
-          "wall_ns": {
-            "median": 1.3584207356812743,
-            "stddev": 0.34152151280832366,
-            "cv": 0.22710288291702396,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9076736.0,
-            "result": 499500.0
-          }
-        },
-        "aot/vm/host/1000/real_time": {
-          "wall_ns": {
-            "median": 46094.82017147043,
-            "stddev": 1136.9105329569666,
-            "cv": 0.024577494788139136,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 144.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 144.0,
-            "process_resident_bytes": 9043968.0,
-            "register_bytes": 45.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 500500.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/native/fields/1000/real_time": {
-          "wall_ns": {
-            "median": 6097.118756848711,
-            "stddev": 330.0481498054602,
-            "cv": 0.052664556982107015,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 59040.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 65568.0,
-            "entry_frame_bytes": 168.0,
-            "entry_shadow_slots": 3.0,
-            "entry_static_root_stores": 8.0,
-            "process_resident_bytes": 9109504.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 1000.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
         "aot/native/host/1000/real_time": {
           "wall_ns": {
-            "median": 13228.454506083706,
-            "stddev": 3923.7613980160013,
-            "cv": 0.2654979044840714,
+            "median": 7594.610018141025,
+            "stddev": 3950.540705945963,
+            "cv": 0.4356019991119247,
             "repetitions": 7
           },
           "counters": {
@@ -181,7 +172,7 @@
             "entry_frame_bytes": 128.0,
             "entry_shadow_slots": 0.0,
             "entry_static_root_stores": 0.0,
-            "process_resident_bytes": 9076736.0,
+            "process_resident_bytes": 9142272.0,
             "remaining_saved_bytes": 0.0,
             "remaining_suspended_frames": 0.0,
             "result": 500500.0,
@@ -190,45 +181,50 @@
             "suspended_frames": 0.0
           }
         },
-        "aot/first_native/fields/1000/real_time": {
+        "aot/native/arrays/1000/real_time": {
           "wall_ns": {
-            "median": 7387.898429918558,
-            "stddev": 371.35251879921003,
-            "cv": 0.049160023786833824,
+            "median": 2998.4300779203313,
+            "stddev": 219.70611232360247,
+            "cv": 0.07304862978346717,
             "repetitions": 7
           },
-          "counters": {}
+          "counters": {
+            "allocated_bytes": 49056.0,
+            "baseline_bytes": 288.0,
+            "committed_bytes": 49440.0,
+            "entry_frame_bytes": 256.0,
+            "entry_shadow_slots": 3.0,
+            "entry_static_root_stores": 8.0,
+            "process_resident_bytes": 9125888.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "result": 499500.0,
+            "retained_bytes": 288.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
         },
-        "aot/first_native/arrays/1000/real_time": {
+        "aot/first_native/host/1000/real_time": {
           "wall_ns": {
-            "median": 33952.6052585362,
-            "stddev": 2351.6260372663237,
-            "cv": 0.06730411101925228,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/first_native/calls/1000/real_time": {
-          "wall_ns": {
-            "median": 11627.645367455154,
-            "stddev": 2795.400971186384,
-            "cv": 0.2187646710262688,
+            "median": 10167.697061558069,
+            "stddev": 1243.2917579840228,
+            "cv": 0.12509560260580005,
             "repetitions": 7
           },
           "counters": {}
         },
         "aot/vm/arrays/1000/real_time": {
           "wall_ns": {
-            "median": 92011.57850046188,
-            "stddev": 12324.123659202403,
-            "cv": 0.12659298490900756,
+            "median": 83897.62429671388,
+            "stddev": 16074.126436750175,
+            "cv": 0.176611150140279,
             "repetitions": 7
           },
           "counters": {
-            "allocated_bytes": 65168.0,
+            "allocated_bytes": 16400.0,
             "baseline_bytes": 144.0,
-            "committed_bytes": 65296.0,
-            "process_resident_bytes": 9109504.0,
+            "committed_bytes": 17296.0,
+            "process_resident_bytes": 9125888.0,
             "register_bytes": 63.0,
             "remaining_saved_bytes": 0.0,
             "remaining_suspended_frames": 0.0,
@@ -238,95 +234,51 @@
             "suspended_frames": 0.0
           }
         },
-        "aot/first_native/gc/1000/real_time": {
+        "aot/vm/asyncWork/64/real_time": {
           "wall_ns": {
-            "median": 88814.86768495112,
-            "stddev": 1272.7141275637646,
-            "cv": 0.014385621427349686,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/first_native/asyncWork/64/real_time": {
-          "wall_ns": {
-            "median": 85232.60580493366,
-            "stddev": 4306.6395827554,
-            "cv": 0.04928102726205005,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/cpp/gc/1000/real_time": {
-          "wall_ns": {
-            "median": 27247.805581059576,
-            "stddev": 812.5488615873365,
-            "cv": 0.029845209209640643,
+            "median": 203387.76670453115,
+            "stddev": 48113.62690327604,
+            "cv": 0.20733969455861112,
             "repetitions": 7
           },
           "counters": {
+            "allocated_bytes": 54096.0,
+            "baseline_bytes": 144.0,
+            "committed_bytes": 65488.0,
             "process_resident_bytes": 9109504.0,
-            "result": 2890.0
-          }
-        },
-        "aot/cpp/host/1000/real_time": {
-          "wall_ns": {
-            "median": 997.190586479394,
-            "stddev": 17.973241463718338,
-            "cv": 0.01795414977563169,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9060352.0,
-            "result": 500500.0
-          }
-        },
-        "aot/native/calls/1000/real_time": {
-          "wall_ns": {
-            "median": 10235.588292287146,
-            "stddev": 157.28400355415707,
-            "cv": 0.015326748175365166,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 288.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 288.0,
-            "entry_frame_bytes": 128.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "process_resident_bytes": 9060352.0,
+            "register_bytes": 72.0,
             "remaining_saved_bytes": 0.0,
             "remaining_suspended_frames": 0.0,
-            "result": 500500.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
+            "result": 2080.0,
+            "retained_bytes": 144.0,
+            "saved_state_bytes": 517.0,
+            "suspended_frames": 2.0
           }
         },
-        "aot/cpp/fields/1000/real_time": {
+        "aot/cpp/asyncWork/64/real_time": {
           "wall_ns": {
-            "median": 25.904235539470193,
-            "stddev": 2.5680450788195017,
-            "cv": 0.09574822940675773,
+            "median": 20928.783295676112,
+            "stddev": 2110.4489401651663,
+            "cv": 0.09867345772420291,
             "repetitions": 7
           },
           "counters": {
-            "process_resident_bytes": 9060352.0,
-            "result": 1000.0
+            "process_resident_bytes": 9093120.0,
+            "result": 2080.0
           }
         },
         "aot/vm/arithmetic/1000/real_time": {
           "wall_ns": {
-            "median": 27763.482267704316,
-            "stddev": 4949.596167443644,
-            "cv": 0.16174768248769453,
+            "median": 28387.180507919864,
+            "stddev": 5407.8510208412,
+            "cv": 0.17599029689972387,
             "repetitions": 7
           },
           "counters": {
             "allocated_bytes": 144.0,
             "baseline_bytes": 144.0,
             "committed_bytes": 144.0,
-            "process_resident_bytes": 9076736.0,
+            "process_resident_bytes": 9125888.0,
             "register_bytes": 45.0,
             "remaining_saved_bytes": 0.0,
             "remaining_suspended_frames": 0.0,
@@ -336,120 +288,20 @@
             "suspended_frames": 0.0
           }
         },
-        "aot/cpp/arrays/1000/real_time": {
+        "aot/first_native/calls/1000/real_time": {
           "wall_ns": {
-            "median": 2320.8286489211823,
-            "stddev": 52.48660592611009,
-            "cv": 0.022575751080356,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9060352.0,
-            "result": 499500.0
-          }
-        },
-        "aot/cpp/calls/1000/real_time": {
-          "wall_ns": {
-            "median": 986.3503695737484,
-            "stddev": 160.7777029960837,
-            "cv": 0.15401628070347223,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9060352.0,
-            "result": 500500.0
-          }
-        },
-        "aot/native/gc/1000/real_time": {
-          "wall_ns": {
-            "median": 84157.81072000125,
-            "stddev": 3176.178173513032,
-            "cv": 0.03761743648885575,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 42528.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 65504.0,
-            "entry_frame_bytes": 176.0,
-            "entry_shadow_slots": 3.0,
-            "entry_static_root_stores": 6.0,
-            "process_resident_bytes": 9060352.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 2890.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/first_native/arithmetic/1000/real_time": {
-          "wall_ns": {
-            "median": 1709.6477744134465,
-            "stddev": 46.67775201177634,
-            "cv": 0.027237561220199623,
+            "median": 3371.0569876553004,
+            "stddev": 304.87819428939963,
+            "cv": 0.08758792114544377,
             "repetitions": 7
           },
           "counters": {}
-        },
-        "aot/first_native/host/1000/real_time": {
-          "wall_ns": {
-            "median": 14513.346666228048,
-            "stddev": 517.4063943935769,
-            "cv": 0.035102778280007296,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/vm/gc/1000/real_time": {
-          "wall_ns": {
-            "median": 112815.69157486805,
-            "stddev": 20211.06277038038,
-            "cv": 0.16669704181174935,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 42384.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 65552.0,
-            "process_resident_bytes": 9060352.0,
-            "register_bytes": 54.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 2890.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/native/arrays/1000/real_time": {
-          "wall_ns": {
-            "median": 32813.17742451021,
-            "stddev": 1003.2385066265824,
-            "cv": 0.030159028661065984,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 65312.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 65440.0,
-            "entry_frame_bytes": 256.0,
-            "entry_shadow_slots": 3.0,
-            "entry_static_root_stores": 8.0,
-            "process_resident_bytes": 9060352.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 499500.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
         },
         "aot/native/arithmetic/1000/real_time": {
           "wall_ns": {
-            "median": 368.37399842093345,
-            "stddev": 43.258121648241776,
-            "cv": 0.11024707950095175,
+            "median": 24.337615645725837,
+            "stddev": 5.193131018706302,
+            "cv": 0.18888709909886797,
             "repetitions": 7
           },
           "counters": {
@@ -468,18 +320,216 @@
             "suspended_frames": 0.0
           }
         },
-        "aot/vm/calls/1000/real_time": {
+        "aot/cpp/host/1000/real_time": {
           "wall_ns": {
-            "median": 55987.79577572248,
-            "stddev": 2226.10291991062,
-            "cv": 0.03924909752015099,
+            "median": 1063.870419587915,
+            "stddev": 82.25375990043304,
+            "cv": 0.07674394389752075,
+            "repetitions": 7
+          },
+          "counters": {
+            "process_resident_bytes": 9125888.0,
+            "result": 500500.0
+          }
+        },
+        "aot/cpp/arithmetic/1000/real_time": {
+          "wall_ns": {
+            "median": 1.4105838465299687,
+            "stddev": 0.9157380357564421,
+            "cv": 0.52029465116979,
+            "repetitions": 7
+          },
+          "counters": {
+            "process_resident_bytes": 9142272.0,
+            "result": 499500.0
+          }
+        },
+        "aot/first_native/arithmetic/1000/real_time": {
+          "wall_ns": {
+            "median": 1393.4360552795738,
+            "stddev": 106.9290381757861,
+            "cv": 0.0757638275440661,
+            "repetitions": 7
+          },
+          "counters": {}
+        },
+        "aot/native/gc/1000/real_time": {
+          "wall_ns": {
+            "median": 66599.50974574726,
+            "stddev": 7633.454932818191,
+            "cv": 0.11251751475682205,
+            "repetitions": 7
+          },
+          "counters": {
+            "allocated_bytes": 46368.0,
+            "baseline_bytes": 288.0,
+            "committed_bytes": 65504.0,
+            "entry_frame_bytes": 176.0,
+            "entry_shadow_slots": 3.0,
+            "entry_static_root_stores": 6.0,
+            "process_resident_bytes": 9207808.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "result": 2890.0,
+            "retained_bytes": 288.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "aot/native/fields/1000/real_time": {
+          "wall_ns": {
+            "median": 124.36607550613145,
+            "stddev": 17.707094331257462,
+            "cv": 0.13134675001543328,
+            "repetitions": 7
+          },
+          "counters": {
+            "allocated_bytes": 52768.0,
+            "baseline_bytes": 288.0,
+            "committed_bytes": 65568.0,
+            "entry_frame_bytes": 168.0,
+            "entry_shadow_slots": 3.0,
+            "entry_static_root_stores": 8.0,
+            "process_resident_bytes": 9142272.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "result": 1000.0,
+            "retained_bytes": 288.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "aot/cpp/fields/1000/real_time": {
+          "wall_ns": {
+            "median": 26.905147439597226,
+            "stddev": 3.2736094597955656,
+            "cv": 0.1171360775931868,
+            "repetitions": 7
+          },
+          "counters": {
+            "process_resident_bytes": 9175040.0,
+            "result": 1000.0
+          }
+        },
+        "aot/cpp/gc/1000/real_time": {
+          "wall_ns": {
+            "median": 27509.17403619969,
+            "stddev": 1926.8569859385682,
+            "cv": 0.0684182004622596,
+            "repetitions": 7
+          },
+          "counters": {
+            "process_resident_bytes": 9224192.0,
+            "result": 2890.0
+          }
+        },
+        "aot/vm/host/1000/real_time": {
+          "wall_ns": {
+            "median": 43334.62488609576,
+            "stddev": 1486.886253477797,
+            "cv": 0.033948915576120654,
             "repetitions": 7
           },
           "counters": {
             "allocated_bytes": 144.0,
             "baseline_bytes": 144.0,
             "committed_bytes": 144.0,
+            "process_resident_bytes": 9224192.0,
+            "register_bytes": 45.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "result": 500500.0,
+            "retained_bytes": 144.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "aot/native/calls/1000/real_time": {
+          "wall_ns": {
+            "median": 2009.8968338079192,
+            "stddev": 166.05202447845303,
+            "cv": 0.08020397198924713,
+            "repetitions": 7
+          },
+          "counters": {
+            "allocated_bytes": 288.0,
+            "baseline_bytes": 288.0,
+            "committed_bytes": 288.0,
+            "entry_frame_bytes": 128.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "process_resident_bytes": 9207808.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "result": 500500.0,
+            "retained_bytes": 288.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "aot/cpp/calls/1000/real_time": {
+          "wall_ns": {
+            "median": 1110.4958912530128,
+            "stddev": 78.22995550280699,
+            "cv": 0.07172378717156197,
+            "repetitions": 7
+          },
+          "counters": {
             "process_resident_bytes": 9076736.0,
+            "result": 500500.0
+          }
+        },
+        "aot/first_native/fields/1000/real_time": {
+          "wall_ns": {
+            "median": 1483.8560408274489,
+            "stddev": 404.1223377695217,
+            "cv": 0.23903970188040166,
+            "repetitions": 7
+          },
+          "counters": {}
+        },
+        "aot/first_native/asyncWork/64/real_time": {
+          "wall_ns": {
+            "median": 84948.61530213123,
+            "stddev": 4941.324300599028,
+            "cv": 0.056814082708625396,
+            "repetitions": 7
+          },
+          "counters": {}
+        },
+        "aot/vm/gc/1000/real_time": {
+          "wall_ns": {
+            "median": 105741.51347863482,
+            "stddev": 10084.772470559315,
+            "cv": 0.09021592451759546,
+            "repetitions": 7
+          },
+          "counters": {
+            "allocated_bytes": 27024.0,
+            "baseline_bytes": 144.0,
+            "committed_bytes": 65552.0,
+            "process_resident_bytes": 9207808.0,
+            "register_bytes": 54.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "result": 2890.0,
+            "retained_bytes": 144.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "aot/vm/calls/1000/real_time": {
+          "wall_ns": {
+            "median": 49095.49410059739,
+            "stddev": 3527.320888909916,
+            "cv": 0.06965882799946878,
+            "repetitions": 7
+          },
+          "counters": {
+            "allocated_bytes": 144.0,
+            "baseline_bytes": 144.0,
+            "committed_bytes": 144.0,
+            "process_resident_bytes": 9224192.0,
             "register_bytes": 54.0,
             "remaining_saved_bytes": 0.0,
             "remaining_suspended_frames": 0.0,
@@ -489,39 +539,39 @@
             "suspended_frames": 0.0
           }
         },
-        "aot/vm/asyncWork/64/real_time": {
+        "aot/cpp/arrays/1000/real_time": {
           "wall_ns": {
-            "median": 177176.65201879642,
-            "stddev": 40738.75505411693,
-            "cv": 0.21278946821299796,
+            "median": 2314.2309151118334,
+            "stddev": 146.17306750322015,
+            "cv": 0.06173931578764385,
             "repetitions": 7
           },
           "counters": {
-            "allocated_bytes": 28368.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 65488.0,
-            "process_resident_bytes": 9060352.0,
-            "register_bytes": 72.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 2080.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 517.0,
-            "suspended_frames": 2.0
+            "process_resident_bytes": 9175040.0,
+            "result": 499500.0
           }
+        },
+        "aot/first_native/gc/1000/real_time": {
+          "wall_ns": {
+            "median": 73031.9855243978,
+            "stddev": 7134.521420843406,
+            "cv": 0.09570807885013284,
+            "repetitions": 7
+          },
+          "counters": {}
         },
         "aot/vm/fields/1000/real_time": {
           "wall_ns": {
-            "median": 41672.22388560814,
-            "stddev": 5520.250451193671,
-            "cv": 0.1269051063046158,
+            "median": 33396.09802969113,
+            "stddev": 11433.18783368538,
+            "cv": 0.29230126379563315,
             "repetitions": 7
           },
           "counters": {
-            "allocated_bytes": 20752.0,
+            "allocated_bytes": 16528.0,
             "baseline_bytes": 144.0,
             "committed_bytes": 65552.0,
-            "process_resident_bytes": 9043968.0,
+            "process_resident_bytes": 9158656.0,
             "register_bytes": 54.0,
             "remaining_saved_bytes": 0.0,
             "remaining_suspended_frames": 0.0,
@@ -533,19 +583,19 @@
         },
         "aot/native/asyncWork/64/real_time": {
           "wall_ns": {
-            "median": 101931.35364845928,
-            "stddev": 7466.08470015869,
-            "cv": 0.07148800352336296,
+            "median": 101328.7749309486,
+            "stddev": 24678.252334424702,
+            "cv": 0.21052784611288297,
             "repetitions": 7
           },
           "counters": {
-            "allocated_bytes": 37728.0,
+            "allocated_bytes": 8672.0,
             "baseline_bytes": 288.0,
             "committed_bytes": 65504.0,
             "entry_frame_bytes": 232.0,
             "entry_shadow_slots": 2.0,
             "entry_static_root_stores": 2.0,
-            "process_resident_bytes": 9060352.0,
+            "process_resident_bytes": 9191424.0,
             "remaining_saved_bytes": 0.0,
             "remaining_suspended_frames": 0.0,
             "result": 2080.0,
@@ -553,46 +603,112 @@
             "saved_state_bytes": 320.0,
             "suspended_frames": 2.0
           }
+        },
+        "aot/first_native/arrays/1000/real_time": {
+          "wall_ns": {
+            "median": 4128.345282881203,
+            "stddev": 549.1081064704279,
+            "cv": 0.12445020141820884,
+            "repetitions": 7
+          },
+          "counters": {}
         }
       }
     },
     "paired_comparison": {
       "arithmetic": {
-        "aot_over_vm": 0.013268292315385885,
-        "aot_over_cpp": 271.17813262485777
+        "aot_over_vm": 0.0008573452949628364,
+        "aot_over_cpp": 17.253576032077984
       },
       "calls": {
-        "aot_over_vm": 0.1828182044045663,
-        "aot_over_cpp": 10.377233697099397
+        "aot_over_vm": 0.040938519320930164,
+        "aot_over_cpp": 1.8099092933518912
       },
       "fields": {
-        "aot_over_vm": 0.1463113361452832,
-        "aot_over_cpp": 235.371499288545
+        "aot_over_vm": 0.003723970249325612,
+        "aot_over_cpp": 4.622389666711049
       },
       "arrays": {
-        "aot_over_vm": 0.35662009020251184,
-        "aot_over_cpp": 14.13856100051296
+        "aot_over_vm": 0.03573915355834187,
+        "aot_over_cpp": 1.295648614120875
       },
       "host": {
-        "aot_over_vm": 0.28698353647708175,
-        "aot_over_cpp": 13.265723408788977
+        "aot_over_vm": 0.17525500770119307,
+        "aot_over_cpp": 7.138660760097794
       },
       "gc": {
-        "aot_over_vm": 0.7459761097519974,
-        "aot_over_cpp": 3.088608749414331
+        "aot_over_vm": 0.629833142677722,
+        "aot_over_cpp": 2.420992708036529
       },
       "asyncWork": {
-        "aot_over_vm": 0.5753091758255231,
-        "aot_over_cpp": 5.205031625685846
+        "aot_over_vm": 0.4982048653798958,
+        "aot_over_cpp": 4.841598935752903
       }
     },
+    "arithmetic_machine_code": {
+      "symbol": "_vela_aot_ebd2b2e439fb5e803ed600095a3e9858_entry_3",
+      "reachable_control_flow_cycle": false,
+      "instruction_count": 68,
+      "wide_multiply_instructions": [
+        "mul",
+        "umulh"
+      ]
+    },
     "measurement_limits": [
-      "One macOS arm64 host; background load and per-case CV limit small performance conclusions.",
-      "C++ arithmetic and field loops may collapse. C++ uses unchecked arithmetic and different ownership; whole-workload ratios are not per-operation ABI overhead.",
-      "First-native excludes instantiation; RSS is a resident snapshot of the combined comparison process.",
-      "Root/frame counters describe planned storage before LLVM optimization, not dynamic writes or machine-stack bytes.",
-      "Windows passed acceptance before these optimizations; these changes were executed on macOS only. Windows/Linux execution and clean-host distribution were not repeated."
-    ]
+      "Same macOS arm64 host, pinned toolchain, Release settings, workload inputs and 7-repetition randomized 0.2s suite; runs occurred in separate processes.",
+      "Background load and high per-case CV limit small regression or speedup claims. Arithmetic median speedup is corroborated by acyclic machine control flow and exact boundary tests.",
+      "AOT/C++ measures the complete workload including native entry, global lookup and result handling. C++ arithmetic uses unchecked integers; this is not a per-operation language overhead ratio.",
+      "First-native excludes instantiation. RSS is a resident snapshot of the combined benchmark process. Frame/root counters describe planning before LLVM optimization.",
+      "Execution was verified on macOS arm64; Windows/Linux and clean-host distribution acceptance were not repeated."
+    ],
+    "comparison_to_previous": {
+      "comparable": true,
+      "basis": "Same machine, toolchain, Release configuration, 28 cases and measurement settings; background load varies, with per-case variation retained.",
+      "workloads": {
+        "arithmetic": {
+          "previous_aot_over_cpp": 306.444377436393,
+          "latest_aot_over_cpp": 17.253576032077984,
+          "aot_wall_speedup": 17.714100693886316,
+          "cpp_normalized_speedup": 17.76120943662051
+        },
+        "calls": {
+          "previous_aot_over_cpp": 1.9190100264474008,
+          "latest_aot_over_cpp": 1.8099092933518912,
+          "aot_wall_speedup": 1.0886413910211188,
+          "cpp_normalized_speedup": 1.0602796689846588
+        },
+        "fields": {
+          "previous_aot_over_cpp": 4.791348220294068,
+          "latest_aot_over_cpp": 4.622389666711049,
+          "aot_wall_speedup": 1.1556975424659384,
+          "cpp_normalized_speedup": 1.0365522090878239
+        },
+        "arrays": {
+          "previous_aot_over_cpp": 1.162799022706768,
+          "latest_aot_over_cpp": 1.295648614120875,
+          "aot_wall_speedup": 1.0330164359496927,
+          "cpp_normalized_speedup": 0.8974647987376977
+        },
+        "host": {
+          "previous_aot_over_cpp": 7.113844453179153,
+          "latest_aot_over_cpp": 7.138660760097794,
+          "aot_wall_speedup": 1.0798874071357996,
+          "cpp_normalized_speedup": 0.99652367471258
+        },
+        "gc": {
+          "previous_aot_over_cpp": 1.896325071563561,
+          "latest_aot_over_cpp": 2.420992708036529,
+          "aot_wall_speedup": 0.9296171006328323,
+          "cpp_normalized_speedup": 0.7832840905586685
+        },
+        "asyncWork": {
+          "previous_aot_over_cpp": 6.144532698302536,
+          "latest_aot_over_cpp": 4.841598935752903,
+          "aot_wall_speedup": 1.196542314914214,
+          "cpp_normalized_speedup": 1.2691122870438705
+        }
+      }
+    }
   },
   "latest": {
     "machine": {
@@ -604,9 +720,9 @@
       "physical_cores": 8,
       "logical_cpus": 8,
       "load_average": [
-        5.51807,
-        11.6152,
-        24.291
+        15.269,
+        21.1152,
+        20.376
       ]
     },
     "toolchain": {
@@ -626,568 +742,16 @@
       "target": "//benchmarks:vela_aot_benchmarks"
     },
     "source": {
-      "revision": "7a9f2081e877b66fa3b9d35c40a69dc3dc08973c",
+      "revision": "58b8f45fdea592be05c09dd6fb69f2487592ae58",
       "working_tree": "dirty",
-      "description": "Explicit Value layout, direct typed field/array access and root stores, scalar append without temporary arrays, combined frame access, and deferred scalar-leaf frames.",
-      "compiler_build_identity": "65b0bd9e003eff9c6384743d17bf59d25b5a5554aa3699ef096a1eef888c7f22",
-      "build_inputs_sha256": "3deafaf3ec2a02ff31d26def59579ec59aa9567cf3476a4ce08d41099c735e34",
-      "build_input_count": 538,
-      "fingerprint_algorithm": "SHA256 of sorted UTF-8 relative path, NUL, binary SHA256(file); project build, benchmark and tooling sources",
-      "aot_cases_sha256": "4e1b891aa996e5568dc633a7598554d0f94479c6657c9a1dad115a5607588b37",
-      "executable_sha256": "496be2ccb4e8ac4b572ea5f5f11e6feff17616941208153afb966fddb6523248"
+      "compiler_build_identity": "b1ed87a767fd9bbcb048c9bd89f72e8d891c54c938d40edc8df37cc223f3f10c",
+      "description": "Cached host imports and stack logical frames/roots; one async result and reusable suspension per invocation in AOT and VM; checked unit field-loop folding. Includes the pre-existing integer-loop optimization.",
+      "build_sources_sha256": "b15472bc4e9682afa27be565947a6f64d837b753a4ee622d3a5e7b2297f42e73",
+      "build_source_count": 541,
+      "fingerprint_algorithm": "SHA256 of relative path, NUL, binary SHA256(file), sorted; .cc/.h/.gn/.gni/.py/.vela files under base, benchmarks, build, compiler, runtime, tools, vm.",
+      "executable_sha256": "b456e55cbf62feb7624438d27b7039cb613f60ded628706c4df19740516bb465",
+      "aot_cases_sha256": "ed1eaa3f62ce11908547c3f126a2363bb1a1849ed936402924ca2a27347b1f4a"
     },
-    "suite": {
-      "id": "offline-aot-vm-cpp-v1",
-      "run_date": "2026-10-28T13:17:09+08:00",
-      "command_argv": [
-        "/opt/homebrew/opt/python@3.14/bin/python3.14",
-        "-m",
-        "tools.vl",
-        "bench",
-        "--aot-compare",
-        "--report",
-        "/tmp/vela-aot-final-performance.json",
-        "--",
-        "--benchmark_filter=^aot/",
-        "--benchmark_repetitions=7",
-        "--benchmark_min_time=0.2s",
-        "--benchmark_enable_random_interleaving=true"
-      ],
-      "working_directory": "/Users/zoy/vela",
-      "settings": {
-        "minimum_wall_time": "0.2s",
-        "repetitions": 7,
-        "random_interleaving": true,
-        "threads": 1
-      },
-      "expected_cases": [
-        "aot/native/arithmetic/1000/real_time",
-        "aot/vm/arithmetic/1000/real_time",
-        "aot/cpp/arithmetic/1000/real_time",
-        "aot/first_native/arithmetic/1000/real_time",
-        "aot/native/calls/1000/real_time",
-        "aot/vm/calls/1000/real_time",
-        "aot/cpp/calls/1000/real_time",
-        "aot/first_native/calls/1000/real_time",
-        "aot/native/fields/1000/real_time",
-        "aot/vm/fields/1000/real_time",
-        "aot/cpp/fields/1000/real_time",
-        "aot/first_native/fields/1000/real_time",
-        "aot/native/arrays/1000/real_time",
-        "aot/vm/arrays/1000/real_time",
-        "aot/cpp/arrays/1000/real_time",
-        "aot/first_native/arrays/1000/real_time",
-        "aot/native/host/1000/real_time",
-        "aot/vm/host/1000/real_time",
-        "aot/cpp/host/1000/real_time",
-        "aot/first_native/host/1000/real_time",
-        "aot/native/gc/1000/real_time",
-        "aot/vm/gc/1000/real_time",
-        "aot/cpp/gc/1000/real_time",
-        "aot/first_native/gc/1000/real_time",
-        "aot/native/asyncWork/64/real_time",
-        "aot/vm/asyncWork/64/real_time",
-        "aot/cpp/asyncWork/64/real_time",
-        "aot/first_native/asyncWork/64/real_time"
-      ],
-      "all_expected_cases_passed": true,
-      "correctness_checks_passed": true,
-      "temporary_retention_checks_passed": true,
-      "cases": {
-        "aot/native/arrays/1000/real_time": {
-          "wall_ns": {
-            "median": 2834.7038564603467,
-            "stddev": 685.5185331946998,
-            "cv": 0.22034337654302422,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 65312.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 65440.0,
-            "entry_frame_bytes": 256.0,
-            "entry_shadow_slots": 3.0,
-            "entry_static_root_stores": 8.0,
-            "process_resident_bytes": 9142272.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 499500.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/vm/asyncWork/64/real_time": {
-          "wall_ns": {
-            "median": 178020.93157142296,
-            "stddev": 9691.403246025644,
-            "cv": 0.05434041350230026,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 29136.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 65488.0,
-            "process_resident_bytes": 8994816.0,
-            "register_bytes": 72.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 2080.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 517.0,
-            "suspended_frames": 2.0
-          }
-        },
-        "aot/vm/host/1000/real_time": {
-          "wall_ns": {
-            "median": 44523.832346698284,
-            "stddev": 3765.6508961897384,
-            "cv": 0.08186971898267963,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 144.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 144.0,
-            "process_resident_bytes": 9142272.0,
-            "register_bytes": 45.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 500500.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/cpp/arithmetic/1000/real_time": {
-          "wall_ns": {
-            "median": 1.3021424926967697,
-            "stddev": 0.33183460024440486,
-            "cv": 0.22327743495837307,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9125888.0,
-            "result": 499500.0
-          }
-        },
-        "aot/vm/fields/1000/real_time": {
-          "wall_ns": {
-            "median": 33343.67998334402,
-            "stddev": 1712.7738454540254,
-            "cv": 0.050067249747729484,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 58768.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 65552.0,
-            "process_resident_bytes": 9191424.0,
-            "register_bytes": 54.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 1000.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/native/fields/1000/real_time": {
-          "wall_ns": {
-            "median": 121.65157826024732,
-            "stddev": 45.25978103950114,
-            "cv": 0.3228024778433636,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 47136.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 65568.0,
-            "entry_frame_bytes": 168.0,
-            "entry_shadow_slots": 3.0,
-            "entry_static_root_stores": 8.0,
-            "process_resident_bytes": 9043968.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 1000.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/cpp/host/1000/real_time": {
-          "wall_ns": {
-            "median": 1000.9018819295835,
-            "stddev": 203.63570293149849,
-            "cv": 0.1872616612407182,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9125888.0,
-            "result": 500500.0
-          }
-        },
-        "aot/native/asyncWork/64/real_time": {
-          "wall_ns": {
-            "median": 99690.01171899075,
-            "stddev": 16632.316466125918,
-            "cv": 0.1567126840721908,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 19488.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 65504.0,
-            "entry_frame_bytes": 232.0,
-            "entry_shadow_slots": 2.0,
-            "entry_static_root_stores": 2.0,
-            "process_resident_bytes": 9043968.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 2080.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 320.0,
-            "suspended_frames": 2.0
-          }
-        },
-        "aot/first_native/host/1000/real_time": {
-          "wall_ns": {
-            "median": 8282.621621682225,
-            "stddev": 177.0567877643624,
-            "cv": 0.021197824862575234,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/first_native/fields/1000/real_time": {
-          "wall_ns": {
-            "median": 1460.4191289514913,
-            "stddev": 76.65305892164177,
-            "cv": 0.05156931622047814,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/cpp/asyncWork/64/real_time": {
-          "wall_ns": {
-            "median": 20616.008033825266,
-            "stddev": 4476.635134282826,
-            "cv": 0.2007767341748516,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9027584.0,
-            "result": 2080.0
-          }
-        },
-        "aot/native/calls/1000/real_time": {
-          "wall_ns": {
-            "median": 2090.755958881434,
-            "stddev": 234.52057324212237,
-            "cv": 0.10809974738846383,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 288.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 288.0,
-            "entry_frame_bytes": 128.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "process_resident_bytes": 9142272.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 500500.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/first_native/calls/1000/real_time": {
-          "wall_ns": {
-            "median": 3311.404835650441,
-            "stddev": 171.2250944009805,
-            "cv": 0.05105890817008314,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/native/host/1000/real_time": {
-          "wall_ns": {
-            "median": 6992.238068774739,
-            "stddev": 241.60583664388778,
-            "cv": 0.034112704830085855,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 288.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 288.0,
-            "entry_frame_bytes": 128.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "process_resident_bytes": 9043968.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 500500.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/native/gc/1000/real_time": {
-          "wall_ns": {
-            "median": 63509.667922451736,
-            "stddev": 5130.700415759105,
-            "cv": 0.07873992652998668,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 33504.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 65504.0,
-            "entry_frame_bytes": 176.0,
-            "entry_shadow_slots": 3.0,
-            "entry_static_root_stores": 6.0,
-            "process_resident_bytes": 9043968.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 2890.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/vm/arithmetic/1000/real_time": {
-          "wall_ns": {
-            "median": 26866.604069001598,
-            "stddev": 10456.934023740183,
-            "cv": 0.339579903221528,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 144.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 144.0,
-            "process_resident_bytes": 9158656.0,
-            "register_bytes": 45.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 499500.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/first_native/asyncWork/64/real_time": {
-          "wall_ns": {
-            "median": 89390.50508977646,
-            "stddev": 6959.39673177375,
-            "cv": 0.0759214067003688,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/cpp/arrays/1000/real_time": {
-          "wall_ns": {
-            "median": 2336.746488688016,
-            "stddev": 614.9155443394675,
-            "cv": 0.2363538111814907,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9043968.0,
-            "result": 499500.0
-          }
-        },
-        "aot/cpp/fields/1000/real_time": {
-          "wall_ns": {
-            "median": 25.816913796278307,
-            "stddev": 1.8705604796683033,
-            "cv": 0.0701802854838048,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9043968.0,
-            "result": 1000.0
-          }
-        },
-        "aot/cpp/gc/1000/real_time": {
-          "wall_ns": {
-            "median": 28946.429083703017,
-            "stddev": 3019.399314071212,
-            "cv": 0.1025721101432445,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9043968.0,
-            "result": 2890.0
-          }
-        },
-        "aot/first_native/arithmetic/1000/real_time": {
-          "wall_ns": {
-            "median": 1650.7466597760251,
-            "stddev": 398.23878906987164,
-            "cv": 0.21239804016346578,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/first_native/arrays/1000/real_time": {
-          "wall_ns": {
-            "median": 4200.477494634759,
-            "stddev": 412.15472544189316,
-            "cv": 0.09402215929227739,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/vm/arrays/1000/real_time": {
-          "wall_ns": {
-            "median": 82858.18818311974,
-            "stddev": 3808.652207842563,
-            "cv": 0.045784287952260604,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 48912.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 49296.0,
-            "process_resident_bytes": 9043968.0,
-            "register_bytes": 63.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 499500.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/first_native/gc/1000/real_time": {
-          "wall_ns": {
-            "median": 71290.45557202939,
-            "stddev": 5942.145468928347,
-            "cv": 0.080943450141173,
-            "repetitions": 7
-          },
-          "counters": {}
-        },
-        "aot/cpp/calls/1000/real_time": {
-          "wall_ns": {
-            "median": 1013.2975812184345,
-            "stddev": 25.652999547708877,
-            "cv": 0.02531783244529647,
-            "repetitions": 7
-          },
-          "counters": {
-            "process_resident_bytes": 9043968.0,
-            "result": 500500.0
-          }
-        },
-        "aot/vm/gc/1000/real_time": {
-          "wall_ns": {
-            "median": 107417.55065708599,
-            "stddev": 16713.889045508728,
-            "cv": 0.1443184189695039,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 65424.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 65552.0,
-            "process_resident_bytes": 8962048.0,
-            "register_bytes": 54.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 2890.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/native/arithmetic/1000/real_time": {
-          "wall_ns": {
-            "median": 369.7801924650931,
-            "stddev": 27.922606345926106,
-            "cv": 0.0722995372537879,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 288.0,
-            "baseline_bytes": 288.0,
-            "committed_bytes": 288.0,
-            "entry_frame_bytes": 104.0,
-            "entry_shadow_slots": 0.0,
-            "entry_static_root_stores": 0.0,
-            "process_resident_bytes": 9027584.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 499500.0,
-            "retained_bytes": 288.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        },
-        "aot/vm/calls/1000/real_time": {
-          "wall_ns": {
-            "median": 66899.34296199882,
-            "stddev": 27484.60560260527,
-            "cv": 0.3743350718705105,
-            "repetitions": 7
-          },
-          "counters": {
-            "allocated_bytes": 144.0,
-            "baseline_bytes": 144.0,
-            "committed_bytes": 144.0,
-            "process_resident_bytes": 9011200.0,
-            "register_bytes": 54.0,
-            "remaining_saved_bytes": 0.0,
-            "remaining_suspended_frames": 0.0,
-            "result": 500500.0,
-            "retained_bytes": 144.0,
-            "saved_state_bytes": 0.0,
-            "suspended_frames": 0.0
-          }
-        }
-      }
-    },
-    "paired_comparison": {
-      "arithmetic": {
-        "aot_over_vm": 0.013763562805160832,
-        "aot_over_cpp": 283.9782854327018
-      },
-      "calls": {
-        "aot_over_vm": 0.031252264466469525,
-        "aot_over_cpp": 2.0633188094334685
-      },
-      "fields": {
-        "aot_over_vm": 0.003648414881651193,
-        "aot_over_cpp": 4.712088331711604
-      },
-      "arrays": {
-        "aot_over_vm": 0.03421151148267379,
-        "aot_over_cpp": 1.2130985839426307
-      },
-      "host": {
-        "aot_over_vm": 0.15704483869060423,
-        "aot_over_cpp": 6.985937577912022
-      },
-      "gc": {
-        "aot_over_vm": 0.5912410731203189,
-        "aot_over_cpp": 2.1940415426995794
-      },
-      "asyncWork": {
-        "aot_over_vm": 0.5599903946070217,
-        "aot_over_cpp": 4.835563294088096
-      }
-    },
-    "measurement_limits": [
-      "One macOS arm64 host; background load and per-case CV limit small performance conclusions.",
-      "C++ arithmetic and field loops may collapse. C++ uses unchecked arithmetic and different ownership; whole-workload ratios are not per-operation ABI overhead.",
-      "First-native excludes instantiation; RSS is a resident snapshot of the combined comparison process.",
-      "Root/frame counters describe planned storage before LLVM optimization, not dynamic writes or machine-stack bytes.",
-      "Windows passed acceptance before these optimizations; these changes were executed on macOS only. Windows/Linux execution and clean-host distribution were not repeated."
-    ],
     "build_phases": {
       "command": [
         "/Users/zoy/vela/out/release/vela",
@@ -1204,108 +768,12 @@
         "-o",
         "/Users/zoy/vela/out/release/gen/benchmarks/aot_native/workload.o"
       ],
-      "compilation_and_publication_seconds": 0.2540590000571683,
-      "object_bytes": 20792,
-      "runtime_abi": "65b0bd9e003eff9c6384743d17bf59d25b5a5554aa3699ef096a1eef888c7f22/release",
-      "toolchain_build": "604992b62a034ea86c457ba0d3724155",
+      "compilation_and_publication_seconds": 0.16599483403842896,
+      "object_bytes": 20416,
+      "runtime_abi": "b1ed87a767fd9bbcb048c9bd89f72e8d891c54c938d40edc8df37cc223f3f10c/release",
+      "toolchain_build": "bfc0dd281fea3c7da575fd174495c8e1",
       "target": "arm64-apple-darwin23.6.0",
       "optimization": "O2"
-    },
-    "comparison_to_previous": {
-      "comparable": true,
-      "basis": "Same machine, compiler, Release flags, workload bodies and inputs, 28-case suite and 7-repetition randomized 0.2s settings; separately run processes, so retain variation and background-load limits.",
-      "workloads": {
-        "arithmetic": {
-          "previous_aot_over_cpp": 271.17813262485777,
-          "latest_aot_over_cpp": 283.9782854327018,
-          "aot_wall_speedup": 0.9961972164198807,
-          "cpp_normalized_speedup": 0.9549255930313818
-        },
-        "calls": {
-          "previous_aot_over_cpp": 10.377233697099397,
-          "latest_aot_over_cpp": 2.0633188094334685,
-          "aot_wall_speedup": 4.895639899437734,
-          "cpp_normalized_speedup": 5.029389374853179
-        },
-        "fields": {
-          "previous_aot_over_cpp": 235.371499288545,
-          "latest_aot_over_cpp": 4.712088331711604,
-          "aot_wall_speedup": 50.11952038801535,
-          "cpp_normalized_speedup": 49.95057026086127
-        },
-        "arrays": {
-          "previous_aot_over_cpp": 14.13856100051296,
-          "latest_aot_over_cpp": 1.2130985839426307,
-          "aot_wall_speedup": 11.575522201279801,
-          "cpp_normalized_speedup": 11.654915097305558
-        },
-        "host": {
-          "previous_aot_over_cpp": 13.265723408788977,
-          "latest_aot_over_cpp": 6.985937577912022,
-          "aot_wall_speedup": 1.8918770179119129,
-          "cpp_normalized_speedup": 1.898918113830882
-        },
-        "gc": {
-          "previous_aot_over_cpp": 3.088608749414331,
-          "latest_aot_over_cpp": 2.1940415426995794,
-          "aot_wall_speedup": 1.3251181036367858,
-          "cpp_normalized_speedup": 1.4077257377789043
-        },
-        "asyncWork": {
-          "previous_aot_over_cpp": 5.205031625685846,
-          "latest_aot_over_cpp": 4.835563294088096,
-          "aot_wall_speedup": 1.0224831143142654,
-          "cpp_normalized_speedup": 1.07640647203387
-        }
-      }
-    },
-    "checked_arithmetic_probe": {
-      "run_date": "2026-10-28T13:19:16+08:00",
-      "command_argv": [
-        "/tmp/vela-aot-checked-arithmetic-benchmark",
-        "--benchmark_repetitions=7",
-        "--benchmark_min_time=0.2s",
-        "--benchmark_enable_random_interleaving=true",
-        "--benchmark_out=/tmp/vela-aot-checked-arithmetic.json",
-        "--benchmark_out_format=json"
-      ],
-      "settings": {
-        "minimum_wall_time": "0.2s",
-        "repetitions": 7,
-        "random_interleaving": true,
-        "threads": 1
-      },
-      "source_sha256": "2659e377097926ce00efec1d8692ab711d7dd8ddab91ade26ac994ae250008e3",
-      "executable_sha256": "88c111d35226168d0c96c2e1e72069312384176e2d40b4db033ce36d247cc3b2",
-      "kernel": "int64 size = 1000, DoNotOptimize(size); sum indices [0, size); checked case uses __builtin_add_overflow(sum, index, &sum); ordinary case uses sum += index; both validate 499500 and DoNotOptimize(sum). Same pinned host Clang/SDK, -O3.",
-      "all_expected_cases_passed": true,
-      "cases": {
-        "CheckedArithmetic/real_time": {
-          "wall_ns": {
-            "median": 374.1662095393522,
-            "stddev": 78.9649733483531,
-            "cv": 0.19441132746599155,
-            "repetitions": 7
-          },
-          "result": 499500
-        },
-        "UncheckedArithmetic/real_time": {
-          "wall_ns": {
-            "median": 0.8459122225224628,
-            "stddev": 0.2756565145331039,
-            "cv": 0.28105576658820747,
-            "repetitions": 7
-          },
-          "result": 499500
-        }
-      },
-      "aot_workload_over_checked_cpp_kernel": 0.9882778910483154,
-      "checked_cpp_kernel_over_unchecked_cpp_kernel": 442.32273701355155,
-      "measurement_limits": [
-        "Additional kernel diagnostic; the ordinary C++ workload baseline is retained.",
-        "Separate executable and run; excludes Vela entry, global lookup, logical frames and exception/source-position handling. This is not a per-operation ABI comparison.",
-        "High wall-time CV limits conclusions about small differences; only approximate parity with checked arithmetic is supported."
-      ]
     },
     "validation": {
       "release_all": {
@@ -1317,32 +785,296 @@
           "release",
           "all"
         ],
-        "cpp_tests_passed": 1567,
+        "cpp_tests_passed": 1575,
         "python_tests_passed": 112,
         "python_tests_skipped": 2,
-        "skip_reason": "Clean-host distribution requires an audited SDK support specification."
+        "skip_reason": "Native distribution acceptance requires an audited VELA_TEST_TARGET_SUPPORT_SPEC."
       },
-      "vm_aot_corpus": {
-        "cases": 396,
-        "failures": 0,
-        "method": "Production object emission and NativeMain; each native case executes in a fresh process; local SDK host link, not distribution acceptance."
+      "native_host_contracts": {
+        "linked_native_host_tests_passed": 38,
+        "coverage": [
+          "host errors, reentry, GC and logical call depth",
+          "repeated awaits, FIFO, return adoption, errors and catch/finally",
+          "resuspended unreachable activation collection",
+          "field overflow prefix visible through aliases and finally",
+          "index-visible and effectful field loops remain sequential"
+        ]
       },
-      "full_lint": {
-        "runs": 1,
-        "files_scanned": 433,
-        "files_reported": 11,
-        "reported_items_addressed": true,
-        "green_rerun_confirmed": false,
-        "changes": "Fixed actual diagnostics and built missing generated headers; GN dependency traversal now prepares required headers before lint."
+      "repeated_await_allocations": {
+        "awaited_sources": 64,
+        "vm_total_heap_future_objects": 65,
+        "aot_total_heap_future_objects": 65,
+        "remaining_suspended_frames": 0
+      },
+      "lint": {
+        "status": "not_run",
+        "reason": "Explicit user instruction."
       },
       "executed_platforms": [
         "macOS arm64"
-      ],
-      "not_repeated": [
-        "Windows execution",
-        "Linux execution",
-        "clean-host distribution acceptance"
       ]
+    },
+    "suite": {
+      "id": "offline-aot-vm-cpp-v1-host-fields-async",
+      "run_date": "2026-10-28T15:37:20+08:00",
+      "command_argv": [
+        "python3",
+        "-m",
+        "tools.vl",
+        "bench",
+        "--aot-compare",
+        "--report",
+        "/tmp/vela-three-paths-final.json",
+        "--",
+        "--benchmark_filter=^aot/(native|vm|cpp|first_native)/(host|fields|asyncWork)/",
+        "--benchmark_repetitions=7"
+      ],
+      "working_directory": "/Users/zoy/vela",
+      "settings": {
+        "minimum_wall_time": "0.2s",
+        "repetitions": 7,
+        "random_interleaving": true,
+        "threads": 1
+      },
+      "expected_cases": [
+        "aot/native/host/1000/real_time",
+        "aot/vm/host/1000/real_time",
+        "aot/cpp/host/1000/real_time",
+        "aot/first_native/host/1000/real_time",
+        "aot/native/fields/1000/real_time",
+        "aot/vm/fields/1000/real_time",
+        "aot/cpp/fields/1000/real_time",
+        "aot/first_native/fields/1000/real_time",
+        "aot/native/asyncWork/64/real_time",
+        "aot/vm/asyncWork/64/real_time",
+        "aot/cpp/asyncWork/64/real_time",
+        "aot/first_native/asyncWork/64/real_time"
+      ],
+      "all_expected_cases_passed": true,
+      "correctness_checks_passed": true,
+      "temporary_retention_checks_passed": true,
+      "cases": {
+        "aot/cpp/asyncWork/64/real_time": {
+          "wall_ns": {
+            "median": 20812.012376716048,
+            "stddev": 1575.2177605214838,
+            "cv": 0.07601423721684729,
+            "repetitions": 7
+          },
+          "counters": {
+            "process_resident_bytes": 8863744.0,
+            "result": 2080.0
+          }
+        },
+        "aot/cpp/fields/1000/real_time": {
+          "wall_ns": {
+            "median": 26.057544518498535,
+            "stddev": 0.48254829927879844,
+            "cv": 0.01842671931433246,
+            "repetitions": 7
+          },
+          "counters": {
+            "process_resident_bytes": 8863744.0,
+            "result": 1000.0
+          }
+        },
+        "aot/cpp/host/1000/real_time": {
+          "wall_ns": {
+            "median": 1038.68081497867,
+            "stddev": 51.75821183825987,
+            "cv": 0.04954198963549724,
+            "repetitions": 7
+          },
+          "counters": {
+            "process_resident_bytes": 8863744.0,
+            "result": 500500.0
+          }
+        },
+        "aot/first_native/asyncWork/64/real_time": {
+          "wall_ns": {
+            "median": 39532.1793453206,
+            "stddev": 1704.4791072454273,
+            "cv": 0.04218739419021611,
+            "repetitions": 7
+          },
+          "counters": {}
+        },
+        "aot/first_native/fields/1000/real_time": {
+          "wall_ns": {
+            "median": 1355.19809891967,
+            "stddev": 21.151136542828354,
+            "cv": 0.015585638538834958,
+            "repetitions": 7
+          },
+          "counters": {}
+        },
+        "aot/first_native/host/1000/real_time": {
+          "wall_ns": {
+            "median": 3759.4371887609464,
+            "stddev": 378.38891241106035,
+            "cv": 0.09746901409744793,
+            "repetitions": 7
+          },
+          "counters": {}
+        },
+        "aot/native/asyncWork/64/real_time": {
+          "wall_ns": {
+            "median": 45963.45904640499,
+            "stddev": 3956.6253307825864,
+            "cv": 0.08213541945942023,
+            "repetitions": 7
+          },
+          "counters": {
+            "allocated_bytes": 62496.0,
+            "baseline_bytes": 288.0,
+            "committed_bytes": 65504.0,
+            "entry_frame_bytes": 232.0,
+            "entry_shadow_slots": 1.0,
+            "entry_static_root_stores": 1.0,
+            "process_resident_bytes": 8749056.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "result": 2080.0,
+            "retained_bytes": 288.0,
+            "saved_state_bytes": 256.0,
+            "suspended_frames": 2.0
+          }
+        },
+        "aot/native/fields/1000/real_time": {
+          "wall_ns": {
+            "median": 50.93161820797402,
+            "stddev": 3.2967867201834484,
+            "cv": 0.06281183536207992,
+            "repetitions": 7
+          },
+          "counters": {
+            "allocated_bytes": 22816.0,
+            "baseline_bytes": 288.0,
+            "committed_bytes": 65568.0,
+            "entry_frame_bytes": 216.0,
+            "entry_shadow_slots": 3.0,
+            "entry_static_root_stores": 8.0,
+            "process_resident_bytes": 8863744.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "result": 1000.0,
+            "retained_bytes": 288.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "aot/native/host/1000/real_time": {
+          "wall_ns": {
+            "median": 2327.456659722931,
+            "stddev": 75.63242650764153,
+            "cv": 0.03187493717737367,
+            "repetitions": 7
+          },
+          "counters": {
+            "allocated_bytes": 288.0,
+            "baseline_bytes": 288.0,
+            "committed_bytes": 288.0,
+            "entry_frame_bytes": 128.0,
+            "entry_shadow_slots": 0.0,
+            "entry_static_root_stores": 0.0,
+            "process_resident_bytes": 8765440.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "result": 500500.0,
+            "retained_bytes": 288.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "aot/vm/asyncWork/64/real_time": {
+          "wall_ns": {
+            "median": 117261.39727228158,
+            "stddev": 3180.4190800146903,
+            "cv": 0.026896015460461366,
+            "repetitions": 7
+          },
+          "counters": {
+            "allocated_bytes": 11984.0,
+            "baseline_bytes": 144.0,
+            "committed_bytes": 65488.0,
+            "process_resident_bytes": 8765440.0,
+            "register_bytes": 72.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "result": 2080.0,
+            "retained_bytes": 144.0,
+            "saved_state_bytes": 504.0,
+            "suspended_frames": 2.0
+          }
+        },
+        "aot/vm/fields/1000/real_time": {
+          "wall_ns": {
+            "median": 32886.84262329932,
+            "stddev": 860.6675075172184,
+            "cv": 0.0258928423151091,
+            "repetitions": 7
+          },
+          "counters": {
+            "allocated_bytes": 13840.0,
+            "baseline_bytes": 144.0,
+            "committed_bytes": 65552.0,
+            "process_resident_bytes": 8880128.0,
+            "register_bytes": 54.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "result": 1000.0,
+            "retained_bytes": 144.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        },
+        "aot/vm/host/1000/real_time": {
+          "wall_ns": {
+            "median": 46542.494652585185,
+            "stddev": 1190.2451184107308,
+            "cv": 0.025530596592593314,
+            "repetitions": 7
+          },
+          "counters": {
+            "allocated_bytes": 144.0,
+            "baseline_bytes": 144.0,
+            "committed_bytes": 144.0,
+            "process_resident_bytes": 8863744.0,
+            "register_bytes": 45.0,
+            "remaining_saved_bytes": 0.0,
+            "remaining_suspended_frames": 0.0,
+            "result": 500500.0,
+            "retained_bytes": 144.0,
+            "saved_state_bytes": 0.0,
+            "suspended_frames": 0.0
+          }
+        }
+      }
+    },
+    "paired_comparison": {
+      "host": {
+        "aot_over_cpp": 2.2407814086473974,
+        "aot_over_vm": 0.050007131699668216
+      },
+      "fields": {
+        "aot_over_cpp": 1.9545824117010375,
+        "aot_over_vm": 0.0015486928554184318
+      },
+      "asyncWork": {
+        "aot_over_cpp": 2.2085062325749787,
+        "aot_over_vm": 0.39197434207335596
+      }
+    },
+    "measurement_limits": [
+      "Ratios use the medians from the same final Release run; host, fields and async only.",
+      "The historical user baselines (host 6.99, fields 4.71, async 4.84) are reference values, not a controlled before/after pair from this run.",
+      "Background load and benchmark variation are recorded; no fixed speedup is promised.",
+      "Darwin CPU frequency/affinity metadata warnings do not affect benchmark checks or measured durations.",
+      "Only macOS arm64 was executed; distribution acceptance tests were skipped without an audited SDK specification."
+    ],
+    "comparison_to_previous": {
+      "comparable": false,
+      "reason": "The previous run contains the complete 28-case suite; this run intentionally selects only the requested 12 host/fields/async backend cases."
     }
   }
 }

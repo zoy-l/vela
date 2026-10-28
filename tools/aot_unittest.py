@@ -15,6 +15,8 @@ from tools.config import ROOT, executable_name, static_library_name, toolchain_t
 from tools.aot_async_fixture import HOST_TESTS as ASYNC_COMPOSITION_TESTS, SOURCE as ASYNC_COMPOSITION_SOURCE
 from tools.aot_api_fixture import HOST_TESTS as PUBLIC_API_TESTS, SOURCE as PUBLIC_API_SOURCE
 from tools.aot_memory_fixture import HOST_TESTS as MEMORY_TESTS, SOURCE as MEMORY_SOURCE
+from tools.aot_integer_loop_fixture import HOST_TESTS as INTEGER_LOOP_TESTS, SOURCE as INTEGER_LOOP_SOURCE
+from tools.aot_field_loop_fixture import HOST_TESTS as FIELD_LOOP_TESTS, SOURCE as FIELD_LOOP_SOURCE
 
 
 HOST_TESTS = r'''
@@ -1097,8 +1099,13 @@ export async func calculate(): Future<int> {
         fixtures["COMPOSITION_ENTRY"] = ASYNC_COMPOSITION_SOURCE
         fixtures["PUBLIC_ENTRY"] = PUBLIC_API_SOURCE
         fixtures["MEMORY_ENTRY"] = MEMORY_SOURCE
+        fixtures["INTEGER_LOOP_ENTRY"] = INTEGER_LOOP_SOURCE
+        fixtures["FIELD_LOOP_ENTRY"] = FIELD_LOOP_SOURCE
         fixtures["VOID_ENTRY"] = "export func calculate(): void {}"
-        host = HOST_TESTS + ASYNC_COMPOSITION_TESTS + PUBLIC_API_TESTS + MEMORY_TESTS
+        host = HOST_TESTS + ASYNC_COMPOSITION_TESTS + PUBLIC_API_TESTS + MEMORY_TESTS + INTEGER_LOOP_TESTS + FIELD_LOOP_TESTS
+        loop_lines = [index for index, line in enumerate(INTEGER_LOOP_SOURCE.splitlines(), 1)
+                      if "for (let index" in line][:5]
+        host = host.replace("INTEGER_LOOP_TRACE_LINES", ", ".join(map(str, loop_lines)))
         trace_source = fixtures["EXCEPTION_ENTRY"].splitlines()
         trace_sites = ("return 1 / zero", "try { return fail(); } finally", "return original();")
         trace_lines = [next(index for index, line in enumerate(trace_source, 1) if site in line)
@@ -1148,7 +1155,7 @@ export async func calculate(): Future<int> {
                               "-framework", "CoreFoundation"])
             self.command([self.tools["cxx"], *flags, source_file, *objects, runtime, *gtest])
         executed = self.command([executable])
-        self.assertIn("[  PASSED  ] 32 tests.", executed.stdout)
+        self.assertIn("[  PASSED  ] 38 tests.", executed.stdout)
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
         symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout
         self.assertNotIn("vela::vm::", symbols)

@@ -24,6 +24,7 @@
 #include "vm/execution_status.h"
 #include "vm/program.h"
 #include "vm/register_file.h"
+#include "vm/suspended_frame.h"
 
 #include "runtime/builtins.h"
 #include "runtime/callable.h"
@@ -258,58 +259,6 @@ runtime::Future Execution::InvokeFuture(runtime::Isolate& isolate,
   return result;
 }
 
-namespace {
-
-// 只有挂起帧持有寄存器快照；VM 调用栈在一个执行片段退出后立即释放。
-class SuspendedFrame final {
- public:
-  SuspendedFrame(runtime::Isolate& isolate,
-                 Program program,
-                 runtime::Future result,
-                 SuspensionPoint point,
-                 std::vector<std::uint8_t> indices,
-                 std::shared_ptr<DebugSession> debug_session,
-                 std::shared_ptr<std::vector<runtime::Value>> values)
-      : isolate_(&isolate),
-        program_(std::move(program)),
-        result_(std::move(result)),
-        point_(point),
-        indices_(std::move(indices)),
-        debug_session_(std::move(debug_session)),
-        values_(std::move(values)) {
-    isolate_->scheduler().AddSuspendedFrame(SavedBytes());
-  }
-
-  ~SuspendedFrame() { isolate_->scheduler().RemoveSuspendedFrame(SavedBytes()); }
-  SuspendedFrame(const SuspendedFrame&) = delete;
-  SuspendedFrame& operator=(const SuspendedFrame&) = delete;
-  SuspendedFrame(SuspendedFrame&&) = delete;
-  SuspendedFrame& operator=(SuspendedFrame&&) = delete;
-
-  void Resume(const runtime::FutureResult& completion) {
-    std::array<RegisterFile, kMaxCallFrames> registers;
-    Execution execution(*isolate_, program_, registers, debug_session_);
-    const auto saved = std::span(*values_).first(indices_.size());
-    Execution::CompleteFuture(*isolate_, result_,
-                              execution.ResumeFrame(point_, indices_, saved, completion));
-  }
-
- private:
-  [[nodiscard]] std::size_t SavedBytes() const noexcept {
-    return sizeof(SuspendedFrame) + sizeof(std::vector<runtime::Value>) +
-           (values_->capacity() * sizeof(runtime::Value)) + indices_.capacity();
-  }
-  runtime::Isolate* isolate_;
-  Program program_;
-  runtime::Future result_;
-  SuspensionPoint point_;
-  std::vector<std::uint8_t> indices_;
-  std::shared_ptr<DebugSession> debug_session_;
-  std::shared_ptr<std::vector<runtime::Value>> values_;
-};
-
-}  // namespace
-
 ExecutionStatus Execution::RestoreFutureError(const runtime::FutureResult& completion) {
   const auto& diagnostic = completion.diagnostic;
   if (!completion.value.IsObject() || completion.value.AsObject() == nullptr) {
@@ -336,26 +285,31 @@ ExecutionStatus Execution::RestoreFutureError(const runtime::FutureResult& compl
   return diagnostic.status;
 }
 
-ExecutionResult Execution::ResumeFrame(SuspensionPoint point,
-                                       std::span<const std::uint8_t> indices,
-                                       std::span<const runtime::Value> saved,
-                                       const runtime::FutureResult& completion) noexcept {
+std::optional<ExecutionResult> Execution::ResumeFrame(
+    SuspendedFrame& suspended,
+    const runtime::FutureResult& completion) noexcept {
+  resumed_frame_ = &suspended;
+  const auto point = suspended.point();
+  const auto indices = suspended.indices();
+  const auto saved = suspended.saved();
   auto& active = frames_.front();
   active.function = &functions_.subspan(point.function).front();
   auto values = registers_.front().Acquire(active.function->register_count);
   if (values.IsEmpty()) {
-    return {.status = ExecutionStatus::OutOfMemory, .stack_trace = {}, .message = {}};
+    return ExecutionResult{
+        .status = ExecutionStatus::OutOfMemory, .stack_trace = {}, .message = {}};
   }
   active.frame.Attach(isolate_.heap(), values);
   for (std::size_t index = 0; index < saved.size(); ++index) {
     values.subspan(indices.subspan(index).front()).front() = saved.subspan(index).front();
   }
+  suspended.ReleaseSaved();
   active.program_counter = point.program_counter;
   frame_count_ = 1;
   if (completion.state == runtime::FutureState::Failed) {
     const auto& diagnostic = completion.diagnostic;
     if (diagnostic.status == ExecutionStatus::DebuggerStopped) {
-      return {
+      return ExecutionResult{
           .value = runtime::Value::Null(),
           .status = diagnostic.status,
           .stack_trace = {},
@@ -369,9 +323,10 @@ ExecutionResult Execution::ResumeFrame(SuspensionPoint point,
   } else {
     values.subspan(point.destination).front() = completion.value;
   }
-  return debug_session_ != nullptr && debug_session_->debugger != nullptr
-             ? Continue<true>(debug_session_->debugger)
-             : Continue<false>(nullptr);
+  auto outcome = debug_session_ != nullptr && debug_session_->debugger != nullptr
+                     ? Continue<true>(debug_session_->debugger)
+                     : Continue<false>(nullptr);
+  return resuspended_ ? std::nullopt : std::optional(std::move(outcome));
 }
 
 ExecutionResult Execution::Invoke(runtime::Value callable,
@@ -663,43 +618,30 @@ StepResult Execution::ExecuteObject(ActiveFrame& active,
 
 StepResult Execution::Await(ActiveFrame& active, FutureRegisters registers) {
   const auto source = active.frame.registers().subspan(registers.source).front().Read();
-  const auto* input = source.IsObject() ? runtime::Heap::GetFuture(*source.AsObject()) : nullptr;
-  auto future =
-      input != nullptr ? input->Rooted() : runtime::Future::Value(source, &isolate_.scheduler());
-  future.AttachHeap(isolate_.heap());
+  const SuspensionPoint point{
+      .function = static_cast<std::uint32_t>(active.function - functions_.data()),
+      .program_counter = active.program_counter,
+      .destination = registers.destination,
+  };
+  const auto values = active.frame.registers();
+  if (IsResumedFrame()) {
+    resumed_frame_->Suspend(point, source, values);
+    resuspended_ = true;
+    active.frame.Detach();
+    frame_count_ = 0;
+    return {};
+  }
   runtime::Future result(&isolate_.scheduler());
   auto* object = isolate_.heap().AllocateFuture(result);
   if (object == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  auto saved = std::make_shared<std::vector<runtime::Value>>();
-  std::vector<std::uint8_t> indices;
-  const auto values = active.frame.registers();
-  for (std::size_t index = 0; index < values.size(); ++index) {
-    const auto value = values.subspan(index).front().Read();
-    if (!value.IsNull()) {
-      indices.push_back(static_cast<std::uint8_t>(index));
-      saved->push_back(value);
-    }
-  }
-  if (globals_ != nullptr) {
-    saved->push_back(globals_->storage);
-  }
-  saved->push_back(runtime::Value::Object(object));
-  result.KeepAlive(saved);
-  const auto function = static_cast<std::uint32_t>(active.function - functions_.data());
-  auto suspended =
-      std::make_shared<SuspendedFrame>(isolate_, program_.Internal(), result.Internal(),
-                                       SuspensionPoint{
-                                           .function = function,
-                                           .program_counter = active.program_counter,
-                                           .destination = registers.destination,
-                                       },
-                                       std::move(indices), debug_session_, saved);
-  future.ObserveResult(
-      [suspended](const runtime::FutureResult& completion) { suspended->Resume(completion); },
-      saved);
-  return Return(active, runtime::Value::Object(object));
+  const auto output = runtime::Value::Object(object);
+  const runtime::RootRange root(isolate_.heap(), &output, 1);
+  auto suspended = std::make_shared<SuspendedFrame>(isolate_, program_.Internal(), output,
+                                                    values.size(), debug_session_);
+  suspended->Suspend(point, source, values);
+  return Return(active, output);
 }
 
 StepResult Execution::AllocateObject(ActiveFrame& active,
@@ -1146,7 +1088,8 @@ bool Execution::IsErasedReturn() const {
 }
 
 StepResult Execution::Return(ActiveFrame& active, runtime::Value value) {
-  if (active.function->is_async &&
+  const auto resumed = IsResumedFrame();
+  if (!resumed && active.function->is_async &&
       (!value.IsObject() || runtime::Heap::GetFuture(*value.AsObject()) == nullptr)) {
     auto future = runtime::Future::Value(value, &isolate_.scheduler());
     auto* object = isolate_.heap().AllocateFuture(std::move(future));
@@ -1160,7 +1103,8 @@ StepResult Execution::Return(ActiveFrame& active, runtime::Value value) {
     globals_->Store(index, value);
     std::span(globals_->states).subspan(index).front() = GlobalState::Ready;
   }
-  if (value.IsObject() && active.function->signature && active.function->signature->result) {
+  if (value.IsObject() && (!resumed || runtime::Heap::GetFuture(*value.AsObject()) != nullptr) &&
+      active.function->signature && active.function->signature->result) {
     const auto& type =
         active.function->layouts->types().subspan(*active.function->signature->result).front();
     if (type.object_kind == runtime::ObjectKind::Future ||
@@ -1171,7 +1115,7 @@ StepResult Execution::Return(ActiveFrame& active, runtime::Value value) {
     }
   }
   const auto return_register = active.return_register;
-  const auto erased_return = IsErasedReturn();
+  const auto erased_return = !resumed && IsErasedReturn();
   if (erased_return && active.function->signature && active.function->signature->result) {
     const auto& type =
         active.function->layouts->types().subspan(*active.function->signature->result).front();

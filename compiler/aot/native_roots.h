@@ -16,6 +16,7 @@ struct NativeRootPlan final {
   std::vector<std::vector<ir::RegisterId>> stores;
   std::vector<std::vector<ir::RegisterId>> clears;
   std::vector<std::vector<ir::RegisterId>> suspended;
+  std::vector<std::vector<std::size_t>> rematerialized;
 };
 
 struct NativeFunctionMetrics final {

@@ -80,6 +80,8 @@ Calling an async function immediately runs its body until it returns, throws, or
 
 Scheduling order is: finish or suspend the current VM execution slice; run queued Future continuations in FIFO order; when the microtask queue is empty, process one timer or host event; then drain microtasks created by that event. One Future completion notifies waiters in registration order.
 
+Both VM and AOT reuse one result Future across repeated awaits in the same async invocation. A plain return value or uncaught error after resumption completes that result directly, without internal Future forwarding tasks; returning another Future still adopts its completion. Every await resumption and result observer notification runs through the microtask queue.
+
 A Future has three observable outcomes: pending, completed with a value, or completed with an error. Its mutable state is not exposed. A Future cannot be cancelled directly. A cancellable host operation accepts a separate `CancellationToken`; the operation decides how to handle the request, and its Future still completes with a normal value or Vela exception.
 
 ## Errors and Lifetime

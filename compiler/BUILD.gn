@@ -214,8 +214,11 @@ source_set("compiler") {
 source_set("aot") {
   sources = [
     "aot/async_emitter.cc",
+    "aot/frame_emitter.cc",
     "aot/function_emitter.cc",
     "aot/function_emitter.h",
+    "aot/integer_loop_optimizer.cc",
+    "aot/integer_loop_optimizer.h",
     "aot/memory_emitter.cc",
     "aot/native_compiler.cc",
     "aot/native_compiler.h",
@@ -225,6 +228,8 @@ source_set("aot") {
     "aot/native_image_emitter.h",
     "aot/native_roots.cc",
     "aot/native_roots.h",
+    "aot/native_type_optimizer.cc",
+    "aot/native_type_optimizer.h",
     "aot/native_values.cc",
     "aot/native_values.h",
     "aot/reachability.cc",
@@ -265,6 +270,7 @@ executable("vela_aot_tests") {
     ":aot",
     "//runtime",
     "//third_party:gtest_main",
+    "//third_party:llvm",
   ]
 }
 

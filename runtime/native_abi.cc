@@ -3,6 +3,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <new>
 #include <span>
 #include <utility>
@@ -16,13 +17,17 @@
 
 namespace vela::runtime {
 
-NativeFrame::NativeFrame(Isolate& isolate, NativeFrameSize size) noexcept
-    : roots_(size.root_count),
+NativeFrame::NativeFrame(Isolate& isolate, NativeFrameSize size, Value* stack_roots) noexcept
+    : allocated_roots_(stack_roots == nullptr ? size.root_count : 0),
+      roots_(stack_roots == nullptr ? allocated_roots_.values()
+                                    : std::span(stack_roots, size.root_count)),
       storage_bytes_(size.storage_bytes),
       storage_(storage_bytes_ == 0 ? nullptr : ::operator new(storage_bytes_, std::nothrow)) {
   if (IsAllocated() && size.root_count != 0) {
-    const auto roots = roots_.values();
-    root_range_.Attach(isolate.heap(), roots.data(), roots.size());
+    if (stack_roots != nullptr) {
+      std::uninitialized_value_construct_n(stack_roots, size.root_count);
+    }
+    root_range_.Attach(isolate.heap(), roots_.data(), roots_.size());
   }
 }
 
@@ -31,17 +36,9 @@ NativeFrame::~NativeFrame() {
 }
 
 NativeExecution::NativeExecution(NativeInstance& instance) noexcept
-    : instance_(&instance), exception_root_(isolate().heap(), &pending_exception_, 1) {}
-
-Isolate& NativeExecution::isolate() const noexcept {
-  return instance_->isolate();
-}
-
-NativeExecution::~NativeExecution() {
-  while (frame_count_ != 0) {
-    Exit();
-  }
-}
+    : instance_(&instance),
+      isolate_(&instance.isolate()),
+      exception_root_(isolate().heap(), &pending_exception_, 1) {}
 
 NativeInstanceScope::NativeInstanceScope(NativeExecution& execution,
                                          NativeInstance& instance) noexcept
@@ -64,71 +61,42 @@ ExecutionStatus NativeExecution::PrepareEntry() noexcept {
   return ExecutionStatus::Returned;
 }
 
-ExecutionStatus NativeExecution::Enter(std::uint32_t function, NativeFrameSize size) noexcept {
+ExecutionStatus NativeExecution::Enter(NativeTraceFrame& frame, std::uint32_t function) noexcept {
   const auto prepared = PrepareEntry();
   if (prepared != ExecutionStatus::Returned) {
     return prepared;
   }
-  if (size.root_count != 0 || size.storage_bytes != 0) {
-    auto& slot = frames_.at(frame_count_);
-    const auto& frame = slot.emplace(isolate(), size);
-    if (!frame.IsAllocated()) {
-      slot.reset();
-      return ExecutionStatus::OutOfMemory;
-    }
-  }
-  positions_.at(frame_count_) = {.function = function};
+  frame = {.position = {.function = function}, .previous = current_frame_};
+  current_frame_ = &frame;
   ++frame_count_;
   return ExecutionStatus::Returned;
 }
 
 void NativeExecution::Exit() noexcept {
   --frame_count_;
-  frames_.at(frame_count_).reset();
+  current_frame_ = current_frame_->previous;
 }
 
-std::span<Value> NativeExecution::current_roots() noexcept {
-  if (frame_count_ == 0) {
-    return {};
+extern "C" std::uint8_t vela_native_v1_frame_storage(NativeExecution* execution,
+                                                     std::uint64_t root_count,
+                                                     std::uint64_t storage_bytes,
+                                                     Value* stack_roots,
+                                                     NativeFrame* frame,
+                                                     NativeFrameAccess* access) noexcept {
+  std::construct_at(frame, execution->isolate(),
+                    NativeFrameSize{.root_count = static_cast<std::size_t>(root_count),
+                                    .storage_bytes = static_cast<std::size_t>(storage_bytes)},
+                    stack_roots);
+  if (!frame->IsAllocated()) {
+    std::destroy_at(frame);
+    return static_cast<std::uint8_t>(ExecutionStatus::OutOfMemory);
   }
-  auto& frame = frames_.at(frame_count_ - 1);
-  return frame ? frame->roots() : std::span<Value>();
+  *access = {.roots = frame->roots().data(), .storage = frame->storage()};
+  return static_cast<std::uint8_t>(ExecutionStatus::Returned);
 }
 
-void* NativeExecution::current_storage() const noexcept {
-  const auto& frame = frames_.at(frame_count_ - 1);
-  return frame ? frame->storage() : nullptr;
-}
-
-std::uint32_t* NativeExecution::current_instruction() noexcept {
-  return &positions_.at(frame_count_ - 1).instruction;
-}
-
-extern "C" std::uint8_t vela_native_v1_frame_enter(NativeExecution* execution,
-                                                   std::uint64_t root_count,
-                                                   std::uint32_t function,
-                                                   std::uint64_t storage_bytes,
-                                                   NativeFrameAccess* access) noexcept {
-  if (execution == nullptr) {
-    return static_cast<std::uint8_t>(ExecutionStatus::InvalidIsolate);
-  }
-  const auto status =
-      execution->Enter(function, {
-                                     .root_count = static_cast<std::size_t>(root_count),
-                                     .storage_bytes = static_cast<std::size_t>(storage_bytes),
-                                 });
-  if (status == ExecutionStatus::Returned) {
-    *access = {
-        .instruction = execution->current_instruction(),
-        .roots = execution->current_roots().data(),
-        .storage = execution->current_storage(),
-    };
-  }
-  return static_cast<std::uint8_t>(status);
-}
-
-extern "C" void vela_native_v1_frame_exit(NativeExecution* execution) noexcept {
-  execution->Exit();
+extern "C" void vela_native_v1_frame_release(NativeFrame* frame) noexcept {
+  std::destroy_at(frame);
 }
 
 extern "C" std::uint8_t vela_native_v1_leaf_enter(NativeExecution* execution) noexcept {
@@ -139,7 +107,8 @@ extern "C" std::uint8_t vela_native_v1_leaf_enter(NativeExecution* execution) no
 extern "C" std::uint8_t vela_native_v1_leaf_failure(NativeExecution* execution,
                                                     const TracePosition* position,
                                                     std::uint8_t status) {
-  const auto entered = execution->Enter(position->function, {});
+  NativeTraceFrame frame;
+  const auto entered = execution->Enter(frame, position->function);
   if (entered != ExecutionStatus::Returned) {
     return static_cast<std::uint8_t>(entered);
   }

@@ -43,6 +43,7 @@ llvm::Value* Convert(Builder& builder,
                      const SourceType& target);
 void EmitWrapper(llvm::Module& module,
                  const ir::Function& source,
+                 std::uint32_t function_index,
                  const GeneratedFunction& function);
 
 }  // namespace vela::compiler::aot

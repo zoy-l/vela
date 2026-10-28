@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -93,6 +94,46 @@ func main(): int { orphan(); return 0; }
   EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0);
   EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0);
   EXPECT_EQ(isolate.heap().object_count(), 0);
+}
+
+TEST(AsyncLifetimeTest, RepeatedAwaitAllocatesOneResultFuturePerActivation) {
+  runtime::Isolate isolate(std::numeric_limits<std::size_t>::max());
+  const auto compiled = CompileSource(R"(
+async func main(): Future<int> {
+  for (let index = 0; index < 64; index++) { await Future.value(index); }
+  return 42;
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto baseline = isolate.heap().object_count();
+  auto result = vm::VirtualMachine(isolate).ExecuteFuture(
+      compiled.program, compiled.program.FindFunction("main").index());
+  ASSERT_TRUE(isolate.scheduler().PumpUntil(result));
+  ExpectFutureInteger(result, 42);
+  EXPECT_EQ(isolate.heap().object_count() - baseline, 65U);
+  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
+  EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
+}
+
+TEST(AsyncLifetimeTest, UnreachableResuspendedActivationIsCollected) {
+  runtime::Isolate isolate(1);
+  {
+    const auto compiled = CompileSource(R"(
+async func orphan(): Future<void> { await 0; await Completer<void>().future; }
+func main(): int { orphan(); return 0; }
+)",
+                                        isolate);
+    ASSERT_TRUE(compiled.Succeeded());
+    ASSERT_TRUE(
+        vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main")).Succeeded());
+    ASSERT_TRUE(isolate.scheduler().PumpOne());
+    EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 1U);
+  }
+  isolate.heap().Collect();
+  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
+  EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
+  EXPECT_EQ(isolate.heap().object_count(), 0U);
 }
 
 TEST(AsyncLifetimeTest, PendingGlobalProducerDoesNotRootItsOwnProgram) {
@@ -443,6 +484,38 @@ async func main(): Future<int> {
   const token: dynamic = CancellationToken();
   token.cancel();
   return selected == Choice.second && token.isCancelled ? 42 : 0;
+})",
+                              42},
+                    AsyncCase{"AwaitCompletionHasNoIntermediateForwardingTurn", R"(
+async func input(): Future<int> { await 0; return 42; }
+async func main(): Future<int> {
+  let order = 0;
+  const value = input();
+  Future.microtask((): void => {
+    order = order * 10 + 1;
+    Future.microtask((): void => { order = order * 10 + 3; });
+  });
+  const result = await value;
+  order = order * 10 + 2;
+  return result == 42 && order == 12 ? 42 : 0;
+})",
+                              42},
+                    AsyncCase{"RepeatedAwaitCompletesObjectWithoutForwardingTurns", R"(
+class Box { public param value: int; }
+let order = 0;
+async func input(): Future<Box> {
+  await 0;
+  await 0;
+  Future.microtask((): void => {
+    order = order * 10 + 1;
+    Future.microtask((): void => { order = order * 10 + 3; });
+  });
+  return Box(value: 42);
+}
+async func main(): Future<int> {
+  const result = await input();
+  order = order * 10 + 2;
+  return result.value == 42 && order == 12 ? 42 : 0;
 })",
                               42},
                     AsyncCase{"ExplicitComputationFactories", R"(

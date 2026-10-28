@@ -79,6 +79,8 @@ struct SuspensionPoint final {
   std::uint8_t destination = 0;
 };
 
+class SuspendedFrame;
+
 class Execution final {
  public:
   Execution(runtime::Isolate& isolate,
@@ -94,10 +96,8 @@ class Execution final {
 
   ExecutionResult Run(std::uint32_t entry_function) noexcept;
   ExecutionResult DebugRun(std::uint32_t entry_function, Debugger& debugger) noexcept;
-  ExecutionResult ResumeFrame(SuspensionPoint point,
-                              std::span<const std::uint8_t> indices,
-                              std::span<const runtime::Value> saved,
-                              const runtime::FutureResult& completion) noexcept;
+  std::optional<ExecutionResult> ResumeFrame(SuspendedFrame& suspended,
+                                             const runtime::FutureResult& completion) noexcept;
   ExecutionResult Invoke(runtime::Value callable,
                          std::span<const runtime::Value> arguments) noexcept;
   [[nodiscard]] static runtime::FutureDiagnostic Diagnostic(const ExecutionResult& result);
@@ -157,6 +157,9 @@ class Execution final {
   StepResult AllocateSleep(ActiveFrame& active, FutureRegisters registers);
   StepResult AllocateCollection(ActiveFrame& active, FutureRegisters registers);
   StepResult Await(ActiveFrame& active, FutureRegisters registers);
+  [[nodiscard]] bool IsResumedFrame() const {
+    return resumed_frame_ != nullptr && frame_count_ == 1;
+  }
   StepResult StringOperation(OpCode opcode,
                              runtime::RegisterReference destination,
                              runtime::Value left,
@@ -252,6 +255,8 @@ class Execution final {
   runtime::Value pending_exception_;
   runtime::RootRange exception_root_;
   std::shared_ptr<DebugSession> debug_session_;
+  SuspendedFrame* resumed_frame_ = nullptr;
+  bool resuspended_ = false;
 };
 
 }  // namespace vela::vm::internal

@@ -1,5 +1,7 @@
 #include "compiler/aot/native_compiler.h"
 #include "compiler/aot/function_emitter.h"
+#include "compiler/aot/integer_loop_optimizer.h"
+#include "compiler/aot/native_type_optimizer.h"
 #include "compiler/aot/native_values.h"
 
 #include <algorithm>
@@ -91,6 +93,11 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
   passes.registerFunctionAnalyses(functions);
   passes.registerLoopAnalyses(loops);
   passes.crossRegisterProxies(loops, functions, calls, modules);
+  llvm::FunctionPassManager integer_loops;
+  AddIntegerLoopPasses(integer_loops);
+  llvm::ModulePassManager preparation;
+  preparation.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(integer_loops)));
+  preparation.run(module, modules);
   auto pipeline = passes.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
   pipeline.run(module, modules);
 }
@@ -147,6 +154,9 @@ std::expected<llvm::FunctionType*, std::string> BodySignature(llvm::Module& modu
   }
   if (argument_bytes > kMaximumNativeStackBytes) {
     return std::unexpected("AOT typed arguments exceed the native call stack budget");
+  }
+  if (!function.native_symbol.empty()) {
+    parameters.push_back(llvm::PointerType::getUnqual(context));
   }
   parameters.push_back(llvm::PointerType::getUnqual(context));
   return llvm::FunctionType::get(llvm::Type::getInt8Ty(context), parameters, false);
@@ -216,6 +226,7 @@ std::expected<std::optional<std::uint32_t>, std::string> PrepareNativeProgram(
     main = *entry;
   }
   PruneNativeProgram(program, options.exports, main);
+  ElideNativeResultBindings(program);
   if (main) {
     if (const auto imports = CheckStandaloneImports(program); !imports) {
       return std::unexpected(imports.error());
@@ -288,7 +299,7 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
           return instruction.opcode == Opcode::Await;
         })) {
       auto* resume_type = llvm::FunctionType::get(llvm::Type::getInt8Ty(context),
-                                                  {pointer, pointer, pointer}, false);
+                                                  {pointer, pointer}, false);
       resume =
           llvm::Function::Create(resume_type, llvm::GlobalValue::InternalLinkage,
                                  options.module_name + "_resume_" + std::to_string(index), module);
@@ -304,7 +315,7 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
     }
     metrics.push_back(*emitted);
     const auto& native_function = generated.at(index);
-    EmitWrapper(module, function, native_function);
+    EmitWrapper(module, function, static_cast<std::uint32_t>(index), native_function);
   }
   std::vector<llvm::Function*> entries;
   entries.reserve(generated.size());

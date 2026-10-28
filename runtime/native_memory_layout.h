@@ -22,7 +22,8 @@ struct NativeMemoryLayout final {
       sizeof(HeapObject) + offsetof(internal::ArrayStorage, capacity);
   static constexpr auto kArrayMutation =
       sizeof(HeapObject) + offsetof(internal::ArrayStorage, mutation);
-  static constexpr auto kFrameInstruction = offsetof(NativeFrameAccess, instruction);
+  static constexpr auto kExecutionFrame = offsetof(NativeExecution, current_frame_);
+  static constexpr auto kExecutionDepth = offsetof(NativeExecution, frame_count_);
   static constexpr auto kFrameRoots = offsetof(NativeFrameAccess, roots);
   static constexpr auto kFrameStorage = offsetof(NativeFrameAccess, storage);
 };
@@ -30,6 +31,8 @@ struct NativeMemoryLayout final {
 static_assert(std::is_standard_layout_v<HeapObject>);
 static_assert(std::is_standard_layout_v<internal::ArrayStorage>);
 static_assert(std::is_standard_layout_v<NativeFrameAccess>);
+static_assert(std::is_standard_layout_v<NativeTraceFrame>);
+static_assert(std::is_standard_layout_v<NativeExecution>);
 static_assert(NativeMemoryLayout::kValuePayload == offsetof(NativeValue, payload));
 static_assert(NativeMemoryLayout::kValueKind == offsetof(NativeValue, kind));
 static_assert(sizeof(Value) == sizeof(NativeValue));

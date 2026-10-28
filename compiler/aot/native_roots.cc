@@ -63,6 +63,35 @@ void RecordSuspension(NativeRootPlan& plan,
   std::ranges::sort(saved);
 }
 
+void PlanRematerialization(NativeRootPlan& plan,
+                           const ir::Function& function,
+                           std::span<const ir::Function> functions) {
+  std::vector<std::size_t> definitions(function.register_count);
+  std::vector<std::size_t> positions(function.register_count);
+  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
+    const auto& instruction = function.instructions.at(index);
+    if (ir::AnalyzeRegisters(instruction, functions).defines_value) {
+      ++definitions.at(instruction.dst);
+      positions.at(instruction.dst) = index;
+    }
+  }
+  for (std::size_t index = 0; index < plan.suspended.size(); ++index) {
+    std::erase_if(plan.suspended.at(index), [&](ir::RegisterId reg) {
+      if (reg < function.parameter_count || definitions.at(reg) != 1) {
+        return false;
+      }
+      const auto position = positions.at(reg);
+      const auto opcode = function.instructions.at(position).opcode;
+      if (opcode != Opcode::LoadInt && opcode != Opcode::LoadDouble && opcode != Opcode::LoadBool &&
+          opcode != Opcode::LoadNull) {
+        return false;
+      }
+      plan.rematerialized.at(index).push_back(position);
+      return true;
+    });
+  }
+}
+
 }  // namespace
 
 NativeRootPlan PlanNativeRoots(const ir::Function& function,
@@ -72,6 +101,7 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
   plan.stores.resize(function.instructions.size());
   plan.clears.resize(function.instructions.size());
   plan.suspended.resize(function.instructions.size());
+  plan.rematerialized.resize(function.instructions.size());
   if (!function.native_symbol.empty()) {
     AssignImportRoots(plan, function);
     return plan;
@@ -112,6 +142,7 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
     }
   }
   AssignRootSlots(plan);
+  PlanRematerialization(plan, function, functions);
   return plan;
 }
 

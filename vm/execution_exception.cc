@@ -186,7 +186,7 @@ std::optional<ExecutionResult> Execution::HandleError(ExecutionStatus status) {
       active.program_counter = handler->target;
       return std::nullopt;
     }
-    if (active.function->is_async) {
+    if (active.function->is_async && !IsResumedFrame()) {
       return CompleteAsyncError(active);
     }
     ResetInitializer(active);

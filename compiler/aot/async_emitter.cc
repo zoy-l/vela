@@ -1,5 +1,6 @@
 #include "compiler/aot/function_emitter.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -15,6 +16,7 @@
 #include "base/opcode.h"
 #include "compiler/aot/native_values.h"
 #include "compiler/ir/ir.h"
+#include "runtime/native_async.h"
 
 namespace vela::compiler::aot {
 
@@ -29,6 +31,11 @@ void FunctionEmitter::StoreAsyncResult() {
 }
 
 void FunctionEmitter::EmitAsyncFailure(llvm::Value* status) {
+  if (kind_ == NativeEntryKind::Resume) {
+    // 激活已持有结果 Future，恢复失败由该激活直接完成，无需分配错误 Future。
+    Finish(status);
+    return;
+  }
   auto pending = module_.getOrInsertFunction("vela_native_v1_has_exception", builder_.getInt8Ty(),
                                              builder_.getPtrTy());
   auto* has_exception = builder_.CreateCall(pending, {body_->getArg(0)});
@@ -57,6 +64,18 @@ void FunctionEmitter::EmitAsyncFailure(llvm::Value* status) {
 }
 
 void FunctionEmitter::EmitAsyncReturn(const ir::Instruction& instruction) {
+  if (kind_ == NativeEntryKind::Resume) {
+    auto helper = module_.getOrInsertFunction("vela_native_v1_resume_return", builder_.getInt8Ty(),
+                                              builder_.getPtrTy(), builder_.getPtrTy(),
+                                              builder_.getInt32Ty(), builder_.getPtrTy());
+    auto* status =
+        builder_.CreateCall(helper, {body_->getArg(0), body_->getArg(1),
+                                     builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
+                                     Pack(Encode(instruction.dst), 0)});
+    CheckStatus(status);
+    Finish(Status(builder_, ExecutionStatus::Returned));
+    return;
+  }
   auto helper = module_.getOrInsertFunction("vela_native_v1_async_return", builder_.getInt8Ty(),
                                             builder_.getPtrTy(), builder_.getInt32Ty(),
                                             builder_.getPtrTy(), builder_.getPtrTy());
@@ -78,10 +97,24 @@ void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
     Pack(Encode(saved.at(slot)), slot);
   }
   auto* source = Pack(Encode(instruction.lhs), saved.size());
+  if (kind_ == NativeEntryKind::Resume) {
+    auto helper = module_.getOrInsertFunction(
+        "vela_native_v1_resuspend", builder_.getVoidTy(), builder_.getPtrTy(),
+        builder_.getInt32Ty(), builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt64Ty());
+    builder_.CreateCall(helper, {body_->getArg(1),
+                                 builder_.getInt32(static_cast<std::uint32_t>(instruction_index_)),
+                                 source, arguments_, builder_.getInt64(saved.size())});
+    Finish(Status(builder_, ExecutionStatus::Returned));
+    return;
+  }
+  std::size_t capacity = 0;
+  for (const auto& values : roots_.suspended) {
+    capacity = std::max(capacity, values.size());
+  }
   auto helper = module_.getOrInsertFunction(
       "vela_native_v1_suspend", builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt32Ty(),
       builder_.getPtrTy(), builder_.getInt32Ty(), builder_.getPtrTy(), builder_.getPtrTy(),
-      builder_.getInt64Ty(), builder_.getPtrTy());
+      builder_.getInt64Ty(), builder_.getInt64Ty(), builder_.getPtrTy());
   auto* status = builder_.CreateCall(
       helper, {
                   body_->getArg(0),
@@ -91,6 +124,7 @@ void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
                   source,
                   arguments_,
                   builder_.getInt64(saved.size()),
+                  builder_.getInt64(capacity),
                   result_,
               });
   CheckStatus(status);
@@ -99,9 +133,10 @@ void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
 
 void FunctionEmitter::EmitResumeDispatch() {
   auto* state = body_->getArg(1);
-  auto resume = module_.getOrInsertFunction("vela_native_v1_resume_instruction",
-                                            builder_.getInt32Ty(), builder_.getPtrTy());
-  auto* instruction = builder_.CreateCall(resume, {state});
+  auto* instruction = builder_.CreateLoad(
+      builder_.getInt32Ty(), ByteAddress(state, offsetof(runtime::NativeResumeState, instruction)));
+  auto* saved_values = builder_.CreateLoad(
+      builder_.getPtrTy(), ByteAddress(state, offsetof(runtime::NativeResumeState, saved)));
   auto* invalid = llvm::BasicBlock::Create(module_.getContext(), "invalid.resume", body_);
   auto* dispatch = builder_.CreateSwitch(instruction, invalid);
   builder_.SetInsertPoint(invalid);
@@ -116,22 +151,22 @@ void FunctionEmitter::EmitResumeDispatch() {
     dispatch->addCase(builder_.getInt32(static_cast<std::uint32_t>(index)), restore);
     builder_.SetInsertPoint(restore);
     SetPosition();
+    for (const auto position : roots_.rematerialized.at(index)) {
+      // 仅单一定义的立即数会进入此列表，不需要保存、分配或错误分支。
+      static_cast<void>(EmitInstruction(source_.instructions.at(position)));
+    }
     const auto& saved = roots_.suspended.at(index);
-    auto read = module_.getOrInsertFunction("vela_native_v1_resume_value", builder_.getVoidTy(),
-                                            builder_.getPtrTy(), builder_.getInt64Ty(),
-                                            builder_.getPtrTy());
     for (std::size_t slot = 0; slot < saved.size(); ++slot) {
       const auto reg = saved.at(slot);
-      builder_.CreateCall(read, {state, builder_.getInt64(slot), result_});
-      Unpack(reg);
+      const auto& type = source_.value_types.at(reg);
+      auto* value = builder_.CreateLoad(NativeRecordType(module_.getContext()),
+                                        ByteAddress(saved_values, slot * sizeof(runtime::Value)));
+      Store(reg, DecodeValue(builder_, value, type), type);
       if (const auto root_slot = roots_.slots.at(reg)) {
         WriteHeapValue(RootAddress(*root_slot), reg);
       }
     }
     // 活动引用先进入当前帧根，再清空挂起快照；错误恢复也可能触发 GC。
-    auto release = module_.getOrInsertFunction("vela_native_v1_resume_release",
-                                               builder_.getVoidTy(), builder_.getPtrTy());
-    builder_.CreateCall(release, {state});
     auto outcome =
         module_.getOrInsertFunction("vela_native_v1_resume_outcome", builder_.getInt8Ty(),
                                     builder_.getPtrTy(), builder_.getPtrTy(), builder_.getPtrTy());

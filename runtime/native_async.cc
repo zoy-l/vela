@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
-#include <new>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -31,13 +30,6 @@
 #include "runtime/value_operations.h"
 
 namespace vela::runtime {
-
-// 仅在一次恢复调用内借用；生成代码通过 ABI helper 读取，不依赖此 C++ 布局。
-struct NativeResumeState final {
-  std::span<Value> references;
-  const FutureResult* completion = nullptr;
-  std::uint32_t instruction = 0;
-};
 
 namespace {
 
@@ -77,13 +69,18 @@ struct SuspensionPoint final {
   std::uint32_t instruction = 0;
 };
 
-class NativeSuspendedFrame final {
+}  // namespace
+
+class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSuspendedFrame> {
  public:
   NativeSuspendedFrame(Isolate& isolate,
-                       Future result,
                        SuspensionPoint point,
-                       std::shared_ptr<std::vector<Value>> values)
-      : isolate_(&isolate), result_(std::move(result)), point_(point), values_(std::move(values)) {
+                       std::size_t capacity,
+                       Value instance,
+                       Value output)
+      : isolate_(&isolate), point_(point), values_(capacity + kSuspensionReferences) {
+    values_.at(capacity) = instance;
+    values_.at(capacity + 1) = output;
     isolate.scheduler().AddSuspendedFrame(SavedBytes());
   }
   ~NativeSuspendedFrame() { isolate_->scheduler().RemoveSuspendedFrame(SavedBytes()); }
@@ -93,49 +90,76 @@ class NativeSuspendedFrame final {
   NativeSuspendedFrame& operator=(NativeSuspendedFrame&&) = delete;
 
   void Resume(const FutureResult& completion) {
-    const auto values = std::span(*values_);
+    const auto values = std::span(values_);
     const auto state_index = values.size() - kSuspensionReferences;
     auto instance = NativeInstance::Borrow(*values.subspan(state_index).front().AsObject());
     NativeExecution execution(instance);
     NativeResumeState state{
-        .references = values,
+        .saved = values.data(),
         .completion = &completion,
+        .frame = this,
         .instruction = point_.instruction,
     };
-    HeapObject* result = nullptr;
-    const auto status = static_cast<ExecutionStatus>(point_.entry(&execution, &state, &result));
+    const auto status = static_cast<ExecutionStatus>(point_.entry(&execution, &state));
     if (status == ExecutionStatus::Returned) {
-      CompleteFuture(*isolate_, result_, *Heap::GetFuture(*result));
+      return;
     } else if (execution.HasException()) {
       const auto& exception = ExceptionData::From(*execution.pending_exception().AsObject());
-      CompleteFutureError(*isolate_, result_, Value::Object(exception.payload),
+      CompleteFutureError(*isolate_, result(), Value::Object(exception.payload),
                           execution.ExceptionDiagnostic());
     } else {
-      CompleteFutureError(*isolate_, result_, Value::Null(),
+      CompleteFutureError(*isolate_, result(), Value::Null(),
                           {.message = {}, .stack_trace = {}, .status = status});
     }
   }
 
+  void Suspend(std::uint32_t instruction, Value source, std::span<const NativeValue> saved) {
+    auto* input = source.IsObject() ? Heap::GetFuture(*source.AsObject()) : nullptr;
+    auto future =
+        input != nullptr ? input->Rooted() : Future::Value(source, &isolate_->scheduler());
+    future.AttachHeap(isolate_->heap());
+    point_.instruction = instruction;
+    for (std::size_t index = 0; index < saved.size(); ++index) {
+      values_.at(index) = DecodeNativeValue(saved[index]);
+    }
+    values_.back() = source;
+    auto self = shared_from_this();
+    // 别名共享持有激活及其固定 vector，排队的 RootRange 始终指向同一存储。
+    // 激活只保存 Future 的托管指针，不能反向持有强 Future 句柄形成 C++ 所有权环。
+    const std::shared_ptr<std::vector<Value>> references(self, &values_);
+    result().KeepAlive(references);
+    future.ObserveResult([self](const FutureResult& completion) { self->Resume(completion); },
+                         references);
+  }
+
+  void ReleaseSaved() {
+    const auto values = std::span(values_);
+    std::ranges::fill(values.first(values.size() - kSuspensionReferences), Value::Null());
+    values.back() = Value::Null();
+  }
+
+  [[nodiscard]] Future& result() {
+    return *Heap::GetFuture(*values_.at(values_.size() - 2).AsObject());
+  }
+
  private:
   [[nodiscard]] std::size_t SavedBytes() const noexcept {
-    return sizeof(NativeSuspendedFrame) + sizeof(std::vector<Value>) +
-           (values_->capacity() * sizeof(Value));
+    return sizeof(NativeSuspendedFrame) + values_.capacity() * sizeof(Value);
   }
   Isolate* isolate_;
-  Future result_;
   SuspensionPoint point_;
-  std::shared_ptr<std::vector<Value>> values_;
+  std::vector<Value> values_;
 };
+
+namespace {
 
 std::expected<Value, ExecutionStatus> Suspend(NativeExecution& execution,
                                               std::uint32_t function,
                                               SuspensionPoint point,
                                               Value source,
-                                              std::span<const NativeValue> saved) {
+                                              std::span<const NativeValue> saved,
+                                              std::size_t capacity) {
   auto& isolate = execution.isolate();
-  auto* input = source.IsObject() ? Heap::GetFuture(*source.AsObject()) : nullptr;
-  auto future = input != nullptr ? input->Rooted() : Future::Value(source, &isolate.scheduler());
-  future.AttachHeap(isolate.heap());
   Future result(&isolate.scheduler());
   auto* object = isolate.heap().AllocateFuture(result);
   if (object == nullptr) {
@@ -143,26 +167,13 @@ std::expected<Value, ExecutionStatus> Suspend(NativeExecution& execution,
   }
   const auto output = Value::Object(object);
   const RootRange root(isolate.heap(), &output, 1);
-  auto references = std::make_shared<std::vector<Value>>();
-  references->reserve(saved.size() + kSuspensionReferences);
-  for (const auto& value : saved) {
-    references->push_back(DecodeNativeValue(value));
-  }
-  references->push_back(execution.instance().state().front());
-  references->push_back(output);
-  references->push_back(source);
-  std::shared_ptr<NativeSuspendedFrame> suspended(
-      new (std::nothrow) NativeSuspendedFrame(isolate, result.Internal(), point, references));
-  if (suspended == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
+  auto suspended = std::make_shared<NativeSuspendedFrame>(
+      isolate, point, capacity, execution.instance().state().front(), output);
   const auto bound = BindResult(execution, function, output);
   if (!bound) {
     return std::unexpected(bound.error());
   }
-  result.KeepAlive(references);
-  future.ObserveResult(
-      [suspended](const FutureResult& completion) { suspended->Resume(completion); }, references);
+  suspended->Suspend(point.instruction, source, saved);
   return output;
 }
 
@@ -277,31 +288,45 @@ extern "C" std::uint8_t vela_native_v1_suspend(NativeExecution* execution,
                                                const NativeValue* source,
                                                const NativeValue* saved,
                                                std::uint64_t count,
+                                               std::uint64_t capacity,
                                                NativeValue* result) {
   return Store(result, Suspend(*execution, function, {.entry = entry, .instruction = instruction},
-                               DecodeNativeValue(*source), std::span(saved, count)));
+                               DecodeNativeValue(*source), std::span(saved, count), capacity));
 }
 
-extern "C" std::uint32_t vela_native_v1_resume_instruction(NativeResumeState* state) noexcept {
-  return state->instruction;
+extern "C" void vela_native_v1_resuspend(NativeResumeState* state,
+                                         std::uint32_t instruction,
+                                         const NativeValue* source,
+                                         const NativeValue* saved,
+                                         std::uint64_t count) {
+  state->frame->Suspend(instruction, DecodeNativeValue(*source), std::span(saved, count));
 }
 
-extern "C" void vela_native_v1_resume_value(NativeResumeState* state,
-                                            std::uint64_t index,
-                                            NativeValue* result) noexcept {
-  *result = EncodeNativeValue(state->references.subspan(index).front());
-}
-
-extern "C" void vela_native_v1_resume_release(NativeResumeState* state) noexcept {
-  const auto references = state->references;
-  std::ranges::fill(references.first(references.size() - kSuspensionReferences), Value::Null());
-  references.back() = Value::Null();
+extern "C" std::uint8_t vela_native_v1_resume_return(NativeExecution* execution,
+                                                     NativeResumeState* state,
+                                                     std::uint32_t function,
+                                                     const NativeValue* payload) {
+  const auto value = DecodeNativeValue(*payload);
+  auto& result = state->frame->result();
+  auto* nested = value.IsObject() ? Heap::GetFuture(*value.AsObject()) : nullptr;
+  // 直接返回 Future 时仍验证绑定，并保留语言规定的 adoption 边界。
+  if (nested != nullptr) {
+    const auto bound = BindResult(*execution, function, value);
+    if (!bound) {
+      return static_cast<std::uint8_t>(bound.error());
+    }
+    CompleteFuture(execution->isolate(), result, *nested);
+  } else {
+    std::ignore = result.Complete(value);
+  }
+  return static_cast<std::uint8_t>(ExecutionStatus::Returned);
 }
 
 extern "C" std::uint8_t vela_native_v1_resume_outcome(NativeExecution* execution,
                                                       NativeResumeState* state,
                                                       NativeValue* result) {
   const auto& completion = *state->completion;
+  state->frame->ReleaseSaved();
   return completion.state == FutureState::Succeeded
              ? Store(result, completion.value)
              : static_cast<std::uint8_t>(execution->RestoreFutureError(completion));
