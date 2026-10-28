@@ -33,9 +33,10 @@ struct InstructionEffects final {
   bool writes_state = false;
   bool changes_control = false;
 
-  [[nodiscard]] bool MayCollect() const noexcept {
-    return may_fail || may_allocate || may_call || may_suspend;
+  [[nodiscard]] bool MayCollectOnSuccess() const noexcept {
+    return may_allocate || may_call || may_suspend;
   }
+  [[nodiscard]] bool MayCollect() const noexcept { return may_fail || MayCollectOnSuccess(); }
   [[nodiscard]] bool IsRemovable() const noexcept {
     return !MayCollect() && !writes_state && !changes_control;
   }

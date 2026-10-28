@@ -42,7 +42,8 @@ std::optional<std::string_view> CompoundAssignmentOperation(std::string_view tex
       ">>=",
       ">>>=",
   });
-  if (const auto found = std::ranges::find(operations, text); found != operations.end()) {
+  if (const decltype(operations.begin()) found = std::ranges::find(operations, text);
+      found != operations.end()) {
     return found->substr(0, found->size() - 1);
   }
   return std::nullopt;

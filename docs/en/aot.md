@@ -93,11 +93,15 @@ Export wrappers take an explicit instance, return a status, and write a successf
 
 Native execution support maintains logical call frames and source positions independently of machine-register allocation. Preserve the current call-depth policy and `StackOverflow` status, checking before entering another script call. Inlining must not accidentally alter observable depth or traces. Native frame size must be bounded; large temporary storage uses runtime-managed allocation that can report failure, preventing user source from causing unchecked native-stack exhaustion. Normal, error, and suspension exits clean up frames and root records consistently.
 
+Logical frame records live inside the execution object without an allocation per call. Root storage and large temporary storage retain explicit allocation failures. Small native frames keep typed local slots separate from ABI scratch buffers whose addresses escape to runtime calls, allowing LLVM to promote locals to SSA. Generated code writes source positions through a borrowed pointer to its logical frame; calls, explicit throws, and async boundaries publish the position before runtime execution, while pure checks record it only on failure.
+
 ## GC roots, safepoints, and write barriers
 
 The first implementation uses explicit shadow root slots backed by existing tagged `Value` storage and `RootRange`. Only managed references live across safepoints need roots; pure numeric values remain in machine registers or ordinary local slots. Initialize root slots to null before registration and unregister before function exit. Slots can be reused over reference live intervals and are cleared when references die, avoiding retention merely because the frame remains active.
 
 Safepoints include runtime calls that may allocate or advance GC, script calls that can reach those operations, and host calls. GC continues to advance cooperatively on the owning Isolate thread. Pure arithmetic loops do not introduce asynchronous collection or new task scheduling points. Any later explicit polling must participate in the same effect and root analysis.
+
+Shared effects distinguish collection on success from allocation of an error envelope. An instruction that can collect only on failure stores live roots in its failure block before creating that envelope. Its successful path requires no root stores for that instruction.
 
 Generated code must obey this ordering:
 

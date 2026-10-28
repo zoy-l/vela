@@ -337,11 +337,15 @@ extern "C" VelaAotStatus vela_aot_v1_future_wait(VelaAotHandle* future,
   if (!isolate.scheduler().PumpUntil(*value, mode)) {
     return Status(ExecutionStatus::AsyncIdle);
   }
-  if (value->state() == FutureState::Succeeded) {
-    return StorePublic(isolate, *value->value(), result);
+  if (const auto completed = value->value()) {
+    return StorePublic(isolate, *completed, result);
   }
-  const auto diagnostic = *value->error_diagnostic();
-  return StoreError(isolate, diagnostic.status, *value->error(), diagnostic, error);
+  const auto diagnostic = value->error_diagnostic();
+  const auto payload = value->error();
+  if (!diagnostic || !payload) {
+    std::unreachable();
+  }
+  return StoreError(isolate, diagnostic->status, *payload, *diagnostic, error);
 }
 
 extern "C" const char* vela_aot_v1_status_code(VelaAotStatus status) {

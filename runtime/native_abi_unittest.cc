@@ -70,4 +70,37 @@ TEST(NativeAbiTest, CallDepthLimitPreservesExistingFrames) {
   EXPECT_EQ(execution.frame_count(), kMaxCallFrames);
 }
 
+TEST(NativeAbiTest, ReusedFramesKeepOuterPositionsAndReleasePreviousRoots) {
+  constexpr std::uint32_t kOuterInstruction = 42;
+  constexpr std::uint32_t kInnerInstruction = 7;
+  Isolate isolate;
+  const auto image = EmptyImage();
+  const auto instance = NativeInstance::Instantiate(isolate, image);
+  ASSERT_TRUE(instance.has_value());
+  NativeExecution execution(**instance);
+  ASSERT_EQ(execution.Enter(0, {.root_count = 1}), ExecutionStatus::Returned);
+  auto* outer_position = execution.current_instruction();
+  *outer_position = kOuterInstruction;
+  auto& heap = isolate.heap();
+  const auto baseline = heap.object_count();
+  ASSERT_EQ(execution.Enter(1, {.root_count = 1}), ExecutionStatus::Returned);
+  auto* text = heap.AllocateString("temporary");
+  ASSERT_NE(text, nullptr);
+  execution.current_roots().front() = Value::String(text);
+  *execution.current_instruction() = kInnerInstruction;
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), baseline + 1);
+  EXPECT_EQ(*outer_position, kOuterInstruction);
+  execution.Exit();
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), baseline);
+  ASSERT_EQ(execution.Enter(2, {}), ExecutionStatus::Returned);
+  EXPECT_EQ(*execution.current_instruction(), 0U);
+  EXPECT_TRUE(execution.current_roots().empty());
+  execution.Exit();
+  EXPECT_EQ(execution.current_instruction(), outer_position);
+  EXPECT_EQ(*outer_position, kOuterInstruction);
+  execution.Exit();
+}
+
 }  // namespace vela::runtime

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <string>
+#include <utility>
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/opcode.h"
@@ -36,8 +37,12 @@ void FunctionEmitter::StoreRoots(std::size_t index) {
       module_.getOrInsertFunction("vela_native_v1_root_store", builder_.getVoidTy(),
                                   builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
   for (const auto reg : roots_.stores.at(index)) {
+    const auto& slot = roots_.slots.at(reg);
+    if (!slot) {
+      std::unreachable();
+    }
     auto* value = Pack(Encode(reg), 0);
-    builder_.CreateCall(store, {body_->getArg(0), builder_.getInt64(*roots_.slots.at(reg)), value});
+    builder_.CreateCall(store, {body_->getArg(0), builder_.getInt64(*slot), value});
   }
 }
 
@@ -45,7 +50,11 @@ void FunctionEmitter::ClearRoots(std::size_t index) {
   auto clear = module_.getOrInsertFunction("vela_native_v1_root_clear", builder_.getVoidTy(),
                                            builder_.getPtrTy(), builder_.getInt64Ty());
   for (const auto reg : roots_.clears.at(index)) {
-    builder_.CreateCall(clear, {body_->getArg(0), builder_.getInt64(*roots_.slots.at(reg))});
+    const auto& slot = roots_.slots.at(reg);
+    if (!slot) {
+      std::unreachable();
+    }
+    builder_.CreateCall(clear, {body_->getArg(0), builder_.getInt64(*slot)});
   }
 }
 

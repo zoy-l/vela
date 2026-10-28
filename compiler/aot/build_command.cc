@@ -93,13 +93,14 @@ std::expected<void, std::string> PublishBuild(const BuildArguments& arguments,
 int ExecuteBuild(BuildArguments arguments, std::ostream& errors) {
   const auto kind = arguments.kind;
   std::optional<TargetSupport> support;
+  const TargetSupport* target_support = nullptr;
   if (kind != NativeOutputKind::Object) {
     auto loaded = LoadTargetSupport(arguments.support_path, kind);
     if (!loaded) {
       errors << "vela: " << loaded.error() << '\n';
       return kIoErrorExitCode;
     }
-    support = std::move(*loaded);
+    target_support = &support.emplace(std::move(*loaded));
   }
   auto parsed = frontend::LoadProgram(arguments.source);
   BinaryWriter identity;
@@ -122,12 +123,12 @@ int ExecuteBuild(BuildArguments arguments, std::ostream& errors) {
   auto binary =
       kind == NativeOutputKind::Object
           ? std::expected<std::vector<std::byte>, std::string>(std::move(artifact->object))
-          : LinkNativeArtifact(*support, artifact->object, kind);
+          : LinkNativeArtifact(*target_support, artifact->object, kind);
   if (!binary) {
     errors << "vela: " << binary.error() << '\n';
     return kIoErrorExitCode;
   }
-  const auto written = PublishBuild(arguments, *artifact, *binary, support ? &*support : nullptr);
+  const auto written = PublishBuild(arguments, *artifact, *binary, target_support);
   if (!written) {
     WriteError(errors, arguments.output, SourceLocation(), written.error());
     return kIoErrorExitCode;

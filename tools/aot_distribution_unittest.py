@@ -196,8 +196,10 @@ TEST(PackageEmbeddingTest, TwoArchivesShareOneRuntimeAndKeepStringResultsAlive) 
             else:
                 flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread"]
                 if sys.platform == "darwin":
-                    flags += ["-isysroot", str(tools["sysroot"]), "-nostdinc++",
-                              "-isystem", str(tools["sysroot"] / "usr/include/c++/v1")]
+                    flags += ["-fuse-ld=" + str(tools["linker"]),
+                              "-isysroot", str(tools["sysroot"]), "-nostdinc++",
+                              "-isystem", str(tools["sysroot"] / "usr/include/c++/v1"),
+                              "-framework", "CoreFoundation"]
                 run([tools["cxx"], *flags, *["-I" + str(path) for path in includes],
                      host_source, *libraries, runtime, *gtest, "-o", host], env=None)
             self.assertIn("[  PASSED  ] 1 test.", run([host]).stdout)

@@ -59,6 +59,7 @@ class FunctionEmitter final {
   void Check(llvm::Value* condition, ExecutionStatus failure);
   void CheckStatus(llvm::Value* status);
   void Fail(llvm::Value* status);
+  void SetPosition();
   void Finish(llvm::Value* status);
   void EmitInteger(const ir::Instruction& instruction);
   void EmitDouble(const ir::Instruction& instruction);
@@ -97,8 +98,8 @@ class FunctionEmitter final {
   llvm::PHINode* status_ = nullptr;
   llvm::Value* arguments_ = nullptr;
   llvm::Value* result_ = nullptr;
+  llvm::Value* instruction_slot_ = nullptr;
   llvm::StructType* frame_type_ = nullptr;
-  llvm::Value* frame_storage_ = nullptr;
   std::uint64_t frame_bytes_ = 0;
   const NativeRootPlan& roots_;
 };

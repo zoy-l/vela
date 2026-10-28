@@ -46,14 +46,14 @@ FutureDiagnostic ResolveTrace(const NativeImage& image,
 
 }  // namespace
 
-void NativeExecution::SetInstruction(std::uint32_t instruction) noexcept {
-  frames_.at(frame_count_ - 1)->set_instruction(instruction);
-}
-
 std::span<const TracePosition> NativeExecution::CapturePositions(
     std::span<TracePosition> storage) const noexcept {
   for (std::size_t index = 0; index < frame_count_; ++index) {
-    storage.subspan(index).front() = frames_.at(frame_count_ - index - 1)->position();
+    const auto& frame = frames_.at(frame_count_ - index - 1);
+    if (!frame) {
+      std::unreachable();
+    }
+    storage.subspan(index).front() = frame->position();
   }
   return storage.first(frame_count_);
 }
@@ -152,11 +152,6 @@ Value NativeExecution::TakeException() noexcept {
   const auto exception = pending_exception_;
   pending_exception_ = Value::Null();
   return exception;
-}
-
-extern "C" void vela_native_v1_position(NativeExecution* execution,
-                                        std::uint32_t instruction) noexcept {
-  execution->SetInstruction(instruction);
 }
 
 extern "C" std::uint8_t vela_native_v1_failure(NativeExecution* execution, std::uint8_t status) {

@@ -251,12 +251,27 @@ struct NativeAdapter<Function> final {
                               NativeAbiCodec<Args>::Type... arguments,
                               NativeAbiCodec<Result>::Type* output) {
     NativeContext context(execution->isolate());
-    auto result = CompleteNativeResult(
-        *execution, function, InvokeDecoded(context, NativeAbiCodec<Args>::Decode(arguments)...));
-    if (!result) {
-      return static_cast<std::uint8_t>(result.error());
+    constexpr auto kResultType = NativeCodec<Result>::kType;
+    if constexpr (std::is_same_v<R, Result> &&
+                  (kResultType == NativeType::Void || kResultType == NativeType::Boolean ||
+                   kResultType == NativeType::Integer || kResultType == NativeType::Double)) {
+      // 精确签名在实例化时验证。不可失败的基本值已是 ABI 表示，无需再装箱为 Value、
+      // 查询结果类型或执行仅用于错误/Future 的完成检查。
+      if constexpr (std::is_void_v<R>) {
+        Function(context, NativeAbiCodec<Args>::Decode(arguments)...);
+        *output = 0;
+      } else {
+        *output = static_cast<NativeAbiCodec<Result>::Type>(
+            Function(context, NativeAbiCodec<Args>::Decode(arguments)...));
+      }
+    } else {
+      auto result = CompleteNativeResult(
+          *execution, function, InvokeDecoded(context, NativeAbiCodec<Args>::Decode(arguments)...));
+      if (!result) {
+        return static_cast<std::uint8_t>(result.error());
+      }
+      *output = NativeAbiCodec<Result>::Encode(*result);
     }
-    *output = NativeAbiCodec<Result>::Encode(*result);
     return static_cast<std::uint8_t>(ExecutionStatus::Returned);
   }
 

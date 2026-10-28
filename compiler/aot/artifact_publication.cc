@@ -116,7 +116,8 @@ class Manifest final {
     for (const auto& collection : layouts.collections) {
       auto* value = Object();
       Add(value, "key", Type(collection.key));
-      Add(value, "value", collection.value ? Type(*collection.value) : yyjson_mut_null(document_));
+      const auto& value_type = collection.value;
+      Add(value, "value", value_type ? Type(*value_type) : yyjson_mut_null(document_));
       Append(collections, value);
     }
     Add(json_.root(), "collections", collections);
@@ -165,7 +166,11 @@ class Manifest final {
     Add(json_.root(), "functions", functions);
     auto* exports = Array();
     for (const auto& entry : artifact.exports) {
-      auto* value = Signature(*program.functions.at(entry.function).signature);
+      const auto& signature = program.functions.at(entry.function).signature;
+      if (!signature) {
+        std::unreachable();
+      }
+      auto* value = Signature(*signature);
       Add(value, "name", Text(entry.name));
       Add(value, "symbol", Text(entry.symbol));
       Add(value, "function", Number(entry.function));
@@ -177,7 +182,11 @@ class Manifest final {
       if (function.native_symbol.empty()) {
         continue;
       }
-      auto* value = Signature(*function.signature);
+      const auto& signature = function.signature;
+      if (!signature) {
+        std::unreachable();
+      }
+      auto* value = Signature(*signature);
       Add(value, "name", Text(function.native_symbol));
       Append(imports, value);
     }

@@ -12,6 +12,7 @@
 #include "compiler/frontend/source_loader.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
+#include "runtime/native_image.h"
 
 namespace vela::compiler::aot {
 namespace {
@@ -34,7 +35,7 @@ export func main(): int {
   const auto result = Compile(*prepared, {.exports = {"main"}});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   EXPECT_FALSE(result->object.empty());
-  EXPECT_FALSE(result->target.empty());
+  EXPECT_EQ(result->target, runtime::NativeTargetIdentity());
   EXPECT_NE(result->llvm_ir.find("vela_aot_entry_"), std::string::npos);
   ASSERT_EQ(result->exports.size(), 1U);
   EXPECT_EQ(result->exports.front().symbol, "vela_aot_export_1");

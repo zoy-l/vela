@@ -3,7 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -63,7 +63,7 @@ class NativeFrame final {
   }
   [[nodiscard]] void* storage() const noexcept { return storage_; }
   [[nodiscard]] TracePosition position() const noexcept { return position_; }
-  void set_instruction(std::uint32_t instruction) noexcept { position_.instruction = instruction; }
+  [[nodiscard]] std::uint32_t* instruction_address() noexcept { return &position_.instruction; }
 
  private:
   ValueBuffer roots_;
@@ -95,7 +95,7 @@ class NativeExecution final {
   [[nodiscard]] void* current_storage() const noexcept;
   [[nodiscard]] NativeInstance& instance() const noexcept { return *instance_; }
   [[nodiscard]] Isolate& isolate() const noexcept;
-  void SetInstruction(std::uint32_t instruction) noexcept;
+  [[nodiscard]] std::uint32_t* current_instruction() noexcept;
   [[nodiscard]] ExecutionStatus HandleFailure(ExecutionStatus status,
                                               std::string_view message = {});
   [[nodiscard]] FutureDiagnostic Diagnostic(ExecutionStatus status, std::string_view message) const;
@@ -111,7 +111,8 @@ class NativeExecution final {
  private:
   friend class NativeInstanceScope;
   NativeInstance* instance_;
-  std::array<std::unique_ptr<NativeFrame>, kMaxCallFrames> frames_;
+  // NativeFrame 不再逐次堆分配；optional 保留未使用帧的空状态，同时让递归深度固定。
+  std::array<std::optional<NativeFrame>, kMaxCallFrames> frames_;
   std::size_t frame_count_ = 0;
   Value pending_exception_;
   RootRange exception_root_;
@@ -146,8 +147,8 @@ extern "C" std::uint8_t vela_native_v1_frame_enter(NativeExecution* execution,
                                                    std::uint64_t storage_bytes) noexcept;
 extern "C" void vela_native_v1_frame_exit(NativeExecution* execution) noexcept;
 extern "C" void* vela_native_v1_frame_storage(NativeExecution* execution) noexcept;
-extern "C" void vela_native_v1_position(NativeExecution* execution,
-                                        std::uint32_t instruction) noexcept;
+// 地址借用当前逻辑帧，直到 frame_exit；嵌套调用不改变或释放外层帧的地址。
+extern "C" std::uint32_t* vela_native_v1_frame_instruction(NativeExecution* execution) noexcept;
 extern "C" std::uint8_t vela_native_v1_failure(NativeExecution* execution, std::uint8_t status);
 extern "C" std::uint8_t vela_native_v1_has_exception(NativeExecution* execution) noexcept;
 extern "C" void vela_native_v1_catch(NativeExecution* execution, NativeValue* result) noexcept;

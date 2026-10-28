@@ -39,7 +39,6 @@
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
-#include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
 
 #include "base/fingerprint.h"
@@ -51,7 +50,6 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
-#include "runtime/native_function.h"
 #include "runtime/native_image.h"
 #include "runtime/standard_library.h"
 
@@ -65,7 +63,9 @@ std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget() 
     return true;
   }();
   static_cast<void>(initialized);
-  const auto triple = llvm::sys::getDefaultTargetTriple();
+  // 编译器、运行时和产物必须使用同一个配置目标。LLVM 的默认 triple 可能带有
+  // 与当前 SDK 不同的 Darwin 版本，直接读取它会让生成镜像无法在同一进程实例化。
+  const auto triple = std::string(runtime::NativeTargetIdentity());
   std::string error;
   const auto* target = llvm::TargetRegistry::lookupTarget(triple, error);
   if (target == nullptr) {
@@ -179,7 +179,11 @@ std::expected<void, std::string> CheckStandaloneImports(const ir::Program& progr
       return std::unexpected("standalone executable cannot use custom host binding '" +
                              function.native_symbol + "'; emit a library for host embedding");
     }
-    if (!binding->IsSignatureCompatible(*function.signature, program.layouts.types)) {
+    const auto& signature = function.signature;
+    if (!signature) {
+      std::unreachable();
+    }
+    if (!binding->IsSignatureCompatible(*signature, program.layouts.types)) {
       return std::unexpected("external declaration does not match standard native signature for '" +
                              function.native_symbol + "'");
     }

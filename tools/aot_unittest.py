@@ -250,7 +250,7 @@ TEST(NativeHostTest, TypedCatchesFinallyAndExceptionPayloadSurviveCollection) {
   const auto instance = NativeInstance::Instantiate(isolate, *EXCEPTION_IMAGE());
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
-  for (const auto operation : {0, 1, 2, 4, 5, 6}) {
+  for (const auto operation : {0, 1, 2, 4, 5, 6, 7, 8, 9}) {
     const std::array arguments{Integer(operation)};
     NativeValue result;
     ASSERT_EQ(Execute(EXCEPTION_ENTRY, execution, arguments, result), ExecutionStatus::Returned)
@@ -279,12 +279,13 @@ TEST(NativeHostTest, RethrowKeepsOriginalLogicalSourceStackAfterAllFramesExit) {
   const auto trace = exception.trace();
   ASSERT_EQ(trace.size(), 3U);
   const std::array names{"fail", "original", "calculate"};
+  const std::array<std::uint32_t, 3> lines{EXPECTED_TRACE_LINES};
   for (std::size_t index = 0; index < trace.size(); ++index) {
     const auto position = trace[index];
     const auto& function = image->functions.values()[position.function];
     EXPECT_EQ(function.name.text(), names[index]);
     ASSERT_LT(position.instruction, function.locations.size);
-    EXPECT_GT(function.locations.values()[position.instruction].line, 0U);
+    EXPECT_EQ(function.locations.values()[position.instruction].line, lines[index]);
   }
   const std::array success{Integer(0)};
   ASSERT_EQ(Execute(EXCEPTION_ENTRY, execution, success, result), ExecutionStatus::Returned);
@@ -674,7 +675,9 @@ class NativeObjectTest(unittest.TestCase):
         self.command([self.executable, "build", entry, "--emit=obj",
                       *["--export=" + value for value in exports], "-o", object_file])
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
-        symbols = self.command([nm, "--defined-only", "--extern-only", object_file]).stdout
+        symbols = self.command([nm, "--defined-only", "--extern-only", "-j", object_file]).stdout
+        if sys.platform == "darwin":
+            symbols = "\n".join(name.removeprefix("_") for name in symbols.splitlines())
         images = re.findall(r"\b(vela_aot_[a-f0-9]+_image)\b", symbols)
         self.assertEqual(len(images), 1, symbols)
         self.assertNotRegex(symbols, r"\bvela_aot_[a-f0-9]+_entry_[0-9]+\b")
@@ -767,6 +770,30 @@ export func calculate(operation: int): int {
   if (operation == 5) {
     try { const value: int? = null; return value as int; }
     catch (error: Error) { if (error.code == 'InvalidCast') { return 42; } return 0; }
+  }
+  if (operation == 7) {
+    const text = 'rooted:${operation}';
+    try { let zero = 0; return 1 / zero; }
+    catch (error: Error) {
+      if (error.code == 'DivisionByZero') { return text.length + 34; }
+      return 0;
+    }
+  }
+  if (operation == 8) {
+    const values = ['rooted:${operation}'];
+    try { return values[2].length; }
+    catch (error: Error) {
+      if (error.code == 'IndexOutOfBounds') { return values[0].length + 34; }
+      return 0;
+    }
+  }
+  if (operation == 9) {
+    const text = 'rooted:${operation}';
+    try { let maximum = 9223372036854775807; return maximum + 1; }
+    catch (error: Error) {
+      if (error.code == 'IntegerOverflow') { return text.length + 34; }
+      return 0;
+    }
   }
   const boxed: dynamic = Choice.second;
   const value = boxed as Choice;
@@ -1070,6 +1097,11 @@ export async func calculate(): Future<int> {
         fixtures["PUBLIC_ENTRY"] = PUBLIC_API_SOURCE
         fixtures["VOID_ENTRY"] = "export func calculate(): void {}"
         host = HOST_TESTS + ASYNC_COMPOSITION_TESTS + PUBLIC_API_TESTS
+        trace_source = fixtures["EXCEPTION_ENTRY"].splitlines()
+        trace_sites = ("return 1 / zero", "try { return fail(); } finally", "return original();")
+        trace_lines = [next(index for index, line in enumerate(trace_source, 1) if site in line)
+                       for site in trace_sites]
+        host = host.replace("EXPECTED_TRACE_LINES", ", ".join(map(str, trace_lines)))
         host = re.sub(r'^extern "C" std::uint8_t \w+_ENTRY\([^\n]+\);\n', "", host, flags=re.MULTILINE)
         objects = []
         for name, source in fixtures.items():
@@ -1108,7 +1140,10 @@ export async func calculate(): Future<int> {
             flags = ["-std=c++23", "-O2", "-stdlib=libc++", "-fno-exceptions", "-pthread",
                      "-o", str(executable), *[f"-I{path}" for path in includes]]
             if sys.platform == "darwin":
-                flags.extend(["-isysroot", str(self.tools["sysroot"])])
+                flags.extend(["-fuse-ld=" + str(self.tools["linker"]),
+                              "-isysroot", str(self.tools["sysroot"]), "-nostdinc++",
+                              "-isystem", str(self.tools["sysroot"] / "usr/include/c++/v1"),
+                              "-framework", "CoreFoundation"])
             self.command([self.tools["cxx"], *flags, source_file, *objects, runtime, *gtest])
         executed = self.command([executable])
         self.assertIn("[  PASSED  ] 30 tests.", executed.stdout)

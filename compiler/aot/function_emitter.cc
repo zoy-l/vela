@@ -105,7 +105,18 @@ void FunctionEmitter::Finish(llvm::Value* status) {
   builder_.CreateBr(cleanup_);
 }
 
+void FunctionEmitter::SetPosition() {
+  builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(instruction_index_)),
+                       instruction_slot_);
+}
+
 void FunctionEmitter::Fail(llvm::Value* status) {
+  SetPosition();
+  if (!source_.instructions.empty() &&
+      !ir::AnalyzeEffects(source_.instructions.at(instruction_index_)).MayCollectOnSuccess()) {
+    // 只有错误封套可能分配时，将保根写入也放到失败分支；成功路径上的借用无需登记。
+    StoreRoots(instruction_index_);
+  }
   auto failure = module_.getOrInsertFunction("vela_native_v1_failure", builder_.getInt8Ty(),
                                              builder_.getPtrTy(), builder_.getInt8Ty());
   auto* propagated = builder_.CreateCall(failure, {body_->getArg(0), status});
@@ -335,26 +346,35 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
   frame_type_ = llvm::StructType::get(context, fields);
   frame_bytes_ = module_.getDataLayout().getTypeAllocSize(frame_type_);
   if (frame_bytes_ <= kMaximumNativeStackBytes) {
-    frame_storage_ = builder_.CreateAlloca(frame_type_);
+    // 局部值的地址不传给 helper；独立 alloca 可提升为 SSA。将它们与 ABI 暂存区
+    // 放在同一结构中会让暂存区的地址逃逸阻止提升，导致纯算术循环持续读写栈。
+    for (std::size_t index = 0; index < slots_.size(); ++index) {
+      if (source_.value_types.at(index).kind != Kind::Invalid) {
+        slots_.at(index) = builder_.CreateAlloca(fields.at(index));
+      }
+    }
+    arguments_ = builder_.CreateAlloca(fields.at(slots_.size()));
+    result_ = builder_.CreateAlloca(fields.back());
   }
   return {};
 }
 
 void FunctionEmitter::BindFrameStorage() {
-  if (frame_storage_ == nullptr) {
-    auto storage = module_.getOrInsertFunction("vela_native_v1_frame_storage", builder_.getPtrTy(),
-                                               builder_.getPtrTy());
-    frame_storage_ = builder_.CreateCall(storage, {body_->getArg(0)});
+  if (frame_bytes_ <= kMaximumNativeStackBytes) {
+    return;
   }
+  auto storage = module_.getOrInsertFunction("vela_native_v1_frame_storage", builder_.getPtrTy(),
+                                             builder_.getPtrTy());
+  auto* frame_storage = builder_.CreateCall(storage, {body_->getArg(0)});
   for (std::size_t index = 0; index < slots_.size(); ++index) {
     if (source_.value_types.at(index).kind != Kind::Invalid) {
       slots_.at(index) =
-          builder_.CreateStructGEP(frame_type_, frame_storage_, static_cast<unsigned>(index));
+          builder_.CreateStructGEP(frame_type_, frame_storage, static_cast<unsigned>(index));
     }
   }
   const auto scratch = static_cast<unsigned>(slots_.size());
-  arguments_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch);
-  result_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 1);
+  arguments_ = builder_.CreateStructGEP(frame_type_, frame_storage, scratch);
+  result_ = builder_.CreateStructGEP(frame_type_, frame_storage, scratch + 1);
 }
 
 void FunctionEmitter::EmitImport() {
@@ -422,7 +442,7 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
                  body_->getArg(0),
                  builder_.getInt64(roots_.count),
                  builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
-                 builder_.getInt64(frame_storage_ == nullptr ? frame_bytes_ : 0),
+                 builder_.getInt64(frame_bytes_ > kMaximumNativeStackBytes ? frame_bytes_ : 0),
              });
   auto* failed = llvm::BasicBlock::Create(context, "enter.failed", body_);
   auto* initialize = llvm::BasicBlock::Create(context, "initialize", body_);
@@ -431,6 +451,9 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   Builder failure(failed);
   failure.CreateRet(entered);
   builder_.SetInsertPoint(initialize);
+  auto position = module_.getOrInsertFunction("vela_native_v1_frame_instruction",
+                                              builder_.getPtrTy(), builder_.getPtrTy());
+  instruction_slot_ = builder_.CreateCall(position, {body_->getArg(0)});
   BindFrameStorage();
   if (kind_ == NativeEntryKind::Initial) {
     for (std::size_t index = 0; index < source_.parameter_count; ++index) {
@@ -454,13 +477,12 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
     instruction_index_ = index;
     builder_.SetInsertPoint(blocks_.at(index));
     const auto effects = ir::AnalyzeEffects(instruction);
-    if (effects.may_fail || effects.may_call) {
-      auto position = module_.getOrInsertFunction("vela_native_v1_position", builder_.getVoidTy(),
-                                                  builder_.getPtrTy(), builder_.getInt32Ty());
-      builder_.CreateCall(position,
-                          {body_->getArg(0), builder_.getInt32(static_cast<std::uint32_t>(index))});
+    if (effects.MayCollectOnSuccess()) {
+      // 调用者位置必须在进入被调用方前可见；throw 和异步 helper 也可能直接捕获栈。
+      // 纯检查在失败块内记录位置，成功的算术循环不执行位置写入。
+      SetPosition();
+      StoreRoots(index);
     }
-    StoreRoots(index);
     auto emitted = EmitInstruction(instruction);
     if (!emitted) {
       return emitted;

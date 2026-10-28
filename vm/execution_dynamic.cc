@@ -287,10 +287,11 @@ StepResult Execution::ExecuteDynamicMethodCall(ActiveFrame& active, Instruction 
   if (!plan) {
     return std::unexpected(plan.error());
   }
-  const auto style = plan->method ? DynamicCallStyle::Method : DynamicCallStyle::Function;
+  const auto& method = plan->method;
+  const auto style = method ? DynamicCallStyle::Method : DynamicCallStyle::Function;
   std::expected<ResolvedCallable, ExecutionStatus> callable;
-  if (style == DynamicCallStyle::Method) {
-    callable = ResolvedCallable{.function = *plan->method, .implicit = plan->value};
+  if (method) {
+    callable = ResolvedCallable{.function = *method, .implicit = plan->value};
   } else {
     callable = ResolveCallable(plan->value);
   }

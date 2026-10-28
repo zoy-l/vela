@@ -115,11 +115,16 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
   const auto resolving = operation == Builtin::DynamicResolveCall;
   std::expected<Value, ExecutionStatus> value;
   switch (member.kind) {
-    case MemberKind::Field:
+    case MemberKind::Field: {
+      const auto& type = member.type;
+      if (!type) {
+        std::unreachable();
+      }
       value = BoxDynamicValue(execution.isolate().heap(),
                               *Heap::GetField(*receiver.AsObject(), member.target),
-                              layouts.types.at(*member.type));
+                              layouts.types.at(*type));
       break;
+    }
     case MemberKind::Method: {
       const auto& wrapper = *layouts.classes.at(member.target);
       const auto target = wrapper.callable();
@@ -158,11 +163,16 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
   const auto original = arguments.subspan(2).front();
   const auto& instance = execution.instance();
   const auto& types = instance.layouts().types;
+  const auto setter = member.setter;
   const TypeConstraint* type = nullptr;
   if (member.kind == MemberKind::Field) {
-    type = &types.at(*member.type);
-  } else if (member.kind == MemberKind::Property && member.setter) {
-    type = &types.at(instance.call_signature(*member.setter).parameters.front().type);
+    const auto& field_type = member.type;
+    if (!field_type) {
+      std::unreachable();
+    }
+    type = &types.at(*field_type);
+  } else if (member.kind == MemberKind::Property && setter) {
+    type = &types.at(instance.call_signature(*setter).parameters.front().type);
   } else {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -179,7 +189,10 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
     return original;
   }
   const std::array input{EncodeNativeValue(receiver), EncodeNativeValue(value)};
-  const auto result = InvokeNativeTarget(execution, *member.setter, input);
+  if (!setter) {
+    std::unreachable();
+  }
+  const auto result = InvokeNativeTarget(execution, *setter, input);
   return result ? std::expected<Value, ExecutionStatus>(original) : std::unexpected(result.error());
 }
 
@@ -191,9 +204,10 @@ std::expected<Value, ExecutionStatus> MethodCall(NativeExecution& execution,
   if (!plan) {
     return std::unexpected(plan.error());
   }
-  if (plan->method) {
+  const auto& method = plan->method;
+  if (method) {
     const ResolvedCallable target{
-        .function = *plan->method,
+        .function = *method,
         .implicit = plan->value,
     };
     return InvokeDynamic(execution, target, arguments, names, DynamicCallStyle::Method);

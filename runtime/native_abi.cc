@@ -3,7 +3,6 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <new>
 #include <span>
 #include <utility>
@@ -22,7 +21,7 @@ NativeFrame::NativeFrame(Isolate& isolate, TracePosition position, NativeFrameSi
       position_(position),
       storage_bytes_(size.storage_bytes),
       storage_(storage_bytes_ == 0 ? nullptr : ::operator new(storage_bytes_, std::nothrow)) {
-  if (IsAllocated()) {
+  if (IsAllocated() && size.root_count != 0) {
     const auto roots = roots_.values();
     root_range_.Attach(isolate.heap(), roots.data(), roots.size());
   }
@@ -63,25 +62,46 @@ ExecutionStatus NativeExecution::Enter(std::uint32_t function, NativeFrameSize s
   if (frame_count_ == kMaxCallFrames) {
     return ExecutionStatus::StackOverflow;
   }
-  std::unique_ptr<NativeFrame> frame(new (std::nothrow)
-                                         NativeFrame(isolate(), {.function = function}, size));
-  if (frame == nullptr || !frame->IsAllocated()) {
+  auto& slot = frames_.at(frame_count_);
+  const auto& frame = slot.emplace(isolate(), TracePosition{.function = function}, size);
+  if (!frame.IsAllocated()) {
+    slot.reset();
     return ExecutionStatus::OutOfMemory;
   }
-  frames_.at(frame_count_++) = std::move(frame);
+  ++frame_count_;
   return ExecutionStatus::Returned;
 }
 
 void NativeExecution::Exit() noexcept {
-  frames_.at(--frame_count_).reset();
+  --frame_count_;
+  frames_.at(frame_count_).reset();
 }
 
 std::span<Value> NativeExecution::current_roots() noexcept {
-  return frame_count_ == 0 ? std::span<Value>() : frames_.at(frame_count_ - 1)->roots();
+  if (frame_count_ == 0) {
+    return {};
+  }
+  auto& frame = frames_.at(frame_count_ - 1);
+  if (!frame) {
+    std::unreachable();
+  }
+  return frame->roots();
 }
 
 void* NativeExecution::current_storage() const noexcept {
-  return frames_.at(frame_count_ - 1)->storage();
+  const auto& frame = frames_.at(frame_count_ - 1);
+  if (!frame) {
+    std::unreachable();
+  }
+  return frame->storage();
+}
+
+std::uint32_t* NativeExecution::current_instruction() noexcept {
+  auto& frame = frames_.at(frame_count_ - 1);
+  if (!frame) {
+    std::unreachable();
+  }
+  return frame->instruction_address();
 }
 
 extern "C" std::uint8_t vela_native_v1_frame_enter(NativeExecution* execution,
@@ -104,6 +124,10 @@ extern "C" void vela_native_v1_frame_exit(NativeExecution* execution) noexcept {
 
 extern "C" void* vela_native_v1_frame_storage(NativeExecution* execution) noexcept {
   return execution->current_storage();
+}
+
+extern "C" std::uint32_t* vela_native_v1_frame_instruction(NativeExecution* execution) noexcept {
+  return execution->current_instruction();
 }
 
 NativeValue EncodeNativeValue(Value value) noexcept {

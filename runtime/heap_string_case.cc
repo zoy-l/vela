@@ -62,7 +62,8 @@ void WalkCase(std::string_view text, StringCase conversion, const Visitor& visit
     };
     std::span<const std::int32_t> mapping = simple;
     const auto& mappings = internal::kFullCaseMappings;
-    const auto full = std::ranges::lower_bound(mappings, point, {}, &internal::CaseMapping::point);
+    const decltype(mappings.begin()) full =
+        std::ranges::lower_bound(mappings, point, {}, &internal::CaseMapping::point);
     if (full != mappings.end() && full->point == point) {
       mapping = conversion == StringCase::Lower ? std::span(full->lower).first(full->lower_size)
                                                 : std::span(full->upper).first(full->upper_size);

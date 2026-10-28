@@ -262,6 +262,7 @@ executable("vela_aot_tests") {
   sources = [ "aot/native_compiler_unittest.cc" ]
   deps = [
     ":aot",
+    "//runtime",
     "//third_party:gtest_main",
   ]
 }

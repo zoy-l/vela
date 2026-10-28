@@ -137,9 +137,10 @@ void Lowerer::RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std:
           .second = {},
       },
   });
-  const auto member = std::ranges::find_if(kMembers, [&receiver, name](const auto& entry) {
-    return entry.receiver == receiver.kind && entry.name == name;
-  });
+  const decltype(kMembers.begin()) member =
+      std::ranges::find_if(kMembers, [&receiver, name](const auto& entry) {
+        return entry.receiver == receiver.kind && entry.name == name;
+      });
   if (member == kMembers.end()) {
     return;
   }

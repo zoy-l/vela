@@ -19,10 +19,14 @@ frontend::Diagnostics CheckNativeBindings(const ir::Program& program,
       continue;
     }
     const auto binding = isolate.FindNative(function.native_symbol);
+    const auto& signature = function.signature;
+    if (!signature) {
+      std::unreachable();
+    }
     std::string message;
     if (binding == nullptr) {
       message = "unregistered native function '" + function.native_symbol + "'";
-    } else if (!binding->IsSignatureCompatible(*function.signature, program.layouts.types)) {
+    } else if (!binding->IsSignatureCompatible(*signature, program.layouts.types)) {
       message = "external declaration does not match native signature for '" +
                 function.native_symbol + "'";
     } else {

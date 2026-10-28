@@ -115,10 +115,7 @@ void FunctionEmitter::EmitResumeDispatch() {
     auto* restore = llvm::BasicBlock::Create(module_.getContext(), "resume", body_);
     dispatch->addCase(builder_.getInt32(static_cast<std::uint32_t>(index)), restore);
     builder_.SetInsertPoint(restore);
-    auto position = module_.getOrInsertFunction("vela_native_v1_position", builder_.getVoidTy(),
-                                                builder_.getPtrTy(), builder_.getInt32Ty());
-    builder_.CreateCall(position,
-                        {body_->getArg(0), builder_.getInt32(static_cast<std::uint32_t>(index))});
+    SetPosition();
     const auto& saved = roots_.suspended.at(index);
     auto read = module_.getOrInsertFunction("vela_native_v1_resume_value", builder_.getVoidTy(),
                                             builder_.getPtrTy(), builder_.getInt64Ty(),

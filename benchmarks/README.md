@@ -15,16 +15,20 @@ CLI compilation/publication time, object size, target and build identities.
 The async C++ baseline uses the same scheduler and two queued observation
 boundaries per element; its locals use ordinary C++ ownership.
 The [rolling aggregate evidence](results/rolling_summary.json) retains all 28
-AOT comparison cases with seven repetitions, plus RSS runs that select one
-backend per process. Native frame bytes describe the declared LLVM frame
+AOT comparison cases with seven repetitions. The latest run measures macOS
+arm64; the previous Windows x64 acceptance run also includes RSS runs that
+select one backend per process and package link/archive probes. Results from
+these different hosts are not compared as a performance regression.
+Native frame bytes describe the declared LLVM frame
 aggregate before optimization; root-store counts describe planned safepoint
 writes. They do not measure the final machine stack or executed store count.
 Compilation includes production object/header/manifest publication. Separate
 link/archive probes use a checked arithmetic library and a precompiled C host;
 their timings exclude compilation and package creation. Variation, exact
 commands, identities, package sizes and system dependencies remain in the
-summary. C++ can collapse arithmetic and field loops; several native workloads
-currently take longer than the VM.
+corresponding summary entry. C++ can collapse arithmetic and field loops and
+uses different ownership and arithmetic checks. These workload timings do not
+isolate the cost of a cross-language call.
 `vm/standard_api` covers default global APIs, sorting and reduction without imports.
 `vm/array_algorithms` covers sorting, repeated reduction and mapping; both
 use the normal compiler and VM and report the existing heap/register counters.

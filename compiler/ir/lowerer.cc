@@ -118,7 +118,7 @@ std::optional<Opcode> SelectBinaryOpcode(std::string_view operation,
           {">=", Opcode::GreaterEqualInt},
       },
   };
-  const auto found = std::ranges::find_if(
+  const decltype(integer_operations.begin()) found = std::ranges::find_if(
       integer_operations, [&](const auto& entry) { return entry.first == operation; });
   if (found != integer_operations.end()) {
     return found->second;
@@ -163,7 +163,7 @@ std::optional<std::string_view> CompoundOperation(std::string_view text) {
       ">>=",
       ">>>=",
   });
-  const auto found = std::ranges::find(operations, text);
+  const decltype(operations.begin()) found = std::ranges::find(operations, text);
   if (found == operations.end()) {
     return std::nullopt;
   }

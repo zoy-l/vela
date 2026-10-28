@@ -197,12 +197,20 @@ std::uint32_t LayoutDescription::Signature(const SourceType& type) {
 }
 
 std::uint32_t LayoutDescription::CallableSignature(const Class& type) {
-  const auto& callable = *type.callable;
+  const auto& target = type.callable;
+  if (!target) {
+    std::unreachable();
+  }
+  const auto& callable = *target;
   if (callable.mode == CallableMode::InterfaceMethod) {
     return Signature({.kind = SourceType::Kind::Function, .name = type.callable_type});
   }
   const auto& program = *program_;
-  const auto& call = *program.functions.at(callable.function).signature;
+  const auto& signature = program.functions.at(callable.function).signature;
+  if (!signature) {
+    std::unreachable();
+  }
+  const auto& call = *signature;
   // 绑定方法的接收者不属于宿主可见参数。其余参数标志直接沿用 lowering 的事实。
   const auto skipped =
       callable.mode == CallableMode::BoundMethod && call.hidden_parameters == 0 ? 1U : 0U;
