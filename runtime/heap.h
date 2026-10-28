@@ -302,6 +302,11 @@ class Heap final {
     }
     return true;
   }
+  // 原生代码已完成类型化存储；引用写入仍须经过同一个增量 GC 屏障。
+  void WriteBarrier(HeapObject& source, Value value) noexcept;
+  // receiver 为本 Heap 的数组，value 已按元素类型验证；两者在可能扩容的 GC 中保根。
+  [[nodiscard]] std::expected<void, ArrayAccessError> GrowArray(HeapObject& array,
+                                                                Value value) noexcept;
   [[nodiscard]] static std::expected<Value, ArrayAccessError> GetElement(
       const HeapObject& array,
       std::uint32_t index) noexcept;
@@ -344,7 +349,6 @@ class Heap final {
   void MarkObject(HeapObject& object) noexcept;
   void ProcessGrayObject(HeapObject& object) noexcept;
   void DrainGray() noexcept;
-  void WriteBarrier(HeapObject& source, Value value) noexcept;
   void WriteBarrier(HeapObject& source,
                     const ArrayLayout& layout,
                     std::span<const std::byte> storage) noexcept;
@@ -387,7 +391,6 @@ class Heap final {
       HeapObject& array,
       std::size_t capacity) noexcept;
   [[nodiscard]] static Value RemoveArrayStorage(HeapObject& array, std::uint32_t index) noexcept;
-  std::expected<void, ArrayAccessError> GrowArray(HeapObject& array, Value value) noexcept;
   void MarkCollection(HeapObject& object) noexcept;
   void ReleaseCollection(HeapObject& object) noexcept;
   std::expected<void, ExecutionStatus> GrowCollection(HeapObject& object) noexcept;

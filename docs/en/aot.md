@@ -81,6 +81,10 @@ Remove shared-path dependencies on 8-bit operands, 256 physical registers, and b
 
 Ordinary local `int`, enum ordinal, `double`, and `bool` values use 64-bit integers, 64-bit integers, binary64, and boolean representations respectively. Non-null references use non-moving heap pointers. Nullable primitives carry independent validity information; no valid numeric value is reserved as a sentinel. Heap fields, arrays, dynamic values, Expected, closure captures, and runtime type identity retain the existing object model. Unboxed locals do not imply a different heap layout.
 
+Heap `Value` slots use an explicit 16-byte payload/tag representation shared by C++, GC, and generated code. The AOT backend derives offsets from `NativeMemoryLayout`, `sizeof`, and `offsetof`; it does not inspect a standard-library variant representation. Primitive arrays retain their compact element storage; nullable primitives and dynamic elements use tagged slots, while references use pointer slots. Runtime ABI fingerprints cover these layout definitions and reject artifacts from a different build.
+
+Array access instructions retain the array-layout index established during lowering. Erasing a temporary to `dynamic` changes its register representation without discarding the element storage facts needed to initialize or read the array. Loads and stores convert between that storage shape and the destination or source register representation.
+
 Native calls have three boundaries:
 
 | Boundary | Contract |
@@ -94,6 +98,10 @@ Export wrappers take an explicit instance, return a status, and write a successf
 Native execution support maintains logical call frames and source positions independently of machine-register allocation. Preserve the current call-depth policy and `StackOverflow` status, checking before entering another script call. Inlining must not accidentally alter observable depth or traces. Native frame size must be bounded; large temporary storage uses runtime-managed allocation that can report failure, preventing user source from causing unchecked native-stack exhaustion. Normal, error, and suspension exits clean up frames and root records consistently.
 
 Logical frame records live inside the execution object without an allocation per call. Root storage and large temporary storage retain explicit allocation failures. Small native frames keep typed local slots separate from ABI scratch buffers whose addresses escape to runtime calls, allowing LLVM to promote locals to SSA. Generated code writes source positions through a borrowed pointer to its logical frame; calls, explicit throws, and async boundaries publish the position before runtime execution, while pure checks record it only on failure.
+
+Frame entry returns borrowed addresses for the instruction position, roots, and large temporary storage together. Scalar frames without roots or large storage register only their logical position; they still consume the same call-depth budget. Generated code writes and clears root slots directly, including when restoring async state, without a runtime call per slot. The addresses remain stable across nested calls and expire at frame exit.
+
+Scalar leaf functions without handlers, calls, allocation, references, or runtime-state access check the call-depth limit at entry and materialize their logical frame only on failure. A failed leaf records its original function and instruction before creating the exception envelope, then releases the frame. Functions that can expose the stack to another operation continue to register frames for their entire execution.
 
 ## GC roots, safepoints, and write barriers
 
@@ -112,7 +120,11 @@ Generated code must obey this ordering:
 
 Root-slot addresses and registration records must remain visible to scanning. LLVM aliasing, memory effects, and call attributes must describe this accurately. Helpers that can observe roots cannot receive incorrect attributes such as `readnone`; optimization cannot delete root stores or move them across safepoints. GC stress validation must exercise optimized machine code.
 
-Reference updates to fields, arrays, collections, globals, capture cells, and continuations obey existing barriers during both marking and sweeping. Initially reuse runtime access and mutation operations. Direct generated accesses require proof of type, bounds, layout, and barrier behavior. A non-moving object does not make a growable array's backing buffer immovable; element addresses cannot survive calls that may grow it.
+Reference updates to fields, arrays, collections, globals, capture cells, and continuations obey existing barriers during both marking and sweeping. Typed field and array accesses now emit direct loads and stores. Array accesses retain an unsigned bounds check that rejects both negative and oversized indices; managed-reference writes call the shared GC barrier. Array append writes directly when capacity is available and uses the existing heap growth operation when full, reloading the backing pointer afterward. A non-moving object does not make a growable array's backing buffer immovable; element addresses cannot survive calls that may grow it.
+
+Single-element `push(value)` lowers to the shared scalar append operation, avoiding a temporary one-element array in both backends. Multiple-element append retains ordered argument evaluation and batch insertion.
+
+These choices follow the explicit memory operations used by [Luau native code generation](https://github.com/luau-lang/luau/blob/master/CodeGen/src/IrLoweringA64.cpp). Further bounds and overflow-check elimination requires range and control-flow proofs, as in [Go SSA analysis](https://github.com/golang/go/blob/master/src/cmd/compile/internal/ssa/prove.go) and [Dart range analysis](https://github.com/dart-lang/sdk/blob/main/runtime/vm/compiler/backend/range_analysis.cc). Checked integer arithmetic, failure positions, observable writes, and logical call depth remain language contracts; enabling LLVM optimization alone does not establish those proofs.
 
 This release does not add conservative scanning, LLVM stack maps, or another collector. A later rooting replacement requires Release benchmark evidence and complete migration of affected paths.
 

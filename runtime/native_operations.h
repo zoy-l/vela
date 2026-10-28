@@ -8,10 +8,6 @@
 namespace vela::runtime {
 
 // 全部指针与编号来自已实例化的映像；借用参数在整个 helper 调用期间由调用帧保根。
-extern "C" void vela_native_v1_root_store(NativeExecution* execution,
-                                          std::uint64_t index,
-                                          const NativeValue* value) noexcept;
-extern "C" void vela_native_v1_root_clear(NativeExecution* execution, std::uint64_t index) noexcept;
 extern "C" void vela_native_v1_constant(NativeExecution* execution,
                                         std::uint32_t index,
                                         NativeValue* result) noexcept;
@@ -44,20 +40,12 @@ extern "C" std::uint8_t vela_native_v1_new_array(NativeExecution* execution,
 extern "C" std::uint8_t vela_native_v1_new_collection(NativeExecution* execution,
                                                       std::uint32_t index,
                                                       NativeValue* result) noexcept;
-extern "C" std::uint8_t vela_native_v1_get_field(HeapObject* object,
-                                                 std::uint32_t index,
-                                                 NativeValue* result) noexcept;
-extern "C" std::uint8_t vela_native_v1_set_field(NativeExecution* execution,
-                                                 HeapObject* object,
-                                                 std::uint32_t index,
-                                                 const NativeValue* value) noexcept;
-extern "C" std::uint8_t vela_native_v1_get_index(HeapObject* array,
-                                                 std::int64_t index,
-                                                 NativeValue* result) noexcept;
-extern "C" std::uint8_t vela_native_v1_set_index(NativeExecution* execution,
-                                                 HeapObject* array,
-                                                 std::int64_t index,
-                                                 const NativeValue* value) noexcept;
+extern "C" void vela_native_v1_write_barrier(NativeExecution* execution,
+                                             HeapObject* object,
+                                             const NativeValue* value) noexcept;
+extern "C" std::uint8_t vela_native_v1_array_grow(NativeExecution* execution,
+                                                  HeapObject* array,
+                                                  const NativeValue* value) noexcept;
 extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
                                                std::uint32_t operation,
                                                const NativeValue* arguments,

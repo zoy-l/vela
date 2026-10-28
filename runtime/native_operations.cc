@@ -53,17 +53,6 @@ std::uint8_t StoreObject(NativeValue* destination, HeapObject* object) noexcept 
 
 }  // namespace
 
-extern "C" void vela_native_v1_root_store(NativeExecution* execution,
-                                          std::uint64_t index,
-                                          const NativeValue* value) noexcept {
-  execution->current_roots().subspan(index).front() = DecodeNativeValue(*value);
-}
-
-extern "C" void vela_native_v1_root_clear(NativeExecution* execution,
-                                          std::uint64_t index) noexcept {
-  execution->current_roots().subspan(index).front() = Value::Null();
-}
-
 extern "C" void vela_native_v1_constant(NativeExecution* execution,
                                         std::uint32_t index,
                                         NativeValue* result) noexcept {
@@ -144,45 +133,20 @@ extern "C" std::uint8_t vela_native_v1_new_collection(NativeExecution* execution
   return StoreObject(result, execution->isolate().heap().AllocateCollection(*type));
 }
 
-extern "C" std::uint8_t vela_native_v1_get_field(HeapObject* object,
-                                                 std::uint32_t index,
-                                                 NativeValue* result) noexcept {
-  if (object == nullptr) {
-    return Status(ExecutionStatus::TypeError);
+extern "C" void vela_native_v1_write_barrier(NativeExecution* execution,
+                                             HeapObject* object,
+                                             const NativeValue* value) noexcept {
+  const auto decoded = DecodeNativeValue(*value);
+  if (decoded.IsReference()) {
+    execution->isolate().heap().WriteBarrier(*object, decoded);
   }
-  const auto* field = Heap::GetField(*object, index);
-  if (field == nullptr) {
-    return Status(ExecutionStatus::InvalidField);
-  }
-  *result = EncodeNativeValue(*field);
-  return Status(ExecutionStatus::Returned);
 }
 
-extern "C" std::uint8_t vela_native_v1_set_field(NativeExecution* execution,
-                                                 HeapObject* object,
-                                                 std::uint32_t index,
-                                                 const NativeValue* value) noexcept {
-  if (object == nullptr) {
-    return Status(ExecutionStatus::TypeError);
-  }
-  return Status(execution->isolate().heap().SetField(*object, index, DecodeNativeValue(*value))
-                    ? ExecutionStatus::Returned
-                    : ExecutionStatus::InvalidField);
-}
-
-extern "C" std::uint8_t vela_native_v1_get_index(HeapObject* array,
-                                                 std::int64_t index,
-                                                 NativeValue* result) noexcept {
-  return Store(result, ReadIndex(array, index));
-}
-
-extern "C" std::uint8_t vela_native_v1_set_index(NativeExecution* execution,
-                                                 HeapObject* array,
-                                                 std::int64_t index,
-                                                 const NativeValue* value) noexcept {
-  const auto written =
-      WriteIndex(execution->isolate().heap(), array, index, DecodeNativeValue(*value));
-  return Status(written ? ExecutionStatus::Returned : written.error());
+extern "C" std::uint8_t vela_native_v1_array_grow(NativeExecution* execution,
+                                                  HeapObject* array,
+                                                  const NativeValue* value) noexcept {
+  const auto grown = execution->isolate().heap().GrowArray(*array, DecodeNativeValue(*value));
+  return Status(grown ? ExecutionStatus::Returned : ExecutionStatus::OutOfMemory);
 }
 
 extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,

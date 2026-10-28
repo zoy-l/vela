@@ -55,6 +55,33 @@ export func negate(value: bool): bool { return !value; }
   EXPECT_FALSE(result->object.empty());
 }
 
+TEST(NativeCompilerTest, PreservesArrayStorageWhenTemporaryValuesAreErasedToDynamic) {
+  const auto prepared = Prepare(R"(
+export func value(): dynamic { return [1, 2, 3] as dynamic; }
+)");
+  ASSERT_TRUE(prepared.has_value());
+  const auto result = Compile(*prepared, {.exports = {"value"}});
+  ASSERT_TRUE(result.has_value()) << result.error().front().message;
+  EXPECT_FALSE(result->object.empty());
+}
+
+TEST(NativeCompilerTest, ArrayAppendZeroExtendsLengthsBeforeAddressingElements) {
+  const auto prepared = Prepare(R"(
+export func append(values: int[], value: int): int { return values.push(value); }
+)");
+  ASSERT_TRUE(prepared.has_value());
+  const auto result =
+      Compile(*prepared, {.optimization = NativeOptimization::None, .exports = {"append"}});
+  ASSERT_TRUE(result.has_value()) << result.error().front().message;
+  // uint32 长度的最高位不是符号位；i32 GEP 会将 2 Gi 元素以上的位置符号扩展。
+  const auto& text = result->llvm_ir;
+  const auto address = text.find("array.element = getelementptr i64,");
+  ASSERT_NE(address, std::string::npos);
+  const auto line = std::string_view(text).substr(address, text.find('\n', address) - address);
+  EXPECT_NE(line.find(", i64 "), std::string_view::npos);
+  EXPECT_EQ(line.find(", i32 "), std::string_view::npos);
+}
+
 TEST(NativeCompilerTest, ExportsOnlyPublicFunctionsFromTheEntryModule) {
   const auto sources = std::to_array<frontend::SourceInput>({
       {.path = "main.vela", .text = "import 'library'; func hidden(): int { return 1; }"},

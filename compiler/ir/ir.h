@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -17,6 +18,7 @@ namespace vela::ir {
 using RegisterId = std::uint32_t;
 using ClassId = std::uint32_t;
 using FieldId = std::uint32_t;
+inline constexpr auto kInvalidArrayType = std::numeric_limits<std::uint32_t>::max();
 
 using ::vela::Opcode;
 
@@ -29,6 +31,8 @@ struct Instruction final {
   std::uint32_t index = 0;
   frontend::SourceLocation location;
   std::optional<std::uint32_t> handler = std::nullopt;
+  // 数组访问时的布局事实独立于寄存器表示；后续 dynamic 擦除不能改变元素存储形状。
+  std::uint32_t array_type = kInvalidArrayType;
 };
 
 struct Class final {

@@ -216,6 +216,7 @@ source_set("aot") {
     "aot/async_emitter.cc",
     "aot/function_emitter.cc",
     "aot/function_emitter.h",
+    "aot/memory_emitter.cc",
     "aot/native_compiler.cc",
     "aot/native_compiler.h",
     "aot/native_export_emitter.cc",

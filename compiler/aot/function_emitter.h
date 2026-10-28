@@ -9,7 +9,9 @@
 #include <span>
 #include <string>
 #include <vector>
+#include "base/builtin.h"
 #include "base/execution_status.h"
+#include "base/layout_description.h"
 #include "compiler/aot/native_roots.h"
 #include "compiler/aot/native_values.h"
 #include "compiler/ir/ir.h"
@@ -65,14 +67,27 @@ class FunctionEmitter final {
   void EmitDouble(const ir::Instruction& instruction);
   void EmitComparison(const ir::Instruction& instruction);
   void EmitValueEquality(const ir::Instruction& instruction);
+  llvm::Value* ByteAddress(llvm::Value* object, std::uint64_t offset);
+  llvm::Value* ReadHeapValue(llvm::Value* address, const SourceType& type);
+  void WriteHeapValue(llvm::Value* address, ir::RegisterId reg);
+  void EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg);
+  void EmitField(const ir::Instruction& instruction);
+  const layout::Type& ArrayElement(const ir::Instruction& instruction) const;
+  llvm::Type* ElementStorage(const layout::Type& element);
+  void WriteElement(llvm::Value* address, const layout::Type& element, ir::RegisterId reg);
+  void EmitIndex(const ir::Instruction& instruction);
+  void EmitArrayBuiltin(const ir::Instruction& instruction, Builtin builtin);
   std::expected<void, std::string> EmitReference(const ir::Instruction& instruction);
   llvm::Value* Encode(ir::RegisterId reg);
   llvm::Value* Pack(llvm::Value* encoded, std::size_t index);
   void Unpack(ir::RegisterId reg);
   void StoreRoots(std::size_t index);
   void ClearRoots(std::size_t index);
+  llvm::Value* RootAddress(std::size_t slot);
+  void ClearRoot(std::size_t slot);
   std::expected<void, std::string> EmitInstruction(const ir::Instruction& instruction);
   std::expected<void, std::string> PrepareFrame();
+  [[nodiscard]] bool CanUseLeafEntry() const;
   void BindFrameStorage();
   void EmitImport();
   llvm::Value* Output();
@@ -99,6 +114,9 @@ class FunctionEmitter final {
   llvm::Value* arguments_ = nullptr;
   llvm::Value* result_ = nullptr;
   llvm::Value* instruction_slot_ = nullptr;
+  llvm::Value* root_slots_ = nullptr;
+  llvm::Value* frame_storage_ = nullptr;
+  bool leaf_entry_ = false;
   llvm::StructType* frame_type_ = nullptr;
   std::uint64_t frame_bytes_ = 0;
   const NativeRootPlan& roots_;

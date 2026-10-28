@@ -123,6 +123,7 @@ source_set("runtime") {
     "native_json.h",
     "native_main.cc",
     "native_main.h",
+    "native_memory_layout.h",
     "native_operations.cc",
     "native_operations.h",
     "native_program_state.h",

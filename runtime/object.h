@@ -204,6 +204,7 @@ struct HeapObject final {
  private:
   friend class Heap;
   friend class StringObject;
+  friend struct NativeMemoryLayout;
 
   ObjectKind kind = ObjectKind::Instance;
   std::uint8_t mark_bit = 0;

@@ -13,6 +13,8 @@
 #include "compiler/aot/native_values.h"
 #include "compiler/ir/ir.h"
 #include "runtime/heap.h"
+#include "runtime/native_memory_layout.h"
+#include "runtime/value.h"
 
 namespace vela::compiler::aot {
 
@@ -33,29 +35,32 @@ void FunctionEmitter::Unpack(ir::RegisterId reg) {
 }
 
 void FunctionEmitter::StoreRoots(std::size_t index) {
-  auto store =
-      module_.getOrInsertFunction("vela_native_v1_root_store", builder_.getVoidTy(),
-                                  builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
   for (const auto reg : roots_.stores.at(index)) {
     const auto& slot = roots_.slots.at(reg);
     if (!slot) {
       std::unreachable();
     }
-    auto* value = Pack(Encode(reg), 0);
-    builder_.CreateCall(store, {body_->getArg(0), builder_.getInt64(*slot), value});
+    WriteHeapValue(RootAddress(*slot), reg);
   }
 }
 
 void FunctionEmitter::ClearRoots(std::size_t index) {
-  auto clear = module_.getOrInsertFunction("vela_native_v1_root_clear", builder_.getVoidTy(),
-                                           builder_.getPtrTy(), builder_.getInt64Ty());
   for (const auto reg : roots_.clears.at(index)) {
     const auto& slot = roots_.slots.at(reg);
     if (!slot) {
       std::unreachable();
     }
-    builder_.CreateCall(clear, {body_->getArg(0), builder_.getInt64(*slot)});
+    ClearRoot(*slot);
   }
+}
+
+llvm::Value* FunctionEmitter::RootAddress(std::size_t slot) {
+  return ByteAddress(root_slots_, slot * sizeof(runtime::Value));
+}
+
+void FunctionEmitter::ClearRoot(std::size_t slot) {
+  builder_.CreateStore(builder_.getInt8(NativeKind(Kind::Null)),
+                       ByteAddress(RootAddress(slot), runtime::NativeMemoryLayout::kValueKind));
 }
 
 std::expected<void, std::string> FunctionEmitter::EmitReference(
@@ -204,36 +209,21 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       Fail(builder_.CreateCall(helper, {context, Pack(Encode(instruction.lhs), 0)}));
       return {};
     }
-    case Opcode::GetField: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_get_field", status_type, pointer,
-                                                word, pointer);
-      status = builder_.CreateCall(helper, {Reference(instruction.lhs), index, result_});
-      break;
-    }
-    case Opcode::SetField: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_set_field", status_type, pointer,
-                                                pointer, word, pointer);
-      auto* value = Pack(Encode(instruction.lhs), 0);
-      CheckStatus(builder_.CreateCall(helper, {context, Reference(instruction.dst), index, value}));
+    case Opcode::GetField:
+    case Opcode::SetField:
+      EmitField(instruction);
       return {};
-    }
-    case Opcode::GetIndex: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_get_index", status_type, pointer,
-                                                builder_.getInt64Ty(), pointer);
-      status = builder_.CreateCall(helper,
-                                   {Reference(instruction.lhs), Payload(instruction.rhs), result_});
-      break;
-    }
-    case Opcode::SetIndex: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_set_index", status_type, pointer,
-                                                pointer, builder_.getInt64Ty(), pointer);
-      auto* value = Pack(Encode(instruction.rhs), 0);
-      CheckStatus(builder_.CreateCall(
-          helper, {context, Reference(instruction.dst), Payload(instruction.lhs), value}));
+    case Opcode::GetIndex:
+    case Opcode::SetIndex:
+      EmitIndex(instruction);
       return {};
-    }
     case Opcode::BuiltinCall: {
       const auto builtin = static_cast<Builtin>(instruction.index);
+      if (builtin == Builtin::ArrayLength || builtin == Builtin::ArrayCapacity ||
+          builtin == Builtin::ArrayMutation || builtin == Builtin::ArrayPush) {
+        EmitArrayBuiltin(instruction, builtin);
+        return {};
+      }
       for (std::size_t argument = 0; argument < BuiltinArity(builtin); ++argument) {
         Pack(Encode(static_cast<ir::RegisterId>(instruction.lhs + argument)), argument);
       }

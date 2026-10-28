@@ -16,9 +16,8 @@
 
 namespace vela::runtime {
 
-NativeFrame::NativeFrame(Isolate& isolate, TracePosition position, NativeFrameSize size) noexcept
+NativeFrame::NativeFrame(Isolate& isolate, NativeFrameSize size) noexcept
     : roots_(size.root_count),
-      position_(position),
       storage_bytes_(size.storage_bytes),
       storage_(storage_bytes_ == 0 ? nullptr : ::operator new(storage_bytes_, std::nothrow)) {
   if (IsAllocated() && size.root_count != 0) {
@@ -54,7 +53,7 @@ NativeInstanceScope::~NativeInstanceScope() {
   execution_->instance_ = previous_;
 }
 
-ExecutionStatus NativeExecution::Enter(std::uint32_t function, NativeFrameSize size) noexcept {
+ExecutionStatus NativeExecution::PrepareEntry() noexcept {
   if (frame_count_ == 0) {
     pending_exception_ = Value::Null();
     exception_allocation_failed_ = false;
@@ -62,12 +61,23 @@ ExecutionStatus NativeExecution::Enter(std::uint32_t function, NativeFrameSize s
   if (frame_count_ == kMaxCallFrames) {
     return ExecutionStatus::StackOverflow;
   }
-  auto& slot = frames_.at(frame_count_);
-  const auto& frame = slot.emplace(isolate(), TracePosition{.function = function}, size);
-  if (!frame.IsAllocated()) {
-    slot.reset();
-    return ExecutionStatus::OutOfMemory;
+  return ExecutionStatus::Returned;
+}
+
+ExecutionStatus NativeExecution::Enter(std::uint32_t function, NativeFrameSize size) noexcept {
+  const auto prepared = PrepareEntry();
+  if (prepared != ExecutionStatus::Returned) {
+    return prepared;
   }
+  if (size.root_count != 0 || size.storage_bytes != 0) {
+    auto& slot = frames_.at(frame_count_);
+    const auto& frame = slot.emplace(isolate(), size);
+    if (!frame.IsAllocated()) {
+      slot.reset();
+      return ExecutionStatus::OutOfMemory;
+    }
+  }
+  positions_.at(frame_count_) = {.function = function};
   ++frame_count_;
   return ExecutionStatus::Returned;
 }
@@ -82,52 +92,61 @@ std::span<Value> NativeExecution::current_roots() noexcept {
     return {};
   }
   auto& frame = frames_.at(frame_count_ - 1);
-  if (!frame) {
-    std::unreachable();
-  }
-  return frame->roots();
+  return frame ? frame->roots() : std::span<Value>();
 }
 
 void* NativeExecution::current_storage() const noexcept {
   const auto& frame = frames_.at(frame_count_ - 1);
-  if (!frame) {
-    std::unreachable();
-  }
-  return frame->storage();
+  return frame ? frame->storage() : nullptr;
 }
 
 std::uint32_t* NativeExecution::current_instruction() noexcept {
-  auto& frame = frames_.at(frame_count_ - 1);
-  if (!frame) {
-    std::unreachable();
-  }
-  return frame->instruction_address();
+  return &positions_.at(frame_count_ - 1).instruction;
 }
 
 extern "C" std::uint8_t vela_native_v1_frame_enter(NativeExecution* execution,
                                                    std::uint64_t root_count,
                                                    std::uint32_t function,
-                                                   std::uint64_t storage_bytes) noexcept {
+                                                   std::uint64_t storage_bytes,
+                                                   NativeFrameAccess* access) noexcept {
   if (execution == nullptr) {
     return static_cast<std::uint8_t>(ExecutionStatus::InvalidIsolate);
   }
-  return static_cast<std::uint8_t>(
+  const auto status =
       execution->Enter(function, {
                                      .root_count = static_cast<std::size_t>(root_count),
                                      .storage_bytes = static_cast<std::size_t>(storage_bytes),
-                                 }));
+                                 });
+  if (status == ExecutionStatus::Returned) {
+    *access = {
+        .instruction = execution->current_instruction(),
+        .roots = execution->current_roots().data(),
+        .storage = execution->current_storage(),
+    };
+  }
+  return static_cast<std::uint8_t>(status);
 }
 
 extern "C" void vela_native_v1_frame_exit(NativeExecution* execution) noexcept {
   execution->Exit();
 }
 
-extern "C" void* vela_native_v1_frame_storage(NativeExecution* execution) noexcept {
-  return execution->current_storage();
+extern "C" std::uint8_t vela_native_v1_leaf_enter(NativeExecution* execution) noexcept {
+  return static_cast<std::uint8_t>(execution != nullptr ? execution->PrepareEntry()
+                                                        : ExecutionStatus::InvalidIsolate);
 }
 
-extern "C" std::uint32_t* vela_native_v1_frame_instruction(NativeExecution* execution) noexcept {
-  return execution->current_instruction();
+extern "C" std::uint8_t vela_native_v1_leaf_failure(NativeExecution* execution,
+                                                    const TracePosition* position,
+                                                    std::uint8_t status) {
+  const auto entered = execution->Enter(position->function, {});
+  if (entered != ExecutionStatus::Returned) {
+    return static_cast<std::uint8_t>(entered);
+  }
+  *execution->current_instruction() = position->instruction;
+  const auto failure = execution->HandleFailure(static_cast<ExecutionStatus>(status));
+  execution->Exit();
+  return static_cast<std::uint8_t>(failure);
 }
 
 NativeValue EncodeNativeValue(Value value) noexcept {

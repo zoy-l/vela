@@ -16,12 +16,12 @@ TEST(AnalysisTest, FailureKeepsPreviousDestinationAliveForTheHandler) {
   function.register_count = 3;
   function.handlers = {{.target = 4}};
   function.instructions = {
-      {.opcode = Opcode::LoadString, .dst = 0},
-      {.opcode = Opcode::Jump, .index = 2},
-      {.opcode = Opcode::CheckedCast, .dst = 0, .lhs = 1, .handler = 0},
-      {.opcode = Opcode::Return, .dst = 0},
-      {.opcode = Opcode::Catch, .dst = 2},
-      {.opcode = Opcode::Return, .dst = 0},
+      {.opcode = Opcode::LoadString, .dst = 0, .location = {}},
+      {.opcode = Opcode::Jump, .index = 2, .location = {}},
+      {.opcode = Opcode::CheckedCast, .dst = 0, .lhs = 1, .location = {}, .handler = 0},
+      {.opcode = Opcode::Return, .dst = 0, .location = {}},
+      {.opcode = Opcode::Catch, .dst = 2, .location = {}},
+      {.opcode = Opcode::Return, .dst = 0, .location = {}},
   };
   const auto graph = BuildFlowGraph(function);
   const auto liveness = AnalyzeLiveness(function, graph, {});
@@ -40,9 +40,9 @@ TEST(AnalysisTest, SuccessfulOverwriteDoesNotKeepThePreviousDestinationAlive) {
   function.parameter_count = 2;
   function.register_count = 2;
   function.instructions = {
-      {.opcode = Opcode::LoadString, .dst = 0},
-      {.opcode = Opcode::CheckedCast, .dst = 0, .lhs = 1},
-      {.opcode = Opcode::Return, .dst = 0},
+      {.opcode = Opcode::LoadString, .dst = 0, .location = {}},
+      {.opcode = Opcode::CheckedCast, .dst = 0, .lhs = 1, .location = {}},
+      {.opcode = Opcode::Return, .dst = 0, .location = {}},
   };
   Optimize(function, {});
   EXPECT_FALSE(std::ranges::any_of(function.instructions, [](const auto& instruction) {
@@ -56,8 +56,8 @@ TEST(AnalysisTest, AwaitHasASeparateResumeBlockWithoutAnExceptionHandler) {
   function.parameter_count = 1;
   function.register_count = 2;
   function.instructions = {
-      {.opcode = Opcode::Await, .dst = 1, .lhs = 0},
-      {.opcode = Opcode::Return, .dst = 1},
+      {.opcode = Opcode::Await, .dst = 1, .lhs = 0, .location = {}},
+      {.opcode = Opcode::Return, .dst = 1, .location = {}},
   };
   const auto graph = BuildFlowGraph(function);
   ASSERT_EQ(graph.blocks.size(), 2U);
@@ -76,10 +76,10 @@ TEST(AnalysisTest, ReturnCompletionRetainsItsExceptionHandler) {
   function.register_count = 2;
   function.handlers = {{.target = 2}};
   function.instructions = {
-      {.opcode = Opcode::LoadInt, .dst = 0, .immediate = 1},
-      {.opcode = Opcode::Return, .dst = 0, .handler = 0},
-      {.opcode = Opcode::Catch, .dst = 1},
-      {.opcode = Opcode::Return, .dst = 1},
+      {.opcode = Opcode::LoadInt, .dst = 0, .immediate = 1, .location = {}},
+      {.opcode = Opcode::Return, .dst = 0, .location = {}, .handler = 0},
+      {.opcode = Opcode::Catch, .dst = 1, .location = {}},
+      {.opcode = Opcode::Return, .dst = 1, .location = {}},
   };
   Optimize(function, {});
   EXPECT_TRUE(std::ranges::any_of(function.instructions, [](const auto& instruction) {

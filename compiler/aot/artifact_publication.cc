@@ -133,7 +133,8 @@ class Manifest final {
         Append(parameters, description);
       }
       Add(value, "parameters", parameters);
-      Add(value, "result", signature.result ? Type(*signature.result) : yyjson_mut_null(document_));
+      const auto& result_type = signature.result;
+      Add(value, "result", result_type ? Type(*result_type) : yyjson_mut_null(document_));
       Append(signatures, value);
     }
     Add(json_.root(), "signatures", signatures);

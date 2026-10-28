@@ -118,7 +118,7 @@ std::optional<Opcode> SelectBinaryOpcode(std::string_view operation,
           {">=", Opcode::GreaterEqualInt},
       },
   };
-  const decltype(integer_operations.begin()) found = std::ranges::find_if(
+  const auto found = std::ranges::find_if(
       integer_operations, [&](const auto& entry) { return entry.first == operation; });
   if (found != integer_operations.end()) {
     return found->second;
@@ -163,7 +163,7 @@ std::optional<std::string_view> CompoundOperation(std::string_view text) {
       ">>=",
       ">>>=",
   });
-  const decltype(operations.begin()) found = std::ranges::find(operations, text);
+  const auto found = std::ranges::find(operations, text);
   if (found == operations.end()) {
     return std::nullopt;
   }
@@ -1520,6 +1520,13 @@ std::optional<FieldId> Lowerer::FindField(const frontend::ClassDescriptor& class
 
 void Lowerer::Emit(Instruction instruction) {
   if (current_function_ != nullptr) {
+    if (instruction.opcode == Opcode::GetIndex || instruction.opcode == Opcode::SetIndex ||
+        (instruction.opcode == Opcode::BuiltinCall &&
+         instruction.index == static_cast<std::uint32_t>(Builtin::ArrayPush))) {
+      const auto array = instruction.opcode == Opcode::SetIndex ? instruction.dst : instruction.lhs;
+      const auto type = current_function_->value_types.at(array);
+      instruction.array_type = RegisterArrayType(type);
+    }
     RecordInstructionValueType(instruction);
     instruction.handler = current_handler_;
     current_function_->instructions.push_back(instruction);

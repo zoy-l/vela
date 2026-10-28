@@ -71,6 +71,39 @@ def _build_files(gn: Path, variant: str) -> list[Path]:
     return sorted(files)
 
 
+def prepare_generated_headers(variant: str, tools: dict[str, Path], files: list[Path]) -> None:
+    output = output_directory(variant)
+    described = subprocess.run(
+        [str(tools["gn"]), "desc", str(output), "//*", "--format=json"],
+        cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8",
+    )
+    try:
+        targets = json.loads(described.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("GN produced an invalid target description") from error
+    sources = {"//" + path.relative_to(ROOT).as_posix() for path in files}
+    pending = [label for label, target in targets.items()
+               if sources.intersection(target.get("sources", []))]
+    required: set[str] = set()
+    while pending:
+        label = pending.pop()
+        if label in required:
+            continue
+        required.add(label)
+        target = targets[label]
+        pending.extend(target.get("deps", []))
+        pending.extend(target.get("public_deps", []))
+    headers = {
+        (ROOT / name.removeprefix("//")).relative_to(output).as_posix()
+        for label in required
+        for name in targets[label].get("outputs", [])
+        if name.endswith(".h") and "/gen/" in name
+    }
+    if headers:
+        subprocess.run([str(tools["ninja"]), "-C", str(output), *sorted(headers)],
+                       cwd=ROOT, check=True)
+
+
 def _path_files(paths: list[Path], build_files: list[Path]) -> list[Path]:
     files: set[Path] = set()
     for path in paths:
@@ -127,6 +160,7 @@ def run(parsed: argparse.Namespace) -> int:
     files = _path_files(parsed.paths, build_files) if parsed.paths else build_files
     if not files:
         raise RuntimeError("no C++ source files or headers were selected for lint")
+    prepare_generated_headers(parsed.variant, tools, files)
 
     if parsed.fix:
         # 不并行修复：多个翻译单元可能同时改写共享头文件。

@@ -27,6 +27,7 @@
 #include <llvm/IR/PassManager.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/Support/Alignment.h>
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/TargetParser/Host.h>
@@ -40,6 +41,9 @@
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
+#include "runtime/exception.h"
+#include "runtime/native_abi.h"
+#include "runtime/native_memory_layout.h"
 
 namespace vela::compiler::aot {
 namespace {
@@ -111,6 +115,20 @@ void FunctionEmitter::SetPosition() {
 }
 
 void FunctionEmitter::Fail(llvm::Value* status) {
+  if (leaf_entry_) {
+    auto failure =
+        module_.getOrInsertFunction("vela_native_v1_leaf_failure", builder_.getInt8Ty(),
+                                    builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt8Ty());
+    auto* position = builder_.CreateAlloca(
+        llvm::ArrayType::get(builder_.getInt8Ty(), sizeof(runtime::TracePosition)));
+    position->setAlignment(llvm::Align(alignof(runtime::TracePosition)));
+    builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
+                         ByteAddress(position, offsetof(runtime::TracePosition, function)));
+    builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(instruction_index_)),
+                         ByteAddress(position, offsetof(runtime::TracePosition, instruction)));
+    Finish(builder_.CreateCall(failure, {body_->getArg(0), position, status}));
+    return;
+  }
   SetPosition();
   if (!source_.instructions.empty() &&
       !ir::AnalyzeEffects(source_.instructions.at(instruction_index_)).MayCollectOnSuccess()) {
@@ -128,11 +146,9 @@ void FunctionEmitter::Fail(llvm::Value* status) {
                                                builder_.getPtrTy());
     auto* has_exception = builder_.CreateCall(pending, {body_->getArg(0)});
     auto* unhandled = llvm::BasicBlock::Create(module_.getContext(), "unhandled", body_);
-    auto clear = module_.getOrInsertFunction("vela_native_v1_root_clear", builder_.getVoidTy(),
-                                             builder_.getPtrTy(), builder_.getInt64Ty());
     // handler 的下一安全点会登记其活动值；此处到 handler 之间不再分配。
     for (std::size_t slot = 0; slot < roots_.count; ++slot) {
-      builder_.CreateCall(clear, {body_->getArg(0), builder_.getInt64(slot)});
+      ClearRoot(slot);
     }
     const auto target = source_.handlers.at(*handler).target;
     builder_.CreateCondBr(builder_.CreateICmpNE(has_exception, builder_.getInt8(0)),
@@ -327,6 +343,12 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
     fields.push_back(type.kind == Kind::Invalid ? builder_.getInt8Ty() : ValueType(context, type));
   }
   for (const auto& instruction : source_.instructions) {
+    if ((instruction.opcode == Opcode::GetIndex || instruction.opcode == Opcode::SetIndex ||
+         (instruction.opcode == Opcode::BuiltinCall &&
+          instruction.index == static_cast<std::uint32_t>(Builtin::ArrayPush))) &&
+        instruction.array_type == ir::kInvalidArrayType) {
+      return std::unexpected("AOT requires upstream array storage types");
+    }
     scratch_count = std::max(scratch_count, TemporaryArgumentCount(instruction));
     const auto access = ir::AnalyzeRegisters(instruction, program_.functions);
     bool has_type =
@@ -359,36 +381,51 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
   return {};
 }
 
+bool FunctionEmitter::CanUseLeafEntry() const {
+  if (source_.is_async || !source_.native_symbol.empty() || !source_.handlers.empty() ||
+      roots_.count != 0 || frame_bytes_ > kMaximumNativeStackBytes ||
+      !IsScalar(source_.return_type)) {
+    return false;
+  }
+  if (!std::ranges::all_of(source_.value_types, [](const SourceType& type) {
+        return type.kind == Kind::Invalid || IsScalar(type);
+      })) {
+    return false;
+  }
+  return std::ranges::all_of(source_.instructions, [](const ir::Instruction& instruction) {
+    // 标量 return 不装箱；其他操作依赖共享效果信息，禁止调用、分配或观察状态。
+    if (instruction.opcode == Opcode::Return) {
+      return true;
+    }
+    const auto effects = ir::AnalyzeEffects(instruction);
+    return !effects.MayCollectOnSuccess() && !effects.reads_state && !effects.writes_state;
+  });
+}
+
 void FunctionEmitter::BindFrameStorage() {
   if (frame_bytes_ <= kMaximumNativeStackBytes) {
     return;
   }
-  auto storage = module_.getOrInsertFunction("vela_native_v1_frame_storage", builder_.getPtrTy(),
-                                             builder_.getPtrTy());
-  auto* frame_storage = builder_.CreateCall(storage, {body_->getArg(0)});
   for (std::size_t index = 0; index < slots_.size(); ++index) {
     if (source_.value_types.at(index).kind != Kind::Invalid) {
       slots_.at(index) =
-          builder_.CreateStructGEP(frame_type_, frame_storage, static_cast<unsigned>(index));
+          builder_.CreateStructGEP(frame_type_, frame_storage_, static_cast<unsigned>(index));
     }
   }
   const auto scratch = static_cast<unsigned>(slots_.size());
-  arguments_ = builder_.CreateStructGEP(frame_type_, frame_storage, scratch);
-  result_ = builder_.CreateStructGEP(frame_type_, frame_storage, scratch + 1);
+  arguments_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch);
+  result_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 1);
 }
 
 void FunctionEmitter::EmitImport() {
   auto* context = body_->getArg(0);
   auto* function = builder_.getInt32(static_cast<std::uint32_t>(function_index_));
-  auto root_store =
-      module_.getOrInsertFunction("vela_native_v1_root_store", builder_.getVoidTy(),
-                                  builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
   std::vector<llvm::Value*> arguments{context, function};
   std::vector<llvm::Type*> types{builder_.getPtrTy(), builder_.getInt32Ty()};
   for (std::size_t index = 0; index < source_.parameter_count; ++index) {
     const auto reg = static_cast<ir::RegisterId>(index);
     if (const auto slot = roots_.slots.at(reg)) {
-      builder_.CreateCall(root_store, {context, builder_.getInt64(*slot), Pack(Encode(reg), 0)});
+      WriteHeapValue(RootAddress(*slot), reg);
     }
     auto* value = Load(reg);
     if (source_.value_types.at(reg).kind == Kind::Bool) {
@@ -427,23 +464,39 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   if (!prepared) {
     return prepared;
   }
+  leaf_entry_ = CanUseLeafEntry();
   cleanup_ = llvm::BasicBlock::Create(context, "cleanup", body_);
   Builder cleanup(cleanup_);
   status_ = cleanup.CreatePHI(builder_.getInt8Ty(), 0, "status");
-  auto exit = module_.getOrInsertFunction("vela_native_v1_frame_exit", cleanup.getVoidTy(),
-                                          cleanup.getPtrTy());
-  cleanup.CreateCall(exit, {body_->getArg(0)});
+  if (!leaf_entry_) {
+    auto exit = module_.getOrInsertFunction("vela_native_v1_frame_exit", cleanup.getVoidTy(),
+                                            cleanup.getPtrTy());
+    cleanup.CreateCall(exit, {body_->getArg(0)});
+  }
   cleanup.CreateRet(status_);
-  auto enter = module_.getOrInsertFunction("vela_native_v1_frame_enter", builder_.getInt8Ty(),
-                                           builder_.getPtrTy(), builder_.getInt64Ty(),
-                                           builder_.getInt32Ty(), builder_.getInt64Ty());
-  auto* entered = builder_.CreateCall(
-      enter, {
-                 body_->getArg(0),
-                 builder_.getInt64(roots_.count),
-                 builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
-                 builder_.getInt64(frame_bytes_ > kMaximumNativeStackBytes ? frame_bytes_ : 0),
-             });
+  llvm::Value* access = nullptr;
+  llvm::Value* entered = nullptr;
+  if (leaf_entry_) {
+    auto enter = module_.getOrInsertFunction("vela_native_v1_leaf_enter", builder_.getInt8Ty(),
+                                             builder_.getPtrTy());
+    entered = builder_.CreateCall(enter, {body_->getArg(0)});
+  } else {
+    auto enter = module_.getOrInsertFunction(
+        "vela_native_v1_frame_enter", builder_.getInt8Ty(), builder_.getPtrTy(),
+        builder_.getInt64Ty(), builder_.getInt32Ty(), builder_.getInt64Ty(), builder_.getPtrTy());
+    auto* allocation = builder_.CreateAlloca(
+        llvm::ArrayType::get(builder_.getInt8Ty(), sizeof(runtime::NativeFrameAccess)));
+    allocation->setAlignment(llvm::Align(alignof(runtime::NativeFrameAccess)));
+    access = allocation;
+    entered = builder_.CreateCall(
+        enter, {
+                   body_->getArg(0),
+                   builder_.getInt64(roots_.count),
+                   builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
+                   builder_.getInt64(frame_bytes_ > kMaximumNativeStackBytes ? frame_bytes_ : 0),
+                   access,
+               });
+  }
   auto* failed = llvm::BasicBlock::Create(context, "enter.failed", body_);
   auto* initialize = llvm::BasicBlock::Create(context, "initialize", body_);
   builder_.CreateCondBr(builder_.CreateICmpEQ(entered, Status(builder_, ExecutionStatus::Returned)),
@@ -451,9 +504,15 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   Builder failure(failed);
   failure.CreateRet(entered);
   builder_.SetInsertPoint(initialize);
-  auto position = module_.getOrInsertFunction("vela_native_v1_frame_instruction",
-                                              builder_.getPtrTy(), builder_.getPtrTy());
-  instruction_slot_ = builder_.CreateCall(position, {body_->getArg(0)});
+  if (!leaf_entry_) {
+    using runtime::NativeMemoryLayout;
+    instruction_slot_ = builder_.CreateLoad(
+        builder_.getPtrTy(), ByteAddress(access, NativeMemoryLayout::kFrameInstruction));
+    root_slots_ = builder_.CreateLoad(builder_.getPtrTy(),
+                                      ByteAddress(access, NativeMemoryLayout::kFrameRoots));
+    frame_storage_ = builder_.CreateLoad(builder_.getPtrTy(),
+                                         ByteAddress(access, NativeMemoryLayout::kFrameStorage));
+  }
   BindFrameStorage();
   if (kind_ == NativeEntryKind::Initial) {
     for (std::size_t index = 0; index < source_.parameter_count; ++index) {
@@ -477,7 +536,7 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
     instruction_index_ = index;
     builder_.SetInsertPoint(blocks_.at(index));
     const auto effects = ir::AnalyzeEffects(instruction);
-    if (effects.MayCollectOnSuccess()) {
+    if (!leaf_entry_ && effects.MayCollectOnSuccess()) {
       // 调用者位置必须在进入被调用方前可见；throw 和异步 helper 也可能直接捕获栈。
       // 纯检查在失败块内记录位置，成功的算术循环不执行位置写入。
       SetPosition();

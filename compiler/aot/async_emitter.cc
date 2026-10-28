@@ -120,15 +120,12 @@ void FunctionEmitter::EmitResumeDispatch() {
     auto read = module_.getOrInsertFunction("vela_native_v1_resume_value", builder_.getVoidTy(),
                                             builder_.getPtrTy(), builder_.getInt64Ty(),
                                             builder_.getPtrTy());
-    auto root = module_.getOrInsertFunction("vela_native_v1_root_store", builder_.getVoidTy(),
-                                            builder_.getPtrTy(), builder_.getInt64Ty(),
-                                            builder_.getPtrTy());
     for (std::size_t slot = 0; slot < saved.size(); ++slot) {
       const auto reg = saved.at(slot);
       builder_.CreateCall(read, {state, builder_.getInt64(slot), result_});
       Unpack(reg);
       if (const auto root_slot = roots_.slots.at(reg)) {
-        builder_.CreateCall(root, {body_->getArg(0), builder_.getInt64(*root_slot), result_});
+        WriteHeapValue(RootAddress(*root_slot), reg);
       }
     }
     // 活动引用先进入当前帧根，再清空挂起快照；错误恢复也可能触发 GC。

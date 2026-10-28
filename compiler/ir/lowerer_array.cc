@@ -30,6 +30,18 @@ Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& ex
     });
     return {.reg = result, .type = model_.expression_types.at(&expression)};
   }
+  if (builtin == Builtin::ArrayPush && expression.arguments.size() == 1) {
+    // 单元素 push 直接使用现有标量操作，避免每次追加都分配和复制一个临时数组。
+    const auto value = LowerExpression(*expression.arguments.front().value);
+    Emit({.opcode = Opcode::Move, .dst = base + 1, .lhs = value.reg, .location = location});
+    const auto result = EmitTemporary({
+        .opcode = Opcode::BuiltinCall,
+        .lhs = base,
+        .index = static_cast<std::uint32_t>(Builtin::ArrayPush),
+        .location = location,
+    });
+    return {.reg = result, .type = model_.expression_types.at(&expression)};
+  }
   if (splice) {
     Emit({.opcode = Opcode::LoadInt, .dst = base + 1, .location = location});
     Emit({
