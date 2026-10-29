@@ -12,6 +12,7 @@
 #include <string_view>
 #include <utility>
 #include "base/builtin.h"
+#include "base/declaration.h"
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
@@ -396,9 +397,30 @@ Diagnostics AddStandardEnvironment(Program& program) {
       return syntax->diagnostics;
     }
     auto parsed = CloneProgram(syntax->program, {.source_id = source_id});
+    const auto module_uri = std::string(kStandardSourcePrefix) + std::string(name);
+    for (const auto& owner : parsed.classes) {
+      parsed.origins.emplace(owner.name, DeclarationOrigin{
+                                             .module_uri = module_uri,
+                                             .name = owner.name,
+                                             .kind = DeclarationKind::Class,
+                                             .arguments = {},
+                                             .type_parameters = {},
+                                             .members = {},
+                                         });
+    }
+    for (const auto& enumeration : parsed.enums) {
+      parsed.origins.emplace(enumeration.name, DeclarationOrigin{
+                                                   .module_uri = module_uri,
+                                                   .name = enumeration.name,
+                                                   .kind = DeclarationKind::Enum,
+                                                   .arguments = {},
+                                                   .type_parameters = {},
+                                                   .members = {},
+                                               });
+    }
     AppendProgram(program, std::move(parsed));
     program.sources.push_back({
-        .path = std::string(kStandardSourcePrefix) + std::string(name),
+        .path = module_uri,
         .text = syntax->source->text,
         .syntax = syntax->source,
     });

@@ -428,7 +428,13 @@ CompileResult CompileProgram(const frontend::Program& source,
                              const frontend::SemanticModel& model,
                              runtime::Isolate& isolate,
                              CompilationState* state) {
-  auto lowered = ir::PrepareProgram(source, model, state == nullptr ? nullptr : &state->ids);
+  ir::PreparationOptions options;
+  if (state != nullptr) {
+    options.persistent_slots = &state->ids;
+    options.declarations = &state->declarations;
+    options.revision = ++state->revision;
+  }
+  auto lowered = ir::PrepareProgram(source, model, options);
   if (!lowered.Succeeded()) {
     return {.program = {}, .diagnostics = std::move(lowered.diagnostics)};
   }

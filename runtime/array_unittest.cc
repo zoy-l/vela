@@ -45,7 +45,8 @@ TEST(NullableArrayTest, KeepsReferenceElementsCompactAndChecksTheirLayouts) {
   auto* record = isolate.CreateClassLayout(0, {});
   auto* other = isolate.CreateClassLayout(0, {});
   const auto* records = isolate.CreateArrayLayout(
-      {.element = {.kind = ValueKind::Object, .instance = record, .nullable = true}});
+      {.element = {
+           .kind = ValueKind::Object, .nominal = &record->nominal_type(), .nullable = true}});
   EXPECT_EQ(records->element_size(), sizeof(HeapObject*));
   Value root = Value::Object(heap.AllocateArray(*records, 1));
   RootRange roots(heap, &root, 1);
@@ -224,8 +225,8 @@ TEST(DynamicArrayTest, ReplacesReferenceRangesDuringSweep) {
   Isolate isolate;
   auto& heap = isolate.heap();
   auto* record = isolate.CreateClassLayout(0, {});
-  const auto* layout =
-      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = record}});
+  const auto* layout = isolate.CreateArrayLayout(
+      {.element = {.kind = ValueKind::Object, .nominal = &record->nominal_type()}});
   auto* child = heap.AllocateInstance(*record);
   Value root = Value::Object(heap.AllocateArray(*layout, 0));
   RootRange roots(heap, &root, 1);
@@ -248,8 +249,8 @@ TEST_P(ArraySliceBarrierTest, PublishesInitializedCopyDuringIncrementalCollectio
   Isolate isolate;
   auto& heap = isolate.heap();
   auto* record = isolate.CreateClassLayout(0, {});
-  const auto* layout =
-      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = record}});
+  const auto* layout = isolate.CreateArrayLayout(
+      {.element = {.kind = ValueKind::Object, .nominal = &record->nominal_type()}});
   constexpr std::size_t kBallast = 64;
   std::array<Value, kBallast> ballast;
   RootRange ballast_roots(heap, ballast.data(), ballast.size());

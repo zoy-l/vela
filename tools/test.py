@@ -18,6 +18,7 @@ TEST_EXECUTABLES = {
     "frontend": "vela_frontend_tests",
     "ir": "vela_ir_tests",
     "aot": "vela_aot_tests",
+    "jit": "vela_jit_tests",
     "compiler": "vela_compiler_tests",
     "runtime": "runtime_tests",
     "vm": "vm_tests",

@@ -16,7 +16,7 @@ class Module;
 class Function;
 }  // namespace llvm
 
-namespace vela::compiler::aot {
+namespace vela::compiler::native {
 
 struct GeneratedFunction;
 
@@ -51,4 +51,4 @@ void EmitWrapper(llvm::Module& module,
                  std::uint32_t function_index,
                  const GeneratedFunction& function);
 
-}  // namespace vela::compiler::aot
+}  // namespace vela::compiler::native

@@ -174,6 +174,7 @@ std::optional<std::string_view> CompoundOperation(std::string_view text) {
 
 LoweringResult Lowerer::Lower() {
   program_ = {};
+  program_.native_mode = native_mode_;
   diagnostics_.clear();
   class_ids_.clear();
   function_ids_.clear();
@@ -187,6 +188,14 @@ LoweringResult Lowerer::Lower() {
   pending_constructors_.clear();
   BuildFunctionTable();
   BuildClassTable();
+  if (declarations_ != nullptr) {
+    for (const auto& [name, selector] : interface_method_ids_) {
+      if (program_.selector_declarations.size() <= selector) {
+        program_.selector_declarations.resize(static_cast<std::size_t>(selector) + 1);
+      }
+      program_.selector_declarations.at(selector) = declarations_->selectors.at(name);
+    }
+  }
   if (!model_.captured_mutables.empty()) {
     class_ids_.emplace("$Cell", static_cast<ClassId>(program_.classes.size()));
     program_.classes.push_back({
@@ -197,6 +206,9 @@ LoweringResult Lowerer::Lower() {
         .interfaces = {},
         .dispatch_targets = {},
         .callable_type = {},
+        .declaration = {},
+        .field_declarations = {},
+        .base_class = {},
     });
   }
   for (const frontend::Function& function : source_.functions) {
@@ -255,12 +267,15 @@ void Lowerer::AddDiagnostic(frontend::SourceLocation location, std::string messa
 }
 
 void Lowerer::BuildInterfaceSelectors() {
-  if (persistent_ != nullptr) {
+  if (persistent_ != nullptr || native_mode_ == NativeProgramMode::Reloadable) {
     // 布局一旦用于实例就不能更换；首次接纳类型时必须绑定全部接口方法。
     for (const auto& interface : source_.interfaces) {
       for (const auto& method : interface.methods) {
         const auto key = interface.name + "." + method.name;
-        interface_method_ids_.emplace(key, persistent_->selectors.Get(key));
+        const auto selector = persistent_ != nullptr
+                                  ? persistent_->selectors.Get(key)
+                                  : static_cast<std::uint32_t>(interface_method_ids_.size());
+        interface_method_ids_.emplace(key, selector);
       }
     }
     return;
@@ -337,6 +352,16 @@ Class Lowerer::BuildClass(const frontend::Class& source_class,
     }
   }
   output_class.field_order = class_info.field_order;
+  if (declarations_ != nullptr) {
+    const auto& declarations = declarations_->classes.at(source_class.name);
+    output_class.declaration = declarations.declaration;
+    if (class_info.base_class) {
+      output_class.base_class = declarations_->nominals.at(*class_info.base_class);
+    }
+    for (const auto& name : output_class.field_order) {
+      output_class.field_declarations.push_back(declarations.fields.at(name));
+    }
+  }
   output_class.field_types.reserve(output_class.field_order.size());
   for (const std::string& field_name : output_class.field_order) {
     const auto field = class_info.fields.find(field_name);
@@ -439,6 +464,15 @@ void Lowerer::StoreFunction(Function function) {
     }
   }
   const auto target = function_ids_.at(function.name);
+  if (declarations_ != nullptr && function.identity.revision == 0) {
+    const auto named = declarations_->named_functions.find(function.name);
+    function.identity.revision = declarations_->revision;
+    if (named != declarations_->named_functions.end()) {
+      function.identity.declaration = named->second;
+    } else {
+      function.identity.local = target + 1;
+    }
+  }
   program_.functions.at(target) = std::move(function);
 }
 
@@ -545,10 +579,21 @@ void Lowerer::LowerFunction(const frontend::Function& source,
                             const frontend::Class* owner,
                             const frontend::LambdaDescriptor* lambda) {
   Function function;
+  function.is_generated_constructor =
+      owner != nullptr && source.name == "$constructor" &&
+      owner->constructor_kind == frontend::ConstructorKind::Generated;
   function.location = source.location;
+  if (declarations_ != nullptr) {
+    const auto identity = declarations_->functions.find(&source);
+    if (identity != declarations_->functions.end()) {
+      function.identity = identity->second;
+    }
+  }
   function.is_async = source.is_async;
-  function.is_exported = owner == nullptr && lambda == nullptr && source.location.source_id == 0 &&
-                         source.export_kind == frontend::ExportKind::Exported;
+  function.is_exported =
+      owner == nullptr && lambda == nullptr &&
+      (native_mode_ == NativeProgramMode::Reloadable || source.location.source_id == 0) &&
+      source.export_kind == frontend::ExportKind::Exported;
   function.owner_class = owner == nullptr ? std::string() : owner->name;
   if (lambda != nullptr) {
     function.name =

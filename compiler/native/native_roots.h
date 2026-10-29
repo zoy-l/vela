@@ -8,7 +8,7 @@
 
 #include "compiler/ir/ir.h"
 
-namespace vela::compiler::aot {
+namespace vela::compiler::native {
 
 struct NativeRootPlan final {
   std::size_t count = 0;
@@ -17,6 +17,7 @@ struct NativeRootPlan final {
   std::vector<std::vector<ir::RegisterId>> clears;
   std::vector<std::vector<ir::RegisterId>> suspended;
   std::vector<std::vector<std::size_t>> rematerialized;
+  std::vector<std::uint8_t> safepoints;
 };
 
 struct NativeFunctionMetrics final {
@@ -26,6 +27,7 @@ struct NativeFunctionMetrics final {
 };
 
 [[nodiscard]] NativeRootPlan PlanNativeRoots(const ir::Function& function,
-                                             std::span<const ir::Function> functions);
+                                             std::span<const ir::Function> functions,
+                                             NativeProgramMode mode);
 
-}  // namespace vela::compiler::aot
+}  // namespace vela::compiler::native

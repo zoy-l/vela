@@ -137,14 +137,12 @@ TEST(NativeCallbackTest, ColdReferenceLeafFailuresKeepTheirOriginalSourceAndCall
   EXPECT_EQ(execution.frame_count(), 0U);
   ASSERT_TRUE(execution.HasException());
   isolate.heap().Collect();
-  const auto& error = ExceptionData::From(*execution.pending_exception().AsObject());
-  const auto trace = error.trace();
+  const auto diagnostic = execution.ExceptionDiagnostic();
+  const auto& trace = diagnostic.stack_trace;
   ASSERT_EQ(trace.size(), 2U);
-  const auto position = trace.front();
-  const auto& function = image->functions.values()[position.function];
-  EXPECT_EQ(function.name.text(), "lookup");
-  EXPECT_EQ(function.locations.values()[position.instruction].line, 6U);
-  EXPECT_EQ(image->functions.values()[trace.back().function].name.text(), "calculate");
+  EXPECT_EQ(trace.front().function, "lookup");
+  EXPECT_EQ(trace.front().line, 6U);
+  EXPECT_EQ(trace.back().function, "calculate");
 }
 
 TEST(NativeCallbackTest, EnumResultMetadataBoxesScalarPayloadsAndPreservesNullableResults) {

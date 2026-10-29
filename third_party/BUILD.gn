@@ -2,6 +2,16 @@ import("abseil_sources.gni")
 
 config("llvm_headers") {
   llvm_include = "$vela_llvm_root/include"
+
+  # 使用 SDK 的 RTTI 契约；派生 ORC 层时不能引用无 RTTI
+  # 库未提供的 typeinfo。
+  if (vela_llvm_rtti == "NO") {
+    if (target_os == "win") {
+      cflags_cc = [ "/GR-" ]
+    } else {
+      cflags_cc = [ "-fno-rtti" ]
+    }
+  }
   if (target_os == "win") {
     cflags = [ "/external:I$llvm_include" ]
   } else {
@@ -20,6 +30,18 @@ source_set("llvm") {
   public_configs = [
     ":llvm_headers",
     ":llvm_libraries",
+  ]
+  public_deps = [ ":zstd" ]
+}
+
+config("llvm_jit_libraries") {
+  libs = vela_llvm_jit_libraries + vela_llvm_jit_system_libraries
+}
+
+source_set("llvm_jit") {
+  public_configs = [
+    ":llvm_headers",
+    ":llvm_jit_libraries",
   ]
   public_deps = [ ":zstd" ]
 }

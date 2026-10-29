@@ -142,13 +142,12 @@ TEST(NativeIntegerLoopTest, OverflowKeepsItsStatusAndOriginalSourcePosition) {
     const auto& exception = ExceptionData::From(*execution.pending_exception().AsObject());
     EXPECT_EQ(exception.status, ExecutionStatus::IntegerOverflow);
     EXPECT_EQ(exception.message(), "integer overflow");
-    const auto trace = exception.trace();
+    const auto diagnostic = execution.ExceptionDiagnostic();
+    const auto& trace = diagnostic.stack_trace;
     ASSERT_FALSE(trace.empty());
-    const auto position = trace.front();
-    const auto& function = image->functions.values()[position.function];
     const auto operation = static_cast<std::size_t>(item[0]);
-    EXPECT_EQ(function.name.text(), names[operation]);
-    EXPECT_EQ(function.locations.values()[position.instruction].line, lines[operation]);
+    EXPECT_EQ(trace.front().function, names[operation]);
+    EXPECT_EQ(trace.front().line, lines[operation]);
   }
 }
 

@@ -47,6 +47,10 @@ C++ 函数签名提供了完整的绑定契约。支持的原生参数类型包�
 
 虚拟机返回结果中的裸 `Value` 是从堆中借用的。如果它包含堆引用，在后续进行任何内存分配或垃圾回收之前，必须先为其创建 `RootedValue`。读取 `handle.value()` 不会创建新的根。原生参数仅在函数调用期间保持被保根；持久的宿主引用必须创建其自身的 `RootedValue`。
 
+替换 Isolate 前，宿主先停止创建新借用并释放外部句柄。`Isolate::ReloadBlockers()` 列出剩余根、原生实例、不透明原生句柄、命名声明入口、待发布的原生候选、Program、Future、活动执行及尚在进行的宿主释放操作；每项包含资源种类、该 Isolate 内的身份和引用计数。仍有资源时，`TryStop()` 返回相同的诊断，不改变当前运行。成功后关闭完成端点、丢弃排队回调与 timer，并回收不可达状态；它不销毁 Isolate，所有者仍需先释放运行时存储，再销毁 Isolate。运行时根使用 `RootOwner::Runtime`；普通宿主 `RootRange` 默认为外部根。内部 retained 句柄只用于运行时所有权，不能代替宿主释放自身借用。
+
+`Isolate::FreezeBindings()` 保存固定的原生注册集合；之后的注册返回 `NativeRegistrationError::BindingsFrozen`。用该 `NativeBindings` 快照创建新 Isolate 时，共享同一份不可变的 binding 实现与签名，脚本状态独立创建。
+
 脚本函数值引用其生产代码中的函数编号，调用时必须具有相同的代码身份；REPL 的连续提交共享这一身份。独立编译的 Program 无法调用通过原生 Future 载荷接收的其它 Program 的函数值，这类调用产生类型错误。保留堆中的函数值可以保留其类型身份；执行代码还需要保留生产它的 Program 或 FunctionHandle。
 
 ## 源码映射与错误诊断

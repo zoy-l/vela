@@ -19,6 +19,7 @@
 #include "runtime/callable.h"
 #include "runtime/dynamic_call.h"
 #include "runtime/exception.h"
+#include "runtime/external_resources.h"
 #include "runtime/future.h"
 #include "runtime/future_composition.h"
 #include "runtime/heap.h"
@@ -92,6 +93,7 @@ class Execution final {
         functions_(program.functions()),
         registers_(registers),
         globals_(program.globals()),
+        execution_resource_(isolate.external_resources(), runtime::ExternalResourceKind::Execution),
         debug_session_(std::move(debug_session)) {}
 
   ExecutionResult Run(std::uint32_t entry_function) noexcept;
@@ -253,7 +255,8 @@ class Execution final {
   GlobalStorage* globals_;
   std::string error_message_;
   runtime::Value pending_exception_;
-  runtime::RootRange exception_root_;
+  runtime::RootRange exception_root_{runtime::RootOwner::Runtime};
+  runtime::ExternalResource execution_resource_;
   std::shared_ptr<DebugSession> debug_session_;
   SuspendedFrame* resumed_frame_ = nullptr;
   bool resuspended_ = false;

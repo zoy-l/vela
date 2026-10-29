@@ -22,6 +22,40 @@ struct TypeSignature;
 struct InterfaceType final {};
 // 同一增量会话共享代码身份；函数编号只在该身份内有意义。
 struct CodeIdentity final {};
+class ClassLayout;
+
+enum class NominalKind : std::uint8_t { Class, Enum, Callable };
+struct NominalTypeOptions final {
+  NominalKind kind = NominalKind::Class;
+  std::vector<const InterfaceType*> interfaces;
+};
+
+// 名义身份独立于布局版本。只有固定存储类型保留可用于分配的 fixed_layout；
+// 可重载用户类型的字段与方法布局由发布快照和实际实例分别拥有。
+class NominalType final {
+ public:
+  NominalType(const NominalType&) = delete;
+  NominalType& operator=(const NominalType&) = delete;
+  NominalType(NominalType&&) = delete;
+  NominalType& operator=(NominalType&&) = delete;
+  ~NominalType() = default;
+  [[nodiscard]] bool IsEnum() const noexcept { return kind_ == NominalKind::Enum; }
+  [[nodiscard]] bool IsCallable() const noexcept { return kind_ == NominalKind::Callable; }
+  [[nodiscard]] bool IsImplementing(const InterfaceType& interface) const noexcept;
+  [[nodiscard]] std::span<const InterfaceType* const> interfaces() const noexcept {
+    return interfaces_;
+  }
+  [[nodiscard]] const ClassLayout* fixed_layout() const noexcept { return fixed_layout_; }
+
+ private:
+  friend class Isolate;
+  explicit NominalType(NominalTypeOptions options);
+  NominalKind kind_;
+  std::vector<const InterfaceType*> interfaces_;
+  const ClassLayout* fixed_layout_ = nullptr;
+};
+
+enum class ClassStorage : std::uint8_t { Inline, Reloadable };
 
 struct ClassLayoutOptions final {
   std::optional<CallableTarget> callable;
@@ -30,6 +64,8 @@ struct ClassLayoutOptions final {
   bool is_enum = false;
   const TypeSignature* callable_type = nullptr;
   const TypeSignature* expected_type = nullptr;
+  NominalType* nominal = nullptr;
+  ClassStorage storage = ClassStorage::Inline;
 };
 
 class ClassLayout final {
@@ -42,14 +78,16 @@ class ClassLayout final {
 
   [[nodiscard]] std::uint32_t field_count() const noexcept { return field_count_; }
   [[nodiscard]] const std::optional<CallableTarget>& callable() const noexcept { return callable_; }
+  [[nodiscard]] const NominalType& nominal_type() const noexcept { return *nominal_; }
+  [[nodiscard]] ClassStorage storage() const noexcept { return storage_; }
   [[nodiscard]] std::span<const InterfaceType* const> interfaces() const noexcept {
-    return interfaces_;
+    return nominal_->interfaces();
   }
   [[nodiscard]] std::span<const std::uint32_t> dispatch_targets() const noexcept {
     return dispatch_targets_;
   }
   [[nodiscard]] bool IsImplementing(const InterfaceType& interface) const noexcept;
-  [[nodiscard]] bool IsEnum() const noexcept { return is_enum_; }
+  [[nodiscard]] bool IsEnum() const noexcept { return nominal_->IsEnum(); }
   [[nodiscard]] const TypeSignature* callable_type() const noexcept { return callable_type_; }
   void BindCallableType(const TypeSignature& type) noexcept;
   [[nodiscard]] const TypeSignature* expected_type() const noexcept { return expected_type_; }
@@ -68,9 +106,9 @@ class ClassLayout final {
   std::uint32_t field_count_;
   std::vector<std::uint32_t> reference_fields_;
   std::optional<CallableTarget> callable_;
-  std::vector<const InterfaceType*> interfaces_;
+  NominalType* nominal_ = nullptr;
+  ClassStorage storage_ = ClassStorage::Inline;
   std::vector<std::uint32_t> dispatch_targets_;
-  bool is_enum_ = false;
   const TypeSignature* callable_type_ = nullptr;
   const TypeSignature* expected_type_ = nullptr;
   const CodeIdentity* code_identity_ = nullptr;
@@ -117,7 +155,7 @@ template <class T, class Header>
 struct TypeConstraint final {
   ValueKind kind = ValueKind::Null;
   ObjectKind object_kind = ObjectKind::Instance;
-  const ClassLayout* instance = nullptr;
+  const NominalType* nominal = nullptr;
   const ArrayLayout* array = nullptr;
   const CollectionLayout* collection = nullptr;
   const InterfaceType* interface = nullptr;
@@ -131,13 +169,13 @@ struct TypeConstraint final {
   bool operator==(const TypeConstraint&) const = default;
   template <typename H>
   friend H AbslHashValue(H hash, const TypeConstraint& type) {
-    return H::combine(std::move(hash), type.kind, type.object_kind, type.instance, type.array,
+    return H::combine(std::move(hash), type.kind, type.object_kind, type.nominal, type.array,
                       type.collection, type.interface, type.nullable, type.callable, type.dynamic,
                       type.signature);
   }
 };
 
-// 结构中的名义类型借用同一个 Isolate 的类布局；规范指针同时用于函数和 Future 载荷身份。
+// 结构中的名义类型借用同一个 Isolate 的稳定身份，不借用某一版本的字段布局。
 struct TypeSignature final {
   struct Parameter final {
     TypeConstraint type;
@@ -178,7 +216,7 @@ struct ArrayLayout final {
   [[nodiscard]] const TypeConstraint& element_type() const noexcept { return element; }
   [[nodiscard]] TypeConstraint value_type() const noexcept {
     auto type = element;
-    if (type.instance != nullptr && type.instance->IsEnum()) {
+    if (type.nominal != nullptr && type.nominal->IsEnum()) {
       type.kind = ValueKind::Object;
     }
     return type;

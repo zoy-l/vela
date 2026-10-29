@@ -24,8 +24,8 @@ struct ExceptionData final {
   ExecutionStatus status = ExecutionStatus::Thrown;
   std::uint32_t trace_count = 0;
   std::uint32_t message_length = 0;
-  // 异步包络拥有跨执行会话的诊断；同步异常保留紧凑的位置数组。
-  FutureDiagnostic* async_diagnostic = nullptr;
+  // 原生或跨 async 边界的异常拥有已经解析的版本诊断；VM 同步异常保留紧凑位置。
+  FutureDiagnostic* diagnostic = nullptr;
 
   [[nodiscard]] std::span<const TracePosition> trace() const noexcept;
   [[nodiscard]] std::string_view message() const noexcept;

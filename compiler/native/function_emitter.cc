@@ -1,6 +1,6 @@
-#include "compiler/aot/function_emitter.h"
-#include "compiler/aot/native_roots.h"
-#include "compiler/aot/native_values.h"
+#include "compiler/native/function_emitter.h"
+#include "compiler/native/native_roots.h"
+#include "compiler/native/native_values.h"
 
 #include <algorithm>
 #include <bit>
@@ -12,39 +12,23 @@
 #include <string>
 #include <vector>
 
-#include <llvm/ADT/SmallVector.h>
-#include <llvm/Analysis/CGSCCPassManager.h>
-#include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
-#include <llvm/IR/Function.h>
-#include <llvm/IR/Instructions.h>
-#include <llvm/IR/Intrinsics.h>
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/Module.h>
-#include <llvm/IR/PassManager.h>
-#include <llvm/IR/Verifier.h>
-#include <llvm/Passes/PassBuilder.h>
-#include <llvm/Support/ErrorHandling.h>
-#include <llvm/Target/TargetMachine.h>
-#include <llvm/TargetParser/Host.h>
-#include <llvm/TargetParser/Triple.h>
 
 #include "base/async_operation.h"
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/opcode.h"
-#include "compiler/aot/native_image_emitter.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "runtime/native_abi.h"
 #include "runtime/native_memory_layout.h"
 
-namespace vela::compiler::aot {
+namespace vela::compiler::native {
 namespace {
 
 std::size_t TemporaryArgumentCount(const ir::Instruction& instruction) {
@@ -113,6 +97,12 @@ void FunctionEmitter::SetPosition() {
                        instruction_slot_);
 }
 
+void FunctionEmitter::Poll() {
+  auto poll = module_.getOrInsertFunction("vela_native_v3_safepoint", builder_.getInt8Ty(),
+                                          builder_.getPtrTy());
+  CheckStatus(builder_.CreateCall(poll, {body_->getArg(0)}));
+}
+
 void FunctionEmitter::Fail(llvm::Value* status) {
   if (leaf_entry_) {
     const auto& live = roots_.stores.at(instruction_index_);
@@ -132,7 +122,8 @@ void FunctionEmitter::Fail(llvm::Value* status) {
   }
   SetPosition();
   if (!source_.instructions.empty() &&
-      !ir::AnalyzeEffects(source_.instructions.at(instruction_index_)).MayCollectOnSuccess()) {
+      !ir::AnalyzeEffects(source_.instructions.at(instruction_index_)).MayCollectOnSuccess() &&
+      roots_.safepoints[instruction_index_] == 0) {
     // 只有错误封套可能分配时，将保根写入也放到失败分支；成功路径上的借用无需登记。
     StoreRoots(instruction_index_);
   }
@@ -180,6 +171,16 @@ void FunctionEmitter::CheckStatus(llvm::Value* status) {
                         next, failed,
                         llvm::MDBuilder(module_.getContext()).createLikelyBranchWeights());
   builder_.SetInsertPoint(failed);
+  if (program_.native_mode == NativeProgramMode::Reloadable) {
+    auto* stopped = llvm::BasicBlock::Create(module_.getContext(), "execution.stopped", body_);
+    auto* propagate = llvm::BasicBlock::Create(module_.getContext(), "execution.failure", body_);
+    builder_.CreateCondBr(
+        builder_.CreateICmpEQ(status, Status(builder_, ExecutionStatus::ExecutionStopped)), stopped,
+        propagate);
+    builder_.SetInsertPoint(stopped);
+    Finish(status);
+    builder_.SetInsertPoint(propagate);
+  }
   Fail(status);
   builder_.SetInsertPoint(next);
 }
@@ -281,6 +282,23 @@ std::expected<void, std::string> FunctionEmitter::EmitInstruction(
     }
     case Opcode::Call: {
       const auto& callee = program_.functions.at(instruction.index);
+      if (program_.native_mode == NativeProgramMode::Reloadable && callee.native_symbol.empty() &&
+          callee.identity.local == 0 && callee.identity.declaration != DeclarationId{}) {
+        for (std::size_t index = 0; index < callee.parameter_count; ++index) {
+          const auto reg = static_cast<ir::RegisterId>(instruction.lhs + index);
+          const auto& type = callee.value_types[index];
+          auto* value = Convert(builder_, Load(reg), source_.value_types[reg], type);
+          Pack(EncodeValue(builder_, value, type), index);
+        }
+        auto helper = module_.getOrInsertFunction(
+            "vela_native_v3_call_declaration", builder_.getInt8Ty(), builder_.getPtrTy(),
+            builder_.getInt64Ty(), builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
+        CheckStatus(builder_.CreateCall(
+            helper, {body_->getArg(0), builder_.getInt64(callee.identity.declaration.value),
+                     arguments_, builder_.getInt64(callee.parameter_count), result_}));
+        Unpack(instruction.dst);
+        break;
+      }
       std::vector<llvm::Value*> arguments{body_->getArg(0)};
       for (std::size_t index = 0; index < callee.parameter_count; ++index) {
         const auto reg = static_cast<ir::RegisterId>(instruction.lhs + index);
@@ -292,6 +310,12 @@ std::expected<void, std::string> FunctionEmitter::EmitInstruction(
       }
       // 各类结果都可放入对齐的单个 ABI 暂存槽；循环和多调用不增加帧大小。
       arguments.push_back(result_);
+      // Call 的效果要求调用者先登记逻辑帧；内联后仍保留该事实，避免为嵌套宿主调用
+      // 复制一条不可能发生的最外层入口清理路径。
+      auto* depth = builder_.CreateLoad(
+          builder_.getInt64Ty(),
+          ByteAddress(body_->getArg(0), runtime::NativeMemoryLayout::kExecutionDepth));
+      builder_.CreateAssumption(builder_.CreateICmpNE(depth, builder_.getInt64(0)));
       auto* status =
           builder_.CreateCall(generated_.subspan(instruction.index).front().body, arguments);
       CheckStatus(status);
@@ -333,7 +357,7 @@ std::expected<void, std::string> FunctionEmitter::EmitInstruction(
 std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
   auto& context = module_.getContext();
   if (source_.value_types.size() != source_.register_count) {
-    return std::unexpected("AOT requires upstream virtual value types");
+    return std::unexpected("native code requires upstream virtual value types");
   }
   slots_.resize(source_.register_count);
   std::size_t scratch_count = roots_.count == 0 && !source_.is_async ? 0 : 1;
@@ -353,9 +377,15 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
          (instruction.opcode == Opcode::BuiltinCall &&
           instruction.index == static_cast<std::uint32_t>(Builtin::ArrayPush))) &&
         instruction.array_type == ir::kInvalidArrayType) {
-      return std::unexpected("AOT requires upstream array storage types");
+      return std::unexpected("native code requires upstream array storage types");
     }
     scratch_count = std::max(scratch_count, TemporaryArgumentCount(instruction));
+    if (program_.native_mode == NativeProgramMode::Reloadable &&
+        instruction.opcode == Opcode::Call) {
+      scratch_count =
+          std::max(scratch_count,
+                   static_cast<std::size_t>(program_.functions[instruction.index].parameter_count));
+    }
     const auto access = ir::AnalyzeRegisters(instruction, program_.functions);
     bool has_type =
         !access.defines_value || source_.value_types.at(instruction.dst).kind != Kind::Invalid;
@@ -364,7 +394,7 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
     });
     if (!has_type) {
       return std::unexpected(
-          "AOT function " + source_.name + " is missing an upstream value type for opcode " +
+          "native function " + source_.name + " is missing an upstream value type for opcode " +
           std::to_string(static_cast<unsigned>(instruction.opcode)) + " (index " +
           std::to_string(instruction.index) + ", result " + std::to_string(instruction.dst) + ")");
     }
@@ -389,7 +419,8 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
 }
 
 bool FunctionEmitter::CanUseLeafEntry() const {
-  if (source_.is_async || !source_.native_symbol.empty() || !source_.handlers.empty() ||
+  if (program_.native_mode == NativeProgramMode::Reloadable || source_.is_async ||
+      !source_.native_symbol.empty() || !source_.handlers.empty() ||
       frame_bytes_ > kMaximumNativeStackBytes || !IsScalar(source_.return_type)) {
     return false;
   }
@@ -441,6 +472,15 @@ void FunctionEmitter::EmitImport() {
     arguments.push_back(value);
     types.push_back(value->getType());
   }
+  const auto host_boundary = [&](const char* symbol) {
+    if (program_.native_mode == NativeProgramMode::Reloadable) {
+      auto helper = module_.getOrInsertFunction(symbol, builder_.getVoidTy(), builder_.getPtrTy());
+      builder_.CreateCall(helper, {context});
+    }
+  };
+  if (program_.native_mode == NativeProgramMode::Reloadable) {
+    Poll();
+  }
   const auto& return_type = source_.return_type;
   auto* result_type = return_type.kind == Kind::Bool || return_type.kind == Kind::Void
                           ? builder_.getInt8Ty()
@@ -473,7 +513,9 @@ void FunctionEmitter::EmitImport() {
       }
       auto* direct_result = return_type.kind == Kind::Void ? builder_.getVoidTy() : result_type;
       auto* signature = llvm::FunctionType::get(direct_result, direct_types, false);
+      host_boundary("vela_native_v3_host_enter");
       auto* value = builder_.CreateCall(signature, target, direct_arguments);
+      host_boundary("vela_native_v3_host_exit");
       if (return_type.kind != Kind::Void) {
         llvm::Value* result = value;
         if (return_type.kind == Kind::Bool) {
@@ -492,7 +534,10 @@ void FunctionEmitter::EmitImport() {
   arguments.push_back(Output());
   types.push_back(builder_.getPtrTy());
   auto* signature = llvm::FunctionType::get(builder_.getInt8Ty(), types, false);
-  CheckStatus(builder_.CreateCall(signature, target, arguments));
+  host_boundary("vela_native_v3_host_enter");
+  auto* called = builder_.CreateCall(signature, target, arguments);
+  host_boundary("vela_native_v3_host_exit");
+  CheckStatus(called);
   if (return_type.kind != Kind::Void) {
     llvm::Value* value = builder_.CreateLoad(result_type, Output());
     if (return_type.kind == Kind::Bool) {
@@ -537,11 +582,15 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
     instruction_index_ = index;
     builder_.SetInsertPoint(blocks_.at(index));
     const auto effects = ir::AnalyzeEffects(instruction);
-    if (!leaf_entry_ && effects.MayCollectOnSuccess()) {
+    const auto safepoint = roots_.safepoints[index] != 0;
+    if (!leaf_entry_ && (effects.MayCollectOnSuccess() || safepoint)) {
       // 调用者位置必须在进入被调用方前可见；throw 和异步 helper 也可能直接捕获栈。
       // 纯检查在失败块内记录位置，成功的算术循环不执行位置写入。
       SetPosition();
       StoreRoots(index);
+    }
+    if (safepoint) {
+      Poll();
     }
     auto emitted = EmitInstruction(instruction);
     if (!emitted) {
@@ -560,10 +609,12 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
 std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     llvm::Module& module,
     const ir::Program& program,
+    llvm::Constant* image,
     std::size_t function_index,
     std::span<const GeneratedFunction> generated) {
-  const auto roots = PlanNativeRoots(program.functions.at(function_index), program.functions);
-  FunctionEmitter initial(module, program, function_index, generated, roots,
+  const auto roots =
+      PlanNativeRoots(program.functions.at(function_index), program.functions, program.native_mode);
+  FunctionEmitter initial(module, program, image, function_index, generated, roots,
                           NativeEntryKind::Initial);
   if (const auto emitted = initial.Emit(); !emitted) {
     return std::unexpected(emitted.error());
@@ -573,7 +624,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     metrics.root_stores += stores.size();
   }
   if (generated.subspan(function_index).front().resume != nullptr) {
-    FunctionEmitter resume(module, program, function_index, generated, roots,
+    FunctionEmitter resume(module, program, image, function_index, generated, roots,
                            NativeEntryKind::Resume);
     if (const auto emitted = resume.Emit(); !emitted) {
       return std::unexpected(emitted.error());
@@ -583,4 +634,4 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   return metrics;
 }
 
-}  // namespace vela::compiler::aot
+}  // namespace vela::compiler::native

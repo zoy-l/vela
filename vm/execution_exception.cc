@@ -140,8 +140,7 @@ std::optional<ExecutionResult> Execution::CompleteAsyncError(ActiveFrame& active
       .stack_trace = ResolveTrace(exception.trace()),
       .message = std::string(exception.message()),
   };
-  auto diagnostic =
-      exception.async_diagnostic != nullptr ? *exception.async_diagnostic : Diagnostic(failure);
+  auto diagnostic = exception.diagnostic != nullptr ? *exception.diagnostic : Diagnostic(failure);
   runtime::Future future(&isolate_.scheduler());
   const auto completion = future.CompleteError(failure.value, std::move(diagnostic));
   auto* object = completion ? isolate_.heap().AllocateFuture(std::move(future)) : nullptr;
@@ -200,7 +199,7 @@ std::optional<ExecutionResult> Execution::HandleError(ExecutionStatus status) {
       .stack_trace = ResolveTrace(exception.trace()),
       .message = std::string(exception.message()),
   };
-  if (const auto* diagnostic = exception.async_diagnostic) {
+  if (const auto* diagnostic = exception.diagnostic) {
     failure.stack_trace.clear();
     for (const auto& frame : diagnostic->stack_trace) {
       failure.stack_trace.push_back({

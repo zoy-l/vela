@@ -1,4 +1,4 @@
-#include "compiler/aot/function_emitter.h"
+#include "compiler/native/function_emitter.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,7 +14,7 @@
 #include "runtime/native_abi.h"
 #include "runtime/native_memory_layout.h"
 
-namespace vela::compiler::aot {
+namespace vela::compiler::native {
 
 void FunctionEmitter::EmitFrameEntry() {
   using runtime::NativeMemoryLayout;
@@ -101,6 +101,7 @@ void FunctionEmitter::EmitFrameEntry() {
     auto* frame = allocate(sizeof(NativeTraceFrame), alignof(NativeTraceFrame));
     auto* previous = builder_.CreateLoad(pointer, frame_address);
     builder_.CreateStore(previous, ByteAddress(frame, offsetof(NativeTraceFrame, previous)));
+    builder_.CreateStore(image_, ByteAddress(frame, offsetof(NativeTraceFrame, image)));
     const auto position = offsetof(NativeTraceFrame, position);
     builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
                          ByteAddress(frame, position + offsetof(runtime::TracePosition, function)));
@@ -137,4 +138,4 @@ void FunctionEmitter::CacheImports() {
   }
 }
 
-}  // namespace vela::compiler::aot
+}  // namespace vela::compiler::native

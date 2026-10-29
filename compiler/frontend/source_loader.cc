@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 
 #include "base/file.h"
 #include "base/path.h"
@@ -61,6 +62,7 @@ class ModuleLoader final {
   }
 
   ModuleGraph Run(std::string_view entry);
+  ModuleGraph Run(std::span<const std::string> roots);
   ModuleGraph RunPrepared(std::string_view entry, ParsedSource source);
 
  private:
@@ -242,6 +244,13 @@ ModuleGraph ModuleLoader::Run(std::string_view entry) {
   return Finish();
 }
 
+ModuleGraph ModuleLoader::Run(std::span<const std::string> roots) {
+  for (const auto& root : roots) {
+    static_cast<void>(Load(Utf8Path(root), SourceLocation(), root));
+  }
+  return Finish();
+}
+
 ModuleGraph ModuleLoader::RunPrepared(std::string_view entry, ParsedSource source) {
   const auto path = Normalize(Utf8Path(entry));
   if (!path) {
@@ -280,13 +289,21 @@ ModuleGraph LoadModuleGraph(std::string_view path) {
   return ModuleLoader(SourceOrigin::Files, {}, cache, SyntaxRetention::Transfer).Run(path);
 }
 
-ParseResult BindModuleGraph(ModuleGraph graph) {
+ParseResult BindModuleGraph(ModuleGraph graph,
+                            std::span<const std::string> retained_standard_names) {
   if (!graph.diagnostics.empty()) {
     Program failed;
     failed.sources = std::move(graph.sources);
     return {.program = std::move(failed), .diagnostics = std::move(graph.diagnostics)};
   }
   auto result = BindModules(std::move(graph.modules), std::move(graph.sources));
+  auto& standard_names = result.program.standard_names;
+  absl::flat_hash_set<std::string> included(standard_names.begin(), standard_names.end());
+  for (const auto& name : retained_standard_names) {
+    if (included.insert(name).second) {
+      standard_names.push_back(name);
+    }
+  }
   for (auto& diagnostic : AddStandardEnvironment(result.program)) {
     result.diagnostics.push_back(std::move(diagnostic));
   }
@@ -326,6 +343,15 @@ ParseResult LoadSources(std::span<const SourceInput> sources, std::string_view e
   ModuleCache cache;
   return BindModuleGraph(
       ModuleLoader(SourceOrigin::Memory, sources, cache, SyntaxRetention::Transfer).Run(entry));
+}
+
+ParseResult LoadSources(std::span<const SourceInput> sources,
+                        std::span<const std::string> roots,
+                        std::span<const std::string> retained_standard_names) {
+  ModuleCache cache;
+  return BindModuleGraph(
+      ModuleLoader(SourceOrigin::Memory, sources, cache, SyntaxRetention::Transfer).Run(roots),
+      retained_standard_names);
 }
 
 ParseResult LoadPreparedProgram(std::string_view path, ParsedSource source, ModuleCache& cache) {

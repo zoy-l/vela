@@ -32,9 +32,13 @@ source_set("frontend") {
     "frontend/checker.cc",
     "frontend/checker.h",
     "frontend/control_flow.h",
+    "frontend/declaration_ids.cc",
+    "frontend/declaration_ids.h",
     "frontend/diagnostic.h",
     "frontend/initialization.cc",
     "frontend/initialization.h",
+    "frontend/lambda_visitor.cc",
+    "frontend/lambda_visitor.h",
     "frontend/lexer.cc",
     "frontend/lexer.h",
     "frontend/module_binding.cc",
@@ -87,6 +91,8 @@ source_set("ir") {
   sources = [
     "ir/analysis.cc",
     "ir/analysis.h",
+    "ir/declaration_bindings.cc",
+    "ir/declaration_bindings.h",
     "ir/ir.h",
     "ir/layout_description.cc",
     "ir/layout_description.h",
@@ -187,6 +193,17 @@ source_set("interactive") {
   deps = [ "//base:json" ]
 }
 
+source_set("source_session") {
+  sources = [
+    "source_session.cc",
+    "source_session.h",
+  ]
+  public_deps = [
+    ":frontend",
+    ":ir",
+  ]
+}
+
 source_set("compiler") {
   include_dirs = [ "$root_gen_dir" ]
   sources = [
@@ -207,6 +224,7 @@ source_set("compiler") {
   public_deps = [
     ":frontend",
     ":ir",
+    ":source_session",
     "//runtime",
     "//vm",
   ]
@@ -216,39 +234,78 @@ source_set("compiler") {
   ]
 }
 
-source_set("aot") {
+source_set("native") {
   sources = [
-    "aot/async_emitter.cc",
-    "aot/frame_emitter.cc",
-    "aot/function_emitter.cc",
-    "aot/function_emitter.h",
-    "aot/integer_loop_optimizer.cc",
-    "aot/integer_loop_optimizer.h",
-    "aot/memory_emitter.cc",
-    "aot/native_call_optimizer.cc",
-    "aot/native_call_optimizer.h",
-    "aot/native_compiler.cc",
-    "aot/native_compiler.h",
-    "aot/native_export_emitter.cc",
-    "aot/native_export_emitter.h",
-    "aot/native_image_emitter.cc",
-    "aot/native_image_emitter.h",
-    "aot/native_roots.cc",
-    "aot/native_roots.h",
-    "aot/native_type_optimizer.cc",
-    "aot/native_type_optimizer.h",
-    "aot/native_values.cc",
-    "aot/native_values.h",
-    "aot/reachability.cc",
-    "aot/reachability.h",
-    "aot/reference_emitter.cc",
-    "aot/scalar_emitter.cc",
+    "native/async_emitter.cc",
+    "native/code_generator.cc",
+    "native/code_generator.h",
+    "native/frame_emitter.cc",
+    "native/function_emitter.cc",
+    "native/function_emitter.h",
+    "native/integer_loop_optimizer.cc",
+    "native/integer_loop_optimizer.h",
+    "native/memory_emitter.cc",
+    "native/native_image_emitter.cc",
+    "native/native_image_emitter.h",
+    "native/native_roots.cc",
+    "native/native_roots.h",
+    "native/native_values.cc",
+    "native/native_values.h",
+    "native/reference_emitter.cc",
+    "native/scalar_emitter.cc",
   ]
   public_deps = [ ":ir" ]
   include_dirs = [ root_gen_dir ]
   deps = [
     "//runtime",
     "//runtime:native_build_identity",
+    "//third_party:llvm",
+  ]
+}
+
+source_set("jit") {
+  sources = [
+    "jit/compiler.cc",
+    "jit/compiler.h",
+    "jit/runtime_symbols.cc",
+    "jit/runtime_symbols.h",
+  ]
+  public_deps = [
+    ":native",
+    "//runtime",
+    "//third_party:llvm_jit",
+  ]
+}
+
+executable("vela_jit_tests") {
+  testonly = true
+  sources = [
+    "jit/callable_unittest.cc",
+    "jit/compiler_unittest.cc",
+  ]
+  deps = [
+    ":jit",
+    ":source_session",
+    "//third_party:gtest_main",
+  ]
+}
+
+source_set("aot") {
+  sources = [
+    "aot/native_call_optimizer.cc",
+    "aot/native_call_optimizer.h",
+    "aot/native_compiler.cc",
+    "aot/native_compiler.h",
+    "aot/native_export_emitter.cc",
+    "aot/native_export_emitter.h",
+    "aot/native_type_optimizer.cc",
+    "aot/native_type_optimizer.h",
+    "aot/reachability.cc",
+    "aot/reachability.h",
+  ]
+  public_deps = [ ":native" ]
+  deps = [
+    "//runtime",
     "//third_party:llvm",
   ]
 }
@@ -366,6 +423,7 @@ executable("vela_compiler_tests") {
     "regexp_unittest.cc",
     "register_allocator_unittest.cc",
     "repl_session_unittest.cc",
+    "source_session_unittest.cc",
     "stack_trace_unittest.cc",
     "standard_library_unittest.cc",
     "string_gc_unittest.cc",

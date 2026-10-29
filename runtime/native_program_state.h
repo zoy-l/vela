@@ -17,6 +17,7 @@
 namespace vela::runtime {
 
 class Isolate;
+class NativeDispatch;
 
 // 元数据由对应的 GC 程序状态对象拥有；其 managed 槽仅通过对象图追踪。
 // 外部实例句柄及执行中的借用句柄负责保根，闭包和续延保留状态对象的引用。
@@ -34,6 +35,7 @@ struct NativeProgramState final {
   NativeProgramState& operator=(NativeProgramState&&) = delete;
 
   Isolate* isolate = nullptr;
+  NativeDispatch* dispatch = nullptr;
   const NativeImage* image = nullptr;
   ProgramLayouts layouts;
   MemberTable members;
@@ -43,6 +45,8 @@ struct NativeProgramState final {
   // 数量由不可变 image 确定；独占定长存储供生成代码直接读取，不依赖 vector 布局。
   GlobalState* global_states = nullptr;
   std::array<Value, kStateSlots> values;
+  // 动态映像使用别名 shared_ptr 保活其代码、重定位及借用元数据；静态 AOT 映像无需所有者。
+  std::shared_ptr<const NativeImage> image_owner;
 };
 
 }  // namespace vela::runtime

@@ -15,6 +15,10 @@ StatusDescription DescribeStatus(ExecutionStatus status) noexcept {
   switch (status) {
     case ExecutionStatus::Returned:
       return {.code = "Returned", .message = "returned"};
+    case ExecutionStatus::ExecutionStopped:
+      return {.code = "ExecutionStopped", .message = "script execution stopped"};
+    case ExecutionStatus::TargetDeleted:
+      return {.code = "TargetDeleted", .message = "named declaration has been deleted"};
     case ExecutionStatus::RegExpSyntaxError:
       return {.code = "RegExpSyntaxError", .message = "invalid regular expression"};
     case ExecutionStatus::RegExpGroupError:

@@ -6,13 +6,13 @@
 #include <string>
 #include <vector>
 
-#include "compiler/aot/native_roots.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/code_generator.h"
+#include "compiler/native/native_roots.h"
 
 namespace vela::compiler::aot {
 
-enum class NativeOptimization : std::uint8_t { None, Release };
 enum class NativeEntryMode : std::uint8_t { Library, Executable };
 
 struct NativeOptions final {
@@ -39,7 +39,7 @@ struct NativeArtifact final {
   std::string instantiate_symbol;
   NativeOptimization optimization = NativeOptimization::Release;
   ir::Program program;
-  std::vector<NativeFunctionMetrics> function_metrics;
+  std::vector<native::NativeFunctionMetrics> function_metrics;
 };
 
 [[nodiscard]] std::string NativeToolchainBuildIdentity(NativeOptimization optimization);

@@ -16,6 +16,7 @@
 
 #include "base/execution_status.h"
 #include "runtime/exception.h"
+#include "runtime/external_resources.h"
 #include "runtime/future.h"
 #include "runtime/object.h"
 #include "runtime/register_storage.h"
@@ -28,11 +29,18 @@ struct RegExpStorage;
 struct RegExpMatchStorage;
 struct NativeProgramState;
 
+enum class RootOwner : std::uint8_t { Runtime, Host, RootedValue, NativeInstance, NativeHandle };
+
 class RootRange final {
  public:
-  RootRange() noexcept = default;
-  RootRange(Heap& heap, const Value* values, std::size_t count) noexcept;
-  RootRange(Heap& heap, std::span<StringObject* const> strings) noexcept;
+  explicit RootRange(RootOwner owner = RootOwner::Host) noexcept : owner_(owner) {}
+  RootRange(Heap& heap,
+            const Value* values,
+            std::size_t count,
+            RootOwner owner = RootOwner::Host) noexcept;
+  RootRange(Heap& heap,
+            std::span<StringObject* const> strings,
+            RootOwner owner = RootOwner::Host) noexcept;
   ~RootRange();
 
   RootRange(const RootRange&) = delete;
@@ -56,6 +64,8 @@ class RootRange final {
   RootRange* next_ = nullptr;
   RootRange** previous_link_ = nullptr;
   Kind kind_ = Kind::Values;
+  RootOwner owner_;
+  std::uint64_t identity_ = 0;
 };
 
 enum class GcPhase : std::uint8_t {
@@ -129,8 +139,11 @@ class Heap final {
       std::unique_ptr<NativeProgramState> state) noexcept;
   [[nodiscard]] static NativeProgramState& NativeProgram(HeapObject& object) noexcept;
   void SetNativeProgramSlot(HeapObject& object, std::size_t index, Value value) noexcept;
-  void SetNativeEnvironment(HeapObject& callable, HeapObject& state) noexcept;
+  void SetNativeEnvironment(HeapObject& callable,
+                            HeapObject& state,
+                            std::uint32_t function) noexcept;
   [[nodiscard]] static HeapObject* NativeEnvironment(const HeapObject& callable) noexcept;
+  [[nodiscard]] static std::uint32_t NativeFunctionIndex(const HeapObject& callable) noexcept;
   [[nodiscard]] HeapObject* AllocateFuture(Future future) noexcept;
   [[nodiscard]] static Future* GetFuture(const HeapObject& object) noexcept;
   [[nodiscard]] HeapObject* AllocateCompleter(Future future) noexcept;
@@ -324,6 +337,7 @@ class Heap final {
   [[nodiscard]] std::size_t object_count() const noexcept { return object_count_; }
   [[nodiscard]] std::size_t allocated_bytes() const noexcept { return allocated_bytes_; }
   [[nodiscard]] std::size_t committed_bytes() const noexcept { return committed_bytes_; }
+  void AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const;
 
  private:
   void MarkByteData(HeapObject& object) noexcept;
@@ -403,6 +417,7 @@ class Heap final {
   HeapObject* gray_ = nullptr;
   HeapObject** sweep_link_ = nullptr;
   RootRange* roots_ = nullptr;
+  std::uint64_t next_root_identity_ = 0;
   std::vector<Future::Root> future_roots_;
   std::array<HeapObject*, kSizeClasses.size()> free_blocks_{};
 

@@ -105,8 +105,8 @@ TEST(RuntimeTest, ArrayStorageSurvivesCollectionAndReuse) {
   Isolate isolate;
   Heap& heap = isolate.heap();
   auto* layout = isolate.CreateClassLayout(0, std::span<const std::uint32_t>());
-  const auto* array_layout =
-      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = layout}});
+  const auto* array_layout = isolate.CreateArrayLayout(
+      {.element = {.kind = ValueKind::Object, .nominal = &layout->nominal_type()}});
   Value array = Value::Object(heap.AllocateArray(*array_layout, 1));
   RootRange roots(heap, &array, 1);
   auto* child = heap.AllocateInstance(*layout);
@@ -171,8 +171,8 @@ TEST(RuntimeTest, NestedArrayWriteBarrierRetainsChildrenAndRejectsWrongLayouts) 
   auto& heap = isolate.heap();
   auto* record = isolate.CreateClassLayout(0, {});
   auto* other_record = isolate.CreateClassLayout(0, {});
-  const auto* records =
-      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = record}});
+  const auto* records = isolate.CreateArrayLayout(
+      {.element = {.kind = ValueKind::Object, .nominal = &record->nominal_type()}});
   const auto* nested =
       isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .array = records}});
   Value root = Value::Object(heap.AllocateArray(*nested, 1));
@@ -199,8 +199,8 @@ TEST(RuntimeTest, ArrayWriteBarrierRetainsUnsweptChild) {
   Isolate isolate;
   auto& heap = isolate.heap();
   auto* record = isolate.CreateClassLayout(0, {});
-  const auto* records =
-      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = record}});
+  const auto* records = isolate.CreateArrayLayout(
+      {.element = {.kind = ValueKind::Object, .nominal = &record->nominal_type()}});
   auto* child = heap.AllocateInstance(*record);
   Value root = Value::Object(heap.AllocateArray(*records, 1));
   RootRange roots(heap, &root, 1);

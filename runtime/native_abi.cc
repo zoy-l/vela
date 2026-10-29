@@ -32,7 +32,8 @@ NativeFrame::~NativeFrame() {
 NativeExecution::NativeExecution(NativeInstance& instance) noexcept
     : instance_(&instance),
       context_(instance.isolate()),
-      exception_root_(isolate().heap(), &pending_exception_, 1) {}
+      exception_root_(isolate().heap(), &pending_exception_, 1, RootOwner::Runtime),
+      execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {}
 
 NativeInstanceScope::NativeInstanceScope(NativeExecution& execution,
                                          NativeInstance& instance) noexcept
@@ -65,7 +66,8 @@ ExecutionStatus NativeExecution::Enter(NativeTraceFrame& frame, std::uint32_t fu
 }
 
 void NativeExecution::MaterializeFrame(NativeTraceFrame& frame, std::uint32_t function) noexcept {
-  frame = {.position = {.function = function}, .previous = current_frame_};
+  frame = {
+      .position = {.function = function}, .previous = current_frame_, .image = &instance().image()};
   current_frame_ = &frame;
   ++frame_count_;
 }
@@ -101,7 +103,7 @@ extern "C" void vela_native_v1_roots_enter(NativeExecution* execution,
                                            RootRange* range) noexcept {
   const auto size = static_cast<std::size_t>(count);
   std::uninitialized_value_construct_n(roots, size);
-  std::construct_at(range, execution->isolate().heap(), roots, size);
+  std::construct_at(range, execution->isolate().heap(), roots, size, RootOwner::Runtime);
 }
 
 extern "C" void vela_native_v1_roots_exit(RootRange* range) noexcept {
@@ -113,8 +115,8 @@ extern "C" std::uint8_t vela_native_v2_leaf_failure(NativeExecution* execution,
                                                     std::uint8_t status,
                                                     const Value* roots,
                                                     std::uint64_t root_count) {
-  const RootRange retained(execution->isolate().heap(), roots,
-                           static_cast<std::size_t>(root_count));
+  const RootRange retained(execution->isolate().heap(), roots, static_cast<std::size_t>(root_count),
+                           RootOwner::Runtime);
   NativeTraceFrame frame;
   const auto decoded = DecodeNativeTracePosition(position);
   execution->MaterializeFrame(frame, decoded.function);

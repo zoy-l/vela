@@ -56,7 +56,7 @@ HeapObject* Heap::AllocateByteArray(std::size_t length) noexcept {
 
 HeapObject* Heap::AllocateByteData(HeapObject& owner, ByteViewRange range) noexcept {
   const auto input = Value::Object(&owner);
-  RootRange root(*this, &input, 1);
+  RootRange root(*this, &input, 1, RootOwner::Runtime);
   const auto size = sizeof(HeapObject) + sizeof(ByteView);
   return AllocateObject(ObjectKind::ByteData, size, [&owner, range](HeapObject& object) {
     object.length = range.length;

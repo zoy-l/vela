@@ -29,7 +29,7 @@ void ExpectIsolatedNodeLayouts(const runtime::ProgramLayouts& first,
   const auto nested = std::ranges::find_if(
       first.arrays, [](const auto* array) { return array->element.array != nullptr; });
   ASSERT_NE(nested, first.arrays.end());
-  EXPECT_EQ((*nested)->element.array->element.instance, first_node);
+  EXPECT_EQ((*nested)->element.array->element.nominal, &first_node->nominal_type());
 }
 
 void ExpectExpectedNodeArray(const runtime::TypeSignature& expected,
@@ -40,7 +40,7 @@ void ExpectExpectedNodeArray(const runtime::TypeSignature& expected,
     return;
   }
   ASSERT_NE(result->array, nullptr);
-  EXPECT_EQ(result->array->element.instance, node);
+  EXPECT_EQ(result->array->element.nominal, &node->nominal_type());
   ASSERT_EQ(expected.parameters.size(), 1U);
   EXPECT_EQ(expected.parameters.front().type.kind, runtime::ValueKind::String);
 }

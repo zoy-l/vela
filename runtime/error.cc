@@ -12,7 +12,7 @@
 namespace vela::runtime {
 
 std::string_view ErrorMessage(Value value, const ClassLayout& layout) noexcept {
-  if (!Heap::IsValueOfType(value, {.kind = ValueKind::Object, .instance = &layout})) {
+  if (!Heap::IsValueOfType(value, {.kind = ValueKind::Object, .nominal = &layout.nominal_type()})) {
     return {};
   }
   const auto* field = Heap::GetField(*value.AsObject(), kErrorMessageField);
@@ -23,7 +23,7 @@ std::expected<Value, ExecutionStatus> CreateError(Heap& heap,
                                                   const ClassLayout& layout,
                                                   ErrorFields fields) {
   std::array<Value, kErrorFieldCount> values;
-  RootRange roots(heap, values.data(), values.size());
+  RootRange roots(heap, values.data(), values.size(), RootOwner::Runtime);
   auto* text = heap.AllocateString(fields.message);
   if (text == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);

@@ -154,33 +154,42 @@ def link_configuration() -> dict[str, str | list[str]]:
                                 capture_output=True, text=True, encoding="utf-8")
         return shlex.split(result.stdout, posix=True)
 
-    components = ("core", "passes", "nativecodegen")
-    libraries = [directory / "lib" / name
-                 for name in query("--libnames", *components)]
-    for library in libraries:
-        if not library.is_file():
-            raise RuntimeError(f"Missing LLVM static library: {library}")
-    system = []
-    for argument in query("--system-libs", *components):
-        name = Path(argument).name
-        if name == "libxml2s.lib" and not any(
-                library.stem == "LLVMWindowsManifest" for library in libraries):
-            # llvm-config 汇总了全部组件的系统库；libxml2 只属于 WindowsManifest，
-            # 当前代码生成组件闭包不包含它。此处按组件归属筛选，不按文件缺失降级。
-            continue
-        if name in {"libzstd.a", "zstd.lib", "-lzstd"}:
-            # 发布方的绝对安装路径不是本地依赖；zstd 由本仓库的固定源码构建。
-            continue
-        if argument.startswith("-l"):
-            system.append(argument[2:])
-        elif not Path(argument).is_absolute() and argument.endswith(".lib"):
-            system.append(argument)
-        else:
-            raise RuntimeError(f"Unmanaged LLVM system library: {argument}")
+    def select(components: tuple[str, ...]) -> tuple[list[str], list[str]]:
+        libraries = [directory / "lib" / name
+                     for name in query("--libnames", *components)]
+        for library in libraries:
+            if not library.is_file():
+                raise RuntimeError(f"Missing LLVM static library: {library}")
+        system = []
+        for argument in query("--system-libs", *components):
+            name = Path(argument).name
+            if name == "libxml2s.lib" and not any(
+                    library.stem == "LLVMWindowsManifest" for library in libraries):
+                # llvm-config 汇总了全部组件的系统库；libxml2 只属于 WindowsManifest，
+                # 当前代码生成组件闭包不包含它。此处按组件归属筛选，不按文件缺失降级。
+                continue
+            if name in {"libzstd.a", "zstd.lib", "-lzstd"}:
+                # 发布方的绝对安装路径不是本地依赖；zstd 由本仓库的固定源码构建。
+                continue
+            if argument.startswith("-l"):
+                system.append(argument[2:])
+            elif not Path(argument).is_absolute() and argument.endswith(".lib"):
+                system.append(argument)
+            else:
+                raise RuntimeError(f"Unmanaged LLVM system library: {argument}")
+        return [path.as_posix() for path in libraries], system
+
+    core = ("core", "passes", "nativecodegen")
+    libraries, system = select(core)
+    jit_libraries, jit_system = select(core + ("orcjit", "orcdebugging", "jitlink",
+                                             "orctargetprocess"))
     return {"vela_llvm_root": directory.as_posix(),
+            "vela_llvm_rtti": query("--has-rtti")[0],
             "vela_llvm_target": query("--host-target")[0],
-            "vela_llvm_libraries": [path.as_posix() for path in libraries],
-            "vela_llvm_system_libraries": system}
+            "vela_llvm_libraries": libraries,
+            "vela_llvm_jit_libraries": jit_libraries,
+            "vela_llvm_system_libraries": system,
+            "vela_llvm_jit_system_libraries": jit_system}
 
 
 def main(arguments: list[str] | None = None) -> int:

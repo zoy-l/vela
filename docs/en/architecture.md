@@ -4,10 +4,12 @@
 
 
 Vela is a statically typed scripting language for native applications. The
-first execution path is a compiled register bytecode VM. Native AOT is a later
-backend of the same typed intermediate representation. JIT is deliberately
-outside the first implementation boundary and must not shape the runtime API
-before a benchmark demonstrates that it is needed.
+first execution path is a compiled register bytecode VM. Native AOT uses the
+same typed intermediate representation. Development JIT, runtime script loading,
+stateful hot reload, and Reload through a new script Isolate are specified in
+the [JIT and hot reload design (Chinese)](../zh-CN/hot_reload.md); these features
+are not implemented. The shared runtime continues to own values, GC, async
+operations, and host integration regardless of execution backend.
 
 ## Source model
 
@@ -87,15 +89,16 @@ source
   -> Vela VM
 ```
 
-Typed IR is the semantic boundary shared by bytecode and future native
-backends. Bytecode is a separate execution representation optimized for dense
-decoding and predictable register access; it is not used as the compiler's
-general optimization graph.
+Typed IR is the semantic boundary shared by bytecode and native AOT; the proposed
+JIT branches from the same boundary. Bytecode is a separate execution
+representation optimized for dense decoding and predictable register access; it
+is not used as the compiler's general optimization graph.
 
 The [native AOT design](aot.md) specifies the LLVM backend, native execution,
 GC/async contracts, and distribution without a separate user installation of
-Clang/LLVM. It is not implemented yet. AOT branches after common IR optimization,
-before VM register allocation and bytecode encoding.
+Clang/LLVM. That document records the implemented scope and release acceptance
+status. AOT branches after common IR optimization, before VM register allocation
+and bytecode encoding.
 
 The VM bootstrap now consumes the runtime root contract directly: each frame
 register span is registered as a root range for the duration of execution.
@@ -179,10 +182,12 @@ cannot prove its precondition.
 
 ## Memory and object boundary
 
-One VM isolate owns its heap and registered host references. Class instances
-have stable handles and a fixed layout; field offsets are assigned once when a
-class is compiled. The runtime does not expose C++ object layout directly to
-scripts.
+One VM isolate owns its heap and registered host references. Current class
+instances have stable handles and a fixed layout; field offsets are assigned
+once when a class is compiled. The proposed reloadable mode preserves object
+addresses with replaceable field storage; its layout and lifetime contracts are
+defined in the [hot reload design (Chinese)](../zh-CN/hot_reload.md#6-对象布局与状态演化).
+The runtime does not expose C++ object layout directly to scripts.
 
 The runtime foundation uses a precise, non-moving, incremental mark-and-sweep
 collector with an isolate-local allocation path. Each class layout records its

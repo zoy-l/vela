@@ -4,8 +4,10 @@
 #include <cassert>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <tuple>
 #include <utility>
@@ -17,14 +19,27 @@
 namespace vela::runtime {
 
 void Timer::Cancel() noexcept {
-  if (state_->cancelled.exchange(true)) {
-    return;
+  {
+    const std::scoped_lock lock(state_->mutex);
+    if (state_->cancelled.exchange(true)) {
+      return;
+    }
+    auto* scheduler = state_->scheduler;
+    if (scheduler != nullptr && !scheduler->IsOwnerThread()) {
+      scheduler->PostMicrotask([state = state_] { Close(*state); });
+      return;
+    }
   }
-  auto* scheduler = state_->scheduler;
-  if (scheduler != nullptr && !scheduler->IsOwnerThread()) {
-    scheduler->PostMicrotask([state = state_] { state->callback = {}; });
-  } else {
-    state_->callback = {};
+  Close(*state_);
+}
+
+void Timer::Close(State& state) noexcept {
+  std::function<void()> retired;
+  {
+    const std::scoped_lock lock(state.mutex);
+    state.cancelled = true;
+    state.scheduler = nullptr;
+    retired.swap(state.callback);
   }
 }
 
@@ -34,12 +49,32 @@ FutureScheduler::~FutureScheduler() {
 
 void FutureScheduler::Shutdown() {
   assert(IsOwnerThread());
+  for (const auto& [identity, state] : completion_endpoints_) {
+    FutureCompletionEndpoint::Close(*state);
+  }
+  completion_endpoints_.clear();
   ReceiveMessages();
   host_events_.clear();
   microtasks_.clear();
   checkpoints_.clear();
   while (!events_.empty()) {
+    Timer::Close(*events_.top().state);
     events_.pop();
+  }
+}
+
+void FutureScheduler::RetireCompletionEndpoint(std::uint64_t identity) {
+  const auto found = completion_endpoints_.find(identity);
+  FutureCompletionEndpoint::Close(*found->second);
+  completion_endpoints_.erase(found);
+}
+
+void FutureScheduler::AppendExternalResources(std::vector<ExternalResourceInfo>& result) const {
+  external_resources_.AppendTo(result);
+  const auto accesses = host_accesses_.load(std::memory_order_acquire);
+  if (accesses != 0) {
+    result.push_back(
+        {.kind = ExternalResourceKind::HostAccess, .identity = 0, .references = accesses});
   }
 }
 
@@ -173,6 +208,7 @@ void FutureScheduler::DrainMicrotasks() {
 
 bool FutureScheduler::PumpOne(FuturePumpMode mode) {
   assert(IsOwnerThread());
+  const ExternalResource execution(external_resources_, ExternalResourceKind::Execution);
   while (true) {
     if (!microtasks_.empty() || !checkpoints_.empty()) {
       DrainMicrotasks();
@@ -187,6 +223,7 @@ bool FutureScheduler::PumpOne(FuturePumpMode mode) {
       return true;
     }
     while (!events_.empty() && events_.top().state->cancelled.load()) {
+      Timer::Close(*events_.top().state);
       events_.pop();
     }
     if (events_.empty()) {
@@ -219,6 +256,8 @@ void FutureScheduler::Fire(Event event) {
     event.deadline = Clock::now() + event.interval;
     event.sequence = next_sequence_++;
     events_.push(std::move(event));
+  } else {
+    Timer::Close(state);
   }
 }
 

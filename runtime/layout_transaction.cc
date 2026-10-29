@@ -21,6 +21,7 @@ LayoutTransaction::~LayoutTransaction() {
     isolate_->collection_layouts_.resize(initial_.collections);
     isolate_->array_layouts_.resize(initial_.arrays);
     isolate_->class_layouts_.resize(initial_.classes);
+    isolate_->nominal_types_.resize(initial_.nominal_types);
     isolate_->type_signatures_.resize(initial_.signatures);
     isolate_->interface_types_.resize(initial_.interfaces);
     isolate_->code_identities_.resize(initial_.code_identities);

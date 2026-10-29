@@ -118,7 +118,7 @@ void ImageWriter::AddElement(const runtime::ArrayLayout& element) {
 }
 
 void ImageWriter::AddType(const runtime::TypeConstraint& type) {
-  classes.Add(type.instance);
+  classes.Add(type.nominal == nullptr ? nullptr : type.nominal->fixed_layout());
   arrays.Add(type.array);
   collections.Add(type.collection);
   interfaces.Add(type.interface);
@@ -162,7 +162,7 @@ void ImageWriter::WriteType(const runtime::TypeConstraint& type) {
                                 (type.dynamic ? internal::kDynamicImageFlag : 0));
   writer.Write(flags);
   writer.Write(interfaces.Index(type.interface));
-  writer.Write(classes.Index(type.instance));
+  writer.Write(classes.Index(type.nominal == nullptr ? nullptr : type.nominal->fixed_layout()));
   writer.Write(arrays.Index(type.array));
   writer.Write(collections.Index(type.collection));
   writer.Write(signatures.Index(type.signature));

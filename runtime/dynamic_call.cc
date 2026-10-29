@@ -22,7 +22,7 @@ namespace vela::runtime {
 
 std::expected<Value, ExecutionStatus> CreateDynamicCallPlan(Heap& heap,
                                                             const DynamicCallPlan& plan) {
-  const RootRange root(heap, &plan.value, 1);
+  const RootRange root(heap, &plan.value, 1, RootOwner::Runtime);
   auto* storage = heap.AllocateValueSlots(2);
   if (storage == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
@@ -97,7 +97,7 @@ struct ArgumentBinding final {
 };
 
 Value Unbox(Value value, const TypeConstraint& type) {
-  return !value.IsNull() && type.instance != nullptr && type.instance->IsEnum()
+  return !value.IsNull() && type.nominal != nullptr && type.nominal->IsEnum()
              ? *Heap::GetField(*value.AsObject(), 0)
              : value;
 }

@@ -93,6 +93,24 @@ Reading `handle.value()` does not create another root. Native parameters remain
 rooted only for the duration of invocation; persistent host references need their
 own `RootedValue`.
 
+Before replacing an Isolate, the host stops creating new borrows and releases its
+external handles. `Isolate::ReloadBlockers()` lists remaining roots, native instances,
+opaque native handles, named declaration entries, prepared native publications,
+Programs, Futures, active execution and host releases still in progress. Each entry
+identifies the resource kind, its identity within that Isolate, and its reference count.
+`TryStop()` returns the same diagnostics without changing the
+running state when resources remain. On success it closes completion endpoints,
+discards queued callbacks and timers, and collects unreachable state. It does not
+destroy the Isolate; the owner releases its runtime storage before destroying it.
+Runtime roots use `RootOwner::Runtime`; ordinary host `RootRange` instances are
+external by default. Internal retained handles are reserved for runtime ownership,
+and do not remove the host's obligation to release its own borrows.
+
+`Isolate::FreezeBindings()` captures the fixed native registration set and prevents
+further registration with `NativeRegistrationError::BindingsFrozen`. Constructing a
+new Isolate from that `NativeBindings` snapshot shares the same immutable binding
+implementations and signatures while creating independent script state.
+
 Script callable values refer to function indices in their producing Program.
 Invocation requires the producing code identity, shared across REPL submissions; independently compiled
 programs cannot invoke each other's callable values received through native Future payloads. Such

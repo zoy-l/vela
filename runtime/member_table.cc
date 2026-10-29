@@ -31,7 +31,7 @@ MemberTable::MemberTable(std::span<const TypeConstraint> types,
 }
 
 MemberTable::ReceiverKey MemberTable::Key(const TypeConstraint& type) {
-  return {type.kind, type.object_kind, type.instance, type.array, type.collection, type.signature};
+  return {type.kind, type.object_kind, type.nominal, type.array, type.collection, type.signature};
 }
 
 bool MemberTable::IsCanonicalReceiverType(std::uint32_t index) const {

@@ -6,7 +6,10 @@
 #include <string>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
+
 #include "base/builtin.h"
+#include "base/declaration.h"
 
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_file.h"
@@ -22,6 +25,23 @@ struct TypeName final {
   std::vector<TypeName> arguments;
 
   [[nodiscard]] std::string ToString() const;
+};
+
+// 名称绑定前的声明来源；键使用绑定后的符号名，值不受导入别名或模块排序影响。
+// 泛型具体化保留模板来源及规范化实参，不从生成名称反向解析身份。
+struct DeclarationOrigin final {
+  struct Member final {
+    DeclarationKind kind = DeclarationKind::Field;
+    std::string name;
+    bool has_initializer = false;
+  };
+  std::string module_uri;
+  std::string name;
+  DeclarationKind kind = DeclarationKind::Function;
+  std::vector<TypeName> arguments;
+  // 模板离开 AST 后仍保留声明结构；具体特化暂时不可达不代表这些声明已删除。
+  std::vector<std::string> type_parameters;
+  std::vector<Member> members;
 };
 
 struct Expression;
@@ -253,6 +273,7 @@ struct Program final {
   std::vector<TypeAlias> aliases;
   std::vector<Interface> interfaces;
   std::vector<Global> globals;
+  absl::flat_hash_map<std::string, DeclarationOrigin> origins;
 };
 
 }  // namespace vela::frontend

@@ -20,6 +20,7 @@
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/persistent_ids.h"
 
@@ -36,8 +37,14 @@ class Lowerer final {
  public:
   Lowerer(const frontend::Program& source,
           const frontend::SemanticModel& model,
-          PersistentIds* persistent = nullptr) noexcept
-      : source_(source), model_(model), persistent_(persistent) {}
+          PersistentIds* persistent = nullptr,
+          const DeclarationBindings* declarations = nullptr,
+          NativeProgramMode native_mode = NativeProgramMode::Closed) noexcept
+      : source_(source),
+        model_(model),
+        persistent_(persistent),
+        declarations_(declarations),
+        native_mode_(native_mode) {}
 
   // lowering 状态借用固定的 AST 和语义模型；执行上下文不允许复制或迁移。
   ~Lowerer() = default;
@@ -353,6 +360,8 @@ class Lowerer final {
   const frontend::Program& source_;
   const frontend::SemanticModel& model_;
   PersistentIds* persistent_;
+  const DeclarationBindings* declarations_;
+  NativeProgramMode native_mode_;
   Program program_;
   frontend::Diagnostics diagnostics_;
   ClassMap class_ids_;

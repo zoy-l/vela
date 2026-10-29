@@ -168,7 +168,7 @@ TEST(CollectionTest, TracesLiveEntriesAndReclaimsRemovedCyclesAndBuffers) {
   const std::array<std::uint32_t, 1> references = {0};
   auto* instance = isolate.CreateClassLayout(1, references);
   const auto* layout = isolate.CreateCollectionLayout({
-      .keys = {.element = {.kind = ValueKind::Object, .instance = instance}},
+      .keys = {.element = {.kind = ValueKind::Object, .nominal = &instance->nominal_type()}},
       .values = ArrayLayout{.element = {.kind = ValueKind::String}},
   });
   std::array<Value, 3> values;

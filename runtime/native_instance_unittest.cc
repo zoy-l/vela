@@ -3,14 +3,20 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string_view>
+#include <utility>
 
 #include <gtest/gtest.h>
 
 #include "base/layout_description.h"
+#include "runtime/external_resources.h"
 #include "runtime/isolate.h"
+#include "runtime/native_abi.h"
+#include "runtime/native_context.h"
 #include "runtime/native_function.h"
 #include "runtime/native_image.h"
+#include "runtime/rooted_value.h"
 #include "runtime/string.h"
 
 namespace vela::runtime {
@@ -130,6 +136,86 @@ TEST(NativeInstanceTest, ReusesCodeIdentityAndSeparatesConstantsAndIsolates) {
   const auto third = NativeInstance::Instantiate(other, image);
   ASSERT_TRUE(third.has_value());
   EXPECT_NE((*first)->layouts().classes.front(), (*third)->layouts().classes.front());
+}
+
+TEST(NativeInstanceTest, DynamicImageOwnerIsRetainedByReachableCallableAndReleasedAfterCollection) {
+  Isolate isolate(1);
+  NativeFunctionDescription function;
+  function.name = Text("function");
+  const std::array functions{function};
+  NativeClassDescription callable;
+  callable.name = Text("Closure");
+  callable.callable_function = 0;
+  const std::array classes{callable};
+  auto image = std::make_shared<NativeImage>(Image());
+  image->classes = Table(classes);
+  image->functions = Table(functions);
+  const std::weak_ptr<const NativeImage> lifetime = image;
+  auto created = NativeInstance::Instantiate(isolate, image);
+  ASSERT_TRUE(created);
+  auto instance = std::move(*created);
+  auto& heap = isolate.heap();
+  auto* closure = heap.AllocateInstance(*instance->layouts().classes.front());
+  ASSERT_NE(closure, nullptr);
+  heap.SetNativeEnvironment(*closure, *instance->state().front().AsObject(),
+                            instance->layouts().classes.front()->callable()->function);
+  {
+    const RootedValue root(isolate, Value::Object(closure));
+    instance.reset();
+    image.reset();
+    heap.Collect();
+    EXPECT_FALSE(lifetime.expired());
+    auto borrowed = NativeInstance::Borrow(*Heap::NativeEnvironment(*root.value().AsObject()));
+    EXPECT_EQ(borrowed.image().functions.values().front().name.text(), "function");
+  }
+  heap.Collect();
+  EXPECT_TRUE(lifetime.expired());
+}
+
+TEST(NativeInstanceTest, DynamicImageCacheReusesLiveOwnerWithoutKeepingCodeAlive) {
+  Isolate isolate;
+  auto image = std::make_shared<NativeImage>(Image());
+  const std::weak_ptr<const NativeImage> lifetime = image;
+  auto first = NativeInstance::Instantiate(isolate, image);
+  ASSERT_TRUE(first);
+  auto second = NativeInstance::Instantiate(isolate, image);
+  ASSERT_TRUE(second);
+  EXPECT_EQ(&(*first)->code_identity(), &(*second)->code_identity());
+  first->reset();
+  second->reset();
+  image.reset();
+  isolate.heap().Collect();
+  EXPECT_TRUE(lifetime.expired());
+}
+
+TEST(NativeInstanceTest, ExternalInstanceMustBeReleasedBeforeStop) {
+  Isolate isolate;
+  const auto image = Image();
+  auto instance = NativeInstance::Instantiate(isolate, image);
+  ASSERT_TRUE(instance);
+  const auto refused = isolate.TryStop();
+  ASSERT_FALSE(refused);
+  ASSERT_EQ(refused.error().size(), 1U);
+  EXPECT_EQ(refused.error().front().kind, ExternalResourceKind::NativeInstance);
+  instance->reset();
+  EXPECT_TRUE(isolate.TryStop());
+}
+
+TEST(NativeInstanceTest, BorrowedExecutionBlocksStopUntilItsNativeStackReturns) {
+  Isolate isolate;
+  const auto image = Image();
+  auto instance = NativeInstance::Instantiate(isolate, image);
+  ASSERT_TRUE(instance);
+  {
+    auto borrowed = NativeInstance::Borrow(*(*instance)->state().front().AsObject());
+    instance->reset();
+    NativeExecution execution(borrowed);
+    const auto refused = isolate.TryStop();
+    ASSERT_FALSE(refused);
+    ASSERT_EQ(refused.error().size(), 1U);
+    EXPECT_EQ(refused.error().front().kind, ExternalResourceKind::Execution);
+  }
+  EXPECT_TRUE(isolate.TryStop());
 }
 
 }  // namespace

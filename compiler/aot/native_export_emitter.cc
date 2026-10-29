@@ -24,12 +24,18 @@
 
 #include "base/execution_status.h"
 #include "compiler/aot/native_compiler.h"
-#include "compiler/aot/native_values.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/native_values.h"
 #include "runtime/native_api.h"
 
 namespace vela::compiler::aot {
 namespace {
+
+using native::Builder;
+using native::Kind;
+using native::NativeRecordType;
+using native::SourceType;
+using native::Status;
 
 enum class Shape : std::uint8_t { Integer, Double, Boolean, Record, Handle, Void };
 
@@ -194,7 +200,8 @@ std::expected<void, std::string> EmitExport(llvm::Module& module,
                                             const ir::Function& source,
                                             const NativeExport& description) {
   const auto count = source.parameter_count;
-  if ((static_cast<std::uint64_t>(count) + 1) * sizeof(VelaAotValue) > kMaximumNativeStackBytes) {
+  if ((static_cast<std::uint64_t>(count) + 1) * sizeof(VelaAotValue) >
+      native::kMaximumNativeStackBytes) {
     return std::unexpected("AOT public wrapper arguments exceed the native stack budget");
   }
   auto& context = module.getContext();

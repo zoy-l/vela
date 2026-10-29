@@ -42,6 +42,7 @@ ParsedSource ParseSourceSnapshot(std::string source, std::uint32_t source_id) {
 }
 
 void AppendProgram(Program& destination, Program source) {
+  destination.origins.merge(source.origins);
   std::ranges::move(source.enums, std::back_inserter(destination.enums));
   std::ranges::move(source.classes, std::back_inserter(destination.classes));
   std::ranges::move(source.functions, std::back_inserter(destination.functions));

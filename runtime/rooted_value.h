@@ -18,7 +18,8 @@ class RootedValue final {
 
  private:
   struct Storage final {
-    Storage(Heap& heap, Value source) : value(source), root(heap, &value, 1) {}
+    Storage(Heap& heap, Value source)
+        : value(source), root(heap, &value, 1, RootOwner::RootedValue) {}
     Value value;
     RootRange root;
   };

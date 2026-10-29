@@ -5,6 +5,7 @@
 #include <span>
 
 #include "base/execution_status.h"
+#include "runtime/callable.h"
 #include "runtime/future_composition.h"
 #include "runtime/native_abi.h"
 #include "runtime/native_instance.h"
@@ -12,8 +13,32 @@
 
 namespace vela::runtime {
 
+[[nodiscard]] std::expected<HeapObject*, ExecutionStatus> AllocateNativeCallable(
+    NativeExecution& execution,
+    const ClassLayout& layout,
+    std::span<const Value> captures = {});
+[[nodiscard]] std::expected<void, ExecutionStatus> CaptureNativeReceiver(NativeExecution& execution,
+                                                                         HeapObject& callable);
+extern "C" std::uint8_t vela_native_v3_capture_receiver(NativeExecution* execution,
+                                                        HeapObject* callable);
+
 // 仅捕获 Isolate 与代码身份；回调的实例状态由 callable 的 managed 边保留。
 [[nodiscard]] FutureCallbacks NativeFutureCallbacks(const NativeInstance& instance);
+
+struct NativeResolvedCallable final {
+  HeapObject* state = nullptr;
+  ResolvedCallable target;
+};
+
+[[nodiscard]] std::expected<NativeResolvedCallable, ExecutionStatus> ResolveNativeCallable(
+    const NativeInstance& caller,
+    Value callable);
+
+// 公开命名/版本入口与 AOT 宿主包装共用参数检查；Value 参数在执行期间保根。
+[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeEntry(
+    NativeExecution& execution,
+    std::uint32_t function,
+    std::span<const Value> arguments);
 
 namespace internal {
 
@@ -49,6 +74,16 @@ extern "C" std::uint8_t vela_native_v1_call_indirect(NativeExecution* execution,
                                                      NativeValue* result);
 extern "C" std::uint8_t vela_native_v1_call_interface(NativeExecution* execution,
                                                       std::uint32_t selector,
+                                                      const NativeValue* arguments,
+                                                      std::uint64_t count,
+                                                      NativeValue* result);
+extern "C" std::uint8_t vela_native_v3_call_declaration(NativeExecution* execution,
+                                                        std::uint64_t declaration,
+                                                        const NativeValue* arguments,
+                                                        std::uint64_t count,
+                                                        NativeValue* result);
+extern "C" std::uint8_t vela_native_v3_call_interface(NativeExecution* execution,
+                                                      std::uint64_t selector,
                                                       const NativeValue* arguments,
                                                       std::uint64_t count,
                                                       NativeValue* result);

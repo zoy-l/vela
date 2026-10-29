@@ -1,5 +1,5 @@
-#include "compiler/aot/function_emitter.h"
-#include "compiler/aot/integer_loop_optimizer.h"
+#include "compiler/native/function_emitter.h"
+#include "compiler/native/integer_loop_optimizer.h"
 
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
@@ -12,13 +12,13 @@
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/opcode.h"
-#include "compiler/aot/native_values.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/native_values.h"
 #include "runtime/heap.h"
 #include "runtime/native_memory_layout.h"
 #include "runtime/value.h"
 
-namespace vela::compiler::aot {
+namespace vela::compiler::native {
 
 llvm::Value* FunctionEmitter::Encode(ir::RegisterId reg) {
   return EncodeValue(builder_, Load(reg), source_.value_types.at(reg));
@@ -125,6 +125,15 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       const auto count = static_cast<std::size_t>(instruction.immediate);
       for (std::size_t argument = 0; argument < count; ++argument) {
         Pack(Encode(static_cast<ir::RegisterId>(instruction.lhs + argument)), argument);
+      }
+      if (program_.native_mode == NativeProgramMode::Reloadable) {
+        const auto selector = program_.selector_declarations.at(instruction.index);
+        auto helper = module_.getOrInsertFunction("vela_native_v3_call_interface", status_type,
+                                                  pointer, builder_.getInt64Ty(), pointer,
+                                                  builder_.getInt64Ty(), pointer);
+        status = builder_.CreateCall(helper, {context, builder_.getInt64(selector.value),
+                                              arguments_, builder_.getInt64(count), result_});
+        break;
       }
       auto helper =
           module_.getOrInsertFunction("vela_native_v1_call_interface", status_type, pointer, word,
@@ -290,4 +299,4 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
   return {};
 }
 
-}  // namespace vela::compiler::aot
+}  // namespace vela::compiler::native

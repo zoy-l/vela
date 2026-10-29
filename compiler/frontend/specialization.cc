@@ -150,6 +150,11 @@ std::string Specializer::Instantiate(const std::string& name,
     return key;
   }
   instantiated_.insert(key);
+  if (const auto origin = program_.origins.find(name); origin != program_.origins.end()) {
+    auto concrete_origin = origin->second;
+    concrete_origin.arguments = arguments;
+    program_.origins.emplace(key, std::move(concrete_origin));
+  }
   // 模板表在 CollectTemplates 后不再插入或改写，队列借用的节点地址保持稳定。
   if (const auto found = function_templates_.find(name); found != function_templates_.end()) {
     auto substitutions = Bind(found->second.type_parameters, arguments, location);
@@ -486,6 +491,9 @@ void Specializer::CollectDeclarations() {
 
 void Specializer::CollectTemplates() {
   for (auto& alias : program_.aliases) {
+    if (const auto origin = program_.origins.find(alias.name); origin != program_.origins.end()) {
+      origin->second.type_parameters = alias.type_parameters;
+    }
     if (IsBuiltinName(alias.name)) {
       Error(alias.location, "type alias name is reserved for a builtin");
     }
@@ -501,6 +509,9 @@ void Specializer::CollectTemplates() {
       functions_.push_back({.declaration = std::move(function), .substitutions = {}});
     } else {
       const auto name = function.name;
+      if (const auto origin = program_.origins.find(name); origin != program_.origins.end()) {
+        origin->second.type_parameters = function.type_parameters;
+      }
       function_templates_.emplace(name, std::move(function));
     }
   }
@@ -512,6 +523,28 @@ void Specializer::CollectTemplates() {
       classes_.push_back({.declaration = std::move(owner), .substitutions = {}});
     } else {
       const auto name = owner.name;
+      if (const auto origin = program_.origins.find(name); origin != program_.origins.end()) {
+        auto& description = origin->second;
+        description.type_parameters = owner.type_parameters;
+        description.members.push_back(
+            {.kind = DeclarationKind::Constructor, .name = "$constructor"});
+        for (const auto& field : owner.fields) {
+          description.members.push_back({
+              .kind = field.storage == MemberStorage::Static ? DeclarationKind::StaticField
+                                                             : DeclarationKind::Field,
+              .name = field.name,
+              .has_initializer = field.initializer != nullptr,
+          });
+        }
+        for (const auto& method : owner.methods) {
+          const auto kind = method.is_getter   ? DeclarationKind::Getter
+                            : method.is_setter ? DeclarationKind::Setter
+                            : method.storage == MemberStorage::Static
+                                ? DeclarationKind::StaticMethod
+                                : DeclarationKind::Method;
+          description.members.push_back({.kind = kind, .name = method.name});
+        }
+      }
       class_templates_.emplace(name, std::move(owner));
     }
   }

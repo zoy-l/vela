@@ -6,6 +6,7 @@
 
 #include "base/builtin.h"
 #include "runtime/dynamic_array.h"
+#include "runtime/heap.h"
 #include "runtime/value.h"
 #include "vm/bytecode.h"
 #include "vm/program.h"
@@ -31,11 +32,21 @@ StepResult Execution::ExecuteDynamicArray(ActiveFrame& active, Instruction instr
     return EnterDynamicCall(active, *callable, *request->arguments, *request->names,
                             DecodeA(instruction), DynamicCallStyle::Function);
   }
-  const auto value =
-      builtin == Builtin::DynamicArrayPrepare
-          ? runtime::PrepareDynamicArray(isolate_, input, active.function->layouts->classes(),
-                                         program_.code_identity(), functions_.size())
-          : runtime::ReadDynamicArrayOperation(builtin, input);
+  std::expected<runtime::Value, ExecutionStatus> value;
+  if (builtin == Builtin::DynamicArrayPrepare) {
+    const auto callable = ResolveCallable(input[1]);
+    if (!callable) {
+      return std::unexpected(callable.error());
+    }
+    const auto* signature = runtime::Heap::ClassOf(*input[1].AsObject())->callable_type();
+    if (signature == nullptr) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    value = runtime::PrepareDynamicArray(isolate_, input, active.function->layouts->classes(),
+                                         *signature);
+  } else {
+    value = runtime::ReadDynamicArrayOperation(builtin, input);
+  }
   if (!value) {
     return std::unexpected(value.error());
   }

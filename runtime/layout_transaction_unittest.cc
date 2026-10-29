@@ -21,8 +21,8 @@ TEST(LayoutTransactionTest, RollbackReleasesOnlyNewMetadataAndPreservesExistingO
     LayoutTransaction transaction(isolate);
     static_cast<void>(isolate.CreateCodeIdentity());
     auto* added = isolate.CreateClassLayout(1, {});
-    const auto* array =
-        isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = added}});
+    const auto* array = isolate.CreateArrayLayout(
+        {.element = {.kind = ValueKind::Object, .nominal = &added->nominal_type()}});
     const auto* collection = isolate.CreateCollectionLayout({
         .keys =
             {
@@ -36,7 +36,7 @@ TEST(LayoutTransactionTest, RollbackReleasesOnlyNewMetadataAndPreservesExistingO
     });
     ASSERT_NE(collection, nullptr);
     const auto* signature = isolate.CreateTypeSignature({
-        .parameters = {{.type = {.kind = ValueKind::Object, .instance = added}}},
+        .parameters = {{.type = {.kind = ValueKind::Object, .nominal = &added->nominal_type()}}},
         .result = runtime::TypeConstraint{.kind = ValueKind::Integer},
     });
     EXPECT_EQ(isolate.CreateTypeSignature(*signature), signature);

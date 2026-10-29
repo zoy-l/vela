@@ -158,10 +158,10 @@ class Aggregation final : public std::enable_shared_from_this<Aggregation> {
       return;
     }
     const auto output = Value::Object(object);
-    RootRange root(isolate_->heap(), &output, 1);
+    RootRange root(isolate_->heap(), &output, 1, RootOwner::Runtime);
     for (std::uint32_t index = 0; index < count_; ++index) {
       auto value = values.subspan(kValuesStart + index).front();
-      const auto* instance = layout_->element.instance;
+      const auto* instance = layout_->element.nominal;
       if (!value.IsNull() && instance != nullptr && instance->IsEnum()) {
         value = *Heap::GetField(*value.AsObject(), 0);
       }
@@ -243,10 +243,10 @@ OperationResult ScheduleTimeout(const FutureContinuation& context,
   }
   const auto timeout_type = *call.runtime_type;
   const auto& error_layout = isolate->error_layout();
-  if (timeout_type.instance == nullptr ||
-      timeout_type.instance->field_count() != error_layout.field_count() ||
-      !std::ranges::equal(timeout_type.instance->reference_fields(),
-                          error_layout.reference_fields())) {
+  const auto* timeout_layout =
+      timeout_type.nominal == nullptr ? nullptr : timeout_type.nominal->fixed_layout();
+  if (timeout_layout == nullptr || timeout_layout->field_count() != error_layout.field_count() ||
+      !std::ranges::equal(timeout_layout->reference_fields(), error_layout.reference_fields())) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto callback = argument(2);
@@ -257,10 +257,11 @@ OperationResult ScheduleTimeout(const FutureContinuation& context,
     }
   }
   auto won = std::make_shared<bool>(false);
-  auto roots = std::make_shared<RootRange>(heap, references->data(), references->size());
+  auto roots =
+      std::make_shared<RootRange>(heap, references->data(), references->size(), RootOwner::Runtime);
   auto timer = scheduler.After(std::chrono::milliseconds(delay.AsInteger()),
                                [context, isolate, callbacks, callback, target, won, references,
-                                roots, timeout_type, diagnostic]() mutable {
+                                roots, timeout_layout, diagnostic]() mutable {
                                  if (std::exchange(*won, true)) {
                                    return;
                                  }
@@ -269,7 +270,7 @@ OperationResult ScheduleTimeout(const FutureContinuation& context,
                                    CompleteCallback(context, replacement);
                                  } else {
                                    const auto error = CreateError(
-                                       isolate->heap(), *timeout_type.instance,
+                                       isolate->heap(), *timeout_layout,
                                        {.message = "Future timed out", .code = "Timeout"});
                                    Forward(target, {
                                                        .state = FutureState::Failed,
@@ -403,7 +404,8 @@ std::expected<Value, ExecutionStatus> ExecuteComputation(Isolate& isolate,
   }
   auto references = std::make_shared<std::vector<Value>>(1, callable);
   references->insert(references->end(), call.retained.begin(), call.retained.end());
-  auto roots = std::make_shared<RootRange>(heap, references->data(), references->size());
+  auto roots =
+      std::make_shared<RootRange>(heap, references->data(), references->size(), RootOwner::Runtime);
   if (operation == AsyncOperation::TimerAfter || operation == AsyncOperation::TimerPeriodic) {
     auto action = [callbacks, callable, references, roots] {
       static_cast<void>(callbacks.invoke(callable, {}));
@@ -421,8 +423,9 @@ std::expected<Value, ExecutionStatus> ExecuteComputation(Isolate& isolate,
   if (object == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  // 排队的计算拥有外部句柄；丢弃脚本返回值不会取消已排队副作用。
-  auto action = [&isolate, callbacks, callable, references, roots, result]() mutable {
+  // 排队计算自行保根；丢弃脚本返回值不取消副作用，停止调度器则释放该内部根。
+  auto action = [&isolate, callbacks, callable, references, roots,
+                 result = result.Retained()]() mutable {
     const auto invoked = callbacks.invoke(callable, {});
     CompleteFuture(isolate, result, invoked);
   };
@@ -474,7 +477,7 @@ std::expected<Value, ExecutionStatus> ExecuteAggregation(Isolate& isolate,
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto owner = Value::Object(storage);
-  RootRange owner_root(heap, &owner, 1);
+  RootRange owner_root(heap, &owner, 1, RootOwner::Runtime);
   Future result(&scheduler);
   auto* object = heap.AllocateFuture(result);
   if (object == nullptr) {

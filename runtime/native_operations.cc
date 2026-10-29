@@ -18,6 +18,7 @@
 #include "runtime/isolate.h"
 #include "runtime/native_abi.h"
 #include "runtime/native_async.h"
+#include "runtime/native_call.h"
 #include "runtime/native_dynamic.h"
 #include "runtime/native_instance.h"
 #include "runtime/native_json.h"
@@ -112,11 +113,12 @@ extern "C" std::uint8_t vela_native_v1_new_instance(NativeExecution* execution,
                                                     std::uint32_t index,
                                                     NativeValue* result) noexcept {
   const auto* type = execution->instance().layouts().classes.at(index);
+  if (type->callable()) {
+    const auto object = AllocateNativeCallable(*execution, *type);
+    return object ? StoreObject(result, *object) : Status(object.error());
+  }
   auto& heap = execution->isolate().heap();
   auto* object = heap.AllocateInstance(*type);
-  if (object != nullptr && type->callable()) {
-    heap.SetNativeEnvironment(*object, *execution->instance().state().front().AsObject());
-  }
   return StoreObject(result, object);
 }
 

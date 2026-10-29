@@ -128,22 +128,31 @@ InputBody NormalizeBody(std::string_view source, const frontend::LexResult& lexe
 }  // namespace
 
 ReplSession::ReplSession(const std::filesystem::path& directory, std::size_t gc_threshold)
-    : path_(directory / "__vela_repl__.vela"), gc_threshold_(gc_threshold) {
-  Reset();
-}
+    : path_(directory / "__vela_repl__.vela"),
+      gc_threshold_(gc_threshold),
+      isolate_(std::make_unique<runtime::Isolate>(gc_threshold)),
+      machine_(std::make_unique<vm::VirtualMachine>(*isolate_)) {}
 
-void ReplSession::Reset() {
+std::expected<void, std::vector<runtime::ExternalResourceInfo>> ReplSession::Reset() {
+  auto stopped = isolate_->TryStop();
+  if (!stopped) {
+    return stopped;
+  }
+  if (!bindings_) {
+    bindings_ = isolate_->FreezeBindings();
+  }
   program_ = {};
   machine_.reset();
-  isolate_ = std::make_unique<runtime::Isolate>(gc_threshold_);
-  machine_ = std::make_unique<vm::VirtualMachine>(*isolate_);
   compilation_ = {};
+  isolate_ = std::make_unique<runtime::Isolate>(*bindings_, gc_threshold_);
+  machine_ = std::make_unique<vm::VirtualMachine>(*isolate_);
   modules_ = {};
   syntax_.clear();
   history_.reset();
   user_source_.clear();
   entries_.clear();
   next_line_ = 1;
+  return {};
 }
 
 ReplSession::Entry ReplSession::Locate(std::uint32_t line, const Entry& current) const {
@@ -329,7 +338,10 @@ SubmissionResult ReplSession::Submit(std::string_view source) {
     Remap(compiled.diagnostics, current);
     return SubmissionFailure(SubmissionStatus::Rejected, std::move(compiled.diagnostics));
   }
-  program_ = std::move(compiled.program);
+  if (!bindings_) {
+    bindings_ = isolate_->FreezeBindings();
+  }
+  program_ = compiled.program.Retained();
   compilation_ = std::move(compilation);
   modules_ = std::move(modules);
   syntax_.push_back(std::move(prepared->addition));

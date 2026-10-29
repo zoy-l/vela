@@ -1,5 +1,6 @@
 #pragma once
 
+#include <span>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,7 @@ struct LayoutCache final {
 // 调用者持有 LayoutTransaction，并在程序整体实例化成功后提交。
 [[nodiscard]] ProgramLayouts InstantiateLayouts(const layout::Program& description,
                                                 Isolate& isolate,
-                                                LayoutCache& cache);
+                                                LayoutCache& cache,
+                                                std::span<NominalType* const> nominals = {});
 
 }  // namespace vela::runtime

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include "compiler/frontend/declaration_ids.h"
 #include "compiler/frontend/symbol_ids.h"
 #include "compiler/ir/persistent_ids.h"
 #include "runtime/program_layouts.h"
@@ -13,6 +15,8 @@ struct CompilationState final {
   ir::PersistentIds ids;
   runtime::LayoutCache layouts;
   std::shared_ptr<vm::GlobalStorage> globals;
+  frontend::DeclarationIds declarations;
+  std::uint64_t revision = 0;
 };
 
 }  // namespace vela::compiler

@@ -163,7 +163,7 @@ std::expected<void, ArrayAccessError> Heap::ReserveArrayStorage(HeapObject& arra
     return std::unexpected(ArrayAccessError::OutOfMemory);
   }
   const auto root = Value::Object(&array);
-  RootRange roots(*this, &root, 1);
+  RootRange roots(*this, &root, 1, RootOwner::Runtime);
   const auto bytes = capacity * element_size;
   MaybeCollect(bytes);
   auto* memory = static_cast<std::byte*>(::operator new(bytes, std::nothrow));
@@ -197,7 +197,7 @@ std::expected<void, ArrayAccessError> Heap::GrowArray(HeapObject& array, Value v
   }
   const auto next = std::min<std::size_t>(kMaximum, static_cast<std::size_t>(capacity) * 2);
   // receiver 由 ReserveArray 保根；待插入值还没有进入数组，必须单独跨 GC 保存。
-  RootRange pending(*this, &value, 1);
+  RootRange pending(*this, &value, 1, RootOwner::Runtime);
   return ReserveArrayStorage(array, std::max(next, static_cast<std::size_t>(array.length) + 1));
 }
 
@@ -261,7 +261,7 @@ std::expected<void, ArrayAccessError> Heap::ReplaceArrayRange(HeapObject& array,
   }
   const auto next_length = length - count + inserted;
   const auto values = std::to_array({Value::Object(&array), Value::Object(&items)});
-  RootRange roots(*this, values.data(), values.size());
+  RootRange roots(*this, values.data(), values.size(), RootOwner::Runtime);
   const auto capacity = internal::ArrayBuffer(array).capacity;
   if (next_length > capacity) {
     const auto next_capacity = std::max<std::size_t>(
@@ -375,7 +375,7 @@ std::expected<HeapObject*, ArrayAccessError> Heap::SliceArray(HeapObject& array,
     return std::unexpected(ArrayAccessError::OutOfBounds);
   }
   const auto source = Value::Object(&array);
-  RootRange roots(*this, &source, 1);
+  RootRange roots(*this, &source, 1, RootOwner::Runtime);
   const auto& layout = *array.array_layout();
   const auto element_size = layout.element_size();
   const auto input = Storage(array, layout, array.length)

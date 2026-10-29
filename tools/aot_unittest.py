@@ -38,6 +38,7 @@ HOST_TESTS = r'''
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <gtest/gtest.h>
 #include "base/execution_status.h"
 #include "base/execution_limits.h"
@@ -117,11 +118,15 @@ std::string InvalidString(NativeContext&) noexcept { return std::string(1, stati
 Future Ready(NativeContext&) noexcept { return Future::Value(Value::Integer(42)); }
 Future Wrong(NativeContext&) noexcept { return Future::Value(Value::Boolean(true)); }
 Future WrongError(NativeContext&) noexcept { return Future::Error(Value::Integer(42)); }
-Completer*& ActiveProducer() { static Completer* producer = nullptr; return producer; }
+FutureCompletionEndpoint*& ActiveProducer() {
+  static FutureCompletionEndpoint* producer = nullptr;
+  return producer;
+}
 Future Fetch(NativeContext& context) noexcept {
-  auto& producer = *ActiveProducer();
-  producer = context.CreateCompleter();
-  return producer.future();
+  auto producer = context.CreateCompleter();
+  auto future = producer.future();
+  *ActiveProducer() = std::move(producer).Detach();
+  return future;
 }
 
 TEST(NativeHostTest, OptimizedIntegerCallsLoopsAndShiftSemantics) {
@@ -314,16 +319,15 @@ TEST(NativeHostTest, RethrowKeepsOriginalLogicalSourceStackAfterAllFramesExit) {
   const auto& exception = ExceptionData::From(*execution.pending_exception().AsObject());
   EXPECT_EQ(exception.status, ExecutionStatus::DivisionByZero);
   EXPECT_EQ(exception.message(), "division by zero");
-  const auto trace = exception.trace();
+  const auto diagnostic = execution.ExceptionDiagnostic();
+  const auto& trace = diagnostic.stack_trace;
   ASSERT_EQ(trace.size(), 3U);
   const std::array names{"fail", "original", "calculate"};
   const std::array<std::uint32_t, 3> lines{EXPECTED_TRACE_LINES};
   for (std::size_t index = 0; index < trace.size(); ++index) {
-    const auto position = trace[index];
-    const auto& function = image->functions.values()[position.function];
-    EXPECT_EQ(function.name.text(), names[index]);
-    ASSERT_LT(position.instruction, function.locations.size);
-    EXPECT_EQ(function.locations.values()[position.instruction].line, lines[index]);
+    const auto& frame = trace[index];
+    EXPECT_EQ(frame.function, names[index]);
+    EXPECT_EQ(frame.line, lines[index]);
   }
   const std::array success{Integer(0)};
   ASSERT_EQ(Execute(EXCEPTION_ENTRY, execution, success, result), ExecutionStatus::Returned);
@@ -653,7 +657,7 @@ TEST(NativeHostTest, NativeAwaitSnapshotsRetainOnlyLiveDefinitions) {
 
 TEST(NativeHostTest, NativeAwaitReceivesHostThreadCompletionAfterInstanceRelease) {
   Isolate isolate(1);
-  Completer producer;
+  FutureCompletionEndpoint producer;
   ActiveProducer() = &producer;
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Fetch>("fetch")));
   Value value;

@@ -32,7 +32,7 @@ class Frame final {
 
  private:
   runtime::RegisterView registers_;
-  runtime::RootRange roots_;
+  runtime::RootRange roots_{runtime::RootOwner::Runtime};
 };
 
 }  // namespace vela::vm

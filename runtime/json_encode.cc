@@ -38,7 +38,7 @@ struct JsonEncodeFrame final {
   }
   JsonEncodeFrame* parent = nullptr;
   std::array<Value, 2> values{};
-  RootRange roots;
+  RootRange roots{RootOwner::Runtime};
   JsonFrameKind kind = JsonFrameKind::Conversion;
   const ArrayLayout* elements = nullptr;
   CollectionIterator iterator;
@@ -50,7 +50,7 @@ JsonEncoder::JsonEncoder(Isolate& isolate, Value input)
     : heap_(&isolate.heap()),
       active_type_(isolate.CreateCollectionLayout({.keys = {.element = {.dynamic = true}}})),
       values_{input, Value::Null(), Value::Null()},
-      roots_(*heap_, values_.data(), values_.size()) {}
+      roots_(*heap_, values_.data(), values_.size(), RootOwner::Runtime) {}
 
 JsonEncoder::~JsonEncoder() {
   while (frame_ != nullptr) {
@@ -285,7 +285,7 @@ std::expected<std::optional<Value>, JsonRuntimeError> JsonEncoder::EncodeValue()
 }
 
 std::expected<void, JsonRuntimeError> JsonEncoder::CheckElement(const ArrayLayout& layout) const {
-  const auto* instance = layout.element.instance;
+  const auto* instance = layout.element.nominal;
   if (instance != nullptr && instance->IsEnum() && !values_.at(kPending).IsNull()) {
     return std::unexpected(Error(ExecutionStatus::JsonEncodeError, "enum is not JSON encodable"));
   }

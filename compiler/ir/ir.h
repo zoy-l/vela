@@ -7,8 +7,10 @@
 #include <vector>
 
 #include "base/callable.h"
+#include "base/declaration.h"
 #include "base/layout_description.h"
 #include "base/member.h"
+#include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_checker.h"
@@ -45,6 +47,9 @@ struct Class final {
   std::vector<std::uint32_t> dispatch_targets;
   Kind kind = Kind::Instance;
   std::string callable_type;
+  DeclarationId declaration;
+  std::vector<DeclarationId> field_declarations;
+  DeclarationId base_class;
 };
 
 struct Function final {
@@ -65,7 +70,18 @@ struct Function final {
   std::vector<Handler> handlers;
   bool is_async = false;
   bool is_exported = false;
+  bool is_generated_constructor = false;
   std::optional<CallSignature> signature = std::nullopt;
+  FunctionIdentity identity;
+};
+
+struct Declaration final {
+  DeclarationId identity;
+  DeclarationId owner;
+  DeclarationKind kind = DeclarationKind::Function;
+  std::string name;
+  std::vector<std::string> type_parameters;
+  std::vector<std::string> enum_members;
 };
 
 struct Program final {
@@ -79,6 +95,14 @@ struct Program final {
   std::vector<frontend::TypeDescriptor> collection_types;
   std::vector<MemberDefinition> members;
   layout::Program layouts;
+  std::uint64_t revision = 0;
+  std::vector<std::string> source_texts;
+  std::vector<Declaration> declarations;
+  std::vector<DeclarationId> interface_declarations;
+  std::vector<DeclarationId> global_declarations;
+  std::vector<DeclarationId> selector_declarations;
+  NativeProgramMode native_mode = NativeProgramMode::Closed;
+  std::vector<std::uint32_t> global_flags;
 };
 
 }  // namespace vela::ir

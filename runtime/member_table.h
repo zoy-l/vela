@@ -34,7 +34,7 @@ class MemberTable final {
  private:
   using ReceiverKey = std::tuple<ValueKind,
                                  ObjectKind,
-                                 const ClassLayout*,
+                                 const NominalType*,
                                  const ArrayLayout*,
                                  const CollectionLayout*,
                                  const TypeSignature*>;

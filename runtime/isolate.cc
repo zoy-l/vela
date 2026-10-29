@@ -19,6 +19,7 @@
 #include "base/utf8.h"
 #include "runtime/date.h"
 #include "runtime/error.h"
+#include "runtime/external_resources.h"
 #include "runtime/native_function.h"
 #include "runtime/object.h"
 #include "runtime/standard_library.h"
@@ -42,6 +43,9 @@ const T* InternLayout(T layout,
 }  // namespace
 
 std::expected<void, NativeRegistrationError> Isolate::RegisterNative(NativeFunction function) {
+  if (bindings_frozen_) {
+    return std::unexpected(NativeRegistrationError::BindingsFrozen);
+  }
   const auto name = function.name();
   if (name.empty() || name.contains('\0') || InvalidUtf8Offset(name)) {
     return std::unexpected(NativeRegistrationError::InvalidName);
@@ -54,20 +58,53 @@ std::expected<void, NativeRegistrationError> Isolate::RegisterNative(NativeFunct
   return {};
 }
 
+NativeBindings Isolate::FreezeBindings() {
+  NativeBindings result;
+  result.functions_ = natives_;
+  bindings_frozen_ = true;
+  return result;
+}
+
 std::shared_ptr<const NativeFunction> Isolate::FindNative(std::string_view name) const {
   const auto found = natives_.find(name);
   return found == natives_.end() ? FindStandardNative(name) : found->second;
 }
 
-Isolate::Isolate(std::size_t gc_threshold) noexcept : heap_(gc_threshold) {
+Isolate::Isolate(std::size_t gc_threshold) noexcept : heap_(gc_threshold), native_dispatch_(*this) {
   constexpr auto references = std::to_array({kErrorMessageField, kErrorCodeField});
   error_layout_ = CreateClassLayout(kErrorFieldCount, references);
   date_parts_layout_ = CreateClassLayout(kDatePartsFieldCount, {});
 }
 
+Isolate::Isolate(NativeBindings bindings, std::size_t gc_threshold) noexcept
+    : Isolate(gc_threshold) {
+  natives_ = std::move(bindings.functions_);
+  bindings_frozen_ = true;
+}
+
 Isolate::~Isolate() {
   // 先释放排队回调的根，再销毁堆；堆中挂起帧的析构仍可访问调度器。
   scheduler_.Shutdown();
+  native_dispatch_.Close();
+}
+
+std::vector<ExternalResourceInfo> Isolate::ReloadBlockers() const {
+  std::vector<ExternalResourceInfo> result;
+  heap_.AppendExternalRoots(result);
+  scheduler_.AppendExternalResources(result);
+  return result;
+}
+
+std::expected<void, std::vector<ExternalResourceInfo>> Isolate::TryStop() {
+  auto blockers = ReloadBlockers();
+  if (!blockers.empty()) {
+    return std::unexpected(std::move(blockers));
+  }
+  native_control_.RequestStop();
+  native_dispatch_.Close();
+  scheduler_.Shutdown();
+  heap_.Collect();
+  return {};
 }
 
 std::ostream& Isolate::output() noexcept {
@@ -91,13 +128,30 @@ ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
   std::unique_ptr<ClassLayout> layout(new ClassLayout(field_count, std::move(references)));
   ClassLayout* result = layout.get();
   result->callable_ = options.callable;
-  std::ranges::sort(options.interfaces, std::less{});
-  result->interfaces_ = std::move(options.interfaces);
+  auto* nominal = options.nominal;
+  if (nominal == nullptr) {
+    nominal = CreateNominalType({.kind = options.is_enum    ? NominalKind::Enum
+                                         : options.callable ? NominalKind::Callable
+                                                            : NominalKind::Class,
+                                 .interfaces = std::move(options.interfaces)});
+  }
+  result->nominal_ = nominal;
+  result->storage_ = options.storage;
+  if (options.storage == ClassStorage::Inline && nominal->fixed_layout_ == nullptr) {
+    // 名义身份由本 Isolate 创建；仅在它的第一个固定布局建立时绑定分配描述。
+    nominal->fixed_layout_ = result;
+  }
   result->dispatch_targets_ = std::move(options.dispatch_targets);
-  result->is_enum_ = options.is_enum;
   result->callable_type_ = options.callable_type;
   result->expected_type_ = options.expected_type;
   class_layouts_.push_back(std::move(layout));
+  return result;
+}
+
+NominalType* Isolate::CreateNominalType(NominalTypeOptions options) {
+  std::unique_ptr<NominalType> identity(new NominalType(std::move(options)));
+  auto* result = identity.get();
+  nominal_types_.push_back(std::move(identity));
   return result;
 }
 
@@ -138,6 +192,7 @@ LayoutCounts Isolate::layout_counts() const noexcept {
       .signatures = type_signatures_.size(),
       .interfaces = interface_types_.size(),
       .code_identities = code_identities_.size(),
+      .nominal_types = nominal_types_.size(),
   };
 }
 

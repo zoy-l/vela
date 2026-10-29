@@ -3,12 +3,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <span>
 #include <string_view>
 
 #include "base/execution_limits.h"
 #include "base/execution_status.h"
 #include "runtime/exception.h"
+#include "runtime/external_resources.h"
 #include "runtime/heap.h"
 #include "runtime/native_context.h"
 #include "runtime/value.h"
@@ -18,18 +20,23 @@ namespace vela::runtime {
 
 class Isolate;
 class NativeInstance;
+struct NativeImage;
 struct FutureDiagnostic;
 struct FutureResult;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 2;
+inline constexpr std::uint32_t kNativeAbiVersion = 3;
+inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
 [[nodiscard]] constexpr std::uint64_t EncodeNativeTracePosition(TracePosition position) noexcept {
-  return (static_cast<std::uint64_t>(position.function) << 32) | position.instruction;
+  return (static_cast<std::uint64_t>(position.function) << kNativeTraceInstructionBits) |
+         position.instruction;
 }
 
 [[nodiscard]] constexpr TracePosition DecodeNativeTracePosition(std::uint64_t position) noexcept {
-  return {.function = static_cast<std::uint32_t>(position >> 32),
-          .instruction = static_cast<std::uint32_t>(position)};
+  return {
+      .function = static_cast<std::uint32_t>(position >> kNativeTraceInstructionBits),
+      .instruction = static_cast<std::uint32_t>(position),
+  };
 }
 inline constexpr std::size_t kNativeValueBytes = 16;
 
@@ -67,6 +74,7 @@ struct NativeFrameAccess final {
 struct NativeTraceFrame final {
   TracePosition position;
   NativeTraceFrame* previous = nullptr;
+  const NativeImage* image = nullptr;
 };
 
 class NativeFrame final {
@@ -86,7 +94,7 @@ class NativeFrame final {
 
  private:
   ValueBuffer allocated_roots_;
-  RootRange root_range_;
+  RootRange root_range_{RootOwner::Runtime};
   std::size_t storage_bytes_;
   void* storage_;
 };
@@ -150,12 +158,11 @@ class NativeExecution final {
   Value pending_exception_;
   RootRange exception_root_;
   bool exception_allocation_failed_ = false;
+  ExternalResource execution_resource_;
 
   [[nodiscard]] ExecutionStatus CreateException(Value payload,
                                                 ExecutionStatus status,
                                                 std::string_view message);
-  [[nodiscard]] std::span<const TracePosition> CapturePositions(
-      std::span<TracePosition> storage) const noexcept;
 };
 
 // 切换到闭包创建时的实例；调用深度、根和异常仍属于同一次逻辑执行。

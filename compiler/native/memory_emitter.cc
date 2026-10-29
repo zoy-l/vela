@@ -1,4 +1,4 @@
-#include "compiler/aot/function_emitter.h"
+#include "compiler/native/function_emitter.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,15 +14,15 @@
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "base/opcode.h"
-#include "compiler/aot/native_values.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/native_values.h"
 #include "runtime/native_memory_layout.h"
 #include "runtime/native_operations.h"
 #include "runtime/native_program_state.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
 
-namespace vela::compiler::aot {
+namespace vela::compiler::native {
 namespace {
 
 SourceType ElementValueType(const layout::Type& element) {
@@ -147,10 +147,27 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   } else {
     WriteHeapValue(address, instruction.lhs);
     EmitWriteBarrier(object, instruction.lhs);
+    if (program_.native_mode == NativeProgramMode::Reloadable && instruction.index == 0 &&
+        source_.value_types.at(instruction.dst).kind == Kind::Function) {
+      auto helper =
+          module_.getOrInsertFunction("vela_native_v3_capture_receiver", builder_.getInt8Ty(),
+                                      builder_.getPtrTy(), builder_.getPtrTy());
+      CheckStatus(builder_.CreateCall(helper, {body_->getArg(0), object}));
+    }
   }
 }
 
 void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
+  if (program_.native_mode == NativeProgramMode::Reloadable) {
+    auto helper = module_.getOrInsertFunction("vela_native_v3_load_global", builder_.getInt8Ty(),
+                                              builder_.getPtrTy(), builder_.getInt64Ty(),
+                                              builder_.getPtrTy());
+    const auto declaration = program_.global_declarations.at(instruction.index);
+    CheckStatus(builder_.CreateCall(
+        helper, {body_->getArg(0), builder_.getInt64(declaration.value), result_}));
+    Unpack(instruction.dst);
+    return;
+  }
   using runtime::NativeMemoryLayout;
   auto* pointer = builder_.getPtrTy();
   auto* execution = body_->getArg(0);
@@ -198,6 +215,15 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
 }
 
 void FunctionEmitter::EmitGlobalStore(const ir::Instruction& instruction) {
+  if (program_.native_mode == NativeProgramMode::Reloadable) {
+    auto helper = module_.getOrInsertFunction("vela_native_v3_store_global", builder_.getInt8Ty(),
+                                              builder_.getPtrTy(), builder_.getInt64Ty(),
+                                              builder_.getPtrTy());
+    const auto declaration = program_.global_declarations.at(instruction.index);
+    CheckStatus(builder_.CreateCall(helper, {body_->getArg(0), builder_.getInt64(declaration.value),
+                                             Pack(Encode(instruction.lhs), 0)}));
+    return;
+  }
   using runtime::NativeMemoryLayout;
   auto* pointer = builder_.getPtrTy();
   auto* instance = builder_.CreateLoad(
@@ -355,4 +381,4 @@ void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Built
         {.kind = Kind::Int, .name = "int"});
 }
 
-}  // namespace vela::compiler::aot
+}  // namespace vela::compiler::native

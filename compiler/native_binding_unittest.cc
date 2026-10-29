@@ -35,8 +35,8 @@ namespace {
 using runtime::NativeContext;
 using runtime::NativeError;
 
-runtime::Completer*& PendingFetchCompleter() {
-  static runtime::Completer* completer = nullptr;
+runtime::FutureCompletionEndpoint*& PendingFetchCompleter() {
+  static runtime::FutureCompletionEndpoint* completer = nullptr;
   return completer;
 }
 
@@ -187,7 +187,7 @@ void Collect(NativeContext& context) noexcept {
 runtime::Future Fetch(NativeContext& context) noexcept {
   auto completer = context.CreateCompleter();
   const auto future = completer.future();
-  *PendingFetchCompleter() = std::move(completer);
+  *PendingFetchCompleter() = std::move(completer).Detach();
   return future;
 }
 
@@ -272,11 +272,12 @@ TEST(NativeBindingTest, NativeFuturePayloadChecksSurviveFreshIsolateImageLoading
 runtime::Future WaitForCancellation(NativeContext& context,
                                     runtime::CancellationToken token) noexcept {
   auto completer = context.CreateCompleter();
-  token.Observe([completer]() mutable {
-    const auto completion = completer.Complete(runtime::Value::Integer(42));
+  const auto future = completer.future();
+  token.Observe([endpoint = std::move(completer).Detach()] {
+    const auto completion = endpoint.Complete(runtime::Value::Integer(42));
     EXPECT_TRUE(completion.has_value());
   });
-  return completer.future();
+  return future;
 }
 
 TEST(NativeBindingTest, CancellationTokenReachesNativeProducerWithoutCancellingFutureItself) {
@@ -319,7 +320,7 @@ async func main(): Future<int> { return await fetch(); }
   return vm::VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
 }
 
-bool CompleteNativeFuture(runtime::Completer& completer) {
+bool CompleteNativeFuture(runtime::FutureCompletionEndpoint& completer) {
   std::atomic_bool succeeded = false;
   std::thread host([&completer, &succeeded] {
     succeeded = completer.Complete(runtime::Value::Integer(kNativeFutureValue)).has_value();
@@ -567,7 +568,7 @@ TEST(NativeBindingTest, RegistrationRejectsDuplicatesAndHostCallsKeepArgumentsRo
 
 TEST(NativeBindingTest, NativeFutureResumesAwaitingAsyncExecution) {
   runtime::Isolate isolate;
-  runtime::Completer completer;
+  runtime::FutureCompletionEndpoint completer;
   PendingFetchCompleter() = &completer;
   auto root = StartNativeFetch(isolate);
   ASSERT_TRUE(root.has_value());
@@ -599,7 +600,7 @@ async func main(): Future<int> {
 })",
                                       isolate);
   ASSERT_TRUE(consumer.Succeeded());
-  runtime::Completer completer;
+  runtime::FutureCompletionEndpoint completer;
   PendingFetchCompleter() = &completer;
   auto result = vm::VirtualMachine(isolate).ExecuteFuture(
       consumer.program, consumer.program.FindFunction("main").index());

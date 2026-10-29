@@ -13,16 +13,16 @@
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/layout_description.h"
-#include "compiler/aot/native_roots.h"
-#include "compiler/aot/native_values.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/native_roots.h"
+#include "compiler/native/native_values.h"
 
 namespace llvm {
 class Function;
 class Module;
 }  // namespace llvm
 
-namespace vela::compiler::aot {
+namespace vela::compiler::native {
 
 struct GeneratedFunction final {
   llvm::Function* body = nullptr;
@@ -36,12 +36,14 @@ class FunctionEmitter final {
  public:
   FunctionEmitter(llvm::Module& module,
                   const ir::Program& program,
+                  llvm::Constant* image,
                   std::size_t function_index,
                   std::span<const GeneratedFunction> generated,
                   const NativeRootPlan& roots,
                   NativeEntryKind kind)
       : module_(module),
         program_(program),
+        image_(image),
         source_(program.functions.at(function_index)),
         function_index_(function_index),
         generated_(generated),
@@ -63,6 +65,7 @@ class FunctionEmitter final {
   void CheckStatus(llvm::Value* status);
   void Fail(llvm::Value* status);
   void SetPosition();
+  void Poll();
   void Finish(llvm::Value* status);
   void EmitInteger(const ir::Instruction& instruction);
   void EmitDouble(const ir::Instruction& instruction);
@@ -106,6 +109,7 @@ class FunctionEmitter final {
 
   llvm::Module& module_;
   const ir::Program& program_;
+  llvm::Constant* image_;
   const ir::Function& source_;
   std::size_t function_index_;
   std::size_t instruction_index_ = 0;
@@ -133,7 +137,8 @@ class FunctionEmitter final {
 std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     llvm::Module& module,
     const ir::Program& program,
+    llvm::Constant* image,
     std::size_t function_index,
     std::span<const GeneratedFunction> generated);
 
-}  // namespace vela::compiler::aot
+}  // namespace vela::compiler::native

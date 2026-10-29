@@ -12,7 +12,6 @@
 #include "base/builtin.h"
 #include "base/callable.h"
 #include "base/execution_status.h"
-#include "runtime/callable.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
@@ -113,7 +112,7 @@ OperationResult CheckCallback(const TypeSignature& callback,
 std::expected<HeapObject*, ExecutionStatus> AllocateOutput(Isolate& isolate,
                                                            TypeConstraint type,
                                                            std::uint32_t length) {
-  if (type.instance != nullptr && type.instance->IsEnum()) {
+  if (type.nominal != nullptr && type.nominal->IsEnum()) {
     type.kind = ValueKind::Integer;
   }
   const auto* layout = isolate.CreateArrayLayout({.element = type});
@@ -199,8 +198,7 @@ OperationResult InitializeOutput(Isolate& isolate,
 std::expected<Value, ExecutionStatus> PrepareDynamicArray(Isolate& isolate,
                                                           std::span<const Value> input,
                                                           std::span<ClassLayout* const> classes,
-                                                          const CodeIdentity& identity,
-                                                          std::size_t function_count) {
+                                                          const TypeSignature& callback_type) {
   const auto receiver = input.front();
   const auto callback = input.subspan(1).front();
   const auto initial = input.subspan(2).front();
@@ -223,20 +221,12 @@ std::expected<Value, ExecutionStatus> PrepareDynamicArray(Isolate& isolate,
   }
   const auto algorithm = static_cast<ArrayAlgorithm>(selector.AsInteger());
   auto accumulator = Heap::TypeOf(initial);
-  const TypeSignature* signature = nullptr;
-  if (const auto callable = ResolveCallable(callback, identity, function_count); !callable) {
-    return std::unexpected(callable.error());
-  }
-  signature = Heap::ClassOf(*callback.AsObject())->callable_type();
-  if (signature == nullptr) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto type = AccumulatorType(initial, algorithm, *signature);
+  const auto type = AccumulatorType(initial, algorithm, callback_type);
   if (!type) {
     return std::unexpected(type.error());
   }
   accumulator = *type;
-  if (auto checked = CheckCallback(*signature, algorithm, receiver, accumulator); !checked) {
+  if (auto checked = CheckCallback(callback_type, algorithm, receiver, accumulator); !checked) {
     return std::unexpected(checked.error());
   }
   auto& heap = isolate.heap();
@@ -245,15 +235,15 @@ std::expected<Value, ExecutionStatus> PrepareDynamicArray(Isolate& isolate,
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto owner = Value::Object(plan);
-  const RootRange root(heap, &owner, 1);
+  const RootRange root(heap, &owner, 1, RootOwner::Runtime);
   heap.SetValueSlot(*plan, kReceiver, receiver);
   heap.SetValueSlot(*plan, kCallback, callback);
   heap.SetValueSlot(*plan, kAlgorithm, selector);
-  const auto count = static_cast<std::uint32_t>(signature->parameters.size());
+  const auto count = static_cast<std::uint32_t>(callback_type.parameters.size());
   if (auto initialized = InitializeArguments(isolate, *plan, count); !initialized) {
     return std::unexpected(initialized.error());
   }
-  if (auto initialized = InitializeOutput(isolate, *plan, signature, *length, accumulator);
+  if (auto initialized = InitializeOutput(isolate, *plan, &callback_type, *length, accumulator);
       !initialized) {
     return std::unexpected(initialized.error());
   }

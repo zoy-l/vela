@@ -10,11 +10,9 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "base/execution_status.h"
 #include "base/utf8.h"
-#include "runtime/callable.h"
 #include "runtime/error.h"
 #include "runtime/exception.h"
 #include "runtime/future.h"
@@ -35,7 +33,7 @@ struct VelaAotHandle final {
                 vela::runtime::FutureDiagnostic detail)
       : isolate(&owner),
         value(source),
-        root(owner.heap(), &value, 1),
+        root(owner.heap(), &value, 1, vela::runtime::RootOwner::NativeHandle),
         diagnostic(std::move(detail)) {}
   vela::runtime::Isolate* isolate;
   vela::runtime::Value value;
@@ -140,61 +138,24 @@ VelaAotStatus StorePublic(Isolate& isolate, Value value, VelaAotValue* output) {
   return VELA_AOT_RETURNED;
 }
 
-std::expected<Value, ExecutionStatus> CheckArgument(NativeInstance& instance,
-                                                    Value value,
-                                                    const TypeConstraint& type) {
-  if (!Heap::IsValueOfType(value, type)) {
-    return std::unexpected(ExecutionStatus::InvalidCast);
-  }
-  if (Heap::TypeOf(value).callable) {
-    const auto callable =
-        ResolveCallable(value, instance.code_identity(), instance.image().functions.size);
-    if (!callable || Heap::NativeEnvironment(*value.AsObject()) == nullptr) {
-      return std::unexpected(ExecutionStatus::TypeError);
-    }
-  }
-  return !value.IsNull() && type.instance != nullptr && type.instance->IsEnum()
-             ? *Heap::GetField(*value.AsObject(), 0)
-             : value;
-}
-
 std::expected<Value, ExecutionStatus> Invoke(NativeExecution& execution,
                                              std::uint32_t function,
                                              std::span<const VelaAotValue> input) {
-  auto& instance = execution.instance();
-  const auto functions = instance.image().functions.values();
-  if (function >= functions.size()) {
-    return std::unexpected(ExecutionStatus::InvalidEntry);
-  }
-  const auto& target = functions.subspan(function).front();
-  const auto& parameters = instance.call_signature(function).parameters;
-  if ((target.flags & kNativeExportedFunction) == 0 || target.hidden_parameters != 0 ||
-      parameters.size() != input.size()) {
-    return std::unexpected(ExecutionStatus::InvalidEntry);
-  }
   ValueBuffer storage(input.size());
   if (!storage.IsAllocated()) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   auto& isolate = execution.isolate();
   const auto values = storage.values();
-  const RootRange roots(isolate.heap(), values.data(), values.size());
-  std::vector<NativeValue> arguments;
-  arguments.reserve(input.size());
-  const auto& types = instance.layouts().types;
+  const RootRange roots(isolate.heap(), values.data(), values.size(), RootOwner::Runtime);
   for (std::size_t index = 0; index < input.size(); ++index) {
     const auto value = DecodePublic(isolate, input.subspan(index).front());
     if (!value) {
       return std::unexpected(value.error());
     }
-    const auto checked = CheckArgument(instance, *value, types.at(parameters.at(index).type));
-    if (!checked) {
-      return std::unexpected(checked.error());
-    }
-    values.subspan(index).front() = *checked;
-    arguments.push_back(EncodeNativeValue(*checked));
+    values.subspan(index).front() = *value;
   }
-  return InvokeNativeTarget(execution, function, arguments);
+  return InvokeNativeEntry(execution, function, values);
 }
 
 }  // namespace
@@ -349,7 +310,7 @@ extern "C" VelaAotStatus vela_aot_v1_future_wait(VelaAotHandle* future,
 }
 
 extern "C" const char* vela_aot_v1_status_code(VelaAotStatus status) {
-  return status <= Status(ExecutionStatus::RegExpExecutionError)
+  return status <= Status(ExecutionStatus::ExecutionStopped)
              ? ExecutionStatusCode(static_cast<ExecutionStatus>(status)).data()
              : "InvalidStatus";
 }

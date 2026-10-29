@@ -85,8 +85,8 @@ struct DecodeFrame final {
   // key 在分配子值时保持存活，根区间不跨越不同的 C++ 成员。
   Value value;
   Value key;
-  RootRange roots;
-  RootRange key_roots;
+  RootRange roots{RootOwner::Runtime};
+  RootRange key_roots{RootOwner::Runtime};
   bool object = false;
   yyjson_obj_iter map{};
   yyjson_arr_iter array{};
@@ -123,7 +123,7 @@ class Decoder final {
     if (!root) {
       return root;
     }
-    RootRange roots(*heap_, &*root, 1);
+    RootRange roots(*heap_, &*root, 1, RootOwner::Runtime);
     if (auto pushed = Push(node, *root); !pushed) {
       return std::unexpected(pushed.error());
     }
@@ -151,7 +151,7 @@ class Decoder final {
       if (!value) {
         return value;
       }
-      RootRange child_root(*heap_, &*value, 1);
+      RootRange child_root(*heap_, &*value, 1, RootOwner::Runtime);
       auto& container = *frame.value.AsObject();
       if (frame.object) {
         if (!heap_->InsertCollection(container, frame.key, *value)) {

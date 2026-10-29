@@ -70,7 +70,7 @@ RegExpMatchStorage& Heap::RegExpMatchOf(HeapObject& object) noexcept {
 
 HeapObject* Heap::AllocateRegExp(const RegExpStorage& storage) noexcept {
   const auto source = Value::String(storage.source);
-  RootRange root(*this, &source, 1);
+  RootRange root(*this, &source, 1, RootOwner::Runtime);
   const auto size = sizeof(HeapObject) + sizeof(RegExpStorage);
   return AllocateObject(ObjectKind::RegExp, size, [&storage](HeapObject& object) {
     std::construct_at(StorageAfter<RegExpStorage>(object), storage);

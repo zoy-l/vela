@@ -5,6 +5,8 @@
 #include <span>
 #include <string_view>
 
+#include "base/declaration.h"
+#include "base/native_program_mode.h"
 #include "base/source_location.h"
 #include "runtime/native_abi.h"
 
@@ -18,9 +20,10 @@ inline constexpr std::uint32_t kNativeExportedFunction = 2;
 inline constexpr std::uint32_t kNativeTypedFunction = 4;
 // 内部入口返回 enum 的标量载荷；进入 runtime Value 表示时需要盒装。
 inline constexpr std::uint32_t kNativeEnumResult = 8;
+inline constexpr std::uint32_t kNativeGeneratedConstructor = 16;
 
 // 这些记录是生成代码可见的内部 ABI：仅包含固定宽度字段、重定位指针和长度。
-// 目标文件静态链接后保持只读；描述表及所有借用字节必须覆盖实例的生命周期。
+// 描述表及所有借用字节均不可变，必须覆盖引用它们的程序状态、闭包与续延的生命周期。
 struct NativeText final {
   const char* data = nullptr;
   std::uint64_t size = 0;
@@ -51,6 +54,9 @@ struct NativeClassDescription final {
   std::uint32_t callable_mode = 0;
   std::uint32_t callable_type = kNoNativeIndex;
   std::uint32_t expected_type = kNoNativeIndex;
+  DeclarationId declaration;
+  NativeTable<DeclarationId> field_declarations;
+  DeclarationId base_class;
 };
 
 struct NativeArrayDescription final {
@@ -98,6 +104,7 @@ struct NativeFunctionDescription final {
   std::uint32_t result_type = kNoNativeIndex;
   std::uint32_t hidden_parameters = 0;
   std::uint32_t flags = 0;
+  FunctionIdentity identity;
 };
 
 struct NativeMemberDescription final {
@@ -107,6 +114,15 @@ struct NativeMemberDescription final {
   std::uint32_t type = kNoNativeIndex;
   std::uint32_t setter = kNoNativeIndex;
   std::uint32_t kind = 0;
+};
+
+struct NativeDeclarationDescription final {
+  DeclarationId identity;
+  DeclarationId owner;
+  std::uint32_t kind = 0;
+  NativeText name;
+  NativeTable<NativeText> type_parameters;
+  NativeTable<NativeText> enum_members;
 };
 
 struct NativeImage final {
@@ -127,6 +143,14 @@ struct NativeImage final {
   NativeTable<NativeFunctionDescription> functions;
   NativeTable<NativeMemberDescription> members;
   NativeTable<std::uint32_t> global_initializers;
+  std::uint64_t revision = 0;
+  NativeTable<NativeText> source_texts;
+  NativeTable<NativeDeclarationDescription> declarations;
+  NativeTable<DeclarationId> interface_declarations;
+  NativeTable<DeclarationId> global_declarations;
+  NativeTable<DeclarationId> selector_declarations;
+  std::uint32_t native_mode = static_cast<std::uint32_t>(NativeProgramMode::Closed);
+  NativeTable<std::uint32_t> global_flags;
 };
 
 [[nodiscard]] std::string_view NativeRuntimeAbiIdentity() noexcept;

@@ -25,7 +25,7 @@ using OperationResult = std::expected<void, ExecutionStatus>;
 bool IsThrowableType(const TypeConstraint& type) {
   return !type.nullable && !type.dynamic && type.kind == ValueKind::Object &&
          (type.interface != nullptr ||
-          (type.instance != nullptr && !type.instance->IsEnum() && !type.instance->callable()));
+          (type.nominal != nullptr && !type.nominal->IsEnum() && !type.nominal->IsCallable()));
 }
 
 std::expected<const TypeSignature*, ExecutionStatus> Callback(Value value, std::size_t count) {

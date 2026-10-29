@@ -15,10 +15,14 @@ namespace {
 
 class LayoutInstantiation final {
  public:
-  LayoutInstantiation(const layout::Program& description, Isolate& isolate, LayoutCache& cache)
+  LayoutInstantiation(const layout::Program& description,
+                      Isolate& isolate,
+                      LayoutCache& cache,
+                      std::span<NominalType* const> nominals)
       : description_(&description),
         isolate_(&isolate),
         cache_(&cache),
+        nominals_(nominals),
         arrays_(description.arrays.size()),
         collections_(description.collections.size()),
         signatures_(description.signatures.size()) {}
@@ -31,11 +35,12 @@ class LayoutInstantiation final {
   const ArrayLayout* Array(std::uint32_t index);
   const CollectionLayout* Collection(std::uint32_t index);
   const TypeSignature* Signature(std::uint32_t index);
-  ClassLayout* Class(const layout::Class& description);
+  ClassLayout* Class(std::size_t index);
 
   const layout::Program* description_;
   Isolate* isolate_;
   LayoutCache* cache_;
+  std::span<NominalType* const> nominals_;
   std::vector<const InterfaceType*> interfaces_;
   std::vector<ClassLayout*> classes_;
   std::vector<const ArrayLayout*> arrays_;
@@ -78,7 +83,7 @@ TypeConstraint LayoutInstantiation::Constraint(const layout::Type& type) {
       break;
     case Kind::Instance:
     case Kind::Enum:
-      result.instance = classes_.at(type.index);
+      result.nominal = &classes_.at(type.index)->nominal_type();
       break;
     case Kind::Interface:
       result.interface = interfaces_.at(type.index);
@@ -192,7 +197,8 @@ const TypeSignature* LayoutInstantiation::Signature(std::uint32_t index) {
   return stored;
 }
 
-ClassLayout* LayoutInstantiation::Class(const layout::Class& description) {
+ClassLayout* LayoutInstantiation::Class(std::size_t index) {
+  const auto& description = description_->classes.at(index);
   if (const auto found = cache_->classes.find(description.name); found != cache_->classes.end()) {
     return found->second;
   }
@@ -214,6 +220,7 @@ ClassLayout* LayoutInstantiation::Class(const layout::Class& description) {
                                       .interfaces = std::move(interfaces),
                                       .dispatch_targets = description.dispatch_targets,
                                       .is_enum = description.kind == layout::Class::Kind::Enum,
+                                      .nominal = nominals_.empty() ? nullptr : nominals_[index],
                                   });
   cache_->classes.emplace(description.name, stored);
   return stored;
@@ -234,8 +241,8 @@ ProgramLayouts LayoutInstantiation::Build() {
     }
     interfaces_.push_back(entry->second);
   }
-  for (const auto& description : description_->classes) {
-    classes_.push_back(Class(description));
+  for (std::size_t index = 0; index < description_->classes.size(); ++index) {
+    classes_.push_back(Class(index));
   }
   // 先创建全部名义布局，再建立结构签名；允许类的签名引用自身或后声明的类。
   for (std::size_t index = 0; index < description_->classes.size(); ++index) {
@@ -266,8 +273,9 @@ ProgramLayouts LayoutInstantiation::Build() {
 
 ProgramLayouts InstantiateLayouts(const layout::Program& description,
                                   Isolate& isolate,
-                                  LayoutCache& cache) {
-  return LayoutInstantiation(description, isolate, cache).Build();
+                                  LayoutCache& cache,
+                                  std::span<NominalType* const> nominals) {
+  return LayoutInstantiation(description, isolate, cache, nominals).Build();
 }
 
 }  // namespace vela::runtime

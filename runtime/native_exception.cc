@@ -1,35 +1,33 @@
 #include "runtime/native_abi.h"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <memory>
 #include <new>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 
-#include "base/execution_limits.h"
 #include "base/execution_status.h"
 #include "runtime/error.h"
 #include "runtime/exception.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
-#include "runtime/native_instance.h"
+#include "runtime/native_image.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
 namespace {
 
-FutureDiagnostic ResolveTrace(const NativeImage& image,
-                              std::span<const TracePosition> positions,
+FutureDiagnostic ResolveTrace(const NativeTraceFrame* frame,
                               ExecutionStatus status,
                               std::string_view message) {
   FutureDiagnostic diagnostic{.message = std::string(message), .stack_trace = {}, .status = status};
-  for (const auto position : positions) {
+  for (; frame != nullptr; frame = frame->previous) {
+    const auto& image = *frame->image;
+    const auto position = frame->position;
     const auto& function = image.functions.values().subspan(position.function).front();
     const auto location = function.locations.values().subspan(position.instruction).front();
     diagnostic.stack_trace.push_back({
@@ -39,6 +37,7 @@ FutureDiagnostic ResolveTrace(const NativeImage& image,
         .line = location.line,
         .column = location.column,
         .instruction = position.instruction,
+        .identity = function.identity,
     });
   }
   return diagnostic;
@@ -46,27 +45,14 @@ FutureDiagnostic ResolveTrace(const NativeImage& image,
 
 }  // namespace
 
-std::span<const TracePosition> NativeExecution::CapturePositions(
-    std::span<TracePosition> storage) const noexcept {
-  std::size_t index = 0;
-  for (auto* frame = current_frame_; frame != nullptr; frame = frame->previous) {
-    storage.subspan(index++).front() = frame->position;
-  }
-  return storage.first(frame_count_);
-}
-
 FutureDiagnostic NativeExecution::Diagnostic(ExecutionStatus status,
                                              std::string_view message) const {
-  std::array<TracePosition, kMaxCallFrames> storage;
-  return ResolveTrace(instance().image(), CapturePositions(storage), status, message);
+  return ResolveTrace(current_frame_, status, message);
 }
 
 FutureDiagnostic NativeExecution::ExceptionDiagnostic() const {
   const auto& exception = ExceptionData::From(*pending_exception_.AsObject());
-  return exception.async_diagnostic != nullptr
-             ? *exception.async_diagnostic
-             : ResolveTrace(instance().image(), exception.trace(), exception.status,
-                            exception.message());
+  return *exception.diagnostic;
 }
 
 void NativeExecution::AbortWithOutOfMemory() noexcept {
@@ -95,25 +81,34 @@ ExecutionStatus NativeExecution::RestoreFutureError(const FutureResult& completi
     AbortWithOutOfMemory();
     return ExecutionStatus::OutOfMemory;
   }
-  ExceptionData::From(*pending_exception_.AsObject()).async_diagnostic = stored.release();
+  const std::unique_ptr<FutureDiagnostic> previous(std::exchange(
+      ExceptionData::From(*pending_exception_.AsObject()).diagnostic, stored.release()));
   return status;
 }
 
 ExecutionStatus NativeExecution::CreateException(Value payload,
                                                  ExecutionStatus status,
                                                  std::string_view message) {
-  std::array<TracePosition, kMaxCallFrames> storage;
-  auto* exception = isolate().heap().AllocateException(*payload.AsObject(), status,
-                                                       CapturePositions(storage), message);
+  std::unique_ptr<FutureDiagnostic> diagnostic(new (std::nothrow)
+                                                   FutureDiagnostic(Diagnostic(status, message)));
+  if (diagnostic == nullptr) {
+    exception_allocation_failed_ = true;
+    return ExecutionStatus::OutOfMemory;
+  }
+  auto* exception = isolate().heap().AllocateException(*payload.AsObject(), status, {}, message);
   if (exception == nullptr) {
     exception_allocation_failed_ = true;
     return ExecutionStatus::OutOfMemory;
   }
+  ExceptionData::From(*exception).diagnostic = diagnostic.release();
   pending_exception_ = Value::Object(exception);
   return status;
 }
 
 ExecutionStatus NativeExecution::HandleFailure(ExecutionStatus status, std::string_view message) {
+  if (status == ExecutionStatus::ExecutionStopped) {
+    return status;
+  }
   if (exception_allocation_failed_) {
     return ExecutionStatus::OutOfMemory;
   }

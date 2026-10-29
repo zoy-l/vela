@@ -20,8 +20,10 @@
 #include "runtime/isolate.h"
 #include "runtime/native_abi.h"
 #include "runtime/native_call.h"
+#include "runtime/native_dispatch.h"
 #include "runtime/native_image.h"
 #include "runtime/native_instance.h"
+#include "runtime/native_program_state.h"
 #include "runtime/object.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
@@ -31,17 +33,12 @@
 namespace vela::runtime {
 namespace {
 
-std::expected<ResolvedCallable, ExecutionStatus> Resolve(NativeExecution& execution, Value value) {
-  const auto& instance = execution.instance();
-  return ResolveCallable(value, instance.code_identity(), instance.image().functions.size);
-}
-
 std::expected<Value, ExecutionStatus> CreatePlan(
     NativeExecution& execution,
     Value value,
     std::optional<std::uint32_t> target = std::nullopt) {
   if (!target) {
-    if (const auto resolved = Resolve(execution, value); !resolved) {
+    if (const auto resolved = ResolveNativeCallable(execution.instance(), value); !resolved) {
       return std::unexpected(resolved.error());
     }
   }
@@ -69,7 +66,8 @@ std::expected<Value, ExecutionStatus> InvokeDynamic(NativeExecution& execution,
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto values = storage.values();
-  const RootRange roots(execution.isolate().heap(), values.data(), values.size());
+  const RootRange roots(execution.isolate().heap(), values.data(), values.size(),
+                        RootOwner::Runtime);
   if (callable.implicit) {
     values.front() = *callable.implicit;
   }
@@ -93,17 +91,13 @@ std::expected<Value, ExecutionStatus> InvokeFunction(NativeExecution& execution,
                                                      Value function,
                                                      const HeapObject& arguments,
                                                      const HeapObject& names) {
-  const auto callable = Resolve(execution, function);
+  const auto callable = ResolveNativeCallable(execution.instance(), function);
   if (!callable) {
     return std::unexpected(callable.error());
   }
-  auto* environment = Heap::NativeEnvironment(*function.AsObject());
-  if (environment == nullptr) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  auto origin = NativeInstance::Borrow(*environment);
+  auto origin = NativeInstance::Borrow(*callable->state);
   const NativeInstanceScope scope(execution, origin);
-  return InvokeDynamic(execution, *callable, arguments, names, DynamicCallStyle::Function);
+  return InvokeDynamic(execution, callable->target, arguments, names, DynamicCallStyle::Function);
 }
 
 std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
@@ -131,16 +125,17 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
       if (!target) {
         std::unreachable();
       }
-      if (resolving) {
+      if (resolving &&
+          Heap::NativeProgram(*instance.state().front().AsObject()).dispatch == nullptr) {
         return CreatePlan(execution, receiver, target->function);
       }
-      auto& heap = execution.isolate().heap();
-      auto* callable = heap.AllocateInstance(wrapper, std::span(&receiver, 1));
-      if (callable == nullptr) {
-        return std::unexpected(ExecutionStatus::OutOfMemory);
+      const auto callable = AllocateNativeCallable(execution, wrapper, std::span(&receiver, 1));
+      if (!callable) {
+        return std::unexpected(callable.error());
       }
-      heap.SetNativeEnvironment(*callable, *instance.state().front().AsObject());
-      return Value::Object(callable);
+      const auto captured = Value::Object(*callable);
+      return resolving ? CreatePlan(execution, captured)
+                       : std::expected<Value, ExecutionStatus>(captured);
     }
     case MemberKind::Property: {
       if (member.target == kInvalidFunctionTarget) {
@@ -180,7 +175,7 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
     return std::unexpected(ExecutionStatus::InvalidCast);
   }
   auto value = original;
-  if (!value.IsNull() && type->instance != nullptr && type->instance->IsEnum()) {
+  if (!value.IsNull() && type->nominal != nullptr && type->nominal->IsEnum()) {
     value = *Heap::GetField(*value.AsObject(), 0);
   }
   if (member.kind == MemberKind::Field) {
@@ -215,6 +210,22 @@ std::expected<Value, ExecutionStatus> MethodCall(NativeExecution& execution,
   return InvokeFunction(execution, plan->value, arguments, names);
 }
 
+std::expected<Value, ExecutionStatus> AccessMember(NativeExecution& execution,
+                                                   Builtin builtin,
+                                                   std::span<const Value> arguments) {
+  const auto receiver = arguments.front();
+  const auto name = arguments[1];
+  if (!name.IsString()) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto* member = execution.instance().members().Find(receiver, name.AsString()->value());
+  if (member == nullptr) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  return builtin == Builtin::DynamicMemberSet ? WriteMember(execution, *member, arguments)
+                                              : ReadMember(execution, *member, receiver, builtin);
+}
+
 }  // namespace
 
 std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& execution,
@@ -222,9 +233,16 @@ std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& 
                                                                std::span<const Value> arguments) {
   if (builtin == Builtin::DynamicArrayPrepare) {
     const auto& instance = execution.instance();
+    const auto callback = ResolveNativeCallable(instance, arguments[1]);
+    if (!callback) {
+      return std::unexpected(callback.error());
+    }
+    const auto* signature = Heap::ClassOf(*arguments[1].AsObject())->callable_type();
+    if (signature == nullptr) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
     const auto plan =
-        PrepareDynamicArray(execution.isolate(), arguments, instance.layouts().classes,
-                            instance.code_identity(), instance.image().functions.size);
+        PrepareDynamicArray(execution.isolate(), arguments, instance.layouts().classes, *signature);
     if (!plan) {
       return plan;
     }
@@ -233,8 +251,10 @@ std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& 
     if (!thunk) {
       return std::unexpected(thunk.error());
     }
-    execution.isolate().heap().SetNativeEnvironment(*thunk->AsObject(),
-                                                    *instance.state().front().AsObject());
+    auto& thunk_object = *thunk->AsObject();
+    execution.isolate().heap().SetNativeEnvironment(
+        thunk_object, *instance.state().front().AsObject(),
+        Heap::ClassOf(thunk_object)->callable()->function);
     return plan;
   }
   if (builtin == Builtin::DynamicArrayInvoke) {
@@ -257,15 +277,13 @@ std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& 
                ? InvokeFunction(execution, first, *second.AsObject(), *names.AsObject())
                : MethodCall(execution, first, *second.AsObject(), *names.AsObject());
   }
-  if (!second.IsString()) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  auto* dispatch = Heap::NativeProgram(*execution.instance().state().front().AsObject()).dispatch;
+  if (dispatch != nullptr) {
+    auto current = NativeInstance::Borrow(dispatch->current_state());
+    const NativeInstanceScope scope(execution, current);
+    return AccessMember(execution, builtin, arguments);
   }
-  const auto* member = execution.instance().members().Find(first, second.AsString()->value());
-  if (member == nullptr) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  return builtin == Builtin::DynamicMemberSet ? WriteMember(execution, *member, arguments)
-                                              : ReadMember(execution, *member, first, builtin);
+  return AccessMember(execution, builtin, arguments);
 }
 
 }  // namespace vela::runtime

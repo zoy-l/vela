@@ -50,7 +50,7 @@ HeapObject* Heap::AllocateException(HeapObject& payload,
     return nullptr;
   }
   const auto rooted_payload = Value::Object(&payload);
-  RootRange roots(*this, &rooted_payload, 1);
+  RootRange roots(*this, &rooted_payload, 1, RootOwner::Runtime);
   return AllocateObject(
       ObjectKind::Exception, size, [&payload, status, trace, message](HeapObject& object) {
         auto* exception = std::construct_at(StorageAfter<ExceptionData>(object));

@@ -24,8 +24,7 @@ struct DynamicArrayInvocation final {
     Isolate& isolate,
     std::span<const Value> input,
     std::span<ClassLayout* const> classes,
-    const CodeIdentity& identity,
-    std::size_t function_count);
+    const TypeSignature& callback_type);
 [[nodiscard]] std::expected<DynamicArrayInvocation, ExecutionStatus> PrepareDynamicArrayInvocation(
     Heap& heap,
     std::span<const Value> input);

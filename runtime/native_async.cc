@@ -101,6 +101,11 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
         .instruction = point_.instruction,
     };
     const auto status = static_cast<ExecutionStatus>(point_.entry(&execution, &state));
+    if (status == ExecutionStatus::ExecutionStopped) {
+      result().KeepAlive({});
+      std::ranges::fill(values_, Value::Null());
+      return;
+    }
     if (status == ExecutionStatus::Returned) {
       return;
     } else if (execution.HasException()) {
@@ -166,7 +171,7 @@ std::expected<Value, ExecutionStatus> Suspend(NativeExecution& execution,
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto output = Value::Object(object);
-  const RootRange root(isolate.heap(), &output, 1);
+  const RootRange root(isolate.heap(), &output, 1, RootOwner::Runtime);
   auto suspended = std::make_shared<NativeSuspendedFrame>(
       isolate, point, capacity, execution.instance().state().front(), output);
   const auto bound = BindResult(execution, function, output);

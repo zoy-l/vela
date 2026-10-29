@@ -1,5 +1,5 @@
-#include "compiler/aot/native_values.h"
-#include "compiler/aot/function_emitter.h"
+#include "compiler/native/native_values.h"
+#include "compiler/native/function_emitter.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -24,13 +24,13 @@
 #include <llvm/TargetParser/Triple.h>
 
 #include "base/execution_status.h"
-#include "compiler/aot/native_image_emitter.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/native_image_emitter.h"
 #include "runtime/native_abi.h"
 #include "runtime/native_function.h"
 
-namespace vela::compiler::aot {
+namespace vela::compiler::native {
 
 bool IsScalar(const SourceType& type) {
   return type.kind == Kind::Int || type.kind == Kind::Enum || type.kind == Kind::Double ||
@@ -303,4 +303,4 @@ void EmitWrapper(llvm::Module& module,
   builder.CreateRet(status);
 }
 
-}  // namespace vela::compiler::aot
+}  // namespace vela::compiler::native

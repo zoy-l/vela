@@ -311,12 +311,12 @@ TEST(FutureTest, ObserversBorrowOneCompletion) {
   const FutureResult* late = nullptr;
   future.ObserveResult([&](const FutureResult& result) { first = &result; });
   future.ObserveResult([&](const FutureResult& result) { second = &result; });
-  ASSERT_TRUE(
-      future.CompleteError(Value::Integer(kErrorValue),
-                           {
-                               .message = "failure",
-                               .stack_trace = {{.function = "host", .source_path = "input.vela"}},
-                           }));
+  ASSERT_TRUE(future.CompleteError(
+      Value::Integer(kErrorValue),
+      {
+          .message = "failure",
+          .stack_trace = {{.function = "host", .source_path = "input.vela", .identity = {}}},
+      }));
   ASSERT_TRUE(isolate.scheduler().PumpOne());
   future.ObserveResult([&](const FutureResult& result) { late = &result; });
   ASSERT_TRUE(isolate.scheduler().PumpOne());

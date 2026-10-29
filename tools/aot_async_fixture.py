@@ -386,7 +386,7 @@ TEST(NativeHostTest, RepeatedAwaitAllocatesOneResultFuturePerActivation) {
 TEST(NativeHostTest, CompositionRetainsCallbackFutureAcrossHostCompletionAndGc) {
   Isolate isolate(1);
   RegisterComposition(isolate);
-  Completer producer;
+  FutureCompletionEndpoint producer;
   ActiveProducer() = &producer;
   Value value;
   RootRange root(isolate.heap(), &value, 1);

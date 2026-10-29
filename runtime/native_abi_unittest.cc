@@ -11,6 +11,7 @@
 #include "base/execution_limits.h"
 #include "base/execution_status.h"
 #include "runtime/isolate.h"
+#include "runtime/native_api.h"
 #include "runtime/native_image.h"
 #include "runtime/native_instance.h"
 #include "runtime/string.h"
@@ -212,10 +213,20 @@ TEST(NativeAbiTest, ScalarLeafEntryDoesNotMaterializeAFrame) {
   EXPECT_EQ(execution.frame_count(), 0U);
 }
 
+TEST(NativeAbiTest, StoppedExecutionHasPublicNativeDiagnostic) {
+  EXPECT_STREQ(
+      vela_aot_v1_status_code(static_cast<VelaAotStatus>(ExecutionStatus::ExecutionStopped)),
+      "ExecutionStopped");
+}
+
 TEST(NativeAbiTest, LeafFailureRetainsBorrowedRootsDuringExceptionAllocationAndReleasesThem) {
   Isolate isolate(1);
   auto image = EmptyImage();
-  const std::array<NativeFunctionDescription, 2> functions;
+  std::array<NativeFunctionDescription, 2> functions;
+  const std::array<SourceLocation, 8> locations;
+  functions[1].locations = {.data = locations.data(), .size = locations.size()};
+  const std::array<NativeText, 1> paths;
+  image.source_paths = {.data = paths.data(), .size = paths.size()};
   image.functions = {.data = functions.data(), .size = functions.size()};
   const auto instance = NativeInstance::Instantiate(isolate, image);
   ASSERT_TRUE(instance.has_value());
@@ -236,9 +247,10 @@ TEST(NativeAbiTest, LeafFailureRetainsBorrowedRootsDuringExceptionAllocationAndR
   EXPECT_EQ(execution.frame_count(), 0U);
   ASSERT_TRUE(execution.HasException());
   const auto& error = ExceptionData::From(*execution.pending_exception().AsObject());
-  ASSERT_EQ(error.trace().size(), 1U);
-  EXPECT_EQ(error.trace().front().function, position.function);
-  EXPECT_EQ(error.trace().front().instruction, position.instruction);
+  const auto diagnostic = execution.ExceptionDiagnostic();
+  ASSERT_EQ(diagnostic.stack_trace.size(), 1U);
+  EXPECT_EQ(diagnostic.stack_trace.front().instruction, position.instruction);
+  EXPECT_EQ(error.trace().size(), 0U);
   static_cast<void>(execution.TakeException());
   heap.Collect();
   EXPECT_EQ(heap.object_count(), baseline);

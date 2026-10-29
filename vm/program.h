@@ -14,6 +14,7 @@
 #include "base/callable.h"
 #include "base/execution_status.h"
 #include "base/member.h"
+#include "runtime/external_resources.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/member_table.h"
@@ -33,9 +34,10 @@ class Execution;
 
 // 原生常量指针池地址稳定且持续保根；所属 Isolate 须覆盖程序和入口句柄的生命周期。
 struct StringConstants final {
-  StringConstants(runtime::Heap& heap, std::size_t count) : values(count), roots(heap, values) {}
+  StringConstants(runtime::Heap& heap, std::size_t count)
+      : values(count), roots(heap, values, runtime::RootOwner::Runtime) {}
   StringConstants(runtime::Heap& heap, std::span<runtime::StringObject* const> source)
-      : values(source.begin(), source.end()), roots(heap, values) {}
+      : values(source.begin(), source.end()), roots(heap, values, runtime::RootOwner::Runtime) {}
   std::vector<runtime::StringObject*> values;
   runtime::RootRange roots;
 };
@@ -117,15 +119,20 @@ struct GlobalStorage final {
   std::span<runtime::Value> values;
   std::vector<GlobalState> states;
   std::vector<std::uint32_t> initializers;
-  runtime::RootRange roots;
-  std::size_t external_users = 0;
+  runtime::RootRange roots{runtime::RootOwner::Runtime};
+  std::size_t rooted_users = 0;
 };
 
 struct ProgramStorage final {
+  ProgramStorage(std::vector<FunctionStorage> code,
+                 const runtime::CodeIdentity* identity,
+                 runtime::Isolate& owner,
+                 std::shared_ptr<GlobalStorage> state);
   std::vector<FunctionStorage> functions;
   const runtime::CodeIdentity* code_identity = nullptr;
   const runtime::Isolate* isolate = nullptr;
   std::shared_ptr<GlobalStorage> globals;
+  mutable runtime::ExternalResource external;
 };
 
 class FunctionHandle;
@@ -154,6 +161,8 @@ class Program final {
   [[nodiscard]] std::span<const FunctionStorage> functions() const noexcept;
   [[nodiscard]] FunctionHandle FindFunction(std::string_view name) const noexcept;
   [[nodiscard]] bool IsForIsolate(const runtime::Isolate& isolate) const noexcept;
+  // 会话拥有的强根与宿主句柄分开；返回宿主入口时重新建立 External 引用。
+  [[nodiscard]] Program Retained() const;
   [[nodiscard]] GlobalStorage* globals() const noexcept;
   [[nodiscard]] const runtime::CodeIdentity& code_identity() const noexcept {
     return *storage_->code_identity;
@@ -162,13 +171,13 @@ class Program final {
  private:
   friend class FunctionHandle;
   friend class internal::Execution;
-  enum class Rooting : std::uint8_t { External, Continuation };
+  enum class Rooting : std::uint8_t { External, Retained, Continuation };
   Program(std::shared_ptr<const ProgramStorage> storage, Rooting rooting = Rooting::External);
   [[nodiscard]] Program Internal() const;
   void Retain() noexcept;
   void Release() noexcept;
   std::shared_ptr<const ProgramStorage> storage_;
-  bool external_ = true;
+  Rooting rooting_ = Rooting::External;
 };
 
 class FunctionHandle final {

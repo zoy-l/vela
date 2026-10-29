@@ -1,0 +1,79 @@
+#pragma once
+
+#include <cstdint>
+#include <expected>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+
+#include "compiler/frontend/declaration_ids.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/ir/ir.h"
+
+namespace vela::compiler {
+
+struct SourceChange final {
+  std::string path;
+  // 空值表示删除模块；空字符串仍是合法的空源码。
+  std::optional<std::string> text;
+};
+
+struct SourceUpdate final {
+  std::uint64_t base_revision = 0;
+  std::vector<SourceChange> changes;
+  std::vector<std::string> added_roots;
+};
+
+struct CompiledSourceSnapshot final {
+  std::uint64_t revision = 0;
+  absl::flat_hash_map<std::string, std::shared_ptr<const std::string>> sources;
+  std::vector<std::string> roots;
+  std::vector<std::string> standard_names;
+  frontend::DeclarationIds identities;
+  ir::Program program;
+};
+
+enum class SourceCandidateStatus : std::uint8_t { SourceError, Stale, DifferentSession };
+
+struct SourceCandidateError final {
+  SourceCandidateStatus status = SourceCandidateStatus::SourceError;
+  frontend::Diagnostics diagnostics;
+};
+
+struct SourceSessionIdentity final {};
+
+class SourceCandidate final {
+ public:
+  [[nodiscard]] const CompiledSourceSnapshot& snapshot() const noexcept { return *prepared_; }
+
+ private:
+  friend class SourceSession;
+  SourceCandidate(std::shared_ptr<const SourceSessionIdentity> session,
+                  std::shared_ptr<const CompiledSourceSnapshot> base,
+                  std::shared_ptr<const CompiledSourceSnapshot> prepared);
+  std::shared_ptr<const SourceSessionIdentity> session_;
+  std::shared_ptr<const CompiledSourceSnapshot> base_;
+  std::shared_ptr<const CompiledSourceSnapshot> prepared_;
+};
+
+// 编译层只拥有不可变源码和声明身份，不访问 Isolate。代码生成或运行时验证成功后，
+// 开发会话才提交候选；失败候选和并行编译不会改变已提交基线。
+class SourceSession final {
+ public:
+  explicit SourceSession(std::string entry);
+  [[nodiscard]] std::shared_ptr<const CompiledSourceSnapshot> snapshot() const noexcept;
+  [[nodiscard]] std::expected<SourceCandidate, SourceCandidateError> Prepare(
+      SourceUpdate update) const;
+  [[nodiscard]] std::expected<void, SourceCandidateStatus> Commit(const SourceCandidate& candidate);
+
+ private:
+  const std::shared_ptr<const SourceSessionIdentity> identity_;
+  mutable std::mutex mutex_;
+  std::shared_ptr<const CompiledSourceSnapshot> current_;
+};
+
+}  // namespace vela::compiler

@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
+
 #include "base/callable.h"
 #include "base/execution_status.h"
 #include "base/layout_description.h"
@@ -158,11 +160,11 @@ std::string_view NativeTargetIdentity() noexcept {
   return kNativeTargetIdentity;
 }
 
-NativeInstance::NativeInstance(NativeProgramState& data, Value anchor)
-    : data_(&data), anchor_(anchor), anchor_root_(data.isolate->heap(), &anchor_, 1) {}
+NativeInstance::NativeInstance(NativeProgramState& data, Value anchor, RootOwner root_owner)
+    : data_(&data), anchor_(anchor), anchor_root_(data.isolate->heap(), &anchor_, 1, root_owner) {}
 
 NativeInstance NativeInstance::Borrow(HeapObject& state) {
-  return {Heap::NativeProgram(state), Value::Object(&state)};
+  return {Heap::NativeProgram(state), Value::Object(&state), RootOwner::Runtime};
 }
 
 Value NativeInstance::constant(std::size_t index) const noexcept {
@@ -232,32 +234,41 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
 }
 
 std::expected<void, NativeInstantiationError> NativeInstance::InitializeConstants() {
-  data_->global_states =
-      new (std::nothrow) NativeProgramState::GlobalState[data_->image->global_initializers.size]{};
-  if (data_->global_states == nullptr) {
+  const auto& image = *data_->image;
+  auto& heap = data_->isolate->heap();
+  auto* constants = heap.AllocateValueSlots(image.strings.size);
+  if (constants == nullptr) {
     return std::unexpected(NativeInstantiationError{
         .status = NativeInstantiationStatus::OutOfMemory,
-        .message = "out of memory creating native global states",
+        .message = "out of memory creating native string constant slots",
     });
   }
-  auto& heap = data_->isolate->heap();
-  auto* constants = heap.AllocateValueSlots(data_->image->strings.size);
-  if (constants != nullptr) {
-    heap.SetNativeProgramSlot(*anchor_.AsObject(), NativeProgramState::kConstants,
-                              Value::Object(constants));
-    auto* globals = heap.AllocateValueSlots(data_->image->global_initializers.size);
+  heap.SetNativeProgramSlot(*anchor_.AsObject(), NativeProgramState::kConstants,
+                            Value::Object(constants));
+  if (image.native_mode == static_cast<std::uint32_t>(NativeProgramMode::Closed)) {
+    const auto global_count = image.global_initializers.size;
+    std::unique_ptr<NativeProgramState::GlobalState[]> global_states(
+        new (std::nothrow) NativeProgramState::GlobalState[global_count]{});
+    data_->global_states = global_states.release();
+    if (data_->global_states == nullptr) {
+      return std::unexpected(NativeInstantiationError{
+          .status = NativeInstantiationStatus::OutOfMemory,
+          .message = "out of memory creating native global states",
+      });
+    }
+    auto* globals = heap.AllocateValueSlots(global_count);
     if (globals != nullptr) {
       heap.SetNativeProgramSlot(*anchor_.AsObject(), NativeProgramState::kGlobals,
                                 Value::Object(globals));
     }
+    if (data_->values.at(NativeProgramState::kGlobals).IsNull()) {
+      return std::unexpected(NativeInstantiationError{
+          .status = NativeInstantiationStatus::OutOfMemory,
+          .message = "out of memory creating native program state",
+      });
+    }
   }
-  if (data_->values.at(NativeProgramState::kGlobals).IsNull()) {
-    return std::unexpected(NativeInstantiationError{
-        .status = NativeInstantiationStatus::OutOfMemory,
-        .message = "out of memory creating native program state",
-    });
-  }
-  const auto strings = data_->image->strings.values();
+  const auto strings = image.strings.values();
   for (std::size_t index = 0; index < strings.size(); ++index) {
     auto* string = heap.AllocateString(strings.subspan(index).front().text());
     if (string == nullptr) {
@@ -273,6 +284,20 @@ std::expected<void, NativeInstantiationError> NativeInstance::InitializeConstant
 
 std::expected<std::unique_ptr<NativeInstance>, NativeInstantiationError>
 NativeInstance::Instantiate(Isolate& isolate, const NativeImage& image) {
+  return Instantiate(isolate, image, {}, nullptr);
+}
+
+std::expected<std::unique_ptr<NativeInstance>, NativeInstantiationError>
+NativeInstance::Instantiate(Isolate& isolate, std::shared_ptr<const NativeImage> image) {
+  const auto& description = *image;
+  return Instantiate(isolate, description, std::move(image), nullptr);
+}
+
+std::expected<std::unique_ptr<NativeInstance>, NativeInstantiationError>
+NativeInstance::Instantiate(Isolate& isolate,
+                            const NativeImage& image,
+                            std::shared_ptr<const NativeImage> owner,
+                            NativeTypeIdentities* identities) {
   if (image.abi_version != kNativeAbiVersion || image.record_bytes != sizeof(NativeImage) ||
       image.abi_identity.text() != NativeRuntimeAbiIdentity()) {
     return std::unexpected(NativeInstantiationError{
@@ -286,6 +311,13 @@ NativeInstance::Instantiate(Isolate& isolate, const NativeImage& image) {
         .message = "native image and runtime targets do not match",
     });
   }
+  if (image.native_mode == static_cast<std::uint32_t>(NativeProgramMode::Reloadable) &&
+      identities == nullptr) {
+    return std::unexpected(NativeInstantiationError{
+        .status = NativeInstantiationStatus::MissingSession,
+        .message = "reloadable images must be instantiated by their session dispatch",
+    });
+  }
   std::unique_ptr<NativeProgramState> data(new (std::nothrow) NativeProgramState);
   if (data == nullptr) {
     return std::unexpected(NativeInstantiationError{
@@ -295,13 +327,16 @@ NativeInstance::Instantiate(Isolate& isolate, const NativeImage& image) {
   }
   data->isolate = &isolate;
   data->image = &image;
-  std::unique_ptr<NativeInstance> instance(new (std::nothrow) NativeInstance(*data, Value::Null()));
+  data->image_owner = std::move(owner);
+  std::unique_ptr<NativeInstance> instance(
+      new (std::nothrow) NativeInstance(*data, Value::Null(), RootOwner::NativeInstance));
   if (instance == nullptr) {
     return std::unexpected(NativeInstantiationError{
         .status = NativeInstantiationStatus::OutOfMemory,
         .message = "out of memory creating native program instance",
     });
   }
+  auto& state = *instance->data_;
   const auto description = DescribeLayouts(image);
   const auto bound = instance->BindImports(description);
   if (!bound) {
@@ -309,12 +344,54 @@ NativeInstance::Instantiate(Isolate& isolate, const NativeImage& image) {
   }
   LayoutTransaction transaction(isolate);
   const auto existing = isolate.native_images_.find(&image);
-  auto cache = existing == isolate.native_images_.end() ? LayoutCache() : existing->second;
+  const auto has_owner = state.image_owner != nullptr;
+  const auto closed = image.native_mode == static_cast<std::uint32_t>(NativeProgramMode::Closed);
+  const auto can_reuse = closed && existing != isolate.native_images_.end() &&
+                         existing->second.static_lifetime == !has_owner &&
+                         (!has_owner || !existing->second.owner.expired());
+  auto cache = can_reuse ? existing->second.layouts : LayoutCache();
   if (cache.code_identity == nullptr) {
     cache.code_identity = isolate.CreateCodeIdentity();
   }
-  instance->data_->layouts = InstantiateLayouts(description, isolate, cache);
-  instance->data_->code_identity = cache.code_identity;
+  std::vector<NominalType*> nominals;
+  if (identities != nullptr) {
+    const auto interface_ids = image.interface_declarations.values();
+    for (std::size_t index = 0; index < description.interfaces.size(); ++index) {
+      const auto identity = interface_ids[index];
+      if (identity == DeclarationId{}) {
+        continue;
+      }
+      const auto [entry, inserted] = identities->interfaces.try_emplace(identity, nullptr);
+      if (inserted) {
+        entry->second = isolate.CreateInterfaceType();
+      }
+      cache.interfaces.emplace(description.interfaces[index], entry->second);
+    }
+    const auto classes = image.classes.values();
+    nominals.resize(classes.size());
+    for (std::size_t index = 0; index < classes.size(); ++index) {
+      const auto& type = classes[index];
+      const auto kind = static_cast<layout::Class::Kind>(type.kind);
+      if (type.declaration == DeclarationId{} || kind == layout::Class::Kind::RuntimeError ||
+          kind == layout::Class::Kind::DateParts) {
+        continue;
+      }
+      const auto [entry, inserted] = identities->classes.try_emplace(type.declaration, nullptr);
+      if (inserted) {
+        std::vector<const InterfaceType*> interfaces;
+        for (const auto interface : type.interfaces.values()) {
+          interfaces.push_back(cache.interfaces.at(description.interfaces[interface]));
+        }
+        entry->second = isolate.CreateNominalType({
+            .kind = kind == layout::Class::Kind::Enum ? NominalKind::Enum : NominalKind::Class,
+            .interfaces = std::move(interfaces),
+        });
+      }
+      nominals[index] = entry->second;
+    }
+  }
+  state.layouts = InstantiateLayouts(description, isolate, cache, nominals);
+  state.code_identity = cache.code_identity;
   std::vector<MemberDefinition> members;
   members.reserve(image.members.size);
   for (const auto& member : image.members.values()) {
@@ -327,8 +404,8 @@ NativeInstance::Instantiate(Isolate& isolate, const NativeImage& image) {
         .setter = member.setter == kNoNativeIndex ? std::nullopt : std::optional(member.setter),
     });
   }
-  instance->data_->members = MemberTable(instance->data_->layouts.types, std::move(members));
-  for (auto* type : instance->data_->layouts.classes) {
+  state.members = MemberTable(state.layouts.types, std::move(members));
+  for (auto* type : state.layouts.classes) {
     if (type->callable()) {
       type->BindCodeIdentity(*cache.code_identity);
     }
@@ -345,7 +422,19 @@ NativeInstance::Instantiate(Isolate& isolate, const NativeImage& image) {
   if (!initialized) {
     return std::unexpected(initialized.error());
   }
-  isolate.native_images_.insert_or_assign(&image, std::move(cache));
+  if (closed && has_owner) {
+    absl::erase_if(isolate.native_images_, [](const auto& entry) {
+      const auto& cached = entry.second;
+      return !cached.static_lifetime && cached.owner.expired();
+    });
+  }
+  if (closed) {
+    isolate.native_images_.insert_or_assign(&image, Isolate::NativeImageCache{
+                                                        .layouts = std::move(cache),
+                                                        .owner = state.image_owner,
+                                                        .static_lifetime = !has_owner,
+                                                    });
+  }
   transaction.Commit();
   return instance;
 }

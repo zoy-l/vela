@@ -94,9 +94,11 @@ CLI 的 `run` 命令会识别零参数的 `async func main(): Future<int>`，启
 
 挂起的局部值、Future 结果、错误、等待者和排队回调在 GC 中保持可达。续延保留 Program 和诊断元数据，借用 Isolate；宿主必须让 Isolate 存活到其 Program、Future 句柄及原生生产者释放之后。VM 代码只在所属 Isolate 线程运行；外部线程投递完成消息，由该线程更新 Future。
 
-Future 值、监听器、VM 帧、GC 状态和 timer 队列由 Isolate 线程独占，内部不使用互斥锁。宿主线程通过无锁 MPSC 消息队列发布不可变的完成消息，Isolate 每次应用一个宿主事件，再排空其微任务。等待宿主事件或 timer 时通过信号量休眠。完成请求的占位和取消状态使用原子操作。Future 状态读取、监听器注册、堆操作与 Program 销毁仍在所属线程执行。原生取消回调可能在取消或注册线程运行，VM 工作必须经调度器投递。
+Future 值、监听器、VM 帧、GC 状态和 timer 队列由 Isolate 线程独占。宿主线程通过无锁 MPSC 消息队列发布不可变的完成消息，Isolate 每次应用一个宿主事件，再排空其微任务。等待宿主事件或 timer 时通过信号量休眠。完成请求的占位和取消状态使用原子操作；可关闭的完成端点及 timer 取消操作串行化调度器指针访问与停止。Future 状态读取、监听器注册、堆操作与 Program 销毁仍在所属线程执行。原生取消回调可能在取消或注册线程运行，VM 工作必须经调度器投递。
 
 `NativeContext::CreateCompleter()` 登记一个存活的宿主生产者；完成操作或释放全部生产者句柄会注销事件源。`NativeContext` 将返回的原生 Future 绑定到自己的调度器，拒绝已属于其他 Isolate 的 Future。原生 Future 完成时检查 external 声明中的 `Future<T>` 载荷；值类型不符或错误不可抛出时，检查后的 Future 以 `TypeError` 失败。跨线程投递的堆值必须已属于该 Isolate，并在发布前保持保根；分配和编码在所属线程完成。
+
+宿主异步操作应先取得 `completer.future()`，再用 `std::move(completer).Detach()` 把完成能力转交给 `FutureCompletionEndpoint`；生产者只保留端点。端点可复制并可晚于 Isolate 销毁。调度器停止时先关闭端点、在所属线程释放其 Future 与回调引用，再丢弃排队事件和 timer；迟到的完成返回 `FutureCompletionError::Closed`，不会投递到新运行。已接受的完成请求仍遵守只能完成一次的规则。最后一个尚未完成的端点句柄释放时，清理回到所属线程，注销宿主事件源。普通 Future、Completer 和 Program 句柄仍须在 Isolate 销毁前释放；端点不会延长堆值的保根期限。
 
 C++ `Future::Complete` 在所属线程调用时同步检查 Future adoption；跨线程调用只返回完成请求是否被接受，由所属线程应用请求时检查 adoption。检查失败时，Future 以对应诊断完成，包括 `FutureSelfAdoption` 或 `InvalidIsolate`。跨线程调用方必须观察 Future 才能取得最终结果。
 

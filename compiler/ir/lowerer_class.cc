@@ -94,6 +94,9 @@ ClassId Lowerer::RegisterEnumType(const frontend::TypeDescriptor& type) {
   Class layout;
   layout.name = name;
   layout.kind = Class::Kind::Enum;
+  if (declarations_ != nullptr) {
+    layout.declaration = declarations_->nominals.at(name);
+  }
   layout.field_order = {"$value"};
   layout.field_types = {{.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"}};
   program_.classes.push_back(std::move(layout));

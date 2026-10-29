@@ -1,4 +1,4 @@
-#include "compiler/aot/function_emitter.h"
+#include "compiler/native/function_emitter.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -14,11 +14,11 @@
 #include "base/async_operation.h"
 #include "base/execution_status.h"
 #include "base/opcode.h"
-#include "compiler/aot/native_values.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/native_values.h"
 #include "runtime/native_async.h"
 
-namespace vela::compiler::aot {
+namespace vela::compiler::native {
 
 llvm::Value* FunctionEmitter::Output() {
   return body_->getArg(static_cast<unsigned>(body_->arg_size() - 1));
@@ -221,4 +221,4 @@ std::expected<void, std::string> FunctionEmitter::EmitAsyncInstruction(
   return {};
 }
 
-}  // namespace vela::compiler::aot
+}  // namespace vela::compiler::native

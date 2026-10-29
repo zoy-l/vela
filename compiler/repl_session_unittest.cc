@@ -1,6 +1,7 @@
 #include "compiler/repl_session.h"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <span>
 #include <sstream>
@@ -9,9 +10,14 @@
 #include <system_error>
 
 #include "base/file.h"
+#include "compiler/compiler.h"
 #include "gtest/gtest.h"
 
+#include "runtime/external_resources.h"
 #include "runtime/heap.h"
+#include "runtime/native_function.h"
+#include "runtime/rooted_value.h"
+#include "runtime/value.h"
 
 namespace vela::compiler {
 namespace {
@@ -46,6 +52,16 @@ TEST_F(ReplSessionTest, PersistsValuesAndInitializesOnceWithoutReplayingHistory)
   Execute("value + 1");
   Execute("print(\"done\")");
   EXPECT_EQ(output().str(), "once\n42\ndone\n");
+}
+
+TEST_F(ReplSessionTest, LambdasInLoopIterablesKeepTheirTargetsAcrossSubmissions) {
+  Execute("const callbacks: (() => int)[] = [];");
+  Execute("for (const callback in [(): int => 20, (): int => 22]) { callbacks.push(callback); }");
+  Execute("for (const callback in [(): int => 100, (): int => 200]) { callbacks.push(callback); }");
+  session().isolate().heap().Collect();
+  Execute("callbacks[0]() + callbacks[1]()");
+  Execute("callbacks[2]() + callbacks[3]()");
+  EXPECT_EQ(output().str(), "42\n300\n");
 }
 
 TEST_F(ReplSessionTest, DynamicJsonValuesAndBoundMethodsSurviveGcAndLaterSubmissions) {
@@ -225,12 +241,71 @@ TEST_F(ReplSessionTest, IncompleteInputAndResetHaveNoEffects) {
   EXPECT_EQ(session().Submit("func value(): int {").status, SubmissionStatus::Incomplete);
   EXPECT_TRUE(session().source().empty());
   Execute("const value = 42;");
-  session().Reset();
+  ASSERT_TRUE(session().Reset());
   session().isolate().SetOutput(output());
   EXPECT_EQ(session().Submit("value").status, SubmissionStatus::Rejected);
   Execute("const value = 3;");
   Execute("value");
   EXPECT_EQ(output().str(), "3\n");
+}
+
+TEST_F(ReplSessionTest, ResetRejectsHostRootsAndKeepsTheCurrentSessionRunning) {
+  Execute("let value = 40;");
+  const auto source = std::string(session().source());
+  {
+    const runtime::RootedValue root(session().isolate(), runtime::Value::Null());
+    const auto reset = session().Reset();
+    ASSERT_FALSE(reset);
+    ASSERT_EQ(reset.error().size(), 1U);
+    EXPECT_EQ(reset.error().front().kind, runtime::ExternalResourceKind::RootedValue);
+    EXPECT_EQ(session().source(), source);
+    Execute("value + 2");
+  }
+  ASSERT_TRUE(session().Reset());
+  EXPECT_TRUE(session().source().empty());
+  EXPECT_EQ(output().str(), "42\n");
+}
+
+TEST_F(ReplSessionTest, ProgramAndFunctionHandlesBlockResetEvenWithoutGlobals) {
+  auto compiled = CompileSource("func answer(): int { return 42; }", session().isolate());
+  ASSERT_TRUE(compiled.Succeeded());
+  auto function = compiled.program.FindFunction("answer");
+  compiled.program = {};
+  const auto refused = session().Reset();
+  ASSERT_FALSE(refused);
+  ASSERT_EQ(refused.error().size(), 1U);
+  EXPECT_EQ(refused.error().front().kind, runtime::ExternalResourceKind::Program);
+  function = {};
+  EXPECT_TRUE(session().Reset());
+}
+
+TEST_F(ReplSessionTest, ResetStopsSuspendedTimersWithoutTreatingInternalRootsAsHostHandles) {
+  Execute("async func wait(): Future<void> { await sleep(10000); }");
+  Execute("const pending = wait();");
+  EXPECT_EQ(session().isolate().scheduler().suspended_frame_count(), 1U);
+  ASSERT_TRUE(session().Reset());
+  EXPECT_EQ(session().isolate().scheduler().suspended_frame_count(), 0U);
+  EXPECT_TRUE(session().isolate().ReloadBlockers().empty());
+}
+
+std::int64_t PersistentHostAnswer() noexcept {
+  return 42;
+}
+
+TEST_F(ReplSessionTest, ResetPreservesTheFixedNativeBindingSnapshot) {
+  ASSERT_TRUE(session().isolate().RegisterNative(
+      runtime::NativeFunction::Bind<PersistentHostAnswer>("host.answer")));
+  Execute("external func answer(): int = 'host.answer';");
+  Execute("answer()");
+  const auto refused = session().isolate().RegisterNative(
+      runtime::NativeFunction::Bind<PersistentHostAnswer>("host.other"));
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error(), runtime::NativeRegistrationError::BindingsFrozen);
+  ASSERT_TRUE(session().Reset());
+  session().isolate().SetOutput(output());
+  Execute("external func answer(): int = 'host.answer';");
+  Execute("answer()");
+  EXPECT_EQ(output().str(), "42\n42\n");
 }
 
 TEST_F(ReplSessionTest, SuspendedFunctionsShareGlobalsAcrossLaterSubmissions) {
@@ -307,7 +382,7 @@ TEST_F(ReplModuleSessionTest, PinsAcceptedModulesAndKeepsBindingsWhenNewImportsC
     Execute(session, "import \"added.vela\" as added;");
     Execute(session, "saved() + added.get()");
     EXPECT_EQ(output.str(), "42\n");
-    session.Reset();
+    ASSERT_TRUE(session.Reset());
     session.isolate().SetOutput(output);
     Execute(session, "import \"parent.vela\" as parent;");
     Execute(session, "parent.get()");

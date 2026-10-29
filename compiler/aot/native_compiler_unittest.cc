@@ -425,7 +425,11 @@ export func answer(): int { return 42; }
   ASSERT_EQ(result->program.functions.size(), 1U);
   EXPECT_EQ(result->program.functions.front().name, "answer");
   EXPECT_EQ(result->exports.front().function, 0U);
-  EXPECT_EQ(result->llvm_ir.find("unused"), std::string::npos);
+  llvm::LLVMContext context;
+  llvm::SMDiagnostic diagnostic;
+  const auto module = llvm::parseAssemblyString(result->llvm_ir, diagnostic, context);
+  ASSERT_NE(module, nullptr);
+  EXPECT_EQ(module->getFunction("vela_native_v1_import"), nullptr);
 }
 
 }  // namespace

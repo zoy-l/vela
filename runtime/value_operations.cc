@@ -50,7 +50,9 @@ bool IsEqualValue(Value left, Value right) noexcept {
     case ValueKind::Object: {
       const auto* layout = Heap::ClassOf(*left.AsObject());
       if (layout != nullptr && layout->IsEnum()) {
-        return layout == Heap::ClassOf(*right.AsObject()) &&
+        const auto* right_layout = Heap::ClassOf(*right.AsObject());
+        return right_layout != nullptr &&
+               &layout->nominal_type() == &right_layout->nominal_type() &&
                Heap::GetField(*left.AsObject(), 0)->AsInteger() ==
                    Heap::GetField(*right.AsObject(), 0)->AsInteger();
       }
@@ -169,11 +171,11 @@ std::expected<Value, ExecutionStatus> CheckFuturePayload(Value value,
 std::expected<Value, ExecutionStatus> BoxDynamicValue(Heap& heap,
                                                       Value value,
                                                       const TypeConstraint& type) {
-  const auto* instance = type.instance;
+  const auto* instance = type.nominal;
   if (value.IsNull() || instance == nullptr || !instance->IsEnum()) {
     return value;
   }
-  auto* object = heap.AllocateInstance(*instance, std::span(&value, 1));
+  auto* object = heap.AllocateInstance(*instance->fixed_layout(), std::span(&value, 1));
   return object != nullptr ? std::expected<Value, ExecutionStatus>(Value::Object(object))
                            : std::unexpected(ExecutionStatus::OutOfMemory);
 }

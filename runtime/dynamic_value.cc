@@ -114,7 +114,7 @@ Result ArrayIndex(Builtin builtin, std::span<const Value> arguments, Heap& heap)
       return std::unexpected(ExecutionStatus::TypeError);
     }
     auto value = original;
-    const auto* element = layout.element.instance;
+    const auto* element = layout.element.nominal;
     if (!value.IsNull() && element != nullptr && element->IsEnum()) {
       value = *Heap::GetField(*value.AsObject(), 0);
     }

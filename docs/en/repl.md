@@ -45,6 +45,13 @@ submissions without re-executing historical code for side effects.
 
 ## Stable Identity and Runtime Continuity
 
+Embedded sessions freeze their native binding registrations after the first accepted
+submission. `ReplSession::Reset()` returns a result: external host roots, Programs,
+Futures or active execution reject reset with resource diagnostics and preserve the
+current session. A successful reset closes the old scheduler and completion endpoints,
+releases old script storage, and creates a new Isolate with the same binding snapshot.
+The console reports a rejected `.reset` instead of destroying a borrowed Isolate.
+
 Recompiling history and copying raw globals alone is insufficient: existing
 closure instances store function and selector IDs, and existing heap objects
 retain class layout pointers. The session preserves structural continuity across

@@ -1,4 +1,4 @@
-#include "compiler/aot/integer_loop_optimizer.h"
+#include "compiler/native/integer_loop_optimizer.h"
 
 #include <bit>
 #include <cstdint>
@@ -29,7 +29,7 @@
 
 #include "runtime/native_memory_layout.h"
 
-namespace vela::compiler::aot {
+namespace vela::compiler::native {
 namespace {
 
 struct CheckedUpdate {
@@ -518,4 +518,4 @@ void AddIntegerLoopPasses(llvm::FunctionPassManager& passes) {
   passes.addPass(IntegerLoopPass());
 }
 
-}  // namespace vela::compiler::aot
+}  // namespace vela::compiler::native

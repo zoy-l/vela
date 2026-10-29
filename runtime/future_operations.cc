@@ -117,7 +117,7 @@ std::expected<Value, ExecutionStatus> CheckFutureCompletion(Isolate& isolate,
                                                             std::optional<TypeConstraint> payload,
                                                             const FutureDiagnostic& diagnostic,
                                                             std::span<const Value> retained) {
-  RootRange source_root(isolate.heap(), &source, 1);
+  RootRange source_root(isolate.heap(), &source, 1, RootOwner::Runtime);
   Future result(&isolate.scheduler());
   auto* object = isolate.heap().AllocateFuture(result);
   if (object == nullptr) {

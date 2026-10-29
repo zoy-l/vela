@@ -384,7 +384,7 @@ std::expected<void, std::string> LayoutLoader::BuildNode(std::size_t index) {
 bool HasExpectedReference(const runtime::TypeConstraint& type) {
   return type.dynamic || type.kind == runtime::ValueKind::String ||
          (type.kind == runtime::ValueKind::Object &&
-          (type.instance == nullptr || !type.instance->IsEnum()));
+          (type.nominal == nullptr || !type.nominal->IsEnum()));
 }
 
 bool IsValidExpectedLayout(const runtime::ClassLayout& layout,
@@ -593,7 +593,7 @@ std::expected<runtime::ArrayLayout, std::string> ResolveElement(const ImageEleme
           {
               .kind = static_cast<runtime::ValueKind>(input.kind),
               .object_kind = static_cast<runtime::ObjectKind>(input.object_kind),
-              .instance = *instance,
+              .nominal = *instance == nullptr ? nullptr : &(*instance)->nominal_type(),
               .array = *array,
               .collection = *collection,
               .interface = *interface,

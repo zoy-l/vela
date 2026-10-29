@@ -9,22 +9,26 @@
 #include <new>
 #include <span>
 #include <utility>
+#include <vector>
 #include "runtime/exception.h"
+#include "runtime/external_resources.h"
 #include "runtime/object.h"
 #include "runtime/register_storage.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
-RootRange::RootRange(Heap& heap, const Value* values, std::size_t count) noexcept {
+RootRange::RootRange(Heap& heap, const Value* values, std::size_t count, RootOwner owner) noexcept
+    : owner_(owner) {
   Attach(heap, values, count);
 }
 
-RootRange::RootRange(Heap& heap, std::span<StringObject* const> strings) noexcept
+RootRange::RootRange(Heap& heap, std::span<StringObject* const> strings, RootOwner owner) noexcept
     : heap_(&heap),
       data_(static_cast<const void*>(strings.data())),
       count_(strings.size()),
-      kind_(Kind::Strings) {
+      kind_(Kind::Strings),
+      owner_(owner) {
   heap.RegisterRoot(*this);
 }
 
@@ -241,6 +245,9 @@ void Heap::Collect() noexcept {
 }
 
 void Heap::RegisterRoot(RootRange& root) noexcept {
+  if (root.owner_ != RootOwner::Runtime) {
+    root.identity_ = next_root_identity_++;
+  }
   root.previous_link_ = &roots_;
   root.next_ = roots_;
   if (root.next_ != nullptr) {
@@ -252,6 +259,31 @@ void Heap::RegisterRoot(RootRange& root) noexcept {
     if (phase_ == GcPhase::Sweep) {
       DrainGray();
     }
+  }
+}
+
+void Heap::AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const {
+  for (auto* root = roots_; root != nullptr; root = root->next_) {
+    if (root->owner_ == RootOwner::Runtime) {
+      continue;
+    }
+    ExternalResourceKind kind = ExternalResourceKind::RootRange;
+    switch (root->owner_) {
+      case RootOwner::Runtime:
+        std::unreachable();
+      case RootOwner::Host:
+        break;
+      case RootOwner::RootedValue:
+        kind = ExternalResourceKind::RootedValue;
+        break;
+      case RootOwner::NativeInstance:
+        kind = ExternalResourceKind::NativeInstance;
+        break;
+      case RootOwner::NativeHandle:
+        kind = ExternalResourceKind::NativeHandle;
+        break;
+    }
+    result.push_back({.kind = kind, .identity = root->identity_, .references = 1});
   }
 }
 
@@ -455,8 +487,7 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   } else if (object.kind == ObjectKind::Future || object.kind == ObjectKind::Completer) {
     const std::unique_ptr<Future> owned(static_cast<Future*>(object.native_payload));
   } else if (object.kind == ObjectKind::Exception) {
-    const std::unique_ptr<FutureDiagnostic> diagnostic(
-        ExceptionData::From(object).async_diagnostic);
+    const std::unique_ptr<FutureDiagnostic> diagnostic(ExceptionData::From(object).diagnostic);
   } else if (object.kind == ObjectKind::Timer) {
     const std::unique_ptr<Timer> owned(static_cast<Timer*>(object.native_payload));
   } else if (object.kind == ObjectKind::CancellationToken) {

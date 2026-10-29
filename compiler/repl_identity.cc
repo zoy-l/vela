@@ -3,70 +3,34 @@
 #include <string>
 
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/lambda_visitor.h"
 
 namespace vela::compiler {
 namespace {
 
-void NameStatement(frontend::Statement* statement, const std::string& owner);
-
-void NameExpression(frontend::Expression* expression, const std::string& owner) {
-  if (expression == nullptr) {
-    return;
-  }
-  if (expression->function) {
-    auto& function = *expression->function;
-    const auto location = expression->location;
-    function.name =
-        owner + ".$lambda." + std::to_string(location.line) + "." + std::to_string(location.column);
-    NameStatement(function.body.get(), function.name);
-  }
-  for (auto* child : {
-           expression->left.get(),
-           expression->right.get(),
-           expression->operand.get(),
-           expression->callee.get(),
-           expression->object.get(),
-           expression->index.get(),
-       }) {
-    NameExpression(child, owner);
-  }
-  for (auto& element : expression->elements) {
-    NameExpression(element.get(), owner);
-  }
-  for (auto& argument : expression->arguments) {
-    NameExpression(argument.value.get(), owner);
-  }
-  for (auto& arm : expression->arms) {
-    NameExpression(arm.pattern.get(), owner);
-    NameExpression(arm.value.get(), owner);
-  }
+void NameLambda(frontend::Expression& expression,
+                const frontend::Function* parent,
+                const std::string& owner) {
+  const auto location = expression.location;
+  expression.function->name = (parent == nullptr ? owner : parent->name) + ".$lambda." +
+                              std::to_string(location.line) + "." + std::to_string(location.column);
 }
 
 void NameStatement(frontend::Statement* statement, const std::string& owner) {
-  if (statement == nullptr) {
-    return;
+  if (statement != nullptr) {
+    frontend::VisitLambdas(*statement,
+                           [&](frontend::Expression& expression, const frontend::Function* parent) {
+                             NameLambda(expression, parent, owner);
+                           });
   }
-  for (auto* expression :
-       {statement->expression.get(), statement->condition.get(), statement->increment.get()}) {
-    NameExpression(expression, owner);
-  }
-  for (auto* child : {
-           statement->then_branch.get(),
-           statement->else_branch.get(),
-           statement->initializer.get(),
-           statement->finally_branch.get(),
-       }) {
-    NameStatement(child, owner);
-  }
-  for (auto& child : statement->statements) {
-    NameStatement(child.get(), owner);
-  }
-  for (auto& branch : statement->cases) {
-    NameExpression(branch.label.get(), owner);
-    NameStatement(branch.body.get(), owner);
-  }
-  for (auto& caught : statement->catches) {
-    NameStatement(caught.body.get(), owner);
+}
+
+void NameExpression(frontend::Expression* expression, const std::string& owner) {
+  if (expression != nullptr) {
+    frontend::VisitLambdas(*expression,
+                           [&](frontend::Expression& lambda, const frontend::Function* parent) {
+                             NameLambda(lambda, parent, owner);
+                           });
   }
 }
 

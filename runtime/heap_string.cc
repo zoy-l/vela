@@ -232,7 +232,7 @@ std::expected<StringObject*, StringJoinError> Heap::JoinArray(const HeapObject& 
     }
     return string;
   }
-  if (layout.element.instance != nullptr ||
+  if (layout.element.nominal != nullptr ||
       (!layout.element.dynamic && layout.element.kind != ValueKind::String &&
        layout.element.kind != ValueKind::Integer && layout.element.kind != ValueKind::Double &&
        layout.element.kind != ValueKind::Boolean)) {

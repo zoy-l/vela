@@ -98,12 +98,12 @@ TEST(NativeNumericTest, DoubleConversionsTruncateAndRejectNonFiniteOrOutOfRangeV
     isolate.heap().Collect();
     const auto& error = ExceptionData::From(*execution.pending_exception().AsObject());
     EXPECT_EQ(error.status, ExecutionStatus::InvalidNumericConversion);
-    const auto trace = error.trace();
+    const auto diagnostic = execution.ExceptionDiagnostic();
+    const auto& trace = diagnostic.stack_trace;
     ASSERT_FALSE(trace.empty());
-    const auto position = trace.front();
-    const auto& function = image->functions.values()[position.function];
-    EXPECT_EQ(function.name.text(), "truncate");
-    EXPECT_EQ(function.locations.values()[position.instruction].line, 2U);
+    const auto& frame = trace.front();
+    EXPECT_EQ(frame.function, "truncate");
+    EXPECT_EQ(frame.line, 2U);
   }
 }
 

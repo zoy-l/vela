@@ -1,9 +1,11 @@
 #include "runtime/future.h"
 #include "base/execution_status.h"
+#include "runtime/external_resources.h"
 #include "runtime/heap.h"
 #include "runtime/value.h"
 
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <expected>
 #include <functional>
@@ -32,6 +34,8 @@ ExecutionStatus FutureCompletionStatus(FutureCompletionError error) noexcept {
       return ExecutionStatus::FutureSelfAdoption;
     case FutureCompletionError::DifferentIsolate:
       return ExecutionStatus::InvalidIsolate;
+    case FutureCompletionError::Closed:
+      return ExecutionStatus::ExecutionStopped;
   }
   std::unreachable();
 }
@@ -46,7 +50,8 @@ struct Future::SharedState final {
     std::function<void(const FutureResult&)> callback;
     std::shared_ptr<std::vector<::vela::runtime::Value>> references;
   };
-  std::atomic_size_t external_count{0};
+  ExternalResource external;
+  std::atomic_size_t retained_count{0};
   std::atomic_bool completion_requested{false};
   FutureResult completion{.value = Value::Null(), .diagnostic = {}};
   bool error_observed = false;
@@ -77,7 +82,7 @@ struct Future::Observer final {
   Future future;
   std::function<void(const FutureResult&)> callback;
   std::shared_ptr<std::vector<::vela::runtime::Value>> references;
-  RootRange roots;
+  RootRange roots{RootOwner::Runtime};
 };
 
 Future::Future(FutureScheduler* scheduler)
@@ -85,20 +90,21 @@ Future::Future(FutureScheduler* scheduler)
         // 只有最后一个句柄在宿主线程释放时才转移销毁，捕获资源始终在所属线程析构。
         auto* owner = state->scheduler;
         if (owner != nullptr && !owner->IsOwnerThread()) {
-          owner->PostMicrotask([state] { const std::unique_ptr<SharedState> owned(state); });
+          owner->PostMicrotask([owned = std::unique_ptr<SharedState>(state)] {});
         } else {
           const std::unique_ptr<SharedState> owned(state);
         }
       }) {
   state_->scheduler = scheduler;
-  ++state_->external_count;
+  if (scheduler != nullptr) {
+    state_->external.Attach(scheduler->external_resources(), ExternalResourceKind::Future);
+  }
+  Retain();
 }
 
 Future::Future(std::shared_ptr<SharedState> state, Rooting rooting)
-    : state_(std::move(state)), external_(rooting == Rooting::External) {
-  if (external_) {
-    ++state_->external_count;
-  }
+    : state_(std::move(state)), rooting_(rooting) {
+  Retain();
 }
 
 Future::~Future() {
@@ -106,34 +112,60 @@ Future::~Future() {
 }
 
 void Future::Release() noexcept {
-  if (state_ != nullptr && external_) {
-    --state_->external_count;
+  if (state_ == nullptr) {
+    return;
+  }
+  auto* scheduler = state_->scheduler;
+  const auto host_thread = scheduler != nullptr && !scheduler->IsOwnerThread();
+  // 计数归零与最后一个 shared_ptr 的延迟销毁投递之间仍会借用调度器。
+  // Reload 读取句柄计数后再读取 host_accesses，不能越过这段宿主析构。
+  if (host_thread) {
+    scheduler->host_accesses_.fetch_add(1, std::memory_order_relaxed);
+  }
+  Unroot();
+  state_.reset();
+  if (host_thread) {
+    scheduler->wakeup_.release();
+    scheduler->host_accesses_.fetch_sub(1, std::memory_order_release);
   }
 }
 
-Future::Future(const Future& other)
-    : Future(other.state_, other.external_ ? Rooting::External : Rooting::Traced) {}
+void Future::Unroot() noexcept {
+  if (rooting_ == Rooting::External) {
+    state_->external.Release();
+  } else if (rooting_ == Rooting::Retained) {
+    --state_->retained_count;
+  }
+}
+
+void Future::Retain() noexcept {
+  if (rooting_ == Rooting::External) {
+    state_->external.Retain();
+  } else if (rooting_ == Rooting::Retained) {
+    ++state_->retained_count;
+  }
+}
+
+Future::Future(const Future& other) : Future(other.state_, other.rooting_) {}
 
 Future& Future::operator=(const Future& other) {
   if (this != &other) {
     Release();
     state_ = other.state_;
-    external_ = other.external_;
-    if (external_) {
-      ++state_->external_count;
-    }
+    rooting_ = other.rooting_;
+    Retain();
   }
   return *this;
 }
 
 Future::Future(Future&& other) noexcept
-    : state_(std::move(other.state_)), external_(other.external_) {}
+    : state_(std::move(other.state_)), rooting_(other.rooting_) {}
 
 Future& Future::operator=(Future&& other) noexcept {
   if (this != &other) {
     Release();
     state_ = std::move(other.state_);
-    external_ = other.external_;
+    rooting_ = other.rooting_;
   }
   return *this;
 }
@@ -145,11 +177,13 @@ Future Future::Rooted() const {
   return Future(state_, Rooting::External);
 }
 
+Future Future::Retained() const {
+  return Future(state_, Rooting::Retained);
+}
+
 void Future::MakeHeapOwned() noexcept {
-  if (external_) {
-    --state_->external_count;
-    external_ = false;
-  }
+  Unroot();
+  rooting_ = Rooting::Traced;
 }
 
 void Future::KeepAlive(std::shared_ptr<std::vector<::vela::runtime::Value>> references) {
@@ -163,7 +197,8 @@ void Future::KeepAlive(std::shared_ptr<std::vector<::vela::runtime::Value>> refe
 }
 
 void Future::Root::Trace(Heap& heap) const noexcept {
-  if (const auto state = state_.lock(); state != nullptr && state->external_count != 0) {
+  if (const auto state = state_.lock();
+      state != nullptr && (state->external.references() != 0 || state->retained_count != 0)) {
     Future(state, Rooting::Traced).Trace(heap);
   }
 }
@@ -223,10 +258,13 @@ std::expected<void, FutureBindingError> Future::Bind(FutureScheduler& scheduler,
     return std::unexpected(FutureBindingError::DifferentIsolate);
   }
   const auto newly_bound = state_->scheduler == nullptr;
+  if (newly_bound) {
+    state_->external.Attach(scheduler.external_resources(), ExternalResourceKind::Future);
+  }
   state_->scheduler = &scheduler;
   AttachHeap(heap);
   if (newly_bound && state_->completion.state == FutureState::Failed && !state_->error_observed) {
-    const auto self = Rooted();
+    const auto self = Retained();
     scheduler.checkpoints_.emplace_back([self] { self.ReportUnhandledError(); });
   }
   return {};
@@ -234,7 +272,7 @@ std::expected<void, FutureBindingError> Future::Bind(FutureScheduler& scheduler,
 
 Future Future::Sleep(std::chrono::milliseconds delay, FutureScheduler& scheduler) {
   Future result(&scheduler);
-  static_cast<void>(scheduler.After(delay, [result]() mutable {
+  static_cast<void>(scheduler.After(delay, [result = result.Retained()]() mutable {
     ConsumeCompletion(result.Complete(::vela::runtime::Value::Null()));
   }));
   return result;
@@ -274,7 +312,7 @@ void Future::Observe(Callback callback) const {
 void Future::ObserveResult(std::function<void(const FutureResult&)> callback,
                            std::shared_ptr<std::vector<::vela::runtime::Value>> references) const {
   if (auto* heap = state_->heap; heap != nullptr && heap->IsCollecting() && references != nullptr) {
-    const RootRange roots(*heap, references->data(), references->size());
+    const RootRange roots(*heap, references->data(), references->size(), RootOwner::Runtime);
   }
   if (state_->completion.state == FutureState::Pending) {
     state_->waiters.push_back(
@@ -290,7 +328,7 @@ void Future::ObserveResult(std::function<void(const FutureResult&)> callback,
   NotifyObserver(std::move(callback), std::move(references));
   if (notify_handled) {
     if (state_->scheduler != nullptr) {
-      const auto self = Rooted();
+      const auto self = Retained();
       state_->scheduler->PostMicrotask([self] { self.ReportHandledError(); });
     } else {
       ReportHandledError();
@@ -300,7 +338,8 @@ void Future::ObserveResult(std::function<void(const FutureResult&)> callback,
 
 void Future::NotifyObserver(std::function<void(const FutureResult&)> callback,
                             std::shared_ptr<std::vector<::vela::runtime::Value>> references) const {
-  auto observer = std::make_unique<Observer>(Rooted(), std::move(callback), std::move(references));
+  auto observer =
+      std::make_unique<Observer>(Retained(), std::move(callback), std::move(references));
   if (state_->scheduler != nullptr) {
     state_->scheduler->PostMicrotask([observer = std::move(observer)] { observer->Invoke(); });
   } else {
@@ -334,7 +373,7 @@ std::expected<void, FutureCompletionError> Future::Settle(FutureResult result) {
   if (state_->scheduler != nullptr && !state_->scheduler->IsOwnerThread()) {
     state_->incoming.store(std::make_unique<FutureResult>(std::move(result)).release(),
                            std::memory_order_release);
-    Future self(state_, Rooting::External);
+    Future self(state_, Rooting::Retained);
     state_->scheduler->PostMicrotask([self = std::move(self)]() mutable {
       std::unique_ptr<FutureResult> incoming(self.state_->incoming.exchange(nullptr));
       self.Publish(std::move(*incoming));
@@ -382,7 +421,7 @@ void Future::Publish(FutureResult result) {
     NotifyObserver(std::move(waiter.callback), std::move(waiter.references));
   }
   if (state_->scheduler != nullptr && !state_->error_observed) {
-    const auto self = Rooted();
+    const auto self = Retained();
     state_->scheduler->checkpoints_.emplace_back([self] { self.ReportUnhandledError(); });
   }
 }
@@ -461,6 +500,13 @@ std::expected<void, FutureCompletionError> Completer::Complete(::vela::runtime::
     producer_->Release();
   }
   return result;
+}
+
+FutureCompletionEndpoint Completer::Detach() && {
+  auto* scheduler = future_.state_->scheduler;
+  assert(scheduler != nullptr && scheduler->IsOwnerThread());
+  future_ = future_.Retained();
+  return FutureCompletionEndpoint::Create(*scheduler, std::move(*this));
 }
 std::expected<void, FutureCompletionError> Completer::CompleteError(::vela::runtime::Value error) {
   return CompleteError(error, {});

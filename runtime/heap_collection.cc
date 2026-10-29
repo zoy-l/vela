@@ -441,7 +441,7 @@ std::expected<HeapObject*, ExecutionStatus> Heap::CombineSets(const HeapObject& 
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto rooted = Value::Object(result);
-  RootRange root(*this, &rooted, 1);
+  RootRange root(*this, &rooted, 1, RootOwner::Runtime);
   const auto& right_storage = Storage(right);
   const auto right_table = View(right_storage, layout);
   const auto append = [&](const HeapObject& input) -> std::expected<void, ExecutionStatus> {

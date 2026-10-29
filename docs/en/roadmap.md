@@ -145,14 +145,17 @@ Async APIs, scheduling, host ownership, and performance boundaries are specified
 8. Re-run Release benchmarks before changing VM dispatch or GC strategy.
 
 Class inheritance, method overriding, and async tasks now run through the source,
-type checker, Typed IR, bytecode, VM, and CLI paths. JIT remains outside the basic
-language milestone.
+type checker, Typed IR, bytecode, VM, and CLI paths. JIT and stateful hot reload
+are separate follow-on capabilities. Their H1–H5 implementation order, Reload,
+and acceptance contracts are specified in the
+[JIT and hot reload design (Chinese)](../zh-CN/hot_reload.md#12-实施顺序与完成条件).
 
 ## Later: native AOT
 
-Native AOT is not implemented. The [AOT design](aot.md#implementation-stages-and-completion-criteria)
-defines the complete A1–A5 sequence and acceptance criteria: shared compilation
-boundaries, synchronous native execution, async and dynamic paths, user builds
+The [AOT design](aot.md#implementation-stages-and-completion-criteria) records the
+current implementation status and defines the complete A1–A5 sequence and
+acceptance criteria: shared compilation boundaries, synchronous native execution,
+async and dynamic paths, user builds
 and distribution, and release acceptance. Emitting the first object file is not
 completion. Every language path and the distribution workflow without a separate
 user installation of Clang/LLVM must be connected.

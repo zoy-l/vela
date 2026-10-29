@@ -5,6 +5,7 @@
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,6 +14,7 @@
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
+#include "runtime/external_resources.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "vm/program.h"
@@ -42,7 +44,7 @@ class ReplSession final {
   ReplSession& operator=(ReplSession&&) = delete;
 
   [[nodiscard]] SubmissionResult Submit(std::string_view source);
-  void Reset();
+  [[nodiscard]] std::expected<void, std::vector<runtime::ExternalResourceInfo>> Reset();
   [[nodiscard]] runtime::Isolate& isolate() noexcept { return *isolate_; }
   [[nodiscard]] std::string_view source() const noexcept { return user_source_; }
   [[nodiscard]] std::size_t function_count() const noexcept { return program_.functions().size(); }
@@ -72,6 +74,7 @@ class ReplSession final {
 
   std::filesystem::path path_;
   const std::size_t gc_threshold_;
+  std::optional<runtime::NativeBindings> bindings_;
   std::unique_ptr<runtime::Isolate> isolate_;
   std::unique_ptr<vm::VirtualMachine> machine_;
   vm::Program program_;

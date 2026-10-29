@@ -95,8 +95,8 @@ TEST(StringGcTest, CollectsCycleContainingStringsAndArrays) {
   auto& heap = isolate.heap();
   constexpr std::array<std::uint32_t, 2> kReferences = {0, 1};
   auto* layout = isolate.CreateClassLayout(2, kReferences);
-  const auto* arrays =
-      isolate.CreateArrayLayout({.element = {.kind = ValueKind::Object, .instance = layout}});
+  const auto* arrays = isolate.CreateArrayLayout(
+      {.element = {.kind = ValueKind::Object, .nominal = &layout->nominal_type()}});
   Value root = Value::Object(heap.AllocateInstance(*layout));
   RootRange roots(heap, &root, 1);
   auto* string = heap.AllocateString("inside cycle");

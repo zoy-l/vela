@@ -42,7 +42,9 @@ struct ModuleGraph final {
 };
 
 [[nodiscard]] ModuleGraph LoadModuleGraph(std::string_view path);
-[[nodiscard]] ParseResult BindModuleGraph(ModuleGraph graph);
+[[nodiscard]] ParseResult BindModuleGraph(
+    ModuleGraph graph,
+    std::span<const std::string> retained_standard_names = {});
 
 // 无扩展名的导入直接映射到 .vela 文件，不探测无后缀文件或目录入口。
 [[nodiscard]] std::filesystem::path ResolveImportPath(const std::filesystem::path& importer,
@@ -63,5 +65,8 @@ struct ModuleGraph final {
                                       SourceLoadMode mode = SourceLoadMode::Compilation);
 // 内存模块只从给定输入解析依赖，不隐式读取磁盘；entry 的模块编号为零。
 [[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources, std::string_view entry);
+[[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources,
+                                      std::span<const std::string> roots,
+                                      std::span<const std::string> retained_standard_names = {});
 
 }  // namespace vela::frontend

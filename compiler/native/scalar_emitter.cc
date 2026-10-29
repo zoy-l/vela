@@ -1,4 +1,4 @@
-#include "compiler/aot/function_emitter.h"
+#include "compiler/native/function_emitter.h"
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Intrinsics.h>
@@ -10,10 +10,10 @@
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/opcode.h"
-#include "compiler/aot/native_values.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/native_values.h"
 
-namespace vela::compiler::aot {
+namespace vela::compiler::native {
 namespace {
 constexpr unsigned kIntegerShiftMask = 63;
 }  // namespace
@@ -230,4 +230,4 @@ void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
   Store(instruction.dst, result, {.kind = Kind::Bool, .name = "bool"});
 }
 
-}  // namespace vela::compiler::aot
+}  // namespace vela::compiler::native

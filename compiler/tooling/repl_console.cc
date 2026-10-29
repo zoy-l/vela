@@ -10,6 +10,7 @@
 #include "base/diagnostic.h"
 #include "base/process_exit.h"
 #include "compiler/repl_session.h"
+#include "runtime/external_resources.h"
 #include "vm/vm.h"
 
 namespace vela::tooling {
@@ -28,8 +29,16 @@ CommandResult Command(std::string_view line, compiler::ReplSession& session, Rep
   } else if (line == ".source") {
     streams.output.get() << session.source();
   } else if (line == ".reset") {
-    session.Reset();
-    session.isolate().SetOutput(streams.output.get());
+    const auto reset = session.Reset();
+    if (reset) {
+      session.isolate().SetOutput(streams.output.get());
+    } else {
+      errors << "vela: cannot reset REPL; release external handles first\n";
+      for (const auto& resource : reset.error()) {
+        errors << "  " << runtime::ExternalResourceKindName(resource.kind) << " #"
+               << resource.identity << ": " << resource.references << " reference(s)\n";
+      }
+    }
   } else {
     errors << "vela: unknown REPL command; use .help\n";
   }

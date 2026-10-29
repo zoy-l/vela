@@ -1,4 +1,5 @@
 #include "compiler/frontend/module_binding.h"
+#include "base/declaration.h"
 #include "compiler/frontend/source_file.h"
 
 #include <algorithm>
@@ -78,7 +79,8 @@ void ModuleBinding::Error(SourceLocation location, std::string message) {
 void ModuleBinding::CollectDeclarations() {
   for (std::size_t index = 0; index < modules_.size(); ++index) {
     auto& scope = scopes_.at(index);
-    const auto declare = [&](const auto& declaration) -> void {
+    auto& program = modules_.at(index).program;
+    const auto declare = [&](const auto& declaration, DeclarationKind kind) -> void {
       if (IsBuiltinName(declaration.name) || IsStandardName(declaration.name)) {
         Error(declaration.location, "declaration name is reserved for a builtin");
       }
@@ -90,28 +92,37 @@ void ModuleBinding::CollectDeclarations() {
                .emplace(declaration.name,
                         Symbol{.target = target, .export_kind = declaration.export_kind})
                .second) {
-        Error(declaration.location, "duplicate module declaration '" + declaration.name + "'");
+        const auto category = kind == DeclarationKind::Function ? "function" : "module declaration";
+        Error(declaration.location,
+              "duplicate " + std::string(category) + " '" + declaration.name + "'");
       }
       scope.names.try_emplace(declaration.name, target);
+      program.origins.emplace(target, DeclarationOrigin{
+                                          .module_uri = sources_.at(index).path,
+                                          .name = declaration.name,
+                                          .kind = kind,
+                                          .arguments = {},
+                                          .type_parameters = {},
+                                          .members = {},
+                                      });
     };
-    const auto& program = modules_.at(index).program;
     for (const auto& declaration : program.functions) {
-      declare(declaration);
+      declare(declaration, DeclarationKind::Function);
     }
     for (const auto& declaration : program.classes) {
-      declare(declaration);
+      declare(declaration, DeclarationKind::Class);
     }
     for (const auto& declaration : program.enums) {
-      declare(declaration);
+      declare(declaration, DeclarationKind::Enum);
     }
     for (const auto& declaration : program.interfaces) {
-      declare(declaration);
+      declare(declaration, DeclarationKind::Interface);
     }
     for (const auto& declaration : program.aliases) {
-      declare(declaration);
+      declare(declaration, DeclarationKind::Alias);
     }
     for (const auto& declaration : program.globals) {
-      declare(declaration);
+      declare(declaration, DeclarationKind::Global);
     }
   }
 }
@@ -183,10 +194,11 @@ std::string ModuleBinding::Resolve(const std::string& name, SourceLocation locat
   if (found != scope.names.end()) {
     return found->second;
   }
-  if (!IsBuiltinName(name) && !IsStandardName(name) && name != "print" && name != "this" &&
-      name != "super") {
-    Error(location, "unknown module symbol '" + name + "'");
+  if (current_ != 0 && scopes_.front().declarations.contains(name)) {
+    // 入口声明保留宿主可见名称；合并 AST 不能令其他模块越过各自的 import 作用域。
+    Error(location, "name '" + name + "' is not declared or imported by this module");
   }
+  // 未绑定的未限定名字交由类型检查器按表达式/类型上下文诊断，避免模块绑定抢占其语义。
   return name;
 }
 
@@ -404,11 +416,6 @@ ParseResult ModuleBinding::Run() {
 }  // namespace
 
 ParseResult BindModules(std::vector<SourceModule> modules, std::vector<SourceFile> sources) {
-  if (modules.size() == 1 && modules.front().program.imports.empty()) {
-    auto program = std::move(modules.front().program);
-    program.sources = std::move(sources);
-    return {.program = std::move(program), .diagnostics = {}};
-  }
   return ModuleBinding(std::move(modules), std::move(sources)).Run();
 }
 

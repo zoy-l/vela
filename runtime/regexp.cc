@@ -273,7 +273,7 @@ Result Enumerate(Builtin builtin,
                  std::size_t start,
                  const ArrayLayout* layout) {
   Value output = Value::Null();
-  RootRange root(*search.heap, &output, 1);
+  RootRange root(*search.heap, &output, 1, RootOwner::Runtime);
   if (builtin == Builtin::RegExpAllMatches) {
     const auto allocated = Allocated(search.heap->AllocateArray(*layout, 0));
     if (!allocated) {
@@ -299,7 +299,7 @@ Result Enumerate(Builtin builtin,
     if (!result || builtin != Builtin::RegExpAllMatches) {
       return result;
     }
-    RootRange match_root(*search.heap, &*result, 1);
+    RootRange match_root(*search.heap, &*result, 1, RootOwner::Runtime);
     if (!search.heap->PushArray(*output.AsObject(), *result)) {
       return Failure(ExecutionStatus::OutOfMemory);
     }
@@ -469,7 +469,7 @@ Result Snapshot(Builtin builtin,
   if (!output) {
     return output;
   }
-  RootRange root(heap, &*output, 1);
+  RootRange root(heap, &*output, 1, RootOwner::Runtime);
   const auto names = NameTable(match);
   const auto count = builtin == Builtin::RegExpMatchGroups ? indices.size() : names.count();
   std::string_view previous;
@@ -488,7 +488,7 @@ Result Snapshot(Builtin builtin,
     if (!value) {
       return value;
     }
-    RootRange value_root(heap, &*value, 1);
+    RootRange value_root(heap, &*value, 1, RootOwner::Runtime);
     if (!heap.PushArray(*output->AsObject(), *value)) {
       return Failure(ExecutionStatus::OutOfMemory);
     }
@@ -561,7 +561,7 @@ Result ExecuteRegExpBuiltin(Builtin builtin,
                             std::span<const Value> arguments,
                             Heap& heap,
                             const ArrayLayout* output_layout) {
-  RootRange roots(heap, arguments.data(), arguments.size());
+  RootRange roots(heap, arguments.data(), arguments.size(), RootOwner::Runtime);
   if (builtin == Builtin::NewRegExp) {
     return Compile(arguments, heap);
   }

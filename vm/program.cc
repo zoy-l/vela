@@ -397,7 +397,7 @@ bool IsValidMemberTarget(const MemberDefinition& member,
   const auto types = table.types();
   const auto classes = table.classes();
   const auto& receiver = types.subspan(member.receiver_type).front();
-  const auto* instance = receiver.instance;
+  const auto* instance = receiver.nominal == nullptr ? nullptr : receiver.nominal->fixed_layout();
   switch (member.kind) {
     case MemberKind::Field:
       if (receiver.kind != runtime::ValueKind::Object ||
@@ -829,12 +829,19 @@ std::expected<Program, ValidationError> Program::Create(
       });
     }
   }
-  return Program(std::make_shared<const ProgramStorage>(ProgramStorage{
-      .functions = std::move(functions),
-      .code_identity = *identity,
-      .isolate = &isolate,
-      .globals = std::move(globals),
-  }));
+  return Program(std::make_shared<const ProgramStorage>(std::move(functions), *identity, isolate,
+                                                        std::move(globals)));
+}
+
+ProgramStorage::ProgramStorage(std::vector<FunctionStorage> code,
+                               const runtime::CodeIdentity* identity,
+                               runtime::Isolate& owner,
+                               std::shared_ptr<GlobalStorage> state)
+    : functions(std::move(code)),
+      code_identity(identity),
+      isolate(&owner),
+      globals(std::move(state)) {
+  external.Attach(owner.external_resources(), runtime::ExternalResourceKind::Program);
 }
 
 GlobalStorage::GlobalStorage(runtime::Heap& heap, std::vector<std::uint32_t> functions)
@@ -860,13 +867,13 @@ std::expected<void, ExecutionStatus> GlobalStorage::Extend(std::vector<std::uint
 }
 
 void GlobalStorage::Retain() noexcept {
-  if (external_users++ == 0) {
+  if (rooted_users++ == 0) {
     roots.Attach(owner, &storage, 1);
   }
 }
 
 void GlobalStorage::Release() noexcept {
-  if (--external_users == 0) {
+  if (--rooted_users == 0) {
     roots.Detach();
   }
 }
@@ -876,46 +883,59 @@ void GlobalStorage::Store(std::size_t index, runtime::Value value) noexcept {
 }
 
 Program::Program(std::shared_ptr<const ProgramStorage> storage, Rooting rooting)
-    : storage_(std::move(storage)), external_(rooting == Rooting::External) {
+    : storage_(std::move(storage)), rooting_(rooting) {
   Retain();
 }
 
 Program::~Program() {
   Release();
 }
-Program::Program(const Program& other)
-    : Program(other.storage_, other.external_ ? Rooting::External : Rooting::Continuation) {}
+Program::Program(const Program& other) : Program(other.storage_, other.rooting_) {}
 Program& Program::operator=(const Program& other) {
   if (this != &other) {
     Release();
     storage_ = other.storage_;
-    external_ = other.external_;
+    rooting_ = other.rooting_;
     Retain();
   }
   return *this;
 }
 Program::Program(Program&& other) noexcept
-    : storage_(std::move(other.storage_)), external_(other.external_) {}
+    : storage_(std::move(other.storage_)), rooting_(other.rooting_) {}
 Program& Program::operator=(Program&& other) noexcept {
   if (this != &other) {
     Release();
     storage_ = std::move(other.storage_);
-    external_ = other.external_;
+    rooting_ = other.rooting_;
   }
   return *this;
 }
 void Program::Retain() noexcept {
-  if (storage_ != nullptr && external_ && storage_->globals != nullptr) {
-    storage_->globals->Retain();
+  if (storage_ != nullptr) {
+    if (rooting_ == Rooting::External) {
+      storage_->external.Retain();
+    }
+    if (rooting_ != Rooting::Continuation && storage_->globals != nullptr) {
+      storage_->globals->Retain();
+    }
   }
 }
 void Program::Release() noexcept {
-  if (storage_ != nullptr && external_ && storage_->globals != nullptr) {
-    storage_->globals->Release();
+  if (storage_ != nullptr) {
+    if (rooting_ == Rooting::External) {
+      storage_->external.Release();
+    }
+    if (rooting_ != Rooting::Continuation && storage_->globals != nullptr) {
+      storage_->globals->Release();
+    }
   }
 }
 Program Program::Internal() const {
   return {storage_, Rooting::Continuation};
+}
+
+Program Program::Retained() const {
+  return {storage_, Rooting::Retained};
 }
 
 std::shared_ptr<GlobalStorage> Program::shared_globals() const noexcept {
@@ -1006,7 +1026,7 @@ FunctionHandle Program::FindFunction(std::string_view name) const noexcept {
   if (found == stored.end()) {
     return {};
   }
-  return {*this, static_cast<std::uint32_t>(found - stored.begin())};
+  return {Program(storage_, Rooting::External), static_cast<std::uint32_t>(found - stored.begin())};
 }
 
 bool FunctionHandle::IsValid() const noexcept {

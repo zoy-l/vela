@@ -1,14 +1,9 @@
 #include "compiler/aot/native_compiler.h"
-#include "compiler/aot/function_emitter.h"
-#include "compiler/aot/integer_loop_optimizer.h"
-#include "compiler/aot/native_type_optimizer.h"
-#include "compiler/aot/native_values.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -20,108 +15,27 @@
 #include <absl/container/flat_hash_set.h>
 
 #include <llvm/ADT/SmallVector.h>
-#include <llvm/Analysis/CGSCCPassManager.h>
-#include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
-#include <llvm/IR/Instructions.h>
-#include <llvm/IR/Intrinsics.h>
-#include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
-#include <llvm/IR/PassManager.h>
-#include <llvm/IR/Verifier.h>
-#include <llvm/MC/TargetRegistry.h>
-#include <llvm/Passes/OptimizationLevel.h>
-#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/CodeGen.h>
-#include <llvm/Support/ErrorHandling.h>
-#include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
-#include <llvm/TargetParser/Triple.h>
-#include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
 
 #include "base/fingerprint.h"
-#include "base/opcode.h"
 #include "compiler/aot/native_call_optimizer.h"
 #include "compiler/aot/native_export_emitter.h"
-#include "compiler/aot/native_image_emitter.h"
-#include "compiler/aot/native_roots.h"
+#include "compiler/aot/native_type_optimizer.h"
 #include "compiler/aot/reachability.h"
-#include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/type_checker.h"
-#include "compiler/ir/ir.h"
+#include "compiler/native/code_generator.h"
 #include "runtime/native_image.h"
 #include "runtime/standard_library.h"
 
 namespace vela::compiler::aot {
 namespace {
-
-std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget() {
-  static const bool initialized = [] {
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-    return true;
-  }();
-  static_cast<void>(initialized);
-  // 编译器、运行时和产物必须使用同一个配置目标。LLVM 的默认 triple 可能带有
-  // 与当前 SDK 不同的 Darwin 版本，直接读取它会让生成镜像无法在同一进程实例化。
-  const auto triple = std::string(runtime::NativeTargetIdentity());
-  std::string error;
-  const auto* target = llvm::TargetRegistry::lookupTarget(triple, error);
-  if (target == nullptr) {
-    return std::unexpected(std::move(error));
-  }
-  llvm::TargetOptions options;
-  std::unique_ptr<llvm::TargetMachine> machine(
-      target->createTargetMachine(llvm::Triple(triple), "generic", "", options, llvm::Reloc::PIC_));
-  if (machine == nullptr) {
-    return std::unexpected("unable to create native target machine");
-  }
-  return machine;
-}
-
-void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
-  llvm::LoopAnalysisManager loops;
-  llvm::FunctionAnalysisManager functions;
-  llvm::CGSCCAnalysisManager calls;
-  llvm::ModuleAnalysisManager modules;
-  llvm::PassBuilder passes(&machine);
-  // 宿主调用约定随实例固定；允许 O2 克隆循环，将 direct/checked 分派移到循环外。
-  // 使用 LLVM 自带的体积阈值控制复制，不改变循环内错误和逻辑栈帧语义。
-  passes.registerLateLoopOptimizationsEPCallback(
-      [](llvm::LoopPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
-        pipeline.addPass(llvm::SimpleLoopUnswitchPass(true));
-      });
-  passes.registerModuleAnalyses(modules);
-  passes.registerCGSCCAnalyses(calls);
-  passes.registerFunctionAnalyses(functions);
-  passes.registerLoopAnalyses(loops);
-  passes.crossRegisterProxies(loops, functions, calls, modules);
-  llvm::FunctionPassManager integer_loops;
-  AddIntegerLoopPasses(integer_loops);
-  llvm::ModulePassManager preparation;
-  preparation.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(integer_loops)));
-  preparation.run(module, modules);
-  auto pipeline = passes.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
-  pipeline.run(module, modules);
-}
-
-frontend::Diagnostics MakeDiagnostics(const ir::Program& program,
-                                      std::string message,
-                                      const ir::Function* function) {
-  frontend::Diagnostic result{.location = {}, .message = std::move(message), .source_path = {}};
-  if (function != nullptr) {
-    result.location = function->location;
-    if (!program.source_paths.empty()) {
-      result.source_path = program.source_paths.at(result.location.source_id);
-    }
-  }
-  return {std::move(result)};
-}
 
 std::expected<absl::flat_hash_set<std::string>, std::string> SelectExports(
     const ir::Program& program,
@@ -139,35 +53,6 @@ std::expected<absl::flat_hash_set<std::string>, std::string> SelectExports(
     selected.insert(name);
   }
   return selected;
-}
-
-std::expected<llvm::FunctionType*, std::string> BodySignature(llvm::Module& module,
-                                                              const ir::Function& function) {
-  if (function.return_type.kind == Kind::Invalid ||
-      (function.is_async && (!function.signature || !function.signature->result))) {
-    return std::unexpected("AOT requires upstream return types and async runtime signatures");
-  }
-  auto& context = module.getContext();
-  std::vector<llvm::Type*> parameters{llvm::PointerType::getUnqual(context)};
-  std::uint64_t argument_bytes = 0;
-  for (std::size_t parameter = 0; parameter < function.parameter_count; ++parameter) {
-    if (parameter >= function.value_types.size() ||
-        function.value_types.at(parameter).kind == Kind::Invalid) {
-      return std::unexpected("AOT function " + function.name +
-                             " requires an upstream type for parameter " +
-                             std::to_string(parameter));
-    }
-    parameters.push_back(ValueType(context, function.value_types.at(parameter)));
-    argument_bytes += module.getDataLayout().getTypeAllocSize(parameters.back());
-  }
-  if (argument_bytes > kMaximumNativeStackBytes) {
-    return std::unexpected("AOT typed arguments exceed the native call stack budget");
-  }
-  if (!function.native_symbol.empty()) {
-    parameters.push_back(NativeImportType(context));
-  }
-  parameters.push_back(llvm::PointerType::getUnqual(context));
-  return llvm::FunctionType::get(llvm::Type::getInt8Ty(context), parameters, false);
 }
 
 std::expected<std::uint32_t, std::string> SelectMain(const ir::Program& program) {
@@ -254,14 +139,13 @@ std::string NativeToolchainBuildIdentity(NativeOptimization optimization) {
 
 std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program,
                                                              const NativeOptions& options) {
-  const auto diagnostic = [&](std::string message, const ir::Function* function = nullptr) {
-    return std::unexpected(MakeDiagnostics(program, std::move(message), function));
+  const auto diagnostic = [](std::string message) {
+    return std::unexpected(frontend::Diagnostics{
+        frontend::Diagnostic{.location = {}, .message = std::move(message), .source_path = {}}});
   };
-  auto target = CreateTarget();
-  if (!target) {
-    return diagnostic(target.error());
+  if (program.native_mode != NativeProgramMode::Closed) {
+    return diagnostic("AOT requires a closed native program");
   }
-  auto& machine = **target;
   const auto selected = SelectExports(program, options.exports);
   if (!selected) {
     return diagnostic(selected.error());
@@ -271,89 +155,33 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
     return diagnostic(prepared.error());
   }
   const auto main = *prepared;
-  llvm::LLVMContext context;
-  llvm::Module module(options.module_name, context);
-  module.setTargetTriple(machine.getTargetTriple());
-  module.setDataLayout(machine.createDataLayout());
-  std::vector<GeneratedFunction> generated;
   std::vector<NativeExport> exports;
   std::vector<std::uint8_t> export_flags(program.functions.size(), 0);
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
-    const auto& function = program.functions.at(index);
-    const auto body_type = BodySignature(module, function);
-    if (!body_type) {
-      return diagnostic(body_type.error(), &function);
-    }
-    auto* body =
-        llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
-                               options.module_name + "_body_" + std::to_string(index), module);
-    auto* pointer = llvm::PointerType::getUnqual(context);
-    auto* wrapper_type = llvm::FunctionType::get(
-        llvm::Type::getInt8Ty(context),
-        {pointer, pointer, llvm::Type::getInt64Ty(context), pointer}, false);
-    const auto symbol = options.module_name + "_entry_" + std::to_string(index);
-    auto* entry =
-        llvm::Function::Create(wrapper_type, llvm::GlobalValue::InternalLinkage, symbol, module);
+    const auto& function = program.functions[index];
     if (selected->contains(function.name)) {
-      export_flags.at(index) = 1;
-      exports.push_back({
-          .name = function.name,
-          .symbol = options.module_name + "_export_" + std::to_string(index),
-          .function = static_cast<std::uint32_t>(index),
-      });
+      export_flags[index] = 1;
+      exports.push_back({.name = function.name,
+                         .symbol = options.module_name + "_export_" + std::to_string(index),
+                         .function = static_cast<std::uint32_t>(index)});
     }
-    llvm::Function* resume = nullptr;
-    if (function.is_async &&
-        std::ranges::any_of(function.instructions, [](const auto& instruction) {
-          return instruction.opcode == Opcode::Await;
-        })) {
-      auto* resume_type =
-          llvm::FunctionType::get(llvm::Type::getInt8Ty(context), {pointer, pointer}, false);
-      resume =
-          llvm::Function::Create(resume_type, llvm::GlobalValue::InternalLinkage,
-                                 options.module_name + "_resume_" + std::to_string(index), module);
-    }
-    generated.push_back({.body = body, .entry = entry, .resume = resume});
   }
-  std::vector<NativeFunctionMetrics> metrics;
-  for (std::size_t index = 0; index < program.functions.size(); ++index) {
-    const auto& function = program.functions.at(index);
-    auto emitted = EmitFunction(module, program, index, generated);
-    if (!emitted) {
-      return diagnostic(emitted.error(), &function);
-    }
-    metrics.push_back(*emitted);
-    const auto& native_function = generated.at(index);
-    EmitWrapper(module, function, static_cast<std::uint32_t>(index), native_function);
+  auto generated = native::Generate(program, options.module_name, export_flags);
+  if (!generated) {
+    return std::unexpected(std::move(generated.error()));
   }
-  std::vector<llvm::Function*> entries;
-  entries.reserve(generated.size());
-  for (const auto& function : generated) {
-    entries.push_back(function.entry);
-  }
-  const auto image_symbol =
-      EmitNativeImage(module, program, entries, export_flags, options.module_name);
-  if (!image_symbol) {
-    return diagnostic(image_symbol.error());
-  }
+  auto& module = *generated->module;
+  auto& machine = *generated->machine;
   auto export_interface = EmitNativeExports(
-      module, program, exports, *module.getFunction(*image_symbol), options.module_name);
+      module, program, exports, *module.getFunction(generated->image_symbol), options.module_name);
   if (!export_interface) {
     return diagnostic(export_interface.error());
   }
   if (main) {
-    EmitMain(module, *module.getFunction(*image_symbol), *main);
+    EmitMain(module, *module.getFunction(generated->image_symbol), *main);
   }
-  std::string verification;
-  llvm::raw_string_ostream verifier(verification);
-  if (llvm::verifyModule(module, &verifier)) {
-    return diagnostic(verification);
-  }
-  if (options.optimization == NativeOptimization::Release) {
-    Optimize(module, machine);
-  }
-  if (llvm::verifyModule(module, &verifier)) {
-    return diagnostic(verification);
+  if (const auto finalized = native::Finalize(*generated, options.optimization); !finalized) {
+    return diagnostic(finalized.error());
   }
   std::string llvm_ir;
   if (options.preserve_ir) {
@@ -376,12 +204,12 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
       .llvm_ir = std::move(llvm_ir),
       .target = machine.getTargetTriple().str(),
       .exports = std::move(exports),
-      .image_symbol = *image_symbol,
+      .image_symbol = generated->image_symbol,
       .header = std::move(export_interface->header),
       .instantiate_symbol = std::move(export_interface->instantiate_symbol),
       .optimization = options.optimization,
       .program = std::move(program),
-      .function_metrics = std::move(metrics),
+      .function_metrics = std::move(generated->function_metrics),
   };
 }
 

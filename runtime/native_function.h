@@ -308,11 +308,12 @@ class NativeFunction final {
       if constexpr (Adapter::kDirect) {
         static constexpr auto kTarget = Adapter::DirectEntry();
         return AotEntry{
-            .slot = &kTarget,
-            .kind = Adapter::kDirectContext ? AotCallKind::DirectWithContext : AotCallKind::Direct};
+            .slot = static_cast<AotEntrySlot>(&kTarget),
+            .kind = Adapter::kDirectContext ? AotCallKind::DirectWithContext : AotCallKind::Direct,
+        };
       } else {
         static constexpr auto kTarget = &Adapter::AotCall;
-        return AotEntry{.slot = &kTarget};
+        return AotEntry{.slot = static_cast<AotEntrySlot>(&kTarget)};
       }
     }();
     return NativeFunction(std::move(name), Adapter::Parameters(),
@@ -349,7 +350,7 @@ class NativeFunction final {
   AotEntry aot_entry_;
 };
 
-enum class NativeRegistrationError : std::uint8_t { InvalidName, DuplicateName };
+enum class NativeRegistrationError : std::uint8_t { InvalidName, DuplicateName, BindingsFrozen };
 
 extern "C" const NativeFunction::AotEntry* vela_native_v1_import(NativeExecution* execution,
                                                                  std::uint32_t function) noexcept;

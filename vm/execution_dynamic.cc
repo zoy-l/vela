@@ -253,7 +253,7 @@ StepResult Execution::WriteDynamicMember(ActiveFrame& active,
   if (!runtime::Heap::IsValueOfType(value, *type)) {
     return std::unexpected(ExecutionStatus::InvalidCast);
   }
-  if (!value.IsNull() && type->instance != nullptr && type->instance->IsEnum()) {
+  if (!value.IsNull() && type->nominal != nullptr && type->nominal->IsEnum()) {
     value = *runtime::Heap::GetField(*value.AsObject(), 0);
   }
   if (member.kind == MemberKind::Field) {

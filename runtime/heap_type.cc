@@ -18,8 +18,17 @@ namespace vela::runtime {
 ClassLayout::ClassLayout(std::uint32_t field_count, std::vector<std::uint32_t> reference_fields)
     : field_count_(field_count), reference_fields_(std::move(reference_fields)) {}
 
-bool ClassLayout::IsImplementing(const InterfaceType& interface) const noexcept {
+NominalType::NominalType(NominalTypeOptions options)
+    : kind_(options.kind), interfaces_(std::move(options.interfaces)) {
+  std::ranges::sort(interfaces_, std::less{});
+}
+
+bool NominalType::IsImplementing(const InterfaceType& interface) const noexcept {
   return std::ranges::binary_search(interfaces_, &interface, std::less{});
+}
+
+bool ClassLayout::IsImplementing(const InterfaceType& interface) const noexcept {
+  return nominal_->IsImplementing(interface);
 }
 
 void ClassLayout::BindCallableType(const TypeSignature& type) noexcept {
@@ -29,7 +38,7 @@ void ClassLayout::BindCallableType(const TypeSignature& type) noexcept {
 }
 
 void ClassLayout::BindExpectedType(const TypeSignature& type) noexcept {
-  assert(field_count_ == 1 && !callable_ && !is_enum_);
+  assert(field_count_ == 1 && !callable_ && !IsEnum());
   assert(expected_type_ == nullptr || expected_type_ == &type);
   expected_type_ = &type;
 }
@@ -67,16 +76,17 @@ TypeConstraint Heap::TypeOf(Value value) noexcept {
       type.signature = object.future_signature();
       return type;
     }
-    type.instance = ClassOf(object);
+    const auto* layout = ClassOf(object);
+    type.nominal = layout == nullptr ? nullptr : &layout->nominal_type();
     type.array = ArrayTypeOf(object);
     type.collection = CollectionTypeOf(object);
     if (object.kind == ObjectKind::Expected) {
       type.signature = object.layout->expected_type();
     }
-    if (type.instance != nullptr && type.instance->callable()) {
+    if (layout != nullptr && layout->callable()) {
       type.callable = true;
-      type.signature = type.instance->callable_type();
-      type.instance = nullptr;
+      type.signature = layout->callable_type();
+      type.nominal = nullptr;
     }
   }
   return type;
@@ -97,8 +107,8 @@ bool TypeConstraint::IsSubtypeOf(const TypeConstraint& target) const noexcept {
     if (actual == expected) {
       return true;
     }
-    if ((expected.interface != nullptr) && actual.instance != nullptr &&
-        actual.instance->IsImplementing(*expected.interface)) {
+    if ((expected.interface != nullptr) && actual.nominal != nullptr &&
+        actual.nominal->IsImplementing(*expected.interface)) {
       return true;
     }
     if (actual.kind != ValueKind::Object || expected.kind != ValueKind::Object ||
@@ -136,7 +146,8 @@ bool Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept {
   }
   const auto* object = value.AsObject();
   if (object == nullptr || object->kind != type.object_kind ||
-      (type.instance != nullptr && object->layout != type.instance) ||
+      (type.nominal != nullptr &&
+       (object->layout == nullptr || &object->layout->nominal_type() != type.nominal)) ||
       (type.array != nullptr && object->array_layout() != type.array) ||
       (type.collection != nullptr && object->collection_layout() != type.collection)) {
     return false;

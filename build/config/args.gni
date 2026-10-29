@@ -11,8 +11,11 @@ declare_args() {
   vela_sysroot = ""
   vela_python = ""
   vela_llvm_root = ""
+  vela_llvm_rtti = ""
   vela_llvm_libraries = []
+  vela_llvm_jit_libraries = []
   vela_llvm_system_libraries = []
+  vela_llvm_jit_system_libraries = []
   vela_llvm_target = ""
 }
 

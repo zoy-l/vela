@@ -210,6 +210,7 @@ runtime::FutureDiagnostic Execution::Diagnostic(const ExecutionResult& result) {
         .line = frame.location.line,
         .column = frame.location.column,
         .instruction = frame.instruction,
+        .identity = {},
     });
   }
   return diagnostic;
@@ -271,15 +272,16 @@ ExecutionStatus Execution::RestoreFutureError(const runtime::FutureResult& compl
     return created.error();
   }
   auto& exception = runtime::ExceptionData::From(*pending_exception_.AsObject());
-  exception.async_diagnostic = std::make_unique<runtime::FutureDiagnostic>(diagnostic).release();
+  exception.diagnostic = std::make_unique<runtime::FutureDiagnostic>(diagnostic).release();
   const auto boundary = CaptureStack();
   for (const auto& frame : boundary) {
-    exception.async_diagnostic->stack_trace.push_back({
+    exception.diagnostic->stack_trace.push_back({
         .function = frame.function,
         .source_path = frame.source_path,
         .line = frame.location.line,
         .column = frame.location.column,
         .instruction = frame.instruction,
+        .identity = {},
     });
   }
   return diagnostic.status;
@@ -331,8 +333,9 @@ std::optional<ExecutionResult> Execution::ResumeFrame(
 
 ExecutionResult Execution::Invoke(runtime::Value callable,
                                   std::span<const runtime::Value> arguments) noexcept {
-  runtime::RootRange argument_roots(isolate_.heap(), arguments.data(), arguments.size());
-  runtime::RootRange callable_root(isolate_.heap(), &callable, 1);
+  runtime::RootRange argument_roots(isolate_.heap(), arguments.data(), arguments.size(),
+                                    runtime::RootOwner::Runtime);
+  runtime::RootRange callable_root(isolate_.heap(), &callable, 1, runtime::RootOwner::Runtime);
   const auto resolved = ResolveCallable(callable);
   if (!resolved) {
     return {.status = resolved.error(), .stack_trace = {}, .message = {}};
@@ -371,7 +374,7 @@ ExecutionResult Execution::Invoke(runtime::Value callable,
       const auto parameter =
           signature.parameters.at(index + hidden - signature.hidden_parameters).type;
       const auto& type = function.layouts->types().subspan(parameter).front();
-      if (!value.IsNull() && type.instance != nullptr && type.instance->IsEnum()) {
+      if (!value.IsNull() && type.nominal != nullptr && type.nominal->IsEnum()) {
         value = *runtime::Heap::GetField(*value.AsObject(), 0);
       }
     }
@@ -637,7 +640,7 @@ StepResult Execution::Await(ActiveFrame& active, FutureRegisters registers) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto output = runtime::Value::Object(object);
-  const runtime::RootRange root(isolate_.heap(), &output, 1);
+  const runtime::RootRange root(isolate_.heap(), &output, 1, runtime::RootOwner::Runtime);
   auto suspended = std::make_shared<SuspendedFrame>(isolate_, program_.Internal(), output,
                                                     values.size(), debug_session_);
   suspended->Suspend(point, source, values);
@@ -824,7 +827,7 @@ StepResult Execution::ExecuteNative(ActiveFrame& active) {
                                : ExecutionStatus::NativeFailure);
   }
   auto value = *result;
-  runtime::RootRange result_root;
+  runtime::RootRange result_root{runtime::RootOwner::Runtime};
   if (value.IsReference()) {
     // 返回引用尚未写入调用者；后续 Future 验证或返回类型转换可能触发 GC。
     result_root.Attach(isolate_.heap(), &value, 1);
@@ -1226,7 +1229,7 @@ ExecutionResult VirtualMachine::ExecuteImpl(const Program& program,
   auto session = std::make_shared<internal::DebugSession>(internal::DebugSession{debugger});
   internal::Execution execution(isolate_, program, registers_, session);
   auto result = execution.DebugRun(entry_function, *debugger);
-  runtime::RootRange result_root(isolate_.heap(), &result.value, 1);
+  runtime::RootRange result_root(isolate_.heap(), &result.value, 1, runtime::RootOwner::Runtime);
   if (result.Succeeded() && result.value.IsObject()) {
     if (auto* source = runtime::Heap::GetFuture(*result.value.AsObject())) {
       auto root = source->Rooted();

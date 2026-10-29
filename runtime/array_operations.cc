@@ -100,7 +100,7 @@ std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
   }
   auto* items = input.AsObject();
   auto roots = std::to_array({Value::Null(), Value::Null()});
-  RootRange root_range(heap, roots.data(), roots.size());
+  RootRange root_range(heap, roots.data(), roots.size(), RootOwner::Runtime);
   // 外部字节码可能复用 receiver；先快照，避免后缀移动覆盖待插入值。
   if (items == &array) {
     const auto copy = heap.SliceArray(array, 0, *length);
@@ -164,7 +164,7 @@ std::expected<Value, ExecutionStatus> SortByDefault(HeapObject& array, Heap& hea
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& type = layout->element;
-  if (type.instance != nullptr ||
+  if (type.nominal != nullptr ||
       (!type.dynamic && type.kind != ValueKind::Integer && type.kind != ValueKind::Double &&
        type.kind != ValueKind::Boolean && type.kind != ValueKind::String)) {
     return std::unexpected(ExecutionStatus::TypeError);

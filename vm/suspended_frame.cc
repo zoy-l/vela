@@ -79,7 +79,8 @@ void SuspendedFrame::Resume(const runtime::FutureResult& completion) {
   std::array<RegisterFile, kMaxCallFrames> registers;
   Execution execution(*isolate_, program_, registers, debug_session_);
   if (const auto outcome = execution.ResumeFrame(*this, completion)) {
-    const runtime::RootRange root(isolate_->heap(), &outcome->value, 1);
+    const runtime::RootRange root(isolate_->heap(), &outcome->value, 1,
+                                  runtime::RootOwner::Runtime);
     Execution::CompleteFuture(*isolate_, result(), *outcome);
   }
 }

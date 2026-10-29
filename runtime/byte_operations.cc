@@ -75,7 +75,7 @@ Result FromArray(Value input, Heap& heap) {
   if (!numbers) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  RootRange root(heap, &input, 1);
+  RootRange root(heap, &input, 1, RootOwner::Runtime);
   const auto result = Allocated(heap.AllocateByteArray(numbers->size()));
   if (!result) {
     return result;
@@ -98,7 +98,7 @@ Result Slice(HeapObject& owner, std::span<const Value> arguments, Heap& heap) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto input = Value::Object(&owner);
-  RootRange root(heap, &input, 1);
+  RootRange root(heap, &input, 1, RootOwner::Runtime);
   const auto bytes = Heap::ByteArrayBytes(owner);
   const auto [start, end] = ClampIndexRange(first.AsInteger(), last.AsInteger(), bytes.size());
   const auto result = Allocated(heap.AllocateByteArray(end - start));

@@ -257,6 +257,7 @@ Program AstCloner::CloneProgram(const Program& source) {
   result.sources = source.sources;
   result.file_resolutions = source.file_resolutions;
   result.standard_names = source.standard_names;
+  result.origins = source.origins;
   result.enums = source.enums;
   for (auto& declaration : result.enums) {
     declaration.location = Relocate(declaration.location);
