@@ -16,10 +16,7 @@ void Lowerer::EmitBuiltinCall(Builtin builtin,
                               RegisterId result,
                               std::span<const RegisterId> values,
                               frontend::SourceLocation location) {
-  const auto base = next_register_;
-  for (std::size_t index = 0; index < values.size(); ++index) {
-    static_cast<void>(AllocateRegister(location));
-  }
+  const auto base = AllocateRegisterWindow(values.size(), location);
   for (std::size_t index = 0; index < values.size(); ++index) {
     Emit({
         .opcode = Opcode::Move,

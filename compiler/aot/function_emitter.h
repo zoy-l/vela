@@ -63,7 +63,6 @@ class FunctionEmitter final {
   void CheckStatus(llvm::Value* status);
   void Fail(llvm::Value* status);
   void SetPosition();
-  llvm::Value* SourcePosition();
   void Finish(llvm::Value* status);
   void EmitInteger(const ir::Instruction& instruction);
   void EmitDouble(const ir::Instruction& instruction);

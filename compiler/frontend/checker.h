@@ -6,6 +6,7 @@
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/parser.h"
 #include "compiler/frontend/source_loader.h"
 
 namespace vela::frontend {
@@ -17,12 +18,10 @@ struct CheckResult final {
   [[nodiscard]] bool Succeeded() const { return diagnostics.empty(); }
 };
 
-[[nodiscard]] CheckResult CheckSource(std::string_view source);
+[[nodiscard]] CheckResult CheckParsed(ParseResult parsed);
 // 已绑定模块的 AST 经过泛型特化后保留，供文档等工具继续读取同一次加载的源码快照。
 [[nodiscard]] CheckResult CheckProgram(Program& program);
 [[nodiscard]] CheckResult CheckFile(std::string_view path,
                                     std::span<const SourceInput> overlays = {});
-[[nodiscard]] CheckResult CheckModules(std::span<const SourceInput> sources,
-                                       std::string_view entry);
 
 }  // namespace vela::frontend

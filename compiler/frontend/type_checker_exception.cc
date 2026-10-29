@@ -14,7 +14,7 @@ StatementFlow TypeChecker::CheckTry(const Statement& statement, const Type& retu
   absl::flat_hash_set<std::string> caught;
   for (const auto& clause : statement.catches) {
     // 异常可发生在任意副作用之后，catch 不能沿用 try 的普通出口事实。
-    refinements_.clear();
+    refinements_.Clear();
     BeginScope();
     if (!clause.name.empty()) {
       const auto type = ResolveType(clause.type, false);
@@ -25,9 +25,7 @@ StatementFlow TypeChecker::CheckTry(const Statement& statement, const Type& retu
         AddDiagnostic(clause.location, "duplicate catch type '" + type.name + "'");
       }
       catch_types_.emplace(&clause, type);
-      if (DeclareLocal(clause.name, type, clause.location, BindingKind::Mutable, &clause)) {
-        bindings_.emplace(&clause, LookupLocal(clause.name)->id);
-      }
+      DeclareLocal(clause.name, type, clause.location, BindingKind::Mutable, &clause);
     }
     const auto next = CheckStatement(*clause.body, return_type);
     EndScope();
@@ -35,7 +33,7 @@ StatementFlow TypeChecker::CheckTry(const Statement& statement, const Type& retu
     flow.can_break = flow.can_break || next.can_break;
     flow.can_continue = flow.can_continue || next.can_continue;
   }
-  refinements_.clear();
+  refinements_.Clear();
   if (statement.finally_branch) {
     const auto final = CheckScopedStatement(*statement.finally_branch, return_type);
     if (!final.can_fall_through) {

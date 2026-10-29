@@ -13,7 +13,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
-#include "compiler/frontend/checker.h"
+#include "compiler/frontend/checker_test_support.h"
 #include "compiler/frontend/source_loader.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
@@ -55,6 +55,56 @@ double Scale(NativeContext& /*unused*/, double value) noexcept {
 
 bool Invert(NativeContext& /*unused*/, bool value) noexcept {
   return !value;
+}
+
+std::int64_t PlainAdd(std::int64_t left, std::int64_t right) noexcept {
+  return left + right;
+}
+double PlainScale(double value) noexcept {
+  return value * kScaleFactor;
+}
+bool PlainInvert(bool value) noexcept {
+  return !value;
+}
+void PlainNoop() noexcept {}
+std::expected<std::int64_t, NativeError> PlainAnswer() noexcept {
+  return kHostAnswer;
+}
+std::expected<void, NativeError> PlainReject() noexcept {
+  return std::unexpected(NativeError{.message = "plain host rejected request"});
+}
+
+TEST(NativeBindingTest, ContextFreeFunctionsShareSignatureValidationCodecsAndFailures) {
+  runtime::Isolate isolate;
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<PlainAdd>("add")));
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<PlainScale>("scale")));
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<PlainInvert>("invert")));
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<PlainNoop>("noop")));
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<PlainAnswer>("answer")));
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<PlainReject>("reject")));
+  const auto compiled = CompileSource(R"(
+external func add(left: int, right: int): int;
+external func scale(value: double): double;
+external func invert(value: bool): bool;
+external func noop(): void;
+external func answer(): int;
+external func reject(): void;
+func main(): int {
+  noop();
+  if (scale(21.0) != 42.0 || !invert(false) || invert(true)) { return 0; }
+  try { reject(); return 0; }
+  catch (error: Error) {
+    if (error.code != 'NativeFailure' || error.message != 'plain host rejected request') { return 0; }
+  }
+  return add(answer(), 0);
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  vm::VirtualMachine machine(isolate);
+  const auto result = machine.Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsInteger(), kHostAnswer);
 }
 
 struct Reentry final {
@@ -303,7 +353,7 @@ export external func invert(value: bool): bool;
 )",
       },
   });
-  EXPECT_TRUE(frontend::CheckModules(sources, "main.vela").Succeeded());
+  EXPECT_TRUE(frontend::CheckTestModules(sources, "main.vela").Succeeded());
   const auto compiled = CompileModules(sources, "main.vela", isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));

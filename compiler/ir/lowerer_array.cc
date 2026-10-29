@@ -13,12 +13,8 @@ namespace vela::ir {
 Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& expression) {
   auto builtin = model_.builtin_calls.at(&expression);
   const auto location = expression.location;
-  const auto base = next_register_;
   const bool splice = builtin == Builtin::ArraySplice;
-  const auto arity = BuiltinArity(builtin);
-  for (std::size_t index = 0; index < arity; ++index) {
-    static_cast<void>(AllocateRegister(location));
-  }
+  const auto base = AllocateRegisterWindow(BuiltinArity(builtin), location);
   const auto receiver = LowerExpression(*expression.callee->object);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = location});
   if (!splice && expression.arguments.empty()) {

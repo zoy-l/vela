@@ -28,13 +28,14 @@ struct NativeMemoryLayout final {
   static constexpr auto kExecutionFrame = offsetof(NativeExecution, current_frame_);
   static constexpr auto kExecutionDepth = offsetof(NativeExecution, frame_count_);
   static constexpr auto kExecutionInstance = offsetof(NativeExecution, instance_);
+  static constexpr auto kExecutionContext = offsetof(NativeExecution, context_);
   static constexpr auto kExecutionException = offsetof(NativeExecution, pending_exception_);
   static constexpr auto kExecutionExceptionAllocationFailed =
       offsetof(NativeExecution, exception_allocation_failed_);
   static constexpr auto kInstanceData = offsetof(NativeInstance, data_);
   static constexpr auto kProgramGlobalStates = offsetof(NativeProgramState, global_states);
-  static constexpr auto kProgramGlobals = offsetof(NativeProgramState, values) +
-                                          sizeof(Value) * NativeProgramState::kGlobals;
+  static constexpr auto kProgramGlobals =
+      offsetof(NativeProgramState, values) + sizeof(Value) * NativeProgramState::kGlobals;
   static constexpr auto kFrameRoots = offsetof(NativeFrameAccess, roots);
   static constexpr auto kFrameStorage = offsetof(NativeFrameAccess, storage);
 };

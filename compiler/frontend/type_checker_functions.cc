@@ -111,16 +111,14 @@ TypeChecker::Type TypeChecker::CheckLambda(const Expression& expression, const T
   lambdas_.push_back({.expression = &expression, .signature = signature, .captures = {}});
   lambda_scopes_.push_back({.index = index, .scope = scopes_.size()});
   auto previous_facts = std::move(refinements_);
-  refinements_.clear();
+  refinements_.Clear();
   const auto previous_loop = std::exchange(loop_depth_, 0);
   const auto previous_switch = std::exchange(switch_depth_, 0);
   BeginScope();
   for (const auto& parameter : function.parameters) {
-    if (DeclareLocal(parameter.name,
-                     signature.parameters.at(signature.parameter_indices.at(parameter.name)).type,
-                     parameter.location, BindingKind::Mutable, &parameter)) {
-      bindings_.emplace(&parameter, LookupLocal(parameter.name)->id);
-    }
+    DeclareLocal(parameter.name,
+                 signature.parameters.at(signature.parameter_indices.at(parameter.name)).type,
+                 parameter.location, BindingKind::Mutable, &parameter);
   }
   const auto flow = CheckSequence(*function.body, signature.return_type);
   control_flow_.insert_or_assign(function.body.get(), flow);

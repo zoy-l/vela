@@ -52,6 +52,49 @@ func main(): int {
 
 class GenericErrorTest : public testing::TestWithParam<std::string_view> {};
 
+TEST(GenericTest, PreservesLoopBindingsAndAccessorFlagsWhenCloningTemplates) {
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(R"(
+func identity<T>(value: T): T { return value; }
+func collect<T>(values: T[]): (() => T)[] {
+  const result: (() => T)[] = [];
+  for (const identity in identity<T[]>(values)) {
+    result.push((): T => identity);
+  }
+  return result;
+}
+func pairs<K, V>(values: Map<K, V>): (() => int)[] {
+  const result: (() => int)[] = [];
+  for (const [key, value] in values) {
+    result.push((): int => key.length + value);
+  }
+  return result;
+}
+class Box<T> {
+  stored: T;
+  get value(): T { return this.stored; }
+  set value(next: T): void { this.stored = next; }
+}
+func main(): int {
+  const values = collect<int>([19, 20]);
+  const map = Map<string, int>();
+  map.set('ab', 1);
+  const callbacks = pairs<string, int>(map);
+  const box = Box<int>(stored: 0);
+  box.value = values[0]() + values[1]();
+  return box.value + callbacks[0]();
+}
+)",
+                                      isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
 TEST_P(GenericErrorTest, RejectsInvalidInstantiationAndExpandingRecursion) {
   runtime::Isolate isolate;
   EXPECT_FALSE(CompileSource(GetParam(), isolate).Succeeded());
@@ -98,6 +141,107 @@ TEST(GenericTest, DiagnosesDeepTypeSyntaxBeforeRecursiveDestructionCanOverflow) 
   }
   runtime::Isolate isolate;
   EXPECT_FALSE(CompileSource("func main(value: " + type + "): void {}", isolate).Succeeded());
+}
+
+TEST(GenericTest, FusedInstantiationPreservesMatchCatchFinallyAndLambdaScopes) {
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(R"(
+func identity<T>(value: T): T { return value; }
+class Failure<T> { value: T; }
+func inspect<T>(value: T, flag: bool): T {
+  let retained: T = value;
+  try {
+    const identity = (): T => value;
+    retained = identity();
+  } catch (identity: Failure<T>) {
+    retained = identity.value;
+  } finally {
+    const identity = (): T => retained;
+    retained = identity();
+  }
+  const selected = match (flag) {
+    true => retained,
+    let identity => identity ? retained : value,
+  };
+  return identity<T>(selected);
+}
+func main(): int { return inspect<int>(20, true) + inspect<int>(22, false); }
+)",
+                                      isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(GenericTest, FusedClassInstantiationPreservesGenericBasesConstructorsAndOverrides) {
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(R"(
+func identity<T>(value: T): T { return value; }
+class Base<T> { value: T; read(): T { return this.value; } }
+class Derived<T> extends Base<T> {
+  extra: T;
+  constructor { super(value: this.extra); }
+  override read(): T { return identity<T>(this.extra); }
+}
+func main(): int {
+  const derived = Derived<int>(extra: 21);
+  return derived.read() + derived.value;
+}
+)",
+                                      isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(GenericTest, FusedInstantiationRejectsTypeArgumentsOnShadowingBindings) {
+  for (const auto source : {
+           R"(
+func identity<T>(value: T): T { return value; }
+func apply<T>(identity: (T) => T, value: T): T { return identity<T>(value); }
+func main(): int { return apply<int>(identity<int>, 42); }
+)",
+           R"(
+func identity<T>(value: T): T { return value; }
+class Failure<T> { value: T; }
+func apply<T>(value: T): T {
+  try { return value; }
+  catch (identity: Failure<T>) { return identity<T>(value); }
+}
+func main(): int { return apply<int>(42); }
+)",
+           R"(
+func identity<T>(value: T): T { return value; }
+func apply<T>(value: T): T {
+  return match (value) { let identity => identity<T>(value), };
+}
+func main(): int { return apply<int>(42); }
+)",
+           R"(
+func identity<T>(value: T): T { return value; }
+func apply<T>(values: Map<string, T>): T {
+  for (const [key, identity] in values) { return identity<T>(identity); }
+  return values.values()[0];
+}
+func main(): int { return apply<int>(Map<string, int>()); }
+)",
+       }) {
+    SCOPED_TRACE(source);
+    runtime::Isolate isolate;
+    const auto compiled = CompileSource(source, isolate);
+    EXPECT_FALSE(compiled.Succeeded());
+    ASSERT_FALSE(compiled.diagnostics.empty());
+    EXPECT_TRUE(compiled.diagnostics.front().message.contains(
+        "type arguments cannot be applied to a local binding"));
+  }
 }
 
 }  // namespace

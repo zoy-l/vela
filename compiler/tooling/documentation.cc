@@ -22,40 +22,6 @@
 namespace vela::tooling {
 namespace {
 
-using frontend::TypeName;
-
-std::string TypeText(const TypeName& type) {
-  switch (type.kind) {
-    case TypeName::Kind::Named:
-      return type.name;
-    case TypeName::Kind::Array:
-      return TypeText(type.arguments.front()) + "[]";
-    case TypeName::Kind::Nullable:
-      return TypeText(type.arguments.front()) + "?";
-    case TypeName::Kind::Generic: {
-      std::string text = type.name + '<';
-      for (const auto& argument : type.arguments) {
-        if (text.back() != '<') {
-          text += ", ";
-        }
-        text += TypeText(argument);
-      }
-      return text + '>';
-    }
-    case TypeName::Kind::Function: {
-      std::string text = "(";
-      for (std::size_t index = 0; index + 1 < type.arguments.size(); ++index) {
-        if (index != 0) {
-          text += ", ";
-        }
-        text += TypeText(type.arguments.at(index));
-      }
-      return text + ") => " + TypeText(type.arguments.back());
-    }
-  }
-  std::unreachable();
-}
-
 void TypeParameters(std::ostream& output, const std::vector<std::string>& parameters) {
   if (parameters.empty()) {
     return;
@@ -77,7 +43,7 @@ void Parameters(std::ostream& output, const std::vector<frontend::Parameter>& pa
       output << ", ";
     }
     const auto& parameter = parameters.at(index);
-    output << parameter.name << ": " << TypeText(parameter.type);
+    output << parameter.name << ": " << parameter.type.ToString();
   }
   output << ')';
 }
@@ -86,7 +52,7 @@ void Signature(std::ostream& output, const frontend::Function& function) {
   output << function.name;
   TypeParameters(output, function.type_parameters);
   Parameters(output, function.parameters);
-  output << ": " << TypeText(function.return_type);
+  output << ": " << function.return_type.ToString();
 }
 
 struct Declaration final {
@@ -193,7 +159,7 @@ void Documentation::Class(const frontend::Class& declaration) {
       if (index != 0) {
         output_ << ", ";
       }
-      output_ << TypeText(declaration.interfaces.at(index));
+      output_ << declaration.interfaces.at(index).ToString();
     }
   }
   output_ << " {\n";
@@ -222,7 +188,7 @@ void Documentation::Class(const frontend::Class& declaration) {
     }
     output_ << "### `" << field.name << "`\n\n";
     Comment(field.location);
-    output_ << "Type: `" << TypeText(field.type) << "`";
+    output_ << "Type: `" << field.type.ToString() << "`";
     if (public_constructor && declaration.IsConstructorField(field)) {
       output_ << "; named constructor parameter";
     }
@@ -243,7 +209,7 @@ void Documentation::FieldDeclaration(const frontend::Field& field) {
   if (field.storage == frontend::MemberStorage::Static) {
     output_ << "static ";
   }
-  output_ << field.name << ": " << TypeText(field.type);
+  output_ << field.name << ": " << field.type.ToString();
   if (field.initializer) {
     output_ << " = …";
   }
@@ -270,7 +236,7 @@ void Documentation::Constructor(const frontend::Class& declaration) {
     if (parameter_index++ != 0) {
       output_ << ", ";
     }
-    output_ << field.name << ": " << TypeText(field.type);
+    output_ << field.name << ": " << field.type.ToString();
     if (field.initializer) {
       output_ << " = …";
     }
@@ -324,7 +290,7 @@ void Documentation::Emit(Declaration declaration) {
       const auto& alias = program.aliases.at(declaration.index);
       output_ << "type " << alias.name;
       TypeParameters(output_, alias.type_parameters);
-      output_ << " = " << TypeText(alias.target) << ";\n";
+      output_ << " = " << alias.target.ToString() << ";\n";
       break;
     }
     case Declaration::Kind::Global: {
@@ -332,7 +298,7 @@ void Documentation::Emit(Declaration declaration) {
       output_ << (global.binding == frontend::BindingKind::Constant ? "const " : "let ")
               << global.name;
       if (!global.type.name.empty()) {
-        output_ << ": " << TypeText(global.type);
+        output_ << ": " << global.type.ToString();
       }
       output_ << " = …;\n";
       break;
@@ -376,7 +342,13 @@ std::expected<std::string, frontend::Diagnostics> GenerateModuleDocumentation(
 }
 
 std::expected<std::string, frontend::Diagnostics> GenerateDocumentation(std::string_view entry) {
-  auto loaded = frontend::LoadProgram(entry);
+  auto graph = frontend::LoadModuleGraph(entry);
+  if (!graph.diagnostics.empty()) {
+    return std::unexpected(std::move(graph.diagnostics));
+  }
+  auto documentation =
+      Documentation(graph.modules.front().program, graph.sources.front().text).Generate();
+  auto loaded = frontend::BindModuleGraph(std::move(graph));
   if (!loaded.diagnostics.empty()) {
     return std::unexpected(std::move(loaded.diagnostics));
   }
@@ -384,8 +356,7 @@ std::expected<std::string, frontend::Diagnostics> GenerateDocumentation(std::str
   if (!checked.Succeeded()) {
     return std::unexpected(std::move(checked.diagnostics));
   }
-  const auto& source = loaded.program.sources.front();
-  return GenerateModuleDocumentation(source.text);
+  return documentation;
 }
 
 }  // namespace vela::tooling

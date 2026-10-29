@@ -152,10 +152,7 @@ Lowerer::LoweredValue Lowerer::LowerIndirectCall(const frontend::Expression& exp
       .location = expression.location,
   });
   const auto count = expression.arguments.size();
-  const auto base = next_register_;
-  for (std::size_t index = 0; index < count; ++index) {
-    static_cast<void>(AllocateRegister(expression.location));
-  }
+  const auto base = AllocateRegisterWindow(count, expression.location);
   for (std::size_t index = 0; index < count; ++index) {
     const auto& argument = expression.arguments.at(index);
     const auto value = LowerExpression(*argument.value);

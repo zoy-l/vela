@@ -3,7 +3,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
-#include "compiler/frontend/checker.h"
+#include "compiler/frontend/checker_test_support.h"
 #include "runtime/isolate.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"
@@ -252,7 +252,7 @@ func main(): int {
 class InvalidExceptionTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(InvalidExceptionTest, RejectsInvalidSyntaxTypesAndUnsafeFlow) {
-  EXPECT_FALSE(frontend::CheckSource(GetParam()).Succeeded());
+  EXPECT_FALSE(frontend::CheckTestSource(GetParam()).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(

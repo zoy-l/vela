@@ -213,7 +213,41 @@ class TypeChecker final {
     std::uint32_t id = 0;
     std::size_t scope = 0;
   };
-  using Refinements = absl::flat_hash_map<std::uint32_t, Type>;
+  using RefinementDelta = absl::flat_hash_map<std::uint32_t, std::optional<Type>>;
+  class Refinements final {
+   public:
+    struct Checkpoint final {
+      std::size_t offset;
+    };
+    Refinements() = default;
+    ~Refinements() = default;
+    Refinements(const Refinements&) = delete;
+    Refinements& operator=(const Refinements&) = delete;
+    Refinements(Refinements&& other) noexcept;
+    Refinements& operator=(Refinements&& other) noexcept;
+
+    [[nodiscard]] const Type* Find(std::uint32_t binding) const;
+    [[nodiscard]] bool IsEmpty() const;
+    void Set(std::uint32_t binding, Type type);
+    void Erase(std::uint32_t binding);
+    void Erase(const absl::flat_hash_set<std::uint32_t>& bindings);
+    void Clear();
+    [[nodiscard]] Checkpoint BeginBranch();
+    void Discard(Checkpoint checkpoint);
+    [[nodiscard]] RefinementDelta Capture(Checkpoint checkpoint);
+    void Apply(const RefinementDelta& changes);
+    void Intersect(RefinementDelta& target, const RefinementDelta& other) const;
+
+   private:
+    struct Change final {
+      std::uint32_t binding;
+      std::optional<Type> previous;
+    };
+    void Save(std::uint32_t binding, const Type* previous);
+    absl::flat_hash_map<std::uint32_t, Type> facts_;
+    std::vector<Change> undo_;
+    std::size_t branch_depth_ = 0;
+  };
 
   [[nodiscard]] static Type InvalidType();
   void AddDiagnostic(SourceLocation location, std::string message);
@@ -363,9 +397,25 @@ class TypeChecker final {
   void RefineCondition(const Expression& condition, ConditionTruth outcome);
   void InvalidateAssignments(const Statement& statement);
   void InvalidateAssignments(const Expression& expression);
+  struct AssignmentEffects final {
+    absl::flat_hash_set<std::string_view> names;
+    bool may_call = false;
+  };
+  class LoopAssignments final {
+   public:
+    explicit LoopAssignments(const Statement& statement) : statement_(statement) {}
+    const AssignmentEffects& Body();
+    const AssignmentEffects& Whole();
+
+   private:
+    const Statement& statement_;
+    std::optional<AssignmentEffects> body_;
+    std::optional<AssignmentEffects> whole_;
+  };
+  static void CollectAssignments(const Statement& statement, AssignmentEffects& effects);
+  static void CollectAssignments(const Expression& expression, AssignmentEffects& effects);
+  void InvalidateAssignments(const AssignmentEffects& effects);
   void InvalidateCapturedRefinements();
-  [[nodiscard]] static Refinements IntersectFacts(const Refinements& left,
-                                                  const Refinements& right);
   [[nodiscard]] static bool IsNumeric(const Type& type);
   [[nodiscard]] static bool IsValid(const Type& type);
   [[nodiscard]] static std::string TypeNameFor(const Type& type);

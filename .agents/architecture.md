@@ -41,6 +41,25 @@ for execution and validation.
   repeating defensive checks at every layer. When removing redundant checks, also remove their
   result enums, branches, and tests.
 
+### Native host bindings
+
+`NativeFunction::Bind<Function>` derives the host signature and AOT calling convention from the
+C++ function. Native instantiation validates that signature against the external declaration before
+publishing the instance. The binding is immutable for the instance's lifetime; generated functions
+resolve each used import once per invocation, including resumed invocations.
+Host functions may take `NativeContext&` as their first argument or omit it. A context is supplied
+only when the function or its codecs require it; scripts see the same external signature.
+
+Functions returning plain `void`, `bool`, `int64_t` or `double` use a direct AOT entry with register
+results. Exact scalar signatures retain the original C++ function pointer. Boolean and managed
+arguments use their ABI codecs. Functions returning `std::expected` or managed values use a checked
+entry that propagates errors and validates managed results, including Future completion types.
+Both entries preserve logical frames, call-depth limits and GC roots during host execution. The
+VM continues to validate register payload types at the host boundary.
+
+Each `NativeExecution` owns its `NativeContext`; it borrows the same Isolate for the execution's
+lifetime. Host calls borrow that context and their managed arguments for the duration of the call.
+
 ## Assertion boundaries and cleanup
 
 - Syntax, type, file, and runtime data errors that users can trigger must not cause fatal assertions.

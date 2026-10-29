@@ -4,7 +4,7 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/frontend/checker.h"
+#include "compiler/frontend/checker_test_support.h"
 #include "compiler/frontend/parser.h"
 
 namespace vela::frontend {
@@ -28,7 +28,7 @@ TEST_P(SourceDiagnosticTest, PointsToTheResponsibleToken) {
   const auto newline = prefix.rfind('\n');
   const auto column =
       static_cast<std::uint32_t>(newline == std::string_view::npos ? offset + 1 : offset - newline);
-  const auto checked = CheckSource(parameter.source);
+  const auto checked = CheckTestSource(parameter.source);
   EXPECT_TRUE(std::ranges::any_of(checked.diagnostics, [&](const auto& diagnostic) -> bool {
     return diagnostic.message.contains(parameter.message) && diagnostic.location.line == line &&
            diagnostic.location.column == column;
@@ -64,8 +64,8 @@ INSTANTIATE_TEST_SUITE_P(
                      "unknown named", "other"},
         LocatedError{"func read(value: int): void {}\nfunc f(): void { read(); }",
                      "missing argument", "read"},
-        LocatedError{"class A { x: int; }\nfunc f(): A { return A(other: 1); }",
-                     "unknown named", "other"},
+        LocatedError{"class A { x: int; }\nfunc f(): A { return A(other: 1); }", "unknown named",
+                     "other"},
         LocatedError{"func f(): int {\n  return 1 + true;\n}", "arithmetic operands", "+"},
         LocatedError{"func f(): int {\n  return [1][true];\n}", "index must be int", "true"},
         LocatedError{"func f(flag: bool?): void {\n  if (flag) {}\n}", "condition must be bool",
@@ -90,6 +90,26 @@ TEST(ParserRecoveryTest, MissingInitializerDoesNotConsumeTheClosingBrace) {
   ASSERT_FALSE(parsed.diagnostics.empty());
   ASSERT_EQ(parsed.program.functions.size(), 2U);
   EXPECT_EQ(parsed.program.functions.back().name, "second");
+}
+
+TEST(ParserRecoveryTest, HandlesTruncatedLambdaAndGenericLookaheadAtEof) {
+  for (const auto source : {"func f(): void { (x", "func f(): void { (x)",
+                            "func f(): void { call<int>", "func f(): void { call<Box<int>>"}) {
+    SCOPED_TRACE(source);
+    EXPECT_FALSE(ParseSource(source).diagnostics.empty());
+  }
+}
+
+TEST(ParserRecoveryTest, ParsesLongComparisonChainsAndNestedGenericClosings) {
+  std::string source = "func f(a: int, b: int): bool { return ";
+  constexpr int kComparisons = 1024;
+  for (int index = 0; index < kComparisons; ++index) {
+    source += index == 0 ? "a < b" : " && a < b";
+  }
+  source += "; }";
+  EXPECT_TRUE(ParseSource(source).diagnostics.empty());
+  EXPECT_TRUE(
+      ParseSource("func f(): void { call<Map<string, Map<int, int>>>(); }").diagnostics.empty());
 }
 
 }  // namespace

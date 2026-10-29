@@ -125,8 +125,6 @@ void FunctionEmitter::EmitFrameEntry() {
 }
 
 void FunctionEmitter::CacheImports() {
-  auto lookup = module_.getOrInsertFunction("vela_native_v1_import", builder_.getPtrTy(),
-                                            builder_.getPtrTy(), builder_.getInt32Ty());
   for (const auto& instruction : source_.instructions) {
     if (instruction.opcode != Opcode::Call ||
         program_.functions.at(instruction.index).native_symbol.empty() ||
@@ -134,9 +132,8 @@ void FunctionEmitter::CacheImports() {
       continue;
     }
     // 绑定随实例创建后不可变；闭包临时切换实例会在返回时恢复，作用域内可复用。
-    auto* slot =
-        builder_.CreateCall(lookup, {body_->getArg(0), builder_.getInt32(instruction.index)});
-    imports_.emplace(instruction.index, builder_.CreateLoad(builder_.getPtrTy(), slot));
+    imports_.emplace(instruction.index,
+                     LoadImport(builder_, module_, body_->getArg(0), instruction.index));
   }
 }
 

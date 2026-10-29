@@ -233,6 +233,7 @@ void LanguageServer::Notification(std::string_view method, const yyjson_val* par
   } else if (method == "textDocument/didClose") {
     changed = Close(params);
   } else if (method == "textDocument/didSave" || method == "workspace/didChangeWatchedFiles") {
+    modules_ = {};
     PublishDiagnostics();
   }
   // initialized、$/cancelRequest 与未知通知无需响应；本阶段请求按接收顺序同步完成。

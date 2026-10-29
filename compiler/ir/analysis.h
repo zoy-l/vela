@@ -6,9 +6,8 @@
 #include <span>
 #include <vector>
 
-#include <absl/container/flat_hash_set.h>
-
 #include "compiler/ir/ir.h"
+#include "compiler/ir/register_set.h"
 
 namespace vela::ir {
 
@@ -73,21 +72,23 @@ struct FlowGraph final {
   std::vector<std::size_t> instruction_blocks;
 };
 
-using RegisterSet = absl::flat_hash_set<RegisterId>;
-
 struct BlockLiveness final {
   RegisterSet live_in;
   RegisterSet live_out;
 };
 
-enum class LivenessMode : std::uint8_t { AllInstructions, NecessaryInstructions };
+struct NecessaryLiveness final {
+  std::vector<BlockLiveness> blocks;
+  std::vector<std::uint8_t> keep;
+};
 
 [[nodiscard]] FlowGraph BuildFlowGraph(const Function& function);
-[[nodiscard]] std::vector<BlockLiveness> AnalyzeLiveness(
-    const Function& function,
-    const FlowGraph& graph,
-    std::span<const Function> functions,
-    LivenessMode mode = LivenessMode::AllInstructions);
+[[nodiscard]] std::vector<BlockLiveness> AnalyzeLiveness(const Function& function,
+                                                         const FlowGraph& graph,
+                                                         std::span<const Function> functions);
+[[nodiscard]] NecessaryLiveness AnalyzeNecessaryLiveness(const Function& function,
+                                                         const FlowGraph& graph,
+                                                         std::span<const Function> functions);
 // 成功边上的定义覆盖旧值，异常边上的定义不生效；两个后端共用此传递规则。
 void TransferLiveness(const Function& function,
                       const FlowGraph& graph,

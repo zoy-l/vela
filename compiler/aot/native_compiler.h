@@ -20,6 +20,7 @@ struct NativeOptions final {
   NativeOptimization optimization = NativeOptimization::Release;
   std::vector<std::string> exports;
   NativeEntryMode entry_mode = NativeEntryMode::Library;
+  bool preserve_ir = false;
 };
 
 struct NativeExport final {

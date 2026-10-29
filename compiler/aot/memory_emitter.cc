@@ -17,6 +17,7 @@
 #include "compiler/aot/native_values.h"
 #include "compiler/ir/ir.h"
 #include "runtime/native_memory_layout.h"
+#include "runtime/native_operations.h"
 #include "runtime/native_program_state.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
@@ -153,39 +154,44 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
   using runtime::NativeMemoryLayout;
   auto* pointer = builder_.getPtrTy();
   auto* execution = body_->getArg(0);
-  auto* instance = builder_.CreateLoad(
-      pointer, ByteAddress(execution, NativeMemoryLayout::kExecutionInstance));
+  auto* instance =
+      builder_.CreateLoad(pointer, ByteAddress(execution, NativeMemoryLayout::kExecutionInstance));
   auto* data =
       builder_.CreateLoad(pointer, ByteAddress(instance, NativeMemoryLayout::kInstanceData));
-  auto* states = builder_.CreateLoad(
-      pointer, ByteAddress(data, NativeMemoryLayout::kProgramGlobalStates));
+  auto* states =
+      builder_.CreateLoad(pointer, ByteAddress(data, NativeMemoryLayout::kProgramGlobalStates));
   auto* state = builder_.CreateLoad(builder_.getInt8Ty(), ByteAddress(states, instruction.index));
   auto* ready = llvm::BasicBlock::Create(module_.getContext(), "global.ready", body_);
   auto* initialize = llvm::BasicBlock::Create(module_.getContext(), "global.initialize", body_);
   auto* loaded = llvm::BasicBlock::Create(module_.getContext(), "global.loaded", body_);
   builder_.CreateCondBr(
       builder_.CreateICmpEQ(state, builder_.getInt8(static_cast<std::uint8_t>(
-                                      runtime::NativeProgramState::GlobalState::Ready))),
-      ready, initialize,
-      llvm::MDBuilder(module_.getContext()).createLikelyBranchWeights());
+                                       runtime::NativeProgramState::GlobalState::Ready))),
+      ready, initialize, llvm::MDBuilder(module_.getContext()).createLikelyBranchWeights());
   builder_.SetInsertPoint(ready);
   // Ready 之后只读 GC 管理的固定槽；分支内不调用、不分配，不需要解码或额外保根。
   auto* globals = builder_.CreateLoad(
-      pointer, ByteAddress(data, NativeMemoryLayout::kProgramGlobals +
-                                    NativeMemoryLayout::kValuePayload));
-  auto* values = builder_.CreateLoad(
-      pointer, ByteAddress(globals, NativeMemoryLayout::kObjectNativePayload));
+      pointer,
+      ByteAddress(data, NativeMemoryLayout::kProgramGlobals + NativeMemoryLayout::kValuePayload));
+  auto* values =
+      builder_.CreateLoad(pointer, ByteAddress(globals, NativeMemoryLayout::kObjectNativePayload));
   const auto& type = source_.value_types.at(instruction.dst);
   Store(instruction.dst,
         ReadHeapValue(ByteAddress(values, instruction.index * sizeof(runtime::Value)), type), type);
   builder_.CreateBr(loaded);
   builder_.SetInsertPoint(initialize);
   // 惰性初始化、循环初始化与失败重试仍由状态所有者处理。
-  auto helper = module_.getOrInsertFunction("vela_native_v1_initialize_global", builder_.getInt8Ty(),
-                                            pointer, builder_.getInt32Ty(), pointer, pointer);
-  auto* position = leaf_entry_ ? SourcePosition() : llvm::ConstantPointerNull::get(pointer);
-  CheckStatus(builder_.CreateCall(helper, {execution, builder_.getInt32(instruction.index),
-                                          position, result_}));
+  auto helper = module_.getOrInsertFunction("vela_native_v2_initialize_global",
+                                            builder_.getInt8Ty(), pointer, builder_.getInt32Ty(),
+                                            builder_.getInt64Ty(), builder_.getInt8Ty(), pointer);
+  const auto position = runtime::EncodeNativeTracePosition(
+      {.function = static_cast<std::uint32_t>(function_index_),
+       .instruction = static_cast<std::uint32_t>(instruction_index_)});
+  const auto frame_kind =
+      leaf_entry_ ? runtime::NativeGlobalFrame::Leaf : runtime::NativeGlobalFrame::Current;
+  CheckStatus(builder_.CreateCall(
+      helper, {execution, builder_.getInt32(instruction.index), builder_.getInt64(position),
+               builder_.getInt8(static_cast<std::uint8_t>(frame_kind)), result_}));
   Unpack(instruction.dst);
   builder_.CreateBr(loaded);
   builder_.SetInsertPoint(loaded);

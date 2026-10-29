@@ -8,7 +8,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
-#include "compiler/frontend/checker.h"
+#include "compiler/frontend/checker_test_support.h"
 #include "compiler/frontend/source_loader.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -216,15 +216,17 @@ TEST(StandardLibraryTest, MapAllocatesOnlyOneResultArray) {
 }
 
 TEST(StandardLibraryTest, RejectsImplicitConversionsAndRemovedModuleScheme) {
-  EXPECT_FALSE(frontend::CheckSource("func main(): double { return Math.sqrt(4); }").Succeeded());
-  EXPECT_FALSE(frontend::CheckSource("func main(): void { const values = [1]; values.fill(1.0); }")
-                   .Succeeded());
-  EXPECT_FALSE(frontend::CheckSource("import \"std:missing\";").Succeeded());
+  EXPECT_FALSE(
+      frontend::CheckTestSource("func main(): double { return Math.sqrt(4); }").Succeeded());
+  EXPECT_FALSE(
+      frontend::CheckTestSource("func main(): void { const values = [1]; values.fill(1.0); }")
+          .Succeeded());
+  EXPECT_FALSE(frontend::CheckTestSource("import \"std:missing\";").Succeeded());
   const auto sources = std::to_array<frontend::SourceInput>({
       {.path = "main.vela", .text = "import \"std:math\";"},
       {.path = "std:math", .text = "export func sqrt(value: double): double { return 0.0; }"},
   });
-  EXPECT_FALSE(frontend::CheckModules(sources, "main.vela").Succeeded());
+  EXPECT_FALSE(frontend::CheckTestModules(sources, "main.vela").Succeeded());
 }
 
 class ArrayAlgorithmExecutionTest : public testing::TestWithParam<std::string_view> {};
@@ -353,7 +355,7 @@ func main(): int {
 
 class InvalidStandardApiTest : public testing::TestWithParam<std::string_view> {};
 TEST_P(InvalidStandardApiTest, RejectsInvalidContracts) {
-  EXPECT_FALSE(frontend::CheckSource(GetParam()).Succeeded());
+  EXPECT_FALSE(frontend::CheckTestSource(GetParam()).Succeeded());
 }
 INSTANTIATE_TEST_SUITE_P(
     StrictSignatures,

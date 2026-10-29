@@ -15,6 +15,7 @@ class SymbolIds final {
     return ids_.try_emplace(name, static_cast<std::uint32_t>(ids_.size())).first->second;
   }
   [[nodiscard]] std::size_t size() const noexcept { return ids_.size(); }
+  [[nodiscard]] bool Has(const std::string& name) const { return ids_.contains(name); }
 
  private:
   absl::flat_hash_map<std::string, std::uint32_t> ids_;

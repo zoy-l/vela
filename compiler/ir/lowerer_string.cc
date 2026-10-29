@@ -19,10 +19,7 @@ Lowerer::LoweredValue Lowerer::LowerStringInterpolation(const frontend::Expressi
       parts.push_back(element.get());
     }
   }
-  const auto base = next_register_;
-  for (std::size_t index = 0; index < parts.size(); ++index) {
-    static_cast<void>(AllocateRegister(expression.location));
-  }
+  const auto base = AllocateRegisterWindow(parts.size(), expression.location);
   for (std::size_t index = 0; index < parts.size(); ++index) {
     const auto part = LowerExpression(*parts.at(index));
     // 在求值下一段前保存当前值，避免后续赋值副作用改写已求值的引用。

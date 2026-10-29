@@ -28,6 +28,7 @@
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "runtime/native_abi.h"
+#include "runtime/native_function.h"
 
 namespace vela::compiler::aot {
 
@@ -48,6 +49,33 @@ llvm::StructType* NativeRecordType(llvm::LLVMContext& context) {
   return llvm::StructType::get(llvm::Type::getInt64Ty(context), llvm::Type::getInt8Ty(context),
                                llvm::Type::getInt8Ty(context), llvm::Type::getInt16Ty(context),
                                llvm::Type::getInt32Ty(context));
+}
+
+llvm::StructType* NativeImportType(llvm::LLVMContext& context) {
+  return llvm::StructType::get(llvm::PointerType::getUnqual(context),
+                               llvm::Type::getInt8Ty(context));
+}
+
+llvm::Value* LoadImport(Builder& builder,
+                        llvm::Module& module,
+                        llvm::Value* execution,
+                        std::uint32_t function) {
+  using runtime::NativeFunction;
+  auto lookup = module.getOrInsertFunction("vela_native_v1_import", builder.getPtrTy(),
+                                           builder.getPtrTy(), builder.getInt32Ty());
+  auto* entry = builder.CreateCall(lookup, {execution, builder.getInt32(function)});
+  auto address = [&](std::size_t offset) {
+    return builder.CreateConstGEP1_64(builder.getInt8Ty(), entry, offset);
+  };
+  auto* slot =
+      builder.CreateLoad(builder.getPtrTy(), address(offsetof(NativeFunction::AotEntry, slot)));
+  auto* kind =
+      builder.CreateLoad(builder.getInt8Ty(), address(offsetof(NativeFunction::AotEntry, kind)));
+  // 槽类型只在此擦除，循环内只传实际入口和由 C++ 签名确定的调用约定。
+  auto* target = builder.CreateLoad(builder.getPtrTy(), slot);
+  llvm::Value* result = llvm::PoisonValue::get(NativeImportType(module.getContext()));
+  result = builder.CreateInsertValue(result, target, 0);
+  return builder.CreateInsertValue(result, kind, 1);
 }
 
 llvm::Type* PayloadType(llvm::LLVMContext& context, Kind kind) {
@@ -256,10 +284,7 @@ void EmitWrapper(llvm::Module& module,
     Builder missing(no_execution);
     missing.CreateRet(Status(missing, ExecutionStatus::InvalidIsolate));
     builder.SetInsertPoint(bound);
-    auto lookup = module.getOrInsertFunction("vela_native_v1_import", builder.getPtrTy(),
-                                             builder.getPtrTy(), builder.getInt32Ty());
-    auto* slot = builder.CreateCall(lookup, {entry->getArg(0), builder.getInt32(function_index)});
-    arguments.push_back(builder.CreateLoad(builder.getPtrTy(), slot));
+    arguments.push_back(LoadImport(builder, module, entry->getArg(0), function_index));
   }
   arguments.push_back(result);
   auto* status = builder.CreateCall(body, arguments);

@@ -93,7 +93,8 @@ SemanticIndex& LanguageServer::IndexFor(std::string_view uri, const ServerDocume
   for (const auto& [open_uri, document] : documents_) {
     overlays.push_back({.path = document.path, .text = document.source.text()});
   }
-  return semantic_indices_.try_emplace(std::string(uri), opened.path, overlays).first->second;
+  return semantic_indices_.try_emplace(std::string(uri), opened.path, modules_, overlays)
+      .first->second;
 }
 
 void LanguageServer::DocumentLinks(RpcCall call) {
@@ -127,7 +128,7 @@ void LanguageServer::DocumentLinks(RpcCall call) {
 
 std::vector<Completion> LanguageServer::CompletionsFor(std::string_view uri,
                                                        const ServerDocument& opened,
-                                                       std::size_t offset) const {
+                                                       std::size_t offset) {
   const auto text = opened.source.text();
   const auto arguments = PrepareArgumentCompletion(text, offset);
   const auto completion_text = arguments ? arguments->source : CompletionSource(text, offset);
@@ -139,7 +140,18 @@ std::vector<Completion> LanguageServer::CompletionsFor(std::string_view uri,
         .text = open_uri == uri ? completion_text : opened_document.source.text(),
     });
   }
-  const SemanticIndex index(opened.path, overlays);
+  auto cached = completion_indices_.find(uri);
+  if (cached == completion_indices_.end() || cached->second.text != completion_text) {
+    if (cached != completion_indices_.end()) {
+      completion_indices_.erase(cached);
+    }
+    cached = completion_indices_
+                 .emplace(std::string(uri),
+                          CompletionIndex{.text = completion_text,
+                                          .index = SemanticIndex(opened.path, modules_, overlays)})
+                 .first;
+  }
+  const auto& index = cached->second.index;
   auto completions = index.Complete(offset);
   if (arguments) {
     std::erase_if(completions, [&arguments](const Completion& item) -> bool {

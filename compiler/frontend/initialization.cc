@@ -2,13 +2,17 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include <absl/container/flat_hash_set.h>
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/inlined_vector.h>
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/control_flow.h"
@@ -20,14 +24,23 @@ namespace {
 
 struct Initialized final {
   enum class Base : unsigned char { Pending, Complete, Maybe };
-  absl::flat_hash_set<std::string> fields;
+  static constexpr auto kWordBits = std::numeric_limits<std::uint64_t>::digits;
+  absl::InlinedVector<std::uint64_t, 1> fields;
   Base base = Base::Pending;
+
+  void Insert(std::size_t index) {
+    fields[index / kWordBits] |= std::uint64_t{1} << (index % kWordBits);
+  }
+  bool Has(std::size_t index) const {
+    return (fields[index / kWordBits] & (std::uint64_t{1} << (index % kWordBits))) != 0;
+  }
 };
 using Path = std::optional<Initialized>;
 
 void Intersect(Initialized& left, const Initialized& right) {
-  absl::erase_if(left.fields,
-                 [&](const auto& name) -> bool { return !right.fields.contains(name); });
+  for (std::size_t index = 0; index < left.fields.size(); ++index) {
+    left.fields[index] &= right.fields[index];
+  }
   if (left.base != right.base) {
     left.base = Initialized::Base::Maybe;
   }
@@ -82,7 +95,7 @@ class Initialization final {
 
   const Class& owner_;
   const SemanticModel& model_;
-  Initialized fields_;
+  absl::flat_hash_map<std::string_view, std::size_t> field_indices_;
   Diagnostics diagnostics_;
   std::vector<Control> controls_;
   std::vector<Finally> finalizers_;
@@ -97,7 +110,8 @@ void Initialization::RequireComplete(const Initialized& initialized, SourceLocat
     Error(location, "derived constructor must call super(...) before this escapes or returns");
   }
   for (const auto& field : owner_.fields) {
-    if (field.storage == MemberStorage::Instance && !initialized.fields.contains(field.name)) {
+    if (field.storage == MemberStorage::Instance &&
+        !initialized.Has(field_indices_.at(field.name))) {
       Error(location, "field '" + field.name +
                           "' must be initialized before this escapes or the constructor returns");
     }
@@ -117,7 +131,9 @@ void Initialization::WalkSuper(const Expression& expression, Initialized& initia
     return;
   }
   const auto& base = model_.classes.at(base_class->name);
-  initialized.fields.insert(base.field_order.begin(), base.field_order.end());
+  for (const auto& name : base.field_order) {
+    initialized.Insert(field_indices_.at(name));
+  }
 }
 
 bool Initialization::WalkSpecial(const Expression& expression, Initialized& initialized) {
@@ -151,12 +167,16 @@ bool Initialization::WalkSpecial(const Expression& expression, Initialized& init
   if (expression.kind == Expression::Kind::Binary && expression.text == "=" &&
       expression.left->kind == Expression::Kind::Member && IsThis(*expression.left->object)) {
     Walk(expression.right.get(), initialized);
-    initialized.fields.insert(expression.left->text);
+    const auto field = field_indices_.find(expression.left->text);
+    if (field != field_indices_.end()) {
+      initialized.Insert(field->second);
+    }
     return true;
   }
   if (expression.kind == Expression::Kind::Member && IsThis(*expression.object)) {
-    const bool is_field = fields_.fields.contains(expression.text);
-    if (is_field && !initialized.fields.contains(expression.text)) {
+    const auto field = field_indices_.find(expression.text);
+    const bool is_field = field != field_indices_.end();
+    if (is_field && !initialized.Has(field->second)) {
       Error(expression.location, "field '" + expression.text + "' is read before initialization");
     } else if (!is_field) {
       RequireComplete(initialized, expression.location);
@@ -212,6 +232,7 @@ Path Initialization::Loop(const Statement& statement, Initialized initialized) {
     initialized = std::move(*after);
   }
   Walk(statement.condition.get(), initialized);
+  Walk(statement.iterable.get(), initialized);
   const auto control = controls_.size();
   controls_.push_back({
       .kind = Control::Kind::Loop,
@@ -283,10 +304,8 @@ Path Initialization::Walk(const Statement& statement, Initialized initialized) {
     }
     case Statement::Kind::While:
     case Statement::Kind::For:
-      return Loop(statement, std::move(initialized));
     case Statement::Kind::ForEach:
-      Walk(statement.iterable.get(), initialized);
-      return Walk(*statement.then_branch, std::move(initialized));
+      return Loop(statement, std::move(initialized));
     case Statement::Kind::Switch:
       return Switch(statement, std::move(initialized));
     case Statement::Kind::Try:
@@ -372,16 +391,23 @@ Path Initialization::Try(const Statement& statement, const Initialized& initiali
 Diagnostics Initialization::Run() {
   Initialized initialized;
   const auto& info = model_.classes.at(owner_.name);
-  fields_.fields.insert(info.field_order.begin(), info.field_order.end());
+  const auto& fields = info.field_order;
+  field_indices_.reserve(fields.size());
+  for (std::size_t index = 0; index < fields.size(); ++index) {
+    field_indices_.emplace(fields[index], index);
+  }
+  initialized.fields.resize((fields.size() + Initialized::kWordBits - 1) / Initialized::kWordBits);
   if (owner_.base_class && !model_.explicit_super_constructors.contains(owner_.name)) {
     const auto& base = model_.classes.at(owner_.base_class->name);
     initialized.base = Initialized::Base::Complete;
-    initialized.fields.insert(base.field_order.begin(), base.field_order.end());
+    for (const auto& name : base.field_order) {
+      initialized.Insert(field_indices_.at(name));
+    }
   }
   for (const auto& field : owner_.fields) {
     if (field.storage == MemberStorage::Instance) {
       if (field.initializer || owner_.IsConstructorField(field)) {
-        initialized.fields.insert(field.name);
+        initialized.Insert(field_indices_.at(field.name));
       }
     }
   }

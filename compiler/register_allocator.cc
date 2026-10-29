@@ -1,5 +1,4 @@
 #include "compiler/register_allocator.h"
-#include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -12,6 +11,7 @@
 
 #include "base/execution_limits.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/type_checker.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 
@@ -48,12 +48,10 @@ std::vector<Interval> LiveIntervals(const ir::Function& function,
   for (std::size_t block_index = 0; block_index < graph.blocks.size(); ++block_index) {
     const auto& block = graph.blocks.at(block_index);
     const auto& live = blocks.at(block_index);
-    for (const auto reg : live.live_in) {
-      Touch(intervals.at(reg), (block.begin * 2) + 1);
-    }
-    for (const auto reg : live.live_out) {
-      Touch(intervals.at(reg), (block.end * 2) + 1);
-    }
+    live.live_in.ForEach(
+        [&](ir::RegisterId reg) { Touch(intervals.at(reg), (block.begin * 2) + 1); });
+    live.live_out.ForEach(
+        [&](ir::RegisterId reg) { Touch(intervals.at(reg), (block.end * 2) + 1); });
   }
   for (std::size_t index = 0; index < function.instructions.size(); ++index) {
     const auto& instruction = function.instructions.at(index);
@@ -195,40 +193,59 @@ void RemoveSelfMoves(ir::Function& function) {
   ir::CompactInstructions(function, keep);
 }
 
-std::vector<ir::RegisterId> DeadRegisters(std::uint32_t count,
-                                          const absl::flat_hash_set<ir::RegisterId>& live) {
-  std::vector<ir::RegisterId> result;
-  for (ir::RegisterId reg = 0; reg < count; ++reg) {
-    if (!live.contains(reg)) {
-      result.push_back(reg);
+bool MayHoldHeapReference(const frontend::TypeDescriptor& type) {
+  using Kind = frontend::TypeDescriptor::Kind;
+  return type.kind != Kind::Invalid && type.kind != Kind::Null && type.kind != Kind::Void &&
+         type.kind != Kind::Bool && type.kind != Kind::Int && type.kind != Kind::Double;
+}
+
+ir::RegisterSet ManagedSlots(const ir::Function& function,
+                             std::span<const Allocation> allocations) {
+  ir::RegisterSet managed(function.register_count);
+  for (const auto& allocation : allocations) {
+    for (ir::RegisterId offset = 0; offset < allocation.count; ++offset) {
+      if (MayHoldHeapReference(function.value_types.at(allocation.first + offset))) {
+        managed.Insert(allocation.physical + offset);
+      }
     }
   }
+  return managed;
+}
+
+std::vector<ir::RegisterId> DeadRegisters(const ir::RegisterSet& managed,
+                                          const ir::RegisterSet& live) {
+  std::vector<ir::RegisterId> result;
+  managed.ForEach([&](ir::RegisterId reg) {
+    if (!live.Has(reg)) {
+      result.push_back(reg);
+    }
+  });
   return result;
 }
 
-void ClearDeadSuspendedRegisters(ir::Function& function, std::span<const ir::Function> functions) {
-  if (!function.is_async ||
-      std::ranges::none_of(function.instructions, [](const auto& instruction) {
+void ClearDeadSuspendedRegisters(ir::Function& function,
+                                 std::span<const ir::Function> functions,
+                                 const ir::RegisterSet& managed) {
+  if (managed.IsEmpty() || std::ranges::none_of(function.instructions, [](const auto& instruction) {
         return instruction.opcode == ir::Opcode::Await;
       })) {
     return;
   }
   const auto graph = ir::BuildFlowGraph(function);
-  const auto liveness =
-      ir::AnalyzeLiveness(function, graph, functions, ir::LivenessMode::AllInstructions);
+  const auto liveness = ir::AnalyzeLiveness(function, graph, functions);
   std::vector<std::vector<ir::RegisterId>> clear(function.instructions.size());
   for (std::size_t block_index = 0; block_index < graph.blocks.size(); ++block_index) {
     const auto& block = graph.blocks.at(block_index);
-    auto live = liveness.at(block_index).live_out;
-    for (auto position = block.end; position > block.begin;) {
-      const auto index = --position;
-      const auto& instruction = function.instructions.at(index);
-      const auto access = ir::AnalyzeRegisters(instruction, functions);
-      ir::TransferLiveness(function, graph, liveness, instruction, access, live);
-      if (instruction.opcode == ir::Opcode::Await) {
-        clear.at(index) = DeadRegisters(function.register_count, live);
-      }
+    // CFG 在挂起指令之后切块；Await 只能位于块尾，清理只需要它的输入活性。
+    const auto index = block.end - 1;
+    const auto& instruction = function.instructions.at(index);
+    if (instruction.opcode != ir::Opcode::Await) {
+      continue;
     }
+    auto live = liveness.at(block_index).live_out;
+    const auto access = ir::AnalyzeRegisters(instruction, functions);
+    ir::TransferLiveness(function, graph, liveness, instruction, access, live);
+    clear.at(index) = DeadRegisters(managed, live);
   }
   std::vector<ir::Instruction> code;
   std::vector<std::uint32_t> remap(function.instructions.size() + 1);
@@ -282,10 +299,15 @@ std::optional<frontend::Diagnostic> AllocateRegisters(ir::Function& function,
         .source_path = {},
     };
   }
-  function.value_types.clear();
   Rewrite(function, functions, allocations);
   RemoveSelfMoves(function);
-  ClearDeadSuspendedRegisters(function, functions);
+  if (function.is_async) {
+    // 物理槽会在不同生命期保存不同类型；不能用最后一个虚拟值的类型覆盖引用事实。
+    // VM 中 enum 也可能是盒装对象，须按可能持有引用处理。
+    const auto managed = ManagedSlots(function, allocations);
+    ClearDeadSuspendedRegisters(function, functions, managed);
+  }
+  function.value_types.clear();
   return std::nullopt;
 }
 

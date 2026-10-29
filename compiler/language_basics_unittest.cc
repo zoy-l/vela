@@ -7,7 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
-#include "compiler/frontend/checker.h"
+#include "compiler/frontend/checker_test_support.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
 #include "runtime/isolate.h"
@@ -103,6 +103,16 @@ INSTANTIATE_TEST_SUITE_P(
           if (value == null) return 2;
           return value + 2;
         } func main(): int { return read(38) + read(null); })",
+                             42},
+        BasicLanguageProgram{R"(func read(value: int?): int {
+          return value != null ? value + 2 : 2;
+        } func main(): int { return read(38) + read(null); })",
+                             42},
+        BasicLanguageProgram{R"(func choose(flag: bool): int {
+          let value: int? = null;
+          const selected = flag ? (value = 40) : (value = 2);
+          return value;
+        } func main(): int { return choose(true) + choose(false); })",
                              42},
         BasicLanguageProgram{R"(func read(value: double?): int {
           if (value != null && value > 1.5) return 40;
@@ -218,7 +228,7 @@ class BasicLanguageErrorTest : public testing::TestWithParam<BasicLanguageError>
 TEST_P(BasicLanguageErrorTest, RejectsInvalidProgramsWithLocatedDiagnostics) {
   const auto& parameter = GetParam();
   SCOPED_TRACE(parameter.source);
-  const auto checked = frontend::CheckSource(parameter.source);
+  const auto checked = frontend::CheckTestSource(parameter.source);
   EXPECT_TRUE(std::ranges::any_of(checked.diagnostics, [&](const auto& diagnostic) -> bool {
     return diagnostic.message.contains(parameter.message) && diagnostic.location.line > 0 &&
            diagnostic.location.column > 0;
@@ -297,7 +307,7 @@ INSTANTIATE_TEST_SUITE_P(
                            "expected nullable type"}));
 
 TEST(DiagnosticLocationTest, ReportsTheDuplicateEnumMemberLocation) {
-  const auto checked = frontend::CheckSource("enum E {\n  a,\n  a,\n}\n");
+  const auto checked = frontend::CheckTestSource("enum E {\n  a,\n  a,\n}\n");
   ASSERT_EQ(checked.diagnostics.size(), 1U);
   const auto& diagnostic = checked.diagnostics.front();
   EXPECT_EQ(diagnostic.location.line, 3U);

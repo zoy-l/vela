@@ -51,37 +51,7 @@ using frontend::TokenKind;
 using frontend::TypeName;
 
 std::string TypeText(const TypeName& type) {
-  switch (type.kind) {
-    case TypeName::Kind::Named:
-      return DisplaySymbolName(type.name);
-    case TypeName::Kind::Array:
-    case TypeName::Kind::Nullable: {
-      const auto& element = type.arguments.front();
-      auto text = TypeText(element);
-      if (element.kind == TypeName::Kind::Function) {
-        text = '(' + text + ')';
-      }
-      return text + (type.kind == TypeName::Kind::Array ? "[]" : "?");
-    }
-    case TypeName::Kind::Generic: {
-      auto text = DisplaySymbolName(type.name) + '<';
-      for (const auto& argument : type.arguments) {
-        if (text.back() != '<') {
-          text += ", ";
-        }
-        text += TypeText(argument);
-      }
-      return text + '>';
-    }
-    case TypeName::Kind::Function: {
-      std::string text = "(";
-      for (std::size_t index = 0; index + 1 < type.arguments.size(); ++index) {
-        text += (index == 0 ? "" : ", ") + TypeText(type.arguments.at(index));
-      }
-      return text + ") => " + TypeText(type.arguments.back());
-    }
-  }
-  std::unreachable();
+  return DisplaySymbolName(type.ToString());
 }
 
 std::string Signature(const frontend::Function& function) {
@@ -184,9 +154,16 @@ std::string CompletionSource(std::string_view source, std::size_t offset) {
   return text;
 }
 
+SemanticIndex::SemanticIndex(std::string_view path, std::span<const frontend::SourceInput> overlays)
+    : SemanticIndex(frontend::LoadProgram(path, overlays, frontend::SourceLoadMode::Editor)) {}
+
 SemanticIndex::SemanticIndex(std::string_view path,
-                             std::span<const frontend::SourceInput> overlays) {
-  auto loaded = frontend::LoadProgram(path, overlays, frontend::SourceLoadMode::Editor);
+                             frontend::ModuleCache& modules,
+                             std::span<const frontend::SourceInput> overlays)
+    : SemanticIndex(
+          frontend::LoadProgram(path, modules, overlays, frontend::SourceLoadMode::Editor)) {}
+
+SemanticIndex::SemanticIndex(frontend::ParseResult loaded) {
   program_ = std::move(loaded.program);
   for (const auto& resolution : program_.file_resolutions) {
     resolutions_.emplace(resolution.requested_path, resolution.canonical_path);
@@ -194,21 +171,27 @@ SemanticIndex::SemanticIndex(std::string_view path,
   sources_.reserve(program_.sources.size());
   for (std::uint32_t index = 0; index < program_.sources.size(); ++index) {
     const auto& file = program_.sources.at(index);
-    auto text = SourceText::Create(file.text);
+    auto text = SourceText::Create(std::string(file.text));
     if (!text) {
       // 无效 UTF-8 已由 loader/lexer 报错，不能构建协议位置索引。
       sources_.clear();
       return;
     }
-    auto lexed = frontend::Lexer(file.text, index, frontend::CommentRetention::Preserve).Tokenize();
+    const auto& syntax = *file.syntax;
     Source source{
         .path = file.path,
         .text = std::move(*text),
-        .tokens = std::move(lexed.tokens),
-        .comments = std::move(lexed.comments),
+        .tokens = syntax.tokens,
+        .comments = syntax.comments,
         .closing = {},
         .imports = {},
     };
+    for (auto& token : source.tokens) {
+      token.location.source_id = index;
+    }
+    for (auto& comment : source.comments) {
+      comment.location.source_id = index;
+    }
     source.closing.resize(source.tokens.size());
     std::vector<std::size_t> opening;
     for (std::size_t token_index = 0; token_index < source.tokens.size(); ++token_index) {
@@ -221,7 +204,10 @@ SemanticIndex::SemanticIndex(std::string_view path,
         opening.pop_back();
       }
     }
-    source.imports = frontend::ParseSource(file.text, index).program.imports;
+    source.imports = syntax.imports;
+    for (auto& imported : source.imports) {
+      imported.location.source_id = index;
+    }
     source_ids_.emplace(file.path, index);
     sources_.push_back(std::move(source));
   }
@@ -267,7 +253,8 @@ SemanticIndex::Scope SemanticIndex::Extent(const Statement& statement) const {
       source.tokens.at(start).kind == TokenKind::LeftBrace) {
     end = source.closing.at(start);
   } else if (statement.kind == Statement::Kind::If || statement.kind == Statement::Kind::While ||
-             statement.kind == Statement::Kind::For || statement.kind == Statement::Kind::Try) {
+             statement.kind == Statement::Kind::For || statement.kind == Statement::Kind::ForEach ||
+             statement.kind == Statement::Kind::Try) {
     auto extent = Scope{
         .source = source_id,
         .begin = source.tokens.at(start).offset,
@@ -548,6 +535,10 @@ void SemanticIndex::VisitStatement(const Statement* statement, Scope scope) {
   if (statement == nullptr) {
     return;
   }
+  if (statement->kind == Statement::Kind::ForEach) {
+    VisitForEach(*statement, scope);
+    return;
+  }
   if (statement->kind == Statement::Kind::Block || statement->kind == Statement::Kind::For) {
     auto nested = Extent(*statement);
     nested.depth = scope.depth + 1;
@@ -597,6 +588,44 @@ void SemanticIndex::VisitStatement(const Statement* statement, Scope scope) {
     }
     VisitStatement(clause.body.get(), nested);
   }
+}
+
+void SemanticIndex::VisitForEach(const Statement& statement, const Scope& scope) {
+  // iterable 在循环绑定之前求值，同名绑定只在循环体内可见。
+  VisitExpression(statement.iterable.get(), scope);
+  auto body = Extent(*statement.then_branch);
+  body.depth = scope.depth + 1;
+  std::string first_type;
+  std::string second_type;
+  const auto iterable = model_.expression_types.find(statement.iterable.get());
+  if (iterable != model_.expression_types.end()) {
+    const auto& type = iterable->second;
+    if (const auto element = model_.array_elements.find(type.name);
+        element != model_.array_elements.end()) {
+      first_type = DisplaySymbolName(element->second.name);
+    } else if (const auto arguments = model_.generic_arguments.find(type.name);
+               arguments != model_.generic_arguments.end() && !arguments->second.empty()) {
+      first_type = DisplaySymbolName(arguments->second.front().name);
+      if (statement.destructuring && arguments->second.size() == 2) {
+        second_type = DisplaySymbolName(arguments->second.back().name);
+      }
+    }
+  }
+  const auto& tokens = sources_.at(statement.location.source_id).tokens;
+  const auto first = TokenAt(statement.location) + (statement.destructuring ? 2 : 1);
+  const auto declare = [&](const void* node, std::size_t token, const std::string& name,
+                           std::string detail) {
+    const auto location = tokens.at(token).location;
+    DeclareLocal(node, location, name, std::move(detail), body, body.begin);
+    if (phase_ == IndexPhase::Checked) {
+      symbols_.at(declarations_.at(KeyAt(location))).completion.kind = CompletionKind::Constant;
+    }
+  };
+  declare(&statement.name, first, statement.name, std::move(first_type));
+  if (statement.destructuring) {
+    declare(&statement.second_name, first + 2, statement.second_name, std::move(second_type));
+  }
+  VisitStatement(statement.then_branch.get(), body);
 }
 
 SemanticIndex::Receiver SemanticIndex::ReceiverFor(const Expression& expression) const {
@@ -726,6 +755,9 @@ void SemanticIndex::VisitProgram() {
   for (const auto& declaration : program_.classes) {
     context_class_ = declaration.name;
     MarkTypeParameters(declaration.location, declaration.type_parameters);
+    if (declaration.base_class) {
+      VisitType(*declaration.base_class);
+    }
     for (const auto& type : declaration.interfaces) {
       VisitType(type);
     }

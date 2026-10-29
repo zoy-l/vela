@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <span>
 #include <string>
@@ -86,6 +88,47 @@ TEST(PreparationTest, ReportsImportedTypeErrorsBeforeLowering) {
   ASSERT_FALSE(result.has_value());
   ASSERT_FALSE(result.error().empty());
   EXPECT_TRUE(result.error().front().source_path.ends_with("library.vela"));
+}
+
+TEST(PreparationTest, EmitsFieldDefaultsOnceInTheConstructorAcrossManyCallSites) {
+  std::string source =
+      "external func initial(): int; class Box { value: int = initial(); } "
+      "func main(): void {";
+  constexpr int kConstructions = 50;
+  for (int index = 0; index < kConstructions; ++index) {
+    source += "Box();";
+  }
+  source += "}";
+  const auto prepared = Prepare(source);
+  ASSERT_TRUE(prepared.has_value());
+  const auto& functions = prepared->functions;
+  const auto initial = std::ranges::find(functions, "initial", &Function::name);
+  ASSERT_NE(initial, functions.end());
+  const auto target = static_cast<std::uint32_t>(initial - functions.begin());
+  std::size_t default_calls = 0;
+  for (const auto& function : functions) {
+    for (const auto& instruction : function.instructions) {
+      if (instruction.opcode == Opcode::Call && instruction.index == target) {
+        ++default_calls;
+        EXPECT_EQ(function.name, "Box.$constructor");
+      }
+    }
+  }
+  EXPECT_EQ(default_calls, 1U);
+}
+
+TEST(PreparationTest, UnusedConstructorsDoNotIntroduceBodiesOrStringRoots) {
+  for (const auto body : {"", "constructor {}", "constructor() {}"}) {
+    SCOPED_TRACE(body);
+    const auto prepared = Prepare("class Unused { value: string = 'unused-constructor-literal'; " +
+                                  std::string(body) + " } func main(): int { return 42; }");
+    ASSERT_TRUE(prepared.has_value());
+    EXPECT_FALSE(std::ranges::any_of(prepared->functions, [](const Function& function) {
+      return function.name == "Unused.$constructor";
+    }));
+    EXPECT_EQ(std::ranges::find(prepared->strings, "unused-constructor-literal"),
+              prepared->strings.end());
+  }
 }
 
 }  // namespace

@@ -107,6 +107,28 @@ func main(): int {
   if (result != null) { return result.value(); }
   return 0;
 }
+)",
+                             R"(
+func main(): int {
+  const values = Map<int, int>(); values.set(1, 9); values.set(2, 30);
+  let total = 0;
+  for (const [key, value] in values) {
+    total += key + value;
+    values.clear(); values.set(100, 100);
+  }
+  return total;
+}
+)",
+                             R"(
+func main(): int {
+  const values = Set<int>(); values.add(1); values.add(41);
+  let total = 0;
+  for (const value in values) {
+    total += value;
+    values.clear(); values.add(100);
+  }
+  return total;
+}
 )"));
 
 class CollectionTypeErrorTest : public testing::TestWithParam<std::string_view> {};

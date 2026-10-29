@@ -69,7 +69,7 @@ TypeChecker::Type TypeChecker::CheckGlobalInitializer(const Global& declaration,
   const auto* const saved_owner = std::exchange(owner_, nullptr);
   scopes_.clear();
   lambda_scopes_.clear();
-  refinements_.clear();
+  refinements_.Clear();
   const auto actual = CheckExpression(*declaration.initializer, expected);
   if (expected != nullptr) {
     RecordConversion(*declaration.initializer, *expected, actual);

@@ -137,36 +137,37 @@ StatementFlow TypeChecker::CheckSequence(const Statement& statement, const Type&
 StatementFlow TypeChecker::CheckIf(const Statement& statement, const Type& return_type) {
   const auto condition_type = CheckExpression(*statement.condition, nullptr);
   CheckBooleanOperand(*statement.condition, condition_type, "if condition must be bool");
-  const auto before = refinements_;
+  const auto then_branch = refinements_.BeginBranch();
   RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
   const auto then_flow = CheckScopedStatement(*statement.then_branch, return_type);
-  const auto then_facts = refinements_;
-  refinements_ = before;
+  auto then_facts = refinements_.Capture(then_branch);
+  const auto else_branch = refinements_.BeginBranch();
   RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);
   const auto else_flow = statement.else_branch
                              ? CheckScopedStatement(*statement.else_branch, return_type)
                              : StatementFlow();
-  const auto else_facts = refinements_;
+  const auto else_facts = refinements_.Capture(else_branch);
   const auto condition = EvaluateCondition(*statement.condition);
   StatementFlow flow;
   if (condition == ConditionTruth::AlwaysTrue) {
-    refinements_ = then_facts;
+    refinements_.Apply(then_facts);
     flow = then_flow;
     if (statement.else_branch) {
       AddDiagnostic(statement.else_branch->location, "unreachable statement");
     }
   } else if (condition == ConditionTruth::AlwaysFalse) {
-    refinements_ = else_facts;
+    refinements_.Apply(else_facts);
     flow = else_flow;
     AddDiagnostic(statement.then_branch->location, "unreachable statement");
   } else {
     flow = MergeBranches(then_flow, else_flow);
     if (!then_flow.can_fall_through) {
-      refinements_ = else_facts;
+      refinements_.Apply(else_facts);
     } else if (!else_flow.can_fall_through) {
-      refinements_ = then_facts;
+      refinements_.Apply(then_facts);
     } else {
-      refinements_ = IntersectFacts(then_facts, else_facts);
+      refinements_.Intersect(then_facts, else_facts);
+      refinements_.Apply(then_facts);
     }
   }
   flow.condition = condition;
@@ -174,16 +175,21 @@ StatementFlow TypeChecker::CheckIf(const Statement& statement, const Type& retur
 }
 
 StatementFlow TypeChecker::CheckWhile(const Statement& statement, const Type& return_type) {
-  InvalidateAssignments(statement);
+  LoopAssignments assignments(statement);
+  if (!refinements_.IsEmpty()) {
+    InvalidateAssignments(assignments.Whole());
+  }
   const auto condition_type = CheckExpression(*statement.condition, nullptr);
   CheckBooleanOperand(*statement.condition, condition_type, "while condition must be bool");
   ++loop_depth_;
-  const auto before = refinements_;
+  const auto before = refinements_.BeginBranch();
   RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
   const auto body = CheckScopedStatement(*statement.then_branch, return_type);
   --loop_depth_;
-  refinements_ = before;
-  InvalidateAssignments(statement);
+  refinements_.Discard(before);
+  if (!refinements_.IsEmpty()) {
+    InvalidateAssignments(assignments.Whole());
+  }
   if (!body.can_break) {
     RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);
   }
@@ -205,31 +211,39 @@ StatementFlow TypeChecker::CheckFor(const Statement& statement, const Type& retu
   if (statement.initializer) {
     CheckStatement(*statement.initializer, return_type);
   }
-  InvalidateAssignments(statement);
+  LoopAssignments assignments(statement);
+  if (!refinements_.IsEmpty()) {
+    InvalidateAssignments(assignments.Whole());
+  }
   auto condition = ConditionTruth::AlwaysTrue;
   if (statement.condition) {
     const auto condition_type = CheckExpression(*statement.condition, nullptr);
     CheckBooleanOperand(*statement.condition, condition_type, "for condition must be bool");
     condition = EvaluateCondition(*statement.condition);
   }
-  const auto before = refinements_;
+  const auto before = refinements_.BeginBranch();
   if (statement.condition) {
     RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
   }
   ++loop_depth_;
   const auto body = CheckScopedStatement(*statement.then_branch, return_type);
   --loop_depth_;
+  refinements_.Discard(before);
   // continue 可从分支直接到达增量表达式，不能沿用普通落点独有的非空事实。
   if (statement.increment) {
-    refinements_ = before;
+    const auto increment = refinements_.BeginBranch();
     if (statement.condition) {
       RefineCondition(*statement.condition, ConditionTruth::AlwaysTrue);
     }
-    InvalidateAssignments(*statement.then_branch);
+    if (!refinements_.IsEmpty()) {
+      InvalidateAssignments(assignments.Body());
+    }
     CheckExpression(*statement.increment, nullptr);
+    refinements_.Discard(increment);
   }
-  refinements_ = before;
-  InvalidateAssignments(statement);
+  if (!refinements_.IsEmpty()) {
+    InvalidateAssignments(assignments.Whole());
+  }
   if (statement.condition && !body.can_break) {
     RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);
   }
@@ -246,45 +260,51 @@ StatementFlow TypeChecker::CheckFor(const Statement& statement, const Type& retu
 StatementFlow TypeChecker::CheckForEach(const Statement& statement, const Type& return_type) {
   BeginScope();
   const auto iterable = CheckExpression(*statement.iterable, nullptr);
+  LoopAssignments assignments(statement);
+  if (!refinements_.IsEmpty()) {
+    InvalidateAssignments(assignments.Body());
+  }
+  const auto before = refinements_.BeginBranch();
   Type element;
+  const auto collection = NonNullable(iterable);
   if (iterable.kind == Type::Kind::Array) {
-    element = array_elements_.at(iterable.name);
+    element = array_elements_.at(collection.name);
   } else if (iterable.kind == Type::Kind::Set || iterable.kind == Type::Kind::Map) {
-    const auto arguments = generic_arguments_.find(iterable.name);
+    const auto arguments = generic_arguments_.find(collection.name);
     if (arguments != generic_arguments_.end() && !arguments->second.empty()) {
       element = arguments->second.front();
     }
   }
-  if (!IsValid(element)) {
-    AddDiagnostic(statement.iterable->location, "'in' requires an array, set, or map");
+  if (!IsValid(element) || iterable.nullable) {
+    AddDiagnostic(statement.iterable->location, "'in' requires a non-null array, set, or map");
   }
   if (statement.destructuring) {
     if (iterable.kind != Type::Kind::Map) {
       AddDiagnostic(statement.location, "dictionary destructuring requires a map");
     } else {
-      const auto arguments = generic_arguments_.find(iterable.name);
+      const auto arguments = generic_arguments_.find(collection.name);
       if (arguments == generic_arguments_.end() || arguments->second.size() != 2) {
         AddDiagnostic(statement.location, "map type arguments are invalid");
       } else {
         DeclareLocal(statement.name, arguments->second.front(), statement.location,
-                     BindingKind::Constant, &statement);
+                     BindingKind::Constant, &statement.name);
         DeclareLocal(statement.second_name, arguments->second.back(), statement.location,
-                     BindingKind::Constant, &statement);
+                     BindingKind::Constant, &statement.second_name);
       }
     }
   } else {
-    DeclareLocal(statement.name, element, statement.location, BindingKind::Constant, &statement);
+    DeclareLocal(statement.name, element, statement.location, BindingKind::Constant,
+                 &statement.name);
   }
   ++loop_depth_;
-  const auto body = CheckScopedStatement(*statement.then_branch, return_type);
+  CheckScopedStatement(*statement.then_branch, return_type);
   --loop_depth_;
+  refinements_.Discard(before);
+  if (!refinements_.IsEmpty()) {
+    InvalidateAssignments(assignments.Body());
+  }
   EndScope();
-  return {
-      .can_fall_through = true,
-      .can_break = body.can_break,
-      .can_continue = body.can_continue,
-      .condition = ConditionTruth::AlwaysTrue,
-  };
+  return {};
 }
 
 }  // namespace vela::frontend

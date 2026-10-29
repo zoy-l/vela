@@ -57,8 +57,8 @@ class ReplSession final {
   };
   struct Prepared final {
     Entry entry;
-    std::string source;
-    frontend::Program program;
+    std::shared_ptr<const frontend::Program> addition;
+    frontend::ParsedSource parsed;
   };
   enum class Echo : std::uint8_t { Display, Suppress };
   [[nodiscard]] std::expected<Prepared, SubmissionResult> Prepare(std::string_view source);
@@ -77,7 +77,8 @@ class ReplSession final {
   vm::Program program_;
   CompilationState compilation_;
   frontend::ModuleCache modules_;
-  std::string history_;
+  std::vector<std::shared_ptr<const frontend::Program>> syntax_;
+  std::shared_ptr<const frontend::SourceSnapshot> history_;
   std::string user_source_;
   std::vector<Entry> entries_;
   std::uint32_t next_line_ = 1;

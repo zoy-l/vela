@@ -9,8 +9,7 @@ Vela 使用显式的虚拟机栈帧与可恢复的错误结果。C++ 异常、`l
 在编译脚本前，先在宿主持有的 Isolate 实例上注册原生函数：
 
 ```cpp
-std::int64_t Add(vela::runtime::NativeContext&, std::int64_t left,
-                 std::int64_t right) noexcept {
+std::int64_t Add(std::int64_t left, std::int64_t right) noexcept {
   return left + right;
 }
 
@@ -31,6 +30,8 @@ func main(): int {
 ```
 
 C++ 函数签名提供了完整的绑定契约。支持的原生参数类型包括 `std::int64_t`、`double`、`bool` 以及借用的 `std::string_view`。返回值类型还支持 `void` 和持有所有权的 `std::string`。原生函数可以返回 `std::expected<T, NativeError>` 以表达可恢复的宿主错误。原生函数必须声明为 `noexcept`；宿主算术越界与资源分配失败由宿主自身负责。绝不会为了适配签名而隐式静默转换 `int`、`float`、可空类型或形状不符的参数。
+
+需要访问 Isolate、分配托管值或执行异步操作时，函数以 `NativeContext&` 作为第一个参数；普通 C++ 函数可以省略它，`Bind` 会推导出相同的脚本签名。AOT 的普通标量结果通过寄存器返回，标量 ABI 完全一致时直接调用原 C++ 函数指针；需要编解码或返回可失败结果时保留相应适配器。
 
 显式可空的字符串返回值使用 `std::optional<std::string>`（或包含它的 expected），此时脚本声明必须返回 `string?`。其它类型不会为了满足这一契约而发生类型提升。可选的显式符号支持带命名空间的宿主注册，无需语言引入 namespace 语法：`external func readLabel(): string? = "app.readLabel";`。
 

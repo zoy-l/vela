@@ -106,10 +106,11 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
              "C++ uses ordinary values, vector/string/unique_ptr ownership, and the same host kernel. "
              "Its async case queues two Future observation boundaries per element on the shared scheduler.",
              "Memory counters describe the Vela GC heap and saved continuations; they are not process RSS.", "",
-             "| Workload | Size | AOT us | VM us | C++ us | First AOT us | AOT/VM | AOT/C++ | CV AOT/VM/C++ |",
-             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
+             "| Workload | Size | AOT us | VM us | C++ us | First AOT us | AOT/VM | AOT/C++ | CV AOT/VM/C++ | VM/C++ |",
+             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |"]
     keys = sorted({(workload, size) for _, workload, size in samples})
     paired_ratios = []
+    vm_ratios = []
     for workload, size in keys:
         values = {backend: samples.get((backend, workload, size), [])
                   for backend in ("native", "vm", "cpp", "first_native")}
@@ -118,14 +119,21 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
         ratios = [f"{medians['native'] / medians[backend]:.3f}" if "native" in medians and backend in medians
                   else "-" for backend in ("vm", "cpp")]
         cvs = "/".join(variation(values[backend]) if values[backend] else "-" for backend in ("native", "vm", "cpp"))
-        lines.append("| " + " | ".join([workload, str(size), *elapsed, *ratios, cvs]) + " |")
+        vm_ratio = medians["vm"] / medians["cpp"] if "vm" in medians and "cpp" in medians else None
+        lines.append("| " + " | ".join([workload, str(size), *elapsed, *ratios, cvs,
+                                       f"{vm_ratio:.3f}" if vm_ratio is not None else "-"]) + " |")
         if "native" in medians and "cpp" in medians:
             paired_ratios.append(medians["native"] / medians["cpp"])
+        if vm_ratio is not None:
+            vm_ratios.append(vm_ratio)
     if paired_ratios:
         geometric_mean = math.exp(mean(math.log(value) for value in paired_ratios))
         lines.extend(["", f"Geometric mean AOT/C++ over {len(paired_ratios)} paired workloads: {geometric_mean:.2f}x."])
+    if vm_ratios:
+        geometric_mean = math.exp(mean(math.log(value) for value in vm_ratios))
+        lines.extend(["", f"Geometric mean VM/C++ over {len(vm_ratios)} paired workloads: {geometric_mean:.2f}x."])
     if any(workload.startswith("dasprofile.") for workload, _ in keys):
-        lines.extend(["", "The ported dasProfile workloads run only AOT and C++. Input preparation is excluded; "
+        lines.extend(["", "The ported dasProfile workloads share Vela source between AOT and VM. Input preparation is excluded; "
                       "each timed call checks its result, and particle positions advance between calls. "
                       "Floating-point work uses double; sorting is stable on both sides. "
                       "Vela retains checked int64 arithmetic, managed containers and GC ownership. "

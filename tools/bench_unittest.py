@@ -63,6 +63,20 @@ def ported_aot_samples(repetitions: int = 1) -> list[dict]:
 
 
 class BenchmarkReportTest(unittest.TestCase):
+    def test_ported_vm_report_uses_matching_cpp_samples_and_checks_suspended_state(self) -> None:
+        rows = ported_aot_samples(3)
+        rows += [dict(row, name=row['name'].replace('/native/', '/vm/'),
+                      real_time=100, register_bytes=512)
+                 for row in rows if '/native/' in row['name']]
+        names = sorted({row['name'] for row in rows})
+        text = aot_comparison_report({'benchmarks': rows}, names, 3)
+        self.assertIn('| dasprofile.queen | 8 | 20.000 | 100.000 | 10.000 |', text)
+        self.assertIn('Geometric mean VM/C++ over 1 paired workloads: 10.00x.', text)
+        self.assertIn('VM/C++', text)
+        rows[-1]['remaining_suspended_frames'] = 1
+        with self.assertRaisesRegex(ValueError, 'retained temporary state'):
+            aot_comparison_report({'benchmarks': rows}, names, 3)
+
     def test_aot_report_includes_ported_cpp_pairs_and_checks_references(self) -> None:
         rows = ported_aot_samples(3)
         names = sorted({row["name"] for row in rows})

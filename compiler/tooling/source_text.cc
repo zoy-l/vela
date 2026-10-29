@@ -13,22 +13,24 @@
 namespace vela::tooling {
 namespace {
 
-constexpr unsigned char kAsciiLimit = 0x80;
+constexpr unsigned char kTwoByteFirst = 0xc2;
 constexpr unsigned char kThreeByteFirst = 0xe0;
 constexpr unsigned char kFourByteFirst = 0xf0;
+constexpr unsigned char kLastUtf8Lead = 0xf4;
 
-std::size_t Utf8Width(char character) {
-  const auto byte = static_cast<unsigned char>(character);
-  if (byte < kAsciiLimit) {
+std::size_t Utf8Width(std::string_view text, std::size_t offset) {
+  const auto byte = static_cast<unsigned char>(text.at(offset));
+  if (byte < kTwoByteFirst || byte > kLastUtf8Lead) {
     return 1;
   }
+  std::size_t width = 4;
   if (byte < kThreeByteFirst) {
-    return 2;
+    width = 2;
+  } else if (byte < kFourByteFirst) {
+    width = 3;
   }
-  if (byte < kFourByteFirst) {
-    return 3;
-  }
-  return 4;
+  // 非法磁盘字节按一个替代字符计数，编辑器输入仍在 Create / Replace 处拒绝。
+  return width > text.size() - offset || InvalidUtf8Offset(text.substr(offset, width)) ? 1 : width;
 }
 
 std::size_t PositionWidth(std::size_t bytes, PositionEncoding encoding) {
@@ -46,40 +48,45 @@ std::expected<SourceText, std::string> SourceText::Create(std::string text) {
   }
   SourceText result;
   result.text_ = std::move(text);
-  result.IndexLines();
+  result.index_.Reset(result.text_);
   return result;
 }
 
-void SourceText::IndexLines() {
+SourceLineIndex::SourceLineIndex(std::string_view text) {
+  Reset(text);
+}
+
+void SourceLineIndex::Reset(std::string_view text) {
   lines_.assign(1, 0);
-  for (std::size_t offset = 0; offset < text_.size(); ++offset) {
-    if (text_.at(offset) == '\n') {
+  for (std::size_t offset = 0; offset < text.size(); ++offset) {
+    if (text.at(offset) == '\n') {
       lines_.push_back(offset + 1);
     }
   }
 }
 
-std::size_t SourceText::LineEnd(std::size_t line) const {
+std::size_t SourceLineIndex::LineEnd(std::string_view text, std::size_t line) const {
   if (line + 1 == lines_.size()) {
-    return text_.size();
+    return text.size();
   }
   auto end = lines_.at(line + 1) - 1;
-  if (end > lines_.at(line) && text_.at(end - 1) == '\r') {
+  if (end > lines_.at(line) && text.at(end - 1) == '\r') {
     --end;
   }
   return end;
 }
 
-std::expected<std::size_t, std::string> SourceText::OffsetAt(TextPosition position,
-                                                             PositionEncoding encoding) const {
+std::expected<std::size_t, std::string> SourceLineIndex::OffsetAt(std::string_view text,
+                                                                  TextPosition position,
+                                                                  PositionEncoding encoding) const {
   if (position.line >= lines_.size()) {
     return std::unexpected("document line is out of range");
   }
   auto offset = lines_.at(position.line);
-  const auto end = LineEnd(position.line);
+  const auto end = LineEnd(text, position.line);
   std::size_t character = 0;
   while (offset < end && character < position.character) {
-    const auto bytes = Utf8Width(text_.at(offset));
+    const auto bytes = Utf8Width(text, offset);
     const auto width = PositionWidth(bytes, encoding);
     if (position.character - character < width) {
       return std::unexpected("position splits a Unicode character");
@@ -91,14 +98,16 @@ std::expected<std::size_t, std::string> SourceText::OffsetAt(TextPosition positi
   return offset;
 }
 
-TextPosition SourceText::PositionAt(std::size_t offset, PositionEncoding encoding) const {
-  offset = std::min(offset, text_.size());
+TextPosition SourceLineIndex::PositionAt(std::string_view text,
+                                         std::size_t offset,
+                                         PositionEncoding encoding) const {
+  offset = std::min(offset, text.size());
   const auto next = std::ranges::upper_bound(lines_, offset);
   const auto line = static_cast<std::size_t>(std::distance(lines_.begin(), next) - 1);
-  const auto end = std::min(offset, LineEnd(line));
+  const auto end = std::min(offset, LineEnd(text, line));
   std::size_t character = 0;
   for (auto cursor = lines_.at(line); cursor < end;) {
-    const auto bytes = Utf8Width(text_.at(cursor));
+    const auto bytes = Utf8Width(text, cursor);
     if (bytes > end - cursor) {
       break;
     }
@@ -106,6 +115,29 @@ TextPosition SourceText::PositionAt(std::size_t offset, PositionEncoding encodin
     cursor += bytes;
   }
   return {.line = line, .character = character};
+}
+
+TextPosition SourceLineIndex::PositionAt(std::string_view text,
+                                         SourceLocation location,
+                                         PositionEncoding encoding) const {
+  const auto line = std::min(static_cast<std::size_t>(location.line - 1), lines_.size() - 1);
+  const auto begin = lines_.at(line);
+  const auto bytes =
+      std::min(static_cast<std::size_t>(location.column - 1), LineEnd(text, line) - begin);
+  return PositionAt(text, begin + bytes, encoding);
+}
+
+std::expected<std::size_t, std::string> SourceText::OffsetAt(TextPosition position,
+                                                             PositionEncoding encoding) const {
+  return index_.OffsetAt(text_, position, encoding);
+}
+
+TextPosition SourceText::PositionAt(std::size_t offset, PositionEncoding encoding) const {
+  return index_.PositionAt(text_, offset, encoding);
+}
+
+TextPosition SourceText::PositionAt(SourceLocation location, PositionEncoding encoding) const {
+  return index_.PositionAt(text_, location, encoding);
 }
 
 std::expected<void, std::string> SourceText::Replace(TextRange range,
@@ -123,7 +155,7 @@ std::expected<void, std::string> SourceText::Replace(TextRange range,
     return std::unexpected("replacement text is not valid UTF-8");
   }
   text_.replace(*start, *end - *start, text);
-  IndexLines();
+  index_.Reset(text_);
   return {};
 }
 

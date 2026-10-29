@@ -10,6 +10,7 @@
 #include "base/execution_status.h"
 #include "runtime/exception.h"
 #include "runtime/heap.h"
+#include "runtime/native_context.h"
 #include "runtime/value.h"
 #include "runtime/value_buffer.h"
 
@@ -20,7 +21,16 @@ class NativeInstance;
 struct FutureDiagnostic;
 struct FutureResult;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 1;
+inline constexpr std::uint32_t kNativeAbiVersion = 2;
+
+[[nodiscard]] constexpr std::uint64_t EncodeNativeTracePosition(TracePosition position) noexcept {
+  return (static_cast<std::uint64_t>(position.function) << 32) | position.instruction;
+}
+
+[[nodiscard]] constexpr TracePosition DecodeNativeTracePosition(std::uint64_t position) noexcept {
+  return {.function = static_cast<std::uint32_t>(position >> 32),
+          .instruction = static_cast<std::uint32_t>(position)};
+}
 inline constexpr std::size_t kNativeValueBytes = 16;
 
 enum class NativeValueKind : std::uint8_t {
@@ -95,7 +105,7 @@ class NativeFrame final {
   return result;
 }
 
-// 每次执行独占；不改变宿主 NativeContext 的生命周期和责任。
+// 每次执行独占；宿主 NativeContext 与执行共用 Isolate 和生命周期。
 // Isolate 必须晚于此对象销毁，所有操作发生在 Isolate 所属线程。
 class NativeExecution final {
  public:
@@ -113,7 +123,8 @@ class NativeExecution final {
   void Exit() noexcept;
   [[nodiscard]] std::size_t frame_count() const noexcept { return frame_count_; }
   [[nodiscard]] NativeInstance& instance() const noexcept { return *instance_; }
-  [[nodiscard]] Isolate& isolate() const noexcept { return *isolate_; }
+  [[nodiscard]] Isolate& isolate() const noexcept { return context_.isolate(); }
+  [[nodiscard]] NativeContext& context() noexcept { return context_; }
   [[nodiscard]] std::uint32_t* current_instruction() noexcept {
     return &current_frame_->position.instruction;
   }
@@ -133,7 +144,7 @@ class NativeExecution final {
   friend class NativeInstanceScope;
   friend struct NativeMemoryLayout;
   NativeInstance* instance_;
-  Isolate* isolate_;
+  NativeContext context_;
   NativeTraceFrame* current_frame_ = nullptr;
   std::size_t frame_count_ = 0;
   Value pending_exception_;
@@ -175,8 +186,9 @@ extern "C" void vela_native_v1_roots_enter(NativeExecution* execution,
                                            RootRange* range) noexcept;
 extern "C" void vela_native_v1_roots_exit(RootRange* range) noexcept;
 // 无成功路径安全点的叶函数在失败时临时登记活动根和逻辑帧。
-extern "C" std::uint8_t vela_native_v1_leaf_failure(NativeExecution* execution,
-                                                    const TracePosition* position,
+// position 的高 32 位是函数编号，低 32 位是指令编号，与宿主字节序无关。
+extern "C" std::uint8_t vela_native_v2_leaf_failure(NativeExecution* execution,
+                                                    std::uint64_t position,
                                                     std::uint8_t status,
                                                     const Value* roots,
                                                     std::uint64_t root_count);

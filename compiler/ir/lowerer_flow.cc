@@ -129,13 +129,7 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
   const auto iterable = LowerExpression(*statement.iterable);
   const auto kind = iterable.type.kind;
   const bool is_array = kind == frontend::TypeDescriptor::Kind::Array;
-  const bool is_set = kind == frontend::TypeDescriptor::Kind::Set;
   const bool is_map = kind == frontend::TypeDescriptor::Kind::Map;
-  if (!is_array && !is_set && !is_map) {
-    AddDiagnostic(statement.location, "collection iteration requires an array, set, or map");
-    PopScope();
-    return;
-  }
   RegisterId values_array = iterable.reg;
   RegisterId map_values_array = iterable.reg;
   frontend::TypeDescriptor element_type;
@@ -145,14 +139,14 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
   } else {
     const auto& arguments = model_.generic_arguments.at(iterable.type.name);
     element_type = arguments.front();
-    const auto base = AllocateRegister(statement.location);
+    const auto base = AllocateRegisterWindow(2, statement.location);
     Emit(
         {.opcode = Opcode::Move, .dst = base, .lhs = iterable.reg, .location = statement.location});
-    const auto keys_array = AllocateRegister(statement.location);
+    const auto keys_array = base + 1;
     RegisterId value_base = base;
     if (is_map && statement.destructuring) {
-      value_base = AllocateRegister(statement.location);
-      map_values_array = AllocateRegister(statement.location);
+      value_base = AllocateRegisterWindow(2, statement.location);
+      map_values_array = value_base + 1;
       value_type = arguments.back();
       Emit({
           .opcode = Opcode::Move,
@@ -225,7 +219,7 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
   RecordValueType(value, element_type);
   const auto binding = AllocateRegister(statement.location);
   Emit({.opcode = Opcode::Move, .dst = binding, .lhs = value, .location = statement.location});
-  DeclareLocal(statement.name, binding, element_type, statement.location, &statement);
+  DeclareLocal(statement.name, binding, element_type, statement.location, &statement.name);
   if (statement.destructuring) {
     const auto second = EmitTemporary({
         .opcode = Opcode::GetIndex,
@@ -241,7 +235,8 @@ void Lowerer::LowerForEach(const frontend::Statement& statement) {
         .lhs = second,
         .location = statement.location,
     });
-    DeclareLocal(statement.second_name, second_binding, value_type, statement.location, &statement);
+    DeclareLocal(statement.second_name, second_binding, value_type, statement.location,
+                 &statement.second_name);
   }
   controls_.push_back(
       {.break_jumps = {}, .continue_jumps = {}, .finally_depth = finalizers_.size()});

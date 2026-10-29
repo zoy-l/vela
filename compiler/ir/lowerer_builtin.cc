@@ -22,11 +22,8 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
       builtin == Builtin::CollectionKeys || builtin == Builtin::CollectionValues) {
     return LowerSnapshotArray(expression);
   }
-  const auto base = next_register_;
   const auto arity = BuiltinArity(builtin);
-  for (std::size_t index = 0; index < arity; ++index) {
-    static_cast<void>(AllocateRegister(expression.location));
-  }
+  const auto base = AllocateRegisterWindow(arity, expression.location);
   const auto kind = expression.kind;
   const bool indexed = kind == frontend::Expression::Kind::Index;
   const bool property = kind == frontend::Expression::Kind::Member;

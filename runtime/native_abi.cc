@@ -31,7 +31,7 @@ NativeFrame::~NativeFrame() {
 
 NativeExecution::NativeExecution(NativeInstance& instance) noexcept
     : instance_(&instance),
-      isolate_(&instance.isolate()),
+      context_(instance.isolate()),
       exception_root_(isolate().heap(), &pending_exception_, 1) {}
 
 NativeInstanceScope::NativeInstanceScope(NativeExecution& execution,
@@ -108,16 +108,17 @@ extern "C" void vela_native_v1_roots_exit(RootRange* range) noexcept {
   std::destroy_at(range);
 }
 
-extern "C" std::uint8_t vela_native_v1_leaf_failure(NativeExecution* execution,
-                                                    const TracePosition* position,
+extern "C" std::uint8_t vela_native_v2_leaf_failure(NativeExecution* execution,
+                                                    std::uint64_t position,
                                                     std::uint8_t status,
                                                     const Value* roots,
                                                     std::uint64_t root_count) {
   const RootRange retained(execution->isolate().heap(), roots,
                            static_cast<std::size_t>(root_count));
   NativeTraceFrame frame;
-  execution->MaterializeFrame(frame, position->function);
-  *execution->current_instruction() = position->instruction;
+  const auto decoded = DecodeNativeTracePosition(position);
+  execution->MaterializeFrame(frame, decoded.function);
+  *execution->current_instruction() = decoded.instruction;
   const auto failure = execution->HandleFailure(static_cast<ExecutionStatus>(status));
   execution->Exit();
   return static_cast<std::uint8_t>(failure);

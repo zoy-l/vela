@@ -13,6 +13,7 @@
 #include <vector>
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/lexer.h"
+#include "compiler/frontend/standard_environment.h"
 #include "compiler/frontend/token.h"
 
 namespace vela::frontend {
@@ -25,6 +26,21 @@ ParseResult ParseSource(std::string_view source, std::uint32_t source_id) {
   return Parser(lexed.tokens).Parse();
 }
 
+ParsedSource ParseSourceSnapshot(std::string source, std::uint32_t source_id) {
+  auto lexed = Lexer(source, source_id, CommentRetention::Preserve).Tokenize();
+  auto parsed = lexed.diagnostics.empty()
+                    ? Parser(lexed.tokens).Parse()
+                    : ParseResult{.program = {}, .diagnostics = std::move(lexed.diagnostics)};
+  auto snapshot =
+      std::make_shared<const SourceSnapshot>(SourceSnapshot{.text = std::move(source),
+                                                            .tokens = std::move(lexed.tokens),
+                                                            .comments = std::move(lexed.comments),
+                                                            .imports = parsed.program.imports});
+  return {.source = std::move(snapshot),
+          .program = std::move(parsed.program),
+          .diagnostics = std::move(parsed.diagnostics)};
+}
+
 void AppendProgram(Program& destination, Program source) {
   std::ranges::move(source.enums, std::back_inserter(destination.enums));
   std::ranges::move(source.classes, std::back_inserter(destination.classes));
@@ -33,6 +49,7 @@ void AppendProgram(Program& destination, Program source) {
   std::ranges::move(source.aliases, std::back_inserter(destination.aliases));
   std::ranges::move(source.interfaces, std::back_inserter(destination.interfaces));
   std::ranges::move(source.globals, std::back_inserter(destination.globals));
+  std::ranges::move(source.standard_names, std::back_inserter(destination.standard_names));
 }
 
 ParseResult Parser::Parse() {
@@ -40,6 +57,7 @@ ParseResult Parser::Parse() {
   while (!IsAtEnd()) {
     ParseDeclaration(program);
   }
+  program.standard_names = CollectStandardNames(tokens_);
   return {.program = std::move(program), .diagnostics = std::move(diagnostics_)};
 }
 
@@ -554,7 +572,7 @@ std::unique_ptr<Expression> Parser::ParseAssignment() {
 }
 
 std::unique_ptr<Expression> Parser::ParseConditional() {
-  auto expression = ParseLogicalOr();
+  auto expression = ParseBinary();
   if (!Match(TokenKind::Question)) {
     return expression;
   }
@@ -576,110 +594,72 @@ std::unique_ptr<Expression> Parser::ParseConditional() {
   return conditional;
 }
 
-std::unique_ptr<Expression> Parser::ParseLogicalOr() {
-  std::unique_ptr<Expression> expression = ParseLogicalAnd();
-  while (Match(TokenKind::OrOr) || Match(TokenKind::QuestionQuestion)) {
-    const Token operator_token = Previous();
-    auto right = ParseLogicalAnd();
-    if (!right) {
-      return nullptr;
-    }
-    auto binary = MakeExpression(Expression::Kind::Binary, operator_token.location);
-    binary->text = operator_token.lexeme;
-    binary->left = std::move(expression);
-    binary->right = std::move(right);
-    expression = std::move(binary);
+namespace {
+
+constexpr std::uint8_t kEqualityPrecedence = 6;
+constexpr std::uint8_t kShiftPrecedence = 8;
+
+std::uint8_t BinaryPrecedence(TokenKind kind) {
+  switch (kind) {
+    case TokenKind::OrOr:
+    case TokenKind::QuestionQuestion:
+      return 1;
+    case TokenKind::AndAnd:
+      return 2;
+    case TokenKind::Pipe:
+      return 3;
+    case TokenKind::Caret:
+      return 4;
+    case TokenKind::Ampersand:
+      return 5;
+    case TokenKind::EqualEqual:
+    case TokenKind::BangEqual:
+      return kEqualityPrecedence;
+    case TokenKind::ShiftLeft:
+    case TokenKind::ShiftRight:
+    case TokenKind::ShiftUnsignedRight:
+      return kShiftPrecedence;
+    case TokenKind::Plus:
+    case TokenKind::Minus:
+      return 9;
+    case TokenKind::Star:
+    case TokenKind::Slash:
+      return 10;
+    default:
+      return 0;
   }
-  return expression;
 }
 
-std::unique_ptr<Expression> Parser::ParseLogicalAnd() {
-  std::unique_ptr<Expression> expression = ParseBitwiseOr();
-  while (Match(TokenKind::AndAnd)) {
-    const Token operator_token = Previous();
-    auto right = ParseBitwiseOr();
-    if (!right) {
-      return nullptr;
-    }
-    auto binary = MakeExpression(Expression::Kind::Binary, operator_token.location);
-    binary->text = operator_token.lexeme;
-    binary->left = std::move(expression);
-    binary->right = std::move(right);
-    expression = std::move(binary);
-  }
-  return expression;
-}
+}  // namespace
 
-std::unique_ptr<Expression> Parser::ParseBitwiseOr() {
-  auto expression = ParseBitwiseXor();
-  while (Match(TokenKind::Pipe)) {
-    const auto token = Previous();
-    auto right = ParseBitwiseXor();
+std::unique_ptr<Expression> Parser::ParseBinary(std::uint8_t minimum_precedence) {
+  // is/as 只出现在关系式的首个移位表达式后；保留这一语法边界，
+  // 避免把 a < b is T 或 a is T + b 接纳为新的表达式形式。
+  const bool below_relational = minimum_precedence < kShiftPrecedence;
+  auto expression = below_relational ? ParseRelational() : ParseUnary();
+  if (!expression) {
+    return nullptr;
+  }
+  while (true) {
+    const auto precedence = BinaryPrecedence(Peek().kind);
+    if (precedence < minimum_precedence || (below_relational && precedence > kEqualityPrecedence)) {
+      return expression;
+    }
+    const auto operation = tokens_.subspan(current_++).front();
+    auto right = ParseBinary(precedence + 1);
     if (!right) {
       return nullptr;
     }
-    auto binary = MakeExpression(Expression::Kind::Binary, token.location);
-    binary->text = token.lexeme;
+    auto binary = MakeExpression(Expression::Kind::Binary, operation.location);
+    binary->text = operation.lexeme;
     binary->left = std::move(expression);
     binary->right = std::move(right);
     expression = std::move(binary);
   }
-  return expression;
-}
-
-std::unique_ptr<Expression> Parser::ParseBitwiseXor() {
-  auto expression = ParseBitwiseAnd();
-  while (Match(TokenKind::Caret)) {
-    const auto token = Previous();
-    auto right = ParseBitwiseAnd();
-    if (!right) {
-      return nullptr;
-    }
-    auto binary = MakeExpression(Expression::Kind::Binary, token.location);
-    binary->text = token.lexeme;
-    binary->left = std::move(expression);
-    binary->right = std::move(right);
-    expression = std::move(binary);
-  }
-  return expression;
-}
-
-std::unique_ptr<Expression> Parser::ParseBitwiseAnd() {
-  auto expression = ParseEquality();
-  while (Match(TokenKind::Ampersand)) {
-    const auto token = Previous();
-    auto right = ParseEquality();
-    if (!right) {
-      return nullptr;
-    }
-    auto binary = MakeExpression(Expression::Kind::Binary, token.location);
-    binary->text = token.lexeme;
-    binary->left = std::move(expression);
-    binary->right = std::move(right);
-    expression = std::move(binary);
-  }
-  return expression;
-}
-
-std::unique_ptr<Expression> Parser::ParseEquality() {
-  std::unique_ptr<Expression> expression = ParseRelational();
-  while (Match(TokenKind::EqualEqual) || Match(TokenKind::BangEqual)) {
-    const Token operator_token = Previous();
-    std::unique_ptr<Expression> right = ParseRelational();
-    if (!right) {
-      return nullptr;
-    }
-    auto binary = MakeExpression(Expression::Kind::Binary, operator_token.location);
-    binary->text = operator_token.lexeme;
-    binary->left = std::move(expression);
-    binary->right = std::move(right);
-    expression = std::move(binary);
-  }
-  return expression;
 }
 
 std::unique_ptr<Expression> Parser::ParseRelational() {
-  std::unique_ptr<Expression> expression = ParseShift();
+  std::unique_ptr<Expression> expression = ParseBinary(kShiftPrecedence);
   while (Check(TokenKind::Is) || Check(TokenKind::As)) {
     const auto operation = tokens_.subspan(current_++).front();
     auto type = ParseType();
@@ -696,59 +676,7 @@ std::unique_ptr<Expression> Parser::ParseRelational() {
   while (Match(TokenKind::Less) || Match(TokenKind::LessEqual) || Match(TokenKind::Greater) ||
          Match(TokenKind::GreaterEqual)) {
     const Token operator_token = Previous();
-    auto right = ParseShift();
-    if (!right) {
-      return nullptr;
-    }
-    auto binary = MakeExpression(Expression::Kind::Binary, operator_token.location);
-    binary->text = operator_token.lexeme;
-    binary->left = std::move(expression);
-    binary->right = std::move(right);
-    expression = std::move(binary);
-  }
-  return expression;
-}
-
-std::unique_ptr<Expression> Parser::ParseShift() {
-  auto expression = ParseAdditive();
-  while (Match(TokenKind::ShiftLeft) || Match(TokenKind::ShiftRight) ||
-         Match(TokenKind::ShiftUnsignedRight)) {
-    const auto token = Previous();
-    auto right = ParseAdditive();
-    if (!right) {
-      return nullptr;
-    }
-    auto binary = MakeExpression(Expression::Kind::Binary, token.location);
-    binary->text = token.lexeme;
-    binary->left = std::move(expression);
-    binary->right = std::move(right);
-    expression = std::move(binary);
-  }
-  return expression;
-}
-
-std::unique_ptr<Expression> Parser::ParseAdditive() {
-  std::unique_ptr<Expression> expression = ParseMultiplicative();
-  while (Match(TokenKind::Plus) || Match(TokenKind::Minus)) {
-    const Token operator_token = Previous();
-    std::unique_ptr<Expression> right = ParseMultiplicative();
-    if (!right) {
-      return nullptr;
-    }
-    auto binary = MakeExpression(Expression::Kind::Binary, operator_token.location);
-    binary->text = operator_token.lexeme;
-    binary->left = std::move(expression);
-    binary->right = std::move(right);
-    expression = std::move(binary);
-  }
-  return expression;
-}
-
-std::unique_ptr<Expression> Parser::ParseMultiplicative() {
-  std::unique_ptr<Expression> expression = ParseUnary();
-  while (Match(TokenKind::Star) || Match(TokenKind::Slash)) {
-    const Token operator_token = Previous();
-    std::unique_ptr<Expression> right = ParseUnary();
+    auto right = ParseBinary(kShiftPrecedence);
     if (!right) {
       return nullptr;
     }

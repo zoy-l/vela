@@ -4,7 +4,8 @@ Google Benchmark runs Vela workloads through the production compiler
 and VM. Versions are pinned in `DEPS`; `//benchmarks:vela_benchmarks` links the
 upstream `benchmark_main` and is separate from the language executable.
 The [16 ported dasProfile workloads](dasprofile/README.md) are checked into
-`benchmarks/dasprofile/` with Vela and C++ implementations. Run
+`benchmarks/dasprofile/` with Vela and C++ implementations. AOT and VM execute
+the same Vela source. Run
 `python3 -m tools.vl bench --aot-compare` to include them in the existing AOT
 comparison executable and report. The port requires no daScript installation.
 `python -m tools.vl bench --aot-compare` builds offline native objects through

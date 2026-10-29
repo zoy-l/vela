@@ -42,6 +42,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/TargetParser/Triple.h>
+#include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
 
 #include "base/fingerprint.h"
 #include "base/opcode.h"
@@ -89,6 +90,12 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
   llvm::CGSCCAnalysisManager calls;
   llvm::ModuleAnalysisManager modules;
   llvm::PassBuilder passes(&machine);
+  // 宿主调用约定随实例固定；允许 O2 克隆循环，将 direct/checked 分派移到循环外。
+  // 使用 LLVM 自带的体积阈值控制复制，不改变循环内错误和逻辑栈帧语义。
+  passes.registerLateLoopOptimizationsEPCallback(
+      [](llvm::LoopPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
+        pipeline.addPass(llvm::SimpleLoopUnswitchPass(true));
+      });
   passes.registerModuleAnalyses(modules);
   passes.registerCGSCCAnalyses(calls);
   passes.registerFunctionAnalyses(functions);
@@ -157,7 +164,7 @@ std::expected<llvm::FunctionType*, std::string> BodySignature(llvm::Module& modu
     return std::unexpected("AOT typed arguments exceed the native call stack budget");
   }
   if (!function.native_symbol.empty()) {
-    parameters.push_back(llvm::PointerType::getUnqual(context));
+    parameters.push_back(NativeImportType(context));
   }
   parameters.push_back(llvm::PointerType::getUnqual(context));
   return llvm::FunctionType::get(llvm::Type::getInt8Ty(context), parameters, false);
@@ -300,8 +307,8 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
         std::ranges::any_of(function.instructions, [](const auto& instruction) {
           return instruction.opcode == Opcode::Await;
         })) {
-      auto* resume_type = llvm::FunctionType::get(llvm::Type::getInt8Ty(context),
-                                                  {pointer, pointer}, false);
+      auto* resume_type =
+          llvm::FunctionType::get(llvm::Type::getInt8Ty(context), {pointer, pointer}, false);
       resume =
           llvm::Function::Create(resume_type, llvm::GlobalValue::InternalLinkage,
                                  options.module_name + "_resume_" + std::to_string(index), module);
@@ -349,8 +356,10 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
     return diagnostic(verification);
   }
   std::string llvm_ir;
-  llvm::raw_string_ostream ir_output(llvm_ir);
-  module.print(ir_output, nullptr);
+  if (options.preserve_ir) {
+    llvm::raw_string_ostream ir_output(llvm_ir);
+    module.print(ir_output, nullptr);
+  }
   llvm::SmallVector<char, 0> bytes;
   llvm::raw_svector_ostream stream(bytes);
   llvm::legacy::PassManager codegen;

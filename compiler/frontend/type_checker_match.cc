@@ -64,7 +64,6 @@ TypeChecker::Type TypeChecker::CheckMatchPattern(const MatchArm& arm,
   }
   if (arm.kind == MatchArm::Kind::Binding &&
       DeclareLocal(arm.binding, narrowed, arm.location, BindingKind::Mutable, &arm)) {
-    bindings_.emplace(&arm, LookupLocal(arm.binding)->id);
     match_bindings_.emplace(&arm, narrowed);
   }
   coverage.null = true;
@@ -89,34 +88,36 @@ void TypeChecker::CheckMatchResult(const Expression& expression,
 
 TypeChecker::Type TypeChecker::CheckMatch(const Expression& expression, const Type* expected) {
   const auto selector = CheckExpression(*expression.operand, nullptr);
-  const auto before = refinements_;
-  std::optional<Refinements> exits;
+  std::optional<RefinementDelta> exits;
   MatchCoverage coverage;
   Type result = expected == nullptr ? InvalidType() : *expected;
   for (const auto& arm : expression.arms) {
     if (IsMatchComplete(selector, coverage)) {
       AddDiagnostic(arm.location, "unreachable match arm");
     }
-    refinements_ = before;
+    const auto branch = refinements_.BeginBranch();
     BeginScope();
     const auto narrowed = CheckMatchPattern(arm, selector, coverage);
     if (expression.operand->kind == Expression::Kind::Name) {
       if (const auto* binding = LookupLocal(expression.operand->text)) {
-        refinements_.insert_or_assign(binding->id, narrowed);
+        refinements_.Set(binding->id, narrowed);
       }
     }
     CheckMatchResult(*arm.value, expected, result);
     EndScope();
-    exits = exits ? IntersectFacts(*exits, refinements_) : refinements_;
+    auto changes = refinements_.Capture(branch);
+    if (exits) {
+      refinements_.Intersect(*exits, changes);
+    } else {
+      exits = std::move(changes);
+    }
   }
   if (expression.arms.empty() || !IsMatchComplete(selector, coverage)) {
     AddDiagnostic(expression.location,
                   "match is not exhaustive; cover every value or add a wildcard/binding arm");
   }
   if (exits) {
-    refinements_ = std::move(*exits);
-  } else {
-    refinements_ = before;
+    refinements_.Apply(*exits);
   }
   return result;
 }

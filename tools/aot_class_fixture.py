@@ -31,6 +31,30 @@ class Child extends Base {
   constructor { super(value: this.extra * 20 - 1); }
 }
 class Optional { text: string? = null; }
+class GenericBase<T> { stored: T; read(): T { return this.stored; } }
+class GenericChild<T> extends GenericBase<T> {
+  constructor(value: T) { super(stored: value); }
+  override read(): T { return super.read(); }
+  get value(): T { return this.stored; }
+  set value(next: T): void { this.stored = next; }
+}
+func identity<T>(value: T): T { return value; }
+func callbacks<K, V>(values: Map<K, V>): (() => int)[] {
+  const result: (() => int)[] = [];
+  for (const [key, value] in identity<Map<K, V>>(values)) {
+    result.push((): int => key.length + value);
+  }
+  return result;
+}
+class LoopInitialized {
+  value: int;
+  constructor(values: int[]) {
+    for (const value in values) {
+      try { if (value == 0) continue; break; } finally { collect(); }
+    }
+    this.value = 42;
+  }
+}
 export func calculate(operation: int): int {
   Trace.value = 0;
   if (operation == 0) {
@@ -56,10 +80,53 @@ export func calculate(operation: int): int {
     collect();
     return child.value + child.extra;
   }
+  if (operation == 5) {
+    const values = Map<string, int>(); values.set('ab', 38);
+    const getters = callbacks<string, int>(values);
+    const child = GenericChild<int>(value: 0);
+    collect();
+    child.value = getters[0]();
+    return child.read() + 2;
+  }
+  if (operation == 6) { return LoopInitialized([0, 1]).value; }
+  if (operation == 7) {
+    const values = Map<int, int>(); values.set(1, 9); values.set(2, 30);
+    let total = 0;
+    for (const [key, value] in values) {
+      values.clear(); values.set(100, 100); collect();
+      total += key + value;
+    }
+    const items = Set<int>(); items.add(1); items.add(41);
+    let sum = 0;
+    for (const item in items) {
+      items.clear(); items.add(100); collect();
+      sum += item;
+    }
+    return total == sum ? total : 0;
+  }
+  if (operation == 8) {
+    const wide = Wide(value63: 10, value64: 10, value127: 10, value128: 12);
+    collect();
+    return wide.value63 + wide.value64 + wide.value127 + wide.value128;
+  }
+  if (operation == 9) {
+    try { Failing(); }
+    catch (error: InitFailure) { collect(); return error.code; }
+    return 0;
+  }
   const box = Explicit<string>(initial: 'retained');
   collect();
   return box.value == 'retained' && box.adjustment() == 2 ? 42 : 0;
 }
+"""
+
+SOURCE += "\nclass Wide {\n" + "".join(
+    f"  value{index}: int = 0;\n" for index in range(130)) + "}\n"
+
+SOURCE += """
+class InitFailure { code: int; }
+func failDefault(): int { collect(); throw InitFailure(code: 42); }
+class Failing { value: int = failDefault(); }
 """
 
 HOST_TESTS = r'''
@@ -71,7 +138,7 @@ TEST(NativeClassTest, ConstructorsPreserveArgumentsDefaultsPrivateStateGenericsA
   const auto instance = NativeInstance::Instantiate(isolate, *CLASS_IMAGE());
   ASSERT_TRUE(instance.has_value()) << instance.error().message;
   NativeExecution execution(**instance);
-  for (const auto operation : {0, 1, 2, 3, 4}) {
+  for (const auto operation : {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}) {
     const std::array arguments{Integer(operation)};
     NativeValue result;
     ASSERT_EQ(Execute(CLASS_ENTRY, execution, arguments, result), ExecutionStatus::Returned)

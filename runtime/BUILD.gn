@@ -110,6 +110,7 @@ source_set("runtime") {
     "native_async.h",
     "native_call.cc",
     "native_call.h",
+    "native_context.h",
     "native_dynamic.cc",
     "native_dynamic.h",
     "native_exception.cc",

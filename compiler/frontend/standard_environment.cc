@@ -4,7 +4,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -14,8 +17,8 @@
 #include <absl/container/flat_hash_set.h>
 
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/ast_clone.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/lexer.h"
 #include "compiler/frontend/parser.h"
 #include "compiler/frontend/token.h"
 
@@ -287,31 +290,42 @@ std::optional<Builtin> Intrinsic(std::string_view owner, const Function& declara
   return found == kIntrinsics.end() ? std::nullopt : std::optional(found->second);
 }
 
-bool HasStandardReferences(std::string_view text) {
-  if (text.contains("Future") || text.contains("Completer") || text.contains("Timer")) {
-    return true;
-  }
-  return std::ranges::any_of(kDeclarations, [text](const auto& declaration) {
-    const auto name = declaration.name;
-    return text.contains(name) && ((name != "int" && name != "double") || text.contains('.'));
+std::shared_ptr<const ParsedSource> StandardSyntax(std::size_t index) {
+  struct Entry final {
+    std::once_flag once;
+    std::shared_ptr<const ParsedSource> syntax;
+  };
+  static std::array<Entry, kDeclarations.size()> entries;
+  auto& entry = entries.at(index);
+  std::call_once(entry.once, [&] {
+    auto syntax = std::make_shared<ParsedSource>(
+        ParseSourceSnapshot(std::string(kDeclarations.at(index).source)));
+    for (auto& declaration : syntax->program.classes) {
+      for (auto& method : declaration.methods) {
+        method.intrinsic = Intrinsic(declaration.name, method);
+        if (method.intrinsic) {
+          method.native_symbol.clear();
+        }
+      }
+    }
+    entry.syntax = std::move(syntax);
   });
+  return entry.syntax;
 }
 
-void CollectSourceStandardNames(std::string_view text, absl::flat_hash_set<std::string>& used) {
-  // 数字类型的普通标注不加载静态解析命名空间；只在成员访问或别名依赖时加入。
-  if (!HasStandardReferences(text)) {
-    return;
-  }
+}
+
+std::vector<std::string> CollectStandardNames(std::span<const Token> tokens) {
+  absl::flat_hash_set<std::string> used;
   constexpr auto kAsyncNames =
       std::to_array<std::string_view>({"Future", "Completer", "Timer", "TimeoutException"});
-  const auto tokens = Lexer(text).Tokenize().tokens;
   for (std::size_t index = 0; index < tokens.size(); ++index) {
-    const auto& token = tokens.at(index);
+    const auto& token = tokens[index];
     if (token.kind != TokenKind::Identifier) {
       continue;
     }
     if ((token.lexeme == "int" || token.lexeme == "double") &&
-        (index + 1 == tokens.size() || tokens.at(index + 1).kind != TokenKind::Dot)) {
+        (index + 1 == tokens.size() || tokens[index + 1].kind != TokenKind::Dot)) {
       continue;
     }
     if (IsStandardName(token.lexeme)) {
@@ -325,12 +339,18 @@ void CollectSourceStandardNames(std::string_view text, absl::flat_hash_set<std::
       used.insert("TimeoutException");
     }
   }
-}
-
+  return {used.begin(), used.end()};
 }
 
 bool IsStandardName(std::string_view name) noexcept {
-  return std::ranges::find(kDeclarations, name, &StandardDeclaration::name) != kDeclarations.end();
+  static const auto kNames = [] {
+    absl::flat_hash_set<std::string_view> names;
+    for (const auto& declaration : kDeclarations) {
+      names.insert(declaration.name);
+    }
+    return names;
+  }();
+  return kNames.contains(name);
 }
 
 bool IsStandardTypeNamespace(const Program& program, const Class& declaration) {
@@ -348,14 +368,12 @@ std::optional<std::string_view> StandardDeclarationSource(std::string_view name)
 }
 
 Diagnostics AddStandardEnvironment(Program& program) {
-  absl::flat_hash_set<std::string> used;
+  absl::flat_hash_set<std::string> used(program.standard_names.begin(),
+                                        program.standard_names.end());
   for (const auto& alias : program.aliases) {
     if (alias.target.name == "int" || alias.target.name == "double") {
       used.insert(alias.target.name);
     }
-  }
-  for (const auto& source : program.sources) {
-    CollectSourceStandardNames(source.text, used);
   }
   if (used.contains("Date")) {
     used.insert("DateParts");
@@ -367,27 +385,22 @@ Diagnostics AddStandardEnvironment(Program& program) {
     used.insert("ByteArray");
     used.insert("Endian");
   }
-  for (const auto& [name, source] : kDeclarations) {
+  for (std::size_t index = 0; index < kDeclarations.size(); ++index) {
+    const auto& name = kDeclarations.at(index).name;
     if (!used.contains(name)) {
       continue;
     }
     const auto source_id = static_cast<std::uint32_t>(program.sources.size());
-    auto parsed = ParseSource(source, source_id);
-    if (!parsed.diagnostics.empty()) {
-      return std::move(parsed.diagnostics);
+    const auto syntax = StandardSyntax(index);
+    if (!syntax->diagnostics.empty()) {
+      return syntax->diagnostics;
     }
-    for (auto& declaration : parsed.program.classes) {
-      for (auto& method : declaration.methods) {
-        method.intrinsic = Intrinsic(declaration.name, method);
-        if (method.intrinsic) {
-          method.native_symbol.clear();
-        }
-      }
-    }
-    AppendProgram(program, std::move(parsed.program));
+    auto parsed = CloneProgram(syntax->program, {.source_id = source_id});
+    AppendProgram(program, std::move(parsed));
     program.sources.push_back({
         .path = std::string(kStandardSourcePrefix) + std::string(name),
-        .text = std::string(source),
+        .text = syntax->source->text,
+        .syntax = syntax->source,
     });
   }
   return {};

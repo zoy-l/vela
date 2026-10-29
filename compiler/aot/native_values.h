@@ -32,6 +32,11 @@ bool HasValidity(const SourceType& type);
 llvm::Type* PayloadType(llvm::LLVMContext& context, Kind kind);
 llvm::Type* ValueType(llvm::LLVMContext& context, const SourceType& type);
 llvm::StructType* NativeRecordType(llvm::LLVMContext& context);
+llvm::StructType* NativeImportType(llvm::LLVMContext& context);
+llvm::Value* LoadImport(Builder& builder,
+                        llvm::Module& module,
+                        llvm::Value* execution,
+                        std::uint32_t function);
 llvm::Value* IsPresent(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* EncodeValue(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* DecodeValue(Builder& builder, llvm::Value* record, const SourceType& type);

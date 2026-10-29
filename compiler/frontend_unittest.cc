@@ -5,7 +5,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
-#include "compiler/frontend/checker.h"
+#include "compiler/frontend/checker_test_support.h"
 
 namespace vela::frontend {
 namespace {
@@ -29,7 +29,7 @@ func build(): App {
   return App(theme: Theme(brightness: Brightness.light));
 }
 )";
-  const CheckResult result = CheckSource(valid_source);
+  const CheckResult result = CheckTestSource(valid_source);
   for (const Diagnostic& diagnostic : result.diagnostics) {
     ADD_FAILURE() << diagnostic.location.line << ':' << diagnostic.location.column << ": "
                   << diagnostic.message;
@@ -51,13 +51,13 @@ func build(): Theme {
   return Theme(brightness: Brightness.missing);
 }
 )";
-  const CheckResult result = CheckSource(invalid_source);
+  const CheckResult result = CheckTestSource(invalid_source);
   EXPECT_FALSE(result.Succeeded());
   EXPECT_FALSE(result.diagnostics.empty());
 }
 
 TEST(FrontendTest, RejectsDuplicateEnumMember) {
-  const CheckResult result = CheckSource("enum Colour { red, red }");
+  const CheckResult result = CheckTestSource("enum Colour { red, red }");
   EXPECT_FALSE(result.Succeeded());
   ASSERT_EQ(result.diagnostics.size(), 1U);
   EXPECT_EQ(result.diagnostics.front().message, "duplicate enum member 'red'");
@@ -71,7 +71,7 @@ func main(): int {
   return local_with_a_long_name;
 }
 )";
-  const CheckResult result = CheckSource(source);
+  const CheckResult result = CheckTestSource(source);
   EXPECT_FALSE(result.Succeeded());
   ASSERT_EQ(result.diagnostics.size(), 1U);
   EXPECT_EQ(result.diagnostics.front().message, "duplicate local name 'local_with_a_long_name'");
@@ -87,7 +87,7 @@ TEST(FrontendTest, RejectsCoalesceAssignment) {
   });
   for (const auto source : kInvalidSources) {
     SCOPED_TRACE(source);
-    EXPECT_FALSE(CheckSource(source).Succeeded());
+    EXPECT_FALSE(CheckTestSource(source).Succeeded());
   }
 }
 
@@ -99,7 +99,7 @@ async func main(): Future<int> {
   return await fetch();
 }
 )";
-  const CheckResult result = CheckSource(source);
+  const CheckResult result = CheckTestSource(source);
   EXPECT_TRUE(result.Succeeded()) << (result.diagnostics.empty()
                                           ? ""
                                           : result.diagnostics.front().message);
@@ -113,7 +113,7 @@ func main(): int {
   return await fetch();
 }
 )";
-  const CheckResult result = CheckSource(source);
+  const CheckResult result = CheckTestSource(source);
   EXPECT_FALSE(result.Succeeded());
   EXPECT_NE(std::ranges::find_if(result.diagnostics,
                                  [](const Diagnostic& diagnostic) {
@@ -145,7 +145,7 @@ TEST(FrontendTest, RejectsArrayTypeMismatchesWithoutConversions) {
   });
   for (const auto source : kInvalidSources) {
     SCOPED_TRACE(source);
-    EXPECT_FALSE(CheckSource(source).Succeeded());
+    EXPECT_FALSE(CheckTestSource(source).Succeeded());
   }
 }
 
@@ -162,7 +162,7 @@ func main(): int {
   return [1, 2][0];
 }
 )";
-  const auto checked = CheckSource(source);
+  const auto checked = CheckTestSource(source);
   for (const auto& diagnostic : checked.diagnostics) {
     ADD_FAILURE() << diagnostic.message;
   }
@@ -199,7 +199,7 @@ TEST(FrontendTest, RejectsImplicitDoubleConversionsAtEveryBoundary) {
   });
   for (const auto source : kInvalidSources) {
     SCOPED_TRACE(source);
-    EXPECT_FALSE(CheckSource(source).Succeeded());
+    EXPECT_FALSE(CheckTestSource(source).Succeeded());
   }
 }
 

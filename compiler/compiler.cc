@@ -16,8 +16,6 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include "base/async_operation.h"
-#include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/parser.h"
@@ -54,10 +52,7 @@ std::uint8_t Byte(std::uint32_t value) {
 }
 
 struct EncodingContext final {
-  const ir::Function* function = nullptr;
   std::size_t code_size = 0;
-  std::size_t function_count = 0;
-  std::size_t class_count = 0;
   std::span<const std::string> source_paths;
 };
 
@@ -88,13 +83,6 @@ std::optional<frontend::Diagnostic> ValidateEncodingOperands(const ir::Instructi
 std::expected<vm::Instruction, frontend::Diagnostic> EncodeJump(const ir::Instruction& instruction,
                                                                 const EncodingContext& context,
                                                                 std::string_view source_path) {
-  if (instruction.index >= context.function->instructions.size()) {
-    return std::unexpected(frontend::Diagnostic{
-        .location = instruction.location,
-        .message = "invalid jump target in IR",
-        .source_path = std::string(source_path),
-    });
-  }
   const std::int64_t offset = static_cast<std::int64_t>(instruction.index) -
                               static_cast<std::int64_t>(context.code_size + 1);
   if (!FitsImmediate16(offset)) {
@@ -114,8 +102,6 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeJump(const ir::Instru
 std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
     const ir::Instruction& instruction,
     const EncodingContext& context) {
-  const auto function_count = context.function_count;
-  const auto class_count = context.class_count;
   const std::string_view source_path =
       context.source_paths.empty()
           ? std::string_view()
@@ -205,23 +191,9 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
     case ir::Opcode::Rethrow:
       return vm::EncodeABC(opcode, 0, Byte(instruction.lhs), 0);
     case ir::Opcode::AsyncCall:
-      if (instruction.index >= static_cast<std::uint32_t>(AsyncOperation::Count)) {
-        return std::unexpected(frontend::Diagnostic{
-            .location = instruction.location,
-            .message = "invalid async operation in IR",
-            .source_path = std::string(source_path),
-        });
-      }
       return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.index),
                            Byte(instruction.lhs));
     case ir::Opcode::BuiltinCall:
-      if (instruction.index >= static_cast<std::uint32_t>(Builtin::Count)) {
-        return std::unexpected(frontend::Diagnostic{
-            .location = instruction.location,
-            .message = "invalid builtin ID in IR",
-            .source_path = std::string(source_path),
-        });
-      }
       return vm::EncodeABC(opcode, Byte(instruction.dst),
                            static_cast<std::uint8_t>(instruction.index), Byte(instruction.lhs));
     case ir::Opcode::CallIndirect:
@@ -241,25 +213,11 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
       return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs), 0);
     case ir::Opcode::NewOk:
     case ir::Opcode::NewErr:
-      if (instruction.index >= class_count) {
-        return std::unexpected(frontend::Diagnostic{
-            .location = instruction.location,
-            .message = "unknown Expected layout",
-            .source_path = std::string(source_path),
-        });
-      }
       return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.index),
                            Byte(instruction.lhs));
     case ir::Opcode::SetGlobal:
       return vm::EncodeABC(opcode, Byte(instruction.lhs), Byte(instruction.index), 0);
     case ir::Opcode::Call:
-      if (instruction.index >= function_count) {
-        return std::unexpected(frontend::Diagnostic{
-            .location = instruction.location,
-            .message = "unknown function ID in IR",
-            .source_path = std::string(source_path),
-        });
-      }
       return vm::EncodeABC(opcode, Byte(instruction.dst),
                            static_cast<std::uint8_t>(instruction.index), Byte(instruction.lhs));
     case ir::Opcode::NegInt:
@@ -269,13 +227,6 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
     case ir::Opcode::Await:
       return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs), 0);
     case ir::Opcode::NewInstance:
-      if (instruction.index >= class_count) {
-        return std::unexpected(frontend::Diagnostic{
-            .location = instruction.location,
-            .message = "unknown class ID in IR",
-            .source_path = std::string(source_path),
-        });
-      }
       return vm::EncodeABC(opcode, Byte(instruction.dst),
                            static_cast<std::uint8_t>(instruction.index), 0);
     case ir::Opcode::SetField:
@@ -293,11 +244,7 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
       return EncodeJump(instruction, context, source_path);
   }
 
-  return std::unexpected(frontend::Diagnostic{
-      .location = instruction.location,
-      .message = "invalid IR opcode",
-      .source_path = std::string(source_path),
-  });
+  std::unreachable();
 }
 
 std::expected<vm::FunctionStorage, frontend::Diagnostic> EncodeFunction(
@@ -422,9 +369,6 @@ CompileResult EncodeProgram(ir::Program program,
     compiled.source_paths = source_paths;
     auto encoded = EncodeFunction(function,
                                   EncodingContext{
-                                      .function = &function,
-                                      .function_count = program.functions.size(),
-                                      .class_count = shared_layouts->classes().size(),
                                       .source_paths = *source_paths,
                                   },
                                   std::move(compiled));

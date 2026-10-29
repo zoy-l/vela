@@ -224,42 +224,50 @@ std::optional<TypeName> Parser::ParseParenthesizedType() {
   return result;
 }
 
-bool Parser::IsTypeApplication() const {
+void Parser::IndexTypeApplications() {
+  type_application_ends_.assign(tokens_.size(), tokens_.size());
+  std::vector<std::size_t> opening;
+  for (std::size_t index = 0; index < tokens_.size(); ++index) {
+    const auto kind = tokens_[index].kind;
+    if (kind == TokenKind::Less) {
+      opening.push_back(index);
+      continue;
+    }
+    std::size_t count = 0;
+    if (kind == TokenKind::Greater) {
+      count = 1;
+    } else if (kind == TokenKind::ShiftRight) {
+      count = 2;
+    } else if (kind == TokenKind::ShiftUnsignedRight) {
+      count = 3;
+    } else if (kind == TokenKind::Semicolon || kind == TokenKind::LeftBrace ||
+               kind == TokenKind::RightBrace || kind == TokenKind::EndOfFile) {
+      opening.clear();
+    }
+    while (count != 0 && !opening.empty()) {
+      type_application_ends_[opening.back()] = index;
+      opening.pop_back();
+      --count;
+    }
+  }
+}
+
+bool Parser::IsTypeApplication() {
   if (!Check(TokenKind::Less)) {
     return false;
   }
-  std::size_t depth = 0;
-  for (std::size_t index = current_; index < tokens_.size(); ++index) {
-    const auto kind = tokens_.subspan(index).front().kind;
-    if (kind == TokenKind::Less) {
-      ++depth;
-    } else if (kind == TokenKind::Greater && --depth == 0) {
-      const auto next = tokens_.subspan(index + 1).front().kind;
-      return next == TokenKind::LeftParen || next == TokenKind::Dot || next == TokenKind::Is ||
-             next == TokenKind::As || next == TokenKind::Semicolon || next == TokenKind::Comma ||
-             next == TokenKind::RightParen || next == TokenKind::RightBracket;
-    } else if (kind == TokenKind::ShiftRight) {
-      if (depth <= 2) {
-        const auto next = tokens_.subspan(index + 1).front().kind;
-        return next == TokenKind::LeftParen || next == TokenKind::Dot || next == TokenKind::Is ||
-               next == TokenKind::As || next == TokenKind::Semicolon || next == TokenKind::Comma ||
-               next == TokenKind::RightParen || next == TokenKind::RightBracket;
-      }
-      depth -= 2;
-    } else if (kind == TokenKind::ShiftUnsignedRight) {
-      if (depth <= 3) {
-        const auto next = tokens_.subspan(index + 1).front().kind;
-        return next == TokenKind::LeftParen || next == TokenKind::Dot || next == TokenKind::Is ||
-               next == TokenKind::As || next == TokenKind::Semicolon || next == TokenKind::Comma ||
-               next == TokenKind::RightParen || next == TokenKind::RightBracket;
-      }
-      depth -= 3;
-    } else if (kind == TokenKind::Semicolon || kind == TokenKind::LeftBrace ||
-               kind == TokenKind::RightBrace || kind == TokenKind::EndOfFile) {
-      return false;
-    }
+  if (type_application_ends_.empty()) {
+    // 每个 '<' 共享一次线性配对，避免比较表达式反复扫描同一后缀。
+    IndexTypeApplications();
   }
-  return false;
+  const auto end = type_application_ends_[current_];
+  if (end == tokens_.size()) {
+    return false;
+  }
+  const auto next = tokens_[end + 1].kind;
+  return next == TokenKind::LeftParen || next == TokenKind::Dot || next == TokenKind::Is ||
+         next == TokenKind::As || next == TokenKind::Semicolon || next == TokenKind::Comma ||
+         next == TokenKind::RightParen || next == TokenKind::RightBracket;
 }
 
 bool Parser::MatchTypeGreater() {

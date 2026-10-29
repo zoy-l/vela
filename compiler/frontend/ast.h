@@ -20,6 +20,8 @@ struct TypeName final {
   Kind kind = Kind::Named;
   // 数组和可空类型有一个子类型，函数按参数顺序保存子类型，最后一项为返回类型。
   std::vector<TypeName> arguments;
+
+  [[nodiscard]] std::string ToString() const;
 };
 
 struct Expression;
@@ -244,6 +246,7 @@ struct Program final {
   std::vector<Import> imports;
   std::vector<SourceFile> sources;
   std::vector<FileResolution> file_resolutions;
+  std::vector<std::string> standard_names;
   std::vector<Enum> enums;
   std::vector<Class> classes;
   std::vector<Function> functions;

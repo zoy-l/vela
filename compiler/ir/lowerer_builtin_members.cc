@@ -166,11 +166,8 @@ void Lowerer::RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
   current_function_ = &function;
   current_handler_.reset();
   next_register_ = function.parameter_count;
-  const auto base = next_register_;
   const auto arity = BuiltinArity(builtin);
-  for (std::size_t index = 0; index < arity; ++index) {
-    static_cast<void>(AllocateRegister({}));
-  }
+  const auto base = AllocateRegisterWindow(arity, {});
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = 0, .location = {}});
   frontend::Expression expression;
   LowerBuiltinDefaults(builtin, expression, base);

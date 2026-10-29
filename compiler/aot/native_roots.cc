@@ -51,16 +51,16 @@ void RecordSuspension(NativeRootPlan& plan,
     return;
   }
   auto saved_live = live;
-  saved_live.erase(instruction.dst);
+  saved_live.Erase(instruction.dst);
   if (instruction.handler) {
     const auto target = function.handlers.at(*instruction.handler).target;
     const auto exceptional_block = blocks.subspan(graph.instruction_blocks.at(target));
     const auto& exceptional = exceptional_block.front().live_in;
-    saved_live.insert(exceptional.begin(), exceptional.end());
+    saved_live.UnionWith(exceptional);
   }
   auto& saved = plan.suspended.at(index);
-  saved.assign(saved_live.begin(), saved_live.end());
-  std::ranges::sort(saved);
+  saved.clear();
+  saved_live.ForEach([&](ir::RegisterId reg) { saved.push_back(reg); });
 }
 
 void PlanRematerialization(NativeRootPlan& plan,
@@ -108,6 +108,7 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
   }
   const auto graph = ir::BuildFlowGraph(function);
   const auto blocks = ir::AnalyzeLiveness(function, graph, functions);
+  ir::RegisterSet after(function.register_count);
   for (std::size_t block_index = 0; block_index < graph.blocks.size(); ++block_index) {
     const auto& block = graph.blocks.at(block_index);
     auto live = blocks.at(block_index).live_out;
@@ -115,27 +116,26 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
       const auto index = --position;
       const auto& instruction = function.instructions.at(index);
       const auto access = ir::AnalyzeRegisters(instruction, functions);
-      const auto after = live;
+      after = live;
       RecordSuspension(plan, function, graph, blocks, index, after);
       ir::TransferLiveness(function, graph, blocks, instruction, access, live);
       auto& stores = plan.stores.at(index);
       auto& clears = plan.clears.at(index);
       const auto safepoint = ir::AnalyzeEffects(instruction).MayCollect();
-      for (const auto reg : live) {
+      live.ForEach([&](ir::RegisterId reg) {
         if (!HasManagedValue(function, reg)) {
-          continue;
+          return;
         }
         if (safepoint) {
           stores.push_back(reg);
         }
-        if (!after.contains(reg)) {
+        if (!after.Has(reg)) {
           clears.push_back(reg);
         }
-      }
+      });
       if (access.defines_value && HasManagedValue(function, instruction.dst)) {
         clears.push_back(instruction.dst);
       }
-      std::ranges::sort(stores);
       std::ranges::sort(clears);
       const auto duplicate = std::ranges::unique(clears);
       clears.erase(duplicate.begin(), duplicate.end());

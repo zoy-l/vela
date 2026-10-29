@@ -37,12 +37,12 @@ StatementFlow TypeChecker::CheckSwitch(const Statement& statement, const Type& r
     AddDiagnostic(statement.condition->location, "switch requires int, bool, string, or enum");
   }
   InvalidateAssignments(statement);
-  const auto before = refinements_;
   absl::flat_hash_set<std::string> labels;
   bool has_default = false;
   std::vector<StatementFlow> branches;
   ++switch_depth_;
   for (const auto& branch : statement.cases) {
+    const auto checkpoint = refinements_.BeginBranch();
     if (branch.label) {
       CheckCaseLabel(*branch.label, type, labels);
     } else if (has_default) {
@@ -50,11 +50,10 @@ StatementFlow TypeChecker::CheckSwitch(const Statement& statement, const Type& r
     } else {
       has_default = true;
     }
-    refinements_ = before;
     branches.push_back(CheckStatement(*branch.body, return_type));
+    refinements_.Discard(checkpoint);
   }
   --switch_depth_;
-  refinements_ = before;
   StatementFlow result{.can_fall_through = !has_default};
   bool tail_falls_through = true;
   for (const auto& branch : std::views::reverse(branches)) {

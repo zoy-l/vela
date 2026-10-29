@@ -141,6 +141,16 @@ TEST_F(ReplSessionTest, RetiredEntryLambdasRemainCallableAndEntriesReuseOneSlot)
   EXPECT_EQ(output().str(), "341\n");
 }
 
+TEST_F(ReplSessionTest, ImplicitConstructorsKeepTheirSlotsAfterTheCallingEntryRetires) {
+  Execute("class Box { value: int = 42; }");
+  Execute("Box().value");
+  const auto functions = session().function_count();
+  Execute("print(1);");
+  EXPECT_EQ(session().function_count(), functions);
+  Execute("Box(value: 40).value + 2");
+  EXPECT_EQ(output().str(), "42\n1\n42\n");
+}
+
 TEST_F(ReplSessionTest, KeepsClassArrayCollectionAndInterfaceIdentityForOldValues) {
   Execute("interface Readable { read(): int; }");
   Execute("class Box implements Readable { value: int; read(): int { return this.value; } }");

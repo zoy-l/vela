@@ -108,14 +108,22 @@ void CaptureAnalysis::Walk(const Statement* statement) {
   if (statement == nullptr) {
     return;
   }
-  const bool has_scope =
-      statement->kind == Statement::Kind::Block || statement->kind == Statement::Kind::For;
+  const bool has_scope = statement->kind == Statement::Kind::Block ||
+                         statement->kind == Statement::Kind::For ||
+                         statement->kind == Statement::Kind::ForEach;
   if (has_scope) {
     scopes_.emplace_back();
   }
   Walk(statement->initializer.get());
   Walk(statement->expression.get());
   Walk(statement->condition.get());
+  Walk(statement->iterable.get());
+  if (statement->kind == Statement::Kind::ForEach) {
+    Declare(statement->name, &statement->name, BindingKind::Constant);
+    if (statement->destructuring) {
+      Declare(statement->second_name, &statement->second_name, BindingKind::Constant);
+    }
+  }
   WalkScoped(statement->then_branch.get());
   WalkScoped(statement->else_branch.get());
   WalkScoped(statement->finally_branch.get());

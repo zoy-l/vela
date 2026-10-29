@@ -31,10 +31,7 @@ RegisterId Lowerer::EmitArrayCallback(RegisterId callback,
                                       std::span<const frontend::TypeDescriptor> argument_types,
                                       RegisterId guard,
                                       frontend::SourceLocation location) {
-  const auto base = next_register_;
-  for (std::size_t index = 0; index < arguments.size(); ++index) {
-    static_cast<void>(AllocateRegister(location));
-  }
+  const auto base = AllocateRegisterWindow(arguments.size(), location);
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     auto argument = LoweredValue{
         .reg = arguments.subspan(index).front(),
@@ -70,12 +67,9 @@ RegisterId Lowerer::EmitArrayCallback(RegisterId callback,
 Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& expression) {
   const auto algorithm = model_.array_algorithms.at(&expression);
   const auto location = expression.location;
-  const auto base = next_register_;
   // 所有输入先保存到帧槽；实参中的赋值不能改变已求值的 receiver 或其他实参。
   const auto slots = std::max<std::size_t>(expression.arguments.size() + 1, 3);
-  for (std::size_t index = 0; index < slots; ++index) {
-    static_cast<void>(AllocateRegister(location));
-  }
+  const auto base = AllocateRegisterWindow(slots, location);
   const auto receiver = LowerExpression(*expression.callee->object);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = location});
   const auto& order = model_.argument_order.at(&expression);
@@ -117,9 +111,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
       .location = location,
   });
   const auto callback = base + 1;
-  const auto guard = next_register_;
-  static_cast<void>(AllocateRegister(location));
-  static_cast<void>(AllocateRegister(location));
+  const auto guard = AllocateRegisterWindow(2, location);
   Emit({.opcode = Opcode::Move, .dst = guard, .lhs = base, .location = location});
   Emit({
       .opcode = Opcode::BuiltinCall,
@@ -148,10 +140,7 @@ Lowerer::LoweredValue Lowerer::LowerArraySortTraversal(const ArrayAlgorithmRegis
                                                        frontend::SourceLocation location) {
   const auto base = inputs.array;
   const auto length = inputs.length;
-  const auto arguments = next_register_;
-  static_cast<void>(AllocateRegister(location));
-  static_cast<void>(AllocateRegister(location));
-  static_cast<void>(AllocateRegister(location));
+  const auto arguments = AllocateRegisterWindow(3, location);
   Emit({.opcode = Opcode::Move, .dst = arguments, .lhs = base, .location = location});
   Emit({.opcode = Opcode::LoadInt, .dst = arguments + 1, .location = location});
   Emit({.opcode = Opcode::Move, .dst = arguments + 2, .lhs = length, .location = location});

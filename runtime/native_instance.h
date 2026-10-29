@@ -59,9 +59,8 @@ class NativeInstance final {
   [[nodiscard]] const CallSignature& call_signature(std::size_t function) const noexcept {
     return data_->signatures.at(function);
   }
-  [[nodiscard]] NativeFunction::AotEntrySlot import_entry_slot(
-      std::size_t function) const noexcept {
-    return data_->imports.at(function)->aot_entry_slot();
+  [[nodiscard]] const NativeFunction::AotEntry& import_entry(std::size_t function) const noexcept {
+    return data_->imports.at(function)->aot_entry();
   }
   [[nodiscard]] std::span<const Value> state() const noexcept { return {&anchor_, 1}; }
   [[nodiscard]] Value constant(std::size_t index) const noexcept;

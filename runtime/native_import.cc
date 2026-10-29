@@ -50,9 +50,9 @@ std::expected<Value, ExecutionStatus> internal::CompleteNativeResult(NativeExecu
   return *checked;
 }
 
-extern "C" NativeFunction::AotEntrySlot vela_native_v1_import(NativeExecution* execution,
-                                                              std::uint32_t function) noexcept {
-  return execution->instance().import_entry_slot(function);
+extern "C" const NativeFunction::AotEntry* vela_native_v1_import(NativeExecution* execution,
+                                                                 std::uint32_t function) noexcept {
+  return &execution->instance().import_entry(function);
 }
 
 }  // namespace vela::runtime

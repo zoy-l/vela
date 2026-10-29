@@ -14,10 +14,13 @@ extern "C" void vela_native_v1_constant(NativeExecution* execution,
 extern "C" std::uint8_t vela_native_v1_type_test(NativeExecution* execution,
                                                  std::uint32_t type,
                                                  const NativeValue* value) noexcept;
-// Ready 槽由生成代码读取；position 仅在调用者尚未登记逻辑帧时提供。
-extern "C" std::uint8_t vela_native_v1_initialize_global(NativeExecution* execution,
+enum class NativeGlobalFrame : std::uint8_t { Current, Leaf };
+
+// Ready 槽由生成代码读取；叶函数调用者需要在初始化期间临时登记逻辑帧。
+extern "C" std::uint8_t vela_native_v2_initialize_global(NativeExecution* execution,
                                                          std::uint32_t index,
-                                                         const TracePosition* position,
+                                                         std::uint64_t position,
+                                                         NativeGlobalFrame frame_kind,
                                                          NativeValue* result);
 extern "C" std::uint8_t vela_native_v1_new_expected(NativeExecution* execution,
                                                     std::uint32_t layout,

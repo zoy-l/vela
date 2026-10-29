@@ -184,6 +184,7 @@ LoweringResult Lowerer::Lower() {
   runtime_type_ids_.clear();
   collection_type_ids_.clear();
   string_constant_ids_.clear();
+  pending_constructors_.clear();
   BuildFunctionTable();
   BuildClassTable();
   if (!model_.captured_mutables.empty()) {
@@ -207,9 +208,6 @@ LoweringResult Lowerer::Lower() {
     for (const frontend::Function& method : owner.methods) {
       LowerFunction(method, model_.classes.at(owner.name).methods.at(method.name), &owner);
     }
-    if (owner.constructor) {
-      LowerFunction(*owner.constructor, model_.classes.at(owner.name).constructor, &owner);
-    }
   }
   for (const auto& owner : source_.classes) {
     for (const auto& field : owner.fields) {
@@ -229,6 +227,18 @@ LoweringResult Lowerer::Lower() {
   }
   for (const auto& generated : model_.generated_functions) {
     LowerFunction(*generated.declaration, generated.signature);
+  }
+  for (std::size_t index = 0; index < pending_constructors_.size(); ++index) {
+    const auto& owner = *pending_constructors_.at(index);
+    const auto& descriptor = model_.classes.at(owner.name);
+    if (owner.constructor) {
+      LowerFunction(*owner.constructor, descriptor.constructor, &owner);
+    } else {
+      frontend::Function constructor;
+      constructor.name = "$constructor";
+      constructor.location = owner.location;
+      LowerFunction(constructor, descriptor.constructor, &owner);
+    }
   }
   RegisterBuiltinMembers();
   RecordProgramValueTypes();
@@ -383,9 +393,10 @@ void Lowerer::BuildFunctionTable() {
       const auto name = MethodKey(owner.name, method);
       static_cast<void>(AddFunctionId(name));
     }
-    if (owner.constructor) {
-      const auto name = owner.name + ".$constructor";
+    const auto name = owner.name + ".$constructor";
+    if (persistent_ != nullptr && persistent_->functions.Has(name)) {
       static_cast<void>(AddFunctionId(name));
+      pending_constructors_.push_back(&owner);
     }
   }
   for (const auto& owner : source_.classes) {
@@ -462,6 +473,9 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
                                       const frontend::Class* owner,
                                       const frontend::LambdaDescriptor* lambda) {
   const bool has_receiver = owner != nullptr && source.storage == frontend::MemberStorage::Instance;
+  const auto* constructor =
+      owner != nullptr && source.name == "$constructor" ? &model_.classes.at(owner->name) : nullptr;
+  const auto masks = constructor == nullptr ? 0 : ConstructorMaskCount(*constructor);
   if (lambda != nullptr) {
     static_cast<void>(AllocateRegister(source.location));
     RecordValueType(0, model_.expression_types.at(lambda->expression));
@@ -469,19 +483,31 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
 
   if (has_receiver) {
     const RegisterId this_reg = AllocateRegister(source.location);
-    DeclareLocal("this", this_reg, model_.classes.at(owner->name).type, source.location, &source);
+    RecordValueType(this_reg, model_.classes.at(owner->name).type);
+  }
+  for (std::uint32_t index = 0; index < masks; ++index) {
+    const auto reg = AllocateRegister(source.location);
+    RecordValueType(reg, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
   }
 
   for (const frontend::Parameter& parameter : source.parameters) {
     const auto type =
         function_info.parameters.at(function_info.parameter_indices.at(parameter.name)).type;
     const RegisterId reg = AllocateRegister(parameter.location);
-    DeclareLocal(parameter.name, reg, type, parameter.location);
+    RecordValueType(reg, type);
+  }
+  if (constructor != nullptr) {
+    // 初始化器只看声明处的全局环境；构造参数与 this 尚未发布到词法作用域。
+    LowerConstructorInitializers(*constructor);
+  }
+  if (has_receiver) {
+    DeclareLocal("this", 0, model_.classes.at(owner->name).type, source.location, &source);
   }
   // 完整参数窗口建立后，再为可捕获的参数分配共享槽位。
-  for (const auto& parameter : source.parameters) {
-    const auto reg = scopes_.back().at(parameter.name).reg;
-    scopes_.back().erase(parameter.name);
+  for (std::size_t index = 0; index < source.parameters.size(); ++index) {
+    const auto& parameter = source.parameters.at(index);
+    const auto reg =
+        static_cast<RegisterId>(index + ((has_receiver || lambda != nullptr) ? 1 : 0) + masks);
     DeclareLocal(
         parameter.name, reg,
         function_info.parameters.at(function_info.parameter_indices.at(parameter.name)).type,
@@ -538,9 +564,22 @@ void Lowerer::LowerFunction(const frontend::Function& source,
     function.return_type = {.kind = frontend::TypeDescriptor::Kind::Void, .name = "void"};
   }
   const bool has_receiver = owner != nullptr && source.storage == frontend::MemberStorage::Instance;
+  const auto masks = owner != nullptr && source.name == "$constructor"
+                         ? ConstructorMaskCount(model_.classes.at(owner->name))
+                         : 0;
   function.parameter_count = static_cast<std::uint32_t>(
-      source.parameters.size() + ((has_receiver || lambda != nullptr) ? 1 : 0));
+      source.parameters.size() + ((has_receiver || lambda != nullptr) ? 1 : 0) + masks);
   RegisterFunctionSignature(function, source, function_info);
+  if (masks != 0) {
+    auto& signature = *function.signature;
+    signature.hidden_parameters = 1;
+    const auto integer =
+        RegisterRuntimeType({.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
+    for (std::uint32_t index = 0; index < masks; ++index) {
+      signature.parameters.push_back(
+          {.name = "$provided" + std::to_string(index), .type = integer});
+    }
+  }
   if (source.intrinsic) {
     const auto builtin = *source.intrinsic;
     auto result = function.parameter_count;
@@ -597,7 +636,8 @@ void Lowerer::LowerFunction(const frontend::Function& source,
     returns_void = arguments != model_.generic_arguments.end() && arguments->second.size() == 1 &&
                    arguments->second.front().kind == frontend::TypeDescriptor::Kind::Void;
   }
-  if (returns_void && model_.control_flow.at(source.body.get()).can_fall_through) {
+  if (returns_void &&
+      (source.body == nullptr || model_.control_flow.at(source.body.get()).can_fall_through)) {
     const RegisterId result = AllocateTemporary(source.location);
     Emit({.opcode = Opcode::LoadNull, .dst = result, .location = source.location});
     Emit({.opcode = Opcode::Return, .dst = result, .location = source.location});
@@ -753,19 +793,24 @@ Lowerer::LoweredValue Lowerer::LowerConversion(LoweredValue value,
 }
 
 Lowerer::LoweredValue Lowerer::LowerExpressionValue(const frontend::Expression& expression) {
-  if (model_.array_algorithms.contains(&expression)) {
-    return LowerArrayAlgorithm(expression);
+  using Kind = frontend::Expression::Kind;
+  const auto kind = expression.kind;
+  if (kind == Kind::Call) {
+    if (model_.array_algorithms.contains(&expression)) {
+      return LowerArrayAlgorithm(expression);
+    }
+    if (model_.collection_constructions.contains(&expression)) {
+      return LowerCollectionConstruction(expression);
+    }
+    if (model_.expected_calls.contains(&expression)) {
+      return LowerExpected(expression);
+    }
   }
-  if (model_.collection_constructions.contains(&expression)) {
-    return LowerCollectionConstruction(expression);
-  }
-  if (model_.expected_calls.contains(&expression)) {
-    return LowerExpected(expression);
-  }
-  if (model_.builtin_calls.contains(&expression)) {
+  if ((kind == Kind::Call || kind == Kind::Member || kind == Kind::Index) &&
+      model_.builtin_calls.contains(&expression)) {
     return LowerBuiltin(expression);
   }
-  if (model_.async_calls.contains(&expression)) {
+  if ((kind == Kind::Call || kind == Kind::Member) && model_.async_calls.contains(&expression)) {
     return LowerAsyncCall(expression);
   }
   switch (expression.kind) {
@@ -1165,30 +1210,22 @@ Lowerer::LoweredValue Lowerer::LowerCall(const frontend::Expression& expression)
       callee_type->second.kind == frontend::TypeDescriptor::Kind::Dynamic) {
     return LowerDynamicCall(expression);
   }
-  auto special = LowerSpecialCall(expression);
-  if (special.type.kind != frontend::TypeDescriptor::Kind::Invalid) {
-    return special;
+  if (model_.interface_members.contains(&expression)) {
+    return LowerInterfaceCall(expression);
   }
-  const auto& callee = *expression.callee;
-  if (callee.kind == frontend::Expression::Kind::Name) {
-    const auto named = LowerNamedCall(expression);
-    if (named.type.kind != frontend::TypeDescriptor::Kind::Invalid) {
-      return named;
-    }
+  const auto static_member = model_.static_members.find(&expression);
+  if (static_member != model_.static_members.end()) {
+    const auto& member = static_member->second;
+    const auto& signature = model_.classes.at(member.owner).methods.at(member.member);
+    return LowerInvocation(expression, signature,
+                           function_ids_.at(member.owner + "." + member.member), nullptr);
   }
-  if (callee.kind == frontend::Expression::Kind::Member) {
-    const auto method = LowerMethodCall(expression);
-    if (method.type.kind != frontend::TypeDescriptor::Kind::Invalid) {
-      return method;
-    }
+  if (callee_type != model_.expression_types.end() &&
+      callee_type->second.kind == frontend::TypeDescriptor::Kind::Function) {
+    return LowerIndirectCall(expression);
   }
-  AddDiagnostic(expression.location, "function or method is not lowerable");
-  return {.reg = 0, .type = InvalidType()};
-}
-
-Lowerer::LoweredValue Lowerer::LowerSpecialCall(const frontend::Expression& expression) {
   if (expression.callee->kind == frontend::Expression::Kind::Name &&
-      expression.callee->text == "sleep" && expression.arguments.size() == 1) {
+      expression.callee->text == "sleep") {
     const auto delay = LowerExpression(*expression.arguments.front().value);
     const auto result = AllocateTemporary(expression.location);
     Emit({
@@ -1200,17 +1237,12 @@ Lowerer::LoweredValue Lowerer::LowerSpecialCall(const frontend::Expression& expr
     return {.reg = result, .type = model_.expression_types.at(&expression)};
   }
   if (expression.callee->kind == frontend::Expression::Kind::Name &&
-      expression.callee->text == "super" && current_function_ != nullptr &&
-      !current_function_->owner_class.empty()) {
+      expression.callee->text == "super") {
     const auto& owner = model_.classes.at(current_function_->owner_class);
-    if (owner.base_class) {
-      const auto& base = model_.classes.at(*owner.base_class);
-      const auto* receiver = FindLocal("this");
-      if (receiver != nullptr) {
-        return LowerConstructorCall(expression.arguments, model_.argument_order.at(&expression),
-                                    expression.location, base, receiver->reg);
-      }
-    }
+    const auto& base = model_.classes.at(*owner.base_class);
+    const auto* receiver = FindLocal("this");
+    return LowerConstructorCall(expression.arguments, model_.argument_order.at(&expression),
+                                expression.location, base, receiver->reg);
   }
   if (expression.callee->kind == frontend::Expression::Kind::Member &&
       expression.callee->object->kind == frontend::Expression::Kind::Name &&
@@ -1221,45 +1253,24 @@ Lowerer::LoweredValue Lowerer::LowerSpecialCall(const frontend::Expression& expr
   if (expression.callee->kind == frontend::Expression::Kind::Member &&
       expression.callee->object->kind == frontend::Expression::Kind::Name &&
       expression.callee->object->text == "super") {
-    const auto member = model_.super_members.find(expression.callee.get());
-    if (member != model_.super_members.end()) {
-      const auto& signature =
-          model_.classes.at(member->second.owner).methods.at(member->second.member);
-      const auto* receiver = FindLocal("this");
-      if (receiver != nullptr) {
-        const LoweredValue receiver_value{.reg = receiver->reg, .type = receiver->type};
-        std::string key = member->second.owner + ".";
-        if (signature.is_getter) {
-          key += "$get.";
-        } else if (signature.is_setter) {
-          key += "$set.";
-        }
-        key += member->second.member;
-        return LowerInvocation(expression, signature, function_ids_.at(key), &receiver_value);
-      }
-    }
-  }
-  return LowerDispatchCall(expression);
-}
-
-Lowerer::LoweredValue Lowerer::LowerDispatchCall(const frontend::Expression& expression) {
-  if (model_.interface_members.contains(&expression)) {
-    return LowerInterfaceCall(expression);
-  }
-  const auto static_member = model_.static_members.find(&expression);
-  if (static_member != model_.static_members.end()) {
-    const auto& member = static_member->second;
+    const auto& member = model_.super_members.at(expression.callee.get());
     const auto& signature = model_.classes.at(member.owner).methods.at(member.member);
-    return LowerInvocation(expression, signature,
-                           function_ids_.at(member.owner + "." + member.member), nullptr);
+    const auto* receiver = FindLocal("this");
+    const LoweredValue receiver_value{.reg = receiver->reg, .type = receiver->type};
+    std::string key = member.owner + ".";
+    if (signature.is_getter) {
+      key += "$get.";
+    } else if (signature.is_setter) {
+      key += "$set.";
+    }
+    key += member.member;
+    return LowerInvocation(expression, signature, function_ids_.at(key), &receiver_value);
   }
-  const auto& callee = *expression.callee;
-  const auto callee_type = model_.expression_types.find(&callee);
-  if (callee_type != model_.expression_types.end() &&
-      callee_type->second.kind == frontend::TypeDescriptor::Kind::Function) {
-    return LowerIndirectCall(expression);
+  if (expression.callee->kind == frontend::Expression::Kind::Name) {
+    return LowerNamedCall(expression);
   }
-  return {.reg = 0, .type = InvalidType()};
+  // 其余合法调用已由 checker 解析为实例方法；这里不再以 InvalidType 探测多个入口。
+  return LowerMethodCall(expression);
 }
 
 Lowerer::LoweredValue Lowerer::LowerNamedCall(const frontend::Expression& expression) {
@@ -1279,11 +1290,8 @@ Lowerer::LoweredValue Lowerer::LowerNamedCall(const frontend::Expression& expres
   if (alias != model_.types.end() && alias->second.kind == frontend::TypeDescriptor::Kind::Class) {
     return LowerConstruction(expression, alias->second);
   }
-  const auto function = model_.functions.find(callee.text);
-  if (function != model_.functions.end()) {
-    return LowerInvocation(expression, function->second, function_ids_.at(callee.text), nullptr);
-  }
-  return {.reg = 0, .type = InvalidType()};
+  return LowerInvocation(expression, model_.functions.at(callee.text),
+                         function_ids_.at(callee.text), nullptr);
 }
 
 Lowerer::LoweredValue Lowerer::LowerMethodCall(const frontend::Expression& expression) {
@@ -1292,29 +1300,23 @@ Lowerer::LoweredValue Lowerer::LowerMethodCall(const frontend::Expression& expre
   const auto receiver_name = receiver.type.nullable
                                  ? receiver.type.name.substr(0, receiver.type.name.size() - 1)
                                  : receiver.type.name;
-  const auto* owner = FindClass(receiver_name);
-  if (owner == nullptr) {
-    return {.reg = 0, .type = InvalidType()};
-  }
-  const auto method = owner->methods.find(callee.text);
-  if (method == owner->methods.end()) {
-    return {.reg = 0, .type = InvalidType()};
-  }
+  const auto& owner = model_.classes.at(receiver_name);
+  const auto& method = owner.methods.at(callee.text);
   const auto method_owner = FindMethodOwner(receiver_name, callee.text);
   std::string method_key = method_owner + ".";
-  if (method->second.is_getter) {
+  if (method.is_getter) {
     method_key += "$get.";
-  } else if (method->second.is_setter) {
+  } else if (method.is_setter) {
     method_key += "$set.";
   }
   method_key += callee.text;
   const auto method_id = function_ids_.at(method_key);
   if (!callee.null_safe) {
-    return LowerInvocation(expression, method->second, method_id, &receiver);
+    return LowerInvocation(expression, method, method_id, &receiver);
   }
   const auto null_jump = current_function_->instructions.size();
   Emit({.opcode = Opcode::JumpIfNull, .lhs = receiver.reg, .location = expression.location});
-  auto result = LowerInvocation(expression, method->second, method_id, &receiver);
+  auto result = LowerInvocation(expression, method, method_id, &receiver);
   const auto end_jump = current_function_->instructions.size();
   Emit({.opcode = Opcode::Jump, .location = expression.location});
   current_function_->instructions.at(null_jump).index =
@@ -1421,12 +1423,9 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
                                                std::uint32_t function_id,
                                                const LoweredValue* receiver,
                                                Opcode opcode) {
-  const RegisterId base = next_register_;
   const std::size_t receiver_count = receiver == nullptr ? 0 : 1;
   const std::size_t count = receiver_count + function.parameters.size();
-  for (std::size_t index = 0; index < count; ++index) {
-    static_cast<void>(AllocateRegister(expression.location));
-  }
+  const auto base = AllocateRegisterWindow(count, expression.location);
   if (receiver != nullptr) {
     Emit({
         .opcode = Opcode::Move,
@@ -1498,6 +1497,14 @@ RegisterId Lowerer::AllocateRegister(frontend::SourceLocation location) {
 
 RegisterId Lowerer::AllocateTemporary(frontend::SourceLocation location) {
   return AllocateRegister(location);
+}
+
+RegisterId Lowerer::AllocateRegisterWindow(std::size_t count, frontend::SourceLocation location) {
+  const auto base = next_register_;
+  for (std::size_t index = 0; index < count; ++index) {
+    static_cast<void>(AllocateRegister(location));
+  }
+  return base;
 }
 
 bool Lowerer::IsInteger(const frontend::TypeDescriptor& type) {

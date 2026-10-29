@@ -103,6 +103,9 @@ class Lowerer final {
                                const frontend::FunctionDescriptor& function_info,
                                const frontend::Class* owner,
                                const frontend::LambdaDescriptor* lambda);
+  [[nodiscard]] bool HasInstanceInitialization(const frontend::ClassDescriptor& owner) const;
+  [[nodiscard]] static std::uint32_t ConstructorMaskCount(const frontend::ClassDescriptor& owner);
+  void LowerConstructorInitializers(const frontend::ClassDescriptor& owner);
   void RegisterFunctionSignature(Function& function,
                                  const frontend::Function& source,
                                  const frontend::FunctionDescriptor& function_info);
@@ -154,8 +157,6 @@ class Lowerer final {
                                                             Opcode operation);
   [[nodiscard]] std::pair<RegisterId, RegisterId> LowerDynamicArguments(
       const frontend::Expression& expression);
-  [[nodiscard]] LoweredValue LowerSpecialCall(const frontend::Expression& expression);
-  [[nodiscard]] LoweredValue LowerDispatchCall(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerNamedCall(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerMethodCall(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerFutureCall(const frontend::Expression& expression);
@@ -208,6 +209,8 @@ class Lowerer final {
   [[nodiscard]] const frontend::ClassDescriptor* FindClass(std::string_view name) const;
   [[nodiscard]] const Local* FindLocal(std::string_view name) const;
   [[nodiscard]] RegisterId AllocateRegister(frontend::SourceLocation location);
+  [[nodiscard]] RegisterId AllocateRegisterWindow(std::size_t count,
+                                                  frontend::SourceLocation location);
   [[nodiscard]] RegisterId AllocateTemporary(frontend::SourceLocation location);
   [[nodiscard]] static bool IsInteger(const frontend::TypeDescriptor& type);
   [[nodiscard]] static bool IsBoolean(const frontend::TypeDescriptor& type);
@@ -367,6 +370,7 @@ class Lowerer final {
   std::vector<LocalMap> scopes_;
   std::vector<ControlTargets> controls_;
   std::vector<Finally> finalizers_;
+  std::vector<const frontend::Class*> pending_constructors_;
   std::optional<std::uint32_t> current_handler_;
   RegisterId next_register_ = 0;
   std::vector<std::uint32_t> lambda_ids_;

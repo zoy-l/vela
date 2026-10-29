@@ -87,6 +87,16 @@ export class GeneratedHidden { value: int; private constructor {} }
   EXPECT_FALSE(result->contains("GeneratedHidden(value:"));
 }
 
+TEST(DocumentationTest, GroupsFunctionTypesBeforeArrayAndNullableSuffixes) {
+  const auto result = GenerateModuleDocumentation(R"(
+export type Operations = ((int) => string)[]?;
+export type Nested = Map<string, ((int[]) => string?)?>;
+)");
+  ASSERT_TRUE(result);
+  EXPECT_TRUE(result->contains("type Operations = ((int) => string)[]?;"));
+  EXPECT_TRUE(result->contains("type Nested = Map<string, ((int[]) => string?)?>;"));
+}
+
 TEST(DocumentationTest, DocumentsEmptyPublicSurfaceAndRejectsSyntaxErrors) {
   const auto empty = GenerateModuleDocumentation("func main(): void {}");
   ASSERT_TRUE(empty);

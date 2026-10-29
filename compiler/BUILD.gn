@@ -19,7 +19,10 @@ generated_file("cache_build_identity") {
 
 source_set("frontend") {
   sources = [
+    "frontend/ast.cc",
     "frontend/ast.h",
+    "frontend/ast_clone.cc",
+    "frontend/ast_clone.h",
     "frontend/builtins.cc",
     "frontend/builtins.h",
     "frontend/byte_builtins.cc",
@@ -69,6 +72,7 @@ source_set("frontend") {
     "frontend/type_checker_interfaces.cc",
     "frontend/type_checker_match.cc",
     "frontend/type_checker_null.cc",
+    "frontend/type_checker_refinements.cc",
     "frontend/type_checker_switch.cc",
     "frontend/type_checker_types.cc",
     "frontend/type_limits.h",
@@ -112,6 +116,7 @@ source_set("ir") {
     "ir/persistent_ids.h",
     "ir/preparation.cc",
     "ir/preparation.h",
+    "ir/register_set.h",
   ]
   public_deps = [
     ":frontend",
@@ -267,7 +272,10 @@ source_set("aot_driver") {
 
 executable("vela_aot_tests") {
   testonly = true
-  sources = [ "aot/native_compiler_unittest.cc" ]
+  sources = [
+    "aot/native_compiler_unittest.cc",
+    "aot/reachability_unittest.cc",
+  ]
   deps = [
     ":aot",
     "//runtime",
@@ -299,9 +307,12 @@ executable("vela_environment_tests") {
 executable("vela_frontend_tests") {
   testonly = true
   sources = [
+    "frontend/checker_test_support.h",
     "frontend/control_flow_unittest.cc",
     "frontend/declarations_unittest.cc",
     "frontend/diagnostic_unittest.cc",
+    "frontend/parser_unittest.cc",
+    "frontend/refinement_unittest.cc",
     "frontend_unittest.cc",
     "tooling/documentation_unittest.cc",
     "tooling/file_uri_unittest.cc",
@@ -336,6 +347,7 @@ executable("vela_compiler_tests") {
     "encoding_unittest.cc",
     "exception_unittest.cc",
     "expected_unittest.cc",
+    "frontend/checker_test_support.h",
     "function_value_unittest.cc",
     "generic_unittest.cc",
     "global_unittest.cc",
@@ -352,6 +364,7 @@ executable("vela_compiler_tests") {
     "optimization_unittest.cc",
     "recursion_unittest.cc",
     "regexp_unittest.cc",
+    "register_allocator_unittest.cc",
     "repl_session_unittest.cc",
     "stack_trace_unittest.cc",
     "standard_library_unittest.cc",

@@ -3,7 +3,6 @@
 #include "compiler/aot/native_values.h"
 
 #include <algorithm>
-#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -11,7 +10,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 #include <llvm/ADT/SmallVector.h>
@@ -21,17 +19,15 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
-#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Passes/PassBuilder.h>
-#include <llvm/Support/Alignment.h>
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/TargetParser/Host.h>
@@ -45,8 +41,8 @@
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
-#include "runtime/exception.h"
 #include "runtime/native_abi.h"
+#include "runtime/native_memory_layout.h"
 
 namespace vela::compiler::aot {
 namespace {
@@ -117,24 +113,6 @@ void FunctionEmitter::SetPosition() {
                        instruction_slot_);
 }
 
-llvm::Value* FunctionEmitter::SourcePosition() {
-  static_assert(std::has_unique_object_representations_v<runtime::TracePosition>);
-  const runtime::TracePosition position{
-      .function = static_cast<std::uint32_t>(function_index_),
-      .instruction = static_cast<std::uint32_t>(instruction_index_),
-  };
-  const auto bytes =
-      std::bit_cast<std::array<std::uint8_t, sizeof(runtime::TracePosition)>>(position);
-  auto* value = llvm::ConstantDataArray::get(module_.getContext(), bytes);
-  // 位置不可变且由产物持有；不用动态 alloca，避免冷分支阻止包装层内联。
-  auto* global = new llvm::GlobalVariable(module_, value->getType(), true,
-                                          llvm::GlobalValue::PrivateLinkage, value,
-                                          "source.position");
-  global->setAlignment(llvm::Align(alignof(runtime::TracePosition)));
-  global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-  return global;
-}
-
 void FunctionEmitter::Fail(llvm::Value* status) {
   if (leaf_entry_) {
     const auto& live = roots_.stores.at(instruction_index_);
@@ -142,11 +120,14 @@ void FunctionEmitter::Fail(llvm::Value* status) {
       WriteHeapValue(RootAddress(index), live.at(index));
     }
     auto failure = module_.getOrInsertFunction(
-        "vela_native_v1_leaf_failure", builder_.getInt8Ty(), builder_.getPtrTy(),
-        builder_.getPtrTy(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
+        "vela_native_v2_leaf_failure", builder_.getInt8Ty(), builder_.getPtrTy(),
+        builder_.getInt64Ty(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
     auto* roots = live.empty() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : root_slots_;
-    Finish(builder_.CreateCall(failure, {body_->getArg(0), SourcePosition(), status, roots,
-                                         builder_.getInt64(live.size())}));
+    const auto position = runtime::EncodeNativeTracePosition(
+        {.function = static_cast<std::uint32_t>(function_index_),
+         .instruction = static_cast<std::uint32_t>(instruction_index_)});
+    Finish(builder_.CreateCall(failure, {body_->getArg(0), builder_.getInt64(position), status,
+                                         roots, builder_.getInt64(live.size())}));
     return;
   }
   SetPosition();
@@ -442,6 +423,8 @@ void FunctionEmitter::BindFrameStorage() {
 }
 
 void FunctionEmitter::EmitImport() {
+  using AotCallKind = runtime::NativeFunction::AotCallKind;
+  using runtime::NativeMemoryLayout;
   auto* context = body_->getArg(0);
   auto* function = builder_.getInt32(static_cast<std::uint32_t>(function_index_));
   std::vector<llvm::Value*> arguments{context, function};
@@ -462,12 +445,54 @@ void FunctionEmitter::EmitImport() {
   auto* result_type = return_type.kind == Kind::Bool || return_type.kind == Kind::Void
                           ? builder_.getInt8Ty()
                           : ValueType(module_.getContext(), return_type);
-  // ABI 标量结果直接写入调用者槽，避免 import 包装层再复制一次。
+  auto* entries = body_->getArg(static_cast<unsigned>(source_.parameter_count + 1));
+  auto* target = builder_.CreateExtractValue(entries, 0);
+  auto* call_kind = builder_.CreateExtractValue(entries, 1);
+  if (return_type.kind == Kind::Void || return_type.kind == Kind::Bool ||
+      return_type.kind == Kind::Int || return_type.kind == Kind::Double) {
+    auto* direct = llvm::BasicBlock::Create(module_.getContext(), "import.direct", body_);
+    auto* checked = llvm::BasicBlock::Create(module_.getContext(), "import.checked", body_);
+    builder_.CreateCondBr(
+        builder_.CreateICmpNE(call_kind,
+                              builder_.getInt8(static_cast<std::uint8_t>(AotCallKind::Checked))),
+        direct, checked);
+    builder_.SetInsertPoint(direct);
+    auto* with_context = llvm::BasicBlock::Create(module_.getContext(), "import.context", body_);
+    auto* plain = llvm::BasicBlock::Create(module_.getContext(), "import.plain", body_);
+    builder_.CreateCondBr(
+        builder_.CreateICmpEQ(
+            call_kind, builder_.getInt8(static_cast<std::uint8_t>(AotCallKind::DirectWithContext))),
+        with_context, plain);
+    auto emit_direct = [&](AotCallKind kind) {
+      std::vector<llvm::Value*> direct_arguments(arguments.begin() + 2, arguments.end());
+      std::vector<llvm::Type*> direct_types(types.begin() + 2, types.end());
+      if (kind == AotCallKind::DirectWithContext) {
+        direct_arguments.insert(direct_arguments.begin(),
+                                ByteAddress(context, NativeMemoryLayout::kExecutionContext));
+        direct_types.insert(direct_types.begin(), builder_.getPtrTy());
+      }
+      auto* direct_result = return_type.kind == Kind::Void ? builder_.getVoidTy() : result_type;
+      auto* signature = llvm::FunctionType::get(direct_result, direct_types, false);
+      auto* value = builder_.CreateCall(signature, target, direct_arguments);
+      if (return_type.kind != Kind::Void) {
+        llvm::Value* result = value;
+        if (return_type.kind == Kind::Bool) {
+          result = builder_.CreateICmpNE(result, builder_.getInt8(0));
+        }
+        builder_.CreateStore(result, Output());
+      }
+      Finish(Status(builder_, ExecutionStatus::Returned));
+    };
+    builder_.SetInsertPoint(with_context);
+    emit_direct(AotCallKind::DirectWithContext);
+    builder_.SetInsertPoint(plain);
+    emit_direct(AotCallKind::Direct);
+    builder_.SetInsertPoint(checked);
+  }
   arguments.push_back(Output());
   types.push_back(builder_.getPtrTy());
-  auto* thunk = body_->getArg(static_cast<unsigned>(source_.parameter_count + 1));
   auto* signature = llvm::FunctionType::get(builder_.getInt8Ty(), types, false);
-  CheckStatus(builder_.CreateCall(signature, thunk, arguments));
+  CheckStatus(builder_.CreateCall(signature, target, arguments));
   if (return_type.kind != Kind::Void) {
     llvm::Value* value = builder_.CreateLoad(result_type, Output());
     if (return_type.kind == Kind::Bool) {

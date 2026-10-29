@@ -1,7 +1,11 @@
 #include "compiler/ir/lowerer.h"
 
+#include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -12,6 +16,74 @@
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
+namespace {
+
+constexpr auto kConstructorMaskBits = std::numeric_limits<std::uint64_t>::digits;
+
+}  // namespace
+
+bool Lowerer::HasInstanceInitialization(const frontend::ClassDescriptor& owner) const {
+  const auto& source = *owner.declaration;
+  if (source.constructor || std::ranges::any_of(source.fields, [](const auto& field) {
+        return field.storage == frontend::MemberStorage::Instance && field.initializer;
+      })) {
+    return true;
+  }
+  return owner.base_class && HasInstanceInitialization(model_.classes.at(*owner.base_class));
+}
+
+std::uint32_t Lowerer::ConstructorMaskCount(const frontend::ClassDescriptor& owner) {
+  const auto& source = *owner.declaration;
+  const bool has_optional_fields =
+      source.constructor_kind == frontend::ConstructorKind::Generated &&
+      !owner.constructor.optional_parameters.empty();
+  return has_optional_fields
+             ? static_cast<std::uint32_t>((owner.field_order.size() + kConstructorMaskBits - 1) /
+                                          kConstructorMaskBits)
+             : 0;
+}
+
+void Lowerer::LowerConstructorInitializers(const frontend::ClassDescriptor& owner) {
+  const auto& source = *owner.declaration;
+  for (const auto& field : source.fields) {
+    if (field.storage == frontend::MemberStorage::Static || !field.initializer) {
+      continue;
+    }
+    const auto index = owner.fields.at(field.name).index;
+    std::optional<std::size_t> provided;
+    if (source.IsConstructorField(field)) {
+      const auto mask = EmitTemporary({
+          .opcode = Opcode::LoadInt,
+          .immediate =
+              std::bit_cast<std::int64_t>(std::uint64_t{1} << (index % kConstructorMaskBits)),
+          .location = field.location,
+      });
+      const auto bits = EmitTemporary({.opcode = Opcode::BitAndInt,
+                                       .lhs = 1 + index / kConstructorMaskBits,
+                                       .rhs = mask,
+                                       .location = field.location});
+      const auto zero = EmitTemporary({.opcode = Opcode::LoadInt, .location = field.location});
+      const auto missing = EmitTemporary(
+          {.opcode = Opcode::EqualInt, .lhs = bits, .rhs = zero, .location = field.location});
+      provided = current_function_->instructions.size();
+      Emit({.opcode = Opcode::JumpIfFalse, .lhs = missing, .location = field.location});
+    }
+    const auto value = LowerExpression(*field.initializer);
+    Emit({.opcode = Opcode::SetField,
+          .dst = 0,
+          .lhs = value.reg,
+          .index = index,
+          .location = field.location});
+    if (provided) {
+      current_function_->instructions.at(*provided).index =
+          static_cast<std::uint32_t>(current_function_->instructions.size());
+    }
+  }
+  if (source.base_class && !model_.explicit_super_constructors.contains(owner.type.name)) {
+    const auto& base = model_.classes.at(source.base_class->name);
+    static_cast<void>(LowerConstructorCall({}, {}, source.location, base, 0));
+  }
+}
 
 ClassId Lowerer::RegisterEnumType(const frontend::TypeDescriptor& type) {
   const auto name = type.nullable ? type.name.substr(0, type.name.size() - 1) : type.name;
@@ -126,8 +198,9 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
   const auto& source = *info.declaration;
   const auto& signature = info.constructor;
   const bool generated = source.constructor_kind == frontend::ConstructorKind::Generated;
+  const auto masks = ConstructorMaskCount(info);
   std::vector<RegisterId> arguments(generated ? 0 : signature.parameters.size());
-  std::vector<bool> provided(info.field_order.size(), false);
+  std::vector<std::uint64_t> provided(masks, 0);
   // 自动构造的实参依源码顺序直接写入尚未逸出的对象，避免为全部字段保留寄存器。
   for (std::size_t index = 0; index < call_arguments.size(); ++index) {
     const auto& argument = call_arguments.subspan(index).front();
@@ -142,51 +215,37 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
           .index = field,
           .location = argument.location,
       });
-      provided.at(field) = true;
+      if (masks != 0) {
+        provided.at(field / kConstructorMaskBits) |= std::uint64_t{1}
+                                                     << (field % kConstructorMaskBits);
+      }
     } else {
       const auto saved = AllocateTemporary(argument.location);
       Emit({.opcode = Opcode::Move, .dst = saved, .lhs = value.reg, .location = argument.location});
       arguments.at(parameter) = saved;
     }
   }
-  for (const auto& field : source.fields) {
-    if (field.storage == frontend::MemberStorage::Static || !field.initializer) {
-      continue;
+  if (HasInstanceInitialization(info)) {
+    const auto name = info.type.name + ".$constructor";
+    std::uint32_t target = 0;
+    if (const auto existing = function_ids_.find(name); existing != function_ids_.end()) {
+      target = existing->second;
+    } else {
+      // 构造函数按实际调用生成，避免未使用的默认值引入常量根和函数体。
+      target = AddFunctionId(name);
+      program_.functions.resize(persistent_ == nullptr ? function_ids_.size()
+                                                       : persistent_->functions.size());
+      pending_constructors_.push_back(&source);
     }
-    const auto field_index = info.fields.at(field.name).index;
-    if (provided.at(field_index)) {
-      continue;
-    }
-    // 字段初始化器在声明处检查，不可意外读取构造调用者的同名局部变量。
-    auto caller_scopes = std::move(scopes_);
-    scopes_.clear();
-    const auto value = LowerExpression(*field.initializer);
-    scopes_ = std::move(caller_scopes);
-    Emit({
-        .opcode = Opcode::SetField,
-        .dst = object,
-        .lhs = value.reg,
-        .index = field_index,
-        .location = field.location,
-    });
-  }
-  if (source.base_class && !model_.explicit_super_constructors.contains(info.type.name)) {
-    const auto& base = model_.classes.at(source.base_class->name);
-    static_cast<void>(LowerConstructorCall({}, {}, location, base, object));
-  }
-  if (source.constructor) {
-    const auto count =
-        source.constructor_kind == frontend::ConstructorKind::Explicit ? arguments.size() : 0;
-    const auto base = next_register_;
-    for (std::size_t index = 0; index <= count; ++index) {
-      static_cast<void>(AllocateRegister(location));
-    }
+    const auto count = generated ? masks : arguments.size();
+    const auto base = AllocateRegisterWindow(count + 1, location);
     Emit({.opcode = Opcode::Move, .dst = base, .lhs = object, .location = location});
     for (std::size_t index = 0; index < count; ++index) {
       Emit({
-          .opcode = Opcode::Move,
+          .opcode = generated ? Opcode::LoadInt : Opcode::Move,
           .dst = static_cast<RegisterId>(base + index + 1),
-          .lhs = arguments.at(index),
+          .lhs = generated ? 0 : arguments.at(index),
+          .immediate = generated ? std::bit_cast<std::int64_t>(provided.at(index)) : 0,
           .location = location,
       });
     }
@@ -195,7 +254,7 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
         .opcode = Opcode::Call,
         .dst = ignored,
         .lhs = base,
-        .index = function_ids_.at(info.type.name + ".$constructor"),
+        .index = target,
         .location = location,
     });
   }

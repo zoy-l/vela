@@ -183,7 +183,8 @@ std::string ModuleBinding::Resolve(const std::string& name, SourceLocation locat
   if (found != scope.names.end()) {
     return found->second;
   }
-  if (!IsBuiltinName(name) && !IsStandardName(name) && name != "print" && name != "this") {
+  if (!IsBuiltinName(name) && !IsStandardName(name) && name != "print" && name != "this" &&
+      name != "super") {
     Error(location, "unknown module symbol '" + name + "'");
   }
   return name;
@@ -266,8 +267,9 @@ void ModuleBinding::BindStatement(Statement* statement) {
   if (statement == nullptr) {
     return;
   }
-  const bool scope =
-      statement->kind == Statement::Kind::Block || statement->kind == Statement::Kind::For;
+  const bool scope = statement->kind == Statement::Kind::Block ||
+                     statement->kind == Statement::Kind::For ||
+                     statement->kind == Statement::Kind::ForEach;
   if (scope) {
     locals_.emplace_back();
   }
@@ -275,6 +277,13 @@ void ModuleBinding::BindStatement(Statement* statement) {
   BindStatement(statement->initializer.get());
   BindExpression(statement->expression.get());
   BindExpression(statement->condition.get());
+  BindExpression(statement->iterable.get());
+  if (statement->kind == Statement::Kind::ForEach) {
+    locals_.back().insert(statement->name);
+    if (statement->destructuring) {
+      locals_.back().insert(statement->second_name);
+    }
+  }
   BindScoped(statement->then_branch.get());
   BindScoped(statement->else_branch.get());
   BindScoped(statement->finally_branch.get());
@@ -319,6 +328,9 @@ void ModuleBinding::BindFunction(Function& function) {
 void ModuleBinding::BindClass(Class& declaration) {
   type_parameters_.emplace_back(declaration.type_parameters.begin(),
                                 declaration.type_parameters.end());
+  if (declaration.base_class) {
+    BindType(*declaration.base_class);
+  }
   for (auto& interface : declaration.interfaces) {
     BindType(interface);
   }

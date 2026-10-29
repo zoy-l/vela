@@ -11,16 +11,12 @@
 #include "compiler/frontend/type_checker.h"
 
 namespace vela::frontend {
-namespace {
-
 CheckResult CheckParsed(ParseResult parsed) {
   if (!parsed.diagnostics.empty()) {
     return {.diagnostics = std::move(parsed.diagnostics), .function_count = 0};
   }
   return CheckProgram(parsed.program);
 }
-
-}  // namespace
 
 CheckResult CheckProgram(Program& program) {
   auto specialized = SpecializeGenerics(program);
@@ -31,16 +27,8 @@ CheckResult CheckProgram(Program& program) {
   return {.diagnostics = std::move(checked.diagnostics), .function_count = checked.function_count};
 }
 
-CheckResult CheckSource(std::string_view source) {
-  const SourceInput input{.path = "main.vela", .text = source};
-  return CheckParsed(LoadSources(std::span(&input, 1), input.path));
-}
 CheckResult CheckFile(std::string_view path, std::span<const SourceInput> overlays) {
   return CheckParsed(LoadProgram(path, overlays));
-}
-
-CheckResult CheckModules(std::span<const SourceInput> sources, std::string_view entry) {
-  return CheckParsed(LoadSources(sources, entry));
 }
 
 }  // namespace vela::frontend

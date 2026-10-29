@@ -82,7 +82,7 @@ class LanguageServer final {
   void Query(RpcCall call, SymbolQuery query);
   [[nodiscard]] std::vector<Completion> CompletionsFor(std::string_view uri,
                                                        const ServerDocument& opened,
-                                                       std::size_t offset) const;
+                                                       std::size_t offset);
   void DocumentLinks(RpcCall call);
   void SemanticTokens(RpcCall call);
   SemanticIndex& IndexFor(std::string_view uri, const ServerDocument& opened);
@@ -97,6 +97,12 @@ class LanguageServer final {
   absl::flat_hash_map<std::string, ServerDocument> documents_;
   absl::flat_hash_set<std::string> published_;
   absl::flat_hash_map<std::string, SemanticIndex> semantic_indices_;
+  struct CompletionIndex final {
+    std::string text;
+    SemanticIndex index;
+  };
+  absl::flat_hash_map<std::string, CompletionIndex> completion_indices_;
+  frontend::ModuleCache modules_;
   std::optional<int> exit_code_;
   std::optional<std::string> output_error_;
 };

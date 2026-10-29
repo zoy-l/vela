@@ -85,6 +85,10 @@ Branches intersect facts at joins. Loops and switches conservatively discard
 facts for locals they may write. Loop backedges and continue paths cannot
 reuse a fact that a previous iteration could invalidate.
 
+Conditional expressions check each arm with its condition's facts and merge
+only facts shared by both arms. A write in one arm does not affect checking
+the other arm; for example, `value != null ? value.length : 0` is valid.
+
 Fields and indexed elements are not promoted because another operation may
 change their contents. For a non-null value, copy the value to a local and check
 it, or use null-safe operators: `?.` skips member access or a method call when

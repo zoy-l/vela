@@ -111,8 +111,13 @@ names, members and named arguments to exact declaration ranges, including unsave
 dependencies. Positions inside a name and immediately after its final character
 resolve to the same declaration. Checked snapshots are reused for repeated definition and hover requests and
 invalidated on document, save or watched-file changes. Built-in declarations
-without a disk source return `null`. Completion currently checks a module graph
-per query, synchronously; this is not an incremental semantic engine.
+without a disk source return `null`. Diagnostics and queries share parsed module
+snapshots across edits; changed overlays replace only their own cached syntax.
+Repeated completions reuse an index when their repaired source is identical.
+Document changes invalidate checked indices; save and watched-file events also
+invalidate disk snapshots, and closing an overlay restores disk loading. A new
+query snapshot still checks its module graph synchronously; semantic checking
+does not incrementally update individual AST subtrees.
 
 Import path literals and import alias declarations also resolve to the imported
 file at line 1. `textDocument/documentLink` supplies resolved links over the raw

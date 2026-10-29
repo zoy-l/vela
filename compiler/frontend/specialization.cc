@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <deque>
-#include <memory>
 #include <ranges>
 #include <string>
 #include <utility>
@@ -13,6 +12,7 @@
 #include <absl/container/flat_hash_set.h>
 
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/ast_clone.h"
 #include "compiler/frontend/builtins.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/standard_environment.h"
@@ -21,136 +21,14 @@
 namespace vela::frontend {
 namespace {
 
-// 特化数量有界，既防止递增递归泛型无限展开，也对应当前字节码的索引容量。
-
-bool IsBuiltinGenericExpression(const Expression& expression) {
+bool IsBuiltinGenericExpression(const Expression& expression, const Expression* object) {
   if (expression.text == "Set" || expression.text == "Map" || expression.text == "Expected" ||
       expression.text == "Future" || expression.text == "Completer") {
     return true;
   }
-  return expression.kind == Expression::Kind::Member && expression.object != nullptr &&
-         expression.object->kind == Expression::Kind::Name && expression.object->text == "Future";
+  return expression.kind == Expression::Kind::Member && object != nullptr &&
+         object->kind == Expression::Kind::Name && object->text == "Future";
 }
-
-Function CloneFunction(const Function& source);
-
-std::unique_ptr<Statement> CloneStatement(const Statement* source);
-
-std::unique_ptr<Expression> CloneExpression(const Expression* source) {
-  if (source == nullptr) {
-    return nullptr;
-  }
-  auto result = std::make_unique<Expression>();
-  result->kind = source->kind;
-  result->location = source->location;
-  result->text = source->text;
-  result->null_safe = source->null_safe;
-  result->postfix = source->postfix;
-  result->integer_value = source->integer_value;
-  result->double_value = source->double_value;
-  result->boolean_value = source->boolean_value;
-  result->type_arguments = source->type_arguments;
-  result->type = source->type;
-  for (const auto& arm : source->arms) {
-    result->arms.push_back({
-        .kind = arm.kind,
-        .location = arm.location,
-        .binding = arm.binding,
-        .pattern = CloneExpression(arm.pattern.get()),
-        .value = CloneExpression(arm.value.get()),
-    });
-  }
-  result->left = CloneExpression(source->left.get());
-  result->right = CloneExpression(source->right.get());
-  result->operand = CloneExpression(source->operand.get());
-  result->callee = CloneExpression(source->callee.get());
-  result->object = CloneExpression(source->object.get());
-  result->index = CloneExpression(source->index.get());
-  for (const auto& element : source->elements) {
-    result->elements.push_back(CloneExpression(element.get()));
-  }
-  for (const auto& argument : source->arguments) {
-    result->arguments.push_back({
-        .name = argument.name,
-        .location = argument.location,
-        .value = CloneExpression(argument.value.get()),
-    });
-  }
-  if (source->function) {
-    result->function = std::make_unique<Function>(CloneFunction(*source->function));
-  }
-  return result;
-}
-
-std::unique_ptr<Statement> CloneStatement(const Statement* source) {
-  if (source == nullptr) {
-    return nullptr;
-  }
-  auto result = std::make_unique<Statement>();
-  result->kind = source->kind;
-  result->location = source->location;
-  result->type = source->type;
-  result->echo = source->echo;
-  result->binding = source->binding;
-  result->name = source->name;
-  result->expression = CloneExpression(source->expression.get());
-  result->condition = CloneExpression(source->condition.get());
-  result->increment = CloneExpression(source->increment.get());
-  result->then_branch = CloneStatement(source->then_branch.get());
-  result->else_branch = CloneStatement(source->else_branch.get());
-  result->initializer = CloneStatement(source->initializer.get());
-  result->finally_branch = CloneStatement(source->finally_branch.get());
-  for (const auto& clause : source->catches) {
-    result->catches.push_back({
-        .location = clause.location,
-        .name = clause.name,
-        .type = clause.type,
-        .body = CloneStatement(clause.body.get()),
-    });
-  }
-  for (const auto& child : source->statements) {
-    result->statements.push_back(CloneStatement(child.get()));
-  }
-  for (const auto& branch : source->cases) {
-    result->cases.push_back({
-        .location = branch.location,
-        .label = CloneExpression(branch.label.get()),
-        .body = CloneStatement(branch.body.get()),
-    });
-  }
-  return result;
-}
-
-Function CloneFunction(const Function& source) {
-  Function result;
-  result.name = source.name;
-  result.return_type = source.return_type;
-  result.parameters = source.parameters;
-  result.body = CloneStatement(source.body.get());
-  result.location = source.location;
-  result.type_parameters = source.type_parameters;
-  result.visibility = source.visibility;
-  result.storage = source.storage;
-  result.export_kind = source.export_kind;
-  result.native_symbol = source.native_symbol;
-  result.intrinsic = source.intrinsic;
-  result.role = source.role;
-  result.is_async = source.is_async;
-  return result;
-}
-
-Field CloneField(const Field& source) {
-  return {
-      .type = source.type,
-      .name = source.name,
-      .location = source.location,
-      .visibility = source.visibility,
-      .storage = source.storage,
-      .initializer = CloneExpression(source.initializer.get()),
-  };
-}
-
-std::string TypeKey(const TypeName& type);
 
 bool IsTypeWithinLimit(const TypeName& type, std::size_t depth = 1) {
   if (depth > kMaxTypeNesting) {
@@ -167,35 +45,15 @@ std::string SpecializationName(const std::string& base, const std::vector<TypeNa
     if (index != 0) {
       result += ", ";
     }
-    result += TypeKey(arguments.at(index));
+    result += arguments.at(index).ToString();
   }
   return result + '>';
 }
 
-std::string TypeKey(const TypeName& type) {
-  if (type.kind == TypeName::Kind::Generic) {
-    return SpecializationName(type.name, type.arguments);
-  }
-  if (type.kind == TypeName::Kind::Array || type.kind == TypeName::Kind::Nullable) {
-    const auto& child = type.arguments.front();
-    const auto name = TypeKey(child);
-    return (child.kind == TypeName::Kind::Function ? "(" + name + ")" : name) +
-           (type.kind == TypeName::Kind::Array ? "[]" : "?");
-  }
-  if (type.kind == TypeName::Kind::Function) {
-    std::string result = "(";
-    for (std::size_t index = 0; index + 1 < type.arguments.size(); ++index) {
-      result += (index == 0 ? "" : ", ") + TypeKey(type.arguments.at(index));
-    }
-    return result + ") => " + TypeKey(type.arguments.back());
-  }
-  return type.name;
-}
-
-class Specializer final {
+class Specializer final : public AstCloneTransform {
  public:
   explicit Specializer(Program& program) : program_(program) {}
-  ~Specializer() = default;
+  ~Specializer() override = default;
   Specializer(const Specializer&) = delete;
   Specializer& operator=(const Specializer&) = delete;
   Specializer(Specializer&&) = delete;
@@ -205,6 +63,12 @@ class Specializer final {
 
  private:
   using Substitutions = absl::flat_hash_map<std::string, TypeName>;
+  template <class T>
+  struct Pending final {
+    T declaration;
+    Substitutions substitutions;
+    const T* source = nullptr;
+  };
   void CollectDeclarations();
   void CollectTemplates();
   void Error(SourceLocation location, std::string message);
@@ -213,6 +77,16 @@ class Specializer final {
                      SourceLocation location);
   void Normalize(TypeName& type, const Substitutions& substitutions);
   void NormalizeType(TypeName& type, const Substitutions& substitutions);
+  void NormalizeTypeHead(TypeName& type);
+  TypeName CloneNormalizedType(const TypeName& source, const Substitutions& substitutions);
+  void NormalizeExpressionHead(Expression& expression,
+                               const Substitutions& substitutions,
+                               const Expression* object);
+  TypeName TransformType(const TypeName& source) override;
+  void TransformApplication(Expression& target, const Expression& source) override;
+  void BeginScope() override;
+  void EndScope() override;
+  void Declare(const std::string& name) override;
   void Normalize(Expression* expression, const Substitutions& substitutions);
   void Normalize(Statement* statement, const Substitutions& substitutions);
   void Normalize(Function& function, const Substitutions& substitutions);
@@ -230,12 +104,11 @@ class Specializer final {
   absl::flat_hash_map<std::string, Program::TypeAlias> aliases_;
   absl::flat_hash_set<std::string> instantiated_;
   absl::flat_hash_set<std::string> active_aliases_;
-  std::deque<Function> functions_;
-  std::deque<Class> classes_;
-  std::deque<Substitutions> function_substitutions_;
-  std::deque<Substitutions> class_substitutions_;
+  std::deque<Pending<Function>> functions_;
+  std::deque<Pending<Class>> classes_;
   std::vector<absl::flat_hash_set<std::string>> scopes_;
   std::size_t type_depth_ = 0;
+  const Substitutions* clone_substitutions_ = nullptr;
 };
 
 void Specializer::Error(SourceLocation location, std::string message) {
@@ -271,38 +144,28 @@ std::string Specializer::Instantiate(const std::string& name,
   if (instantiated_.contains(key)) {
     return key;
   }
+  // 特化数量有界，防止递增递归泛型无限展开，并约束字节码索引容量。
   if (instantiated_.size() >= kMaxGenericSpecializations) {
     Error(location, "generic specialization exceeds the limit of 256; check expanding recursion");
     return key;
   }
   instantiated_.insert(key);
+  // 模板表在 CollectTemplates 后不再插入或改写，队列借用的节点地址保持稳定。
   if (const auto found = function_templates_.find(name); found != function_templates_.end()) {
-    const auto substitutions = Bind(found->second.type_parameters, arguments, location);
-    auto function = CloneFunction(found->second);
+    auto substitutions = Bind(found->second.type_parameters, arguments, location);
+    Function function;
     function.name = key;
-    function.type_parameters.clear();
-    // 特化体加入工作队列，不沿泛型调用链递归展开 C++ 栈。
-    functions_.push_back(std::move(function));
-    function_substitutions_.push_back(substitutions);
+    // 只排入模板引用；取出队列项时融合克隆与规范化，不沿泛型调用链递归展开 C++ 栈。
+    functions_.push_back({.declaration = std::move(function),
+                          .substitutions = std::move(substitutions),
+                          .source = &found->second});
   } else if (const auto owner = class_templates_.find(name); owner != class_templates_.end()) {
-    const auto substitutions = Bind(owner->second.type_parameters, arguments, location);
+    auto substitutions = Bind(owner->second.type_parameters, arguments, location);
     Class concrete;
     concrete.name = key;
-    for (const auto& field : owner->second.fields) {
-      concrete.fields.push_back(CloneField(field));
-    }
-    concrete.location = owner->second.location;
-    concrete.constructor_kind = owner->second.constructor_kind;
-    concrete.export_kind = owner->second.export_kind;
-    concrete.interfaces = owner->second.interfaces;
-    if (owner->second.constructor) {
-      concrete.constructor = std::make_unique<Function>(CloneFunction(*owner->second.constructor));
-    }
-    for (const auto& method : owner->second.methods) {
-      concrete.methods.push_back(CloneFunction(method));
-    }
-    classes_.push_back(std::move(concrete));
-    class_substitutions_.push_back(substitutions);
+    classes_.push_back({.declaration = std::move(concrete),
+                        .substitutions = std::move(substitutions),
+                        .source = &owner->second});
   } else {
     Error(location, "unknown generic declaration '" + name + "'");
   }
@@ -339,6 +202,10 @@ void Specializer::NormalizeType(TypeName& type, const Substitutions& substitutio
   for (auto& argument : type.arguments) {
     Normalize(argument, substitutions);
   }
+  NormalizeTypeHead(type);
+}
+
+void Specializer::NormalizeTypeHead(TypeName& type) {
   const auto alias = aliases_.find(type.name);
   if ((type.kind == TypeName::Kind::Named || type.kind == TypeName::Kind::Generic) &&
       alias != aliases_.end()) {
@@ -348,8 +215,7 @@ void Specializer::NormalizeType(TypeName& type, const Substitutions& substitutio
       return;
     }
     const auto bound = Bind(alias->second.type_parameters, type.arguments, type.location);
-    type = alias->second.target;
-    Normalize(type, bound);
+    type = CloneNormalizedType(alias->second.target, bound);
     active_aliases_.erase(key);
     return;
   }
@@ -363,7 +229,90 @@ void Specializer::NormalizeType(TypeName& type, const Substitutions& substitutio
     type.arguments.clear();
   } else if (type.kind == TypeName::Kind::Array || type.kind == TypeName::Kind::Nullable ||
              type.kind == TypeName::Kind::Function) {
-    type.name = TypeKey(type);
+    type.name = type.ToString();
+  }
+}
+
+TypeName Specializer::CloneNormalizedType(const TypeName& source,
+                                          const Substitutions& substitutions) {
+  if (type_depth_ >= kMaxTypeNesting) {
+    Error(source.location,
+          "type nesting exceeds the limit of 128; check expanding generic recursion");
+    return source;
+  }
+  ++type_depth_;
+  TypeName result;
+  const auto parameter =
+      source.kind == TypeName::Kind::Named ? substitutions.find(source.name) : substitutions.end();
+  if (parameter != substitutions.end()) {
+    result = parameter->second;
+  } else {
+    result.name = source.name;
+    result.location = source.location;
+    result.kind = source.kind;
+    result.arguments.reserve(source.arguments.size());
+    for (const auto& argument : source.arguments) {
+      result.arguments.push_back(CloneNormalizedType(argument, substitutions));
+    }
+    NormalizeTypeHead(result);
+  }
+  if (type_depth_ == 1 && diagnostics_.empty() && !IsTypeWithinLimit(result)) {
+    Error(result.location,
+          "type nesting exceeds the limit of 128; check expanding generic recursion");
+  }
+  --type_depth_;
+  return result;
+}
+
+TypeName Specializer::TransformType(const TypeName& source) {
+  return CloneNormalizedType(source, *clone_substitutions_);
+}
+
+void Specializer::TransformApplication(Expression& target, const Expression& source) {
+  NormalizeExpressionHead(target, *clone_substitutions_, source.object.get());
+}
+
+void Specializer::BeginScope() {
+  scopes_.emplace_back();
+}
+
+void Specializer::EndScope() {
+  scopes_.pop_back();
+}
+
+void Specializer::Declare(const std::string& name) {
+  if (!scopes_.empty()) {
+    scopes_.back().insert(name);
+  }
+}
+
+void Specializer::NormalizeExpressionHead(Expression& expression,
+                                          const Substitutions& substitutions,
+                                          const Expression* object) {
+  if (!expression.type_arguments.empty() && IsShadowed(expression.text)) {
+    Error(expression.location, "type arguments cannot be applied to a local binding");
+  } else if (!expression.type_arguments.empty() && aliases_.contains(expression.text)) {
+    TypeName type{
+        .name = expression.text,
+        .location = expression.location,
+        .kind = TypeName::Kind::Generic,
+        .arguments = expression.type_arguments,
+    };
+    Normalize(type, substitutions);
+    if (type.kind == TypeName::Kind::Named ||
+        (type.kind == TypeName::Kind::Generic && (type.name == "Set" || type.name == "Map"))) {
+      expression.text = type.name;
+      expression.type_arguments = type.arguments;
+    } else {
+      Error(expression.location, "type alias does not name a constructible type");
+    }
+  } else if (!expression.type_arguments.empty() && (function_templates_.contains(expression.text) ||
+                                                    class_templates_.contains(expression.text))) {
+    expression.text = Instantiate(expression.text, expression.type_arguments, expression.location);
+    expression.type_arguments.clear();
+  } else if (!expression.type_arguments.empty() &&
+             !IsBuiltinGenericExpression(expression, object)) {
+    Error(expression.location, "type arguments require a generic declaration");
   }
 }
 
@@ -377,32 +326,7 @@ void Specializer::Normalize(Expression* expression, const Substitutions& substit
   for (auto& argument : expression->type_arguments) {
     Normalize(argument, substitutions);
   }
-  if (!expression->type_arguments.empty() && IsShadowed(expression->text)) {
-    Error(expression->location, "type arguments cannot be applied to a local binding");
-  } else if (!expression->type_arguments.empty() && aliases_.contains(expression->text)) {
-    TypeName type{
-        .name = expression->text,
-        .location = expression->location,
-        .kind = TypeName::Kind::Generic,
-        .arguments = expression->type_arguments,
-    };
-    Normalize(type, substitutions);
-    if (type.kind == TypeName::Kind::Named ||
-        (type.kind == TypeName::Kind::Generic && (type.name == "Set" || type.name == "Map"))) {
-      expression->text = type.name;
-      expression->type_arguments = type.arguments;
-    } else {
-      Error(expression->location, "type alias does not name a constructible type");
-    }
-  } else if (!expression->type_arguments.empty() &&
-             (function_templates_.contains(expression->text) ||
-              class_templates_.contains(expression->text))) {
-    expression->text =
-        Instantiate(expression->text, expression->type_arguments, expression->location);
-    expression->type_arguments.clear();
-  } else if (!expression->type_arguments.empty() && !IsBuiltinGenericExpression(*expression)) {
-    Error(expression->location, "type arguments require a generic declaration");
-  }
+  NormalizeExpressionHead(*expression, substitutions, expression->object.get());
   for (auto* child : {
            expression->left.get(),
            expression->right.get(),
@@ -437,8 +361,9 @@ void Specializer::Normalize(Statement* statement, const Substitutions& substitut
   if (statement == nullptr) {
     return;
   }
-  const bool has_scope =
-      statement->kind == Statement::Kind::Block || statement->kind == Statement::Kind::For;
+  const bool has_scope = statement->kind == Statement::Kind::Block ||
+                         statement->kind == Statement::Kind::For ||
+                         statement->kind == Statement::Kind::ForEach;
   if (has_scope) {
     scopes_.emplace_back();
   }
@@ -448,6 +373,13 @@ void Specializer::Normalize(Statement* statement, const Substitutions& substitut
   Normalize(statement->initializer.get(), substitutions);
   Normalize(statement->expression.get(), substitutions);
   Normalize(statement->condition.get(), substitutions);
+  Normalize(statement->iterable.get(), substitutions);
+  if (statement->kind == Statement::Kind::ForEach) {
+    scopes_.back().insert(statement->name);
+    if (statement->destructuring) {
+      scopes_.back().insert(statement->second_name);
+    }
+  }
   NormalizeScoped(statement->then_branch.get(), substitutions);
   NormalizeScoped(statement->else_branch.get(), substitutions);
   NormalizeScoped(statement->finally_branch.get(), substitutions);
@@ -496,6 +428,9 @@ void Specializer::Normalize(Function& function, const Substitutions& substitutio
 }
 
 void Specializer::Normalize(Class& owner, const Substitutions& substitutions) {
+  if (owner.base_class) {
+    Normalize(*owner.base_class, substitutions);
+  }
   for (auto& interface : owner.interfaces) {
     Normalize(interface, substitutions);
   }
@@ -563,8 +498,7 @@ void Specializer::CollectTemplates() {
       Error(function.location, "function name is reserved for a builtin");
     }
     if (function.type_parameters.empty()) {
-      functions_.push_back(std::move(function));
-      function_substitutions_.emplace_back();
+      functions_.push_back({.declaration = std::move(function), .substitutions = {}});
     } else {
       const auto name = function.name;
       function_templates_.emplace(name, std::move(function));
@@ -575,8 +509,7 @@ void Specializer::CollectTemplates() {
       Error(owner.location, "type name is reserved for a builtin");
     }
     if (owner.type_parameters.empty()) {
-      classes_.push_back(std::move(owner));
-      class_substitutions_.emplace_back();
+      classes_.push_back({.declaration = std::move(owner), .substitutions = {}});
     } else {
       const auto name = owner.name;
       class_templates_.emplace(name, std::move(owner));
@@ -610,18 +543,38 @@ Diagnostics Specializer::Run() {
   while (diagnostics_.empty() &&
          (function_index < functions_.size() || class_index < classes_.size())) {
     if (function_index < functions_.size()) {
-      Normalize(functions_.at(function_index), function_substitutions_.at(function_index));
+      auto& pending = functions_.at(function_index);
+      if (pending.source != nullptr) {
+        const auto name = pending.declaration.name;
+        clone_substitutions_ = &pending.substitutions;
+        pending.declaration = CloneFunction(*pending.source, *this);
+        clone_substitutions_ = nullptr;
+        pending.declaration.name = name;
+        pending.declaration.type_parameters.clear();
+      } else {
+        Normalize(pending.declaration, pending.substitutions);
+      }
       ++function_index;
     } else {
-      Normalize(classes_.at(class_index), class_substitutions_.at(class_index));
+      auto& pending = classes_.at(class_index);
+      if (pending.source != nullptr) {
+        const auto name = pending.declaration.name;
+        clone_substitutions_ = &pending.substitutions;
+        pending.declaration = CloneClass(*pending.source, *this);
+        clone_substitutions_ = nullptr;
+        pending.declaration.name = name;
+        pending.declaration.type_parameters.clear();
+      } else {
+        Normalize(pending.declaration, pending.substitutions);
+      }
       ++class_index;
     }
   }
   for (auto& function : functions_) {
-    program_.functions.push_back(std::move(function));
+    program_.functions.push_back(std::move(function.declaration));
   }
   for (auto& owner : classes_) {
-    program_.classes.push_back(std::move(owner));
+    program_.classes.push_back(std::move(owner.declaration));
   }
   return std::move(diagnostics_);
 }

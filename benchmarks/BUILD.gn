@@ -4,8 +4,10 @@ executable("vela_benchmarks") {
     "async_benchmark.cc",
     "byte_data_benchmark.cc",
     "compilation_cache_benchmark.cc",
+    "completion_benchmark.cc",
     "gc_strategy_benchmark.cc",
     "json_benchmark.cc",
+    "liveness_benchmark.cc",
     "native_call_benchmark.cc",
     "native_call_kernels.cc",
     "native_call_kernels.h",
@@ -16,6 +18,7 @@ executable("vela_benchmarks") {
     "regexp_benchmark.cc",
     "repl_benchmark.cc",
     "representative_benchmark.cc",
+    "specialization_benchmark.cc",
     "standard_value_benchmark.cc",
     "standard_value_benchmark.h",
     "symbol_tables_benchmark.cc",
@@ -26,6 +29,7 @@ executable("vela_benchmarks") {
   deps = [
     "//base:json",
     "//compiler",
+    "//compiler:tooling",
     "//third_party:benchmark_main",
     "//third_party:luajit",
     "//third_party:pcre2",
@@ -98,7 +102,11 @@ executable("vela_aot_benchmarks") {
   }
   include_dirs = [ root_gen_dir ]
   benchmark_source = rebase_path("aot_workloads.vela", "")
-  defines = [ "VELA_AOT_BENCHMARK_SOURCE=\"$benchmark_source\"" ]
+  dasprofile_source = rebase_path("dasprofile/workloads.vela", "")
+  defines = [
+    "VELA_AOT_BENCHMARK_SOURCE=\"$benchmark_source\"",
+    "VELA_DASPROFILE_BENCHMARK_SOURCE=\"$dasprofile_source\"",
+  ]
   deps = [
     ":aot_native_inputs",
     ":dasprofile_native_inputs",

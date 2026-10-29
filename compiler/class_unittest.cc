@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <string>
 #include <string_view>
 
 #include "gtest/gtest.h"
@@ -436,6 +437,47 @@ func main(): int {
                                       isolate);
   for (const auto& diagnostic : compiled.diagnostics) {
     ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(ClassInitializationTest, DefaultsUseDeclarationScopeBeforeConstructorParameters) {
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(R"(
+let seed = 40;
+class Generated { value: int = seed; }
+class Explicit { value: int = seed; constructor(seed: int) { this.value += seed; } }
+func main(): int {
+  let seed = 999;
+  return Generated().value + Explicit(seed: 2).value - 40;
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(ClassInitializationTest, OptionalFieldsCrossMaskWordsWithoutAFullFieldArgumentWindow) {
+  std::string source =
+      "class Trace { static calls: int = 0; static next(): int { Trace.calls++; return 0; } } "
+      "class Wide {";
+  constexpr int kFields = 130;
+  for (int index = 0; index < kFields; ++index) {
+    source += "value" + std::to_string(index) + ": int = Trace.next();";
+  }
+  source +=
+      "} func main(): int { const box = Wide(value63: 10, value64: 10, value127: 10, "
+      "value128: 12); return Trace.calls == 126 ? "
+      "box.value63 + box.value64 + box.value127 + box.value128 : 0; }";
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(source, isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.message;
   }
   ASSERT_TRUE(compiled.Succeeded());
   const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));

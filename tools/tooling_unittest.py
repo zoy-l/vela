@@ -949,6 +949,23 @@ class LanguageServerTest(unittest.TestCase):
         self.assertTrue(diagnostics[-1]["diagnostics"])
         self.assertEqual(diagnostics[-1]["diagnostics"][0]["range"]["start"]["line"], 1)
 
+    def test_reports_invalid_utf8_in_unopened_import_with_unicode_prefix(self) -> None:
+        library = self.directory / "bad.vela"
+        prefix = '// 中😀\r\nconst text = "中😀"; '
+        library.write_bytes(prefix.encode('utf-8') + b'\xff')
+        for encoding in ('utf-8', 'utf-16'):
+            with self.subTest(encoding=encoding):
+                messages = self.session([
+                    self.open('import "bad.vela"; func main(): int { return 42; }')
+                ], encoding)
+                diagnostics = self.diagnostics(messages, library.as_uri())[-1]['diagnostics']
+                self.assertTrue(diagnostics)
+                column = prefix.split('\r\n')[-1]
+                expected = (len(column.encode('utf-8')) if encoding == 'utf-8'
+                            else len(column.encode('utf-16-le')) // 2)
+                self.assertEqual(diagnostics[0]['range']['start'],
+                                 {'line': 1, 'character': expected})
+
     def test_unknown_requests_and_invalid_format_params_are_explicit_errors(self) -> None:
         messages = self.session([request("unknown", {}, "unknown"), request("textDocument/formatting", {}, "bad")])
         self.assertEqual(self.reply(messages, "unknown")["error"]["code"], -32601)
@@ -1193,6 +1210,28 @@ class LanguageServerTest(unittest.TestCase):
             self.assertEqual(self.reply(messages, identity)["result"]["range"]["start"]["line"], 0)
         self.assertEqual([item["label"] for item in self.reply(messages, "changed")["result"]], ["newer"])
 
+    def test_repeated_completion_snapshots_do_not_pollute_hover_or_later_edits(self) -> None:
+        source = ("class Box { first: int; second: string; } "
+                  "func main(): void { const box = Box(first: 42, second: 'x'); print(box.first); }")
+        offset = source.index("box.first") + len("box.")
+        changed = source.replace("first", "third")
+        messages = self.session([
+            self.open(source),
+            self.symbol_query("completion", source, offset, "first"),
+            self.symbol_query("completion", source, offset, "repeated"),
+            self.symbol_query("hover", source, source.index("box.first"), "hover"),
+            self.symbol_query("completion", source, offset, "after_hover"),
+            self.change([{"text": changed}]),
+            self.symbol_query("completion", changed, offset, "changed"),
+        ])
+        first = self.reply(messages, "first")["result"]
+        self.assertEqual(first, self.reply(messages, "repeated")["result"])
+        self.assertEqual(first, self.reply(messages, "after_hover")["result"])
+        self.assertEqual({item["label"] for item in first}, {"first", "second"})
+        self.assertIn("Box", self.reply(messages, "hover")["result"]["contents"]["value"])
+        self.assertEqual({item["label"] for item in self.reply(messages, "changed")["result"]},
+                         {"third", "second"})
+
     def test_symbol_queries_negotiate_unicode_positions_and_validate_input(self) -> None:
         source = 'func main(): int { const text = "中😀"; const answer = 42; return answer; }'
         offset = source.index("answer;")
@@ -1251,6 +1290,54 @@ class LanguageServerTest(unittest.TestCase):
             "line": 3, "character": source.splitlines()[3].index("caught:")})
         self.assertEqual(self.reply(messages, "match")["result"]["range"]["start"], {
             "line": 4, "character": source.splitlines()[4].index("matched =>")})
+
+    def test_for_in_bindings_have_distinct_definitions_types_and_body_scopes(self) -> None:
+        source = ("func main(): void {\n"
+                  "  const items = [1];\n"
+                  "  for (const items in items) { print(items); }\n"
+                  "  const pairs = Map<string, int>(); pairs.set('key', 42);\n"
+                  "  for (const [key, value] in pairs) {\n"
+                  "    const capture = (): string => key; print(value);\n"
+                  "  }\n"
+                  "  print(items);\n}")
+        markers = [('iterable', 'in items', 3), ('element', 'print(items)', 6),
+                   ('key', '=> key', 3), ('value', 'print(value)', 6)]
+        messages = self.session([self.open(source), *[
+            self.symbol_query('definition', source, source.index(marker) + skip, identity)
+            for identity, marker, skip in markers],
+            self.symbol_query('hover', source, source.index('print(items)') + 6, 'element-type'),
+            self.symbol_query('hover', source, source.index('=> key') + 3, 'key-type'),
+            self.symbol_query('hover', source, source.index('print(value)') + 6, 'value-type'),
+            self.symbol_query('completion', source, source.index('print(value)'), 'inside'),
+            self.symbol_query('completion', source, source.rindex('print(items)'), 'outside')])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        for identity, line, marker in [('iterable', 1, 'items ='), ('element', 2, 'items in'),
+                                       ('key', 4, 'key,'), ('value', 4, 'value]')]:
+            self.assertEqual(self.reply(messages, identity)['result']['range']['start'], {
+                'line': line, 'character': source.splitlines()[line].index(marker)})
+        for identity, signature in [('element-type', 'const items: int'),
+                                     ('key-type', 'const key: string'),
+                                     ('value-type', 'const value: int')]:
+            self.assertIn(signature, self.reply(messages, identity)['result']['contents']['value'])
+        inside = {item['label']: item for item in self.reply(messages, 'inside')['result']}
+        self.assertEqual(inside['key']['kind'], 21)
+        self.assertEqual(inside['value']['detail'], 'int')
+        outside = {item['label'] for item in self.reply(messages, 'outside')['result']}
+        self.assertNotIn('key', outside)
+        self.assertNotIn('value', outside)
+
+    def test_imported_base_type_resolves_to_its_declaration(self) -> None:
+        library = self.directory / 'base.vela'
+        library.write_text('export class Base<T> { value: T; }\n', encoding='utf-8')
+        source = ("import 'base' as lib;\n"
+                  "class Child<T> extends lib.Base<T> { constructor { super(value: this.extra); } extra: T; }\n"
+                  "func main(): int { return Child<int>(extra: 42).value; }")
+        messages = self.session([self.open(source),
+            self.symbol_query('definition', source, source.index('Base<T>'))])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        target = self.reply(messages, 'query')['result']
+        self.assertEqual(target['uri'], library.as_uri())
+        self.assertEqual(target['range']['start'], {'line': 0, 'character': len('export class ')})
 
     def test_generic_alias_interface_and_chained_member_queries(self) -> None:
         source = ("interface Readable { read(): int; }\n"

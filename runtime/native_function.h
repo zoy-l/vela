@@ -15,6 +15,7 @@
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "runtime/native_abi.h"
+#include "runtime/native_context.h"
 #include "runtime/register_storage.h"
 #include "runtime/value.h"
 
@@ -35,28 +36,6 @@ enum class NativeType : std::uint8_t {
   Future,
   CancellationToken,
 };
-enum class NativeErrorKind : std::uint8_t { Failure, TypeMismatch, OutOfMemory, InvalidUtf8 };
-
-struct NativeError final {
-  NativeErrorKind kind = NativeErrorKind::Failure;
-  std::string message;
-};
-
-using NativeResult = std::expected<Value, NativeError>;
-
-class NativeContext final {
- public:
-  explicit NativeContext(Isolate& isolate) noexcept : isolate_(&isolate) {}
-  [[nodiscard]] Isolate& isolate() const noexcept { return *isolate_; }
-  [[nodiscard]] NativeResult String(std::string_view text) const;
-  [[nodiscard]] std::expected<Value, NativeError> FutureValue(const Future& future) const;
-  [[nodiscard]] Completer CreateCompleter() const;
-  [[nodiscard]] NativeResult CancellationValue(const CancellationToken& token) const;
-
- private:
-  Isolate* isolate_;
-};
-
 namespace internal {
 
 template <class T>
@@ -203,9 +182,32 @@ struct NativeAbiCodec final {
   }
 };
 
-template <class R, class... Args, R (*Function)(NativeContext&, Args...) noexcept>
-struct NativeAdapter<Function> final {
+template <auto Function, class R, class... Args>
+struct NativeAdapterBase {
   using Result = NativeReturn<R>::Type;
+  static constexpr auto kResultType = NativeCodec<Result>::kType;
+  static constexpr bool kDirect =
+      std::is_same_v<R, Result> &&
+      (kResultType == NativeType::Void || kResultType == NativeType::Boolean ||
+       kResultType == NativeType::Integer || kResultType == NativeType::Double);
+  using DirectResult =
+      std::conditional_t<std::is_void_v<R>, void, typename NativeAbiCodec<Result>::Type>;
+  static constexpr bool kNeedsContext =
+      std::is_invocable_v<decltype(Function), NativeContext&, Args...>;
+  static constexpr bool kExactAbi =
+      std::is_same_v<R, DirectResult> &&
+      (std::is_same_v<Args, typename NativeAbiCodec<Args>::Type> && ...);
+  static constexpr bool kDirectContext = kNeedsContext || !kExactAbi;
+
+  static std::vector<NativeType> Parameters() { return {NativeCodec<Args>::kType...}; }
+
+  static R InvokeFunction(NativeContext& context, Args... arguments) noexcept {
+    if constexpr (kNeedsContext) {
+      return Function(context, std::forward<Args>(arguments)...);
+    } else {
+      return Function(std::forward<Args>(arguments)...);
+    }
+  }
 
   template <std::size_t... Indices>
   static NativeResult Invoke(NativeContext& context,
@@ -223,10 +225,10 @@ struct NativeAdapter<Function> final {
 
   static NativeResult InvokeDecoded(NativeContext& context, Args... arguments) {
     if constexpr (std::is_void_v<R>) {
-      Function(context, std::forward<Args>(arguments)...);
+      InvokeFunction(context, std::forward<Args>(arguments)...);
       return Value::Null();
     } else {
-      auto result = Function(context, std::forward<Args>(arguments)...);
+      auto result = InvokeFunction(context, std::forward<Args>(arguments)...);
       if constexpr (std::is_same_v<R, std::expected<Result, NativeError>>) {
         if (!result) {
           return std::unexpected(std::move(result.error()));
@@ -250,33 +252,41 @@ struct NativeAdapter<Function> final {
                               std::uint32_t function,
                               NativeAbiCodec<Args>::Type... arguments,
                               NativeAbiCodec<Result>::Type* output) {
-    NativeContext context(execution->isolate());
-    constexpr auto kResultType = NativeCodec<Result>::kType;
-    if constexpr (std::is_same_v<R, Result> &&
-                  (kResultType == NativeType::Void || kResultType == NativeType::Boolean ||
-                   kResultType == NativeType::Integer || kResultType == NativeType::Double)) {
-      // 精确签名在实例化时验证。不可失败的基本值已是 ABI 表示，无需再装箱为 Value、
-      // 查询结果类型或执行仅用于错误/Future 的完成检查。
-      if constexpr (std::is_void_v<R>) {
-        Function(context, NativeAbiCodec<Args>::Decode(arguments)...);
-        *output = 0;
-      } else {
-        *output = static_cast<NativeAbiCodec<Result>::Type>(
-            Function(context, NativeAbiCodec<Args>::Decode(arguments)...));
-      }
-    } else {
-      auto result = CompleteNativeResult(
-          *execution, function, InvokeDecoded(context, NativeAbiCodec<Args>::Decode(arguments)...));
-      if (!result) {
-        return static_cast<std::uint8_t>(result.error());
-      }
-      *output = NativeAbiCodec<Result>::Encode(*result);
+    auto result = CompleteNativeResult(
+        *execution, function,
+        InvokeDecoded(execution->context(), NativeAbiCodec<Args>::Decode(arguments)...));
+    if (!result) {
+      return static_cast<std::uint8_t>(result.error());
     }
+    *output = NativeAbiCodec<Result>::Encode(*result);
     return static_cast<std::uint8_t>(ExecutionStatus::Returned);
   }
 
-  static constexpr auto kAotEntry = &AotCall;
+  static DirectResult DirectCall(NativeContext& context,
+                                 NativeAbiCodec<Args>::Type... arguments) noexcept {
+    if constexpr (std::is_void_v<R>) {
+      InvokeFunction(context, NativeAbiCodec<Args>::Decode(arguments)...);
+    } else {
+      return static_cast<DirectResult>(
+          InvokeFunction(context, NativeAbiCodec<Args>::Decode(arguments)...));
+    }
+  }
+
+  static constexpr auto DirectEntry() {
+    // 基本标量签名完全一致时直接保留原函数指针；bool 和托管参数仍由 codec 转换。
+    if constexpr (kExactAbi) {
+      return Function;
+    } else {
+      return &DirectCall;
+    }
+  }
 };
+
+template <class R, class... Args, R (*Function)(NativeContext&, Args...) noexcept>
+struct NativeAdapter<Function> final : NativeAdapterBase<Function, R, Args...> {};
+
+template <class R, class... Args, R (*Function)(Args...) noexcept>
+struct NativeAdapter<Function> final : NativeAdapterBase<Function, R, Args...> {};
 
 }  // namespace internal
 
@@ -286,15 +296,34 @@ class NativeFunction final {
   // 指向静态的精确函数指针槽；只擦除槽的对象类型，不转换函数指针类型。
   // 生成代码从槽读取入口，并按实例化时验证的签名调用。
   using AotEntrySlot = const void*;
+  enum class AotCallKind : std::uint8_t { Checked, Direct, DirectWithContext };
+  struct AotEntry final {
+    AotEntrySlot slot = nullptr;
+    AotCallKind kind = AotCallKind::Checked;
+  };
   template <auto Function>
   [[nodiscard]] static NativeFunction Bind(std::string name) {
-    return BindSignature<Function>(std::move(name), Function);
+    using Adapter = internal::NativeAdapter<Function>;
+    static constexpr AotEntry kEntry = [] {
+      if constexpr (Adapter::kDirect) {
+        static constexpr auto kTarget = Adapter::DirectEntry();
+        return AotEntry{
+            .slot = &kTarget,
+            .kind = Adapter::kDirectContext ? AotCallKind::DirectWithContext : AotCallKind::Direct};
+      } else {
+        static constexpr auto kTarget = &Adapter::AotCall;
+        return AotEntry{.slot = &kTarget};
+      }
+    }();
+    return NativeFunction(std::move(name), Adapter::Parameters(),
+                          internal::NativeCodec<typename Adapter::Result>::kType, &Adapter::Call,
+                          kEntry);
   }
 
   [[nodiscard]] std::string_view name() const noexcept { return name_; }
   [[nodiscard]] std::span<const NativeType> parameters() const noexcept { return parameters_; }
   [[nodiscard]] NativeType result_type() const noexcept { return result_type_; }
-  [[nodiscard]] AotEntrySlot aot_entry_slot() const noexcept { return aot_entry_slot_; }
+  [[nodiscard]] const AotEntry& aot_entry() const noexcept { return aot_entry_; }
   [[nodiscard]] bool IsSignatureCompatible(const CallSignature& signature,
                                            std::span<const layout::Type> types) const;
   // 实参数量须等于 parameters().size()，参数窗口须由调用者持续保根。
@@ -302,36 +331,27 @@ class NativeFunction final {
   [[nodiscard]] NativeResult Invoke(Isolate& isolate, RegisterView arguments) const;
 
  private:
-  template <auto Function, class R, class... Args>
-  static NativeFunction BindSignature(std::string name,
-                                      R (* /*unused*/)(NativeContext&, Args...) noexcept) {
-    using Adapter = internal::NativeAdapter<Function>;
-    return NativeFunction(std::move(name), {internal::NativeCodec<Args>::kType...},
-                          internal::NativeCodec<typename Adapter::Result>::kType, &Adapter::Call,
-                          static_cast<const void*>(&Adapter::kAotEntry));
-  }
-
   using Callback = NativeResult (*)(NativeContext&, RegisterView);
   NativeFunction(std::string name,
                  std::vector<NativeType> parameters,
                  NativeType result_type,
                  Callback callback,
-                 AotEntrySlot aot_entry_slot)
+                 AotEntry aot_entry)
       : name_(std::move(name)),
         parameters_(std::move(parameters)),
         result_type_(result_type),
         callback_(callback),
-        aot_entry_slot_(aot_entry_slot) {}
+        aot_entry_(aot_entry) {}
   std::string name_;
   std::vector<NativeType> parameters_;
   NativeType result_type_;
   Callback callback_;
-  AotEntrySlot aot_entry_slot_;
+  AotEntry aot_entry_;
 };
 
 enum class NativeRegistrationError : std::uint8_t { InvalidName, DuplicateName };
 
-extern "C" NativeFunction::AotEntrySlot vela_native_v1_import(NativeExecution* execution,
-                                                              std::uint32_t function) noexcept;
+extern "C" const NativeFunction::AotEntry* vela_native_v1_import(NativeExecution* execution,
+                                                                 std::uint32_t function) noexcept;
 
 }  // namespace vela::runtime

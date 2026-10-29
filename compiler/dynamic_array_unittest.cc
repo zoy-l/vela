@@ -5,7 +5,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
-#include "compiler/frontend/checker.h"
+#include "compiler/frontend/checker_test_support.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "vm/bytecode_image.h"
@@ -141,7 +141,7 @@ TEST(DynamicArrayTest, RejectsImplicitConversionsAndReadonlyLengthOrCapacityWrit
   });
   for (const auto body : invalid) {
     EXPECT_FALSE(
-        frontend::CheckSource("func main(): void { " + std::string(body) + " }").Succeeded())
+        frontend::CheckTestSource("func main(): void { " + std::string(body) + " }").Succeeded())
         << body;
   }
 }

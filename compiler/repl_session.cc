@@ -1,4 +1,5 @@
 #include "compiler/repl_session.h"
+#include "compiler/frontend/ast_clone.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -138,7 +139,8 @@ void ReplSession::Reset() {
   machine_ = std::make_unique<vm::VirtualMachine>(*isolate_);
   compilation_ = {};
   modules_ = {};
-  history_.clear();
+  syntax_.clear();
+  history_.reset();
   user_source_.clear();
   entries_.clear();
   next_line_ = 1;
@@ -208,8 +210,10 @@ std::expected<ReplSession::Prepared, SubmissionResult> ReplSession::Prepare(
     ++current.first_line;
   }
   current.last_line = next_line_ + static_cast<std::uint32_t>(std::ranges::count(addition, '\n'));
-  auto candidate = history_ + addition;
-  auto parsed = frontend::ParseSource(candidate);
+  auto parsed = frontend::ParseSource(addition);
+  for (auto& diagnostic : parsed.diagnostics) {
+    diagnostic.location.line += next_line_ - 1;
+  }
   if (!parsed.diagnostics.empty()) {
     // EOF 缺少函数体、参数或表达式时允许继续输入，内部语法错误立即报告。
     const auto eof_line = current.last_line - (body.declaration ? 2U : 1U);
@@ -223,11 +227,26 @@ std::expected<ReplSession::Prepared, SubmissionResult> ReplSession::Prepare(
     return std::unexpected(
         SubmissionFailure(SubmissionStatus::Rejected, std::move(parsed.diagnostics)));
   }
-  BindEntries(parsed.program, current, body.terminated ? Echo::Suppress : Echo::Display);
+  auto accepted = std::make_shared<const frontend::Program>(
+      frontend::CloneProgram(parsed.program, {.line = next_line_}));
+  frontend::Program candidate;
+  for (const auto& fragment : syntax_) {
+    frontend::AppendProgram(candidate, frontend::CloneProgram(*fragment, {}));
+  }
+  frontend::AppendProgram(candidate, frontend::CloneProgram(*accepted, {}));
+  BindEntries(candidate, current, body.terminated ? Echo::Suppress : Echo::Display);
+  auto text = history_ ? history_->text : std::string();
+  text += addition;
   return Prepared{
       .entry = current,
-      .source = std::move(candidate),
-      .program = std::move(parsed.program),
+      .addition = std::move(accepted),
+      .parsed = {.source = std::make_shared<const frontend::SourceSnapshot>(
+                     frontend::SourceSnapshot{.text = std::move(text),
+                                              .tokens = {},
+                                              .comments = {},
+                                              .imports = candidate.imports}),
+                 .program = std::move(candidate),
+                 .diagnostics = {}},
   };
 }
 
@@ -271,8 +290,11 @@ void ReplSession::BindEntries(frontend::Program& program, const Entry& current, 
 CompileResult ReplSession::Compile(Prepared& prepared,
                                    CompilationState& compilation,
                                    frontend::ModuleCache& modules) {
-  auto loaded = frontend::LoadPreparedProgram(PathText(path_), std::move(prepared.program),
-                                              prepared.source, modules);
+  auto loaded = frontend::LoadPreparedProgram(PathText(path_),
+                                              {.source = prepared.parsed.source,
+                                               .program = std::move(prepared.parsed.program),
+                                               .diagnostics = {}},
+                                              modules);
   auto diagnostics = std::move(loaded.diagnostics);
   if (diagnostics.empty()) {
     diagnostics = frontend::SpecializeGenerics(loaded.program);
@@ -310,7 +332,8 @@ SubmissionResult ReplSession::Submit(std::string_view source) {
   program_ = std::move(compiled.program);
   compilation_ = std::move(compilation);
   modules_ = std::move(modules);
-  history_ = std::move(prepared->source);
+  syntax_.push_back(std::move(prepared->addition));
+  history_ = std::move(prepared->parsed.source);
   user_source_ += source;
   user_source_ += '\n';
   const auto entry = program_.FindFunction("$repl" + std::to_string(current.submission));

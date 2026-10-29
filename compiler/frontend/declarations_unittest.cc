@@ -2,7 +2,7 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/frontend/checker.h"
+#include "compiler/frontend/checker_test_support.h"
 
 namespace vela::frontend {
 namespace {
@@ -10,7 +10,7 @@ namespace {
 class DeclarationErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(DeclarationErrorTest, RejectsInvalidDeclarationsAndConstWrites) {
-  EXPECT_FALSE(CheckSource(GetParam()).Succeeded());
+  EXPECT_FALSE(CheckTestSource(GetParam()).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -60,13 +60,13 @@ func main(): int {
   return values[1];
 }
 )";
-  EXPECT_TRUE(CheckSource(source).Succeeded());
+  EXPECT_TRUE(CheckTestSource(source).Succeeded());
 }
 
 class EnumMemberSyntaxTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(EnumMemberSyntaxTest, RejectsUnqualifiedEnumMembers) {
-  const auto result = CheckSource(GetParam());
+  const auto result = CheckTestSource(GetParam());
   EXPECT_FALSE(result.Succeeded());
   ASSERT_FALSE(result.diagnostics.empty());
   EXPECT_EQ(result.diagnostics.front().message, "expected expression");

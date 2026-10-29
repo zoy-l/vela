@@ -163,6 +163,8 @@ std::expected<void, std::string> LanguageServer::Close(const yyjson_val* params)
     return std::unexpected("document is not open");
   }
   ClearDiagnostics(*uri);
+  // 关闭后重新从磁盘读取；不能把未保存的 overlay 固定成后续依赖快照。
+  modules_.sources.erase(found->second.path);
   documents_.erase(found);
   published_.erase(std::string(*uri));
   PublishDiagnostics();

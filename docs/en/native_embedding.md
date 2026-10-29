@@ -11,8 +11,7 @@ Vela uses explicit VM frames and recoverable error results. C++ exceptions,
 Register functions on the owning isolate before compilation:
 
 ```cpp
-std::int64_t Add(vela::runtime::NativeContext&, std::int64_t left,
-                 std::int64_t right) noexcept {
+std::int64_t Add(std::int64_t left, std::int64_t right) noexcept {
   return left + right;
 }
 
@@ -39,6 +38,12 @@ types additionally include `void` and owned `std::string`. A function may return
 be `noexcept`; host arithmetic and resource failures remain the host's
 responsibility. An `int`, `float`, nullable value, or differently shaped signature
 is never silently converted to match a binding.
+
+Functions that need the Isolate, allocation or asynchronous operations take
+`NativeContext&` as their first parameter. Ordinary C++ functions may omit it;
+`Bind` derives the same script signature in either form. In AOT, plain scalar
+results return in registers. Exact scalar signatures call the original function
+pointer directly, while codecs and fallible results retain the required adapters.
 
 An explicitly nullable string return uses `std::optional<std::string>` (or an
 expected containing it), and the declaration must return `string?`. Other types

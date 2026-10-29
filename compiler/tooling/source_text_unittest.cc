@@ -62,5 +62,31 @@ TEST(SourceTextTest, EmptyDocumentHasOneLineAndClampsEndPositions) {
   EXPECT_EQ(source.PositionAt(1000, PositionEncoding::Utf16), TextPosition());
 }
 
+TEST(SourceTextTest, MapsCompilerByteColumnsThroughTheSharedIndex) {
+  const auto source = SourceText::Create("first\r\na中😀z\r\n");
+  ASSERT_TRUE(source);
+  const SourceLocation location{.line = 2, .column = 9};
+  EXPECT_EQ(source->PositionAt(location, PositionEncoding::Utf8),
+            (TextPosition{.line = 1, .character = 8}));
+  EXPECT_EQ(source->PositionAt(location, PositionEncoding::Utf16),
+            (TextPosition{.line = 1, .character = 4}));
+  EXPECT_EQ(source->PositionAt(SourceLocation{.line = 2, .column = 100}, PositionEncoding::Utf16),
+            (TextPosition{.line = 1, .character = 5}));
+}
+
+TEST(SourceTextTest, IndexesInvalidDiskBytesWithoutAcceptingThemAsEditorText) {
+  std::string text = "中😀";
+  text.push_back(static_cast<char>(0xff));
+  text.push_back(static_cast<char>(0xf0));
+  text += "\r\nnext";
+  EXPECT_FALSE(SourceText::Create(text));
+  const SourceLineIndex index(text);
+  EXPECT_EQ(
+      index.PositionAt(text, SourceLocation{.line = 1, .column = 10}, PositionEncoding::Utf16),
+      (TextPosition{.line = 0, .character = 5}));
+  EXPECT_EQ(index.PositionAt(text, SourceLocation{.line = 2}, PositionEncoding::Utf8),
+            (TextPosition{.line = 1, .character = 0}));
+}
+
 }  // namespace
 }  // namespace vela::tooling

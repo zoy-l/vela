@@ -18,6 +18,7 @@
 #include "base/file.h"
 #include "base/path.h"
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/ast_clone.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/module_binding.h"
 #include "compiler/frontend/parser.h"
@@ -28,14 +29,22 @@ namespace vela::frontend {
 namespace {
 
 enum class SourceOrigin : std::uint8_t { Files, Memory };
+// 单次加载直接转移 AST；跨根或会话缓存保留未绑定模板，每个绑定上下文独立克隆。
+enum class SyntaxRetention : std::uint8_t { Transfer, Cache };
+
+struct ResolvedPath final {
+  std::filesystem::path canonical;
+  std::string requested_key;
+};
 
 class ModuleLoader final {
  public:
   ModuleLoader(SourceOrigin origin,
                std::span<const SourceInput> inputs,
                ModuleCache& cache,
+               SyntaxRetention retention,
                SourceLoadMode mode = SourceLoadMode::Compilation)
-      : origin_(origin), mode_(mode), cache_(&cache) {
+      : origin_(origin), mode_(mode), retention_(retention), cache_(&cache) {
     for (const auto& input : inputs) {
       if (input.path.starts_with(kStandardSourcePrefix)) {
         Error(SourceLocation(), std::string(input.path),
@@ -45,30 +54,32 @@ class ModuleLoader final {
       const auto path = Normalize(Utf8Path(input.path));
       if (!path) {
         Error(SourceLocation(), std::string(input.path), path.error());
-      } else if (!overlays_.emplace(PathText(*path), input.text).second) {
+      } else if (!overlays_.emplace(PathText(path->canonical), input.text).second) {
         Error(SourceLocation(), std::string(input.path), "duplicate module source path");
       }
     }
   }
 
-  ParseResult Run(std::string_view entry);
-  ParseResult RunPrepared(std::string_view entry, Program root, std::string source);
+  ModuleGraph Run(std::string_view entry);
+  ModuleGraph RunPrepared(std::string_view entry, ParsedSource source);
 
  private:
-  [[nodiscard]] std::expected<std::filesystem::path, std::string> Normalize(
+  [[nodiscard]] std::expected<ResolvedPath, std::string> Normalize(
       const std::filesystem::path& path) const;
-  [[nodiscard]] std::expected<std::string, std::string> Read(const std::filesystem::path& path,
-                                                             const std::string& key) const;
+  [[nodiscard]] std::expected<ParsedSource, std::string> Read(const std::filesystem::path& path,
+                                                              const std::string& key,
+                                                              std::uint32_t source_id) const;
   std::optional<std::uint32_t> Load(const std::filesystem::path& file,
                                     SourceLocation location,
                                     const std::string& importer);
   void LoadDependencies(std::size_t index);
-  std::optional<std::uint32_t> ParseModule(const std::string& key, std::string source);
+  std::optional<std::uint32_t> ParseModule(const std::string& key, ParsedSource source);
   void Error(SourceLocation location, const std::string& path, std::string message);
-  ParseResult Finish();
+  ModuleGraph Finish();
 
   SourceOrigin origin_;
   SourceLoadMode mode_;
+  SyntaxRetention retention_;
   absl::flat_hash_map<std::string, std::string_view> overlays_;
   absl::flat_hash_map<std::string, std::uint32_t> ids_;
   std::vector<SourceModule> modules_;
@@ -84,74 +95,82 @@ void ModuleLoader::Error(SourceLocation location, const std::string& path, std::
       {.location = location, .message = std::move(message), .source_path = path});
 }
 
-std::expected<std::filesystem::path, std::string> ModuleLoader::Normalize(
+std::expected<ResolvedPath, std::string> ModuleLoader::Normalize(
     const std::filesystem::path& path) const {
   if (origin_ == SourceOrigin::Memory) {
-    return path.lexically_normal();
+    return ResolvedPath{.canonical = path.lexically_normal(), .requested_key = {}};
   }
   std::error_code error;
-  const auto requested = std::filesystem::absolute(path, error).lexically_normal();
+  const auto requested = std::filesystem::absolute(path, error);
   if (error) {
     return std::unexpected("cannot identify source path: " + error.message());
   }
-  const auto requested_key = PathText(requested);
+  auto requested_key = PathText(requested.lexically_normal());
   if (const auto found = cache_->resolutions.find(requested_key);
       found != cache_->resolutions.end()) {
-    return Utf8Path(found->second);
+    return ResolvedPath{.canonical = Utf8Path(found->second),
+                        .requested_key = std::move(requested_key)};
   }
-  auto canonical = std::filesystem::weakly_canonical(path, error);
+  auto canonical = std::filesystem::weakly_canonical(requested, error);
   if (error) {
     return std::unexpected("cannot resolve source path: " + error.message());
   }
   cache_->resolutions.emplace(requested_key, PathText(canonical));
-  return canonical;
+  return ResolvedPath{.canonical = std::move(canonical), .requested_key = std::move(requested_key)};
 }
 
-std::expected<std::string, std::string> ModuleLoader::Read(const std::filesystem::path& path,
-                                                           const std::string& key) const {
+std::expected<ParsedSource, std::string> ModuleLoader::Read(const std::filesystem::path& path,
+                                                            const std::string& key,
+                                                            std::uint32_t source_id) const {
+  const auto instantiate = [source_id](const ParsedSource& source) -> ParsedSource {
+    return {.source = source.source,
+            .program = CloneProgram(source.program, {.source_id = source_id}),
+            .diagnostics = source.diagnostics};
+  };
   const auto overlay = overlays_.find(key);
+  const auto cached = cache_->sources.find(key);
+  if (cached != cache_->sources.end() &&
+      (overlay == overlays_.end() || cached->second->source->text == overlay->second)) {
+    return instantiate(*cached->second);
+  }
+  std::string text;
   if (overlay != overlays_.end()) {
-    return std::string(overlay->second);
+    text = overlay->second;
+  } else {
+    if (origin_ == SourceOrigin::Memory) {
+      return std::unexpected("source module was not supplied: '" + key + "'");
+    }
+    const auto bytes = ReadBinaryFile(path);
+    if (!bytes) {
+      return std::unexpected(bytes.error());
+    }
+    const void* storage = bytes->data();
+    text.assign(static_cast<const char*>(storage), bytes->size());
   }
-  if (origin_ == SourceOrigin::Memory) {
-    return std::unexpected("source module was not supplied: '" + key + "'");
+  if (retention_ == SyntaxRetention::Transfer) {
+    return ParseSourceSnapshot(std::move(text), source_id);
   }
-  if (const auto found = cache_->sources.find(key); found != cache_->sources.end()) {
-    return *found->second;
-  }
-  const auto bytes = ReadBinaryFile(path);
-  if (!bytes) {
-    return std::unexpected(bytes.error());
-  }
-  const void* storage = bytes->data();
-  std::string source(static_cast<const char*>(storage), bytes->size());
-  cache_->sources.emplace(key, std::make_shared<const std::string>(source));
-  return source;
+  auto parsed = std::make_shared<const ParsedSource>(ParseSourceSnapshot(std::move(text)));
+  cache_->sources.insert_or_assign(key, parsed);
+  return instantiate(*parsed);
 }
 
 std::optional<std::uint32_t> ModuleLoader::Load(const std::filesystem::path& file,
                                                 SourceLocation location,
                                                 const std::string& importer) {
-  const auto canonical = Normalize(file);
-  if (!canonical) {
-    Error(location, importer, canonical.error());
+  auto resolved = Normalize(file);
+  if (!resolved) {
+    Error(location, importer, resolved.error());
     return std::nullopt;
   }
-  const auto key = PathText(*canonical);
+  const auto key = PathText(resolved->canonical);
   if (origin_ == SourceOrigin::Files) {
-    std::error_code error;
-    const auto requested = std::filesystem::absolute(file, error).lexically_normal();
-    if (error) {
-      Error(location, importer, "cannot identify requested source path: " + error.message());
-      return std::nullopt;
-    }
-    const auto requested_key = PathText(requested);
-    resolutions_.try_emplace(requested_key, key);
+    resolutions_.try_emplace(std::move(resolved->requested_key), key);
   }
   if (const auto found = ids_.find(key); found != ids_.end()) {
     return found->second;
   }
-  auto source = Read(*canonical, key);
+  auto source = Read(resolved->canonical, key, static_cast<std::uint32_t>(modules_.size()));
   if (!source) {
     Error(location, importer, source.error());
     return std::nullopt;
@@ -159,13 +178,15 @@ std::optional<std::uint32_t> ModuleLoader::Load(const std::filesystem::path& fil
   return ParseModule(key, std::move(*source));
 }
 
-std::optional<std::uint32_t> ModuleLoader::ParseModule(const std::string& key, std::string source) {
+std::optional<std::uint32_t> ModuleLoader::ParseModule(const std::string& key,
+                                                       ParsedSource source) {
   const auto source_id = static_cast<std::uint32_t>(modules_.size());
-  sources_.push_back({.path = key, .text = std::move(source)});
-  auto parsed = ParseSource(sources_.back().text, source_id);
-  if (!parsed.diagnostics.empty()) {
+  const auto& snapshot = source.source;
+  sources_.push_back({.path = key, .text = snapshot->text, .syntax = snapshot});
+  if (!source.diagnostics.empty()) {
     auto& diagnostics = mode_ == SourceLoadMode::Editor ? syntax_diagnostics_ : diagnostics_;
-    for (auto& diagnostic : parsed.diagnostics) {
+    for (auto diagnostic : source.diagnostics) {
+      diagnostic.location.source_id = source_id;
       diagnostic.source_path = key;
       diagnostics.push_back(std::move(diagnostic));
     }
@@ -177,7 +198,7 @@ std::optional<std::uint32_t> ModuleLoader::ParseModule(const std::string& key, s
   const auto binding =
       cache_->binding_ids.try_emplace(key, static_cast<std::uint32_t>(cache_->binding_ids.size()));
   modules_.push_back({
-      .program = std::move(parsed.program),
+      .program = std::move(source.program),
       .dependencies = {},
       .binding_id = binding.first->second,
   });
@@ -207,7 +228,7 @@ void ModuleLoader::LoadDependencies(std::size_t index) {
   modules_.at(index).dependencies = std::move(dependencies);
 }
 
-ParseResult ModuleLoader::Run(std::string_view entry) {
+ModuleGraph ModuleLoader::Run(std::string_view entry) {
   if (diagnostics_.empty()) {
     const auto path = Utf8Path(entry);
     std::error_code error;
@@ -221,44 +242,60 @@ ParseResult ModuleLoader::Run(std::string_view entry) {
   return Finish();
 }
 
-ParseResult ModuleLoader::RunPrepared(std::string_view entry, Program root, std::string source) {
+ModuleGraph ModuleLoader::RunPrepared(std::string_view entry, ParsedSource source) {
   const auto path = Normalize(Utf8Path(entry));
   if (!path) {
     Error(SourceLocation(), std::string(entry), path.error());
     return Finish();
   }
-  const auto key = PathText(*path);
+  const auto key = PathText(path->canonical);
   ids_.emplace(key, 0);
   cache_->binding_ids.try_emplace(key, 0);
-  sources_.push_back({.path = key, .text = std::move(source)});
-  modules_.push_back({.program = std::move(root), .dependencies = {}, .binding_id = 0});
+  const auto& snapshot = source.source;
+  sources_.push_back({.path = key, .text = snapshot->text, .syntax = snapshot});
+  modules_.push_back({.program = std::move(source.program), .dependencies = {}, .binding_id = 0});
   return Finish();
 }
 
-ParseResult ModuleLoader::Finish() {
+ModuleGraph ModuleLoader::Finish() {
   for (std::size_t index = 0; index < modules_.size() && diagnostics_.empty(); ++index) {
     LoadDependencies(index);
   }
-  if (!diagnostics_.empty()) {
-    Program failed;
-    failed.sources = std::move(sources_);
-    return {.program = std::move(failed), .diagnostics = std::move(diagnostics_)};
-  }
-  auto result = BindModules(std::move(modules_), std::move(sources_));
-  for (auto& diagnostic : AddStandardEnvironment(result.program)) {
-    result.diagnostics.push_back(std::move(diagnostic));
-  }
-  for (auto& diagnostic : syntax_diagnostics_) {
-    result.diagnostics.push_back(std::move(diagnostic));
-  }
+  std::vector<FileResolution> resolutions;
+  resolutions.reserve(resolutions_.size());
   for (auto& [requested, canonical] : resolutions_) {
-    result.program.file_resolutions.push_back(
-        {.requested_path = requested, .canonical_path = std::move(canonical)});
+    resolutions.push_back({.requested_path = requested, .canonical_path = std::move(canonical)});
   }
-  return result;
+  return {.modules = std::move(modules_),
+          .sources = std::move(sources_),
+          .file_resolutions = std::move(resolutions),
+          .diagnostics = std::move(diagnostics_),
+          .syntax_diagnostics = std::move(syntax_diagnostics_)};
 }
 
 }  // namespace
+
+ModuleGraph LoadModuleGraph(std::string_view path) {
+  ModuleCache cache;
+  return ModuleLoader(SourceOrigin::Files, {}, cache, SyntaxRetention::Transfer).Run(path);
+}
+
+ParseResult BindModuleGraph(ModuleGraph graph) {
+  if (!graph.diagnostics.empty()) {
+    Program failed;
+    failed.sources = std::move(graph.sources);
+    return {.program = std::move(failed), .diagnostics = std::move(graph.diagnostics)};
+  }
+  auto result = BindModules(std::move(graph.modules), std::move(graph.sources));
+  for (auto& diagnostic : AddStandardEnvironment(result.program)) {
+    result.diagnostics.push_back(std::move(diagnostic));
+  }
+  for (auto& diagnostic : graph.syntax_diagnostics) {
+    result.diagnostics.push_back(std::move(diagnostic));
+  }
+  result.program.file_resolutions = std::move(graph.file_resolutions);
+  return result;
+}
 
 std::filesystem::path ResolveImportPath(const std::filesystem::path& importer,
                                         std::filesystem::path imported) {
@@ -272,20 +309,28 @@ ParseResult LoadProgram(std::string_view path,
                         std::span<const SourceInput> overlays,
                         SourceLoadMode mode) {
   ModuleCache cache;
-  return ModuleLoader(SourceOrigin::Files, overlays, cache, mode).Run(path);
+  return BindModuleGraph(
+      ModuleLoader(SourceOrigin::Files, overlays, cache, SyntaxRetention::Transfer, mode)
+          .Run(path));
+}
+
+ParseResult LoadProgram(std::string_view path,
+                        ModuleCache& cache,
+                        std::span<const SourceInput> overlays,
+                        SourceLoadMode mode) {
+  return BindModuleGraph(
+      ModuleLoader(SourceOrigin::Files, overlays, cache, SyntaxRetention::Cache, mode).Run(path));
 }
 
 ParseResult LoadSources(std::span<const SourceInput> sources, std::string_view entry) {
   ModuleCache cache;
-  return ModuleLoader(SourceOrigin::Memory, sources, cache).Run(entry);
+  return BindModuleGraph(
+      ModuleLoader(SourceOrigin::Memory, sources, cache, SyntaxRetention::Transfer).Run(entry));
 }
 
-ParseResult LoadPreparedProgram(std::string_view path,
-                                Program root,
-                                std::string source,
-                                ModuleCache& cache) {
-  return ModuleLoader(SourceOrigin::Files, {}, cache)
-      .RunPrepared(path, std::move(root), std::move(source));
+ParseResult LoadPreparedProgram(std::string_view path, ParsedSource source, ModuleCache& cache) {
+  return BindModuleGraph(ModuleLoader(SourceOrigin::Files, {}, cache, SyntaxRetention::Cache)
+                             .RunPrepared(path, std::move(source)));
 }
 
 }  // namespace vela::frontend

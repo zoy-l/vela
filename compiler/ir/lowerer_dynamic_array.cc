@@ -92,8 +92,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
       .index = static_cast<std::uint32_t>(Builtin::ArrayLength),
       .location = {},
   });
-  const auto guard = AllocateRegister({});
-  static_cast<void>(AllocateRegister({}));
+  const auto guard = AllocateRegisterWindow(2, {});
   Emit({.opcode = Opcode::Move, .dst = guard, .lhs = 0, .location = {}});
   Emit({
       .opcode = Opcode::BuiltinCall,

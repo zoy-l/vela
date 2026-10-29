@@ -38,12 +38,16 @@ TEST(NativeAbiTest, ValueCodecsPreservePayloadBitsAndClearReservedFields) {
   ASSERT_NE(string, nullptr);
   const auto nan = std::bit_cast<double>(std::uint64_t{0x7ff8000000000042});
   const auto values = std::to_array<Value>({
-      Value::Null(), Value::Boolean(false), Value::Boolean(true),
+      Value::Null(),
+      Value::Boolean(false),
+      Value::Boolean(true),
       Value::Integer(std::numeric_limits<std::int64_t>::min()),
       Value::Integer(std::numeric_limits<std::int64_t>::max()),
-      Value::Double(-0.0), Value::Double(nan),
+      Value::Double(-0.0),
+      Value::Double(nan),
       Value::Double(std::numeric_limits<double>::infinity()),
-      Value::Object(object), Value::String(string),
+      Value::Object(object),
+      Value::String(string),
   });
   for (const auto value : values) {
     auto encoded = EncodeNativeValue(value);
@@ -211,8 +215,8 @@ TEST(NativeAbiTest, ScalarLeafEntryDoesNotMaterializeAFrame) {
 TEST(NativeAbiTest, LeafFailureRetainsBorrowedRootsDuringExceptionAllocationAndReleasesThem) {
   Isolate isolate(1);
   auto image = EmptyImage();
-  const NativeFunctionDescription function;
-  image.functions = {.data = &function, .size = 1};
+  const std::array<NativeFunctionDescription, 2> functions;
+  image.functions = {.data = functions.data(), .size = functions.size()};
   const auto instance = NativeInstance::Instantiate(isolate, image);
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
@@ -222,16 +226,18 @@ TEST(NativeAbiTest, LeafFailureRetainsBorrowedRootsDuringExceptionAllocationAndR
   auto* string = heap.AllocateString("retained only by the cold leaf root range");
   ASSERT_NE(string, nullptr);
   const std::array roots{Value::String(string)};
-  const TracePosition position{.function = 0, .instruction = 7};
-  EXPECT_EQ(static_cast<ExecutionStatus>(vela_native_v1_leaf_failure(
-                &execution, &position, static_cast<std::uint8_t>(ExecutionStatus::IndexOutOfBounds),
-                roots.data(), roots.size())),
+  const TracePosition position{.function = 1, .instruction = 7};
+  EXPECT_EQ(static_cast<ExecutionStatus>(vela_native_v2_leaf_failure(
+                &execution, EncodeNativeTracePosition(position),
+                static_cast<std::uint8_t>(ExecutionStatus::IndexOutOfBounds), roots.data(),
+                roots.size())),
             ExecutionStatus::IndexOutOfBounds);
   EXPECT_EQ(string->value(), "retained only by the cold leaf root range");
   EXPECT_EQ(execution.frame_count(), 0U);
   ASSERT_TRUE(execution.HasException());
   const auto& error = ExceptionData::From(*execution.pending_exception().AsObject());
   ASSERT_EQ(error.trace().size(), 1U);
+  EXPECT_EQ(error.trace().front().function, position.function);
   EXPECT_EQ(error.trace().front().instruction, position.instruction);
   static_cast<void>(execution.TakeException());
   heap.Collect();

@@ -11,6 +11,7 @@
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/lexer.h"
 #include "compiler/frontend/token.h"
 
 namespace vela::frontend {
@@ -19,6 +20,21 @@ struct ParseResult final {
   Program program;
   Diagnostics diagnostics;
 };
+
+struct SourceSnapshot final {
+  std::string text;
+  std::vector<Token> tokens;
+  std::vector<SourceComment> comments;
+  std::vector<Program::Import> imports;
+};
+
+struct ParsedSource final {
+  std::shared_ptr<const SourceSnapshot> source;
+  Program program;
+  Diagnostics diagnostics;
+};
+
+[[nodiscard]] ParsedSource ParseSourceSnapshot(std::string source, std::uint32_t source_id = 0);
 
 [[nodiscard]] ParseResult ParseSource(std::string_view source, std::uint32_t source_id = 0);
 void AppendProgram(Program& destination, Program source);
@@ -75,7 +91,8 @@ class Parser final {
   std::optional<Program::TypeAlias> ParseTypeAlias();
   std::vector<std::string> ParseTypeParameters();
   std::vector<TypeName> ParseTypeArguments();
-  [[nodiscard]] bool IsTypeApplication() const;
+  [[nodiscard]] bool IsTypeApplication();
+  void IndexTypeApplications();
   bool MatchTypeGreater();
   [[nodiscard]] bool IsVariableDeclaration() const;
   std::unique_ptr<Statement> ParseBlock();
@@ -94,16 +111,8 @@ class Parser final {
   std::unique_ptr<Expression> ParseExpression();
   std::unique_ptr<Expression> ParseAssignment();
   std::unique_ptr<Expression> ParseConditional();
-  std::unique_ptr<Expression> ParseEquality();
-  std::unique_ptr<Expression> ParseLogicalOr();
-  std::unique_ptr<Expression> ParseLogicalAnd();
-  std::unique_ptr<Expression> ParseBitwiseOr();
-  std::unique_ptr<Expression> ParseBitwiseXor();
-  std::unique_ptr<Expression> ParseBitwiseAnd();
+  std::unique_ptr<Expression> ParseBinary(std::uint8_t minimum_precedence = 1);
   std::unique_ptr<Expression> ParseRelational();
-  std::unique_ptr<Expression> ParseShift();
-  std::unique_ptr<Expression> ParseAdditive();
-  std::unique_ptr<Expression> ParseMultiplicative();
   std::unique_ptr<Expression> ParseUnary();
   std::unique_ptr<Expression> ParsePostfix();
   bool ParsePostfixTypeApplication(std::unique_ptr<Expression>& expression);
@@ -125,6 +134,7 @@ class Parser final {
   std::span<Token> tokens_;
   std::size_t current_ = 0;
   std::size_t pending_type_greater_ = 0;
+  std::vector<std::size_t> type_application_ends_;
   Diagnostics diagnostics_;
   std::size_t type_parse_depth_ = 0;
   std::size_t last_type_depth_ = 0;

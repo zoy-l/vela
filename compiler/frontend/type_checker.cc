@@ -254,7 +254,7 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
 void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner) {
   owner_ = owner;
   in_async_function_ = function.is_async;
-  refinements_.clear();
+  refinements_.Clear();
   constant_bindings_.clear();
   Type return_type;
   FunctionInfo accessor_info;
@@ -297,7 +297,6 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
     const auto type =
         function_info->parameters.at(function_info->parameter_indices.at(parameter.name)).type;
     DeclareLocal(parameter.name, type, parameter.location, BindingKind::Mutable, &parameter);
-    bindings_.emplace(&parameter, LookupLocal(parameter.name)->id);
   }
   if (function.body) {
     const auto flow = CheckSequence(*function.body, return_type);
@@ -760,8 +759,8 @@ TypeChecker::Type TypeChecker::LookupName(const Expression& expression) {
   const auto* local = LookupLocal(expression.text);
   if (local != nullptr) {
     CaptureLocal(expression, *local);
-    const auto refined = refinements_.find(local->id);
-    return refined != refinements_.end() ? refined->second : local->type;
+    const auto* refined = refinements_.Find(local->id);
+    return refined == nullptr ? local->type : *refined;
   }
   if (globals_.contains(expression.text)) {
     return ResolveGlobal(expression.text);
@@ -789,7 +788,7 @@ void TypeChecker::BeginScope() {
 
 void TypeChecker::EndScope() {
   for (const auto& [name, binding] : scopes_.back()) {
-    refinements_.erase(binding.id);
+    refinements_.Erase(binding.id);
   }
   scopes_.pop_back();
 }
@@ -819,6 +818,9 @@ bool TypeChecker::DeclareLocal(std::string_view name,
   }
   if (captured_declarations_.contains(declaration)) {
     captured_mutables_.insert(binding_id);
+  }
+  if (declaration != nullptr) {
+    bindings_.emplace(declaration, binding_id);
   }
   return true;
 }
@@ -855,9 +857,6 @@ void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
   local_types_.insert_or_assign(&statement, type);
   const auto declared =
       DeclareLocal(statement.name, type, statement.location, statement.binding, &statement);
-  if (declared) {
-    bindings_.emplace(&statement, LookupLocal(statement.name)->id);
-  }
   if (statement.binding == BindingKind::Constant) {
     const auto* local = LookupLocal(statement.name);
     if (declared && constant && local != nullptr) {
@@ -1047,8 +1046,16 @@ TypeChecker::Type TypeChecker::CheckUnary(const Expression& expression) {
 TypeChecker::Type TypeChecker::CheckConditional(const Expression& expression) {
   const auto condition = CheckExpression(*expression.operand, nullptr);
   CheckBooleanOperand(*expression.operand, condition, "conditional condition must be bool");
+  const auto true_branch = refinements_.BeginBranch();
+  RefineCondition(*expression.operand, ConditionTruth::AlwaysTrue);
   auto when_true = CheckExpression(*expression.left, nullptr);
+  auto true_facts = refinements_.Capture(true_branch);
+  const auto false_branch = refinements_.BeginBranch();
+  RefineCondition(*expression.operand, ConditionTruth::AlwaysFalse);
   auto when_false = CheckExpression(*expression.right, nullptr);
+  const auto false_facts = refinements_.Capture(false_branch);
+  refinements_.Intersect(true_facts, false_facts);
+  refinements_.Apply(true_facts);
   if ((when_true.kind == Type::Kind::Dynamic || when_false.kind == Type::Kind::Dynamic) &&
       when_true.kind != Type::Kind::Void && when_false.kind != Type::Kind::Void) {
     const Type dynamic{.kind = Type::Kind::Dynamic, .name = "dynamic"};
@@ -1093,7 +1100,7 @@ TypeChecker::Type TypeChecker::CheckCompoundAssignment(const Expression& express
     RecordConversion(*expression.right, left, right);
     if (expression.left->kind == Expression::Kind::Name) {
       if (const auto* binding = LookupLocal(expression.left->text)) {
-        refinements_.erase(binding->id);
+        refinements_.Erase(binding->id);
       }
     }
     return left.kind == Type::Kind::Dynamic
@@ -1154,15 +1161,18 @@ TypeChecker::Type TypeChecker::CheckBinary(const Expression& expression) {
     return CheckCompoundAssignment(expression);
   }
   Type left = CheckExpression(*expression.left, nullptr);
-  const auto after_left = refinements_;
   const bool logical = expression.text == "&&" || expression.text == "||";
+  std::optional<Refinements::Checkpoint> after_left;
   if (logical) {
+    after_left = refinements_.BeginBranch();
     RefineCondition(*expression.left, expression.text == "&&" ? ConditionTruth::AlwaysTrue
                                                               : ConditionTruth::AlwaysFalse);
   }
   const Type right = CheckExpression(*expression.right, nullptr);
   if (logical) {
-    refinements_ = IntersectFacts(after_left, refinements_);
+    auto changes = refinements_.Capture(*after_left);
+    refinements_.Intersect(changes, {});
+    refinements_.Apply(changes);
   }
   if (!IsValid(left) || !IsValid(right)) {
     return InvalidType();
@@ -1330,9 +1340,9 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
   const Type right = CheckExpression(*expression.right, &left);
   RecordConversion(*expression.right, left, right);
   if (binding != nullptr) {
-    refinements_.erase(binding->id);
+    refinements_.Erase(binding->id);
     if (IsValid(right) && right.kind != Type::Kind::Null && !right.nullable) {
-      refinements_.insert_or_assign(binding->id, NonNullable(left));
+      refinements_.Set(binding->id, NonNullable(left));
     }
   }
   if (IsValid(left) && IsValid(right) && !CanAssign(left, right)) {

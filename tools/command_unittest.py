@@ -212,6 +212,22 @@ func main(): void {
         self.command("doc", self.entry, output, expected=65)
         self.assertEqual(output.read_bytes(), original)
 
+    def test_documentation_preserves_import_prefixes_and_unspecialized_generics(self) -> None:
+        (self.directory / "library.vela").write_text(
+            "/// Dependency export.\nexport class Box<T> { value: T; }\n", encoding="utf-8")
+        self.write("import 'library.vela' as api;\n"
+                   "/// Root generic export.\n"
+                   "export func wrap<T>(value: T): api.Box<T> { return api.Box<T>(value: value); }\n"
+                   "export func answer(): api.Box<int> { return wrap<int>(42); }\n")
+        output = self.directory / "api.md"
+        self.command("doc", self.entry, output)
+        text = output.read_text(encoding="utf-8")
+        self.assertIn("Root generic export.", text)
+        self.assertIn("func wrap<T>(value: T): api.Box<T>;", text)
+        self.assertIn("func answer(): api.Box<int>;", text)
+        self.assertNotIn("Dependency export.", text)
+        self.assertNotIn("$module", text)
+
     def test_unicode_source_and_output_paths(self) -> None:
         self.entry = self.directory / "你好😀.vela"
         self.write("func main(): int { return 42; }")

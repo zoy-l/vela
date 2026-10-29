@@ -6,7 +6,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
-#include "compiler/frontend/checker.h"
+#include "compiler/frontend/checker_test_support.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/string.h"
@@ -215,10 +215,10 @@ TEST_F(StringLanguageTest, JoinIsAnOrdinaryUserDeclarationName) {
   EXPECT_EQ(Text(R"(func join(): string { return 'user'; }
                     func main(): string { return join() + ['a', 'b'].join('-'); })"),
             "usera-b");
+  EXPECT_TRUE(frontend::CheckTestSource("class join {} func main(): void { const x = join(); }")
+                  .Succeeded());
   EXPECT_TRUE(
-      frontend::CheckSource("class join {} func main(): void { const x = join(); }").Succeeded());
-  EXPECT_TRUE(
-      frontend::CheckSource("enum join { value } func main(): void { const x = join.value; }")
+      frontend::CheckTestSource("enum join { value } func main(): void { const x = join.value; }")
           .Succeeded());
 }
 
@@ -355,7 +355,7 @@ INSTANTIATE_TEST_SUITE_P(InvalidRanges,
 class StringDiagnosticTest : public testing::TestWithParam<const char*> {};
 
 TEST_P(StringDiagnosticTest, RejectsInvalidSyntaxAndImplicitConversions) {
-  const auto checked = frontend::CheckSource(GetParam());
+  const auto checked = frontend::CheckTestSource(GetParam());
   EXPECT_FALSE(checked.Succeeded());
   EXPECT_FALSE(checked.diagnostics.empty());
 }
@@ -417,8 +417,8 @@ TEST(StringDiagnosticTest, RejectsMalformedUtf8InLiteral) {
       "A\xAC",
   };
   for (const auto bytes : invalid) {
-    const auto checked = frontend::CheckSource(std::string("func main(): string { return \"") +
-                                               std::string(bytes) + "\"; }");
+    const auto checked = frontend::CheckTestSource(std::string("func main(): string { return \"") +
+                                                   std::string(bytes) + "\"; }");
     EXPECT_FALSE(checked.Succeeded());
   }
 }

@@ -1,25 +1,9 @@
-#include <absl/container/flat_hash_map.h>
 #include "compiler/frontend/type_checker.h"
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/control_flow.h"
 
 namespace vela::frontend {
-
-TypeChecker::Refinements TypeChecker::IntersectFacts(const Refinements& left,
-                                                     const Refinements& right) {
-  if (left.size() > right.size()) {
-    return IntersectFacts(right, left);
-  }
-  Refinements result;
-  for (const auto& [binding_id, type] : left) {
-    const auto found = right.find(binding_id);
-    if (found != right.end() && IsSameType(type, found->second)) {
-      result.emplace(binding_id, type);
-    }
-  }
-  return result;
-}
 
 void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth outcome) {
   using Kind = Expression::Kind;
@@ -34,7 +18,7 @@ void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth ou
     const auto* binding = LookupLocal(condition.operand->text);
     const auto target = type_operands_.find(&condition);
     if (binding != nullptr && target != type_operands_.end()) {
-      refinements_.insert_or_assign(binding->id, target->second);
+      refinements_.Set(binding->id, target->second);
     }
     return;
   }
@@ -66,25 +50,19 @@ void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth ou
     return;
   }
   if ((condition.text == "!=") == (outcome == Truth::AlwaysTrue)) {
-    refinements_.insert_or_assign(binding->id, NonNullable(binding->type));
+    refinements_.Set(binding->id, NonNullable(binding->type));
   } else {
-    refinements_.erase(binding->id);
+    refinements_.Erase(binding->id);
   }
 }
 
-void TypeChecker::InvalidateAssignments(const Expression& expression) {
-  if (refinements_.empty()) {
-    return;
-  }
+void TypeChecker::CollectAssignments(const Expression& expression, AssignmentEffects& effects) {
   if (expression.kind == Expression::Kind::Call) {
-    InvalidateCapturedRefinements();
+    effects.may_call = true;
   }
   if (expression.kind == Expression::Kind::Binary && expression.text == "=" &&
       expression.left->kind == Expression::Kind::Name) {
-    const auto* binding = LookupLocal(expression.left->text);
-    if (binding != nullptr) {
-      refinements_.erase(binding->id);
-    }
+    effects.names.insert(expression.left->text);
   }
   for (const auto* child : {
            expression.left.get(),
@@ -95,33 +73,25 @@ void TypeChecker::InvalidateAssignments(const Expression& expression) {
            expression.index.get(),
        }) {
     if (child != nullptr) {
-      InvalidateAssignments(*child);
+      CollectAssignments(*child, effects);
     }
   }
   for (const auto& child : expression.elements) {
-    InvalidateAssignments(*child);
+    CollectAssignments(*child, effects);
   }
   for (const auto& argument : expression.arguments) {
-    InvalidateAssignments(*argument.value);
+    CollectAssignments(*argument.value, effects);
   }
   for (const auto& arm : expression.arms) {
-    InvalidateAssignments(*arm.value);
+    CollectAssignments(*arm.value, effects);
   }
 }
 
-void TypeChecker::InvalidateCapturedRefinements() {
-  absl::erase_if(refinements_,
-                 [&](const auto& fact) -> bool { return captured_mutables_.contains(fact.first); });
-}
-
-void TypeChecker::InvalidateAssignments(const Statement& statement) {
-  if (refinements_.empty()) {
-    return;
-  }
-  for (const auto* expression :
-       {statement.expression.get(), statement.condition.get(), statement.increment.get()}) {
+void TypeChecker::CollectAssignments(const Statement& statement, AssignmentEffects& effects) {
+  for (const auto* expression : {statement.expression.get(), statement.condition.get(),
+                                 statement.increment.get(), statement.iterable.get()}) {
     if (expression != nullptr) {
-      InvalidateAssignments(*expression);
+      CollectAssignments(*expression, effects);
     }
   }
   for (const auto* child : {
@@ -131,18 +101,73 @@ void TypeChecker::InvalidateAssignments(const Statement& statement) {
            statement.finally_branch.get(),
        }) {
     if (child != nullptr) {
-      InvalidateAssignments(*child);
+      CollectAssignments(*child, effects);
     }
   }
   for (const auto& child : statement.statements) {
-    InvalidateAssignments(*child);
+    CollectAssignments(*child, effects);
   }
   for (const auto& branch : statement.cases) {
-    InvalidateAssignments(*branch.body);
+    CollectAssignments(*branch.body, effects);
   }
   for (const auto& clause : statement.catches) {
-    InvalidateAssignments(*clause.body);
+    CollectAssignments(*clause.body, effects);
   }
+}
+
+void TypeChecker::InvalidateAssignments(const Expression& expression) {
+  if (!refinements_.IsEmpty()) {
+    AssignmentEffects effects;
+    CollectAssignments(expression, effects);
+    InvalidateAssignments(effects);
+  }
+}
+
+void TypeChecker::InvalidateAssignments(const Statement& statement) {
+  if (!refinements_.IsEmpty()) {
+    AssignmentEffects effects;
+    CollectAssignments(statement, effects);
+    InvalidateAssignments(effects);
+  }
+}
+
+void TypeChecker::InvalidateAssignments(const AssignmentEffects& effects) {
+  if (effects.may_call) {
+    InvalidateCapturedRefinements();
+  }
+  for (const auto name : effects.names) {
+    if (const auto* binding = LookupLocal(name)) {
+      refinements_.Erase(binding->id);
+    }
+  }
+}
+
+void TypeChecker::InvalidateCapturedRefinements() {
+  refinements_.Erase(captured_mutables_);
+}
+
+const TypeChecker::AssignmentEffects& TypeChecker::LoopAssignments::Body() {
+  if (!body_) {
+    body_.emplace();
+    CollectAssignments(*statement_.then_branch, *body_);
+  }
+  return *body_;
+}
+
+const TypeChecker::AssignmentEffects& TypeChecker::LoopAssignments::Whole() {
+  if (!whole_) {
+    whole_ = Body();
+    for (const auto* expression :
+         {statement_.condition.get(), statement_.increment.get(), statement_.iterable.get()}) {
+      if (expression != nullptr) {
+        CollectAssignments(*expression, *whole_);
+      }
+    }
+    if (statement_.initializer) {
+      CollectAssignments(*statement_.initializer, *whole_);
+    }
+  }
+  return *whole_;
 }
 
 }  // namespace vela::frontend

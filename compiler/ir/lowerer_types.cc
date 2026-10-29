@@ -123,6 +123,10 @@ void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
         RecordValueType(instruction.dst, {.kind = Kind::Int, .name = "int"});
       } else if (builtin == Builtin::ArrayCheckMutation) {
         RecordValueType(instruction.dst, {.kind = Kind::Void, .name = "void"});
+      } else if (builtin == Builtin::CollectionKeys || builtin == Builtin::CollectionValues) {
+        // 投影填充调用窗口中的目标数组，并返回同一个数组。
+        const auto type = current_function_->value_types.at(instruction.lhs + 1);
+        RecordValueType(instruction.dst, type);
       } else if (builtin >= Builtin::DynamicBinary && builtin < Builtin::Count) {
         RecordValueType(instruction.dst, {.kind = Kind::Dynamic, .name = "dynamic"});
       }

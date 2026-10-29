@@ -1,7 +1,9 @@
 #include "compiler/ir/analysis.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -238,43 +240,113 @@ FlowGraph BuildFlowGraph(const Function& function) {
   return graph;
 }
 
-std::vector<BlockLiveness> AnalyzeLiveness(const Function& function,
+namespace {
+
+std::optional<std::size_t> ExceptionalBlock(const Function& function,
+                                            const FlowGraph& graph,
+                                            const Instruction& instruction,
+                                            const InstructionEffects& effects) {
+  if (!instruction.handler || !effects.may_fail) {
+    return std::nullopt;
+  }
+  return graph.instruction_blocks.at(function.handlers.at(*instruction.handler).target);
+}
+
+void TransferInstruction(const Instruction& instruction,
+                         const RegisterAccess& access,
+                         std::optional<std::size_t> exceptional,
+                         std::span<const BlockLiveness> blocks,
+                         RegisterSet& live) {
+  if (access.defines_value) {
+    live.Erase(instruction.dst);
+  }
+  if (exceptional) {
+    live.UnionWith(blocks[*exceptional].live_in);
+  }
+  ForEachUse(instruction, access, [&](RegisterId reg) { live.Insert(reg); });
+}
+
+struct ExceptionalTransfer final {
+  std::size_t successor;
+  RegisterId destination;
+};
+
+struct BlockTransfer final {
+  RegisterSet generated;
+  RegisterSet killed;
+  std::optional<ExceptionalTransfer> exceptional;
+};
+
+std::vector<BlockTransfer> SummarizeBlocks(const Function& function,
                                            const FlowGraph& graph,
-                                           std::span<const Function> functions,
-                                           LivenessMode mode) {
-  std::vector<BlockLiveness> live(graph.blocks.size());
+                                           std::span<const Function> functions) {
+  std::vector<BlockTransfer> transfers;
+  transfers.reserve(graph.blocks.size());
+  for (const auto& block : graph.blocks) {
+    BlockTransfer transfer{.generated = RegisterSet(function.register_count),
+                           .killed = RegisterSet(function.register_count),
+                           .exceptional = std::nullopt};
+    for (auto position = block.begin; position < block.end; ++position) {
+      const auto& instruction = function.instructions.at(position);
+      const auto access = AnalyzeRegisters(instruction, functions);
+      if (position + 1 == block.end && access.defines_value &&
+          !transfer.killed.Has(instruction.dst)) {
+        const auto exceptional =
+            ExceptionalBlock(function, graph, instruction, AnalyzeEffects(instruction));
+        if (exceptional) {
+          // CFG 在受查指令之后切块；只有尚未被前序定义覆盖的旧目标值需要补回。
+          transfer.exceptional =
+              ExceptionalTransfer{.successor = *exceptional, .destination = instruction.dst};
+        }
+      }
+      ForEachUse(instruction, access, [&](RegisterId reg) {
+        if (!transfer.killed.Has(reg)) {
+          transfer.generated.Insert(reg);
+        }
+      });
+      if (access.defines_value) {
+        transfer.killed.Insert(instruction.dst);
+      }
+    }
+    transfers.push_back(std::move(transfer));
+  }
+  return transfers;
+}
+
+template <typename TransferBlock>
+std::vector<BlockLiveness> SolveLiveness(const Function& function,
+                                         const FlowGraph& graph,
+                                         const TransferBlock& transfer_block) {
+  std::vector<BlockLiveness> live;
+  live.reserve(graph.blocks.size());
   std::vector<std::size_t> work;
   work.reserve(graph.blocks.size());
   std::vector<std::uint8_t> queued(graph.blocks.size(), 1);
   for (std::size_t index = 0; index < graph.blocks.size(); ++index) {
+    live.push_back({.live_in = RegisterSet(function.register_count),
+                    .live_out = RegisterSet(function.register_count)});
     work.push_back(index);
   }
+  RegisterSet live_out(function.register_count);
+  RegisterSet live_in(function.register_count);
   while (!work.empty()) {
     const auto index = work.back();
     work.pop_back();
     queued.at(index) = 0;
     auto& current = live.at(index);
-    RegisterSet live_out;
+    live_out.Clear();
     const auto& block = graph.blocks.at(index);
     for (const auto successor : block.successors) {
       const auto& next = live.at(successor).live_in;
-      live_out.insert(next.begin(), next.end());
+      live_out.UnionWith(next);
     }
-    auto live_in = live_out;
-    for (std::size_t position = block.end; position > block.begin;) {
-      const auto& instruction = function.instructions.at(--position);
-      const auto access = AnalyzeRegisters(instruction, functions);
-      if (mode == LivenessMode::NecessaryInstructions && access.defines_value &&
-          AnalyzeEffects(instruction).IsRemovable() && !live_in.contains(instruction.dst)) {
-        continue;
-      }
-      TransferLiveness(function, graph, live, instruction, access, live_in);
-    }
-    current.live_out = std::move(live_out);
+    live_in = live_out;
+    transfer_block(index, live, live_in);
+    current.live_out.Swap(live_out);
     if (current.live_in == live_in) {
       continue;
     }
-    current.live_in = std::move(live_in);
+    current.live_in.Swap(live_in);
     for (const auto predecessor : block.predecessors) {
       if (queued.at(predecessor) == 0) {
         work.push_back(predecessor);
@@ -285,26 +357,64 @@ std::vector<BlockLiveness> AnalyzeLiveness(const Function& function,
   return live;
 }
 
+}  // namespace
+
+std::vector<BlockLiveness> AnalyzeLiveness(const Function& function,
+                                           const FlowGraph& graph,
+                                           std::span<const Function> functions) {
+  const auto transfers = SummarizeBlocks(function, graph, functions);
+  return SolveLiveness(function, graph, [&](std::size_t index, const auto& live, auto& live_in) {
+    const auto& transfer = transfers.at(index);
+    live_in.Subtract(transfer.killed);
+    live_in.UnionWith(transfer.generated);
+    if (transfer.exceptional) {
+      const auto& exceptional = *transfer.exceptional;
+      if (live.at(exceptional.successor).live_in.Has(exceptional.destination)) {
+        live_in.Insert(exceptional.destination);
+      }
+    }
+  });
+}
+
+NecessaryLiveness AnalyzeNecessaryLiveness(const Function& function,
+                                           const FlowGraph& graph,
+                                           std::span<const Function> functions) {
+  std::vector<std::uint8_t> keep(function.instructions.size(), 0);
+  auto blocks =
+      SolveLiveness(function, graph, [&](std::size_t index, const auto& live, auto& live_in) {
+        // 死指令是否产生 uses 依赖当前活性；随每轮传递覆盖标记，收敛后直接用于压缩。
+        const auto& block = graph.blocks.at(index);
+        for (auto position = block.end; position > block.begin;) {
+          const auto& instruction = function.instructions.at(--position);
+          const auto access = AnalyzeRegisters(instruction, functions);
+          const auto necessary = !access.defines_value ||
+                                 !AnalyzeEffects(instruction).IsRemovable() ||
+                                 live_in.Has(instruction.dst);
+          keep.at(position) = necessary ? 1 : 0;
+          if (necessary) {
+            TransferLiveness(function, graph, live, instruction, access, live_in);
+          }
+        }
+      });
+  return {.blocks = std::move(blocks), .keep = std::move(keep)};
+}
+
 void TransferLiveness(const Function& function,
                       const FlowGraph& graph,
                       std::span<const BlockLiveness> blocks,
                       const Instruction& instruction,
                       const RegisterAccess& access,
                       RegisterSet& live) {
-  if (access.defines_value) {
-    live.erase(instruction.dst);
-  }
-  if (instruction.handler && AnalyzeEffects(instruction).may_fail) {
-    const auto target = function.handlers.at(*instruction.handler).target;
-    const auto handler = graph.instruction_blocks.at(target);
-    const auto exceptional_block = blocks.subspan(handler, 1);
-    const auto& exceptional = exceptional_block.front().live_in;
-    live.insert(exceptional.begin(), exceptional.end());
-  }
-  ForEachUse(instruction, access, [&](RegisterId reg) { live.insert(reg); });
+  const auto exceptional = instruction.handler ? ExceptionalBlock(function, graph, instruction,
+                                                                  AnalyzeEffects(instruction))
+                                               : std::nullopt;
+  TransferInstruction(instruction, access, exceptional, blocks, live);
 }
 
 void CompactInstructions(Function& function, std::span<const std::uint8_t> keep) {
+  if (std::ranges::find(keep, std::uint8_t{0}) == keep.end()) {
+    return;
+  }
   auto& code = function.instructions;
   std::vector<std::uint32_t> remap(code.size() + 1);
   std::uint32_t next = 0;

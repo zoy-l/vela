@@ -100,6 +100,9 @@ struct ArgumentCompletionQuery final {
 class SemanticIndex final {
  public:
   SemanticIndex(std::string_view path, std::span<const frontend::SourceInput> overlays);
+  SemanticIndex(std::string_view path,
+                frontend::ModuleCache& modules,
+                std::span<const frontend::SourceInput> overlays);
   [[nodiscard]] std::vector<Completion> Complete(std::size_t offset) const;
   [[nodiscard]] std::optional<Definition> FindDefinition(std::size_t offset,
                                                          PositionEncoding encoding) const;
@@ -110,6 +113,7 @@ class SemanticIndex final {
       const ArgumentCompletionQuery& query) const;
 
  private:
+  explicit SemanticIndex(frontend::ParseResult loaded);
   using Key = std::pair<std::uint32_t, std::size_t>;
   struct Source final {
     std::string path;
@@ -177,6 +181,7 @@ class SemanticIndex final {
                      const Scope& scope,
                      const frontend::FunctionDescriptor* signature = nullptr);
   void VisitStatement(const frontend::Statement* statement, Scope scope);
+  void VisitForEach(const frontend::Statement& statement, const Scope& scope);
   void VisitExpression(const frontend::Expression* expression, const Scope& scope);
   void VisitProgram();
   void DeclareLocal(const void* node,

@@ -1,10 +1,14 @@
 #include <array>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
 #include "compiler/frontend/checker.h"
+#include "compiler/frontend/checker_test_support.h"
 #include "compiler/frontend/source_loader.h"
 #include "runtime/isolate.h"
 #include "vm/vm.h"
@@ -16,10 +20,39 @@ TEST(ModuleTest, RejectsUnsupportedImportSchemes) {
   const auto sources = std::to_array<frontend::SourceInput>({
       {.path = "main.vela", .text = "import \"registry:math/value.vela\";"},
   });
-  const auto checked = frontend::CheckModules(sources, "main.vela");
+  const auto checked = frontend::CheckTestModules(sources, "main.vela");
   ASSERT_FALSE(checked.Succeeded());
   ASSERT_EQ(checked.diagnostics.size(), 1U);
   EXPECT_EQ(checked.diagnostics.front().message, "unsupported module import scheme");
+}
+
+TEST(ModuleTest, CachedGenericSyntaxSurvivesSpecializationInIndependentRoots) {
+  const auto sources = std::to_array<frontend::SourceInput>({
+      {.path = "first.vela", .text = "import 'middle'; func first(): int { return number(); }"},
+      {.path = "middle.vela",
+       .text = "import 'shared'; export func number(): int { return identity<int>(42); }"},
+      {.path = "second.vela",
+       .text = "import 'shared'; func second(): string { return identity<string>('second'); }"},
+      {.path = "shared.vela", .text = "export func identity<T>(value: T): T { return value; }"},
+  });
+  frontend::ModuleCache cache;
+  auto first = frontend::LoadProgram("first.vela", cache, sources);
+  ASSERT_TRUE(first.diagnostics.empty());
+  ASSERT_TRUE(frontend::CheckProgram(first.program).Succeeded());
+  const auto& path = first.program.sources.at(2).path;
+  const auto syntax = cache.sources.at(path);
+  const auto& generic = syntax->program.functions.front();
+  EXPECT_EQ(generic.name, "identity");
+  ASSERT_EQ(generic.type_parameters.size(), 1U);
+  EXPECT_EQ(generic.return_type.name, "T");
+  auto second = frontend::LoadProgram("second.vela", cache, sources);
+  ASSERT_TRUE(second.diagnostics.empty());
+  EXPECT_EQ(first.program.sources.at(2).syntax, second.program.sources.at(1).syntax);
+  EXPECT_TRUE(frontend::CheckProgram(second.program).Succeeded());
+  EXPECT_EQ(cache.sources.at(path), syntax);
+  EXPECT_EQ(generic.name, "identity");
+  EXPECT_EQ(generic.return_type.name, "T");
+  EXPECT_EQ(generic.body->statements.front()->expression->text, "value");
 }
 
 TEST(ModuleTest, ResolvesExtensionlessImportsToVelaAndSharesIdentityWithExplicitImports) {
@@ -52,7 +85,7 @@ TEST(ModuleTest, DoesNotSearchForExtensionlessFilesOrDirectoryEntryPoints) {
       {.path = "lib", .text = "export const answer = 42;"},
       {.path = "lib/index.vela", .text = "export const answer = 42;"},
   });
-  EXPECT_FALSE(frontend::CheckModules(sources, "main.vela").Succeeded());
+  EXPECT_FALSE(frontend::CheckTestModules(sources, "main.vela").Succeeded());
 }
 
 TEST(ModuleTest, PrefixesKeepSameNamesDistinctAcrossFunctionsClassesEnumsAndAliases) {
@@ -89,7 +122,7 @@ export func read(value: Box): int { return value.value; }
 )",
       },
   });
-  EXPECT_TRUE(frontend::CheckModules(sources, "main.vela").Succeeded());
+  EXPECT_TRUE(frontend::CheckTestModules(sources, "main.vela").Succeeded());
   runtime::Isolate isolate(1);
   const auto compiled = CompileModules(sources, "main.vela", isolate);
   for (const auto& diagnostic : compiled.diagnostics) {
@@ -157,6 +190,98 @@ func main(): int {
   EXPECT_EQ(result.value.AsInteger(), 42);
 }
 
+TEST(ModuleTest, BindsImportedGenericBasesAndIterablesBeforeLoopShadowing) {
+  const auto sources = std::to_array<frontend::SourceInput>({
+      {.path = "main.vela", .text = R"(
+import 'derived.vela';
+func main(): int { return Derived<int>(value: 20).read(); }
+)"},
+      {.path = "base.vela", .text = R"(
+export class Base<T> { stored: T; read(): T { return this.stored; } }
+export func values<T>(value: T): T[] { return [value, value]; }
+)"},
+      {.path = "derived.vela", .text = R"(
+import 'base.vela' as lib;
+export class Derived<T> extends lib.Base<T> {
+  constructor(value: T) { super(stored: value); }
+  override read(): T {
+    let result = super.read();
+    for (const lib in lib.values<T>(this.stored)) {
+      const capture = (): T => lib;
+      result += capture() / 2;
+    }
+    return result + 2;
+  }
+}
+)"},
+  });
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileModules(sources, "main.vela", isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.source_path << ':' << diagnostic.location.line << ": "
+                  << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(ModuleTest, SharesImmutableSyntaxAcrossRootsWithIndependentBindingsAndLocations) {
+  const auto sources = std::to_array<frontend::SourceInput>({
+      {.path = "first.vela", .text = "import 'middle'; func first(): int { return read(); }"},
+      {.path = "middle.vela",
+       .text = "import 'shared'; export func read(): int { return value(); }"},
+      {.path = "second.vela", .text = "import 'shared'; func second(): int { return value(); }"},
+      {.path = "shared.vela",
+       .text = "export func value(): int { return Math.sqrt(1764.0).toInt(); }"},
+  });
+  frontend::ModuleCache cache;
+  auto first = frontend::LoadProgram("first.vela", cache, sources);
+  ASSERT_TRUE(first.diagnostics.empty());
+  const auto second = frontend::LoadProgram("second.vela", cache, sources);
+  ASSERT_TRUE(second.diagnostics.empty());
+  const auto& first_shared = first.program.sources.at(2);
+  const auto& second_shared = second.program.sources.at(1);
+  EXPECT_EQ(first_shared.syntax, second_shared.syntax);
+  EXPECT_EQ(first_shared.text.data(), second_shared.text.data());
+  const auto& shared_template = cache.sources.at(first_shared.path)->program;
+  EXPECT_EQ(shared_template.functions.front().name, "value");
+  const auto& first_value = first.program.functions.at(2);
+  const auto& second_value = second.program.functions.at(1);
+  EXPECT_EQ(first_value.location.source_id, 2U);
+  EXPECT_EQ(second_value.location.source_id, 1U);
+  EXPECT_EQ(second_value.body->statements.front()->expression->location.source_id, 1U);
+  first.program.functions.at(2).name = "changed";
+  EXPECT_NE(second_value.name, "changed");
+  EXPECT_EQ(shared_template.functions.front().name, "value");
+}
+
+TEST(ModuleTest, TransferredModulesRetainSourceTextTokensAndOriginalImports) {
+  std::vector<frontend::SourceFile> retained;
+  const std::string expected = "import 'lib'; func main(): int { return value(); }";
+  {
+    const std::string main = expected;
+    const std::string library = "export func value(): int { return 42; }";
+    const auto sources = std::to_array<frontend::SourceInput>({
+        {.path = "main.vela", .text = main},
+        {.path = "lib.vela", .text = library},
+    });
+    auto loaded = frontend::LoadSources(sources, "main.vela");
+    ASSERT_TRUE(loaded.diagnostics.empty());
+    retained = std::move(loaded.program.sources);
+  }
+  ASSERT_EQ(retained.size(), 2U);
+  const auto& main = retained.front();
+  EXPECT_EQ(main.text, expected);
+  EXPECT_EQ(main.text.data(), main.syntax->text.data());
+  ASSERT_EQ(main.syntax->imports.size(), 1U);
+  EXPECT_EQ(main.syntax->imports.front().path, "lib");
+  EXPECT_FALSE(main.syntax->tokens.empty());
+  ASSERT_FALSE(retained.back().syntax->tokens.empty());
+  EXPECT_EQ(retained.back().syntax->tokens.front().location.source_id, 1U);
+}
+
 class ModuleVisibilityTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(ModuleVisibilityTest, RejectsAccessOutsideTheExplicitModuleScope) {
@@ -173,7 +298,7 @@ export func visible(): int { return leaf(); }
       },
       {.path = "leaf.vela", .text = "export func leaf(): int { return 42; }"},
   });
-  EXPECT_FALSE(frontend::CheckModules(sources, "main.vela").Succeeded());
+  EXPECT_FALSE(frontend::CheckTestModules(sources, "main.vela").Succeeded());
   runtime::Isolate isolate;
   EXPECT_FALSE(CompileModules(sources, "main.vela", isolate).Succeeded());
 }

@@ -1,5 +1,6 @@
 #include "compiler/ir/optimizer.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -32,12 +33,16 @@ void InvalidateRepresentative(RegisterId destination,
   }
 }
 
-void PropagateCopies(Function& function, std::span<const Function> functions) {
-  const auto graph = BuildFlowGraph(function);
-  std::vector<std::uint8_t> keep(function.instructions.size(), 1);
+void PropagateCopies(Function& function,
+                     std::span<const Function> functions,
+                     const FlowGraph& graph,
+                     std::span<std::uint8_t> keep) {
+  absl::flat_hash_map<RegisterId, std::size_t> values;
+  absl::flat_hash_map<std::size_t, RegisterId> representatives;
   for (const auto& block : graph.blocks) {
-    absl::flat_hash_map<RegisterId, std::size_t> values;
-    absl::flat_hash_map<std::size_t, RegisterId> representatives;
+    // Abseil clear() 可释放较大表的容量；整段 erase 保留桶数组供后续块复用。
+    values.erase(values.begin(), values.end());
+    representatives.erase(representatives.begin(), representatives.end());
     std::size_t next_value = 0;
     const auto value_of = [&](RegisterId reg) -> std::size_t {
       const auto [entry, inserted] = values.try_emplace(reg, next_value);
@@ -65,7 +70,7 @@ void PropagateCopies(Function& function, std::span<const Function> functions) {
                                     : std::nullopt;
       const auto previous = values.find(destination);
       if (source_value && previous != values.end() && previous->second == *source_value) {
-        keep.at(index) = 0;
+        keep[index] = 0;
         continue;
       }
       InvalidateRepresentative(destination, values, representatives);
@@ -74,7 +79,6 @@ void PropagateCopies(Function& function, std::span<const Function> functions) {
       representatives.try_emplace(value, destination);
     }
   }
-  CompactInstructions(function, keep);
 }
 
 void ThreadJumps(Function& function) {
@@ -242,18 +246,23 @@ void Materialize(Instruction& instruction, const Constant& value) {
   instruction.index = 0;
 }
 
-void FoldConstants(Function& function, std::span<const Function> functions) {
-  const auto graph = BuildFlowGraph(function);
-  std::vector<std::uint8_t> keep(function.instructions.size(), 1);
+void FoldConstants(Function& function,
+                   std::span<const Function> functions,
+                   const FlowGraph& graph,
+                   std::span<std::uint8_t> keep) {
+  Constants constants;
   for (const auto& block : graph.blocks) {
-    Constants constants;
+    constants.erase(constants.begin(), constants.end());
     for (std::size_t index = block.begin; index < block.end; ++index) {
+      if (keep[index] == 0) {
+        continue;
+      }
       auto& instruction = function.instructions.at(index);
       if (instruction.opcode == Opcode::JumpIfFalse) {
         const auto condition = constants.find(instruction.lhs);
         if (condition != constants.end() && std::holds_alternative<bool>(condition->second)) {
           if (std::get<bool>(condition->second)) {
-            keep.at(index) = 0;
+            keep[index] = 0;
           } else {
             instruction.opcode = Opcode::Jump;
             instruction.lhs = 0;
@@ -274,13 +283,12 @@ void FoldConstants(Function& function, std::span<const Function> functions) {
       }
     }
   }
-  CompactInstructions(function, keep);
 }
 
-void RemoveUnreachable(Function& function) {
-  const auto graph = BuildFlowGraph(function);
+FlowGraph RemoveUnreachable(Function& function) {
+  auto graph = BuildFlowGraph(function);
   if (graph.blocks.empty()) {
-    return;
+    return graph;
   }
   std::vector<std::uint8_t> reached(graph.blocks.size(), 0);
   std::vector<std::size_t> work = {0};
@@ -295,44 +303,38 @@ void RemoveUnreachable(Function& function) {
       }
     }
   }
+  if (std::ranges::all_of(reached, [](auto value) { return value != 0; })) {
+    return graph;
+  }
   std::vector<std::uint8_t> keep(function.instructions.size(), 0);
   for (std::size_t index = 0; index < keep.size(); ++index) {
     keep.at(index) = reached.at(graph.instruction_blocks.at(index));
   }
   CompactInstructions(function, keep);
+  return BuildFlowGraph(function);
 }
 
-void RemoveUnusedValues(Function& function, std::span<const Function> functions) {
-  const auto graph = BuildFlowGraph(function);
-  const auto blocks =
-      AnalyzeLiveness(function, graph, functions, LivenessMode::NecessaryInstructions);
-  std::vector<std::uint8_t> keep(function.instructions.size(), 1);
-  for (std::size_t block_index = 0; block_index < graph.blocks.size(); ++block_index) {
-    auto live = blocks.at(block_index).live_out;
-    const auto& block = graph.blocks.at(block_index);
-    for (std::size_t index = block.end; index > block.begin;) {
-      --index;
-      const auto& instruction = function.instructions.at(index);
-      const auto access = AnalyzeRegisters(instruction, functions);
-      if (access.defines_value && AnalyzeEffects(instruction).IsRemovable() &&
-          !live.contains(instruction.dst)) {
-        keep.at(index) = 0;
-        continue;
-      }
-      TransferLiveness(function, graph, blocks, instruction, access, live);
-    }
-  }
-  CompactInstructions(function, keep);
+void RemoveUnusedValues(Function& function,
+                        std::span<const Function> functions,
+                        const FlowGraph& graph) {
+  const auto liveness = AnalyzeNecessaryLiveness(function, graph, functions);
+  CompactInstructions(function, liveness.keep);
 }
 
 }  // namespace
 
 void Optimize(Function& function, std::span<const Function> functions) {
-  PropagateCopies(function, functions);
-  FoldConstants(function, functions);
+  {
+    // 局部传播只依赖原始基本块边界；两个 pass 完成后统一压缩，保持指令编号稳定。
+    const auto graph = BuildFlowGraph(function);
+    std::vector<std::uint8_t> keep(function.instructions.size(), 1);
+    PropagateCopies(function, functions, graph, keep);
+    FoldConstants(function, functions, graph, keep);
+    CompactInstructions(function, keep);
+  }
   ThreadJumps(function);
-  RemoveUnreachable(function);
-  RemoveUnusedValues(function, functions);
+  const auto graph = RemoveUnreachable(function);
+  RemoveUnusedValues(function, functions, graph);
 }
 
 }  // namespace vela::ir

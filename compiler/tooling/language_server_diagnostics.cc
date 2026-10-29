@@ -15,8 +15,6 @@
 
 #include "base/json.h"
 #include "base/path.h"
-#include "base/source_location.h"
-#include "base/utf8.h"
 #include "compiler/frontend/checker.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_file.h"
@@ -32,59 +30,10 @@ struct EditorDiagnostic final {
   std::string message;
 };
 
-struct DiagnosticSource final {
-  std::string_view text;
-  std::vector<std::size_t> lines{0};
-  explicit DiagnosticSource(std::string_view source) : text(source) {
-    for (std::size_t index = 0; index < text.size(); ++index) {
-      if (text.at(index) == '\n') {
-        lines.push_back(index + 1);
-      }
-    }
-  }
-  [[nodiscard]] TextPosition Position(SourceLocation location, PositionEncoding encoding) const;
+struct OpenSource final {
+  std::string_view uri;
+  const SourceText* source;
 };
-
-TextPosition DiagnosticSource::Position(SourceLocation location, PositionEncoding encoding) const {
-  const auto line = std::min(static_cast<std::size_t>(location.line - 1), lines.size() - 1);
-  const auto begin = lines.at(line);
-  const auto end = line + 1 < lines.size() ? lines.at(line + 1) - 1 : text.size();
-  const auto bytes = std::min(static_cast<std::size_t>(location.column - 1), end - begin);
-  if (encoding == PositionEncoding::Utf8) {
-    return {.line = line, .character = bytes};
-  }
-  const auto prefix = text.substr(begin, bytes);
-  std::size_t character = 0;
-  for (std::size_t index = 0; index < prefix.size(); ++character) {
-    constexpr unsigned char kAsciiLimit = 0x80;
-    constexpr unsigned char kTwoByteFirst = 0xc2;
-    constexpr unsigned char kThreeByteFirst = 0xe0;
-    constexpr unsigned char kFourByteFirst = 0xf0;
-    constexpr unsigned char kLastUtf8Lead = 0xf4;
-    const auto lead = static_cast<unsigned char>(prefix.at(index));
-    std::size_t width = 1;
-    if (lead >= kTwoByteFirst && lead < kThreeByteFirst) {
-      width = 2;
-    } else if (lead >= kThreeByteFirst && lead < kFourByteFirst) {
-      width = 3;
-    } else if (lead >= kFourByteFirst && lead <= kLastUtf8Lead) {
-      width = 4;
-    }
-    const auto remaining = prefix.substr(index);
-    if (width > remaining.size() || InvalidUtf8Offset(remaining.substr(0, width))) {
-      width = 1;
-    }
-    if (width == 4) {
-      ++character;
-    }
-    // 非法磁盘字节按一个替代字符计数；不能让错误源码破坏协议位置或越界扫描。
-    if (lead < kAsciiLimit) {
-      width = 1;
-    }
-    index += width;
-  }
-  return {.line = line, .character = character};
-}
 
 JsonOutput DiagnosticNotification(std::string_view uri) {
   JsonOutput output;
@@ -120,10 +69,11 @@ using DiagnosticKey = std::tuple<std::string, std::uint32_t, std::uint32_t, std:
 // 借用本轮打开文档的视图；检查时立即把快照诊断转换为拥有消息文本的编辑器诊断。
 class DiagnosticCollection final {
  public:
-  explicit DiagnosticCollection(PositionEncoding encoding) : encoding_(encoding) {}
+  DiagnosticCollection(PositionEncoding encoding, frontend::ModuleCache& modules)
+      : encoding_(encoding), modules_(modules) {}
   void AddOpenDocument(std::string_view uri, const ServerDocument& document) {
     overlays_.push_back({.path = document.path, .text = document.source.text()});
-    document_uris_.emplace(document.path, uri);
+    open_sources_.emplace(document.path, OpenSource{.uri = uri, .source = &document.source});
     EnsureUri(uri);
   }
   void EnsureUri(std::string_view uri) { buckets_.try_emplace(uri); }
@@ -133,13 +83,14 @@ class DiagnosticCollection final {
  private:
   PositionEncoding encoding_;
   std::vector<frontend::SourceInput> overlays_;
-  absl::flat_hash_map<std::string_view, std::string_view> document_uris_;
+  absl::flat_hash_map<std::string_view, OpenSource> open_sources_;
   absl::flat_hash_set<DiagnosticKey> emitted_;
   DiagnosticBuckets buckets_;
+  frontend::ModuleCache& modules_;
 };
 
 void DiagnosticCollection::Collect(std::string_view path) {
-  auto loaded = frontend::LoadProgram(path, overlays_);
+  auto loaded = frontend::LoadProgram(path, modules_, overlays_);
   auto diagnostics = std::move(loaded.diagnostics);
   if (diagnostics.empty()) {
     diagnostics = frontend::CheckProgram(loaded.program).diagnostics;
@@ -147,10 +98,11 @@ void DiagnosticCollection::Collect(std::string_view path) {
   if (diagnostics.empty()) {
     return;
   }
-  absl::flat_hash_map<std::string_view, DiagnosticSource> sources;
+  absl::flat_hash_map<std::string_view, const frontend::SourceFile*> sources;
   for (const auto& source : loaded.program.sources) {
-    sources.try_emplace(source.path, source.text);
+    sources.try_emplace(source.path, &source);
   }
+  absl::flat_hash_map<std::string_view, SourceLineIndex> indices;
   for (const auto& diagnostic : diagnostics) {
     const auto source_path =
         diagnostic.source_path.empty() ? std::string(path) : diagnostic.source_path;
@@ -160,13 +112,17 @@ void DiagnosticCollection::Collect(std::string_view path) {
              .second) {
       continue;
     }
-    const auto found = document_uris_.find(source_path);
-    const auto uri =
-        found == document_uris_.end() ? FileUri(Utf8Path(source_path)) : std::string(found->second);
-    const auto source = sources.find(source_path);
-    const auto position = source == sources.end()
-                              ? TextPosition()
-                              : source->second.Position(diagnostic.location, encoding_);
+    const auto found = open_sources_.find(source_path);
+    const auto uri = found == open_sources_.end() ? FileUri(Utf8Path(source_path))
+                                                  : std::string(found->second.uri);
+    TextPosition position;
+    if (found != open_sources_.end()) {
+      position = found->second.source->PositionAt(diagnostic.location, encoding_);
+    } else if (const auto source = sources.find(source_path); source != sources.end()) {
+      const auto& text = source->second->text;
+      const auto index = indices.try_emplace(source->first, text).first;
+      position = index->second.PositionAt(text, diagnostic.location, encoding_);
+    }
     auto& bucket = buckets_.try_emplace(uri).first->second;
     bucket.push_back({.position = position, .message = diagnostic.message});
   }
@@ -180,7 +136,8 @@ void LanguageServer::ClearDiagnostics(std::string_view uri) {
 
 void LanguageServer::PublishDiagnostics() {
   semantic_indices_.clear();
-  DiagnosticCollection collected(encoding_);
+  completion_indices_.clear();
+  DiagnosticCollection collected(encoding_, modules_);
   std::vector<std::string_view> entries;
   for (const auto& [uri, document] : documents_) {
     collected.AddOpenDocument(uri, document);

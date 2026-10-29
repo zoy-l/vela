@@ -16,6 +16,21 @@ export func calculate(operation: int, integer: int, decimal: double): dynamic {
     } finally { result += 2; }
     return result;
   }
+  if (operation == 6) {
+    let value: int? = integer;
+    if (integer == 0) { value = null; }
+    return value != null ? value + 2 : 2;
+  }
+  if (operation == 7) {
+    let value: int? = null;
+    const selected = integer > 0 ? (value = integer) : (value = 2);
+    return value;
+  }
+  if (operation == 8) {
+    let value: string? = 'retained';
+    if (integer <= 0) { value = null; }
+    return value != null ? value.length : 0;
+  }
   let sum = 0.0;
   for (let index = 0; index < integer; index++) { sum += index.toDouble(); }
   return sum.toInt();
@@ -122,6 +137,25 @@ TEST(NativeNumericTest, FailureRetainsCatchRootsAndLoopConversionsKeepZeroTripBe
     const std::array arguments{Integer(5), Integer(item[0]), Double(0.0)};
     ASSERT_EQ(Execute(NUMERIC_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), item[1]);
+    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_FALSE(execution.HasException());
+  }
+}
+
+TEST(NativeNumericTest, ConditionalPromotionPreservesNullablePayloadsAndBothBranchWrites) {
+  Isolate isolate(1);
+  const auto instance = NativeInstance::Instantiate(isolate, *NUMERIC_IMAGE());
+  ASSERT_TRUE(instance.has_value());
+  NativeExecution execution(**instance);
+  const std::array<std::array<std::int64_t, 3>, 6> cases{{
+      {6, 40, 42}, {6, 0, 2}, {7, 40, 40}, {7, -1, 2}, {8, 40, 8}, {8, 0, 0}}};
+  for (const auto& item : cases) {
+    SCOPED_TRACE(item[0]);
+    const std::array arguments{Integer(item[0]), Integer(item[1]), Double(0.0)};
+    NativeValue result;
+    ASSERT_EQ(Execute(NUMERIC_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
+    EXPECT_EQ(result.kind, NativeValueKind::Integer);
+    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), item[2]);
     EXPECT_EQ(execution.frame_count(), 0U);
     EXPECT_FALSE(execution.HasException());
   }
