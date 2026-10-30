@@ -216,5 +216,32 @@ TEST(AnalysisTest, NecessaryInstructionsBecomeLiveThroughLoopSuccessors) {
   EXPECT_EQ(necessary.keep, (std::vector<std::uint8_t>{1, 0, 1, 1}));
 }
 
+TEST(AnalysisTest, RecoveryUsesKeepThePreviousDefinitionAliveAtAnOverwrite) {
+  Function function;
+  function.parameter_count = 1;
+  function.register_count = 2;
+  function.instructions = {
+      {.opcode = Opcode::LoadString, .dst = 1, .location = {}},
+      {.opcode = Opcode::Jump, .index = 2, .location = {}},
+      {.opcode = Opcode::CheckedCast, .dst = 1, .lhs = 0, .location = {}},
+      {.opcode = Opcode::Return, .dst = 1, .location = {}},
+  };
+  std::vector<std::vector<RegisterId>> required(function.instructions.size());
+  required.at(2) = {1};
+  const auto graph = BuildFlowGraph(function);
+  const auto normal = AnalyzeLiveness(function, graph, {});
+  const auto recovery = AnalyzeLiveness(function, graph, {}, required);
+  const auto block = graph.instruction_blocks.at(2);
+  EXPECT_FALSE(normal.at(block).live_in.Has(1));
+  EXPECT_TRUE(recovery.at(block).live_in.Has(1));
+  RegisterSet live(function.register_count);
+  live.Insert(1);
+  const auto& instruction = function.instructions.at(2);
+  TransferLiveness(function, graph, recovery, instruction, AnalyzeRegisters(instruction, {}), live,
+                   required.at(2));
+  EXPECT_TRUE(live.Has(0));
+  EXPECT_TRUE(live.Has(1));
+}
+
 }  // namespace
 }  // namespace vela::ir

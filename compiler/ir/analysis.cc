@@ -276,7 +276,8 @@ struct BlockTransfer final {
 
 std::vector<BlockTransfer> SummarizeBlocks(const Function& function,
                                            const FlowGraph& graph,
-                                           std::span<const Function> functions) {
+                                           std::span<const Function> functions,
+                                           std::span<const std::vector<RegisterId>> required) {
   std::vector<BlockTransfer> transfers;
   transfers.reserve(graph.blocks.size());
   for (const auto& block : graph.blocks) {
@@ -298,11 +299,17 @@ std::vector<BlockTransfer> SummarizeBlocks(const Function& function,
               ExceptionalTransfer{.successor = *exceptional, .destination = instruction.dst};
         }
       }
-      ForEachUse(instruction, access, [&](RegisterId reg) {
+      const auto record_use = [&](RegisterId reg) {
         if (!transfer.killed.Has(reg)) {
           transfer.generated.Insert(reg);
         }
-      });
+      };
+      ForEachUse(instruction, access, record_use);
+      if (!required.empty()) {
+        for (const auto reg : required.subspan(position).front()) {
+          record_use(reg);
+        }
+      }
       if (access.defines_value) {
         transfer.killed.Insert(instruction.dst);
       }
@@ -362,8 +369,9 @@ std::vector<BlockLiveness> SolveLiveness(const Function& function,
 
 std::vector<BlockLiveness> AnalyzeLiveness(const Function& function,
                                            const FlowGraph& graph,
-                                           std::span<const Function> functions) {
-  const auto transfers = SummarizeBlocks(function, graph, functions);
+                                           std::span<const Function> functions,
+                                           std::span<const std::vector<RegisterId>> required) {
+  const auto transfers = SummarizeBlocks(function, graph, functions, required);
   return SolveLiveness(function, graph, [&](std::size_t index, const auto& live, auto& live_in) {
     const auto& transfer = transfers.at(index);
     live_in.Subtract(transfer.killed);
@@ -405,11 +413,15 @@ void TransferLiveness(const Function& function,
                       std::span<const BlockLiveness> blocks,
                       const Instruction& instruction,
                       const RegisterAccess& access,
-                      RegisterSet& live) {
+                      RegisterSet& live,
+                      std::span<const RegisterId> required) {
   const auto exceptional = instruction.handler ? ExceptionalBlock(function, graph, instruction,
                                                                   AnalyzeEffects(instruction))
                                                : std::nullopt;
   TransferInstruction(instruction, access, exceptional, blocks, live);
+  for (const auto reg : required) {
+    live.Insert(reg);
+  }
 }
 
 void CompactInstructions(Function& function, std::span<const std::uint8_t> keep) {

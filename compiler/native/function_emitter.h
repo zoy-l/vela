@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -16,6 +17,7 @@
 #include "base/layout_description.h"
 #include "base/native_program_mode.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
 
@@ -34,9 +36,16 @@ struct GeneratedFunction final {
   llvm::Function* baseline_resume = nullptr;
   llvm::Function* recovery = nullptr;
   llvm::Function* resume_recovery = nullptr;
+  llvm::Function* borrowed = nullptr;
 };
 
-enum class NativeEntryKind : std::uint8_t { Initial, Resume, RecoverInitial, RecoverResume };
+enum class NativeEntryKind : std::uint8_t {
+  Initial,
+  Resume,
+  RecoverInitial,
+  RecoverResume,
+  Borrowed,
+};
 
 class FunctionEmitter final {
  public:
@@ -44,6 +53,7 @@ class FunctionEmitter final {
                   const ir::Program& program,
                   llvm::Constant* image,
                   std::size_t function_index,
+                  const EscapePlan& escape,
                   std::span<const GeneratedFunction> generated,
                   const NativeRootPlan& roots,
                   NativeEntryKind kind,
@@ -51,7 +61,9 @@ class FunctionEmitter final {
       : module_(module),
         program_(program),
         image_(image),
-        source_(program.functions.at(function_index)),
+        escape_(escape),
+        source_(escape.function),
+        origins_(escape.origins),
         function_index_(function_index),
         generated_(generated),
         body_(SelectBody(generated.subspan(function_index).front(), kind)),
@@ -79,6 +91,7 @@ class FunctionEmitter final {
   llvm::Value* ResumeState();
   void InitializeCheckpoint();
   void StoreCheckpoint();
+  llvm::Constant* VirtualGraph(std::size_t instruction);
   void RecoverIfInvalidated();
   void EmitRecoveryDispatch();
   void GuardResume();
@@ -113,9 +126,11 @@ class FunctionEmitter final {
   llvm::Value* RootAddress(std::size_t slot);
   void ClearRoot(std::size_t slot);
   std::expected<void, std::string> EmitInstruction(const ir::Instruction& instruction);
+  void EmitCall(const ir::Instruction& instruction);
+  void BindArguments();
+  void InitializeRecords();
   void EmitConstant(const ir::Instruction& instruction);
   std::expected<void, std::string> EmitInstructionBlock(std::size_t index);
-  std::expected<std::size_t, std::string> TemporaryCount() const;
   std::expected<void, std::string> PrepareFrame();
   [[nodiscard]] bool CanUseLeafEntry() const;
   void BindFrameStorage();
@@ -133,16 +148,19 @@ class FunctionEmitter final {
   llvm::Module& module_;
   const ir::Program& program_;
   llvm::Constant* image_;
+  const EscapePlan& escape_;
   const ir::Function& source_;
+  std::span<const std::size_t> origins_;
   std::size_t function_index_;
   std::size_t instruction_index_ = 0;
-  std::uint32_t field_access_index_ = 0;
+  std::vector<std::optional<std::uint32_t>> field_accesses_;
   std::span<const GeneratedFunction> generated_;
   llvm::Function* body_;
   NativeEntryKind kind_;
   NativeCodeTier tier_;
   Builder builder_;
   std::vector<llvm::Value*> slots_;
+  std::vector<llvm::Value*> records_;
   std::vector<llvm::BasicBlock*> blocks_;
   llvm::BasicBlock* cleanup_ = nullptr;
   llvm::PHINode* status_ = nullptr;
@@ -155,6 +173,7 @@ class FunctionEmitter final {
   llvm::Value* checkpoint_ = nullptr;
   llvm::Value* checkpoint_values_ = nullptr;
   llvm::Value* recovery_storage_ = nullptr;
+  llvm::Value* virtual_references_ = nullptr;
   llvm::Value* trace_frame_ = nullptr;
   bool leaf_entry_ = false;
   llvm::StructType* frame_type_ = nullptr;
@@ -171,6 +190,17 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     std::size_t function_index,
     std::span<const GeneratedFunction> generated,
     NativeDebugging debugging,
-    NativeCodeTier tier = NativeCodeTier::Baseline);
+    NativeCodeTier tier = NativeCodeTier::Baseline,
+    EscapeOptimization optimization = EscapeOptimization::Enabled,
+    std::span<const std::optional<ir::ClassId>> borrowable = {});
+
+std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
+    llvm::Module& module,
+    const ir::Program& program,
+    llvm::Constant* image,
+    std::size_t function_index,
+    const EscapePlan& plan,
+    std::span<const GeneratedFunction> generated,
+    NativeDebugging debugging);
 
 }  // namespace vela::compiler::native

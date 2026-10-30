@@ -263,7 +263,7 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
 def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: int) -> str:
     pattern = re.compile(r"^(?:aot/(native|vm|cpp)|hot/steady/(baseline|optimized))/([^/]+)/(\d+)/real_time$")
     lifecycle_pattern = re.compile(
-        r"^hot/(baseline|optimized)/(edits|closures|instances|continuations|rebuild|active)(?:/(\d+))?/manual_time$")
+        r"^hot/(baseline|optimized)/(edits|closures|instances|continuations|rebuild|active|virtual)(?:/(\d+))?/manual_time$")
     rows = iteration_rows(report, expected_cases, repetitions)
     lifecycle = {}
     samples = {}
@@ -272,16 +272,21 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
     for name, entries in rows.items():
         match = pattern.fullmatch(name)
         if match is None:
-            if lifecycle_pattern.fullmatch(name) is None:
+            lifecycle_match = lifecycle_pattern.fullmatch(name)
+            if lifecycle_match is None:
                 raise ValueError(f"Unsupported JIT comparison case: {name}")
             for entry in entries:
                 if entry["released_code_batches"] != 1 or entry["released_suspended_frames"] != 0:
                     raise ValueError(f"{name}: old code or suspended frames survived release")
+                if (lifecycle_match[2] == "virtual" and
+                        entry["materialized_objects"] != (1 if lifecycle_match[1] == "optimized" else 0)):
+                    raise ValueError(f"{name}: incorrect materialized object count")
                 for field in ("pause_ns", "pause_max_ns", "source_ns", "llvm_lowering_ns",
                               "llvm_optimization_ns", "machine_compilation_ns", "linking_ns",
                               "instantiation_ns", "validation_ns", "state_preparation_ns",
                               "deoptimization_ns", "commit_ns", "refresh_ns", "entry_ns",
-                              "stopping_ns", "new_isolate_preparation_ns", "safepoint_waiting_ns"):
+                              "stopping_ns", "new_isolate_preparation_ns", "safepoint_waiting_ns",
+                              "materialization_ns", "materialized_objects"):
                     value = entry[field]
                     if not math.isfinite(value) or value < 0:
                         raise ValueError(f"{name}: invalid {field}")
@@ -393,18 +398,20 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
     if lifecycle:
         fields = ("source_ns", "llvm_lowering_ns", "llvm_optimization_ns", "machine_compilation_ns",
                   "linking_ns", "safepoint_waiting_ns", "instantiation_ns", "validation_ns",
-                  "state_preparation_ns", "deoptimization_ns", "commit_ns", "pause_ns", "pause_max_ns",
+                  "materialization_ns", "state_preparation_ns", "deoptimization_ns", "commit_ns", "pause_ns", "pause_max_ns",
                   "new_isolate_preparation_ns", "stopping_ns", "entry_ns", "refresh_ns")
         lines.extend(["", "Reload lifecycle: wall microseconds per edit, including compilation. "
                       "Stage counters are per-edit averages; pause_max_ns records the largest complete "
                       "runtime pause in the sample. Instance expansion occurs on the first edit. "
                       "No framework refresh callback is installed, so refresh_ns is zero.", "",
-                      "| Case | Total us | CV | " + " | ".join(field.removesuffix("_ns") + " us" for field in fields) + " |",
-                      "| --- | ---: | --- | " + " | ".join("---:" for _ in fields) + " |"])
+                      "| Case | Total us | CV | Materialized objects | " + " | ".join(field.removesuffix("_ns") + " us" for field in fields) + " |",
+                      "| --- | ---: | --- | ---: | " + " | ".join("---:" for _ in fields) + " |"])
         for name, entries in sorted(lifecycle.items()):
             times = [entry["real_time"] * MICROSECONDS[entry["time_unit"]] for entry in entries]
             numbers = [f"{median(entry[field] for entry in entries) / 1000:.3f}" for field in fields]
-            lines.append("| " + " | ".join([name, f"{median(times):.3f}", variation(times), *numbers]) + " |")
+            materialized = median(entry["materialized_objects"] for entry in entries)
+            lines.append("| " + " | ".join([name, f"{median(times):.3f}", variation(times),
+                                            f"{materialized:.3f}", *numbers]) + " |")
         fields = ("heap_bytes", "external_field_bytes", "executable_bytes", "read_only_bytes",
                   "writable_bytes", "constant_payload_bytes", "debug_payload_bytes", "code_batches",
                   "suspended_frames", "saved_state_bytes")

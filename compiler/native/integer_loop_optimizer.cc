@@ -416,7 +416,7 @@ std::optional<FieldAccesses> MatchFieldAccesses(const llvm::Loop& loop) {
       }
     }
   }
-  if (accesses.load == nullptr || accesses.store == nullptr || accesses.tag == nullptr ||
+  if (accesses.load == nullptr || accesses.store == nullptr ||
       accesses.load->getPointerOperand() != accesses.store->getPointerOperand()) {
     return std::nullopt;
   }
@@ -458,7 +458,9 @@ bool IsFieldReductionBody(const CountedLoop& counted,
   AllowedInstructions allowed;
   allowed.insert(accesses.load);
   allowed.insert(accesses.store);
-  allowed.insert(accesses.tag);
+  if (accesses.tag != nullptr) {
+    allowed.insert(accesses.tag);
+  }
   allowed.insert(counted.index);
   allowed.insert(counted.comparison);
   allowed.insert(counted.condition->getCondition());
@@ -501,12 +503,17 @@ std::optional<FieldReduction> MatchFieldReduction(const CountedLoop& counted,
   std::int64_t tag_offset = 0;
   auto* base =
       llvm::GetPointerBaseWithConstantOffset(load->getPointerOperand(), value_offset, layout);
-  auto* tag_base = llvm::GetPointerBaseWithConstantOffset(accesses->tag->getPointerOperand(),
-                                                          tag_offset, layout);
-  if (!loop.isLoopInvariant(base) || tag_base != base ||
-      tag_offset - value_offset !=
-          static_cast<std::int64_t>(runtime::NativeMemoryLayout::kValueKind) ||
-      !IsFieldReductionBody(counted, *accesses, *update, base)) {
+  // 私有借用字段使用类型化槽，只有普通 Value 字段才带种类字节。
+  if (accesses->tag != nullptr) {
+    auto* tag_base = llvm::GetPointerBaseWithConstantOffset(accesses->tag->getPointerOperand(),
+                                                            tag_offset, layout);
+    if (tag_base != base ||
+        tag_offset - value_offset !=
+            static_cast<std::int64_t>(runtime::NativeMemoryLayout::kValueKind)) {
+      return std::nullopt;
+    }
+  }
+  if (!loop.isLoopInvariant(base) || !IsFieldReductionBody(counted, *accesses, *update, base)) {
     return std::nullopt;
   }
   return FieldReduction{.load = load, .store = store, .update = *update};

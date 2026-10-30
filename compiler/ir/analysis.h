@@ -83,9 +83,11 @@ struct NecessaryLiveness final {
 };
 
 [[nodiscard]] FlowGraph BuildFlowGraph(const Function& function);
-[[nodiscard]] std::vector<BlockLiveness> AnalyzeLiveness(const Function& function,
-                                                         const FlowGraph& graph,
-                                                         std::span<const Function> functions);
+[[nodiscard]] std::vector<BlockLiveness> AnalyzeLiveness(
+    const Function& function,
+    const FlowGraph& graph,
+    std::span<const Function> functions,
+    std::span<const std::vector<RegisterId>> required = {});
 [[nodiscard]] NecessaryLiveness AnalyzeNecessaryLiveness(const Function& function,
                                                          const FlowGraph& graph,
                                                          std::span<const Function> functions);
@@ -95,7 +97,8 @@ void TransferLiveness(const Function& function,
                       std::span<const BlockLiveness> blocks,
                       const Instruction& instruction,
                       const RegisterAccess& access,
-                      RegisterSet& live);
+                      RegisterSet& live,
+                      std::span<const RegisterId> required = {});
 void CompactInstructions(Function& function, std::span<const std::uint8_t> keep);
 
 }  // namespace vela::ir

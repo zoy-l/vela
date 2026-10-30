@@ -29,6 +29,7 @@
 #include "runtime/native_control.h"
 #include "runtime/native_image.h"
 #include "runtime/native_instance.h"
+#include "runtime/native_materialization.h"
 #include "runtime/native_metadata.h"
 #include "runtime/native_program_state.h"
 #include "runtime/native_version.h"
@@ -446,6 +447,16 @@ std::expected<NativePublicationTimings, NativePublicationError> NativeDispatch::
   // 完成正在进行的增量轮次后重新追踪当前根，弱登记中的死亡实例不得阻挡结构修改。
   heap.FinishCollection();
   heap.Collect();
+  const auto materializing = Clock::now();
+  auto materializations = PrepareMaterializations();
+  if (!materializations) {
+    return std::unexpected(NativePublicationError{
+        .status = NativePublicationStatus::InstantiationFailed,
+        .message = "out of memory while materializing active native objects",
+        .declaration = {},
+    });
+  }
+  timings.materialization = Clock::now() - materializing;
   std::vector<NativeRetainedFunction> retained;
   heap.AppendRetainedNativeFunctions(retained);
   AppendExecutionFunctions(retained);
@@ -475,7 +486,7 @@ std::expected<NativePublicationTimings, NativePublicationError> NativeDispatch::
         .dependency = error.dependency,
     });
   }
-  timings.validation = Clock::now() - started;
+  timings.validation = Clock::now() - started - timings.materialization;
   const auto preparing = Clock::now();
   auto migrations = PrepareMigrations(*candidate.snapshot_);
   if (!migrations) {
@@ -485,6 +496,10 @@ std::expected<NativePublicationTimings, NativePublicationError> NativeDispatch::
   // 包括等待已进入调用返回结果的续延。
   timings.state_preparation = Clock::now() - preparing;
   const auto deoptimizing = Clock::now();
+  for (auto& materialization : *materializations) {
+    timings.materialized_objects += materialization->object_count();
+    materialization->Commit();
+  }
   DeoptimizeExecutions();
   timings.deoptimization = Clock::now() - deoptimizing;
   const auto committing = Clock::now();
@@ -867,6 +882,16 @@ extern "C" std::uint8_t vela_native_v3_store_field(NativeExecution* execution,
   auto& state = Heap::NativeProgram(*execution->instance().state().front().AsObject());
   const auto stored = state.dispatch->StoreField(
       *object, DeclarationId{field}, DecodeNativeValue(*value), state.field_cache(access));
+  return static_cast<std::uint8_t>(stored ? ExecutionStatus::Returned : stored.error());
+}
+
+extern "C" std::uint8_t vela_native_v7_store_materialized_field(NativeExecution* execution,
+                                                                HeapObject* object,
+                                                                std::uint64_t field,
+                                                                const NativeValue* value) noexcept {
+  auto& state = Heap::NativeProgram(*execution->instance().state().front().AsObject());
+  const auto stored =
+      state.dispatch->StoreField(*object, DeclarationId{field}, DecodeNativeValue(*value));
   return static_cast<std::uint8_t>(stored ? ExecutionStatus::Returned : stored.error());
 }
 

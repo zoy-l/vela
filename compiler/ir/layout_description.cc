@@ -235,6 +235,7 @@ layout::Class LayoutDescription::DescribeClass(const Class& type) {
   };
   switch (type.kind) {
     case Class::Kind::Instance:
+    case Class::Kind::CaptureCell:
       break;
     case Class::Kind::RuntimeError:
       descriptor.kind = layout::Class::Kind::RuntimeError;

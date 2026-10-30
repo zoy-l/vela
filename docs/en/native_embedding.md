@@ -39,6 +39,14 @@ be `noexcept`; host arithmetic and resource failures remain the host's
 responsibility. An `int`, `float`, nullable value, or differently shaped signature
 is never silently converted to match a binding.
 
+Heap limits and `OutOfMemory` apply to actual storage requests. Native optimization
+may remove unobservable instance storage or delay allocation until heap identity
+is required. Hosts cannot assume that every script constructor increases heap
+counters or that the VM and native backends fail at the same constructor. Objects
+passed through the host ABI always have ordinary heap identity and follow the
+existing borrowing and rooting rules. See
+[escape analysis and materialization](../zh-CN/escape_analysis.md).
+
 Functions that need the Isolate, allocation or asynchronous operations take
 `NativeContext&` as their first parameter. Ordinary C++ functions may omit it;
 `Bind` derives the same script signature in either form. In AOT, plain scalar

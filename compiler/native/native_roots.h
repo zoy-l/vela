@@ -23,17 +23,33 @@ struct NativeRootPlan final {
   std::vector<std::uint8_t> safepoints;
   // 原版本基线恢复使用的规范寄存器编号，包含标量局部值。
   std::vector<std::vector<ir::RegisterId>> checkpoints;
+  std::size_t minimum_temporary_count = 0;
+};
+
+struct NativeRecoveryRequirements final {
+  std::span<const std::vector<ir::RegisterId>> values;
+  std::span<const std::uint8_t> safepoints;
+  std::size_t minimum_root_count = 0;
+  std::size_t minimum_temporary_count = 0;
 };
 
 struct NativeFunctionMetrics final {
   std::uint64_t shadow_slots = 0;
   std::uint64_t frame_bytes = 0;
   std::uint64_t root_stores = 0;
+  std::uint64_t eliminated_allocations = 0;
+  std::uint64_t sunk_allocations = 0;
+  std::uint64_t retained_allocations = 0;
+  std::uint64_t stack_records = 0;
+  std::uint64_t borrowed_frame_bytes = 0;
+  std::uint64_t borrowed_shadow_slots = 0;
+  std::uint64_t borrowed_root_stores = 0;
 };
 
 [[nodiscard]] NativeRootPlan PlanNativeRoots(const ir::Function& function,
                                              std::span<const ir::Function> functions,
                                              NativeProgramMode mode,
-                                             NativeDebugging debugging);
+                                             NativeDebugging debugging,
+                                             NativeRecoveryRequirements recovery = {});
 
 }  // namespace vela::compiler::native

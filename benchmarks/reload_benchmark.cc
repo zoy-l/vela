@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -18,6 +19,7 @@
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_context.h"
+#include "runtime/native_debugger.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
 
@@ -127,6 +129,9 @@ void AddTimings(benchmark::State& state, const DevelopmentResult& result) {
   AddDuration(state, "pause_ns", timings.pause);
   AddDuration(state, "instantiation_ns", timings.publication.instantiation);
   AddDuration(state, "validation_ns", timings.publication.validation);
+  AddDuration(state, "materialization_ns", timings.publication.materialization);
+  state.counters["materialized_objects"] +=
+      static_cast<double>(timings.publication.materialized_objects);
   AddDuration(state, "state_preparation_ns", timings.publication.state_preparation);
   AddDuration(state, "deoptimization_ns", timings.publication.deoptimization);
   AddDuration(state, "commit_ns", timings.publication.commit);
@@ -142,7 +147,7 @@ void AddTimings(benchmark::State& state, const DevelopmentResult& result) {
 
 void AverageTimings(benchmark::State& state, std::int64_t operations) {
   for (auto& [name, counter] : state.counters) {
-    if (name.ends_with("_ns") && !name.contains("_max_")) {
+    if ((name.ends_with("_ns") && !name.contains("_max_")) || name == "materialized_objects") {
       counter.value /= static_cast<double>(operations);
     }
   }
@@ -397,6 +402,74 @@ void Rebuild(benchmark::State& state, NativeCodeTier tier) {
   }
 }
 
+std::string VirtualSource(std::int64_t version) {
+  return "func checkpoint(): void {} class Box { value: int; text: string; "
+         "read(): int { return this.value + this.text.length + " +
+         std::to_string(version) +
+         "; } } func main(): int { const box = Box(value: 38, text: 'a' + 'b'); "
+         "checkpoint(); return box.read(); }";
+}
+
+struct VirtualPause final : runtime::NativeDebugger {
+  explicit VirtualPause(DevelopmentSession& target) : session(target) {}
+  void AtSafepoint(const runtime::NativeDebugContext& context) noexcept override {
+    if (context.top_frame().name() != "checkpoint") {
+      return;
+    }
+    if (auto candidate = std::exchange(pending, std::nullopt)) {
+      (void)session.Submit(std::move(*candidate));
+      result = session.Pump();
+    }
+  }
+  DevelopmentSession& session;
+  std::optional<compiler::DevelopmentCandidate> pending;
+  DevelopmentResult result;
+};
+
+void VirtualReload(benchmark::State& state, NativeCodeTier tier) {
+  compiler::DevelopmentOptions options;
+  options.compilation.tier = tier;
+  auto created = DevelopmentSession::Create(std::string(kModule), {}, std::move(options));
+  if (!created) {
+    state.SkipWithError("cannot create virtual reload session");
+    return;
+  }
+  auto& session = **created;
+  if (const auto loaded = Apply(session, VirtualSource(0), DevelopmentOperation::Load); !loaded) {
+    state.SkipWithError(loaded.error());
+    return;
+  }
+  VirtualPause pause(session);
+  session.SetDebugger(&pause);
+  std::int64_t version = 0;
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    const auto started = Clock::now();
+    auto candidate = Prepare(session, VirtualSource(++version), DevelopmentOperation::HotReload);
+    if (!candidate) {
+      state.SkipWithError(candidate.error());
+      return;
+    }
+    pause.pending = std::move(*candidate);
+    const auto value = session.RunEntry();
+    state.SetIterationTime(std::chrono::duration<double>(Clock::now() - started).count());
+    if (!value || value->AsInteger() != kSaved + version || pause.pending ||
+        pause.result.status != DevelopmentStatus::Accepted ||
+        pause.result.timings.publication.materialized_objects !=
+            (tier == NativeCodeTier::Optimized ? 1U : 0U)) {
+      state.SkipWithError("virtual object reload or original caller recovery failed");
+      return;
+    }
+    AddTimings(state, pause.result);
+  }
+  session.SetDebugger(nullptr);
+  AverageTimings(state, state.iterations());
+  Memory(state, session, "released_");
+  if (session.code_resources().batches != 1) {
+    state.SkipWithError("virtual descriptors retained old code after recovery");
+  }
+}
+
 int RegisterReloadBenchmarks() {
   benchmark::AddCustomContext("jit_baseline",
                               "LLVM O2; current dispatch; precise roots; safepoints");
@@ -423,6 +496,7 @@ int RegisterReloadBenchmarks() {
         ->UseManualTime();
     benchmark::RegisterBenchmark(prefix + "rebuild", Rebuild, tier)->UseManualTime();
     benchmark::RegisterBenchmark(prefix + "active", ActiveReload, tier)->UseManualTime();
+    benchmark::RegisterBenchmark(prefix + "virtual", VirtualReload, tier)->UseManualTime();
   }
   return 0;
 }

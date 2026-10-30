@@ -24,7 +24,7 @@ struct FutureDiagnostic;
 struct FutureResult;
 struct NativeCheckpoint;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 6;
+inline constexpr std::uint32_t kNativeAbiVersion = 7;
 inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
 [[nodiscard]] constexpr std::uint64_t EncodeNativeTracePosition(TracePosition position) noexcept {
@@ -153,7 +153,9 @@ class NativeExecution final {
   [[nodiscard]] ExecutionStatus Rethrow(Value exception) noexcept;
   [[nodiscard]] Value TakeException() noexcept;
   [[nodiscard]] Value pending_exception() const noexcept { return pending_exception_; }
-  [[nodiscard]] bool HasException() const noexcept { return !pending_exception_.IsNull(); }
+  [[nodiscard]] bool HasException() const noexcept {
+    return !exception_allocation_failed_ && !pending_exception_.IsNull();
+  }
 
  private:
   friend class NativeInstanceScope;

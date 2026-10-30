@@ -714,6 +714,7 @@ class NativeObjectTest(unittest.TestCase):
         exports = ["calculate", *{
             "callable_entry": ["globalCounter", "readGlobal", "retainCycle"],
             "async_entry": ["readTrace"],
+            "class_entry": ["createGraph", "createLink", "borrowedRecursion"],
             "global_leaf_entry": ["repair"],
         }.get(name, [])]
         self.command([self.executable, "build", entry, "--emit=obj",
@@ -1197,7 +1198,7 @@ export async func calculate(): Future<int> {
                               "-framework", "CoreFoundation"])
             self.command([self.tools["cxx"], *flags, source_file, *objects, runtime, *gtest])
         executed = self.command([executable])
-        self.assertIn("[  PASSED  ] 53 tests.", executed.stdout)
+        self.assertIn("[  PASSED  ] 55 tests.", executed.stdout)
         nm = self.tools["cxx"].parent / executable_name("llvm-nm")
         symbols = self.command([nm, "--defined-only", "--demangle", runtime]).stdout
         self.assertNotIn("vela::vm::", symbols)

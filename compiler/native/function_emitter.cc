@@ -1,6 +1,7 @@
 #include "compiler/native/function_emitter.h"
-#include "base/declaration.h"
 #include "base/native_program_mode.h"
+#include "compiler/native/escape_analysis.h"
+#include "compiler/native/native_frame_plan.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
 
@@ -22,8 +23,6 @@
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Alignment.h>
 
-#include "base/async_operation.h"
-#include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/opcode.h"
 #include "compiler/frontend/type_checker.h"
@@ -36,44 +35,6 @@
 #include "runtime/value.h"
 
 namespace vela::compiler::native {
-namespace {
-
-std::size_t TemporaryArgumentCount(const ir::Instruction& instruction) {
-  switch (instruction.opcode) {
-    case Opcode::CallIndirect:
-      return static_cast<std::size_t>(instruction.index) + 2;
-    case Opcode::CallInterface:
-      return static_cast<std::size_t>(instruction.immediate);
-    case Opcode::BuiltinCall:
-      return BuiltinArity(static_cast<Builtin>(instruction.index));
-    case Opcode::AsyncCall:
-      return AsyncArity(static_cast<AsyncOperation>(instruction.index));
-    case Opcode::StringInterpolate:
-      return instruction.rhs;
-    case Opcode::StringConcat:
-    case Opcode::EqualString:
-    case Opcode::NotEqualString:
-    case Opcode::EqualValue:
-    case Opcode::NotEqualValue:
-      return 2;
-    case Opcode::SetField:
-    case Opcode::SetIndex:
-    case Opcode::Print:
-    case Opcode::SetGlobal:
-    case Opcode::NewFuture:
-    case Opcode::IsType:
-    case Opcode::CheckedCast:
-    case Opcode::ExceptionValue:
-    case Opcode::Throw:
-    case Opcode::Rethrow:
-      return 1;
-    default:
-      return 0;
-  }
-}
-
-}  // namespace
-
 llvm::Value* FunctionEmitter::Load(ir::RegisterId reg) {
   const auto& type = source_.value_types.at(reg);
   if (IsRecovering()) {
@@ -105,8 +66,8 @@ void FunctionEmitter::Finish(llvm::Value* status) {
 }
 
 void FunctionEmitter::SetPosition() {
-  builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(instruction_index_)),
-                       instruction_slot_);
+  const auto position = origins_.empty() ? 0 : origins_.subspan(instruction_index_).front();
+  builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(position)), instruction_slot_);
 }
 
 void FunctionEmitter::Poll() {
@@ -131,7 +92,7 @@ void FunctionEmitter::Fail(llvm::Value* status) {
     auto* roots = live.empty() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : root_slots_;
     const auto position = runtime::EncodeNativeTracePosition({
         .function = static_cast<std::uint32_t>(function_index_),
-        .instruction = static_cast<std::uint32_t>(instruction_index_),
+        .instruction = static_cast<std::uint32_t>(origins_.subspan(instruction_index_).front()),
     });
     Finish(builder_.CreateCall(failure, {
                                             body_->getArg(0),
@@ -315,60 +276,9 @@ std::expected<void, std::string> FunctionEmitter::EmitInstruction(
       builder_.CreateCondBr(condition, blocks_.at(instruction.index), next);
       break;
     }
-    case Opcode::Call: {
-      const auto& callee = program_.functions.at(instruction.index);
-      if (program_.native_mode == NativeProgramMode::Reloadable && callee.native_symbol.empty() &&
-          tier_ == NativeCodeTier::Baseline && callee.identity.local == 0 &&
-          callee.identity.declaration != DeclarationId{}) {
-        for (std::size_t index = 0; index < callee.parameter_count; ++index) {
-          const auto reg = static_cast<ir::RegisterId>(instruction.lhs + index);
-          const auto& type = callee.value_types.at(index);
-          auto* value = Convert(builder_, Load(reg), source_.value_types.at(reg), type);
-          Pack(EncodeValue(builder_, value, type), index);
-        }
-        auto helper = module_.getOrInsertFunction(
-            "vela_native_v3_call_declaration", builder_.getInt8Ty(), builder_.getPtrTy(),
-            builder_.getInt64Ty(), builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
-        CheckStatus(
-            builder_.CreateCall(helper, {
-                                            body_->getArg(0),
-                                            builder_.getInt64(callee.identity.declaration.value),
-                                            arguments_,
-                                            builder_.getInt64(callee.parameter_count),
-                                            result_,
-                                        }));
-        Unpack(instruction.dst);
-        break;
-      }
-      std::vector<llvm::Value*> arguments{body_->getArg(0)};
-      for (std::size_t index = 0; index < callee.parameter_count; ++index) {
-        const auto reg = static_cast<ir::RegisterId>(instruction.lhs + index);
-        arguments.push_back(Convert(builder_, Load(reg), source_.value_types.at(reg),
-                                    callee.value_types.at(index)));
-      }
-      if (!callee.native_symbol.empty()) {
-        arguments.push_back(imports_.at(instruction.index));
-      }
-      // 各类结果都可放入对齐的单个 ABI 暂存槽；循环和多调用不增加帧大小。
-      arguments.push_back(result_);
-      // Call 的效果要求调用者先登记逻辑帧；内联后仍保留该事实，避免为嵌套宿主调用
-      // 复制一条不可能发生的最外层入口清理路径。
-      auto* depth = builder_.CreateLoad(
-          builder_.getInt64Ty(),
-          ByteAddress(body_->getArg(0), runtime::NativeMemoryLayout::kExecutionDepth));
-      builder_.CreateAssumption(builder_.CreateICmpNE(depth, builder_.getInt64(0)));
-      auto* status =
-          builder_.CreateCall(generated_.subspan(instruction.index).front().body, arguments);
-      CheckStatus(status);
-      if (callee.return_type.kind == Kind::Void) {
-        Store(instruction.dst, builder_.getFalse(), callee.return_type);
-      } else {
-        Store(instruction.dst,
-              builder_.CreateLoad(ValueType(module_.getContext(), callee.return_type), result_),
-              callee.return_type);
-      }
+    case Opcode::Call:
+      EmitCall(instruction);
       break;
-    }
     case Opcode::Await:
       EmitAwait(instruction);
       break;
@@ -395,45 +305,7 @@ std::expected<void, std::string> FunctionEmitter::EmitInstruction(
   return {};
 }
 
-std::expected<std::size_t, std::string> FunctionEmitter::TemporaryCount() const {
-  std::size_t scratch_count = roots_.count == 0 && !source_.is_async ? 0 : 1;
-  for (const auto& saved : roots_.suspended) {
-    if (!saved.empty()) {
-      scratch_count = std::max(scratch_count, saved.size() + 1);
-    }
-  }
-  for (const auto& instruction : source_.instructions) {
-    if ((instruction.opcode == Opcode::GetIndex || instruction.opcode == Opcode::SetIndex ||
-         (instruction.opcode == Opcode::BuiltinCall &&
-          instruction.index == static_cast<std::uint32_t>(Builtin::ArrayPush))) &&
-        instruction.array_type == ir::kInvalidArrayType) {
-      return std::unexpected("native code requires upstream array storage types");
-    }
-    scratch_count = std::max(scratch_count, TemporaryArgumentCount(instruction));
-    if (program_.native_mode == NativeProgramMode::Reloadable &&
-        instruction.opcode == Opcode::Call) {
-      scratch_count = std::max(
-          scratch_count,
-          static_cast<std::size_t>(program_.functions.at(instruction.index).parameter_count));
-    }
-    const auto access = ir::AnalyzeRegisters(instruction, program_.functions);
-    bool has_type =
-        !access.defines_value || source_.value_types.at(instruction.dst).kind != Kind::Invalid;
-    ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) {
-      has_type = has_type && source_.value_types.at(reg).kind != Kind::Invalid;
-    });
-    if (!has_type) {
-      return std::unexpected(
-          "native function " + source_.name + " is missing an upstream value type for opcode " +
-          std::to_string(static_cast<unsigned>(instruction.opcode)) + " (index " +
-          std::to_string(instruction.index) + ", result " + std::to_string(instruction.dst) + ")");
-    }
-  }
-  return scratch_count;
-}
-
 std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
-  auto& context = module_.getContext();
   if (source_.value_types.size() != source_.register_count) {
     return std::unexpected("native code requires upstream virtual value types");
   }
@@ -444,31 +316,14 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
     construction_depth_ = builder_.CreateAlloca(builder_.getInt32Ty());
     builder_.CreateStore(builder_.getInt32(0), construction_depth_);
   }
-  const auto scratch_count = TemporaryCount();
-  if (!scratch_count) {
-    return std::unexpected(scratch_count.error());
+  const auto frame = PlanNativeFrame(module_, program_, escape_, roots_, tier_, kind_);
+  if (!frame) {
+    return std::unexpected(frame.error());
   }
-  std::vector<llvm::Type*> fields;
-  constexpr std::size_t kAuxiliaryFields = 5;
-  fields.reserve(slots_.size() + kAuxiliaryFields);
-  for (const auto& type : source_.value_types) {
-    fields.push_back(type.kind == Kind::Invalid ? builder_.getInt8Ty() : ValueType(context, type));
-  }
-  fields.push_back(llvm::ArrayType::get(NativeRecordType(context), *scratch_count));
-  fields.push_back(NativeRecordType(context));
-  if (tier_ == NativeCodeTier::Optimized) {
-    auto* recovery_storage =
-        llvm::StructType::get(context, {fields.at(slots_.size()), fields.at(slots_.size() + 1)});
-    fields.push_back(llvm::ArrayType::get(builder_.getInt8Ty(), sizeof(runtime::NativeCheckpoint)));
-    fields.push_back(llvm::ArrayType::get(NativeRecordType(context), source_.register_count));
-    fields.push_back(recovery_storage);
-  }
-  frame_type_ =
-      IsRecovering()
-          ? llvm::StructType::get(context, {fields.at(slots_.size()), fields.at(slots_.size() + 1)})
-          : llvm::StructType::get(context, fields);
+  frame_type_ = frame->type;
+  const std::vector<llvm::Type*> fields(frame_type_->element_begin(), frame_type_->element_end());
   storage_bytes_ = module_.getDataLayout().getTypeAllocSize(frame_type_);
-  frame_bytes_ = storage_bytes_ + (roots_.count * sizeof(runtime::Value));
+  frame_bytes_ = frame->bytes;
   if (!IsRecovering() && frame_bytes_ <= kMaximumNativeStackBytes) {
     // 局部值的地址不传给 helper；独立 alloca 可提升为 SSA。将它们与 ABI 暂存区
     // 放在同一结构中会让暂存区的地址逃逸阻止提升，导致纯算术循环持续读写栈。
@@ -485,6 +340,10 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
       checkpoint_ = checkpoint;
       checkpoint_values_ = builder_.CreateAlloca(fields.at(slots_.size() + 3));
       recovery_storage_ = builder_.CreateAlloca(fields.at(slots_.size() + 4));
+      if (!escape_.checkpoints.empty()) {
+        virtual_references_ =
+            builder_.CreateAlloca(fields.at(slots_.size() + kVirtualReferenceFieldIndex));
+      }
     }
   }
   return {};
@@ -544,6 +403,10 @@ void FunctionEmitter::BindFrameStorage() {
     checkpoint_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 2);
     checkpoint_values_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 3);
     recovery_storage_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 4);
+    if (!escape_.checkpoints.empty()) {
+      virtual_references_ = builder_.CreateStructGEP(frame_type_, frame_storage_,
+                                                     scratch + kVirtualReferenceFieldIndex);
+    }
   }
 }
 
@@ -679,8 +542,52 @@ std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size
   return {};
 }
 
+void FunctionEmitter::BindArguments() {
+  if (kind_ == NativeEntryKind::Initial || kind_ == NativeEntryKind::Borrowed) {
+    for (std::size_t index = 0; index < source_.parameter_count; ++index) {
+      auto* value =
+          kind_ == NativeEntryKind::Borrowed && index == 0
+              ? llvm::ConstantPointerNull::get(builder_.getPtrTy())
+              : static_cast<llvm::Value*>(body_->getArg(static_cast<unsigned>(index + 1)));
+      builder_.CreateStore(value, slots_.at(index));
+    }
+  }
+  if (kind_ == NativeEntryKind::Borrowed) {
+    for (std::size_t index = 0; index < escape_.borrowed_fields.size(); ++index) {
+      auto* address = builder_.CreateConstGEP1_64(builder_.getPtrTy(), body_->getArg(1), index);
+      slots_.at(escape_.borrowed_fields.at(index)) =
+          builder_.CreateLoad(builder_.getPtrTy(), address);
+    }
+  }
+}
+
+void FunctionEmitter::InitializeRecords() {
+  records_.resize(escape_.allocations.size());
+  for (std::size_t index = 0; index < escape_.allocations.size(); ++index) {
+    const auto& site = escape_.allocations.at(index);
+    if (!site.stack_record) {
+      continue;
+    }
+    auto* record =
+        builder_.CreateAlloca(llvm::ArrayType::get(builder_.getPtrTy(), site.fields.size()));
+    records_.at(index) = record;
+    for (std::size_t field = 0; field < site.fields.size(); ++field) {
+      builder_.CreateStore(slots_.at(site.fields.at(field)),
+                           builder_.CreateConstGEP1_64(builder_.getPtrTy(), record, field));
+    }
+  }
+}
+
 std::expected<void, std::string> FunctionEmitter::Emit() {
   auto& context = module_.getContext();
+  const auto& canonical = program_.functions.at(function_index_).instructions;
+  field_accesses_.resize(canonical.size());
+  std::uint32_t access = 0;
+  for (std::size_t index = 0; index < canonical.size(); ++index) {
+    if (canonical.at(index).field_declaration) {
+      field_accesses_.at(index) = access++;
+    }
+  }
   auto* entry = llvm::BasicBlock::Create(context, "entry", body_);
   builder_.SetInsertPoint(entry);
   GuardResume();
@@ -693,11 +600,8 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   BindFrameStorage();
   InitializeCheckpoint();
   CacheImports();
-  if (kind_ == NativeEntryKind::Initial) {
-    for (std::size_t index = 0; index < source_.parameter_count; ++index) {
-      builder_.CreateStore(body_->getArg(static_cast<unsigned>(index + 1)), slots_.at(index));
-    }
-  }
+  BindArguments();
+  InitializeRecords();
   if (!source_.native_symbol.empty()) {
     EmitImport();
     return {};
@@ -722,6 +626,75 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   return {};
 }
 
+namespace {
+
+std::expected<NativeRootPlan, std::string> EscapeRoots(const ir::Program& program,
+                                                       std::size_t function_index,
+                                                       const EscapePlan& escape,
+                                                       NativeDebugging debugging) {
+  std::vector<std::vector<ir::RegisterId>> required;
+  std::vector<std::uint8_t> safepoints;
+  NativeRecoveryRequirements requirements;
+  if (!escape.checkpoints.empty()) {
+    const auto& canonical = program.functions.at(function_index);
+    const auto canonical_roots =
+        PlanNativeRoots(canonical, program.functions, program.native_mode, debugging);
+    const auto temporary = PlanTemporaryCount(canonical, program, canonical_roots);
+    if (!temporary) {
+      return std::unexpected(temporary.error());
+    }
+    required.resize(escape.function.instructions.size());
+    safepoints.resize(escape.function.instructions.size());
+    for (std::size_t index = 0; index < escape.origins.size(); ++index) {
+      const auto origin = escape.origins.at(index);
+      required.at(index) = escape.checkpoints.at(origin).required;
+      if (index == 0 || origin != escape.origins.at(index - 1)) {
+        safepoints.at(index) = canonical_roots.safepoints.at(origin);
+      }
+    }
+    requirements = {
+        .values = required,
+        .safepoints = safepoints,
+        .minimum_root_count = canonical_roots.count,
+        .minimum_temporary_count = *temporary,
+    };
+  }
+  if (std::ranges::any_of(escape.borrowed_calls,
+                          [](const auto& call) { return call.has_value(); })) {
+    required.resize(escape.function.instructions.size());
+    for (std::size_t index = 0; index < escape.borrowed_calls.size(); ++index) {
+      if (const auto object = escape.borrowed_calls.at(index)) {
+        required.at(index) = escape.allocations.at(*object).fields;
+      }
+    }
+    requirements.values = required;
+  }
+  return PlanNativeRoots(escape.function, program.functions, program.native_mode, debugging,
+                         requirements);
+}
+
+void AccumulateMetrics(NativeFunctionMetrics& metrics,
+                       const EscapePlan& escape,
+                       const NativeRootPlan& roots) {
+  for (const auto& allocation : escape.allocations) {
+    metrics.stack_records += allocation.stack_record ? 1 : 0;
+    if (allocation.decision == AllocationDecision::ScalarReplacement) {
+      if (allocation.materialized) {
+        ++metrics.sunk_allocations;
+      } else {
+        ++metrics.eliminated_allocations;
+      }
+    } else {
+      ++metrics.retained_allocations;
+    }
+  }
+  for (const auto& stores : roots.stores) {
+    metrics.root_stores += stores.size();
+  }
+}
+
+}  // namespace
+
 std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     llvm::Module& module,
     const ir::Program& program,
@@ -729,20 +702,36 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     std::size_t function_index,
     std::span<const GeneratedFunction> generated,
     NativeDebugging debugging,
-    NativeCodeTier tier) {
-  const auto roots = PlanNativeRoots(program.functions.at(function_index), program.functions,
-                                     program.native_mode, debugging);
-  FunctionEmitter initial(module, program, image, function_index, generated, roots,
+    NativeCodeTier tier,
+    EscapeOptimization optimization,
+    std::span<const std::optional<ir::ClassId>> borrowable) {
+  const auto escape = PlanEscapes(program, function_index, optimization, tier, borrowable);
+  const auto planned = EscapeRoots(program, function_index, escape, debugging);
+  if (!planned) {
+    return std::unexpected(planned.error());
+  }
+  const auto& roots = *planned;
+  if (std::ranges::any_of(escape.allocations, &AllocationSite::stack_record)) {
+    const auto frame =
+        PlanNativeFrame(module, program, escape, roots, tier, NativeEntryKind::Initial);
+    if (!frame) {
+      return std::unexpected(frame.error());
+    }
+    if (frame->bytes > kMaximumNativeStackBytes) {
+      // 在 LLVM body 发射前完成表示选择；超预算记录使用普通调用所需的堆物化。
+      return EmitFunction(module, program, image, function_index, generated, debugging, tier,
+                          EscapeOptimization::ScalarReplacement);
+    }
+  }
+  FunctionEmitter initial(module, program, image, function_index, escape, generated, roots,
                           NativeEntryKind::Initial, tier);
   if (const auto emitted = initial.Emit(); !emitted) {
     return std::unexpected(emitted.error());
   }
   NativeFunctionMetrics metrics{.shadow_slots = roots.count, .frame_bytes = initial.frame_bytes()};
-  for (const auto& stores : roots.stores) {
-    metrics.root_stores += stores.size();
-  }
+  AccumulateMetrics(metrics, escape, roots);
   if (generated.subspan(function_index).front().resume != nullptr) {
-    FunctionEmitter resume(module, program, image, function_index, generated, roots,
+    FunctionEmitter resume(module, program, image, function_index, escape, generated, roots,
                            NativeEntryKind::Resume, tier);
     if (const auto emitted = resume.Emit(); !emitted) {
       return std::unexpected(emitted.error());
@@ -751,19 +740,41 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   }
   const auto& function = generated.subspan(function_index).front();
   if (tier == NativeCodeTier::Baseline && function.recovery != nullptr) {
-    FunctionEmitter recovery(module, program, image, function_index, generated, roots,
+    FunctionEmitter recovery(module, program, image, function_index, escape, generated, roots,
                              NativeEntryKind::RecoverInitial, tier);
     if (const auto emitted = recovery.Emit(); !emitted) {
       return std::unexpected(emitted.error());
     }
     if (function.resume_recovery != nullptr) {
-      FunctionEmitter resume(module, program, image, function_index, generated, roots,
+      FunctionEmitter resume(module, program, image, function_index, escape, generated, roots,
                              NativeEntryKind::RecoverResume, tier);
       if (const auto emitted = resume.Emit(); !emitted) {
         return std::unexpected(emitted.error());
       }
     }
   }
+  return metrics;
+}
+
+std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
+    llvm::Module& module,
+    const ir::Program& program,
+    llvm::Constant* image,
+    std::size_t function_index,
+    const EscapePlan& plan,
+    std::span<const GeneratedFunction> generated,
+    NativeDebugging debugging) {
+  const std::vector<std::vector<ir::RegisterId>> required(plan.function.instructions.size(),
+                                                          plan.borrowed_fields);
+  const auto roots = PlanNativeRoots(plan.function, program.functions, program.native_mode,
+                                     debugging, {.values = required, .safepoints = {}});
+  FunctionEmitter borrowed(module, program, image, function_index, plan, generated, roots,
+                           NativeEntryKind::Borrowed, NativeCodeTier::Baseline);
+  if (const auto emitted = borrowed.Emit(); !emitted) {
+    return std::unexpected(emitted.error());
+  }
+  NativeFunctionMetrics metrics{.shadow_slots = roots.count, .frame_bytes = borrowed.frame_bytes()};
+  AccumulateMetrics(metrics, plan, roots);
   return metrics;
 }
 

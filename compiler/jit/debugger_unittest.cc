@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -13,8 +15,10 @@
 #include <gtest/gtest.h>
 
 #include "base/declaration.h"
+#include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "compiler/development_session.h"
+#include "compiler/native/native_roots.h"
 #include "compiler/source_session.h"
 #include "runtime/future.h"
 #include "runtime/native_debugger.h"
@@ -38,9 +42,12 @@ struct DebugSnapshot final {
 
 struct JitDebuggerTest : public testing::TestWithParam<NativeCodeTier>,
                          public runtime::NativeDebugger {
-  void SetUp() override {
+  void SetUp() override { Initialize(native::NativeDebugging::Safepoints); }
+
+  void Initialize(native::NativeDebugging debugging) {
     DevelopmentOptions options;
     options.compilation.tier = GetParam();
+    options.compilation.debugging = debugging;
     auto created = DevelopmentSession::Create("main.vela", {}, std::move(options));
     ASSERT_TRUE(created);
     session_ = std::move(*created);
@@ -94,6 +101,47 @@ struct JitDebuggerTest : public testing::TestWithParam<NativeCodeTier>,
   std::function<void(const runtime::NativeDebugContext&)> paused_;
   std::vector<DebugSnapshot> snapshots_;
 };
+
+struct JitSourceLineTest : public JitDebuggerTest {
+  void SetUp() override { Initialize(native::NativeDebugging::SourceLines); }
+};
+
+TEST_P(JitSourceLineTest, ReloadAtAnArithmeticSourceLineRestoresVirtualFieldsWithoutReplay) {
+  Load(
+      "class Box { value: int; text: string; }\n"
+      "export func caller(): int {\n"
+      "  const box = Box(value: 38, text: 'a' + 'b');\n"
+      "  box.value += 2;\n"
+      "  box.value += 1;\n"
+      "  return box.value + box.text.length - 1;\n"
+      "}\n");
+  auto candidate = Prepare(
+      "class Box { value: int; text: string; added: int = 2; }\n"
+      "export func caller(): int { return 0; }\n");
+  ASSERT_TRUE(candidate);
+  std::optional<DevelopmentCandidate> pending(std::move(*candidate));
+  DevelopmentResult published;
+  constexpr std::uint32_t kReloadLine = 5;
+  paused_ = [&](const runtime::NativeDebugContext& context) {
+    const auto& frame = context.top_frame();
+    const auto location = frame.location();
+    if (frame.name() == "caller" && location && location->line == kReloadLine) {
+      if (auto update = std::exchange(pending, std::nullopt)) {
+        (void)session_->Submit(std::move(*update));
+        published = session_->Pump();
+      }
+    }
+  };
+  const auto value = session_->Invoke("main.vela", "caller");
+  ASSERT_TRUE(value) << ExecutionStatusName(value.error());
+  EXPECT_FALSE(pending);
+  EXPECT_EQ(published.status, DevelopmentStatus::Accepted) << published.message;
+  EXPECT_EQ(value->AsInteger(), 42);
+  EXPECT_EQ(published.timings.publication.materialized_objects,
+            GetParam() == NativeCodeTier::Optimized ? 1U : 0U);
+  session_->isolate().heap().Collect();
+  EXPECT_EQ(session_->code_resources().batches, 1U);
+}
 
 TEST_P(JitDebuggerTest, PublishingWhilePausedPreservesOldFrameSourcesAndCallsTheLatestCode) {
   const std::string old_source =
@@ -452,8 +500,143 @@ TEST_P(JitDebuggerTest, RejectedPublicationLeavesOptimizationAndLogicalFramesUnc
   EXPECT_EQ(session_->isolate().native_dispatch().deoptimized_frames(), 0U);
 }
 
+TEST_P(JitDebuggerTest, VirtualFieldsAreMaterializedBeforeMigrationAndResumeTheOriginalCaller) {
+  const std::string common =
+      "let calls = 0; let defaults = 0; func initial(): int { defaults++; return 2; } "
+      "func checkpoint(): void {} export func count(): int { return calls; } "
+      "export func initialized(): int { return defaults; } ";
+  Load(common +
+       "class Box { value: int; text: string; read(): int { return this.value + this.text.length; "
+       "} } "
+       "export func caller(): int { calls++; const box = Box(value: 38, text: 'o' + 'k'); "
+       "checkpoint(); return box.read(); }");
+  auto candidate = Prepare(common +
+                           "class Box { value: int; text: string; added: int = initial(); "
+                           "read(): int { return this.value + this.text.length + this.added; } } "
+                           "export func caller(): int { return 0; }");
+  ASSERT_TRUE(candidate);
+  std::optional<DevelopmentCandidate> pending(std::move(*candidate));
+  DevelopmentResult published;
+  paused_ = [&](const runtime::NativeDebugContext& context) {
+    if (context.top_frame().name() == "checkpoint") {
+      if (auto update = std::exchange(pending, std::nullopt)) {
+        (void)session_->Submit(std::move(*update));
+        published = session_->Pump();
+      }
+    }
+  };
+  const auto value = session_->Invoke("main.vela", "caller");
+  ASSERT_TRUE(value) << ExecutionStatusName(value.error());
+  EXPECT_EQ(published.status, DevelopmentStatus::Accepted) << published.message;
+  EXPECT_EQ(value->AsInteger(), 42);
+  EXPECT_EQ(published.timings.publication.materialized_objects,
+            GetParam() == NativeCodeTier::Optimized ? 1U : 0U);
+  EXPECT_EQ(session_->Invoke("main.vela", "count")->AsInteger(), 1);
+  EXPECT_EQ(session_->Invoke("main.vela", "initialized")->AsInteger(), 1);
+  EXPECT_EQ(session_->Invoke("main.vela", "caller")->AsInteger(), 0);
+  session_->isolate().heap().Collect();
+  EXPECT_EQ(session_->code_resources().batches, 1U);
+}
+
+TEST_P(JitDebuggerTest, VirtualInstancesParticipateInRequiredFieldConflictChecks) {
+  Load(
+      "func checkpoint(): void {} class Box { value: int; read(): int { return this.value; } } "
+      "export func caller(): int { const box = Box(value: 42); checkpoint(); return box.read(); }");
+  auto candidate = Prepare(
+      "func checkpoint(): void {} class Box { value: int; required: int; "
+      "read(): int { return this.value; } } export func caller(): int { return 0; }");
+  ASSERT_TRUE(candidate);
+  std::optional<DevelopmentCandidate> pending(std::move(*candidate));
+  DevelopmentResult published;
+  paused_ = [&](const runtime::NativeDebugContext& context) {
+    if (context.top_frame().name() == "checkpoint") {
+      if (auto update = std::exchange(pending, std::nullopt)) {
+        (void)session_->Submit(std::move(*update));
+        published = session_->Pump();
+      }
+    }
+  };
+  const auto value = session_->Invoke("main.vela", "caller");
+  ASSERT_TRUE(value) << ExecutionStatusName(value.error());
+  EXPECT_EQ(published.status, DevelopmentStatus::RequiresReload) << published.message;
+  EXPECT_EQ(value->AsInteger(), 42);
+  EXPECT_EQ(session_->snapshot()->revision, 1U);
+  EXPECT_EQ(session_->isolate().native_dispatch().deoptimized_frames(), 0U);
+  session_->isolate().heap().Collect();
+  EXPECT_EQ(session_->code_resources().batches, 1U);
+}
+
+TEST_P(JitDebuggerTest, MaterializationPreservesSharedChildrenAndCyclesAcrossReload) {
+  Load(
+      "func checkpoint(): void {} class Link { value: int; next: Link?; other: Link?; "
+      "read(): int { return this.value; } } export func caller(): int { "
+      "const first = Link(value: 20, next: null, other: null); "
+      "const second = Link(value: 20, next: first, other: first); "
+      "first.next = second; first.other = second; checkpoint(); "
+      "const next = first.next as Link; return next.next == first && first.other == next "
+      "? first.read() + next.value : 0; }");
+  auto candidate = Prepare(
+      "func checkpoint(): void {} class Link { value: int; next: Link?; other: Link?; "
+      "added: int = 2; read(): int { return this.value + this.added; } } "
+      "export func caller(): int { return 0; }");
+  ASSERT_TRUE(candidate);
+  std::optional<DevelopmentCandidate> pending(std::move(*candidate));
+  DevelopmentResult published;
+  paused_ = [&](const runtime::NativeDebugContext& context) {
+    if (context.top_frame().name() == "checkpoint") {
+      if (auto update = std::exchange(pending, std::nullopt)) {
+        (void)session_->Submit(std::move(*update));
+        published = session_->Pump();
+      }
+    }
+  };
+  const auto value = session_->Invoke("main.vela", "caller");
+  ASSERT_TRUE(value) << ExecutionStatusName(value.error());
+  EXPECT_EQ(published.status, DevelopmentStatus::Accepted) << published.message;
+  EXPECT_EQ(value->AsInteger(), 42);
+  EXPECT_EQ(published.timings.publication.materialized_objects,
+            GetParam() == NativeCodeTier::Optimized ? 2U : 0U);
+  session_->isolate().heap().Collect();
+  EXPECT_EQ(session_->code_resources().batches, 1U);
+}
+
+TEST_P(JitDebuggerTest, FailedMaterializationPreparationLeavesTheOldVirtualFrameRunnable) {
+  Load(
+      "func checkpoint(): void {} class Box { value: int; } "
+      "export func caller(): int { const box = Box(value: 42); checkpoint(); return box.value; }");
+  auto candidate = Prepare(
+      "func checkpoint(): void {} class Box { value: int; added: int = 2; } "
+      "export func caller(): int { return 0; }");
+  ASSERT_TRUE(candidate);
+  std::optional<DevelopmentCandidate> pending(std::move(*candidate));
+  DevelopmentResult published;
+  paused_ = [&](const runtime::NativeDebugContext& context) {
+    if (context.top_frame().name() == "checkpoint") {
+      if (auto update = std::exchange(pending, std::nullopt)) {
+        auto& heap = session_->isolate().heap();
+        heap.Collect();
+        heap.SetAllocationLimit(heap.allocated_bytes());
+        (void)session_->Submit(std::move(*update));
+        published = session_->Pump();
+        heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
+      }
+    }
+  };
+  const auto value = session_->Invoke("main.vela", "caller");
+  ASSERT_TRUE(value) << ExecutionStatusName(value.error());
+  EXPECT_EQ(published.status, DevelopmentStatus::InstantiationFailed) << published.message;
+  EXPECT_EQ(value->AsInteger(), 42);
+  EXPECT_EQ(session_->snapshot()->revision, 1U);
+  EXPECT_EQ(session_->isolate().native_dispatch().deoptimized_frames(), 0U);
+  session_->isolate().heap().Collect();
+  EXPECT_EQ(session_->code_resources().batches, 1U);
+}
+
 INSTANTIATE_TEST_SUITE_P(Tiers,
                          JitDebuggerTest,
+                         testing::Values(NativeCodeTier::Baseline, NativeCodeTier::Optimized));
+INSTANTIATE_TEST_SUITE_P(Tiers,
+                         JitSourceLineTest,
                          testing::Values(NativeCodeTier::Baseline, NativeCodeTier::Optimized));
 
 }  // namespace

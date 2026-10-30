@@ -37,6 +37,7 @@ struct NativeMemoryLayout final {
   static constexpr auto kExecutionExceptionAllocationFailed =
       offsetof(NativeExecution, exception_allocation_failed_);
   static constexpr auto kInstanceData = offsetof(NativeInstance, data_);
+  static constexpr auto kInstanceAnchor = offsetof(NativeInstance, anchor_);
   static constexpr auto kProgramGlobalStates = offsetof(NativeProgramState, global_states);
   static constexpr auto kProgramGlobals =
       offsetof(NativeProgramState, values) + (sizeof(Value) * NativeProgramState::kGlobals);

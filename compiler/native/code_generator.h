@@ -11,6 +11,7 @@
 #include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
 
 namespace llvm {
@@ -22,6 +23,7 @@ class TargetMachine;
 namespace vela::compiler {
 
 enum class NativeOptimization : std::uint8_t { None, Release };
+enum class NativeCodePlacement : std::uint8_t { Linked, Dynamic };
 
 namespace native {
 
@@ -47,7 +49,9 @@ struct NativeModule final {
     const std::string& module_name,
     std::span<const std::uint8_t> exports,
     NativeDebugging debugging = NativeDebugging::Safepoints,
-    NativeCodeTier tier = NativeCodeTier::Baseline);
+    NativeCodeTier tier = NativeCodeTier::Baseline,
+    EscapeOptimization escape = EscapeOptimization::Enabled,
+    NativeCodePlacement placement = NativeCodePlacement::Linked);
 
 // 调用者可在优化前添加 AOT 的公开包装和 main；JIT 直接交付映像入口。
 [[nodiscard]] std::expected<void, std::string> Finalize(NativeModule& generated,

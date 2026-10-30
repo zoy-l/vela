@@ -1,5 +1,6 @@
 #include "runtime/native_abi.h"
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -14,9 +15,11 @@
 #include "runtime/external_resources.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/native_control.h"
 #include "runtime/native_deoptimization.h"
 #include "runtime/native_dispatch.h"
 #include "runtime/native_instance.h"
+#include "runtime/native_materialization.h"
 #include "runtime/native_stack.h"
 #include "runtime/value.h"
 
@@ -112,6 +115,20 @@ void NativeExecution::Exit() noexcept {
 }
 
 std::uint8_t NativeExecution::Recover(NativeCheckpoint& checkpoint, void* result) noexcept {
+  if (NativeMaterialization::HasVirtualObjects(checkpoint)) {
+    const NativeInitializationScope initialization(isolate().native_control());
+    auto prepared = NativeMaterialization::Prepare(isolate().heap(), checkpoint);
+    if (!prepared) {
+      // 保留原异常的根；OOM 中止恢复，不能让外层 catch 把旧异常当作新恢复结果。
+      exception_allocation_failed_ = true;
+      return static_cast<std::uint8_t>(ExecutionStatus::OutOfMemory);
+    }
+    (*prepared)->Commit();
+  }
+  // 从此只运行基线恢复；进入其第一个安全点前不会分配，那里将登记规范活跃值。
+  // 清除优化专用的字段根，避免旧物理帧在恢复执行期间额外保活死亡子图。
+  std::ranges::fill(std::span(checkpoint.roots, static_cast<std::size_t>(checkpoint.root_count)),
+                    Value::Null());
   auto* physical = current_frame_;
   Exit();
   const auto status = checkpoint.recovery(this, &checkpoint, result);

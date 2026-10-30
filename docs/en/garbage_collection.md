@@ -65,6 +65,14 @@ Collection work is budgeted and scheduled cooperatively:
 
 ## Write Barriers and Field Stores
 
+Native optimization may remove unobservable local class storage while preserving
+constructor arguments, initialization, failures and side effects in their original
+order. `OutOfMemory` applies to actual storage requests; each source constructor
+need not allocate, and allocation failure need not occur at the same source point
+in the VM and native backends. Heap limits account for actual requests. Allocation
+and collection counts are implementation observations. See the
+[escape and materialization contract](../zh-CN/escape_analysis.md#13-分配失败与资源观测).
+
 - **Reference Stores**: Storing a heap reference into an object field, array
   element, or closure capture triggers the GC write barrier. The barrier shades
   either the target object or the assigned value to maintain tri-color invariants.

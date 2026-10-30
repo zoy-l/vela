@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
@@ -83,6 +84,37 @@ TEST(JitCompilerTest, MaterializesTheCompleteImageBeforePublishingNamedEntries) 
   EXPECT_EQ(result->AsInteger(), 42);
 }
 
+TEST(JitCompilerTest, VirtualClassFieldsRemainRootedAcrossUnrelatedAllocations) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+  const auto compiled = CompileText(**compiler, R"(
+class Point { x: int; text: string; }
+export func read(): int {
+  const point = Point(x: 40, text: 'a' + 'b');
+  const values = ['unrelated'];
+  return point.x + point.text.length + values.length - 1;
+}
+)",
+                                    NativeCodeTier::Optimized);
+  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+  const auto functions = compiled->image->functions.values();
+  const auto found = std::ranges::find(functions, "read",
+                                       [](const auto& function) { return function.name.text(); });
+  ASSERT_NE(found, functions.end());
+  const auto index = static_cast<std::size_t>(found - functions.begin());
+  EXPECT_EQ(compiled->function_metrics.at(index).eliminated_allocations, 1U);
+  EXPECT_NE(compiled->llvm_ir.find("_virtual_"), std::string::npos);
+  runtime::Isolate isolate(1);
+  auto publication = isolate.native_dispatch().Prepare(0, compiled->image);
+  ASSERT_TRUE(publication) << publication.error().message;
+  ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*publication)));
+  const auto entry = isolate.native_dispatch().FindEntry("main.vela", "read");
+  ASSERT_TRUE(entry);
+  const auto result = entry->Invoke({});
+  ASSERT_TRUE(result);
+  EXPECT_EQ(result->AsInteger(), 42);
+}
+
 TEST(JitCompilerTest, AsyncResumptionKeepsItsMachineCodeAfterTheCompilerIsDestroyed) {
   runtime::Isolate isolate(1);
   {
@@ -110,6 +142,91 @@ TEST(JitCompilerTest, AsyncResumptionKeepsItsMachineCodeAfterTheCompilerIsDestro
     FAIL() << "Future did not complete with a value";
   }
   EXPECT_EQ(completed->AsInteger(), 42);
+}
+
+TEST(JitCompilerTest, VirtualObjectsEndBeforeAwaitAndLiveObjectsUseHeapContinuationState) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+  const auto compiled = CompileText(**compiler, R"(
+class Box { value: int; text: string; }
+export async func dead(): Future<int> {
+  const box = Box(value: 40, text: 'a' + 'b');
+  const result = box.value + box.text.length;
+  await sleep(1);
+  return result;
+}
+export async func live(): Future<int> {
+  const box = Box(value: 40, text: 'a' + 'b');
+  await sleep(1);
+  return box.value + box.text.length;
+}
+)",
+                                    NativeCodeTier::Optimized);
+  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+  runtime::Isolate isolate(1);
+  auto publication = isolate.native_dispatch().Prepare(0, compiled->image);
+  ASSERT_TRUE(publication) << publication.error().message;
+  ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*publication)));
+  const auto functions = compiled->image->functions.values();
+  for (const auto* const name : {"dead", "live"}) {
+    const auto found = std::ranges::find(functions, name,
+                                         [](const auto& function) { return function.name.text(); });
+    ASSERT_NE(found, functions.end());
+    const auto& metrics =
+        compiled->function_metrics.at(static_cast<std::size_t>(found - functions.begin()));
+    EXPECT_EQ(metrics.eliminated_allocations, std::string_view(name) == "dead" ? 1U : 0U);
+    EXPECT_EQ(metrics.retained_allocations, std::string_view(name) == "live" ? 1U : 0U);
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", name);
+    ASSERT_TRUE(entry);
+    const auto started = entry->Invoke({});
+    ASSERT_TRUE(started);
+    const runtime::RootedValue root(isolate, *started);
+    auto* future = runtime::Heap::GetFuture(*root.value().AsObject());
+    ASSERT_NE(future, nullptr);
+    isolate.heap().Collect();
+    ASSERT_TRUE(isolate.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost));
+    const auto completed = future->value();
+    if (completed) {
+      EXPECT_EQ(completed->AsInteger(), 42);
+    } else {
+      FAIL() << "Future did not complete with a value";
+    }
+  }
+  isolate.heap().Collect();
+  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
+}
+
+TEST(JitCompilerTest, ComparingVirtualAndOverlappingLoopInstancesPreservesFields) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+  const std::string source = R"(
+class Box { value: int; ignored: int; }
+export func read(): int {
+  const first = Box(value: 14, ignored: 0);
+  let previous = Box(value: 0, ignored: 0);
+  let sum = 0;
+  for (let index = 0; index < 3; index++) {
+    const current = Box(value: index, ignored: 0);
+    sum += previous.ignored;
+    sum += first != current ? first.value : 0;
+    previous = current;
+  }
+  return sum;
+}
+)";
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    const auto compiled = CompileText(**compiler, source, tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate(1);
+    auto publication = isolate.native_dispatch().Prepare(0, compiled->image);
+    ASSERT_TRUE(publication) << publication.error().message;
+    ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*publication)));
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", "read");
+    ASSERT_TRUE(entry);
+    const auto result = entry->Invoke({});
+    ASSERT_TRUE(result) << ExecutionStatusName(result.error());
+    EXPECT_EQ(result->AsInteger(), 42);
+  }
 }
 
 TEST(JitCompilerTest, DiscardedCompiledCandidatesRetireTheirOrcResources) {

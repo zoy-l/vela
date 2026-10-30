@@ -17,6 +17,7 @@
 #include "compiler/jit/code_cache.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/native/code_generator.h"
+#include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
 #include "runtime/native_image.h"
 
@@ -28,6 +29,7 @@ struct CompileOptions final {
   NativeCodeTier tier = NativeCodeTier::Baseline;
   std::optional<std::filesystem::path> code_cache = std::nullopt;
   bool preserve_ir = false;
+  native::EscapeOptimization escape = native::EscapeOptimization::Enabled;
 };
 
 struct CompileTimings final {

@@ -141,14 +141,25 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   Check(builder_.CreateIsNotNull(object), ExecutionStatus::TypeError);
   const auto field = instruction.field_declaration;
   if (field) {
+    const auto origin = origins_.subspan(instruction_index_).front();
+    const auto& canonical = program_.functions.at(function_index_).instructions.at(origin);
+    auto* value = reading ? result_ : Pack(Encode(instruction.lhs), 0);
+    if (!reading &&
+        (canonical.opcode != instruction.opcode || canonical.field_declaration != field)) {
+      auto helper = module_.getOrInsertFunction(
+          "vela_native_v7_store_materialized_field", builder_.getInt8Ty(), builder_.getPtrTy(),
+          builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
+      CheckStatus(builder_.CreateCall(
+          helper, {body_->getArg(0), object, builder_.getInt64(field->value), value}));
+      return;
+    }
     auto helper = module_.getOrInsertFunction(
         reading ? "vela_native_v3_load_field" : "vela_native_v3_store_field", builder_.getInt8Ty(),
         builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getInt64Ty(),
         builder_.getPtrTy());
-    auto* value = reading ? result_ : Pack(Encode(instruction.lhs), 0);
     const auto access = runtime::EncodeNativeTracePosition({
         .function = static_cast<std::uint32_t>(function_index_),
-        .instruction = field_access_index_++,
+        .instruction = *field_accesses_.at(origin),
     });
     CheckStatus(builder_.CreateCall(helper, {
                                                 body_->getArg(0),
@@ -227,7 +238,7 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
                                             builder_.getInt64Ty(), builder_.getInt8Ty(), pointer);
   const auto position = runtime::EncodeNativeTracePosition({
       .function = static_cast<std::uint32_t>(function_index_),
-      .instruction = static_cast<std::uint32_t>(instruction_index_),
+      .instruction = static_cast<std::uint32_t>(origins_.subspan(instruction_index_).front()),
   });
   const auto frame_kind =
       leaf_entry_ ? runtime::NativeGlobalFrame::Leaf : runtime::NativeGlobalFrame::Current;

@@ -105,14 +105,14 @@ void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
     auto helper = module_.getOrInsertFunction(
         "vela_native_v1_resuspend", builder_.getVoidTy(), builder_.getPtrTy(),
         builder_.getInt32Ty(), builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt64Ty());
-    builder_.CreateCall(helper,
-                        {
-                            ResumeState(),
-                            builder_.getInt32(static_cast<std::uint32_t>(instruction_index_)),
-                            source,
-                            arguments_,
-                            builder_.getInt64(saved.size()),
-                        });
+    builder_.CreateCall(helper, {
+                                    ResumeState(),
+                                    builder_.getInt32(static_cast<std::uint32_t>(
+                                        origins_.subspan(instruction_index_).front())),
+                                    source,
+                                    arguments_,
+                                    builder_.getInt64(saved.size()),
+                                });
     Finish(Status(builder_, ExecutionStatus::Returned));
     return;
   }
@@ -129,7 +129,8 @@ void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
                   body_->getArg(0),
                   builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
                   generated_.subspan(function_index_).front().resume,
-                  builder_.getInt32(static_cast<std::uint32_t>(instruction_index_)),
+                  builder_.getInt32(
+                      static_cast<std::uint32_t>(origins_.subspan(instruction_index_).front())),
                   source,
                   arguments_,
                   builder_.getInt64(saved.size()),
@@ -157,7 +158,8 @@ void FunctionEmitter::EmitResumeDispatch() {
     }
     instruction_index_ = index;
     auto* restore = llvm::BasicBlock::Create(module_.getContext(), "resume", body_);
-    dispatch->addCase(builder_.getInt32(static_cast<std::uint32_t>(index)), restore);
+    dispatch->addCase(
+        builder_.getInt32(static_cast<std::uint32_t>(origins_.subspan(index).front())), restore);
     builder_.SetInsertPoint(restore);
     SetPosition();
     for (const auto position : roots_.rematerialized.at(index)) {

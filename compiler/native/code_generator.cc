@@ -36,6 +36,8 @@
 #include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/borrow_analysis.h"
+#include "compiler/native/escape_analysis.h"
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/native_image_emitter.h"
@@ -47,7 +49,7 @@ namespace vela::compiler::native {
 namespace {
 
 std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
-    NativeProgramMode mode) {
+    NativeCodePlacement placement) {
   InitializeTarget();
   // 编译器、运行时和产物必须使用同一个配置目标。LLVM 的默认 triple 可能带有
   // 与当前 SDK 不同的 Darwin 版本，直接读取它会让生成镜像无法在同一进程实例化。
@@ -60,7 +62,7 @@ std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
   llvm::TargetOptions options;
   std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
       llvm::Triple(triple), "generic", "", options, llvm::Reloc::PIC_, std::nullopt,
-      llvm::CodeGenOptLevel::Default, mode == NativeProgramMode::Reloadable));
+      llvm::CodeGenOptLevel::Default, placement == NativeCodePlacement::Dynamic));
   if (machine == nullptr) {
     return std::unexpected("unable to create native target machine");
   }
@@ -162,6 +164,21 @@ GeneratedFunction AddRecoveryEntries(llvm::Module& module,
   return optimized;
 }
 
+llvm::Function* AddResumeEntry(llvm::Module& module,
+                               const ir::Function& function,
+                               const std::string& symbol) {
+  if (!function.is_async ||
+      !std::ranges::any_of(function.instructions, [](const auto& instruction) {
+        return instruction.opcode == Opcode::Await;
+      })) {
+    return nullptr;
+  }
+  auto& context = module.getContext();
+  auto* pointer = llvm::PointerType::getUnqual(context);
+  auto* type = llvm::FunctionType::get(llvm::Type::getInt8Ty(context), {pointer, pointer}, false);
+  return llvm::Function::Create(type, llvm::GlobalValue::InternalLinkage, symbol, module);
+}
+
 }  // namespace
 
 void InitializeTarget() {
@@ -181,11 +198,13 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
                                                             const std::string& module_name,
                                                             std::span<const std::uint8_t> exports,
                                                             NativeDebugging debugging,
-                                                            NativeCodeTier tier) {
+                                                            NativeCodeTier tier,
+                                                            EscapeOptimization escape,
+                                                            NativeCodePlacement placement) {
   const auto diagnostic = [&](std::string message, const ir::Function* function = nullptr) {
     return std::unexpected(MakeDiagnostics(program, std::move(message), function));
   };
-  auto target = CreateTarget(program.native_mode);
+  auto target = CreateTarget(placement);
   if (!target) {
     return diagnostic(target.error());
   }
@@ -200,6 +219,10 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   module.setCodeModel(output.machine->getCodeModel());
   std::vector<GeneratedFunction> generated;
   std::vector<GeneratedFunction> optimized;
+  const auto borrows = escape == EscapeOptimization::Enabled
+                           ? PlanBorrows(program)
+                           : std::vector<std::optional<BorrowedFunction>>(program.functions.size());
+  std::vector<std::optional<ir::ClassId>> borrowable(program.functions.size());
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
     const auto& function = program.functions.at(index);
     const auto body_type = BodySignature(module, function);
@@ -215,20 +238,19 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
     const auto symbol = module_name + "_entry_" + std::to_string(index);
     auto* entry =
         llvm::Function::Create(wrapper_type, llvm::GlobalValue::InternalLinkage, symbol, module);
-    llvm::Function* resume = nullptr;
-    if (function.is_async &&
-        std::ranges::any_of(function.instructions, [](const auto& instruction) {
-          return instruction.opcode == Opcode::Await;
-        })) {
-      auto* resume_type =
-          llvm::FunctionType::get(llvm::Type::getInt8Ty(context), {pointer, pointer}, false);
-      resume = llvm::Function::Create(resume_type, llvm::GlobalValue::InternalLinkage,
-                                      module_name + "_resume_" + std::to_string(index), module);
-    }
+    auto* resume =
+        AddResumeEntry(module, function, module_name + "_resume_" + std::to_string(index));
     GeneratedFunction baseline{.body = body, .entry = entry, .resume = resume};
     auto current = baseline;
     if (tier == NativeCodeTier::Optimized && function.native_symbol.empty()) {
       current = AddRecoveryEntries(module, module_name + '_' + std::to_string(index), baseline);
+    }
+    if (const auto& borrow = borrows.at(index)) {
+      baseline.borrowed =
+          llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
+                                 module_name + "_borrowed_" + std::to_string(index), module);
+      borrowable.at(index) = borrow->type;
+      current.borrowed = baseline.borrowed;
     }
     generated.push_back(baseline);
     optimized.push_back(current);
@@ -245,13 +267,24 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   std::vector<NativeFunctionMetrics> metrics;
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
     const auto& function = program.functions.at(index);
-    auto emitted = EmitFunction(module, program, image->data, index, generated, debugging);
+    auto emitted = EmitFunction(module, program, image->data, index, generated, debugging,
+                                NativeCodeTier::Baseline, escape, borrowable);
     if (!emitted) {
       return diagnostic(emitted.error(), &function);
     }
+    if (const auto& borrow = borrows.at(index)) {
+      const auto borrowed = EmitBorrowedFunction(module, program, image->data, index, borrow->plan,
+                                                 generated, debugging);
+      if (!borrowed) {
+        return diagnostic(borrowed.error(), &function);
+      }
+      emitted->borrowed_frame_bytes = borrowed->frame_bytes;
+      emitted->borrowed_shadow_slots = borrowed->shadow_slots;
+      emitted->borrowed_root_stores = borrowed->root_stores;
+    }
     if (optimized.at(index).baseline_body != nullptr) {
       auto optimized_metrics = EmitFunction(module, program, image->data, index, optimized,
-                                            debugging, NativeCodeTier::Optimized);
+                                            debugging, NativeCodeTier::Optimized, escape);
       if (!optimized_metrics) {
         return diagnostic(optimized_metrics.error(), &function);
       }

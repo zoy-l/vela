@@ -10,6 +10,7 @@ import subprocess
 import sys
 
 from tools.benchmark_report import aot_comparison_report, comparison_report, jit_comparison_report, native_call_report
+from tools.escape_benchmark_report import escape_comparison_report
 from tools.build import build
 from tools.config import BUILD_VARIANTS, ROOT, executable_name, output_directory
 
@@ -22,14 +23,15 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     comparison.add_argument("--native-compare", action="store_true", help="Compare VM native calls with direct and indirect C++ calls")
     comparison.add_argument("--aot-compare", action="store_true", help="Compare offline AOT, VM and C++ workloads")
     comparison.add_argument("--jit-compare", action="store_true", help="Compare reloadable baseline and optimized JIT with offline AOT, VM and C++")
+    comparison.add_argument("--escape-compare", action="store_true", help="Compare heap, scalar replacement and private borrowing with virtual-frame reload")
     parser.add_argument("--report", type=Path, help="Comparison JSON output (default: out/benchmarks/comparison.json)")
     values = list(sys.argv[1:] if arguments is None else arguments)
     separator = values.index("--") if "--" in values else len(values)
     parsed = parser.parse_args(values[:separator])
     parsed.benchmark_arguments = values[separator + 1:]
-    comparing = parsed.compare or parsed.native_compare or parsed.aot_compare or parsed.jit_compare
+    comparing = parsed.compare or parsed.native_compare or parsed.aot_compare or parsed.jit_compare or parsed.escape_compare
     if parsed.report and not comparing:
-        parser.error("--report requires --compare, --native-compare, --aot-compare or --jit-compare")
+        parser.error("--report requires a comparison mode")
     if parsed.report and parsed.report.suffix != ".json":
         parser.error("--report must name a .json file")
     if comparing and parsed.variant != "release":
@@ -55,10 +57,10 @@ def benchmark_option(arguments: list[str], name: str, default: str) -> str:
 
 def run(parsed: argparse.Namespace) -> None:
     build(parsed.variant, "benchmarks")
-    name = "vela_aot_benchmarks" if parsed.aot_compare or parsed.jit_compare else "vela_benchmarks"
+    name = "vela_aot_benchmarks" if parsed.aot_compare or parsed.jit_compare or parsed.escape_compare else "vela_benchmarks"
     executable = output_directory(parsed.variant) / executable_name(name)
     arguments = list(parsed.benchmark_arguments)
-    comparing = parsed.compare or parsed.native_compare or parsed.aot_compare or parsed.jit_compare
+    comparing = parsed.compare or parsed.native_compare or parsed.aot_compare or parsed.jit_compare or parsed.escape_compare
     if comparing:
         filename = "comparison.json"
         filter_pattern = "^(compare/|first/(vm|luajit|luajit_interp)/|compile/(representative|luajit)/)"
@@ -69,6 +71,9 @@ def run(parsed: argparse.Namespace) -> None:
         elif parsed.jit_compare:
             filename = "jit_comparison.json"
             filter_pattern = "^(aot/(native|vm|cpp)/|hot/)"
+        elif parsed.escape_compare:
+            filename = "escape_comparison.json"
+            filter_pattern = "^(escape/|hot/(baseline|optimized)/virtual/)"
         report = (parsed.report or ROOT / "out" / "benchmarks" / filename).resolve()
         report.parent.mkdir(parents=True, exist_ok=True)
         # A failed invocation must never reuse an earlier successful report.
@@ -107,6 +112,8 @@ def run(parsed: argparse.Namespace) -> None:
             summarize = aot_comparison_report
         elif parsed.jit_compare:
             summarize = jit_comparison_report
+        elif parsed.escape_compare:
+            summarize = escape_comparison_report
         text = summarize(
             json.loads(report.read_text(encoding="utf-8")), expected_cases, repetitions)
         report.with_suffix(".md").write_text(text, encoding="utf-8", newline="\n")

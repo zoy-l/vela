@@ -355,6 +355,7 @@ class Heap final {
   void MarkRegExp(HeapObject& object) noexcept;
   static void ReleaseRegExp(HeapObject& object) noexcept;
   friend class RootRange;
+  friend class NativeMaterialization;
   friend class Future;
   friend class InstanceMigration;
   friend class NativeDispatch;

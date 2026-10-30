@@ -118,12 +118,8 @@ void PlanRematerialization(NativeRootPlan& plan,
   }
 }
 
-}  // namespace
-
-NativeRootPlan PlanNativeRoots(const ir::Function& function,
-                               std::span<const ir::Function> functions,
-                               NativeProgramMode mode,
-                               NativeDebugging debugging) {
+NativeRootPlan InitializeRoots(const ir::Function& function, NativeProgramMode mode,
+                               NativeDebugging debugging, NativeRecoveryRequirements recovery) {
   NativeRootPlan plan;
   plan.slots.resize(function.register_count);
   plan.stores.resize(function.instructions.size());
@@ -132,15 +128,30 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
   plan.rematerialized.resize(function.instructions.size());
   plan.safepoints.resize(function.instructions.size());
   plan.checkpoints.resize(function.instructions.size());
-  if (mode == NativeProgramMode::Reloadable) {
+  plan.minimum_temporary_count = recovery.minimum_temporary_count;
+  if (!recovery.safepoints.empty()) {
+    plan.safepoints.assign(recovery.safepoints.begin(), recovery.safepoints.end());
+  } else if (mode == NativeProgramMode::Reloadable) {
     PlanSafepoints(plan, function, debugging);
   }
+  return plan;
+}
+
+}  // namespace
+
+NativeRootPlan PlanNativeRoots(const ir::Function& function,
+                               std::span<const ir::Function> functions,
+                               NativeProgramMode mode,
+                               NativeDebugging debugging,
+                               NativeRecoveryRequirements recovery) {
+  auto plan = InitializeRoots(function, mode, debugging, recovery);
   if (!function.native_symbol.empty()) {
     AssignImportRoots(plan, function);
     return plan;
   }
   const auto graph = ir::BuildFlowGraph(function);
-  const auto blocks = ir::AnalyzeLiveness(function, graph, functions);
+  const auto required = recovery.values;
+  const auto blocks = ir::AnalyzeLiveness(function, graph, functions, required);
   ir::RegisterSet after(function.register_count);
   for (std::size_t block_index = 0; block_index < graph.blocks.size(); ++block_index) {
     const auto& block = graph.blocks.at(block_index);
@@ -151,7 +162,9 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
       const auto access = ir::AnalyzeRegisters(instruction, functions);
       after = live;
       RecordSuspension(plan, function, graph, blocks, index, after);
-      ir::TransferLiveness(function, graph, blocks, instruction, access, live);
+      ir::TransferLiveness(
+          function, graph, blocks, instruction, access, live,
+          required.empty() ? std::span<const ir::RegisterId>{} : required.subspan(index).front());
       live.ForEach([&](ir::RegisterId reg) { plan.checkpoints.at(index).push_back(reg); });
       auto& stores = plan.stores.at(index);
       auto& clears = plan.clears.at(index);
@@ -177,6 +190,7 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
     }
   }
   AssignRootSlots(plan);
+  plan.count = std::max(plan.count, recovery.minimum_root_count);
   PlanRematerialization(plan, function, functions);
   return plan;
 }

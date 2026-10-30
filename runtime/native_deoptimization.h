@@ -10,6 +10,7 @@ namespace vela::runtime {
 
 struct NativeResumeState;
 struct NativeCheckpoint;
+struct NativeVirtualGraph;
 using NativeRecoveryEntry = std::uint8_t (*)(NativeExecution*, NativeCheckpoint*, void*) noexcept;
 
 enum class NativeCheckpointPhase : std::uint8_t { Instruction, AwaitingResult };
@@ -26,6 +27,12 @@ struct NativeCheckpoint final {
   std::uint32_t instruction = 0;
   NativeCodeTier tier = NativeCodeTier::Optimized;
   NativeCheckpointPhase phase = NativeCheckpointPhase::Instruction;
+  const NativeVirtualGraph* virtual_graph = nullptr;
+  HeapObject*** virtual_references = nullptr;
+  HeapObject* program = nullptr;
+  std::uint64_t root_count = 0;
+  std::uint64_t value_count = 0;
+  std::uint64_t reference_count = 0;
 };
 
 [[nodiscard]] bool CanUseNativeOptimization(const NativeExecution& execution,

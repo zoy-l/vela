@@ -26,6 +26,7 @@ namespace vela::runtime {
 
 class Isolate;
 class NativeMetadataTracer;
+class NativeMaterialization;
 class NativeDispatch;
 struct NativeDispatchSnapshot;
 
@@ -49,16 +50,20 @@ struct NativePublicationError final {
 struct NativePublicationTimings final {
   std::chrono::nanoseconds instantiation{};
   std::chrono::nanoseconds validation{};
+  std::chrono::nanoseconds materialization{};
   std::chrono::nanoseconds state_preparation{};
   std::chrono::nanoseconds deoptimization{};
   std::chrono::nanoseconds commit{};
+  std::uint64_t materialized_objects = 0;
 
   NativePublicationTimings& operator+=(const NativePublicationTimings& other) noexcept {
     instantiation += other.instantiation;
     validation += other.validation;
+    materialization += other.materialization;
     state_preparation += other.state_preparation;
     deoptimization += other.deoptimization;
     commit += other.commit;
+    materialized_objects += other.materialized_objects;
     return *this;
   }
 };
@@ -189,6 +194,8 @@ class NativeDispatch final {
   static void UnregisterExecution(NativeExecution& execution) noexcept;
   void AppendExecutionFunctions(std::vector<NativeRetainedFunction>& functions) const;
   void DeoptimizeExecutions() noexcept;
+  std::expected<std::vector<std::unique_ptr<NativeMaterialization>>, ExecutionStatus>
+  PrepareMaterializations();
   std::expected<std::vector<std::unique_ptr<InstanceMigration>>, NativePublicationError>
   PrepareMigrations(const NativeDispatchSnapshot& candidate);
   std::expected<Value, ExecutionStatus> LoadFieldAt(NativeExecution& execution,
@@ -221,5 +228,9 @@ extern "C" std::uint8_t vela_native_v3_store_field(NativeExecution* execution,
                                                    std::uint64_t field,
                                                    std::uint64_t access,
                                                    const NativeValue* value) noexcept;
+extern "C" std::uint8_t vela_native_v7_store_materialized_field(NativeExecution* execution,
+                                                                HeapObject* object,
+                                                                std::uint64_t field,
+                                                                const NativeValue* value) noexcept;
 
 }  // namespace vela::runtime

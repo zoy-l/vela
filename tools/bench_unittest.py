@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from tools.bench import parse_arguments, run
 from tools.benchmark_report import aot_comparison_report, comparison_report, jit_comparison_report, native_call_report
+from tools.escape_benchmark_report import aggregate_escape_results
 
 
 BACKENDS = ("cpp", "vm", "luajit_interp", "luajit")
@@ -63,6 +64,33 @@ def ported_aot_samples(repetitions: int = 1) -> list[dict]:
 
 
 class BenchmarkReportTest(unittest.TestCase):
+    def test_escape_report_requires_complete_modes_checksums_and_virtual_code_retirement(self) -> None:
+        rows = [dict(name=f"escape/{mode}/numeric/real_time", real_time=time, time_unit="ns",
+                     result=42, expected_result=42, allocation_bytes=128)
+                for mode, time in (("heap", 100), ("scalar", 60), ("borrow", 50))]
+        names = [row["name"] for row in rows]
+        values = aggregate_escape_results({"benchmarks": rows}, names, 1)
+        self.assertEqual(values[names[-1]]["median_ns"], 50)
+        with self.assertRaisesRegex(ValueError, "all three modes"):
+            aggregate_escape_results({"benchmarks": rows[:-1]}, names[:-1], 1)
+        rows[-1]["result"] = 0
+        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+            aggregate_escape_results({"benchmarks": rows}, names, 1)
+        rows[-1]["result"] = 42
+        rows[-1]["allocation_bytes"] = -1
+        with self.assertRaisesRegex(ValueError, "invalid counter"):
+            aggregate_escape_results({"benchmarks": rows}, names, 1)
+        rows[-1]["allocation_bytes"] = 0
+        lifecycle = dict(name="hot/optimized/virtual/manual_time", real_time=10, time_unit="us",
+                         released_code_batches=2, released_saved_state_bytes=0,
+                         released_suspended_frames=0, materialized_objects=1)
+        rows.append(lifecycle)
+        names.append(lifecycle["name"])
+        with self.assertRaisesRegex(ValueError, "code retirement"):
+            aggregate_escape_results({"benchmarks": rows}, names, 1)
+        lifecycle["released_code_batches"] = 1
+        self.assertEqual(len(aggregate_escape_results({"benchmarks": rows}, names, 1)), 4)
+
     def test_reloadable_report_requires_five_checked_backends_and_code_retirement_evidence(self) -> None:
         rows = ported_aot_samples(3)
         rows += [dict(row, name=row["name"].replace("/native/", "/vm/"), real_time=80,
@@ -96,12 +124,14 @@ class BenchmarkReportTest(unittest.TestCase):
                              "llvm_optimization_ns", "machine_compilation_ns", "linking_ns",
                              "instantiation_ns", "validation_ns", "state_preparation_ns",
                              "deoptimization_ns", "commit_ns", "refresh_ns", "entry_ns",
-                             "stopping_ns", "new_isolate_preparation_ns", "safepoint_waiting_ns"), 1000)
+                             "stopping_ns", "new_isolate_preparation_ns", "safepoint_waiting_ns",
+                             "materialization_ns"), 1000)
         row.update(name=name, real_time=20, time_unit="us", released_code_batches=1,
                    released_heap_bytes=128, released_external_field_bytes=0,
                    released_executable_bytes=1024, released_read_only_bytes=2048,
                    released_constant_payload_bytes=32, released_debug_payload_bytes=1024,
-                   released_writable_bytes=0, released_suspended_frames=0, released_saved_state_bytes=0)
+                   released_writable_bytes=0, released_suspended_frames=0, released_saved_state_bytes=0,
+                   materialized_objects=0)
         report = {"benchmarks": [row]}
         text = jit_comparison_report(report, [name], 1)
         self.assertIn("20.000", text)
@@ -113,6 +143,15 @@ class BenchmarkReportTest(unittest.TestCase):
         row["released_code_batches"] = 1
         row["pause_ns"] = float("nan")
         with self.assertRaisesRegex(ValueError, "invalid pause_ns"):
+            jit_comparison_report(report, [name], 1)
+        row["pause_ns"] = 1000
+        name = "hot/optimized/virtual/manual_time"
+        row.update(name=name, materialized_objects=1)
+        text = jit_comparison_report(report, [name], 1)
+        self.assertIn("Materialized objects", text)
+        self.assertIn("materialization us", text)
+        row["materialized_objects"] = 0
+        with self.assertRaisesRegex(ValueError, "incorrect materialized object count"):
             jit_comparison_report(report, [name], 1)
 
     def test_ported_vm_report_uses_matching_cpp_samples_and_checks_suspended_state(self) -> None:

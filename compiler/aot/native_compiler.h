@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -9,6 +10,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
+#include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
 
 namespace vela::compiler::aot {
@@ -21,12 +23,21 @@ struct NativeOptions final {
   std::vector<std::string> exports;
   NativeEntryMode entry_mode = NativeEntryMode::Library;
   bool preserve_ir = false;
+  native::EscapeOptimization escape = native::EscapeOptimization::Enabled;
+  NativeCodePlacement placement = NativeCodePlacement::Linked;
 };
 
 struct NativeExport final {
   std::string name;
   std::string symbol;
   std::uint32_t function = 0;
+};
+
+struct NativeCompileTimings final {
+  std::chrono::nanoseconds preparation{};
+  std::chrono::nanoseconds generation{};
+  std::chrono::nanoseconds optimization{};
+  std::chrono::nanoseconds emission{};
 };
 
 struct NativeArtifact final {
@@ -40,6 +51,7 @@ struct NativeArtifact final {
   NativeOptimization optimization = NativeOptimization::Release;
   ir::Program program;
   std::vector<native::NativeFunctionMetrics> function_metrics;
+  NativeCompileTimings timings;
 };
 
 [[nodiscard]] std::string NativeToolchainBuildIdentity(NativeOptimization optimization);

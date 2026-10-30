@@ -245,15 +245,25 @@ source_set("compiler") {
 source_set("native") {
   sources = [
     "native/async_emitter.cc",
+    "native/borrow_analysis.cc",
+    "native/borrow_analysis.h",
+    "native/call_emitter.cc",
     "native/code_generator.cc",
     "native/code_generator.h",
     "native/deoptimization_emitter.cc",
+    "native/escape_analysis.cc",
+    "native/escape_analysis.h",
+    "native/escape_dataflow.h",
+    "native/escape_rewriter.cc",
     "native/frame_emitter.cc",
     "native/function_emitter.cc",
     "native/function_emitter.h",
     "native/integer_loop_optimizer.cc",
     "native/integer_loop_optimizer.h",
+    "native/materialization_emitter.cc",
     "native/memory_emitter.cc",
+    "native/native_frame_plan.cc",
+    "native/native_frame_plan.h",
     "native/native_image_emitter.cc",
     "native/native_image_emitter.h",
     "native/native_roots.cc",
@@ -390,6 +400,7 @@ executable("vela_aot_tests") {
   sources = [
     "aot/native_compiler_unittest.cc",
     "aot/reachability_unittest.cc",
+    "native/escape_analysis_unittest.cc",
   ]
   deps = [
     ":aot",

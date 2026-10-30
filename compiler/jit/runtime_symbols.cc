@@ -72,6 +72,8 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind("vela_native_v3_store_global", &runtime::vela_native_v3_store_global);
   bind("vela_native_v3_load_field", &runtime::vela_native_v3_load_field);
   bind("vela_native_v3_store_field", &runtime::vela_native_v3_store_field);
+  bind("vela_native_v7_store_materialized_field",
+       &runtime::vela_native_v7_store_materialized_field);
   bind("vela_native_v1_import", &runtime::vela_native_v1_import);
   bind("vela_native_v1_constant", &runtime::vela_native_v1_constant);
   bind("vela_native_v1_type_test", &runtime::vela_native_v1_type_test);

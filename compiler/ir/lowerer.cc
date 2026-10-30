@@ -207,6 +207,7 @@ LoweringResult Lowerer::Lower() {
         .callable = std::nullopt,
         .interfaces = {},
         .dispatch_targets = {},
+        .kind = Class::Kind::CaptureCell,
         .callable_type = {},
         .declaration = {},
         .fields = {},

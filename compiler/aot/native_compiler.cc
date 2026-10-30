@@ -1,5 +1,6 @@
 #include "compiler/aot/native_compiler.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -32,6 +33,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
+#include "compiler/native/native_roots.h"
 #include "runtime/native_image.h"
 #include "runtime/standard_library.h"
 
@@ -152,7 +154,11 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
   if (!selected) {
     return diagnostic(selected.error());
   }
+  using Clock = std::chrono::steady_clock;
+  NativeCompileTimings timings;
+  const auto preparing = Clock::now();
   const auto prepared = PrepareNativeProgram(program, options);
+  timings.preparation = Clock::now() - preparing;
   if (!prepared) {
     return diagnostic(prepared.error());
   }
@@ -170,10 +176,14 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
       });
     }
   }
-  auto generated = native::Generate(program, options.module_name, export_flags);
+  const auto generating = Clock::now();
+  auto generated = native::Generate(program, options.module_name, export_flags,
+                                    native::NativeDebugging::Safepoints, NativeCodeTier::Baseline,
+                                    options.escape, options.placement);
   if (!generated) {
     return std::unexpected(std::move(generated.error()));
   }
+  timings.generation = Clock::now() - generating;
   auto& module = *generated->module;
   auto& machine = *generated->machine;
   auto export_interface = EmitNativeExports(
@@ -184,15 +194,19 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
   if (main) {
     EmitMain(module, *module.getFunction(generated->image_symbol), *main);
   }
+  const auto optimizing = Clock::now();
   if (const auto finalized = native::Finalize(*generated, options.optimization); !finalized) {
     return diagnostic(finalized.error());
   }
+  timings.optimization = Clock::now() - optimizing;
   std::string llvm_ir;
   if (options.preserve_ir) {
     llvm::raw_string_ostream ir_output(llvm_ir);
     module.print(ir_output, nullptr);
   }
+  const auto emitting = Clock::now();
   auto object = native::EmitObject(*generated);
+  timings.emission = Clock::now() - emitting;
   if (!object) {
     return diagnostic(object.error());
   }
@@ -207,6 +221,7 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
       .optimization = options.optimization,
       .program = std::move(program),
       .function_metrics = std::move(generated->function_metrics),
+      .timings = timings,
   };
 }
 

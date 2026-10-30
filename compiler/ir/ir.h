@@ -55,7 +55,7 @@ struct Class final {
     frontend::Visibility visibility = frontend::Visibility::Public;
     std::uint32_t initializer = kInvalidFunctionTarget;
   };
-  enum class Kind : std::uint8_t { Instance, RuntimeError, DateParts, Enum };
+  enum class Kind : std::uint8_t { Instance, RuntimeError, DateParts, Enum, CaptureCell };
   std::string name;
   std::vector<std::string> field_order;
   std::vector<frontend::TypeDescriptor> field_types;

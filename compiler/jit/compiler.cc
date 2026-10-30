@@ -216,7 +216,8 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(
   CompileTimings timings;
   const auto generation_started = Clock::now();
   const std::string module_name = "vela_jit";
-  auto generated = native::Generate(program, module_name, exports, options.debugging, options.tier);
+  auto generated = native::Generate(program, module_name, exports, options.debugging, options.tier,
+                                    options.escape, NativeCodePlacement::Dynamic);
   timings.generation = Clock::now() - generation_started;
   if (!generated) {
     return std::unexpected(std::move(generated.error()));
