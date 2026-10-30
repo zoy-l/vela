@@ -2,6 +2,8 @@
 
 > 状态：T0–T5 已实现。本文定义通用项目配置 `vela.json`、面向 Vela 源码的测试库，以及 `vela test` 运行器。测试 API 和执行语义以 Dart `package:test` 为依据；配置复用已有 JSON 基础设施，测试路径必须显式提供。Debug/Release 回归、真实进程、静态检查与 Release 测量已在 Windows x64 完成；性能与资源证据见[滚动摘要](../../benchmarks/results/rolling_summary.json)。
 
+> Mock 扩展状态：第 12 节为待实现的完整设计，采用 Dart Mockito／Mocktail 的配置、匹配和验证模型。`sdk:mock`、接口生成命令及该节 API 当前尚不可用；M0–M5 不属于已经完成的 T0–T5。
+
 项目在根目录通过 `vela.json` 声明测试入口：
 
 ```json
@@ -55,7 +57,7 @@ func main(): void {
 
 Dart 当前 `test` 与生命周期回调使用 `FutureOr<dynamic> Function()`，并非只接受 `void` 或 `Future<void>`。Vela 保留“普通返回值忽略、Future 等待完成”的行为，不为测试框架增加 `FutureOr`、联合类型、函数重载、泛型约束或类型实参推导。
 
-第一版包括本机 VM 上的单元测试与集成测试、配置、发现、注册、生命周期、同步与异步断言、超时、标签筛选、并发及结构化报告。浏览器测试、跨平台选择表达式、注解语法、mock 生成、快照测试、覆盖率、分片、重试和随机顺序不在本次实现范围内；不宣称完整兼容 Dart 的全部 API 或配置。
+T0–T5 包括本机 VM 上的单元测试与集成测试、配置、发现、注册、生命周期、同步与异步断言、超时、标签筛选、并发及结构化报告。Mock 和接口生成另由第 12 节定义。浏览器测试、跨平台选择表达式、注解语法、快照测试、覆盖率、分片、重试和随机顺序仍不在范围内；不宣称完整兼容 Dart 的全部 API 或配置。
 
 ### 1.2 可复用的生产实现
 
@@ -375,7 +377,251 @@ LSP 补全、悬停、文档、导入链接与格式化消费真实 SDK 声明�
 
 实现完成边界执行相关 Debug/Release 回归、仓库静态检查和 Release 测量。测量小 suite 启动、批量 suite 编译缓存命中、注册/断言吞吐、深度匹配内存、并发资源峰值及普通异步程序回退；按[基准结果保留规则](../../.agents/benchmark_results.md)保存证据。只修改本文时检查内容、链接、UTF-8、LF 和 diff，不运行无关构建。
 
-## 12. 参考
+## 12. Mock 扩展设计（待实现）
+
+### 12.1 目标与代表性用法
+
+提供独立的 `sdk:mock` 模块，支持接口替身生成、调用记录、返回值与异常配置、自定义响应、实参匹配和捕获、调用次数与顺序验证，以及异步调用等待。业务代码接收具有原接口类型的对象；测试通过生成的调用描述入口配置和验证它。公开 API 使用普通 Vela 声明，不增加注解、宏、源码 rest 形参或 `noSuchMethod` 语言机制。
+
+例如，业务模块定义：
+
+```vela
+// lib/user_repository.vela
+export interface UserRepository {
+  load(id: int): Future<string>;
+  save(id: int, name: string): void;
+}
+```
+
+显式生成测试模块：
+
+```text
+vela mock lib/user_repository.vela --interface UserRepository -o tests/user_repository.mocks.vela
+```
+
+测试代码使用生成对象与调用描述：
+
+```vela
+import 'sdk:test';
+import 'sdk:mock' as mock;
+import './user_repository.mocks.vela' as generated;
+
+func main(): void {
+  test('读取并保存用户', async (): Future<void> => {
+    const session = mock.MockSession();
+    const repository = generated.MockUserRepository(session: session);
+
+    mock.when(repository.calls.load(42)).thenAnswer(
+      async (invocation: mock.MockInvocation): Future<string> => {
+        return 'Alice';
+      }
+    );
+    mock.when(repository.calls.save(42, 'Alice')).thenDo(
+      (invocation: mock.MockInvocation): void => {}
+    );
+
+    const name = await repository.object.load(42);
+    repository.object.save(id: 42, name: name);
+
+    expect(name, equals('Alice'));
+    mock.verifyInOrder([
+      repository.calls.load(42),
+      repository.calls.save(42, 'Alice'),
+    ]);
+    mock.verifyNoMoreInteractions(repository.control);
+  });
+}
+```
+
+`repository.object` 的类型为原始 `UserRepository`；实际项目将它传给被测服务。`repository.calls` 创建调用模式，不执行接口方法；`repository.control` 用于检查和管理该 mock 的记录。三者由生成的包装对象持有。业务接口可以拥有名为 `calls`、`object` 或 `control` 的方法，因为这些成员属于包装对象，不占用被替身接口的成员空间。
+
+### 12.2 与 Dart 框架的对应关系
+
+| 能力 | Dart 的实际做法 | Vela 契约 |
+| --- | --- | --- |
+| 接口适配 | Mockito 通常用 `build_runner` 生成 mock；Mocktail 使用 `Mock` 与 `noSuchMethod` | 静态生成真实接口实现与调用描述类型，复用生产模块图、绑定与类型检查 |
+| 配置调用 | Mockito 使用 `when(mock.method(...))`；Mocktail 使用 `when(() => mock.method(...))` | 使用 `when(mock.calls.method(...))`，不运行实际方法或配置闭包 |
+| 实参 matcher | Mockito／Mocktail 在真实参数位置接收 matcher 占位值；Mocktail 对自定义类型需要 `registerFallbackValue` | 调用描述参数接收普通值或 matcher，不需要把 matcher 转成业务类型或登记占位对象 |
+| 非空返回 | Mockito 生成适当的录制返回值；Mocktail 的闭包处理录制期间的 TypeError | 创建调用模式时不求取业务返回值，不捕获并忽略类型错误 |
+| 匹配多个 stub | Mockito 使用最后配置的匹配项 | 按同一方法的配置逆序匹配，最后配置优先 |
+| 异步响应 | Mockito 要求用 `thenAnswer` 创建 Future／Stream 响应 | Future 方法使用 `thenAnswer`，在实际调用上下文中创建 Future |
+| 验证消费 | Mockito／Mocktail 后续验证排除已验证调用 | 验证成功后消费对应记录；失败时不消费，批量顺序验证整体提交 |
+| 实参捕获 | 提供 `captureAny`、`captureThat` 等调用匹配入口 | 捕获只在验证成功时提交；stub 和等待使用普通 matcher，不接受捕获模式 |
+| 缺少 stub | Mockito 可生成缺失 stub 抛错或提供缺省响应的 mock；Mocktail 默认 null 可能触发返回类型错误 | 所有真实调用都要求匹配 stub，包括 void 方法；缺少时明确失败 |
+
+这是一套借鉴 Dart 的 Vela API，不承诺与 Mockito／Mocktail 的全部语法和边缘行为相同。首版采用显式缺失调用失败，不提供 nice mock、零值响应或自动执行真实实现的模式。`called(0)` 按本节零次验证契约工作，不复制 Dart 框架已有的相关限制。
+
+### 12.3 支持面与类型边界
+
+生成器覆盖 Vela 当前可声明的导出接口及其全部方法，支持任意现有固定参数数量、命名实参调用、可空类型、显式实例化的泛型类、透明类型别名、容器、函数值、普通返回值、void 和 `Future<T>`。生成对象完整实现所选接口，不能只生成当时被测试引用的方法。
+
+当前 [`Interface`](../../compiler/frontend/ast.h) 只包含名称和方法；[生产解析器](../../compiler/frontend/parser_declarations.cc) 尚不支持接口类型参数、接口继承、接口属性或接口泛型方法。本扩展不把这些结构写成已有语言能力，也不为 mock 顺带扩展它们。现有接口方法的参数和返回类型可以引用如 `Box<int>` 的合法具体类型。
+
+普通类、构造函数、静态方法、顶层函数、扩展方法和内置对象不接受运行时替换。已有依赖应通过接口或函数值传入。回调依赖另提供 `MockFunction0<R>`、`MockFunction1<A, R>`、`MockFunction2<A, B, R>`，以及 `MockVoidFunction0`、`MockVoidFunction1<A>`、`MockVoidFunction2<A, B>`；泛型实参显式书写，R 不允许为 void。这些类型暴露可传给业务代码的 `function`、创建调用模式的 `query(...)` 和 `control`，复用同一记录与验证核心。更多参数的函数可通过生成接口适配，不引入隐含的语言参数数量上限。
+
+生成的真实接口方法保留原参数及返回类型。调用描述方法保留参数名称与数量，将各参数类型显式设为 dynamic，返回 `MockCall`；参数绑定后按原声明顺序归一化。因此 `load(42)` 与 `load(id: 42)` 描述相同模式，真实调用采用哪种书写方式不影响匹配。不会通过搜索测试表达式、猜测函数名或反向解析内部特化名称来重建签名。
+
+`thenReturn` 等配置接口通过方法描述中的真实返回契约检查动态输入，不能把生产接口改成 dynamic。错误返回类型在配置时拒绝；自定义响应的实际结果还要经过生成适配器的受查转换。void 有独立的调用分支，不能存储为 dynamic 或用 null 冒充 void。现有 `sdk:test` 的 matcher 原样复用，不再建立另一套深度相等规则。
+
+### 12.4 会话、调用模式与记录
+
+`MockSession` 是显式的测试范围对象，统一拥有序号分配、控制器、stub、记录、未完成 builder 和异步等待。每个测试或它的 `setUp` 创建新会话；构造时绑定真实测试执行上下文，不允许在注册期或 `setUpAll` 创建会话供后代共享。一个测试可以拥有多个会话。顺序验证只能组合来自同一会话的模式。
+
+配置、实际调用和验证必须属于创建会话的测试范围。其它测试使用旧控制器属于当前调用方的使用错误，不能通过切换上下文把访问合法化；原测试产生的迟到异步调用仍按既有错误封套归属原测试。会话和 mock 身份使用会话内数值 ID，不使用名称或宿主地址作为唯一键。
+
+`MockCall` 是不可变的调用模式，包含所属控制器、方法身份及按参数顺序保存的匹配条件。构造模式不记录真实调用，不选择 stub，不运行 matcher，不执行响应，也不推进 Future。模式绑定原控制器，不因出现同名 mock 而改变目标；会话关闭后不能再使用。
+
+每次真实调用在匹配 stub 和执行响应之前登记一条记录，并取得会话内严格递增的序号。记录包含 mock 身份、方法身份、规范实参、调用位置和验证状态。匹配失败、响应抛错及响应返回错误类型的调用仍保留记录。Future 的完成不额外产生第二次方法调用。
+
+传给 `thenAnswer`／`thenDo` 的 `MockInvocation` 提供只读的 mock 身份、方法身份、方法名、序号、注册与调用位置，以及 `argumentAt(index)`、`argument(name)` 和 `arguments`。实参只保存一份有序存储，按名称访问复用声明生产者给出的名称索引；`arguments` 返回浅拷贝，不能借此改写内部记录。
+
+实参对象保留原引用，不隐式深拷贝。之后修改数组或对象时，后续验证观察当前对象内容；需要匹配调用时的某个字段，可在响应中显式提取并保存。`same(value)` 验证身份，`equals(value)` 遵循测试库的深度匹配。框架不得调用业务 getter、`toJson` 或用户转换方法来保存或显示记录。
+
+### 12.5 Stub 配置与响应
+
+| API | 契约 |
+| --- | --- |
+| `when(call: MockCall)` | 返回尚未提交的 `MockStub`，不消耗真实调用 |
+| `thenReturn(value)` | 返回非 Future、非 void 的固定值；重复调用返回同一值或对象引用 |
+| `thenReturnInOrder(values)` | 配置非空的有限值序列；按匹配该 stub 的调用次数依次取值，耗尽即失败 |
+| `thenThrow(error)` | 同步抛出配置的原始异常实例，异常必须符合现有 throw 契约 |
+| `thenAnswer(callback)` | 接收一个 `MockInvocation`，计算普通返回值或返回原签名要求的 Future |
+| `thenDo(callback)` | 专用于 void 方法，接收一个 `MockInvocation`，以语句形式调用返回 void 的同步回调 |
+
+每个 builder 必须且只能提交一种响应；完成配置的动作才发布 stub。空序列、非法异常、非 callable、错误回调形参或不适合该方法的响应种类属于 `MockUsageError`。未终结的 builder 在会话收尾时报错，不能使一条看似已配置的规则被静默忽略。
+
+响应优先级只取决于配置顺序，不推测哪条规则“更具体”。匹配阶段对候选 stub 从新到旧求值；匹配到第一项后执行一次响应。有限序列耗尽不重新选择较早的规则，也不重复最后一个值。需要交错返回与抛错时，使用具有显式局部状态的 `thenAnswer`。
+
+回调签名在配置边界使用既有 callable 元数据校验，支持普通闭包和合法绑定方法；不能通过试调用检查签名。响应和 matcher 在普通脚本帧中执行，不在 C++ builtin 内递归进入 VM。自定义响应调用其它 mock 或再次调用同一 mock 时，按普通调用栈处理并取得后续序号。
+
+无匹配规则时产生 `MockMissingStub`，诊断包含实际调用、该方法的候选配置及首个有意义的不匹配。不会返回 null、构造任意业务实例或调用真实服务。该行为也适用于 void 方法，允许测试通过显式 `thenDo` 接受预期的无返回调用。
+
+### 12.6 实参 matcher 与捕获
+
+调用模式中的普通期望值包装为 `equals(value)`；实现 `Matcher` 的对象按 matcher 使用。可直接使用 `same`、数值比较、组合 matcher 和 `predicate`。另提供 `mock.any`，匹配包括 null 在内的任意单个参数。把 matcher 对象本身作为业务期望值时，显式使用 `same(matcher)`。
+
+匹配按参数声明顺序进行，并在首个不匹配处停止；一次操作中，同一模式与同一候选调用之间的每个参数 matcher 最多求值一次。诊断复用首次匹配结果，不为生成说明再次执行 predicate 或响应。matcher 必须同步。异步 matcher 在此边界拒绝；自定义 matcher 抛出的异常原样传播，不能转成“未匹配”继续寻找其它 stub。匹配期间不允许在同一会话触发真实 mock 调用或改变配置、历史与验证状态，避免重入改变当前候选集；响应执行期间不受这一限制。
+
+验证提供 `captureAny` 和 `captureThat(matcher)`，分别捕获任意实参和满足 matcher 的实参。例如：
+
+```vela
+const result = mock.verify(
+  repository.calls.save(mock.captureAny, mock.captureThat(isNotEmpty))
+).called(2);
+expect(result.captured, equals([1, 'Alice', 2, 'Bob']));
+```
+
+示例假设此前依次调用 `save(1, 'Alice')` 和 `save(2, 'Bob')`，并已配置允许这些调用的 stub。捕获结果按调用序号、再按参数声明顺序展平；同一参数是数组时保留该数组对象，不再展开。结果同时提供匹配调用的只读描述，以便需要按调用分组时使用。
+
+只有完整匹配且验证成功提交后才发布捕获结果；匹配失败、次数失败和顺序验证回滚均不泄漏部分捕获。捕获模式用于验证，不用于 `when` 或 `untilCalled`；错误使用在创建相关操作时拒绝。由此捕获结果不受 stub 搜索重试和等待观察影响。
+
+### 12.7 次数验证、顺序与消费规则
+
+| API | 契约 |
+| --- | --- |
+| `verify(call).called(count)` | count 为非负 int 时要求精确次数；为同步 Matcher 时匹配 int 计数 |
+| `verifyNever(call)` | 等价于对未验证记录执行零次验证 |
+| `verifyInOrder(calls)` | 按会话序号匹配不同的未验证记录，全部成功后整体标为已验证 |
+| `verifyZeroInteractions(control)` | 要求当前历史中没有任何真实调用，包括已经验证的调用 |
+| `verifyNoMoreInteractions(control)` | 要求没有尚未验证的真实调用 |
+| `clearInteractions(control)` | 清空该 mock 的调用历史，保留 stub 及其序列当前位置 |
+| `reset(control)` | 清空该 mock 的 stub、历史和序列状态，并使其未提交操作失效 |
+
+`verify(call)` 只选择创建操作时已有的未验证记录，形成快照；`called` 成功后才标记这些记录并返回捕获结果。创建快照之后新增的调用不进入本次验证。忽略 builder 不算验证成功；重复终结同一 builder、对已被其它验证消费的记录提交旧 builder，或在历史已被清空后提交旧 builder，都产生使用错误。失败不消费记录，因此可以在捕获失败后检查相同历史。
+
+`called(0)` 与 `verifyNever` 成功时都不消费记录。传入计数 matcher 时仍复用 `sdk:test` 的实际匹配结果；失败保留计数与 matcher 差异。没有负数或浮点次数的隐式转换。
+
+`verifyInOrder` 为每个模式选择上一个序号之后最早的匹配未验证记录，一项匹配一次真实调用。允许忽略模式之间的其它调用；那些记录保持未验证，可由 `verifyNoMoreInteractions` 发现。相邻相同模式也必须由不同调用满足；整个序列失败时，所有选中状态和捕获都回滚。空序列属于使用错误，不产生一次没有意义的验证成功。
+
+序号在整个会话内共享，跨 mock 的顺序可直接验证；reset 和 clear 不重用旧序号。不同会话或不同测试的调用不能合并验证。验证针对方法调用发生顺序，不针对 Future 完成顺序。
+
+### 12.8 Future 与等待调用
+
+Future 方法使用 `thenAnswer` 返回符合原声明的 `Future<T>`，包括 `Future<void>`。每次真实调用都执行响应回调，在该调用的测试上下文中创建或取得 Future。`thenReturn(Future...)` 和 `thenReturnInOrder` 中的 Future 在配置边界拒绝，防止把在配置范围预先失败的 Future 带入另一执行范围。
+
+框架不自动 await 响应，不把所有响应包装成 async，不更换响应的原始异常对象。`thenThrow` 对 Future 方法仍是同步抛出；需要 Future 失败时，使用会返回失败 Future 的 `thenAnswer`。调用验证本身不观察或处理该 Future 的错误，错误仍由用户 await、matcher 和既有未处理错误检查点负责。
+
+`untilCalled(call)` 返回 `Future<MockInvocation>`：若当前历史已有匹配调用，包括已验证的调用，选择最早一项并完成；否则等待之后首个匹配调用。登记等待前检查历史与发布观察必须处于同一执行线程的不可重入边界，避免丢失其间发生的调用。一次调用可以唤醒多个观察者；等待不会消费验证状态。
+
+等待在真实调用记录完成后触发，不等待响应返回或 Future 完成。`untilCalled` 复用测试驱动的异步期望登记，调用者没有 await 时也保留在所属测试范围内，并受原测试的无活动超时、取消和迟到错误归属约束。匹配调用完成等待时更新心跳，无关调用、重复查询和日志不更新心跳。未发生调用时不会提前报假 AsyncIdle。
+
+等待的 matcher 在检查历史或发布新记录时同步求值；抛错使对应等待 Future 以原异常失败，保留等待登记的上下文和源码位置，不中止被观察调用的正常 stub 响应。Future 的监听器沿既有微任务调度执行，不能在发布记录的同步分派中重入验证或响应。
+
+`clearInteractions` 不撤销已登记的未来调用等待。`reset` 使该 mock 的等待以 `MockReset` 失败；显式关闭会话使尚未完成的等待以 `MockSessionClosed` 失败，均保留登记时的测试归属。取消与超时不撤销已经执行的响应，不承诺中断同步代码或宿主调用。
+
+### 12.9 生命周期、GC 与失败报告
+
+会话可以在 `setUp`、测试体及该测试的清理阶段使用。框架在该测试所有动态清理和静态 `tearDown` 完成后、发布最终执行阶段结束事件前，结束会话；不能直接用在 `setUp` 中登记的普通 `addTearDown` 提前关闭会话，导致后面的 teardown 无法验证 mock。
+
+接入 suite 的内部范围收尾边界，按普通 VM 回调路径完成未提交 builder 检查、等待关闭和句柄释放。这个内部登记需要补全 SDK producer、运行时桥接和 suite 消费者；不能依赖 C++ 析构期间调用脚本，也不新增公开生命周期钩子。自动收尾失败标记为 `tearDown` 阶段，发布 `testDone` 前推进其已就绪的完成通知与错误检查点。显式 `session.close()` 使用同一收尾契约，重复关闭无额外效果；关闭后的新配置、调用与验证明确失败。
+
+stub 闭包、异常、期望值、调用实参、捕获结果和挂起等待均使用现有精确根与写屏障，不能仅保存在未追踪的宿主容器中。模式或验证结果被用户保留时，只保留其真实需要的脚本值；会话关闭释放内部注册、未完成等待和响应，不能让每个历史条目永久保根整个 Program。不同 suite／Isolate 不共享控制器、序号或脚本值。
+
+使用错误和不满足预期的交互沿现有 `TestFailure` 通道报告，分类区分 `MockUsageError`、`MockMissingStub`、`MockStubExhausted`、`MockVerificationFailure`、`MockReset` 与 `MockSessionClosed`。错误类别由真实 SDK 声明身份和结构化数据提供，不能从用户消息文字推断。自定义响应或 matcher 抛出的业务异常保留原对象与第一次失败栈，不能再包装成一个 mock 失败。匹配抛错不替代实际调用记录。
+
+验证失败至少显示期望调用、次数或顺序、实际匹配数量、相关未验证调用，以及配置／验证位置和真实调用位置。复用现有结构化差异、原始源码栈和有预算的值显示，不从终端文本反向解析机器事件。断言与交互失败使用退出码 1，不阻止独立 suite 继续执行。
+
+统一错误事件增加可选 `mock` 对象，包含 `mockSessionID`、`mockID`、规范方法名、期望说明、实际次数和有预算的相关调用列表；调用项保存序号、显示用实参和真实源码栈。worker 发布复制后的文本与数值，不跨 Isolate 传递脚本值。沿用 `vela.test` 版本 1 的已有字段与语义，消费者须忽略未知可选字段；删改已有字段、必填性或解释规则时必须提升协议版本。所有 reporter 消费同一事件，不另建第二条 stdout 日志流。
+
+### 12.10 生成器、SDK 身份与工具链
+
+拟新增命令如下，所有路径均相对调用时工作目录解析：
+
+```text
+vela mock API_FILE --interface NAME [--interface OTHER] -o OUTPUT
+vela mock API_FILE --interface NAME -o OUTPUT --check
+```
+
+生成只处理显式选中的、由 API_FILE 导出的接口；至少提供一个 `--interface`。选择基于解析与绑定后的声明身份，不按源码文本搜索。重复选择同一声明去重，输出按规范模块身份与声明位置稳定排序。API_FILE 是独立的 API 模块，生成过程不运行 main、全局初始化器、测试注册或业务构造函数，也不扫描未声明目录。
+
+生成器复用生产模块图、导出／私有性检查、类型别名解析、callable 签名和格式化。检查未通过或签名包含无法在输出模块合法命名的私有类型时，报告具体声明与原因，不能擦除为 dynamic、忽略成员或生成注释占位实现。可以通过公开的类型别名合法命名的类型应保留该公开名称。
+
+每个包装对象生成完整的真实实现、调用描述入口和控制器连接。内部辅助标识按实际声明集合分配不冲突的名字；方法身份来自规范接口与成员声明，不能依赖临时 AST 地址、导入前缀或名称字符串猜测。零参数、同名接口的不同导入身份、可空与函数类型、任意固定参数数量及 void 分支均属于必须接通的生产路径。
+
+生成产物是普通 `.vela` 模块，使用明确的文件导入与 `sdk:mock` 导入。目标输出必须是可编译的 Vela 源文件，不能覆盖 API 输入或其依赖。正常生成先完成全部语义检查、格式化和产物类型检查，再原子替换单个输出文件；失败保留旧文件，内容未改变时不重写。生成头记录输入声明指纹、生成器版本和 SDK 描述契约版本，不记录时间戳或机器私有路径。
+
+`--check` 生成同一预期文本并与输出比较，不写文件；完全相同返回 0，缺失或过期返回 1，参数错误 64、源码或接口契约错误 65、内部失败 70、I/O 失败 74。正常编译、LSP 和测试运行不隐式重新生成文件；CI 应在编译前运行 `--check`。未运行生成命令时，缺失生成模块按现有模块加载错误报告。
+
+`sdk:mock` 与 `sdk:test` 使用同一嵌入资源生产管线、声明绑定和不可覆盖的 SDK 身份。复用后者的 `Matcher`、差异和失败类型，不复制其源码或建立 stub 声明。SDK 内部导入也必须沿生产 SDK 模块图加载。生成器不引入 Python 专用 Vela parser、额外 mock 配置文件或项目级隐式生成扫描。
+
+`check`、磁盘／内存编译、字节码镜像、缓存和 LSP 消费同一套 SDK 与生成源码。缓存使用真实 API 依赖、生成源和 SDK 的现有内容指纹；配置了不同 stub 或验证条件属于运行时状态，不加入编译缓存键。生成器模板版本参与生成检查，改变 SDK 宿主契约时进入既有依赖指纹。
+
+LSP 补全、悬停、命名参数、跳转和文档读取真实生成声明；真实对象展示业务参数类型，调用描述入口明确展示接收值／matcher 的参数和说明。生成文件中的辅助符号导航到真实生成源码，SDK 符号保持只读 SDK URI。原接口位置作为来源元数据用于诊断关联，不能把不存在的文件或行号当作跳转结果。
+
+### 12.11 数据结构与性能契约
+
+SDK 核心拥有匹配、响应和验证状态；生成代码拥有接口类型适配；runtime 只提供必要的真实签名、上下文和收尾桥接。普通方法调用继续走现有 VM 调用路径，不在语言的所有成员访问上安装 mock 分派分支。
+
+记录按控制器和方法身份建立索引；一次真实调用不扫描其它 mock 的历史。stub 查找限定于当前方法，最坏成本为该方法规则数乘实参匹配成本；次数验证扫描对应方法的候选记录，顺序验证复用会话序号与有序索引。不得为每个 mock 复制同一份会话序号表或完整模块元数据。
+
+自定义 matcher 的成本与副作用由实际求值决定，不按显示预算跳过匹配。保留验证需要的历史，不能为限制内存静默丢弃旧调用。通过 `clearInteractions`、`reset` 和测试范围关闭显式释放；大规模调用的历史与根保留量须纳入测量。调用栈保存沿用现有紧凑源码表示，展开和文本格式化留到诊断消费时完成。
+
+Release 测量区分生成／检查时间、生成产物编译与缓存命中、单次已配置调用、不同规则数、次数与顺序验证、参数捕获、异步等待，以及大量记录后的内存回收。使用同签名的手写接口实现作为调用成本基线，记录匹配器实际比较次数；另测未使用 mock 的普通方法与 Future 路径。按已有滚动摘要规则保存聚合证据，不以代码行数或单个微基准取代完成契约。
+
+### 12.12 实施阶段与验收
+
+| 阶段 | 必须完成的生产路径 |
+| --- | --- |
+| M0：契约与生成模型 | 固定公开 API、调用描述／真实实现的职责和全部当前接口类型边界；诊断身份与序号模型确定 |
+| M1：SDK 核心与同步调用 | 登记 `sdk:mock`，接通记录、stub 优先级、所有响应种类、匹配、缺失调用失败和函数替身；真实 void 契约闭环 |
+| M2：验证与捕获 | 次数 matcher、零次、顺序、跨 mock 顺序、捕获、验证消费／回滚、清理和 reset 全部接通 |
+| M3：接口生成器 | 生产语义图到完整接口对象／调用描述／控制器，CLI、原子输出、`--check`、生成代码类型检查与稳定输出完成 |
+| M4：异步与工具集成 | Future 归属、untilCalled、超时／取消、测试范围收尾、GC、统一报告、SDK 导航、缓存和镜像身份完成 |
+| M5：交付验证 | Debug/Release 回归、真实 CLI／LSP／生成检查、Release 性能与资源测量完成，文档状态与实际支持一致 |
+
+M0–M5 是这项扩展的完整规格。只完成同步核心、只提供手写适配、缺少生成器或异步收尾时，都不能将“相对完整的 mock”标为交付完成。
+
+行为测试至少覆盖最后规则优先、重复调用与序列耗尽、null 与错误类型、任意自定义异常原对象、所有响应分支、响应重入、matcher 抛错、循环／共享实参、无副作用的有预算显示，以及用户明确写出的独立预期结果。
+
+验证测试覆盖 `.called(0)`、次数 matcher、失败不消费、成功后排除、过期 builder、捕获顺序与回滚、同一模式出现多次、顺序中间有无关调用、不同 mock 共用序号、禁止跨会话验证、clear／reset 和未终结配置。不能只断言实现生成的调用文本符合自身规则。
+
+生成测试覆盖全部当前接口类型与调用形态、参数改名、接口增删方法、公开别名与不可命名私有类型、辅助名称冲突、稳定排序、输出过期、缺失输出、输出与输入冲突、失败不破坏旧产物，以及编辑器查询不执行生成或脚本。真实进程验证生成后的代码经 `check`、`run`、`vela test`、镜像和内容缓存进入同一生产路径。
+
+异步和资源测试覆盖登记前／后已发生调用、多等待者、已验证历史、Future 未完成／失败／采用、响应跨 await、等待不消费调用、无关调用不延长超时、清理阶段验证、超时后的迟到调用、reset／close 期间等待，以及旧测试对象不能成为下一测试的 mock。GC 覆盖响应、实参、异常、捕获与挂起等待；suite 关闭后验证根、挂起帧、timer 和宿主端点回收。
+
+本节是设计交付；当前修改仅需核对引用、示例、现有语言边界、UTF-8、LF 和差异。M5 中的构建、回归和性能检查在实现完成边界执行，不能把尚未执行的验证写成已通过。
+
+## 13. 参考
 
 - [Dart package:test 使用与运行语义](https://github.com/dart-lang/test/blob/master/pkgs/test/README.md)。
 - [Dart 测试配置：paths、filename、timeout 与 concurrency](https://github.com/dart-lang/test/blob/master/pkgs/test/doc/configuration.md)。
@@ -383,4 +629,8 @@ LSP 补全、悬停、文档、导入链接与格式化消费真实 SDK 声明�
 - [Dart Invoker：异步错误、心跳与超时](https://github.com/dart-lang/test/blob/master/pkgs/test_api/lib/src/backend/invoker.dart)。
 - [Dart VM suite 加载：Isolate 与不同编译模式](https://github.com/dart-lang/test/blob/master/pkgs/test_core/lib/src/runner/vm/platform.dart)。
 - [Dart JSON reporter 协议](https://github.com/dart-lang/test/blob/master/pkgs/test/doc/json_reporter.md)。
+- [Mockito：配置、匹配、捕获、验证、异步响应与 nice／classic mock](https://github.com/dart-lang/mockito/blob/master/README.md)。
+- [Mockito null safety：生成接口与录制返回值的实际约束](https://github.com/dart-lang/mockito/blob/master/NULL_SAFETY_README.md)。
+- [Mocktail：闭包 API、参数占位与验证消费](https://github.com/felangel/mocktail/blob/main/packages/mocktail/README.md)。
+- [Mocktail 实现：noSuchMethod、录制状态与交互验证](https://github.com/felangel/mocktail/blob/main/packages/mocktail/lib/src/mocktail.dart)。
 - Vela [模块](modules.md)、[异步](async_tasks.md)、[异常](exceptions.md)、[动态值](json.md)与[源码工具链](source_tooling.md)。

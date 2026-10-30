@@ -134,6 +134,7 @@ vm::ExecutionResult Suite::WaitFailure(WaitStatus status) const {
 void Suite::AbandonExpectations(Node& scope) {
   for (auto& expectation : scope.expectations) {
     expectation.waiting = false;
+    expectation.producer.reset();
   }
   for (const auto identity : scope.callback_expectations) {
     callbacks_.at(identity).state = CallbackExpectation::State::Abandoned;
@@ -205,7 +206,8 @@ vm::ExecutionResult Suite::Await(vm::ExecutionResult result,
   observation->waiting = false;
   if (status != WaitStatus::Completed) {
     observation->retained = scope.expectations.size();
-    scope.expectations.push_back({.future = future.Rooted(), .trace = {}, .waiting = false});
+    scope.expectations.push_back(
+        {.future = future.Rooted(), .trace = {}, .waiting = false, .producer = {}});
     AbandonExpectations(scope);
     return WaitFailure(status);
   }
@@ -230,7 +232,8 @@ std::expected<runtime::ExecutionContext, std::string> Suite::ExecutingContext() 
 
 std::expected<runtime::Value, std::string> Suite::TrackExpectation(
     runtime::Value value,
-    std::vector<runtime::FutureTraceFrame> trace) {
+    std::vector<runtime::FutureTraceFrame> trace,
+    ExpectationKind kind) {
   const auto executing = ExecutingContext();
   if (!executing) {
     return std::unexpected(executing.error());
@@ -242,16 +245,26 @@ std::expected<runtime::Value, std::string> Suite::TrackExpectation(
   }
   auto future = source->Rooted();
   const auto index = scope->expectations.size();
-  scope->expectations.push_back({.future = future.Rooted(), .trace = std::move(trace)});
+  scope->expectations.push_back({
+      .future = future.Rooted(),
+      .trace = std::move(trace),
+      .producer = kind == ExpectationKind::CallObservation
+                      ? std::make_shared<runtime::HostEventSource>(isolate_->scheduler())
+                      : nullptr,
+  });
   ++scope->pending_expectations;
   const auto identity = scope->id;
   const auto phase = phases_.at(executing->invocation);
-  future.ObserveResult([this, identity, index, phase](const auto& completion) {
+  future.ObserveResult([this, identity, index, phase, kind](const auto& completion) {
     auto& owner = *scopes_.at(identity);
     auto& expectation = owner.expectations.at(index);
+    expectation.producer.reset();
     if (expectation.waiting) {
       --owner.pending_expectations;
-      owner.heartbeat = runtime::FutureScheduler::Clock::now();
+      if (kind == ExpectationKind::Assertion ||
+          completion.state == runtime::FutureState::Succeeded) {
+        owner.heartbeat = runtime::FutureScheduler::Clock::now();
+      }
       expectation.waiting = false;
     }
     if (completion.state == runtime::FutureState::Failed) {
@@ -350,7 +363,7 @@ std::expected<runtime::Value, std::string> Suite::Control(
     std::vector<runtime::FutureTraceFrame> trace) {
   switch (operation) {
     case runtime::TestControl::TrackExpectation:
-      return TrackExpectation(arguments.front(), std::move(trace));
+      return TrackExpectation(arguments.front(), std::move(trace), ExpectationKind::Assertion);
     case runtime::TestControl::RegisterCallback:
       return RegisterCallback(arguments, std::move(trace));
     case runtime::TestControl::EnterCallback:
@@ -359,8 +372,58 @@ std::expected<runtime::Value, std::string> Suite::Control(
       return ExitCallback(arguments.front());
     case runtime::TestControl::CheckCallback:
       return CheckCallback(arguments.front());
+    case runtime::TestControl::CurrentTestScope:
+      return CurrentTestScope();
+    case runtime::TestControl::RegisterFinalizer:
+      return RegisterFinalizer(arguments.front(), std::move(trace));
+    case runtime::TestControl::ReleaseFinalizer:
+      return ReleaseFinalizer(arguments.front());
+    case runtime::TestControl::TrackCallWait:
+      return TrackExpectation(arguments.front(), std::move(trace),
+                              ExpectationKind::CallObservation);
   }
   std::unreachable();
+}
+
+runtime::Value Suite::CurrentTestScope() const {
+  const auto context = isolate_->scheduler().context();
+  if (!context || state_ != State::Running) {
+    return runtime::Value::Integer(0);
+  }
+  const auto& scope = *scopes_.at(context->scope);
+  if (scope.kind != NodeKind::Test || scope.closed) {
+    return runtime::Value::Integer(0);
+  }
+  return runtime::Value::Integer(static_cast<std::int64_t>(scope.id));
+}
+
+std::expected<runtime::Value, std::string> Suite::RegisterFinalizer(
+    runtime::Value callback,
+    std::vector<runtime::FutureTraceFrame> trace) {
+  const auto identity = CurrentTestScope().AsInteger();
+  if (identity == 0) {
+    return std::unexpected("SDK finalizers require an executing test scope");
+  }
+  auto& scope = *scopes_.at(static_cast<std::uint64_t>(identity));
+  const auto registration = next_id_++;
+  scope.finalizers.push_back({
+      .id = registration,
+      .value = runtime::RootedValue(*isolate_, callback),
+      .trace = std::move(trace),
+  });
+  return runtime::Value::Integer(static_cast<std::int64_t>(registration));
+}
+
+std::expected<runtime::Value, std::string> Suite::ReleaseFinalizer(runtime::Value identity) {
+  const auto scope_id = CurrentTestScope().AsInteger();
+  if (scope_id == 0 || !identity.IsInteger()) {
+    return std::unexpected("SDK finalizer release requires its executing test scope");
+  }
+  auto& scope = *scopes_.at(static_cast<std::uint64_t>(scope_id));
+  std::erase_if(scope.finalizers, [identity](const Callback& callback) {
+    return std::cmp_equal(callback.id, identity.AsInteger());
+  });
+  return runtime::Value::Null();
 }
 
 void Suite::DeliverError(const runtime::FutureResult& completion,

@@ -7,10 +7,14 @@
 #include <string_view>
 #include <vector>
 
+#include "base/mock_operation.h"
+
 #include "runtime/future.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
+
+class NominalType;
 
 enum class TestOperation : std::uint8_t {
   Test,
@@ -29,6 +33,10 @@ enum class TestControl : std::uint8_t {
   EnterCallback,
   ExitCallback,
   CheckCallback,
+  CurrentTestScope,
+  RegisterFinalizer,
+  ReleaseFinalizer,
+  TrackCallWait,
 };
 
 struct TestRegistration final {
@@ -54,6 +62,7 @@ class TestBridge {
   TestBridge(TestBridge&&) = delete;
   TestBridge& operator=(TestBridge&&) = delete;
   virtual std::expected<void, std::string> Register(const TestRegistration& registration) = 0;
+  virtual void RegisterMockFailure(const NominalType& type, MockFailureKind kind) = 0;
   virtual std::expected<Value, std::string> Control(TestControl operation,
                                                     std::span<const Value> arguments,
                                                     std::vector<FutureTraceFrame> trace) = 0;

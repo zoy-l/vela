@@ -1,0 +1,4 @@
+export interface MockBenchmarkService {
+  read(id: int): int;
+  ready(id: int): Future<int>;
+}

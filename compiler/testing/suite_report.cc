@@ -4,11 +4,17 @@
 #include <optional>
 #include <utility>
 
+#include "base/mock_operation.h"
 #include "compiler/testing/report.h"
 #include "compiler/testing/result.h"
 #include "runtime/future.h"
+#include "runtime/object.h"
 
 namespace vela::testing {
+
+void Suite::RegisterMockFailure(const runtime::NominalType& type, MockFailureKind kind) {
+  mock_failures_.try_emplace(&type, kind);
+}
 
 void Suite::Emit(ReportEvent event) const {
   if (!options_.emit) {

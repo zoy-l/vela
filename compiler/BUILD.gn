@@ -19,11 +19,16 @@ generated_file("cache_build_identity") {
 
 action("sdk_sources") {
   script = "//tools/embed_sdk.py"
-  inputs = [ "sdk/test.vela" ]
+  inputs = [
+    "sdk/test.vela",
+    "sdk/mock.vela",
+  ]
   outputs = [ "$target_gen_dir/sdk_sources.h" ]
   args = [
     "--source",
     rebase_path(inputs[0], root_build_dir),
+    "--source",
+    rebase_path(inputs[1], root_build_dir),
     "--output",
     rebase_path(outputs[0], root_build_dir),
   ]
@@ -181,6 +186,9 @@ source_set("tooling") {
     "tooling/language_server_documents.cc",
     "tooling/language_server_internal.h",
     "tooling/language_server_queries.cc",
+    "tooling/mock_command.cc",
+    "tooling/mock_generator.cc",
+    "tooling/mock_generator.h",
     "tooling/semantic_arguments.cc",
     "tooling/semantic_completion.cc",
     "tooling/semantic_hover.cc",
@@ -223,6 +231,7 @@ source_set("testing") {
     "testing/command_options.h",
     "testing/discovery.cc",
     "testing/discovery.h",
+    "testing/mock_report.cc",
     "testing/report.cc",
     "testing/report.h",
     "testing/result.h",
@@ -547,6 +556,7 @@ executable("vela_compiler_tests") {
     "string_gc_unittest.cc",
     "string_unittest.cc",
     "testing/matchers_unittest.cc",
+    "testing/mock_unittest.cc",
     "testing/suite_unittest.cc",
     "unicode_unittest.cc",
   ]

@@ -8,6 +8,7 @@ executable("vela_benchmarks") {
     "gc_strategy_benchmark.cc",
     "json_benchmark.cc",
     "liveness_benchmark.cc",
+    "mock_benchmark.cc",
     "native_call_benchmark.cc",
     "native_call_kernels.cc",
     "native_call_kernels.h",
@@ -32,8 +33,8 @@ executable("vela_benchmarks") {
   deps = [
     "//base:json",
     "//compiler",
-    "//compiler:tooling",
     "//compiler:testing",
+    "//compiler:tooling",
     "//third_party:benchmark_main",
     "//third_party:luajit",
     "//third_party:pcre2",

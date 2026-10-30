@@ -21,6 +21,7 @@ source_set("vm") {
     "execution_dynamic_async.cc",
     "execution_exception.cc",
     "execution_json.cc",
+    "execution_mock.cc",
     "execution_regexp.cc",
     "execution_status.h",
     "execution_test.cc",

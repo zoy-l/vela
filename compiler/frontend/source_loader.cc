@@ -55,7 +55,7 @@ class ModuleLoader final {
       }
       const auto path = Normalize(Utf8Path(input.path));
       if (!path) {
-        Error(SourceLocation(), std::string(input.path), path.error());
+        Error(SourceLocation(), std::string(input.path), path.error(), DiagnosticKind::Io);
       } else if (!overlays_.emplace(PathText(path->canonical), input.text).second) {
         Error(SourceLocation(), std::string(input.path), "duplicate module source path");
       }
@@ -80,7 +80,10 @@ class ModuleLoader final {
                                        const std::string& importer);
   void LoadDependencies(std::size_t index);
   std::optional<std::uint32_t> ParseModule(const std::string& key, ParsedSource source);
-  void Error(SourceLocation location, const std::string& path, std::string message);
+  void Error(SourceLocation location,
+             const std::string& path,
+             std::string message,
+             DiagnosticKind kind = DiagnosticKind::Source);
   ModuleGraph Finish();
 
   SourceOrigin origin_;
@@ -96,9 +99,12 @@ class ModuleLoader final {
   ModuleCache* cache_;
 };
 
-void ModuleLoader::Error(SourceLocation location, const std::string& path, std::string message) {
+void ModuleLoader::Error(SourceLocation location,
+                         const std::string& path,
+                         std::string message,
+                         DiagnosticKind kind) {
   diagnostics_.push_back(
-      {.location = location, .message = std::move(message), .source_path = path});
+      {.location = location, .message = std::move(message), .source_path = path, .kind = kind});
 }
 
 std::expected<ResolvedPath, std::string> ModuleLoader::Normalize(
@@ -175,7 +181,7 @@ std::optional<std::uint32_t> ModuleLoader::Load(const std::filesystem::path& fil
   }
   auto resolved = Normalize(file);
   if (!resolved) {
-    Error(location, importer, resolved.error());
+    Error(location, importer, resolved.error(), DiagnosticKind::Io);
     return std::nullopt;
   }
   const auto key = PathText(resolved->canonical);
@@ -187,7 +193,8 @@ std::optional<std::uint32_t> ModuleLoader::Load(const std::filesystem::path& fil
   }
   auto source = Read(resolved->canonical, key, static_cast<std::uint32_t>(modules_.size()));
   if (!source) {
-    Error(location, importer, source.error());
+    Error(location, importer, source.error(),
+          origin_ == SourceOrigin::Files ? DiagnosticKind::Io : DiagnosticKind::Source);
     return std::nullopt;
   }
   return ParseModule(key, std::move(*source));
@@ -305,7 +312,7 @@ ModuleGraph ModuleLoader::Run(std::span<const std::string> roots) {
 ModuleGraph ModuleLoader::RunPrepared(std::string_view entry, ParsedSource source) {
   const auto path = Normalize(Utf8Path(entry));
   if (!path) {
-    Error(SourceLocation(), std::string(entry), path.error());
+    Error(SourceLocation(), std::string(entry), path.error(), DiagnosticKind::Io);
     return Finish();
   }
   const auto key = PathText(path->canonical);

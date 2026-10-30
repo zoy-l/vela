@@ -60,6 +60,22 @@ VM continues to validate register payload types at the host boundary.
 Each `NativeExecution` owns its `NativeContext`; it borrows the same Isolate for the execution's
 lifetime. Host calls borrow that context and their managed arguments for the duration of the call.
 
+### Source-test mocks
+
+`sdk:mock` owns interaction history, matching, responses, verification and call observations in
+ordinary script objects. Generated adapters retain the original interface signatures and provide
+separate call-pattern methods. The generator reads the production bound module graph, checks its
+output before atomic publication, and never evaluates source initializers or test registration.
+
+The VM exposes only signature inspection, compact source positions and test-context bridges.
+Matchers and responses execute in normal script frames. Each mock session belongs to one real test
+scope; the suite invokes its internal finalizers after all user cleanup and teardown callbacks,
+before `testDone`. Call observations reuse tracked asynchronous expectations and retain their
+registration context when errors are forwarded. Reporters receive copied strings, numbers and
+resolved frames; interaction records do not own host-side Program handles. See
+[the testing contract](../docs/zh-CN/testing.md#12-mock-扩展设计待实现) for the public API and failure
+categories.
+
 ## Assertion boundaries and cleanup
 
 - Syntax, type, file, and runtime data errors that users can trigger must not cause fatal assertions.

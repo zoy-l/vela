@@ -1,0 +1,174 @@
+#include "compiler/testing/suite.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include "base/mock_operation.h"
+#include "compiler/testing/result.h"
+#include "runtime/exception.h"
+#include "runtime/future.h"
+#include "runtime/heap.h"
+#include "runtime/object.h"
+#include "runtime/string.h"
+#include "runtime/value.h"
+#include "vm/program.h"
+
+namespace vela::testing {
+namespace {
+
+constexpr std::size_t kMockReportBudget = 16;
+constexpr std::size_t kMockTextBudget = 4096;
+
+std::string_view FailureName(MockFailureKind kind) {
+  switch (kind) {
+    case MockFailureKind::Usage:
+      return "MockUsageError";
+    case MockFailureKind::MissingStub:
+      return "MockMissingStub";
+    case MockFailureKind::StubExhausted:
+      return "MockStubExhausted";
+    case MockFailureKind::Verification:
+      return "MockVerificationFailure";
+    case MockFailureKind::Reset:
+      return "MockReset";
+    case MockFailureKind::SessionClosed:
+      return "MockSessionClosed";
+  }
+  std::unreachable();
+}
+
+class MockReportReader final {
+ public:
+  explicit MockReportReader(const vm::Program& program)
+      : program_(&program), layouts_(program.functions().front().layouts.get()) {}
+  static std::vector<runtime::Value> Items(runtime::Value value);
+  [[nodiscard]] std::vector<runtime::FutureTraceFrame> Trace(runtime::Value value) const;
+  static std::vector<std::string> Strings(runtime::Value value);
+  static std::string Text(runtime::Value value);
+  static std::int64_t Number(runtime::Value value);
+  [[nodiscard]] TestError::MockDetails Read(runtime::Value value) const;
+
+ private:
+  const vm::Program* program_;
+  const vm::LayoutTables* layouts_;
+};
+
+std::vector<runtime::Value> MockReportReader::Items(runtime::Value value) {
+  if (!value.IsObject()) {
+    return {};
+  }
+  const auto count = runtime::Heap::ArrayLength(*value.AsObject());
+  if (!count) {
+    return {};
+  }
+  const auto size = std::min(static_cast<std::size_t>(*count), kMockReportBudget);
+  std::vector<runtime::Value> items;
+  items.reserve(size);
+  for (std::size_t index = 0; index < size; ++index) {
+    items.push_back(
+        *runtime::Heap::GetElement(*value.AsObject(), static_cast<std::uint32_t>(index)));
+  }
+  return items;
+}
+
+std::string MockReportReader::Text(runtime::Value value) {
+  if (!value.IsString()) {
+    return "<invalid mock report text>";
+  }
+  const auto text = value.AsString()->value();
+  // SDK 已对值显示施加预算；此处处理用户显式改写公开失败数据的边界。
+  return text.size() <= kMockTextBudget ? std::string(text) : "<mock report text exceeds budget>";
+}
+
+std::int64_t MockReportReader::Number(runtime::Value value) {
+  return value.IsInteger() ? value.AsInteger() : 0;
+}
+
+std::vector<std::string> MockReportReader::Strings(runtime::Value value) {
+  std::vector<std::string> strings;
+  for (const auto item : Items(value)) {
+    strings.push_back(Text(item));
+  }
+  return strings;
+}
+
+std::vector<runtime::FutureTraceFrame> MockReportReader::Trace(runtime::Value value) const {
+  const auto positions = runtime::ReadTraceValue(value);
+  if (!positions) {
+    return {};
+  }
+  const auto resolved = program_->ResolveTrace(*positions);
+  if (!resolved) {
+    return {};
+  }
+  std::vector<runtime::FutureTraceFrame> trace;
+  for (const auto& frame : *resolved) {
+    trace.push_back({
+        .function = frame.function,
+        .source_path = frame.source_path,
+        .line = frame.location.line,
+        .column = frame.location.column,
+        .instruction = frame.instruction,
+        .identity = {},
+    });
+  }
+  return trace;
+}
+
+TestError::MockDetails MockReportReader::Read(runtime::Value value) const {
+  const auto& layouts = *layouts_;
+  TestError::MockDetails result{
+      .session = Number(layouts.ReadPublicField(value, mock_fields::kSession)),
+      .mock = Number(layouts.ReadPublicField(value, mock_fields::kMock)),
+      .method = Text(layouts.ReadPublicField(value, mock_fields::kMethod)),
+      .expected = Text(layouts.ReadPublicField(value, mock_fields::kExpected)),
+      .actual_count = Number(layouts.ReadPublicField(value, mock_fields::kCount)),
+      .calls = {},
+      .configurations = Strings(layouts.ReadPublicField(value, mock_fields::kConfigurations)),
+      .configuration_traces = {},
+      .verification_trace = Trace(layouts.ReadPublicField(value, mock_fields::kVerificationTrace)),
+  };
+  for (const auto call : Items(layouts.ReadPublicField(value, mock_fields::kCalls))) {
+    result.calls.push_back({
+        .sequence = Number(layouts.ReadPublicField(call, mock_fields::kSequence)),
+        .arguments = Strings(layouts.ReadPublicField(call, mock_fields::kArguments)),
+        .omitted_arguments = Number(layouts.ReadPublicField(call, mock_fields::kOmittedArguments)),
+        .trace = Trace(layouts.ReadPublicField(call, mock_fields::kTrace)),
+    });
+  }
+  for (const auto trace :
+       Items(layouts.ReadPublicField(value, mock_fields::kConfigurationTraces))) {
+    result.configuration_traces.push_back(Trace(trace));
+  }
+  return result;
+}
+
+}  // namespace
+
+void Suite::DescribeMockFailure(runtime::Value value, TestError& error) const {
+  if (!value.IsObject()) {
+    return;
+  }
+  const auto* layout = runtime::Heap::ClassOf(*value.AsObject());
+  if (layout == nullptr) {
+    return;
+  }
+  const auto found = mock_failures_.find(&layout->nominal_type());
+  if (found == mock_failures_.end()) {
+    return;
+  }
+  error.category = FailureName(found->second);
+  const MockReportReader reader(*program_);
+  const auto& layouts = *program_->functions().front().layouts;
+  const auto details = layouts.ReadPublicField(value, mock_fields::kDetails);
+  if (!details.IsNull()) {
+    error.mock = reader.Read(details);
+  }
+}
+
+}  // namespace vela::testing

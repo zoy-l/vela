@@ -10,6 +10,14 @@
 
 namespace vela::vm {
 
+// 错误帧拥有文本，不借用 Program；程序销毁后仍可输出诊断。
+struct StackFrame final {
+  std::string function;
+  std::string source_path;
+  SourceLocation location;
+  std::size_t instruction = 0;
+};
+
 struct SourceMapping final {
   std::uint32_t instruction = 0;
   SourceLocation location;

@@ -22,6 +22,7 @@
 #include "base/execution_status.h"
 #include "base/member.h"
 #include "base/utf8.h"
+#include "runtime/exception.h"
 #include "runtime/external_resources.h"
 #include "runtime/isolate.h"
 #include "runtime/native_function.h"
@@ -29,8 +30,20 @@
 #include "runtime/string.h"
 #include "runtime/value.h"
 #include "vm/bytecode.h"
+#include "vm/debug_info.h"
 
 namespace vela::vm {
+
+runtime::Value LayoutTables::ReadPublicField(runtime::Value receiver, std::string_view name) const {
+  if (!receiver.IsObject()) {
+    return runtime::Value::Null();
+  }
+  const auto* member = FindMember(receiver, name);
+  if (member == nullptr || member->kind != MemberKind::Field) {
+    return runtime::Value::Null();
+  }
+  return *runtime::Heap::GetField(*receiver.AsObject(), member->target);
+}
 namespace {
 
 constexpr std::size_t kLayoutPoolCount = 5;
@@ -1088,6 +1101,39 @@ bool FunctionHandle::IsValid() const noexcept {
 
 bool Program::IsForIsolate(const runtime::Isolate& isolate) const noexcept {
   return storage_ != nullptr && storage_->isolate == &isolate;
+}
+
+std::expected<std::vector<StackFrame>, ExecutionStatus> Program::ResolveTrace(
+    std::span<const runtime::TracePosition> positions) const {
+  const auto code = functions();
+  std::vector<StackFrame> trace;
+  trace.reserve(positions.size());
+  for (const auto position : positions) {
+    if (position.function >= code.size()) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    const auto& function = code.subspan(position.function).front();
+    const auto source_paths = function.source_paths != nullptr
+                                  ? std::span<const std::string>(*function.source_paths)
+                                  : std::span<const std::string>();
+    const DebugInfo debug{
+        .name = function.name,
+        .source_paths = source_paths,
+        .mappings = function.source_mappings,
+    };
+    StackFrame frame{
+        .function = function.name,
+        .source_path = {},
+        .location = {},
+        .instruction = position.instruction,
+    };
+    if (const auto* mapping = debug.Locate(position.instruction)) {
+      frame.location = mapping->location;
+      frame.source_path = debug.source_paths.subspan(mapping->location.source_id).front();
+    }
+    trace.push_back(std::move(frame));
+  }
+  return trace;
 }
 
 std::uint16_t FunctionHandle::parameter_count() const noexcept {

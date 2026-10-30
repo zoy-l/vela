@@ -7,11 +7,11 @@
 #include <string>
 #include <vector>
 
-#include "base/source_location.h"
 #include "runtime/execution_context.h"
 #include "runtime/future.h"
 #include "runtime/isolate.h"
 #include "runtime/value.h"
+#include "vm/debug_info.h"
 #include "vm/debugger.h"
 #include "vm/execution_status.h"
 #include "vm/frame_slots.h"
@@ -19,14 +19,6 @@
 #include "vm/register_file.h"
 
 namespace vela::vm {
-
-// 错误帧拥有文本，不借用 Program；程序销毁后仍可输出诊断。
-struct StackFrame final {
-  std::string function;
-  std::string source_path;
-  SourceLocation location;
-  std::size_t instruction = 0;
-};
 
 struct ExecutionResult final {
   // 返回引用不自动保根；宿主须在下一次分配或 GC 前注册 RootRange。

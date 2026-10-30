@@ -1,6 +1,7 @@
 #include "compiler/testing/report.h"
 
 #include <chrono>
+#include <cstddef>
 #include <mutex>
 #include <optional>
 #include <ostream>
@@ -13,6 +14,7 @@
 #include <yyjson.h>
 
 #include "base/json.h"
+#include "base/mock_operation.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/settings.h"
 #include "runtime/future.h"
@@ -155,6 +157,46 @@ void ErrorFields(yyjson_mut_doc* document, yyjson_mut_val* object, const TestErr
   if (error.difference) {
     AddJsonField(document, object, "difference", JsonDifference(document, *error.difference));
   }
+  if (error.mock) {
+    const auto& details = *error.mock;
+    auto* mock = yyjson_mut_obj(document);
+    AddJsonField(document, mock, mock_fields::kSession, yyjson_mut_sint(document, details.session));
+    AddJsonField(document, mock, mock_fields::kMock, yyjson_mut_sint(document, details.mock));
+    StringField(document, mock, mock_fields::kMethod, details.method);
+    StringField(document, mock, mock_fields::kExpected, details.expected);
+    AddJsonField(document, mock, mock_fields::kCount,
+                 yyjson_mut_sint(document, details.actual_count));
+    auto* calls = yyjson_mut_arr(document);
+    for (const auto& call : details.calls) {
+      auto* item = yyjson_mut_obj(document);
+      AddJsonField(document, item, mock_fields::kSequence,
+                   yyjson_mut_sint(document, call.sequence));
+      auto* arguments = yyjson_mut_arr(document);
+      for (const auto& argument : call.arguments) {
+        yyjson_mut_arr_add_strncpy(document, arguments, argument.data(), argument.size());
+      }
+      AddJsonField(document, item, mock_fields::kArguments, arguments);
+      AddJsonField(document, item, mock_fields::kOmittedArguments,
+                   yyjson_mut_sint(document, call.omitted_arguments));
+      AddJsonField(document, item, mock_fields::kTrace, JsonTrace(document, call.trace));
+      yyjson_mut_arr_add_val(calls, item);
+    }
+    AddJsonField(document, mock, mock_fields::kCalls, calls);
+    auto* configurations = yyjson_mut_arr(document);
+    for (const auto& configuration : details.configurations) {
+      yyjson_mut_arr_add_strncpy(document, configurations, configuration.data(),
+                                 configuration.size());
+    }
+    AddJsonField(document, mock, mock_fields::kConfigurations, configurations);
+    auto* traces = yyjson_mut_arr(document);
+    for (const auto& trace : details.configuration_traces) {
+      yyjson_mut_arr_add_val(traces, JsonTrace(document, trace));
+    }
+    AddJsonField(document, mock, mock_fields::kConfigurationTraces, traces);
+    AddJsonField(document, mock, mock_fields::kVerificationTrace,
+                 JsonTrace(document, details.verification_trace));
+    AddJsonField(document, object, mock_fields::kDetails, mock);
+  }
 }
 
 void TestFields(yyjson_mut_doc* document, yyjson_mut_val* object, const ReportEvent& event) {
@@ -192,6 +234,39 @@ void WriteListedTest(std::ostream& output, const ReportEvent& event) {
   output << '\n';
 }
 
+void WriteMockFailure(std::ostream& output, const TestError::MockDetails& mock) {
+  output << "  expected " << mock.expected << "; actual count " << mock.actual_count << '\n';
+  for (const auto& call : mock.calls) {
+    output << "  #" << call.sequence << ' ' << mock.method << '(';
+    for (std::size_t index = 0; index < call.arguments.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      output << call.arguments.at(index);
+    }
+    if (call.omitted_arguments != 0) {
+      output << ", ...";
+    }
+    output << ')';
+    if (const auto* location = UserLocation(call.trace)) {
+      output << " at " << location->source_path << ':' << location->line << ':' << location->column;
+    }
+    output << '\n';
+  }
+  for (std::size_t index = 0; index < mock.configurations.size(); ++index) {
+    output << "  configured " << mock.configurations.at(index);
+    if (index < mock.configuration_traces.size()) {
+      if (const auto* location = UserLocation(mock.configuration_traces.at(index))) {
+        output << " at " << location->source_path << ':' << location->line;
+      }
+    }
+    output << '\n';
+  }
+  if (const auto* location = UserLocation(mock.verification_trace)) {
+    output << "  verified at " << location->source_path << ':' << location->line << '\n';
+  }
+}
+
 void WriteFailure(std::ostream& output, const ReportEvent& event) {
   const auto& error = *event.error;
   output << event.file << " [" << PhaseName(error.phase) << "]: " << error.message << '\n';
@@ -201,6 +276,9 @@ void WriteFailure(std::ostream& output, const ReportEvent& event) {
   }
   if (error.difference) {
     output << "  " << error.difference->path << ": " << error.difference->actual << '\n';
+  }
+  if (error.mock) {
+    WriteMockFailure(output, *error.mock);
   }
 }
 

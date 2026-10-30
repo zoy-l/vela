@@ -16,6 +16,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
+#include "base/mock_operation.h"
 #include "compiler/testing/report.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/settings.h"
@@ -58,6 +59,7 @@ class Suite final : public runtime::TestBridge {
   [[nodiscard]] SuiteResult Run();
   [[nodiscard]] std::optional<std::uint64_t> CurrentTestId() const;
   std::expected<void, std::string> Register(const runtime::TestRegistration& registration) override;
+  void RegisterMockFailure(const runtime::NominalType& type, MockFailureKind kind) override;
   std::expected<runtime::Value, std::string> Control(
       runtime::TestControl operation,
       std::span<const runtime::Value> arguments,
@@ -67,6 +69,7 @@ class Suite final : public runtime::TestBridge {
   enum class NodeKind : std::uint8_t { Group, Test };
   enum class State : std::uint8_t { Registering, Running, Finished };
   enum class WaitStatus : std::uint8_t { Completed, TimedOut, Idle, Cancelled };
+  enum class ExpectationKind : std::uint8_t { Assertion, CallObservation };
   struct Callback final {
     std::uint64_t id;
     runtime::RootedValue value;
@@ -76,6 +79,7 @@ class Suite final : public runtime::TestBridge {
     std::optional<runtime::Future> future;
     std::vector<runtime::FutureTraceFrame> trace;
     bool waiting = true;
+    std::shared_ptr<runtime::HostEventSource> producer;
   };
   struct Node final {
     std::uint64_t id = 0;
@@ -88,6 +92,7 @@ class Suite final : public runtime::TestBridge {
     std::optional<Callback> body;
     std::array<std::vector<Callback>, 4> hooks;
     std::vector<Callback> cleanup;
+    std::vector<Callback> finalizers;
     std::vector<std::unique_ptr<Node>> children;
     std::vector<runtime::FutureTraceFrame> trace;
     std::optional<std::size_t> result;
@@ -151,17 +156,24 @@ class Suite final : public runtime::TestBridge {
   [[nodiscard]] std::expected<runtime::ExecutionContext, std::string> ExecutingContext();
   std::expected<runtime::Value, std::string> TrackExpectation(
       runtime::Value value,
-      std::vector<runtime::FutureTraceFrame> trace);
+      std::vector<runtime::FutureTraceFrame> trace,
+      ExpectationKind kind);
   std::expected<runtime::Value, std::string> RegisterCallback(
       std::span<const runtime::Value> arguments,
       std::vector<runtime::FutureTraceFrame> trace);
   std::expected<runtime::Value, std::string> EnterCallback(runtime::Value identity);
   std::expected<runtime::Value, std::string> ExitCallback(runtime::Value ticket);
   std::expected<runtime::Value, std::string> CheckCallback(runtime::Value identity);
+  [[nodiscard]] runtime::Value CurrentTestScope() const;
+  std::expected<runtime::Value, std::string> RegisterFinalizer(
+      runtime::Value callback,
+      std::vector<runtime::FutureTraceFrame> trace);
+  std::expected<runtime::Value, std::string> ReleaseFinalizer(runtime::Value identity);
   void DeliverError(const runtime::FutureResult& completion,
                     std::uint64_t identity,
                     TestPhase phase);
   [[nodiscard]] TestError Describe(const vm::ExecutionResult& result, TestPhase phase) const;
+  void DescribeMockFailure(runtime::Value value, TestError& error) const;
   void Unhandled(const runtime::Future& future, runtime::Value value);
   void RecordError(const vm::ExecutionResult& failure,
                    TestPhase phase,
@@ -187,6 +199,7 @@ class Suite final : public runtime::TestBridge {
   absl::flat_hash_set<std::string> declared_tags_;
   absl::flat_hash_set<std::string> warned_tags_;
   absl::flat_hash_map<std::uint64_t, CallbackExpectation> callbacks_;
+  absl::flat_hash_map<const runtime::NominalType*, MockFailureKind> mock_failures_;
   std::vector<std::optional<runtime::ExecutionContext>> callback_contexts_;
   SuiteResult result_;
   runtime::ProcessEntry process_;

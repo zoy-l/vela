@@ -9,6 +9,9 @@
 #include <utility>
 
 #include "base/builtin.h"
+#include "runtime/exception.h"
+#include "runtime/future.h"
+#include "runtime/heap.h"
 #include "runtime/string.h"
 #include "runtime/test_bridge.h"
 #include "runtime/value.h"
@@ -17,6 +20,25 @@
 #include "vm/program.h"
 
 namespace vela::vm::internal {
+
+StepResult Execution::ValidateTestFinalizer(runtime::Value value) {
+  const auto resolved = ResolveCallable(value);
+  if (!resolved) {
+    return std::unexpected(resolved.error());
+  }
+  const auto& function = functions_.subspan(resolved->function).front();
+  const auto& signature = function.signature;
+  if (!signature) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto skipped = (resolved->implicit ? 1U : 0U) - signature->hidden_parameters;
+  if (function.is_async || signature->result || signature->parameters.size() != skipped) {
+    error_message_ =
+        "test scope finalizer must be synchronous, accept no arguments and return void";
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  return {};
+}
 
 StepResult Execution::ExecuteTestRegistration(ActiveFrame& active, Instruction instruction) {
   constexpr auto kArity = BuiltinArity(Builtin::TestRegister);
@@ -92,10 +114,16 @@ StepResult Execution::ExecuteTestControl(ActiveFrame& active, Instruction instru
   active.frame.registers().subspan(DecodeC(instruction), kArity).CopyTo(values);
   const auto opcode = values.front();
   if (!opcode.IsInteger() || opcode.AsInteger() < 0 ||
-      opcode.AsInteger() > static_cast<std::int64_t>(runtime::TestControl::CheckCallback)) {
+      opcode.AsInteger() > static_cast<std::int64_t>(runtime::TestControl::TrackCallWait)) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto operation = static_cast<runtime::TestControl>(opcode.AsInteger());
+  if (operation == runtime::TestControl::RegisterFinalizer) {
+    const auto valid = ValidateTestFinalizer(values.at(1));
+    if (!valid) {
+      return valid;
+    }
+  }
   if (operation == runtime::TestControl::RegisterCallback) {
     const auto resolved = ResolveCallable(values.at(1));
     const auto arity = values.at(4);
@@ -120,6 +148,10 @@ StepResult Execution::ExecuteTestControl(ActiveFrame& active, Instruction instru
     }
   }
   auto* bridge = isolate_.test_bridge();
+  if (bridge == nullptr && operation == runtime::TestControl::CurrentTestScope) {
+    active.frame.registers().subspan(DecodeA(instruction)).front().SetInteger(0);
+    return {};
+  }
   if (bridge == nullptr) {
     error_message_ = "asynchronous expectations require a test execution session";
     return std::unexpected(ExecutionStatus::TypeError);

@@ -28,6 +28,7 @@
 #include "compiler/tooling/documentation.h"
 #include "compiler/tooling/formatter.h"
 #include "compiler/tooling/language_server.h"
+#include "compiler/tooling/mock_generator.h"
 #include "compiler/tooling/repl_console.h"
 #include "compiler/tooling/standard_streams.h"
 #include "runtime/isolate.h"
@@ -56,6 +57,7 @@ void PrintUsage(std::ostream& output) {
       << "  check FILE   Parse and statically check a Vela source file\n"
       << "  run FILE     Compile with a local content cache and run main\n"
       << "  test [PATH...] [OPTIONS]   Run configured source test suites\n"
+      << "  mock API_FILE --interface NAME -o OUTPUT [--check]   Generate interface mocks\n"
       << "  dev FILE [--optimized] [--code-cache=DIR]   Run a JIT development session\n"
       << "  build FILE [--emit=exe|obj|staticlib] [--export=NAME] -o OUTPUT   Build native code\n"
       << "  build --verify-manifest=FILE   Verify a native library and its header\n"
@@ -319,6 +321,16 @@ int TestCommand(std::span<char*> arguments) {
   return vela::testing::TestCommand(options, {.output = std::cout, .errors = std::cerr});
 }
 
+int WriteArtifactCommand(std::string_view command, std::span<char*> arguments) {
+  if (arguments.size() != 2) {
+    std::cerr << "vela: " << command << " requires a source and output path\n";
+    return kUsageExitCode;
+  }
+  const std::string_view source = arguments.front();
+  const auto output = vela::Utf8Path(arguments.subspan(1).front());
+  return command == "compile" ? CompileFile(source, output) : DocumentFile(source, output);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -344,6 +356,9 @@ int main(int argc, char** argv) {
   if (command == "test") {
     return TestCommand(arguments.subspan(2));
   }
+  if (command == "mock") {
+    return vela::tooling::MockCommand(arguments.subspan(2), std::cout, std::cerr);
+  }
 
   if (command == "fmt") {
     return FormatCommand(arguments.subspan(2));
@@ -361,13 +376,7 @@ int main(int argc, char** argv) {
     return DevelopmentCommand(arguments.subspan(2));
   }
   if (command == "compile" || command == "doc") {
-    if (argc != 4) {
-      std::cerr << "vela: " << command << " requires a source and output path\n";
-      return kUsageExitCode;
-    }
-    const std::string_view source = arguments.subspan(2).front();
-    const auto output = vela::Utf8Path(arguments.subspan(3).front());
-    return command == "compile" ? CompileFile(source, output) : DocumentFile(source, output);
+    return WriteArtifactCommand(command, arguments.subspan(2));
   }
 
   if (command == "run" || command == "exec" || command == "debug") {

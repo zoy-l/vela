@@ -1,0 +1,1176 @@
+import 'sdk:test' as testing;
+
+external func _control(
+  operation: int,
+  first: dynamic,
+  second: dynamic,
+  third: dynamic,
+  fourth: dynamic
+): dynamic;
+
+external func _inspect(operation: int, value: dynamic): dynamic;
+
+external func _contract(operation: int, signature: dynamic, value: dynamic): dynamic;
+
+/// Invalid mock configuration or an operation outside its owning test scope.
+export class MockUsageError extends testing.TestFailure {
+  constructor(message: string) {
+    super(message: message);
+    _contract(9, 0, this);
+  }
+}
+
+/// A real call had no matching configured response.
+export class MockMissingStub extends testing.TestFailure {
+  constructor(message: string) {
+    super(message: message);
+    _contract(9, 1, this);
+  }
+}
+
+/// A finite response sequence was exhausted.
+export class MockStubExhausted extends testing.TestFailure {
+  constructor(message: string) {
+    super(message: message);
+    _contract(9, 2, this);
+  }
+}
+
+/// Recorded interactions did not satisfy a verification.
+export class MockVerificationFailure extends testing.TestFailure {
+  constructor(message: string) {
+    super(message: message);
+    _contract(9, 3, this);
+  }
+}
+
+/// A pending call observation was reset.
+export class MockReset extends testing.TestFailure {
+  constructor(message: string) {
+    super(message: message);
+    _contract(9, 4, this);
+  }
+}
+
+/// A mock session has closed.
+export class MockSessionClosed extends testing.TestFailure {
+  constructor(message: string) {
+    super(message: message);
+    _contract(9, 5, this);
+  }
+}
+
+func _usage(message: string): void {
+  throw MockUsageError(message);
+}
+
+/// A copied frame resolved from the original call location.
+export class MockSourceFrame {
+  functionName: string;
+  file: string;
+  line: int;
+  column: int;
+  instruction: int;
+}
+
+func _frames(trace: ByteArray): MockSourceFrame[] {
+  const values: dynamic[] = [];
+  _contract(8, trace, values);
+  const result: MockSourceFrame[] = [];
+  for (let index = 0; index < values.length; index += 5) {
+    result.push(
+      MockSourceFrame(
+        functionName: values[index],
+        file: values[index + 1],
+        line: values[index + 2],
+        column: values[index + 3],
+        instruction: values[index + 4]
+      )
+    );
+  }
+  return result;
+}
+
+class _CallReport {
+  sequence: int;
+  arguments: string[];
+  omittedArguments: int;
+  trace: ByteArray;
+}
+
+class _MockDetails {
+  mockSessionID: int;
+  mockID: int;
+  method: string;
+  expected: string;
+  actualCount: int;
+  calls: _CallReport[];
+  configurations: string[] = [];
+  configurationTraces: ByteArray[] = [];
+  verificationTrace: ByteArray? = null;
+}
+
+const _reportCallBudget = 16;
+
+const _reportArgumentBudget = 16;
+
+class _Any implements testing.Matcher {
+  match (actual: dynamic): testing.MatchResult {
+    return testing.MatchResult(success: true, description: 'any value');
+  }
+}
+
+/// Matches any single argument, including null.
+export const any: testing.Matcher = _Any();
+
+class _Capture {
+  matcher: testing.Matcher;
+}
+
+/// Captures any argument after a successful verification commits.
+export const captureAny = _Capture(matcher: any);
+
+func _matcher(value: dynamic): testing.Matcher {
+  if (value is testing.AsyncMatcher) {
+    _usage('mock argument matchers must be synchronous');
+  }
+  if (value is testing.Matcher) {
+    return value;
+  }
+  return testing.equals(value);
+}
+
+/// Captures arguments satisfying a synchronous matcher.
+export func captureThat(matcher: dynamic): dynamic {
+  return _Capture(matcher: _matcher(matcher));
+}
+
+/// Owns mock identities, ordering and cleanup for one executing test.
+export class MockSession {
+  private scope: int;
+  private identity: int = 0;
+  private sequence: int = 0;
+  private controls: MockControl[] = [];
+  private closed: bool = false;
+  private matching: bool = false;
+
+  constructor() {
+    this.scope = _control(5, null, null, null, null);
+    if (this.scope == 0) {
+      _usage('MockSession requires an executing test, setUp or tearDown');
+    }
+    this.identity = _control(6, () => {
+      this.close();
+    }, null, null, null);
+  }
+
+  get mockSessionID(): int {
+    return this.identity;
+  }
+
+  check(): void {
+    if (_control(5, null, null, null, null) != this.scope) {
+      _usage('mock operation belongs to a different test scope');
+    }
+    if (this.closed) {
+      throw MockSessionClosed('mock session is closed');
+    }
+    if (this.matching) {
+      _usage('mock operations cannot reenter an argument matcher');
+    }
+  }
+
+  attach(control: MockControl): int {
+    this.check();
+    this.controls.push(control);
+    return this.controls.length;
+  }
+
+  nextSequence(): int {
+    this.check();
+    this.sequence ++;
+    return this.sequence;
+  }
+  beginMatch(): void {
+    this.check();
+    this.matching = true;
+  }
+  endMatch(): void {
+    this.matching = false;
+  }
+  /// Closes after all user teardown hooks; explicit repeated close has no extra effect.
+  close(): void {
+    if (this.closed) {
+      return;
+    }
+    this.check();
+    let pending = 0;
+    let report: _MockDetails? = null;
+    for (const control in this.controls) {
+      if (report == null) { report = control.unfinished(); }
+      pending += control.finish();
+    }
+    this.controls.clear();
+    this.closed = true;
+    _control(7, this.identity, null, null, null);
+    if (pending != 0) {
+      const error = MockUsageError('${pending} mock stub builder(s) were not completed');
+      error.mock = report;
+      throw error;
+    }
+  }
+}
+
+/// Shared control for the methods of one generated interface or function substitute.
+export class MockControl {
+  private owner: MockSession;
+  private identity: int = 0;
+  private methods: MockMethod[] = [];
+
+  constructor(session: MockSession) {
+    this.owner = session;
+    this.identity = session.attach(this);
+  }
+
+  get session(): MockSession {
+    return this.owner;
+  }
+  get mockID(): int {
+    return this.identity;
+  }
+  attach(method: MockMethod): void {
+    this.owner.check();
+    this.methods.push(method);
+  }
+
+  clear(): void {
+    this.owner.check();
+    for (const method in this.methods) {
+      method.clear();
+    }
+  }
+
+  reset(): void {
+    this.owner.check();
+    for (const method in this.methods) {
+      method.reset();
+    }
+  }
+
+  unfinished(): _MockDetails? {
+    for (const method in this.methods) {
+      const report = method.unfinished();
+      if (report != null) { return report; }
+    }
+    return null;
+  }
+
+  finish(): int {
+    let pending = 0;
+    for (const method in this.methods) {
+      pending += method.finish();
+    }
+    this.methods.clear();
+    return pending;
+  }
+
+  verifyEmpty(includeVerified: bool): void {
+    this.owner.check();
+    for (const method in this.methods) {
+      for (const record in method.history()) {
+        const invocation = record.invocation;
+        if (includeVerified || !record.verified) {
+          const error = MockVerificationFailure('unexpected call: ${invocation.methodName} #${invocation.sequence}');
+          const details = method.report('no interactions', 1, _contract(7, null, null));
+          details.calls = [invocation.report()];
+          error.mock = details;
+          throw error;
+        }
+      }
+    }
+  }
+}
+
+/// Read-only description of one real invocation. Argument objects retain their identity.
+export class MockInvocation {
+  private sessionIdentity: int;
+  private mockIdentity: int;
+  private methodIdentity: string;
+  private order: int;
+  private values: dynamic[];
+  private names: Map<string, int>;
+  private registeredAt: ByteArray;
+  private calledAt: ByteArray;
+
+  constructor(
+    sessionID: int,
+    mockID: int,
+    methodName: string,
+    sequence: int,
+    arguments: dynamic[],
+    names: Map<string, int>,
+    registrationTrace: ByteArray,
+    callTrace: ByteArray
+  ) {
+    this.sessionIdentity = sessionID;
+    this.mockIdentity = mockID;
+    this.methodIdentity = methodName;
+    this.order = sequence;
+    this.values = arguments.slice(0, arguments.length);
+    this.names = names;
+    this.registeredAt = registrationTrace;
+    this.calledAt = callTrace;
+  }
+
+  get mockSessionID(): int {
+    return this.sessionIdentity;
+  }
+  get mockID(): int {
+    return this.mockIdentity;
+  }
+  get methodName(): string {
+    return this.methodIdentity;
+  }
+  get sequence(): int {
+    return this.order;
+  }
+  get arguments(): dynamic[] {
+    return this.values.slice(0, this.values.length);
+  }
+  get registrationLocation(): MockSourceFrame[] {
+    return _frames(this.registeredAt);
+  }
+  get callLocation(): MockSourceFrame[] {
+    return _frames(this.calledAt);
+  }
+
+  report(): _CallReport {
+    const arguments: string[] = [];
+    const count = this.values.length < _reportArgumentBudget ? this.values.length : _reportArgumentBudget;
+    for (let index = 0; index < count; index ++) {
+      arguments.push(_inspect(1, this.values[index]));
+    }
+    return _CallReport(
+      sequence: this.order,
+      arguments: arguments,
+      omittedArguments: this.values.length - count,
+      trace: this.calledAt.slice(0, this.calledAt.length)
+    );
+  }
+
+  argumentAt(index: int): dynamic {
+    if (index < 0 || index >= this.values.length) {
+      _usage('mock argument index is out of range');
+    }
+    return this.values[index];
+  }
+
+  argument(name: string): dynamic {
+    const index = this.names.get(name);
+    if (index == null) {
+      _usage('unknown mock argument: ${name}');
+    }
+    return this.values[index as int];
+  }
+}
+
+/// Immutable call pattern. Constructing it never records or dispatches a real call.
+export class MockCall {
+  private target: MockMethod;
+  private matchers: testing.Matcher[] = [];
+  private captures: bool[] = [];
+  private capturing: bool = false;
+  private source: ByteArray;
+  private descriptionValue: string;
+
+  constructor(method: MockMethod, arguments: dynamic[]) {
+    method.control.session.check();
+    if (arguments.length != method.arity) {
+      _usage('wrong number of mock arguments');
+    }
+    this.target = method;
+    this.source = _contract(7, null, null);
+    const descriptions: string[] = [];
+    for (const value in arguments) {
+      const capture = value is _Capture;
+      if (descriptions.length < _reportArgumentBudget) {
+        descriptions.push(
+          value is testing.Matcher || capture ? '<matcher>' : _inspect(1, value)
+        );
+      }
+      this.captures.push(capture);
+      if (capture) {
+        const marker = value as _Capture;
+        this.matchers.push(marker.matcher);
+        this.capturing = true;
+      } else {
+        this.matchers.push(_matcher(value));
+      }
+    }
+    if (arguments.length > descriptions.length) {
+      descriptions.push('...');
+    }
+    this.descriptionValue = '${method.methodName}(${descriptions.join(', ')})';
+  }
+
+  get method(): MockMethod {
+    return this.target;
+  }
+  get hasCaptures(): bool {
+    return this.capturing;
+  }
+  get description(): string {
+    return this.descriptionValue;
+  }
+  get configurationTrace(): ByteArray {
+    return this.source.slice(0, this.source.length);
+  }
+
+  match (invocation: MockInvocation): _Match {
+    const session = this.target.control.session;
+    session.beginMatch();
+    try {
+      const captured: dynamic[] = [];
+      for (let index = 0; index < this.matchers.length; index ++) {
+        const argument = invocation.argumentAt(index);
+        const result = this.matchers[index].match (argument);
+        if (!result.success) {
+          return _Match(success: false, captured: [], result: result);
+        }
+        if (this.captures[index]) {
+          captured.push(argument);
+        }
+      }
+      return _Match(success: true, captured: captured, result: null);
+    } finally {
+      session.endMatch();
+    }
+  }
+}
+
+class _Match {
+  success: bool;
+  captured: dynamic[];
+  result: testing.MatchResult?;
+}
+
+class _Response {
+  call: MockCall;
+  kind: int;
+  value: dynamic;
+  index: int = 0;
+}
+
+class _Record {
+  invocation: MockInvocation;
+  verified: bool = false;
+}
+
+class _Wait {
+  call: MockCall;
+  completion: Completer<MockInvocation> = Completer<MockInvocation>();
+  trace: ByteArray = _contract(7, null, null);
+
+  private async evaluate(invocation: MockInvocation): Future<bool> {
+    return this.call.match (invocation).success;
+  }
+
+  observe(invocation: MockInvocation): void {
+    if (_contract(10, this.evaluate(invocation), this.completion)) {
+      this.completion.complete(invocation);
+    }
+  }
+
+  fail(error: dynamic): void {
+    error.mock = this.call.method.report(this.call.description, 0, this.trace);
+    _contract(11, this.completion, error);
+  }
+}
+
+enum _CloseReason {
+  reset,
+  session
+}
+
+/// Generated adapters supply a real typed method to retain its callable contract.
+export class MockMethod {
+  private owner: MockControl;
+  private name: string;
+  private signature: dynamic = null;
+  private names: Map<string, int> = Map<string, int>();
+  private count: int = 0;
+  private voidResult: bool = false;
+  private records: _Record[] = [];
+  private responses: _Response[] = [];
+  private pending: Map<int, MockCall> = Map<int, MockCall>();
+  private nextStub: int = 0;
+  private generation: int = 0;
+  private historyGeneration: int = 0;
+  private waits: _Wait[] = [];
+  private registeredAt: ByteArray;
+
+  constructor(control: MockControl, name: string) {
+    this.owner = control;
+    this.name = name;
+    this.registeredAt = _contract(7, null, null);
+    control.attach(this);
+  }
+
+  bind(signature: dynamic): void {
+    this.owner.session.check();
+    if (this.signature != null) {
+      _usage('mock method signature is already bound');
+    }
+    this.signature = signature;
+    const count = _contract(2, signature, null);
+    if (!(count is int)) {
+      _usage('mock method requires a real callable signature');
+    }
+    this.count = count;
+    this.voidResult = _contract(0, signature, null);
+    for (let index = 0; index < this.count; index ++) {
+      const parameter: string = _contract(3, signature, index);
+      this.names.set(parameter, index);
+    }
+  }
+
+  get control(): MockControl {
+    return this.owner;
+  }
+  get methodName(): string {
+    return this.name;
+  }
+  get arity(): int {
+    return this.count;
+  }
+  get epoch(): int {
+    return this.generation;
+  }
+  get historyEpoch(): int {
+    return this.historyGeneration;
+  }
+  query(arguments: dynamic[]): MockCall {
+    return MockCall(this, arguments);
+  }
+  history(): _Record[] {
+    return this.records.slice(0, this.records.length);
+  }
+  get recordCount(): int {
+    return this.records.length;
+  }
+  recordAt(index: int): _Record {
+    return this.records[index];
+  }
+  firstAfter(sequence: int): int {
+    let start = 0;
+    let end = this.records.length;
+    while (start < end) {
+      const middle = start + (end - start) / 2;
+      if (this.records[middle].invocation.sequence <= sequence) {
+        start = middle + 1;
+      } else {
+        end = middle;
+      }
+    }
+    return start;
+  }
+  beginStub(call: MockCall): int {
+    this.owner.session.check();
+    this.nextStub++;
+    this.pending.set(this.nextStub, call);
+    return this.nextStub;
+  }
+
+  validateValue(value: dynamic): void {
+    if (
+      this.voidResult || _inspect(0, value) == 4 || !_contract(1, this.signature, value)
+    ) {
+      _usage('thenReturn requires a non-Future value satisfying ${this.name}');
+    }
+  }
+
+  validateCallback(callback: dynamic, isVoid: bool): void {
+    const sample = this.describe([], 0);
+    if (
+      isVoid != this.voidResult || !_contract(isVoid ? 5 : 4, callback, sample) || (!isVoid && !_contract(12, this.signature, callback))
+    ) {
+      _usage('response must accept MockInvocation and return the required value or void');
+    }
+  }
+
+  commit(response: _Response, identity: int): void {
+    this.owner.session.check();
+    // 同一不可变模式的新响应完全遮蔽旧响应，移除后也不会重复求值 matcher。
+    for (let index = this.responses.length - 1; index >= 0; index--) {
+      if (this.responses[index].call == response.call) { this.responses.splice(index, 1); }
+    }
+    this.responses.push(response);
+    this.pending.delete(identity);
+  }
+
+  private describe(arguments: dynamic[], sequence: int): MockInvocation {
+    const session = this.owner.session;
+    return MockInvocation(
+      session.mockSessionID,
+      this.owner.mockID,
+      this.name,
+      sequence,
+      arguments,
+      this.names,
+      this.registeredAt,
+      _contract(7, null, null)
+    );
+  }
+
+  private record(arguments: dynamic[]): MockInvocation {
+    const sequence = this.owner.session.nextSequence();
+    if (arguments.length != this.count) {
+      _usage('wrong number of real mock arguments');
+    }
+    const invocation = this.describe(arguments, sequence);
+    this.records.push(_Record(invocation: invocation));
+    const pending: _Wait[] = [];
+    for (const wait in this.waits) {
+      wait.observe(invocation);
+      if (!wait.completion.isCompleted) {
+        pending.push(wait);
+      }
+    }
+    this.waits = pending;
+    return invocation;
+  }
+
+  private select(invocation: MockInvocation): _Response {
+    let mismatch: testing.MatchResult? = null;
+    for (let index = this.responses.length - 1; index >= 0; index --) {
+      const response = this.responses[index];
+      const matched = response.call.match (invocation);
+      if (matched.success) {
+        return response;
+      }
+      if (mismatch == null) {
+        mismatch = matched.result;
+      }
+    }
+    const error = MockMissingStub('no matching stub for ${this.name} #${invocation.sequence}');
+    const details = this.report('a matching configured response', 0, null);
+    for (
+      let index = this.responses.length - 1; index >= 0 && details.configurations.length < _reportCallBudget; index --
+    ) {
+      const call = this.responses[index].call;
+      details.configurations.push(call.description);
+      details.configurationTraces.push(call.configurationTrace);
+    }
+    error.mock = details;
+    if (mismatch != null) {
+      error.difference = mismatch.difference;
+    }
+    throw error;
+  }
+
+  invoke(arguments: dynamic[]): dynamic {
+    const invocation = this.record(arguments);
+    const response = this.select(invocation);
+    if (response.kind == 0) {
+      return response.value;
+    }
+    if (response.kind == 1) {
+      const values = response.value;
+      const index = response.index++;
+      if (index >= values.length) {
+        const error = MockStubExhausted('response sequence exhausted for ${this.name}');
+        const details = this.report(response.call.description, response.index, null);
+        details.configurations.push(response.call.description);
+        details.configurationTraces.push(response.call.configurationTrace);
+        error.mock = details;
+        throw error;
+      }
+      return values[index];
+    }
+    if (response.kind == 2) {
+      throw response.value;
+    }
+    if (response.kind == 3) {
+      return response.value(invocation);
+    }
+    throw MockUsageError('void response requires a void adapter');
+  }
+
+  invokeVoid(arguments: dynamic[]): void {
+    const invocation = this.record(arguments);
+    const response = this.select(invocation);
+    if (response.kind == 2) {
+      throw response.value;
+    }
+    if (response.kind != 4) {
+      _usage('void method requires thenDo');
+    }
+    response.value(invocation);
+  }
+
+  clear(): void {
+    this.records.clear();
+    this.historyGeneration ++;
+  }
+
+  report(expected: string, count: int, verificationTrace: ByteArray?): _MockDetails {
+    const calls: _CallReport[] = [];
+    for (
+      let index = this.records.length - 1; index >= 0 && calls.length < _reportCallBudget; index --
+    ) {
+      const record = this.records[index];
+      if (!record.verified) {
+        calls.push(record.invocation.report());
+      }
+    }
+    calls.reverse();
+    return _MockDetails(
+      mockSessionID: this.owner.session.mockSessionID,
+      mockID: this.owner.mockID,
+      method: this.name,
+      expected: expected,
+      actualCount: count,
+      calls: calls,
+      verificationTrace: verificationTrace
+    );
+  }
+
+  wait(call: MockCall): Future<MockInvocation> {
+    this.owner.session.check();
+    if (call.hasCaptures) {
+      _usage('capture patterns are only valid in verification');
+    }
+    const wait = _Wait(call: call);
+    const future = wait.completion.future;
+    _control(8, future, null, null, null);
+    for (const record in this.records) {
+      wait.observe(record.invocation);
+      if (wait.completion.isCompleted) {
+        return future;
+      }
+    }
+    this.waits.push(wait);
+    return future;
+  }
+
+  private closeWaits(reason: _CloseReason): void {
+    for (const wait in this.waits) {
+      if (reason == _CloseReason.reset) {
+        wait.fail(MockReset('mock was reset before the expected call'));
+      } else {
+        wait.fail(MockSessionClosed('mock session closed before the expected call'));
+      }
+    }
+    this.waits.clear();
+  }
+
+  reset(): void {
+    this.clear();
+    this.responses.clear();
+    this.pending.clear();
+    this.generation ++;
+    this.closeWaits(_CloseReason.reset);
+  }
+  unfinished(): _MockDetails? {
+    if (this.pending.size == 0) { return null; }
+    const report = this.report('complete every stub builder', this.pending.size, null);
+    for (const call in this.pending.values()) {
+      if (report.configurations.length == _reportCallBudget) { break; }
+      report.configurations.push(call.description);
+      report.configurationTraces.push(call.configurationTrace);
+    }
+    return report;
+  }
+
+  finish(): int {
+    const pending = this.pending.size;
+    this.closeWaits(_CloseReason.session);
+    this.reset();
+    this.signature = null;
+    return pending;
+  }
+}
+
+/// A configuration builder publishes exactly one completed response.
+export class MockStub {
+  private call: MockCall;
+  private generation: int;
+  private identity: int;
+  private completed: bool = false;
+
+  constructor(call: MockCall) {
+    if (call.hasCaptures) {
+      _usage('capture patterns are only valid in verification');
+    }
+    const method = call.method;
+    this.identity = method.beginStub(call);
+    this.call = call;
+    this.generation = method.epoch;
+  }
+
+  private check(): void {
+    const method = this.call.method;
+    method.control.session.check();
+    if (this.completed || this.generation != method.epoch) {
+      _usage('mock stub builder is stale or completed');
+    }
+  }
+
+  private commit(kind: int, value: dynamic): void {
+    this.call.method.commit(_Response(call: this.call, kind: kind, value: value), this.identity);
+    this.completed = true;
+  }
+
+  thenReturn(value: dynamic): void {
+    this.check();
+    this.call.method.validateValue(value);
+    this.commit(0, value);
+  }
+  thenReturnInOrder(values: dynamic[]): void {
+    this.check();
+    if (values.length == 0) {
+      _usage('response sequence must not be empty');
+    }
+    const method = this.call.method;
+    for (const value in values) {
+      method.validateValue(value);
+    }
+    this.commit(1, values.slice(0, values.length));
+  }
+  thenThrow(error: dynamic): void {
+    this.check();
+    if (!_contract(6, null, error)) {
+      _usage('thenThrow requires a throwable object');
+    }
+    this.commit(2, error);
+  }
+  thenAnswer(callback: dynamic): void {
+    this.check();
+    this.call.method.validateCallback(callback, false);
+    this.commit(3, callback);
+  }
+  thenDo(callback: dynamic): void {
+    this.check();
+    this.call.method.validateCallback(callback, true);
+    this.commit(4, callback);
+  }
+}
+
+export func when(call: MockCall): MockStub {
+  return MockStub(call);
+}
+
+/// Successful verification results expose copies of ordered captures and call descriptions.
+export class MockVerificationResult {
+  private values: dynamic[];
+  private calls: MockInvocation[];
+  constructor(captured: dynamic[], invocations: MockInvocation[]) {
+    this.values = captured;
+    this.calls = invocations;
+  }
+  get captured(): dynamic[] {
+    return this.values.slice(0, this.values.length);
+  }
+  get invocations(): MockInvocation[] {
+    return this.calls.slice(0, this.calls.length);
+  }
+}
+
+/// Snapshot verification; records are consumed only after a successful called() commit.
+export class MockVerification {
+  private call: MockCall;
+  private epoch: int;
+  private records: _Record[] = [];
+  private captured: dynamic[] = [];
+  private completed: bool = false;
+  private source: ByteArray;
+
+  private matchCount(matcher: testing.Matcher): testing.MatchResult {
+    const session = this.call.method.control.session;
+    session.beginMatch();
+    try {
+      return matcher.match (this.records.length);
+    } finally {
+      session.endMatch();
+    }
+  }
+
+  constructor(call: MockCall) {
+    const method = call.method;
+    method.control.session.check();
+    this.call = call;
+    this.epoch = method.historyEpoch;
+    this.source = _contract(7, null, null);
+    for (const record in method.history()) {
+      if (record.verified) {
+        continue;
+      }
+      const invocation = record.invocation;
+      const matched = call.match (invocation);
+      if (matched.success) {
+        this.records.push(record);
+        for (const value in matched.captured) {
+          this.captured.push(value);
+        }
+      }
+    }
+  }
+
+  called(count: dynamic): MockVerificationResult {
+    const method = this.call.method;
+    const session = method.control.session;
+    session.check();
+    if (this.completed || this.epoch != method.historyEpoch) {
+      _usage('verification builder is stale or completed');
+    }
+    for (const record in this.records) {
+      if (record.verified) {
+        _usage('verification records were already consumed');
+      }
+    }
+    if (!(count is testing.Matcher) && (!(count is int) || count < 0)) {
+      _usage('called requires a nonnegative int or synchronous Matcher');
+    }
+    const matcher = _matcher(count);
+    const result = this.matchCount(matcher);
+    if (!result.success) {
+      const error = MockVerificationFailure(
+        '${method.methodName}: matched ${this.records.length} call(s), expected ${result.description}'
+      );
+      error.difference = result.difference;
+      error.mock = method.report(
+        '${this.call.description} called ${result.description}',
+        this.records.length,
+        this.source
+      );
+      throw error;
+    }
+    const invocations: MockInvocation[] = [];
+    for (const record in this.records) {
+      record.verified = true;
+      invocations.push(record.invocation);
+    }
+    this.completed = true;
+    return MockVerificationResult(this.captured, invocations);
+  }
+}
+
+export func verify(call: MockCall): MockVerification {
+  return MockVerification(call);
+}
+
+export func verifyNever(call: MockCall): void {
+  verify(call).called(0);
+}
+
+export func verifyZeroInteractions(control: MockControl): void {
+  control.verifyEmpty(true);
+}
+
+export func verifyNoMoreInteractions(control: MockControl): void {
+  control.verifyEmpty(false);
+}
+
+export func clearInteractions(control: MockControl): void {
+  control.clear();
+}
+
+export func reset(control: MockControl): void {
+  control.reset();
+}
+
+/// Observes the earliest matching historical or future call without consuming it.
+export func untilCalled(call: MockCall): Future<MockInvocation> {
+  return call.method.wait(call);
+}
+
+/// Atomically consumes the earliest distinct ordered matches in one session.
+export func verifyInOrder(calls: MockCall[]): MockVerificationResult {
+  if (calls.length == 0) {
+    _usage('verifyInOrder requires at least one pattern');
+  }
+  const session = calls[0].method.control.session;
+  session.check();
+  for (const call in calls) {
+    if (call.method.control.session != session) {
+      _usage('ordered verification cannot combine sessions');
+    }
+  }
+  const selected: _Record[] = [];
+  const captured: dynamic[] = [];
+  const source: ByteArray = _contract(7, null, null);
+  let sequence = 0;
+  for (const call in calls) {
+    const method = call.method;
+    let found = false;
+    for (
+      let index = method.firstAfter(sequence); index < method.recordCount; index ++
+    ) {
+      const record = method.recordAt(index);
+      const invocation = record.invocation;
+      if (record.verified) {
+        continue;
+      }
+      const matched = call.match (invocation);
+      if (!matched.success) {
+        continue;
+      }
+      selected.push(record);
+      for (const value in matched.captured) {
+        captured.push(value);
+      }
+      sequence = invocation.sequence;
+      found = true;
+      break;
+    }
+    if (!found) {
+      const error = MockVerificationFailure('missing ordered call: ${method.methodName} after #${sequence}');
+      error.mock = method.report('${call.description} after #${sequence}', 0, source);
+      throw error;
+    }
+  }
+  const invocations: MockInvocation[] = [];
+  for (const record in selected) {
+    record.verified = true;
+    invocations.push(record.invocation);
+  }
+  return MockVerificationResult(captured, invocations);
+}
+
+/// A zero-argument typed function substitute.
+export class MockFunction0<R> {
+  private owner: MockControl;
+  private method: MockMethod;
+  constructor(session: MockSession) {
+    this.owner = MockControl(session);
+    this.method = MockMethod(this.owner, 'MockFunction0.function');
+    this.method.bind(this.invoke);
+  }
+  private invoke(): R {
+    return this.method.invoke([]) as R;
+  }
+  get function(): () => R {
+    return this.invoke;
+  }
+  get control(): MockControl {
+    return this.owner;
+  }
+  query(): MockCall {
+    return this.method.query([]);
+  }
+}
+
+/// A one-argument typed function substitute.
+export class MockFunction1<A, R> {
+  private owner: MockControl;
+  private method: MockMethod;
+  constructor(session: MockSession) {
+    this.owner = MockControl(session);
+    this.method = MockMethod(this.owner, 'MockFunction1.function');
+    this.method.bind(this.invoke);
+  }
+  private invoke(argument: A): R {
+    return this.method.invoke([argument]) as R;
+  }
+  get function(): (A) => R {
+    return this.invoke;
+  }
+  get control(): MockControl {
+    return this.owner;
+  }
+  query(argument: dynamic): MockCall {
+    return this.method.query([argument]);
+  }
+}
+
+/// A two-argument typed function substitute.
+export class MockFunction2<A, B, R> {
+  private owner: MockControl;
+  private method: MockMethod;
+  constructor(session: MockSession) {
+    this.owner = MockControl(session);
+    this.method = MockMethod(this.owner, 'MockFunction2.function');
+    this.method.bind(this.invoke);
+  }
+  private invoke(first: A, second: B): R {
+    return this.method.invoke([first, second]) as R;
+  }
+  get function(): (A, B) => R {
+    return this.invoke;
+  }
+  get control(): MockControl {
+    return this.owner;
+  }
+  query(first: dynamic, second: dynamic): MockCall {
+    return this.method.query([first, second]);
+  }
+}
+
+/// A zero-argument void function substitute.
+export class MockVoidFunction0 {
+  private owner: MockControl;
+  private method: MockMethod;
+  constructor(session: MockSession) {
+    this.owner = MockControl(session);
+    this.method = MockMethod(this.owner, 'MockVoidFunction0.function');
+    this.method.bind(this.invoke);
+  }
+  private invoke(): void {
+    this.method.invokeVoid([]);
+  }
+  get function(): () => void {
+    return this.invoke;
+  }
+  get control(): MockControl {
+    return this.owner;
+  }
+  query(): MockCall {
+    return this.method.query([]);
+  }
+}
+
+/// A one-argument void function substitute.
+export class MockVoidFunction1<A> {
+  private owner: MockControl;
+  private method: MockMethod;
+  constructor(session: MockSession) {
+    this.owner = MockControl(session);
+    this.method = MockMethod(this.owner, 'MockVoidFunction1.function');
+    this.method.bind(this.invoke);
+  }
+  private invoke(argument: A): void {
+    this.method.invokeVoid([argument]);
+  }
+  get function(): (A) => void {
+    return this.invoke;
+  }
+  get control(): MockControl {
+    return this.owner;
+  }
+  query(argument: dynamic): MockCall {
+    return this.method.query([argument]);
+  }
+}
+
+/// A two-argument void function substitute.
+export class MockVoidFunction2<A, B> {
+  private owner: MockControl;
+  private method: MockMethod;
+  constructor(session: MockSession) {
+    this.owner = MockControl(session);
+    this.method = MockMethod(this.owner, 'MockVoidFunction2.function');
+    this.method.bind(this.invoke);
+  }
+  private invoke(first: A, second: B): void {
+    this.method.invokeVoid([first, second]);
+  }
+  get function(): (A, B) => void {
+    return this.invoke;
+  }
+  get control(): MockControl {
+    return this.owner;
+  }
+  query(first: dynamic, second: dynamic): MockCall {
+    return this.method.query([first, second]);
+  }
+}

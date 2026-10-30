@@ -1190,6 +1190,53 @@ class LanguageServerTest(unittest.TestCase):
         self.assertIn('match(actual: dynamic)', self.reply(messages, 'hover')['result']['contents']['value'])
         self.assertIn('skip: dynamic = null', self.reply(messages, 'test')['result']['contents']['value'])
 
+    def test_generated_mocks_keep_real_signatures_navigation_and_readonly_sdk_sources(self) -> None:
+        api = self.directory / 'api.vela'
+        generated = self.directory / 'api.mocks.vela'
+        api.write_text('export interface Repository { load(id: int): string; }\n', encoding='utf-8')
+        result = subprocess.run([str(self.executable), 'mock', str(api), '--interface', 'Repository',
+                                 '-o', str(generated)], capture_output=True, text=True,
+                                encoding='utf-8', timeout=20, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        before = generated.read_bytes(), generated.stat().st_mtime_ns
+        source = ("import 'sdk:mock' as mock;\nimport './api.mocks.vela' as generated;\n"
+                  "func main(): void {\n"
+                  "  const repository = generated.MockRepository(mock.MockSession());\n"
+                  "  repository.object.load(id: 42);\n"
+                  "  repository.calls.load(id: mock.any);\n}\n")
+        real = source.index('object.load') + len('object.')
+        pattern = source.index('calls.load') + len('calls.')
+        arguments = source.index('calls.load(') + len('calls.load(')
+        messages = self.session([
+            self.open(source),
+            self.symbol_query('hover', source, real, 'real'),
+            self.symbol_query('hover', source, pattern, 'pattern'),
+            self.symbol_query('definition', source, real, 'real-definition'),
+            self.symbol_query('definition', source, pattern, 'pattern-definition'),
+            self.symbol_query('completion', source, pattern, 'members'),
+            self.symbol_query('completion', source, arguments, 'arguments'),
+            self.symbol_query('definition', source, source.index('MockSession'), 'session'),
+            request('vela/sdkSource', {'uri': 'sdk:mock'}, 'sdk'),
+        ])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        self.assertIn('load(id: int): string', self.reply(messages, 'real')['result']['contents']['value'])
+        self.assertIn('load(id: dynamic)', self.reply(messages, 'pattern')['result']['contents']['value'])
+        self.assertIn('Describes Repository.load', self.reply(messages, 'pattern')['result']['contents']['value'])
+        self.assertEqual(self.reply(messages, 'real-definition')['result']['uri'], api.as_uri())
+        self.assertEqual(self.reply(messages, 'pattern-definition')['result']['uri'], generated.as_uri())
+        self.assertIn('load', [item['label'] for item in self.reply(messages, 'members')['result']])
+        parameter = next(item for item in self.reply(messages, 'arguments')['result'] if item['label'] == 'id:')
+        self.assertEqual(parameter['detail'], 'id: dynamic')
+        self.assertEqual(self.reply(messages, 'session')['result']['uri'], 'sdk:mock')
+        self.assertEqual(self.reply(messages, 'sdk')['result'],
+                         (ROOT / 'compiler/sdk/mock.vela').read_text(encoding='utf-8'))
+        self.assertEqual((generated.read_bytes(), generated.stat().st_mtime_ns), before)
+
+        generated.unlink()
+        messages = self.session([self.open(source)])
+        self.assertTrue(self.diagnostics(messages)[-1]['diagnostics'])
+        self.assertFalse(generated.exists())
+
     def test_definition_resolves_shadowed_locals_parameters_and_closure_captures(self) -> None:
         source = ("func main(seed: int): int {\n  const value = seed;\n"
                   "  { const value = 7; print(value); }\n"

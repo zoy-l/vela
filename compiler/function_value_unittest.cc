@@ -95,6 +95,20 @@ func main(): int {
 }
 )",
                              R"(
+class Callback {
+  reads: int = 0;
+  get operation(): (int) => int {
+    this.reads++;
+    return (value: int): int => value + 1;
+  }
+}
+func main(): int {
+  const object = Callback();
+  const value = object.operation(40);
+  return value + object.reads;
+}
+)",
+                             R"(
 func main(): int {
   const callbacks: (() => int)[] = [(): int => 40, (): int => 2];
   return callbacks[0]() + callbacks[1]();

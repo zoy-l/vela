@@ -139,6 +139,7 @@ enum class Builtin : std::uint8_t {
   TestInspect,
   TestSame,
   TestControl,
+  MockInspect,
   Count,
 };
 
@@ -257,6 +258,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::StringGraphemeSlice:
     case Builtin::MapSet:
     case Builtin::ArraySlice:
+    case Builtin::MockInspect:
       return 3;
     case Builtin::ArrayFill:
     case Builtin::NewRegExp:

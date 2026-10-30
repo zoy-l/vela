@@ -2,12 +2,16 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
+#include <expected>
 #include <limits>
 #include <memory>
 #include <span>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
+#include "base/execution_limits.h"
 #include "base/execution_status.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -22,6 +26,31 @@ std::span<TracePosition> TraceStorage(ExceptionData& exception) {
 }
 
 }  // namespace
+
+std::expected<Value, ExecutionStatus> CaptureTraceValue(Heap& heap,
+                                                        std::span<const TracePosition> positions) {
+  auto* object = heap.AllocateByteArray(positions.size_bytes());
+  if (object == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  const auto bytes = Heap::ByteArrayBytes(*object);
+  std::memcpy(bytes.data(), positions.data(), positions.size_bytes());
+  return Value::Object(object);
+}
+
+std::expected<std::vector<TracePosition>, ExecutionStatus> ReadTraceValue(Value value) {
+  if (!value.IsObject() || !Heap::IsByteArray(*value.AsObject())) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto bytes = Heap::ByteArrayBytes(*value.AsObject());
+  if (bytes.size() % sizeof(TracePosition) != 0 ||
+      bytes.size() / sizeof(TracePosition) > kMaxCallFrames) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  std::vector<TracePosition> positions(bytes.size() / sizeof(TracePosition));
+  std::memcpy(positions.data(), bytes.data(), bytes.size());
+  return positions;
+}
 
 static_assert(std::is_standard_layout_v<ExceptionData>);
 static_assert(std::is_trivially_destructible_v<ExceptionData>);

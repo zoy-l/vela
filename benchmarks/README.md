@@ -417,3 +417,33 @@ high-water mark, including compilation and earlier cases; run a case in a fresh
 process to attribute that counter. These are distinct from instantaneous matcher
 stack usage. Measure the unchanged `async/` cases in the same Release build to
 check the ordinary asynchronous path.
+
+The `mock/` suite measures the production interface generator and `--check`,
+generated-source compilation and content-cache hits, configured calls with 1,
+16 and 128 matching rules, count and order verification, argument capture,
+Future responses, call observation, and collection after 10,000 recorded calls.
+It generates its interface adapters in an owned temporary directory from
+[`mock_api.vela`](mock_api.vela) and executes
+[`mock_workload.vela`](mock_workload.vela). The synchronous and Future baselines
+use a handwritten implementation of the same interface.
+
+Execution timings exclude compilation and include one selected test's setup,
+body, verification and session cleanup. Most cases perform 1,024 calls; waiting
+uses 128 and the resource case uses 10,000. `items_per_second` reports that batch
+size, so its inverse is an amortized workload cost rather than an isolated VM
+instruction cost. `custom_matcher_evaluations` counts user matcher calls in the
+rule, verification, capture and observation cases; it excludes unconditional
+built-in `any` matches. The script checks these counts against independent
+expected values. Every case verifies its results; execution cases
+also require post-collection `retained_bytes` to equal the warmed
+`baseline_bytes` and require zero remaining suspended frames. Allocated and
+committed heap counters are not process RSS.
+
+```powershell
+python -m tools.vl bench -- --benchmark_filter=^mock/ --benchmark_min_time=0.2s --benchmark_repetitions=7 --benchmark_enable_random_interleaving=true
+```
+
+Use the same Release build to measure `async/no_await`, `async/completed_await`
+and `async/suspend_resume` when checking ordinary Future execution without mock
+imports. Save complete aggregate evidence according to the
+[retention rules](../.agents/benchmark_results.md).

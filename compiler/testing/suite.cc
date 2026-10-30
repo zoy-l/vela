@@ -58,19 +58,6 @@ bool IsSuiteMain(const vm::FunctionStorage& function) {
          !type.signature->result;
 }
 
-runtime::Value ReadPublicField(const vm::LayoutTables& layouts,
-                               runtime::Value value,
-                               std::string_view name) {
-  if (!value.IsObject()) {
-    return runtime::Value::Null();
-  }
-  const auto* member = layouts.FindMember(value, name);
-  if (member == nullptr || member->kind != MemberKind::Field) {
-    return runtime::Value::Null();
-  }
-  return *runtime::Heap::GetField(*value.AsObject(), member->target);
-}
-
 std::optional<Difference> CopyDifference(const vm::LayoutTables& layouts, runtime::Value value) {
   if (value.IsNull()) {
     return std::nullopt;
@@ -82,9 +69,9 @@ std::optional<Difference> CopyDifference(const vm::LayoutTables& layouts, runtim
   while (!pending.empty()) {
     const auto [source, target] = pending.back();
     pending.pop_back();
-    const auto path = ReadPublicField(layouts, source, "path");
-    const auto actual = ReadPublicField(layouts, source, "actual");
-    const auto children = ReadPublicField(layouts, source, "children");
+    const auto path = layouts.ReadPublicField(source, "path");
+    const auto actual = layouts.ReadPublicField(source, "actual");
+    const auto children = layouts.ReadPublicField(source, "children");
     if (!path.IsString() || !actual.IsString() || !children.IsObject()) {
       target->actual = "<invalid difference>";
       continue;
@@ -446,7 +433,7 @@ TestError Suite::Describe(const vm::ExecutionResult& result, TestPhase phase) co
     error.message = output.str();
   }
   const auto& layouts = *program_->functions().front().layouts;
-  error.difference = CopyDifference(layouts, ReadPublicField(layouts, result.value, "difference"));
+  error.difference = CopyDifference(layouts, layouts.ReadPublicField(result.value, "difference"));
   if (error.difference) {
     error.category = "TestFailure";
   }
@@ -457,6 +444,7 @@ TestError Suite::Describe(const vm::ExecutionResult& result, TestPhase phase) co
       error.message = value->AsString()->value();
     }
   }
+  DescribeMockFailure(result.value, error);
   return error;
 }
 
@@ -577,6 +565,12 @@ void Suite::RunTest(Node& test,
   RunCleanup(test, errors);
   while (entered != 0) {
     RunHooks(*ancestry.at(--entered), kTearDown, TestPhase::TearDown, test, errors);
+  }
+  // SDK 范围收尾必须晚于全部用户清理，且通过普通 VM 帧执行并推进错误检查点。
+  while (!test.finalizers.empty()) {
+    auto callback = std::move(test.finalizers.back());
+    test.finalizers.pop_back();
+    Invoke(callback, TestPhase::TearDown, test, errors);
   }
   if (!errors.empty()) {
     result.status = TestStatus::Failed;

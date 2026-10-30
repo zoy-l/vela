@@ -15,6 +15,7 @@
 #include "base/execution_status.h"
 #include "base/member.h"
 #include "base/source_location.h"
+#include "runtime/exception.h"
 #include "runtime/external_resources.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -70,6 +71,8 @@ class LayoutTables final {
   }
   [[nodiscard]] const MemberDefinition* FindMember(runtime::Value receiver,
                                                    std::string_view name) const;
+  [[nodiscard]] runtime::Value ReadPublicField(runtime::Value receiver,
+                                               std::string_view name) const;
   [[nodiscard]] bool IsCanonicalReceiverType(std::uint32_t index) const;
 
  private:
@@ -161,6 +164,8 @@ class Program final {
       std::vector<std::uint32_t> global_initializers = {});
 
   [[nodiscard]] std::span<const FunctionStorage> functions() const noexcept;
+  [[nodiscard]] std::expected<std::vector<StackFrame>, ExecutionStatus> ResolveTrace(
+      std::span<const runtime::TracePosition> positions) const;
   [[nodiscard]] FunctionHandle FindFunction(std::string_view name) const noexcept;
   [[nodiscard]] bool IsForIsolate(const runtime::Isolate& isolate) const noexcept;
   // 会话拥有的强根与宿主句柄分开；返回宿主入口时重新建立 External 引用。

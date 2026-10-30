@@ -114,6 +114,7 @@ class Future final {
   };
   [[nodiscard]] static Future Sleep(std::chrono::milliseconds delay, FutureScheduler& scheduler);
   [[nodiscard]] FutureState state() const noexcept;
+  [[nodiscard]] std::optional<ExecutionContext> creation_context() const noexcept;
   // 借用当前完成记录；所属线程使用，Future 的句柄覆盖借用期。
   [[nodiscard]] const FutureResult& result() const noexcept;
   [[nodiscard]] bool is_pending() const noexcept { return state() == FutureState::Pending; }

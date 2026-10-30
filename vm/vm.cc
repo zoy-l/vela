@@ -794,13 +794,16 @@ StepResult Execution::AllocateCollection(ActiveFrame& active, FutureRegisters re
 }
 
 StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) {
-  if (static_cast<Builtin>(DecodeB(instruction)) == Builtin::TestRegister) {
+  const auto builtin = static_cast<Builtin>(DecodeB(instruction));
+  if (builtin == Builtin::TestRegister) {
     return ExecuteTestRegistration(active, instruction);
   }
-  if (static_cast<Builtin>(DecodeB(instruction)) == Builtin::TestControl) {
+  if (builtin == Builtin::TestControl) {
     return ExecuteTestControl(active, instruction);
   }
-  const auto builtin = static_cast<Builtin>(DecodeB(instruction));
+  if (builtin == Builtin::MockInspect) {
+    return ExecuteMockInspection(active, instruction);
+  }
   if (builtin == Builtin::DynamicAsync) {
     return ExecuteDynamicAsync(active, instruction);
   }

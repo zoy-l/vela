@@ -302,7 +302,9 @@ FutureState Future::state() const noexcept {
   return state_->completion.state;
 }
 
-const FutureResult& Future::result() const noexcept { return state_->completion; }
+const FutureResult& Future::result() const noexcept {
+  return state_->completion;
+}
 
 bool Future::IsCompleted() const noexcept {
   return state_->completion_requested;
@@ -382,6 +384,10 @@ std::expected<void, FutureCompletionError> Future::Complete(::vela::runtime::Val
 
 std::expected<void, FutureCompletionError> Future::CompleteError(::vela::runtime::Value error) {
   return CompleteError(error, {});
+}
+
+std::optional<ExecutionContext> Future::creation_context() const noexcept {
+  return state_->creation_context;
 }
 
 std::expected<void, FutureCompletionError> Future::CompleteError(::vela::runtime::Value error,

@@ -2,6 +2,7 @@
 export class TestFailure {
   message: string;
   difference: MatchDifference? = null;
+  mock: dynamic = null;
 }
 
 /// Raises a test assertion failure at the current script call site.

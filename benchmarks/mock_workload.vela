@@ -1,0 +1,114 @@
+import 'sdk:test';
+import 'sdk:mock' as mock;
+import './mock_api.vela';
+import './mock_api.mocks.vela' as generated;
+
+const count = 1024;
+let comparisons = 0;
+
+class ManualService implements MockBenchmarkService {
+  read(id: int): int { return 42; }
+  ready(id: int): Future<int> { return Future.value(42); }
+}
+
+func comparisonCount(): int { return comparisons; }
+
+func counted(): Matcher {
+  return predicate((value: dynamic): bool => { comparisons++; return true; }, 'any');
+}
+
+func main(): void {
+  setUp(() => { comparisons = 0; });
+  test('manual', () => {
+    const service: MockBenchmarkService = ManualService();
+    let sum = 0;
+    for (let index = 0; index < count; index++) { sum += service.read(index); }
+    expect(sum, 43008);
+  });
+  test('manual_future', async (): Future<void> => {
+    const service: MockBenchmarkService = ManualService();
+    let sum = 0;
+    for (let index = 0; index < count; index++) { sum += await service.ready(index); }
+    expect(sum, 43008);
+  });
+  test('configured', () => {
+    const service = generated.MockMockBenchmarkService(mock.MockSession());
+    mock.when(service.calls.read(mock.any)).thenReturn(42);
+    let sum = 0;
+    for (let index = 0; index < count; index++) { sum += service.object.read(index); }
+    expect(sum, 43008);
+  });
+  for (const rules in [1, 16, 128]) {
+    test('rules_${rules}', () => {
+      const service = generated.MockMockBenchmarkService(mock.MockSession());
+      for (let index = 0; index < rules; index++) {
+        const expected = index;
+        mock.when(service.calls.read(predicate((value: dynamic): bool => {
+          comparisons++; return value == expected;
+        }, 'rule'))).thenReturn(42);
+      }
+      let sum = 0;
+      for (let index = 0; index < count; index++) { sum += service.object.read(0); }
+      expect(sum, 43008);
+      expect(comparisons, count * rules);
+    });
+  }
+  test('verify', () => {
+    const service = generated.MockMockBenchmarkService(mock.MockSession());
+    mock.when(service.calls.read(mock.any)).thenReturn(42);
+    for (let index = 0; index < count; index++) { service.object.read(index); }
+    mock.verify(service.calls.read(counted())).called(count);
+    expect(comparisons, count);
+    mock.verifyNoMoreInteractions(service.control);
+  });
+  test('order', () => {
+    const service = generated.MockMockBenchmarkService(mock.MockSession());
+    mock.when(service.calls.read(mock.any)).thenReturn(42);
+    const pattern = service.calls.read(counted());
+    const patterns: mock.MockCall[] = [];
+    for (let index = 0; index < count; index++) {
+      service.object.read(index); patterns.push(pattern);
+    }
+    const result = mock.verifyInOrder(patterns);
+    expect(result.invocations.length, count);
+    expect(comparisons, count);
+    mock.verifyNoMoreInteractions(service.control);
+  });
+  test('capture', () => {
+    const service = generated.MockMockBenchmarkService(mock.MockSession());
+    mock.when(service.calls.read(mock.any)).thenReturn(42);
+    for (let index = 0; index < count; index++) { service.object.read(index); }
+    const result = mock.verify(service.calls.read(mock.captureThat(counted()))).called(count);
+    expect(result.captured.length, count);
+    expect(result.captured[0], 0);
+    expect(result.captured[count - 1], 1023);
+    expect(comparisons, count);
+  });
+  test('future', async (): Future<void> => {
+    const service = generated.MockMockBenchmarkService(mock.MockSession());
+    mock.when(service.calls.ready(mock.any)).thenAnswer(
+      (call: mock.MockInvocation): Future<int> => Future.value(42));
+    let sum = 0;
+    for (let index = 0; index < count; index++) { sum += await service.object.ready(index); }
+    expect(sum, 43008);
+  });
+  test('wait', async (): Future<void> => {
+    const service = generated.MockMockBenchmarkService(mock.MockSession());
+    mock.when(service.calls.read(mock.any)).thenReturn(42);
+    for (let index = 0; index < 128; index++) {
+      mock.clearInteractions(service.control);
+      const observed = mock.untilCalled(service.calls.read(counted()));
+      expect(service.object.read(index), 42);
+      expect((await observed).argumentAt(0), index);
+    }
+    expect(comparisons, 128);
+  });
+  test('resource', () => {
+    const service = generated.MockMockBenchmarkService(mock.MockSession());
+    mock.when(service.calls.read(mock.any)).thenReturn(42);
+    for (let index = 0; index < 10000; index++) { service.object.read(index); }
+    mock.verify(service.calls.read(mock.any)).called(10000);
+    mock.clearInteractions(service.control);
+    mock.verifyZeroInteractions(service.control);
+  });
+}

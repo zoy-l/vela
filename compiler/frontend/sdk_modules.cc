@@ -13,11 +13,14 @@ std::optional<std::string_view> SdkModuleSource(std::string_view identity) noexc
   if (identity == "sdk:test") {
     return internal::kTestSource;
   }
+  if (identity == "sdk:mock") {
+    return internal::kMockSource;
+  }
   return std::nullopt;
 }
 
 void BindSdkDeclarations(std::string_view identity, Program& program) {
-  if (identity != "sdk:test") {
+  if (identity != "sdk:test" && identity != "sdk:mock") {
     return;
   }
   for (auto& function : program.functions) {
@@ -32,6 +35,9 @@ void BindSdkDeclarations(std::string_view identity, Program& program) {
       function.native_symbol.clear();
     } else if (function.name == "_control") {
       function.intrinsic = Builtin::TestControl;
+      function.native_symbol.clear();
+    } else if (identity == "sdk:mock" && function.name == "_contract") {
+      function.intrinsic = Builtin::MockInspect;
       function.native_symbol.clear();
     } else if (function.name == "test" || function.name == "group") {
       function.optional_parameters = {"skip", "timeout", "tags"};

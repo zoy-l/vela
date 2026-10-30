@@ -15,7 +15,6 @@
 #include <vector>
 
 #include "base/execution_limits.h"
-#include "base/source_location.h"
 #include "runtime/error.h"
 #include "runtime/exception.h"
 #include "runtime/heap.h"
@@ -61,38 +60,9 @@ std::span<const runtime::TracePosition> Execution::CapturePositions(
   return storage.first(count);
 }
 
-std::vector<StackFrame> Execution::ResolveTrace(
-    std::span<const runtime::TracePosition> positions) const {
-  std::vector<StackFrame> trace;
-  trace.reserve(positions.size());
-  for (const auto position : positions) {
-    const auto& function = functions_.subspan(position.function).front();
-    const auto source_paths = function.source_paths != nullptr
-                                  ? std::span<const std::string>(*function.source_paths)
-                                  : std::span<const std::string>();
-    const DebugInfo debug{
-        .name = function.name,
-        .source_paths = source_paths,
-        .mappings = function.source_mappings,
-    };
-    StackFrame frame{
-        .function = std::string(debug.name),
-        .source_path = {},
-        .location = SourceLocation(),
-        .instruction = position.instruction,
-    };
-    if (const auto* mapping = debug.Locate(position.instruction)) {
-      frame.location = mapping->location;
-      frame.source_path = debug.source_paths.subspan(mapping->location.source_id).front();
-    }
-    trace.push_back(std::move(frame));
-  }
-  return trace;
-}
-
 std::vector<StackFrame> Execution::CaptureStack() const {
   std::array<runtime::TracePosition, kMaxCallFrames> positions;
-  return ResolveTrace(CapturePositions(positions));
+  return program_.ResolveTrace(CapturePositions(positions)).value();
 }
 
 StepResult Execution::CreateException(runtime::Value payload,
@@ -137,7 +107,7 @@ std::optional<ExecutionResult> Execution::CompleteAsyncError(ActiveFrame& active
   ExecutionResult failure{
       .value = runtime::Value::Object(exception.payload),
       .status = exception.status,
-      .stack_trace = ResolveTrace(exception.trace()),
+      .stack_trace = program_.ResolveTrace(exception.trace()).value(),
       .message = std::string(exception.message()),
       .origin = exception.origin,
   };
@@ -204,7 +174,7 @@ std::optional<ExecutionResult> Execution::HandleError(ExecutionStatus status) {
   ExecutionResult failure{
       .value = runtime::Value::Object(exception.payload),
       .status = exception.status,
-      .stack_trace = ResolveTrace(exception.trace()),
+      .stack_trace = program_.ResolveTrace(exception.trace()).value(),
       .message = std::string(exception.message()),
       .origin = exception.origin,
   };

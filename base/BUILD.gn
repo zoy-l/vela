@@ -20,6 +20,7 @@ source_set("base") {
     "fingerprint.h",
     "layout_description.h",
     "member.h",
+    "mock_operation.h",
     "native_program_mode.h",
     "opcode.h",
     "path.cc",

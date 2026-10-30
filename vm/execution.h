@@ -27,6 +27,7 @@
 #include "runtime/register_storage.h"
 #include "runtime/value.h"
 #include "vm/bytecode.h"
+#include "vm/debug_info.h"
 #include "vm/debugger.h"
 #include "vm/execution_status.h"
 #include "vm/frame.h"
@@ -173,6 +174,12 @@ class Execution final {
   StepResult ExecuteBuiltin(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteTestRegistration(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteTestControl(ActiveFrame& active, Instruction instruction);
+  StepResult ExecuteMockInspection(ActiveFrame& active, Instruction instruction);
+  StepResult ExecuteMockObservation(ActiveFrame& active, Instruction instruction) const;
+  StepResult ExecuteMockCallable(ActiveFrame& active, Instruction instruction);
+  [[nodiscard]] bool IsMockResponseCompatible(const FunctionStorage& function,
+                                              runtime::Value value) const;
+  StepResult ValidateTestFinalizer(runtime::Value value);
   static StepResult ExecuteTypeBinding(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteCalendar(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteJson(ActiveFrame& active, Instruction instruction);
@@ -232,8 +239,6 @@ class Execution final {
   [[clang::always_inline]] StepResult ResumeCaller(std::uint8_t return_register,
                                                    runtime::Value value);
   [[nodiscard]] std::vector<StackFrame> CaptureStack() const;
-  [[nodiscard]] std::vector<StackFrame> ResolveTrace(
-      std::span<const runtime::TracePosition> positions) const;
   [[nodiscard]] std::span<const runtime::TracePosition> CapturePositions(
       std::span<runtime::TracePosition> storage) const;
   std::expected<runtime::Value, ExecutionStatus> RuntimeError(ExecutionStatus status,

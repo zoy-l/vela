@@ -651,6 +651,12 @@ TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression,
       if (method->second.storage == MemberStorage::Static) {
         AddDiagnostic(expression.location, "static method must be accessed through its class");
       }
+      if (method->second.is_getter) {
+        const auto type = method->second.return_type;
+        expression_types_.insert_or_assign(expression.callee.get(), type);
+        InvalidateCapturedRefinements();
+        return CheckIndirectCall(expression, type);
+      }
       const Type result = CheckFunctionCall(method->second, expression);
       if (expected != nullptr && IsValid(result) && !CanAssign(*expected, result)) {
         AddDiagnostic(expression.location, "method result does not match expected type");

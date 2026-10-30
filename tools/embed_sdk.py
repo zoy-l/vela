@@ -9,18 +9,24 @@ from pathlib import Path
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--source", type=Path, action="append", required=True)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
-    source = arguments.source.read_text(encoding="utf-8")
     delimiter = "VELA_SDK"
-    if f'){delimiter}"' in source:
-        raise ValueError("SDK source contains its embedding delimiter")
+    declarations = []
+    for path in arguments.source:
+        source = path.read_text(encoding="utf-8")
+        if f'){delimiter}"' in source:
+            raise ValueError("SDK source contains its embedding delimiter")
+        name = path.stem.capitalize()
+        declarations.append(
+            f'inline constexpr std::string_view k{name}Source = R"{delimiter}({source}){delimiter}";'
+        )
     output = "\n".join([
         "#pragma once",
         "#include <string_view>",
         "namespace vela::frontend::internal {",
-        f'inline constexpr std::string_view kTestSource = R"{delimiter}({source}){delimiter}";',
+        *declarations,
         "}",
         "",
     ])

@@ -32,6 +32,24 @@ struct TestError final {
   std::string message;
   std::vector<runtime::FutureTraceFrame> trace;
   std::optional<Difference> difference;
+  struct MockCall final {
+    std::int64_t sequence = 0;
+    std::vector<std::string> arguments;
+    std::int64_t omitted_arguments = 0;
+    std::vector<runtime::FutureTraceFrame> trace;
+  };
+  struct MockDetails final {
+    std::int64_t session = 0;
+    std::int64_t mock = 0;
+    std::string method;
+    std::string expected;
+    std::int64_t actual_count = 0;
+    std::vector<MockCall> calls;
+    std::vector<std::string> configurations;
+    std::vector<std::vector<runtime::FutureTraceFrame>> configuration_traces;
+    std::vector<runtime::FutureTraceFrame> verification_trace;
+  };
+  std::optional<MockDetails> mock = std::nullopt;
 };
 
 struct TestResult final {
