@@ -1,6 +1,6 @@
 #include <array>
 #include <charconv>
-#include <cmath>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -8,19 +8,24 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <benchmark/benchmark.h>
 
+#include "base/native_program_mode.h"
 #include "benchmarks/aot_benchmark_memory.h"
 #include "benchmarks/aot_benchmark_types.h"
 #include "benchmarks/aot_native/entries.h"
+#include "benchmarks/dasprofile/workloads.h"
+#include "benchmarks/jit_benchmark.h"
 #include "compiler/compiler.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_abi.h"
 #include "runtime/native_call.h"
+#include "runtime/native_context.h"
 #include "runtime/native_function.h"
 #include "runtime/native_image.h"
 #include "runtime/native_instance.h"
@@ -134,6 +139,57 @@ void NativeSteady(benchmark::State& state, AotBenchmarkCase problem) {
   ReportAotHeap(state, isolate);
 }
 
+void JitSteady(benchmark::State& state, AotBenchmarkCase problem, NativeCodeTier tier) {
+  runtime::NativeBindings bindings;
+  {
+    runtime::Isolate isolate;
+    if (const auto registered = RegisterHost(isolate); !registered) {
+      state.SkipWithError(registered.error());
+      return;
+    }
+    bindings = isolate.FreezeBindings();
+  }
+  auto setup = LoadJitWorkload(VELA_AOT_BENCHMARK_SOURCE, std::move(bindings), {.tier = tier});
+  if (!setup) {
+    state.SkipWithError(setup.error());
+    return;
+  }
+  auto& session = *setup->session;
+  const auto run = [&]() -> std::expected<Sample, std::string> {
+    const auto value = InvokeJitWorkload(session, problem.name);
+    if (!value) {
+      return std::unexpected("JIT benchmark execution failed");
+    }
+    return ResolveResult(session.isolate(), *value, problem.completion);
+  };
+  const auto first_started = std::chrono::steady_clock::now();
+  const auto warm = run();
+  state.counters["first_execution_ns"] =
+      static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::steady_clock::now() - first_started)
+                              .count());
+  if (!warm || warm->value != problem.expected) {
+    state.SkipWithError(warm ? "JIT warm-up checksum mismatch" : warm.error());
+    return;
+  }
+  auto& heap = session.isolate().heap();
+  heap.FinishCollection();
+  heap.Collect();
+  state.counters["baseline_bytes"] = static_cast<double>(heap.allocated_bytes());
+  ReportSample(state, *warm);
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    auto result = run();
+    if (!result || result->value != problem.expected) {
+      state.SkipWithError(result ? "JIT checksum mismatch" : result.error());
+      return;
+    }
+    benchmark::DoNotOptimize(result->value);
+  }
+  ReportJitSetup(state, *setup);
+  ReportJitMemory(state, session);
+}
+
 void VmSteady(benchmark::State& state, AotBenchmarkCase problem) {
   runtime::Isolate isolate;
   if (const auto registered = RegisterHost(isolate); !registered) {
@@ -211,37 +267,10 @@ std::expected<Sample, std::string> CppAsync(runtime::Isolate& isolate, std::int6
 }
 
 std::int64_t CppSpectralNorm() {
-  // 与 Vela 相同的 binary64、int64 索引、500 阶矩阵和两次幂迭代。
-  constexpr std::int64_t kDimension = 500;
-  std::vector<double> u(kDimension, 1.0);
-  std::vector<double> v(kDimension, 0.0);
-  std::vector<double> temporary(kDimension, 0.0);
-  const auto multiply = [](const std::vector<double>& input, std::vector<double>& output,
-                           bool transpose) {
-    for (std::int64_t i = 0; i < kDimension; ++i) {
-      double sum = 0.0;
-      for (std::int64_t j = 0; j < kDimension; ++j) {
-        const auto index = transpose ? j : i;
-        const auto denominator = (i + j) * (i + j + 1) / 2 + index + 1;
-        sum += input[static_cast<std::size_t>(j)] / static_cast<double>(denominator);
-      }
-      output[static_cast<std::size_t>(i)] = sum;
-    }
-  };
-  for (std::int64_t round = 0; round < 2; ++round) {
-    multiply(u, temporary, false);
-    multiply(temporary, v, true);
-    multiply(v, temporary, false);
-    multiply(temporary, u, true);
-  }
-  double numerator = 0.0;
-  double denominator = 0.0;
-  for (std::int64_t i = 0; i < kDimension; ++i) {
-    const auto index = static_cast<std::size_t>(i);
-    numerator += u[index] * v[index];
-    denominator += v[index] * v[index];
-  }
-  return static_cast<std::int64_t>(std::sqrt(numerator / denominator) * 1000000000.0);
+  // 两套 Vela 用例使用相同的 500 阶、两次幂迭代；这里只转换原生用例的定点结果。
+  constexpr double kFixedPointScale = 1'000'000'000.0;
+  dasprofile::CppWorkload workload(dasprofile::Workload::SpectralNorm);
+  return static_cast<std::int64_t>(workload.Run() * kFixedPointScale);
 }
 
 std::expected<Sample, std::string> CppRun(runtime::Isolate& isolate, AotBenchmarkCase problem) {
@@ -368,6 +397,12 @@ int RegisterAotBenchmarks() {
     benchmark::RegisterBenchmark("aot/vm/" + suffix, VmSteady, problem)->UseRealTime();
     benchmark::RegisterBenchmark("aot/cpp/" + suffix, CppSteady, problem)->UseRealTime();
     benchmark::RegisterBenchmark("aot/first_native/" + suffix, NativeFirst, problem)->UseRealTime();
+    benchmark::RegisterBenchmark("hot/steady/baseline/" + suffix, JitSteady, problem,
+                                 NativeCodeTier::Baseline)
+        ->UseRealTime();
+    benchmark::RegisterBenchmark("hot/steady/optimized/" + suffix, JitSteady, problem,
+                                 NativeCodeTier::Optimized)
+        ->UseRealTime();
   }
   return 0;
 }

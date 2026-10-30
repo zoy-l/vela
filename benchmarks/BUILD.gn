@@ -89,7 +89,10 @@ executable("vela_aot_benchmarks") {
     "dasprofile/host_kernel.cc",
     "dasprofile/workloads.cc",
     "dasprofile/workloads.h",
+    "jit_benchmark.cc",
+    "jit_benchmark.h",
     "process_memory.h",
+    "reload_benchmark.cc",
     aot_object,
     dasprofile_object,
   ]
@@ -111,6 +114,7 @@ executable("vela_aot_benchmarks") {
     ":aot_native_inputs",
     ":dasprofile_native_inputs",
     "//compiler",
+    "//compiler:development",
     "//runtime",
     "//third_party:benchmark_main",
   ]

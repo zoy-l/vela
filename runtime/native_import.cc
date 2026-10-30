@@ -1,3 +1,4 @@
+#include "runtime/native_context.h"
 #include "runtime/native_function.h"
 
 #include <cstdint>

@@ -52,7 +52,7 @@ ClassId Lowerer::CallableClass(std::uint32_t function_id,
   return layout_id;
 }
 
-Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& expression) {
+Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Expression& expression) {
   const bool lambda = expression.kind == frontend::Expression::Kind::Lambda;
   const auto interface = model_.interface_members.find(&expression);
   const auto static_member = model_.static_members.find(&expression);
@@ -60,9 +60,10 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
   const auto super = model_.super_members.find(&expression);
   const bool method = expression.kind == frontend::Expression::Kind::Member &&
                       static_member == model_.static_members.end();
-  std::vector<frontend::Capture> captures;
-  std::uint32_t target = 0;
-  std::optional<LoweredValue> receiver;
+  FunctionValuePlan plan;
+  auto& captures = plan.captures;
+  auto& target = plan.target;
+  auto& receiver = plan.receiver;
   if (lambda) {
     const auto index = model_.lambda_indices.at(&expression);
     target = lambda_ids_.at(index);
@@ -97,16 +98,23 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
   } else {
     target = function_ids_.at(expression.text);
   }
-  auto mode = CallableMode::Plain;
   if (lambda) {
-    mode = CallableMode::Closure;
+    plan.mode = CallableMode::Closure;
   } else if (interface != model_.interface_members.end()) {
-    mode = CallableMode::InterfaceMethod;
+    plan.mode = CallableMode::InterfaceMethod;
   } else if (method) {
-    mode = CallableMode::BoundMethod;
+    plan.mode = CallableMode::BoundMethod;
   }
-  const auto layout =
-      CallableClass(target, mode, captures, model_.expression_types.at(&expression));
+  return plan;
+}
+
+Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& expression) {
+  const auto plan = ResolveFunctionValue(expression);
+  const auto& receiver = plan.receiver;
+  const auto& captures = plan.captures;
+  const auto mode = plan.mode;
+  const auto& function_type = model_.expression_types.at(&expression);
+  const auto layout = CallableClass(plan.target, mode, captures, function_type);
   const auto object = AllocateTemporary(expression.location);
   std::optional<std::size_t> null_jump;
   if (receiver && expression.null_safe) {
@@ -119,6 +127,19 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
       .index = layout,
       .location = expression.location,
   });
+  if (declarations_ != nullptr && receiver && mode == CallableMode::BoundMethod) {
+    const auto& type = receiver->type;
+    auto name = type.name;
+    if (model_.super_members.contains(&expression)) {
+      name = *model_.classes.at(name).base_class;
+    } else if (type.nullable) {
+      name.resize(name.size() - 1);
+    }
+    const auto owner = declarations_->classes.find(name);
+    if (owner != declarations_->classes.end()) {
+      current_function_->instructions.back().binding_receiver = owner->second.declaration;
+    }
+  }
   for (std::size_t index = 0; index < captures.size(); ++index) {
     const auto reg = receiver ? receiver->reg : binding_registers_.at(captures.at(index).binding);
     Emit({
@@ -138,7 +159,7 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
     current_function_->instructions.at(end_jump).index =
         static_cast<std::uint32_t>(current_function_->instructions.size());
   }
-  return {.reg = object, .type = model_.expression_types.at(&expression)};
+  return {.reg = object, .type = function_type};
 }
 
 Lowerer::LoweredValue Lowerer::LowerIndirectCall(const frontend::Expression& expression) {

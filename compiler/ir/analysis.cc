@@ -11,6 +11,7 @@
 #include "base/async_operation.h"
 #include "base/builtin.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/register_set.h"
 
 namespace vela::ir {
 
@@ -261,7 +262,7 @@ void TransferInstruction(const Instruction& instruction,
     live.Erase(instruction.dst);
   }
   if (exceptional) {
-    live.UnionWith(blocks[*exceptional].live_in);
+    live.UnionWith(blocks.subspan(*exceptional).front().live_in);
   }
   ForEachUse(instruction, access, [&](RegisterId reg) { live.Insert(reg); });
 }
@@ -283,9 +284,11 @@ std::vector<BlockTransfer> SummarizeBlocks(const Function& function,
   std::vector<BlockTransfer> transfers;
   transfers.reserve(graph.blocks.size());
   for (const auto& block : graph.blocks) {
-    BlockTransfer transfer{.generated = RegisterSet(function.register_count),
-                           .killed = RegisterSet(function.register_count),
-                           .exceptional = std::nullopt};
+    BlockTransfer transfer{
+        .generated = RegisterSet(function.register_count),
+        .killed = RegisterSet(function.register_count),
+        .exceptional = std::nullopt,
+    };
     for (auto position = block.begin; position < block.end; ++position) {
       const auto& instruction = function.instructions.at(position);
       const auto access = AnalyzeRegisters(instruction, functions);
@@ -323,8 +326,10 @@ std::vector<BlockLiveness> SolveLiveness(const Function& function,
   work.reserve(graph.blocks.size());
   std::vector<std::uint8_t> queued(graph.blocks.size(), 1);
   for (std::size_t index = 0; index < graph.blocks.size(); ++index) {
-    live.push_back({.live_in = RegisterSet(function.register_count),
-                    .live_out = RegisterSet(function.register_count)});
+    live.push_back({
+        .live_in = RegisterSet(function.register_count),
+        .live_out = RegisterSet(function.register_count),
+    });
     work.push_back(index);
   }
   RegisterSet live_out(function.register_count);
@@ -496,9 +501,19 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
       return {.may_fail = true};
     case Opcode::CheckedCast:
     case Opcode::GetIndex:
-    case Opcode::GetField:
     case Opcode::ExpectedHasValue:
     case Opcode::ExpectedValue:
+      return {.may_fail = true, .reads_state = true};
+    case Opcode::GetField:
+      if (instruction.field_declaration) {
+        return {
+            .may_fail = true,
+            .may_allocate = true,
+            .may_call = true,
+            .reads_state = true,
+            .writes_state = true,
+        };
+      }
       return {.may_fail = true, .reads_state = true};
     case Opcode::StringConcat:
     case Opcode::StringInterpolate:

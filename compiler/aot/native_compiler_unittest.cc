@@ -1,26 +1,34 @@
 #include "compiler/aot/native_compiler.h"
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <gtest/gtest.h>
 
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/Dominators.h>
+#include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Support/Casting.h>
 #include <llvm/Support/SourceMgr.h>
 
+#include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
+#include "compiler/native/code_generator.h"
 #include "runtime/native_image.h"
 
 namespace vela::compiler::aot {
@@ -101,6 +109,29 @@ export func read(values: int[], index: int): int { return values[index]; }
   EXPECT_EQ(text.find("source.position"), std::string::npos);
 }
 
+struct LoopHostCalls {
+  std::vector<const llvm::CallBase*> direct;
+  bool has_checked = false;
+};
+
+LoopHostCalls CollectHostCalls(const llvm::Loop& loop) {
+  LoopHostCalls calls;
+  for (const auto* block : loop.blocks()) {
+    for (const auto& instruction : *block) {
+      const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+      if (call == nullptr || !call->isIndirectCall()) {
+        continue;
+      }
+      if (call->getType()->isIntegerTy(std::numeric_limits<std::int64_t>::digits + 1)) {
+        calls.direct.push_back(call);
+      } else {
+        calls.has_checked = true;
+      }
+    }
+  }
+  return calls;
+}
+
 TEST(NativeCompilerTest, SelectsDirectOrCheckedHostAbiOutsideTheLoop) {
   const auto prepared = Prepare(R"(
 external func step(value: int): int;
@@ -125,25 +156,13 @@ export func calculate(count: int): int {
     llvm::DominatorTree dominators(function);
     const llvm::LoopInfo loops(dominators);
     for (const auto* loop : loops.getLoopsInPreorder()) {
-      bool has_direct = false;
-      bool has_checked = false;
-      for (const auto* block : loop->blocks()) {
-        for (const auto& instruction : *block) {
-          const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
-          if (call == nullptr || !call->isIndirectCall()) {
-            continue;
-          }
-          if (call->getType()->isIntegerTy(64)) {
-            has_direct = true;
-            EXPECT_TRUE(call->arg_size() == 1U || call->arg_size() == 2U);
-          } else {
-            has_checked = true;
-          }
-        }
+      const auto calls = CollectHostCalls(*loop);
+      for (const auto* call : calls.direct) {
+        EXPECT_TRUE(call->arg_size() == 1U || call->arg_size() == 2U);
       }
-      if (has_direct) {
+      if (!calls.direct.empty()) {
         ++direct_loops;
-        EXPECT_FALSE(has_checked) << result->llvm_ir;
+        EXPECT_FALSE(calls.has_checked) << result->llvm_ir;
       }
     }
   }

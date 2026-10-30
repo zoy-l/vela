@@ -99,6 +99,7 @@ class Documentation final {
  private:
   void Comment(SourceLocation location);
   void Class(const frontend::Class& declaration);
+  void ClassDeclaration(const frontend::Class& declaration);
   void Constructor(const frontend::Class& declaration);
   void FieldDeclaration(const frontend::Field& field);
   void Method(const frontend::Function& method);
@@ -147,10 +148,8 @@ void Documentation::Method(const frontend::Function& method) {
   output_ << ";\n```\n\n";
 }
 
-void Documentation::Class(const frontend::Class& declaration) {
+void Documentation::ClassDeclaration(const frontend::Class& declaration) {
   const auto* constructor = declaration.constructor.get();
-  const bool public_constructor =
-      constructor == nullptr || constructor->visibility == frontend::Visibility::Public;
   output_ << "class " << declaration.name;
   TypeParameters(output_, declaration.type_parameters);
   if (!declaration.interfaces.empty()) {
@@ -171,7 +170,7 @@ void Documentation::Class(const frontend::Class& declaration) {
   }
   if (constructor != nullptr) {
     output_ << "  ";
-    if (!public_constructor) {
+    if (constructor->visibility != frontend::Visibility::Public) {
       output_ << "private ";
     }
     output_ << "constructor";
@@ -181,7 +180,14 @@ void Documentation::Class(const frontend::Class& declaration) {
     output_ << " { … }\n";
   }
   output_ << "}\n```\n\n";
+}
+
+void Documentation::Class(const frontend::Class& declaration) {
+  ClassDeclaration(declaration);
   Constructor(declaration);
+  const auto* constructor = declaration.constructor.get();
+  const bool public_constructor =
+      constructor == nullptr || constructor->visibility == frontend::Visibility::Public;
   for (const auto& field : declaration.fields) {
     if (field.visibility == frontend::Visibility::Private) {
       continue;

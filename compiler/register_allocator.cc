@@ -212,17 +212,6 @@ ir::RegisterSet ManagedSlots(const ir::Function& function,
   return managed;
 }
 
-std::vector<ir::RegisterId> DeadRegisters(const ir::RegisterSet& managed,
-                                          const ir::RegisterSet& live) {
-  std::vector<ir::RegisterId> result;
-  managed.ForEach([&](ir::RegisterId reg) {
-    if (!live.Has(reg)) {
-      result.push_back(reg);
-    }
-  });
-  return result;
-}
-
 void ClearDeadSuspendedRegisters(ir::Function& function,
                                  std::span<const ir::Function> functions,
                                  const ir::RegisterSet& managed) {
@@ -245,7 +234,10 @@ void ClearDeadSuspendedRegisters(ir::Function& function,
     auto live = liveness.at(block_index).live_out;
     const auto access = ir::AnalyzeRegisters(instruction, functions);
     ir::TransferLiveness(function, graph, liveness, instruction, access, live);
-    clear.at(index) = DeadRegisters(managed, live);
+    auto dead = managed;
+    dead.Subtract(live);
+    auto& registers = clear.at(index);
+    dead.ForEach([&registers](ir::RegisterId reg) { registers.push_back(reg); });
   }
   std::vector<ir::Instruction> code;
   std::vector<std::uint32_t> remap(function.instructions.size() + 1);

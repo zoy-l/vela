@@ -12,6 +12,7 @@
 #include "base/member.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_checker.h"
 
@@ -24,6 +25,12 @@ inline constexpr auto kInvalidArrayType = std::numeric_limits<std::uint32_t>::ma
 
 using ::vela::Opcode;
 
+struct Construction final {
+  DeclarationId type;
+  std::vector<DeclarationId> supplied;
+  bool generated = true;
+};
+
 struct Instruction final {
   Opcode opcode = Opcode::LoadNull;
   RegisterId dst = 0;
@@ -35,9 +42,19 @@ struct Instruction final {
   std::optional<std::uint32_t> handler = std::nullopt;
   // 数组访问时的布局事实独立于寄存器表示；后续 dynamic 擦除不能改变元素存储形状。
   std::uint32_t array_type = kInvalidArrayType;
+  std::optional<DeclarationId> field_declaration = std::nullopt;
+  std::optional<DeclarationId> binding_receiver = std::nullopt;
+  std::optional<Construction> construction = std::nullopt;
+  bool completes_construction = false;
 };
 
 struct Class final {
+  struct Field final {
+    DeclarationId declaration;
+    std::uint32_t type = 0;
+    frontend::Visibility visibility = frontend::Visibility::Public;
+    std::uint32_t initializer = kInvalidFunctionTarget;
+  };
   enum class Kind : std::uint8_t { Instance, Expected, RuntimeError, DateParts, Enum };
   std::string name;
   std::vector<std::string> field_order;
@@ -48,7 +65,7 @@ struct Class final {
   Kind kind = Kind::Instance;
   std::string callable_type;
   DeclarationId declaration;
-  std::vector<DeclarationId> field_declarations;
+  std::vector<Field> fields;
   DeclarationId base_class;
 };
 
@@ -71,8 +88,10 @@ struct Function final {
   bool is_async = false;
   bool is_exported = false;
   bool is_generated_constructor = false;
+  frontend::Visibility visibility = frontend::Visibility::Public;
   std::optional<CallSignature> signature = std::nullopt;
   FunctionIdentity identity;
+  std::vector<DeclarationId> type_dependencies;
 };
 
 struct Declaration final {
@@ -82,6 +101,7 @@ struct Declaration final {
   std::string name;
   std::vector<std::string> type_parameters;
   std::vector<std::string> enum_members;
+  DeclarationId definition;
 };
 
 struct Program final {

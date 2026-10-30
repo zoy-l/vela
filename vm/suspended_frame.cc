@@ -2,10 +2,20 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <span>
 #include <utility>
+#include <vector>
 
 #include "base/execution_limits.h"
+#include "runtime/future.h"
 #include "runtime/heap.h"
+#include "runtime/register_storage.h"
+#include "runtime/value.h"
+#include "vm/execution.h"
+#include "vm/program.h"
 #include "vm/register_file.h"
 
 namespace vela::vm::internal {
@@ -37,7 +47,8 @@ SuspendedFrame::~SuspendedFrame() {
 }
 
 std::size_t SuspendedFrame::SavedBytes() const noexcept {
-  return sizeof(SuspendedFrame) + values_.capacity() * sizeof(runtime::Value) + indices_.capacity();
+  return sizeof(SuspendedFrame) + (values_.capacity() * sizeof(runtime::Value)) +
+         indices_.capacity();
 }
 
 runtime::Future& SuspendedFrame::result() {

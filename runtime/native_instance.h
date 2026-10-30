@@ -6,10 +6,12 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <vector>
 
 #include <absl/container/flat_hash_map.h>
 
 #include "base/callable.h"
+#include "base/declaration.h"
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "runtime/heap.h"
@@ -40,10 +42,11 @@ struct NativeInstantiationError final {
   std::string message;
 };
 
-// 发布快照持有会话的声明到名义身份映射；具体布局版本从不写入此表。
+// 发布快照持有会话的名义身份及物理字段身份序列；删除槽保留空洞，不复用旧偏移。
 struct NativeTypeIdentities final {
   absl::flat_hash_map<DeclarationId, NominalType*> classes;
   absl::flat_hash_map<DeclarationId, const InterfaceType*> interfaces;
+  absl::flat_hash_map<DeclarationId, std::vector<DeclarationId>> fields;
 };
 
 // 实例拥有本次实例化的绑定、常量根与全局状态。动态映像的共享所有者随 GC 程序状态保活，

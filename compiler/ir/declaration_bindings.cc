@@ -23,7 +23,7 @@ class DeclarationBinder final {
                     const frontend::SemanticModel& model,
                     frontend::DeclarationIds& identities,
                     std::uint64_t revision)
-      : source_(source), model_(model), identities_(identities) {
+      : source_(&source), model_(&model), identities_(&identities) {
     result_.revision = revision;
   }
   DeclarationBindings Run();
@@ -40,9 +40,9 @@ class DeclarationBinder final {
   void BindClass(const frontend::Class& owner);
   void InheritFields();
 
-  const frontend::Program& source_;
-  const frontend::SemanticModel& model_;
-  frontend::DeclarationIds& identities_;
+  const frontend::Program* source_;
+  const frontend::SemanticModel* model_;
+  frontend::DeclarationIds* identities_;
   DeclarationBindings result_;
   absl::flat_hash_map<std::string, DeclarationId> modules_;
 };
@@ -51,7 +51,8 @@ DeclarationId DeclarationBinder::Member(DeclarationId owner,
                                         DeclarationKind kind,
                                         const std::string& name,
                                         DeclarationId definition) {
-  return identities_.Get({.owner = owner, .kind = kind, .name = name, .arguments = {}}, definition);
+  return identities_->Get({.owner = owner, .kind = kind, .name = name, .arguments = {}},
+                          definition);
 }
 
 DeclarationId DeclarationBinder::Origin(const frontend::DeclarationOrigin& origin) {
@@ -65,11 +66,14 @@ DeclarationId DeclarationBinder::Origin(const frontend::DeclarationOrigin& origi
   for (const auto& argument : origin.arguments) {
     arguments.push_back(Type(argument));
   }
-  return identities_.Get({.owner = declaration,
-                          .kind = origin.kind,
-                          .name = origin.name,
-                          .arguments = std::move(arguments)},
-                         declaration);
+  return identities_->Get(
+      {
+          .owner = declaration,
+          .kind = origin.kind,
+          .name = origin.name,
+          .arguments = std::move(arguments),
+      },
+      declaration);
 }
 
 frontend::TypeIdentity DeclarationBinder::Type(const frontend::TypeName& source) {
@@ -94,13 +98,13 @@ frontend::TypeIdentity DeclarationBinder::Type(const frontend::TypeName& source)
   }
   if (source.kind == frontend::TypeName::Kind::Named ||
       source.kind == frontend::TypeName::Kind::Generic) {
-    const auto origin = source_.origins.find(source.name);
-    const auto checked = model_.types.find(source.name);
-    const auto nominal = checked != model_.types.end() &&
+    const auto origin = source_->origins.find(source.name);
+    const auto checked = model_->types.find(source.name);
+    const auto nominal = checked != model_->types.end() &&
                          (checked->second.kind == frontend::TypeDescriptor::Kind::Class ||
                           checked->second.kind == frontend::TypeDescriptor::Kind::Interface ||
                           checked->second.kind == frontend::TypeDescriptor::Kind::Enum);
-    if (nominal && origin != source_.origins.end()) {
+    if (nominal && origin != source_->origins.end()) {
       result.kind = Kind::Declared;
       result.declaration = Origin(origin->second);
     } else {
@@ -150,7 +154,7 @@ void DeclarationBinder::BindExpression(const frontend::Expression* expression,
 
 void DeclarationBinder::BindClass(const frontend::Class& owner) {
   const auto declaration = result_.nominals.at(owner.name);
-  const auto& origin = source_.origins.at(owner.name);
+  const auto& origin = source_->origins.at(owner.name);
   const auto definition = origin.arguments.empty()
                               ? DeclarationId{}
                               : Member(modules_.at(origin.module_uri), origin.kind, origin.name);
@@ -166,7 +170,7 @@ void DeclarationBinder::BindClass(const frontend::Class& owner) {
             : Member(Member(definition, kind, name), DeclarationKind::Initializer, "");
     return Member(field, DeclarationKind::Initializer, "", template_initializer);
   };
-  auto& fields = result_.classes[owner.name];
+  auto& fields = result_.classes.try_emplace(owner.name).first->second;
   fields.declaration = declaration;
   const auto constructor = member(DeclarationKind::Constructor, "$constructor");
   result_.named_functions.emplace(owner.name + ".$constructor", constructor);
@@ -202,7 +206,9 @@ void DeclarationBinder::BindClass(const frontend::Class& owner) {
     } else {
       fields.fields.emplace(field.name, identity);
       if (field.initializer != nullptr) {
-        BindExpression(field.initializer.get(), initializer(identity, kind, field.name));
+        const auto target = initializer(identity, kind, field.name);
+        result_.named_functions.emplace("$field." + owner.name + '.' + field.name, target);
+        BindExpression(field.initializer.get(), target);
       }
     }
   }
@@ -212,10 +218,10 @@ void DeclarationBinder::InheritFields() {
   // 拓扑遍历每条父类边一次；每个具体类只复制它实际包含的继承字段。
   absl::flat_hash_map<std::string, std::vector<std::string>> children;
   std::vector<std::string> pending;
-  for (const auto& owner : source_.classes) {
-    const auto& parent = model_.classes.at(owner.name).base_class;
+  for (const auto& owner : source_->classes) {
+    const auto& parent = model_->classes.at(owner.name).base_class;
     if (parent) {
-      children[*parent].push_back(owner.name);
+      children.try_emplace(*parent).first->second.push_back(owner.name);
     } else {
       pending.push_back(owner.name);
     }
@@ -239,10 +245,10 @@ void DeclarationBinder::InheritFields() {
 }
 
 DeclarationBindings DeclarationBinder::Run() {
-  identities_.BeginUpdate();
+  identities_->BeginUpdate();
   std::vector<std::string> modules;
-  modules.reserve(source_.sources.size());
-  for (const auto& source : source_.sources) {
+  modules.reserve(source_->sources.size());
+  for (const auto& source : source_->sources) {
     modules.push_back(source.path);
   }
   std::ranges::sort(modules);
@@ -250,13 +256,13 @@ DeclarationBindings DeclarationBinder::Run() {
     modules_.emplace(module, Member({}, DeclarationKind::Module, module));
   }
   std::vector<std::string> names;
-  names.reserve(source_.origins.size());
-  for (const auto& [name, origin] : source_.origins) {
+  names.reserve(source_->origins.size());
+  for (const auto& [name, origin] : source_->origins) {
     names.push_back(name);
   }
   std::ranges::sort(names);
   for (const auto& name : names) {
-    const auto& origin = source_.origins.at(name);
+    const auto& origin = source_->origins.at(name);
     const auto identity = Origin(origin);
     if (origin.arguments.empty()) {
       for (const auto& member : origin.members) {
@@ -276,24 +282,24 @@ DeclarationBindings DeclarationBinder::Run() {
       result_.nominals.emplace(name, identity);
     }
   }
-  for (const auto& function : source_.functions) {
+  for (const auto& function : source_->functions) {
     BindFunction(function, result_.named_functions.at(function.name));
   }
-  for (const auto& owner : source_.classes) {
+  for (const auto& owner : source_->classes) {
     BindClass(owner);
   }
-  for (const auto& interface : source_.interfaces) {
+  for (const auto& interface : source_->interfaces) {
     const auto declaration = result_.nominals.at(interface.name);
     for (const auto& method : interface.methods) {
       result_.selectors.emplace(interface.name + '.' + method.name,
                                 Member(declaration, DeclarationKind::Selector, method.name));
     }
   }
-  for (const auto& global : source_.globals) {
+  for (const auto& global : source_->globals) {
     BindExpression(global.initializer.get(), result_.named_functions.at("$global." + global.name));
   }
   InheritFields();
-  identities_.FinishUpdate();
+  identities_->FinishUpdate();
   return std::move(result_);
 }
 

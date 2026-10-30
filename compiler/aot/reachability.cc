@@ -342,6 +342,7 @@ void Reachability::RemapClass(T& type,
                               std::span<const std::uint32_t> mapping) const {
   if (!reached_.contains({.kind = NodeKind::Class, .index = index})) {
     type.callable.reset();
+    type.callable_type = {};
     std::ranges::fill(type.dispatch_targets, kInvalidFunctionTarget);
     return;
   }

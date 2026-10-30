@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <benchmark/benchmark.h>
@@ -12,7 +14,7 @@
 namespace vela::benchmarks {
 namespace {
 
-enum class CompletionReuse { Fresh, ParsedModules, Index };
+enum class CompletionReuse : std::uint8_t { Fresh, ParsedModules, Index };
 
 void CompleteProject(benchmark::State& state, CompletionReuse reuse) {
   std::vector<std::string> paths;
@@ -26,7 +28,8 @@ void CompleteProject(benchmark::State& state, CompletionReuse reuse) {
     paths.push_back("completion-module" + std::to_string(index) + ".vela");
     texts.front() += "import '" + paths.back() + "';";
     std::string module;
-    for (int declaration = 0; declaration < 8; ++declaration) {
+    constexpr int kDeclarationsPerModule = 8;
+    for (int declaration = 0; declaration < kDeclarationsPerModule; ++declaration) {
       module += "export class Record" + std::to_string(index) + "_" + std::to_string(declaration) +
                 " { value: int = 42; read(): int { "
                 "return this.value; } }";

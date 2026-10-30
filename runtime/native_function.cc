@@ -12,6 +12,7 @@
 #include "base/utf8.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/native_context.h"
 #include "runtime/register_storage.h"
 #include "runtime/string.h"
 #include "runtime/value.h"

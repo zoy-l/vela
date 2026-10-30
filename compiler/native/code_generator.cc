@@ -5,16 +5,19 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
 #include <llvm/IR/Verifier.h>
@@ -26,19 +29,25 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/TargetParser/Triple.h>
+#include <llvm/Transforms/Scalar/LoopPassManager.h>
 #include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
 
+#include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/ir/ir.h"
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/integer_loop_optimizer.h"
 #include "compiler/native/native_image_emitter.h"
+#include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native_image.h"
 
 namespace vela::compiler::native {
 namespace {
 
-std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget() {
+std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
+    NativeProgramMode mode) {
   InitializeTarget();
   // 编译器、运行时和产物必须使用同一个配置目标。LLVM 的默认 triple 可能带有
   // 与当前 SDK 不同的 Darwin 版本，直接读取它会让生成镜像无法在同一进程实例化。
@@ -49,8 +58,9 @@ std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget() 
     return std::unexpected(std::move(error));
   }
   llvm::TargetOptions options;
-  std::unique_ptr<llvm::TargetMachine> machine(
-      target->createTargetMachine(llvm::Triple(triple), "generic", "", options, llvm::Reloc::PIC_));
+  std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
+      llvm::Triple(triple), "generic", "", options, llvm::Reloc::PIC_, std::nullopt,
+      llvm::CodeGenOptLevel::Default, mode == NativeProgramMode::Reloadable));
   if (machine == nullptr) {
     return std::unexpected("unable to create native target machine");
   }
@@ -126,6 +136,32 @@ std::expected<llvm::FunctionType*, std::string> BodySignature(llvm::Module& modu
   return llvm::FunctionType::get(llvm::Type::getInt8Ty(context), parameters, false);
 }
 
+GeneratedFunction AddRecoveryEntries(llvm::Module& module,
+                                     const std::string& prefix,
+                                     GeneratedFunction& baseline) {
+  auto& context = module.getContext();
+  auto* pointer = llvm::PointerType::getUnqual(context);
+  auto* recovery_type =
+      llvm::FunctionType::get(llvm::Type::getInt8Ty(context), {pointer, pointer, pointer}, false);
+  const auto create = [&](llvm::FunctionType* type, const std::string& suffix) {
+    return llvm::Function::Create(type, llvm::GlobalValue::InternalLinkage, prefix + suffix,
+                                  module);
+  };
+  baseline.recovery = create(recovery_type, "_recover");
+  auto* resume = baseline.resume;
+  if (resume != nullptr) {
+    baseline.resume_recovery = create(recovery_type, "_recover_resume");
+  }
+  auto optimized = baseline;
+  optimized.baseline_body = baseline.body;
+  optimized.baseline_resume = resume;
+  optimized.body = create(baseline.body->getFunctionType(), "_optimized");
+  if (resume != nullptr) {
+    optimized.resume = create(resume->getFunctionType(), "_optimized_resume");
+  }
+  return optimized;
+}
+
 }  // namespace
 
 void InitializeTarget() {
@@ -143,11 +179,13 @@ NativeModule::NativeModule(NativeModule&&) noexcept = default;
 
 std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& program,
                                                             const std::string& module_name,
-                                                            std::span<const std::uint8_t> exports) {
+                                                            std::span<const std::uint8_t> exports,
+                                                            NativeDebugging debugging,
+                                                            NativeCodeTier tier) {
   const auto diagnostic = [&](std::string message, const ir::Function* function = nullptr) {
     return std::unexpected(MakeDiagnostics(program, std::move(message), function));
   };
-  auto target = CreateTarget();
+  auto target = CreateTarget(program.native_mode);
   if (!target) {
     return diagnostic(target.error());
   }
@@ -159,7 +197,9 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   auto& module = *output.module;
   module.setTargetTriple(output.machine->getTargetTriple());
   module.setDataLayout(output.machine->createDataLayout());
+  module.setCodeModel(output.machine->getCodeModel());
   std::vector<GeneratedFunction> generated;
+  std::vector<GeneratedFunction> optimized;
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
     const auto& function = program.functions.at(index);
     const auto body_type = BodySignature(module, function);
@@ -185,7 +225,13 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
       resume = llvm::Function::Create(resume_type, llvm::GlobalValue::InternalLinkage,
                                       module_name + "_resume_" + std::to_string(index), module);
     }
-    generated.push_back({.body = body, .entry = entry, .resume = resume});
+    GeneratedFunction baseline{.body = body, .entry = entry, .resume = resume};
+    auto current = baseline;
+    if (tier == NativeCodeTier::Optimized && function.native_symbol.empty()) {
+      current = AddRecoveryEntries(module, module_name + '_' + std::to_string(index), baseline);
+    }
+    generated.push_back(baseline);
+    optimized.push_back(current);
   }
   std::vector<llvm::Function*> entries;
   entries.reserve(generated.size());
@@ -199,13 +245,21 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   std::vector<NativeFunctionMetrics> metrics;
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
     const auto& function = program.functions.at(index);
-    auto emitted = EmitFunction(module, program, image->data, index, generated);
+    auto emitted = EmitFunction(module, program, image->data, index, generated, debugging);
     if (!emitted) {
       return diagnostic(emitted.error(), &function);
     }
+    if (optimized.at(index).baseline_body != nullptr) {
+      auto optimized_metrics = EmitFunction(module, program, image->data, index, optimized,
+                                            debugging, NativeCodeTier::Optimized);
+      if (!optimized_metrics) {
+        return diagnostic(optimized_metrics.error(), &function);
+      }
+      emitted = std::move(optimized_metrics);
+    }
     metrics.push_back(*emitted);
-    const auto& native_function = generated.at(index);
-    EmitWrapper(module, function, static_cast<std::uint32_t>(index), native_function);
+    EmitWrapper(module, function, static_cast<std::uint32_t>(index), optimized.at(index),
+                image->data);
   }
   output.image_symbol = image->symbol;
   output.function_metrics = std::move(metrics);
@@ -227,6 +281,22 @@ std::expected<void, std::string> Finalize(NativeModule& generated,
     return std::unexpected(verification);
   }
   return {};
+}
+
+std::expected<std::vector<std::byte>, std::string> EmitObject(NativeModule& generated) {
+  llvm::SmallVector<char, 0> bytes;
+  llvm::raw_svector_ostream stream(bytes);
+  llvm::legacy::PassManager codegen;
+  if (generated.machine->addPassesToEmitFile(codegen, stream, nullptr,
+                                             llvm::CodeGenFileType::ObjectFile)) {
+    return std::unexpected("native target cannot emit object files");
+  }
+  codegen.run(*generated.module);
+  std::vector<std::byte> object(bytes.size());
+  std::ranges::transform(bytes, object.begin(), [](char value) {
+    return static_cast<std::byte>(static_cast<unsigned char>(value));
+  });
+  return object;
 }
 
 }  // namespace vela::compiler::native

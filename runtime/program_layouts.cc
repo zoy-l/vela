@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -18,11 +19,11 @@ class LayoutInstantiation final {
   LayoutInstantiation(const layout::Program& description,
                       Isolate& isolate,
                       LayoutCache& cache,
-                      std::span<NominalType* const> nominals)
+                      std::span<const ClassLayoutOptions> classes)
       : description_(&description),
         isolate_(&isolate),
         cache_(&cache),
-        nominals_(nominals),
+        class_options_(classes),
         arrays_(description.arrays.size()),
         collections_(description.collections.size()),
         signatures_(description.signatures.size()) {}
@@ -40,7 +41,7 @@ class LayoutInstantiation final {
   const layout::Program* description_;
   Isolate* isolate_;
   LayoutCache* cache_;
-  std::span<NominalType* const> nominals_;
+  std::span<const ClassLayoutOptions> class_options_;
   std::vector<const InterfaceType*> interfaces_;
   std::vector<ClassLayout*> classes_;
   std::vector<const ArrayLayout*> arrays_;
@@ -210,18 +211,17 @@ ClassLayout* LayoutInstantiation::Class(std::size_t index) {
   }
   std::vector<const InterfaceType*> interfaces;
   interfaces.reserve(description.interfaces.size());
-  for (const auto index : description.interfaces) {
-    interfaces.push_back(interfaces_.at(index));
+  for (const auto interface : description.interfaces) {
+    interfaces.push_back(interfaces_.at(interface));
   }
-  auto* stored =
-      isolate_->CreateClassLayout(description.field_count, description.reference_fields,
-                                  {
-                                      .callable = description.callable,
-                                      .interfaces = std::move(interfaces),
-                                      .dispatch_targets = description.dispatch_targets,
-                                      .is_enum = description.kind == layout::Class::Kind::Enum,
-                                      .nominal = nominals_.empty() ? nullptr : nominals_[index],
-                                  });
+  auto options =
+      class_options_.empty() ? ClassLayoutOptions{} : class_options_.subspan(index).front();
+  options.callable = description.callable;
+  options.interfaces = std::move(interfaces);
+  options.dispatch_targets = description.dispatch_targets;
+  options.is_enum = description.kind == layout::Class::Kind::Enum;
+  auto* stored = isolate_->CreateClassLayout(description.field_count, description.reference_fields,
+                                             std::move(options));
   cache_->classes.emplace(description.name, stored);
   return stored;
 }
@@ -266,6 +266,7 @@ ProgramLayouts LayoutInstantiation::Build() {
     result.types.push_back(Constraint(type));
   }
   result.classes = std::move(classes_);
+  result.interfaces = std::move(interfaces_);
   return result;
 }
 
@@ -274,8 +275,8 @@ ProgramLayouts LayoutInstantiation::Build() {
 ProgramLayouts InstantiateLayouts(const layout::Program& description,
                                   Isolate& isolate,
                                   LayoutCache& cache,
-                                  std::span<NominalType* const> nominals) {
-  return LayoutInstantiation(description, isolate, cache, nominals).Build();
+                                  std::span<const ClassLayoutOptions> classes) {
+  return LayoutInstantiation(description, isolate, cache, classes).Build();
 }
 
 }  // namespace vela::runtime

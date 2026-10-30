@@ -1,7 +1,6 @@
 #include "compiler/tooling/language_server_internal.h"
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -70,7 +69,7 @@ using DiagnosticKey = std::tuple<std::string, std::uint32_t, std::uint32_t, std:
 class DiagnosticCollection final {
  public:
   DiagnosticCollection(PositionEncoding encoding, frontend::ModuleCache& modules)
-      : encoding_(encoding), modules_(modules) {}
+      : encoding_(encoding), modules_(&modules) {}
   void AddOpenDocument(std::string_view uri, const ServerDocument& document) {
     overlays_.push_back({.path = document.path, .text = document.source.text()});
     open_sources_.emplace(document.path, OpenSource{.uri = uri, .source = &document.source});
@@ -86,11 +85,11 @@ class DiagnosticCollection final {
   absl::flat_hash_map<std::string_view, OpenSource> open_sources_;
   absl::flat_hash_set<DiagnosticKey> emitted_;
   DiagnosticBuckets buckets_;
-  frontend::ModuleCache& modules_;
+  frontend::ModuleCache* modules_;
 };
 
 void DiagnosticCollection::Collect(std::string_view path) {
-  auto loaded = frontend::LoadProgram(path, modules_, overlays_);
+  auto loaded = frontend::LoadProgram(path, *modules_, overlays_);
   auto diagnostics = std::move(loaded.diagnostics);
   if (diagnostics.empty()) {
     diagnostics = frontend::CheckProgram(loaded.program).diagnostics;

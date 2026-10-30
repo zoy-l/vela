@@ -29,6 +29,9 @@ void* Heap::AllocateNative(std::size_t size) noexcept {
   }
   const auto total = size + sizeof(NativeHeader);
   MaybeCollect(total);
+  if (!CanAllocate(total)) {
+    return nullptr;
+  }
   auto* header = static_cast<NativeHeader*>(::operator new(total, std::nothrow));
   if (header == nullptr) {
     return nullptr;

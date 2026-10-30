@@ -16,7 +16,9 @@
 #include <absl/container/flat_hash_map.h>
 
 #include "base/callable.h"
+#include "base/declaration.h"
 #include "base/member.h"
+#include "base/native_program_mode.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_checker.h"
@@ -67,6 +69,13 @@ class Lowerer final {
     frontend::TypeDescriptor type;
   };
 
+  struct FunctionValuePlan final {
+    std::uint32_t target = 0;
+    CallableMode mode = CallableMode::Plain;
+    std::vector<frontend::Capture> captures;
+    std::optional<LoweredValue> receiver;
+  };
+
   using ClassMap = absl::flat_hash_map<std::string, ClassId>;
   using FunctionMap = absl::flat_hash_map<std::string, std::uint32_t>;
   using LocalMap = absl::flat_hash_map<std::string, Local>;
@@ -102,6 +111,11 @@ class Lowerer final {
                         const frontend::Expression& initializer,
                         const frontend::TypeDescriptor& type,
                         frontend::SourceLocation location);
+  void LowerFieldDefaultInitializers(const frontend::Class& owner);
+  [[nodiscard]] Function PrepareFunction(const frontend::Function& source,
+                                         const frontend::FunctionDescriptor& function_info,
+                                         const frontend::Class* owner,
+                                         const frontend::LambdaDescriptor* lambda);
   void LowerFunction(const frontend::Function& source,
                      const frontend::FunctionDescriptor& function_info,
                      const frontend::Class* owner = nullptr,
@@ -111,7 +125,7 @@ class Lowerer final {
                                const frontend::Class* owner,
                                const frontend::LambdaDescriptor* lambda);
   [[nodiscard]] bool HasInstanceInitialization(const frontend::ClassDescriptor& owner) const;
-  [[nodiscard]] static std::uint32_t ConstructorMaskCount(const frontend::ClassDescriptor& owner);
+  [[nodiscard]] std::uint32_t ConstructorMaskCount(const frontend::ClassDescriptor& owner) const;
   void LowerConstructorInitializers(const frontend::ClassDescriptor& owner);
   void RegisterFunctionSignature(Function& function,
                                  const frontend::Function& source,
@@ -134,6 +148,8 @@ class Lowerer final {
 
   [[nodiscard]] LoweredValue LowerExpression(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerExpressionValue(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerName(const frontend::Expression& expression);
+  [[nodiscard]] LoweredValue LowerAwait(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerConversion(LoweredValue value,
                                              const frontend::TypeDescriptor& target,
                                              frontend::SourceLocation location);
@@ -148,7 +164,13 @@ class Lowerer final {
                                                   std::span<const std::uint32_t> argument_order,
                                                   frontend::SourceLocation location,
                                                   const frontend::ClassDescriptor& info,
-                                                  RegisterId object);
+                                                  RegisterId object,
+                                                  std::span<const LoweredValue> evaluated = {});
+  void EmitConstructorInitialization(const frontend::ClassDescriptor& info,
+                                     RegisterId object,
+                                     std::span<const RegisterId> arguments,
+                                     std::span<const std::uint64_t> provided,
+                                     frontend::SourceLocation location);
   [[nodiscard]] LoweredValue LowerMember(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerObjectMember(const frontend::Expression& expression);
   [[nodiscard]] LoweredValue LowerGetter(const frontend::Expression& expression,
@@ -169,6 +191,7 @@ class Lowerer final {
   [[nodiscard]] LoweredValue LowerFutureCall(const frontend::Expression& expression);
   [[nodiscard]] std::uint32_t AddSyncFutureFunction(const frontend::TypeDescriptor& return_type,
                                                     const frontend::TypeDescriptor& callback_type);
+  [[nodiscard]] FunctionValuePlan ResolveFunctionValue(const frontend::Expression& expression);
   LoweredValue LowerFunctionValue(const frontend::Expression& expression);
   LoweredValue LowerIndirectCall(const frontend::Expression& expression);
   LoweredValue LowerInterfaceCall(const frontend::Expression& expression);
@@ -380,6 +403,7 @@ class Lowerer final {
   std::vector<ControlTargets> controls_;
   std::vector<Finally> finalizers_;
   std::vector<const frontend::Class*> pending_constructors_;
+  absl::flat_hash_map<DeclarationId, std::uint32_t> field_initializers_;
   std::optional<std::uint32_t> current_handler_;
   RegisterId next_register_ = 0;
   std::vector<std::uint32_t> lambda_ids_;

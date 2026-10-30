@@ -10,6 +10,9 @@
 
 #include "base/execution_limits.h"
 #include "base/execution_status.h"
+#include "base/source_location.h"
+#include "runtime/exception.h"
+#include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_api.h"
 #include "runtime/native_image.h"
@@ -57,9 +60,9 @@ TEST(NativeAbiTest, ValueCodecsPreservePayloadBitsAndClearReservedFields) {
     EXPECT_EQ(encoded.reserved_word, 0U);
     const auto expected = encoded;
     // ABI 保留字段不属于 Value；解码不得将其作为载荷或标签消费。
-    encoded.reserved_byte = 0xff;
-    encoded.reserved_half = 0xffff;
-    encoded.reserved_word = 0xffffffff;
+    encoded.reserved_byte = std::numeric_limits<std::uint8_t>::max();
+    encoded.reserved_half = std::numeric_limits<std::uint16_t>::max();
+    encoded.reserved_word = std::numeric_limits<std::uint32_t>::max();
     const auto decoded = DecodeNativeValue(encoded);
     EXPECT_EQ(decoded.kind(), value.kind());
     const auto roundtrip = EncodeNativeValue(decoded);
@@ -166,8 +169,9 @@ TEST(NativeAbiTest, ResourceEntryOwnsRootsAndReleasesStorage) {
   const auto instance = NativeInstance::Instantiate(isolate, image);
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
-  alignas(NativeFrame) std::array<std::byte, sizeof(NativeFrame)> storage;
-  auto* frame = reinterpret_cast<NativeFrame*>(storage.data());
+  alignas(NativeFrame) std::array<std::byte, sizeof(NativeFrame)> storage{};
+  void* frame_storage = storage.data();
+  auto* frame = static_cast<NativeFrame*>(frame_storage);
   NativeFrameAccess outer;
   ASSERT_EQ(vela_native_v1_frame_storage(&execution, 1, kStorageBytes, frame, &outer),
             static_cast<std::uint8_t>(ExecutionStatus::Returned));
@@ -187,8 +191,9 @@ TEST(NativeAbiTest, BorrowedStackRootsUseOnlyRootRangeAndReleaseTheirReferences)
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
   const auto baseline = heap.object_count();
-  alignas(RootRange) std::array<std::byte, sizeof(RootRange)> storage;
-  auto* range = reinterpret_cast<RootRange*>(storage.data());
+  alignas(RootRange) std::array<std::byte, sizeof(RootRange)> storage{};
+  void* range_storage = storage.data();
+  auto* range = static_cast<RootRange*>(range_storage);
   std::array<Value, 1> roots;
   vela_native_v1_roots_enter(&execution, roots.data(), roots.size(), range);
   auto* text = heap.AllocateString("stack rooted");
@@ -224,7 +229,7 @@ TEST(NativeAbiTest, LeafFailureRetainsBorrowedRootsDuringExceptionAllocationAndR
   auto image = EmptyImage();
   std::array<NativeFunctionDescription, 2> functions;
   const std::array<SourceLocation, 8> locations;
-  functions[1].locations = {.data = locations.data(), .size = locations.size()};
+  functions.back().locations = {.data = locations.data(), .size = locations.size()};
   const std::array<NativeText, 1> paths;
   image.source_paths = {.data = paths.data(), .size = paths.size()};
   image.functions = {.data = functions.data(), .size = functions.size()};

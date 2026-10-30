@@ -260,6 +260,168 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
     return "\n".join(lines) + "\n"
 
 
+def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: int) -> str:
+    pattern = re.compile(r"^(?:aot/(native|vm|cpp)|hot/steady/(baseline|optimized))/([^/]+)/(\d+)/real_time$")
+    lifecycle_pattern = re.compile(
+        r"^hot/(baseline|optimized)/(edits|closures|instances|continuations|rebuild|active)(?:/(\d+))?/manual_time$")
+    rows = iteration_rows(report, expected_cases, repetitions)
+    lifecycle = {}
+    samples = {}
+    counters = {}
+    checksums = defaultdict(set)
+    for name, entries in rows.items():
+        match = pattern.fullmatch(name)
+        if match is None:
+            if lifecycle_pattern.fullmatch(name) is None:
+                raise ValueError(f"Unsupported JIT comparison case: {name}")
+            for entry in entries:
+                if entry["released_code_batches"] != 1 or entry["released_suspended_frames"] != 0:
+                    raise ValueError(f"{name}: old code or suspended frames survived release")
+                for field in ("pause_ns", "pause_max_ns", "source_ns", "llvm_lowering_ns",
+                              "llvm_optimization_ns", "machine_compilation_ns", "linking_ns",
+                              "instantiation_ns", "validation_ns", "state_preparation_ns",
+                              "deoptimization_ns", "commit_ns", "refresh_ns", "entry_ns",
+                              "stopping_ns", "new_isolate_preparation_ns", "safepoint_waiting_ns"):
+                    value = entry[field]
+                    if not math.isfinite(value) or value < 0:
+                        raise ValueError(f"{name}: invalid {field}")
+            lifecycle[name] = entries
+            continue
+        aot_backend, jit_backend, workload, size_text = match.groups()
+        backend = aot_backend or jit_backend
+        key = workload, int(size_text)
+        samples[backend, *key] = [entry["real_time"] * MICROSECONDS[entry["time_unit"]]
+                                 for entry in entries]
+        counters[backend, *key] = entries
+        for entry in entries:
+            result = entry["result"]
+            expected = entry.get("expected_result", result)
+            if (not math.isfinite(result) or not math.isfinite(expected) or
+                    not math.isclose(result, expected, rel_tol=1e-12, abs_tol=1e-10)):
+                raise ValueError(f"{name}: checksum mismatch")
+            checksums[key].add(expected)
+            resident = entry["process_resident_bytes"]
+            if not math.isfinite(resident) or resident <= 0:
+                raise ValueError(f"{name}: invalid resident-memory counter")
+            if backend == "cpp":
+                continue
+            if (entry["baseline_bytes"] != entry["retained_bytes"] or
+                    entry["remaining_suspended_frames"] != 0 or entry["remaining_saved_bytes"] != 0):
+                raise ValueError(f"{name}: retained temporary state")
+            if backend in {"baseline", "optimized"}:
+                for field in ("code_batches", "code_executable_bytes", "code_read_only_bytes"):
+                    value = entry[field]
+                    if not math.isfinite(value) or value <= 0:
+                        raise ValueError(f"{name}: invalid {field}")
+                for field in ("code_writable_bytes", "external_field_bytes"):
+                    value = entry[field]
+                    if not math.isfinite(value) or value < 0:
+                        raise ValueError(f"{name}: invalid {field}")
+    backends = ("cpp", "vm", "native", "baseline", "optimized")
+    keys = sorted(checksums)
+    for key in keys:
+        if len(checksums[key]) != 1 or any((backend, *key) not in samples for backend in backends):
+            raise ValueError(f"{key}: requires matching C++, VM, AOT, baseline and optimized JIT samples")
+    lines = ["Reloadable JIT comparison: median wall microseconds per complete workload.",
+             f"All selected cases passed all {repetitions} repetitions.",
+             "Compilation and warm-up are excluded from steady timing. Named dispatch, precise roots, "
+             "safepoints, external fields and ordinary GC remain enabled. Optimized code retains "
+             "old-version baseline recovery; the closed AOT comparison uses its normal layout and call policy.",
+             "Arithmetic that C++ simplifies as a whole is a separate case; its ratio does not predict JIT gains.", "",
+             "| Workload | Size | C++ us | VM us | AOT us | Baseline us | Optimized us | Baseline/AOT | Optimized/AOT | CV C++/VM/AOT/baseline/optimized |",
+             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
+    ratios = {backend: [] for backend in ("baseline", "optimized")}
+    for key in keys:
+        values = {backend: samples[backend, *key] for backend in backends}
+        medians = {backend: median(elapsed) for backend, elapsed in values.items()}
+        for backend in ("baseline", "optimized"):
+            ratios[backend].append(medians[backend] / medians["native"])
+        lines.append("| " + " | ".join([key[0], str(key[1]),
+                                        *[f"{medians[backend]:.3f}" for backend in backends],
+                                        f'{medians["baseline"] / medians["native"]:.2f}x',
+                                        f'{medians["optimized"] / medians["native"]:.2f}x',
+                                        "/".join(variation(values[backend]) for backend in backends)]) + " |")
+    for backend, values in ratios.items():
+        if values:
+            ratio = math.exp(mean(math.log(value) for value in values))
+            lines.append(f"Geometric mean {backend} JIT/AOT over {len(keys)} paired workloads: {ratio:.2f}x.")
+            selected = [value for key, value in zip(keys, values)
+                        if key[0] not in {"arithmetic", "fields"}]
+            if selected and len(selected) != len(values):
+                ratio = math.exp(mean(math.log(value) for value in selected))
+                lines.append(f"Geometric mean {backend} JIT/AOT excluding arithmetic and fields "
+                             f"over {len(selected)} paired workloads: {ratio:.2f}x.")
+    startup_fields = ("load_ns", "file_capture_ns", "engine_creation_ns", "source_total_ns", "code_total_ns",
+                      "source_loading_ns", "specialization_ns",
+                      "type_checking_ns", "typed_ir_ns", "llvm_lowering_ns", "llvm_optimization_ns",
+                      "machine_compilation_ns", "linking_ns", "instantiation_ns",
+                      "initial_publication_pause_ns", "first_execution_ns")
+    lines.extend(["", "Fresh-session setup and first workload execution, median microseconds. "
+                  "The process and OS file cache may already be warm; code caching is disabled. "
+                  "Each JIT case compiles the entire source suite, outside steady timing. "
+                  "dasProfile input preparation runs after loading and before first_execution_ns; "
+                  "it is excluded from both first-workload and steady timing.", "",
+                  "| Workload | Backend | " + " | ".join(field.removesuffix("_ns") + " us" for field in startup_fields) + " |",
+                  "| --- | --- | " + " | ".join("---:" for _ in startup_fields) + " |"])
+    for key in keys:
+        for backend in ("baseline", "optimized"):
+            entries = counters[backend, *key]
+            numbers = [f"{median(entry[field] for entry in entries) / 1000:.3f}" for field in startup_fields]
+            lines.append("| " + " | ".join([key[0], backend, *numbers]) + " |")
+    lines.extend(["", "Memory is reported separately from timing. Linked code/image counters count block "
+                  "contents, excluding allocator page padding and OS debugger overhead. Read-only image "
+                  "contents include constants, source versions, location maps and unwind information. "
+                  "Constant/debug payload counters describe logical image contents, including source "
+                  "text and locations; they overlap the linked blocks and exclude allocator, string "
+                  "deduplication and OS registration overhead. Process resident memory includes the "
+                  "compiler and incremental source state. Resident samples share a process and may "
+                  "include LLVM initialized by earlier cases; they are not independent backend footprints. "
+                  "Compilation peak is the process lifetime "
+                  "resident high-water mark sampled after compilation; run one case in a fresh process "
+                  "to attribute it to that workload.", "",
+                  "| Workload | Size | Backend | Heap after GC | External fields | Executable | Read-only image | Writable image | Code batches | Resident | Constant payload | Debug payload | Compilation process peak | VM registers |",
+                  "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"])
+    fields = ("retained_bytes", "external_field_bytes", "code_executable_bytes", "code_read_only_bytes",
+              "code_writable_bytes", "code_batches", "process_resident_bytes", "constant_payload_bytes",
+              "debug_payload_bytes", "compilation_peak_resident_bytes", "register_bytes")
+    for key in keys:
+        for backend in backends:
+            entries = counters[backend, *key]
+            numbers = [f"{median(entry[field] for entry in entries):.0f}" if field in entries[0] else "-"
+                       for field in fields]
+            lines.append("| " + " | ".join([key[0], str(key[1]), backend, *numbers]) + " |")
+    if lifecycle:
+        fields = ("source_ns", "llvm_lowering_ns", "llvm_optimization_ns", "machine_compilation_ns",
+                  "linking_ns", "safepoint_waiting_ns", "instantiation_ns", "validation_ns",
+                  "state_preparation_ns", "deoptimization_ns", "commit_ns", "pause_ns", "pause_max_ns",
+                  "new_isolate_preparation_ns", "stopping_ns", "entry_ns", "refresh_ns")
+        lines.extend(["", "Reload lifecycle: wall microseconds per edit, including compilation. "
+                      "Stage counters are per-edit averages; pause_max_ns records the largest complete "
+                      "runtime pause in the sample. Instance expansion occurs on the first edit. "
+                      "No framework refresh callback is installed, so refresh_ns is zero.", "",
+                      "| Case | Total us | CV | " + " | ".join(field.removesuffix("_ns") + " us" for field in fields) + " |",
+                      "| --- | ---: | --- | " + " | ".join("---:" for _ in fields) + " |"])
+        for name, entries in sorted(lifecycle.items()):
+            times = [entry["real_time"] * MICROSECONDS[entry["time_unit"]] for entry in entries]
+            numbers = [f"{median(entry[field] for entry in entries) / 1000:.3f}" for field in fields]
+            lines.append("| " + " | ".join([name, f"{median(times):.3f}", variation(times), *numbers]) + " |")
+        fields = ("heap_bytes", "external_field_bytes", "executable_bytes", "read_only_bytes",
+                  "writable_bytes", "constant_payload_bytes", "debug_payload_bytes", "code_batches",
+                  "suspended_frames", "saved_state_bytes")
+        lines.extend(["", "Lifecycle memory snapshots after full GC, in bytes/counts. "
+                      "Retained includes deliberately live old closures or continuations; released "
+                      "drops them and verifies exactly one current code batch remains.", "",
+                      "| Case | State | " + " | ".join(fields) + " |",
+                      "| --- | --- | " + " | ".join("---:" for _ in fields) + " |"])
+        for name, entries in sorted(lifecycle.items()):
+            for phase in ("before", "retained", "released"):
+                if phase + "_heap_bytes" not in entries[0]:
+                    continue
+                numbers = [f"{median(entry[phase + '_' + field] for entry in entries):.0f}" for field in fields]
+                lines.append("| " + " | ".join([name, phase, *numbers]) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def native_call_report(report: dict, expected_cases: list[str], repetitions: int) -> str:
     rows = iteration_rows(report, expected_cases, repetitions)
     samples = {}

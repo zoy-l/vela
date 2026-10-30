@@ -33,8 +33,10 @@ bool TypeChecker::Refinements::IsEmpty() const {
 
 void TypeChecker::Refinements::Save(std::uint32_t binding, const Type* previous) {
   if (branch_depth_ != 0) {
-    undo_.push_back({.binding = binding,
-                     .previous = previous == nullptr ? std::nullopt : std::optional(*previous)});
+    undo_.push_back({
+        .binding = binding,
+        .previous = previous == nullptr ? std::nullopt : std::optional(*previous),
+    });
   }
 }
 
@@ -97,7 +99,7 @@ void TypeChecker::Refinements::Discard(Checkpoint checkpoint) {
 TypeChecker::RefinementDelta TypeChecker::Refinements::Capture(Checkpoint checkpoint) {
   RefinementDelta changes;
   for (std::size_t index = checkpoint.offset; index < undo_.size(); ++index) {
-    const auto binding = undo_[index].binding;
+    const auto binding = undo_.at(index).binding;
     if (!changes.contains(binding)) {
       const auto* type = Find(binding);
       changes.emplace(binding, type == nullptr ? std::nullopt : std::optional(*type));
@@ -122,9 +124,12 @@ void TypeChecker::Refinements::Intersect(RefinementDelta& target,
   // 两个增量以当前事实表为共同基线；没有修改的绑定直接读取基线。
   for (auto& [binding, type] : target) {
     const auto found = other.find(binding);
-    const auto* right = found == other.end() ? Find(binding)
-                        : found->second      ? &*found->second
-                                             : nullptr;
+    const TypeDescriptor* right = nullptr;
+    if (found == other.end()) {
+      right = Find(binding);
+    } else if (found->second) {
+      right = &*found->second;
+    }
     if (!type || right == nullptr || !IsSameType(*type, *right)) {
       type.reset();
     }

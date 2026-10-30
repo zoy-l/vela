@@ -29,17 +29,17 @@ struct Initialized final {
   Base base = Base::Pending;
 
   void Insert(std::size_t index) {
-    fields[index / kWordBits] |= std::uint64_t{1} << (index % kWordBits);
+    fields.at(index / kWordBits) |= std::uint64_t{1} << (index % kWordBits);
   }
-  bool Has(std::size_t index) const {
-    return (fields[index / kWordBits] & (std::uint64_t{1} << (index % kWordBits))) != 0;
+  [[nodiscard]] bool Has(std::size_t index) const {
+    return (fields.at(index / kWordBits) & (std::uint64_t{1} << (index % kWordBits))) != 0;
   }
 };
 using Path = std::optional<Initialized>;
 
 void Intersect(Initialized& left, const Initialized& right) {
   for (std::size_t index = 0; index < left.fields.size(); ++index) {
-    left.fields[index] &= right.fields[index];
+    left.fields.at(index) &= right.fields.at(index);
   }
   if (left.base != right.base) {
     left.base = Initialized::Base::Maybe;
@@ -394,7 +394,7 @@ Diagnostics Initialization::Run() {
   const auto& fields = info.field_order;
   field_indices_.reserve(fields.size());
   for (std::size_t index = 0; index < fields.size(); ++index) {
-    field_indices_.emplace(fields[index], index);
+    field_indices_.emplace(fields.at(index), index);
   }
   initialized.fields.resize((fields.size() + Initialized::kWordBits - 1) / Initialized::kWordBits);
   if (owner_.base_class && !model_.explicit_super_constructors.contains(owner_.name)) {

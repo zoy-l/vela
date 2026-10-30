@@ -9,7 +9,6 @@
 #include <string_view>
 #include <vector>
 
-#include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/module_binding.h"
 #include "compiler/frontend/parser.h"
@@ -42,6 +41,9 @@ struct ModuleGraph final {
 };
 
 [[nodiscard]] ModuleGraph LoadModuleGraph(std::string_view path);
+[[nodiscard]] ModuleGraph LoadModuleGraph(std::span<const std::string> roots,
+                                          ModuleCache& cache,
+                                          std::span<const SourceInput> overlays);
 [[nodiscard]] ParseResult BindModuleGraph(
     ModuleGraph graph,
     std::span<const std::string> retained_standard_names = {});
@@ -67,6 +69,10 @@ struct ModuleGraph final {
 [[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources, std::string_view entry);
 [[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources,
                                       std::span<const std::string> roots,
+                                      std::span<const std::string> retained_standard_names = {});
+[[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources,
+                                      std::span<const std::string> roots,
+                                      ModuleCache& cache,
                                       std::span<const std::string> retained_standard_names = {});
 
 }  // namespace vela::frontend

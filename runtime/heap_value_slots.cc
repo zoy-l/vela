@@ -22,13 +22,20 @@ HeapObject* Heap::AllocateValueSlots(std::size_t count) noexcept {
   }
   const auto bytes = count * sizeof(Value);
   MaybeCollect(sizeof(HeapObject) + bytes);
+  if (!CanAllocate(bytes)) {
+    return nullptr;
+  }
   auto* slots = static_cast<Value*>(::operator new(count * sizeof(Value), std::nothrow));
   if (slots == nullptr) {
     return nullptr;
   }
   std::uninitialized_value_construct_n(slots, count);
+  allocated_bytes_ += bytes;
+  committed_bytes_ += bytes;
   const auto allocation = AllocateRaw(sizeof(HeapObject));
   if (allocation.memory == nullptr) {
+    allocated_bytes_ -= bytes;
+    committed_bytes_ -= bytes;
     std::destroy_n(slots, count);
     ::operator delete(slots);
     return nullptr;
@@ -37,8 +44,6 @@ HeapObject* Heap::AllocateValueSlots(std::size_t count) noexcept {
   object->kind = ObjectKind::ValueSlots;
   object->length = static_cast<std::uint32_t>(count);
   object->native_payload = slots;
-  allocated_bytes_ += bytes;
-  committed_bytes_ += bytes;
   Publish(*object, allocation);
   return object;
 }
@@ -55,6 +60,9 @@ std::expected<void, ExecutionStatus> Heap::ExtendValueSlots(HeapObject& object,
   }
   const auto extra = (count - object.length) * sizeof(Value);
   MaybeCollect(extra);
+  if (!CanAllocate(extra)) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
   auto* slots = static_cast<Value*>(::operator new(count * sizeof(Value), std::nothrow));
   if (slots == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);

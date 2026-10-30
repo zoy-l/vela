@@ -31,14 +31,17 @@ ParsedSource ParseSourceSnapshot(std::string source, std::uint32_t source_id) {
   auto parsed = lexed.diagnostics.empty()
                     ? Parser(lexed.tokens).Parse()
                     : ParseResult{.program = {}, .diagnostics = std::move(lexed.diagnostics)};
-  auto snapshot =
-      std::make_shared<const SourceSnapshot>(SourceSnapshot{.text = std::move(source),
-                                                            .tokens = std::move(lexed.tokens),
-                                                            .comments = std::move(lexed.comments),
-                                                            .imports = parsed.program.imports});
-  return {.source = std::move(snapshot),
-          .program = std::move(parsed.program),
-          .diagnostics = std::move(parsed.diagnostics)};
+  auto snapshot = std::make_shared<const SourceSnapshot>(SourceSnapshot{
+      .text = std::move(source),
+      .tokens = std::move(lexed.tokens),
+      .comments = std::move(lexed.comments),
+      .imports = parsed.program.imports,
+  });
+  return {
+      .source = std::move(snapshot),
+      .program = std::move(parsed.program),
+      .diagnostics = std::move(parsed.diagnostics),
+  };
 }
 
 void AppendProgram(Program& destination, Program source) {
@@ -599,6 +602,9 @@ namespace {
 
 constexpr std::uint8_t kEqualityPrecedence = 6;
 constexpr std::uint8_t kShiftPrecedence = 8;
+constexpr std::uint8_t kBitAndPrecedence = 5;
+constexpr std::uint8_t kAdditivePrecedence = 9;
+constexpr std::uint8_t kMultiplicativePrecedence = 10;
 
 std::uint8_t BinaryPrecedence(TokenKind kind) {
   switch (kind) {
@@ -612,7 +618,7 @@ std::uint8_t BinaryPrecedence(TokenKind kind) {
     case TokenKind::Caret:
       return 4;
     case TokenKind::Ampersand:
-      return 5;
+      return kBitAndPrecedence;
     case TokenKind::EqualEqual:
     case TokenKind::BangEqual:
       return kEqualityPrecedence;
@@ -622,10 +628,10 @@ std::uint8_t BinaryPrecedence(TokenKind kind) {
       return kShiftPrecedence;
     case TokenKind::Plus:
     case TokenKind::Minus:
-      return 9;
+      return kAdditivePrecedence;
     case TokenKind::Star:
     case TokenKind::Slash:
-      return 10;
+      return kMultiplicativePrecedence;
     default:
       return 0;
   }

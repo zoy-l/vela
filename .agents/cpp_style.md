@@ -27,6 +27,9 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
 - Name test source files `*_unittest.cc` and place them in the module under test. Use GoogleTest
   `TEST` / `TEST_F` and `ASSERT_*` / `EXPECT_*`. Do not write custom test entry points, boolean result
   aggregation, or assertion frameworks.
+- Cognitive-complexity checks count project control flow and ignore macro expansions, including
+  GoogleTest assertion implementation branches. Keep assertion calls at the tested boundary;
+  do not split a scenario merely to reduce the framework's expanded branch count.
 - Name benchmark source files `*_benchmark.cc`. Use Google Benchmark for registration, timing, and
   statistics; do not write a custom timing framework.
 - Put the operating system immediately before the extension in platform-specific files, such as
@@ -70,6 +73,11 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   clang-tidy diagnostics about raw pointers or indexing.
 - Do not repeat defensive checks on every element access when an outer contract already guarantees
   array length, index bounds, and lifetime.
+- In `benchmarks/dasprofile` reference ports, preserve upstream numerical coefficients and
+  conventional mathematical symbols. Its local `.clang-tidy` permits those literals and names,
+  contiguous buffer indexing, and pointer arithmetic. Bound traversals by prepared container sizes
+  or fixed algorithm dimensions and check every workload result; do not add per-element checked
+  access solely for lint. These exceptions do not apply to compiler/runtime code or input boundaries.
 - Aim for O(1), O(log n), or O(n) core loops. Avoid unindexed nested linear scans and frequent
   linear searches.
 - Validate refactoring that may affect hot paths with Release benchmarks, assembly, or
@@ -85,6 +93,11 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   Explain empirical strategy values in an anonymous namespace or configuration structure.
 - Use strong types or enums for internal object types, modes, and state machines instead of string
   comparisons.
+- Preserve externally fixed native ABI and LLVM override signatures. `vl lint` excludes
+  `bugprone-easily-swappable-parameters` in `runtime/native_operations.cc` and
+  `compiler/jit/platform_support_win.cc`: generated C entries and ORC resource-transfer callbacks
+  retain their specified positional scalar arguments. Keep their parameter roles explicit; use
+  strong types for new internal interfaces instead of extending this exception.
 - Centralize protocol keys shared between modules as `inline constexpr std::string_view` constants.
   Do not scatter hard-coded copies.
 - Use structured path interfaces such as `std::filesystem::path`; do not concatenate separators
@@ -99,6 +112,11 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   `std::optional` represents only legitimate absence.
 - Define ownership, borrowing duration, destruction order, and threading constraints for every
   resource type.
+- In `runtime/native_instance.cc`, use `std::unique_ptr<T[]>` for fallible fixed-array preparation
+  before transferring ownership to the native program state. `vl lint` excludes the two
+  `avoid-c-arrays` checks in that file because this owner preserves the existing `nothrow` failure
+  boundary and the generated code's raw-pointer ABI. Other C-style array declarations remain
+  prohibited; do not substitute a throwing allocation or an ABI-dependent container layout.
 - External files, text, and user input must not cause intentional process termination. Return
   actionable diagnostics or failure results at the actual boundary.
 - Assert runtime invariants once at their actual boundary. Do not repeatedly check state guaranteed

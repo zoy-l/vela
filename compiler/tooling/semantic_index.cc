@@ -163,8 +163,7 @@ SemanticIndex::SemanticIndex(std::string_view path,
     : SemanticIndex(
           frontend::LoadProgram(path, modules, overlays, frontend::SourceLoadMode::Editor)) {}
 
-SemanticIndex::SemanticIndex(frontend::ParseResult loaded) {
-  program_ = std::move(loaded.program);
+SemanticIndex::SemanticIndex(frontend::ParseResult loaded) : program_(std::move(loaded.program)) {
   for (const auto& resolution : program_.file_resolutions) {
     resolutions_.emplace(resolution.requested_path, resolution.canonical_path);
   }

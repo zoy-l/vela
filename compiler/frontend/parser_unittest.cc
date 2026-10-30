@@ -1,6 +1,7 @@
 #include "compiler/frontend/parser.h"
 
 #include <array>
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -16,8 +17,8 @@ TEST(ParserTest, PreservesBinaryPrecedenceAndLeftAssociativity) {
       std::to_array<std::string_view>({"||", "&&", "|", "^", "&", "==", "<", "<<", "+", "*"});
   for (std::size_t lower = 0; lower < kOperators.size(); ++lower) {
     for (std::size_t higher = lower; higher < kOperators.size(); ++higher) {
-      const auto left_op = kOperators[lower];
-      const auto right_op = kOperators[higher];
+      const auto left_op = kOperators.at(lower);
+      const auto right_op = kOperators.at(higher);
       const std::string source = "func f(): int { return a " + std::string(left_op) + " b " +
                                  std::string(right_op) + " c; }";
       SCOPED_TRACE(source);
@@ -65,7 +66,7 @@ TEST(ParserTest, PreservesTypeOperatorGrammarAndAssignmentAssociativity) {
   ASSERT_NE(logical.left, nullptr);
   EXPECT_EQ(logical.left->text, "??");
 
-  for (const auto expression : {"a < b is int", "a is int + b", "a +", "a <", "a *"}) {
+  for (const auto* const expression : {"a < b is int", "a is int + b", "a +", "a <", "a *"}) {
     SCOPED_TRACE(expression);
     EXPECT_FALSE(ParseSource("func f(): int { return " + std::string(expression) + "; }")
                      .diagnostics.empty());

@@ -9,6 +9,7 @@
 #include "runtime/heap.h"
 #include "runtime/value.h"
 #include "vm/bytecode.h"
+#include "vm/execution_status.h"
 #include "vm/program.h"
 
 namespace vela::vm::internal {
@@ -34,11 +35,12 @@ StepResult Execution::ExecuteDynamicArray(ActiveFrame& active, Instruction instr
   }
   std::expected<runtime::Value, ExecutionStatus> value;
   if (builtin == Builtin::DynamicArrayPrepare) {
-    const auto callable = ResolveCallable(input[1]);
+    const auto callback = input.subspan(1).front();
+    const auto callable = ResolveCallable(callback);
     if (!callable) {
       return std::unexpected(callable.error());
     }
-    const auto* signature = runtime::Heap::ClassOf(*input[1].AsObject())->callable_type();
+    const auto* signature = runtime::Heap::ClassOf(*callback.AsObject())->callable_type();
     if (signature == nullptr) {
       return std::unexpected(ExecutionStatus::TypeError);
     }

@@ -11,7 +11,7 @@
 namespace vela::benchmarks {
 namespace {
 
-enum class TemplateKind { Function, Class };
+enum class TemplateKind : std::uint8_t { Function, Class };
 
 void SpecializeTemplates(benchmark::State& state, TemplateKind kind) {
   std::string body;
@@ -29,9 +29,11 @@ void SpecializeTemplates(benchmark::State& state, TemplateKind kind) {
   source += "func main(): void {";
   for (std::int64_t index = 0; index < state.range(1); ++index) {
     const auto name = "Item" + std::to_string(index);
-    source += kind == TemplateKind::Function
-                  ? "duplicate<" + name + ">(" + name + "());"
-                  : "Container<" + name + ">(value: " + name + "()).read();";
+    source += kind == TemplateKind::Function ? "duplicate<" : "Container<";
+    source += name;
+    source += kind == TemplateKind::Function ? ">(" : ">(value: ";
+    source += name;
+    source += kind == TemplateKind::Function ? "());" : "()).read();";
   }
   source += "}";
   const auto parsed = frontend::ParseSource(source);

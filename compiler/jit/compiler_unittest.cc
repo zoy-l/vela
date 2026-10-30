@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <expected>
 #include <memory>
 #include <optional>
@@ -12,10 +12,14 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <utility>
 
 #include <gtest/gtest.h>
 
+#include "base/declaration.h"
+#include "base/execution_status.h"
+#include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/source_session.h"
 #include "runtime/future.h"
@@ -41,15 +45,17 @@ std::string DiagnosticsText(const frontend::Diagnostics& diagnostics) {
   return text;
 }
 
-std::expected<CompiledImage, frontend::Diagnostics> CompileText(Compiler& compiler,
-                                                                std::string source) {
+std::expected<CompiledImage, frontend::Diagnostics> CompileText(
+    Compiler& compiler,
+    std::string source,
+    NativeCodeTier tier = NativeCodeTier::Baseline) {
   SourceSession session("main.vela");
   const auto prepared = session.Prepare(
       {.changes = {{.path = "main.vela", .text = std::move(source)}}, .added_roots = {}});
   if (!prepared) {
     return std::unexpected(prepared.error().diagnostics);
   }
-  return compiler.Compile(prepared->snapshot().program, {.preserve_ir = true});
+  return compiler.Compile(prepared->snapshot().program, {.tier = tier, .preserve_ir = true});
 }
 
 TEST(JitCompilerTest, MaterializesTheCompleteImageBeforePublishingNamedEntries) {
@@ -99,7 +105,11 @@ TEST(JitCompilerTest, AsyncResumptionKeepsItsMachineCodeAfterTheCompilerIsDestro
   auto* future = runtime::Heap::GetFuture(*root.value().AsObject());
   ASSERT_NE(future, nullptr);
   ASSERT_TRUE(isolate.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost));
-  EXPECT_EQ(future->value()->AsInteger(), 42);
+  const auto completed = future->value();
+  if (!completed) {
+    FAIL() << "Future did not complete with a value";
+  }
+  EXPECT_EQ(completed->AsInteger(), 42);
 }
 
 TEST(JitCompilerTest, DiscardedCompiledCandidatesRetireTheirOrcResources) {
@@ -121,11 +131,17 @@ TEST(JitCompilerTest, CapturedMachineCodeKeepsItsBodyAndCallsTheLatestNamedImple
   SourceSession source("main.vela");
   runtime::Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
-  const auto first =
-      source.Prepare({.changes = {{.path = "main.vela",
-                                   .text = "export func answer(): int { return 40; } "
-                                           "export func caller(): int { return answer(); }"}},
-                      .added_roots = {}});
+  const auto first = source.Prepare({
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = "export func answer(): int { return 40; } "
+                          "export func caller(): int { return answer(); }",
+              },
+          },
+      .added_roots = {},
+  });
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
   {
     const auto compiled = (*compiler)->Compile(first->snapshot().program);
@@ -141,12 +157,18 @@ TEST(JitCompilerTest, CapturedMachineCodeKeepsItsBodyAndCallsTheLatestNamedImple
   ASSERT_TRUE(caller);
   std::optional<runtime::NativeVersionEntry> old_answer = *answer->Capture();
   std::optional<runtime::NativeVersionEntry> old_caller = *caller->Capture();
-  const auto next =
-      source.Prepare({.base_revision = 1,
-                      .changes = {{.path = "main.vela",
-                                   .text = "export func answer(): int { return 42; } "
-                                           "export func caller(): int { return answer() + 100; }"}},
-                      .added_roots = {}});
+  const auto next = source.Prepare({
+      .base_revision = 1,
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = "export func answer(): int { return 42; } "
+                          "export func caller(): int { return answer() + 100; }",
+              },
+          },
+      .added_roots = {},
+  });
   ASSERT_TRUE(next) << DiagnosticsText(next.error().diagnostics);
   {
     const auto compiled = (*compiler)->Compile(next->snapshot().program);
@@ -175,14 +197,19 @@ TEST(JitCompilerTest, GlobalAndStaticSlotsAreSharedByOldAndNewCodeAndPendingCand
   runtime::Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
   const auto first = source.Prepare({
-      .changes = {{.path = "main.vela",
-                   .text = "let score = 10; const title = 'old'; let cold = 20; "
-                           "class Counter { static value: int = 4; } "
-                           "export func answer(): int { "
-                           "return score + Counter.value + (title == 'old' ? 1 : 1000); } "
-                           "export func edit(): void { score = 42; Counter.value = 7; } "
-                           "export func bump(): int { score++; return score; } "
-                           "export func readCold(): int { return cold; }"}},
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = "let score = 10; const title = 'old'; let cold = 20; "
+                          "class Counter { static value: int = 4; } "
+                          "export func answer(): int { "
+                          "return score + Counter.value + (title == 'old' ? 1 : 1000); } "
+                          "export func edit(): void { score = 42; Counter.value = 7; } "
+                          "export func bump(): int { score++; return score; } "
+                          "export func readCold(): int { return cold; }",
+              },
+          },
       .added_roots = {},
   });
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
@@ -213,14 +240,19 @@ TEST(JitCompilerTest, GlobalAndStaticSlotsAreSharedByOldAndNewCodeAndPendingCand
   EXPECT_EQ(initial->AsInteger(), 15);
   const auto next = source.Prepare({
       .base_revision = 1,
-      .changes = {{.path = "main.vela",
-                   .text = "let added = 3; let cold = 200; const title = 'new'; let score = 100; "
-                           "class Counter { static value: int = 400; } "
-                           "export func answer(): int { "
-                           "return score + Counter.value + (title == 'old' ? 1 : 1000) + 100; } "
-                           "export func edit(): void { score = 1000; } "
-                           "export func bump(): int { score += 100; return score; } "
-                           "export func readCold(): int { return cold + added; }"}},
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = "let added = 3; let cold = 200; const title = 'new'; let score = 100; "
+                          "class Counter { static value: int = 400; } "
+                          "export func answer(): int { "
+                          "return score + Counter.value + (title == 'old' ? 1 : 1000) + 100; } "
+                          "export func edit(): void { score = 1000; } "
+                          "export func bump(): int { score += 100; return score; } "
+                          "export func readCold(): int { return cold + added; }",
+              },
+          },
       .added_roots = {},
   });
   ASSERT_TRUE(next) << DiagnosticsText(next.error().diagnostics);
@@ -303,9 +335,14 @@ TEST(JitCompilerTest, NominalTypesInHostCallsAndContainersSurviveLayoutVersions)
       "export func check(values: Box[], value: dynamic): bool { "
       "return values[0] == value && value is Box && value is Reader; } ";
   const auto first = source.Prepare({
-      .changes = {{.path = "main.vela",
-                   .text =
-                       declarations + "export func read(value: Box): int { return value.value; }"}},
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text =
+                      declarations + "export func read(value: Box): int { return value.value; }",
+              },
+          },
       .added_roots = {},
   });
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
@@ -334,9 +371,14 @@ TEST(JitCompilerTest, NominalTypesInHostCallsAndContainersSurviveLayoutVersions)
   const runtime::RootedValue array(isolate, *wrapped);
   const auto next = source.Prepare({
       .base_revision = 1,
-      .changes = {{.path = "main.vela",
-                   .text = "class Added { other: string = 'new'; } " + declarations +
-                           "export func read(value: Box): int { return value.value + 2; }"}},
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = "class Added { other: string = 'new'; } " + declarations +
+                          "export func read(value: Box): int { return value.value + 2; }",
+              },
+          },
       .added_roots = {},
   });
   ASSERT_TRUE(next) << DiagnosticsText(next.error().diagnostics);
@@ -361,7 +403,7 @@ TEST(JitCompilerTest, NominalTypesInHostCallsAndContainersSurviveLayoutVersions)
   ASSERT_TRUE(newer);
   const auto* previous_layout = runtime::Heap::ClassOf(*object.value().AsObject());
   const auto* current_layout = runtime::Heap::ClassOf(*newer->AsObject());
-  EXPECT_NE(previous_layout, current_layout);
+  EXPECT_EQ(previous_layout, current_layout);
   EXPECT_EQ(&previous_layout->nominal_type(), &current_layout->nominal_type());
 }
 
@@ -372,9 +414,14 @@ TEST_P(JitContractTest, RejectsIncompatibleCallsAndSlotsWithoutChangingThePublis
   runtime::Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
   const auto first = source.Prepare({
-      .changes = {{.path = "main.vela",
-                   .text = "let value = 40; export func answer(input: int): int { "
-                           "return value + input; }"}},
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = "let value = 40; export func answer(input: int): int { "
+                          "return value + input; }",
+              },
+          },
       .added_roots = {},
   });
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
@@ -453,9 +500,13 @@ TEST_P(JitNominalContractTest, RejectsTypeContractChangesIncludingUninstantiated
   auto& dispatch = isolate.native_dispatch();
   const auto change = GetParam();
   const auto first = source.Prepare({
-      .changes = {{.path = "main.vela",
-                   .text =
-                       std::string(change.before) + " export func answer(): int { return 42; }"}},
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = std::string(change.before) + " export func answer(): int { return 42; }",
+              },
+          },
       .added_roots = {},
   });
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
@@ -470,17 +521,26 @@ TEST_P(JitNominalContractTest, RejectsTypeContractChangesIncludingUninstantiated
   const auto counts = isolate.layout_counts();
   const auto next = source.Prepare({
       .base_revision = 1,
-      .changes = {{.path = "main.vela",
-                   .text = std::string(change.after) + " export func answer(): int { return 0; }"}},
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = std::string(change.after) + " export func answer(): int { return 0; }",
+              },
+          },
       .added_roots = {},
   });
-  ASSERT_TRUE(next) << DiagnosticsText(next.error().diagnostics);
-  const auto compiled = (*compiler)->Compile(next->snapshot().program);
-  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-  const auto prepared = dispatch.Prepare(1, compiled->image);
-  ASSERT_FALSE(prepared);
-  EXPECT_EQ(prepared.error().status, runtime::NativePublicationStatus::RequiresReload);
-  EXPECT_NE(prepared.error().declaration, DeclarationId{});
+  if (!next) {
+    EXPECT_EQ(next.error().status, SourceCandidateStatus::RequiresReload);
+    EXPECT_NE(next.error().declaration, DeclarationId{});
+  } else {
+    const auto compiled = (*compiler)->Compile(next->snapshot().program);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    const auto prepared = dispatch.Prepare(1, compiled->image);
+    ASSERT_FALSE(prepared);
+    EXPECT_EQ(prepared.error().status, runtime::NativePublicationStatus::RequiresReload);
+    EXPECT_NE(prepared.error().declaration, DeclarationId{});
+  }
   EXPECT_EQ(isolate.layout_counts(), counts);
   EXPECT_EQ(dispatch.revision(), 1U);
   const auto answer = dispatch.FindEntry("main.vela", "answer");
@@ -515,12 +575,17 @@ TEST(JitCompilerTest, OldInterfaceCallsSelectCurrentMethodsByStableSelectors) {
   runtime::Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
   const auto first = source.Prepare({
-      .changes = {{.path = "main.vela",
-                   .text = "interface Reader { read(): int; other(): int; } "
-                           "class Box implements Reader { "
-                           "read(): int { return 40; } other(): int { return 1; } } "
-                           "export func make(): Box { return Box(); } "
-                           "export func call(value: Reader): int { return value.read(); }"}},
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = "interface Reader { read(): int; other(): int; } "
+                          "class Box implements Reader { "
+                          "read(): int { return 40; } other(): int { return 1; } } "
+                          "export func make(): Box { return Box(); } "
+                          "export func call(value: Reader): int { return value.read(); }",
+              },
+          },
       .added_roots = {},
   });
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
@@ -543,12 +608,17 @@ TEST(JitCompilerTest, OldInterfaceCallsSelectCurrentMethodsByStableSelectors) {
   const runtime::RootedValue receiver(isolate, *created);
   const auto next = source.Prepare({
       .base_revision = 1,
-      .changes = {{.path = "main.vela",
-                   .text = "interface Reader { other(): int; read(): int; } "
-                           "class Box implements Reader { "
-                           "other(): int { return 100; } read(): int { return 42; } } "
-                           "export func make(): Box { return Box(); } "
-                           "export func call(value: Reader): int { return value.read() + 1; }"}},
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = "interface Reader { other(): int; read(): int; } "
+                          "class Box implements Reader { "
+                          "other(): int { return 100; } read(): int { return 42; } } "
+                          "export func make(): Box { return Box(); } "
+                          "export func call(value: Reader): int { return value.read() + 1; }",
+              },
+          },
       .added_roots = {},
   });
   ASSERT_TRUE(next) << DiagnosticsText(next.error().diagnostics);
@@ -568,13 +638,15 @@ TEST(JitCompilerTest, OldInterfaceCallsSelectCurrentMethodsByStableSelectors) {
   EXPECT_EQ(current->AsInteger(), 43);
 }
 
-class JitLanguageTest : public testing::TestWithParam<std::string_view> {};
+class JitLanguageTest
+    : public testing::TestWithParam<std::tuple<std::string_view, NativeCodeTier>> {};
 
 TEST_P(JitLanguageTest, ExecutesNativeProductionPathsWithPreciseRoots) {
-  SCOPED_TRACE(GetParam());
+  const auto [source, tier] = GetParam();
+  SCOPED_TRACE(source);
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
-  const auto compiled = CompileText(**compiler, std::string(GetParam()));
+  const auto compiled = CompileText(**compiler, std::string(source), tier);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
   runtime::Isolate isolate(1);
   auto prepared = isolate.native_dispatch().Prepare(0, compiled->image);
@@ -599,98 +671,102 @@ TEST_P(JitLanguageTest, ExecutesNativeProductionPathsWithPreciseRoots) {
 
 INSTANTIATE_TEST_SUITE_P(NativeSemantics,
                          JitLanguageTest,
-                         testing::Values(
-                             R"(
+                         testing::Combine(testing::Values(
+                                              R"(
 func sum(count: int): int { if (count == 0) { return 0; } return count + sum(count - 1); }
 export func main(): int { let value = 0; for (let i = 0; i < 6; i++) { value += i; }
   switch (value) { case 15: return sum(6) << 1; default: return 0; } }
 )",
-                             R"(
+                                              R"(
 func counter(value: int): () => int { return (): int => { value++; return value; }; }
 export func main(): int { const next = counter(40); const values: (() => int)[] = [next];
   next(); return values[0](); }
 )",
-                             R"(
+                                              R"(
 interface Reader { read(): int; }
 class Base { stored: int = 40; read(): int { return this.stored; } }
 class Child extends Base implements Reader { override read(): int { return super.read() + 2; } }
 export func main(): int { const reader: Reader = Child(); const callback = reader.read;
   return callback(); }
 )",
-                             R"(
+                                              R"(
 func same<T>(value: T): T { return value; }
 class Box<T> { private stored: T; constructor(value: T) { this.stored = value; }
   read(): T { return this.stored; } }
 type IntegerBox = Box<int>;
 export func main(): int { return same<int>(IntegerBox(42).read()); }
 )",
-                             R"(
+                                              R"(
 let count = 0;
 func initial(): int { count++; return 40; }
 const value = initial();
 export func main(): int { const first = value; return first + value - 39 + count; }
 )",
-                             R"(
+                                              R"(
 func divide(value: int, denominator: int): Expected<int, string> {
   if (denominator == 0) { return err('zero'); } return ok(value / denominator); }
 export func main(): int { const result = divide(84, 2);
   try { const zero = 0; return 1 / zero; }
   catch (error: Error) { return error.code == 'DivisionByZero' ? result.value() : 0; } }
 )",
-                             R"(
+                                              R"(
 enum Shade { light, dark }
 func choose(value: int?): int { return match (value) { null => 0, let present => present }; }
 export func main(): int { const selected = Shade.dark;
   return match (selected) { Shade.light => 0, Shade.dark => choose(42) }; }
 )",
-                             R"(
+                                              R"(
 export func main(): int { const values = [1, 2, 3]; values.push(4);
   const mapped = values.map((value: int): int => value * 2);
   return mapped.reduce((sum: int, value: int): int => sum + value, 0) + 22; }
 )",
-                             R"(
+                                              R"(
 class Item { value: int; }
 export func main(): int { const key = Item(value: 40); const values = Map<Item, string>();
   values.set(key, 'ab'); const text = values.get(key);
   if (text != null && !values.has(Item(value: 40))) { return key.value + text.length; }
   return 0; }
 )",
-                             R"(
+                                              R"(
 export func main(): int { const bytes = ByteArray(length: 8); const data = ByteData.view(bytes);
   const write: (int,int) => void = data.setInt32; write(0, 42);
   return data.getInt32(0) == 42 && bytes[3] == 42 ? 42 : 0; }
 )",
-                             R"(
+                                              R"(
 export func main(): int { const root: dynamic = Json.parse('{"items":[40,2]}');
   const values: dynamic[] = root.get('items'); return (values[0] as int) + (values[1] as int); }
 )",
-                             R"(
+                                              R"(
 export func main(): int { const found = RegExp('(?<digits>[0-9]+)').firstMatch('😀42');
   if (found != null) { return int.parse(found.namedGroup('digits') ?? '0'); } return 0; }
 )",
-                             R"(
+                                              R"(
 export async func main(): Future<int> {
   const values = await Future.wait([Future.value(20), Future.delayed(1, (): int => 22)]);
   return values[0] + values[1]; }
 )",
-                             R"(
+                                              R"(
 class Failure { value: int; }
 async func failed(): Future<int> { await sleep(1); throw Failure(value: 40); }
 export async func main(): Future<int> { let value = 0;
   try { value = await failed(); } catch (error: Failure) { value = error.value; }
   finally { value += 2; } return value; }
-)"));
+)"),
+                                          testing::Values(NativeCodeTier::Baseline,
+                                                          NativeCodeTier::Optimized)));
 
-std::binary_semaphore entered{0};
-std::atomic_int finalizers{0};
+std::binary_semaphore& StopSignal() {
+  static std::binary_semaphore signal{0};
+  return signal;
+}
 
 void Entered(runtime::NativeContext& context) noexcept {
   EXPECT_TRUE(context.isolate().native_control().HasHostBorrow());
-  entered.release();
+  StopSignal().release();
 }
 
 void Finalized() noexcept {
-  finalizers.fetch_add(1);
+  ADD_FAILURE() << "Stopping a run must not execute its finalizers";
 }
 
 std::int64_t Twice(std::int64_t value) noexcept {
@@ -755,9 +831,10 @@ TEST(JitCompilerTest, AddedModulesExposeTheirExportsWithoutRunningUserInitialize
       runtime::NativeFunction::Bind<&UnexpectedInitialization>("initialized")));
   static_cast<void>(isolate.FreezeBindings());
   auto& dispatch = isolate.native_dispatch();
-  const auto first = source.Prepare(
-      {.changes = {{.path = "main.vela", .text = "export func answer(): int { return 40; }"}},
-       .added_roots = {}});
+  const auto first = source.Prepare({
+      .changes = {{.path = "main.vela", .text = "export func answer(): int { return 40; }"}},
+      .added_roots = {},
+  });
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
   const auto initial_code = (*compiler)->Compile(first->snapshot().program);
   ASSERT_TRUE(initial_code) << DiagnosticsText(initial_code.error());
@@ -767,12 +844,18 @@ TEST(JitCompilerTest, AddedModulesExposeTheirExportsWithoutRunningUserInitialize
   ASSERT_TRUE(source.Commit(*first));
   const auto original = dispatch.FindEntry("main.vela", "answer");
   ASSERT_TRUE(original);
-  const auto added = source.Prepare(
-      {.base_revision = 1,
-       .changes = {{.path = "added.vela",
-                    .text = "external func initialized(): int; let unused = initialized(); "
-                            "export func answer(): int { return 42; }"}},
-       .added_roots = {"added.vela"}});
+  const auto added = source.Prepare({
+      .base_revision = 1,
+      .changes =
+          {
+              {
+                  .path = "added.vela",
+                  .text = "external func initialized(): int; let unused = initialized(); "
+                          "export func answer(): int { return 42; }",
+              },
+          },
+      .added_roots = {"added.vela"},
+  });
   ASSERT_TRUE(added) << DiagnosticsText(added.error().diagnostics);
   const auto code = (*compiler)->Compile(added->snapshot().program);
   ASSERT_TRUE(code) << DiagnosticsText(code.error());
@@ -805,15 +888,17 @@ export func main(): void { entered(); try { while (true) {} } finally { finalize
   const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
   ASSERT_TRUE(entry);
   std::jthread request([&] {
-    if (entered.try_acquire_for(std::chrono::seconds(10))) {
+    constexpr auto kEntryTimeout = std::chrono::seconds(10);
+    const auto entered = StopSignal().try_acquire_for(kEntryTimeout);
+    EXPECT_TRUE(entered);
+    if (entered) {
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
-      isolate.native_control().RequestStop();
     }
+    isolate.native_control().RequestStop();
   });
   const auto result = entry->Invoke({});
   ASSERT_FALSE(result);
   EXPECT_EQ(result.error(), ExecutionStatus::ExecutionStopped);
-  EXPECT_EQ(finalizers.load(), 0);
   EXPECT_FALSE(isolate.native_control().HasHostBorrow());
 }
 

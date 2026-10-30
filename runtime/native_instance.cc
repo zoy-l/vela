@@ -15,11 +15,14 @@
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 
 #include "base/callable.h"
+#include "base/declaration.h"
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "base/member.h"
+#include "base/native_program_mode.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/layout_transaction.h"
@@ -27,6 +30,8 @@
 #include "runtime/native_build_identity.h"
 #include "runtime/native_function.h"
 #include "runtime/native_image.h"
+#include "runtime/native_program_state.h"
+#include "runtime/object.h"
 #include "runtime/program_layouts.h"
 #include "runtime/value.h"
 
@@ -103,6 +108,40 @@ layout::Signature DescribeSignature(const NativeSignatureDescription& source) {
   return result;
 }
 
+std::expected<void, NativeInstantiationError> ValidateImage(const NativeImage& image,
+                                                           const NativeTypeIdentities* identities) {
+  if (image.abi_version != kNativeAbiVersion || image.record_bytes != sizeof(NativeImage) ||
+      image.abi_identity.text() != NativeRuntimeAbiIdentity()) {
+    return std::unexpected(NativeInstantiationError{
+        .status = NativeInstantiationStatus::AbiMismatch,
+        .message = "native image and runtime ABI identities do not match",
+    });
+  }
+  if (image.target.text() != NativeTargetIdentity()) {
+    return std::unexpected(NativeInstantiationError{
+        .status = NativeInstantiationStatus::TargetMismatch,
+        .message = "native image and runtime targets do not match",
+    });
+  }
+  if (image.native_mode == static_cast<std::uint32_t>(NativeProgramMode::Reloadable) &&
+      identities == nullptr) {
+    return std::unexpected(NativeInstantiationError{
+        .status = NativeInstantiationStatus::MissingSession,
+        .message = "reloadable images must be instantiated by their session dispatch",
+    });
+  }
+  return {};
+}
+
+void PrepareFieldCaches(NativeProgramState& state) {
+  const auto& image = *state.image;
+  state.field_caches.reserve(image.functions.size);
+  for (const auto& function : image.functions.values()) {
+    state.field_caches.emplace_back(
+        function.dependencies == nullptr ? 0 : function.dependencies->fields.size);
+  }
+}
+
 layout::Program DescribeLayouts(const NativeImage& image) {
   return {
       .interfaces = ConvertTable<std::string>(image.interfaces, Text),
@@ -128,6 +167,121 @@ layout::Program DescribeLayouts(const NativeImage& image) {
       .array_types = CopyTable(image.array_types),
       .collection_types = CopyTable(image.collection_types),
   };
+}
+
+void BindReloadableFields(layout::Class& description,
+                          const NativeClassDescription& type,
+                          std::vector<DeclarationId>& fields,
+                          ClassLayoutOptions& options) {
+  options.storage = ClassStorage::Reloadable;
+  const auto declared = type.fields.values();
+  absl::flat_hash_set<DeclarationId> present;
+  for (const auto& field : declared) {
+    present.insert(field.declaration);
+  }
+  absl::flat_hash_map<DeclarationId, std::uint32_t> slots;
+  for (std::size_t slot = 0; slot < fields.size(); ++slot) {
+    auto& field = fields.at(slot);
+    if (!present.contains(field)) {
+      field = {};
+    } else {
+      slots.emplace(field, static_cast<std::uint32_t>(slot));
+    }
+  }
+  for (const auto& field : declared) {
+    if (!slots.contains(field.declaration)) {
+      slots.emplace(field.declaration, static_cast<std::uint32_t>(fields.size()));
+      fields.push_back(field.declaration);
+    }
+  }
+  for (auto& reference : description.reference_fields) {
+    reference = slots.at(declared.subspan(reference).front().declaration);
+  }
+  description.field_count = static_cast<std::uint32_t>(fields.size());
+  options.field_declarations = fields;
+}
+
+void RegisterInterfaces(const NativeImage& image,
+                        const layout::Program& description,
+                        Isolate& isolate,
+                        NativeTypeIdentities& identities,
+                        LayoutCache& cache) {
+  const auto interface_ids = image.interface_declarations.values();
+  for (std::size_t index = 0; index < description.interfaces.size(); ++index) {
+    const auto identity = interface_ids.subspan(index).front();
+    if (identity == DeclarationId{}) {
+      continue;
+    }
+    const auto [entry, inserted] = identities.interfaces.try_emplace(identity, nullptr);
+    if (inserted) {
+      entry->second = isolate.CreateInterfaceType();
+    }
+    cache.interfaces.emplace(description.interfaces.at(index), entry->second);
+  }
+}
+
+std::vector<ClassLayoutOptions> ReloadableClassOptions(const NativeImage& image,
+                                                       layout::Program& description,
+                                                       Isolate& isolate,
+                                                       NativeTypeIdentities& identities,
+                                                       LayoutCache& cache) {
+  RegisterInterfaces(image, description, isolate, identities, cache);
+  const auto classes = image.classes.values();
+  std::vector<ClassLayoutOptions> result(classes.size());
+  for (std::size_t index = 0; index < classes.size(); ++index) {
+    const auto& type = classes.subspan(index).front();
+    const auto kind = static_cast<layout::Class::Kind>(type.kind);
+    if (type.declaration == DeclarationId{} || kind == layout::Class::Kind::RuntimeError ||
+        kind == layout::Class::Kind::DateParts) {
+      continue;
+    }
+    const auto [entry, inserted] = identities.classes.try_emplace(type.declaration, nullptr);
+    if (inserted) {
+      std::vector<const InterfaceType*> interfaces;
+      for (const auto interface : type.interfaces.values()) {
+        interfaces.push_back(cache.interfaces.at(description.interfaces.at(interface)));
+      }
+      entry->second = isolate.CreateNominalType({
+          .kind = kind == layout::Class::Kind::Enum ? NominalKind::Enum : NominalKind::Class,
+          .interfaces = std::move(interfaces),
+          .declaration = type.declaration,
+      });
+    }
+    auto& options = result.at(index);
+    options.nominal = entry->second;
+    options.revision = image.revision;
+    if (kind == layout::Class::Kind::Instance && type.callable_function == kNoNativeIndex) {
+      auto& fields = identities.fields.try_emplace(type.declaration).first->second;
+      BindReloadableFields(description.classes.at(index), type, fields, options);
+    }
+  }
+  return result;
+}
+
+std::vector<MemberDefinition> DescribeMembers(const NativeImage& image,
+                                              const ProgramLayouts& layouts) {
+  std::vector<MemberDefinition> members;
+  members.reserve(image.members.size);
+  for (const auto& member : image.members.values()) {
+    auto target = member.target;
+    if (member.kind == static_cast<std::uint32_t>(MemberKind::Field)) {
+      const auto& receiver = image.types.values().subspan(member.receiver_type).front();
+      const auto* layout = layouts.classes.at(receiver.index);
+      if (layout->storage() == ClassStorage::Reloadable) {
+        const auto fields = image.classes.values().subspan(receiver.index).front().fields.values();
+        target = *layout->FieldIndex(fields.subspan(target).front().declaration);
+      }
+    }
+    members.push_back({
+        .receiver_type = member.receiver_type,
+        .name = std::string(member.name.text()),
+        .kind = static_cast<MemberKind>(member.kind),
+        .target = target,
+        .type = member.type == kNoNativeIndex ? std::nullopt : std::optional(member.type),
+        .setter = member.setter == kNoNativeIndex ? std::nullopt : std::optional(member.setter),
+    });
+  }
+  return members;
 }
 
 CallSignature DescribeCall(const NativeFunctionDescription& source) {
@@ -298,25 +452,8 @@ NativeInstance::Instantiate(Isolate& isolate,
                             const NativeImage& image,
                             std::shared_ptr<const NativeImage> owner,
                             NativeTypeIdentities* identities) {
-  if (image.abi_version != kNativeAbiVersion || image.record_bytes != sizeof(NativeImage) ||
-      image.abi_identity.text() != NativeRuntimeAbiIdentity()) {
-    return std::unexpected(NativeInstantiationError{
-        .status = NativeInstantiationStatus::AbiMismatch,
-        .message = "native image and runtime ABI identities do not match",
-    });
-  }
-  if (image.target.text() != NativeTargetIdentity()) {
-    return std::unexpected(NativeInstantiationError{
-        .status = NativeInstantiationStatus::TargetMismatch,
-        .message = "native image and runtime targets do not match",
-    });
-  }
-  if (image.native_mode == static_cast<std::uint32_t>(NativeProgramMode::Reloadable) &&
-      identities == nullptr) {
-    return std::unexpected(NativeInstantiationError{
-        .status = NativeInstantiationStatus::MissingSession,
-        .message = "reloadable images must be instantiated by their session dispatch",
-    });
+  if (const auto validated = ValidateImage(image, identities); !validated) {
+    return std::unexpected(validated.error());
   }
   std::unique_ptr<NativeProgramState> data(new (std::nothrow) NativeProgramState);
   if (data == nullptr) {
@@ -328,6 +465,9 @@ NativeInstance::Instantiate(Isolate& isolate,
   data->isolate = &isolate;
   data->image = &image;
   data->image_owner = std::move(owner);
+  if (identities != nullptr) {
+    PrepareFieldCaches(*data);
+  }
   std::unique_ptr<NativeInstance> instance(
       new (std::nothrow) NativeInstance(*data, Value::Null(), RootOwner::NativeInstance));
   if (instance == nullptr) {
@@ -337,15 +477,16 @@ NativeInstance::Instantiate(Isolate& isolate,
     });
   }
   auto& state = *instance->data_;
-  const auto description = DescribeLayouts(image);
+  auto description = DescribeLayouts(image);
   const auto bound = instance->BindImports(description);
   if (!bound) {
     return std::unexpected(bound.error());
   }
-  LayoutTransaction transaction(isolate);
+  const auto closed = image.native_mode == static_cast<std::uint32_t>(NativeProgramMode::Closed);
+  LayoutTransaction transaction(isolate,
+                                closed ? LayoutLifetime::Isolate : LayoutLifetime::Reloadable);
   const auto existing = isolate.native_images_.find(&image);
   const auto has_owner = state.image_owner != nullptr;
-  const auto closed = image.native_mode == static_cast<std::uint32_t>(NativeProgramMode::Closed);
   const auto can_reuse = closed && existing != isolate.native_images_.end() &&
                          existing->second.static_lifetime == !has_owner &&
                          (!has_owner || !existing->second.owner.expired());
@@ -353,60 +494,16 @@ NativeInstance::Instantiate(Isolate& isolate,
   if (cache.code_identity == nullptr) {
     cache.code_identity = isolate.CreateCodeIdentity();
   }
-  std::vector<NominalType*> nominals;
+  std::vector<ClassLayoutOptions> class_options;
   if (identities != nullptr) {
-    const auto interface_ids = image.interface_declarations.values();
-    for (std::size_t index = 0; index < description.interfaces.size(); ++index) {
-      const auto identity = interface_ids[index];
-      if (identity == DeclarationId{}) {
-        continue;
-      }
-      const auto [entry, inserted] = identities->interfaces.try_emplace(identity, nullptr);
-      if (inserted) {
-        entry->second = isolate.CreateInterfaceType();
-      }
-      cache.interfaces.emplace(description.interfaces[index], entry->second);
-    }
-    const auto classes = image.classes.values();
-    nominals.resize(classes.size());
-    for (std::size_t index = 0; index < classes.size(); ++index) {
-      const auto& type = classes[index];
-      const auto kind = static_cast<layout::Class::Kind>(type.kind);
-      if (type.declaration == DeclarationId{} || kind == layout::Class::Kind::RuntimeError ||
-          kind == layout::Class::Kind::DateParts) {
-        continue;
-      }
-      const auto [entry, inserted] = identities->classes.try_emplace(type.declaration, nullptr);
-      if (inserted) {
-        std::vector<const InterfaceType*> interfaces;
-        for (const auto interface : type.interfaces.values()) {
-          interfaces.push_back(cache.interfaces.at(description.interfaces[interface]));
-        }
-        entry->second = isolate.CreateNominalType({
-            .kind = kind == layout::Class::Kind::Enum ? NominalKind::Enum : NominalKind::Class,
-            .interfaces = std::move(interfaces),
-        });
-      }
-      nominals[index] = entry->second;
-    }
+    class_options = ReloadableClassOptions(image, description, isolate, *identities, cache);
   }
-  state.layouts = InstantiateLayouts(description, isolate, cache, nominals);
+  state.layouts = InstantiateLayouts(description, isolate, cache, class_options);
   state.code_identity = cache.code_identity;
-  std::vector<MemberDefinition> members;
-  members.reserve(image.members.size);
-  for (const auto& member : image.members.values()) {
-    members.push_back({
-        .receiver_type = member.receiver_type,
-        .name = std::string(member.name.text()),
-        .kind = static_cast<MemberKind>(member.kind),
-        .target = member.target,
-        .type = member.type == kNoNativeIndex ? std::nullopt : std::optional(member.type),
-        .setter = member.setter == kNoNativeIndex ? std::nullopt : std::optional(member.setter),
-    });
-  }
+  auto members = DescribeMembers(image, state.layouts);
   state.members = MemberTable(state.layouts.types, std::move(members));
   for (auto* type : state.layouts.classes) {
-    if (type->callable()) {
+    if (type->callable() != nullptr) {
       type->BindCodeIdentity(*cache.code_identity);
     }
   }
@@ -420,6 +517,10 @@ NativeInstance::Instantiate(Isolate& isolate,
   instance->anchor_ = Value::Object(anchor);
   const auto initialized = instance->InitializeConstants();
   if (!initialized) {
+    // 常量对象尚未逃逸；先清除候选根并回收其对象，再回滚被它们借用的布局。
+    instance.reset();
+    isolate.heap().FinishCollection();
+    isolate.heap().Collect();
     return std::unexpected(initialized.error());
   }
   if (closed && has_owner) {
@@ -435,7 +536,11 @@ NativeInstance::Instantiate(Isolate& isolate,
                                                         .static_lifetime = !has_owner,
                                                     });
   }
-  transaction.Commit();
+  if (closed) {
+    transaction.Commit();
+  } else {
+    transaction.CommitNative(*anchor);
+  }
   return instance;
 }
 

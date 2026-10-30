@@ -228,7 +228,7 @@ void Parser::IndexTypeApplications() {
   type_application_ends_.assign(tokens_.size(), tokens_.size());
   std::vector<std::size_t> opening;
   for (std::size_t index = 0; index < tokens_.size(); ++index) {
-    const auto kind = tokens_[index].kind;
+    const auto kind = tokens_.subspan(index).front().kind;
     if (kind == TokenKind::Less) {
       opening.push_back(index);
       continue;
@@ -245,7 +245,7 @@ void Parser::IndexTypeApplications() {
       opening.clear();
     }
     while (count != 0 && !opening.empty()) {
-      type_application_ends_[opening.back()] = index;
+      type_application_ends_.at(opening.back()) = index;
       opening.pop_back();
       --count;
     }
@@ -260,11 +260,11 @@ bool Parser::IsTypeApplication() {
     // 每个 '<' 共享一次线性配对，避免比较表达式反复扫描同一后缀。
     IndexTypeApplications();
   }
-  const auto end = type_application_ends_[current_];
+  const auto end = type_application_ends_.at(current_);
   if (end == tokens_.size()) {
     return false;
   }
-  const auto next = tokens_[end + 1].kind;
+  const auto next = tokens_.subspan(end + 1).front().kind;
   return next == TokenKind::LeftParen || next == TokenKind::Dot || next == TokenKind::Is ||
          next == TokenKind::As || next == TokenKind::Semicolon || next == TokenKind::Comma ||
          next == TokenKind::RightParen || next == TokenKind::RightBracket;

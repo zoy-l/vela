@@ -6,9 +6,12 @@
 #include <span>
 #include <vector>
 
+#include "base/native_program_mode.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::compiler::native {
+
+enum class NativeDebugging : std::uint8_t { Safepoints, SourceLines };
 
 struct NativeRootPlan final {
   std::size_t count = 0;
@@ -18,6 +21,8 @@ struct NativeRootPlan final {
   std::vector<std::vector<ir::RegisterId>> suspended;
   std::vector<std::vector<std::size_t>> rematerialized;
   std::vector<std::uint8_t> safepoints;
+  // 原版本基线恢复使用的规范寄存器编号，包含标量局部值。
+  std::vector<std::vector<ir::RegisterId>> checkpoints;
 };
 
 struct NativeFunctionMetrics final {
@@ -28,6 +33,7 @@ struct NativeFunctionMetrics final {
 
 [[nodiscard]] NativeRootPlan PlanNativeRoots(const ir::Function& function,
                                              std::span<const ir::Function> functions,
-                                             NativeProgramMode mode);
+                                             NativeProgramMode mode,
+                                             NativeDebugging debugging);
 
 }  // namespace vela::compiler::native

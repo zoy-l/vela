@@ -17,6 +17,7 @@ struct ProgramLayouts final {
   std::vector<ClassLayout*> classes;
   std::vector<const ArrayLayout*> arrays;
   std::vector<const CollectionLayout*> collections;
+  std::vector<const InterfaceType*> interfaces;
   std::vector<TypeConstraint> types;
 };
 
@@ -35,6 +36,6 @@ struct LayoutCache final {
 [[nodiscard]] ProgramLayouts InstantiateLayouts(const layout::Program& description,
                                                 Isolate& isolate,
                                                 LayoutCache& cache,
-                                                std::span<NominalType* const> nominals = {});
+                                                std::span<const ClassLayoutOptions> classes = {});
 
 }  // namespace vela::runtime

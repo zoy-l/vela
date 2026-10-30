@@ -28,6 +28,7 @@
 #include "base/json.h"
 #include "base/path.h"
 #include "compiler/aot/native_compiler.h"
+#include "compiler/native/code_generator.h"
 #include "runtime/native_image.h"
 
 namespace vela::compiler::aot {

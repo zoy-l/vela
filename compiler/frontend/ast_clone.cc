@@ -3,6 +3,8 @@
 #include <memory>
 #include <optional>
 #include <utility>
+#include "compiler/frontend/ast.h"
+#include "compiler/frontend/diagnostic.h"
 
 namespace vela::frontend {
 namespace {
@@ -17,21 +19,23 @@ class AstCloner final {
   Program CloneProgram(const Program& source);
 
  private:
-  SourceLocation Relocate(SourceLocation location) const {
+  [[nodiscard]] SourceLocation Relocate(SourceLocation location) const {
     if (origin_) {
       location.source_id = origin_->source_id;
       location.line += origin_->line - 1;
     }
     return location;
   }
-  TypeName CloneType(const TypeName& source) const {
+  [[nodiscard]] TypeName CloneType(const TypeName& source) const {
     if (transform_ != nullptr && !source.name.empty()) {
       return transform_->TransformType(source);
     }
-    TypeName result{.name = source.name,
-                    .location = Relocate(source.location),
-                    .kind = source.kind,
-                    .arguments = {}};
+    TypeName result{
+        .name = source.name,
+        .location = Relocate(source.location),
+        .kind = source.kind,
+        .arguments = {},
+    };
     result.arguments.reserve(source.arguments.size());
     for (const auto& argument : source.arguments) {
       result.arguments.push_back(CloneType(argument));
@@ -208,9 +212,11 @@ Function AstCloner::CloneFunction(const Function& source) {
   result.return_type = CloneType(source.return_type);
   result.parameters.reserve(source.parameters.size());
   for (const auto& parameter : source.parameters) {
-    result.parameters.push_back({.type = CloneType(parameter.type),
-                                 .name = parameter.name,
-                                 .location = Relocate(parameter.location)});
+    result.parameters.push_back({
+        .type = CloneType(parameter.type),
+        .name = parameter.name,
+        .location = Relocate(parameter.location),
+    });
     if (transform_ != nullptr) {
       transform_->Declare(parameter.name);
     }
@@ -289,12 +295,14 @@ Program AstCloner::CloneProgram(const Program& source) {
     result.classes.push_back(CloneClass(owner));
   }
   for (const auto& global : source.globals) {
-    result.globals.push_back({.name = global.name,
-                              .type = CloneType(global.type),
-                              .initializer = CloneExpression(global.initializer.get()),
-                              .location = Relocate(global.location),
-                              .binding = global.binding,
-                              .export_kind = global.export_kind});
+    result.globals.push_back({
+        .name = global.name,
+        .type = CloneType(global.type),
+        .initializer = CloneExpression(global.initializer.get()),
+        .location = Relocate(global.location),
+        .binding = global.binding,
+        .export_kind = global.export_kind,
+    });
   }
   return result;
 }

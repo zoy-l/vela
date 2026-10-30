@@ -178,8 +178,8 @@ StepResult Execution::ReadDynamicMember(ActiveFrame& active,
     }
     case MemberKind::Method: {
       const auto& wrapper = *layouts.classes().subspan(member.target).front();
-      const auto target = wrapper.callable();
-      if (!target) {
+      const auto* const target = wrapper.callable();
+      if (target == nullptr) {
         std::unreachable();
       }
       if (resolving) {

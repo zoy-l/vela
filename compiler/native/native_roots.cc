@@ -5,9 +5,11 @@
 #include <span>
 #include <vector>
 
+#include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/register_set.h"
 #include "compiler/native/native_values.h"
 
 namespace vela::compiler::native {
@@ -40,24 +42,27 @@ void AssignImportRoots(NativeRootPlan& plan, const ir::Function& function) {
   }
 }
 
-void PlanSafepoints(NativeRootPlan& plan, const ir::Function& function) {
+void PlanSafepoints(NativeRootPlan& plan, const ir::Function& function, NativeDebugging debugging) {
   const auto& instructions = function.instructions;
   for (std::size_t index = 0; index < instructions.size(); ++index) {
-    const auto& instruction = instructions[index];
+    const auto& instruction = instructions.at(index);
     const auto backward =
         (instruction.opcode == Opcode::Jump || instruction.opcode == Opcode::JumpIfFalse ||
          instruction.opcode == Opcode::JumpIfNull) &&
         instruction.index <= index;
-    if (index == 0 || backward || instruction.opcode == Opcode::Return ||
+    const auto source_line =
+        debugging == NativeDebugging::SourceLines &&
+        (index == 0 || instruction.location.line != instructions.at(index - 1).location.line);
+    if (index == 0 || backward || source_line || instruction.opcode == Opcode::Return ||
         ir::AnalyzeEffects(instruction).MayCollectOnSuccess()) {
-      plan.safepoints[index] = 1;
+      plan.safepoints.at(index) = 1;
     }
     if (index + 1 < instructions.size() && ir::AnalyzeEffects(instruction).MayCollectOnSuccess()) {
-      plan.safepoints[index + 1] = 1;
+      plan.safepoints.at(index + 1) = 1;
     }
   }
   for (const auto& handler : function.handlers) {
-    plan.safepoints[handler.target] = 1;
+    plan.safepoints.at(handler.target) = 1;
   }
 }
 
@@ -117,7 +122,8 @@ void PlanRematerialization(NativeRootPlan& plan,
 
 NativeRootPlan PlanNativeRoots(const ir::Function& function,
                                std::span<const ir::Function> functions,
-                               NativeProgramMode mode) {
+                               NativeProgramMode mode,
+                               NativeDebugging debugging) {
   NativeRootPlan plan;
   plan.slots.resize(function.register_count);
   plan.stores.resize(function.instructions.size());
@@ -125,8 +131,9 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
   plan.suspended.resize(function.instructions.size());
   plan.rematerialized.resize(function.instructions.size());
   plan.safepoints.resize(function.instructions.size());
+  plan.checkpoints.resize(function.instructions.size());
   if (mode == NativeProgramMode::Reloadable) {
-    PlanSafepoints(plan, function);
+    PlanSafepoints(plan, function, debugging);
   }
   if (!function.native_symbol.empty()) {
     AssignImportRoots(plan, function);
@@ -145,10 +152,11 @@ NativeRootPlan PlanNativeRoots(const ir::Function& function,
       after = live;
       RecordSuspension(plan, function, graph, blocks, index, after);
       ir::TransferLiveness(function, graph, blocks, instruction, access, live);
+      live.ForEach([&](ir::RegisterId reg) { plan.checkpoints.at(index).push_back(reg); });
       auto& stores = plan.stores.at(index);
       auto& clears = plan.clears.at(index);
       const auto safepoint =
-          plan.safepoints[index] != 0 || ir::AnalyzeEffects(instruction).MayCollect();
+          plan.safepoints.at(index) != 0 || ir::AnalyzeEffects(instruction).MayCollect();
       live.ForEach([&](ir::RegisterId reg) {
         if (!HasManagedValue(function, reg)) {
           return;

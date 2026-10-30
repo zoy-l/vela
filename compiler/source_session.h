@@ -1,17 +1,23 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 
+#include "base/declaration.h"
 #include "compiler/frontend/declaration_ids.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/parser.h"
+#include "compiler/frontend/source_loader.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::compiler {
@@ -20,6 +26,8 @@ struct SourceChange final {
   std::string path;
   // 空值表示删除模块；空字符串仍是合法的空源码。
   std::optional<std::string> text;
+  // 交互源码携带解析器生成并标注入口角色的不可变树；必须与 text 相同。
+  std::shared_ptr<const frontend::ParsedSource> syntax = nullptr;
 };
 
 struct SourceUpdate final {
@@ -28,20 +36,36 @@ struct SourceUpdate final {
   std::vector<std::string> added_roots;
 };
 
+struct SourceTimings final {
+  std::chrono::nanoseconds loading{};
+  std::chrono::nanoseconds specialization{};
+  std::chrono::nanoseconds checking{};
+  std::chrono::nanoseconds ir{};
+};
+
 struct CompiledSourceSnapshot final {
   std::uint64_t revision = 0;
   absl::flat_hash_map<std::string, std::shared_ptr<const std::string>> sources;
+  absl::flat_hash_set<std::string> prepared_sources;
   std::vector<std::string> roots;
   std::vector<std::string> standard_names;
   frontend::DeclarationIds identities;
+  frontend::ModuleCache modules;
   ir::Program program;
+  SourceTimings timings;
 };
 
-enum class SourceCandidateStatus : std::uint8_t { SourceError, Stale, DifferentSession };
+enum class SourceCandidateStatus : std::uint8_t {
+  SourceError,
+  Stale,
+  DifferentSession,
+  RequiresReload,
+};
 
 struct SourceCandidateError final {
   SourceCandidateStatus status = SourceCandidateStatus::SourceError;
   frontend::Diagnostics diagnostics;
+  DeclarationId declaration;
 };
 
 struct SourceSessionIdentity final {};
@@ -64,10 +88,11 @@ class SourceCandidate final {
 // 开发会话才提交候选；失败候选和并行编译不会改变已提交基线。
 class SourceSession final {
  public:
-  explicit SourceSession(std::string entry);
+  explicit SourceSession(const std::string& entry);
   [[nodiscard]] std::shared_ptr<const CompiledSourceSnapshot> snapshot() const noexcept;
   [[nodiscard]] std::expected<SourceCandidate, SourceCandidateError> Prepare(
-      SourceUpdate update) const;
+      SourceUpdate update,
+      std::span<const DeclarationId> retained = {}) const;
   [[nodiscard]] std::expected<void, SourceCandidateStatus> Commit(const SourceCandidate& candidate);
 
  private:

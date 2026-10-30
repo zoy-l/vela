@@ -124,7 +124,7 @@ void CheckRefinements(benchmark::State& state) {
 
 BENCHMARK(CheckRefinements)->Name("check/refinements")->Arg(8)->Arg(32)->Arg(128);
 
-enum class BranchKind { Match, Switch };
+enum class BranchKind : std::uint8_t { Match, Switch };
 
 void CheckBranchRefinements(benchmark::State& state, BranchKind kind) {
   std::string source = "func choose(selector: int";

@@ -3,13 +3,19 @@
 #include <string>
 
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/diagnostic.h"
 
 namespace vela::frontend {
 
 // 转换器只在克隆期间借用；词法作用域按源码的绑定顺序进入与退出。
 class AstCloneTransform {
  public:
+  AstCloneTransform() = default;
   virtual ~AstCloneTransform() = default;
+  AstCloneTransform(const AstCloneTransform&) = delete;
+  AstCloneTransform& operator=(const AstCloneTransform&) = delete;
+  AstCloneTransform(AstCloneTransform&&) = delete;
+  AstCloneTransform& operator=(AstCloneTransform&&) = delete;
   virtual TypeName TransformType(const TypeName& source) = 0;
   // 仅处理显式类型实参；target 的类型已转换，表达式子节点尚未构造。
   virtual void TransformApplication(Expression& target, const Expression& source) = 0;

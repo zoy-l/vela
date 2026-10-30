@@ -240,7 +240,7 @@ class TypeChecker final {
 
    private:
     struct Change final {
-      std::uint32_t binding;
+      std::uint32_t binding{};
       std::optional<Type> previous;
     };
     void Save(std::uint32_t binding, const Type* previous);
@@ -403,12 +403,12 @@ class TypeChecker final {
   };
   class LoopAssignments final {
    public:
-    explicit LoopAssignments(const Statement& statement) : statement_(statement) {}
+    explicit LoopAssignments(const Statement& statement) : statement_(&statement) {}
     const AssignmentEffects& Body();
     const AssignmentEffects& Whole();
 
    private:
-    const Statement& statement_;
+    const Statement* statement_;
     std::optional<AssignmentEffects> body_;
     std::optional<AssignmentEffects> whole_;
   };

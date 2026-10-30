@@ -68,9 +68,9 @@ StepResult Execution::ContinueJson(ActiveFrame& active) {
     return JsonError(encoder.ConversionError(
         "JSON object requires a public zero-argument toJson() returning a value"));
   }
-  const auto callable =
+  const auto* const callable =
       active.function->layouts->classes().subspan(method->target).front()->callable();
-  if (!callable) {
+  if (callable == nullptr) {
     std::unreachable();
   }
   const auto target = callable->function;

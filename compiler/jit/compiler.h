@@ -1,17 +1,21 @@
 #pragma once
 
 #include <atomic>
-#include <cstddef>
-#include <cstdint>
+#include <chrono>
 #include <expected>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 
+#include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
+#include "compiler/jit/code_cache.h"
+#include "compiler/jit/code_resources.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/native_roots.h"
 #include "runtime/native_image.h"
@@ -20,7 +24,18 @@ namespace vela::compiler::jit {
 
 struct CompileOptions final {
   NativeOptimization optimization = NativeOptimization::Release;
+  native::NativeDebugging debugging = native::NativeDebugging::Safepoints;
+  NativeCodeTier tier = NativeCodeTier::Baseline;
+  std::optional<std::filesystem::path> code_cache = std::nullopt;
   bool preserve_ir = false;
+};
+
+struct CompileTimings final {
+  std::chrono::nanoseconds generation{};
+  std::chrono::nanoseconds cache{};
+  std::chrono::nanoseconds optimization{};
+  std::chrono::nanoseconds compilation{};
+  std::chrono::nanoseconds linking{};
 };
 
 struct CompiledImage final {
@@ -28,16 +43,8 @@ struct CompiledImage final {
   std::shared_ptr<const runtime::NativeImage> image;
   std::string llvm_ir;
   std::vector<native::NativeFunctionMetrics> function_metrics;
-};
-
-struct CodeResourceCounts final {
-  std::size_t batches = 0;
-  std::size_t functions = 0;
-};
-
-struct CodeResourceCounters final {
-  std::atomic_size_t batches{0};
-  std::atomic_size_t functions{0};
+  CodeCacheStatus cache = CodeCacheStatus::Disabled;
+  CompileTimings timings;
 };
 
 // 编译不访问 Isolate；未发布结果可以丢弃。映像最后引用在 Isolate 线程释放时退休 ORC

@@ -147,8 +147,10 @@ std::vector<Completion> LanguageServer::CompletionsFor(std::string_view uri,
     }
     cached = completion_indices_
                  .emplace(std::string(uri),
-                          CompletionIndex{.text = completion_text,
-                                          .index = SemanticIndex(opened.path, modules_, overlays)})
+                          CompletionIndex{
+                              .text = completion_text,
+                              .index = SemanticIndex(opened.path, modules_, overlays),
+                          })
                  .first;
   }
   const auto& index = cached->second.index;

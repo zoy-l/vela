@@ -16,6 +16,7 @@
 namespace vela::compiler::native {
 namespace {
 constexpr unsigned kIntegerShiftMask = 63;
+constexpr double kIntegerMagnitudeLimit = 0x1p63;
 }  // namespace
 
 void FunctionEmitter::EmitInteger(const ir::Instruction& instruction) {
@@ -127,8 +128,8 @@ void FunctionEmitter::EmitNumericConversion(const ir::Instruction& instruction, 
     value = builder_.CreateUnaryIntrinsic(llvm::Intrinsic::trunc, value);
     // 与 ConvertNumber 共用半开范围语义；ordered 比较同时拒绝 NaN 和无穷。
     // 必须先检查再生成 fptosi，越界转换会产生 poison，不能用转换结果反查范围。
-    auto* lower = llvm::ConstantFP::get(builder_.getDoubleTy(), -0x1p63);
-    auto* upper = llvm::ConstantFP::get(builder_.getDoubleTy(), 0x1p63);
+    auto* lower = llvm::ConstantFP::get(builder_.getDoubleTy(), -kIntegerMagnitudeLimit);
+    auto* upper = llvm::ConstantFP::get(builder_.getDoubleTy(), kIntegerMagnitudeLimit);
     Check(builder_.CreateAnd(builder_.CreateFCmpOGE(value, lower),
                              builder_.CreateFCmpOLT(value, upper)),
           ExecutionStatus::InvalidNumericConversion);

@@ -11,7 +11,6 @@
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/lexer.h"
 #include "compiler/frontend/token.h"
 
 namespace vela::frontend {

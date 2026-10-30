@@ -21,7 +21,6 @@
 #include "runtime/native_abi.h"
 #include "runtime/native_call.h"
 #include "runtime/native_dispatch.h"
-#include "runtime/native_image.h"
 #include "runtime/native_instance.h"
 #include "runtime/native_program_state.h"
 #include "runtime/object.h"
@@ -114,15 +113,24 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
       if (!type) {
         std::unreachable();
       }
-      value = BoxDynamicValue(execution.isolate().heap(),
-                              *Heap::GetField(*receiver.AsObject(), member.target),
-                              layouts.types.at(*type));
+      auto& object = *receiver.AsObject();
+      const auto* layout = Heap::ClassOf(object);
+      auto* dispatch = Heap::NativeProgram(*instance.state().front().AsObject()).dispatch;
+      const auto loaded =
+          layout->storage() == ClassStorage::Reloadable
+              ? dispatch->LoadField(execution, object,
+                                    layout->field_declarations().subspan(member.target).front())
+              : std::expected<Value, ExecutionStatus>(*Heap::GetField(object, member.target));
+      if (!loaded) {
+        return std::unexpected(loaded.error());
+      }
+      value = BoxDynamicValue(execution.isolate().heap(), *loaded, layouts.types.at(*type));
       break;
     }
     case MemberKind::Method: {
       const auto& wrapper = *layouts.classes.at(member.target);
-      const auto target = wrapper.callable();
-      if (!target) {
+      const auto* const target = wrapper.callable();
+      if (target == nullptr) {
         std::unreachable();
       }
       if (resolving &&
@@ -179,6 +187,15 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
     value = *Heap::GetField(*value.AsObject(), 0);
   }
   if (member.kind == MemberKind::Field) {
+    auto& object = *receiver.AsObject();
+    const auto* layout = Heap::ClassOf(object);
+    if (layout->storage() == ClassStorage::Reloadable) {
+      auto* dispatch = Heap::NativeProgram(*instance.state().front().AsObject()).dispatch;
+      const auto stored = dispatch->StoreField(
+          object, layout->field_declarations().subspan(member.target).front(), value);
+      return stored ? std::expected<Value, ExecutionStatus>(original)
+                    : std::unexpected(stored.error());
+    }
     static_cast<void>(
         execution.isolate().heap().SetField(*receiver.AsObject(), member.target, value));
     return original;
@@ -214,7 +231,7 @@ std::expected<Value, ExecutionStatus> AccessMember(NativeExecution& execution,
                                                    Builtin builtin,
                                                    std::span<const Value> arguments) {
   const auto receiver = arguments.front();
-  const auto name = arguments[1];
+  const auto name = arguments.subspan(1).front();
   if (!name.IsString()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -233,11 +250,12 @@ std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& 
                                                                std::span<const Value> arguments) {
   if (builtin == Builtin::DynamicArrayPrepare) {
     const auto& instance = execution.instance();
-    const auto callback = ResolveNativeCallable(instance, arguments[1]);
+    const auto callback_value = arguments.subspan(1).front();
+    const auto callback = ResolveNativeCallable(instance, callback_value);
     if (!callback) {
       return std::unexpected(callback.error());
     }
-    const auto* signature = Heap::ClassOf(*arguments[1].AsObject())->callable_type();
+    const auto* signature = Heap::ClassOf(*callback_value.AsObject())->callable_type();
     if (signature == nullptr) {
       return std::unexpected(ExecutionStatus::TypeError);
     }

@@ -22,6 +22,7 @@
 #include "base/execution_status.h"
 #include "base/member.h"
 #include "base/utf8.h"
+#include "runtime/external_resources.h"
 #include "runtime/isolate.h"
 #include "runtime/native_function.h"
 #include "runtime/object.h"
@@ -278,7 +279,7 @@ std::expected<void, ValidationError> ValidateClassLayout(const runtime::ClassLay
       });
     }
   }
-  if (!layout->callable()) {
+  if (layout->callable() == nullptr) {
     return {};
   }
   const auto callable = *layout->callable();
@@ -415,8 +416,8 @@ bool IsValidMemberTarget(const MemberDefinition& member,
       if (wrapper == nullptr) {
         return false;
       }
-      const auto& callable = wrapper->callable();
-      if (!callable || callable->mode != CallableMode::BoundMethod ||
+      const auto* callable = wrapper->callable();
+      if ((callable == nullptr) || callable->mode != CallableMode::BoundMethod ||
           callable->function >= functions.size()) {
         return false;
       }
@@ -603,8 +604,8 @@ std::expected<void, ValidationError> ValidateInterfaceSignatures(
     std::span<const FunctionStorage> functions) {
   absl::flat_hash_map<std::size_t, const runtime::ClassLayout*> selectors;
   for (const auto* layout : classes) {
-    const auto callable = layout->callable();
-    if (!callable || (*callable).mode != CallableMode::InterfaceMethod ||
+    const auto* const callable = layout->callable();
+    if ((callable == nullptr) || (*callable).mode != CallableMode::InterfaceMethod ||
         layout->callable_type() == nullptr) {
       continue;
     }
@@ -646,7 +647,7 @@ absl::flat_hash_set<runtime::ClassLayout*> IndexCallables(
       continue;
     }
     for (auto* layout : table->classes()) {
-      if (layout != nullptr && layout->callable()) {
+      if (layout != nullptr && (layout->callable() != nullptr)) {
         callable_layouts.insert(layout);
       }
     }

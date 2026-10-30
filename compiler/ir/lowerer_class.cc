@@ -1,3 +1,4 @@
+#include "base/native_program_mode.h"
 #include "compiler/ir/lowerer.h"
 
 #include <algorithm>
@@ -22,6 +23,19 @@ constexpr auto kConstructorMaskBits = std::numeric_limits<std::uint64_t>::digits
 
 }  // namespace
 
+void Lowerer::LowerFieldDefaultInitializers(const frontend::Class& owner) {
+  const auto& info = model_.classes.at(owner.name);
+  for (const auto& field : owner.fields) {
+    if (field.storage == frontend::MemberStorage::Static) {
+      LowerInitializer("$static." + owner.name + "." + field.name, *field.initializer,
+                       info.static_fields.at(field.name).type, field.location);
+    } else if (native_mode_ == NativeProgramMode::Reloadable && field.initializer != nullptr) {
+      LowerInitializer("$field." + owner.name + '.' + field.name, *field.initializer,
+                       info.fields.at(field.name).type, field.location);
+    }
+  }
+}
+
 bool Lowerer::HasInstanceInitialization(const frontend::ClassDescriptor& owner) const {
   const auto& source = *owner.declaration;
   if (source.constructor || std::ranges::any_of(source.fields, [](const auto& field) {
@@ -32,7 +46,10 @@ bool Lowerer::HasInstanceInitialization(const frontend::ClassDescriptor& owner) 
   return owner.base_class && HasInstanceInitialization(model_.classes.at(*owner.base_class));
 }
 
-std::uint32_t Lowerer::ConstructorMaskCount(const frontend::ClassDescriptor& owner) {
+std::uint32_t Lowerer::ConstructorMaskCount(const frontend::ClassDescriptor& owner) const {
+  if (native_mode_ == NativeProgramMode::Reloadable) {
+    return 0;
+  }
   const auto& source = *owner.declaration;
   const bool has_optional_fields =
       source.constructor_kind == frontend::ConstructorKind::Generated &&
@@ -50,6 +67,14 @@ void Lowerer::LowerConstructorInitializers(const frontend::ClassDescriptor& owne
       continue;
     }
     const auto index = owner.fields.at(field.name).index;
+    if (native_mode_ == NativeProgramMode::Reloadable &&
+        source.constructor_kind == frontend::ConstructorKind::Generated) {
+      // 显式实参已按稳定字段身份写入对象；读取只为尚未提供的槽运行当前初始化器。
+      const auto value = EmitTemporary(
+          {.opcode = Opcode::GetField, .lhs = 0, .index = index, .location = field.location});
+      RecordValueType(value, owner.fields.at(field.name).type);
+      continue;
+    }
     std::optional<std::size_t> provided;
     if (source.IsConstructorField(field)) {
       const auto mask = EmitTemporary({
@@ -58,10 +83,12 @@ void Lowerer::LowerConstructorInitializers(const frontend::ClassDescriptor& owne
               std::bit_cast<std::int64_t>(std::uint64_t{1} << (index % kConstructorMaskBits)),
           .location = field.location,
       });
-      const auto bits = EmitTemporary({.opcode = Opcode::BitAndInt,
-                                       .lhs = 1 + index / kConstructorMaskBits,
-                                       .rhs = mask,
-                                       .location = field.location});
+      const auto bits = EmitTemporary({
+          .opcode = Opcode::BitAndInt,
+          .lhs = 1 + (index / kConstructorMaskBits),
+          .rhs = mask,
+          .location = field.location,
+      });
       const auto zero = EmitTemporary({.opcode = Opcode::LoadInt, .location = field.location});
       const auto missing = EmitTemporary(
           {.opcode = Opcode::EqualInt, .lhs = bits, .rhs = zero, .location = field.location});
@@ -69,11 +96,13 @@ void Lowerer::LowerConstructorInitializers(const frontend::ClassDescriptor& owne
       Emit({.opcode = Opcode::JumpIfFalse, .lhs = missing, .location = field.location});
     }
     const auto value = LowerExpression(*field.initializer);
-    Emit({.opcode = Opcode::SetField,
-          .dst = 0,
-          .lhs = value.reg,
-          .index = index,
-          .location = field.location});
+    Emit({
+        .opcode = Opcode::SetField,
+        .dst = 0,
+        .lhs = value.reg,
+        .index = index,
+        .location = field.location,
+    });
     if (provided) {
       current_function_->instructions.at(*provided).index =
           static_cast<std::uint32_t>(current_function_->instructions.size());
@@ -181,15 +210,43 @@ void Lowerer::LowerInitializer(std::string name,
 Lowerer::LoweredValue Lowerer::LowerConstruction(const frontend::Expression& expression,
                                                  const frontend::TypeDescriptor& expected) {
   const auto& info = model_.classes.at(expected.name);
+  std::vector<LoweredValue> evaluated;
+  std::optional<Construction> construction;
+  if (native_mode_ == NativeProgramMode::Reloadable) {
+    // 实参可能 await；在分配对象及进入初始化屏障前求值并快照，避免挂起半初始化实例。
+    for (const auto& argument : expression.arguments) {
+      const auto value = LowerExpression(*argument.value);
+      const auto saved = AllocateTemporary(argument.location);
+      Emit({.opcode = Opcode::Move, .dst = saved, .lhs = value.reg, .location = argument.location});
+      evaluated.push_back({.reg = saved, .type = value.type});
+    }
+    const auto& fields = declarations_->classes.at(expected.name);
+    const auto generated =
+        info.declaration->constructor_kind == frontend::ConstructorKind::Generated;
+    construction.emplace(
+        Construction{.type = fields.declaration, .supplied = {}, .generated = generated});
+    if (generated) {
+      for (const auto parameter : model_.argument_order.at(&expression)) {
+        construction->supplied.push_back(
+            fields.fields.at(info.constructor.parameters.at(parameter).name));
+      }
+    }
+  }
   const auto object = AllocateTemporary(expression.location);
   Emit({
       .opcode = Opcode::NewInstance,
       .dst = object,
       .index = class_ids_.at(expected.name),
       .location = expression.location,
+      .construction = std::move(construction),
   });
-  return LowerConstructorCall(expression.arguments, model_.argument_order.at(&expression),
-                              expression.location, info, object);
+  const auto result =
+      LowerConstructorCall(expression.arguments, model_.argument_order.at(&expression),
+                           expression.location, info, object, evaluated);
+  if (native_mode_ == NativeProgramMode::Reloadable) {
+    current_function_->instructions.back().completes_construction = true;
+  }
+  return result;
 }
 
 Lowerer::LoweredValue Lowerer::LowerConstructorCall(
@@ -197,7 +254,8 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
     std::span<const std::uint32_t> argument_order,
     frontend::SourceLocation location,
     const frontend::ClassDescriptor& info,
-    RegisterId object) {
+    RegisterId object,
+    std::span<const LoweredValue> evaluated) {
   const auto& source = *info.declaration;
   const auto& signature = info.constructor;
   const bool generated = source.constructor_kind == frontend::ConstructorKind::Generated;
@@ -208,7 +266,8 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
   for (std::size_t index = 0; index < call_arguments.size(); ++index) {
     const auto& argument = call_arguments.subspan(index).front();
     const auto parameter = argument_order.subspan(index).front();
-    const auto value = LowerExpression(*argument.value);
+    const auto value =
+        evaluated.empty() ? LowerExpression(*argument.value) : evaluated.subspan(index).front();
     if (generated) {
       const auto field = info.fields.at(signature.parameters.at(parameter).name).index;
       Emit({
@@ -228,40 +287,51 @@ Lowerer::LoweredValue Lowerer::LowerConstructorCall(
       arguments.at(parameter) = saved;
     }
   }
-  if (HasInstanceInitialization(info)) {
-    const auto name = info.type.name + ".$constructor";
-    std::uint32_t target = 0;
-    if (const auto existing = function_ids_.find(name); existing != function_ids_.end()) {
-      target = existing->second;
-    } else {
-      // 构造函数按实际调用生成，避免未使用的默认值引入常量根和函数体。
-      target = AddFunctionId(name);
-      program_.functions.resize(persistent_ == nullptr ? function_ids_.size()
-                                                       : persistent_->functions.size());
-      pending_constructors_.push_back(&source);
-    }
-    const auto count = generated ? masks : arguments.size();
-    const auto base = AllocateRegisterWindow(count + 1, location);
-    Emit({.opcode = Opcode::Move, .dst = base, .lhs = object, .location = location});
-    for (std::size_t index = 0; index < count; ++index) {
-      Emit({
-          .opcode = generated ? Opcode::LoadInt : Opcode::Move,
-          .dst = static_cast<RegisterId>(base + index + 1),
-          .lhs = generated ? 0 : arguments.at(index),
-          .immediate = generated ? std::bit_cast<std::int64_t>(provided.at(index)) : 0,
-          .location = location,
-      });
-    }
-    const auto ignored = AllocateTemporary(location);
+  if (HasInstanceInitialization(info) ||
+      (generated && native_mode_ == NativeProgramMode::Reloadable)) {
+    EmitConstructorInitialization(info, object, arguments, provided, location);
+  }
+  return {.reg = object, .type = info.type};
+}
+
+void Lowerer::EmitConstructorInitialization(const frontend::ClassDescriptor& info,
+                                            RegisterId object,
+                                            std::span<const RegisterId> arguments,
+                                            std::span<const std::uint64_t> provided,
+                                            frontend::SourceLocation location) {
+  const auto& source = *info.declaration;
+  const bool generated = source.constructor_kind == frontend::ConstructorKind::Generated;
+  const auto name = info.type.name + ".$constructor";
+  std::uint32_t target = 0;
+  if (const auto existing = function_ids_.find(name); existing != function_ids_.end()) {
+    target = existing->second;
+  } else {
+    // 封闭模式按实际调用生成；可重载类已登记入口，供存留代码继续构造。
+    target = AddFunctionId(name);
+    program_.functions.resize(persistent_ == nullptr ? function_ids_.size()
+                                                     : persistent_->functions.size());
+    pending_constructors_.push_back(&source);
+  }
+  const auto count = generated ? provided.size() : arguments.size();
+  const auto base = AllocateRegisterWindow(count + 1, location);
+  Emit({.opcode = Opcode::Move, .dst = base, .lhs = object, .location = location});
+  for (std::size_t index = 0; index < count; ++index) {
     Emit({
-        .opcode = Opcode::Call,
-        .dst = ignored,
-        .lhs = base,
-        .index = target,
+        .opcode = generated ? Opcode::LoadInt : Opcode::Move,
+        .dst = static_cast<RegisterId>(base + index + 1),
+        .lhs = generated ? 0 : arguments.subspan(index).front(),
+        .immediate = generated ? std::bit_cast<std::int64_t>(provided.subspan(index).front()) : 0,
         .location = location,
     });
   }
-  return {.reg = object, .type = info.type};
+  const auto ignored = AllocateTemporary(location);
+  Emit({
+      .opcode = Opcode::Call,
+      .dst = ignored,
+      .lhs = base,
+      .index = target,
+      .location = location,
+  });
 }
 
 }  // namespace vela::ir

@@ -6,9 +6,11 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 
 #include "base/diagnostic.h"
 #include "base/file.h"
+#include "base/native_program_mode.h"
 #include "base/path.h"
 #include "base/process_exit.h"
 #include "base/source_location.h"
@@ -18,7 +20,9 @@
 #include "compiler/compiler.h"
 #include "compiler/frontend/checker.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/jit/compiler.h"
 #include "compiler/tooling/debug_console.h"
+#include "compiler/tooling/development_console.h"
 #include "compiler/tooling/documentation.h"
 #include "compiler/tooling/formatter.h"
 #include "compiler/tooling/language_server.h"
@@ -49,6 +53,7 @@ void PrintUsage(std::ostream& output) {
       << "  --version    Show the compiler version\n"
       << "  check FILE   Parse and statically check a Vela source file\n"
       << "  run FILE     Compile with a local content cache and run main\n"
+      << "  dev FILE [--optimized] [--code-cache=DIR]   Run a JIT development session\n"
       << "  build FILE [--emit=exe|obj|staticlib] [--export=NAME] -o OUTPUT   Build native code\n"
       << "  build --verify-manifest=FILE   Verify a native library and its header\n"
       << "  compile FILE OUTPUT   Write a validated bytecode image\n"
@@ -252,6 +257,37 @@ int ReplCommand(std::span<char*> arguments) {
                                 {.input = std::cin, .output = std::cout, .errors = std::cerr});
 }
 
+int CheckCommand(std::span<char*> arguments) {
+  if (arguments.size() != 1) {
+    std::cerr << "vela: check requires exactly one source file\n";
+    PrintUsage(std::cerr);
+    return kUsageExitCode;
+  }
+  return CheckFile(arguments.front());
+}
+
+int DevelopmentCommand(std::span<char*> arguments) {
+  if (arguments.empty() || std::string_view(arguments.front()).starts_with("--")) {
+    std::cerr << "vela: dev requires a source file\n";
+    return kUsageExitCode;
+  }
+  vela::compiler::jit::CompileOptions options;
+  constexpr std::string_view kCodeCache = "--code-cache=";
+  for (const std::string_view argument : arguments.subspan(1)) {
+    if (argument == "--optimized") {
+      options.tier = vela::NativeCodeTier::Optimized;
+    } else if (argument.starts_with(kCodeCache) && argument.size() > kCodeCache.size()) {
+      options.code_cache = vela::Utf8Path(argument.substr(kCodeCache.size()));
+    } else {
+      std::cerr << "vela: unknown development option: " << argument << '\n';
+      return kUsageExitCode;
+    }
+  }
+  return vela::tooling::RunDevelopmentConsole(
+      arguments.front(), {.input = std::cin, .output = std::cout, .errors = std::cerr},
+      std::move(options));
+}
+
 int LanguageServerCommand(std::span<char*> arguments) {
   if (!arguments.empty()) {
     std::cerr << "vela: lsp takes no arguments\n";
@@ -286,12 +322,7 @@ int main(int argc, char** argv) {
   }
 
   if (command == "check") {
-    if (argc != 3) {
-      std::cerr << "vela: check requires exactly one source file\n";
-      PrintUsage(std::cerr);
-      return kUsageExitCode;
-    }
-    return CheckFile(arguments.subspan(2).front());
+    return CheckCommand(arguments.subspan(2));
   }
 
   if (command == "fmt") {
@@ -305,6 +336,9 @@ int main(int argc, char** argv) {
   }
   if (command == "repl") {
     return ReplCommand(arguments.subspan(2));
+  }
+  if (command == "dev") {
+    return DevelopmentCommand(arguments.subspan(2));
   }
   if (command == "compile" || command == "doc") {
     if (argc != 4) {

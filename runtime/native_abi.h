@@ -7,7 +7,6 @@
 #include <span>
 #include <string_view>
 
-#include "base/execution_limits.h"
 #include "base/execution_status.h"
 #include "runtime/exception.h"
 #include "runtime/external_resources.h"
@@ -23,8 +22,9 @@ class NativeInstance;
 struct NativeImage;
 struct FutureDiagnostic;
 struct FutureResult;
+struct NativeCheckpoint;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 3;
+inline constexpr std::uint32_t kNativeAbiVersion = 4;
 inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
 [[nodiscard]] constexpr std::uint64_t EncodeNativeTracePosition(TracePosition position) noexcept {
@@ -75,6 +75,7 @@ struct NativeTraceFrame final {
   TracePosition position;
   NativeTraceFrame* previous = nullptr;
   const NativeImage* image = nullptr;
+  NativeCheckpoint* checkpoint = nullptr;
 };
 
 class NativeFrame final {
@@ -118,7 +119,7 @@ class NativeFrame final {
 class NativeExecution final {
  public:
   explicit NativeExecution(NativeInstance& instance) noexcept;
-  ~NativeExecution() = default;
+  ~NativeExecution();
   NativeExecution(const NativeExecution&) = delete;
   NativeExecution& operator=(const NativeExecution&) = delete;
   NativeExecution(NativeExecution&&) = delete;
@@ -129,15 +130,21 @@ class NativeExecution final {
   // 实际入口已经检查深度；延迟登记不得清理被调用方刚产生的异常。
   void MaterializeFrame(NativeTraceFrame& frame, std::uint32_t function) noexcept;
   void Exit() noexcept;
+  // 替换当前逻辑帧；物理返回路径继续持有其根。
+  [[nodiscard]] std::uint8_t Recover(NativeCheckpoint& checkpoint, void* result) noexcept;
   [[nodiscard]] std::size_t frame_count() const noexcept { return frame_count_; }
   [[nodiscard]] NativeInstance& instance() const noexcept { return *instance_; }
   [[nodiscard]] Isolate& isolate() const noexcept { return context_.isolate(); }
   [[nodiscard]] NativeContext& context() noexcept { return context_; }
+  [[nodiscard]] const NativeTraceFrame* current_frame() const noexcept { return current_frame_; }
   [[nodiscard]] std::uint32_t* current_instruction() noexcept {
     return &current_frame_->position.instruction;
   }
   [[nodiscard]] ExecutionStatus HandleFailure(ExecutionStatus status,
                                               std::string_view message = {});
+  [[nodiscard]] ExecutionStatus HandleLeafFailure(TracePosition position,
+                                                  ExecutionStatus status,
+                                                  std::span<const Value> roots);
   [[nodiscard]] FutureDiagnostic Diagnostic(ExecutionStatus status, std::string_view message) const;
   [[nodiscard]] FutureDiagnostic ExceptionDiagnostic() const;
   [[nodiscard]] ExecutionStatus RestoreFutureError(const FutureResult& completion);
@@ -150,6 +157,7 @@ class NativeExecution final {
 
  private:
   friend class NativeInstanceScope;
+  friend class NativeDispatch;
   friend struct NativeMemoryLayout;
   NativeInstance* instance_;
   NativeContext context_;
@@ -159,6 +167,8 @@ class NativeExecution final {
   RootRange exception_root_;
   bool exception_allocation_failed_ = false;
   ExternalResource execution_resource_;
+  NativeExecution* version_next_ = nullptr;
+  NativeExecution** version_previous_link_ = nullptr;
 
   [[nodiscard]] ExecutionStatus CreateException(Value payload,
                                                 ExecutionStatus status,

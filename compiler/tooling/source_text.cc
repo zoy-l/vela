@@ -8,6 +8,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/source_location.h"
 #include "base/utf8.h"
 
 namespace vela::tooling {

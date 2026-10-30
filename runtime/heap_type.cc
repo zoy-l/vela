@@ -19,7 +19,9 @@ ClassLayout::ClassLayout(std::uint32_t field_count, std::vector<std::uint32_t> r
     : field_count_(field_count), reference_fields_(std::move(reference_fields)) {}
 
 NominalType::NominalType(NominalTypeOptions options)
-    : kind_(options.kind), interfaces_(std::move(options.interfaces)) {
+    : kind_(options.kind),
+      interfaces_(std::move(options.interfaces)),
+      declaration_(options.declaration) {
   std::ranges::sort(interfaces_, std::less{});
 }
 
@@ -83,7 +85,7 @@ TypeConstraint Heap::TypeOf(Value value) noexcept {
     if (object.kind == ObjectKind::Expected) {
       type.signature = object.layout->expected_type();
     }
-    if (layout != nullptr && layout->callable()) {
+    if (layout != nullptr && (layout->callable() != nullptr)) {
       type.callable = true;
       type.signature = layout->callable_type();
       type.nominal = nullptr;
@@ -128,7 +130,7 @@ bool TypeConstraint::IsSubtypeOf(const TypeConstraint& target) const noexcept {
 
 bool Heap::IsThrowable(Value value) noexcept {
   const auto* layout = value.IsObject() ? ClassOf(*value.AsObject()) : nullptr;
-  return layout != nullptr && !layout->IsEnum() && !layout->callable();
+  return layout != nullptr && !layout->IsEnum() && (layout->callable() == nullptr);
 }
 
 bool Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept {
@@ -160,7 +162,7 @@ bool Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept {
     return false;
   }
   return !type.callable ||
-         (object->layout != nullptr && object->layout->callable().has_value() &&
+         (object->layout != nullptr && object->layout->callable() != nullptr &&
           (type.signature == nullptr || object->layout->callable_type() == type.signature));
 }
 

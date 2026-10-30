@@ -228,6 +228,8 @@ class Execution final {
   StepResult AccessGlobal(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteExpected(ActiveFrame& active, Instruction instruction);
   [[clang::always_inline]] StepResult Return(ActiveFrame& active, runtime::Value value);
+  [[clang::always_inline]] StepResult ResumeCaller(std::uint8_t return_register,
+                                                   runtime::Value value);
   [[nodiscard]] std::vector<StackFrame> CaptureStack() const;
   [[nodiscard]] std::vector<StackFrame> ResolveTrace(
       std::span<const runtime::TracePosition> positions) const;

@@ -26,6 +26,7 @@
 #include "runtime/native_call.h"
 #include "runtime/native_image.h"
 #include "runtime/native_instance.h"
+#include "runtime/native_version.h"
 #include "runtime/value.h"
 #include "runtime/value_operations.h"
 
@@ -77,8 +78,12 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
                        SuspensionPoint point,
                        std::size_t capacity,
                        Value instance,
+                       std::uint32_t function,
                        Value output)
-      : isolate_(&isolate), point_(point), values_(capacity + kSuspensionReferences) {
+      : isolate_(&isolate),
+        point_(point),
+        values_(capacity + kSuspensionReferences),
+        version_(*instance.AsObject(), function, RootOwner::Runtime, point.instruction) {
     values_.at(capacity) = instance;
     values_.at(capacity + 1) = output;
     isolate.scheduler().AddSuspendedFrame(SavedBytes());
@@ -90,6 +95,7 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
   NativeSuspendedFrame& operator=(NativeSuspendedFrame&&) = delete;
 
   void Resume(const FutureResult& completion) {
+    version_.SetExecuting();
     const auto values = std::span(values_);
     const auto state_index = values.size() - kSuspensionReferences;
     auto instance = NativeInstance::Borrow(*values.subspan(state_index).front().AsObject());
@@ -108,7 +114,8 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
     }
     if (status == ExecutionStatus::Returned) {
       return;
-    } else if (execution.HasException()) {
+    }
+    if (execution.HasException()) {
       const auto& exception = ExceptionData::From(*execution.pending_exception().AsObject());
       CompleteFutureError(*isolate_, result(), Value::Object(exception.payload),
                           execution.ExceptionDiagnostic());
@@ -124,8 +131,9 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
         input != nullptr ? input->Rooted() : Future::Value(source, &isolate_->scheduler());
     future.AttachHeap(isolate_->heap());
     point_.instruction = instruction;
+    version_.SetSuspended(instruction);
     for (std::size_t index = 0; index < saved.size(); ++index) {
-      values_.at(index) = DecodeNativeValue(saved[index]);
+      values_.at(index) = DecodeNativeValue(saved.subspan(index).front());
     }
     values_.back() = source;
     auto self = shared_from_this();
@@ -149,11 +157,12 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
 
  private:
   [[nodiscard]] std::size_t SavedBytes() const noexcept {
-    return sizeof(NativeSuspendedFrame) + values_.capacity() * sizeof(Value);
+    return sizeof(NativeSuspendedFrame) + (values_.capacity() * sizeof(Value));
   }
   Isolate* isolate_;
   SuspensionPoint point_;
   std::vector<Value> values_;
+  NativeFunctionRoot version_;
 };
 
 namespace {
@@ -173,7 +182,7 @@ std::expected<Value, ExecutionStatus> Suspend(NativeExecution& execution,
   const auto output = Value::Object(object);
   const RootRange root(isolate.heap(), &output, 1, RootOwner::Runtime);
   auto suspended = std::make_shared<NativeSuspendedFrame>(
-      isolate, point, capacity, execution.instance().state().front(), output);
+      isolate, point, capacity, execution.instance().state().front(), function, output);
   const auto bound = BindResult(execution, function, output);
   if (!bound) {
     return std::unexpected(bound.error());

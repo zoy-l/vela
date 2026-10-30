@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "base/callable.h"
 #include "base/execution_status.h"
 #include "runtime/callable.h"
 #include "runtime/exception.h"
@@ -40,9 +41,11 @@ struct NativeCallDomain final {
 };
 
 NativeCallDomain Domain(const NativeInstance& instance) {
-  return {.isolate = &instance.isolate(),
-          .identity = &instance.code_identity(),
-          .dispatch = Heap::NativeProgram(*instance.state().front().AsObject()).dispatch};
+  return {
+      .isolate = &instance.isolate(),
+      .identity = &instance.code_identity(),
+      .dispatch = Heap::NativeProgram(*instance.state().front().AsObject()).dispatch,
+  };
 }
 
 std::expected<NativeCallback, ExecutionStatus> ResolveNativeCallback(const NativeCallDomain& domain,
@@ -174,12 +177,14 @@ std::expected<HeapObject*, ExecutionStatus> AllocateNativeCallable(
     const ClassLayout& layout,
     std::span<const Value> captures) {
   const auto target = *layout.callable();
-  NativeResolvedDeclaration selected{.state = execution.instance().state().front().AsObject(),
-                                     .function = target.function};
+  NativeResolvedDeclaration selected{
+      .state = execution.instance().state().front().AsObject(),
+      .function = target.function,
+  };
   const auto& state = Heap::NativeProgram(*selected.state);
   if (state.dispatch != nullptr && target.mode != CallableMode::Closure &&
       target.mode != CallableMode::InterfaceMethod) {
-    const auto identity = state.image->functions.values()[target.function].identity;
+    const auto identity = state.image->functions.values().subspan(target.function).front().identity;
     if (identity.local == 0) {
       const auto current = state.dispatch->Resolve(identity.declaration);
       if (!current) {
@@ -215,7 +220,8 @@ std::expected<void, ExecutionStatus> CaptureNativeReceiver(NativeExecution& exec
   if (layout == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto selector = source.image->selector_declarations.values()[target.function];
+  const auto selector =
+      source.image->selector_declarations.values().subspan(target.function).front();
   const auto selected = source.dispatch->ResolveInterface(layout->nominal_type(), selector);
   if (!selected) {
     return std::unexpected(selected.error());
@@ -248,7 +254,7 @@ std::expected<Value, ExecutionStatus> InvokeNativeEntry(NativeExecution& executi
   if (function >= functions.size()) {
     return std::unexpected(ExecutionStatus::InvalidEntry);
   }
-  const auto& target = functions[function];
+  const auto& target = functions.subspan(function).front();
   const auto& parameters = instance.call_signature(function).parameters;
   if ((target.flags & kNativeExportedFunction) == 0 || target.hidden_parameters != 0 ||
       parameters.size() != input.size()) {
@@ -260,8 +266,8 @@ std::expected<Value, ExecutionStatus> InvokeNativeEntry(NativeExecution& executi
   arguments.reserve(input.size());
   const auto& types = instance.layouts().types;
   for (std::size_t index = 0; index < input.size(); ++index) {
-    auto value = input[index];
-    const auto& type = types.at(parameters[index].type);
+    auto value = input.subspan(index).front();
+    const auto& type = types.at(parameters.at(index).type);
     if (!Heap::IsValueOfType(value, type)) {
       return std::unexpected(ExecutionStatus::InvalidCast);
     }
@@ -361,8 +367,11 @@ extern "C" std::uint8_t vela_native_v3_call_declaration(NativeExecution* executi
   }
   auto origin = NativeInstance::Borrow(*target->state);
   const NativeInstanceScope scope(*execution, origin);
-  return origin.image().functions.values()[target->function].entry(execution, arguments, count,
-                                                                   result);
+  return origin.image()
+      .functions.values()
+      .subspan(target->function)
+      .front()
+      .entry(execution, arguments, count, result);
 }
 
 extern "C" std::uint8_t vela_native_v3_call_interface(NativeExecution* execution,
@@ -388,8 +397,11 @@ extern "C" std::uint8_t vela_native_v3_call_interface(NativeExecution* execution
   }
   auto origin = NativeInstance::Borrow(*target->state);
   const NativeInstanceScope scope(*execution, origin);
-  return origin.image().functions.values()[target->function].entry(execution, arguments, count,
-                                                                   result);
+  return origin.image()
+      .functions.values()
+      .subspan(target->function)
+      .front()
+      .entry(execution, arguments, count, result);
 }
 
 }  // namespace vela::runtime

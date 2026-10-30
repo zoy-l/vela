@@ -21,7 +21,8 @@ namespace vela::runtime {
 namespace {
 
 std::int64_t HostAnswer() noexcept {
-  return 42;
+  constexpr std::int64_t kAnswer = 42;
+  return kAnswer;
 }
 
 TEST(IsolateLifecycleTest, BindingSnapshotIsFixedAndSharesTheSameNativeImplementation) {
@@ -71,11 +72,16 @@ TEST(IsolateLifecycleTest, ExternalFutureCopiesHaveOneIdentityAndAnExactReferenc
   Isolate isolate;
   {
     Future future(&isolate.scheduler());
-    auto copy = future;
+    std::optional<Future> copy(future);
     const auto resources = isolate.ReloadBlockers();
     ASSERT_EQ(resources.size(), 1U);
     EXPECT_EQ(resources.front().kind, ExternalResourceKind::Future);
     EXPECT_EQ(resources.front().references, 2U);
+    copy.reset();
+    const auto remaining = isolate.ReloadBlockers();
+    ASSERT_EQ(remaining.size(), 1U);
+    EXPECT_EQ(remaining.front().identity, resources.front().identity);
+    EXPECT_EQ(remaining.front().references, 1U);
     EXPECT_FALSE(isolate.TryStop());
   }
   EXPECT_TRUE(isolate.TryStop());

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <deque>
 #include <ranges>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -11,6 +12,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
+#include "base/declaration.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/ast_clone.h"
 #include "compiler/frontend/builtins.h"
@@ -59,7 +61,7 @@ class Specializer final : public AstCloneTransform {
   Specializer(Specializer&&) = delete;
   Specializer& operator=(Specializer&&) = delete;
 
-  Diagnostics Run();
+  Diagnostics Run(std::span<const GenericSpecialization> retained);
 
  private:
   using Substitutions = absl::flat_hash_map<std::string, TypeName>;
@@ -70,7 +72,11 @@ class Specializer final : public AstCloneTransform {
     const T* source = nullptr;
   };
   void CollectDeclarations();
-  void CollectTemplates();
+  void CollectAliases();
+  void CollectFunctionTemplates();
+  void CollectClassTemplates();
+  void DescribeClassTemplate(const Class& owner);
+  void NormalizeAliases();
   void Error(SourceLocation location, std::string message);
   Substitutions Bind(const std::vector<std::string>& parameters,
                      const std::vector<TypeName>& arguments,
@@ -161,16 +167,20 @@ std::string Specializer::Instantiate(const std::string& name,
     Function function;
     function.name = key;
     // 只排入模板引用；取出队列项时融合克隆与规范化，不沿泛型调用链递归展开 C++ 栈。
-    functions_.push_back({.declaration = std::move(function),
-                          .substitutions = std::move(substitutions),
-                          .source = &found->second});
+    functions_.push_back({
+        .declaration = std::move(function),
+        .substitutions = std::move(substitutions),
+        .source = &found->second,
+    });
   } else if (const auto owner = class_templates_.find(name); owner != class_templates_.end()) {
     auto substitutions = Bind(owner->second.type_parameters, arguments, location);
     Class concrete;
     concrete.name = key;
-    classes_.push_back({.declaration = std::move(concrete),
-                        .substitutions = std::move(substitutions),
-                        .source = &owner->second});
+    classes_.push_back({
+        .declaration = std::move(concrete),
+        .substitutions = std::move(substitutions),
+        .source = &owner->second,
+    });
   } else {
     Error(location, "unknown generic declaration '" + name + "'");
   }
@@ -489,11 +499,8 @@ void Specializer::CollectDeclarations() {
   }
 }
 
-void Specializer::CollectTemplates() {
+void Specializer::CollectAliases() {
   for (auto& alias : program_.aliases) {
-    if (const auto origin = program_.origins.find(alias.name); origin != program_.origins.end()) {
-      origin->second.type_parameters = alias.type_parameters;
-    }
     if (IsBuiltinName(alias.name)) {
       Error(alias.location, "type alias name is reserved for a builtin");
     }
@@ -501,6 +508,9 @@ void Specializer::CollectTemplates() {
       Error(alias.location, "duplicate type alias '" + alias.name + "'");
     }
   }
+}
+
+void Specializer::CollectFunctionTemplates() {
   for (auto& function : program_.functions) {
     if (IsBuiltinName(function.name)) {
       Error(function.location, "function name is reserved for a builtin");
@@ -509,12 +519,41 @@ void Specializer::CollectTemplates() {
       functions_.push_back({.declaration = std::move(function), .substitutions = {}});
     } else {
       const auto name = function.name;
-      if (const auto origin = program_.origins.find(name); origin != program_.origins.end()) {
-        origin->second.type_parameters = function.type_parameters;
-      }
       function_templates_.emplace(name, std::move(function));
     }
   }
+  program_.functions.clear();
+}
+
+void Specializer::DescribeClassTemplate(const Class& owner) {
+  const auto origin = program_.origins.find(owner.name);
+  if (origin == program_.origins.end()) {
+    return;
+  }
+  auto& description = origin->second;
+  description.members.push_back({.kind = DeclarationKind::Constructor, .name = "$constructor"});
+  for (const auto& field : owner.fields) {
+    description.members.push_back({
+        .kind = field.storage == MemberStorage::Static ? DeclarationKind::StaticField
+                                                       : DeclarationKind::Field,
+        .name = field.name,
+        .has_initializer = field.initializer != nullptr,
+    });
+  }
+  for (const auto& method : owner.methods) {
+    auto kind = DeclarationKind::Method;
+    if (method.is_getter) {
+      kind = DeclarationKind::Getter;
+    } else if (method.is_setter) {
+      kind = DeclarationKind::Setter;
+    } else if (method.storage == MemberStorage::Static) {
+      kind = DeclarationKind::StaticMethod;
+    }
+    description.members.push_back({.kind = kind, .name = method.name});
+  }
+}
+
+void Specializer::CollectClassTemplates() {
   for (auto& owner : program_.classes) {
     if (IsBuiltinName(owner.name) && !IsStandardTypeNamespace(program_, owner)) {
       Error(owner.location, "type name is reserved for a builtin");
@@ -523,43 +562,34 @@ void Specializer::CollectTemplates() {
       classes_.push_back({.declaration = std::move(owner), .substitutions = {}});
     } else {
       const auto name = owner.name;
-      if (const auto origin = program_.origins.find(name); origin != program_.origins.end()) {
-        auto& description = origin->second;
-        description.type_parameters = owner.type_parameters;
-        description.members.push_back(
-            {.kind = DeclarationKind::Constructor, .name = "$constructor"});
-        for (const auto& field : owner.fields) {
-          description.members.push_back({
-              .kind = field.storage == MemberStorage::Static ? DeclarationKind::StaticField
-                                                             : DeclarationKind::Field,
-              .name = field.name,
-              .has_initializer = field.initializer != nullptr,
-          });
-        }
-        for (const auto& method : owner.methods) {
-          const auto kind = method.is_getter   ? DeclarationKind::Getter
-                            : method.is_setter ? DeclarationKind::Setter
-                            : method.storage == MemberStorage::Static
-                                ? DeclarationKind::StaticMethod
-                                : DeclarationKind::Method;
-          description.members.push_back({.kind = kind, .name = method.name});
-        }
-      }
+      DescribeClassTemplate(owner);
       class_templates_.emplace(name, std::move(owner));
     }
   }
-  program_.functions.clear();
   program_.classes.clear();
 }
 
-Diagnostics Specializer::Run() {
-  CollectDeclarations();
-  CollectTemplates();
+void Specializer::NormalizeAliases() {
   std::erase_if(program_.aliases,
                 [](const auto& alias) -> bool { return !alias.type_parameters.empty(); });
   for (auto& alias : program_.aliases) {
     Normalize(alias.target, {});
   }
+}
+
+Diagnostics Specializer::Run(std::span<const GenericSpecialization> retained) {
+  CollectDeclarations();
+  CollectAliases();
+  CollectFunctionTemplates();
+  CollectClassTemplates();
+  for (const auto& request : retained) {
+    auto arguments = request.arguments;
+    for (auto& argument : arguments) {
+      Normalize(argument, {});
+    }
+    (void)Instantiate(request.name, arguments, {});
+  }
+  NormalizeAliases();
   for (auto& interface : program_.interfaces) {
     for (auto& method : interface.methods) {
       Normalize(method, {});
@@ -614,8 +644,8 @@ Diagnostics Specializer::Run() {
 
 }  // namespace
 
-Diagnostics SpecializeGenerics(Program& program) {
-  return Specializer(program).Run();
+Diagnostics SpecializeGenerics(Program& program, std::span<const GenericSpecialization> retained) {
+  return Specializer(program).Run(retained);
 }
 
 }  // namespace vela::frontend

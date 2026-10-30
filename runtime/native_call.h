@@ -8,7 +8,9 @@
 #include "runtime/callable.h"
 #include "runtime/future_composition.h"
 #include "runtime/native_abi.h"
+#include "runtime/native_image.h"
 #include "runtime/native_instance.h"
+#include "runtime/object.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -35,10 +37,9 @@ struct NativeResolvedCallable final {
     Value callable);
 
 // 公开命名/版本入口与 AOT 宿主包装共用参数检查；Value 参数在执行期间保根。
-[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeEntry(
-    NativeExecution& execution,
-    std::uint32_t function,
-    std::span<const Value> arguments);
+[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeEntry(NativeExecution& execution,
+                                                                      std::uint32_t function,
+                                                                      std::span<const Value> input);
 
 namespace internal {
 

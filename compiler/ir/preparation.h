@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <expected>
 
+#include "base/native_program_mode.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/declaration_ids.h"
 #include "compiler/frontend/diagnostic.h"

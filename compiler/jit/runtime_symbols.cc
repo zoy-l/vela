@@ -3,7 +3,10 @@
 #include <utility>
 
 #include <llvm/ADT/StringRef.h>
+#include <llvm/ExecutionEngine/JITSymbol.h>
+#include <llvm/ExecutionEngine/Orc/AbsoluteSymbols.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
+#include <llvm/ExecutionEngine/Orc/CoreContainers.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
 #include <llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderGDB.h>
@@ -14,6 +17,7 @@
 #include "runtime/native_async.h"
 #include "runtime/native_call.h"
 #include "runtime/native_control.h"
+#include "runtime/native_deoptimization.h"
 #include "runtime/native_dispatch.h"
 #include "runtime/native_function.h"
 #include "runtime/native_operations.h"
@@ -23,8 +27,8 @@ namespace vela::compiler::jit {
 llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   llvm::orc::SymbolMap symbols;
   const auto bind = [&](llvm::StringRef name, auto* entry) {
-    symbols[jit.mangleAndIntern(name)] = llvm::orc::ExecutorSymbolDef(
-        llvm::orc::ExecutorAddr::fromPtr(entry), llvm::JITSymbolFlags::Exported);
+    symbols.try_emplace(jit.mangleAndIntern(name), llvm::orc::ExecutorAddr::fromPtr(entry),
+                        llvm::JITSymbolFlags::Exported);
   };
   // 静态 SDK 的注册入口不依赖宿主导出其全部符号；同一张表负责强制链接与 ORC 解析。
   bind("llvm_orc_registerJITLoaderGDBAllocAction", &llvm_orc_registerJITLoaderGDBAllocAction);
@@ -33,8 +37,12 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind("llvm_orc_deregisterEHFrameSectionAllocAction",
        &llvm_orc_deregisterEHFrameSectionAllocAction);
   bind("vela_native_v3_safepoint", &runtime::vela_native_v3_safepoint);
+  bind("vela_native_v4_can_optimize", &runtime::vela_native_v4_can_optimize);
+  bind("vela_native_v4_recover", &runtime::vela_native_v4_recover);
   bind("vela_native_v3_host_enter", &runtime::vela_native_v3_host_enter);
   bind("vela_native_v3_host_exit", &runtime::vela_native_v3_host_exit);
+  bind("vela_native_v3_initialization_enter", &runtime::vela_native_v3_initialization_enter);
+  bind("vela_native_v3_initialization_exit", &runtime::vela_native_v3_initialization_exit);
   bind("vela_native_v1_frame_storage", &runtime::vela_native_v1_frame_storage);
   bind("vela_native_v1_frame_release", &runtime::vela_native_v1_frame_release);
   bind("vela_native_v1_roots_enter", &runtime::vela_native_v1_roots_enter);
@@ -62,6 +70,8 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind("vela_native_v3_capture_receiver", &runtime::vela_native_v3_capture_receiver);
   bind("vela_native_v3_load_global", &runtime::vela_native_v3_load_global);
   bind("vela_native_v3_store_global", &runtime::vela_native_v3_store_global);
+  bind("vela_native_v3_load_field", &runtime::vela_native_v3_load_field);
+  bind("vela_native_v3_store_field", &runtime::vela_native_v3_store_field);
   bind("vela_native_v1_import", &runtime::vela_native_v1_import);
   bind("vela_native_v1_constant", &runtime::vela_native_v1_constant);
   bind("vela_native_v1_type_test", &runtime::vela_native_v1_type_test);

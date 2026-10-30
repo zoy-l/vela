@@ -1,6 +1,8 @@
 #include "compiler/ir/analysis.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -52,14 +54,16 @@ TEST(AnalysisTest, SuccessfulOverwriteDoesNotKeepThePreviousDestinationAlive) {
 }
 
 TEST(AnalysisTest, CopyRemovalAndConstantBranchesShareStableInstructionPositions) {
+  constexpr std::int64_t kResult = 42;
+  constexpr std::uint32_t kFalseTarget = 6;
   Function function;
   function.register_count = 3;
   function.instructions = {
-      {.opcode = Opcode::LoadInt, .dst = 0, .immediate = 42, .location = {}},
+      {.opcode = Opcode::LoadInt, .dst = 0, .immediate = kResult, .location = {}},
       {.opcode = Opcode::Move, .dst = 1, .lhs = 0, .location = {}},
       {.opcode = Opcode::Move, .dst = 1, .lhs = 0, .location = {}},
       {.opcode = Opcode::LoadBool, .dst = 2, .immediate = 1, .location = {}},
-      {.opcode = Opcode::JumpIfFalse, .lhs = 2, .index = 6, .location = {}},
+      {.opcode = Opcode::JumpIfFalse, .lhs = 2, .index = kFalseTarget, .location = {}},
       {.opcode = Opcode::Return, .dst = 1, .location = {}},
       {.opcode = Opcode::LoadInt, .dst = 1, .location = {}},
       {.opcode = Opcode::Return, .dst = 1, .location = {}},
@@ -92,6 +96,26 @@ TEST(AnalysisTest, AwaitHasASeparateResumeBlockWithoutAnExceptionHandler) {
   EXPECT_TRUE(liveness.front().live_out.Has(1));
 }
 
+TEST(AnalysisTest, AnUnreachableFinalizerDoesNotLeaveExceptionTargetsPastTheCode) {
+  constexpr std::int64_t kUnreachableResult = 42;
+  Function function;
+  function.register_count = 2;
+  function.handlers = {{.target = 3}};
+  function.instructions = {
+      {.opcode = Opcode::LoadBool, .dst = 0, .immediate = 1, .location = {}, .handler = 0},
+      {.opcode = Opcode::JumpIfFalse, .lhs = 0, .index = 3, .location = {}, .handler = 0},
+      {.opcode = Opcode::Jump, .index = 0, .location = {}, .handler = 0},
+      {.opcode = Opcode::LoadInt, .dst = 1, .immediate = kUnreachableResult, .location = {}},
+      {.opcode = Opcode::Print, .dst = 1, .location = {}},
+      {.opcode = Opcode::Return, .dst = 1, .location = {}},
+  };
+  Optimize(function, {});
+  EXPECT_TRUE(function.handlers.empty());
+  EXPECT_FALSE(std::ranges::any_of(function.instructions, [](const auto& instruction) {
+    return instruction.handler.has_value() || instruction.opcode == Opcode::Print;
+  }));
+}
+
 TEST(AnalysisTest, ReturnCompletionRetainsItsExceptionHandler) {
   Function function;
   function.is_async = true;
@@ -110,36 +134,51 @@ TEST(AnalysisTest, ReturnCompletionRetainsItsExceptionHandler) {
 }
 
 TEST(AnalysisTest, PropagatesLoopAndExceptionLivenessAcrossBitsetWords) {
+  constexpr RegisterId kWordBits = std::numeric_limits<std::uint64_t>::digits;
+  constexpr auto kPreviousWord = kWordBits - 1;
+  constexpr auto kDistantWord = kWordBits * 4;
+  constexpr auto kResult = kDistantWord + 1;
+  constexpr auto kCaught = kWordBits + 1;
+  constexpr std::uint32_t kNormalExit = 5;
+  constexpr std::uint32_t kExceptionTarget = kNormalExit + 1;
   Function function;
-  function.register_count = 258;
-  function.handlers = {{.target = 6}};
+  function.register_count = kResult + 1;
+  function.handlers = {{.target = kExceptionTarget}};
   function.instructions = {
       {.opcode = Opcode::Jump, .index = 1, .location = {}},
-      {.opcode = Opcode::JumpIfFalse, .lhs = 64, .index = 5, .location = {}},
-      {.opcode = Opcode::CheckedCast, .dst = 257, .lhs = 63, .location = {}, .handler = 0},
-      {.opcode = Opcode::Move, .dst = 63, .lhs = 256, .location = {}},
+      {.opcode = Opcode::JumpIfFalse, .lhs = kWordBits, .index = kNormalExit, .location = {}},
+      {
+          .opcode = Opcode::CheckedCast,
+          .dst = kResult,
+          .lhs = kPreviousWord,
+          .location = {},
+          .handler = 0,
+      },
+      {.opcode = Opcode::Move, .dst = kPreviousWord, .lhs = kDistantWord, .location = {}},
       {.opcode = Opcode::Jump, .index = 1, .location = {}},
-      {.opcode = Opcode::Return, .dst = 257, .location = {}},
-      {.opcode = Opcode::Catch, .dst = 65, .location = {}},
-      {.opcode = Opcode::Return, .dst = 257, .location = {}},
+      {.opcode = Opcode::Return, .dst = kResult, .location = {}},
+      {.opcode = Opcode::Catch, .dst = kCaught, .location = {}},
+      {.opcode = Opcode::Return, .dst = kResult, .location = {}},
   };
   const auto graph = BuildFlowGraph(function);
   const auto live = AnalyzeLiveness(function, graph, {});
   std::vector<RegisterId> entry;
   live.front().live_in.ForEach([&](RegisterId reg) { entry.push_back(reg); });
-  EXPECT_EQ(entry, (std::vector<RegisterId>{63, 64, 256, 257}));
+  EXPECT_EQ(entry, (std::vector<RegisterId>{kPreviousWord, kWordBits, kDistantWord, kResult}));
   const auto& before_cast = live.at(graph.instruction_blocks.at(2)).live_in;
-  EXPECT_TRUE(before_cast.Has(63));
-  EXPECT_TRUE(before_cast.Has(257));
-  EXPECT_FALSE(before_cast.Has(65));
+  EXPECT_TRUE(before_cast.Has(kPreviousWord));
+  EXPECT_TRUE(before_cast.Has(kResult));
+  EXPECT_FALSE(before_cast.Has(kCaught));
 }
 
 TEST(AnalysisTest, ExceptionalTransferKillsOnlyDefinitionsCompletedBeforeFailure) {
+  constexpr std::uint32_t kRegisterCount = 5;
+  constexpr std::int64_t kBeforeCast = 42;
   Function function;
-  function.register_count = 5;
+  function.register_count = kRegisterCount;
   function.handlers = {{.target = 4}};
   function.instructions = {
-      {.opcode = Opcode::LoadInt, .dst = 0, .immediate = 42, .location = {}, .handler = 0},
+      {.opcode = Opcode::LoadInt, .dst = 0, .immediate = kBeforeCast, .location = {}, .handler = 0},
       {.opcode = Opcode::Move, .dst = 1, .lhs = 2, .location = {}, .handler = 0},
       {.opcode = Opcode::CheckedCast, .dst = 0, .lhs = 3, .location = {}, .handler = 0},
       {.opcode = Opcode::Return, .dst = 0, .location = {}},

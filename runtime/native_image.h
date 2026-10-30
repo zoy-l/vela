@@ -21,6 +21,8 @@ inline constexpr std::uint32_t kNativeTypedFunction = 4;
 // 内部入口返回 enum 的标量载荷；进入 runtime Value 表示时需要盒装。
 inline constexpr std::uint32_t kNativeEnumResult = 8;
 inline constexpr std::uint32_t kNativeGeneratedConstructor = 16;
+inline constexpr std::uint32_t kNativePrivateFunction = 32;
+inline constexpr std::uint32_t kNativePrivateField = 1;
 
 // 这些记录是生成代码可见的内部 ABI：仅包含固定宽度字段、重定位指针和长度。
 // 描述表及所有借用字节均不可变，必须覆盖引用它们的程序状态、闭包与续延的生命周期。
@@ -43,6 +45,13 @@ struct NativeTypeDescription final {
   std::uint32_t index = 0;
 };
 
+struct NativeFieldDescription final {
+  DeclarationId declaration;
+  std::uint32_t type = 0;
+  std::uint32_t flags = 0;
+  std::uint32_t initializer = kNoNativeIndex;
+};
+
 struct NativeClassDescription final {
   NativeText name;
   NativeTable<std::uint32_t> reference_fields;
@@ -55,7 +64,7 @@ struct NativeClassDescription final {
   std::uint32_t callable_type = kNoNativeIndex;
   std::uint32_t expected_type = kNoNativeIndex;
   DeclarationId declaration;
-  NativeTable<DeclarationId> field_declarations;
+  NativeTable<NativeFieldDescription> fields;
   DeclarationId base_class;
 };
 
@@ -94,6 +103,35 @@ using NativeEntry = std::uint8_t (*)(NativeExecution*,
                                      std::uint64_t,
                                      NativeValue*) noexcept;
 
+struct NativeConstructionDescription final {
+  DeclarationId type;
+  NativeTable<DeclarationId> supplied;
+};
+
+struct NativeBindingDependency final {
+  DeclarationId target;
+  DeclarationId receiver;
+};
+
+struct NativeDependencyBlock final {
+  std::uint32_t begin = 0;
+  std::uint32_t end = 0;
+  NativeTable<std::uint32_t> successors;
+};
+
+struct NativeFunctionDependencies final {
+  NativeTable<DeclarationId> fields;
+  NativeTable<DeclarationId> globals;
+  NativeTable<std::uint32_t> versions;
+  NativeTable<NativeConstructionDescription> constructions;
+  DeclarationId lexical_class;
+  NativeTable<NativeBindingDependency> bindings;
+  NativeTable<DeclarationId> types;
+  // 按 fields、globals、versions、constructions、bindings 的顺序对应每条依赖的原 IR 位置。
+  NativeTable<std::uint32_t> positions;
+  NativeTable<NativeDependencyBlock> blocks;
+};
+
 struct NativeFunctionDescription final {
   NativeText name;
   NativeText native_symbol;
@@ -105,6 +143,7 @@ struct NativeFunctionDescription final {
   std::uint32_t hidden_parameters = 0;
   std::uint32_t flags = 0;
   FunctionIdentity identity;
+  const NativeFunctionDependencies* dependencies = nullptr;
 };
 
 struct NativeMemberDescription final {
@@ -123,6 +162,7 @@ struct NativeDeclarationDescription final {
   NativeText name;
   NativeTable<NativeText> type_parameters;
   NativeTable<NativeText> enum_members;
+  DeclarationId definition;
 };
 
 struct NativeImage final {

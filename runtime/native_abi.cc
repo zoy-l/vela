@@ -4,13 +4,18 @@
 #include <cstdint>
 #include <memory>
 #include <new>
+#include <span>
 
 #include "base/execution_limits.h"
 #include "base/execution_status.h"
+#include "base/native_program_mode.h"
 #include "runtime/exception.h"
+#include "runtime/external_resources.h"
+#include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/native_deoptimization.h"
+#include "runtime/native_dispatch.h"
 #include "runtime/native_instance.h"
-#include "runtime/native_memory_layout.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -33,7 +38,17 @@ NativeExecution::NativeExecution(NativeInstance& instance) noexcept
     : instance_(&instance),
       context_(instance.isolate()),
       exception_root_(isolate().heap(), &pending_exception_, 1, RootOwner::Runtime),
-      execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {}
+      execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {
+  if (instance.image().native_mode == static_cast<std::uint32_t>(NativeProgramMode::Reloadable)) {
+    isolate().native_dispatch().RegisterExecution(*this);
+  }
+}
+
+NativeExecution::~NativeExecution() {
+  if (version_previous_link_ != nullptr) {
+    NativeDispatch::UnregisterExecution(*this);
+  }
+}
 
 NativeInstanceScope::NativeInstanceScope(NativeExecution& execution,
                                          NativeInstance& instance) noexcept
@@ -67,7 +82,10 @@ ExecutionStatus NativeExecution::Enter(NativeTraceFrame& frame, std::uint32_t fu
 
 void NativeExecution::MaterializeFrame(NativeTraceFrame& frame, std::uint32_t function) noexcept {
   frame = {
-      .position = {.function = function}, .previous = current_frame_, .image = &instance().image()};
+      .position = {.function = function},
+      .previous = current_frame_,
+      .image = &instance().image(),
+  };
   current_frame_ = &frame;
   ++frame_count_;
 }
@@ -77,14 +95,25 @@ void NativeExecution::Exit() noexcept {
   current_frame_ = current_frame_->previous;
 }
 
+std::uint8_t NativeExecution::Recover(NativeCheckpoint& checkpoint, void* result) noexcept {
+  auto* physical = current_frame_;
+  Exit();
+  const auto status = checkpoint.recovery(this, &checkpoint, result);
+  current_frame_ = physical;
+  ++frame_count_;
+  return status;
+}
+
 extern "C" std::uint8_t vela_native_v1_frame_storage(NativeExecution* execution,
                                                      std::uint64_t root_count,
                                                      std::uint64_t storage_bytes,
                                                      NativeFrame* frame,
                                                      NativeFrameAccess* access) noexcept {
   std::construct_at(frame, execution->isolate(),
-                    NativeFrameSize{.root_count = static_cast<std::size_t>(root_count),
-                                    .storage_bytes = static_cast<std::size_t>(storage_bytes)});
+                    NativeFrameSize{
+                        .root_count = static_cast<std::size_t>(root_count),
+                        .storage_bytes = static_cast<std::size_t>(storage_bytes),
+                    });
   if (!frame->IsAllocated()) {
     std::destroy_at(frame);
     return static_cast<std::uint8_t>(ExecutionStatus::OutOfMemory);
@@ -110,20 +139,26 @@ extern "C" void vela_native_v1_roots_exit(RootRange* range) noexcept {
   std::destroy_at(range);
 }
 
+ExecutionStatus NativeExecution::HandleLeafFailure(TracePosition position,
+                                                   ExecutionStatus status,
+                                                   std::span<const Value> roots) {
+  const RootRange retained(isolate().heap(), roots.data(), roots.size(), RootOwner::Runtime);
+  NativeTraceFrame frame;
+  MaterializeFrame(frame, position.function);
+  frame.position.instruction = position.instruction;
+  const auto failure = HandleFailure(status);
+  Exit();
+  return failure;
+}
+
 extern "C" std::uint8_t vela_native_v2_leaf_failure(NativeExecution* execution,
                                                     std::uint64_t position,
                                                     std::uint8_t status,
                                                     const Value* roots,
                                                     std::uint64_t root_count) {
-  const RootRange retained(execution->isolate().heap(), roots, static_cast<std::size_t>(root_count),
-                           RootOwner::Runtime);
-  NativeTraceFrame frame;
-  const auto decoded = DecodeNativeTracePosition(position);
-  execution->MaterializeFrame(frame, decoded.function);
-  *execution->current_instruction() = decoded.instruction;
-  const auto failure = execution->HandleFailure(static_cast<ExecutionStatus>(status));
-  execution->Exit();
-  return static_cast<std::uint8_t>(failure);
+  return static_cast<std::uint8_t>(execution->HandleLeafFailure(
+      DecodeNativeTracePosition(position), static_cast<ExecutionStatus>(status),
+      std::span(roots, static_cast<std::size_t>(root_count))));
 }
 
 }  // namespace vela::runtime

@@ -16,5 +16,6 @@ HeaderFilterRegex: '.*'
 ExcludeHeaderFilterRegex: '(^|[/\\])third_party[/\\]'
 FormatStyle: file
 CheckOptions:
+  readability-function-cognitive-complexity.IgnoreMacros: true
   readability-trailing-comma.SingleLineCommaPolicy: Ignore
   readability-trailing-comma.MultiLineCommaPolicy: Append

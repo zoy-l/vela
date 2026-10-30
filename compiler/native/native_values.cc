@@ -221,7 +221,8 @@ llvm::Value* Convert(Builder& builder,
 void EmitWrapper(llvm::Module& module,
                  const ir::Function& source,
                  std::uint32_t function_index,
-                 const GeneratedFunction& function) {
+                 const GeneratedFunction& function,
+                 llvm::Constant* image) {
   auto* body = function.body;
   auto* entry = function.entry;
   auto& context = module.getContext();
@@ -287,7 +288,29 @@ void EmitWrapper(llvm::Module& module,
     arguments.push_back(LoadImport(builder, module, entry->getArg(0), function_index));
   }
   arguments.push_back(result);
-  auto* status = builder.CreateCall(body, arguments);
+  llvm::Value* status = nullptr;
+  if (function.baseline_body != nullptr) {
+    auto helper = module.getOrInsertFunction("vela_native_v4_can_optimize", builder.getInt8Ty(),
+                                             builder.getPtrTy(), builder.getPtrTy());
+    auto* optimized = llvm::BasicBlock::Create(context, "optimized", entry);
+    auto* baseline = llvm::BasicBlock::Create(context, "baseline", entry);
+    auto* merge = llvm::BasicBlock::Create(context, "called", entry);
+    auto* current = builder.CreateCall(helper, {entry->getArg(0), image});
+    builder.CreateCondBr(builder.CreateICmpNE(current, builder.getInt8(0)), optimized, baseline);
+    builder.SetInsertPoint(optimized);
+    auto* fast = builder.CreateCall(body, arguments);
+    builder.CreateBr(merge);
+    builder.SetInsertPoint(baseline);
+    auto* stable = builder.CreateCall(function.baseline_body, arguments);
+    builder.CreateBr(merge);
+    builder.SetInsertPoint(merge);
+    auto* outcome = builder.CreatePHI(builder.getInt8Ty(), 2);
+    outcome->addIncoming(fast, optimized);
+    outcome->addIncoming(stable, baseline);
+    status = outcome;
+  } else {
+    status = builder.CreateCall(body, arguments);
+  }
   auto* returned = llvm::BasicBlock::Create(context, "returned", entry);
   auto* failed = llvm::BasicBlock::Create(context, "failed", entry);
   builder.CreateCondBr(builder.CreateICmpEQ(status, Status(builder, ExecutionStatus::Returned)),

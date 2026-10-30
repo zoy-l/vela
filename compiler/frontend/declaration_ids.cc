@@ -1,5 +1,6 @@
 #include "compiler/frontend/declaration_ids.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -36,12 +37,8 @@ void DeclarationIds::FinishUpdate() {
     if (type.declaration != DeclarationId{} && !is_active(type.declaration)) {
       return false;
     }
-    for (const auto& argument : type.arguments) {
-      if (!self(self, argument)) {
-        return false;
-      }
-    }
-    return true;
+    return std::ranges::all_of(type.arguments,
+                               [&](const auto& argument) { return self(self, argument); });
   };
   // Get 的依赖先于使用者分配：模块、模板、类型实参、具体化、成员、初始化器。
   // 顺序退休可在线性时间传播真实删除；不要求为不可达特化生成函数体。

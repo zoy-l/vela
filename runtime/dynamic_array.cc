@@ -215,7 +215,7 @@ std::expected<Value, ExecutionStatus> PrepareDynamicArray(Isolate& isolate,
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto* closure = classes.subspan(static_cast<std::size_t>(wrapper.AsInteger())).front();
-  if (closure == nullptr || !closure->callable() ||
+  if (closure == nullptr || (closure->callable() == nullptr) ||
       closure->callable()->mode != CallableMode::Closure || closure->field_count() != 1) {
     return std::unexpected(ExecutionStatus::TypeError);
   }

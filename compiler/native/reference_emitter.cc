@@ -11,6 +11,7 @@
 #include <utility>
 #include "base/builtin.h"
 #include "base/execution_status.h"
+#include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
@@ -33,7 +34,8 @@ llvm::Value* FunctionEmitter::Pack(llvm::Value* encoded, std::size_t index) {
 
 void FunctionEmitter::Unpack(ir::RegisterId reg) {
   auto* record = builder_.CreateLoad(NativeRecordType(module_.getContext()), result_);
-  builder_.CreateStore(DecodeValue(builder_, record, source_.value_types.at(reg)), slots_.at(reg));
+  const auto& type = source_.value_types.at(reg);
+  Store(reg, DecodeValue(builder_, record, type), type);
 }
 
 void FunctionEmitter::StoreRoots(std::size_t index) {
@@ -68,6 +70,34 @@ void FunctionEmitter::ClearRoot(std::size_t slot) {
       builder_.CreateStore(builder_.getInt8(NativeKind(Kind::Null)),
                            ByteAddress(RootAddress(slot), runtime::NativeMemoryLayout::kValueKind));
   clear->setMetadata(kNativeRootClearMetadata, llvm::MDNode::get(module_.getContext(), {}));
+}
+
+std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruction& instruction) {
+  const auto builtin = static_cast<Builtin>(instruction.index);
+  if (builtin == Builtin::NumericToInt || builtin == Builtin::NumericToDouble) {
+    const auto& type = source_.value_types.at(instruction.lhs);
+    if (type.nullable || (type.kind != Kind::Int && type.kind != Kind::Double)) {
+      return std::unexpected("native numeric conversion requires a non-null numeric operand");
+    }
+    EmitNumericConversion(instruction, builtin);
+    return {};
+  }
+  if (builtin == Builtin::ArrayLength || builtin == Builtin::ArrayCapacity ||
+      builtin == Builtin::ArrayMutation || builtin == Builtin::ArrayCheckMutation ||
+      builtin == Builtin::ArrayPush) {
+    EmitArrayBuiltin(instruction, builtin);
+    return {};
+  }
+  for (std::size_t argument = 0; argument < BuiltinArity(builtin); ++argument) {
+    Pack(Encode(static_cast<ir::RegisterId>(instruction.lhs + argument)), argument);
+  }
+  auto helper = module_.getOrInsertFunction("vela_native_v1_builtin", builder_.getInt8Ty(),
+                                            builder_.getPtrTy(), builder_.getInt32Ty(),
+                                            builder_.getPtrTy(), builder_.getPtrTy());
+  CheckStatus(builder_.CreateCall(
+      helper, {body_->getArg(0), builder_.getInt32(instruction.index), arguments_, result_}));
+  Unpack(instruction.dst);
+  return {};
 }
 
 std::expected<void, std::string> FunctionEmitter::EmitReference(
@@ -131,8 +161,13 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
         auto helper = module_.getOrInsertFunction("vela_native_v3_call_interface", status_type,
                                                   pointer, builder_.getInt64Ty(), pointer,
                                                   builder_.getInt64Ty(), pointer);
-        status = builder_.CreateCall(helper, {context, builder_.getInt64(selector.value),
-                                              arguments_, builder_.getInt64(count), result_});
+        status = builder_.CreateCall(helper, {
+                                                 context,
+                                                 builder_.getInt64(selector.value),
+                                                 arguments_,
+                                                 builder_.getInt64(count),
+                                                 result_,
+                                             });
         break;
       }
       auto helper =
@@ -229,30 +264,8 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
     case Opcode::SetIndex:
       EmitIndex(instruction);
       return {};
-    case Opcode::BuiltinCall: {
-      const auto builtin = static_cast<Builtin>(instruction.index);
-      if (builtin == Builtin::NumericToInt || builtin == Builtin::NumericToDouble) {
-        const auto& type = source_.value_types.at(instruction.lhs);
-        if (type.nullable || (type.kind != Kind::Int && type.kind != Kind::Double)) {
-          return std::unexpected("AOT numeric conversion requires a non-null numeric operand");
-        }
-        EmitNumericConversion(instruction, builtin);
-        return {};
-      }
-      if (builtin == Builtin::ArrayLength || builtin == Builtin::ArrayCapacity ||
-          builtin == Builtin::ArrayMutation || builtin == Builtin::ArrayCheckMutation ||
-          builtin == Builtin::ArrayPush) {
-        EmitArrayBuiltin(instruction, builtin);
-        return {};
-      }
-      for (std::size_t argument = 0; argument < BuiltinArity(builtin); ++argument) {
-        Pack(Encode(static_cast<ir::RegisterId>(instruction.lhs + argument)), argument);
-      }
-      auto helper = module_.getOrInsertFunction("vela_native_v1_builtin", status_type, pointer,
-                                                word, pointer, pointer);
-      status = builder_.CreateCall(helper, {context, index, arguments_, result_});
-      break;
-    }
+    case Opcode::BuiltinCall:
+      return EmitBuiltin(instruction);
     case Opcode::StringConcat:
     case Opcode::EqualString:
     case Opcode::NotEqualString: {
@@ -287,7 +300,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       return {};
     }
     default:
-      return std::unexpected("AOT lowering is not implemented for opcode " +
+      return std::unexpected("native lowering is not implemented for opcode " +
                              std::to_string(static_cast<unsigned>(instruction.opcode)));
   }
   CheckStatus(status);

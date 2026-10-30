@@ -4,26 +4,29 @@
 
 #include <benchmark/benchmark.h>
 
+#include "base/opcode.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::benchmarks {
 namespace {
 
-enum class LivenessMode { All, Necessary };
+enum class LivenessMode : std::uint8_t { All, Necessary };
 
 void LoopLiveness(benchmark::State& state, LivenessMode mode) {
   ir::Function function;
-  function.register_count = 128;
+  constexpr std::uint32_t kRegisterCount = 128;
+  constexpr auto kDataRegisters = kRegisterCount - 1;
+  function.register_count = kRegisterCount;
   const auto blocks = static_cast<std::size_t>(state.range(0));
   const auto width = static_cast<std::size_t>(state.range(1));
   for (std::size_t block = 0; block < blocks; ++block) {
     for (std::size_t index = 0; index < width; ++index) {
-      const auto value = block * width + index;
+      const auto value = (block * width) + index;
       function.instructions.push_back({
           .opcode = Opcode::Move,
-          .dst = 1 + static_cast<std::uint32_t>((value + 1) % 127),
-          .lhs = 1 + static_cast<std::uint32_t>(value % 127),
+          .dst = 1 + static_cast<std::uint32_t>((value + 1) % kDataRegisters),
+          .lhs = 1 + static_cast<std::uint32_t>(value % kDataRegisters),
           .location = {},
       });
     }
@@ -34,7 +37,8 @@ void LoopLiveness(benchmark::State& state, LivenessMode mode) {
         .location = {},
     });
   }
-  function.instructions.push_back({.opcode = Opcode::Return, .dst = 127, .location = {}});
+  function.instructions.push_back(
+      {.opcode = Opcode::Return, .dst = kDataRegisters, .location = {}});
   const auto graph = ir::BuildFlowGraph(function);
   for (auto iteration : state) {
     auto live = mode == LivenessMode::All

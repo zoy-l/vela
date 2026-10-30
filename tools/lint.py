@@ -19,6 +19,13 @@ from tools.config import BUILD_VARIANTS, ROOT, output_directory, toolchain_tools
 
 CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"}
 
+# These fixed ABI signatures and fallible array owners are documented in .agents/cpp_style.md.
+SCOPED_CHECK_EXCEPTIONS = {
+    "compiler/jit/platform_support_win.cc": ("bugprone-easily-swappable-parameters",),
+    "runtime/native_operations.cc": ("bugprone-easily-swappable-parameters",),
+    "runtime/native_instance.cc": ("cppcoreguidelines-avoid-c-arrays", "modernize-avoid-c-arrays"),
+}
+
 
 @dataclass(frozen=True)
 class LintResult:
@@ -125,6 +132,9 @@ def _check_source(clang_tidy: Path, source: Path, database: Path, *, fix: bool) 
     command = [
         str(clang_tidy), str(source), "-p", str(database), "--quiet", "--warnings-as-errors=*",
     ]
+    exceptions = SCOPED_CHECK_EXCEPTIONS.get(source.relative_to(ROOT).as_posix(), ())
+    if exceptions:
+        command.append("--checks=" + ",".join("-" + check for check in exceptions))
     if fix:
         command.extend(["--fix", "--format-style=file"])
     result = subprocess.run(

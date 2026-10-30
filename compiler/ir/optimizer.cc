@@ -6,6 +6,7 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -70,7 +71,7 @@ void PropagateCopies(Function& function,
                                     : std::nullopt;
       const auto previous = values.find(destination);
       if (source_value && previous != values.end() && previous->second == *source_value) {
-        keep[index] = 0;
+        keep.subspan(index).front() = 0;
         continue;
       }
       InvalidateRepresentative(destination, values, representatives);
@@ -246,6 +247,19 @@ void Materialize(Instruction& instruction, const Constant& value) {
   instruction.index = 0;
 }
 
+void FoldBranch(Instruction& instruction, const Constants& constants, std::uint8_t& keep) {
+  const auto condition = constants.find(instruction.lhs);
+  if (condition == constants.end() || !std::holds_alternative<bool>(condition->second)) {
+    return;
+  }
+  if (std::get<bool>(condition->second)) {
+    keep = 0;
+  } else {
+    instruction.opcode = Opcode::Jump;
+    instruction.lhs = 0;
+  }
+}
+
 void FoldConstants(Function& function,
                    std::span<const Function> functions,
                    const FlowGraph& graph,
@@ -254,20 +268,13 @@ void FoldConstants(Function& function,
   for (const auto& block : graph.blocks) {
     constants.erase(constants.begin(), constants.end());
     for (std::size_t index = block.begin; index < block.end; ++index) {
-      if (keep[index] == 0) {
+      auto& retained = keep.subspan(index).front();
+      if (retained == 0) {
         continue;
       }
       auto& instruction = function.instructions.at(index);
       if (instruction.opcode == Opcode::JumpIfFalse) {
-        const auto condition = constants.find(instruction.lhs);
-        if (condition != constants.end() && std::holds_alternative<bool>(condition->second)) {
-          if (std::get<bool>(condition->second)) {
-            keep[index] = 0;
-          } else {
-            instruction.opcode = Opcode::Jump;
-            instruction.lhs = 0;
-          }
-        }
+        FoldBranch(instruction, constants, retained);
         continue;
       }
       const auto access = AnalyzeRegisters(instruction, functions);
@@ -321,6 +328,28 @@ void RemoveUnusedValues(Function& function,
   CompactInstructions(function, liveness.keep);
 }
 
+void RemoveUnusedHandlers(Function& function) {
+  std::vector<std::optional<std::uint32_t>> remap(function.handlers.size());
+  std::vector<Function::Handler> handlers;
+  for (auto& instruction : function.instructions) {
+    const auto previous = instruction.handler;
+    if (!previous) {
+      continue;
+    }
+    if (!AnalyzeEffects(instruction).may_fail) {
+      instruction.handler.reset();
+      continue;
+    }
+    auto& target = remap.at(*previous);
+    if (!target) {
+      target = static_cast<std::uint32_t>(handlers.size());
+      handlers.push_back(function.handlers.at(*previous));
+    }
+    instruction.handler = *target;
+  }
+  function.handlers = std::move(handlers);
+}
+
 }  // namespace
 
 void Optimize(Function& function, std::span<const Function> functions) {
@@ -335,6 +364,7 @@ void Optimize(Function& function, std::span<const Function> functions) {
   ThreadJumps(function);
   const auto graph = RemoveUnreachable(function);
   RemoveUnusedValues(function, functions, graph);
+  RemoveUnusedHandlers(function);
 }
 
 }  // namespace vela::ir

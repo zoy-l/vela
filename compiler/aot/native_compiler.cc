@@ -1,6 +1,5 @@
 #include "compiler/aot/native_compiler.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -21,15 +20,17 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
-#include <llvm/Support/CodeGen.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
 
 #include "base/fingerprint.h"
+#include "base/native_program_mode.h"
 #include "compiler/aot/native_call_optimizer.h"
 #include "compiler/aot/native_export_emitter.h"
 #include "compiler/aot/native_type_optimizer.h"
 #include "compiler/aot/reachability.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
 #include "runtime/native_image.h"
 #include "runtime/standard_library.h"
@@ -141,7 +142,8 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
                                                              const NativeOptions& options) {
   const auto diagnostic = [](std::string message) {
     return std::unexpected(frontend::Diagnostics{
-        frontend::Diagnostic{.location = {}, .message = std::move(message), .source_path = {}}});
+        frontend::Diagnostic{.location = {}, .message = std::move(message), .source_path = {}},
+    });
   };
   if (program.native_mode != NativeProgramMode::Closed) {
     return diagnostic("AOT requires a closed native program");
@@ -158,12 +160,14 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
   std::vector<NativeExport> exports;
   std::vector<std::uint8_t> export_flags(program.functions.size(), 0);
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
-    const auto& function = program.functions[index];
+    const auto& function = program.functions.at(index);
     if (selected->contains(function.name)) {
-      export_flags[index] = 1;
-      exports.push_back({.name = function.name,
-                         .symbol = options.module_name + "_export_" + std::to_string(index),
-                         .function = static_cast<std::uint32_t>(index)});
+      export_flags.at(index) = 1;
+      exports.push_back({
+          .name = function.name,
+          .symbol = options.module_name + "_export_" + std::to_string(index),
+          .function = static_cast<std::uint32_t>(index),
+      });
     }
   }
   auto generated = native::Generate(program, options.module_name, export_flags);
@@ -188,19 +192,12 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
     llvm::raw_string_ostream ir_output(llvm_ir);
     module.print(ir_output, nullptr);
   }
-  llvm::SmallVector<char, 0> bytes;
-  llvm::raw_svector_ostream stream(bytes);
-  llvm::legacy::PassManager codegen;
-  if (machine.addPassesToEmitFile(codegen, stream, nullptr, llvm::CodeGenFileType::ObjectFile)) {
-    return diagnostic("native target cannot emit object files");
+  auto object = native::EmitObject(*generated);
+  if (!object) {
+    return diagnostic(object.error());
   }
-  codegen.run(module);
-  std::vector<std::byte> object(bytes.size());
-  std::ranges::transform(bytes, object.begin(), [](char value) {
-    return static_cast<std::byte>(static_cast<unsigned char>(value));
-  });
   return NativeArtifact{
-      .object = std::move(object),
+      .object = std::move(*object),
       .llvm_ir = std::move(llvm_ir),
       .target = machine.getTargetTriple().str(),
       .exports = std::move(exports),

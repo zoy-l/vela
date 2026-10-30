@@ -44,9 +44,14 @@ TEST(NullableArrayTest, KeepsReferenceElementsCompactAndChecksTheirLayouts) {
   auto& heap = isolate.heap();
   auto* record = isolate.CreateClassLayout(0, {});
   auto* other = isolate.CreateClassLayout(0, {});
-  const auto* records = isolate.CreateArrayLayout(
-      {.element = {
-           .kind = ValueKind::Object, .nominal = &record->nominal_type(), .nullable = true}});
+  const auto* records = isolate.CreateArrayLayout({
+      .element =
+          {
+              .kind = ValueKind::Object,
+              .nominal = &record->nominal_type(),
+              .nullable = true,
+          },
+  });
   EXPECT_EQ(records->element_size(), sizeof(HeapObject*));
   Value root = Value::Object(heap.AllocateArray(*records, 1));
   RootRange roots(heap, &root, 1);

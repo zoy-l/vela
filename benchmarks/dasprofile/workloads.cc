@@ -7,10 +7,12 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <numbers>
+#include <numeric>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -43,10 +45,10 @@ constexpr auto kShaConstants = std::to_array<std::uint32_t>({
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 });
 
-[[clang::noinline]] void DigestBlock(const std::uint32_t* data,
+[[clang::noinline]] void DigestBlock(std::span<const std::uint32_t> data,
                                      std::array<std::uint32_t, 8>& hash) {
-  std::array<std::uint32_t, 64> digest;
-  std::copy_n(data, 16, digest.begin());
+  std::array<std::uint32_t, 64> digest{};
+  std::ranges::copy(data, digest.begin());
   for (std::size_t i = 16; i < digest.size(); ++i) {
     const auto v0 = digest[i - 15];
     const auto v1 = digest[i - 2];
@@ -82,7 +84,7 @@ constexpr auto kShaConstants = std::to_array<std::uint32_t>({
 }
 
 double Sha256(const std::vector<std::uint32_t>& input) {
-  std::array<char, 65> hex;
+  std::array<char, 65> hex{};
   for (std::int64_t round = 0; round < 32; ++round) {
     auto hash = std::to_array<std::uint32_t>({
         0x6a09e667,
@@ -95,10 +97,17 @@ double Sha256(const std::vector<std::uint32_t>& input) {
         0x5be0cd19,
     });
     for (std::size_t block = 0; block < input.size() / 16; ++block) {
-      DigestBlock(input.data() + block * 16, hash);
+      DigestBlock(std::span(input).subspan(block * 16, 16), hash);
     }
-    std::snprintf(hex.data(), hex.size(), "%08x%08x%08x%08x%08x%08x%08x%08x", hash[0], hash[1],
-                  hash[2], hash[3], hash[4], hash[5], hash[6], hash[7]);
+    constexpr std::string_view kHexDigits = "0123456789abcdef";
+    constexpr std::size_t kDigitsPerWord = 8;
+    for (std::size_t word = 0; word < hash.size(); ++word) {
+      auto value = hash[word];
+      for (std::size_t digit = 0; digit < kDigitsPerWord; ++digit) {
+        hex[(word * kDigitsPerWord) + kDigitsPerWord - digit - 1] = kHexDigits[value & 0xfU];
+        value >>= 4;
+      }
+    }
     benchmark::DoNotOptimize(hex);
   }
   return std::string_view(hex.data()) ==
@@ -135,21 +144,51 @@ double NBodies() {
   constexpr double kSolarMass = 4.0 * std::numbers::pi * std::numbers::pi;
   constexpr double kDays = 365.24;
   auto bodies = std::to_array<Body>({
-      {0, 0, 0, 0, 0, 0, 0, kSolarMass},
-      {4.84143144246472090, -1.16032004402742839, -0.103622044471123109, 0,
-       0.00166007664274403694 * kDays, 0.00769901118419740425 * kDays,
-       -0.0000690460016972063023 * kDays, 0.000954791938424326609 * kSolarMass},
-      {8.34336671824457987, 4.12479856412430479, -0.403523417114321381, 0,
-       -0.00276742510726862411 * kDays, 0.00499852801234917238 * kDays,
-       0.0000230417297573763929 * kDays, 0.000285885980666130812 * kSolarMass},
-      {12.8943695621391310, -15.1111514016986312, -0.223307578892655734, 0,
-       0.00296460137564761618 * kDays, 0.00237847173959480950 * kDays,
-       -0.0000296589568540237556 * kDays, 0.0000436624404335156298 * kSolarMass},
-      {15.3796971148509165, -25.9193146099879641, 0.179258772950371181, 0,
-       0.00268067772490389322 * kDays, 0.00162824170038242295 * kDays,
-       -0.0000951592254519715870 * kDays, 0.0000515138902046611451 * kSolarMass},
+      {.x = 0, .y = 0, .z = 0, .padding = 0, .vx = 0, .vy = 0, .vz = 0, .mass = kSolarMass},
+      {
+          .x = 4.84143144246472090,
+          .y = -1.16032004402742839,
+          .z = -0.103622044471123109,
+          .padding = 0,
+          .vx = 0.00166007664274403694 * kDays,
+          .vy = 0.00769901118419740425 * kDays,
+          .vz = -0.0000690460016972063023 * kDays,
+          .mass = 0.000954791938424326609 * kSolarMass,
+      },
+      {
+          .x = 8.34336671824457987,
+          .y = 4.12479856412430479,
+          .z = -0.403523417114321381,
+          .padding = 0,
+          .vx = -0.00276742510726862411 * kDays,
+          .vy = 0.00499852801234917238 * kDays,
+          .vz = 0.0000230417297573763929 * kDays,
+          .mass = 0.000285885980666130812 * kSolarMass,
+      },
+      {
+          .x = 12.8943695621391310,
+          .y = -15.1111514016986312,
+          .z = -0.223307578892655734,
+          .padding = 0,
+          .vx = 0.00296460137564761618 * kDays,
+          .vy = 0.00237847173959480950 * kDays,
+          .vz = -0.0000296589568540237556 * kDays,
+          .mass = 0.0000436624404335156298 * kSolarMass,
+      },
+      {
+          .x = 15.3796971148509165,
+          .y = -25.9193146099879641,
+          .z = 0.179258772950371181,
+          .padding = 0,
+          .vx = 0.00268067772490389322 * kDays,
+          .vy = 0.00162824170038242295 * kDays,
+          .vz = -0.0000951592254519715870 * kDays,
+          .mass = 0.0000515138902046611451 * kSolarMass,
+      },
   });
-  double px = 0, py = 0, pz = 0;
+  double px = 0;
+  double py = 0;
+  double pz = 0;
   for (const auto& body : bodies) {
     px += body.vx * body.mass;
     py += body.vy * body.mass;
@@ -166,7 +205,7 @@ double NBodies() {
         const auto dx = a.x - b.x;
         const auto dy = a.y - b.y;
         const auto dz = a.z - b.z;
-        const auto squared = dx * dx + dy * dy + dz * dz;
+        const auto squared = (dx * dx) + (dy * dy) + (dz * dz);
         const auto magnitude = 0.01 / (squared * std::sqrt(squared));
         a.vx -= dx * b.mass * magnitude;
         a.vy -= dy * b.mass * magnitude;
@@ -185,13 +224,13 @@ double NBodies() {
   double energy = 0;
   for (std::size_t i = 0; i < bodies.size(); ++i) {
     const auto& a = bodies[i];
-    energy += 0.5 * a.mass * (a.vx * a.vx + a.vy * a.vy + a.vz * a.vz);
+    energy += 0.5 * a.mass * ((a.vx * a.vx) + (a.vy * a.vy) + (a.vz * a.vz));
     for (std::size_t j = i + 1; j < bodies.size(); ++j) {
       const auto& b = bodies[j];
       const auto dx = a.x - b.x;
       const auto dy = a.y - b.y;
       const auto dz = a.z - b.z;
-      energy -= a.mass * b.mass / std::sqrt(dx * dx + dy * dy + dz * dz);
+      energy -= a.mass * b.mass / std::sqrt((dx * dx) + (dy * dy) + (dz * dz));
     }
   }
   return energy;
@@ -205,7 +244,7 @@ void MatrixMultiply(const std::vector<double>& input, std::vector<double>& outpu
     double sum = 0;
     for (std::size_t j = 0; j < kDimension; ++j) {
       const auto index = kMatrix == Matrix::Normal ? i : j;
-      const auto denominator = (i + j) * (i + j + 1) / 2 + index + 1;
+      const auto denominator = ((i + j) * (i + j + 1) / 2) + index + 1;
       sum += input[j] / static_cast<double>(denominator);
     }
     output[i] = sum;
@@ -213,14 +252,17 @@ void MatrixMultiply(const std::vector<double>& input, std::vector<double>& outpu
 }
 
 double SpectralNorm() {
-  std::vector<double> u(kDimension, 1.0), v(kDimension), temporary(kDimension);
+  std::vector<double> u(kDimension, 1.0);
+  std::vector<double> v(kDimension);
+  std::vector<double> temporary(kDimension);
   for (std::int64_t round = 0; round < 2; ++round) {
     MatrixMultiply<Matrix::Normal>(u, temporary);
     MatrixMultiply<Matrix::Transposed>(temporary, v);
     MatrixMultiply<Matrix::Normal>(v, temporary);
     MatrixMultiply<Matrix::Transposed>(temporary, u);
   }
-  double numerator = 0, denominator = 0;
+  double numerator = 0;
+  double denominator = 0;
   for (std::size_t i = 0; i < kDimension; ++i) {
     numerator += u[i] * v[i];
     denominator += v[i] * v[i];
@@ -230,10 +272,11 @@ double SpectralNorm() {
 
 std::int64_t MandelbrotLevel(double cx, double cy) {
   std::int64_t count = 0;
-  double zx = cx, zy = cy;
-  while (std::sqrt(zx * zx + zy * zy) < 2.0 && count < 255) {
-    const auto nx = zx * zx - zy * zy;
-    const auto ny = zx * zy + zy * zx;
+  double zx = cx;
+  double zy = cy;
+  while (std::sqrt((zx * zx) + (zy * zy)) < 2.0 && count < 255) {
+    const auto nx = (zx * zx) - (zy * zy);
+    const auto ny = (zx * zy) + (zy * zx);
     zx = nx + cx;
     zy = ny + cy;
     ++count;
@@ -310,46 +353,46 @@ double Primes() {
 
 class Tree final {
  public:
-  ~Tree() { delete root_; }
-
   bool HasValue(std::int64_t value) {
-    Node *low, *equal, *high;
-    Split(root_, value, low, equal, high);
+    NodePtr low;
+    NodePtr equal;
+    NodePtr high;
+    Split(std::move(root_), value, low, equal, high);
     const bool present = equal != nullptr;
-    root_ = Merge(Merge(low, equal), high);
+    root_ = Merge(Merge(std::move(low), std::move(equal)), std::move(high));
     return present;
   }
 
   void Insert(std::int64_t value) {
-    Node *low, *equal, *high;
-    Split(root_, value, low, equal, high);
+    NodePtr low;
+    NodePtr equal;
+    NodePtr high;
+    Split(std::move(root_), value, low, equal, high);
     if (equal == nullptr) {
-      seed_ = (seed_ * 1103515245 + 12345) & 0x7fffffff;
-      equal = new Node{.value = value, .priority = seed_};
+      seed_ = ((seed_ * 1103515245) + 12345) & 0x7fffffff;
+      equal = std::make_unique<Node>(value, seed_);
     }
-    root_ = Merge(Merge(low, equal), high);
+    root_ = Merge(Merge(std::move(low), std::move(equal)), std::move(high));
   }
 
   void Erase(std::int64_t value) {
-    Node *low, *equal, *high;
-    Split(root_, value, low, equal, high);
-    root_ = Merge(low, high);
-    delete equal;
+    NodePtr low;
+    NodePtr equal;
+    NodePtr high;
+    Split(std::move(root_), value, low, equal, high);
+    root_ = Merge(std::move(low), std::move(high));
   }
 
  private:
   struct Node final {
-    ~Node() {
-      delete left;
-      delete right;
-    }
     std::int64_t value;
     std::int64_t priority;
-    Node* left = nullptr;
-    Node* right = nullptr;
+    std::unique_ptr<Node> left;
+    std::unique_ptr<Node> right;
   };
+  using NodePtr = std::unique_ptr<Node>;
 
-  static Node* Merge(Node* low, Node* high) {
+  static NodePtr Merge(NodePtr low, NodePtr high) {
     if (low == nullptr) {
       return high;
     }
@@ -357,40 +400,42 @@ class Tree final {
       return low;
     }
     if (low->priority < high->priority) {
-      low->right = Merge(low->right, high);
+      low->right = Merge(std::move(low->right), std::move(high));
       return low;
     }
-    high->left = Merge(low, high->left);
+    high->left = Merge(std::move(low), std::move(high->left));
     return high;
   }
 
-  static void Split(Node* node, std::int64_t value, Node*& low, Node*& high) {
+  static void Split(NodePtr node, std::int64_t value, NodePtr& low, NodePtr& high) {
     if (node == nullptr) {
-      low = high = nullptr;
+      low.reset();
+      high.reset();
     } else if (node->value < value) {
-      low = node;
-      Split(low->right, value, low->right, high);
+      low = std::move(node);
+      Split(std::move(low->right), value, low->right, high);
     } else {
-      high = node;
-      Split(high->left, value, low, high->left);
+      high = std::move(node);
+      Split(std::move(high->left), value, low, high->left);
     }
   }
 
-  static void Split(Node* node, std::int64_t value, Node*& low, Node*& equal, Node*& high) {
-    Node* remaining;
-    Split(node, value, low, remaining);
-    Split(remaining, value + 1, equal, high);
+  static void Split(NodePtr node, std::int64_t value, NodePtr& low, NodePtr& equal, NodePtr& high) {
+    NodePtr remaining;
+    Split(std::move(node), value, low, remaining);
+    Split(std::move(remaining), value + 1, equal, high);
   }
 
-  Node* root_ = nullptr;
+  NodePtr root_;
   std::int64_t seed_ = 1;
 };
 
 double RunTree() {
   Tree tree;
-  std::int64_t current = 5, result = 0;
+  std::int64_t current = 5;
+  std::int64_t result = 0;
   for (std::int64_t i = 1; i < 20000; ++i) {
-    current = (current * 57 + 43) % 10007;
+    current = ((current * 57) + 43) % 10007;
     switch (i % 3) {
       case 0:
         tree.Insert(current);
@@ -419,7 +464,8 @@ std::int64_t Noise(std::int64_t position) {
 }
 
 double FibonacciLoop() {
-  std::uint32_t last = 1, current = 0;
+  std::uint32_t last = 1;
+  std::uint32_t current = 0;
   for (std::int64_t i = 0; i < 6511134; ++i) {
     const auto temporary = current;
     current += last;
@@ -433,6 +479,41 @@ double FibonacciLoop() {
     return value;
   }
   return FibonacciRecursive(value - 1) + FibonacciRecursive(value - 2);
+}
+
+double String2Float(const std::vector<std::string>& texts) {
+  double sum = 0;
+  for (std::int64_t round = 0; round < 4; ++round) {
+    for (const auto& text : texts) {
+      const auto* begin = text.data();
+      const auto* end = begin + text.size();
+      double value = 0;
+      const auto result = std::from_chars(begin, end, value);
+      if (result.ec != std::errc{} || result.ptr != end) {
+        return std::numeric_limits<double>::quiet_NaN();
+      }
+      sum += value;
+    }
+  }
+  return sum;
+}
+
+double Float2String(const std::vector<double>& numbers) {
+  std::int64_t sum = 0;
+  std::array<char, 128> buffer{};
+  auto* begin = buffer.data();
+  auto* end = begin + buffer.size();
+  for (std::int64_t round = 0; round < 4; ++round) {
+    for (const auto value : numbers) {
+      const auto result = std::to_chars(begin, end, value);
+      if (result.ec != std::errc{}) {
+        return std::numeric_limits<double>::quiet_NaN();
+      }
+      sum += result.ptr - begin;
+      benchmark::DoNotOptimize(buffer);
+    }
+  }
+  return static_cast<double>(sum);
 }
 
 }  // namespace
@@ -453,9 +534,9 @@ CppWorkload::CppWorkload(Workload workload) : workload_(workload) {
       numbers_.reserve(kNumbers);
       texts_.reserve(kNumbers);
       for (std::int64_t i = 0; i < kNumbers; ++i) {
-        const auto value = static_cast<double>(i) + static_cast<double>(i) / 10000.0;
+        const auto value = static_cast<double>(i) + (static_cast<double>(i) / 10000.0);
         numbers_.push_back(value);
-        std::array<char, 128> buffer;
+        std::array<char, 128> buffer{};
         const auto result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
         texts_.emplace_back(buffer.data(), result.ptr);
       }
@@ -464,7 +545,14 @@ CppWorkload::CppWorkload(Workload workload) : workload_(workload) {
       particles_.reserve(kParticles);
       for (std::int64_t i = 0; i < kParticles; ++i) {
         const auto value = static_cast<double>(i);
-        particles_.push_back({value, value + 1, value + 2, 0, 1, 2, 3, 0});
+        particles_.push_back({.x = value,
+                              .y = value + 1,
+                              .z = value + 2,
+                              .position_padding = 0,
+                              .vx = 1,
+                              .vy = 2,
+                              .vz = 3,
+                              .velocity_padding = 0,});
       }
       break;
     case Workload::Sort:
@@ -493,20 +581,8 @@ double CppWorkload::Run() {
       return Mandelbrot();
     case Workload::ExpLoop:
       return ExpLoop();
-    case Workload::String2Float: {
-      double sum = 0;
-      for (std::int64_t round = 0; round < 4; ++round) {
-        for (const auto& text : texts_) {
-          double value = 0;
-          const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
-          if (result.ec != std::errc{} || result.ptr != text.data() + text.size()) {
-            return std::numeric_limits<double>::quiet_NaN();
-          }
-          sum += value;
-        }
-      }
-      return sum;
-    }
+    case Workload::String2Float:
+      return String2Float(texts_);
     case Workload::Particles: {
       for (std::int64_t round = 0; round < 10; ++round) {
         for (auto& particle : particles_) {
@@ -519,7 +595,7 @@ double CppWorkload::Run() {
       return last.x + last.y + last.z;
     }
     case Workload::Queen: {
-      std::array<std::int64_t, kQueens> board;
+      std::array<std::int64_t, kQueens> board{};
       return static_cast<double>(AddQueen(board, 0));
     }
     case Workload::Interop: {
@@ -535,33 +611,17 @@ double CppWorkload::Run() {
       return RunTree();
     case Workload::Sort: {
       std::ranges::copy(sort_source_, sort_work_.begin());
-      std::stable_sort(sort_work_.begin(), sort_work_.end(), std::greater<>());
-      std::int64_t sum = 0;
-      for (std::size_t i = 0; i < sort_work_.size(); ++i) {
-        if (i > 0 && sort_work_[i - 1] < sort_work_[i]) {
-          return std::numeric_limits<double>::quiet_NaN();
-        }
-        sum += sort_work_[i];
+      std::ranges::stable_sort(sort_work_, std::greater<>());
+      if (!std::ranges::is_sorted(sort_work_, std::greater<>())) {
+        return std::numeric_limits<double>::quiet_NaN();
       }
-      return static_cast<double>(sum);
+      return static_cast<double>(
+          std::accumulate(sort_work_.begin(), sort_work_.end(), std::int64_t{0}));
     }
     case Workload::FibonacciLoop:
       return FibonacciLoop();
-    case Workload::Float2String: {
-      std::int64_t sum = 0;
-      std::array<char, 128> buffer;
-      for (std::int64_t round = 0; round < 4; ++round) {
-        for (const auto value : numbers_) {
-          const auto result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
-          if (result.ec != std::errc{}) {
-            return std::numeric_limits<double>::quiet_NaN();
-          }
-          sum += result.ptr - buffer.data();
-          benchmark::DoNotOptimize(buffer);
-        }
-      }
-      return static_cast<double>(sum);
-    }
+    case Workload::Float2String:
+      return Float2String(numbers_);
     case Workload::FibonacciRecursive:
       return static_cast<double>(FibonacciRecursive(31));
   }

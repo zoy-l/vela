@@ -39,8 +39,8 @@ std::expected<Value, ExecutionStatus> Convert(NativeExecution& execution,
   if (member == nullptr || member->kind != MemberKind::Method) {
     return invalid();
   }
-  const auto callable = instance.layouts().classes.at(member->target)->callable();
-  if (!callable) {
+  const auto* const callable = instance.layouts().classes.at(member->target)->callable();
+  if (callable == nullptr) {
     return invalid();
   }
   const auto& function = instance.image().functions.values().subspan(callable->function).front();

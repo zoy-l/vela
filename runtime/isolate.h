@@ -18,6 +18,7 @@
 #include "runtime/native_control.h"
 #include "runtime/native_dispatch.h"
 #include "runtime/native_function.h"
+#include "runtime/native_metadata.h"
 #include "runtime/object.h"
 #include "runtime/program_layouts.h"
 #include "runtime/random.h"
@@ -97,8 +98,14 @@ class Isolate final {
   [[nodiscard]] LayoutCounts layout_counts() const noexcept;
 
  private:
+  friend class Heap;
   friend class LayoutTransaction;
   friend class NativeInstance;
+  void CollectNativeMetadata();
+  NativeMetadataSet native_metadata_;
+  std::size_t layout_transactions_ = 0;
+  std::size_t native_layout_transactions_ = 0;
+  bool metadata_collection_pending_ = false;
   std::vector<std::unique_ptr<ClassLayout>> class_layouts_;
   std::vector<std::unique_ptr<NominalType>> nominal_types_;
   std::vector<std::unique_ptr<ArrayLayout>> array_layouts_;

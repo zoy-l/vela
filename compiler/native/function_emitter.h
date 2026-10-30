@@ -2,6 +2,7 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Constant.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Module.h>
 #include <cstddef>
@@ -13,6 +14,7 @@
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/layout_description.h"
+#include "base/native_program_mode.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
@@ -28,9 +30,13 @@ struct GeneratedFunction final {
   llvm::Function* body = nullptr;
   llvm::Function* entry = nullptr;
   llvm::Function* resume = nullptr;
+  llvm::Function* baseline_body = nullptr;
+  llvm::Function* baseline_resume = nullptr;
+  llvm::Function* recovery = nullptr;
+  llvm::Function* resume_recovery = nullptr;
 };
 
-enum class NativeEntryKind : std::uint8_t { Initial, Resume };
+enum class NativeEntryKind : std::uint8_t { Initial, Resume, RecoverInitial, RecoverResume };
 
 class FunctionEmitter final {
  public:
@@ -40,16 +46,17 @@ class FunctionEmitter final {
                   std::size_t function_index,
                   std::span<const GeneratedFunction> generated,
                   const NativeRootPlan& roots,
-                  NativeEntryKind kind)
+                  NativeEntryKind kind,
+                  NativeCodeTier tier)
       : module_(module),
         program_(program),
         image_(image),
         source_(program.functions.at(function_index)),
         function_index_(function_index),
         generated_(generated),
-        body_(kind == NativeEntryKind::Initial ? generated.subspan(function_index).front().body
-                                               : generated.subspan(function_index).front().resume),
+        body_(SelectBody(generated.subspan(function_index).front(), kind)),
         kind_(kind),
+        tier_(tier),
         builder_(module.getContext()),
         roots_(roots) {}
 
@@ -66,6 +73,18 @@ class FunctionEmitter final {
   void Fail(llvm::Value* status);
   void SetPosition();
   void Poll();
+  static llvm::Function* SelectBody(const GeneratedFunction& function, NativeEntryKind kind);
+  [[nodiscard]] bool IsRecovering() const noexcept;
+  [[nodiscard]] bool IsResuming() const noexcept;
+  llvm::Value* ResumeState();
+  void InitializeCheckpoint();
+  void StoreCheckpoint();
+  void RecoverIfInvalidated();
+  void EmitRecoveryDispatch();
+  void GuardResume();
+  void BeginConstruction();
+  void EndConstruction();
+  void AbortConstructions();
   void Finish(llvm::Value* status);
   void EmitInteger(const ir::Instruction& instruction);
   void EmitDouble(const ir::Instruction& instruction);
@@ -84,6 +103,7 @@ class FunctionEmitter final {
   void WriteElement(llvm::Value* address, const layout::Type& element, ir::RegisterId reg);
   void EmitIndex(const ir::Instruction& instruction);
   void EmitArrayBuiltin(const ir::Instruction& instruction, Builtin builtin);
+  std::expected<void, std::string> EmitBuiltin(const ir::Instruction& instruction);
   std::expected<void, std::string> EmitReference(const ir::Instruction& instruction);
   llvm::Value* Encode(ir::RegisterId reg);
   llvm::Value* Pack(llvm::Value* encoded, std::size_t index);
@@ -93,6 +113,9 @@ class FunctionEmitter final {
   llvm::Value* RootAddress(std::size_t slot);
   void ClearRoot(std::size_t slot);
   std::expected<void, std::string> EmitInstruction(const ir::Instruction& instruction);
+  void EmitConstant(const ir::Instruction& instruction);
+  std::expected<void, std::string> EmitInstructionBlock(std::size_t index);
+  std::expected<std::size_t, std::string> TemporaryCount() const;
   std::expected<void, std::string> PrepareFrame();
   [[nodiscard]] bool CanUseLeafEntry() const;
   void BindFrameStorage();
@@ -113,9 +136,11 @@ class FunctionEmitter final {
   const ir::Function& source_;
   std::size_t function_index_;
   std::size_t instruction_index_ = 0;
+  std::uint32_t field_access_index_ = 0;
   std::span<const GeneratedFunction> generated_;
   llvm::Function* body_;
   NativeEntryKind kind_;
+  NativeCodeTier tier_;
   Builder builder_;
   std::vector<llvm::Value*> slots_;
   std::vector<llvm::BasicBlock*> blocks_;
@@ -126,6 +151,11 @@ class FunctionEmitter final {
   llvm::Value* instruction_slot_ = nullptr;
   llvm::Value* root_slots_ = nullptr;
   llvm::Value* frame_storage_ = nullptr;
+  llvm::Value* construction_depth_ = nullptr;
+  llvm::Value* checkpoint_ = nullptr;
+  llvm::Value* checkpoint_values_ = nullptr;
+  llvm::Value* recovery_storage_ = nullptr;
+  llvm::Value* trace_frame_ = nullptr;
   bool leaf_entry_ = false;
   llvm::StructType* frame_type_ = nullptr;
   std::uint64_t frame_bytes_ = 0;
@@ -139,6 +169,8 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     const ir::Program& program,
     llvm::Constant* image,
     std::size_t function_index,
-    std::span<const GeneratedFunction> generated);
+    std::span<const GeneratedFunction> generated,
+    NativeDebugging debugging,
+    NativeCodeTier tier = NativeCodeTier::Baseline);
 
 }  // namespace vela::compiler::native

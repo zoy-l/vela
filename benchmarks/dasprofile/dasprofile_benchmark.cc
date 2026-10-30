@@ -1,17 +1,21 @@
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <utility>
 
 #include <benchmark/benchmark.h>
 
 #include "base/file.h"
+#include "base/native_program_mode.h"
 #include "base/path.h"
 #include "benchmarks/aot_benchmark_memory.h"
 #include "benchmarks/dasprofile/workloads.h"
 #include "benchmarks/dasprofile_native/entries.h"
+#include "benchmarks/jit_benchmark.h"
 #include "compiler/compiler.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -60,6 +64,66 @@ void Cpp(benchmark::State& state, Case problem) {
   ReportAotResident(state);
 }
 
+void Jit(benchmark::State& state, Case problem, NativeCodeTier tier) {
+  runtime::NativeBindings bindings;
+  {
+    runtime::Isolate isolate;
+    if (!isolate.RegisterNative(runtime::NativeFunction::Bind<AddOne>("dasprofile.addOne"))) {
+      state.SkipWithError("C++ binding registration failed");
+      return;
+    }
+    bindings = isolate.FreezeBindings();
+  }
+  auto setup =
+      LoadJitWorkload(VELA_DASPROFILE_BENCHMARK_SOURCE, std::move(bindings), {.tier = tier});
+  if (!setup) {
+    state.SkipWithError(setup.error());
+    return;
+  }
+  auto& session = *setup->session;
+  const auto snapshot = session.snapshot();
+  const auto input =
+      std::to_array({runtime::Value::Integer(static_cast<std::int64_t>(problem.workload))});
+  if (!session.Invoke(snapshot->roots.front(), "prepare", input)) {
+    state.SkipWithError("JIT input preparation failed");
+    return;
+  }
+  const auto first_started = std::chrono::steady_clock::now();
+  const auto warm = InvokeJitWorkload(session, problem.name);
+  state.counters["first_execution_ns"] =
+      static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::steady_clock::now() - first_started)
+                              .count());
+  if (!warm || !IsExpected(Number(*warm), problem.expected)) {
+    state.SkipWithError("JIT warm-up checksum mismatch");
+    return;
+  }
+  auto& heap = session.isolate().heap();
+  heap.FinishCollection();
+  heap.Collect();
+  state.counters["baseline_bytes"] = static_cast<double>(heap.allocated_bytes());
+  state.counters["result"] = problem.expected;
+  state.counters["expected_result"] = problem.expected;
+  auto expected = problem.expected;
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    const auto result = InvokeJitWorkload(session, problem.name);
+    if (!result) {
+      state.SkipWithError("JIT execution failed");
+      return;
+    }
+    auto value = Number(*result);
+    benchmark::DoNotOptimize(value);
+    expected += problem.increment;
+    if (!IsExpected(value, expected)) {
+      state.SkipWithError("JIT checksum mismatch");
+      return;
+    }
+  }
+  ReportJitSetup(state, *setup);
+  ReportJitMemory(state, session);
+}
+
 void Native(benchmark::State& state, Case problem) {
   runtime::Isolate isolate;
   if (!isolate.RegisterNative(runtime::NativeFunction::Bind<AddOne>("dasprofile.addOne"))) {
@@ -72,8 +136,10 @@ void Native(benchmark::State& state, Case problem) {
     return;
   }
   runtime::NativeExecution execution(**instance);
-  const auto input = std::to_array({runtime::EncodeNativeValue(
-      runtime::Value::Integer(static_cast<std::int64_t>(problem.workload)))});
+  const auto input = std::to_array({
+      runtime::EncodeNativeValue(
+          runtime::Value::Integer(static_cast<std::int64_t>(problem.workload))),
+  });
   if (!runtime::InvokeNativeTarget(execution, kPrepare, input)) {
     state.SkipWithError(execution.ExceptionDiagnostic().message);
     return;
@@ -194,9 +260,15 @@ int Register() {
   for (const auto& problem : kCases) {
     const auto suffix =
         "dasprofile." + std::string(problem.name) + "/" + std::to_string(problem.size);
-    benchmark::RegisterBenchmark(("aot/native/" + suffix).c_str(), Native, problem)->UseRealTime();
-    benchmark::RegisterBenchmark(("aot/vm/" + suffix).c_str(), Vm, problem)->UseRealTime();
-    benchmark::RegisterBenchmark(("aot/cpp/" + suffix).c_str(), Cpp, problem)->UseRealTime();
+    benchmark::RegisterBenchmark("aot/native/" + suffix, Native, problem)->UseRealTime();
+    benchmark::RegisterBenchmark("aot/vm/" + suffix, Vm, problem)->UseRealTime();
+    benchmark::RegisterBenchmark("aot/cpp/" + suffix, Cpp, problem)->UseRealTime();
+    benchmark::RegisterBenchmark("hot/steady/baseline/" + suffix, Jit, problem,
+                                 NativeCodeTier::Baseline)
+        ->UseRealTime();
+    benchmark::RegisterBenchmark("hot/steady/optimized/" + suffix, Jit, problem,
+                                 NativeCodeTier::Optimized)
+        ->UseRealTime();
   }
   return 0;
 }

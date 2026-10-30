@@ -20,4 +20,13 @@ std::expected<std::uint64_t, std::string> CurrentResidentBytes() {
   return counters.WorkingSetSize;
 }
 
+std::expected<std::uint64_t, std::string> PeakResidentBytes() {
+  PROCESS_MEMORY_COUNTERS counters{};
+  counters.cb = sizeof(counters);
+  if (K32GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)) == 0) {
+    return std::unexpected("cannot read benchmark process peak working set");
+  }
+  return counters.PeakWorkingSetSize;
+}
+
 }  // namespace vela::benchmarks

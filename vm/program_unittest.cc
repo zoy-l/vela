@@ -19,6 +19,7 @@
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/native_context.h"
 #include "runtime/native_function.h"
 #include "runtime/object.h"
 #include "runtime/register_storage.h"
@@ -341,6 +342,7 @@ TEST(ProgramTest, RejectsCallableIdentityThatDisagreesWithTheTargetSignature) {
           .interfaces = {},
           .dispatch_targets = {},
           .callable_type = signature,
+          .field_declarations = {},
       });
   const auto code = std::to_array<Instruction>({EncodeABC(OpCode::Return, 0, 0, 0)});
   const std::array classes{callable};
@@ -367,9 +369,10 @@ TEST(ProgramTest, RejectsInterfaceDispatchThatDisagreesWithItsCallableSignature)
           .interfaces = {},
           .dispatch_targets = {},
           .callable_type = signature,
+          .field_declarations = {},
       });
-  auto* implementation =
-      isolate.CreateClassLayout(0, {}, {.callable = {}, .interfaces = {}, .dispatch_targets = {0}});
+  auto* implementation = isolate.CreateClassLayout(
+      0, {}, {.callable = {}, .interfaces = {}, .dispatch_targets = {0}, .field_declarations = {}});
   const std::array classes{callable, implementation};
   CallSignature actual;
   actual.hidden_parameters = 1;
@@ -395,30 +398,35 @@ TEST(ProgramTest, RejectsInvalidCallableAndInterfaceTargetsAtLoading) {
           .interfaces = {},
           .dispatch_targets = {},
           .callable_type = {},
+          .field_declarations = {},
       },
       {
           .callable = CallableTarget{.function = 0, .mode = CallableMode::Closure},
           .interfaces = {},
           .dispatch_targets = {},
           .callable_type = {},
+          .field_declarations = {},
       },
       {
           .callable = CallableTarget{.function = 0, .mode = CallableMode::InterfaceMethod},
           .interfaces = {},
           .dispatch_targets = {},
           .callable_type = {},
+          .field_declarations = {},
       },
       {
           .callable = CallableTarget{.function = 0, .mode = static_cast<CallableMode>(0xff)},
           .interfaces = {},
           .dispatch_targets = {},
           .callable_type = {},
+          .field_declarations = {},
       },
       {
           .callable = std::nullopt,
           .interfaces = {},
           .dispatch_targets = {0},
           .callable_type = {},
+          .field_declarations = {},
       },
   });
   for (const auto& options : layouts) {

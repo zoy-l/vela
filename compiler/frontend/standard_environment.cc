@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 #include "base/builtin.h"
 #include "base/declaration.h"
 
@@ -321,12 +322,12 @@ std::vector<std::string> CollectStandardNames(std::span<const Token> tokens) {
   constexpr auto kAsyncNames =
       std::to_array<std::string_view>({"Future", "Completer", "Timer", "TimeoutException"});
   for (std::size_t index = 0; index < tokens.size(); ++index) {
-    const auto& token = tokens[index];
+    const auto& token = tokens.subspan(index).front();
     if (token.kind != TokenKind::Identifier) {
       continue;
     }
     if ((token.lexeme == "int" || token.lexeme == "double") &&
-        (index + 1 == tokens.size() || tokens[index + 1].kind != TokenKind::Dot)) {
+        (index + 1 == tokens.size() || tokens.subspan(index + 1).front().kind != TokenKind::Dot)) {
       continue;
     }
     if (IsStandardName(token.lexeme)) {

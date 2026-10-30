@@ -110,8 +110,10 @@ std::expected<ResolvedPath, std::string> ModuleLoader::Normalize(
   auto requested_key = PathText(requested.lexically_normal());
   if (const auto found = cache_->resolutions.find(requested_key);
       found != cache_->resolutions.end()) {
-    return ResolvedPath{.canonical = Utf8Path(found->second),
-                        .requested_key = std::move(requested_key)};
+    return ResolvedPath{
+        .canonical = Utf8Path(found->second),
+        .requested_key = std::move(requested_key),
+    };
   }
   auto canonical = std::filesystem::weakly_canonical(requested, error);
   if (error) {
@@ -125,13 +127,16 @@ std::expected<ParsedSource, std::string> ModuleLoader::Read(const std::filesyste
                                                             const std::string& key,
                                                             std::uint32_t source_id) const {
   const auto instantiate = [source_id](const ParsedSource& source) -> ParsedSource {
-    return {.source = source.source,
-            .program = CloneProgram(source.program, {.source_id = source_id}),
-            .diagnostics = source.diagnostics};
+    return {
+        .source = source.source,
+        .program = CloneProgram(source.program, {.source_id = source_id}),
+        .diagnostics = source.diagnostics,
+    };
   };
   const auto overlay = overlays_.find(key);
   const auto cached = cache_->sources.find(key);
   if (cached != cache_->sources.end() &&
+      (origin_ == SourceOrigin::Files || overlay != overlays_.end()) &&
       (overlay == overlays_.end() || cached->second->source->text == overlay->second)) {
     return instantiate(*cached->second);
   }
@@ -259,10 +264,15 @@ ModuleGraph ModuleLoader::RunPrepared(std::string_view entry, ParsedSource sourc
   }
   const auto key = PathText(path->canonical);
   ids_.emplace(key, 0);
-  cache_->binding_ids.try_emplace(key, 0);
+  const auto binding =
+      cache_->binding_ids.try_emplace(key, static_cast<std::uint32_t>(cache_->binding_ids.size()));
   const auto& snapshot = source.source;
   sources_.push_back({.path = key, .text = snapshot->text, .syntax = snapshot});
-  modules_.push_back({.program = std::move(source.program), .dependencies = {}, .binding_id = 0});
+  modules_.push_back({
+      .program = std::move(source.program),
+      .dependencies = {},
+      .binding_id = binding.first->second,
+  });
   return Finish();
 }
 
@@ -275,11 +285,13 @@ ModuleGraph ModuleLoader::Finish() {
   for (auto& [requested, canonical] : resolutions_) {
     resolutions.push_back({.requested_path = requested, .canonical_path = std::move(canonical)});
   }
-  return {.modules = std::move(modules_),
-          .sources = std::move(sources_),
-          .file_resolutions = std::move(resolutions),
-          .diagnostics = std::move(diagnostics_),
-          .syntax_diagnostics = std::move(syntax_diagnostics_)};
+  return {
+      .modules = std::move(modules_),
+      .sources = std::move(sources_),
+      .file_resolutions = std::move(resolutions),
+      .diagnostics = std::move(diagnostics_),
+      .syntax_diagnostics = std::move(syntax_diagnostics_),
+  };
 }
 
 }  // namespace
@@ -287,6 +299,12 @@ ModuleGraph ModuleLoader::Finish() {
 ModuleGraph LoadModuleGraph(std::string_view path) {
   ModuleCache cache;
   return ModuleLoader(SourceOrigin::Files, {}, cache, SyntaxRetention::Transfer).Run(path);
+}
+
+ModuleGraph LoadModuleGraph(std::span<const std::string> roots,
+                            ModuleCache& cache,
+                            std::span<const SourceInput> overlays) {
+  return ModuleLoader(SourceOrigin::Files, overlays, cache, SyntaxRetention::Cache).Run(roots);
 }
 
 ParseResult BindModuleGraph(ModuleGraph graph,
@@ -351,6 +369,15 @@ ParseResult LoadSources(std::span<const SourceInput> sources,
   ModuleCache cache;
   return BindModuleGraph(
       ModuleLoader(SourceOrigin::Memory, sources, cache, SyntaxRetention::Transfer).Run(roots),
+      retained_standard_names);
+}
+
+ParseResult LoadSources(std::span<const SourceInput> sources,
+                        std::span<const std::string> roots,
+                        ModuleCache& cache,
+                        std::span<const std::string> retained_standard_names) {
+  return BindModuleGraph(
+      ModuleLoader(SourceOrigin::Memory, sources, cache, SyntaxRetention::Cache).Run(roots),
       retained_standard_names);
 }
 

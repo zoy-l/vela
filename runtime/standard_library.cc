@@ -13,6 +13,7 @@
 #include <absl/container/flat_hash_map.h>
 
 #include "runtime/isolate.h"
+#include "runtime/native_context.h"
 #include "runtime/native_function.h"
 #include "runtime/random.h"
 

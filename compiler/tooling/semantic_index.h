@@ -15,6 +15,7 @@
 
 #include "base/source_location.h"
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/parser.h"
 #include "compiler/frontend/source_loader.h"
 #include "compiler/frontend/token.h"
 #include "compiler/frontend/type_checker.h"

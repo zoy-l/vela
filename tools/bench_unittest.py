@@ -12,7 +12,7 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from tools.bench import parse_arguments, run
-from tools.benchmark_report import aot_comparison_report, comparison_report, native_call_report
+from tools.benchmark_report import aot_comparison_report, comparison_report, jit_comparison_report, native_call_report
 
 
 BACKENDS = ("cpp", "vm", "luajit_interp", "luajit")
@@ -63,6 +63,58 @@ def ported_aot_samples(repetitions: int = 1) -> list[dict]:
 
 
 class BenchmarkReportTest(unittest.TestCase):
+    def test_reloadable_report_requires_five_checked_backends_and_code_retirement_evidence(self) -> None:
+        rows = ported_aot_samples(3)
+        rows += [dict(row, name=row["name"].replace("/native/", "/vm/"), real_time=80,
+                      register_bytes=512) for row in rows if "/native/" in row["name"]]
+        template = rows[0]
+        for backend, elapsed in (("baseline", 40), ("optimized", 30)):
+            rows += [dict(template, name=f"hot/steady/{backend}/dasprofile.queen/8/real_time",
+                          repetition_index=index, real_time=elapsed,
+                          code_batches=1, code_executable_bytes=1024, code_read_only_bytes=2048,
+                          code_writable_bytes=0, external_field_bytes=128,
+                          **dict.fromkeys(("load_ns", "source_total_ns", "code_total_ns",
+                                           "file_capture_ns", "engine_creation_ns", "source_loading_ns",
+                                           "specialization_ns", "type_checking_ns", "typed_ir_ns",
+                                           "llvm_lowering_ns", "llvm_optimization_ns", "machine_compilation_ns",
+                                           "linking_ns", "instantiation_ns", "initial_publication_pause_ns",
+                                           "first_execution_ns"), 1000)) for index in range(3)]
+        names = sorted({row["name"] for row in rows})
+        text = jit_comparison_report({"benchmarks": rows}, names, 3)
+        self.assertIn("| dasprofile.queen | 8 | 10.000 | 80.000 | 20.000 | 40.000 | 30.000 | 2.00x | 1.50x |", text)
+        self.assertIn("Geometric mean optimized JIT/AOT over 1 paired workloads: 1.50x.", text)
+        missing = [row for row in rows if "/optimized/" not in row["name"]]
+        with self.assertRaisesRegex(ValueError, "requires matching"):
+            jit_comparison_report({"benchmarks": missing}, sorted({row["name"] for row in missing}), 3)
+        rows[-1]["remaining_suspended_frames"] = 1
+        with self.assertRaisesRegex(ValueError, "retained temporary state"):
+            jit_comparison_report({"benchmarks": rows}, names, 3)
+
+    def test_reload_lifecycle_report_rejects_incomplete_retirement_and_invalid_pause_measurements(self) -> None:
+        name = "hot/optimized/active/manual_time"
+        row = dict.fromkeys(("pause_ns", "pause_max_ns", "source_ns", "llvm_lowering_ns",
+                             "llvm_optimization_ns", "machine_compilation_ns", "linking_ns",
+                             "instantiation_ns", "validation_ns", "state_preparation_ns",
+                             "deoptimization_ns", "commit_ns", "refresh_ns", "entry_ns",
+                             "stopping_ns", "new_isolate_preparation_ns", "safepoint_waiting_ns"), 1000)
+        row.update(name=name, real_time=20, time_unit="us", released_code_batches=1,
+                   released_heap_bytes=128, released_external_field_bytes=0,
+                   released_executable_bytes=1024, released_read_only_bytes=2048,
+                   released_constant_payload_bytes=32, released_debug_payload_bytes=1024,
+                   released_writable_bytes=0, released_suspended_frames=0, released_saved_state_bytes=0)
+        report = {"benchmarks": [row]}
+        text = jit_comparison_report(report, [name], 1)
+        self.assertIn("20.000", text)
+        self.assertIn("pause_max_ns", text)
+        self.assertNotIn("Geometric mean", text)
+        row["released_code_batches"] = 2
+        with self.assertRaisesRegex(ValueError, "survived release"):
+            jit_comparison_report(report, [name], 1)
+        row["released_code_batches"] = 1
+        row["pause_ns"] = float("nan")
+        with self.assertRaisesRegex(ValueError, "invalid pause_ns"):
+            jit_comparison_report(report, [name], 1)
+
     def test_ported_vm_report_uses_matching_cpp_samples_and_checks_suspended_state(self) -> None:
         rows = ported_aot_samples(3)
         rows += [dict(row, name=row['name'].replace('/native/', '/vm/'),

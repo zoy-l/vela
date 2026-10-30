@@ -291,6 +291,9 @@ std::expected<std::span<char>, ExecutionStatus> Heap::AppendStringStorage(
         std::min(kMaximumStringLength, buffer.capacity * 2),
     });
     MaybeCollect(capacity);
+    if (!CanAllocate(capacity - buffer.capacity)) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
+    }
     auto* memory = static_cast<char*>(::operator new(capacity, std::nothrow));
     if (memory == nullptr) {
       return std::unexpected(ExecutionStatus::OutOfMemory);

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -15,9 +16,33 @@
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
+#include "runtime/isolate.h"
+#include "runtime/program_layouts.h"
 
 namespace vela::compiler::aot {
 namespace {
+
+TEST(ReachabilityTest, PrunedOverriddenGenericMethodsLeaveInstantiableLayoutDescriptions) {
+  const frontend::SourceInput input{
+      .path = "main.vela",
+      .text =
+          "func identity<T>(value: T): T { return value; } "
+          "class Base<T> { value: T; read(): T { return this.value; } } "
+          "class Derived<T> extends Base<T> { extra: T; "
+          "constructor { super(value: this.extra); } "
+          "override read(): T { return identity<T>(this.extra); } } "
+          "func main(): int { const value = Derived<int>(extra: 21); "
+          "return value.read() + value.value; }",
+  };
+  auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
+  ASSERT_TRUE(prepared);
+  std::optional<std::uint32_t> main;
+  PruneNativeProgram(*prepared, {}, main);
+  runtime::Isolate isolate;
+  runtime::LayoutCache cache;
+  const auto layouts = runtime::InstantiateLayouts(prepared->layouts, isolate, cache);
+  EXPECT_FALSE(layouts.classes.empty());
+}
 
 TEST(ReachabilityTest, CompactFunctionIndexesDoNotRenumberDeclarationOrVersionIdentities) {
   const frontend::SourceInput input{
@@ -32,8 +57,9 @@ TEST(ReachabilityTest, CompactFunctionIndexesDoNotRenumberDeclarationOrVersionId
   const auto checked = frontend::TypeChecker().Check(parsed.program);
   ASSERT_TRUE(checked.diagnostics.empty());
   frontend::DeclarationIds identities;
+  constexpr std::uint64_t kRevision = 7;
   auto prepared = ir::PrepareProgram(parsed.program, checked.model,
-                                     {.declarations = &identities, .revision = 7});
+                                     {.declarations = &identities, .revision = kRevision});
   ASSERT_TRUE(prepared.Succeeded());
   auto& program = prepared.program;
   const auto old = std::ranges::find(program.functions, "used", &ir::Function::name);
@@ -50,7 +76,7 @@ TEST(ReachabilityTest, CompactFunctionIndexesDoNotRenumberDeclarationOrVersionId
 }
 
 TEST(ReachabilityTest, ErasedLocalValuesDoNotRetainUnreferencedClassMethods) {
-  for (const auto expression : {"42", "Json.parse('42')", "erase(42)", "parsed()"}) {
+  for (const auto* const expression : {"42", "Json.parse('42')", "erase(42)", "parsed()"}) {
     SCOPED_TRACE(expression);
     const std::string source =
         "class Unused { value: int = 42; read(): int { return this.value; } } "

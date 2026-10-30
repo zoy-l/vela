@@ -1,3 +1,4 @@
+#include "runtime/external_resources.h"
 #include "runtime/future.h"
 
 #include <atomic>
@@ -11,6 +12,7 @@
 #include <thread>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include <absl/functional/any_invocable.h>
 

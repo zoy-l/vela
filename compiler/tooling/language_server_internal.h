@@ -14,6 +14,7 @@
 #include <yyjson.h>
 
 #include "base/json.h"
+#include "compiler/frontend/source_loader.h"
 #include "compiler/tooling/language_server.h"
 #include "compiler/tooling/semantic_index.h"
 #include "compiler/tooling/source_text.h"

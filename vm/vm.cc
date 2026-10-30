@@ -19,6 +19,7 @@
 #include "base/regexp.h"
 #include "runtime/byte_operations.h"
 #include "runtime/exception.h"
+#include "runtime/native_context.h"
 #include "vm/debugger.h"
 #include "vm/execution.h"
 #include "vm/execution_status.h"
@@ -299,7 +300,10 @@ std::optional<ExecutionResult> Execution::ResumeFrame(
   auto values = registers_.front().Acquire(active.function->register_count);
   if (values.IsEmpty()) {
     return ExecutionResult{
-        .status = ExecutionStatus::OutOfMemory, .stack_trace = {}, .message = {}};
+        .status = ExecutionStatus::OutOfMemory,
+        .stack_trace = {},
+        .message = {},
+    };
   }
   active.frame.Attach(isolate_.heap(), values);
   for (std::size_t index = 0; index < saved.size(); ++index) {
@@ -1134,6 +1138,10 @@ StepResult Execution::Return(ActiveFrame& active, runtime::Value value) {
     result_ = value;
     return {};
   }
+  return ResumeCaller(return_register, value);
+}
+
+StepResult Execution::ResumeCaller(std::uint8_t return_register, runtime::Value value) {
   auto& caller = std::span(frames_).subspan(frame_count_ - 1).front();
   caller.dynamic_return = false;
   if (caller.json_encoder) {

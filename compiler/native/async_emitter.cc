@@ -17,6 +17,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native_async.h"
+#include "runtime/value.h"
 
 namespace vela::compiler::native {
 
@@ -31,7 +32,7 @@ void FunctionEmitter::StoreAsyncResult() {
 }
 
 void FunctionEmitter::EmitAsyncFailure(llvm::Value* status) {
-  if (kind_ == NativeEntryKind::Resume) {
+  if (IsResuming()) {
     // 激活已持有结果 Future，恢复失败由该激活直接完成，无需分配错误 Future。
     Finish(status);
     return;
@@ -64,14 +65,17 @@ void FunctionEmitter::EmitAsyncFailure(llvm::Value* status) {
 }
 
 void FunctionEmitter::EmitAsyncReturn(const ir::Instruction& instruction) {
-  if (kind_ == NativeEntryKind::Resume) {
+  if (IsResuming()) {
     auto helper = module_.getOrInsertFunction("vela_native_v1_resume_return", builder_.getInt8Ty(),
                                               builder_.getPtrTy(), builder_.getPtrTy(),
                                               builder_.getInt32Ty(), builder_.getPtrTy());
-    auto* status =
-        builder_.CreateCall(helper, {body_->getArg(0), body_->getArg(1),
-                                     builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
-                                     Pack(Encode(instruction.dst), 0)});
+    auto* status = builder_.CreateCall(
+        helper, {
+                    body_->getArg(0),
+                    ResumeState(),
+                    builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
+                    Pack(Encode(instruction.dst), 0),
+                });
     CheckStatus(status);
     Finish(Status(builder_, ExecutionStatus::Returned));
     return;
@@ -97,13 +101,18 @@ void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
     Pack(Encode(saved.at(slot)), slot);
   }
   auto* source = Pack(Encode(instruction.lhs), saved.size());
-  if (kind_ == NativeEntryKind::Resume) {
+  if (IsResuming()) {
     auto helper = module_.getOrInsertFunction(
         "vela_native_v1_resuspend", builder_.getVoidTy(), builder_.getPtrTy(),
         builder_.getInt32Ty(), builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt64Ty());
-    builder_.CreateCall(helper, {body_->getArg(1),
-                                 builder_.getInt32(static_cast<std::uint32_t>(instruction_index_)),
-                                 source, arguments_, builder_.getInt64(saved.size())});
+    builder_.CreateCall(helper,
+                        {
+                            ResumeState(),
+                            builder_.getInt32(static_cast<std::uint32_t>(instruction_index_)),
+                            source,
+                            arguments_,
+                            builder_.getInt64(saved.size()),
+                        });
     Finish(Status(builder_, ExecutionStatus::Returned));
     return;
   }
@@ -132,7 +141,7 @@ void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
 }
 
 void FunctionEmitter::EmitResumeDispatch() {
-  auto* state = body_->getArg(1);
+  auto* state = ResumeState();
   auto* instruction = builder_.CreateLoad(
       builder_.getInt32Ty(), ByteAddress(state, offsetof(runtime::NativeResumeState, instruction)));
   auto* saved_values = builder_.CreateLoad(
@@ -153,7 +162,7 @@ void FunctionEmitter::EmitResumeDispatch() {
     SetPosition();
     for (const auto position : roots_.rematerialized.at(index)) {
       // 仅单一定义的立即数会进入此列表，不需要保存、分配或错误分支。
-      static_cast<void>(EmitInstruction(source_.instructions.at(position)));
+      EmitConstant(source_.instructions.at(position));
     }
     const auto& saved = roots_.suspended.at(index);
     for (std::size_t slot = 0; slot < saved.size(); ++slot) {

@@ -2,6 +2,7 @@
 
 #include <libproc.h>
 #include <sys/proc_info.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include <cstdint>
@@ -17,6 +18,14 @@ std::expected<std::uint64_t, std::string> CurrentResidentBytes() {
     return std::unexpected("cannot read benchmark process resident size");
   }
   return information.pti_resident_size;
+}
+
+std::expected<std::uint64_t, std::string> PeakResidentBytes() {
+  rusage usage{};
+  if (getrusage(RUSAGE_SELF, &usage) != 0) {
+    return std::unexpected("cannot read benchmark process peak resident size");
+  }
+  return static_cast<std::uint64_t>(usage.ru_maxrss);
 }
 
 }  // namespace vela::benchmarks

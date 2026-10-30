@@ -16,7 +16,7 @@ the production `vela build --emit=obj` path, and links the object with
 executable. Its 48 AOT/VM/C++ cases join the existing benchmark registry as
 `aot/native/dasprofile.*`, `aot/vm/dasprofile.*` and `aot/cpp/dasprofile.*`.
 The VM compiles the same source and calls `prepare` before warm-up and timing.
-The complete registry has 24 workloads and 80 cases, including the original first-call cases. It
+The `^aot/` selection has 24 workloads and 80 cases, including the original first-call cases. It
 uses seven repetitions with random interleaving, and writes
 `out/benchmarks/aot_comparison.json` plus its Markdown report. Each
 invocation checks its result. Runtime errors, incorrect checksums, missing

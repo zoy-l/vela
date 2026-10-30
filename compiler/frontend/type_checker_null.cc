@@ -88,8 +88,12 @@ void TypeChecker::CollectAssignments(const Expression& expression, AssignmentEff
 }
 
 void TypeChecker::CollectAssignments(const Statement& statement, AssignmentEffects& effects) {
-  for (const auto* expression : {statement.expression.get(), statement.condition.get(),
-                                 statement.increment.get(), statement.iterable.get()}) {
+  for (const auto* expression : {
+           statement.expression.get(),
+           statement.condition.get(),
+           statement.increment.get(),
+           statement.iterable.get(),
+       }) {
     if (expression != nullptr) {
       CollectAssignments(*expression, effects);
     }
@@ -149,7 +153,7 @@ void TypeChecker::InvalidateCapturedRefinements() {
 const TypeChecker::AssignmentEffects& TypeChecker::LoopAssignments::Body() {
   if (!body_) {
     body_.emplace();
-    CollectAssignments(*statement_.then_branch, *body_);
+    CollectAssignments(*statement_->then_branch, *body_);
   }
   return *body_;
 }
@@ -158,13 +162,13 @@ const TypeChecker::AssignmentEffects& TypeChecker::LoopAssignments::Whole() {
   if (!whole_) {
     whole_ = Body();
     for (const auto* expression :
-         {statement_.condition.get(), statement_.increment.get(), statement_.iterable.get()}) {
+         {statement_->condition.get(), statement_->increment.get(), statement_->iterable.get()}) {
       if (expression != nullptr) {
         CollectAssignments(*expression, *whole_);
       }
     }
-    if (statement_.initializer) {
-      CollectAssignments(*statement_.initializer, *whole_);
+    if (statement_->initializer) {
+      CollectAssignments(*statement_->initializer, *whole_);
     }
   }
   return *whole_;

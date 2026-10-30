@@ -35,7 +35,7 @@ struct NativeMemoryLayout final {
   static constexpr auto kInstanceData = offsetof(NativeInstance, data_);
   static constexpr auto kProgramGlobalStates = offsetof(NativeProgramState, global_states);
   static constexpr auto kProgramGlobals =
-      offsetof(NativeProgramState, values) + sizeof(Value) * NativeProgramState::kGlobals;
+      offsetof(NativeProgramState, values) + (sizeof(Value) * NativeProgramState::kGlobals);
   static constexpr auto kFrameRoots = offsetof(NativeFrameAccess, roots);
   static constexpr auto kFrameStorage = offsetof(NativeFrameAccess, storage);
 };

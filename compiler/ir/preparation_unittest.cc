@@ -118,7 +118,7 @@ TEST(PreparationTest, EmitsFieldDefaultsOnceInTheConstructorAcrossManyCallSites)
 }
 
 TEST(PreparationTest, UnusedConstructorsDoNotIntroduceBodiesOrStringRoots) {
-  for (const auto body : {"", "constructor {}", "constructor() {}"}) {
+  for (const auto* const body : {"", "constructor {}", "constructor() {}"}) {
     SCOPED_TRACE(body);
     const auto prepared = Prepare("class Unused { value: string = 'unused-constructor-literal'; " +
                                   std::string(body) + " } func main(): int { return 42; }");

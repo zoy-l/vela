@@ -18,6 +18,7 @@
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/native_context.h"
 #include "runtime/native_function.h"
 #include "runtime/register_storage.h"
 #include "runtime/rooted_value.h"

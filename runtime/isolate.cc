@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -70,7 +69,8 @@ std::shared_ptr<const NativeFunction> Isolate::FindNative(std::string_view name)
   return found == natives_.end() ? FindStandardNative(name) : found->second;
 }
 
-Isolate::Isolate(std::size_t gc_threshold) noexcept : heap_(gc_threshold), native_dispatch_(*this) {
+Isolate::Isolate(std::size_t gc_threshold) noexcept
+    : heap_(*this, gc_threshold), native_dispatch_(*this) {
   constexpr auto references = std::to_array({kErrorMessageField, kErrorCodeField});
   error_layout_ = CreateClassLayout(kErrorFieldCount, references);
   date_parts_layout_ = CreateClassLayout(kDatePartsFieldCount, {});
@@ -118,6 +118,12 @@ void Isolate::SetOutput(std::ostream& output) noexcept {
 ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
                                         std::span<const std::uint32_t> reference_fields,
                                         ClassLayoutOptions options) {
+  if (options.is_enum && options.nominal != nullptr && options.nominal->fixed_layout_ != nullptr) {
+    if (native_layout_transactions_ == 0) {
+      native_metadata_.classes.erase(options.nominal->fixed_layout_);
+    }
+    return options.nominal->fixed_layout_;
+  }
   std::vector<std::uint32_t> references(reference_fields.begin(), reference_fields.end());
   std::ranges::sort(references);
   const auto duplicates = std::ranges::unique(references);
@@ -130,13 +136,29 @@ ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
   result->callable_ = options.callable;
   auto* nominal = options.nominal;
   if (nominal == nullptr) {
-    nominal = CreateNominalType({.kind = options.is_enum    ? NominalKind::Enum
-                                         : options.callable ? NominalKind::Callable
-                                                            : NominalKind::Class,
-                                 .interfaces = std::move(options.interfaces)});
+    auto kind = NominalKind::Class;
+    if (options.is_enum) {
+      kind = NominalKind::Enum;
+    } else if (options.callable) {
+      kind = NominalKind::Callable;
+    }
+    nominal = CreateNominalType({
+        .kind = kind,
+        .interfaces = std::move(options.interfaces),
+        .declaration = {},
+    });
   }
   result->nominal_ = nominal;
   result->storage_ = options.storage;
+  result->revision_ = options.revision;
+  result->field_declarations_ = std::move(options.field_declarations);
+  const auto declarations = result->field_declarations();
+  for (std::size_t index = 0; index < declarations.size(); ++index) {
+    const auto field = declarations.subspan(index).front();
+    if (field != DeclarationId{}) {
+      result->field_indices_.emplace(field, static_cast<std::uint32_t>(index));
+    }
+  }
   if (options.storage == ClassStorage::Inline && nominal->fixed_layout_ == nullptr) {
     // 名义身份由本 Isolate 创建；仅在它的第一个固定布局建立时绑定分配描述。
     nominal->fixed_layout_ = result;
@@ -159,15 +181,27 @@ const ArrayLayout* Isolate::CreateArrayLayout(ArrayLayout layout) {
   if (layout.element.array != nullptr) {
     layout.element.object_kind = ObjectKind::Array;
   }
-  return InternLayout(layout, array_layout_index_, array_layouts_);
+  const auto* result = InternLayout(layout, array_layout_index_, array_layouts_);
+  if (native_layout_transactions_ == 0) {
+    native_metadata_.arrays.erase(result);
+  }
+  return result;
 }
 
 const CollectionLayout* Isolate::CreateCollectionLayout(CollectionLayout layout) {
-  return InternLayout(layout, collection_layout_index_, collection_layouts_);
+  const auto* result = InternLayout(layout, collection_layout_index_, collection_layouts_);
+  if (native_layout_transactions_ == 0) {
+    native_metadata_.collections.erase(result);
+  }
+  return result;
 }
 
 const TypeSignature* Isolate::CreateTypeSignature(TypeSignature signature) {
-  return InternLayout(std::move(signature), type_signature_index_, type_signatures_);
+  const auto* result = InternLayout(std::move(signature), type_signature_index_, type_signatures_);
+  if (native_layout_transactions_ == 0) {
+    native_metadata_.signatures.erase(result);
+  }
+  return result;
 }
 
 const InterfaceType* Isolate::CreateInterfaceType() {
@@ -185,7 +219,7 @@ const CodeIdentity* Isolate::CreateCodeIdentity() {
 }
 
 LayoutCounts Isolate::layout_counts() const noexcept {
-  return {
+  LayoutCounts counts{
       .classes = class_layouts_.size(),
       .arrays = array_layouts_.size(),
       .collections = collection_layouts_.size(),
@@ -194,6 +228,8 @@ LayoutCounts Isolate::layout_counts() const noexcept {
       .code_identities = code_identities_.size(),
       .nominal_types = nominal_types_.size(),
   };
+  heap_.AccumulateNativeLayouts(counts);
+  return counts;
 }
 
 }  // namespace vela::runtime

@@ -11,6 +11,7 @@
 
 #include "base/file.h"
 #include "compiler/compiler.h"
+#include "compiler/repl_source.h"
 #include "gtest/gtest.h"
 
 #include "runtime/external_resources.h"
@@ -289,7 +290,8 @@ TEST_F(ReplSessionTest, ResetStopsSuspendedTimersWithoutTreatingInternalRootsAsH
 }
 
 std::int64_t PersistentHostAnswer() noexcept {
-  return 42;
+  constexpr std::int64_t kAnswer = 42;
+  return kAnswer;
 }
 
 TEST_F(ReplSessionTest, ResetPreservesTheFixedNativeBindingSnapshot) {

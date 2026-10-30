@@ -1,6 +1,7 @@
 #include <string>
 #include <string_view>
 
+#include "base/source_location.h"
 #include "gtest/gtest.h"
 
 #include "compiler/tooling/source_text.h"
@@ -76,8 +77,7 @@ TEST(SourceTextTest, MapsCompilerByteColumnsThroughTheSharedIndex) {
 
 TEST(SourceTextTest, IndexesInvalidDiskBytesWithoutAcceptingThemAsEditorText) {
   std::string text = "中😀";
-  text.push_back(static_cast<char>(0xff));
-  text.push_back(static_cast<char>(0xf0));
+  text += "\xff\xf0";
   text += "\r\nnext";
   EXPECT_FALSE(SourceText::Create(text));
   const SourceLineIndex index(text);

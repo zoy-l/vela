@@ -13,6 +13,7 @@
 #include "base/path.h"
 #include "compiler/compilation_cache.h"
 #include "runtime/isolate.h"
+#include "runtime/native_context.h"
 #include "runtime/native_function.h"
 #include "vm/vm.h"
 

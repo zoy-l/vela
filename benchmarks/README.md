@@ -113,6 +113,70 @@ end-of-execution heap snapshot. JIT code bytes sum the machine code returned by
 counters retain their existing definitions. None of these is process RSS, and
 Lua heap plus trace bytes must not be presented as complete process memory.
 
+## Reloadable JIT
+
+`python -m tools.vl bench --jit-compare` uses the AOT comparison executable to
+run the eight maintained native workloads and 16 ported dasProfile workloads against C++,
+VM, closed AOT, reloadable baseline JIT and optimized JIT. It also runs the `hot/`
+lifecycle cases. The runner checks every selected registry entry and repetition,
+checks paired execution results and rejects unretired temporary state. Output
+defaults to `out/benchmarks/jit_comparison.json` and a Markdown report; `--report`
+selects another JSON path. Defaults are seven repetitions, 0.2 seconds per case
+and random interleaving.
+
+Both JIT tiers use LLVM O2, checked operations, precise roots, current named
+dispatch, external instance fields and safepoints. The optimized tier also emits
+version-dependent direct calls/inlining and original-version baseline recovery.
+Closed AOT keeps its normal fixed layouts and direct-call policy. Results are
+reported per workload and as geometric mean JIT/AOT ratios, with a separate
+aggregate excluding arithmetic and fields; they do not promise
+that the optimized tier is faster. C++ arithmetic that simplifies as a whole is
+shown separately and does not establish a general JIT performance advantage.
+
+`hot/steady/` excludes compilation and one verified warm-up invocation. Its
+counters separately record file capture, engine creation, source loading,
+specialization, checking, Typed IR, LLVM lowering/optimization, machine code,
+linking, instantiation, initial publication and first execution. Each JIT case
+compiles the entire corresponding source suite. dasProfile prepares its inputs
+after loading and before the first measured workload call; that preparation is
+excluded from both first-workload and steady timing. Process startup and OS cache
+misses are outside these fresh-session measurements.
+
+`hot/baseline/` and `hot/optimized/` measure complete lifecycle operations with
+manual wall timing. `edits/8` and `edits/32` repeatedly change a function;
+`closures/128`, `instances/1` and `instances/4096`, and `continuations/1` and
+`continuations/1024` keep old state alive across eight edits. Instance fields
+expand on the first edit, so the report includes maximum pause as well as
+per-edit averages. Continuations await a shared host-created gate and must finish
+their original body while calling the current callee. `active` commits at an
+active frame's entry safepoint and verifies optimized deoptimization; `rebuild`
+creates a fresh Isolate and verifies that its entry reruns. Stage counters
+separate compilation, safepoint waiting, validation/GC, state preparation,
+deoptimization, commit, stop and entry. No framework callback is installed;
+the refresh counter is consequently zero.
+
+Lifecycle memory snapshots collect before sampling and show deliberately
+retained old state separately from state after release. The cases verify that
+the last old reference releases its code batch and leaves one current batch.
+Heap, external fields, saved continuations and linked executable/read-only/
+writable block contents are distinct counters. Logical constant/debug payloads
+describe part of the linked image, including source text and locations; they
+overlap block totals and do not include allocator padding, deduplication or OS
+debug registration. Compilation peak is the process lifetime resident high-water
+mark sampled after compilation. Run a single workload in a fresh process to
+attribute that peak; a combined run can retain the high-water mark of an earlier
+case. Resident snapshots include LLVM and incremental compilation state.
+
+Use a registry filter for a focused measurement:
+
+```sh
+python -m tools.vl bench --jit-compare -- --benchmark_filter='^(aot/(native|vm|cpp)/|hot/steady/)'
+python -m tools.vl bench --jit-compare -- --benchmark_filter='^hot/(baseline|optimized)/'
+```
+
+Aggregate results follow the repository's two-entry
+[`rolling_summary.json`](results/rolling_summary.json) retention contract.
+
 ## Native C++ call boundaries
 
 Run `python3 -m tools.vl bench --native-compare` to compare direct C++ calls,

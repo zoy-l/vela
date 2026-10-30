@@ -93,8 +93,12 @@ TEST(ParserRecoveryTest, MissingInitializerDoesNotConsumeTheClosingBrace) {
 }
 
 TEST(ParserRecoveryTest, HandlesTruncatedLambdaAndGenericLookaheadAtEof) {
-  for (const auto source : {"func f(): void { (x", "func f(): void { (x)",
-                            "func f(): void { call<int>", "func f(): void { call<Box<int>>"}) {
+  for (const auto* const source : {
+           "func f(): void { (x",
+           "func f(): void { (x)",
+           "func f(): void { call<int>",
+           "func f(): void { call<Box<int>>",
+       }) {
     SCOPED_TRACE(source);
     EXPECT_FALSE(ParseSource(source).diagnostics.empty());
   }

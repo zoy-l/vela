@@ -110,7 +110,8 @@ async func main(): Future<int> {
   auto result = vm::VirtualMachine(isolate).ExecuteFuture(
       compiled.program, compiled.program.FindFunction("main").index());
   ASSERT_TRUE(isolate.scheduler().PumpUntil(result));
-  ExpectFutureInteger(result, 42);
+  constexpr std::int64_t kExpectedResult = 42;
+  ExpectFutureInteger(result, kExpectedResult);
   EXPECT_EQ(isolate.heap().object_count() - baseline, 65U);
   EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
   EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);

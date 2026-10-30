@@ -1,6 +1,6 @@
+#include "base/native_program_mode.h"
 #include "compiler/native/function_emitter.h"
 
-#include <cstddef>
 #include <cstdint>
 
 #include <llvm/IR/BasicBlock.h>
@@ -16,6 +16,7 @@
 #include "base/opcode.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
+#include "runtime/native_abi.h"
 #include "runtime/native_memory_layout.h"
 #include "runtime/native_operations.h"
 #include "runtime/native_program_state.h"
@@ -138,6 +139,29 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   const auto reading = instruction.opcode == Opcode::GetField;
   auto* object = Reference(reading ? instruction.lhs : instruction.dst);
   Check(builder_.CreateIsNotNull(object), ExecutionStatus::TypeError);
+  const auto field = instruction.field_declaration;
+  if (field) {
+    auto helper = module_.getOrInsertFunction(
+        reading ? "vela_native_v3_load_field" : "vela_native_v3_store_field", builder_.getInt8Ty(),
+        builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getInt64Ty(),
+        builder_.getPtrTy());
+    auto* value = reading ? result_ : Pack(Encode(instruction.lhs), 0);
+    const auto access = runtime::EncodeNativeTracePosition({
+        .function = static_cast<std::uint32_t>(function_index_),
+        .instruction = field_access_index_++,
+    });
+    CheckStatus(builder_.CreateCall(helper, {
+                                                body_->getArg(0),
+                                                object,
+                                                builder_.getInt64(field->value),
+                                                builder_.getInt64(access),
+                                                value,
+                                            }));
+    if (reading) {
+      Unpack(instruction.dst);
+    }
+    return;
+  }
   // 字段编号由静态成员解析确定，实际对象布局在入口边界验证；无需逐次查找布局。
   auto* address = ByteAddress(
       object, sizeof(runtime::HeapObject) + (instruction.index * sizeof(runtime::Value)));
@@ -201,14 +225,20 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
   auto helper = module_.getOrInsertFunction("vela_native_v2_initialize_global",
                                             builder_.getInt8Ty(), pointer, builder_.getInt32Ty(),
                                             builder_.getInt64Ty(), builder_.getInt8Ty(), pointer);
-  const auto position = runtime::EncodeNativeTracePosition(
-      {.function = static_cast<std::uint32_t>(function_index_),
-       .instruction = static_cast<std::uint32_t>(instruction_index_)});
+  const auto position = runtime::EncodeNativeTracePosition({
+      .function = static_cast<std::uint32_t>(function_index_),
+      .instruction = static_cast<std::uint32_t>(instruction_index_),
+  });
   const auto frame_kind =
       leaf_entry_ ? runtime::NativeGlobalFrame::Leaf : runtime::NativeGlobalFrame::Current;
-  CheckStatus(builder_.CreateCall(
-      helper, {execution, builder_.getInt32(instruction.index), builder_.getInt64(position),
-               builder_.getInt8(static_cast<std::uint8_t>(frame_kind)), result_}));
+  CheckStatus(
+      builder_.CreateCall(helper, {
+                                      execution,
+                                      builder_.getInt32(instruction.index),
+                                      builder_.getInt64(position),
+                                      builder_.getInt8(static_cast<std::uint8_t>(frame_kind)),
+                                      result_,
+                                  }));
   Unpack(instruction.dst);
   builder_.CreateBr(loaded);
   builder_.SetInsertPoint(loaded);
@@ -220,8 +250,11 @@ void FunctionEmitter::EmitGlobalStore(const ir::Instruction& instruction) {
                                               builder_.getPtrTy(), builder_.getInt64Ty(),
                                               builder_.getPtrTy());
     const auto declaration = program_.global_declarations.at(instruction.index);
-    CheckStatus(builder_.CreateCall(helper, {body_->getArg(0), builder_.getInt64(declaration.value),
-                                             Pack(Encode(instruction.lhs), 0)}));
+    CheckStatus(builder_.CreateCall(helper, {
+                                                body_->getArg(0),
+                                                builder_.getInt64(declaration.value),
+                                                Pack(Encode(instruction.lhs), 0),
+                                            }));
     return;
   }
   using runtime::NativeMemoryLayout;

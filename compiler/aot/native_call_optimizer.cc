@@ -1,5 +1,6 @@
 #include "compiler/aot/native_call_optimizer.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -10,6 +11,7 @@
 #include "base/opcode.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/analysis.h"
+#include "compiler/ir/ir.h"
 
 namespace vela::compiler::aot {
 namespace {
@@ -17,8 +19,8 @@ namespace {
 class CallableDefinitions final {
  public:
   CallableDefinitions(const ir::Function& function, const ir::Program& program)
-      : function_(function),
-        program_(program),
+      : function_(&function),
+        program_(&program),
         counts_(function.register_count),
         definitions_(function.register_count),
         states_(function.register_count),
@@ -36,6 +38,8 @@ class CallableDefinitions final {
   }
 
   std::optional<ir::ClassId> Resolve(ir::RegisterId reg) {
+    const auto& function = *function_;
+    const auto& program = *program_;
     std::vector<ir::RegisterId> path;
     std::optional<ir::ClassId> result;
     while (states_.at(reg) == 0) {
@@ -45,13 +49,13 @@ class CallableDefinitions final {
       if (counts_.at(reg) != 1 || !definition) {
         break;
       }
-      const auto& instruction = function_.instructions.at(*definition);
+      const auto& instruction = function.instructions.at(*definition);
       if (instruction.opcode == Opcode::Move) {
         reg = instruction.lhs;
         continue;
       }
       if (instruction.opcode == Opcode::NewInstance &&
-          program_.classes.at(instruction.index).callable) {
+          program.classes.at(instruction.index).callable) {
         result = instruction.index;
       }
       break;
@@ -67,8 +71,8 @@ class CallableDefinitions final {
   }
 
  private:
-  const ir::Function& function_;
-  const ir::Program& program_;
+  const ir::Function* function_;
+  const ir::Program* program_;
   std::vector<std::size_t> counts_;
   std::vector<std::optional<std::size_t>> definitions_;
   std::vector<std::uint8_t> states_;
@@ -100,30 +104,54 @@ bool CanCallDirectly(const ir::Instruction& instruction,
   return IsSameType(caller.value_types.at(instruction.dst), callee.return_type);
 }
 
+std::vector<std::optional<CallableTarget>> FindDirectCalls(const ir::Function& function,
+                                                           const ir::Program& program) {
+  CallableDefinitions definitions(function, program);
+  std::vector<std::optional<CallableTarget>> targets(function.instructions.size());
+  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
+    const auto& instruction = function.instructions.at(index);
+    if (instruction.opcode != Opcode::CallIndirect) {
+      continue;
+    }
+    const auto type = definitions.Resolve(instruction.rhs);
+    if (!type) {
+      continue;
+    }
+    const auto target = *program.classes.at(*type).callable;
+    const auto& callee = program.functions.at(target.function);
+    if (CanCallDirectly(instruction, function, callee, target.mode)) {
+      targets.at(index) = target;
+    }
+  }
+  return targets;
+}
+
+void BindClosureArguments(ir::Function& function,
+                          const ir::Function& callee,
+                          ir::Instruction& instruction,
+                          std::vector<ir::Instruction>& code) {
+  const auto base = function.register_count;
+  for (std::size_t parameter = 0; parameter < callee.parameter_count; ++parameter) {
+    const auto source = parameter == 0 ? instruction.rhs : instruction.lhs + parameter - 1;
+    const auto type = parameter == 0 ? callee.value_types.front() : function.value_types.at(source);
+    code.push_back({
+        .opcode = Opcode::Move,
+        .dst = function.register_count++,
+        .lhs = static_cast<ir::RegisterId>(source),
+        .location = instruction.location,
+        .handler = instruction.handler,
+    });
+    function.value_types.push_back(type);
+  }
+  instruction.lhs = base;
+}
+
 }  // namespace
 
 void DevirtualizeNativeCalls(ir::Program& program) {
   for (auto& function : program.functions) {
-    CallableDefinitions definitions(function, program);
-    std::vector<std::optional<CallableTarget>> targets(function.instructions.size());
-    bool changed = false;
-    for (std::size_t index = 0; index < function.instructions.size(); ++index) {
-      const auto& instruction = function.instructions.at(index);
-      if (instruction.opcode != Opcode::CallIndirect) {
-        continue;
-      }
-      const auto type = definitions.Resolve(instruction.rhs);
-      if (!type) {
-        continue;
-      }
-      const auto target = *program.classes.at(*type).callable;
-      const auto& callee = program.functions.at(target.function);
-      if (CanCallDirectly(instruction, function, callee, target.mode)) {
-        targets.at(index) = target;
-        changed = true;
-      }
-    }
-    if (!changed) {
+    const auto targets = FindDirectCalls(function, program);
+    if (std::ranges::none_of(targets, [](const auto& target) { return target.has_value(); })) {
       continue;
     }
     std::vector<ir::Instruction> code;
@@ -135,19 +163,7 @@ void DevirtualizeNativeCalls(ir::Program& program) {
       if (target) {
         if (target->mode == CallableMode::Closure) {
           const auto& callee = program.functions.at(target->function);
-          const auto base = function.register_count;
-          for (std::size_t parameter = 0; parameter < callee.parameter_count; ++parameter) {
-            const auto source = parameter == 0 ? instruction.rhs : instruction.lhs + parameter - 1;
-            const auto type =
-                parameter == 0 ? callee.value_types.front() : function.value_types.at(source);
-            code.push_back({.opcode = Opcode::Move,
-                            .dst = function.register_count++,
-                            .lhs = static_cast<ir::RegisterId>(source),
-                            .location = instruction.location,
-                            .handler = instruction.handler});
-            function.value_types.push_back(type);
-          }
-          instruction.lhs = base;
+          BindClosureArguments(function, callee, instruction, code);
         }
         // 只追踪单定义和 Move 链，所有可能覆写都使目标未知；对象的 callable target 不可变。
         // NewInstance 在当前实例建立环境，因此直接调用保留捕获对象且无需跨实例重绑定。

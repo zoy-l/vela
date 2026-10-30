@@ -1,12 +1,16 @@
 # JIT 与热重载设计
 
-> 状态：拟定设计，尚未实现。本文定义开发模式 JIT、保留状态的 Hot Reload，以及重建脚本状态的 Reload；不表示现有 VM、AOT 或 REPL 已具备这些能力。
+> 状态：开发模式已接通共享原生 JIT、保留状态的 Hot Reload、重建脚本状态的 Reload，以及优化层的原版本基线恢复。H3–H5 的功能与资源生命周期已通过 Windows x64 验证，性能测量仍显示与封闭 AOT 有明显差距，见第 13 节。VM、封闭 AOT 和 VM REPL 保持各自入口。
 
 Vela 的开发模式以及需要运行时加载源码的宿主使用 JIT，固定发布产物继续使用 AOT。两者共享前端、Typed IR、原生代码生成与运行时语义。用户可以在宿主运行期间加载或修改脚本；Hot Reload 保留脚本状态并更新后续执行，Reload 重建脚本 Isolate 并重新执行入口。**C++ binding 的实现、签名和注册集合在开发会话内固定，不参与热重载。**
 
 本设计参考 Dart VM 的方法版本、调用更新、状态保留与原子提交语义，以及 Flutter 将代码更新和界面重建分开的做法。Vela 保留非移动 GC 和严格静态类型，不复制 Dart 的对象移动实现，也不承诺接受 Dart 能接受的全部结构修改。
 
 JIT 与可重载能力由宿主选择，不由 C++ 的 Debug/Release 构建配置隐式决定；性能测量使用 Release 构建的 JIT。需要动态脚本的发布宿主可以包含 JIT，但必须满足目标平台的可执行内存政策，并承担编译器体积与运行时编译成本。
+
+开发控制台使用 `vela dev app.vela`；`--optimized` 选择具有去优化恢复能力的优化层，`--code-cache=DIR` 启用可重定位目标文件缓存。控制台默认监视导入图；`.hot`、`.reload` 和 `.load FILE` 分别发起三种事务，`.status` 显示版本、阶段耗时和代码资源，`.cancel` 取消未提交请求。文件 Hot Reload 不回放交互语句；`.reset` 读取当前文件快照、移除交互历史并重建运行。`.break`、`.stack`、`.source` 和 `.continue` 使用具体版本的源码与帧。
+
+嵌入宿主通过 [`DevelopmentSession`](../../compiler/development_session.h) 调用 `Prepare`、`Submit` 和 `Pump`，以 `Invoke` 进入当前导出声明；后台准备后的候选可以通过 `Post` 投递到 Isolate 线程。会话固定 binding 快照；刷新回调和外部根释放仍由宿主接入。`DevelopmentResult` 区分源码错误、需要 Reload、安全点等待、外部句柄等待、过期、取消和提交后刷新失败，并携带声明及冲突依赖。
 
 ## 1. 使用方式与操作边界
 
@@ -195,7 +199,7 @@ Lambda 归属具体函数版本，并具有版本内唯一身份。修改外层�
 
 ### 6.1 稳定对象头与独立字段存储
 
-当前实例的字段紧接 `HeapObject`，与对象头在同一次固定大小的分配中。该布局无法在保持对象地址的同时增加字段。可重载程序中的用户类改为：稳定对象头持有会话类型身份和可替换的连续字段存储，字段块由堆核算并拥有精确引用扫描描述。
+封闭程序的内联字段紧接 `HeapObject`，与对象头在同一次固定大小的分配中。可重载程序中的用户类使用稳定对象头、会话类型身份和可替换的连续字段存储；字段块由堆核算并拥有精确引用扫描描述。
 
 对象头不移动；`Value`、对象相等性、Map/Set 键、宿主已保根的对象引用以及接收者身份均保持有效。需要扩容时替换字段块，不对堆图做全量指针重写。字符串、数组、集合、Future 等内建对象的固定运行时结构不参与脚本类布局修改。
 
@@ -263,13 +267,13 @@ Hot Reload 的准备与提交阶段不执行用户初始化器。已有实例新
 
 ### 7.3 接近 AOT 的优化代码
 
-单纯采用 JIT 不保证接近 AOT；间接调用、字段存储与安全点均有成本。后续优化层可以内联、直接调用或专化，但必须记录它依赖的函数版本、字段与类型事实、选择器及初始化假设。
+单纯采用 JIT 不保证接近 AOT；间接调用、字段存储与安全点均有成本。优化层可以内联、直接调用或专化，但必须记录它依赖的函数版本、字段与类型事实、选择器及初始化假设。
 
 优化代码发布前必须具备失效与去优化闭环：在可提交安全点记录物理机器状态到逻辑帧、局部值、GC 根和恢复位置的映射。重载影响这些假设时，先把活跃优化帧还原到**它们原函数版本的基线代码**，再发布新快照；不能跳到新函数体。旧闭包中已失效的优化入口同样回到其旧版本基线，未来普通调用仍进入最新分派。
 
 挂起续延必须保存可恢复的版本与逻辑状态，不能只保留将被卸载的优化恢复地址。首次提供优化层时就必须支持其失效、异常路径和 async 状态转换，不能在遇到重载时临时关闭功能或继续执行失效假设。
 
-在该闭环完成前，正式可重载模式只发布遵守上述基线限制的代码；不以“先打开 LLVM O2，以后再处理热重载”的方式引入错误语义。优化层是明确的后续里程碑，基线与优化代码是同一 JIT 的执行层次，不是编译失败后转解释执行的路径。
+在该闭环完成前，正式可重载模式只发布遵守上述基线限制的代码；不以“先打开 LLVM O2，以后再处理热重载”的方式引入错误语义。基线与优化代码是同一 JIT 的执行层次，不是编译失败后转解释执行的路径。
 
 ## 8. Hot Reload 事务
 
@@ -315,28 +319,28 @@ Reload 不能在机器栈上仍有旧脚本帧时直接销毁 Isolate。停止�
 
 模块缓存分为持久内容缓存与会话运行状态。可复用的编译缓存必须包含源码内容、导入依赖、编译模式、目标平台、工具链及 runtime ABI 身份；代码缓存不携带另一会话的裸地址。候选基于确定源码快照，接受后才成为下一次变更的基线。文件监视器负责合并连续保存和发起请求，不能自行决定结构兼容性。
 
-当前 REPL 是追加声明和语句的事务会话，并拒绝重复声明；导入源码在 reset 前保持固定。热重载与它复用身份分配、保根和候选提交机制，但不把重载伪装成追加一段同名源码。既有交互语句不回放；文件变更通过明确的重载操作进入候选图。REPL 的 reset/退出必须接入代码退休、任务端点关闭和外部根释放。
+VM REPL 是追加声明和语句的事务会话，并拒绝重复声明；导入源码在 reset 前保持固定。JIT 开发控制台通过 `DevelopmentRepl` 复用交互源码构造、身份分配和候选提交机制，文件更新仍使用独立的重载事务。既有交互语句不回放；reset/退出接通代码退休、任务端点关闭和外部根释放。
 
 调试器与诊断以“源码版本 + 函数版本 + 位置”标识帧。新源码的断点绑定新代码，仍执行旧版本的帧展示对应旧源码；去优化后保留逻辑内联栈。调试器持有的版本引用在继续、删除断点或断开时正确释放。
 
 JIT 的每个受支持目标都必须实现可执行内存权限切换、指令缓存同步、栈展开与调试注册；ORC 集成不能假定这些工作在所有平台自动等价。macOS 的受限运行环境与移动平台的 JIT 权限是发行能力边界：未获支持的环境明确不能启动 JIT 开发模式，发布使用 AOT。不得静默降为解释执行并报告 JIT 正常。
 
-## 11. 与当前实现的接入点
+## 11. 实现接入点
 
-以下是实施时需要改造的现有路径，不是已经实现的新接口。
+生产路径按以下边界接通；runtime 不依赖 LLVM，宿主仅链接封闭 AOT runtime 时仍可独立构建。
 
-| 现有路径 | 需要完成的接入 |
+| 路径 | 责任 |
 | --- | --- |
-| [`compiler/ir/preparation.h`](../../compiler/ir/preparation.h)、[`persistent_ids.h`](../../compiler/ir/persistent_ids.h) | 保留共享语义准备边界；把持久身份扩展到模块、类型与字段，并贯穿候选事务 |
-| [`compiler/repl_session.cc`](../../compiler/repl_session.cc)、[`repl_identity.cc`](../../compiler/repl_identity.cc) | 复用工作副本与身份事务；区分追加提交、声明替换及版本内 lambda |
-| [`compiler/aot/native_compiler.cc`](../../compiler/aot/native_compiler.cc) | 提取共享 LLVM lowering 与优化策略；分开 AOT 目标文件和 JIT 资源交付 |
-| [`compiler/native/function_emitter.cc`](../../compiler/native/function_emitter.cc)、[`native_call_optimizer.cc`](../../compiler/aot/native_call_optimizer.cc) | 覆盖普通直接调用、函数值去虚化、初始化器、async 与叶入口；按模式限制可重载假设 |
-| [`compiler/aot/reachability.h`](../../compiler/aot/reachability.h) | 把产物内裁剪编号与会话稳定身份分开，不能重排后者 |
-| [`runtime/native_image.h`](../../runtime/native_image.h)、[`native_program_state.h`](../../runtime/native_program_state.h)、[`native_instance.h`](../../runtime/native_instance.h) | 从借用静态映像扩展到明确拥有 JIT 代码与版本元数据；全局状态与当前发布映像解耦 |
-| [`runtime/object.h`](../../runtime/object.h)、[`heap.cc`](../../runtime/heap.cc)、[`native_memory_layout.h`](../../runtime/native_memory_layout.h) | 接通稳定类型、可重载字段存储、初始化状态、精确扫描、屏障及共享布局事实；更新 ABI 身份 |
-| [`runtime/native_async.cc`](../../runtime/native_async.cc) | 让恢复入口保活代码版本；完成优化状态转换与退休；不能只保存裸恢复地址 |
-| [`runtime/rooted_value.h`](../../runtime/rooted_value.h)、[`isolate.h`](../../runtime/isolate.h)、[`future.h`](../../runtime/future.h) | 接通 Reload 的根生命周期、固定 binding 快照、调度器停止及可关闭完成端点 |
-| [`tools/llvm.py`](../../tools/llvm.py) | 补齐 ORC 及其依赖闭包，覆盖开发工具链、平台链接与发行；AOT runtime 不引入 LLVM 依赖 |
+| [`compiler/source_session.h`](../../compiler/source_session.h)、[`ir/preparation.h`](../../compiler/ir/preparation.h) | 不可变源码工作副本、持久声明身份、存留特化和共享语义准备 |
+| [`compiler/development_session.h`](../../compiler/development_session.h)、[`development_files.h`](../../compiler/development_files.h)、[`development_repl.h`](../../compiler/development_repl.h) | 操作串行化、文件快照与监视、交互提交、刷新及 Isolate 切换 |
+| [`compiler/native/code_generator.cc`](../../compiler/native/code_generator.cc)、[`jit/compiler.cc`](../../compiler/jit/compiler.cc)、[`jit/code_cache.cc`](../../compiler/jit/code_cache.cc) | 共享 LLVM lowering 和目标文件生成；隔离 ORC 批次、重定位缓存及资源退休 |
+| [`compiler/native/function_emitter.cc`](../../compiler/native/function_emitter.cc)、[`deoptimization_emitter.cc`](../../compiler/native/deoptimization_emitter.cc) | 按模式限制调用假设；保存精确逻辑状态并恢复原版本基线，避免重放待完成调用 |
+| [`compiler/aot/reachability.h`](../../compiler/aot/reachability.h) | 产物内裁剪编号与会话稳定身份分离，保留稳定声明契约 |
+| [`runtime/native_dispatch.h`](../../runtime/native_dispatch.h)、[`native_version.h`](../../runtime/native_version.h)、[`native_metadata.h`](../../runtime/native_metadata.h) | 原子快照、会话全局、存留依赖、函数版本所有权及元数据回收 |
+| [`runtime/instance_storage.h`](../../runtime/instance_storage.h)、[`heap_instance.cc`](../../runtime/heap_instance.cc)、[`native_memory_layout.h`](../../runtime/native_memory_layout.h) | 稳定对象、独立字段块、弱实例登记、精确扫描、屏障与迁移 |
+| [`runtime/native_async.cc`](../../runtime/native_async.cc)、[`native_deoptimization.h`](../../runtime/native_deoptimization.h) | 挂起版本保活、活跃帧检查点、优化续延恢复和退休 |
+| [`runtime/rooted_value.h`](../../runtime/rooted_value.h)、[`isolate.h`](../../runtime/isolate.h)、[`future.h`](../../runtime/future.h) | 外部根诊断、固定 binding 快照、停止边界和可关闭完成端点 |
+| [`compiler/jit/platform_support_win.cc`](../../compiler/jit/platform_support_win.cc)、[`platform_support_posix.cc`](../../compiler/jit/platform_support_posix.cc)、[`tools/llvm.py`](../../tools/llvm.py) | 平台展开/调试注册、可执行资源和 ORC 依赖闭包 |
 
 现有 AOT 与 VM 的具体状态以各自实现和文档为准。本文对可重载模式的布局、调用和生命周期要求，只在对应里程碑完整接通后才可标记为已支持。
 
@@ -353,6 +357,8 @@ JIT 的每个受支持目标都必须实现可执行内存权限切换、指令�
 | H5：优化与性能验收 | 依赖失效、去优化、内联/直接调用、优化续延、代码缓存与测量 | 活跃和挂起优化状态都能正确重载；旧代码可回收；性能数据同时给出冷启动、重载暂停、稳态与内存 |
 
 H2 不能因为首个算术函数可执行就完成；H3 不能因为没有活动栈的函数体替换成功就完成；H4 不能把宿主 RootedValue 的悬空风险留给用户承担。每阶段验收覆盖生产入口、IR、代码生成、runtime、嵌入、工具和退出清理的完整链路。H1–H4 完成后才可宣称支持本文的基线热重载；接近 AOT 的性能结论需要 H5 的实测。
+
+当前 Windows x64 实现通过 539 个 C++ 文件的静态检查、1,891 项 C++ 测试及 141 项 Python 工具与发行测试。验证包含基线和优化层的状态演化、活跃帧与挂起续延恢复、开发操作、缓存和资源退休；本轮未在 macOS 或 Linux 目标机执行验证。
 
 ## 13. 验证与性能标准
 
@@ -376,9 +382,15 @@ H2 不能因为首个算术函数可执行就完成；H3 不能因为没有活�
 | Reload | 完整编译、新 Isolate 准备、旧运行停止与入口重跑分别计时 |
 | 内存 | 堆、字段外部块、常量、编译峰值、可执行代码、调试元数据与被保活旧版本分别统计 |
 
-现有 VM 报告中的 24 项和 16 项移植负载继续作为对照集合，并增加频繁编辑、存活旧闭包、大量旧实例及大量挂起任务的负载。算术或字段用例若被 C++ 整体化简，应单列，不用其极端倍率推导 JIT 收益。宿主、分配和字符串库成本单独解释。
+现有统一报告的 24 项负载（8 项原生负载及 16 项 dasProfile 移植负载）继续作为完整对照集合，在同机 Release 构建上覆盖 C++、VM、封闭 AOT、可重载基线和优化 JIT；这 16 项属于 24 项集合，不重复计数。另测频繁编辑、存活旧闭包、大量旧实例及大量挂起任务。算术或字段用例若被 C++ 整体化简，应单列，不用其极端倍率推导 JIT 收益。宿主、分配和字符串库成本单独解释。
+
+`python -m tools.vl bench --jit-compare` 对比同一套 C++、VM、封闭 AOT、可重载基线和优化层，并运行 `hot/` 重载负载。报告将完整运行时暂停与后台编译分开，提供各阶段耗时、首次执行、字段块、代码、常量/调试载荷和旧版本释放前后的计数。进程 resident 高水位在编译结束时采样；要将它归因于某个编译负载，应在独立进程只选择该用例。操作系统文件缓存和已启动进程的状态不等同于冷机器启动。运行方式和计数边界见 [benchmark 说明](../../benchmarks/README.md)，汇总按仓库规则保留在 [`rolling_summary.json`](../../benchmarks/results/rolling_summary.json)。
 
 “接近 AOT”在完成这些测量后按用例和几何平均报告 JIT/AOT 比值，不预先承诺固定倍数。报告必须包含基线与优化层的差异，不能以关闭热重载约束的代码冒充可重载 JIT。若墓碑或用户保留的旧函数值造成会话增长，工具给出资源统计和显式 Reload 入口，不自动丢弃用户状态。
+
+2026-10-30 的 Windows x64 Release 测量使用 Ryzen 9 7900X，覆盖五后端的 24 项共同负载及 18 个重载入口。138 个入口的七次随机交错采样共 966 个样本，均通过完整性、校验值和资源释放检查。基线及优化 JIT/AOT 的几何平均分别为 **13.06×、13.57×**；排除单列的算术与字段用例后，其余 22 项分别为 **9.11×、9.34×**。本轮未显示优化层的整体收益，尚不能宣称接近 AOT。不少用例的变异系数超过 10%，不把两档 JIT 的小幅整体差异视为已确认的稳定回归幅度。
+
+另以 28 个独立进程覆盖两套完整源码和两档 JIT，记录装载、首次工作负载执行及编译进程 resident 峰值；dasProfile 输入准备位于装载之后、首次工作负载计时之前，其耗时不包含在装载或首次工作负载耗时中。重载测量中的最大观察暂停为 **2.491 ms**，包含运行时验证、GC、迁移、去优化及发布，不代表暂停上界。保留旧闭包或续延的用例在最后引用释放后均只剩一个当前代码批次。各用例的中位数、变异、阶段耗时、内存及源码和工具链身份以 [`rolling_summary.json`](../../benchmarks/results/rolling_summary.json) 为准；其前一次记录的机器与测量范围不同，不能直接比较回归幅度。
 
 ## 14. 参考与相关契约
 
@@ -388,4 +400,6 @@ H2 不能因为首个算术函数可执行就完成；H3 不能因为没有活�
 - [Flutter：Hot reload](https://github.com/flutter/website/blob/b11d153818774d8fa5b1cb66b332c9c7e7ae9d86/sites/docs/src/content/tools/hot-reload.md)；[在线说明](https://docs.flutter.dev/tools/hot-reload)：Hot Reload、Hot Restart、入口不重跑和框架 rebuild 的边界。
 - [Dart VM：object_reload.cc](https://github.com/dart-lang/sdk/blob/main/runtime/vm/object_reload.cc)、[isolate_reload.cc](https://github.com/dart-lang/sdk/blob/main/runtime/vm/isolate_reload.cc)：布局迁移与失效处理的实现参考；不作为 Vela 非移动堆的直接实现方案。
 - [React Native：Fast Refresh](https://reactnative.dev/docs/fast-refresh)：框架刷新与状态恢复策略的对照。
+- [LLVM：Benchmarking tips](https://llvm.org/docs/Benchmarking.html)：重复运行、运行环境和测量噪声的边界；降低波动不代表负载具有代表性。
+- [Google Benchmark：User Guide](https://github.com/google/benchmark/blob/main/docs/user_guide.md)：注册用例核验、重复采样、中位数与变异、随机交错和独立的内存计数。
 - [Vela AOT](aot.md)、[GC](garbage_collection.md)、[异步](async_tasks.md)、[宿主嵌入](native_embedding.md)、[REPL](repl.md)、[模块](modules.md)、[编译缓存](compilation_cache.md)、[调试器](debugger.md)：共享语言语义与现有边界。

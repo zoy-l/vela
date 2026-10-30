@@ -6,7 +6,6 @@
 
 #include "base/execution_status.h"
 #include "runtime/native_abi.h"
-#include "runtime/object.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {

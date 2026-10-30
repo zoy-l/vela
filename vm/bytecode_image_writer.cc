@@ -178,8 +178,8 @@ void ImageWriter::WriteClass(const runtime::ClassLayout& layout) {
   writer.Write(static_cast<std::uint8_t>(standard));
   writer.Write(layout.field_count());
   WriteNumbers(writer, layout.reference_fields());
-  writer.Write(static_cast<std::uint8_t>(layout.callable().has_value()));
-  if (layout.callable()) {
+  writer.Write(static_cast<std::uint8_t>(layout.callable() != nullptr));
+  if (layout.callable() != nullptr) {
     writer.Write(layout.callable()->function);
     writer.Write(static_cast<std::uint8_t>(layout.callable()->mode));
   }

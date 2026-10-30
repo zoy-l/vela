@@ -128,7 +128,8 @@ std::size_t HashKey(Value value) noexcept {
     case ValueKind::Object: {
       const auto* layout = Heap::ClassOf(*value.AsObject());
       if (layout != nullptr && layout->IsEnum()) {
-        return absl::HashOf(layout, Heap::GetField(*value.AsObject(), 0)->AsInteger());
+        return absl::HashOf(&layout->nominal_type(),
+                            Heap::GetField(*value.AsObject(), 0)->AsInteger());
       }
       return absl::HashOf(value.kind(), value.AsObject());
     }
@@ -157,7 +158,9 @@ bool IsSameKey(Value left, Value right) noexcept {
     case ValueKind::Object: {
       const auto* layout = Heap::ClassOf(*left.AsObject());
       if (layout != nullptr && layout->IsEnum()) {
-        return layout == Heap::ClassOf(*right.AsObject()) &&
+        const auto* right_layout = Heap::ClassOf(*right.AsObject());
+        return right_layout != nullptr &&
+               &layout->nominal_type() == &right_layout->nominal_type() &&
                Heap::GetField(*left.AsObject(), 0)->AsInteger() ==
                    Heap::GetField(*right.AsObject(), 0)->AsInteger();
       }
@@ -233,6 +236,9 @@ std::expected<void, ExecutionStatus> Heap::GrowCollection(HeapObject& object) no
   }
   const auto bytes = LayoutFor(layout, capacity).bytes;
   MaybeCollect(bytes);
+  if (!CanAllocate(bytes - current.bytes)) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
   auto* memory = static_cast<std::byte*>(::operator new(bytes, std::nothrow));
   if (memory == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);

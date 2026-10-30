@@ -140,18 +140,19 @@ TEST(ControlFlowTest, ReportsTheUnreachableSourceLocation) {
 }
 
 TEST(ControlFlowTest, IntersectsConstructorFieldsAcrossBitmapWords) {
+  constexpr int kFields = 130;
   for (const auto omitted : {-1, 0, 63, 64, 127, 128, 129}) {
     SCOPED_TRACE(omitted);
     std::string source = "class Base { inherited: int = 42; } class Box extends Base {";
-    for (int field = 0; field < 130; ++field) {
+    for (int field = 0; field < kFields; ++field) {
       source += "field" + std::to_string(field) + ": int;";
     }
     source += "static count: int = 0; constructor(flag: bool) { if (flag) {";
-    for (int field = 0; field < 130; ++field) {
+    for (int field = 0; field < kFields; ++field) {
       source += "this.field" + std::to_string(field) + " = 42;";
     }
     source += "} else {";
-    for (int field = 0; field < 130; ++field) {
+    for (int field = 0; field < kFields; ++field) {
       if (field != omitted) {
         source += "this.field" + std::to_string(field) + " = 42;";
       }

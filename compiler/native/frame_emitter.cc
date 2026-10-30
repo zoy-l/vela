@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/MDBuilder.h>
@@ -11,8 +12,12 @@
 #include "base/execution_limits.h"
 #include "base/execution_status.h"
 #include "base/opcode.h"
+#include "compiler/native/native_values.h"
+#include "runtime/exception.h"
+#include "runtime/heap.h"
 #include "runtime/native_abi.h"
 #include "runtime/native_memory_layout.h"
+#include "runtime/value.h"
 
 namespace vela::compiler::native {
 
@@ -41,16 +46,18 @@ void FunctionEmitter::EmitFrameEntry() {
   builder_.CreateCondBr(builder_.CreateICmpULT(depth, builder_.getInt64(kMaxCallFrames)), available,
                         failed, llvm::MDBuilder(context).createLikelyBranchWeights());
   builder_.SetInsertPoint(available);
-  auto* first = llvm::BasicBlock::Create(context, "execution.first", body_);
-  builder_.CreateCondBr(builder_.CreateICmpEQ(depth, builder_.getInt64(0)), first, initialize);
-  builder_.SetInsertPoint(first);
-  // 与 NativeExecution::PrepareEntry 共用布局事实；成功入口不跨 helper 调用边界。
-  // 仅最外层清理上次异常，嵌套调用必须保留 catch 作用域中的异常状态。
-  builder_.CreateStore(llvm::Constant::getNullValue(NativeRecordType(context)),
-                       ByteAddress(execution, NativeMemoryLayout::kExecutionException));
-  builder_.CreateStore(
-      builder_.getInt8(0),
-      ByteAddress(execution, NativeMemoryLayout::kExecutionExceptionAllocationFailed));
+  if (!IsRecovering()) {
+    auto* first = llvm::BasicBlock::Create(context, "execution.first", body_);
+    builder_.CreateCondBr(builder_.CreateICmpEQ(depth, builder_.getInt64(0)), first, initialize);
+    builder_.SetInsertPoint(first);
+    // 与 NativeExecution::PrepareEntry 共用布局事实；成功入口不跨 helper 调用边界。
+    // 仅最外层清理上次异常，嵌套调用必须保留 catch 作用域中的异常状态。
+    builder_.CreateStore(llvm::Constant::getNullValue(NativeRecordType(context)),
+                         ByteAddress(execution, NativeMemoryLayout::kExecutionException));
+    builder_.CreateStore(
+        builder_.getInt8(0),
+        ByteAddress(execution, NativeMemoryLayout::kExecutionExceptionAllocationFailed));
+  }
   builder_.CreateBr(initialize);
   builder_.SetInsertPoint(initialize);
 
@@ -63,7 +70,9 @@ void FunctionEmitter::EmitFrameEntry() {
   llvm::Value* resources = nullptr;
   llvm::Value* root_range = nullptr;
   const bool on_stack = frame_bytes_ <= kMaximumNativeStackBytes;
-  if (leaf_entry_ && roots_.count != 0) {
+  if (IsRecovering()) {
+    // 优化帧已预留基线存储，并持有根区间直到恢复返回；此处不分配资源或重复登记根。
+  } else if (leaf_entry_ && roots_.count != 0) {
     // 成功路径没有 GC 安全点；根槽只在失败分支写入并由 leaf_failure 临时登记。
     root_slots_ = allocate(roots_.count * sizeof(runtime::Value), alignof(runtime::Value));
   } else if (on_stack && roots_.count != 0) {
@@ -80,9 +89,13 @@ void FunctionEmitter::EmitFrameEntry() {
         allocate(sizeof(runtime::NativeFrameAccess), alignof(runtime::NativeFrameAccess));
     auto storage = module_.getOrInsertFunction("vela_native_v1_frame_storage", builder_.getInt8Ty(),
                                                pointer, word, word, pointer, pointer);
-    auto* entered =
-        builder_.CreateCall(storage, {execution, builder_.getInt64(roots_.count),
-                                      builder_.getInt64(storage_bytes_), resources, access});
+    auto* entered = builder_.CreateCall(storage, {
+                                                     execution,
+                                                     builder_.getInt64(roots_.count),
+                                                     builder_.getInt64(storage_bytes_),
+                                                     resources,
+                                                     access,
+                                                 });
     auto* allocated = llvm::BasicBlock::Create(context, "storage.ready", body_);
     error->addIncoming(entered, builder_.GetInsertBlock());
     builder_.CreateCondBr(
@@ -97,11 +110,20 @@ void FunctionEmitter::EmitFrameEntry() {
   cleanup_ = llvm::BasicBlock::Create(context, "cleanup", body_);
   Builder cleanup(cleanup_);
   status_ = cleanup.CreatePHI(builder_.getInt8Ty(), 0, "status");
+  if (construction_depth_ != nullptr) {
+    auto exit = module_.getOrInsertFunction("vela_native_v3_initialization_exit",
+                                            cleanup.getVoidTy(), pointer, cleanup.getInt32Ty());
+    cleanup.CreateCall(exit,
+                       {execution, cleanup.CreateLoad(cleanup.getInt32Ty(), construction_depth_)});
+  }
   if (!leaf_entry_) {
     auto* frame = allocate(sizeof(NativeTraceFrame), alignof(NativeTraceFrame));
+    trace_frame_ = frame;
     auto* previous = builder_.CreateLoad(pointer, frame_address);
     builder_.CreateStore(previous, ByteAddress(frame, offsetof(NativeTraceFrame, previous)));
     builder_.CreateStore(image_, ByteAddress(frame, offsetof(NativeTraceFrame, image)));
+    builder_.CreateStore(llvm::ConstantPointerNull::get(builder_.getPtrTy()),
+                         ByteAddress(frame, offsetof(NativeTraceFrame, checkpoint)));
     const auto position = offsetof(NativeTraceFrame, position);
     builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
                          ByteAddress(frame, position + offsetof(runtime::TracePosition, function)));
@@ -136,6 +158,35 @@ void FunctionEmitter::CacheImports() {
     imports_.emplace(instruction.index,
                      LoadImport(builder_, module_, body_->getArg(0), instruction.index));
   }
+}
+
+void FunctionEmitter::BeginConstruction() {
+  auto enter = module_.getOrInsertFunction("vela_native_v3_initialization_enter",
+                                           builder_.getVoidTy(), builder_.getPtrTy());
+  builder_.CreateCall(enter, {body_->getArg(0)});
+  auto* depth = builder_.CreateLoad(builder_.getInt32Ty(), construction_depth_);
+  builder_.CreateStore(builder_.CreateAdd(depth, builder_.getInt32(1)), construction_depth_);
+}
+
+void FunctionEmitter::EndConstruction() {
+  auto exit =
+      module_.getOrInsertFunction("vela_native_v3_initialization_exit", builder_.getVoidTy(),
+                                  builder_.getPtrTy(), builder_.getInt32Ty());
+  builder_.CreateCall(exit, {body_->getArg(0), builder_.getInt32(1)});
+  auto* depth = builder_.CreateLoad(builder_.getInt32Ty(), construction_depth_);
+  builder_.CreateStore(builder_.CreateSub(depth, builder_.getInt32(1)), construction_depth_);
+}
+
+void FunctionEmitter::AbortConstructions() {
+  if (construction_depth_ == nullptr) {
+    return;
+  }
+  auto exit =
+      module_.getOrInsertFunction("vela_native_v3_initialization_exit", builder_.getVoidTy(),
+                                  builder_.getPtrTy(), builder_.getInt32Ty());
+  builder_.CreateCall(
+      exit, {body_->getArg(0), builder_.CreateLoad(builder_.getInt32Ty(), construction_depth_)});
+  builder_.CreateStore(builder_.getInt32(0), construction_depth_);
 }
 
 }  // namespace vela::compiler::native

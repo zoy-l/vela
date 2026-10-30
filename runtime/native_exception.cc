@@ -1,6 +1,5 @@
 #include "runtime/native_abi.h"
 
-#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <memory>

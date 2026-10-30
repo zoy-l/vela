@@ -42,6 +42,8 @@ class ModuleBinding final {
 
  private:
   void Error(SourceLocation location, std::string message);
+  template <class Declaration>
+  void Declare(const Declaration& declaration, DeclarationKind kind, std::size_t index);
   void CollectDeclarations();
   void BindImports();
   void AddImport(const Program::Import& imported, std::uint32_t dependency, ModuleScope& scope);
@@ -76,53 +78,61 @@ void ModuleBinding::Error(SourceLocation location, std::string message) {
   });
 }
 
+template <class Declaration>
+void ModuleBinding::Declare(const Declaration& declaration,
+                            DeclarationKind kind,
+                            std::size_t index) {
+  auto& scope = scopes_.at(index);
+  auto& module = modules_.at(index);
+  if (IsBuiltinName(declaration.name) || IsStandardName(declaration.name)) {
+    Error(declaration.location, "declaration name is reserved for a builtin");
+  }
+  const auto binding_id = module.binding_id;
+  const auto target = index == 0 ? declaration.name
+                                 : "$module" + std::to_string(binding_id) + "." + declaration.name;
+  if (!scope.declarations
+           .emplace(declaration.name,
+                    Symbol{.target = target, .export_kind = declaration.export_kind})
+           .second) {
+    const auto* category = kind == DeclarationKind::Function ? "function" : "module declaration";
+    Error(declaration.location,
+          "duplicate " + std::string(category) + " '" + declaration.name + "'");
+  }
+  scope.names.try_emplace(declaration.name, target);
+  std::vector<std::string> parameters;
+  if constexpr (requires { declaration.type_parameters; }) {
+    parameters = declaration.type_parameters;
+  }
+  module.program.origins.emplace(target, DeclarationOrigin{
+                                             .module_uri = sources_.at(index).path,
+                                             .name = declaration.name,
+                                             .kind = kind,
+                                             .arguments = {},
+                                             .type_parameters = std::move(parameters),
+                                             .members = {},
+                                         });
+}
+
 void ModuleBinding::CollectDeclarations() {
   for (std::size_t index = 0; index < modules_.size(); ++index) {
-    auto& scope = scopes_.at(index);
-    auto& program = modules_.at(index).program;
-    const auto declare = [&](const auto& declaration, DeclarationKind kind) -> void {
-      if (IsBuiltinName(declaration.name) || IsStandardName(declaration.name)) {
-        Error(declaration.location, "declaration name is reserved for a builtin");
-      }
-      const auto binding_id = modules_.at(index).binding_id;
-      const auto target = index == 0
-                              ? declaration.name
-                              : "$module" + std::to_string(binding_id) + "." + declaration.name;
-      if (!scope.declarations
-               .emplace(declaration.name,
-                        Symbol{.target = target, .export_kind = declaration.export_kind})
-               .second) {
-        const auto category = kind == DeclarationKind::Function ? "function" : "module declaration";
-        Error(declaration.location,
-              "duplicate " + std::string(category) + " '" + declaration.name + "'");
-      }
-      scope.names.try_emplace(declaration.name, target);
-      program.origins.emplace(target, DeclarationOrigin{
-                                          .module_uri = sources_.at(index).path,
-                                          .name = declaration.name,
-                                          .kind = kind,
-                                          .arguments = {},
-                                          .type_parameters = {},
-                                          .members = {},
-                                      });
-    };
+    const auto& program = modules_.at(index).program;
     for (const auto& declaration : program.functions) {
-      declare(declaration, DeclarationKind::Function);
+      Declare(declaration, DeclarationKind::Function, index);
     }
     for (const auto& declaration : program.classes) {
-      declare(declaration, DeclarationKind::Class);
+      Declare(declaration, DeclarationKind::Class, index);
     }
     for (const auto& declaration : program.enums) {
-      declare(declaration, DeclarationKind::Enum);
+      Declare(declaration, DeclarationKind::Enum, index);
     }
     for (const auto& declaration : program.interfaces) {
-      declare(declaration, DeclarationKind::Interface);
+      Declare(declaration, DeclarationKind::Interface, index);
     }
     for (const auto& declaration : program.aliases) {
-      declare(declaration, DeclarationKind::Alias);
+      Declare(declaration, DeclarationKind::Alias, index);
     }
     for (const auto& declaration : program.globals) {
-      declare(declaration, DeclarationKind::Global);
+      Declare(declaration, DeclarationKind::Global, index);
     }
   }
 }

@@ -12,6 +12,8 @@
 #include <vector>
 #include "runtime/exception.h"
 #include "runtime/external_resources.h"
+#include "runtime/instance_storage.h"
+#include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "runtime/register_storage.h"
 #include "runtime/string.h"
@@ -70,6 +72,10 @@ Heap::~Heap() {
   DestroyAll();
 }
 
+Heap::Heap(Isolate& isolate, std::size_t gc_threshold) noexcept : Heap(gc_threshold) {
+  isolate_ = &isolate;
+}
+
 HeapObject* Heap::AllocateFuture(Future future) noexcept {
   future.AttachHeap(*this);
   return AllocateNativeObject(ObjectKind::Future, std::move(future));
@@ -113,6 +119,26 @@ HeapObject* Heap::AllocateInstance(const ClassLayout& layout,
     return nullptr;
   }
 
+  if (layout.storage() == ClassStorage::Reloadable) {
+    auto* storage = AllocateInstanceStorage(layout.field_count());
+    if (storage == nullptr) {
+      return nullptr;
+    }
+    // AllocateRaw 不触发 GC；先前传入的 initial_fields 不会在块准备后失根。
+    const auto allocation = AllocateRaw(sizeof(HeapObject));
+    if (allocation.memory == nullptr) {
+      ReleaseInstanceStorage(*storage);
+      return nullptr;
+    }
+    auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
+    object->layout = &layout;
+    object->native_payload = storage;
+    std::ranges::copy(initial_fields, ObjectFields(object));
+    std::ranges::fill(storage->states().first(initial_fields.size()), FieldState::Ready);
+    RegisterInstance(*object, *storage);
+    Publish(*object, allocation);
+    return object;
+  }
   const std::size_t requested_size = sizeof(HeapObject) + (sizeof(Value) * layout.field_count());
   if (requested_size > std::numeric_limits<std::uint32_t>::max()) {
     return nullptr;
@@ -372,6 +398,9 @@ void Heap::MarkObject(HeapObject& object) noexcept {
 }
 
 void Heap::ProcessGrayObject(HeapObject& object) noexcept {
+  if (object.layout != nullptr) {
+    MarkReference(object.layout->program_owner_);
+  }
   if (object.kind == ObjectKind::RegExp || object.kind == ObjectKind::RegExpMatch) {
     MarkRegExp(object);
     return;
@@ -440,6 +469,9 @@ void Heap::WriteBarrier(HeapObject& source, Value value) noexcept {
 
 Heap::Allocation Heap::AllocateRaw(std::size_t requested_size) noexcept {
   const auto [block_size, class_index] = SelectBlockClass(requested_size);
+  if (!CanAllocate(block_size)) {
+    return {};
+  }
   void* memory = nullptr;
 
   if (class_index < free_blocks_.size()) {
@@ -477,7 +509,7 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   } else if (object.kind == ObjectKind::NativeProgram) {
     ReleaseNativeProgram(object);
   } else if (object.layout != nullptr) {
-    std::destroy_n(ObjectFields(&object), object.layout->field_count());
+    ReleaseInstance(object);
   } else if (object.kind == ObjectKind::MutableString) {
     ReleaseMutableString(object);
   } else if (object.kind == ObjectKind::Collection) {
@@ -529,6 +561,10 @@ bool Heap::ShouldCollect(std::size_t next_size) const noexcept {
   return next_size > gc_threshold_ || allocated_bytes_ > gc_threshold_ - next_size;
 }
 
+bool Heap::CanAllocate(std::size_t bytes) const noexcept {
+  return bytes <= allocation_limit_ && allocated_bytes_ <= allocation_limit_ - bytes;
+}
+
 void Heap::MaybeCollect(std::size_t next_size) noexcept {
   if (phase_ == GcPhase::Idle && ShouldCollect(next_size)) {
     StartCollection();
@@ -539,6 +575,10 @@ void Heap::MaybeCollect(std::size_t next_size) noexcept {
 }
 
 void Heap::FinishSweep() noexcept {
+  ReleaseRetiredNativePrograms();
+  if (isolate_ != nullptr) {
+    isolate_->CollectNativeMetadata();
+  }
   phase_ = GcPhase::Idle;
   sweep_link_ = nullptr;
   const std::size_t doubled_live_size =
@@ -555,6 +595,7 @@ void Heap::DestroyAll() noexcept {
     ReleaseRaw(*object);
   }
   object_count_ = 0;
+  ReleaseRetiredNativePrograms();
 
   for (std::size_t index = 0; index < free_blocks_.size(); ++index) {
     HeapObject*& block = std::span(free_blocks_).subspan(index).front();

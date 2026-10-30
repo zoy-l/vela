@@ -8,7 +8,10 @@
 #include <utility>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
+
 #include "base/callable.h"
+#include "base/declaration.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -18,6 +21,7 @@ class Future;
 class Timer;
 class CancellationToken;
 struct TypeSignature;
+struct HeapObject;
 // Isolate 持有的名义接口身份；不占用可分配类的字节码索引。
 struct InterfaceType final {};
 // 同一增量会话共享代码身份；函数编号只在该身份内有意义。
@@ -28,6 +32,7 @@ enum class NominalKind : std::uint8_t { Class, Enum, Callable };
 struct NominalTypeOptions final {
   NominalKind kind = NominalKind::Class;
   std::vector<const InterfaceType*> interfaces;
+  DeclarationId declaration;
 };
 
 // 名义身份独立于布局版本。只有固定存储类型保留可用于分配的 fixed_layout；
@@ -46,13 +51,15 @@ class NominalType final {
     return interfaces_;
   }
   [[nodiscard]] const ClassLayout* fixed_layout() const noexcept { return fixed_layout_; }
+  [[nodiscard]] DeclarationId declaration() const noexcept { return declaration_; }
 
  private:
   friend class Isolate;
   explicit NominalType(NominalTypeOptions options);
   NominalKind kind_;
   std::vector<const InterfaceType*> interfaces_;
-  const ClassLayout* fixed_layout_ = nullptr;
+  ClassLayout* fixed_layout_ = nullptr;
+  DeclarationId declaration_;
 };
 
 enum class ClassStorage : std::uint8_t { Inline, Reloadable };
@@ -66,6 +73,8 @@ struct ClassLayoutOptions final {
   const TypeSignature* expected_type = nullptr;
   NominalType* nominal = nullptr;
   ClassStorage storage = ClassStorage::Inline;
+  std::vector<DeclarationId> field_declarations;
+  std::uint64_t revision = 0;
 };
 
 class ClassLayout final {
@@ -77,9 +86,16 @@ class ClassLayout final {
   ~ClassLayout() = default;
 
   [[nodiscard]] std::uint32_t field_count() const noexcept { return field_count_; }
-  [[nodiscard]] const std::optional<CallableTarget>& callable() const noexcept { return callable_; }
+  [[nodiscard]] const CallableTarget* callable() const noexcept {
+    return callable_ ? &*callable_ : nullptr;
+  }
   [[nodiscard]] const NominalType& nominal_type() const noexcept { return *nominal_; }
   [[nodiscard]] ClassStorage storage() const noexcept { return storage_; }
+  [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
+  [[nodiscard]] std::optional<std::uint32_t> FieldIndex(DeclarationId field) const noexcept;
+  [[nodiscard]] std::span<const DeclarationId> field_declarations() const noexcept {
+    return field_declarations_;
+  }
   [[nodiscard]] std::span<const InterfaceType* const> interfaces() const noexcept {
     return nominal_->interfaces();
   }
@@ -100,6 +116,8 @@ class ClassLayout final {
 
  private:
   friend class Isolate;
+  friend class LayoutTransaction;
+  friend class Heap;
 
   ClassLayout(std::uint32_t field_count, std::vector<std::uint32_t> reference_fields);
 
@@ -108,10 +126,15 @@ class ClassLayout final {
   std::optional<CallableTarget> callable_;
   NominalType* nominal_ = nullptr;
   ClassStorage storage_ = ClassStorage::Inline;
+  std::uint64_t revision_ = 0;
+  std::vector<DeclarationId> field_declarations_;
+  absl::flat_hash_map<DeclarationId, std::uint32_t> field_indices_;
   std::vector<std::uint32_t> dispatch_targets_;
   const TypeSignature* callable_type_ = nullptr;
   const TypeSignature* expected_type_ = nullptr;
   const CodeIdentity* code_identity_ = nullptr;
+  // 版本布局由 GC 程序状态拥有；实例通过此边追踪其扫描描述的生命周期。
+  HeapObject* program_owner_ = nullptr;
 };
 
 enum class ObjectKind : std::uint8_t {
@@ -243,6 +266,9 @@ struct HeapObject final {
   friend class Heap;
   friend class StringObject;
   friend struct NativeMemoryLayout;
+  friend class InstanceMigration;
+  friend Value* ObjectFields(HeapObject* object) noexcept;
+  friend const Value* ObjectFields(const HeapObject* object) noexcept;
 
   ObjectKind kind = ObjectKind::Instance;
   std::uint8_t mark_bit = 0;
@@ -263,19 +289,16 @@ struct HeapObject final {
     return static_cast<const TypeSignature*>(type_metadata);
   }
   std::uint32_t length = 0;
-  // kind 确定 native_payload 的类型；底层存储由 Heap 按该类型销毁。
+  // kind 与实例的 storage/callable 契约确定载荷类型；可重载用户实例持有字段块，
+  // 固定 callable 持有版本环境，两者不会同时占用此槽。Heap 负责底层存储的销毁。
   void* native_payload = nullptr;
 };
 
 static_assert(alignof(HeapObject) >= alignof(Value));
 
-// 实例字段紧接对象头，二者在同一次分配中保持连续存储。
+// 固定布局字段紧接对象头；可重载实例借用独立字段块，地址不得跨安全点保存。
 static_assert(sizeof(HeapObject) % alignof(Value) == 0);
-[[nodiscard]] inline Value* ObjectFields(HeapObject* object) noexcept {
-  return StorageAfter<Value>(*object);
-}
-[[nodiscard]] inline const Value* ObjectFields(const HeapObject* object) noexcept {
-  return StorageAfter<Value>(*object);
-}
+[[nodiscard]] Value* ObjectFields(HeapObject* object) noexcept;
+[[nodiscard]] const Value* ObjectFields(const HeapObject* object) noexcept;
 
 }  // namespace vela::runtime

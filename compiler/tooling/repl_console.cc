@@ -10,6 +10,7 @@
 #include "base/diagnostic.h"
 #include "base/process_exit.h"
 #include "compiler/repl_session.h"
+#include "compiler/repl_source.h"
 #include "runtime/external_resources.h"
 #include "vm/vm.h"
 

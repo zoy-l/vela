@@ -19,6 +19,7 @@
 #include "runtime/native_abi.h"
 #include "runtime/native_async.h"
 #include "runtime/native_call.h"
+#include "runtime/native_dispatch.h"
 #include "runtime/native_dynamic.h"
 #include "runtime/native_instance.h"
 #include "runtime/native_json.h"
@@ -113,7 +114,12 @@ extern "C" std::uint8_t vela_native_v1_new_instance(NativeExecution* execution,
                                                     std::uint32_t index,
                                                     NativeValue* result) noexcept {
   const auto* type = execution->instance().layouts().classes.at(index);
-  if (type->callable()) {
+  if (type->storage() == ClassStorage::Reloadable) {
+    auto* dispatch =
+        Heap::NativeProgram(*execution->instance().state().front().AsObject()).dispatch;
+    type = &dispatch->CurrentLayout(type->nominal_type());
+  }
+  if (type->callable() != nullptr) {
     const auto object = AllocateNativeCallable(*execution, *type);
     return object ? StoreObject(result, *object) : Status(object.error());
   }

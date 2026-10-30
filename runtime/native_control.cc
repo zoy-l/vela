@@ -1,15 +1,66 @@
 #include "runtime/native_control.h"
 
+#include <atomic>
 #include <cstdint>
+#include <deque>
+#include <expected>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <utility>
+
+#include <absl/functional/any_invocable.h>
 
 #include "base/execution_status.h"
 #include "runtime/isolate.h"
 #include "runtime/native_abi.h"
+#include "runtime/native_debugger.h"
 
 namespace vela::runtime {
 
-void NativeControl::RequestStop() noexcept {
-  stop_requested_.store(true, std::memory_order_release);
+NativeSafepointEndpoint::NativeSafepointEndpoint(std::shared_ptr<NativeSafepointQueue> queue)
+    : queue_(std::move(queue)) {}
+
+void NativeSafepointEndpoint::RequestStop() const noexcept {
+  queue_->stop_requested.store(true, std::memory_order_release);
+  const std::scoped_lock lock(queue_->mutex);
+  queue_->closed = true;
+}
+
+std::expected<void, NativeSafepointError> NativeSafepointEndpoint::Post(
+    absl::AnyInvocable<void()> action) const {
+  const std::scoped_lock lock(queue_->mutex);
+  if (queue_->closed) {
+    return std::unexpected(NativeSafepointError::Stopped);
+  }
+  queue_->actions.push_back(std::move(action));
+  queue_->available.store(true, std::memory_order_release);
+  return {};
+}
+
+NativeControl::NativeControl() : queue_(std::make_shared<NativeSafepointQueue>()) {}
+
+NativeControl::~NativeControl() {
+  // 关闭后的端点可独立存活；携带所有权的动作仍在所属线程释放。
+  std::deque<absl::AnyInvocable<void()>> retired;
+  {
+    const std::scoped_lock lock(queue_->mutex);
+    queue_->closed = true;
+    retired.swap(queue_->actions);
+    queue_->available.store(false, std::memory_order_relaxed);
+  }
+}
+
+NativeSafepointEndpoint NativeControl::endpoint() const {
+  return NativeSafepointEndpoint(queue_);
+}
+
+void NativeControl::SetDebugger(NativeDebugger* debugger) noexcept {
+  debugger_ = debugger;
+}
+
+void NativeControl::RequestStop() const noexcept {
+  endpoint().RequestStop();
 }
 
 void NativeControl::EnterHost() noexcept {
@@ -32,12 +83,68 @@ void NativeControl::ExitInitialization() noexcept {
   --initializations_;
 }
 
+void NativeControl::ExitInitializations(std::uint32_t count) noexcept {
+  initializations_ -= count;
+}
+
 bool NativeControl::CanPublish() const noexcept {
-  return !IsStopRequested() && !HasHostBorrow() && initializations_ == 0;
+  return !IsStopRequested() && !HasHostBorrow() && !IsInitializing();
+}
+
+bool NativeControl::IsInitializing() const noexcept {
+  return initializations_ != 0;
+}
+
+std::expected<void, NativeSafepointError> NativeControl::ScheduleSafepoint(
+    std::function<void()> action) {
+  if (IsStopRequested()) {
+    return std::unexpected(NativeSafepointError::Stopped);
+  }
+  if (pending_) {
+    return std::unexpected(NativeSafepointError::AlreadyPending);
+  }
+  pending_ = std::move(action);
+  return {};
+}
+
+void NativeControl::CancelSafepoint() noexcept {
+  pending_ = {};
+}
+
+ExecutionStatus NativeControl::ProcessSafepoint(NativeExecution* execution) {
+  if (IsStopRequested() || HasHostBorrow() || processing_) {
+    return Poll();
+  }
+  processing_ = true;
+  absl::AnyInvocable<void()> queued;
+  if (queue_->available.load(std::memory_order_acquire)) {
+    {
+      const std::scoped_lock lock(queue_->mutex);
+      queued = std::move(queue_->actions.front());
+      queue_->actions.pop_front();
+      queue_->available.store(!queue_->actions.empty(), std::memory_order_release);
+    }
+  }
+  if (queued) {
+    queued();
+  } else if (CanPublish() && pending_) {
+    auto action = std::move(pending_);
+    action();
+  }
+  processing_ = false;
+  auto* debugger = debugger_;
+  if (debugger != nullptr && execution != nullptr && execution->current_frame() != nullptr &&
+      !debugging_ && !IsStopRequested()) {
+    debugging_ = true;
+    const NativeDebugContext context(*execution);
+    debugger->AtSafepoint(context);
+    debugging_ = false;
+  }
+  return Poll();
 }
 
 bool NativeControl::IsStopRequested() const noexcept {
-  return stop_requested_.load(std::memory_order_acquire);
+  return queue_->stop_requested.load(std::memory_order_acquire);
 }
 
 NativeInitializationScope::NativeInitializationScope(NativeControl& control) noexcept
@@ -55,7 +162,8 @@ ExecutionStatus NativeControl::Poll() const noexcept {
 }
 
 extern "C" std::uint8_t vela_native_v3_safepoint(NativeExecution* execution) noexcept {
-  return static_cast<std::uint8_t>(execution->isolate().native_control().Poll());
+  return static_cast<std::uint8_t>(
+      execution->isolate().native_control().ProcessSafepoint(execution));
 }
 
 extern "C" void vela_native_v3_host_enter(NativeExecution* execution) noexcept {
@@ -64,6 +172,15 @@ extern "C" void vela_native_v3_host_enter(NativeExecution* execution) noexcept {
 
 extern "C" void vela_native_v3_host_exit(NativeExecution* execution) noexcept {
   execution->isolate().native_control().ExitHost();
+}
+
+extern "C" void vela_native_v3_initialization_enter(NativeExecution* execution) noexcept {
+  execution->isolate().native_control().EnterInitialization();
+}
+
+extern "C" void vela_native_v3_initialization_exit(NativeExecution* execution,
+                                                   std::uint32_t count) noexcept {
+  execution->isolate().native_control().ExitInitializations(count);
 }
 
 }  // namespace vela::runtime

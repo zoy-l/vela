@@ -33,7 +33,8 @@ std::expected<ResolvedCallable, ExecutionStatus> ResolveCallable(Value value,
                                                                  std::size_t function_count) {
   const auto* object = value.IsObject() ? value.AsObject() : nullptr;
   const auto* layout = object != nullptr ? Heap::ClassOf(*object) : nullptr;
-  if (layout == nullptr || !layout->callable() || layout->code_identity() != &identity) {
+  if (layout == nullptr || (layout->callable() == nullptr) ||
+      layout->code_identity() != &identity) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto target = *layout->callable();

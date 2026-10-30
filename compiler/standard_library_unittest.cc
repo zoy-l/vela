@@ -12,6 +12,7 @@
 #include "compiler/frontend/source_loader.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/native_context.h"
 #include "runtime/native_function.h"
 #include "runtime/value.h"
 #include "vm/vm.h"

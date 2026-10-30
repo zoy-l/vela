@@ -1,5 +1,6 @@
 #pragma once
 
+#include <llvm/IR/Constant.h>
 #include <llvm/IR/IRBuilder.h>
 #include <cstdint>
 #include "base/execution_status.h"
@@ -49,6 +50,7 @@ llvm::Value* Convert(Builder& builder,
 void EmitWrapper(llvm::Module& module,
                  const ir::Function& source,
                  std::uint32_t function_index,
-                 const GeneratedFunction& function);
+                 const GeneratedFunction& function,
+                 llvm::Constant* image);
 
 }  // namespace vela::compiler::native

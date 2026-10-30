@@ -14,6 +14,9 @@
 #include <utility>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
+
+#include "base/declaration.h"
 #include "base/execution_status.h"
 #include "runtime/exception.h"
 #include "runtime/external_resources.h"
@@ -25,9 +28,15 @@
 namespace vela::runtime {
 
 class Heap;
+class Isolate;
+class NativeMetadataTracer;
 struct RegExpStorage;
 struct RegExpMatchStorage;
 struct NativeProgramState;
+struct InstanceStorage;
+class InstanceMigration;
+struct NativeRetainedFunction;
+struct LayoutCounts;
 
 enum class RootOwner : std::uint8_t { Runtime, Host, RootedValue, NativeInstance, NativeHandle };
 
@@ -126,6 +135,7 @@ class Heap final {
   [[nodiscard]] StringObject* ConvertStringCase(StringObject& source,
                                                 StringCase conversion) noexcept;
   explicit Heap(std::size_t gc_threshold = kDefaultGcThreshold) noexcept;
+  Heap(Isolate& isolate, std::size_t gc_threshold) noexcept;
   ~Heap();
 
   Heap(Heap&&) = delete;
@@ -135,6 +145,15 @@ class Heap final {
 
   [[nodiscard]] HeapObject* AllocateInstance(const ClassLayout& layout,
                                              std::span<const Value> initial_fields = {}) noexcept;
+  // 返回弱登记中的对象；调用者在可能分配前统一保根，并按需完成一次新根追踪。
+  void AppendInstances(const NominalType& type, std::vector<Value>& instances) const;
+  // 调用者先完成当前根的一致追踪；仅返回实际可达闭包及 C++ 版本根的函数集合。
+  void AppendRetainedNativeFunctions(std::vector<NativeRetainedFunction>& functions) const;
+  void AppendRetainedNativeTypes(std::vector<DeclarationId>& declarations) const;
+  void AccumulateNativeLayouts(LayoutCounts& counts) const noexcept;
+  [[nodiscard]] std::unique_ptr<InstanceMigration> PrepareInstanceMigration(
+      HeapObject& object,
+      const ClassLayout& layout) noexcept;
   [[nodiscard]] HeapObject* AllocateNativeProgram(
       std::unique_ptr<NativeProgramState> state) noexcept;
   [[nodiscard]] static NativeProgramState& NativeProgram(HeapObject& object) noexcept;
@@ -304,17 +323,7 @@ class Heap final {
   [[nodiscard]] static std::expected<void, ExecutionStatus> BindRuntimeType(
       HeapObject& object,
       const TypeConstraint& type) noexcept;
-  [[nodiscard]] bool SetField(HeapObject& object, std::uint32_t index, Value value) noexcept {
-    auto* field = GetField(object, index);
-    if (field == nullptr) {
-      return false;
-    }
-    *field = value;
-    if (value.IsReference()) {
-      WriteBarrier(object, value);
-    }
-    return true;
-  }
+  [[nodiscard]] bool SetField(HeapObject& object, std::uint32_t index, Value value) noexcept;
   // 原生代码已完成类型化存储；引用写入仍须经过同一个增量 GC 屏障。
   void WriteBarrier(HeapObject& source, Value value) noexcept;
   // receiver 为本 Heap 的数组，value 已按元素类型验证；两者在可能扩容的 GC 中保根。
@@ -337,16 +346,29 @@ class Heap final {
   [[nodiscard]] std::size_t object_count() const noexcept { return object_count_; }
   [[nodiscard]] std::size_t allocated_bytes() const noexcept { return allocated_bytes_; }
   [[nodiscard]] std::size_t committed_bytes() const noexcept { return committed_bytes_; }
+  // 外部字段块载荷，包含已准备的迁移块，不含分配器头部。
+  [[nodiscard]] std::size_t instance_field_bytes() const noexcept { return instance_field_bytes_; }
+  [[nodiscard]] std::size_t instance_type_count() const noexcept { return instances_.size(); }
+  // 限制 Heap 核算的托管及外部块活跃字节；降低限额不改变已分配状态，后续申请显式失败。
+  void SetAllocationLimit(std::size_t bytes) noexcept { allocation_limit_ = bytes; }
+  [[nodiscard]] std::size_t allocation_limit() const noexcept { return allocation_limit_; }
   void AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const;
 
  private:
+  friend class Isolate;
+  void TraceNativeMetadata(NativeMetadataTracer& tracer) const;
+  Isolate* isolate_ = nullptr;
   void MarkByteData(HeapObject& object) noexcept;
   void MarkNativeProgram(HeapObject& object) noexcept;
-  static void ReleaseNativeProgram(HeapObject& object) noexcept;
+  void ReleaseNativeProgram(HeapObject& object) noexcept;
+  void ReleaseRetiredNativePrograms() noexcept;
   void MarkRegExp(HeapObject& object) noexcept;
   static void ReleaseRegExp(HeapObject& object) noexcept;
   friend class RootRange;
   friend class Future;
+  friend class InstanceMigration;
+  friend class NativeDispatch;
+  [[nodiscard]] static InstanceStorage& InstanceFields(HeapObject& object) noexcept;
 
   static constexpr auto kSizeClasses =
       std::to_array<std::size_t>({32, 64, 128, 256, 512, 1024, 2048, 4096});
@@ -391,9 +413,14 @@ class Heap final {
   [[nodiscard]] static std::pair<std::size_t, std::size_t> SelectBlockClass(
       std::size_t requested_size) noexcept;
   [[nodiscard]] bool ShouldCollect(std::size_t next_size) const noexcept;
+  [[nodiscard]] bool CanAllocate(std::size_t bytes) const noexcept;
   void MaybeCollect(std::size_t next_size) noexcept;
   void FinishSweep() noexcept;
   void DestroyAll() noexcept;
+  [[nodiscard]] InstanceStorage* AllocateInstanceStorage(std::uint32_t count) noexcept;
+  void ReleaseInstanceStorage(InstanceStorage& storage) noexcept;
+  void RegisterInstance(HeapObject& object, InstanceStorage& storage);
+  void ReleaseInstance(HeapObject& object) noexcept;
   [[nodiscard]] StringObject* AllocateStringStorage(std::size_t length) noexcept;
   void ReleaseMutableString(HeapObject& object) noexcept;
   void MarkArray(HeapObject& array) noexcept;
@@ -419,15 +446,40 @@ class Heap final {
   RootRange* roots_ = nullptr;
   std::uint64_t next_root_identity_ = 0;
   std::vector<Future::Root> future_roots_;
+  absl::flat_hash_map<const NominalType*, InstanceStorage*> instances_;
+  NativeProgramState* retired_programs_ = nullptr;
   std::array<HeapObject*, kSizeClasses.size()> free_blocks_{};
 
   std::size_t object_count_ = 0;
   std::size_t allocated_bytes_ = 0;
   std::size_t committed_bytes_ = 0;
+  std::size_t instance_field_bytes_ = 0;
+  std::size_t allocation_limit_ = std::numeric_limits<std::size_t>::max();
   std::size_t gc_threshold_ = 0;
   std::size_t minimum_gc_threshold_ = 0;
   std::uint8_t current_mark_bit_ = 1;
   GcPhase phase_ = GcPhase::Idle;
+};
+
+// 准备中的块和被迁移对象分别保根；销毁候选只释放新块，Commit 不分配也不执行用户代码。
+class InstanceMigration final {
+ public:
+  ~InstanceMigration();
+  InstanceMigration(const InstanceMigration&) = delete;
+  InstanceMigration& operator=(const InstanceMigration&) = delete;
+  InstanceMigration(InstanceMigration&&) = delete;
+  InstanceMigration& operator=(InstanceMigration&&) = delete;
+  void Commit() noexcept;
+
+ private:
+  friend class Heap;
+  InstanceMigration(Heap& heap, HeapObject& object, const ClassLayout& layout) noexcept;
+  Heap* heap_;
+  Value object_;
+  const ClassLayout* layout_;
+  InstanceStorage* storage_ = nullptr;
+  RootRange object_root_;
+  RootRange field_roots_;
 };
 
 // 初始化不得分配或失败；对象的引用及有效长度全部就绪后才发布给 GC。

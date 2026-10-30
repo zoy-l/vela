@@ -34,7 +34,7 @@ enum class DeclarationKind : std::uint8_t {
   Initializer,
 };
 
-enum class GlobalBinding : std::uint32_t { Mutable, Constant };
+enum class GlobalFlag : std::uint8_t { Constant = 1, Private = 2 };
 
 // local 为零表示命名实现；非零表示同一外层版本内的匿名函数。
 struct FunctionIdentity final {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
@@ -7,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_roots.h"
@@ -43,11 +45,15 @@ struct NativeModule final {
 [[nodiscard]] std::expected<NativeModule, frontend::Diagnostics> Generate(
     const ir::Program& program,
     const std::string& module_name,
-    std::span<const std::uint8_t> exports);
+    std::span<const std::uint8_t> exports,
+    NativeDebugging debugging = NativeDebugging::Safepoints,
+    NativeCodeTier tier = NativeCodeTier::Baseline);
 
 // 调用者可在优化前添加 AOT 的公开包装和 main；JIT 直接交付映像入口。
 [[nodiscard]] std::expected<void, std::string> Finalize(NativeModule& generated,
                                                         NativeOptimization optimization);
+[[nodiscard]] std::expected<std::vector<std::byte>, std::string> EmitObject(
+    NativeModule& generated);
 
 }  // namespace native
 }  // namespace vela::compiler

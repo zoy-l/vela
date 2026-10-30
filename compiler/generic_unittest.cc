@@ -203,7 +203,7 @@ func main(): int {
 }
 
 TEST(GenericTest, FusedInstantiationRejectsTypeArgumentsOnShadowingBindings) {
-  for (const auto source : {
+  for (const auto* const source : {
            R"(
 func identity<T>(value: T): T { return value; }
 func apply<T>(identity: (T) => T, value: T): T { return identity<T>(value); }

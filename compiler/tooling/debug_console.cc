@@ -176,8 +176,8 @@ void WriteDebugValue(std::ostream& output, runtime::Value value) {
   } else if (value.IsObject()) {
     const auto& object = *value.AsObject();
     if (const auto* layout = runtime::Heap::ClassOf(object)) {
-      output << (layout->callable() ? "function" : "object") << "(fields=" << layout->field_count()
-             << ')';
+      output << ((layout->callable() != nullptr) ? "function" : "object")
+             << "(fields=" << layout->field_count() << ')';
     } else if (const auto length = runtime::Heap::ArrayLength(object)) {
       output << "array(length=" << *length << ')';
     } else if (const auto collection_size = runtime::Heap::CollectionLength(object)) {

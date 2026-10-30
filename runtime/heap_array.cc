@@ -47,14 +47,21 @@ HeapObject* Heap::AllocateArrayStorage(const ArrayLayout& layout,
     return nullptr;
   }
   MaybeCollect(header_bytes + external_bytes);
+  if (!CanAllocate(external_bytes)) {
+    return nullptr;
+  }
   auto* memory = external_bytes == 0
                      ? nullptr
                      : static_cast<std::byte*>(::operator new(external_bytes, std::nothrow));
   if (external_bytes != 0 && memory == nullptr) {
     return nullptr;
   }
+  allocated_bytes_ += external_bytes;
+  committed_bytes_ += external_bytes;
   const auto allocation = AllocateRaw(header_bytes);
   if (allocation.memory == nullptr) {
+    allocated_bytes_ -= external_bytes;
+    committed_bytes_ -= external_bytes;
     ::operator delete(memory);
     return nullptr;
   }
@@ -73,8 +80,6 @@ HeapObject* Heap::AllocateArrayStorage(const ArrayLayout& layout,
   } else {
     std::memcpy(storage.data(), contents.data(), contents.size());
   }
-  allocated_bytes_ += external_bytes;
-  committed_bytes_ += external_bytes;
   Publish(*object, allocation);
   return object;
 }
@@ -166,6 +171,11 @@ std::expected<void, ArrayAccessError> Heap::ReserveArrayStorage(HeapObject& arra
   RootRange roots(*this, &root, 1, RootOwner::Runtime);
   const auto bytes = capacity * element_size;
   MaybeCollect(bytes);
+  const auto previous_bytes =
+      buffer.data == internal::InlineArrayData(buffer) ? 0 : buffer.capacity * element_size;
+  if (!CanAllocate(bytes - previous_bytes)) {
+    return std::unexpected(ArrayAccessError::OutOfMemory);
+  }
   auto* memory = static_cast<std::byte*>(::operator new(bytes, std::nothrow));
   if (memory == nullptr) {
     return std::unexpected(ArrayAccessError::OutOfMemory);
@@ -174,7 +184,6 @@ std::expected<void, ArrayAccessError> Heap::ReserveArrayStorage(HeapObject& arra
     std::memcpy(memory, buffer.data, array.length * element_size);
   }
   if (buffer.data != internal::InlineArrayData(buffer)) {
-    const auto previous_bytes = buffer.capacity * element_size;
     allocated_bytes_ -= previous_bytes;
     committed_bytes_ -= previous_bytes;
     ::operator delete(buffer.data);

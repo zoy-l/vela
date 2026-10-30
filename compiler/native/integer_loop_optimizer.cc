@@ -1,5 +1,6 @@
 #include "compiler/native/integer_loop_optimizer.h"
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
 #include <limits>
@@ -11,15 +12,18 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/IR/Analysis.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/PassManager.h>
 #include <llvm/IR/PatternMatch.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Transforms/Scalar/DCE.h>
@@ -28,9 +32,16 @@
 #include <llvm/Transforms/Utils/Mem2Reg.h>
 
 #include "runtime/native_memory_layout.h"
+#include "runtime/value.h"
 
 namespace vela::compiler::native {
 namespace {
+
+constexpr auto kIntegerBits = std::numeric_limits<std::uint64_t>::digits;
+constexpr auto kValueKindBits = std::numeric_limits<std::uint8_t>::digits;
+// 常见的归约只有两组受查更新，内联容纳其指令集合。
+constexpr unsigned kInlineAllowedValues = 16;
+using AllowedInstructions = llvm::SmallPtrSet<llvm::Value*, kInlineAllowedValues>;
 
 struct CheckedUpdate {
   llvm::IntrinsicInst* call;
@@ -86,7 +97,13 @@ std::optional<CheckedUpdate> MatchUpdate(llvm::Value* incoming, const llvm::Loop
   if (loop.contains(failed) || !loop.contains(branch->getSuccessor(1 - failure_edge))) {
     return std::nullopt;
   }
-  return CheckedUpdate{call, value, overflow, branch, failed};
+  return CheckedUpdate{
+      .call = call,
+      .value = value,
+      .overflow = overflow,
+      .branch = branch,
+      .failed = failed,
+  };
 }
 
 struct CountedLoop {
@@ -100,6 +117,68 @@ struct CountedLoop {
   int direction;
 };
 
+std::optional<CountedLoop> MatchLoopExit(llvm::Loop& loop,
+                                         llvm::BasicBlock* block,
+                                         llvm::DominatorTree& dominators) {
+  auto* branch = llvm::dyn_cast<llvm::BranchInst>(block->getTerminator());
+  if (branch == nullptr || !branch->isConditional()) {
+    return std::nullopt;
+  }
+  auto* condition = branch->getCondition();
+  llvm::Value* unwrapped = nullptr;
+  const bool inverted = llvm::PatternMatch::match(
+      condition, llvm::PatternMatch::m_Not(llvm::PatternMatch::m_Value(unwrapped)));
+  auto* comparison = llvm::dyn_cast<llvm::ICmpInst>(inverted ? unwrapped : condition);
+  if (comparison == nullptr) {
+    return std::nullopt;
+  }
+  const unsigned exit_edge = loop.contains(branch->getSuccessor(0)) ? 1 : 0;
+  auto predicate = comparison->getPredicate();
+  if (inverted == (exit_edge == 1)) {
+    predicate = llvm::CmpInst::getInversePredicate(predicate);
+  }
+  auto* index = llvm::dyn_cast<llvm::PHINode>(comparison->getOperand(0));
+  auto* bound = comparison->getOperand(1);
+  if (index == nullptr || index->getParent() != loop.getHeader()) {
+    index = llvm::dyn_cast<llvm::PHINode>(bound);
+    bound = comparison->getOperand(0);
+    predicate = llvm::CmpInst::getSwappedPredicate(predicate);
+  }
+  if (index == nullptr || index->getParent() != loop.getHeader() ||
+      !index->getType()->isIntegerTy(kIntegerBits) || !loop.isLoopInvariant(bound)) {
+    return std::nullopt;
+  }
+  const auto step = MatchUpdate(index->getIncomingValueForBlock(loop.getLoopLatch()), loop);
+  if (!step || !dominators.dominates(block, step->call->getParent())) {
+    return std::nullopt;
+  }
+  auto* left = step->call->getArgOperand(0);
+  auto* right = step->call->getArgOperand(1);
+  const auto intrinsic = step->call->getIntrinsicID();
+  if (right == index && intrinsic == llvm::Intrinsic::sadd_with_overflow) {
+    std::swap(left, right);
+  }
+  auto* constant = llvm::dyn_cast<llvm::ConstantInt>(right);
+  if (left != index || constant == nullptr || !constant->isOne()) {
+    return std::nullopt;
+  }
+  const int direction = intrinsic == llvm::Intrinsic::sadd_with_overflow ? 1 : -1;
+  if ((direction == 1 && predicate == llvm::CmpInst::ICMP_SLT) ||
+      (direction == -1 && predicate == llvm::CmpInst::ICMP_SGT)) {
+    return CountedLoop{
+        .loop = &loop,
+        .index = index,
+        .bound = bound,
+        .comparison = comparison,
+        .condition = branch,
+        .exit_edge = exit_edge,
+        .step = *step,
+        .direction = direction,
+    };
+  }
+  return std::nullopt;
+}
+
 std::optional<CountedLoop> MatchCountedLoop(llvm::Loop& loop, llvm::DominatorTree& dominators) {
   if (!loop.isLoopSimplifyForm()) {
     return std::nullopt;
@@ -107,52 +186,9 @@ std::optional<CountedLoop> MatchCountedLoop(llvm::Loop& loop, llvm::DominatorTre
   llvm::SmallVector<llvm::BasicBlock*> exits;
   loop.getExitingBlocks(exits);
   for (auto* block : exits) {
-    auto* branch = llvm::dyn_cast<llvm::BranchInst>(block->getTerminator());
-    if (branch == nullptr || !branch->isConditional()) {
-      continue;
-    }
-    auto* condition = branch->getCondition();
-    llvm::Value* unwrapped = nullptr;
-    const bool inverted = llvm::PatternMatch::match(
-        condition, llvm::PatternMatch::m_Not(llvm::PatternMatch::m_Value(unwrapped)));
-    auto* comparison = llvm::dyn_cast<llvm::ICmpInst>(inverted ? unwrapped : condition);
-    if (comparison == nullptr) {
-      continue;
-    }
-    const unsigned exit_edge = loop.contains(branch->getSuccessor(0)) ? 1 : 0;
-    auto predicate = comparison->getPredicate();
-    if (inverted == (exit_edge == 1)) {
-      predicate = llvm::CmpInst::getInversePredicate(predicate);
-    }
-    auto* index = llvm::dyn_cast<llvm::PHINode>(comparison->getOperand(0));
-    auto* bound = comparison->getOperand(1);
-    if (index == nullptr || index->getParent() != loop.getHeader()) {
-      index = llvm::dyn_cast<llvm::PHINode>(bound);
-      bound = comparison->getOperand(0);
-      predicate = llvm::CmpInst::getSwappedPredicate(predicate);
-    }
-    if (index == nullptr || index->getParent() != loop.getHeader() ||
-        !index->getType()->isIntegerTy(64) || !loop.isLoopInvariant(bound)) {
-      continue;
-    }
-    const auto step = MatchUpdate(index->getIncomingValueForBlock(loop.getLoopLatch()), loop);
-    if (!step || !dominators.dominates(block, step->call->getParent())) {
-      continue;
-    }
-    auto* left = step->call->getArgOperand(0);
-    auto* right = step->call->getArgOperand(1);
-    const auto intrinsic = step->call->getIntrinsicID();
-    if (right == index && intrinsic == llvm::Intrinsic::sadd_with_overflow) {
-      std::swap(left, right);
-    }
-    auto* constant = llvm::dyn_cast<llvm::ConstantInt>(right);
-    if (left != index || constant == nullptr || !constant->isOne()) {
-      continue;
-    }
-    const int direction = intrinsic == llvm::Intrinsic::sadd_with_overflow ? 1 : -1;
-    if ((direction == 1 && predicate == llvm::CmpInst::ICMP_SLT) ||
-        (direction == -1 && predicate == llvm::CmpInst::ICMP_SGT)) {
-      return CountedLoop{&loop, index, bound, comparison, branch, exit_edge, *step, direction};
+    const auto counted = MatchLoopExit(loop, block, dominators);
+    if (counted) {
+      return counted;
     }
   }
   return std::nullopt;
@@ -172,6 +208,87 @@ void AddUpdateInstructions(llvm::SmallPtrSetImpl<llvm::Value*>& allowed,
   allowed.insert(update.branch->getCondition());
 }
 
+llvm::PHINode* FindAccumulator(const CountedLoop& counted) {
+  const auto& loop = *counted.loop;
+  llvm::PHINode* accumulator = nullptr;
+  for (auto& phi : loop.getHeader()->phis()) {
+    if (&phi == counted.index) {
+      continue;
+    }
+    if (accumulator != nullptr || !phi.getType()->isIntegerTy(kIntegerBits)) {
+      return nullptr;
+    }
+    accumulator = &phi;
+  }
+  return accumulator;
+}
+
+bool IsMonotoneTerm(const CountedLoop& counted,
+                    llvm::Value* term,
+                    llvm::ScalarEvolution& evolution) {
+  const auto& loop = *counted.loop;
+  if (term == counted.index) {
+    auto* start = counted.index->getIncomingValueForBlock(loop.getLoopPreheader());
+    const auto* start_range = evolution.getSCEV(start);
+    const auto* bound_range = evolution.getSCEV(counted.bound);
+    // 与 Go loopbce、Dart RangeAnalysis 一样，先用循环条件约束 induction range。
+    // 跨零的等差项可能让中间前缀先溢出再回到范围内，不能只检查最终值。
+    return counted.direction == 1 ? evolution.isKnownNonNegative(start_range) ||
+                                        evolution.isKnownNonPositive(bound_range)
+                                  : evolution.isKnownNonPositive(start_range) ||
+                                        evolution.isKnownNonNegative(bound_range);
+  }
+  return loop.isLoopInvariant(term);
+}
+
+bool IsReductionInstruction(const llvm::Instruction& instruction,
+                            const CountedLoop& counted,
+                            const Reduction& reduction,
+                            const AllowedInstructions& allowed) {
+  if (const auto* branch = llvm::dyn_cast<llvm::BranchInst>(&instruction)) {
+    if (branch->isConditional() && branch != counted.condition && branch != counted.step.branch &&
+        branch != reduction.update.branch) {
+      return false;
+    }
+  } else if (!allowed.contains(&instruction)) {
+    return false;
+  }
+  auto* normal_exit = counted.condition->getSuccessor(counted.exit_edge);
+  for (const auto* user : instruction.users()) {
+    const auto* use = llvm::cast<llvm::Instruction>(user);
+    if (!counted.loop->contains(use) &&
+        (use->getParent() != normal_exit ||
+         (&instruction != reduction.accumulator && &instruction != counted.index))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool IsReductionBody(const CountedLoop& counted, const Reduction& reduction) {
+  const auto& loop = *counted.loop;
+  auto* accumulator = reduction.accumulator;
+  const auto& update = reduction.update;
+  AllowedInstructions allowed;
+  allowed.insert(counted.index);
+  allowed.insert(accumulator);
+  allowed.insert(counted.comparison);
+  allowed.insert(counted.condition->getCondition());
+  AddUpdateInstructions(allowed, counted.step);
+  AddUpdateInstructions(allowed, update);
+  for (auto* block : loop.blocks()) {
+    for (auto& instruction : *block) {
+      if (!IsReductionInstruction(instruction, counted, reduction, allowed)) {
+        return false;
+      }
+    }
+  }
+  // 累加器只能参与自己的 recurrence；比较、再次使用等都会观察中间值。
+  return std::ranges::all_of(accumulator->users(), [&](const auto* user) {
+    return !loop.contains(llvm::cast<llvm::Instruction>(user)) || user == update.call;
+  });
+}
+
 std::optional<Reduction> MatchReduction(const CountedLoop& counted,
                                         llvm::ScalarEvolution& evolution,
                                         llvm::DominatorTree& dominators) {
@@ -179,16 +296,7 @@ std::optional<Reduction> MatchReduction(const CountedLoop& counted,
   if (!loop.getSubLoops().empty()) {
     return std::nullopt;
   }
-  llvm::PHINode* accumulator = nullptr;
-  for (auto& phi : loop.getHeader()->phis()) {
-    if (&phi == counted.index) {
-      continue;
-    }
-    if (accumulator != nullptr || !phi.getType()->isIntegerTy(64)) {
-      return std::nullopt;
-    }
-    accumulator = &phi;
-  }
+  auto* accumulator = FindAccumulator(counted);
   if (accumulator == nullptr) {
     return std::nullopt;
   }
@@ -203,61 +311,11 @@ std::optional<Reduction> MatchReduction(const CountedLoop& counted,
       update->call->getIntrinsicID() == llvm::Intrinsic::sadd_with_overflow) {
     std::swap(left, term);
   }
-  if (left != accumulator) {
+  if (left != accumulator || !IsMonotoneTerm(counted, term, evolution)) {
     return std::nullopt;
   }
-  if (term == counted.index) {
-    auto* start = counted.index->getIncomingValueForBlock(loop.getLoopPreheader());
-    const auto* start_range = evolution.getSCEV(start);
-    const auto* bound_range = evolution.getSCEV(counted.bound);
-    // 与 Go loopbce、Dart RangeAnalysis 一样，先用循环条件约束 induction range。
-    // 跨零的等差项可能让中间前缀先溢出再回到范围内，不能只检查最终值。
-    const bool monotone = counted.direction == 1 ? evolution.isKnownNonNegative(start_range) ||
-                                                       evolution.isKnownNonPositive(bound_range)
-                                                 : evolution.isKnownNonPositive(start_range) ||
-                                                       evolution.isKnownNonNegative(bound_range);
-    if (!monotone) {
-      return std::nullopt;
-    }
-  } else if (!loop.isLoopInvariant(term)) {
-    return std::nullopt;
-  }
-
-  llvm::SmallPtrSet<llvm::Value*, 16> allowed;
-  allowed.insert(counted.index);
-  allowed.insert(accumulator);
-  allowed.insert(counted.comparison);
-  allowed.insert(counted.condition->getCondition());
-  AddUpdateInstructions(allowed, counted.step);
-  AddUpdateInstructions(allowed, *update);
-  auto* normal_exit = counted.condition->getSuccessor(counted.exit_edge);
-  for (auto* block : loop.blocks()) {
-    for (auto& instruction : *block) {
-      if (auto* branch = llvm::dyn_cast<llvm::BranchInst>(&instruction)) {
-        if (branch->isConditional() && branch != counted.condition &&
-            branch != counted.step.branch && branch != update->branch) {
-          return std::nullopt;
-        }
-      } else if (!allowed.contains(&instruction)) {
-        return std::nullopt;
-      }
-      for (auto* user : instruction.users()) {
-        auto* use = llvm::cast<llvm::Instruction>(user);
-        if (!loop.contains(use) &&
-            (use->getParent() != normal_exit ||
-             (&instruction != accumulator && &instruction != counted.index))) {
-          return std::nullopt;
-        }
-      }
-    }
-  }
-  // 累加器只能参与自己的 recurrence；比较、再次使用等都会观察中间值。
-  for (auto* user : accumulator->users()) {
-    if (loop.contains(llvm::cast<llvm::Instruction>(user)) && user != update->call) {
-      return std::nullopt;
-    }
-  }
-  return Reduction{accumulator, term, *update};
+  const Reduction reduction{.accumulator = accumulator, .term = term, .update = *update};
+  return IsReductionBody(counted, reduction) ? std::optional(reduction) : std::nullopt;
 }
 
 void ReplaceUpdate(const CheckedUpdate& update, llvm::Value* result) {
@@ -311,47 +369,123 @@ struct FieldReduction {
   CheckedUpdate update;
 };
 
+struct FieldAccesses {
+  llvm::LoadInst* load = nullptr;
+  llvm::StoreInst* store = nullptr;
+  llvm::StoreInst* tag = nullptr;
+};
+
+bool CanIncludeFieldAccess(FieldAccesses& accesses, llvm::Instruction& instruction) {
+  if (auto* read = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
+    if (accesses.load != nullptr || !read->isSimple() ||
+        !read->getType()->isIntegerTy(kIntegerBits)) {
+      return false;
+    }
+    accesses.load = read;
+  }
+  auto* write = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+  if (write == nullptr) {
+    return true;
+  }
+  if (!write->isSimple()) {
+    return false;
+  }
+  if (write->getMetadata(kNativeRootClearMetadata) != nullptr) {
+    return true;
+  }
+  if (write->getValueOperand()->getType()->isIntegerTy(kIntegerBits) && accesses.store == nullptr) {
+    accesses.store = write;
+    return true;
+  }
+  const auto* kind = llvm::dyn_cast<llvm::ConstantInt>(write->getValueOperand());
+  if (kind == nullptr || !kind->getType()->isIntegerTy(kValueKindBits) ||
+      kind->getZExtValue() != static_cast<std::uint8_t>(runtime::ValueKind::Integer) ||
+      accesses.tag != nullptr) {
+    return false;
+  }
+  accesses.tag = write;
+  return true;
+}
+
+std::optional<FieldAccesses> MatchFieldAccesses(const llvm::Loop& loop) {
+  FieldAccesses accesses;
+  for (auto* block : loop.blocks()) {
+    for (auto& instruction : *block) {
+      if (!CanIncludeFieldAccess(accesses, instruction)) {
+        return std::nullopt;
+      }
+    }
+  }
+  if (accesses.load == nullptr || accesses.store == nullptr || accesses.tag == nullptr ||
+      accesses.load->getPointerOperand() != accesses.store->getPointerOperand()) {
+    return std::nullopt;
+  }
+  return accesses;
+}
+
+bool IsFieldInstruction(const llvm::Instruction& instruction,
+                        const CountedLoop& counted,
+                        const CheckedUpdate& update,
+                        const AllowedInstructions& allowed,
+                        const llvm::Value* base) {
+  if (instruction.getMetadata(kNativeRootClearMetadata) != nullptr) {
+    return true;
+  }
+  if (const auto* branch = llvm::dyn_cast<llvm::BranchInst>(&instruction)) {
+    if (!branch->isConditional() || branch == counted.condition || branch == counted.step.branch ||
+        branch == update.branch || llvm::isa<llvm::ConstantInt>(branch->getCondition())) {
+      return true;
+    }
+    const auto* check = llvm::dyn_cast<llvm::ICmpInst>(branch->getCondition());
+    // 保留第一次迭代的空引用检查；零次迭代不访问对象。
+    return check != nullptr && check->isEquality() && check->getOperand(0) == base &&
+           llvm::isa<llvm::ConstantPointerNull>(check->getOperand(1));
+  }
+  const auto is_address = llvm::isa<llvm::GetElementPtrInst>(instruction);
+  if (!allowed.contains(&instruction) && !is_address && !llvm::isa<llvm::ICmpInst>(instruction)) {
+    return false;
+  }
+  // 循环索引或临时值若在 catch 等路径可见，不能跳过其中间状态。
+  return is_address || std::ranges::all_of(instruction.users(), [&](const auto* user) {
+           return counted.loop->contains(llvm::cast<llvm::Instruction>(user));
+         });
+}
+
+bool IsFieldReductionBody(const CountedLoop& counted,
+                          const FieldAccesses& accesses,
+                          const CheckedUpdate& update,
+                          const llvm::Value* base) {
+  AllowedInstructions allowed;
+  allowed.insert(accesses.load);
+  allowed.insert(accesses.store);
+  allowed.insert(accesses.tag);
+  allowed.insert(counted.index);
+  allowed.insert(counted.comparison);
+  allowed.insert(counted.condition->getCondition());
+  AddUpdateInstructions(allowed, counted.step);
+  AddUpdateInstructions(allowed, update);
+  for (auto* block : counted.loop->blocks()) {
+    for (auto& instruction : *block) {
+      if (!IsFieldInstruction(instruction, counted, update, allowed, base)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 std::optional<FieldReduction> MatchFieldReduction(const CountedLoop& counted,
                                                   llvm::DominatorTree& dominators) {
   const auto& loop = *counted.loop;
   if (!loop.getSubLoops().empty()) {
     return std::nullopt;
   }
-  llvm::LoadInst* load = nullptr;
-  llvm::StoreInst* store = nullptr;
-  llvm::StoreInst* tag = nullptr;
-  for (auto* block : loop.blocks()) {
-    for (auto& instruction : *block) {
-      if (auto* read = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
-        if (load != nullptr || !read->isSimple() || !read->getType()->isIntegerTy(64)) {
-          return std::nullopt;
-        }
-        load = read;
-      }
-      if (auto* write = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
-        if (!write->isSimple()) {
-          return std::nullopt;
-        }
-        if (write->getMetadata(kNativeRootClearMetadata) != nullptr) {
-          continue;
-        }
-        if (write->getValueOperand()->getType()->isIntegerTy(64) && store == nullptr) {
-          store = write;
-        } else if (auto* kind = llvm::dyn_cast<llvm::ConstantInt>(write->getValueOperand());
-                   kind != nullptr && kind->getType()->isIntegerTy(8) &&
-                   kind->getZExtValue() == static_cast<std::uint8_t>(runtime::ValueKind::Integer) &&
-                   tag == nullptr) {
-          tag = write;
-        } else {
-          return std::nullopt;
-        }
-      }
-    }
-  }
-  if (load == nullptr || store == nullptr || tag == nullptr ||
-      load->getPointerOperand() != store->getPointerOperand()) {
+  const auto accesses = MatchFieldAccesses(loop);
+  if (!accesses) {
     return std::nullopt;
   }
+  auto* load = accesses->load;
+  auto* store = accesses->store;
   const auto update = MatchUpdate(store->getValueOperand(), loop);
   if (!update || !update->failed->phis().empty() ||
       !dominators.dominates(store, counted.step.call) ||
@@ -367,55 +501,15 @@ std::optional<FieldReduction> MatchFieldReduction(const CountedLoop& counted,
   std::int64_t tag_offset = 0;
   auto* base =
       llvm::GetPointerBaseWithConstantOffset(load->getPointerOperand(), value_offset, layout);
-  auto* tag_base =
-      llvm::GetPointerBaseWithConstantOffset(tag->getPointerOperand(), tag_offset, layout);
+  auto* tag_base = llvm::GetPointerBaseWithConstantOffset(accesses->tag->getPointerOperand(),
+                                                          tag_offset, layout);
   if (!loop.isLoopInvariant(base) || tag_base != base ||
       tag_offset - value_offset !=
-          static_cast<std::int64_t>(runtime::NativeMemoryLayout::kValueKind)) {
+          static_cast<std::int64_t>(runtime::NativeMemoryLayout::kValueKind) ||
+      !IsFieldReductionBody(counted, *accesses, *update, base)) {
     return std::nullopt;
   }
-  llvm::SmallPtrSet<llvm::Value*, 16> allowed;
-  allowed.insert(load);
-  allowed.insert(store);
-  allowed.insert(tag);
-  allowed.insert(counted.index);
-  allowed.insert(counted.comparison);
-  allowed.insert(counted.condition->getCondition());
-  AddUpdateInstructions(allowed, counted.step);
-  AddUpdateInstructions(allowed, *update);
-  for (auto* block : loop.blocks()) {
-    for (auto& instruction : *block) {
-      if (instruction.getMetadata(kNativeRootClearMetadata) != nullptr) {
-        continue;
-      }
-      if (auto* branch = llvm::dyn_cast<llvm::BranchInst>(&instruction)) {
-        if (branch->isConditional() && branch != counted.condition &&
-            branch != counted.step.branch && branch != update->branch &&
-            !llvm::isa<llvm::ConstantInt>(branch->getCondition())) {
-          auto* check = llvm::dyn_cast<llvm::ICmpInst>(branch->getCondition());
-          // 保留第一次迭代的空引用检查；零次迭代不访问对象。
-          if (check == nullptr || !check->isEquality() || check->getOperand(0) != base ||
-              !llvm::isa<llvm::ConstantPointerNull>(check->getOperand(1))) {
-            return std::nullopt;
-          }
-          allowed.insert(check);
-        }
-        continue;
-      }
-      if (!allowed.contains(&instruction) && !llvm::isa<llvm::GetElementPtrInst>(instruction) &&
-          !llvm::isa<llvm::ICmpInst>(instruction)) {
-        return std::nullopt;
-      }
-      for (auto* user : instruction.users()) {
-        if (!loop.contains(llvm::cast<llvm::Instruction>(user)) &&
-            !llvm::isa<llvm::GetElementPtrInst>(instruction)) {
-          // 循环索引或临时值若在 catch 等路径可见，不能跳过其中间状态。
-          return std::nullopt;
-        }
-      }
-    }
-  }
-  return FieldReduction{load, store, *update};
+  return FieldReduction{.load = load, .store = store, .update = *update};
 }
 
 void FoldFieldReduction(const CountedLoop& counted, const FieldReduction& field) {
@@ -454,7 +548,8 @@ void FoldFieldReduction(const CountedLoop& counted, const FieldReduction& field)
 
 class FieldLoopPass : public llvm::PassInfoMixin<FieldLoopPass> {
  public:
-  llvm::PreservedAnalyses run(llvm::Function& function, llvm::FunctionAnalysisManager& analyses) {
+  static llvm::PreservedAnalyses run(llvm::Function& function,
+                                     llvm::FunctionAnalysisManager& analyses) {
     auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
     auto& dominators = analyses.getResult<llvm::DominatorTreeAnalysis>(function);
     bool changed = false;
@@ -475,7 +570,8 @@ class FieldLoopPass : public llvm::PassInfoMixin<FieldLoopPass> {
 
 class IntegerLoopPass : public llvm::PassInfoMixin<IntegerLoopPass> {
  public:
-  llvm::PreservedAnalyses run(llvm::Function& function, llvm::FunctionAnalysisManager& analyses) {
+  static llvm::PreservedAnalyses run(llvm::Function& function,
+                                     llvm::FunctionAnalysisManager& analyses) {
     auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
     auto& dominators = analyses.getResult<llvm::DominatorTreeAnalysis>(function);
     auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
@@ -487,7 +583,8 @@ class IntegerLoopPass : public llvm::PassInfoMixin<IntegerLoopPass> {
     for (auto* loop : loops.getLoopsInPreorder()) {
       const auto counted = MatchCountedLoop(*loop, dominators);
       if (counted) {
-        plans.push_back({*counted, MatchReduction(*counted, evolution, dominators)});
+        plans.push_back(
+            {.counted = *counted, .reduction = MatchReduction(*counted, evolution, dominators)});
       }
     }
     for (const auto& plan : plans) {

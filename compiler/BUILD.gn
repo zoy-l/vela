@@ -55,6 +55,7 @@ source_set("frontend") {
     "frontend/source_loader.h",
     "frontend/specialization.cc",
     "frontend/specialization.h",
+    "frontend/specialization_requests.cc",
     "frontend/standard_environment.cc",
     "frontend/standard_environment.h",
     "frontend/symbol_ids.h",
@@ -204,6 +205,14 @@ source_set("source_session") {
   ]
 }
 
+source_set("repl_source") {
+  sources = [
+    "repl_source.cc",
+    "repl_source.h",
+  ]
+  public_deps = [ ":frontend" ]
+}
+
 source_set("compiler") {
   include_dirs = [ "$root_gen_dir" ]
   sources = [
@@ -224,6 +233,7 @@ source_set("compiler") {
   public_deps = [
     ":frontend",
     ":ir",
+    ":repl_source",
     ":source_session",
     "//runtime",
     "//vm",
@@ -239,6 +249,7 @@ source_set("native") {
     "native/async_emitter.cc",
     "native/code_generator.cc",
     "native/code_generator.h",
+    "native/deoptimization_emitter.cc",
     "native/frame_emitter.cc",
     "native/function_emitter.cc",
     "native/function_emitter.h",
@@ -264,30 +275,79 @@ source_set("native") {
 }
 
 source_set("jit") {
+  include_dirs = [ root_gen_dir ]
   sources = [
+    "jit/code_cache.cc",
+    "jit/code_cache.h",
+    "jit/code_resources.cc",
+    "jit/code_resources.h",
     "jit/compiler.cc",
     "jit/compiler.h",
+    "jit/platform_support.h",
     "jit/runtime_symbols.cc",
     "jit/runtime_symbols.h",
   ]
+  deps = [ ":cache_build_identity" ]
   public_deps = [
     ":native",
     "//runtime",
     "//third_party:llvm_jit",
   ]
+  if (target_os == "win") {
+    sources += [ "jit/platform_support_win.cc" ]
+    libs = [ "dbghelp.lib" ]
+  } else {
+    sources += [ "jit/platform_support_posix.cc" ]
+  }
+}
+
+source_set("development") {
+  sources = [
+    "development_files.cc",
+    "development_files.h",
+    "development_repl.cc",
+    "development_repl.h",
+    "development_session.cc",
+    "development_session.h",
+  ]
+  public_deps = [
+    ":jit",
+    ":repl_source",
+    ":source_session",
+  ]
+}
+
+source_set("development_tools") {
+  sources = [
+    "tooling/development_console.cc",
+    "tooling/development_console.h",
+    "tooling/development_debugger.cc",
+    "tooling/development_debugger.h",
+  ]
+  public_deps = [ ":development" ]
 }
 
 executable("vela_jit_tests") {
   testonly = true
   sources = [
+    "development_files_unittest.cc",
+    "development_repl_unittest.cc",
+    "development_session_unittest.cc",
     "jit/callable_unittest.cc",
+    "jit/code_cache_unittest.cc",
     "jit/compiler_unittest.cc",
+    "jit/debugger_unittest.cc",
+    "jit/state_evolution_unittest.cc",
   ]
   deps = [
+    ":development",
     ":jit",
     ":source_session",
     "//third_party:gtest_main",
   ]
+  if (target_os == "win") {
+    sources += [ "jit/platform_support_unittest_win.cc" ]
+  }
 }
 
 source_set("aot") {
@@ -347,6 +407,7 @@ executable("vela") {
     ":aot_driver",
     ":build_info",
     ":compiler",
+    ":development_tools",
     ":interactive",
     ":tooling",
   ]

@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/source_session.h"
@@ -31,8 +32,7 @@ std::string DiagnosticsText(const frontend::Diagnostics& diagnostics) {
   return text;
 }
 
-class JitCallableTest : public testing::Test {
- protected:
+struct JitCallableTest : public testing::TestWithParam<NativeCodeTier> {
   void SetUp() override {
     auto created = Compiler::Create();
     ASSERT_TRUE(created) << DiagnosticsText(created.error());
@@ -49,7 +49,7 @@ class JitCallableTest : public testing::Test {
     if (!source) {
       return std::unexpected(DiagnosticsText(source.error().diagnostics));
     }
-    const auto code = compiler_->Compile(source->snapshot().program);
+    const auto code = compiler_->Compile(source->snapshot().program, {.tier = GetParam()});
     if (!code) {
       return std::unexpected(DiagnosticsText(code.error()));
     }
@@ -93,7 +93,7 @@ std::string FactorySource(int result) {
          "export func call(callback: () => int): int { return callback(); }";
 }
 
-TEST_F(JitCallableTest, OldFactoriesCaptureCurrentNamedVersionsAndTheirOwnLambdaVersions) {
+TEST_P(JitCallableTest, OldFactoriesCaptureCurrentNamedVersionsAndTheirOwnLambdaVersions) {
   const auto initial = Publish(FactorySource(40));
   ASSERT_TRUE(initial) << initial.error();
   auto& dispatch = isolate_.native_dispatch();
@@ -105,12 +105,13 @@ TEST_F(JitCallableTest, OldFactoriesCaptureCurrentNamedVersionsAndTheirOwnLambda
   ASSERT_TRUE(created);
   const runtime::RootedValue receiver(isolate_, *created);
   const std::array receiver_argument{receiver.value()};
-  const std::array names{"topFactory", "lambdaFactory", "boundFactory", "interfaceFactory",
-                         "dynamicFactory"};
+  const std::array names{
+      "topFactory", "lambdaFactory", "boundFactory", "interfaceFactory", "dynamicFactory",
+  };
   std::vector<runtime::NativeVersionEntry> factories;
   std::vector<runtime::RootedValue> callbacks;
   for (std::size_t index = 0; index < names.size(); ++index) {
-    const auto entry = dispatch.FindEntry("main.vela", names[index]);
+    const auto entry = dispatch.FindEntry("main.vela", names.at(index));
     ASSERT_TRUE(entry);
     const auto captured = entry->Capture();
     ASSERT_TRUE(captured);
@@ -125,14 +126,14 @@ TEST_F(JitCallableTest, OldFactoriesCaptureCurrentNamedVersionsAndTheirOwnLambda
   ASSERT_TRUE(updated) << updated.error();
   isolate_.heap().Collect();
   for (std::size_t index = 0; index < names.size(); ++index) {
-    SCOPED_TRACE(names[index]);
-    const std::array previous_argument{callbacks[index].value()};
+    SCOPED_TRACE(names.at(index));
+    const std::array previous_argument{callbacks.at(index).value()};
     const auto previous = call->Invoke(previous_argument);
     ASSERT_TRUE(previous);
     EXPECT_EQ(previous->AsInteger(), 40);
     const auto arguments = index < 2 ? std::span<const runtime::Value>{}
                                      : std::span<const runtime::Value>(receiver_argument);
-    const auto created_callback = factories[index].Invoke(arguments);
+    const auto created_callback = factories.at(index).Invoke(arguments);
     ASSERT_TRUE(created_callback);
     const runtime::RootedValue callback(isolate_, *created_callback);
     const std::array current_argument{callback.value()};
@@ -147,7 +148,7 @@ TEST_F(JitCallableTest, OldFactoriesCaptureCurrentNamedVersionsAndTheirOwnLambda
   EXPECT_EQ(compiler_->resource_counts().batches, 1U);
 }
 
-TEST_F(JitCallableTest, DynamicArrayCallbacksUseTheCapturedStateAndFunctionIndexTogether) {
+TEST_P(JitCallableTest, DynamicArrayCallbacksUseTheCapturedStateAndFunctionIndexTogether) {
   const std::string declarations =
       "export func factory(): (int) => int { return increment; } "
       "export func map(callback: (int) => int): int { "
@@ -185,7 +186,7 @@ TEST_F(JitCallableTest, DynamicArrayCallbacksUseTheCapturedStateAndFunctionIndex
   EXPECT_EQ(current->AsInteger(), 42);
 }
 
-TEST_F(JitCallableTest, FixedStandardDeclarationsRemainAvailableToRetainedOldCode) {
+TEST_P(JitCallableTest, FixedStandardDeclarationsRemainAvailableToRetainedOldCode) {
   const auto initial = Publish("export func answer(): int { return int.parse('42'); }");
   ASSERT_TRUE(initial) << initial.error();
   auto& dispatch = isolate_.native_dispatch();
@@ -202,6 +203,10 @@ TEST_F(JitCallableTest, FixedStandardDeclarationsRemainAvailableToRetainedOldCod
   EXPECT_EQ(old_result->AsInteger(), 42);
   EXPECT_EQ(current_result->AsInteger(), 44);
 }
+
+INSTANTIATE_TEST_SUITE_P(Tiers,
+                         JitCallableTest,
+                         testing::Values(NativeCodeTier::Baseline, NativeCodeTier::Optimized));
 
 }  // namespace
 }  // namespace vela::compiler::jit

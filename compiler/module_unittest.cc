@@ -29,10 +29,14 @@ TEST(ModuleTest, RejectsUnsupportedImportSchemes) {
 TEST(ModuleTest, CachedGenericSyntaxSurvivesSpecializationInIndependentRoots) {
   const auto sources = std::to_array<frontend::SourceInput>({
       {.path = "first.vela", .text = "import 'middle'; func first(): int { return number(); }"},
-      {.path = "middle.vela",
-       .text = "import 'shared'; export func number(): int { return identity<int>(42); }"},
-      {.path = "second.vela",
-       .text = "import 'shared'; func second(): string { return identity<string>('second'); }"},
+      {
+          .path = "middle.vela",
+          .text = "import 'shared'; export func number(): int { return identity<int>(42); }",
+      },
+      {
+          .path = "second.vela",
+          .text = "import 'shared'; func second(): string { return identity<string>('second'); }",
+      },
       {.path = "shared.vela", .text = "export func identity<T>(value: T): T { return value; }"},
   });
   frontend::ModuleCache cache;
@@ -192,15 +196,23 @@ func main(): int {
 
 TEST(ModuleTest, BindsImportedGenericBasesAndIterablesBeforeLoopShadowing) {
   const auto sources = std::to_array<frontend::SourceInput>({
-      {.path = "main.vela", .text = R"(
+      {
+          .path = "main.vela",
+          .text = R"(
 import 'derived.vela';
 func main(): int { return Derived<int>(value: 20).read(); }
-)"},
-      {.path = "base.vela", .text = R"(
+)",
+      },
+      {
+          .path = "base.vela",
+          .text = R"(
 export class Base<T> { stored: T; read(): T { return this.stored; } }
 export func values<T>(value: T): T[] { return [value, value]; }
-)"},
-      {.path = "derived.vela", .text = R"(
+)",
+      },
+      {
+          .path = "derived.vela",
+          .text = R"(
 import 'base.vela' as lib;
 export class Derived<T> extends lib.Base<T> {
   constructor(value: T) { super(stored: value); }
@@ -213,7 +225,8 @@ export class Derived<T> extends lib.Base<T> {
     return result + 2;
   }
 }
-)"},
+)",
+      },
   });
   runtime::Isolate isolate(1);
   const auto compiled = CompileModules(sources, "main.vela", isolate);
@@ -230,11 +243,15 @@ export class Derived<T> extends lib.Base<T> {
 TEST(ModuleTest, SharesImmutableSyntaxAcrossRootsWithIndependentBindingsAndLocations) {
   const auto sources = std::to_array<frontend::SourceInput>({
       {.path = "first.vela", .text = "import 'middle'; func first(): int { return read(); }"},
-      {.path = "middle.vela",
-       .text = "import 'shared'; export func read(): int { return value(); }"},
+      {
+          .path = "middle.vela",
+          .text = "import 'shared'; export func read(): int { return value(); }",
+      },
       {.path = "second.vela", .text = "import 'shared'; func second(): int { return value(); }"},
-      {.path = "shared.vela",
-       .text = "export func value(): int { return Math.sqrt(1764.0).toInt(); }"},
+      {
+          .path = "shared.vela",
+          .text = "export func value(): int { return Math.sqrt(1764.0).toInt(); }",
+      },
   });
   frontend::ModuleCache cache;
   auto first = frontend::LoadProgram("first.vela", cache, sources);
@@ -261,7 +278,7 @@ TEST(ModuleTest, TransferredModulesRetainSourceTextTokensAndOriginalImports) {
   std::vector<frontend::SourceFile> retained;
   const std::string expected = "import 'lib'; func main(): int { return value(); }";
   {
-    const std::string main = expected;
+    const std::string& main = expected;
     const std::string library = "export func value(): int { return 42; }";
     const auto sources = std::to_array<frontend::SourceInput>({
         {.path = "main.vela", .text = main},
