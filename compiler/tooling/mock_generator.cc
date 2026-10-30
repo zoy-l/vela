@@ -113,6 +113,7 @@ class MockGenerator final {
   void Error(SourceLocation location, std::string message);
   [[nodiscard]] frontend::TypeName Expand(const frontend::TypeName& type) const;
   frontend::TypeName NameType(const frontend::TypeName& type);
+  std::optional<frontend::TypeName> FindTypeName(const frontend::TypeName& type);
   void RegisterPublicAlias(const frontend::Program::TypeAlias& alias);
   std::optional<frontend::TypeName> NameGenericAlias(const frontend::TypeName& type);
   std::string PublicName(const std::string& name, SourceLocation location);
@@ -228,17 +229,25 @@ std::optional<frontend::TypeName> MockGenerator::NameGenericAlias(const frontend
       continue;
     }
     frontend::TypeName result{
-        .name = PublicName(alias.name, type.location),
+        .name = alias.name,
         .location = type.location,
         .kind = frontend::TypeName::Kind::Generic,
         .arguments = {},
     };
     naming_aliases_.insert(alias.name);
+    bool complete = true;
     for (const auto& parameter : alias.parameters) {
-      result.arguments.push_back(NameType(*arguments.at(parameter)));
+      auto argument = FindTypeName(*arguments.at(parameter));
+      if (!argument) {
+        complete = false;
+        break;
+      }
+      result.arguments.push_back(std::move(*argument));
     }
     naming_aliases_.erase(alias.name);
-    return result;
+    if (complete) {
+      return result;
+    }
   }
   return std::nullopt;
 }
@@ -310,20 +319,47 @@ std::string MockGenerator::PublicName(const std::string& name, SourceLocation lo
 }
 
 frontend::TypeName MockGenerator::NameType(const frontend::TypeName& type) {
+  auto named = FindTypeName(type);
+  if (!named) {
+    Error(type.location, "mock signature type '" + type.ToString() + "' has no public name");
+    return type;
+  }
+  // 合法名称选择不发布 import；只有最终选中的类型树分配模块前缀。
+  const auto qualify = [this](auto&& self, frontend::TypeName input) -> frontend::TypeName {
+    if (input.kind == frontend::TypeName::Kind::Named ||
+        input.kind == frontend::TypeName::Kind::Generic) {
+      input.name = PublicName(input.name, input.location);
+    }
+    for (auto& argument : input.arguments) {
+      argument = self(self, std::move(argument));
+    }
+    return input;
+  };
+  return qualify(qualify, std::move(*named));
+}
+
+std::optional<frontend::TypeName> MockGenerator::FindTypeName(const frontend::TypeName& type) {
   const auto origin = program_->origins.find(type.name);
   if (origin != program_->origins.end() && exported_.contains(type.name)) {
     auto result = type;
-    result.name = PublicName(type.name, type.location);
+    bool complete = true;
     for (auto& argument : result.arguments) {
-      argument = NameType(argument);
+      auto named = FindTypeName(argument);
+      if (!named) {
+        complete = false;
+        break;
+      }
+      argument = std::move(*named);
     }
-    return result;
+    if (complete) {
+      return result;
+    }
   }
   const auto expanded = Expand(type);
   const auto alias = public_aliases_.find(expanded.ToString());
   if (alias != public_aliases_.end()) {
-    return {
-        .name = PublicName(alias->second, type.location),
+    return frontend::TypeName{
+        .name = alias->second,
         .location = type.location,
         .arguments = {},
     };
@@ -334,10 +370,19 @@ frontend::TypeName MockGenerator::NameType(const frontend::TypeName& type) {
   auto result = expanded;
   if (result.kind == frontend::TypeName::Kind::Named ||
       result.kind == frontend::TypeName::Kind::Generic) {
-    result.name = PublicName(result.name, type.location);
+    const auto declaration = program_->origins.find(result.name);
+    if (declaration != program_->origins.end() &&
+        !declaration->second.module_uri.starts_with("builtin:") &&
+        !exported_.contains(result.name)) {
+      return std::nullopt;
+    }
   }
   for (auto& argument : result.arguments) {
-    argument = NameType(argument);
+    auto named = FindTypeName(argument);
+    if (!named) {
+      return std::nullopt;
+    }
+    argument = std::move(*named);
   }
   return result;
 }

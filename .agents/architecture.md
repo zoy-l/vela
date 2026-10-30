@@ -73,7 +73,7 @@ scope; the suite invokes its internal finalizers after all user cleanup and tear
 before `testDone`. Call observations reuse tracked asynchronous expectations and retain their
 registration context when errors are forwarded. Reporters receive copied strings, numbers and
 resolved frames; interaction records do not own host-side Program handles. See
-[the testing contract](../docs/zh-CN/testing.md#12-mock-扩展设计待实现) for the public API and failure
+[the testing contract](../docs/zh-CN/testing.md#12-mock-扩展) for the public API and failure
 categories.
 
 ## Assertion boundaries and cleanup

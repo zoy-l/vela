@@ -334,6 +334,17 @@ export interface Repository { exchange(value: Hidden<int>): Hidden<int>; }
         self.assertIn('.Public<int>', artifact)
         self.assertNotIn('.Hidden<int>', artifact)
         self.invoke('check', 'repository.mocks.vela')
+        self.write('api.vela', '''class Hidden<A, B> { first: A; second: B; }
+class Marker {}
+export type General<A, B> = Hidden<A, B>;
+export type Specific<T> = Hidden<Marker, T>;
+export interface Repository { exchange(value: General<Marker, int>): Hidden<Marker, int>; }
+''')
+        self.generate()
+        artifact = (self.directory / 'repository.mocks.vela').read_text(encoding='utf-8')
+        self.assertIn('.Specific<int>', artifact)
+        self.assertNotIn('.Marker', artifact)
+        self.invoke('check', 'repository.mocks.vela')
 
     def test_selection_order_and_duplicate_names_from_distinct_imports_are_stable(self):
         self.write('left.vela', 'export class Value { left: int; }')

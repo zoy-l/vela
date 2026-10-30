@@ -327,6 +327,20 @@ func main(): void {
     expect(invocation.argument('argument'), same(argument));
     expect(invocation.callLocation.length, greaterThan(0));
     expect(invocation.registrationLocation.length, greaterThan(0));
+    const deep = mock.MockFunction1<dynamic, int>(function.control.session);
+    const expected: dynamic[] = [null, 2];
+    expected[0] = expected;
+    mock.when(deep.query(expected)).thenReturn(42);
+    expect(deep.function(argument), 42);
+    const shared = [7];
+    mock.when(deep.query([[7], [7]])).thenReturn(7);
+    expect(deep.function([shared, shared]), 7);
+    mock.verify(deep.query(expected)).called(1);
+    mock.verify(deep.query([[7], [7]])).called(1);
+    const matcher = equals(7);
+    mock.when(deep.query(same(matcher))).thenReturn(8);
+    expect(deep.function(matcher), 8);
+    mock.verify(deep.query(same(matcher))).called(1);
   });
 })",
                              R"(import 'sdk:test';
@@ -430,6 +444,45 @@ func main(): void {
     expect(missing, true);
     expect(comparisons, 2);
     mock.verify(function.query(mock.any)).called(2);
+  });
+})",
+                             R"(import 'sdk:test';
+import 'sdk:mock' as mock;
+class Responses {
+  sum: int = 0;
+  answer(call: mock.MockInvocation): int {
+    return (call.argument('first') as int) + (call.argument('second') as int);
+  }
+  accept(call: mock.MockInvocation): void {
+    this.sum += (call.argumentAt(0) as int) + (call.argumentAt(1) as int);
+  }
+}
+class Failure { code: int; }
+func main(): void {
+  test('two argument substitutes, bound responses and checked dynamic results', () => {
+    const session = mock.MockSession();
+    const response = Responses();
+    const pair = mock.MockFunction2<int, int, int>(session);
+    const sink = mock.MockVoidFunction2<int, int>(session);
+    mock.when(pair.query(mock.any, mock.any)).thenAnswer(response.answer);
+    mock.when(sink.query(mock.any, mock.any)).thenDo(response.accept);
+    expect(pair.function(20, 22), 42);
+    sink.function(1, 2); sink.function(3, 4);
+    expect(response.sum, 10);
+    expect(mock.verify(sink.query(mock.captureAny, mock.captureAny)).called(2).captured, [1, 2, 3, 4]);
+    mock.when(pair.query(mock.any, mock.any)).thenAnswer((call: mock.MockInvocation): dynamic => 'wrong');
+    let wrongType = false;
+    try { pair.function(1, 2); } catch (error: Error) { wrongType = true; }
+    expect(wrongType, true);
+    mock.verify(pair.query(mock.any, mock.any)).called(2);
+    const asynchronous = mock.MockFunction0<Future<int>>(session);
+    const original = Failure(code: 42);
+    mock.when(asynchronous.query()).thenThrow(original);
+    let synchronous = false;
+    try { asynchronous.function(); }
+    catch (error: Failure) { synchronous = same(original).match(error).success; }
+    expect(synchronous, true);
+    mock.verify(asynchronous.query()).called(1);
   });
 })"));
 
