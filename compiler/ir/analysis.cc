@@ -39,10 +39,6 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
     case Opcode::GetField:
     case Opcode::IsType:
     case Opcode::CheckedCast:
-    case Opcode::NewOk:
-    case Opcode::NewErr:
-    case Opcode::ExpectedHasValue:
-    case Opcode::ExpectedValue:
     case Opcode::NewDynamicArray:
     case Opcode::ExceptionValue:
     case Opcode::NewFuture:
@@ -501,8 +497,6 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
       return {.may_fail = true};
     case Opcode::CheckedCast:
     case Opcode::GetIndex:
-    case Opcode::ExpectedHasValue:
-    case Opcode::ExpectedValue:
       return {.may_fail = true, .reads_state = true};
     case Opcode::GetField:
       if (instruction.field_declaration) {
@@ -521,8 +515,6 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
     case Opcode::NewDynamicArray:
     case Opcode::NewCollection:
     case Opcode::NewInstance:
-    case Opcode::NewOk:
-    case Opcode::NewErr:
     case Opcode::NewFuture:
     case Opcode::SleepFuture:
       return {.may_fail = true, .may_allocate = true, .reads_state = true, .writes_state = true};

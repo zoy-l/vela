@@ -12,10 +12,13 @@ values (code points), not bytes or grapheme clusters. There is no `char` type.
 
 For `"A中😀e\u0301"`, `length` is 5 and `byteLength` is 11. The final `e` and
 combining accent count separately. Vela does not normalize Unicode; equality
-compares the exact encoded content. Random code point indexing requires a
-scan. A loop that repeatedly indexes a long string can therefore take quadratic
-time. Use `codePoints()` to materialize a native `int[]` in linear time, then
-index that array in constant time. Grapheme APIs (`graphemes()`,
+compares the exact encoded content. `length` is cached and takes O(1).
+ASCII indexing takes O(1). For other strings, a cached code point position
+allows consecutive forward or reverse indexing in amortized O(1) per access;
+`for (let i = 0; i < text.length; i++) { text[i]; }` takes O(n) in total.
+Arbitrary jumps still take O(n) in the worst case. Use `codePoints()` to
+materialize a native `int[]` in linear time when repeated random access is
+needed, then index that array in constant time. Grapheme APIs (`graphemes()`,
 `graphemeLength`, `graphemeSlice(start, end)`) use extended grapheme clusters;
 see [P1 Unicode contracts](core_language.md#unicode-code-points-and-graphemes).
 
@@ -64,10 +67,10 @@ stream locale and numeric formatting flags.
 
 | Expression | Result | Contract |
 | --- | --- | --- |
-| `text.length` | `int` | Code point count, O(byte length) |
+| `text.length` | `int` | Cached code point count, O(1) |
 | `text.byteLength` | `int` | Encoded byte count, O(1) |
-| `text[index]` | `string` | One code point; scans to the index and allocates 1–4 bytes of content |
-| `text.slice(start: int, end: int)` | `string` | Half-open code point range; scans boundaries once and copies the result |
+| `text[index]` | `string` | One code point; ASCII O(1), consecutive forward/reverse access amortized O(1), arbitrary jumps worst-case O(n); allocates 1–4 bytes of content |
+| `text.slice(start: int, end: int)` | `string` | Half-open code point range; locates boundaries using the position cache and copies the result |
 | `text.indexOf(text: string)` | `int` | First matching code point offset, or -1; empty pattern matches at 0 |
 | `text.includes(text: string)` | `bool` | Whether the pattern occurs; empty pattern is contained |
 | `text.startsWith(prefix: string)` | `bool` | Exact prefix, including the empty prefix |
@@ -100,6 +103,15 @@ report allocation failure explicitly. Prefix/suffix tests compare bytes
 directly; valid UTF-8 guarantees these matches respect code point boundaries.
 
 ## Compilation, allocation, and GC
+
+Every string creation path initializes the code point count. Concatenation,
+interpolation and joins reuse input counts where available; raw UTF-8 input is
+counted during creation. The count uses existing header padding and the
+position cache shares a metadata slot unused by strings, so neither increases
+the object header size. String bytes remain immutable, but the runtime may
+update integer position metadata on the Isolate's owning thread. VM, JIT and
+AOT consumers must preserve this distinction: the whole object is not read-only.
+The cache contains no managed references and needs no GC write barrier.
 
 The lexer emits decoded literal segments and expression tokens. The parser
 builds an interpolation node; the checker validates every segment/expression and

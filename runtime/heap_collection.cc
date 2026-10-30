@@ -217,7 +217,7 @@ void LinkTail(CollectionStorage& storage, const Table& table, std::uint32_t entr
 HeapObject* Heap::AllocateCollection(const CollectionLayout& layout) noexcept {
   const auto size = sizeof(HeapObject) + sizeof(CollectionStorage);
   return AllocateObject(ObjectKind::Collection, size, [&layout](HeapObject& object) {
-    object.type_metadata = &layout;
+    object.SetTypeMetadata(&layout);
     std::construct_at(StorageAfter<CollectionStorage>(object));
   });
 }

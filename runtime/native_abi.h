@@ -24,7 +24,7 @@ struct FutureDiagnostic;
 struct FutureResult;
 struct NativeCheckpoint;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 4;
+inline constexpr std::uint32_t kNativeAbiVersion = 6;
 inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
 [[nodiscard]] constexpr std::uint64_t EncodeNativeTracePosition(TracePosition position) noexcept {
@@ -163,6 +163,8 @@ class NativeExecution final {
   NativeContext context_;
   NativeTraceFrame* current_frame_ = nullptr;
   std::size_t frame_count_ = 0;
+  std::uintptr_t stack_limit_ = 0;
+  ExecutionStatus stack_status_ = ExecutionStatus::NativeFailure;
   Value pending_exception_;
   RootRange exception_root_;
   bool exception_allocation_failed_ = false;

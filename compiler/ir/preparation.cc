@@ -75,7 +75,6 @@ void BindTypeDependencies(Program& program,
         }
         break;
       }
-      case Kind::Expected:
       case Kind::Future:
       case Kind::Completer:
       case Kind::Set:

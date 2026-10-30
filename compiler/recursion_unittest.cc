@@ -41,5 +41,26 @@ func main(): int { return 42; }
   EXPECT_EQ(isolate.heap().object_count(), 0U);
 }
 
+TEST(RecursionTest, KeepsDeepCallFramesStableAcrossAllocationsAndCollection) {
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(R"(
+func descend(depth: int): int {
+  const text = '${depth}';
+  if (depth == 0) { return text.length + 41; }
+  const answer = descend(depth - 1);
+  return text.length > 0 ? answer : 0;
+}
+func main(): int { return descend(512); }
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  vm::VirtualMachine machine(isolate);
+  const auto result = machine.Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+  isolate.heap().Collect();
+  EXPECT_EQ(isolate.heap().object_count(), 0U);
+}
+
 }  // namespace
 }  // namespace vela::compiler

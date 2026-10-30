@@ -39,12 +39,6 @@ void ClassLayout::BindCallableType(const TypeSignature& type) noexcept {
   callable_type_ = &type;
 }
 
-void ClassLayout::BindExpectedType(const TypeSignature& type) noexcept {
-  assert(field_count_ == 1 && !callable_ && !IsEnum());
-  assert(expected_type_ == nullptr || expected_type_ == &type);
-  expected_type_ = &type;
-}
-
 void ClassLayout::BindCodeIdentity(const CodeIdentity& identity) noexcept {
   assert(callable_.has_value());
   assert(code_identity_ == nullptr || code_identity_ == &identity);
@@ -82,9 +76,6 @@ TypeConstraint Heap::TypeOf(Value value) noexcept {
     type.nominal = layout == nullptr ? nullptr : &layout->nominal_type();
     type.array = ArrayTypeOf(object);
     type.collection = CollectionTypeOf(object);
-    if (object.kind == ObjectKind::Expected) {
-      type.signature = object.layout->expected_type();
-    }
     if (layout != nullptr && (layout->callable() != nullptr)) {
       type.callable = true;
       type.signature = layout->callable_type();
@@ -178,7 +169,7 @@ std::expected<void, ExecutionStatus> Heap::BindRuntimeType(HeapObject& object,
                ? std::expected<void, ExecutionStatus>{}
                : std::unexpected(ExecutionStatus::InvalidCast);
   }
-  object.type_metadata = type.signature;
+  object.SetTypeMetadata(type.signature);
   return {};
 }
 

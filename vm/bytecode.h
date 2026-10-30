@@ -23,8 +23,45 @@ inline constexpr unsigned kOperandBShift = 16;
 inline constexpr unsigned kOperandCShift = 24;
 inline constexpr Instruction kByteMask = std::numeric_limits<std::uint8_t>::max();
 inline constexpr Instruction kImmediateMask = std::numeric_limits<std::uint16_t>::max();
+inline constexpr unsigned kIndexBits = std::numeric_limits<std::uint8_t>::digits;
+inline constexpr unsigned kConstantIndexBits = std::numeric_limits<std::uint16_t>::digits;
 
 using OpCode = ::vela::Opcode;
+
+// 前缀只扩展池索引，不改变寄存器宽度；其后的操作码仍占一个 32 位字。
+inline constexpr Instruction kIndexPrefix = kByteMask;
+
+[[nodiscard]] constexpr bool IsIndexPrefix(Instruction instruction) noexcept {
+  return (instruction & kByteMask) == kIndexPrefix;
+}
+
+[[nodiscard]] constexpr Instruction EncodeIndexPrefix(std::uint32_t index) noexcept {
+  return (index & ~kByteMask) | kIndexPrefix;
+}
+
+[[nodiscard]] constexpr unsigned IndexOperandBits(OpCode opcode) noexcept {
+  switch (opcode) {
+    case OpCode::LoadString:
+    case OpCode::LoadDouble:
+    case OpCode::LoadIntConstant:
+      return kConstantIndexBits;
+    case OpCode::NewArray:
+    case OpCode::NewDynamicArray:
+    case OpCode::NewCollection:
+    case OpCode::Call:
+    case OpCode::CallInterface:
+    case OpCode::GetGlobal:
+    case OpCode::SetGlobal:
+    case OpCode::IsType:
+    case OpCode::CheckedCast:
+    case OpCode::NewInstance:
+    case OpCode::SetField:
+    case OpCode::GetField:
+      return kIndexBits;
+    default:
+      return 0;
+  }
+}
 
 [[nodiscard]] constexpr Instruction EncodeABC(OpCode opcode,
                                               std::uint8_t operand_a,
@@ -74,6 +111,17 @@ using OpCode = ::vela::Opcode;
 
 [[nodiscard]] constexpr std::uint16_t DecodeUnsigned16(Instruction instruction) noexcept {
   return static_cast<std::uint16_t>((instruction >> kOperandBShift) & kImmediateMask);
+}
+
+[[nodiscard]] constexpr std::uint32_t DecodeIndex(Instruction instruction) noexcept {
+  const auto opcode = DecodeOp(instruction);
+  if (IndexOperandBits(opcode) == kConstantIndexBits) {
+    return DecodeUnsigned16(instruction);
+  }
+  if (opcode == OpCode::GetField || opcode == OpCode::IsType || opcode == OpCode::CheckedCast) {
+    return DecodeC(instruction);
+  }
+  return DecodeB(instruction);
 }
 
 // code 与元数据均为借用视图；字符串常量须由所有者持续保根。

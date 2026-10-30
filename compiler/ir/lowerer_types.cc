@@ -77,7 +77,6 @@ void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
     case Opcode::EqualValue:
     case Opcode::NotEqualValue:
     case Opcode::IsType:
-    case Opcode::ExpectedHasValue:
       RecordValueType(instruction.dst, {.kind = Kind::Bool, .name = "bool"});
       break;
     case Opcode::LoadString:

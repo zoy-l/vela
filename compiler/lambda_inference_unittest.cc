@@ -108,9 +108,9 @@ INSTANTIATE_TEST_SUITE_P(
              const f: () => ((int) => int)[] = () => [x => x * 2];
              return f()[0](21) + callbacks.length;
            })",
-        R"(func main(): int {
-             const result: Expected<(int) => int, string> = ok(x => x * 2);
-             return result.value()(21);
+        R"(class Box<T> { value: T; } func main(): int {
+             const result: Box<(int) => int> = Box<(int) => int>(value: x => x * 2);
+             return result.value(21);
            })"));
 
 class LambdaInferenceErrorTest : public testing::TestWithParam<std::string_view> {};

@@ -480,6 +480,58 @@ TEST(ProgramTest, AcceptsAll256RegisterSlotsAndRejects257) {
   EXPECT_FALSE(Program::Load(std::span(&input, 1), isolate).has_value());
 }
 
+TEST(ProgramTest, RejectsMalformedIndexPrefixesAndJumpsIntoExtendedInstructions) {
+  const auto prefix = EncodeIndexPrefix(kMaxFrameRegisters);
+  const auto load = EncodeAUnsigned16(OpCode::LoadIntConstant, 0, kMaxFrameRegisters);
+  const auto done = EncodeABC(OpCode::Return, 0, 0, 0);
+  const std::vector<std::vector<Instruction>> invalid{
+      {prefix},
+      {prefix, prefix, done},
+      {prefix, EncodeABC(OpCode::Move, 0, 0, 0), done},
+      {prefix, EncodeABC(OpCode::Call, 0, 0, 0), done},
+      {EncodeAImm16(OpCode::Jump, 0, 1), prefix, load, done},
+  };
+  runtime::Isolate isolate;
+  for (const auto& code : invalid) {
+    FunctionStorage function;
+    function.register_count = 1;
+    function.code = code;
+    function.integers.resize(kMaxFrameRegisters + 1);
+    EXPECT_FALSE(Program::Create({function}, isolate));
+  }
+}
+
+TEST(ProgramTest, ExecutesConstantPoolIndicesBeyond16BitsAndValidatesExtendedBoundaries) {
+  constexpr std::uint32_t kWideIndex = std::uint32_t{1} << kConstantIndexBits;
+  FunctionStorage function;
+  function.register_count = 1;
+  function.integers.resize(kWideIndex + 1);
+  function.integers.at(kWideIndex) = kExpectedResult;
+  function.code = {
+      EncodeIndexPrefix(kWideIndex),
+      EncodeAUnsigned16(OpCode::LoadIntConstant, 0, 0),
+      EncodeABC(OpCode::Return, 0, 0, 0),
+  };
+  runtime::Isolate isolate;
+  const auto program = Program::Create({function}, isolate);
+  ASSERT_TRUE(program);
+  const auto result = VirtualMachine(isolate).Execute(*program, 0);
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsInteger(), kExpectedResult);
+
+  function.source_paths =
+      std::make_shared<const std::vector<std::string>>(std::vector<std::string>{"main.vela"});
+  function.source_mappings = {
+      {.instruction = 0, .location = {.line = 1, .column = 1}},
+      {.instruction = 1, .location = {.line = 2, .column = 1}},
+  };
+  EXPECT_FALSE(Program::Create({function}, isolate));
+  function.source_mappings.clear();
+  function.code.insert(function.code.end() - 1, EncodeABC(OpCode::Catch, 0, 0, 0));
+  function.handlers = {{.begin = 1, .end = 2, .target = 2}};
+  EXPECT_FALSE(Program::Create({function}, isolate));
+}
+
 TEST(ProgramTest, RejectsAnEntryFromAnotherIsolate) {
   runtime::Isolate first;
   runtime::Isolate second;

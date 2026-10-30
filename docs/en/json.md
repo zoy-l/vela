@@ -171,7 +171,7 @@ Encoding directly supports null, bool, int, finite double, string, arrays, and
 maps whose actual keys are all strings. Typed arrays and maps are traversed
 directly without converting their whole storage to dynamic containers. Elements
 and map values are checked recursively. Enum values are not encoded as their
-integer storage. Functions, Set, Expected, Future, mutable String, and byte-storage
+integer storage. Functions, Set, Future, mutable String, and byte-storage
 objects are not directly encodable.
 
 An application class instance is encodable through a public, non-generic,
@@ -277,7 +277,7 @@ cannot violate the int64 contract. Runtime does not depend on compiler/tooling.
 
 The [offline layout descriptions](../../compiler/ir/layout_description.cc) and
 [runtime instantiation](../../runtime/program_layouts.cc) retain nominal
-class, interface and enum identities, structural function and Expected signatures,
+class, interface and enum identities, structural function signatures,
 and Future/Completer payload signatures. Arrays and collections retain their full
 element constraints. Boxed enums preserve identity in erased slots while typed
 enum arrays retain integer storage. Isolate-owned metadata survives compilation

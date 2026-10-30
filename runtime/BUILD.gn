@@ -147,6 +147,7 @@ source_set("runtime") {
     "native_operations.cc",
     "native_operations.h",
     "native_program_state.h",
+    "native_stack.h",
     "native_version.cc",
     "native_version.h",
     "numeric_operations_internal.h",
@@ -169,6 +170,7 @@ source_set("runtime") {
     "rooted_value.h",
     "standard_library.cc",
     "standard_library.h",
+    "string.cc",
     "string.h",
     "unicode_operations.cc",
     "unicode_operations.h",
@@ -180,6 +182,13 @@ source_set("runtime") {
     "value_operations.cc",
     "value_operations.h",
   ]
+  if (target_os == "win") {
+    sources += [ "native_stack_win.cc" ]
+  } else if (target_os == "mac") {
+    sources += [ "native_stack_mac.cc" ]
+  } else {
+    sources += [ "native_stack_linux.cc" ]
+  }
 }
 
 static_library("vela_runtime") {

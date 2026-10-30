@@ -68,10 +68,10 @@ the expected match/string/nullability shape. Engine code and match spans are
 created during execution and are never image payloads.
 
 Dynamic metadata includes nominal enum and interface identities, structural
-function and Expected signatures, Future/Completer payload signatures, and public
+function signatures, Future/Completer payload signatures, and public
 member dispatch records. Function call records retain parameter names, optional
 and rest flags, checked type indices, and result types. Loading validates these
-contracts and Expected GC layouts before publishing executable code.
+contracts before publishing executable code.
 
 Array/collection/signature graph reconstruction uses an iterative topological traversal;
 cycles and missing references are diagnosed. Counts are bounded by the remaining

@@ -85,15 +85,15 @@ func main(): int {
   if (original.length != 3 || values.length != 1 || original[2] != 40) { return 0; }
   return original.splice(0, 1)[0];
 })",
-                             R"(func main(): int {
+                             R"(class Box { value: int; } func main(): int {
   const values: ((int) => int)[] = [];
   for (let i = 0; i < 100; i = i + 1) {
     const offset = i; values.push((x: int): int => offset + x);
   }
   const operation = values.pop(); if (operation == null) { return 0; }
-  const data: Expected<int, string>[] = []; data.push(ok(42));
+  const data: Box[] = []; data.push(Box(value: 42));
   const result = data.pop(); if (result == null || operation(1) != 100) { return 0; }
-  return result.value();
+  return result.value;
 })",
                              R"(func main(): int {
   const words: string[] = [];

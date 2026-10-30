@@ -54,10 +54,10 @@ func choose(input: int?): () => int {
 func main(): int { const f = choose(40); f(); return f(); }
 )",
                              R"(
-func choose(value: bool): Expected<int, string> {
-  return match (value) { true => ok(42), false => err("failure") };
+func choose(value: bool): int? {
+  return match (value) { true => 42, false => null };
 }
-func main(): int { return choose(true).value(); }
+func main(): int { return choose(true) ?? 0; }
 )",
                              R"(
 func choose(value: bool?): int { return match (value) { true => 42, false => 0, null => 1 }; }

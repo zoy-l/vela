@@ -165,7 +165,6 @@ ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
   }
   result->dispatch_targets_ = std::move(options.dispatch_targets);
   result->callable_type_ = options.callable_type;
-  result->expected_type_ = options.expected_type;
   class_layouts_.push_back(std::move(layout));
   return result;
 }

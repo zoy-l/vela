@@ -6,11 +6,10 @@
 This document defines the core language features, object model, and runtime contracts for Vela.
 Function type annotations contain only parameter types, followed by `=>` and
 the return type; parameter names remain in function declarations and lambdas.
-Success/error results follow the
-requested `std::expected` model as `Expected<T, E>`, replacing the earlier
-payload-enum proposal. Runnable versions are in [`examples/`](../../examples/).
+Runnable versions are in [`examples/`](../../examples/).
 `func`, postfix annotations, strict types, explicit
-enum qualification, `T?`, and C/C++ switch fallthrough remain established rules.
+enum qualification, and `T?` remain established rules. Switch labels may share
+an empty branch; a non-empty branch must not fall through to another label.
 
 Explicit `dynamic` values retain their actual language type, including null.
 Operations and conversions to concrete types are checked at runtime. Containers
@@ -77,7 +76,7 @@ func aliasDemo(): void {
 ```
 
 Instance method values retain their receiver, evaluated once when the value is
-created. This includes primitive, string, builder, array, collection, and Expected
+created. This includes primitive, string, builder, array, and collection
 builtins, inherited methods, and interface/super bindings. A null-safe method
 access returns null for a null receiver; a live binding keeps its receiver alive.
 
@@ -131,10 +130,11 @@ Aliases are transparent names, not distinct nominal types. Generic arguments
 are explicit. The compiler specializes static generic uses,
 preserving primitive storage instead of boxing every `T` as a heap object.
 Equivalent transparent aliases reuse the same specialization. Function and
-class templates are checked when instantiated. Expansion is bounded to 256
-specializations per compilation, and type nesting is bounded to 128; exceeding
-either limit produces a diagnostic. Expanding recursive templates cannot
-silently consume unbounded compiler memory.
+class templates are checked when instantiated. Independent specializations have
+no fixed count limit. Generic dependency expansion and type nesting are each
+bounded to 128 levels; exceeding either produces a diagnostic. Dependencies are
+expanded depth first so branching recursive templates reach that boundary
+without first generating an exponentially wide work queue.
 
 ## Interfaces and explicit implementation
 
@@ -171,48 +171,6 @@ as an interface preserves its identity and numeric representation. Concrete
 calls remain statically resolved; interface calls need runtime dispatch.
 Method values bind their receiver.
 
-## Expected success/error results
-
-```typescript
-func divide(numerator: int, denominator: int): Expected<int, string> {
-  if (denominator == 0) {
-    return err("division by zero");
-  }
-  return ok(numerator / denominator);
-}
-
-func expectedDemo(): void {
-  const result: Expected<int, string> = divide(84, 2);
-  if (result.hasValue()) {
-    print(result.value());              // 42
-  } else {
-    print(result.error());
-  }
-}
-```
-
-`Expected<T, E>` contains exactly one active alternative: a success value of
-type `T`, or an error of type `E`. It is a generic result type, not an enum
-declaration. The selected explicit factories are `ok(value: T)` and
-`err(error: E)`. The compiler infers their generic arguments from an expected
-`Expected<T, E>` type, such as a function return type or an annotated local.
-If context cannot determine both arguments, an explicit type annotation is
-required. This is compile-time inference, not a runtime conversion.
-There is no conversion from a plain value/error to Expected,
-or from Expected to bool. `hasValue()` returns bool. `value()` and `error()`
-are checked accessors; accessing the inactive alternative reports a runtime
-failure. The error type may be a string, a normal enum, or another value type.
-Success and error types may be identical without construction ambiguity.
-`Expected<void, E>` represents successful completion without a value, using
-`ok()` without an argument.
-
-This follows the success/error contract of C++ `std::expected`, while keeping
-Vela's explicit conversions and runtime failure reporting. It does not import
-C++ exceptions, implicit converting constructors, or unchecked access.
-The current representation is a GC object with a header discriminant and one
-active payload slot. Construction allocates; access performs a tag check and
-does not use string-key lookup or a dynamic property dictionary.
-
 ## Normal enums and exhaustive match expressions
 
 ```typescript
@@ -248,7 +206,7 @@ values followed by a null arm, or vice versa, supports nullable narrowing.
 The catch-all `let present` above excludes null after the preceding null arm.
 Matching does not add conversions; string formatting follows the
 [string context rules](strings.md). Traditional `switch`
-keeps its existing C/C++ fallthrough semantics.
+allows shared empty labels and rejects reachable fallthrough from non-empty branches.
 Constant patterns support integers, booleans, strings, and explicitly qualified
 enum members. Double literal patterns, destructuring, and guards are not
 supported; wildcard and binding arms can handle other selector types.
@@ -301,7 +259,6 @@ func main(): void {
   functionDemo();
   genericDemo();
   interfaceDemo();
-  expectedDemo();
   enumDemo();
 
   const counter: Counter = Counter(value: 40);
@@ -507,6 +464,6 @@ implementations rather than scanning all interfaces for every class.
 Program metadata is validated at compilation/loading, then shared immutably.
 Layout tables are shared across functions. The owning Isolate must outlive
 programs, function handles, and their borrowed layouts. Exact roots and write
-barriers cover captures, static slots, Expected payloads, and collections.
+barriers cover captures, static slots, and collections.
 Large-object tracing is not subdivided into per-entry work budgets, so the
 incremental collector does not guarantee a hard maximum pause time.

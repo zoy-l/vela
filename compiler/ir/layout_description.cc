@@ -112,10 +112,6 @@ layout::Type LayoutDescription::Type(const SourceType& type) {
       result.kind = Kind::Callable;
       result.index = Signature(type);
       break;
-    case Source::Expected:
-      result.kind = Kind::Expected;
-      result.index = Signature(type);
-      break;
     case Source::Future:
       result.kind = Kind::Future;
       result.index = Signature(type);
@@ -186,9 +182,6 @@ std::uint32_t LayoutDescription::Signature(const SourceType& type) {
     if (payload.kind != SourceType::Kind::Void) {
       descriptor.result = Type(payload);
     }
-    if (type.kind == SourceType::Kind::Expected) {
-      descriptor.parameters.push_back({.type = Type(arguments.back())});
-    }
   }
   const auto index = static_cast<std::uint32_t>(result_.signatures.size());
   result_.signatures.push_back(std::move(descriptor));
@@ -234,9 +227,7 @@ std::uint32_t LayoutDescription::CallableSignature(const Class& type) {
 layout::Class LayoutDescription::DescribeClass(const Class& type) {
   layout::Class descriptor{
       .name = type.name,
-      .field_count = type.kind == Class::Kind::Expected
-                         ? 1U
-                         : static_cast<std::uint32_t>(type.field_types.size()),
+      .field_count = static_cast<std::uint32_t>(type.field_types.size()),
       .reference_fields = {},
       .callable = type.callable,
       .interfaces = type.interfaces,
@@ -244,7 +235,6 @@ layout::Class LayoutDescription::DescribeClass(const Class& type) {
   };
   switch (type.kind) {
     case Class::Kind::Instance:
-    case Class::Kind::Expected:
       break;
     case Class::Kind::RuntimeError:
       descriptor.kind = layout::Class::Kind::RuntimeError;
@@ -258,12 +248,8 @@ layout::Class LayoutDescription::DescribeClass(const Class& type) {
   }
   for (std::size_t index = 0; index < type.field_types.size(); ++index) {
     if (HasReference(type.field_types.at(index).kind)) {
-      descriptor.reference_fields.push_back(
-          type.kind == Class::Kind::Expected ? 0U : static_cast<std::uint32_t>(index));
+      descriptor.reference_fields.push_back(static_cast<std::uint32_t>(index));
     }
-  }
-  if (type.kind == Class::Kind::Expected) {
-    descriptor.expected_type = Signature({.kind = SourceType::Kind::Expected, .name = type.name});
   }
   if (type.callable && !type.callable_type.empty()) {
     descriptor.callable_type = CallableSignature(type);

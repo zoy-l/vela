@@ -37,7 +37,7 @@ Dynamic primitive values use the existing register tags. Erased enums are boxed
 with their nominal identity; statically typed enum arrays keep compact integer
 storage. Dynamic arrays and collection slots store tagged values and use ordinary
 GC barriers. Canonical Isolate metadata describes container arguments, callable
-signatures, Expected payloads, and Future/Completer payloads independently of a
+signatures, and Future/Completer payloads independently of a
 frontend compilation result.
 
 ## Constants

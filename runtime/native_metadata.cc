@@ -16,7 +16,6 @@ void NativeMetadataTracer::Mark(const ClassLayout* layout) {
   }
   Mark(&layout->nominal_type());
   Mark(layout->callable_type());
-  Mark(layout->expected_type());
 }
 
 void NativeMetadataTracer::Mark(const NominalType* nominal) {

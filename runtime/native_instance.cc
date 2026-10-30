@@ -78,7 +78,6 @@ layout::Class DescribeClass(const NativeClassDescription& source) {
       .interfaces = CopyTable(source.interfaces),
       .dispatch_targets = CopyTable(source.dispatch_targets),
       .callable_type = OptionalIndex(source.callable_type),
-      .expected_type = OptionalIndex(source.expected_type),
   };
   if (source.callable_function != kNoNativeIndex) {
     result.callable = CallableTarget{
@@ -108,8 +107,9 @@ layout::Signature DescribeSignature(const NativeSignatureDescription& source) {
   return result;
 }
 
-std::expected<void, NativeInstantiationError> ValidateImage(const NativeImage& image,
-                                                           const NativeTypeIdentities* identities) {
+std::expected<void, NativeInstantiationError> ValidateImage(
+    const NativeImage& image,
+    const NativeTypeIdentities* identities) {
   if (image.abi_version != kNativeAbiVersion || image.record_bytes != sizeof(NativeImage) ||
       image.abi_identity.text() != NativeRuntimeAbiIdentity()) {
     return std::unexpected(NativeInstantiationError{

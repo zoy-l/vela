@@ -51,10 +51,6 @@ std::optional<TypeChecker::FunctionInfo> TypeChecker::InferBuiltinMethod(const T
     const auto method = ResolveCollectionMethod(receiver, name);
     return method ? std::optional(method->signature) : std::nullopt;
   }
-  if (receiver.kind == Type::Kind::Expected) {
-    const auto method = ResolveExpectedMethod(receiver, name);
-    return method ? std::optional(method->signature) : std::nullopt;
-  }
   return InferAsyncMethod(receiver, name);
 }
 

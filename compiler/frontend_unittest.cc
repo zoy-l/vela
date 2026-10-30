@@ -57,6 +57,20 @@ func build(): Theme {
   EXPECT_FALSE(result.diagnostics.empty());
 }
 
+TEST(FrontendTest, RejectsRemovedResultBuiltins) {
+  constexpr auto kSources = std::to_array<std::string_view>({
+      "func main(value: Expected<int, string>): void {}",
+      "func main(): void { const value = ok(42); }",
+      "func main(): void { const value = err('failed'); }",
+  });
+  for (const auto source : kSources) {
+    SCOPED_TRACE(source);
+    const auto result = CheckTestSource(source);
+    EXPECT_FALSE(result.Succeeded());
+    EXPECT_FALSE(result.diagnostics.empty());
+  }
+}
+
 TEST(FrontendTest, RejectsDuplicateEnumMember) {
   const CheckResult result = CheckTestSource("enum Colour { red, red }");
   EXPECT_FALSE(result.Succeeded());

@@ -77,7 +77,7 @@ concatenations. It prints `Vela`, `Vela GC`, then returns `true`.
 APIs, array `.join(separator)`, primitive formatting, and imports. `string_builder.vela` builds text in a loop and keeps
 an immutable snapshot. See [string contracts](../docs/en/strings.md).
 
-`switch.vela` demonstrates enum cases, fallthrough, and loop control; it prints
+`switch.vela` demonstrates enum cases, explicit branch exits, and loop control; it prints
 `close` and returns `121`. `nullable.vela` demonstrates `T?`, guard checks,
 nullable fields and array elements; it prints `label: Vela`, `empty`, and returns
 `42`. See [basic language contracts](../docs/en/language_basics.md).

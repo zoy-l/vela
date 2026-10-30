@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <string>
 #include <string_view>
 
@@ -48,6 +49,41 @@ INSTANTIATE_TEST_SUITE_P(
         FlowErrorCase{"func f(): void { for (;false;) {} }", "unreachable"},
         FlowErrorCase{"func f(): void { break; }", "inside a loop"},
         FlowErrorCase{"func f(): void { continue; }", "inside a loop"}));
+
+TEST(ControlFlowTest, RejectsNonEmptySwitchBranchesWithAReachableFallthrough) {
+  constexpr auto sources = std::to_array<std::string_view>({
+      "func f(): void { switch (1) { case 1: print(1); case 2: break; } }",
+      "func f(flag: bool): void { switch (1) { case 1: if (flag) break; case 2: break; } }",
+      "func f(): void { switch (1) { default: print(1); case 2: break; } }",
+      "func f(): void { switch (1) { case 1: while (true) { break; } case 2: break; } }",
+  });
+  for (const auto source : sources) {
+    SCOPED_TRACE(source);
+    const auto result = CheckTestSource(source);
+    EXPECT_FALSE(result.Succeeded());
+    EXPECT_TRUE(std::ranges::any_of(result.diagnostics, [](const auto& diagnostic) {
+      return diagnostic.message.contains("must not fall through");
+    }));
+  }
+}
+
+TEST(ControlFlowTest, AcceptsSharedEmptySwitchLabelsAndBranchesThatExitOnEveryPath) {
+  const auto checked = CheckTestSource(R"(
+func f(value: int, flag: bool): void {
+  while (true) {
+    switch (value) {
+      case 0:
+      case 1: if (flag) break; else return;
+      case 2: continue;
+      case 3: throw Error(message: 'stopped');
+      default: print(value);
+    }
+    break;
+  }
+}
+)");
+  EXPECT_TRUE(checked.Succeeded());
+}
 
 TEST(ControlFlowTest, ForEachDoesNotEstablishFactsFromAPossiblyEmptyBody) {
   const auto checked = CheckTestSource(R"(

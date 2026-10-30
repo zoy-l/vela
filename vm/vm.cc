@@ -132,19 +132,15 @@ std::expected<runtime::Value, ExecutionStatus> ExecuteValueBuiltin(Builtin built
 
 template <bool Debugging>
 ExecutionResult Execution::RunImpl(std::uint32_t entry_function, Debugger* debugger) noexcept {
-  auto& entry = frames_.front();
-  entry.function = &functions_.subspan(entry_function).front();
-  auto entry_values = registers_.front().Acquire(entry.function->register_count);
-  if (entry_values.IsEmpty()) {
+  const auto entered = EnterFrame({.function = entry_function});
+  if (!entered) {
     return {
         .value = runtime::Value::Null(),
-        .status = ExecutionStatus::OutOfMemory,
+        .status = entered.error(),
         .stack_trace = {},
         .message = {},
     };
   }
-  entry.frame.Attach(isolate_.heap(), entry_values);
-  frame_count_ = 1;
   return Continue<Debugging>(debugger);
 }
 
@@ -162,7 +158,7 @@ ExecutionResult Execution::Continue(Debugger* debugger) noexcept {
   }
   while (frame_count_ != 0) {
     if constexpr (Debugging) {
-      const DebugContext context(frames_.data(), frame_count_);
+      const DebugContext context(frames_, frame_count_);
       if (debugger->BeforeInstruction(context) == DebugAction::Stop) {
         AbortInitializers();
         return {
@@ -173,9 +169,14 @@ ExecutionResult Execution::Continue(Debugger* debugger) noexcept {
         };
       }
     }
-    auto& active = std::span(frames_).subspan(frame_count_ - 1).front();
-    const auto instruction =
-        std::span(active.function->code).subspan(active.program_counter++).front();
+    auto& active = frames_.at(frame_count_ - 1);
+    auto instruction = std::span(active.function->code).subspan(active.program_counter++).front();
+    Instruction prefix = 0;
+    if (IsIndexPrefix(instruction)) {
+      prefix = instruction;
+      instruction = std::span(active.function->code).subspan(active.program_counter++).front();
+    }
+    active.index_prefix = prefix & ~kByteMask;
     const auto step = ExecuteInstruction(active, instruction);
     if (!step) {
       if (step.error() == ExecutionStatus::DebuggerStopped) {
@@ -247,7 +248,7 @@ runtime::Future Execution::InvokeFuture(runtime::Isolate& isolate,
                                         runtime::Value callable,
                                         std::span<const runtime::Value> arguments,
                                         std::shared_ptr<DebugSession> debug_session) {
-  std::array<RegisterFile, kMaxCallFrames> registers;
+  FrameSlots<RegisterFile> registers;
   Execution execution(isolate, program, registers, std::move(debug_session));
   const auto invoked = execution.Invoke(callable, arguments);
   if (invoked.Succeeded() && invoked.value.IsObject()) {
@@ -295,23 +296,21 @@ std::optional<ExecutionResult> Execution::ResumeFrame(
   const auto point = suspended.point();
   const auto indices = suspended.indices();
   const auto saved = suspended.saved();
-  auto& active = frames_.front();
-  active.function = &functions_.subspan(point.function).front();
-  auto values = registers_.front().Acquire(active.function->register_count);
-  if (values.IsEmpty()) {
+  const auto entered = EnterFrame({.function = point.function});
+  if (!entered) {
     return ExecutionResult{
-        .status = ExecutionStatus::OutOfMemory,
+        .status = entered.error(),
         .stack_trace = {},
         .message = {},
     };
   }
-  active.frame.Attach(isolate_.heap(), values);
+  auto& active = frames_.at(0);
+  const auto values = *entered;
   for (std::size_t index = 0; index < saved.size(); ++index) {
     values.subspan(indices.subspan(index).front()).front() = saved.subspan(index).front();
   }
   suspended.ReleaseSaved();
   active.program_counter = point.program_counter;
-  frame_count_ = 1;
   if (completion.state == runtime::FutureState::Failed) {
     const auto& diagnostic = completion.diagnostic;
     if (diagnostic.status == ExecutionStatus::DebuggerStopped) {
@@ -361,13 +360,11 @@ ExecutionResult Execution::Invoke(runtime::Value callable,
       }
     }
   }
-  auto values = registers_.front().Acquire(function.register_count);
-  if (values.IsEmpty()) {
-    return {.status = ExecutionStatus::OutOfMemory, .stack_trace = {}, .message = {}};
+  const auto entered = EnterFrame({.function = target});
+  if (!entered) {
+    return {.status = entered.error(), .stack_trace = {}, .message = {}};
   }
-  auto& active = frames_.front();
-  active.function = &function;
-  active.frame.Attach(isolate_.heap(), values);
+  const auto values = *entered;
   if (implicit) {
     values.front() = *implicit;
   }
@@ -384,7 +381,6 @@ ExecutionResult Execution::Invoke(runtime::Value callable,
     }
     values.subspan(index + hidden).front() = value;
   }
-  frame_count_ = 1;
   return debug_session_ != nullptr && debug_session_->debugger != nullptr
              ? Continue<true>(debug_session_->debugger)
              : Continue<false>(nullptr);
@@ -408,11 +404,15 @@ StepResult Execution::ExecuteInstruction(ActiveFrame& active, Instruction instru
       return {};
     case OpCode::LoadIntConstant:
       values.subspan(operand_a).front().SetInteger(
-          std::span(active.function->integers).subspan(DecodeUnsigned16(instruction)).front());
+          std::span(active.function->integers)
+              .subspan(active.index_prefix | DecodeUnsigned16(instruction))
+              .front());
       return {};
     case OpCode::LoadDouble:
       values.subspan(operand_a).front().SetDouble(
-          std::span(active.function->doubles).subspan(DecodeUnsigned16(instruction)).front());
+          std::span(active.function->doubles)
+              .subspan(active.index_prefix | DecodeUnsigned16(instruction))
+              .front());
       return {};
     case OpCode::AddDouble:
     case OpCode::SubDouble:
@@ -502,15 +502,11 @@ StepResult Execution::ExecuteObject(ActiveFrame& active,
   auto values = active.frame.registers();
   auto& heap = isolate_.heap();
   switch (opcode) {
-    case OpCode::NewOk:
-    case OpCode::NewErr:
-    case OpCode::ExpectedHasValue:
-    case OpCode::ExpectedValue:
-      return ExecuteExpected(active, instruction);
     case OpCode::LoadString:
-      values.subspan(operand_a).front().SetString(std::span(active.function->strings->values)
-                                                      .subspan(DecodeUnsigned16(instruction))
-                                                      .front());
+      values.subspan(operand_a).front().SetString(
+          std::span(active.function->strings->values)
+              .subspan(active.index_prefix | DecodeUnsigned16(instruction))
+              .front());
       return {};
     case OpCode::EqualValue:
     case OpCode::NotEqualValue: {
@@ -546,7 +542,8 @@ StepResult Execution::ExecuteObject(ActiveFrame& active,
       if (!object.IsObject() || object.AsObject() == nullptr) {
         return std::unexpected(ExecutionStatus::TypeError);
       }
-      if (!heap.SetField(*object.AsObject(), operand_b, values.subspan(operand_c).front())) {
+      if (!heap.SetField(*object.AsObject(), active.index_prefix | operand_b,
+                         values.subspan(operand_c).front())) {
         return std::unexpected(ExecutionStatus::InvalidField);
       }
       return {};
@@ -556,7 +553,8 @@ StepResult Execution::ExecuteObject(ActiveFrame& active,
       if (!object.IsObject() || object.AsObject() == nullptr) {
         return std::unexpected(ExecutionStatus::TypeError);
       }
-      const auto* field = runtime::Heap::GetField(*object.AsObject(), operand_c);
+      const auto* field =
+          runtime::Heap::GetField(*object.AsObject(), active.index_prefix | operand_c);
       if (field == nullptr) {
         return std::unexpected(ExecutionStatus::InvalidField);
       }
@@ -566,7 +564,8 @@ StepResult Execution::ExecuteObject(ActiveFrame& active,
     case OpCode::IsType:
     case OpCode::CheckedCast: {
       const auto value = values.subspan(operand_b).front();
-      const auto& type = active.function->layouts->types().subspan(operand_c).front();
+      const auto& type =
+          active.function->layouts->types().subspan(active.index_prefix | operand_c).front();
       const bool matches = runtime::Heap::IsValueOfType(value, type);
       if (opcode == OpCode::CheckedCast && !matches) {
         return std::unexpected(ExecutionStatus::InvalidCast);
@@ -660,8 +659,12 @@ StepResult Execution::AllocateObject(ActiveFrame& active,
     case OpCode::NewArray:
     case OpCode::NewDynamicArray:
     case OpCode::NewInstance: {
-      return AllocateArrayOrInstance(
-          active, opcode, {.destination = operand_a, .source = operand_c, .layout = operand_b});
+      return AllocateArrayOrInstance(active, opcode,
+                                     {
+                                         .destination = operand_a,
+                                         .source = operand_c,
+                                         .layout = active.index_prefix | operand_b,
+                                     });
     }
     case OpCode::NewFuture: {
       return AllocateFuture(active, {.destination = operand_a, .source = operand_b}, operand_c);
@@ -669,7 +672,8 @@ StepResult Execution::AllocateObject(ActiveFrame& active,
     case OpCode::SleepFuture:
       return AllocateSleep(active, {.destination = operand_a, .source = operand_b});
     case OpCode::NewCollection:
-      return AllocateCollection(active, {.destination = operand_a, .layout = operand_b});
+      return AllocateCollection(
+          active, {.destination = operand_a, .layout = active.index_prefix | operand_b});
     default:
       std::unreachable();
   }
@@ -810,13 +814,13 @@ StepResult Execution::ExecuteDynamic(ActiveFrame& active, Instruction instructio
 }
 
 StepResult Execution::CompleteCallSetup() {
-  auto& active = std::span(frames_).subspan(frame_count_ - 1).front();
+  auto& active = frames_.at(frame_count_ - 1);
   return active.function->native != nullptr ? ExecuteNative(active) : StepResult{};
 }
 
 StepResult Execution::ExecuteNative(ActiveFrame& active) {
   if (debug_session_ != nullptr && debug_session_->debugger != nullptr &&
-      debug_session_->debugger->BeforeInstruction(DebugContext(frames_.data(), frame_count_)) ==
+      debug_session_->debugger->BeforeInstruction(DebugContext(frames_, frame_count_)) ==
           DebugAction::Stop) {
     return std::unexpected(ExecutionStatus::DebuggerStopped);
   }
@@ -931,45 +935,12 @@ void Execution::Jump(ActiveFrame& active, std::int16_t offset) noexcept {
   active.program_counter = static_cast<std::size_t>(target);
 }
 
-StepResult Execution::ExecuteExpected(ActiveFrame& active, Instruction instruction) {
-  const auto values = active.frame.registers();
-  const auto opcode = DecodeOp(instruction);
-  auto destination = values.subspan(DecodeA(instruction)).front();
-  if (opcode == OpCode::NewOk || opcode == OpCode::NewErr) {
-    const auto payload = values.subspan(DecodeC(instruction)).front();
-    auto& layout = *active.function->layouts->classes().subspan(DecodeB(instruction)).front();
-    auto* object = isolate_.heap().AllocateExpected(layout, payload,
-                                                    opcode == OpCode::NewOk
-                                                        ? runtime::ExpectedAlternative::Ok
-                                                        : runtime::ExpectedAlternative::Err);
-    if (object == nullptr) {
-      return std::unexpected(ExecutionStatus::OutOfMemory);
-    }
-    destination = runtime::Value::Object(object);
-    return {};
-  }
-  const auto receiver = values.subspan(DecodeB(instruction)).front();
-  if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto payload =
-      opcode == OpCode::ExpectedHasValue
-          ? runtime::ExpectedHasValue(receiver.AsObject())
-          : runtime::ExpectedValue(receiver.AsObject(),
-                                   static_cast<runtime::ExpectedAlternative>(DecodeC(instruction)));
-  if (!payload) {
-    return std::unexpected(payload.error());
-  }
-  destination = *payload;
-  return {};
-}
-
 StepResult Execution::Call(ActiveFrame& active, Instruction instruction) {
-  return EnterCall(DecodeB(instruction), active, instruction, std::nullopt);
+  return EnterCall(active.index_prefix | DecodeB(instruction), active, instruction, std::nullopt);
 }
 
 StepResult Execution::AccessGlobal(ActiveFrame& active, Instruction instruction) {
-  const auto index = DecodeB(instruction);
+  const auto index = active.index_prefix | DecodeB(instruction);
   auto& state = std::span(globals_->states).subspan(index).front();
   auto& value = std::span(globals_->values).subspan(index).front();
   auto slot = active.frame.registers().subspan(DecodeA(instruction)).front();
@@ -1001,7 +972,8 @@ std::expected<std::uint32_t, ExecutionStatus> Execution::InterfaceTarget(
 StepResult Execution::CallInterface(ActiveFrame& active, Instruction instruction) {
   const auto base = DecodeC(instruction);
   const auto values = active.frame.registers();
-  const auto target = InterfaceTarget(values.subspan(base).front(), DecodeB(instruction));
+  const auto target =
+      InterfaceTarget(values.subspan(base).front(), active.index_prefix | DecodeB(instruction));
   if (!target) {
     return std::unexpected(target.error());
   }
@@ -1041,7 +1013,11 @@ StepResult Execution::EnterCall(std::uint32_t target,
     if (frame_count_ == kMaxCallFrames) {
       return std::unexpected(ExecutionStatus::StackOverflow);
     }
-    auto& next = std::span(frames_).subspan(frame_count_).front();
+    auto* slot = frames_.Acquire(frame_count_);
+    if (slot == nullptr) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
+    }
+    auto& next = *slot;
     next.function = &callee;
     next.program_counter = 0;
     next.return_register = DecodeA(instruction);
@@ -1056,7 +1032,7 @@ StepResult Execution::EnterCall(std::uint32_t target,
     return std::unexpected(entered.error());
   }
   const auto callee_values = *entered;
-  std::span(frames_).subspan(frame_count_ - 1).front().initialized_global = initialized_global;
+  frames_.at(frame_count_ - 1).initialized_global = initialized_global;
   const std::size_t hidden = implicit.has_value() ? 1 : 0;
   if (implicit) {
     callee_values.front() = *implicit;
@@ -1072,11 +1048,16 @@ std::expected<runtime::RegisterView, ExecutionStatus> Execution::EnterFrame(Fram
     return std::unexpected(ExecutionStatus::StackOverflow);
   }
   const auto& callee = functions_.subspan(entry.function).front();
-  auto callee_values = registers_.subspan(frame_count_).front().Acquire(callee.register_count);
+  auto* registers = registers_.Acquire(frame_count_);
+  auto* slot = frames_.Acquire(frame_count_);
+  if (registers == nullptr || slot == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  auto callee_values = registers->Acquire(callee.register_count);
   if (callee_values.IsEmpty()) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  auto& next = std::span(frames_).subspan(frame_count_).front();
+  auto& next = *slot;
   next.function = &callee;
   next.program_counter = 0;
   next.return_register = entry.destination;
@@ -1090,7 +1071,7 @@ bool Execution::IsErasedReturn() const {
   if (frame_count_ == 1) {
     return true;
   }
-  const auto& caller = std::span(frames_).subspan(frame_count_ - 2).front();
+  const auto& caller = frames_.at(frame_count_ - 2);
   return caller.json_encoder || caller.dynamic_return;
 }
 
@@ -1142,7 +1123,7 @@ StepResult Execution::Return(ActiveFrame& active, runtime::Value value) {
 }
 
 StepResult Execution::ResumeCaller(std::uint8_t return_register, runtime::Value value) {
-  auto& caller = std::span(frames_).subspan(frame_count_ - 1).front();
+  auto& caller = frames_.at(frame_count_ - 1);
   caller.dynamic_return = false;
   if (caller.json_encoder) {
     caller.json_encoder->ResumeConversion(value);
@@ -1172,9 +1153,11 @@ ExecutionResult VirtualMachine::Execute(const FunctionHandle& function) noexcept
 }
 
 std::size_t VirtualMachine::register_bytes() const noexcept {
-  std::size_t bytes = 0;
-  for (const auto& registers : registers_) {
-    bytes += registers.capacity() * runtime::kRegisterSlotBytes;
+  std::size_t bytes = registers_.at(0).capacity() * runtime::kRegisterSlotBytes;
+  for (const auto& registers : registers_.additional_slots()) {
+    if (registers != nullptr) {
+      bytes += registers->capacity() * runtime::kRegisterSlotBytes;
+    }
   }
   return bytes;
 }

@@ -477,18 +477,18 @@ class LanguageServerTest(unittest.TestCase):
 
     def test_every_intrinsic_completion_has_documentation(self) -> None:
         source = ("func main(): void { const text = 'x'; const values = [1]; const keys = Set<int>(); "
-                  "const lookup = Map<int, string>(); const result: Expected<int, string> = ok(42); "
+                  "const lookup = Map<int, string>(); "
                   "const builder = String(); const integer = 1; const decimal = 1.5; const flag = true; "
                   "print(text.length); print(values.length); print(keys.size); print(lookup.size); "
-                  "print(result.hasValue()); print(builder.toString()); print(integer.toString()); "
+                  "print(builder.toString()); print(integer.toString()); "
                   "print(decimal.toString()); print(flag.toString()); }")
         queries = [self.open(source)]
         for name, member in [('text', 'length'), ('values', 'length'), ('keys', 'size'), ('lookup', 'size'),
-                             ('result', 'hasValue'), ('builder', 'toString'), ('integer', 'toString'),
+                             ('builder', 'toString'), ('integer', 'toString'),
                              ('decimal', 'toString'), ('flag', 'toString')]:
             queries.append(self.symbol_query('completion', source, source.index(name + '.' + member) + len(name) + 1, name))
         messages = self.session(queries)
-        for name in ('text', 'values', 'keys', 'lookup', 'result', 'builder', 'integer', 'decimal', 'flag'):
+        for name in ('text', 'values', 'keys', 'lookup', 'builder', 'integer', 'decimal', 'flag'):
             for item in self.reply(messages, name)['result']:
                 with self.subTest(receiver=name, method=item['label']):
                     self.assertTrue(item.get('documentation', {}).get('value'), item)
@@ -513,16 +513,14 @@ class LanguageServerTest(unittest.TestCase):
         for spelling in ('String =', 'String()'):
             self.assertIn((0, source.index(spelling), len('String'), 'class', 2), self.semantic_tokens(messages))
 
-    def test_expected_factories_hover_with_contextual_payload_types_and_documentation(self) -> None:
-        source = ("func main(): void { const good: Expected<int, string> = ok(42); "
-                  "const bad: Expected<int, string> = err('failed'); }")
+    def test_removed_result_builtins_are_not_offered_in_completion(self) -> None:
+        source = "func main(): void { print(42); }"
         messages = self.session([self.open(source),
-            self.symbol_query('hover', source, source.index('ok(42)'), 'ok'),
-            self.symbol_query('hover', source, source.index("err('failed')"), 'err')])
-        self.assertIn('func ok(value: int): Expected<int, string>', self.reply(messages, 'ok')['result']['contents']['value'])
-        self.assertIn('func err(error: string): Expected<int, string>', self.reply(messages, 'err')['result']['contents']['value'])
-        self.assertIn('success alternative', self.reply(messages, 'ok')['result']['contents']['value'])
-        self.assertIn('does not automatically throw', self.reply(messages, 'err')['result']['contents']['value'])
+            self.symbol_query('completion', source, source.index('print'), 'completion')])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        candidates = {item['label'] for item in self.reply(messages, 'completion')['result']}
+        self.assertIn('print', candidates)
+        self.assertTrue(candidates.isdisjoint({'Expected', 'ok', 'err'}))
 
     def semantic_tokens(self, messages: list[dict], identity: str = 'tokens') -> list[tuple]:
         legend = self.reply(messages, 1)['result']['capabilities']['semanticTokensProvider']['legend']
@@ -1041,7 +1039,6 @@ class LanguageServerTest(unittest.TestCase):
                 ("const value: int[] = [1];", {"slice", "splice", "fill", "reverse", "length"}),
                 ("const value = Set<int>();", {"add", "has", "delete", "clear", "values", "size"}),
                 ("const value = Map<string, int>();", {"get", "set", "keys", "values", "size"}),
-                ("const value: Expected<int, string> = ok(42);", {"hasValue", "value", "error"}),
                 ("const value = 1;", {"toString", "toInt", "toDouble"})):
             with self.subTest(declaration=declaration):
                 source = "func main(): void { " + declaration + " value.; }"

@@ -27,10 +27,11 @@ and supported unary/binary constant expressions. Calls, mutable bindings,
 overflow, and division by zero cannot produce case constants. Duplicate case
 values and multiple defaults are errors.
 
-Branches follow C/C++ fallthrough semantics: execution continues into the next
-branch unless stopped by `break`, `continue`, or `return`. Empty labels share
-the following statements. A default may appear anywhere; it is entered only
-when no case matches. An empty switch still evaluates its selector.
+Empty labels share the following statements. A non-empty branch with a path
+into the next label is a compile-time error; use `break`, `continue`, `return`,
+`throw`, or control flow that exits on every path. The final branch may finish
+normally. A default may appear anywhere and follows the same rule; it is entered
+only when no case matches. An empty switch still evaluates its selector.
 
 `break` exits the nearest loop or switch. `continue` targets the nearest loop,
 passing through enclosing switches; in a `for` loop it executes the increment.

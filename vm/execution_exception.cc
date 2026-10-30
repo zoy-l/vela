@@ -52,7 +52,7 @@ std::span<const runtime::TracePosition> Execution::CapturePositions(
     std::span<runtime::TracePosition> storage) const {
   std::size_t count = 0;
   for (auto depth = frame_count_; depth != 0; --depth) {
-    const auto& active = std::span(frames_).subspan(depth - 1).front();
+    const auto& active = frames_.at(depth - 1);
     storage.subspan(count++).front() = {
         .function = static_cast<std::uint32_t>(active.function - functions_.data()),
         .instruction = static_cast<std::uint32_t>(active.program_counter - 1),
@@ -119,8 +119,8 @@ void Execution::AbortInitializers() noexcept {
   if (globals_ == nullptr) {
     return;
   }
-  for (auto& active : std::span(frames_).first(frame_count_)) {
-    ResetInitializer(active);
+  for (std::size_t index = 0; index < frame_count_; ++index) {
+    ResetInitializer(frames_.at(index));
   }
 }
 
@@ -176,7 +176,7 @@ std::optional<ExecutionResult> Execution::HandleError(ExecutionStatus status) {
     error_message_.clear();
   }
   while (frame_count_ != 0) {
-    auto& active = std::span(frames_).subspan(frame_count_ - 1).front();
+    auto& active = frames_.at(frame_count_ - 1);
     active.json_encoder.reset();
     active.dynamic_return = false;
     active.dynamic_call_plan = false;

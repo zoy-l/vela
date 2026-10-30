@@ -84,28 +84,26 @@ Result MutableStringOperation(Builtin builtin, std::span<const Value> arguments,
   return Value::Null();
 }
 
-Result Slice(Builtin builtin, std::string_view text, std::span<const Value> arguments, Heap& heap) {
+Result Slice(Builtin builtin,
+             const StringObject& string,
+             std::span<const Value> arguments,
+             Heap& heap) {
   if (!arguments.subspan(1).front().IsInteger() ||
       (builtin == Builtin::StringSlice && !arguments.subspan(2).front().IsInteger())) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto start = arguments.subspan(1).front().AsInteger();
+  if (start < 0 || std::cmp_greater(start, string.length())) {
+    return std::unexpected(ExecutionStatus::IndexOutOfBounds);
+  }
   const auto end =
-      builtin == Builtin::StringIndex ? start : arguments.subspan(2).front().AsInteger();
-  if (start < 0 || end < start || std::cmp_greater(end, text.size())) {
+      builtin == Builtin::StringIndex ? start + 1 : arguments.subspan(2).front().AsInteger();
+  if (end < start || std::cmp_greater(end, string.length())) {
     return std::unexpected(ExecutionStatus::IndexOutOfBounds);
   }
-  const auto offset = Utf8Offset(text, static_cast<std::size_t>(start));
-  if (!offset) {
-    return std::unexpected(ExecutionStatus::IndexOutOfBounds);
-  }
-  const auto suffix = text.substr(*offset);
-  const auto count = builtin == Builtin::StringIndex ? 1 : static_cast<std::size_t>(end - start);
-  const auto size = Utf8Offset(suffix, count);
-  if (!size) {
-    return std::unexpected(ExecutionStatus::IndexOutOfBounds);
-  }
-  return StringResult(heap.AllocateString(suffix.substr(0, *size)));
+  const auto offset = string.ByteOffset(static_cast<std::uint32_t>(start));
+  const auto end_offset = string.ByteOffset(static_cast<std::uint32_t>(end));
+  return StringResult(heap.AllocateString(string.value().substr(offset, end_offset - offset)));
 }
 
 std::expected<std::int64_t, ExecutionStatus> Find(std::string_view text_view,
@@ -253,13 +251,14 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
   if (!arguments.front().IsString()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto text = arguments.front().AsString()->value();
+  const auto& string = *arguments.front().AsString();
+  const auto text = string.value();
   if (builtin == Builtin::StringLength || builtin == Builtin::StringByteLength) {
     return Value::Integer(static_cast<std::int64_t>(
-        builtin == Builtin::StringLength ? Utf8Length(text) : text.size()));
+        builtin == Builtin::StringLength ? string.length() : text.size()));
   }
   if (builtin == Builtin::StringIndex || builtin == Builtin::StringSlice) {
-    return Slice(builtin, text, arguments, heap);
+    return Slice(builtin, string, arguments, heap);
   }
   if (!arguments.subspan(1).front().IsString()) {
     return std::unexpected(ExecutionStatus::TypeError);

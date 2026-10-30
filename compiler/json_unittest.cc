@@ -82,23 +82,6 @@ func accept(value: Marker): int { return 42; }
 func main(): (Marker) => int { return accept; }
 )"));
 
-TEST(DynamicIdentityTest, ExpectedIdentityUsesItsArgumentsAcrossIndependentCompilations) {
-  runtime::Isolate isolate(1);
-  constexpr std::string_view source = R"(func main(): Expected<int, string> { return ok(42); })";
-  const auto first = CompileSource(source, isolate);
-  ASSERT_TRUE(first.Succeeded());
-  const auto value = vm::VirtualMachine(isolate).Execute(first.program.FindFunction("main"));
-  ASSERT_TRUE(value.Succeeded());
-  const runtime::RootedValue rooted(isolate, value.value);
-  const auto second = CompileSource(source, isolate);
-  ASSERT_TRUE(second.Succeeded());
-  const auto types = second.program.functions().front().layouts->types();
-  const auto expected = std::ranges::find_if(
-      types, [](const auto& type) { return type.object_kind == runtime::ObjectKind::Expected; });
-  ASSERT_NE(expected, types.end());
-  EXPECT_TRUE(runtime::Heap::IsValueOfType(rooted.value(), *expected));
-}
-
 void ExpectJsonAnswer(const vm::Program& program, runtime::Isolate& isolate) {
   const auto main = program.FindFunction("main");
   auto result = vm::VirtualMachine(isolate).ExecuteFuture(program, main.index());
@@ -567,21 +550,6 @@ func main(): int {
     }
   }
   return 0;
-})",
-                             R"(enum Flag { yes }
-func main(): int {
-  const value: Expected<Flag, string> = ok(Flag.yes);
-  const erased: dynamic = value;
-  const failed: Expected<int, string> = err('bad');
-  const error: dynamic = failed;
-  const read = erased.value;
-  const actual: Flag = read();
-  const empty: Expected<void, string> = ok();
-  const nothing: dynamic = empty;
-  const source: dynamic = [value];
-  const mapped = source.map((item: Expected<Flag, string>): Flag => item.value());
-  return erased.hasValue() && actual == Flag.yes && error.error() == 'bad' &&
-    nothing.hasValue() && nothing.value() == null && (mapped is Flag[]) ? 42 : 0;
 })",
                              R"(enum Flag { yes }
 async func main(): Future<int> {

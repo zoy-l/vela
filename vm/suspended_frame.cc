@@ -1,7 +1,6 @@
 #include "vm/suspended_frame.h"
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -9,12 +8,12 @@
 #include <utility>
 #include <vector>
 
-#include "base/execution_limits.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/register_storage.h"
 #include "runtime/value.h"
 #include "vm/execution.h"
+#include "vm/frame_slots.h"
 #include "vm/program.h"
 #include "vm/register_file.h"
 
@@ -87,7 +86,7 @@ void SuspendedFrame::ReleaseSaved() {
 }
 
 void SuspendedFrame::Resume(const runtime::FutureResult& completion) {
-  std::array<RegisterFile, kMaxCallFrames> registers;
+  FrameSlots<RegisterFile> registers;
   Execution execution(*isolate_, program_, registers, debug_session_);
   if (const auto outcome = execution.ResumeFrame(*this, completion)) {
     const runtime::RootRange root(isolate_->heap(), &outcome->value, 1,

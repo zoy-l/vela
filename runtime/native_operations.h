@@ -22,16 +22,6 @@ extern "C" std::uint8_t vela_native_v2_initialize_global(NativeExecution* execut
                                                          std::uint64_t position,
                                                          NativeGlobalFrame frame_kind,
                                                          NativeValue* result);
-extern "C" std::uint8_t vela_native_v1_new_expected(NativeExecution* execution,
-                                                    std::uint32_t layout,
-                                                    const NativeValue* payload,
-                                                    std::uint8_t alternative,
-                                                    NativeValue* result) noexcept;
-extern "C" std::uint8_t vela_native_v1_expected_has_value(HeapObject* object,
-                                                          NativeValue* result) noexcept;
-extern "C" std::uint8_t vela_native_v1_expected_value(HeapObject* object,
-                                                      std::uint8_t alternative,
-                                                      NativeValue* result) noexcept;
 extern "C" std::uint8_t vela_native_v1_new_instance(NativeExecution* execution,
                                                     std::uint32_t index,
                                                     NativeValue* result) noexcept;

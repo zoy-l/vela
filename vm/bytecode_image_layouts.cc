@@ -36,7 +36,6 @@ std::expected<bool, BinaryError> ReadFlag(BinaryReader& reader) {
 struct ImageClass final {
   runtime::ClassLayout* layout = nullptr;
   std::uint64_t signature = kNoImageId;
-  std::uint64_t expected = kNoImageId;
 };
 
 std::expected<runtime::ClassLayoutOptions, BinaryError> ReadClassOptions(
@@ -116,17 +115,8 @@ std::expected<ImageClass, BinaryError> ReadClass(
   }
   auto options = std::move(*parsed_options);
   const auto callable_type = reader.Read<std::uint64_t>();
-  const auto expected_type = reader.Read<std::uint64_t>();
   if (!callable_type) {
     return std::unexpected(callable_type.error());
-  }
-  if (!expected_type) {
-    return std::unexpected(expected_type.error());
-  }
-  if (*expected_type != kNoImageId &&
-      (*fields != 1 || options.callable || options.is_enum || !options.interfaces.empty() ||
-       !options.dispatch_targets.empty())) {
-    return std::unexpected(reader.Error("invalid Expected type layout"));
   }
   if (!options.callable && *callable_type != kNoImageId) {
     return std::unexpected(reader.Error("non-callable layout has callable type"));
@@ -139,8 +129,7 @@ std::expected<ImageClass, BinaryError> ReadClass(
     auto& layout = isolate.error_layout();
     if (*fields != layout.field_count() ||
         !std::ranges::equal(*references, layout.reference_fields()) || options.callable ||
-        !options.interfaces.empty() || !options.dispatch_targets.empty() || options.is_enum ||
-        *expected_type != kNoImageId) {
+        !options.interfaces.empty() || !options.dispatch_targets.empty() || options.is_enum) {
       return std::unexpected(reader.Error("invalid standard Error layout"));
     }
     return ImageClass{.layout = &layout};
@@ -149,8 +138,7 @@ std::expected<ImageClass, BinaryError> ReadClass(
     auto& layout = isolate.date_parts_layout();
     if (*fields != layout.field_count() ||
         !std::ranges::equal(*references, layout.reference_fields()) || options.callable ||
-        !options.interfaces.empty() || !options.dispatch_targets.empty() || options.is_enum ||
-        *expected_type != kNoImageId) {
+        !options.interfaces.empty() || !options.dispatch_targets.empty() || options.is_enum) {
       return std::unexpected(reader.Error("invalid standard DateParts layout"));
     }
     return ImageClass{.layout = &layout};
@@ -158,7 +146,6 @@ std::expected<ImageClass, BinaryError> ReadClass(
   return ImageClass{
       .layout = isolate.CreateClassLayout(*fields, *references, std::move(options)),
       .signature = *callable_type,
-      .expected = *expected_type,
   };
 }
 
@@ -273,8 +260,7 @@ std::expected<runtime::TypeConstraint, std::string> ResolveSignatureType(
   }
   const auto kind = type->object_kind;
   if (type->kind == runtime::ValueKind::Object && type->signature == nullptr &&
-      (kind == runtime::ObjectKind::Future || kind == runtime::ObjectKind::Completer ||
-       kind == runtime::ObjectKind::Expected)) {
+      (kind == runtime::ObjectKind::Future || kind == runtime::ObjectKind::Completer)) {
     return std::unexpected("generic signature type must retain its payload signature");
   }
   return type;
@@ -381,27 +367,6 @@ std::expected<void, std::string> LayoutLoader::BuildNode(std::size_t index) {
   return BuildSignature(index - collections_.size());
 }
 
-bool HasExpectedReference(const runtime::TypeConstraint& type) {
-  return type.dynamic || type.kind == runtime::ValueKind::String ||
-         (type.kind == runtime::ValueKind::Object &&
-          (type.nominal == nullptr || !type.nominal->IsEnum()));
-}
-
-bool IsValidExpectedLayout(const runtime::ClassLayout& layout,
-                           const runtime::TypeSignature& signature) {
-  if (signature.parameters.size() != 1) {
-    return false;
-  }
-  const auto& error = signature.parameters.front();
-  if (error.optional || error.rest) {
-    return false;
-  }
-  const auto value = signature.result;
-  const bool reference =
-      HasExpectedReference(error.type) || (value && HasExpectedReference(*value));
-  return layout.reference_fields().size() == (reference ? 1U : 0U);
-}
-
 std::expected<ImageCollection, BinaryError> ReadCollection(BinaryReader& reader) {
   const auto keys = ReadElement(reader);
   const auto has_values = ReadFlag(reader);
@@ -471,18 +436,6 @@ std::expected<void, BinaryError> BindClassTypes(BinaryReader& reader,
     if (*signature != nullptr) {
       input.layout->BindCallableType(**signature);
     }
-    const auto expected = ResolvePointer(
-        input.expected, std::span<const runtime::TypeSignature* const>(layouts.signatures));
-    if (!expected) {
-      return std::unexpected(reader.Error(expected.error()));
-    }
-    if (*expected != nullptr) {
-      if (!IsValidExpectedLayout(*input.layout, **expected)) {
-        return std::unexpected(
-            reader.Error("Expected signature does not match its payload storage"));
-      }
-      input.layout->BindExpectedType(**expected);
-    }
   }
   return {};
 }
@@ -536,10 +489,8 @@ std::expected<ImageElement, BinaryError> ReadElement(BinaryReader& reader) {
   }
   if (*signature != kNoImageId && (flags & kCallableImageFlag) == 0 &&
       object_kind != static_cast<std::uint8_t>(runtime::ObjectKind::Future) &&
-      object_kind != static_cast<std::uint8_t>(runtime::ObjectKind::Expected) &&
       object_kind != static_cast<std::uint8_t>(runtime::ObjectKind::Completer)) {
-    return std::unexpected(
-        reader.Error("type signature requires a callable, Expected, Future or Completer"));
+    return std::unexpected(reader.Error("type signature requires a callable, Future or Completer"));
   }
   return ImageElement{
       .kind = kind,
@@ -581,10 +532,7 @@ std::expected<runtime::ArrayLayout, std::string> ResolveElement(const ImageEleme
   }
   if (*signature != nullptr && (input.flags & kCallableImageFlag) == 0) {
     const auto parameters = std::span((*signature)->parameters);
-    const auto expected =
-        input.object_kind == static_cast<std::uint8_t>(runtime::ObjectKind::Expected);
-    if (parameters.size() != (expected ? 1U : 0U) ||
-        (expected && (parameters.front().optional || parameters.front().rest))) {
+    if (!parameters.empty()) {
       return std::unexpected("invalid generic payload signature");
     }
   }
@@ -628,7 +576,7 @@ std::expected<LoadedLayouts, BinaryError> ReadLayouts(BinaryReader& reader,
   for (std::uint64_t index = 0; index < *interfaces; ++index) {
     layouts.interfaces.push_back(isolate.CreateInterfaceType());
   }
-  constexpr auto kClassBytes = (5 * sizeof(std::uint64_t)) + sizeof(std::uint32_t) + 3;
+  constexpr auto kClassBytes = (4 * sizeof(std::uint64_t)) + sizeof(std::uint32_t) + 3;
   const auto classes =
       ReadRecords<ImageClass>(reader, kClassBytes, [&isolate, &layouts](BinaryReader& input) {
         return ReadClass(input, isolate, layouts.interfaces);

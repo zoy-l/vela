@@ -198,7 +198,7 @@ kinds, using the existing object-valued Value representation. The protected
 standard environment supplies factory namespaces and the Endian enum. Constructor,
 property and method signatures share builtin metadata with completion, hover,
 named arguments and source tools. Aliases, nullable types, fields, captures,
-arrays, collections, Expected and Future payloads retain their normal type rules.
+arrays, collections and Future payloads retain their normal type rules.
 
 Instance method values bind the receiver and retain it through GC. With no
 function-type context they use the full positional signature, including Endian;
@@ -237,7 +237,7 @@ bounds, unchanged storage after failure, IEEE reference vectors, signed zero,
 NaN/infinities, and overlapping views. Float32 rounding is checked under changed
 host rounding modes without modifying that environment. GC tests retain only a
 view, including an empty view, and verify final storage release. Compiler,
-source-free fresh-Isolate images, async suspension, typed containers, Expected,
+source-free fresh-Isolate images, async suspension, typed containers,
 REPL, LSP, formatting and generated documentation use the production paths.
 
 Run [`examples/byte_data.vela`](../../examples/byte_data.vela) for the public API.

@@ -62,7 +62,6 @@ struct NativeClassDescription final {
   std::uint32_t callable_function = kNoNativeIndex;
   std::uint32_t callable_mode = 0;
   std::uint32_t callable_type = kNoNativeIndex;
-  std::uint32_t expected_type = kNoNativeIndex;
   DeclarationId declaration;
   NativeTable<NativeFieldDescription> fields;
   DeclarationId base_class;

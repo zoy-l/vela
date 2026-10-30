@@ -85,9 +85,11 @@ void WalkCase(std::string_view text, StringCase conversion, const Visitor& visit
 StringObject* Heap::ConvertStringCase(StringObject& source, StringCase conversion) noexcept {
   const auto text = source.value();
   std::optional<std::size_t> length = 0;
+  std::size_t code_points = 0;
   bool changed = false;
   WalkCase(text, conversion, [&](std::int32_t point, std::span<const std::int32_t> mapping) {
     changed = changed || mapping.size() != 1 || mapping.front() != point;
+    code_points += mapping.size();
     for (const auto result : mapping) {
       const auto width = Utf8EncodedWidth(static_cast<std::uint32_t>(result));
       if (length && width <= kMaximumStringLength - *length) {
@@ -105,7 +107,7 @@ StringObject* Heap::ConvertStringCase(StringObject& source, StringCase conversio
   }
   const auto value = Value::String(&source);
   RootRange root(*this, &value, 1, RootOwner::Runtime);
-  auto* output = AllocateStringStorage(*length);
+  auto* output = AllocateStringStorage({.bytes = *length, .code_points = code_points});
   if (output == nullptr) {
     return nullptr;
   }

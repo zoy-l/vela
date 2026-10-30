@@ -100,11 +100,12 @@ func main(): int {
 }
 )",
                              R"(
+class Box { value: int; }
 func main(): int {
-  const values = Map<int, Expected<int, string>>();
-  values.set(1, ok(42));
+  const values = Map<int, Box>();
+  values.set(1, Box(value: 42));
   const result = values.get(1);
-  if (result != null) { return result.value(); }
+  if (result != null) { return result.value; }
   return 0;
 }
 )",
@@ -148,7 +149,6 @@ INSTANTIATE_TEST_SUITE_P(
                     "func main(): void { const values = Set<void>(); }",
                     "func main(): void { const values: Set<double> = Set<int>(); }",
                     "func main(): int { const values = Map<int, int>(); return values.get(1); }",
-                    "func ok<T>(value:T):T { return value; } func main(): void {}",
                     "type MaybeSet = Set<int>?; func main(): void { const values = MaybeSet(); }"));
 
 }  // namespace

@@ -165,7 +165,6 @@ bool IsSameNativeType(const NativeImage& left_image,
               IsSameNativeType(left_image, first.value, right_image, second.value));
     }
     case Kind::Callable:
-    case Kind::Expected:
     case Kind::Future:
     case Kind::Completer:
       return IsSameSignature(left_image, left_image.signatures.values().subspan(left.index).front(),

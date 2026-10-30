@@ -869,9 +869,6 @@ Lowerer::LoweredValue Lowerer::LowerExpressionValue(const frontend::Expression& 
     if (model_.collection_constructions.contains(&expression)) {
       return LowerCollectionConstruction(expression);
     }
-    if (model_.expected_calls.contains(&expression)) {
-      return LowerExpected(expression);
-    }
   }
   if ((kind == Kind::Call || kind == Kind::Member || kind == Kind::Index) &&
       model_.builtin_calls.contains(&expression)) {
@@ -998,8 +995,10 @@ Lowerer::LoweredValue Lowerer::LowerAwait(const frontend::Expression& expression
   });
   if (converts_enum) {
     return LowerConversion(
-        {.reg = result,
-         .type = {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},},
+        {
+            .reg = result,
+            .type = {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},
+        },
         type, expression.location);
   }
   return {.reg = result, .type = type};

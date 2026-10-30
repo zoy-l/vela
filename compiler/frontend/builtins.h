@@ -33,9 +33,6 @@ struct CollectionMethod final {
     const TypeDescriptor& receiver,
     std::span<const TypeDescriptor> arguments,
     std::string_view name);
-[[nodiscard]] std::optional<ExpectedMethod> ResolveExpectedBuiltin(
-    std::span<const TypeDescriptor> arguments,
-    std::string_view name);
 [[nodiscard]] std::optional<Builtin> FindSetOperation(std::string_view name);
 [[nodiscard]] FunctionDescriptor ArrayCallbackSignature(ArrayAlgorithm algorithm,
                                                         const TypeDescriptor& element,

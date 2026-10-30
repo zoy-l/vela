@@ -60,8 +60,6 @@ std::size_t TemporaryArgumentCount(const ir::Instruction& instruction) {
     case Opcode::SetIndex:
     case Opcode::Print:
     case Opcode::SetGlobal:
-    case Opcode::NewOk:
-    case Opcode::NewErr:
     case Opcode::NewFuture:
     case Opcode::IsType:
     case Opcode::CheckedCast:

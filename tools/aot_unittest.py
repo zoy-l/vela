@@ -134,10 +134,11 @@ TEST(NativeHostTest, OptimizedIntegerCallsLoopsAndShiftSemantics) {
   const auto instance = NativeInstance::Instantiate(isolate, *INTEGER_IMAGE());
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
-  const std::array<std::array<std::int64_t, 4>, 7> cases{{
+  const std::array<std::array<std::int64_t, 4>, 8> cases{{
       {0, -3, -4, 12}, {0, 3, -4, -12}, {3, -1, 1, -2},
       {3, 1, -1, std::numeric_limits<std::int64_t>::min()},
       {4, -8, 65, -4}, {5, -1, 64, -1}, {6, 0, 0, 90},
+      {7, 512, 0, 512},
   }};
   for (const auto& values : cases) {
     const std::array arguments{Integer(values[0]), Integer(values[1]), Integer(values[2])};
@@ -162,7 +163,7 @@ TEST(NativeHostTest, ErrorsAndDepthLimitsCleanUpAllNativeFrames) {
       Case{1, minimum, -1, ExecutionStatus::IntegerOverflow},
       Case{2, minimum, -1, ExecutionStatus::IntegerOverflow},
       Case{1, 1, 0, ExecutionStatus::DivisionByZero},
-      Case{7, 100, 0, ExecutionStatus::StackOverflow},
+      Case{7, static_cast<std::int64_t>(vela::kMaxCallFrames + 1), 0, ExecutionStatus::StackOverflow},
   };
   for (const auto& item : cases) {
     const std::array arguments{Integer(item.operation), Integer(item.left), Integer(item.right)};
@@ -346,7 +347,7 @@ TEST(NativeHostTest, LazyGlobalsRetryFailuresAndKeepEachInstancesStateIndependen
   NativeValue result;
   ASSERT_EQ(Execute(GLOBAL_ENTRY, execution, count, result), ExecutionStatus::Returned);
   EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 0);
-  for (const auto operation : {0, 2, 3, 3, 4}) {
+  for (const auto operation : {0, 2, 2}) {
     const std::array arguments{Integer(operation)};
     ASSERT_EQ(Execute(GLOBAL_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42) << operation;
@@ -356,7 +357,7 @@ TEST(NativeHostTest, LazyGlobalsRetryFailuresAndKeepEachInstancesStateIndependen
   EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 2);
   ASSERT_EQ(Execute(GLOBAL_ENTRY, other, count, result), ExecutionStatus::Returned);
   EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 0);
-  const std::array assignment{Integer(5)};
+  const std::array assignment{Integer(3)};
   ASSERT_EQ(Execute(GLOBAL_ENTRY, other, assignment, result), ExecutionStatus::Returned);
   EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42);
   ASSERT_EQ(Execute(GLOBAL_ENTRY, other, count, result), ExecutionStatus::Returned);
@@ -757,7 +758,7 @@ export func calculate(operation: int, left: int, right: int): int {
             "BOOL_ENTRY": "export func calculate(value: bool): bool { return !value; }",
             "NULLABLE_ENTRY": "export func calculate(value: int?): int? { return value; }",
             "NULL_TEST_ENTRY": "export func calculate(value: int?): bool { return value == null; }",
-            "REFERENCE_ENTRY": """
+            "REFERENCE_ENTRY": r"""
 class Box { text: string; }
 func make(value: int): string { return 'item:${value}'; }
 func churn(): void {
@@ -770,6 +771,13 @@ export func calculate(): int {
   churn();
   values.push('tail');
   box.text = 'changed';
+  const unicode = 'A中😀e\u0301\0';
+  const forward = String(); const backward = String();
+  const dynamicText: dynamic = unicode;
+  for (let index = 0; index < dynamicText.length; index++) { forward.append(dynamicText[index]); }
+  for (let index = unicode.length - 1; index >= 0; index--) { backward.append(unicode[index]); }
+  if (forward.toString() != unicode || backward.toString() != '\0\u0301e😀中A' ||
+      [unicode, unicode].join('界').length != 13 || 'ßﬃ'.toUpperCase().length != 5) { return 0; }
   return values[0].length + values[1].length + values[2].length;
 }
 """,
@@ -861,22 +869,8 @@ export func calculate(operation: int): int {
   }
   if (operation == 1) { return attempts; }
   if (operation == 2) {
-    const success: Expected<int, string> = ok(40);
-    const failure: Expected<int, string> = err('no');
-    const nested: Expected<Expected<int, string>, bool> = ok(ok(2));
-    if (success.hasValue() && !failure.hasValue() && failure.error() == 'no') {
-      return success.value() + nested.value().value();
-    }
-    return 0;
-  }
-  if (operation == 3) {
     try { return cycle; }
     catch (error: Error) { if (error.code == 'CyclicInitialization') { return 42; } return 0; }
-  }
-  if (operation == 4) {
-    const failure: Expected<int, string> = err('inactive');
-    try { return failure.value(); }
-    catch (error: Error) { if (error.code == 'InactiveExpectedAlternative') { return 42; } return 0; }
   }
   answer = 42;
   return answer;

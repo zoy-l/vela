@@ -16,6 +16,8 @@ namespace vela::runtime {
 // 编译器和运行时使用同一组 C++ 布局事实；生成代码不得复制对象头或猜标准库布局。
 // NativeRuntimeAbiIdentity 已包含这些构建输入，旧产物不能与改变布局的运行时混用。
 struct NativeMemoryLayout final {
+  static_assert(offsetof(HeapObject, string_length) + sizeof(std::uint32_t) ==
+                offsetof(HeapObject, native_payload));
   static constexpr auto kValuePayload = offsetof(Value, payload_);
   static constexpr auto kValueKind = offsetof(Value, kind_);
   static constexpr auto kObjectLength = offsetof(HeapObject, length);
@@ -27,6 +29,8 @@ struct NativeMemoryLayout final {
       sizeof(HeapObject) + offsetof(internal::ArrayStorage, mutation);
   static constexpr auto kExecutionFrame = offsetof(NativeExecution, current_frame_);
   static constexpr auto kExecutionDepth = offsetof(NativeExecution, frame_count_);
+  static constexpr auto kExecutionStackLimit = offsetof(NativeExecution, stack_limit_);
+  static constexpr auto kExecutionStackStatus = offsetof(NativeExecution, stack_status_);
   static constexpr auto kExecutionInstance = offsetof(NativeExecution, instance_);
   static constexpr auto kExecutionContext = offsetof(NativeExecution, context_);
   static constexpr auto kExecutionException = offsetof(NativeExecution, pending_exception_);

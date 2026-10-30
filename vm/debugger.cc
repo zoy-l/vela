@@ -9,6 +9,7 @@
 #include "runtime/value.h"
 #include "vm/debug_info.h"
 #include "vm/execution.h"
+#include "vm/frame_slots.h"
 #include "vm/program.h"
 
 namespace vela::vm {
@@ -54,14 +55,14 @@ std::optional<DebugFrame> DebugContext::Frame(std::size_t depth) const noexcept 
   if (depth >= frame_count_) {
     return std::nullopt;
   }
-  const auto& frame = std::span(frames_, frame_count_).subspan(frame_count_ - 1 - depth).front();
+  const auto& frame = frames_->at(frame_count_ - 1 - depth);
   const auto instruction =
       depth != 0 && frame.program_counter != 0 ? frame.program_counter - 1 : frame.program_counter;
   return DebugFrame(frame, instruction);
 }
 
 DebugFrame DebugContext::current_frame() const noexcept {
-  const auto& frame = std::span(frames_, frame_count_).back();
+  const auto& frame = frames_->at(frame_count_ - 1);
   return {frame, frame.program_counter};
 }
 

@@ -176,8 +176,6 @@ void Reachability::VisitFunction(const ir::Function& function, TypeExposure expo
         Mark(NodeKind::Function, instruction.index);
         break;
       case Opcode::NewInstance:
-      case Opcode::NewOk:
-      case Opcode::NewErr:
         Mark(NodeKind::Class, instruction.index);
         break;
       case Opcode::IsType:
@@ -223,9 +221,6 @@ void Reachability::VisitClass(std::uint32_t index, TypeExposure exposure) {
   const auto& layout = program_.layouts.classes.at(index);
   if (layout.callable_type) {
     Mark(NodeKind::Signature, *layout.callable_type, exposure);
-  }
-  if (layout.expected_type) {
-    Mark(NodeKind::Signature, *layout.expected_type, exposure);
   }
   // 类可能只由 NewInstance 引用，而尚未注册为参数约束；动态成员仍按相同名义类型保留。
   if (const auto type = names_.find(source.name);
@@ -277,7 +272,6 @@ void Reachability::VisitLayout(const layout::Type& type, TypeExposure exposure) 
       Mark(NodeKind::Collection, type.index, exposure);
       break;
     case Kind::Callable:
-    case Kind::Expected:
     case Kind::Future:
     case Kind::Completer:
       Mark(NodeKind::Signature, type.index, exposure);

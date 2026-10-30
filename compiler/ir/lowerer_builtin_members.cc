@@ -111,12 +111,6 @@ void Lowerer::RegisterBuiltinReceiverMember(const frontend::TypeDescriptor& rece
       RegisterBuiltinMember(receiver, name, Builtin::ArrayJoin,
                             frontend::BuiltinSignature(Builtin::ArrayJoin), MemberKind::Method);
     }
-  } else if (receiver.kind == Kind::Expected) {
-    const auto method =
-        frontend::ResolveExpectedBuiltin(model_.generic_arguments.at(receiver.name), name);
-    if (method) {
-      RegisterExpectedMember(receiver, name, *method);
-    }
   } else if (receiver.kind == Kind::Set || receiver.kind == Kind::Map) {
     const auto method = frontend::ResolveCollectionBuiltin(
         receiver, model_.generic_arguments.at(receiver.name), name);

@@ -47,7 +47,8 @@ bytecode, and executes it in the VM. Function calls,
 control-flow branches, loops, strings, and typed arrays are supported.
 String APIs, interpolation, conversions, and builder contracts are documented in
 [string contracts](../docs/en/strings.md).
-Fallthrough switches, nullable types, lexical scope, and source locations are
+Switches with shared empty labels and explicit non-empty branch exits, nullable types,
+lexical scope, and source locations are
 specified in [basic language contracts](../docs/en/language_basics.md).
 
 The optimizer propagates integer, boolean, and null constants within basic
@@ -57,8 +58,10 @@ The bytecode backend uses linear-scan allocation over conservative live
 intervals, preserving contiguous argument windows and parameter positions.
 Registers are reused after their last use; pressure exceeding 256 physical
 slots produces a source diagnostic. IR virtual register IDs are 32-bit.
-Encoding checks all 8-bit operands, signed 16-bit immediates, and relative jump
-offsets before narrowing. `vm::Program::Create` validates the owned output once;
+Encoding checks register operands, signed 16-bit immediates, and relative jump
+offsets before narrowing, and extends pool and field indexes to uint32 with an
+index prefix. Jump targets, handlers, and source mappings use final word offsets.
+`vm::Program::Create` validates the owned output once;
 the compiler no longer exposes mutable bytecode views. See
 [execution contracts and measurements](../docs/en/vm_execution.md).
 
@@ -67,8 +70,9 @@ signatures, and generic arguments. The checker interns resolved types and record
 each expression's checked type against the AST. Lowering consumes those facts and assigns compact array-layout
 IDs. Enum members always use `Enum.member`. Nested element layouts precede their
 parent layouts. Bytecode `NewArray` encodes the
-destination register, layout ID, and length in three 8-bit operands; lengths or
-layout IDs above 255 produce a diagnostic. The existing per-function register
+destination register, compact layout ID, and length in three 8-bit operands;
+larger layout IDs use an index prefix. Lengths above 255 produce a diagnostic.
+The existing per-function register
 limit can constrain large literals earlier.
 
 Arrays are invariant references: assignments alias their storage, and element
@@ -97,7 +101,7 @@ elements occupy eight bytes and require no GC element scan.
 Generic specialization precedes checking; aliases are transparent and concrete
 specializations preserve primitive storage. Classes use public instance fields or an
 explicit constructor. Function values, shared mutable captures, interfaces,
-Expected, match, and ordered collections pass through the same typed IR and
+match, and ordered collections pass through the same typed IR and
 validated bytecode paths. See [core language specification](../docs/en/core_language.md).
 The checker does not interpret source directly.
 

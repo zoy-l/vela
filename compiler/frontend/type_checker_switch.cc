@@ -1,5 +1,6 @@
 #include "compiler/frontend/type_checker.h"
 
+#include <cstddef>
 #include <ranges>
 #include <string>
 #include <vector>
@@ -41,7 +42,9 @@ StatementFlow TypeChecker::CheckSwitch(const Statement& statement, const Type& r
   bool has_default = false;
   std::vector<StatementFlow> branches;
   ++switch_depth_;
-  for (const auto& branch : statement.cases) {
+  const auto& cases = statement.cases;
+  for (std::size_t index = 0; index < cases.size(); ++index) {
+    const auto& branch = cases.at(index);
     const auto checkpoint = refinements_.BeginBranch();
     if (branch.label) {
       CheckCaseLabel(*branch.label, type, labels);
@@ -50,7 +53,12 @@ StatementFlow TypeChecker::CheckSwitch(const Statement& statement, const Type& r
     } else {
       has_default = true;
     }
-    branches.push_back(CheckStatement(*branch.body, return_type));
+    const auto flow = CheckStatement(*branch.body, return_type);
+    branches.push_back(flow);
+    if (index + 1 < cases.size() && !branch.body->statements.empty() && flow.can_fall_through) {
+      AddDiagnostic(cases.at(index + 1).location,
+                    "non-empty switch branch must not fall through to the next label");
+    }
     refinements_.Discard(checkpoint);
   }
   --switch_depth_;

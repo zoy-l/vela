@@ -61,7 +61,6 @@ P0 行为详见[基础语言契约](language_basics.md)。
 
 ## P1：类型系统和模式匹配
 
-- [x] 参考 `std::expected` 实现 `Expected<T, E>`，通过 `ok()` / `err()` 显式构造成功值/错误值
 - [x] 添加枚举 `switch`
 - [x] 添加穷尽性匹配检查
 - [x] 添加 `match` 表达式

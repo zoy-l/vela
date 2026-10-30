@@ -24,9 +24,7 @@ TypeChecker::Type TypeChecker::NullableType(Type type) {
 TypeChecker::Type TypeChecker::ResolveGenericType(const TypeName& source) {
   Type::Kind kind = Type::Kind::Invalid;
   std::size_t count = 2;
-  if (source.name == "Expected") {
-    kind = Type::Kind::Expected;
-  } else if (source.name == "Future") {
+  if (source.name == "Future") {
     kind = Type::Kind::Future;
     count = 1;
   } else if (source.name == "Completer") {
@@ -46,10 +44,8 @@ TypeChecker::Type TypeChecker::ResolveGenericType(const TypeName& source) {
   std::vector<Type> arguments;
   std::string name = source.name + '<';
   for (std::size_t index = 0; index < count; ++index) {
-    const bool allow_void = kind == Type::Kind::Expected && index == 0;
-    auto argument =
-        ResolveType(source.arguments.at(index),
-                    allow_void || kind == Type::Kind::Future || kind == Type::Kind::Completer);
+    auto argument = ResolveType(source.arguments.at(index),
+                                kind == Type::Kind::Future || kind == Type::Kind::Completer);
     if (!IsValid(argument)) {
       return InvalidType();
     }

@@ -24,6 +24,7 @@ source_set("vm") {
     "execution_regexp.cc",
     "execution_status.h",
     "frame.h",
+    "frame_slots.h",
     "program.cc",
     "program.h",
     "register_file.cc",

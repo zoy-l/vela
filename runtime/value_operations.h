@@ -21,10 +21,6 @@ namespace vela::runtime {
                                                               HeapObject* object,
                                                               std::int64_t index,
                                                               Value value);
-[[nodiscard]] std::expected<Value, ExecutionStatus> ExpectedHasValue(HeapObject* object) noexcept;
-[[nodiscard]] std::expected<Value, ExecutionStatus> ExpectedValue(
-    HeapObject* object,
-    ExpectedAlternative alternative) noexcept;
 [[nodiscard]] std::expected<Value, ExecutionStatus> BindValueType(
     Value value,
     const TypeConstraint& type) noexcept;

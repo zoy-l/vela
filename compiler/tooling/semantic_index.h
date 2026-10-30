@@ -162,8 +162,6 @@ class SemanticIndex final {
   [[nodiscard]] std::string DefaultValue(const frontend::Expression& expression) const;
   void MarkTypeParameters(SourceLocation location, std::span<const std::string> parameters);
   [[nodiscard]] std::optional<Completion> BuiltinCompletion(const frontend::Token& token) const;
-  [[nodiscard]] std::optional<Completion> ExpectedFactoryCompletion(
-      const frontend::Token& token) const;
   [[nodiscard]] Key KeyAt(SourceLocation location) const;
   [[nodiscard]] Scope Extent(const frontend::Statement& statement) const;
   std::size_t AddSymbol(SourceLocation location, Completion completion);

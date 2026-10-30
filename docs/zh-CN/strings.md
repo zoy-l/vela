@@ -6,7 +6,9 @@
 
 `string` 是不可变且合法的 UTF-8 字节序列。源文件、运行时存储及控制台输出统一采用 UTF-8 编码。字符串中允许包含内嵌的 NUL 字节（`\0`），且不会因此截断字符串。字符串的长度、索引、切片边界和检索结果均以 Unicode 标量值（码点，code point）为单位进行计算，而非字节数或字素簇。语言中不设立独立的 `char` 类型。
 
-对于字符串 `"A中😀e\u0301"`，其 `length` 为 5，而 `byteLength` 为 11。末尾的 `e` 与组合重音符号各自作为独立码点计数。Vela 不进行 Unicode 规范化归一化处理；相等性比较精确比对编码后的实际字节序列。随机码点索引需要从头扫描，因此在循环中反复对长字符串按索引寻址将呈现二次方时间复杂度 O(n²)。建议调用 `codePoints()` 在线性时间 O(n) 内生成原生的 `int[]` 数组，随后便可以 O(1) 常数时间按索引访问该数组。字素簇 API（`graphemes()`、`graphemeLength`、`graphemeSlice(start, end)`）遵循扩展字素簇规范；详见 [P1 Unicode 契约](core_language.md#unicode-code-points-and-graphemes)。
+对于字符串 `"A中😀e\u0301"`，其 `length` 为 5，而 `byteLength` 为 11。末尾的 `e` 与组合重音符号各自作为独立码点计数。Vela 不进行 Unicode 规范化归一化处理；相等性比较精确比对编码后的实际字节序列。
+
+`length` 缓存码点数，复杂度为 O(1)。ASCII 字符串按码点索引也是 O(1)。非 ASCII 字符串缓存最近访问的位置，连续正序或倒序索引的单次开销均摊为 O(1)，因此 `for (let i = 0; i < text.length; i++) { text[i]; }` 的总时间为 O(n)。任意跳读的最坏开销仍为 O(n)。需要反复随机访问时，可调用 `codePoints()` 在线性时间内生成原生 `int[]`，随后以 O(1) 访问数组。字素簇 API（`graphemes()`、`graphemeLength`、`graphemeSlice(start, end)`）遵循扩展字素簇规范；详见 [P1 Unicode 契约](core_language.md#unicode-code-points-and-graphemes)。
 
 ## 字面量、转义与插值
 
@@ -27,10 +29,10 @@ const emoji = '\u{1F600}';
 
 | 表达式 | 返回类型 | 规范契约 |
 | --- | --- | --- |
-| `text.length` | `int` | Unicode 码点数量，时间复杂度 O(byte length) |
+| `text.length` | `int` | 缓存的 Unicode 码点数量，时间复杂度 O(1) |
 | `text.byteLength` | `int` | 编码字节数量，时间复杂度 O(1) |
-| `text[index]` | `string` | 单个码点；扫描到该索引并分配 1–4 字节内容的子字符串 |
-| `text.slice(start: int, end: int)` | `string` | 左闭右开码点范围切片；扫描切片边界一次并复制结果 |
+| `text[index]` | `string` | 单个码点；ASCII 为 O(1)，连续正序或倒序访问均摊 O(1)，任意跳读最坏 O(n)；分配 1–4 字节内容的子字符串 |
+| `text.slice(start: int, end: int)` | `string` | 左闭右开码点范围切片；使用位置缓存定位边界并复制结果 |
 | `text.indexOf(text: string)` | `int` | 首次匹配的码点偏移位置，未找到返回 -1；空模式在位置 0 处命中 |
 | `text.includes(text: string)` | `bool` | 是否包含子串；任何文本均包含空模式 |
 | `text.startsWith(prefix: string)` | `bool` | 是否以指定前缀开头，空前缀始终返回 true |
@@ -48,6 +50,8 @@ const emoji = '\u{1F600}';
 `indexOf` 和 `includes` 对多字节模式采用 KMP 算法，保证在重复前缀输入下仍具有线性 O(n) 搜索时间。短模式跳转表使用栈内存；超过 64 字节的模式将分配临时原生前缀跳转表并在分配失败时显式报错。前缀与后缀检查直接比对字节序列；UTF-8 的自同步特性确保这些字节比对严格落在合法的 Unicode 码点边界上。
 
 ## 编译、内存分配与垃圾回收
+
+所有字符串创建路径都会初始化码点数。拼接、插值和 join 在已有计数时直接复用；原始 UTF-8 输入在创建时计数。码点数利用对象头中既有的对齐空间，位置缓存复用字符串闲置的元数据槽，两者均不增加对象头大小。字符串字节不可变，但运行时可在 Isolate 所属线程更新整数位置缓存。VM、JIT 和 AOT 必须遵守这一契约，不能把整个对象视为只读存储。缓存不含托管引用，不需要 GC 写屏障。
 
 词法分析器输出解码后的字面量分段与表达式标记。语法分析器构建字符串插值 AST 节点；类型检查器验证每个片段与表达式并记录内置函数绑定。Typed IR 保留插值专用操作及静态选定的内置函数 ID，并将其直接带入定长寄存器字节码中。程序创建与加载边界会对内置函数 ID 与寄存器范围统一做单次有效性校验。运行时调用会返回明确区分的类型、越界或内存分配错误。
 

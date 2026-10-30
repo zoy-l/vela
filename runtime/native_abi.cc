@@ -1,5 +1,6 @@
 #include "runtime/native_abi.h"
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -16,6 +17,7 @@
 #include "runtime/native_deoptimization.h"
 #include "runtime/native_dispatch.h"
 #include "runtime/native_instance.h"
+#include "runtime/native_stack.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -39,6 +41,15 @@ NativeExecution::NativeExecution(NativeInstance& instance) noexcept
       context_(instance.isolate()),
       exception_root_(isolate().heap(), &pending_exception_, 1, RootOwner::Runtime),
       execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {
+  const auto bounds = CurrentNativeStackBounds();
+  if (!bounds) {
+    stack_status_ = bounds.error();
+  } else if (bounds->upper - bounds->lower <= kNativeStackReserveBytes) {
+    stack_status_ = ExecutionStatus::StackOverflow;
+  } else {
+    stack_limit_ = bounds->lower + kNativeStackReserveBytes;
+    stack_status_ = ExecutionStatus::Returned;
+  }
   if (instance.image().native_mode == static_cast<std::uint32_t>(NativeProgramMode::Reloadable)) {
     isolate().native_dispatch().RegisterExecution(*this);
   }
@@ -65,7 +76,12 @@ ExecutionStatus NativeExecution::PrepareEntry() noexcept {
     pending_exception_ = Value::Null();
     exception_allocation_failed_ = false;
   }
-  if (frame_count_ == kMaxCallFrames) {
+  if (stack_status_ != ExecutionStatus::Returned) {
+    return stack_status_;
+  }
+  const std::byte stack_position{};
+  if (frame_count_ == kMaxCallFrames ||
+      std::bit_cast<std::uintptr_t>(&stack_position) <= stack_limit_) {
     return ExecutionStatus::StackOverflow;
   }
   return ExecutionStatus::Returned;

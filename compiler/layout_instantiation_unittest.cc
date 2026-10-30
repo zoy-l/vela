@@ -32,29 +32,29 @@ void ExpectIsolatedNodeLayouts(const runtime::ProgramLayouts& first,
   EXPECT_EQ((*nested)->element.array->element.nominal, &first_node->nominal_type());
 }
 
-void ExpectExpectedNodeArray(const runtime::TypeSignature& expected,
+void ExpectNodeArrayCallback(const runtime::TypeSignature& callback,
                              const runtime::ClassLayout* node) {
-  const auto& result = expected.result;
+  const auto& result = callback.result;
   if (!result.has_value()) {
-    ADD_FAILURE() << "Expected must retain its success payload";
+    ADD_FAILURE() << "Callback must retain its result type";
     return;
   }
   ASSERT_NE(result->array, nullptr);
   EXPECT_EQ(result->array->element.nominal, &node->nominal_type());
-  ASSERT_EQ(expected.parameters.size(), 1U);
-  EXPECT_EQ(expected.parameters.front().type.kind, runtime::ValueKind::String);
+  ASSERT_EQ(callback.parameters.size(), 1U);
+  EXPECT_EQ(callback.parameters.front().type.kind, runtime::ValueKind::String);
 }
 
 void ExpectNestedFuture(const runtime::LayoutCache& cache, const runtime::ClassLayout* node) {
-  const auto* future = cache.signatures.at("Future<Expected<Node[], string>>");
+  const auto* future = cache.signatures.at("Future<(string) => Node[]>");
   const auto& payload = future->result;
   if (!payload.has_value()) {
     ADD_FAILURE() << "Future must retain its result type";
     return;
   }
-  const auto* expected = payload->signature;
-  ASSERT_NE(expected, nullptr);
-  ExpectExpectedNodeArray(*expected, node);
+  const auto* callback = payload->signature;
+  ASSERT_NE(callback, nullptr);
+  ExpectNodeArrayCallback(*callback, node);
 }
 
 TEST(LayoutInstantiationTest, OwnsNestedTypesAfterFrontendDestructionAndBindsPerIsolate) {
@@ -66,11 +66,11 @@ class Node implements Readable {
   next: Node?;
   read(): int { return 42; }
 }
-func identity(value: Future<Expected<Node[], string>>): Future<Expected<Node[], string>> {
+func identity(value: Future<(string) => Node[]>): Future<(string) => Node[]> {
   return value;
 }
 func main(): void {
-  const callback: (Future<Expected<Node[], string>>) => Future<Expected<Node[], string>> = identity;
+  const callback: (Future<(string) => Node[]>) => Future<(string) => Node[]> = identity;
   const nodes: Node[][] = [];
   const view: Readable = Node(next: null);
 }

@@ -174,18 +174,12 @@ BENCHMARK_CAPTURE(SteadyExecution, MatchDispatch, "match_dispatch.vela", 3500)
 BENCHMARK_CAPTURE(Compile, NumericConversions, "numeric_conversions.vela")
     ->Name("compile/numeric_conversions");
 BENCHMARK_CAPTURE(Compile, ClosureCalls, "closure_calls.vela")->Name("compile/closure_calls");
-BENCHMARK_CAPTURE(Compile, ExpectedResults, "expected_results.vela")
-    ->Name("compile/expected_results");
 BENCHMARK_CAPTURE(Compile, UnicodeGraphemes, "unicode_graphemes.vela")
     ->Name("compile/unicode_graphemes");
 BENCHMARK_CAPTURE(FirstExecution, UnicodeGraphemes, "unicode_graphemes.vela", 4000)
     ->Name("first_execute/unicode_graphemes");
 BENCHMARK_CAPTURE(SteadyExecution, UnicodeGraphemes, "unicode_graphemes.vela", 4000)
     ->Name("vm/unicode_graphemes");
-BENCHMARK_CAPTURE(FirstExecution, ExpectedResults, "expected_results.vela", 499500)
-    ->Name("first_execute/expected_results");
-BENCHMARK_CAPTURE(SteadyExecution, ExpectedResults, "expected_results.vela", 499500)
-    ->Name("vm/expected_results");
 BENCHMARK_CAPTURE(FirstExecution, ClosureCalls, "closure_calls.vela", 1000)
     ->Name("first_execute/closure_calls");
 BENCHMARK_CAPTURE(SteadyExecution, ClosureCalls, "closure_calls.vela", 1000)

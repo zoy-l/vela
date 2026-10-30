@@ -27,7 +27,7 @@ class NativeDistributionTest(unittest.TestCase):
 
     def test_existing_language_corpus_matches_vm(self) -> None:
         categories = [
-            "class", "interface", "generic", "global", "exception", "expected", "dynamic_array",
+            "class", "interface", "generic", "global", "exception", "dynamic_array",
             "double", "numeric_conversion", "byte_data", "collection", "function_value",
             "builtin_function_value", "string", "regexp", "json", "standard_library", "async_contract",
             "language_basics", "control_flow", "match", "cast", "optimization", "recursion",

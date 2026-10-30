@@ -1,19 +1,18 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iosfwd>
 #include <string>
 #include <vector>
 
-#include "base/execution_limits.h"
 #include "base/source_location.h"
 #include "runtime/future.h"
 #include "runtime/isolate.h"
 #include "runtime/value.h"
 #include "vm/debugger.h"
 #include "vm/execution_status.h"
+#include "vm/frame_slots.h"
 #include "vm/program.h"
 #include "vm/register_file.h"
 
@@ -62,7 +61,7 @@ class VirtualMachine final {
                                                        std::uint32_t entry_function,
                                                        Debugger* debugger) noexcept;
   runtime::Isolate& isolate_;
-  std::array<RegisterFile, kMaxCallFrames> registers_;
+  FrameSlots<RegisterFile> registers_;
   bool executing_ = false;
 };
 

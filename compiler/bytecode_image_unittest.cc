@@ -1,7 +1,5 @@
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
-#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -64,7 +62,6 @@ INSTANTIATE_TEST_SUITE_P(
         "interface Readable { read(): int; } class Box implements Readable { read(): int { return "
         "42; } } "
         "func main(): int { const item: Readable = Box(); return item.read(); }",
-        "func main(): int { const result: Expected<int, string> = ok(42); return result.value(); }",
         "func main(): int { const values: Map<string, Set<int>> = Map<string, Set<int>>(); "
         "const set: Set<int> = Set<int>(); set.add(42); values.set(\"key\", set); "
         "const found = values.get(\"key\"); if (found != null) { return found.values()[0]; } "
@@ -125,21 +122,6 @@ TEST(BytecodeImageTest, ReloadsFreshGlobalStateAndRetainsSourceTrace) {
   ASSERT_TRUE(loaded);
   EXPECT_EQ(machine.Execute(loaded->FindFunction("main")).value.AsInteger(), 42);
   EXPECT_EQ(machine.Execute(compiled.program.FindFunction("main")).value.AsInteger(), 44);
-}
-
-TEST(BytecodeImageTest, EncodingFailureDoesNotRetainNewLayoutMetadata) {
-  runtime::Isolate isolate;
-  const auto initial = isolate.layout_counts();
-  constexpr std::uint32_t kFieldCount =
-      static_cast<std::uint32_t>(std::numeric_limits<std::uint8_t>::max()) + 2;
-  std::string source = "class Large {";
-  for (std::uint32_t index = 0; index < kFieldCount; ++index) {
-    source += "value" + std::to_string(index) + ": int = 0;";
-  }
-  source += "} func main(): int { const value = Large(); return 0; }";
-  const auto compiled = CompileSource(source, isolate);
-  EXPECT_FALSE(compiled.Succeeded());
-  EXPECT_EQ(isolate.layout_counts(), initial);
 }
 
 }  // namespace

@@ -86,7 +86,6 @@ void ImageWriter::CollectTypeGraph() {
     if (instance < classes.values.size()) {
       const auto* layout = classes.values.at(instance++);
       signatures.Add(layout->callable_type());
-      signatures.Add(layout->expected_type());
       for (const auto* interface : layout->interfaces()) {
         interfaces.Add(interface);
       }
@@ -190,7 +189,6 @@ void ImageWriter::WriteClass(const runtime::ClassLayout& layout) {
   WriteNumbers(writer, layout.dispatch_targets());
   writer.Write(static_cast<std::uint8_t>(layout.IsEnum()));
   writer.Write(signatures.Index(layout.callable_type()));
-  writer.Write(signatures.Index(layout.expected_type()));
 }
 
 void ImageWriter::WriteTypeSignatures() {

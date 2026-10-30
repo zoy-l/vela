@@ -300,6 +300,31 @@ func main(): string {
             "0,,,0,-1,true,true,true");
 }
 
+TEST_F(StringLanguageTest, CountsEveryConstructionPathAndTraversesBothDirectionsWithDynamicAccess) {
+  const auto result = Run(R"(
+func main(): int {
+  const text = 'A中😀e\u0301\0';
+  const joined = [text, text].join('界');
+  const absent: string? = null;
+  const formatted = '${text}/${42}/${true}/${absent}';
+  const numbers = [12, 34].join('中');
+  const builder = String(); builder.append(text); builder.append('ß');
+  const snapshot = builder.toString();
+  const forward = String(); const backward = String();
+  const dynamicText: dynamic = text;
+  for (let i = 0; i < dynamicText.length; i++) { forward.append(dynamicText[i]); }
+  for (let i = text.length - 1; i >= 0; i--) { backward.append(text[i]); }
+  return text.length == 6 && joined.length == 13 && formatted.length == 19 &&
+         numbers.length == 5 && snapshot.length == 7 && snapshot.toUpperCase().length == 8 &&
+         'İßﬃ'.toLowerCase().length == 4 && 'ßﬃ'.toUpperCase().length == 5 &&
+         forward.toString() == text && backward.toString() == '\0\u0301e😀中A' &&
+         joined.slice(6, 9) == '界A中' ? 42 : 0;
+}
+)");
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
 TEST_F(StringAllocationTest, InterpolationAllocatesOnlyTheFinalString) {
   auto& isolate = this->isolate();
   auto& compiled = compilation();

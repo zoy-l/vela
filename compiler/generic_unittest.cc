@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -5,6 +6,7 @@
 
 #include "compiler/compiler.h"
 #include "runtime/isolate.h"
+#include "vm/bytecode_image.h"
 #include "vm/vm.h"
 
 namespace vela::compiler {
@@ -51,6 +53,43 @@ func main(): int {
 }
 
 class GenericErrorTest : public testing::TestWithParam<std::string_view> {};
+
+TEST(GenericTest, ExecutesIndependentSpecializationsBeyond256AndRestoresWideCodeFromImage) {
+  constexpr std::size_t kTypes = 257;
+  std::string source = "class Box<T> { value: T; } func identity<T>(value: T): T { return value; }";
+  for (std::size_t index = 0; index < kTypes; ++index) {
+    source += "class Tag" + std::to_string(index) + " { value: int; }";
+  }
+  source += "func main(): int { let total = 0; for (let round = 0; round < 2; round++) { try {";
+  for (std::size_t index = 0; index < kTypes; ++index) {
+    const auto type = "Tag" + std::to_string(index);
+    source.append("total += identity<Box<")
+        .append(type)
+        .append(">>(Box<")
+        .append(type)
+        .append(">(value: ")
+        .append(type)
+        .append("(value: 1))).value.value;");
+  }
+  source +=
+      "const zero = round - round; total += 1 / zero; } catch (error: Error) { "
+      "if (error.code != 'DivisionByZero') { return -1; } } } return total; }";
+  runtime::Isolate isolate;
+  const auto compiled = CompileSource(source, isolate);
+  ASSERT_TRUE(compiled.Succeeded())
+      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), kTypes * 2);
+  const auto image = vm::SaveBytecode(compiled.program, isolate);
+  ASSERT_TRUE(image);
+  runtime::Isolate restored;
+  const auto loaded = vm::LoadBytecode(*image, restored);
+  ASSERT_TRUE(loaded) << loaded.error().message;
+  const auto resumed = vm::VirtualMachine(restored).Execute(loaded->FindFunction("main"));
+  ASSERT_TRUE(resumed.Succeeded()) << resumed.message;
+  EXPECT_EQ(resumed.value.AsInteger(), kTypes * 2);
+}
 
 TEST(GenericTest, PreservesLoopBindingsAndAccessorFlagsWhenCloningTemplates) {
   runtime::Isolate isolate(1);

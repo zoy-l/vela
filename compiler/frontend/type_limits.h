@@ -5,6 +5,6 @@
 namespace vela::frontend {
 
 inline constexpr std::size_t kMaxTypeNesting = 128;
-inline constexpr std::size_t kMaxGenericSpecializations = 256;
+inline constexpr std::size_t kMaxGenericExpansionDepth = 128;
 
 }  // namespace vela::frontend

@@ -162,7 +162,7 @@ INSTANTIATE_TEST_SUITE_P(
         "class E{message:string;}func main():void{try{throw "
         "E(message:\"x\");}catch(e:E){print(e.message);}"
         "catch{print(\"other\");}finally{print(\"done\");}}",
-        "func main():int{const x:Expected<int,string> =ok(42);return match(x.value()){"
+        "func main():int{const x:Map<int,string> =Map<int,string>();return match(x.size){"
         "42=>42,_=>0,};}",
         "func main():void{const x:int?[][]=[[40,null],[2]];print(\"${(\"${\"nested\"}\")}\");}",
         R"(func main():void{print("apostrophe ' and escaped \"quotes\"");print('${'${"nested"}'}');})",

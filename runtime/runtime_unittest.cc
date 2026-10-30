@@ -254,13 +254,5 @@ TEST(RuntimeTest, FutureBindingStoresThePayloadSignatureAndRejectsRetyping) {
             ExecutionStatus::TypeError);
 }
 
-TEST(RuntimeTest, ExpectedAllocationRejectsLayoutsWithoutPayloadStorage) {
-  Isolate isolate;
-  auto* empty = isolate.CreateClassLayout(0, {});
-  EXPECT_EQ(isolate.heap().AllocateExpected(*empty, Value::Integer(42), ExpectedAlternative::Ok),
-            nullptr);
-  EXPECT_EQ(isolate.heap().object_count(), 0U);
-}
-
 }  // namespace
 }  // namespace vela::runtime

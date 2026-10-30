@@ -78,7 +78,7 @@ ByteArray stores its header and fixed raw bytes in one accounted heap allocation
 and is traced as a leaf. ByteData stores a strong owner reference initialized
 before publication; tracing visits that owner even for an empty view. No byte
 content is scanned for references. Views, including those reached from fields,
-closures, typed containers, Expected or suspended async frames, retain the entire
+closures, typed containers or suspended async frames, retain the entire
 backing allocation. See [byte ownership](byte_data.md#ownership-mutation-and-gc).
 
 RegExp traces its original source and owns its PCRE2 program. RegExpMatch traces

@@ -93,7 +93,6 @@ TypeCheckResult TypeChecker::Check(const Program& program) {
   explicit_super_constructors_.clear();
   type_operands_.clear();
   generic_arguments_.clear();
-  expected_calls_.clear();
   match_bindings_.clear();
   catch_types_.clear();
   enum_sizes_.clear();
@@ -177,7 +176,6 @@ TypeCheckResult TypeChecker::Check(const Program& program) {
   model.explicit_super_constructors = std::move(explicit_super_constructors_);
   model.type_operands = std::move(type_operands_);
   model.generic_arguments = std::move(generic_arguments_);
-  model.expected_calls = std::move(expected_calls_);
   model.match_bindings = std::move(match_bindings_);
   model.catch_types = std::move(catch_types_);
   model.argument_order = std::move(argument_order_);
@@ -426,10 +424,6 @@ TypeChecker::Type TypeChecker::CheckCall(const Expression& expression, const Typ
       (callee.text == "Set" || callee.text == "Map")) {
     return CheckCollectionConstruction(expression, expected);
   }
-  if (callee.kind == Expression::Kind::Name && LookupLocal(callee.text) == nullptr &&
-      (callee.text == "ok" || callee.text == "err")) {
-    return CheckExpectedFactory(expression, expected);
-  }
   if (callee.kind == Expression::Kind::Member) {
     return CheckMethodCall(expression, expected);
   }
@@ -599,9 +593,6 @@ TypeChecker::Type TypeChecker::CheckMethodReceiver(const Expression& expression,
   if (receiver.kind == Type::Kind::Future || receiver.kind == Type::Kind::Completer ||
       receiver.kind == Type::Kind::Timer || receiver.kind == Type::Kind::CancellationToken) {
     return CheckAsyncMethod(expression, receiver, expected);
-  }
-  if (receiver.kind == Type::Kind::Expected) {
-    return CheckExpectedMethod(expression, receiver);
   }
   if (receiver.kind == Type::Kind::Array) {
     return CheckArrayMethod(expression, receiver);
@@ -1198,8 +1189,8 @@ TypeChecker::Type TypeChecker::CheckEquality(const Expression& expression,
     return {.kind = Type::Kind::Bool, .name = "bool"};
   }
   if (left.kind == Type::Kind::Array || left.kind == Type::Kind::MutableString ||
-      left.kind == Type::Kind::Function || left.kind == Type::Kind::Expected ||
-      left.kind == Type::Kind::Set || left.kind == Type::Kind::Map) {
+      left.kind == Type::Kind::Function || left.kind == Type::Kind::Set ||
+      left.kind == Type::Kind::Map) {
     AddDiagnostic(expression.location, "equality is not defined for this type");
     return InvalidType();
   }

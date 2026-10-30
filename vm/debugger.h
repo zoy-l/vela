@@ -9,6 +9,8 @@
 #include "runtime/value.h"
 
 namespace vela::vm {
+template <class T>
+class FrameSlots;
 namespace internal {
 struct ActiveFrame;
 class Execution;
@@ -45,10 +47,9 @@ class DebugContext final {
 
  private:
   friend class internal::Execution;
-  DebugContext(const internal::ActiveFrame* frames, std::size_t count) noexcept
-      : frames_(frames), frame_count_(count) {}
-  // ActiveFrame 在此是不完整类型；MSVC span 会提前实例化迭代器，实际 span 在实现中构造。
-  const internal::ActiveFrame* frames_;
+  DebugContext(const FrameSlots<internal::ActiveFrame>& frames, std::size_t count) noexcept
+      : frames_(&frames), frame_count_(count) {}
+  const FrameSlots<internal::ActiveFrame>* frames_;
   std::size_t frame_count_;
 };
 

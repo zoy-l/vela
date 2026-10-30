@@ -228,14 +228,6 @@ func main(): int {
   return result[0] + result[1];
 })",
                              R"(
-func main(): int {
-  const result: Expected<int, string> = ok(42);
-  const hasValue = result.hasValue;
-  const value = result.value;
-  if (hasValue()) { return value(); }
-  return 0;
-})",
-                             R"(
 func contains(text: string?): int {
   if (text != null) {
     const has = text.includes;

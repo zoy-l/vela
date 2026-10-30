@@ -113,9 +113,6 @@ std::uint32_t Lowerer::RegisterArrayType(const frontend::TypeDescriptor& type) {
       element.kind == frontend::TypeDescriptor::Kind::Map) {
     static_cast<void>(RegisterCollectionType(element));
   }
-  if (element.kind == frontend::TypeDescriptor::Kind::Expected) {
-    static_cast<void>(RegisterExpectedType(element));
-  }
   if (element.kind == frontend::TypeDescriptor::Kind::Array) {
     static_cast<void>(RegisterArrayType(element));
   }

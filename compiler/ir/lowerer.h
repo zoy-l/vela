@@ -205,9 +205,6 @@ class Lowerer final {
   void RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& receiver,
                                     std::string_view name,
                                     ArrayAlgorithm algorithm);
-  void RegisterExpectedMember(const frontend::TypeDescriptor& receiver,
-                              std::string_view name,
-                              const frontend::ExpectedMethod& descriptor);
   Function CreateMemberFunction(const frontend::TypeDescriptor& receiver,
                                 std::string_view name,
                                 const frontend::FunctionDescriptor& signature);
@@ -228,8 +225,6 @@ class Lowerer final {
                              Builtin builtin,
                              const frontend::FunctionDescriptor& signature,
                              MemberKind kind);
-  LoweredValue LowerExpected(const frontend::Expression& expression);
-  ClassId RegisterExpectedType(frontend::TypeDescriptor type);
   LoweredValue ReadLocal(const Local& local, frontend::SourceLocation location);
   ClassId CallableClass(std::uint32_t function_id,
                         CallableMode mode,

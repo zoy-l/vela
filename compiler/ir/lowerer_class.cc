@@ -146,9 +146,6 @@ std::uint32_t Lowerer::RegisterRuntimeType(const frontend::TypeDescriptor& type)
     if (type.kind == frontend::TypeDescriptor::Kind::Array) {
       static_cast<void>(RegisterArrayType(type));
     }
-    if (type.kind == frontend::TypeDescriptor::Kind::Expected) {
-      static_cast<void>(RegisterExpectedType(type));
-    }
     if (type.kind == frontend::TypeDescriptor::Kind::Set ||
         type.kind == frontend::TypeDescriptor::Kind::Map) {
       static_cast<void>(RegisterCollectionType(type));

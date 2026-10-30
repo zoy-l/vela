@@ -97,8 +97,6 @@ enum class ArrayAccessError : std::uint8_t {
 enum class StringJoinError : std::uint8_t { TypeMismatch, OutOfMemory };
 
 enum class StringCase : std::uint8_t { Lower, Upper };
-enum class ExpectedAlternative : std::uint8_t { Ok, Err };
-enum class ExpectedAccessError : std::uint8_t { NotExpected, InactiveAlternative };
 
 struct CollectionEntry final {
   Value key;
@@ -196,14 +194,6 @@ class Heap final {
   // 借用对象的固定原始存储；调用者先验证对象种类并在借用期间保根。
   [[nodiscard]] static std::span<std::uint8_t> ByteArrayBytes(HeapObject& object) noexcept;
   [[nodiscard]] static std::span<std::uint8_t> ByteDataBytes(HeapObject& object) noexcept;
-  [[nodiscard]] HeapObject* AllocateExpected(ClassLayout& layout,
-                                             Value payload,
-                                             ExpectedAlternative alternative) noexcept;
-  [[nodiscard]] static std::expected<ExpectedAlternative, ExpectedAccessError>
-  ExpectedAlternativeOf(const HeapObject& object) noexcept;
-  [[nodiscard]] static std::expected<Value, ExpectedAccessError> ReadExpectedValue(
-      const HeapObject& object,
-      ExpectedAlternative alternative) noexcept;
   [[nodiscard]] HeapObject* AllocateCollection(const CollectionLayout& layout) noexcept;
   // 输入在整个运算期间须保根；结果独立分配并保持插入顺序。
   [[nodiscard]] std::expected<HeapObject*, ExecutionStatus>
@@ -421,7 +411,11 @@ class Heap final {
   void ReleaseInstanceStorage(InstanceStorage& storage) noexcept;
   void RegisterInstance(HeapObject& object, InstanceStorage& storage);
   void ReleaseInstance(HeapObject& object) noexcept;
-  [[nodiscard]] StringObject* AllocateStringStorage(std::size_t length) noexcept;
+  struct StringSize final {
+    std::size_t bytes;
+    std::size_t code_points;
+  };
+  [[nodiscard]] StringObject* AllocateStringStorage(StringSize size) noexcept;
   void ReleaseMutableString(HeapObject& object) noexcept;
   void MarkArray(HeapObject& array) noexcept;
   void ReleaseArray(HeapObject& array) noexcept;

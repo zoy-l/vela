@@ -16,7 +16,6 @@ enum class ExecutionStatus : std::uint8_t {
   InvalidNumericConversion,
   CyclicInitialization,
   InvalidCast,
-  InactiveExpectedAlternative,
   StackOverflow,
   InvalidEntry,
   InvalidIsolate,

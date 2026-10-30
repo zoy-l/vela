@@ -14,6 +14,7 @@
 #include "base/callable.h"
 #include "base/execution_status.h"
 #include "base/member.h"
+#include "base/source_location.h"
 #include "runtime/external_resources.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -103,6 +104,7 @@ struct ValidationError final {
   std::size_t function = 0;
   std::size_t instruction = 0;
   std::string message;
+  std::optional<SourceLocation> location = std::nullopt;
 };
 
 enum class GlobalState : std::uint8_t { Uninitialized, Initializing, Ready };

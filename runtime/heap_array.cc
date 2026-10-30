@@ -67,7 +67,7 @@ HeapObject* Heap::AllocateArrayStorage(const ArrayLayout& layout,
   }
   auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
   object->kind = ObjectKind::Array;
-  object->type_metadata = &layout;
+  object->SetTypeMetadata(&layout);
   object->length = static_cast<std::uint32_t>(length);
   auto& buffer = *std::construct_at(&internal::ArrayBuffer(*object));
   buffer.capacity = inline_capacity == 0 ? object->length : inline_capacity;

@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <expected>
 #include <limits>
 #include <memory>
 #include <new>
@@ -150,38 +149,6 @@ HeapObject* Heap::AllocateInstance(const ClassLayout& layout,
                           std::uninitialized_fill_n(fields, layout.field_count(), Value::Null());
                           std::ranges::copy(initial_fields, fields);
                         });
-}
-
-HeapObject* Heap::AllocateExpected(ClassLayout& layout,
-                                   Value payload,
-                                   ExpectedAlternative alternative) noexcept {
-  auto* object = AllocateInstance(layout, std::span(&payload, 1));
-  if (object != nullptr) {
-    object->kind = ObjectKind::Expected;
-    object->length = static_cast<std::uint32_t>(alternative);
-  }
-  return object;
-}
-
-std::expected<ExpectedAlternative, ExpectedAccessError> Heap::ExpectedAlternativeOf(
-    const HeapObject& object) noexcept {
-  if (object.kind != ObjectKind::Expected) {
-    return std::unexpected(ExpectedAccessError::NotExpected);
-  }
-  return static_cast<ExpectedAlternative>(object.length);
-}
-
-std::expected<Value, ExpectedAccessError> Heap::ReadExpectedValue(
-    const HeapObject& object,
-    ExpectedAlternative alternative) noexcept {
-  const auto active = ExpectedAlternativeOf(object);
-  if (!active) {
-    return std::unexpected(active.error());
-  }
-  if (*active != alternative) {
-    return std::unexpected(ExpectedAccessError::InactiveAlternative);
-  }
-  return *GetField(object, 0);
 }
 
 void Heap::Publish(HeapObject& object, const Allocation& allocation) noexcept {

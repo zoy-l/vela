@@ -101,10 +101,6 @@ TypeConstraint LayoutInstantiation::Constraint(const layout::Type& type) {
       result.callable = true;
       result.signature = Signature(type.index);
       break;
-    case Kind::Expected:
-      result.object_kind = ObjectKind::Expected;
-      result.signature = Signature(type.index);
-      break;
     case Kind::Future:
       result.object_kind = ObjectKind::Future;
       result.signature = Signature(type.index);
@@ -248,9 +244,6 @@ ProgramLayouts LayoutInstantiation::Build() {
   for (std::size_t index = 0; index < description_->classes.size(); ++index) {
     const auto& description = description_->classes.at(index);
     auto* stored = classes_.at(index);
-    if (description.expected_type) {
-      stored->BindExpectedType(*Signature(*description.expected_type));
-    }
     if (description.callable_type) {
       stored->BindCallableType(*Signature(*description.callable_type));
     }

@@ -9,11 +9,12 @@ the [basic language milestone](language_basics.md).
 
 ## Findings
 
-The earlier encoder already checked every non-jump `instruction.index` against
-the 8-bit range before any narrowing. Calling function index 256 therefore
-produced a diagnostic; it did not silently wrap to function zero. The same
-guard covered constant, layout, and field indexes. Signed immediate and jump
-offset checks also existed. New regression tests exercise those boundaries.
+The encoder checks register widths, signed immediates, and jump offsets before
+narrowing. Pool, call-target, selector, and field indexes use an index-extension
+word when they exceed their compact operand. The resulting index is uint32;
+no global 256-specialization restriction is needed. Jumps, exception ranges,
+and source mappings are remapped to final word offsets. Program validation
+rejects truncated or misplaced prefixes and jumps into extended instructions.
 
 The other findings were actionable: virtual registers accumulated without
 reuse, execution revalidated all functions and allocated a maximum-sized
@@ -94,12 +95,19 @@ calls reuse the storage after clearing it to null. Each active frame registers
 only its actual slot span as a GC root range. Return and error unwinding detach
 all frame roots; inactive cached slots are not roots.
 
+The current call-depth limit is 1024. Frame metadata and register files keep
+stable addresses as the stack grows. The first frame is inline; deeper frames
+are allocated on demand. Native JIT/AOT entries also check the current thread's
+physical stack boundary, reserving 64 KiB for failure reporting and unwinding.
+They can return `StackOverflow` before reaching 1024 logical frames if the host
+thread has insufficient stack space.
+
 This replaces a 262,144-byte maximum register allocation on every execution
 (`64 * 256 * sizeof(Value)`, with `sizeof(Value) == 16` on this build). The new
 `register_bytes` benchmark counter sums retained native slot capacities after
 warm-up. It excludes fixed VM/frame metadata, allocator overhead, program
 storage, and GC heap memory. It is neither process RSS nor total VM memory.
-The current twenty scripts retain 48–224 bytes of native register slots.
+The twenty scripts in that measurement retained 48–224 bytes of native register slots.
 Capacity persists until VM destruction; peak recursive workloads can still
 reach the configured maximum.
 
@@ -115,19 +123,18 @@ root visits, object tracing, and allocation costs still need measurement.
 | --- | --- |
 | Physical slots per function | 1–256; register indexes 0–255 |
 | Parameters per function | At most 256, subject to slot/window allocation |
-| Direct call target | Function index 0–255 |
+| Direct call target | uint32 function index; compact byte operand or index prefix |
 | Entry point | 32-bit index; index 256 is tested and supported |
-| Class, array-layout and field indexes | 0–255 in encoded instructions |
-| Integer, double and string constant indexes | 0–65535 in encoded instructions |
+| Class, array-layout, collection, type, selector, global and field indexes | uint32; index prefix when needed |
+| Integer, double and string constant indexes | uint32; compact uint16 operand or index prefix |
 | Array literal length and interpolation part count | At most 255 per instruction |
 | Integer literals | Signed 16-bit immediate or full int64 constant pool |
 | Relative branch | Signed 16-bit offset from the following instruction |
-| Active call depth | At most 64 frames; overflow returns `StackOverflow` |
+| Active call depth | At most 1024 frames; overflow returns `StackOverflow`; native backends also enforce the host thread's physical stack boundary |
 
-Unreferenced declarations do not require a blanket 256-function restriction.
-Programs with more functions can execute an entry beyond the call operand
-range, provided their encoded direct calls remain representable. Limits are
-diagnosed before narrowing. Current P2 register/constant representation and
+Programs can call and instantiate declarations beyond index 255. Register
+pressure, literal lengths, and branch ranges retain their separate checks.
+Current P2 register/constant representation and
 architecture is documented in [VM storage](vm_storage.md).
 
 ## Validation and correctness contracts

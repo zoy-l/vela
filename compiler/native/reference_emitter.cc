@@ -15,7 +15,6 @@
 #include "base/opcode.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
-#include "runtime/heap.h"
 #include "runtime/native_memory_layout.h"
 #include "runtime/value.h"
 
@@ -184,40 +183,6 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
     case Opcode::SetGlobal: {
       EmitGlobalStore(instruction);
       return {};
-    }
-    case Opcode::NewOk:
-    case Opcode::NewErr: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_new_expected", status_type, pointer,
-                                                word, pointer, status_type, pointer);
-      const auto alternative = instruction.opcode == Opcode::NewOk
-                                   ? runtime::ExpectedAlternative::Ok
-                                   : runtime::ExpectedAlternative::Err;
-      status =
-          builder_.CreateCall(helper, {
-                                          context,
-                                          index,
-                                          Pack(Encode(instruction.lhs), 0),
-                                          builder_.getInt8(static_cast<std::uint8_t>(alternative)),
-                                          result_,
-                                      });
-      break;
-    }
-    case Opcode::ExpectedHasValue: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_expected_has_value", status_type,
-                                                pointer, pointer);
-      status = builder_.CreateCall(helper, {Reference(instruction.lhs), result_});
-      break;
-    }
-    case Opcode::ExpectedValue: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_expected_value", status_type,
-                                                pointer, status_type, pointer);
-      status = builder_.CreateCall(
-          helper, {
-                      Reference(instruction.lhs),
-                      builder_.getInt8(static_cast<std::uint8_t>(instruction.index)),
-                      result_,
-                  });
-      break;
     }
     case Opcode::IsType:
     case Opcode::CheckedCast: {

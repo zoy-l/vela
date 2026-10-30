@@ -33,15 +33,17 @@ std::string FunctionSource(std::size_t count) {
   return source;
 }
 
-TEST(EncodingTest, RejectsFunctionIndex256WithoutTruncation) {
+TEST(EncodingTest, CallsFunctionIndex256WithoutTruncation) {
   runtime::Isolate isolate;
   const auto source = FunctionSource(kBeyondByteIndex) + "func main(): int { return f256(); }";
   const auto compiled = CompileSource(source, isolate);
-  ASSERT_FALSE(compiled.Succeeded());
-  EXPECT_TRUE(compiled.diagnostics.front().message.contains("encoding"));
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsInteger(), 256);
 }
 
-TEST(EncodingTest, AllowsFunctionIndex255AndAnEntryBeyondTheCallOperandLimit) {
+TEST(EncodingTest, AllowsFunctionIndex255AndAnEntryBeyondTheByteIndexRange) {
   runtime::Isolate isolate;
   const auto compiled = CompileSource(
       FunctionSource(kMaxFrameRegisters) + "func main(): int { return f255(); }", isolate);
@@ -54,7 +56,7 @@ TEST(EncodingTest, AllowsFunctionIndex255AndAnEntryBeyondTheCallOperandLimit) {
   EXPECT_EQ(result.value.AsInteger(), 255);
 }
 
-TEST(EncodingTest, RejectsClassIndex256) {
+TEST(EncodingTest, AllocatesClassIndex256) {
   std::string source;
   for (std::size_t index = 0; index < kBeyondByteIndex; ++index) {
     source += "class C" + std::to_string(index) + " {}\n";
@@ -62,8 +64,10 @@ TEST(EncodingTest, RejectsClassIndex256) {
   source += "func main(): C256 { return C256(); }";
   runtime::Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
-  ASSERT_FALSE(compiled.Succeeded());
-  EXPECT_TRUE(compiled.diagnostics.front().message.contains("encoding"));
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_TRUE(result.value.IsObject());
 }
 
 TEST(EncodingTest, LoadsStringConstantIndex256WithoutTruncation) {
@@ -92,7 +96,7 @@ TEST(EncodingTest, AcceptsDoubleConstantIndex256) {
   EXPECT_EQ(compiled.program.functions().front().doubles.size(), kBeyondByteIndex);
 }
 
-TEST(EncodingTest, RejectsArrayLayoutIndex256) {
+TEST(EncodingTest, AllocatesArrayLayoutIndex256) {
   std::string source;
   for (std::size_t index = 0; index < kBeyondByteIndex; ++index) {
     const auto type = "Element" + std::to_string(index);
@@ -101,17 +105,19 @@ TEST(EncodingTest, RejectsArrayLayoutIndex256) {
   }
   runtime::Isolate isolate;
   const auto compiled = CompileSource(source, isolate);
-  ASSERT_FALSE(compiled.Succeeded());
-  EXPECT_TRUE(compiled.diagnostics.front().message.contains("encoding"));
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("f256"));
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_TRUE(result.value.IsObject());
 }
 
-CompileResult CompileArrayLayoutOverflow(CompilationState& state, runtime::Isolate& isolate) {
-  std::string source;
-  for (std::size_t index = 0; index < kBeyondByteIndex; ++index) {
-    const auto type = "Element" + std::to_string(index);
-    source += "class " + type + " {}\n";
-    source += "func f" + std::to_string(index) + "(): " + type + "[] { return []; }\n";
+CompileResult CompileBranchOverflow(CompilationState& state, runtime::Isolate& isolate) {
+  std::string source =
+      "class Element {} func main(): void { const value = Element(); while (true) {";
+  for (std::size_t index = 0; index < kLongBranchStatements; ++index) {
+    source += "print(1);";
   }
+  source += "} }";
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
   if (!parsed.diagnostics.empty()) {
@@ -128,9 +134,9 @@ TEST(EncodingTest, FailedEncodingDoesNotPublishSessionLayouts) {
   runtime::Isolate isolate;
   CompilationState state;
   const auto before = isolate.layout_counts();
-  const auto compiled = CompileArrayLayoutOverflow(state, isolate);
+  const auto compiled = CompileBranchOverflow(state, isolate);
   ASSERT_FALSE(compiled.Succeeded());
-  EXPECT_TRUE(compiled.diagnostics.front().message.contains("encoding"));
+  EXPECT_TRUE(compiled.diagnostics.front().message.contains("bytecode range"));
   EXPECT_EQ(isolate.layout_counts(), before);
   EXPECT_TRUE(state.layouts.classes.empty());
   EXPECT_TRUE(state.layouts.arrays.empty());
@@ -152,7 +158,7 @@ std::string FieldsSource(std::size_t count) {
   return source + "); return record.f" + std::to_string(count - 1) + "; }";
 }
 
-TEST(EncodingTest, ReusesRegistersFor256FieldsAndRejectsFieldIndex256) {
+TEST(EncodingTest, ReusesRegistersAndAddressesFieldsBeyondByteIndexRange) {
   runtime::Isolate isolate;
   const auto valid = CompileSource(FieldsSource(kMaxFrameRegisters), isolate);
   ASSERT_TRUE(valid.Succeeded());
@@ -162,9 +168,11 @@ TEST(EncodingTest, ReusesRegistersFor256FieldsAndRejectsFieldIndex256) {
   const auto result = vm::VirtualMachine(isolate).Execute(main);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsInteger(), 255);
-  const auto invalid = CompileSource(FieldsSource(kBeyondByteIndex), isolate);
-  ASSERT_FALSE(invalid.Succeeded());
-  EXPECT_TRUE(invalid.diagnostics.front().message.contains("encoding"));
+  const auto wide = CompileSource(FieldsSource(kBeyondByteIndex), isolate);
+  ASSERT_TRUE(wide.Succeeded());
+  const auto wide_result = vm::VirtualMachine(isolate).Execute(wide.program.FindFunction("main"));
+  ASSERT_TRUE(wide_result.Succeeded());
+  EXPECT_EQ(wide_result.value.AsInteger(), 256);
 }
 
 TEST(EncodingTest, PreservesArithmeticResultsOutsideTheImmediateRange) {

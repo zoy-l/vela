@@ -32,7 +32,7 @@ Result Equality(Opcode operation, internal::NumericOperands operands) {
       const auto kind = Heap::KindOf(*left.AsObject());
       const auto* layout = Heap::ClassOf(*left.AsObject());
       if (kind == ObjectKind::Array || kind == ObjectKind::MutableString ||
-          kind == ObjectKind::Expected || kind == ObjectKind::Collection ||
+          kind == ObjectKind::Collection ||
           (layout != nullptr && (layout->callable() != nullptr))) {
         return std::unexpected(ExecutionStatus::TypeError);
       }

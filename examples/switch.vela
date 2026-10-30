@@ -21,7 +21,8 @@ func main(): int {
       case 0:
         continue;
       case 1:
-        result = result + 1;
+        result = result + 11;
+        break;
       case 2:
         result = result + 10;
         break;

@@ -201,12 +201,14 @@ TEST_F(ReplSessionTest, FailedCompilationRollsBackStateAndLayoutAllocations) {
   Execute("let value = 40;");
   const auto before = session().isolate().layout_counts();
   const auto old_source = std::string(session().source());
-  std::string bad = "class Huge { ";
-  constexpr int kUnencodableFieldCount = 257;
-  for (int index = 0; index < kUnencodableFieldCount; ++index) {
-    bad += "field" + std::to_string(index) + ": int = 0; ";
+  std::string bad =
+      "class Pending { field: int = 0; } "
+      "func construct(flag: bool): void { const value = Pending(); if (flag) {";
+  constexpr int kLongBranchStatements = 17000;
+  for (int index = 0; index < kLongBranchStatements; ++index) {
+    bad += "print(1);";
   }
-  bad += "} func construct(): void { const value = Huge(); }";
+  bad += "} }";
   EXPECT_EQ(session().Submit(bad).status, SubmissionStatus::Rejected);
   EXPECT_EQ(session().isolate().layout_counts(), before);
   EXPECT_EQ(session().source(), old_source);

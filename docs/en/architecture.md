@@ -24,9 +24,9 @@ boundaries remain strict. There are no legacy prefix declarations. Function
 types contain parameter types only, such as `(int, int) => int`; typed arrow
 functions support lexical captures with shared mutation of captured `let`
 bindings. [P1 contracts](core_language.md) specify closures, construction,
-interfaces, generics, Expected, matching, and ordered collections.
+interfaces, generics, matching, and ordered collections.
 
-Control flow includes C/C++-style fallthrough switches. Explicit nullable types
+Control flow includes switches with shared empty labels and explicit non-empty branch exits. Explicit nullable types
 use `T?` and flow-sensitive non-null checks. Scope, declaration order, and
 source diagnostics are specified in [Basic language contracts](language_basics.md).
 

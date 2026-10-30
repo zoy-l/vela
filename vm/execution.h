@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -14,7 +13,6 @@
 
 #include "base/async_operation.h"
 #include "base/callable.h"
-#include "base/execution_limits.h"
 #include "base/member.h"
 #include "runtime/callable.h"
 #include "runtime/dynamic_call.h"
@@ -32,6 +30,7 @@
 #include "vm/debugger.h"
 #include "vm/execution_status.h"
 #include "vm/frame.h"
+#include "vm/frame_slots.h"
 #include "vm/program.h"
 #include "vm/register_file.h"
 #include "vm/vm.h"
@@ -48,9 +47,10 @@ struct ActiveFrame final {
   Frame frame;
   const FunctionStorage* function = nullptr;
   std::size_t program_counter = 0;
+  Instruction index_prefix = 0;
   std::uint8_t return_register = 0;
   std::optional<std::size_t> initialized_global;
-  // 固定帧数组为 encoder 及其 intrusive roots 提供稳定地址；只在 stringify 期间构造。
+  // 帧槽分配后地址固定，encoder 的 intrusive roots 在 stringify 期间借用该地址。
   std::optional<runtime::JsonEncoder> json_encoder;
   std::uint8_t json_destination = 0;
   bool dynamic_return = false;
@@ -61,7 +61,7 @@ struct ActiveFrame final {
 struct FutureRegisters final {
   std::uint8_t destination = 0;
   std::uint8_t source = 0;
-  std::uint8_t layout = 0;
+  std::uint32_t layout = 0;
 };
 
 struct AsyncArguments final {
@@ -86,7 +86,7 @@ class Execution final {
  public:
   Execution(runtime::Isolate& isolate,
             const Program& program,
-            std::span<RegisterFile> registers,
+            FrameSlots<RegisterFile>& registers,
             std::shared_ptr<DebugSession> debug_session = {})
       : isolate_(isolate),
         program_(program),
@@ -226,7 +226,6 @@ class Execution final {
       std::optional<runtime::Value> implicit,
       std::optional<std::size_t> initialized_global = std::nullopt);
   StepResult AccessGlobal(ActiveFrame& active, Instruction instruction);
-  StepResult ExecuteExpected(ActiveFrame& active, Instruction instruction);
   [[clang::always_inline]] StepResult Return(ActiveFrame& active, runtime::Value value);
   [[clang::always_inline]] StepResult ResumeCaller(std::uint8_t return_register,
                                                    runtime::Value value);
@@ -250,8 +249,8 @@ class Execution final {
   runtime::Isolate& isolate_;
   const Program& program_;
   std::span<const FunctionStorage> functions_;
-  std::span<RegisterFile> registers_;
-  std::array<ActiveFrame, kMaxCallFrames> frames_;
+  FrameSlots<RegisterFile>& registers_;
+  FrameSlots<ActiveFrame> frames_;
   std::size_t frame_count_ = 0;
   runtime::Value result_;
   GlobalStorage* globals_;

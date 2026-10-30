@@ -152,65 +152,6 @@ TEST(BytecodeImageBoundaryTest, RejectsCyclicTypeGraphsAndRollsBackMetadata) {
   EXPECT_EQ(isolate.layout_counts(), initial);
 }
 
-struct ExpectedImageInput final {
-  std::uint64_t references = 1;
-  std::uint64_t parameters = 1;
-  std::uint8_t optional = 0;
-  std::uint8_t rest = 0;
-};
-
-std::vector<std::byte> ExpectedImage(ExpectedImageInput input) {
-  BinaryWriter body;
-  body.Write(std::uint64_t{0});
-  body.Write(std::uint64_t{1});
-  body.Write(static_cast<std::uint8_t>(internal::StandardClass::None));
-  body.Write(std::uint32_t{1});
-  body.Write(input.references);
-  for (std::uint64_t index = 0; index < input.references; ++index) {
-    body.Write(std::uint32_t{0});
-  }
-  body.Write(std::uint8_t{0});
-  body.Write(std::uint64_t{0});
-  body.Write(std::uint64_t{0});
-  body.Write(std::uint8_t{0});
-  body.Write(kNoPool);
-  body.Write(std::uint64_t{0});
-  body.Write(std::uint64_t{0});
-  body.Write(std::uint64_t{0});
-  body.Write(std::uint64_t{1});
-  body.Write(input.parameters);
-  for (std::uint64_t index = 0; index < input.parameters; ++index) {
-    WriteElement(body, {.kind = static_cast<std::uint8_t>(runtime::ValueKind::String)});
-    body.Write(input.optional);
-    body.Write(input.rest);
-  }
-  body.Write(std::uint8_t{1});
-  WriteElement(body, {.kind = static_cast<std::uint8_t>(runtime::ValueKind::Integer)});
-  return ImageWithLayouts(body);
-}
-
-class ExpectedImageBoundaryTest : public testing::TestWithParam<ExpectedImageInput> {};
-
-TEST_P(ExpectedImageBoundaryTest, RejectsPayloadSignaturesThatDisagreeWithGcStorage) {
-  runtime::Isolate isolate;
-  const auto initial = isolate.layout_counts();
-  EXPECT_FALSE(LoadBytecode(ExpectedImage(GetParam()), isolate));
-  EXPECT_EQ(isolate.layout_counts(), initial);
-}
-
-INSTANTIATE_TEST_SUITE_P(InvalidExpectedMetadata,
-                         ExpectedImageBoundaryTest,
-                         testing::Values(ExpectedImageInput{.references = 0},
-                                         ExpectedImageInput{.parameters = 0},
-                                         ExpectedImageInput{.parameters = 2},
-                                         ExpectedImageInput{.optional = 1},
-                                         ExpectedImageInput{.rest = 1}));
-
-TEST(BytecodeImageBoundaryTest, AcceptsExpectedPayloadSignatureWithMatchingGcStorage) {
-  runtime::Isolate isolate;
-  EXPECT_TRUE(LoadBytecode(ExpectedImage({}), isolate));
-}
-
 TEST(BytecodeImageBoundaryTest, RejectsGenericFunctionResultWithoutItsPayloadIdentity) {
   BinaryWriter body;
   constexpr std::size_t kPoolsBeforeSignatures = 4;

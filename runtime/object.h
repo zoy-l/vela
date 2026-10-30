@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -70,7 +72,6 @@ struct ClassLayoutOptions final {
   std::vector<std::uint32_t> dispatch_targets;
   bool is_enum = false;
   const TypeSignature* callable_type = nullptr;
-  const TypeSignature* expected_type = nullptr;
   NominalType* nominal = nullptr;
   ClassStorage storage = ClassStorage::Inline;
   std::vector<DeclarationId> field_declarations;
@@ -106,10 +107,8 @@ class ClassLayout final {
   [[nodiscard]] bool IsEnum() const noexcept { return nominal_->IsEnum(); }
   [[nodiscard]] const TypeSignature* callable_type() const noexcept { return callable_type_; }
   void BindCallableType(const TypeSignature& type) noexcept;
-  [[nodiscard]] const TypeSignature* expected_type() const noexcept { return expected_type_; }
   [[nodiscard]] const CodeIdentity* code_identity() const noexcept { return code_identity_; }
   void BindCodeIdentity(const CodeIdentity& identity) noexcept;
-  void BindExpectedType(const TypeSignature& type) noexcept;
   [[nodiscard]] std::span<const std::uint32_t> reference_fields() const noexcept {
     return reference_fields_;
   }
@@ -131,7 +130,6 @@ class ClassLayout final {
   absl::flat_hash_map<DeclarationId, std::uint32_t> field_indices_;
   std::vector<std::uint32_t> dispatch_targets_;
   const TypeSignature* callable_type_ = nullptr;
-  const TypeSignature* expected_type_ = nullptr;
   const CodeIdentity* code_identity_ = nullptr;
   // 版本布局由 GC 程序状态拥有；实例通过此边追踪其扫描描述的生命周期。
   HeapObject* program_owner_ = nullptr;
@@ -142,7 +140,6 @@ enum class ObjectKind : std::uint8_t {
   Array,
   String,
   MutableString,
-  Expected,
   Collection,
   Exception,
   Future,
@@ -277,18 +274,28 @@ struct HeapObject final {
   const ClassLayout* layout = nullptr;
   HeapObject* next = nullptr;
   HeapObject* gray_next = nullptr;
-  // kind 区分互斥的元数据；Future/Completer 直接借用载荷签名，不占用数组布局。
-  const void* type_metadata = nullptr;
+  struct StringPosition final {
+    std::uint32_t index;
+    std::uint32_t offset;
+  };
+  // kind 区分互斥的元数据；与 Value 一样以对象表示保存，避免 inactive union 读取。
+  // 字符串仅在此保存整数位置，GC 不将其视为引用。
+  alignas(const void*) mutable std::array<std::byte, sizeof(const void*)> type_metadata = {};
+  void SetTypeMetadata(const void* metadata) noexcept {
+    type_metadata = std::bit_cast<decltype(type_metadata)>(metadata);
+  }
   [[nodiscard]] const ArrayLayout* array_layout() const noexcept {
-    return static_cast<const ArrayLayout*>(type_metadata);
+    return static_cast<const ArrayLayout*>(std::bit_cast<const void*>(type_metadata));
   }
   [[nodiscard]] const CollectionLayout* collection_layout() const noexcept {
-    return static_cast<const CollectionLayout*>(type_metadata);
+    return static_cast<const CollectionLayout*>(std::bit_cast<const void*>(type_metadata));
   }
   [[nodiscard]] const TypeSignature* future_signature() const noexcept {
-    return static_cast<const TypeSignature*>(type_metadata);
+    return static_cast<const TypeSignature*>(std::bit_cast<const void*>(type_metadata));
   }
   std::uint32_t length = 0;
+  // 复用 length 后的对齐空间，不增加对象头大小。
+  std::uint32_t string_length = 0;
   // kind 与实例的 storage/callable 契约确定载荷类型；可重载用户实例持有字段块，
   // 固定 callable 持有版本环境，两者不会同时占用此槽。Heap 负责底层存储的销毁。
   void* native_payload = nullptr;

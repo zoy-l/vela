@@ -114,31 +114,6 @@ std::expected<void, ExecutionStatus> WriteIndex(Heap& heap,
   return {};
 }
 
-std::expected<Value, ExecutionStatus> ExpectedHasValue(HeapObject* object) noexcept {
-  if (object == nullptr) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto alternative = Heap::ExpectedAlternativeOf(*object);
-  if (!alternative) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  return Value::Boolean(*alternative == ExpectedAlternative::Ok);
-}
-
-std::expected<Value, ExecutionStatus> ExpectedValue(HeapObject* object,
-                                                    ExpectedAlternative alternative) noexcept {
-  if (object == nullptr) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto payload = Heap::ReadExpectedValue(*object, alternative);
-  if (!payload) {
-    return std::unexpected(payload.error() == ExpectedAccessError::InactiveAlternative
-                               ? ExecutionStatus::InactiveExpectedAlternative
-                               : ExecutionStatus::TypeError);
-  }
-  return *payload;
-}
-
 std::expected<Value, ExecutionStatus> BindValueType(Value value,
                                                     const TypeConstraint& type) noexcept {
   if (value.IsNull() && type.nullable) {

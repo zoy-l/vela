@@ -48,18 +48,18 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(
         BasicLanguageProgram{R"(func main(): int {
           let result = 0;
-          switch (1) { case 0: result = 100; case 1: result = result + 2;
+          switch (1) { case 0: result = 100; break; case 1: result = result + 2; break;
                        case 2: result = result + 4; break; default: result = 99; }
           return result;
         })",
-                             6},
+                             2},
         BasicLanguageProgram{R"(func main(): int {
           let result = 0;
-          switch (9) { case 0: result = 100; default: result = result + 2;
+          switch (9) { case 0: result = 100; break; default: result = result + 2; break;
                        case 2: result = result + 4; }
           return result;
         })",
-                             6},
+                             2},
         BasicLanguageProgram{R"(func main(): int {
           let value = 0;
           for (let i = 0; i < 5; i = i + 1) {

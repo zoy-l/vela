@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <ranges>
 #include <span>
@@ -24,8 +25,8 @@ namespace vela::frontend {
 namespace {
 
 bool IsBuiltinGenericExpression(const Expression& expression, const Expression* object) {
-  if (expression.text == "Set" || expression.text == "Map" || expression.text == "Expected" ||
-      expression.text == "Future" || expression.text == "Completer") {
+  if (expression.text == "Set" || expression.text == "Map" || expression.text == "Future" ||
+      expression.text == "Completer") {
     return true;
   }
   return expression.kind == Expression::Kind::Member && object != nullptr &&
@@ -70,6 +71,12 @@ class Specializer final : public AstCloneTransform {
     T declaration;
     Substitutions substitutions;
     const T* source = nullptr;
+    std::size_t expansion_depth = 0;
+  };
+  struct Work final {
+    enum class Kind : std::uint8_t { Function, Class };
+    Kind kind;
+    std::size_t index;
   };
   void CollectDeclarations();
   void CollectAliases();
@@ -112,8 +119,10 @@ class Specializer final : public AstCloneTransform {
   absl::flat_hash_set<std::string> active_aliases_;
   std::deque<Pending<Function>> functions_;
   std::deque<Pending<Class>> classes_;
+  std::vector<Work> work_;
   std::vector<absl::flat_hash_set<std::string>> scopes_;
   std::size_t type_depth_ = 0;
+  std::size_t expansion_depth_ = 0;
   const Substitutions* clone_substitutions_ = nullptr;
 };
 
@@ -150,9 +159,9 @@ std::string Specializer::Instantiate(const std::string& name,
   if (instantiated_.contains(key)) {
     return key;
   }
-  // 特化数量有界，防止递增递归泛型无限展开，并约束字节码索引容量。
-  if (instantiated_.size() >= kMaxGenericSpecializations) {
-    Error(location, "generic specialization exceeds the limit of 256; check expanding recursion");
+  // 限制单条依赖链的展开深度，不限制项目中彼此独立的具体特化数量。
+  if (expansion_depth_ >= kMaxGenericExpansionDepth) {
+    Error(location, "generic expansion depth exceeds the limit of 128; check expanding recursion");
     return key;
   }
   instantiated_.insert(key);
@@ -171,7 +180,9 @@ std::string Specializer::Instantiate(const std::string& name,
         .declaration = std::move(function),
         .substitutions = std::move(substitutions),
         .source = &found->second,
+        .expansion_depth = expansion_depth_ + 1,
     });
+    work_.push_back({.kind = Work::Kind::Function, .index = functions_.size() - 1});
   } else if (const auto owner = class_templates_.find(name); owner != class_templates_.end()) {
     auto substitutions = Bind(owner->second.type_parameters, arguments, location);
     Class concrete;
@@ -180,7 +191,9 @@ std::string Specializer::Instantiate(const std::string& name,
         .declaration = std::move(concrete),
         .substitutions = std::move(substitutions),
         .source = &owner->second,
+        .expansion_depth = expansion_depth_ + 1,
     });
+    work_.push_back({.kind = Work::Kind::Class, .index = classes_.size() - 1});
   } else {
     Error(location, "unknown generic declaration '" + name + "'");
   }
@@ -235,8 +248,8 @@ void Specializer::NormalizeTypeHead(TypeName& type) {
     return;
   }
   if (type.kind == TypeName::Kind::Generic) {
-    if (type.name == "Set" || type.name == "Map" || type.name == "Expected" ||
-        type.name == "Future" || type.name == "Completer") {
+    if (type.name == "Set" || type.name == "Map" || type.name == "Future" ||
+        type.name == "Completer") {
       return;
     }
     type.name = Instantiate(type.name, type.arguments, type.location);
@@ -517,6 +530,7 @@ void Specializer::CollectFunctionTemplates() {
     }
     if (function.type_parameters.empty()) {
       functions_.push_back({.declaration = std::move(function), .substitutions = {}});
+      work_.push_back({.kind = Work::Kind::Function, .index = functions_.size() - 1});
     } else {
       const auto name = function.name;
       function_templates_.emplace(name, std::move(function));
@@ -560,6 +574,7 @@ void Specializer::CollectClassTemplates() {
     }
     if (owner.type_parameters.empty()) {
       classes_.push_back({.declaration = std::move(owner), .substitutions = {}});
+      work_.push_back({.kind = Work::Kind::Class, .index = classes_.size() - 1});
     } else {
       const auto name = owner.name;
       DescribeClassTemplate(owner);
@@ -601,12 +616,13 @@ Diagnostics Specializer::Run(std::span<const GenericSpecialization> retained) {
     }
     Normalize(global.initializer.get(), {});
   }
-  std::size_t function_index = 0;
-  std::size_t class_index = 0;
-  while (diagnostics_.empty() &&
-         (function_index < functions_.size() || class_index < classes_.size())) {
-    if (function_index < functions_.size()) {
-      auto& pending = functions_.at(function_index);
+  // 深度优先处理依赖，保证指数分叉的展开递归先触达深度边界，而非耗尽整个宽度。
+  while (diagnostics_.empty() && !work_.empty()) {
+    const auto work = work_.back();
+    work_.pop_back();
+    if (work.kind == Work::Kind::Function) {
+      auto& pending = functions_.at(work.index);
+      expansion_depth_ = pending.expansion_depth;
       if (pending.source != nullptr) {
         const auto name = pending.declaration.name;
         clone_substitutions_ = &pending.substitutions;
@@ -617,9 +633,9 @@ Diagnostics Specializer::Run(std::span<const GenericSpecialization> retained) {
       } else {
         Normalize(pending.declaration, pending.substitutions);
       }
-      ++function_index;
     } else {
-      auto& pending = classes_.at(class_index);
+      auto& pending = classes_.at(work.index);
+      expansion_depth_ = pending.expansion_depth;
       if (pending.source != nullptr) {
         const auto name = pending.declaration.name;
         clone_substitutions_ = &pending.substitutions;
@@ -630,7 +646,6 @@ Diagnostics Specializer::Run(std::span<const GenericSpecialization> retained) {
       } else {
         Normalize(pending.declaration, pending.substitutions);
       }
-      ++class_index;
     }
   }
   for (auto& function : functions_) {

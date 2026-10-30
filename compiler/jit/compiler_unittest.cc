@@ -678,6 +678,32 @@ export func main(): int { let value = 0; for (let i = 0; i < 6; i++) { value += 
   switch (value) { case 15: return sum(6) << 1; default: return 0; } }
 )",
                                               R"(
+func descend(depth: int): int {
+  const text = '${depth}';
+  if (depth == 0) { return text.length + 41; }
+  const answer = descend(depth - 1);
+  return text.length > 0 ? answer : 0;
+}
+export func main(): int { return descend(512); }
+)",
+                                              R"(
+export func main(): int {
+  const text = 'A中😀e\u0301\0';
+  const joined = [text, text].join('界');
+  const absent: string? = null;
+  const formatted = '${text}/${42}/${true}/${absent}';
+  const builder = String(); builder.append(text); builder.append('ß');
+  const snapshot = builder.toString();
+  const forward = String(); const backward = String();
+  const dynamicText: dynamic = text;
+  for (let i = 0; i < dynamicText.length; i++) { forward.append(dynamicText[i]); }
+  for (let i = text.length - 1; i >= 0; i--) { backward.append(text[i]); }
+  return joined.length == 13 && formatted.length == 19 && snapshot.length == 7 &&
+         snapshot.toUpperCase().length == 8 && forward.toString() == text &&
+         backward.toString() == '\0\u0301e😀中A' && joined.slice(6, 9) == '界A中' ? 42 : 0;
+}
+)",
+                                              R"(
 func counter(value: int): () => int { return (): int => { value++; return value; }; }
 export func main(): int { const next = counter(40); const values: (() => int)[] = [next];
   next(); return values[0](); }
@@ -703,11 +729,10 @@ const value = initial();
 export func main(): int { const first = value; return first + value - 39 + count; }
 )",
                                               R"(
-func divide(value: int, denominator: int): Expected<int, string> {
-  if (denominator == 0) { return err('zero'); } return ok(value / denominator); }
+func divide(value: int, denominator: int): int { return value / denominator; }
 export func main(): int { const result = divide(84, 2);
   try { const zero = 0; return 1 / zero; }
-  catch (error: Error) { return error.code == 'DivisionByZero' ? result.value() : 0; } }
+  catch (error: Error) { return error.code == 'DivisionByZero' ? result : 0; } }
 )",
                                               R"(
 enum Shade { light, dark }

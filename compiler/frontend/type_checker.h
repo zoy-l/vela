@@ -47,7 +47,6 @@ struct TypeDescriptor final {
     Enum,
     Class,
     Interface,
-    Expected,
     Future,
     Completer,
     Timer,
@@ -143,13 +142,6 @@ struct MemberReference final {
   std::string member;
 };
 
-enum class ExpectedOperation : std::uint8_t { Ok, Err, HasValue, Value, Error };
-
-struct ExpectedMethod final {
-  ExpectedOperation operation = ExpectedOperation::Value;
-  FunctionDescriptor signature;
-};
-
 struct SemanticModel final {
   absl::flat_hash_map<std::string, GlobalDescriptor> globals;
   absl::flat_hash_map<std::string, TypeDescriptor> types;
@@ -180,7 +172,6 @@ struct SemanticModel final {
   absl::flat_hash_set<std::string> explicit_super_constructors;
   absl::flat_hash_map<const Expression*, TypeDescriptor> type_operands;
   absl::flat_hash_map<std::string, std::vector<TypeDescriptor>> generic_arguments;
-  absl::flat_hash_map<const Expression*, ExpectedOperation> expected_calls;
   absl::flat_hash_map<const MatchArm*, TypeDescriptor> match_bindings;
   absl::flat_hash_map<const Statement::Catch*, TypeDescriptor> catch_types;
   absl::flat_hash_map<const Expression*, std::vector<std::uint32_t>> argument_order;
@@ -301,9 +292,6 @@ class TypeChecker final {
   Type CheckLambda(const Expression& expression, const Type* expected);
   void InferLambdaReturn(const Statement& statement);
   Type CheckTypeOperation(const Expression& expression);
-  Type CheckExpectedFactory(const Expression& expression, const Type* expected);
-  Type CheckExpectedMethod(const Expression& expression, const Type& receiver);
-  std::optional<ExpectedMethod> ResolveExpectedMethod(const Type& receiver, std::string_view name);
   Type CheckMatch(const Expression& expression, const Type* expected);
   struct MatchCoverage final {
     absl::flat_hash_set<std::string> labels;
@@ -521,7 +509,6 @@ class TypeChecker final {
   absl::flat_hash_set<std::string> explicit_super_constructors_;
   absl::flat_hash_map<const Expression*, TypeDescriptor> type_operands_;
   absl::flat_hash_map<std::string, std::vector<TypeDescriptor>> generic_arguments_;
-  absl::flat_hash_map<const Expression*, ExpectedOperation> expected_calls_;
   absl::flat_hash_map<const MatchArm*, TypeDescriptor> match_bindings_;
   absl::flat_hash_map<const Statement::Catch*, TypeDescriptor> catch_types_;
   absl::flat_hash_map<const Expression*, std::vector<std::uint32_t>> argument_order_;

@@ -48,11 +48,6 @@ StatusDescription DescribeStatus(ExecutionStatus status) noexcept {
       return {.code = "CyclicInitialization", .message = "cyclic global initialization"};
     case ExecutionStatus::InvalidCast:
       return {.code = "InvalidCast", .message = "checked cast failed"};
-    case ExecutionStatus::InactiveExpectedAlternative:
-      return {
-          .code = "InactiveExpectedAlternative",
-          .message = "accessed the inactive Expected alternative",
-      };
     case ExecutionStatus::StackOverflow:
       return {.code = "StackOverflow", .message = "stack overflow"};
     case ExecutionStatus::InvalidEntry:

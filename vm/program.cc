@@ -79,6 +79,7 @@ bool IsValidAsyncInstruction(Instruction instruction, const Function& function) 
 
 bool IsValidInstruction(Instruction instruction,
                         const Function& function,
+                        std::uint32_t pool_index,
                         std::span<const FunctionStorage> functions,
                         std::size_t global_count) noexcept {
   const OpCode opcode = DecodeOp(instruction);
@@ -93,29 +94,27 @@ bool IsValidInstruction(Instruction instruction,
     case OpCode::Return:
       return IsRegister(operand_a, function);
     case OpCode::NewArray:
-      return IsRegister(operand_a, function) && operand_b < function.arrays.size() &&
-             function.arrays.subspan(operand_b).front() != nullptr;
+      return IsRegister(operand_a, function) && pool_index < function.arrays.size() &&
+             function.arrays.subspan(pool_index).front() != nullptr;
     case OpCode::NewDynamicArray:
       return IsRegister(operand_a, function) && IsRegister(operand_c, function) &&
-             operand_b < function.arrays.size() &&
-             function.arrays.subspan(operand_b).front() != nullptr;
+             pool_index < function.arrays.size() &&
+             function.arrays.subspan(pool_index).front() != nullptr;
     case OpCode::ExceptionValue:
       return IsRegister(operand_a, function) && IsRegister(operand_b, function);
     case OpCode::Throw:
     case OpCode::Rethrow:
       return IsRegister(operand_b, function);
     case OpCode::NewCollection:
-      return IsRegister(operand_a, function) && operand_b < function.collections.size() &&
-             function.collections.subspan(operand_b).front() != nullptr;
+      return IsRegister(operand_a, function) && pool_index < function.collections.size() &&
+             function.collections.subspan(pool_index).front() != nullptr;
     case OpCode::LoadDouble:
-      return IsRegister(operand_a, function) &&
-             DecodeUnsigned16(instruction) < function.doubles.size();
+      return IsRegister(operand_a, function) && pool_index < function.doubles.size();
     case OpCode::LoadIntConstant:
-      return IsRegister(operand_a, function) &&
-             DecodeUnsigned16(instruction) < function.integers.size();
+      return IsRegister(operand_a, function) && pool_index < function.integers.size();
     case OpCode::GetGlobal:
     case OpCode::SetGlobal:
-      return IsRegister(operand_a, function) && operand_b < global_count;
+      return IsRegister(operand_a, function) && pool_index < global_count;
     case OpCode::Move:
     case OpCode::NegInt:
     case OpCode::BitNotInt:
@@ -126,17 +125,7 @@ bool IsValidInstruction(Instruction instruction,
     case OpCode::IsType:
     case OpCode::CheckedCast:
       return IsRegister(operand_a, function) && IsRegister(operand_b, function) &&
-             operand_c < function.types.size();
-    case OpCode::NewOk:
-    case OpCode::NewErr:
-      return IsRegister(operand_a, function) && IsRegister(operand_c, function) &&
-             operand_b < function.classes.size() &&
-             function.classes.subspan(operand_b).front() != nullptr &&
-             function.classes.subspan(operand_b).front()->field_count() == 1;
-    case OpCode::ExpectedHasValue:
-      return IsRegister(operand_a, function) && IsRegister(operand_b, function);
-    case OpCode::ExpectedValue:
-      return IsRegister(operand_a, function) && IsRegister(operand_b, function) && operand_c <= 1;
+             pool_index < function.types.size();
     case OpCode::AddInt:
     case OpCode::AddDouble:
     case OpCode::SubDouble:
@@ -178,9 +167,9 @@ bool IsValidInstruction(Instruction instruction,
       return IsRegister(operand_a, function) && IsRegister(operand_b, function) &&
              IsRegister(operand_c, function);
     case OpCode::Call:
-      return IsRegister(operand_a, function) && operand_b < functions.size() &&
+      return IsRegister(operand_a, function) && pool_index < functions.size() &&
              static_cast<std::size_t>(operand_c) +
-                     functions.subspan(operand_b).front().parameter_count <=
+                     functions.subspan(pool_index).front().parameter_count <=
                  function.register_count;
     case OpCode::CallIndirect:
       return IsRegister(operand_a, function) && IsRegister(operand_b, function) &&
@@ -203,16 +192,15 @@ bool IsValidInstruction(Instruction instruction,
     case OpCode::JumpIfNull:
       return IsRegister(operand_a, function);
     case OpCode::NewInstance:
-      return IsRegister(operand_a, function) && operand_b < function.classes.size() &&
-             function.classes.subspan(operand_b).front() != nullptr;
+      return IsRegister(operand_a, function) && pool_index < function.classes.size() &&
+             function.classes.subspan(pool_index).front() != nullptr;
     case OpCode::NewFuture:
     case OpCode::SleepFuture:
     case OpCode::Await:
       return IsValidAsyncInstruction(instruction, function);
     case OpCode::LoadString:
-      return IsRegister(operand_a, function) &&
-             DecodeUnsigned16(instruction) < function.strings.size() &&
-             function.strings.subspan(DecodeUnsigned16(instruction)).front() != nullptr;
+      return IsRegister(operand_a, function) && pool_index < function.strings.size() &&
+             function.strings.subspan(pool_index).front() != nullptr;
     case OpCode::Print:
       return IsRegister(operand_b, function);
     case OpCode::SetField:
@@ -309,14 +297,58 @@ std::expected<void, ValidationError> ValidateClassLayout(const runtime::ClassLay
   return {};
 }
 
-std::expected<void, ValidationError> ValidateFunctionCode(std::size_t index,
-                                                          const Function& function,
-                                                          std::span<const FunctionStorage> storage,
-                                                          std::size_t global_count) {
+std::expected<std::vector<std::uint8_t>, ValidationError> ReadInstructionBoundaries(
+    std::size_t index,
+    const Function& function,
+    std::span<const FunctionStorage> storage,
+    std::size_t global_count) {
+  std::vector<std::uint8_t> boundaries(function.code.size() + 1, 1);
+  for (std::size_t position = 0; position < function.code.size(); ++position) {
+    auto instruction = function.code.subspan(position).front();
+    Instruction prefix = 0;
+    const auto begin = position;
+    if (IsIndexPrefix(instruction)) {
+      prefix = instruction;
+      if (++position >= function.code.size()) {
+        return std::unexpected(ValidationError{
+            .function = index,
+            .instruction = begin,
+            .message = "index prefix is missing its instruction",
+        });
+      }
+      boundaries.at(position) = 0;
+      instruction = function.code.subspan(position).front();
+      if (IndexOperandBits(DecodeOp(instruction)) == 0) {
+        return std::unexpected(ValidationError{
+            .function = index,
+            .instruction = begin,
+            .message = "index prefix requires an indexed instruction",
+        });
+      }
+    }
+    const auto pool_index = DecodeIndex(instruction) | (prefix & ~kByteMask);
+    if (!IsValidInstruction(instruction, function, pool_index, storage, global_count)) {
+      return std::unexpected(ValidationError{
+          .function = index,
+          .instruction = begin,
+          .message = "invalid instruction operand",
+      });
+    }
+  }
+  return boundaries;
+}
+
+std::expected<void, ValidationError> ValidateFunctionMetadata(
+    std::size_t index,
+    const Function& function,
+    std::span<const std::uint8_t> boundaries) {
   std::uint32_t previous_end = 0;
   for (const auto& handler : function.handlers) {
     if (handler.begin < previous_end || handler.begin >= handler.end ||
         handler.end > function.code.size() || handler.target >= function.code.size() ||
+        boundaries.subspan(handler.begin).front() == 0 ||
+        boundaries.subspan(handler.end).front() == 0 ||
+        boundaries.subspan(handler.target).front() == 0 ||
         DecodeOp(function.code.subspan(handler.target).front()) != OpCode::Catch) {
       return std::unexpected(ValidationError{
           .function = index,
@@ -330,6 +362,7 @@ std::expected<void, ValidationError> ValidateFunctionCode(std::size_t index,
   for (const auto& mapping : function.debug.mappings) {
     const auto location_count = function.native != nullptr ? 1U : function.code.size();
     if (mapping.instruction >= location_count ||
+        boundaries.subspan(mapping.instruction).front() == 0 ||
         mapping.location.source_id >= function.debug.source_paths.size() ||
         mapping.location.line == 0 || mapping.location.column == 0 ||
         (previous ? mapping.instruction <= *previous : mapping.instruction != 0)) {
@@ -341,23 +374,35 @@ std::expected<void, ValidationError> ValidateFunctionCode(std::size_t index,
     }
     previous = mapping.instruction;
   }
+  return {};
+}
+
+std::expected<void, ValidationError> ValidateFunctionCode(std::size_t index,
+                                                          const Function& function,
+                                                          std::span<const FunctionStorage> storage,
+                                                          std::size_t global_count) {
+  const auto decoded = ReadInstructionBoundaries(index, function, storage, global_count);
+  if (!decoded) {
+    return std::unexpected(decoded.error());
+  }
+  const auto& boundaries = *decoded;
+  if (auto metadata = ValidateFunctionMetadata(index, function, boundaries); !metadata) {
+    return metadata;
+  }
   for (std::size_t position = 0; position < function.code.size(); ++position) {
-    const auto instruction = function.code.subspan(position).front();
-    if (!IsValidInstruction(instruction, function, storage, global_count)) {
-      return std::unexpected(ValidationError{
-          .function = index,
-          .instruction = position,
-          .message = "invalid instruction operand",
-      });
+    if (boundaries.at(position) == 0) {
+      continue;
     }
+    const auto instruction = function.code.subspan(position).front();
     const auto opcode = DecodeOp(instruction);
-    if (opcode == OpCode::Jump || opcode == OpCode::JumpIfFalse) {
+    if (opcode == OpCode::Jump || opcode == OpCode::JumpIfFalse || opcode == OpCode::JumpIfNull) {
       const auto target = static_cast<std::int64_t>(position) + 1 + DecodeImm16(instruction);
-      if (target < 0 || std::cmp_greater_equal(target, function.code.size())) {
+      if (target < 0 || std::cmp_greater_equal(target, function.code.size()) ||
+          boundaries.at(static_cast<std::size_t>(target)) == 0) {
         return std::unexpected(ValidationError{
             .function = index,
             .instruction = position,
-            .message = "jump target is outside the function",
+            .message = "jump target is outside the function or inside an instruction",
         });
       }
     }
@@ -786,7 +831,14 @@ std::expected<Program, ValidationError> Program::Create(
   }
   const auto valid = ValidateFunctions(functions, global_initializers);
   if (!valid) {
-    return std::unexpected(valid.error());
+    auto error = valid.error();
+    if (error.function < functions.size()) {
+      const auto debug = functions.at(error.function).View().debug;
+      if (const auto* mapping = debug.Locate(error.instruction)) {
+        error.location = mapping->location;
+      }
+    }
+    return std::unexpected(std::move(error));
   }
   for (const auto initializer : global_initializers) {
     if (initializer >= functions.size() ||

@@ -42,12 +42,22 @@ class CommandTest(unittest.TestCase):
         image.write_bytes(data)
         self.assertIn("checksum", self.command("exec", image, expected=65).stderr)
 
-    def test_byte_views_survive_async_suspension_and_expected_payloads(self) -> None:
+    def test_nonempty_switch_fallthrough_is_a_source_error(self) -> None:
+        self.write("func main(): int { let value = 0; switch (1) { "
+                   "case 1: value = 1; case 2: return 42; } return value; }")
+        for arguments in [("check", self.entry), ("run", self.entry),
+                          ("compile", self.entry, self.directory / "invalid.vbc")]:
+            with self.subTest(command=arguments[0]):
+                result = self.command(*arguments, expected=65)
+                self.assertIn("error: non-empty switch branch must not fall through", result.stderr)
+        self.assertFalse((self.directory / "invalid.vbc").exists())
+
+    def test_byte_views_survive_async_suspension_and_typed_containers(self) -> None:
         self.write("async func main(): Future<int> { "
                    "const data = ByteData.view(ByteArray(8)); data.setInt64(0,42); await 0; "
-                   "const saved: Expected<ByteData,string> = ok(data); "
+                   "const saved: ByteData[] = [data]; "
                    "for (let i = 0; i < 1000; i++) { const temporary = ByteArray(1024); } "
-                   "return saved.value().getInt64(0); }")
+                   "return saved[0].getInt64(0); }")
         self.command("run", self.entry, expected=42)
         image = self.directory / "async-bytes.vbc"
         self.command("compile", self.entry, image)

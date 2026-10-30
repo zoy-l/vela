@@ -54,6 +54,7 @@ std::uint8_t Byte(std::uint32_t value) {
 struct EncodingContext final {
   std::size_t code_size = 0;
   std::span<const std::string> source_paths;
+  std::span<const std::uint32_t> instruction_offsets;
 };
 
 std::optional<frontend::Diagnostic> ValidateEncodingOperands(const ir::Instruction& instruction,
@@ -61,16 +62,11 @@ std::optional<frontend::Diagnostic> ValidateEncodingOperands(const ir::Instructi
   const bool uses_wide_target = instruction.opcode == ir::Opcode::Jump ||
                                 instruction.opcode == ir::Opcode::JumpIfFalse ||
                                 instruction.opcode == ir::Opcode::JumpIfNull;
-  const bool uses_wide_constant = instruction.opcode == ir::Opcode::LoadString ||
-                                  instruction.opcode == ir::Opcode::LoadDouble ||
-                                  instruction.opcode == ir::Opcode::LoadIntConstant;
-  const std::uint32_t index_limit = uses_wide_constant ? std::numeric_limits<std::uint16_t>::max()
-                                                       : std::numeric_limits<std::uint8_t>::max();
-
   if (instruction.dst > std::numeric_limits<std::uint8_t>::max() ||
       instruction.lhs > std::numeric_limits<std::uint8_t>::max() ||
       instruction.rhs > std::numeric_limits<std::uint8_t>::max() ||
-      (!uses_wide_target && instruction.index > index_limit)) {
+      (!uses_wide_target && vm::IndexOperandBits(instruction.opcode) == 0 &&
+       instruction.index > std::numeric_limits<std::uint8_t>::max())) {
     return frontend::Diagnostic{
         .location = instruction.location,
         .message = "instruction operand exceeds VM encoding",
@@ -83,8 +79,9 @@ std::optional<frontend::Diagnostic> ValidateEncodingOperands(const ir::Instructi
 std::expected<vm::Instruction, frontend::Diagnostic> EncodeJump(const ir::Instruction& instruction,
                                                                 const EncodingContext& context,
                                                                 std::string_view source_path) {
-  const std::int64_t offset = static_cast<std::int64_t>(instruction.index) -
-                              static_cast<std::int64_t>(context.code_size + 1);
+  const std::int64_t offset =
+      static_cast<std::int64_t>(context.instruction_offsets.subspan(instruction.index).front()) -
+      static_cast<std::int64_t>(context.code_size + 1);
   if (!FitsImmediate16(offset)) {
     return std::unexpected(frontend::Diagnostic{
         .location = instruction.location,
@@ -170,7 +167,7 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
           std::cmp_greater(instruction.immediate, std::numeric_limits<std::uint8_t>::max())) {
         return std::unexpected(frontend::Diagnostic{
             .location = instruction.location,
-            .message = "array layout index or length exceeds bytecode encoding",
+            .message = "array literal length exceeds bytecode encoding",
             .source_path = std::string(source_path),
         });
       }
@@ -206,15 +203,8 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
       return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.index), 0);
     case ir::Opcode::IsType:
     case ir::Opcode::CheckedCast:
-    case ir::Opcode::ExpectedValue:
       return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs),
                            Byte(instruction.index));
-    case ir::Opcode::ExpectedHasValue:
-      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.lhs), 0);
-    case ir::Opcode::NewOk:
-    case ir::Opcode::NewErr:
-      return vm::EncodeABC(opcode, Byte(instruction.dst), Byte(instruction.index),
-                           Byte(instruction.lhs));
     case ir::Opcode::SetGlobal:
       return vm::EncodeABC(opcode, Byte(instruction.lhs), Byte(instruction.index), 0);
     case ir::Opcode::Call:
@@ -247,6 +237,22 @@ std::expected<vm::Instruction, frontend::Diagnostic> EncodeInstruction(
   std::unreachable();
 }
 
+void BindIntegerConstants(std::span<ir::Instruction> instructions,
+                          std::vector<std::int64_t>& integers) {
+  absl::flat_hash_map<std::int64_t, std::uint32_t> integer_ids;
+  for (auto& instruction : instructions) {
+    if (instruction.opcode == ir::Opcode::LoadInt && !FitsImmediate16(instruction.immediate)) {
+      const auto next = static_cast<std::uint32_t>(integers.size());
+      const auto [entry, inserted] = integer_ids.try_emplace(instruction.immediate, next);
+      if (inserted) {
+        integers.push_back(instruction.immediate);
+      }
+      instruction.opcode = ir::Opcode::LoadIntConstant;
+      instruction.index = entry->second;
+    }
+  }
+}
+
 std::expected<vm::FunctionStorage, frontend::Diagnostic> EncodeFunction(
     const ir::Function& function,
     EncodingContext context,
@@ -255,18 +261,19 @@ std::expected<vm::FunctionStorage, frontend::Diagnostic> EncodeFunction(
     // 原生声明的逻辑调用位置为 0，不构造仅为调用宿主而存在的字节码函数体。
     compiled.source_mappings.push_back({.instruction = 0, .location = function.location});
   }
-  compiled.code.reserve(function.instructions.size());
-  absl::flat_hash_map<std::int64_t, std::uint32_t> integer_ids;
-  for (auto instruction : function.instructions) {
-    if (instruction.opcode == ir::Opcode::LoadInt && !FitsImmediate16(instruction.immediate)) {
-      const auto next = static_cast<std::uint32_t>(compiled.integers.size());
-      const auto [entry, inserted] = integer_ids.try_emplace(instruction.immediate, next);
-      if (inserted) {
-        compiled.integers.push_back(instruction.immediate);
-      }
-      instruction.opcode = ir::Opcode::LoadIntConstant;
-      instruction.index = entry->second;
-    }
+  auto instructions = function.instructions;
+  BindIntegerConstants(instructions, compiled.integers);
+  std::vector<std::uint32_t> offsets(instructions.size() + 1);
+  const auto has_prefix = [](const ir::Instruction& instruction) {
+    const auto bits = vm::IndexOperandBits(instruction.opcode);
+    return bits != 0 && instruction.index >= (std::uint32_t{1} << bits);
+  };
+  for (std::size_t index = 0; index < instructions.size(); ++index) {
+    offsets.at(index + 1) = offsets.at(index) + (has_prefix(instructions.at(index)) ? 2U : 1U);
+  }
+  context.instruction_offsets = offsets;
+  compiled.code.reserve(offsets.back());
+  for (const auto& instruction : instructions) {
     context.code_size = compiled.code.size();
     const auto encoded = EncodeInstruction(instruction, context);
     if (!encoded) {
@@ -281,16 +288,20 @@ std::expected<vm::FunctionStorage, frontend::Diagnostic> EncodeFunction(
       });
     }
     const auto begin = static_cast<std::uint32_t>(compiled.code.size());
+    if (has_prefix(instruction)) {
+      compiled.code.push_back(vm::EncodeIndexPrefix(instruction.index));
+    }
     compiled.code.push_back(*encoded);
     if (!instruction.handler || !ir::AnalyzeEffects(instruction).may_fail) {
       continue;
     }
-    const auto target = function.handlers.at(*instruction.handler).target;
+    const auto target = offsets.at(function.handlers.at(*instruction.handler).target);
+    const auto end = static_cast<std::uint32_t>(compiled.code.size());
     if (!compiled.handlers.empty() && compiled.handlers.back().end == begin &&
         compiled.handlers.back().target == target) {
-      ++compiled.handlers.back().end;
+      compiled.handlers.back().end = end;
     } else {
-      compiled.handlers.push_back({.begin = begin, .end = begin + 1, .target = target});
+      compiled.handlers.push_back({.begin = begin, .end = end, .target = target});
     }
   }
   return compiled;
@@ -370,6 +381,7 @@ CompileResult EncodeProgram(ir::Program program,
     auto encoded = EncodeFunction(function,
                                   EncodingContext{
                                       .source_paths = *source_paths,
+                                      .instruction_offsets = {},
                                   },
                                   std::move(compiled));
     if (!encoded) {
@@ -384,9 +396,7 @@ CompileResult EncodeProgram(ir::Program program,
   if (!prepared) {
     const auto& error = prepared.error();
     const auto& function = program.functions.at(error.function);
-    const auto location = function.instructions.empty()
-                              ? function.location
-                              : function.instructions.at(error.instruction).location;
+    const auto location = error.location.value_or(function.location);
     AddDiagnostic(result.diagnostics, location, error.message);
     return result;
   }

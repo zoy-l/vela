@@ -6,7 +6,10 @@
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Intrinsics.h>
+#include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/MDBuilder.h>
+#include <llvm/IR/Metadata.h>
 #include <llvm/Support/Alignment.h>
 
 #include "base/execution_limits.h"
@@ -38,13 +41,33 @@ void FunctionEmitter::EmitFrameEntry() {
   builder_.CreateCondBr(builder_.CreateIsNotNull(execution), valid, failed,
                         llvm::MDBuilder(context).createLikelyBranchWeights());
   builder_.SetInsertPoint(valid);
+  auto* stack_status = builder_.CreateLoad(
+      builder_.getInt8Ty(), ByteAddress(execution, NativeMemoryLayout::kExecutionStackStatus));
+  // 这两个字段仅由 NativeExecution 构造函数写入；宿主调用不会改变线程栈边界。
+  auto* invariant = llvm::MDNode::get(context, {});
+  stack_status->setMetadata(llvm::LLVMContext::MD_invariant_load, invariant);
+  auto* stack_valid = llvm::BasicBlock::Create(context, "stack.valid", body_);
+  error->addIncoming(stack_status, builder_.GetInsertBlock());
+  builder_.CreateCondBr(
+      builder_.CreateICmpEQ(stack_status, Status(builder_, ExecutionStatus::Returned)), stack_valid,
+      failed, llvm::MDBuilder(context).createLikelyBranchWeights());
+  builder_.SetInsertPoint(stack_valid);
   auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
   auto* frame_address = ByteAddress(execution, NativeMemoryLayout::kExecutionFrame);
   auto* depth = builder_.CreateLoad(word, depth_address);
+  auto* stack_limit =
+      builder_.CreateLoad(word, ByteAddress(execution, NativeMemoryLayout::kExecutionStackLimit));
+  stack_limit->setMetadata(llvm::LLVMContext::MD_invariant_load, invariant);
+  auto* stack_position =
+      builder_.CreateIntrinsic(llvm::Intrinsic::frameaddress, {pointer}, {builder_.getInt32(0)});
+  auto* stack_available =
+      builder_.CreateICmpUGT(builder_.CreatePtrToInt(stack_position, word), stack_limit);
   auto* available = llvm::BasicBlock::Create(context, "depth.available", body_);
   error->addIncoming(Status(builder_, ExecutionStatus::StackOverflow), builder_.GetInsertBlock());
-  builder_.CreateCondBr(builder_.CreateICmpULT(depth, builder_.getInt64(kMaxCallFrames)), available,
-                        failed, llvm::MDBuilder(context).createLikelyBranchWeights());
+  builder_.CreateCondBr(
+      builder_.CreateAnd(builder_.CreateICmpULT(depth, builder_.getInt64(kMaxCallFrames)),
+                         stack_available),
+      available, failed, llvm::MDBuilder(context).createLikelyBranchWeights());
   builder_.SetInsertPoint(available);
   if (!IsRecovering()) {
     auto* first = llvm::BasicBlock::Create(context, "execution.first", body_);

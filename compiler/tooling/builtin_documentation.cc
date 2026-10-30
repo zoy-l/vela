@@ -182,20 +182,6 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
               "```vela\nprint('Hello, ${42}!');\n```",
           },
           {
-              {Kind::Invalid, "ok"},
-              "Creates the success alternative of Expected<T, E>. T and E come from the expected "
-              "variable, return or parameter type.\n\n"
-              "value must match T. Omit the argument when T is void. Creating a result does not "
-              "throw it.",
-          },
-          {
-              {Kind::Invalid, "err"},
-              "Creates the error alternative of Expected<T, E>. T and E come from the expected "
-              "variable, return or parameter type.\n\n"
-              "error must match E. Omit the argument when E is void. Creating an error result does "
-              "not automatically throw.",
-          },
-          {
               {Kind::Invalid, "String"},
               "A mutable String, initially empty. Repeated append() calls have amortized "
               "linear cost.\n\n"
@@ -214,12 +200,6 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
               "deletion take average O(1) time.\n\n"
               "get(key) returns null for a missing key. Updating an existing key preserves its "
               "position.",
-          },
-          {
-              {Kind::Invalid, "Expected"},
-              "Represents either a success value T or an error value E. Construct results with "
-              "ok(value) or err(error), then inspect hasValue().\n\n"
-              "Reading the inactive alternative produces a runtime error.",
           },
           {
               {Kind::Invalid, "int"},
@@ -556,21 +536,6 @@ std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {
               {Kind::Map, "values"},
               "Returns an independent V[] snapshot of values in key insertion order.",
           },
-          {
-              {Kind::Expected, "hasValue"},
-              "Returns whether the result contains a success value. When true, use value(); when "
-              "false, use error().",
-          },
-          {
-              {Kind::Expected, "value"},
-              "Returns the success value T. Produces a runtime error if the result contains an "
-              "error instead. Check hasValue() first.",
-          },
-          {
-              {Kind::Expected, "error"},
-              "Returns the error value E. Produces a runtime error if the result contains a "
-              "success value instead. Check hasValue() first.",
-          },
       };
   const auto found = kDocumentation.find({receiver, name});
   return found == kDocumentation.end() ? std::string_view{} : found->second;
@@ -595,7 +560,6 @@ std::string_view BuiltinTypeDetail(std::string_view name) {
       {"RegExpMatch", "type RegExpMatch"},
       {"Set", "class Set<T> {\n  constructor();\n}"},
       {"Map", "class Map<K, V> {\n  constructor();\n}"},
-      {"Expected", "type Expected<T, E>"},
       {"Future", "type Future<T>"},
       {"Completer", "class Completer<T> {\n  constructor();\n}"},
       {"Timer", "type Timer"},

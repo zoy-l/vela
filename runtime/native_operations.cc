@@ -88,28 +88,6 @@ extern "C" std::uint8_t vela_native_v2_initialize_global(NativeExecution* execut
   return status;
 }
 
-extern "C" std::uint8_t vela_native_v1_new_expected(NativeExecution* execution,
-                                                    std::uint32_t layout,
-                                                    const NativeValue* payload,
-                                                    std::uint8_t alternative,
-                                                    NativeValue* result) noexcept {
-  auto* type = execution->instance().layouts().classes.at(layout);
-  return StoreObject(result, execution->isolate().heap().AllocateExpected(
-                                 *type, DecodeNativeValue(*payload),
-                                 static_cast<ExpectedAlternative>(alternative)));
-}
-
-extern "C" std::uint8_t vela_native_v1_expected_has_value(HeapObject* object,
-                                                          NativeValue* result) noexcept {
-  return Store(result, ExpectedHasValue(object));
-}
-
-extern "C" std::uint8_t vela_native_v1_expected_value(HeapObject* object,
-                                                      std::uint8_t alternative,
-                                                      NativeValue* result) noexcept {
-  return Store(result, ExpectedValue(object, static_cast<ExpectedAlternative>(alternative)));
-}
-
 extern "C" std::uint8_t vela_native_v1_new_instance(NativeExecution* execution,
                                                     std::uint32_t index,
                                                     NativeValue* result) noexcept {

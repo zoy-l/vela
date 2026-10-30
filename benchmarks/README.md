@@ -252,7 +252,7 @@ The array and double timing tables below predate that execution refactor.
 | `string_builder` | 512 |
 | `string_growth_large`, `string_builder_large` | 4096 |
 | `string_unicode` | 1000 |
-| `numeric_conversions`, `expected_results`, `set_membership`, `map_lookup` | 499500 |
+| `numeric_conversions`, `set_membership`, `map_lookup` | 499500 |
 | `closure_calls`, `interface_calls` | 1000 |
 | `match_dispatch` | 3500 |
 | `unicode_graphemes` | 4000 |
@@ -288,12 +288,21 @@ The added string workloads compare six-part `+`, interpolation, and `join`,
 compare builders against repeated `+` at 512 and 4096 appends, and exercise
 Unicode APIs.
 
+`string/length_scan_*` and `string/length_cached_*` compare counting UTF-8
+bytes on every read with the stored code point count. `string/index_from_start_*`
+uses the former indexing algorithm; `string/index_cursor_forward_*` and
+`string/index_cursor_reverse_*` use the current string position cache. Arguments
+256 and 1024 are four-code-point block counts (1024 and 4096 code points).
+ASCII blocks are `abcd`; mixed blocks are `A中😀e`. Every case checks its count
+or offset sum. These runtime measurements exclude compilation, VM dispatch and
+allocation of the one-code-point strings returned by language indexing.
+
 `string_format` formats int/double/bool values directly in interpolation;
 `string_format_explicit` produces the same result with three explicit
 `toString()` calls per iteration. `number_join` joins six integers. Each checks
 1,000 results.
 
-Core language features include explicit conversions, escaping closures, Expected allocation, interface
+Core language features include explicit conversions, escaping closures, interface
 dispatch, match, Unicode graphemes, and ordered Set/Map workloads; see the
 [core language specification](../docs/en/core_language.md).
 

@@ -79,7 +79,7 @@ Remove shared-path dependencies on 8-bit operands, 256 physical registers, and b
 
 ## Value representation and native ABI
 
-Ordinary local `int`, enum ordinal, `double`, and `bool` values use 64-bit integers, 64-bit integers, binary64, and boolean representations respectively. Non-null references use non-moving heap pointers. Nullable primitives carry independent validity information; no valid numeric value is reserved as a sentinel. Heap fields, arrays, dynamic values, Expected, closure captures, and runtime type identity retain the existing object model. Unboxed locals do not imply a different heap layout.
+Ordinary local `int`, enum ordinal, `double`, and `bool` values use 64-bit integers, 64-bit integers, binary64, and boolean representations respectively. Non-null references use non-moving heap pointers. Nullable primitives carry independent validity information; no valid numeric value is reserved as a sentinel. Heap fields, arrays, dynamic values, closure captures, and runtime type identity retain the existing object model. Unboxed locals do not imply a different heap layout.
 
 Function descriptors mark enum results whose native scalar payload needs boxing at the runtime boundary. Other results bypass boxing dispatch. Native value codecs copy only the shared payload/tag prefix, preserve payload bits, and zero the ABI reserved fields when encoding.
 
@@ -249,7 +249,7 @@ Windows verification covers 1,563 C++ tests, 114 tooling tests, 396 VM/AOT corpu
 
 Acceptance matrix:
 
-- Language comparisons: execute the same valid programs through VM/AOT, comparing values, output, side-effect order, error codes, and source traces. Cover module initialization, inheritance, generics, Expected, dynamic values, and every implemented standard-library feature. Compare NaNs and nondeterministic APIs by contract rather than coincidental random numbers or wall-clock values.
+- Language comparisons: execute the same valid programs through VM/AOT, comparing values, output, side-effect order, error codes, and source traces. Cover module initialization, inheritance, generics, dynamic values, and every implemented standard-library feature. Compare NaNs and nondeterministic APIs by contract rather than coincidental random numbers or wall-clock values.
 - GC and ownership: stress every collection boundary, including result handoff, GC inside hosts, shared mutable captures, array growth, exceptions/finally, multiple Isolates, suspension/resumption, and result cycles. Verify root cleanup, layout transactions, and suspended-state counters after exit.
 - Async: synchronous first-segment effects, awaiting ordinary values/completed Futures, FIFO, adoption, composition failures, cancellation, timers, background errors, external-thread completion, and idle, with no AOT-specific scheduling order.
 - ABI and linking: mismatched targets/versions/signatures, missing imports, multiple instances, multiple static libraries sharing one runtime, archive removal, Unicode/space paths, preservation of previous outputs on compilation/linking failure, publication I/O failures, and rejection of mixed manifests.

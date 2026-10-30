@@ -21,6 +21,7 @@ executable("vela_benchmarks") {
     "specialization_benchmark.cc",
     "standard_value_benchmark.cc",
     "standard_value_benchmark.h",
+    "string_index_benchmark.cc",
     "symbol_tables_benchmark.cc",
     "vm_benchmark.cc",
   ]

@@ -13,6 +13,7 @@
 #include <absl/container/inlined_vector.h>
 
 #include "base/execution_status.h"
+#include "base/utf8.h"
 #include "runtime/array_storage.h"
 #include "runtime/element_storage.h"
 #include "runtime/object.h"
@@ -70,12 +71,14 @@ std::expected<StringObject*, StringJoinError> JoinFormatted(std::size_t count,
                                                             const Read& read,
                                                             const Allocate& allocate) {
   std::size_t length = 0;
+  std::size_t code_points = 0;
   if (count > 1) {
     const auto gaps = count - 1;
     if (separator.size() > kMaximumStringLength / gaps) {
       return std::unexpected(StringJoinError::OutOfMemory);
     }
     length = gaps * separator.size();
+    code_points = gaps * Utf8Length(separator);
   }
   absl::InlinedVector<char, kInlineFormattedParts * kScalarTextCapacity> scalars;
   absl::InlinedVector<std::size_t, kInlineFormattedParts> scalar_lengths;
@@ -90,12 +93,13 @@ std::expected<StringObject*, StringJoinError> JoinFormatted(std::size_t count,
       return std::unexpected(StringJoinError::OutOfMemory);
     }
     length += text->size();
+    code_points += value.IsString() ? value.AsString()->length() : text->size();
     if (!value.IsString() && !value.IsNull()) {
       scalars.insert(scalars.end(), text->begin(), text->end());
       scalar_lengths.push_back(text->size());
     }
   }
-  auto* string = allocate(length);
+  auto* string = allocate({.bytes = length, .code_points = code_points});
   if (string == nullptr) {
     return std::unexpected(StringJoinError::OutOfMemory);
   }
@@ -126,7 +130,8 @@ std::expected<StringObject*, StringJoinError> JoinFormatted(std::size_t count,
 
 }  // namespace
 
-StringObject* Heap::AllocateStringStorage(std::size_t length) noexcept {
+StringObject* Heap::AllocateStringStorage(StringSize size) noexcept {
+  const auto length = size.bytes;
   if (length > kMaximumStringLength) {
     return nullptr;
   }
@@ -141,6 +146,7 @@ StringObject* Heap::AllocateStringStorage(std::size_t length) noexcept {
   auto& header = string->header_;
   header.kind = ObjectKind::String;
   header.length = static_cast<std::uint32_t>(length);
+  header.string_length = static_cast<std::uint32_t>(size.code_points);
   Publish(header, allocation);
   return string;
 }
@@ -150,7 +156,10 @@ StringObject* Heap::AllocateString(std::string_view first, std::string_view seco
     return nullptr;
   }
   const auto length = first.size() + second.size();
-  auto* string = AllocateStringStorage(length);
+  auto* string = AllocateStringStorage({
+      .bytes = length,
+      .code_points = Utf8Length(first) + Utf8Length(second),
+  });
   if (string == nullptr) {
     return nullptr;
   }
@@ -163,12 +172,14 @@ StringObject* Heap::AllocateString(std::string_view first, std::string_view seco
 StringObject* Heap::JoinStrings(std::span<StringObject* const> parts,
                                 std::string_view separator) noexcept {
   std::size_t length = 0;
+  std::size_t code_points = 0;
   if (parts.size() > 1) {
     const auto gaps = parts.size() - 1;
     if (separator.size() > kMaximumStringLength / gaps) {
       return nullptr;
     }
     length = gaps * separator.size();
+    code_points = gaps * Utf8Length(separator);
   }
   for (const auto* part : parts) {
     const auto size = part->value().size();
@@ -176,8 +187,9 @@ StringObject* Heap::JoinStrings(std::span<StringObject* const> parts,
       return nullptr;
     }
     length += size;
+    code_points += part->length();
   }
-  auto* string = AllocateStringStorage(length);
+  auto* string = AllocateStringStorage({.bytes = length, .code_points = code_points});
   if (string == nullptr) {
     return nullptr;
   }
@@ -212,7 +224,7 @@ std::expected<StringObject*, StringJoinError> Heap::JoinValues(
   return JoinFormatted(
       parts.size(), {}, TextContext::Interpolation,
       [parts](std::size_t index) -> Value { return parts.subspan(index).front(); },
-      [this](std::size_t length) -> StringObject* { return AllocateStringStorage(length); });
+      [this](StringSize size) -> StringObject* { return AllocateStringStorage(size); });
 }
 
 std::expected<StringObject*, StringJoinError> Heap::JoinArray(const HeapObject& array,
@@ -244,14 +256,14 @@ std::expected<StringObject*, StringJoinError> Heap::JoinArray(const HeapObject& 
       [&layout, storage](std::size_t index) -> Value {
         return LoadElementStorage(layout, storage, index);
       },
-      [this](std::size_t length) -> StringObject* { return AllocateStringStorage(length); });
+      [this](StringSize size) -> StringObject* { return AllocateStringStorage(size); });
 }
 
 std::expected<StringObject*, StringJoinError> Heap::JoinValues(RegisterView parts) noexcept {
   return JoinFormatted(
       parts.size(), {}, TextContext::Interpolation,
       [parts](std::size_t index) -> Value { return parts.subspan(index).front().Read(); },
-      [this](std::size_t length) -> StringObject* { return AllocateStringStorage(length); });
+      [this](StringSize size) -> StringObject* { return AllocateStringStorage(size); });
 }
 
 HeapObject* Heap::AllocateMutableString() noexcept {

@@ -28,7 +28,6 @@ struct Type final {
     Array,
     Collection,
     Callable,
-    Expected,
     Future,
     Completer,
     Timer,
@@ -72,7 +71,6 @@ struct Class final {
   std::vector<std::uint32_t> interfaces;
   std::vector<std::uint32_t> dispatch_targets;
   std::optional<std::uint32_t> callable_type = std::nullopt;
-  std::optional<std::uint32_t> expected_type = std::nullopt;
 };
 
 // arrays/collections 包含嵌套类型；操作数表另外保存 IR 类型编号到描述表的映射。

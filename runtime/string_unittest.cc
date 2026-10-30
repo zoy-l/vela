@@ -5,6 +5,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "gtest/gtest.h"
 
@@ -27,10 +28,14 @@ TEST(StringGcTest, StoresEmptyAndEmbeddedNullBytes) {
   auto* empty = heap.AllocateString("");
   ASSERT_NE(empty, nullptr);
   EXPECT_TRUE(empty->value().empty());
+  EXPECT_EQ(empty->length(), 0U);
+  EXPECT_EQ(empty->ByteOffset(0), 0U);
   constexpr std::string_view kBytes("a\0b", 3);
   auto* joined = heap.AllocateString(kBytes, kBytes);
   ASSERT_NE(joined, nullptr);
   EXPECT_EQ(joined->value(), std::string_view("a\0ba\0b", 6));
+  EXPECT_EQ(joined->length(), 6U);
+  EXPECT_EQ(joined->ByteOffset(5), 5U);
   EXPECT_EQ(heap.object_count(), 2U);
   heap.Collect();
   EXPECT_EQ(heap.allocated_bytes(), 0U);
@@ -52,6 +57,40 @@ TEST(StringGcTest, AccountsAndReleasesLargePayload) {
   EXPECT_EQ(heap.object_count(), 0U);
   EXPECT_EQ(heap.allocated_bytes(), 0U);
   EXPECT_EQ(heap.committed_bytes(), 0U);
+}
+
+TEST(StringGcTest, KeepsCodePointBoundariesAcrossForwardReverseAndScatteredAccess) {
+  constexpr std::array<std::string_view, 6> kPoints = {"A", "中", "😀", "e", "́", {"\0", 1}};
+  constexpr std::size_t kRepetitions = 512;
+  constexpr std::size_t kScatterStride = 1543;
+  std::string text;
+  std::vector<std::size_t> offsets{0};
+  for (std::size_t repeat = 0; repeat < kRepetitions; ++repeat) {
+    for (const auto point : kPoints) {
+      text += point;
+      offsets.push_back(text.size());
+    }
+  }
+  Heap heap(1);
+  const auto value = Value::String(heap.AllocateString(text));
+  RootRange root(heap, &value, 1);
+  const auto* string = value.AsString();
+  ASSERT_NE(string, nullptr);
+  EXPECT_EQ(string->length(), kPoints.size() * kRepetitions);
+  for (std::uint32_t index = 0; index < offsets.size(); ++index) {
+    EXPECT_EQ(string->ByteOffset(index), offsets.at(index));
+  }
+  heap.Collect();
+  for (auto index = static_cast<std::uint32_t>(offsets.size()); index != 0;) {
+    --index;
+    EXPECT_EQ(string->ByteOffset(index), offsets.at(index));
+  }
+  for (std::uint32_t step = 0; step < offsets.size(); ++step) {
+    const auto index = static_cast<std::uint32_t>((step * kScatterStride) % offsets.size());
+    EXPECT_EQ(string->ByteOffset(index), offsets.at(index));
+  }
+  EXPECT_EQ(string->value(), text);
+  EXPECT_EQ(heap.allocated_bytes(), sizeof(StringObject) + text.size());
 }
 
 TEST(StringGcTest, ReusesBlocksAcrossStringAndInstanceLifetimes) {

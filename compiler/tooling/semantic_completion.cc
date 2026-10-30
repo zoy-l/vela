@@ -41,18 +41,6 @@ void AddBuiltins(std::vector<Completion>& result, Kind kind) {
         .kind = CompletionKind::Function,
         .documentation = std::string(BuiltinDocumentation(kind, "print")),
     });
-    result.push_back({
-        .label = "ok",
-        .detail = "(value: T): Expected<T, E>",
-        .kind = CompletionKind::Function,
-        .documentation = std::string(BuiltinDocumentation(kind, "ok")),
-    });
-    result.push_back({
-        .label = "err",
-        .detail = "(error: E): Expected<T, E>",
-        .kind = CompletionKind::Function,
-        .documentation = std::string(BuiltinDocumentation(kind, "err")),
-    });
   }
   constexpr auto kNames = std::to_array<std::string_view>({
       "String",
@@ -194,38 +182,10 @@ std::optional<Completion> SemanticIndex::BuiltinCompletion(const frontend::Token
           .documentation = std::string(BuiltinDocumentation(Kind::Invalid, token.lexeme)),
       };
     }
-    if (const auto expected = ExpectedFactoryCompletion(token)) {
-      return expected;
-    }
     AddBuiltins(candidates, Kind::Invalid);
   }
   const auto found = std::ranges::find(candidates, token.lexeme, &Completion::label);
   return found == candidates.end() ? std::nullopt : std::optional(*found);
-}
-
-std::optional<Completion> SemanticIndex::ExpectedFactoryCompletion(
-    const frontend::Token& token) const {
-  if (token.lexeme != "ok" && token.lexeme != "err") {
-    return std::nullopt;
-  }
-  const auto call = calls_.find(Key{0, token.offset});
-  if (call == calls_.end()) {
-    return std::nullopt;
-  }
-  const auto type = model_.expression_types.find(call->second);
-  if (type == model_.expression_types.end() || type->second.kind != Kind::Expected) {
-    return std::nullopt;
-  }
-  const auto& arguments = model_.generic_arguments.at(type->second.name);
-  const auto& payload = token.lexeme == "ok" ? arguments.front() : arguments.back();
-  const auto* const name = token.lexeme == "ok" ? "value: " : "error: ";
-  return Completion{
-      .label = token.lexeme,
-      .detail = "(" + (payload.kind == Kind::Void ? std::string{} : name + payload.name) +
-                "): " + type->second.name,
-      .kind = CompletionKind::Function,
-      .documentation = std::string(BuiltinDocumentation(Kind::Invalid, token.lexeme)),
-  };
 }
 
 std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receiver) const {
@@ -367,34 +327,28 @@ void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
     if (element != model_.array_elements.end()) {
       AddArrayElementMethods(result, element->second);
     }
-  } else if (kind == Kind::Set || kind == Kind::Map || kind == Kind::Expected) {
+  } else if (kind == Kind::Set || kind == Kind::Map) {
     const auto arguments = model_.generic_arguments.find(type.name);
     if (arguments == model_.generic_arguments.end()) {
       return;
     }
     const auto& types = arguments->second;
-    if (kind == Kind::Expected) {
-      method("hasValue", "(): bool");
-      method("value", "(): " + types.front().name);
-      method("error", "(): " + types.back().name);
+    property("size");
+    const std::string_view parameter = kind == Kind::Set ? "value: " : "key: ";
+    method("has", "(" + std::string(parameter) + types.front().name + "): bool");
+    method("delete", "(" + std::string(parameter) + types.front().name + "): bool");
+    method("clear", "(): void");
+    method("values", "(): " + types.back().name + "[]");
+    if (kind == Kind::Set) {
+      method("add", "(value: " + types.front().name + "): bool");
+      method("union", "(other: " + type.name + "): " + type.name);
+      method("intersection", "(other: " + type.name + "): " + type.name);
+      method("difference", "(other: " + type.name + "): " + type.name);
     } else {
-      property("size");
-      const std::string_view parameter = kind == Kind::Set ? "value: " : "key: ";
-      method("has", "(" + std::string(parameter) + types.front().name + "): bool");
-      method("delete", "(" + std::string(parameter) + types.front().name + "): bool");
-      method("clear", "(): void");
-      method("values", "(): " + types.back().name + "[]");
-      if (kind == Kind::Set) {
-        method("add", "(value: " + types.front().name + "): bool");
-        method("union", "(other: " + type.name + "): " + type.name);
-        method("intersection", "(other: " + type.name + "): " + type.name);
-        method("difference", "(other: " + type.name + "): " + type.name);
-      } else {
-        method("keys", "(): " + types.front().name + "[]");
-        method("get", "(key: " + types.front().name + "): " + types.back().name +
-                          (types.back().nullable ? "" : "?"));
-        method("set", "(key: " + types.front().name + ", value: " + types.back().name + "): void");
-      }
+      method("keys", "(): " + types.front().name + "[]");
+      method("get", "(key: " + types.front().name + "): " + types.back().name +
+                        (types.back().nullable ? "" : "?"));
+      method("set", "(key: " + types.front().name + ", value: " + types.back().name + "): void");
     }
   }
 }
@@ -512,7 +466,6 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
         "void",
         "Set",
         "Map",
-        "Expected",
         "RegExpMatch",
         "Future",
         "Completer",

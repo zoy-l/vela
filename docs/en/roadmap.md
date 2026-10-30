@@ -62,7 +62,6 @@ P0 behavior is specified in [Basic language contracts](language_basics.md).
 
 ## P1: type system and pattern matching
 
-- [x] Implement `Expected<T, E>` results inspired by `std::expected`, with explicit `ok()` / `err()` construction
 - [x] Add enum `switch`
 - [x] Add exhaustive matching
 - [x] Add `match` expressions
