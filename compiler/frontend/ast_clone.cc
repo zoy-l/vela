@@ -229,6 +229,7 @@ Function AstCloner::CloneFunction(const Function& source) {
   result.export_kind = source.export_kind;
   result.native_symbol = source.native_symbol;
   result.intrinsic = source.intrinsic;
+  result.optional_parameters = source.optional_parameters;
   result.role = source.role;
   result.is_async = source.is_async;
   result.is_override = source.is_override;

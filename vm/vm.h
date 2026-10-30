@@ -3,10 +3,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <iosfwd>
+#include <span>
 #include <string>
 #include <vector>
 
 #include "base/source_location.h"
+#include "runtime/execution_context.h"
 #include "runtime/future.h"
 #include "runtime/isolate.h"
 #include "runtime/value.h"
@@ -32,6 +34,7 @@ struct ExecutionResult final {
   ExecutionStatus status = ExecutionStatus::InvalidEntry;
   std::vector<StackFrame> stack_trace;
   std::string message;
+  runtime::ErrorOrigin origin;
 
   [[nodiscard]] bool Succeeded() const noexcept { return status == ExecutionStatus::Returned; }
 };
@@ -51,6 +54,9 @@ class VirtualMachine final {
   [[nodiscard]] ExecutionResult Execute(const FunctionHandle& function) noexcept;
   [[nodiscard]] ExecutionResult Execute(const Program& program,
                                         std::uint32_t entry_function) noexcept;
+  [[nodiscard]] ExecutionResult Invoke(const Program& program,
+                                       runtime::Value callable,
+                                       std::span<const runtime::Value> arguments = {}) noexcept;
   [[nodiscard]] runtime::Future ExecuteFuture(const Program& program,
                                               std::uint32_t entry_function) noexcept;
   [[nodiscard]] ExecutionResult Debug(const FunctionHandle& function, Debugger& debugger) noexcept;

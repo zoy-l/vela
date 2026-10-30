@@ -210,6 +210,8 @@ void LanguageServer::Request(std::string_view method, RpcCall call) {
     Query(call, SymbolQuery::Hover);
   } else if (method == "textDocument/documentLink") {
     DocumentLinks(call);
+  } else if (method == protocol::kSdkSource) {
+    SdkSource(call);
   } else if (method == "textDocument/semanticTokens/full") {
     SemanticTokens(call);
   } else {

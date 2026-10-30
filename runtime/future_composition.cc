@@ -150,11 +150,12 @@ class Aggregation final : public std::enable_shared_from_this<Aggregation> {
       const auto error = CreateError(
           isolate_->heap(), isolate_->error_layout(),
           {.message = ExecutionStatusName(status), .code = ExecutionStatusCode(status)});
-      Forward(result_, {
-                           .state = FutureState::Failed,
-                           .value = error.value_or(Value::Null()),
-                           .diagnostic = {.message = {}, .stack_trace = {}, .status = status},
-                       });
+      Forward(result_,
+              {
+                  .state = FutureState::Failed,
+                  .value = error.value_or(Value::Null()),
+                  .diagnostic = {.message = {}, .stack_trace = {}, .status = status, .origin = {}},
+              });
       return;
     }
     const auto output = Value::Object(object);
@@ -175,6 +176,7 @@ class Aggregation final : public std::enable_shared_from_this<Aggregation> {
                                 .message = std::string(ExecutionStatusName(status)),
                                 .stack_trace = {},
                                 .status = status,
+                                .origin = {},
                             });
         return;
       }
@@ -210,8 +212,9 @@ void CompleteCallback(const FutureContinuation& context, Future& source) {
   auto* object = isolate.heap().AllocateFuture(source);
   auto target = context.target;
   if (object == nullptr) {
-    CompleteFutureError(isolate, target, Value::Null(),
-                        {.message = {}, .stack_trace = {}, .status = ExecutionStatus::OutOfMemory});
+    CompleteFutureError(
+        isolate, target, Value::Null(),
+        {.message = {}, .stack_trace = {}, .status = ExecutionStatus::OutOfMemory, .origin = {}});
     return;
   }
   auto retained = std::make_shared<std::vector<Value>>(*context.references);
@@ -311,9 +314,13 @@ OperationResult ObserveCompletion(const FutureContinuation& context, const Futur
         retained->push_back(input.value);
         auto* pending = isolate->heap().AllocateFuture(completed);
         if (pending == nullptr) {
-          CompleteFutureError(
-              *isolate, target, Value::Null(),
-              {.message = {}, .stack_trace = {}, .status = ExecutionStatus::OutOfMemory});
+          CompleteFutureError(*isolate, target, Value::Null(),
+                              {
+                                  .message = {},
+                                  .stack_trace = {},
+                                  .status = ExecutionStatus::OutOfMemory,
+                                  .origin = {},
+                              });
           return;
         }
         retained->push_back(Value::Object(pending));
@@ -368,9 +375,13 @@ OperationResult ObserveCallbacks(const FutureContinuation& context, const Future
         const std::array<Value, 1> argument_value{input.value};
         const auto count = callbacks.arity(callback);
         if (!count || *count > 1) {
-          CompleteFutureError(
-              *isolate, target, Value::Null(),
-              {.message = {}, .stack_trace = {}, .status = ExecutionStatus::TypeError});
+          CompleteFutureError(*isolate, target, Value::Null(),
+                              {
+                                  .message = {},
+                                  .stack_trace = {},
+                                  .status = ExecutionStatus::TypeError,
+                                  .origin = {},
+                              });
           return;
         }
         auto invoked = callbacks.invoke(callback, std::span(argument_value).first(*count));

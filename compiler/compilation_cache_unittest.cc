@@ -111,6 +111,20 @@ TEST_F(CompilationCacheTest, InvalidatesChangedDependencyEvenWithSameTimestampAn
   ExpectRun(*second, kChangedAnswer);
 }
 
+TEST_F(CompilationCacheTest, ValidatesEmbeddedSdkInputsWithoutReadingThemAsDiskPaths) {
+  Write("main.vela", R"(import 'sdk:test'; func main(): int {
+    return Timeout(42).milliseconds;
+  })");
+  const auto first = Compile();
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first->status, CacheStatus::Absent);
+  ExpectRun(*first, kAnswer);
+  const auto second = Compile();
+  ASSERT_TRUE(second);
+  EXPECT_EQ(second->status, CacheStatus::Hit);
+  ExpectRun(*second, kAnswer);
+}
+
 TEST_F(CompilationCacheTest, InvalidSourceCannotExecuteOrReplaceOldImage) {
   ASSERT_TRUE(Compile());
   Write("main.vela", "func main(): int { return true; }");

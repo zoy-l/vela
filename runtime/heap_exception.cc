@@ -10,6 +10,7 @@
 
 #include "base/execution_status.h"
 #include "runtime/heap.h"
+#include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
 
@@ -52,10 +53,16 @@ HeapObject* Heap::AllocateException(HeapObject& payload,
   const auto rooted_payload = Value::Object(&payload);
   RootRange roots(*this, &rooted_payload, 1, RootOwner::Runtime);
   return AllocateObject(
-      ObjectKind::Exception, size, [&payload, status, trace, message](HeapObject& object) {
+      ObjectKind::Exception, size, [this, &payload, status, trace, message](HeapObject& object) {
         auto* exception = std::construct_at(StorageAfter<ExceptionData>(object));
         exception->payload = &payload;
         exception->status = status;
+        auto& scheduler = isolate_->scheduler();
+        exception->origin = {
+            .context = scheduler.context(),
+            .identity = scheduler.NewErrorIdentity(),
+            .captured = true,
+        };
         exception->trace_count = static_cast<std::uint32_t>(trace.size());
         exception->message_length = static_cast<std::uint32_t>(message.size());
         std::ranges::uninitialized_copy(trace, TraceStorage(*exception));

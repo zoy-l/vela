@@ -1,5 +1,6 @@
 #include "runtime/future.h"
 #include "base/execution_status.h"
+#include "runtime/execution_context.h"
 #include "runtime/external_resources.h"
 #include "runtime/heap.h"
 #include "runtime/value.h"
@@ -49,6 +50,7 @@ struct Future::SharedState final {
   struct Waiter final {
     std::function<void(const FutureResult&)> callback;
     std::shared_ptr<std::vector<::vela::runtime::Value>> references;
+    std::optional<ExecutionContext> context;
   };
   ExternalResource external;
   std::atomic_size_t retained_count{0};
@@ -59,6 +61,7 @@ struct Future::SharedState final {
   bool handled_reported = false;
   std::vector<Waiter> waiters;
   FutureScheduler* scheduler = nullptr;
+  std::optional<ExecutionContext> creation_context;
   Heap* heap = nullptr;
   std::atomic<FutureResult*> incoming{nullptr};
   ~SharedState() { const std::unique_ptr<FutureResult> owned(incoming.load()); }
@@ -70,19 +73,30 @@ struct Future::SharedState final {
 struct Future::Observer final {
   Observer(Future source,
            std::function<void(const FutureResult&)> action,
-           std::shared_ptr<std::vector<::vela::runtime::Value>> values)
-      : future(std::move(source)), callback(std::move(action)), references(std::move(values)) {
+           std::shared_ptr<std::vector<::vela::runtime::Value>> values,
+           std::optional<ExecutionContext> execution_context)
+      : future(std::move(source)),
+        callback(std::move(action)),
+        references(std::move(values)),
+        context(execution_context) {
     if (auto* heap = future.state_->heap; heap != nullptr && references != nullptr) {
       roots.Attach(*heap, references->data(), references->size());
     }
   }
 
-  void Invoke() const { callback(future.state_->completion); }
+  void Invoke() const {
+    std::optional<ExecutionContextScope> scope;
+    if (auto* scheduler = future.state_->scheduler) {
+      scope.emplace(*scheduler, context);
+    }
+    callback(future.state_->completion);
+  }
 
   Future future;
   std::function<void(const FutureResult&)> callback;
   std::shared_ptr<std::vector<::vela::runtime::Value>> references;
   RootRange roots{RootOwner::Runtime};
+  std::optional<ExecutionContext> context;
 };
 
 Future::Future(FutureScheduler* scheduler)
@@ -97,6 +111,7 @@ Future::Future(FutureScheduler* scheduler)
       }) {
   state_->scheduler = scheduler;
   if (scheduler != nullptr) {
+    state_->creation_context = scheduler->context();
     state_->external.Attach(scheduler->external_resources(), ExternalResourceKind::Future);
   }
   Retain();
@@ -259,9 +274,14 @@ std::expected<void, FutureBindingError> Future::Bind(FutureScheduler& scheduler,
   }
   const auto newly_bound = state_->scheduler == nullptr;
   if (newly_bound) {
+    state_->creation_context = scheduler.context();
     state_->external.Attach(scheduler.external_resources(), ExternalResourceKind::Future);
   }
   state_->scheduler = &scheduler;
+  if (newly_bound && state_->completion.state == FutureState::Failed &&
+      state_->completion.diagnostic.origin.identity == 0) {
+    state_->completion.diagnostic.origin.identity = scheduler.NewErrorIdentity();
+  }
   AttachHeap(heap);
   if (newly_bound && state_->completion.state == FutureState::Failed && !state_->error_observed) {
     const auto self = Retained();
@@ -281,6 +301,8 @@ Future Future::Sleep(std::chrono::milliseconds delay, FutureScheduler& scheduler
 FutureState Future::state() const noexcept {
   return state_->completion.state;
 }
+
+const FutureResult& Future::result() const noexcept { return state_->completion; }
 
 bool Future::IsCompleted() const noexcept {
   return state_->completion_requested;
@@ -314,9 +336,10 @@ void Future::ObserveResult(std::function<void(const FutureResult&)> callback,
   if (auto* heap = state_->heap; heap != nullptr && heap->IsCollecting() && references != nullptr) {
     const RootRange roots(*heap, references->data(), references->size(), RootOwner::Runtime);
   }
+  const auto context = state_->scheduler != nullptr ? state_->scheduler->context() : std::nullopt;
   if (state_->completion.state == FutureState::Pending) {
     state_->waiters.push_back(
-        {.callback = std::move(callback), .references = std::move(references)});
+        {.callback = std::move(callback), .references = std::move(references), .context = context});
     return;
   }
   bool notify_handled = false;
@@ -325,7 +348,7 @@ void Future::ObserveResult(std::function<void(const FutureResult&)> callback,
     notify_handled = state_->unhandled_reported && !state_->handled_reported;
     state_->handled_reported = state_->handled_reported || notify_handled;
   }
-  NotifyObserver(std::move(callback), std::move(references));
+  NotifyObserver(std::move(callback), std::move(references), context);
   if (notify_handled) {
     if (state_->scheduler != nullptr) {
       const auto self = Retained();
@@ -337,9 +360,10 @@ void Future::ObserveResult(std::function<void(const FutureResult&)> callback,
 }
 
 void Future::NotifyObserver(std::function<void(const FutureResult&)> callback,
-                            std::shared_ptr<std::vector<::vela::runtime::Value>> references) const {
+                            std::shared_ptr<std::vector<::vela::runtime::Value>> references,
+                            std::optional<ExecutionContext> context) const {
   auto observer =
-      std::make_unique<Observer>(Retained(), std::move(callback), std::move(references));
+      std::make_unique<Observer>(Retained(), std::move(callback), std::move(references), context);
   if (state_->scheduler != nullptr) {
     state_->scheduler->PostMicrotask([observer = std::move(observer)] { observer->Invoke(); });
   } else {
@@ -362,6 +386,16 @@ std::expected<void, FutureCompletionError> Future::CompleteError(::vela::runtime
 
 std::expected<void, FutureCompletionError> Future::CompleteError(::vela::runtime::Value error,
                                                                  FutureDiagnostic diagnostic) {
+  if (!diagnostic.origin.captured) {
+    auto* scheduler = state_->scheduler;
+    diagnostic.origin.context = scheduler != nullptr && scheduler->IsOwnerThread()
+                                    ? scheduler->context()
+                                    : state_->creation_context;
+    diagnostic.origin.captured = true;
+  }
+  if (diagnostic.origin.identity == 0 && state_->scheduler != nullptr) {
+    diagnostic.origin.identity = state_->scheduler->NewErrorIdentity();
+  }
   return Settle(
       {.state = FutureState::Failed, .value = error, .diagnostic = std::move(diagnostic)});
 }
@@ -399,6 +433,7 @@ void Future::Publish(FutureResult result) {
                     .message = std::string(ExecutionStatusName(status)),
                     .stack_trace = {},
                     .status = status,
+                    .origin = {.context = state_->creation_context, .captured = true},
                 },
         });
       }
@@ -418,7 +453,7 @@ void Future::Publish(FutureResult result) {
   }
   auto waiters = std::move(state_->waiters);
   for (auto& waiter : waiters) {
-    NotifyObserver(std::move(waiter.callback), std::move(waiter.references));
+    NotifyObserver(std::move(waiter.callback), std::move(waiter.references), waiter.context);
   }
   if (state_->scheduler != nullptr && !state_->error_observed) {
     const auto self = Retained();

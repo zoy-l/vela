@@ -39,6 +39,7 @@ inline constexpr std::string_view kCharacter = "character";
 inline constexpr std::string_view kDiagnostics = "diagnostics";
 inline constexpr std::string_view kPosition = "position";
 inline constexpr std::string_view kMessage = "message";
+inline constexpr std::string_view kSdkSource = "vela/sdkSource";
 }  // namespace protocol
 
 [[nodiscard]] std::optional<std::string_view> JsonText(const yyjson_val* value);
@@ -85,6 +86,7 @@ class LanguageServer final {
                                                        const ServerDocument& opened,
                                                        std::size_t offset);
   void DocumentLinks(RpcCall call);
+  void SdkSource(RpcCall call);
   void SemanticTokens(RpcCall call);
   SemanticIndex& IndexFor(std::string_view uri, const ServerDocument& opened);
   void PublishDiagnostics();

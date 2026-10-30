@@ -1152,6 +1152,44 @@ class LanguageServerTest(unittest.TestCase):
                                      self.symbol_query('definition', source, source.index(path))])
             self.assertIsNone(self.reply(messages, 'query')['result'])
 
+    def test_sdk_imports_use_real_declarations_and_readonly_source_identity(self) -> None:
+        source = "import 'sdk:test' as t; func main(): void { t.fail('failure'); }"
+        messages = self.session([
+            self.open(source),
+            self.symbol_query('definition', source, source.index('t.fail') + 2, 'definition'),
+            self.symbol_query('hover', source, source.index('t.fail') + 2, 'hover'),
+            request('textDocument/documentLink', {'textDocument': {'uri': self.uri}}, 'links'),
+            request('vela/sdkSource', {'uri': 'sdk:test'}, 'sdk'),
+            request('vela/sdkSource', {'uri': self.uri}, 'disk'),
+        ])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        definition = self.reply(messages, 'definition')['result']
+        self.assertEqual(definition['uri'], 'sdk:test')
+        hover = self.reply(messages, 'hover')['result']['contents']['value']
+        self.assertIn('fail(message: string)', hover)
+        links = self.reply(messages, 'links')['result']
+        self.assertEqual([link['target'] for link in links], ['sdk:test'])
+        sdk = self.reply(messages, 'sdk')['result']
+        self.assertEqual(sdk, (ROOT / 'compiler/sdk/test.vela').read_text(encoding='utf-8'))
+        self.assertEqual(sdk.splitlines()[definition['range']['start']['line']],
+                         'export func fail(message: string): void {')
+        self.assertEqual(self.reply(messages, 'disk')['error']['code'], -32602)
+
+    def test_sdk_matcher_members_and_optional_parameters_use_production_signatures(self) -> None:
+        source = ("import 'sdk:test'; func main(): void { "
+                  "const matcher = equals(42); matcher.match(42); test('case', () => {}); }")
+        member = source.index('matcher.match') + len('matcher.match')
+        messages = self.session([
+            self.open(source),
+            self.symbol_query('definition', source, member, 'member'),
+            self.symbol_query('hover', source, member, 'hover'),
+            self.symbol_query('hover', source, source.index("test('case'"), 'test'),
+        ])
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+        self.assertEqual(self.reply(messages, 'member')['result']['uri'], 'sdk:test')
+        self.assertIn('match(actual: dynamic)', self.reply(messages, 'hover')['result']['contents']['value'])
+        self.assertIn('skip: dynamic = null', self.reply(messages, 'test')['result']['contents']['value'])
+
     def test_definition_resolves_shadowed_locals_parameters_and_closure_captures(self) -> None:
         source = ("func main(seed: int): int {\n  const value = seed;\n"
                   "  { const value = 7; print(value); }\n"

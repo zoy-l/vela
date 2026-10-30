@@ -7,6 +7,7 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include "base/diagnostic.h"
 #include "base/file.h"
@@ -21,6 +22,7 @@
 #include "compiler/frontend/checker.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
+#include "compiler/testing/command.h"
 #include "compiler/tooling/debug_console.h"
 #include "compiler/tooling/development_console.h"
 #include "compiler/tooling/documentation.h"
@@ -53,6 +55,7 @@ void PrintUsage(std::ostream& output) {
       << "  --version    Show the compiler version\n"
       << "  check FILE   Parse and statically check a Vela source file\n"
       << "  run FILE     Compile with a local content cache and run main\n"
+      << "  test [PATH...] [OPTIONS]   Run configured source test suites\n"
       << "  dev FILE [--optimized] [--code-cache=DIR]   Run a JIT development session\n"
       << "  build FILE [--emit=exe|obj|staticlib] [--export=NAME] -o OUTPUT   Build native code\n"
       << "  build --verify-manifest=FILE   Verify a native library and its header\n"
@@ -88,6 +91,11 @@ enum class ExecutionMode : std::uint8_t { Run, Debug };
 int ExecuteAsync(const vela::vm::Program& program,
                  vela::runtime::Isolate& isolate,
                  const vela::vm::FunctionHandle& function) {
+  if (vela::testing::HasTestModule(program)) {
+    const auto& paths = program.functions().subspan(function.index()).front().source_paths;
+    return vela::testing::RunDirectSuite(program, isolate, paths->front(),
+                                         {.output = std::cout, .errors = std::cerr});
+  }
   vela::runtime::ProcessEntry process(isolate, std::cerr);
   vela::vm::VirtualMachine machine(isolate);
   const auto executed = machine.Execute(program, function.index());
@@ -302,6 +310,15 @@ int LanguageServerCommand(std::span<char*> arguments) {
       {.input = std::cin, .output = std::cout, .errors = std::cerr});
 }
 
+int TestCommand(std::span<char*> arguments) {
+  std::vector<std::string_view> options;
+  options.reserve(arguments.size());
+  for (const auto* argument : arguments) {
+    options.emplace_back(argument);
+  }
+  return vela::testing::TestCommand(options, {.output = std::cout, .errors = std::cerr});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -323,6 +340,9 @@ int main(int argc, char** argv) {
 
   if (command == "check") {
     return CheckCommand(arguments.subspan(2));
+  }
+  if (command == "test") {
+    return TestCommand(arguments.subspan(2));
   }
 
   if (command == "fmt") {

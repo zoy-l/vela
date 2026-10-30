@@ -23,6 +23,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/module_binding.h"
 #include "compiler/frontend/parser.h"
+#include "compiler/frontend/sdk_modules.h"
 #include "compiler/frontend/source_file.h"
 #include "compiler/frontend/standard_environment.h"
 
@@ -47,9 +48,9 @@ class ModuleLoader final {
                SourceLoadMode mode = SourceLoadMode::Compilation)
       : origin_(origin), mode_(mode), retention_(retention), cache_(&cache) {
     for (const auto& input : inputs) {
-      if (input.path.starts_with(kStandardSourcePrefix)) {
-        Error(SourceLocation(), std::string(input.path),
-              "standard environment sources cannot be overridden");
+      if (input.path.starts_with(kStandardSourcePrefix) ||
+          input.path.starts_with(kSdkSourcePrefix)) {
+        Error(SourceLocation(), std::string(input.path), "embedded sources cannot be overridden");
         continue;
       }
       const auto path = Normalize(Utf8Path(input.path));
@@ -74,6 +75,9 @@ class ModuleLoader final {
   std::optional<std::uint32_t> Load(const std::filesystem::path& file,
                                     SourceLocation location,
                                     const std::string& importer);
+  std::optional<std::uint32_t> LoadSdk(std::string_view identity,
+                                       SourceLocation location,
+                                       const std::string& importer);
   void LoadDependencies(std::size_t index);
   std::optional<std::uint32_t> ParseModule(const std::string& key, ParsedSource source);
   void Error(SourceLocation location, const std::string& path, std::string message);
@@ -165,6 +169,10 @@ std::expected<ParsedSource, std::string> ModuleLoader::Read(const std::filesyste
 std::optional<std::uint32_t> ModuleLoader::Load(const std::filesystem::path& file,
                                                 SourceLocation location,
                                                 const std::string& importer) {
+  const auto supplied = PathText(file);
+  if (supplied.starts_with(kSdkSourcePrefix)) {
+    return LoadSdk(supplied, location, importer);
+  }
   auto resolved = Normalize(file);
   if (!resolved) {
     Error(location, importer, resolved.error());
@@ -218,6 +226,14 @@ void ModuleLoader::LoadDependencies(std::size_t index) {
   auto imports = std::move(modules_.at(index).program.imports);
   std::vector<std::uint32_t> dependencies;
   for (const auto& imported : imports) {
+    if (imported.path.starts_with(kSdkSourcePrefix)) {
+      const auto dependency = LoadSdk(imported.path, imported.location, path);
+      if (!dependency) {
+        break;
+      }
+      dependencies.push_back(*dependency);
+      continue;
+    }
     const auto imported_path = Utf8Path(imported.path);
     if (imported.path.contains(':') && !imported_path.is_absolute()) {
       Error(imported.location, path, "unsupported module import scheme");
@@ -233,6 +249,36 @@ void ModuleLoader::LoadDependencies(std::size_t index) {
   // 加载会扩张模块向量；导入指令临时移出，避免跨扩容借用 AST 容器。
   modules_.at(index).program.imports = std::move(imports);
   modules_.at(index).dependencies = std::move(dependencies);
+}
+
+std::optional<std::uint32_t> ModuleLoader::LoadSdk(std::string_view identity,
+                                                   SourceLocation location,
+                                                   const std::string& importer) {
+  const std::string key(identity);
+  if (const auto found = ids_.find(key); found != ids_.end()) {
+    return found->second;
+  }
+  const auto text = SdkModuleSource(identity);
+  if (!text) {
+    Error(location, importer, "unknown SDK module '" + key + "'");
+    return std::nullopt;
+  }
+  const auto cached = cache_->sources.find(key);
+  std::shared_ptr<const ParsedSource> source;
+  if (cached == cache_->sources.end()) {
+    auto parsed = ParseSourceSnapshot(std::string(*text));
+    BindSdkDeclarations(identity, parsed.program);
+    source = std::make_shared<const ParsedSource>(std::move(parsed));
+    cache_->sources.emplace(key, source);
+  } else {
+    source = cached->second;
+  }
+  const auto source_id = static_cast<std::uint32_t>(modules_.size());
+  return ParseModule(key, {
+                              .source = source->source,
+                              .program = CloneProgram(source->program, {.source_id = source_id}),
+                              .diagnostics = source->diagnostics,
+                          });
 }
 
 ModuleGraph ModuleLoader::Run(std::string_view entry) {

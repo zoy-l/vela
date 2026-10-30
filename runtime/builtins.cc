@@ -18,9 +18,11 @@
 #include "runtime/heap.h"
 #include "runtime/index_buffer.h"
 #include "runtime/string.h"
+#include "runtime/test_inspection.h"
 #include "runtime/unicode_operations.h"
 #include "runtime/value.h"
 #include "runtime/value_io.h"
+#include "runtime/value_operations.h"
 
 namespace vela::runtime {
 namespace {
@@ -178,6 +180,10 @@ Result ConvertNumber(NumericConversion conversion, Value value) {
 
 Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   switch (builtin) {
+    case Builtin::TestInspect:
+      return InspectTestValue(arguments, heap);
+    case Builtin::TestSame:
+      return Value::Boolean(IsEqualValue(arguments.front(), arguments.subspan(1).front()));
     case Builtin::NumericToInt:
     case Builtin::NumericToDouble:
       return ConvertNumber(

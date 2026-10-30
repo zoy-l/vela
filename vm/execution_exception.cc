@@ -139,6 +139,7 @@ std::optional<ExecutionResult> Execution::CompleteAsyncError(ActiveFrame& active
       .status = exception.status,
       .stack_trace = ResolveTrace(exception.trace()),
       .message = std::string(exception.message()),
+      .origin = exception.origin,
   };
   auto diagnostic = exception.diagnostic != nullptr ? *exception.diagnostic : Diagnostic(failure);
   runtime::Future future(&isolate_.scheduler());
@@ -149,12 +150,18 @@ std::optional<ExecutionResult> Execution::CompleteAsyncError(ActiveFrame& active
         .status = ExecutionStatus::OutOfMemory,
         .stack_trace = {},
         .message = {},
+        .origin = {},
     };
   }
   pending_exception_ = runtime::Value::Null();
   const auto returned = Return(active, runtime::Value::Object(object));
   if (!returned) {
-    return ExecutionResult{.status = returned.error(), .stack_trace = {}, .message = {}};
+    return ExecutionResult{
+        .status = returned.error(),
+        .stack_trace = {},
+        .message = {},
+        .origin = {},
+    };
   }
   return std::nullopt;
 }
@@ -171,6 +178,7 @@ std::optional<ExecutionResult> Execution::HandleError(ExecutionStatus status) {
           .status = ExecutionStatus::OutOfMemory,
           .stack_trace = CaptureStack(),
           .message = {},
+          .origin = {},
       };
     }
     error_message_.clear();
@@ -198,8 +206,10 @@ std::optional<ExecutionResult> Execution::HandleError(ExecutionStatus status) {
       .status = exception.status,
       .stack_trace = ResolveTrace(exception.trace()),
       .message = std::string(exception.message()),
+      .origin = exception.origin,
   };
   if (const auto* diagnostic = exception.diagnostic) {
+    failure.origin = diagnostic->origin;
     failure.stack_trace.clear();
     for (const auto& frame : diagnostic->stack_trace) {
       failure.stack_trace.push_back({

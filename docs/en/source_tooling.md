@@ -162,3 +162,18 @@ instruction observer; it shares source mappings with runtime diagnostics.
 
 The [persistent REPL](repl.md) uses `vela repl`, retaining declarations and values
 without replaying previous submissions.
+
+## Source testing
+
+`vela test` reads the nearest `vela.json` and discovers tests from explicit
+paths. `--list` executes registration and lists selected tests;
+`--reporter=json` emits the version 1 `vela.test` NDJSON protocol. See the
+[testing contract](../zh-CN/testing.md) for APIs, exit codes, asynchronous error
+ownership and timeout boundaries. `vela run FILE` automatically runs the single
+suite when the program imports `sdk:test`, without project configuration.
+
+SDK completion, hover, documentation and locations use the embedded source.
+Definitions and import links retain the `sdk:test` URI. VS Code reads its
+readonly content with `vela/sdkSource`, passing `{ "uri": "sdk:test" }`;
+only registered SDK modules are accepted. Static editor queries never execute
+test registration or test bodies.

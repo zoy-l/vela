@@ -10,6 +10,8 @@
 
 namespace vela::tooling {
 
+bool IsInteractiveStandardOutput() noexcept { return _isatty(1) != 0; }
+
 std::expected<void, std::string> SetBinaryStandardStreams() {
   constexpr int kStandardInputDescriptor = 0;
   constexpr int kStandardOutputDescriptor = 1;

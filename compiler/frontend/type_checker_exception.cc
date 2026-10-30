@@ -12,20 +12,30 @@ namespace vela::frontend {
 StatementFlow TypeChecker::CheckTry(const Statement& statement, const Type& return_type) {
   auto flow = CheckScopedStatement(*statement.then_branch, return_type);
   absl::flat_hash_set<std::string> caught;
+  bool catches_all = false;
   for (const auto& clause : statement.catches) {
+    if (catches_all) {
+      AddDiagnostic(clause.location, "catch-all must be the last catch clause");
+    }
     // 异常可发生在任意副作用之后，catch 不能沿用 try 的普通出口事实。
     refinements_.Clear();
     BeginScope();
     if (!clause.name.empty()) {
       const auto type = ResolveType(clause.type, false);
-      if ((type.kind != Type::Kind::Class && type.kind != Type::Kind::Interface) || type.nullable) {
-        AddDiagnostic(clause.location, "catch type must be a non-null class or interface");
+      if ((type.kind != Type::Kind::Class && type.kind != Type::Kind::Interface &&
+           type.kind != Type::Kind::Dynamic) ||
+          type.nullable) {
+        AddDiagnostic(clause.location,
+                      "catch type must be a non-null class, interface, or dynamic");
       }
+      catches_all = type.kind == Type::Kind::Dynamic;
       if (!caught.insert(type.name).second) {
         AddDiagnostic(clause.location, "duplicate catch type '" + type.name + "'");
       }
       catch_types_.emplace(&clause, type);
       DeclareLocal(clause.name, type, clause.location, BindingKind::Mutable, &clause);
+    } else {
+      catches_all = true;
     }
     const auto next = CheckStatement(*clause.body, return_type);
     EndScope();

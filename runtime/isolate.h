@@ -27,6 +27,7 @@ namespace vela::runtime {
 
 struct NativeImage;
 class NativeInstance;
+class TestBridge;
 
 // 会话内固定的宿主实现与签名；复制快照只共享不可变 NativeFunction 包装。
 class NativeBindings final {
@@ -81,6 +82,8 @@ class Isolate final {
   [[nodiscard]] std::expected<void, std::vector<ExternalResourceInfo>> TryStop();
   [[nodiscard]] std::ostream& output() noexcept;
   void SetOutput(std::ostream& output) noexcept;
+  [[nodiscard]] TestBridge* test_bridge() const noexcept { return test_bridge_; }
+  void SetTestBridge(TestBridge* bridge) noexcept { test_bridge_ = bridge; }
 
   [[nodiscard]] ClassLayout* CreateClassLayout(std::uint32_t field_count,
                                                std::span<const std::uint32_t> reference_fields,
@@ -129,6 +132,7 @@ class Isolate final {
   Random random_;
   FutureScheduler scheduler_;
   std::ostream* output_ = nullptr;
+  TestBridge* test_bridge_ = nullptr;
   Heap heap_;
   NativeControl native_control_;
   NativeDispatch native_dispatch_;

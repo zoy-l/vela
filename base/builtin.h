@@ -8,6 +8,7 @@ namespace vela {
 
 inline constexpr std::size_t kUtcComponentCount = 7;
 inline constexpr std::size_t kDynamicOperationArity = 5;
+inline constexpr std::size_t kTestRegistrationArity = 8;
 
 // 编译器与 VM 共享的内建调用编号，不携带前端或运行时对象。
 enum class Builtin : std::uint8_t {
@@ -134,6 +135,10 @@ enum class Builtin : std::uint8_t {
   DynamicArrayValidate,
   DynamicAsync,
   CheckFuturePayload,
+  TestRegister,
+  TestInspect,
+  TestSame,
+  TestControl,
   Count,
 };
 
@@ -192,6 +197,8 @@ enum class Builtin : std::uint8_t {
     case Builtin::DynamicResolveCall:
     case Builtin::BindRuntimeType:
     case Builtin::CheckFuturePayload:
+    case Builtin::TestInspect:
+    case Builtin::TestSame:
     case Builtin::RegExpHasMatch:
     case Builtin::RegExpFirstMatch:
     case Builtin::RegExpStringMatch:
@@ -265,9 +272,12 @@ enum class Builtin : std::uint8_t {
       return 4;
     case Builtin::DateFromUTC:
       return kUtcComponentCount;
+    case Builtin::TestRegister:
+      return kTestRegistrationArity;
     case Builtin::DynamicArrayPrepare:
     case Builtin::DynamicArrayInvoke:
     case Builtin::DynamicAsync:
+    case Builtin::TestControl:
       return kDynamicOperationArity;
     case Builtin::Count:
       return 0;

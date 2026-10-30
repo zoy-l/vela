@@ -1,0 +1,5 @@
+import 'sdk:test';
+
+func main(): void {
+  test('small suite', () => { expect(42, equals(42)); });
+}

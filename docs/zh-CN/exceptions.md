@@ -31,6 +31,8 @@ func main(): int {
 
 末尾的 `catch { ... }` 可以捕获任何异常，且不向局部暴露未类型化的值。若需绑定异常变量，则必须使用 `catch (name: Type)` 语法。重复的捕获类型以及在通用 catch 之后的 catch 子句均会被编译器拒绝。try 块必须跟随 catch、finally 或两者兼具。Catch 块绑定的变量遵循常规词法作用域及可变闭包捕获规则。
 
+`catch (error: dynamic)` 同样捕获任何异常，并绑定原始异常实例，供通用异常匹配等代码使用。它必须位于其它 catch 子句之后；访问绑定值时仍遵循 `dynamic` 的运行时检查。
+
 全局内置的 `Error(message: string, code: string)` 类无需导入即可使用，其中 `code` 默认为 `"Error"`。这是一个具有固定内存布局的普通类。虚拟机执行失败时会具体化为该类型：`message` 包含诊断信息，`code` 使用稳定的 `ExecutionStatusCode`，例如 `"DivisionByZero"` 或 `"NativeFailure"`。诊断文案与错误码分离，修改文案不能改变错误码。领域 API 在各自契约中定义命名错误码；显式构造的 Error 保留用户传入的 code。自定义错误类型无需继承任何通用基类。原生 C++ 失败与运行时受查失败走完全相同的 catch 处理路径。
 
 异步完成错误中，第二次请求完成使用 `FutureAlreadyCompleted`，直接或间接采用自身使用 `FutureSelfAdoption`。`TimeoutException` 是独立的可抛出类，默认 code 为 `Timeout`。原生 `Future<T>` 完成的值类型不符或错误不可抛出时产生 `TypeError`。根 Future 没有可推进其执行的生产者时，宿主执行状态为 `AsyncIdle`；不会向挂起任务注入异常。传播与调度规则见[异步契约](async_tasks.md)。

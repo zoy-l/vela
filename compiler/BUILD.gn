@@ -17,7 +17,21 @@ generated_file("cache_build_identity") {
   ]
 }
 
+action("sdk_sources") {
+  script = "//tools/embed_sdk.py"
+  inputs = [ "sdk/test.vela" ]
+  outputs = [ "$target_gen_dir/sdk_sources.h" ]
+  args = [
+    "--source",
+    rebase_path(inputs[0], root_build_dir),
+    "--output",
+    rebase_path(outputs[0], root_build_dir),
+  ]
+}
+
 source_set("frontend") {
+  include_dirs = [ root_gen_dir ]
+  deps = [ ":sdk_sources" ]
   sources = [
     "frontend/ast.cc",
     "frontend/ast.h",
@@ -50,6 +64,8 @@ source_set("frontend") {
     "frontend/parser_types.cc",
     "frontend/regexp_builtins.cc",
     "frontend/regexp_builtins.h",
+    "frontend/sdk_modules.cc",
+    "frontend/sdk_modules.h",
     "frontend/source_file.h",
     "frontend/source_loader.cc",
     "frontend/source_loader.h",
@@ -143,6 +159,12 @@ executable("vela_ir_tests") {
 
 source_set("tooling") {
   sources = [
+    "project_config.cc",
+    "project_config.h",
+    "testing/pattern.cc",
+    "testing/pattern.h",
+    "testing/settings.cc",
+    "testing/settings.h",
     "tooling/builtin_documentation.cc",
     "tooling/builtin_documentation.h",
     "tooling/documentation.cc",
@@ -172,6 +194,7 @@ source_set("tooling") {
   public_deps = [
     ":frontend",
     "//base:json",
+    "//third_party:pcre2",
   ]
   deps = [ ":build_info" ]
   if (target_os == "win") {
@@ -190,6 +213,28 @@ source_set("interactive") {
   ]
   public_deps = [ ":compiler" ]
   deps = [ "//base:json" ]
+}
+
+source_set("testing") {
+  sources = [
+    "testing/command.cc",
+    "testing/command.h",
+    "testing/command_options.cc",
+    "testing/command_options.h",
+    "testing/discovery.cc",
+    "testing/discovery.h",
+    "testing/report.cc",
+    "testing/report.h",
+    "testing/result.h",
+    "testing/suite.cc",
+    "testing/suite.h",
+    "testing/suite_async.cc",
+    "testing/suite_report.cc",
+  ]
+  public_deps = [
+    ":compiler",
+    ":tooling",
+  ]
 }
 
 source_set("source_session") {
@@ -418,6 +463,7 @@ executable("vela") {
     ":compiler",
     ":development_tools",
     ":interactive",
+    ":testing",
     ":tooling",
   ]
 }
@@ -441,6 +487,8 @@ executable("vela_frontend_tests") {
     "frontend/parser_unittest.cc",
     "frontend/refinement_unittest.cc",
     "frontend_unittest.cc",
+    "project_config_unittest.cc",
+    "testing/settings_unittest.cc",
     "tooling/documentation_unittest.cc",
     "tooling/file_uri_unittest.cc",
     "tooling/formatter_unittest.cc",
@@ -492,15 +540,19 @@ executable("vela_compiler_tests") {
     "regexp_unittest.cc",
     "register_allocator_unittest.cc",
     "repl_session_unittest.cc",
+    "sdk_modules_unittest.cc",
     "source_session_unittest.cc",
     "stack_trace_unittest.cc",
     "standard_library_unittest.cc",
     "string_gc_unittest.cc",
     "string_unittest.cc",
+    "testing/matchers_unittest.cc",
+    "testing/suite_unittest.cc",
     "unicode_unittest.cc",
   ]
   deps = [
     ":compiler",
+    ":testing",
     "//runtime",
     "//third_party:gtest_main",
   ]

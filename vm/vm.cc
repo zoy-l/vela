@@ -1,6 +1,7 @@
 #include "vm/vm.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -51,6 +52,36 @@ namespace internal {
 namespace {
 
 inline constexpr std::size_t kInlineInterpolationParts = 8;
+
+StepResult CheckInvocationArguments(const FunctionStorage& function,
+                                    const runtime::ResolvedCallable& callable,
+                                    std::span<const runtime::Value> arguments) {
+  const auto hidden = callable.implicit.has_value() ? 1U : 0U;
+  if (function.parameter_count < arguments.size() + hidden ||
+      (!function.signature && function.parameter_count != arguments.size() + hidden)) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  if (!function.signature) {
+    return {};
+  }
+  const auto& signature = *function.signature;
+  const auto skipped = hidden - signature.hidden_parameters;
+  const auto parameters = std::span(signature.parameters).subspan(skipped);
+  const auto missing = parameters.subspan(arguments.size());
+  if (std::ranges::any_of(missing, [](const auto& parameter) -> bool {
+        return !parameter.optional && !parameter.rest;
+      })) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    const auto parameter = signature.parameters.at(index + skipped).type;
+    const auto& type = function.layouts->types().subspan(parameter).front();
+    if (!runtime::Heap::IsValueOfType(arguments.subspan(index).front(), type)) {
+      return std::unexpected(ExecutionStatus::InvalidCast);
+    }
+  }
+  return {};
+}
 
 struct BinaryOperands final {
   runtime::RegisterReference left;
@@ -139,6 +170,7 @@ ExecutionResult Execution::RunImpl(std::uint32_t entry_function, Debugger* debug
         .status = entered.error(),
         .stack_trace = {},
         .message = {},
+        .origin = {},
     };
   }
   return Continue<Debugging>(debugger);
@@ -150,7 +182,7 @@ ExecutionResult Execution::Continue(Debugger* debugger) noexcept {
   if (!prepared) {
     if (prepared.error() == ExecutionStatus::DebuggerStopped) {
       AbortInitializers();
-      return {.status = prepared.error(), .stack_trace = {}, .message = {}};
+      return {.status = prepared.error(), .stack_trace = {}, .message = {}, .origin = {}};
     }
     if (auto failure = HandleError(prepared.error())) {
       return std::move(*failure);
@@ -166,6 +198,7 @@ ExecutionResult Execution::Continue(Debugger* debugger) noexcept {
             .status = ExecutionStatus::DebuggerStopped,
             .stack_trace = {},
             .message = {},
+            .origin = {},
         };
       }
     }
@@ -181,14 +214,20 @@ ExecutionResult Execution::Continue(Debugger* debugger) noexcept {
     if (!step) {
       if (step.error() == ExecutionStatus::DebuggerStopped) {
         AbortInitializers();
-        return {.status = step.error(), .stack_trace = {}, .message = {}};
+        return {.status = step.error(), .stack_trace = {}, .message = {}, .origin = {}};
       }
       if (auto failure = HandleError(step.error())) {
         return std::move(*failure);
       }
     }
   }
-  return {.value = result_, .status = ExecutionStatus::Returned, .stack_trace = {}, .message = {}};
+  return {
+      .value = result_,
+      .status = ExecutionStatus::Returned,
+      .stack_trace = {},
+      .message = {},
+      .origin = {},
+  };
 }
 
 ExecutionResult Execution::Run(std::uint32_t entry_function) noexcept {
@@ -204,6 +243,7 @@ runtime::FutureDiagnostic Execution::Diagnostic(const ExecutionResult& result) {
       .message = result.message,
       .stack_trace = {},
       .status = result.status,
+      .origin = result.origin,
   };
   for (const auto& frame : result.stack_trace) {
     diagnostic.stack_trace.push_back({
@@ -224,6 +264,7 @@ runtime::FutureDiagnostic Execution::ThrowDiagnostic(runtime::Value payload) con
       .status = ExecutionStatus::Thrown,
       .stack_trace = CaptureStack(),
       .message = std::string(runtime::ErrorMessage(payload, isolate_.error_layout())),
+      .origin = {.context = isolate_.scheduler().context(), .captured = true},
   });
 }
 
@@ -302,6 +343,7 @@ std::optional<ExecutionResult> Execution::ResumeFrame(
         .status = entered.error(),
         .stack_trace = {},
         .message = {},
+        .origin = {},
     };
   }
   auto& active = frames_.at(0);
@@ -319,6 +361,7 @@ std::optional<ExecutionResult> Execution::ResumeFrame(
           .status = diagnostic.status,
           .stack_trace = {},
           .message = diagnostic.message,
+          .origin = diagnostic.origin,
       };
     }
     const auto status = RestoreFutureError(completion);
@@ -341,28 +384,18 @@ ExecutionResult Execution::Invoke(runtime::Value callable,
   runtime::RootRange callable_root(isolate_.heap(), &callable, 1, runtime::RootOwner::Runtime);
   const auto resolved = ResolveCallable(callable);
   if (!resolved) {
-    return {.status = resolved.error(), .stack_trace = {}, .message = {}};
+    return {.status = resolved.error(), .stack_trace = {}, .message = {}, .origin = {}};
   }
   const auto& [target, implicit] = *resolved;
   const auto& function = functions_.subspan(target).front();
   const auto hidden = implicit.has_value() ? 1U : 0U;
-  if (function.parameter_count != arguments.size() + hidden) {
-    return {.status = ExecutionStatus::TypeError, .stack_trace = {}, .message = {}};
-  }
-  if (function.signature) {
-    const auto& signature = *function.signature;
-    const auto skipped = hidden - signature.hidden_parameters;
-    for (std::size_t index = 0; index < arguments.size(); ++index) {
-      const auto parameter = signature.parameters.at(index + skipped).type;
-      const auto& type = function.layouts->types().subspan(parameter).front();
-      if (!runtime::Heap::IsValueOfType(arguments.subspan(index).front(), type)) {
-        return {.status = ExecutionStatus::InvalidCast, .stack_trace = {}, .message = {}};
-      }
-    }
+  const auto checked = CheckInvocationArguments(function, *resolved, arguments);
+  if (!checked) {
+    return {.status = checked.error(), .stack_trace = {}, .message = {}, .origin = {}};
   }
   const auto entered = EnterFrame({.function = target});
   if (!entered) {
-    return {.status = entered.error(), .stack_trace = {}, .message = {}};
+    return {.status = entered.error(), .stack_trace = {}, .message = {}, .origin = {}};
   }
   const auto values = *entered;
   if (implicit) {
@@ -380,6 +413,25 @@ ExecutionResult Execution::Invoke(runtime::Value callable,
       }
     }
     values.subspan(index + hidden).front() = value;
+  }
+  for (std::size_t index = arguments.size() + hidden; index < function.parameter_count; ++index) {
+    auto parameter = values.subspan(index).front();
+    parameter.SetNull();
+    const auto& signature = *function.signature;
+    const auto& descriptor = signature.parameters.at(index - signature.hidden_parameters);
+    if (descriptor.rest) {
+      const auto& type = function.layouts->types().subspan(descriptor.type).front();
+      auto* empty = isolate_.heap().AllocateArray(*type.array, 0);
+      if (empty == nullptr) {
+        return {
+            .status = ExecutionStatus::OutOfMemory,
+            .stack_trace = {},
+            .message = {},
+            .origin = {},
+        };
+      }
+      parameter.SetObject(empty);
+    }
   }
   return debug_session_ != nullptr && debug_session_->debugger != nullptr
              ? Continue<true>(debug_session_->debugger)
@@ -742,6 +794,12 @@ StepResult Execution::AllocateCollection(ActiveFrame& active, FutureRegisters re
 }
 
 StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instruction) {
+  if (static_cast<Builtin>(DecodeB(instruction)) == Builtin::TestRegister) {
+    return ExecuteTestRegistration(active, instruction);
+  }
+  if (static_cast<Builtin>(DecodeB(instruction)) == Builtin::TestControl) {
+    return ExecuteTestControl(active, instruction);
+  }
   const auto builtin = static_cast<Builtin>(DecodeB(instruction));
   if (builtin == Builtin::DynamicAsync) {
     return ExecuteDynamicAsync(active, instruction);
@@ -1167,6 +1225,27 @@ ExecutionResult VirtualMachine::Execute(const Program& program,
   return ExecuteImpl(program, entry_function, nullptr);
 }
 
+ExecutionResult VirtualMachine::Invoke(const Program& program,
+                                       runtime::Value callable,
+                                       std::span<const runtime::Value> arguments) noexcept {
+  if (!program.IsForIsolate(isolate_)) {
+    return {
+        .status = ExecutionStatus::InvalidIsolate,
+        .stack_trace = {},
+        .message = {},
+        .origin = {},
+    };
+  }
+  if (executing_) {
+    VirtualMachine nested(isolate_);
+    return nested.Invoke(program, callable, arguments);
+  }
+  executing_ = true;
+  const absl::Cleanup execution_finished = [this] { executing_ = false; };
+  internal::Execution execution(isolate_, program, registers_);
+  return execution.Invoke(callable, arguments);
+}
+
 runtime::Future VirtualMachine::ExecuteFuture(const Program& program,
                                               std::uint32_t entry_function) noexcept {
   const auto executed = Execute(program, entry_function);
@@ -1196,6 +1275,7 @@ ExecutionResult VirtualMachine::ExecuteImpl(const Program& program,
         .status = ExecutionStatus::InvalidEntry,
         .stack_trace = {},
         .message = {},
+        .origin = {},
     };
   }
   if (!program.IsForIsolate(isolate_)) {
@@ -1204,6 +1284,7 @@ ExecutionResult VirtualMachine::ExecuteImpl(const Program& program,
         .status = ExecutionStatus::InvalidIsolate,
         .stack_trace = {},
         .message = {},
+        .origin = {},
     };
   }
   if (executing_) {
@@ -1231,6 +1312,7 @@ ExecutionResult VirtualMachine::ExecuteImpl(const Program& program,
             .status = ExecutionStatus::AsyncIdle,
             .stack_trace = {},
             .message = {},
+            .origin = {},
         };
       } else if (root.state() == runtime::FutureState::Failed) {
         const auto diagnostic = root.error_diagnostic().value_or(runtime::FutureDiagnostic{});
@@ -1239,6 +1321,7 @@ ExecutionResult VirtualMachine::ExecuteImpl(const Program& program,
             .status = diagnostic.status,
             .stack_trace = {},
             .message = diagnostic.message,
+            .origin = diagnostic.origin,
         };
         for (const auto& frame : diagnostic.stack_trace) {
           result.stack_trace.push_back({

@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "base/execution_status.h"
+#include "runtime/execution_context.h"
 #include "runtime/object.h"
 
 namespace vela::runtime {
@@ -26,6 +27,7 @@ struct ExceptionData final {
   std::uint32_t message_length = 0;
   // 原生或跨 async 边界的异常拥有已经解析的版本诊断；VM 同步异常保留紧凑位置。
   FutureDiagnostic* diagnostic = nullptr;
+  ErrorOrigin origin;
 
   [[nodiscard]] std::span<const TracePosition> trace() const noexcept;
   [[nodiscard]] std::string_view message() const noexcept;

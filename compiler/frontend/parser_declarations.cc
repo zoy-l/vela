@@ -88,7 +88,7 @@ Parser::MemberModifiers Parser::ParseMemberModifiers() {
   bool has_storage = false;
   const auto is_accessor_modifier = [&]() {
     return (Check(TokenKind::Get) || Check(TokenKind::Set)) && current_ + 1 < tokens_.size() &&
-           tokens_.subspan(current_ + 1).front().kind == TokenKind::Identifier;
+           IsMemberName(tokens_.subspan(current_ + 1).front().kind);
   };
   while (Check(TokenKind::Private) || Check(TokenKind::Static) || Check(TokenKind::Override) ||
          is_accessor_modifier()) {
@@ -181,7 +181,7 @@ Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
     return MemberParseResult::Parsed;
   }
   std::optional<Token> member;
-  if (Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)) {
+  if (IsMemberName(Peek().kind)) {
     member = tokens_.subspan(current_++).front();
   } else {
     AddDiagnostic(Peek().location, "expected field or method name");
@@ -247,13 +247,18 @@ std::optional<Interface> Parser::ParseInterface() {
   declaration.name = name->lexeme;
   declaration.location = name->location;
   while (!Check(TokenKind::RightBrace) && !IsAtEnd()) {
-    const auto member = Expect(TokenKind::Identifier, "expected interface method name");
-    if (!member || !Expect(TokenKind::LeftParen, "expected '(' after interface method name")) {
+    const auto member = Peek();
+    if (!IsMemberName(member.kind)) {
+      AddDiagnostic(Peek().location, "expected interface method name");
+      return std::nullopt;
+    }
+    ++current_;
+    if (!Expect(TokenKind::LeftParen, "expected '(' after interface method name")) {
       return std::nullopt;
     }
     Function method;
-    method.name = member->lexeme;
-    method.location = member->location;
+    method.name = member.lexeme;
+    method.location = member.location;
     while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
       auto parameter = ParseParameter();
       if (!parameter) {
@@ -290,8 +295,11 @@ std::optional<Function> Parser::ParseFunction() {
   const auto name = Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)
                         ? std::optional<Token>(tokens_.subspan(current_++).front())
                         : std::nullopt;
-  return name ? ParseFunctionBody(*name, external ? name->lexeme : std::string(), is_async)
-              : std::nullopt;
+  if (!name) {
+    AddDiagnostic(Peek().location, "expected function name");
+    return std::nullopt;
+  }
+  return ParseFunctionBody(*name, external ? name->lexeme : std::string(), is_async);
 }
 
 std::optional<Function> Parser::ParseFunctionBody(const Token& name,
@@ -356,6 +364,7 @@ std::optional<Parameter> Parser::ParseParameter(ParameterTyping typing) {
                         ? std::optional<Token>(tokens_.subspan(current_++).front())
                         : std::nullopt;
   if (!name) {
+    AddDiagnostic(Peek().location, "expected parameter name");
     return std::nullopt;
   }
   if (!Match(TokenKind::Colon)) {

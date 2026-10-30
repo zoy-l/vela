@@ -20,6 +20,7 @@
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/lexer.h"
 #include "compiler/frontend/parser.h"
+#include "compiler/frontend/sdk_modules.h"
 #include "compiler/frontend/source_loader.h"
 #include "compiler/frontend/specialization.h"
 #include "compiler/frontend/standard_environment.h"
@@ -65,6 +66,10 @@ std::string Signature(const frontend::Function& function) {
       text += ", ";
     }
     text += parameter.name + ": " + TypeText(parameter.type);
+    if (std::ranges::find(function.optional_parameters, parameter.name) !=
+        function.optional_parameters.end()) {
+      text += " = null";
+    }
   }
   return text + "): " + TypeText(function.return_type);
 }
@@ -791,8 +796,10 @@ void SemanticIndex::VisitProgram() {
 
 std::optional<std::uint32_t> SemanticIndex::ImportSource(
     const frontend::Program::Import& imported) const {
-  auto path = PathText(
-      frontend::ResolveImportPath(Utf8Path(sources_.front().path), Utf8Path(imported.path)));
+  auto path = imported.path;
+  if (!path.starts_with(frontend::kSdkSourcePrefix)) {
+    path = PathText(frontend::ResolveImportPath(Utf8Path(sources_.front().path), Utf8Path(path)));
+  }
   if (const auto resolution = resolutions_.find(path); resolution != resolutions_.end()) {
     path = resolution->second;
   }
@@ -868,10 +875,10 @@ const frontend::Token* SemanticIndex::QueryToken(std::size_t offset) const {
   }
   auto selected = std::prev(after);
   // 编辑器的光标可停在单词末尾，此时当前位置可能已经属于紧接着的 '(' 或 '.'。
-  if (selected->offset == offset && selected->kind != TokenKind::Identifier &&
+  if (selected->offset == offset && !frontend::IsMemberName(selected->kind) &&
       selected->kind != TokenKind::Print && selected != tokens.begin()) {
     const auto previous = std::prev(selected);
-    if ((previous->kind == TokenKind::Identifier || previous->kind == TokenKind::Print) &&
+    if ((frontend::IsMemberName(previous->kind) || previous->kind == TokenKind::Print) &&
         previous->offset + previous->length == offset) {
       selected = previous;
     }

@@ -412,7 +412,7 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
   const auto current =
       after == tokens.begin() ? 0 : static_cast<std::size_t>(std::prev(after) - tokens.begin());
   const auto& token = tokens.at(current);
-  const auto prefix = token.kind == frontend::TokenKind::Identifier && offset >= token.offset
+  const auto prefix = frontend::IsMemberName(token.kind) && offset >= token.offset
                           ? source.text.text().substr(token.offset, offset - token.offset)
                           : std::string_view();
   if (token.kind == frontend::TokenKind::StringLiteral ||

@@ -37,6 +37,10 @@ Typed bindings require `catch (name: Type)`. Duplicate types and catch clauses
 after a catch-all are rejected. A try must have catch, finally, or both. Catch
 bindings follow ordinary lexical scope and mutable closure-capture rules.
 
+`catch (error: dynamic)` also catches every exception and binds its original
+instance for generic exception handling and matching. It must be the final
+catch clause. Access through the binding follows the normal dynamic checks.
+
 The default global `Error(message: string, code: string)` requires no import;
 `code` defaults to `"Error"`. This is an ordinary fixed-layout class. VM failures
 are materialized as this type: `message` contains the diagnostic, while `code`

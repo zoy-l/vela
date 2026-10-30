@@ -130,7 +130,7 @@ TypeChecker::Type TypeChecker::CheckLambda(const Expression& expression, const T
                     "null-only lambda requires an explicit nullable return type");
     }
   }
-  if (signature.return_type.kind != Type::Kind::Void && flow.can_fall_through) {
+  if (!CanFallThrough(function, signature.return_type) && flow.can_fall_through) {
     AddDiagnostic(function.location, "non-void lambda may fall through without returning");
   }
   EndScope();

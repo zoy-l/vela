@@ -1519,7 +1519,7 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
     });
   }
   const auto& order = model_.argument_order.at(&expression);
-  if (function.intrinsic) {
+  if (!function.optional_parameters.empty()) {
     for (std::size_t index = 0; index < function.parameters.size(); ++index) {
       if (function.optional_parameters.contains(function.parameters.at(index).name)) {
         Emit({

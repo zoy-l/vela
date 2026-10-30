@@ -792,7 +792,7 @@ bool Parser::ParsePostfixMember(std::unique_ptr<Expression>& expression) {
     return true;
   }
   std::optional<Token> member;
-  if (Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)) {
+  if (IsMemberName(Peek().kind)) {
     member = tokens_.subspan(current_++).front();
   } else {
     AddDiagnostic(Peek().location,

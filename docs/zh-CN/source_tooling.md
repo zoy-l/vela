@@ -51,3 +51,9 @@ out/debug/vela.exe doc examples/documented_library.vela api.md
 [终端调试器](debugger.md) 通过 `vela debug FILE` 启动，基于虚拟机的显式指令观察者运行，与运行时诊断共享源码映射表。
 
 [持久化 REPL](repl.md) 通过 `vela repl` 启动，在多轮提交之间持久保留变量声明与数值，且不重新回放先前的输出。
+
+## 源码测试
+
+`vela test` 读取最近的 `vela.json`，使用显式路径发现并运行测试；`--list` 执行注册逻辑并列出筛选后的测试，`--reporter=json` 提供版本为 1 的 `vela.test` 行式 JSON 事件。完整 API、退出码、异步归属及超时边界见[测试契约](testing.md)。`vela run FILE` 对导入 `sdk:test` 的程序自动运行本文件的 suite，无需项目配置。
+
+SDK 导入的补全、悬停、文档和位置来自真实嵌入源码。跳转与导入链接保留 `sdk:test` URI，VS Code 通过 `vela/sdkSource` 请求读取只读内容；该请求接收 `{ "uri": "sdk:test" }`，只允许已登记的 SDK 模块。静态编辑器查询不会运行测试注册或测试体。

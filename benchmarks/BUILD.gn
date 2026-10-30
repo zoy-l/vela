@@ -15,6 +15,7 @@ executable("vela_benchmarks") {
     "native_standard_workloads.h",
     "native_workloads.cc",
     "native_workloads.h",
+    "process_memory.h",
     "regexp_benchmark.cc",
     "repl_benchmark.cc",
     "representative_benchmark.cc",
@@ -23,6 +24,7 @@ executable("vela_benchmarks") {
     "standard_value_benchmark.h",
     "string_index_benchmark.cc",
     "symbol_tables_benchmark.cc",
+    "testing_benchmark.cc",
     "vm_benchmark.cc",
   ]
   benchmark_source_dir = rebase_path("//benchmarks", "")
@@ -31,10 +33,18 @@ executable("vela_benchmarks") {
     "//base:json",
     "//compiler",
     "//compiler:tooling",
+    "//compiler:testing",
     "//third_party:benchmark_main",
     "//third_party:luajit",
     "//third_party:pcre2",
   ]
+  if (target_os == "win") {
+    sources += [ "process_memory_win.cc" ]
+  } else if (target_os == "mac") {
+    sources += [ "process_memory_mac.cc" ]
+  } else {
+    sources += [ "process_memory_linux.cc" ]
+  }
 }
 
 aot_native_directory = "$target_gen_dir/aot_native"

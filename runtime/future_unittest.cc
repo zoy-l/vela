@@ -313,10 +313,9 @@ TEST(FutureTest, ObserversBorrowOneCompletion) {
   future.ObserveResult([&](const FutureResult& result) { second = &result; });
   ASSERT_TRUE(future.CompleteError(
       Value::Integer(kErrorValue),
-      {
-          .message = "failure",
-          .stack_trace = {{.function = "host", .source_path = "input.vela", .identity = {}}},
-      }));
+      {.message = "failure",
+       .stack_trace = {{.function = "host", .source_path = "input.vela", .identity = {}}},
+       .origin = {}}));
   ASSERT_TRUE(isolate.scheduler().PumpOne());
   future.ObserveResult([&](const FutureResult& result) { late = &result; });
   ASSERT_TRUE(isolate.scheduler().PumpOne());

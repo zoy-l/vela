@@ -171,6 +171,8 @@ class Execution final {
                             runtime::Value left,
                             runtime::Value right);
   StepResult ExecuteBuiltin(ActiveFrame& active, Instruction instruction);
+  StepResult ExecuteTestRegistration(ActiveFrame& active, Instruction instruction);
+  StepResult ExecuteTestControl(ActiveFrame& active, Instruction instruction);
   static StepResult ExecuteTypeBinding(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteCalendar(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteJson(ActiveFrame& active, Instruction instruction);

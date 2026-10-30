@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <tuple>
 #include <utility>
@@ -16,6 +17,7 @@
 
 #include <absl/functional/any_invocable.h>
 
+#include "runtime/execution_context.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -92,7 +94,7 @@ void FutureScheduler::RemoveSuspendedFrame(std::size_t saved_bytes) noexcept {
 
 void FutureScheduler::PostMicrotask(absl::AnyInvocable<void()> task) {
   if (IsOwnerThread()) {
-    microtasks_.push_back(std::move(task));
+    microtasks_.push_back({.context = context_, .action = std::move(task)});
     return;
   }
   auto message = std::make_unique<Message>();
@@ -175,6 +177,7 @@ Timer FutureScheduler::After(std::chrono::milliseconds delay, std::function<void
   auto state = std::make_shared<Timer::State>();
   state->callback = std::move(callback);
   state->scheduler = this;
+  state->context = context_;
   events_.push(Event{
       .deadline = Clock::now() + delay,
       .sequence = next_sequence_++,
@@ -190,6 +193,7 @@ Timer FutureScheduler::Periodic(std::chrono::milliseconds interval,
   auto state = std::make_shared<Timer::State>();
   state->callback = std::move(callback);
   state->scheduler = this;
+  state->context = context_;
   events_.push(Event{
       .deadline = Clock::now() + interval,
       .sequence = next_sequence_++,
@@ -201,10 +205,16 @@ Timer FutureScheduler::Periodic(std::chrono::milliseconds interval,
 
 void FutureScheduler::DrainMicrotasks() {
   while (!microtasks_.empty() || !checkpoints_.empty()) {
-    auto& queue = microtasks_.empty() ? checkpoints_ : microtasks_;
-    auto task = std::move(queue.front());
-    queue.pop_front();
-    task();
+    if (!microtasks_.empty()) {
+      auto task = std::move(microtasks_.front());
+      microtasks_.pop_front();
+      const ExecutionContextScope scope(*this, task.context);
+      task.action();
+    } else {
+      auto checkpoint = std::move(checkpoints_.front());
+      checkpoints_.pop_front();
+      checkpoint();
+    }
   }
 }
 
@@ -220,6 +230,7 @@ bool FutureScheduler::PumpOne(FuturePumpMode mode) {
     if (!host_events_.empty()) {
       auto event = std::move(host_events_.front());
       host_events_.pop_front();
+      const ExecutionContextScope scope(*this, std::nullopt);
       event();
       DrainMicrotasks();
       return true;
@@ -229,7 +240,7 @@ bool FutureScheduler::PumpOne(FuturePumpMode mode) {
       events_.pop();
     }
     if (events_.empty()) {
-      if (mode == FuturePumpMode::AvailableWork || host_sources_.load() == 0) {
+      if (mode != FuturePumpMode::WaitForHost || host_sources_.load() == 0) {
         return false;
       }
       wakeup_.acquire();
@@ -237,6 +248,9 @@ bool FutureScheduler::PumpOne(FuturePumpMode mode) {
     }
     const auto deadline = events_.top().deadline;
     if (deadline > Clock::now()) {
+      if (mode == FuturePumpMode::ReadyWork) {
+        return false;
+      }
       std::ignore = wakeup_.try_acquire_until(deadline);
       continue;
     }
@@ -251,6 +265,7 @@ void FutureScheduler::Fire(Event event) {
   auto& state = *event.state;
   auto callback = event.interval.count() == 0 ? std::move(state.callback) : state.callback;
   if (callback && !state.cancelled.load()) {
+    const ExecutionContextScope scope(*this, state.context);
     callback();
     DrainMicrotasks();
   }

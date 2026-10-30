@@ -19,6 +19,7 @@
 #include "compiler/cache_build_identity.h"
 #include "compiler/compiler.h"
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/sdk_modules.h"
 #include "compiler/frontend/source_file.h"
 #include "compiler/frontend/source_loader.h"
 #include "compiler/frontend/standard_environment.h"
@@ -106,6 +107,10 @@ std::expected<CacheImage, BinaryError> DecodeImage(std::span<const std::byte> by
 }
 
 bool IsCurrent(const InputIdentity& input) {
+  if (input.path.starts_with(frontend::kSdkSourcePrefix)) {
+    const auto source = frontend::SdkModuleSource(input.path);
+    return source && ContentFingerprint(*source) == input.fingerprint;
+  }
   if (input.path.starts_with(frontend::kStandardSourcePrefix)) {
     const auto source = frontend::StandardDeclarationSource(
         input.path.substr(frontend::kStandardSourcePrefix.size()));

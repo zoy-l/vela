@@ -121,7 +121,7 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
                           execution.ExceptionDiagnostic());
     } else {
       CompleteFutureError(*isolate_, result(), Value::Null(),
-                          {.message = {}, .stack_trace = {}, .status = status});
+                          {.message = {}, .stack_trace = {}, .status = status, .origin = {}});
     }
   }
 

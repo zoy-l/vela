@@ -198,6 +198,8 @@ struct Function final {
   std::string native_symbol;
   // 仅标准声明生产者设置；源码不能声明或覆盖 intrinsic。
   std::optional<Builtin> intrinsic;
+  // SDK 声明生产者登记可省略的参数；省略值沿现有调用契约以 null 传递。
+  std::vector<std::string> optional_parameters;
   Role role = Role::Ordinary;
   bool is_async = false;
   bool is_override = false;

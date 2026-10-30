@@ -1,0 +1,584 @@
+/// A failed test assertion. This exception is active in every build configuration.
+export class TestFailure {
+  message: string;
+  difference: MatchDifference? = null;
+}
+
+/// Raises a test assertion failure at the current script call site.
+export func fail(message: string): void {
+  throw TestFailure(message: message);
+}
+
+/// A structured difference produced by a matcher, independent of display budgets.
+export class MatchDifference {
+  path: string;
+  actual: string;
+  children: MatchDifference[] = [];
+}
+
+/// A matcher's result. Diagnostics remain structured until a reporter renders them.
+export class MatchResult {
+  success: bool;
+  description: string;
+  difference: MatchDifference? = null;
+}
+
+/// Implement this interface to define a synchronous matcher.
+export interface Matcher {
+  match(actual: dynamic): MatchResult;
+}
+
+/// Implement this interface for matchers that wait for asynchronous work.
+export interface AsyncMatcher {
+  matchAsync(actual: dynamic): Future<MatchResult>;
+}
+
+/// An inherited inactivity timeout. Absolute durations are in milliseconds.
+export class Timeout {
+  private durationValue: int;
+  private factorValue: double = 1.0;
+  private modeValue: int = 0;
+
+  constructor(milliseconds: int) {
+    if (milliseconds < 0) {
+      throw Error(message: 'Timeout milliseconds must be nonnegative');
+    }
+    this.durationValue = milliseconds;
+  }
+
+  /// Multiplies the inherited timeout. An inherited disabled timeout stays disabled.
+  static factor(value: double): Timeout {
+    if (!Math.isFinite(value) || value <= 0.0) {
+      throw Error(message: 'Timeout factor must be positive and finite');
+    }
+    const result = Timeout(0);
+    result.modeValue = 1;
+    result.factorValue = value;
+    return result;
+  }
+
+  /// Disables inactivity timeouts for this scope.
+  static none(): Timeout {
+    const result = Timeout(0);
+    result.modeValue = 2;
+    return result;
+  }
+
+  get milliseconds(): int { return this.durationValue; }
+  get multiplier(): double { return this.factorValue; }
+  get mode(): int { return this.modeValue; }
+}
+
+external func _publish(operation: int, description: string, callback: dynamic,
+                       skip: dynamic, tags: dynamic, timeoutMode: int,
+                       milliseconds: int, multiplier: double): void;
+
+func _register(operation: int, description: string, callback: dynamic,
+               skip: dynamic, timeout: Timeout?, tags: dynamic): void {
+  let mode = -1;
+  let milliseconds = 0;
+  let multiplier = 1.0;
+  if (timeout != null) {
+    mode = timeout.mode;
+    milliseconds = timeout.milliseconds;
+    multiplier = timeout.multiplier;
+  }
+  _publish(operation, description, callback, skip, tags, mode, milliseconds, multiplier);
+}
+
+/// Registers a synchronous or asynchronous test. Ordinary return values are ignored.
+export func test(description: string, body: dynamic, skip: dynamic,
+                 timeout: Timeout?, tags: dynamic): void {
+  _register(0, description, body, skip, timeout, tags);
+}
+
+/// Registers nested tests synchronously. The body must return void.
+export func group(description: string, body: dynamic, skip: dynamic,
+                  timeout: Timeout?, tags: dynamic): void {
+  _register(1, description, body, skip, timeout, tags);
+  try { body(); }
+  finally { _register(2, '', null, null, null, null); }
+}
+
+/// Runs before each selected test in this group, from outer groups to inner groups.
+export func setUp(callback: dynamic): void { _register(3, '', callback, null, null, null); }
+/// Runs after each test, from inner groups to outer groups, in reverse registration order.
+export func tearDown(callback: dynamic): void { _register(4, '', callback, null, null, null); }
+/// Runs once before the first selected test in this group.
+export func setUpAll(callback: dynamic): void { _register(5, '', callback, null, null, null); }
+/// Runs once after the last selected test in this group.
+export func tearDownAll(callback: dynamic): void { _register(6, '', callback, null, null, null); }
+/// Registers cleanup in the currently executing test or setUpAll scope.
+export func addTearDown(callback: dynamic): void { _register(7, '', callback, null, null, null); }
+
+external func _inspect(operation: int, value: dynamic): dynamic;
+external func _same(left: dynamic, right: dynamic): bool;
+external func _control(operation: int, first: dynamic, second: dynamic,
+                       third: dynamic, fourth: dynamic): dynamic;
+func _kind(value: dynamic): int { return _inspect(0, value); }
+func _display(value: dynamic): string { return _inspect(1, value); }
+
+func _matched(description: string): MatchResult {
+  return MatchResult(success: true, description: description);
+}
+
+func _mismatch(actual: dynamic, description: string, path: string): MatchResult {
+  return MatchResult(success: false, description: description,
+                     difference: MatchDifference(path: path, actual: _display(actual)));
+}
+
+class _MatchPath {
+  parent: _MatchPath?;
+  segment: string;
+}
+
+func _pathText(path: _MatchPath?): string {
+  const segments: string[] = [];
+  let current = path;
+  while (current != null) {
+    segments.push(current.segment);
+    current = current.parent;
+  }
+  segments.reverse();
+  return segments.join('');
+}
+
+class _DeepFrame {
+  actual: dynamic;
+  expected: dynamic;
+  path: _MatchPath?;
+  forceUnordered: bool = false;
+  initialized: bool = false;
+  tracked: bool = false;
+  kind: int = 0;
+  length: int = 0;
+  index: int = 0;
+  column: int = 0;
+  actualItems: dynamic = null;
+  expectedItems: dynamic = null;
+  edges: bool[][] = [];
+}
+
+func _perfectMatching(edges: bool[][]): bool {
+  const count = edges.length;
+  const owner: int[] = [];
+  const assigned: int[] = [];
+  for (let index = 0; index < count; index++) { owner.push(-1); assigned.push(-1); }
+  for (let source = 0; source < count; source++) {
+    const parent: int[] = [];
+    const seen: bool[] = [];
+    for (let index = 0; index < count; index++) { parent.push(-1); seen.push(false); }
+    const queue: int[] = [source];
+    seen[source] = true;
+    let head = 0;
+    let free = -1;
+    while (head < queue.length && free < 0) {
+      const left = queue[head++];
+      for (let right = 0; right < count; right++) {
+        if (!edges[left][right] || parent[right] != -1) { continue; }
+        parent[right] = left;
+        if (owner[right] == -1) { free = right; break; }
+        const next = owner[right];
+        if (!seen[next]) { seen[next] = true; queue.push(next); }
+      }
+    }
+    if (free < 0) { return false; }
+    while (free >= 0) {
+      const left = parent[free];
+      const previous = assigned[left];
+      assigned[left] = free;
+      owner[free] = left;
+      free = previous;
+    }
+  }
+  return true;
+}
+
+class _DeepComparison {
+  stack: _DeepFrame[] = [];
+  active: Map<dynamic, Set<dynamic>> = Map<dynamic, Set<dynamic>>();
+
+  finish(result: MatchResult): MatchResult {
+    const frame = this.stack.pop();
+    if (frame != null && frame.tracked) {
+      const pairs = this.active.get(frame.actual);
+      if (pairs != null) {
+        pairs.delete(frame.expected);
+        if (pairs.size == 0) { this.active.delete(frame.actual); }
+      }
+    }
+    return result;
+  }
+
+  initialize(frame: _DeepFrame): MatchResult? {
+    frame.initialized = true;
+    const expected = frame.expected;
+    if (expected is Matcher) {
+      const result = expected.match(frame.actual);
+      if (!result.success && frame.path != null) {
+        const children: MatchDifference[] = [];
+        const difference = result.difference;
+        if (difference != null) { children.push(difference); }
+        return MatchResult(success: false, description: result.description,
+                           difference: MatchDifference(path: _pathText(frame.path), actual: _display(frame.actual),
+                                                       children: children));
+      }
+      return result;
+    }
+    if (_same(frame.actual, expected)) { return _matched(_display(expected)); }
+    const actualKind = _kind(frame.actual);
+    const expectedKind = _kind(expected);
+    if (frame.forceUnordered && (actualKind == 1 || actualKind == 3) &&
+        (expectedKind == 1 || expectedKind == 3)) {
+      frame.kind = 3;
+    } else {
+      if (actualKind != expectedKind || actualKind == 0 || actualKind == 4) {
+        return _mismatch(frame.actual, _display(expected), _pathText(frame.path));
+      }
+      frame.kind = actualKind;
+    }
+    let pairs = this.active.get(frame.actual);
+    if (pairs != null && pairs.has(expected)) { return _matched(_display(expected)); }
+    if (pairs == null) {
+      pairs = Set<dynamic>();
+      this.active.set(frame.actual, pairs);
+    }
+    pairs.add(expected);
+    frame.tracked = true;
+    if (frame.kind == 1) {
+      frame.actualItems = frame.actual;
+      frame.expectedItems = expected;
+    } else if (frame.kind == 2) {
+      frame.actualItems = frame.actual.keys();
+      frame.expectedItems = expected.keys();
+    } else {
+      frame.actualItems = actualKind == 1 ? frame.actual : frame.actual.values();
+      frame.expectedItems = expectedKind == 1 ? expected : expected.values();
+    }
+    frame.length = frame.expectedItems.length;
+    if (frame.actualItems.length != frame.length) {
+      return _mismatch(frame.actual, 'length ${frame.length}', '${_pathText(frame.path)}.length');
+    }
+    if (frame.kind == 3) {
+      for (let row = 0; row < frame.length; row++) {
+        const edges: bool[] = [];
+        for (let column = 0; column < frame.length; column++) { edges.push(false); }
+        frame.edges.push(edges);
+      }
+    }
+    return null;
+  }
+
+  run(actual: dynamic, expected: dynamic, unordered: bool): MatchResult {
+    this.stack.push(_DeepFrame(actual: actual, expected: expected, path: null, forceUnordered: unordered));
+    let completed: MatchResult? = null;
+    while (this.stack.length != 0) {
+      const frame = this.stack[this.stack.length - 1];
+      const child = completed;
+      completed = null;
+      if (child != null) {
+        if (frame.kind == 3) {
+          frame.edges[frame.index][frame.column] = child.success;
+          frame.column++;
+          if (frame.column == frame.length) { frame.column = 0; frame.index++; }
+        } else {
+          if (!child.success) { completed = this.finish(child); continue; }
+          frame.index++;
+        }
+      }
+      if (!frame.initialized) {
+        const result = this.initialize(frame);
+        if (result != null) { completed = this.finish(result); continue; }
+      }
+      if (frame.index == frame.length) {
+        if (frame.kind == 3 && !_perfectMatching(frame.edges)) {
+          completed = this.finish(_mismatch(frame.actual, 'a one-to-one unordered match', _pathText(frame.path)));
+        } else {
+          completed = this.finish(_matched(_display(frame.expected)));
+        }
+        continue;
+      }
+      if (frame.kind == 2) {
+        const key: dynamic = frame.expectedItems[frame.index];
+        const path = _MatchPath(parent: frame.path, segment: '[${_display(key)}]');
+        if (!frame.actual.has(key)) {
+          completed = this.finish(_mismatch(frame.actual, 'a map containing key ${_display(key)}', _pathText(path)));
+          continue;
+        }
+        this.stack.push(_DeepFrame(actual: frame.actual.get(key), expected: frame.expected.get(key), path: path));
+      } else {
+        const expectedIndex = frame.kind == 3 ? frame.column : frame.index;
+        this.stack.push(_DeepFrame(actual: frame.actualItems[frame.index],
+                                  expected: frame.expectedItems[expectedIndex],
+                                  path: _MatchPath(parent: frame.path, segment: '[${frame.index}]')));
+      }
+    }
+    if (completed == null) { fail('deep matcher did not produce a result'); }
+    return completed as MatchResult;
+  }
+}
+
+class _EqualsMatcher implements Matcher {
+  expected: dynamic;
+  unordered: bool = false;
+  match(actual: dynamic): MatchResult {
+    return _DeepComparison().run(actual, this.expected, this.unordered);
+  }
+}
+
+/// Compares values deeply without changing language equality or numeric types.
+export func equals(value: dynamic): Matcher { return _EqualsMatcher(expected: value); }
+class _OrderedMatcher implements Matcher {
+  expected: dynamic;
+  match(actual: dynamic): MatchResult {
+    const actualKind = _kind(actual);
+    if (actualKind != 1 && actualKind != 3) { return _mismatch(actual, 'an array or Set in order', ''); }
+    const expected = this.expected;
+    const actualItems: dynamic = actualKind == 1 ? actual : actual.values();
+    const expectedItems: dynamic = _kind(expected) == 1 ? expected : expected.values();
+    return _DeepComparison().run(actualItems, expectedItems, false);
+  }
+}
+
+/// Compares arrays or Set iteration order, including nested values.
+export func orderedEquals(values: dynamic): Matcher {
+  const kind = _kind(values);
+  if (kind != 1 && kind != 3) { throw Error(message: 'orderedEquals requires an array or Set'); }
+  return _OrderedMatcher(expected: values);
+}
+/// Requires a complete one-to-one match, including overlapping custom matchers.
+export func unorderedEquals(values: dynamic): Matcher {
+  const kind = _kind(values);
+  if (kind != 1 && kind != 3) { throw Error(message: 'unorderedEquals requires an array or Set'); }
+  return _EqualsMatcher(expected: values, unordered: true);
+}
+
+func _wrap(value: dynamic): Matcher {
+  if (value is Matcher) { return value; }
+  return equals(value);
+}
+
+func _length(value: dynamic): int {
+  if (value is string || _kind(value) == 1) { return value.length; }
+  const kind = _kind(value);
+  if (kind == 2 || kind == 3) { return value.size; }
+  return -1;
+}
+
+class _SimpleMatcher implements Matcher {
+  mode: int;
+  expected: dynamic = null;
+  delta: double = 0.0;
+  description: string;
+
+  accepts(actual: dynamic): bool {
+    if (this.mode == 0) { return _same(actual, this.expected); }
+    if (this.mode == 1) { return actual == null; }
+    if (this.mode == 2) { return actual != null; }
+    if (this.mode == 3) { return actual is bool && actual; }
+    if (this.mode == 4) { return actual is bool && !actual; }
+    if (this.mode == 5 || this.mode == 6) {
+      const expected = this.expected;
+      if (!((actual is int && expected is int) || (actual is double && expected is double))) { return false; }
+      return this.mode == 5 ? actual > expected : actual < expected;
+    }
+    if (this.mode == 7) {
+      if (!(actual is double)) { return false; }
+      const expected: double = this.expected;
+      return Math.abs(actual - expected) <= this.delta;
+    }
+    if (this.mode == 8) {
+      if (actual is string && this.expected is string) { return actual.includes(this.expected); }
+      const kind = _kind(actual);
+      if (kind == 2) { return actual.has(this.expected); }
+      if (kind != 1 && kind != 3) { return false; }
+      const values: dynamic = kind == 1 ? actual : actual.values();
+      const matcher = _wrap(this.expected);
+      const length: int = values.length;
+      for (let index = 0; index < length; index++) {
+        if (matcher.match(values[index]).success) { return true; }
+      }
+      return false;
+    }
+    const length = _length(actual);
+    if (this.mode == 9) { return length >= 0 && length == this.expected; }
+    if (this.mode == 10) { return length == 0; }
+    return length > 0;
+  }
+
+  match(actual: dynamic): MatchResult {
+    const description = this.description;
+    return this.accepts(actual) ? _matched(description) : _mismatch(actual, description, '');
+  }
+}
+
+export func same(value: dynamic): Matcher {
+  return _SimpleMatcher(mode: 0, expected: value, description: 'same as ${_display(value)}');
+}
+export const isNull: Matcher = _SimpleMatcher(mode: 1, description: 'null');
+export const isNotNull: Matcher = _SimpleMatcher(mode: 2, description: 'not null');
+export const isTrue: Matcher = _SimpleMatcher(mode: 3, description: 'true');
+export const isFalse: Matcher = _SimpleMatcher(mode: 4, description: 'false');
+export func greaterThan(value: dynamic): Matcher {
+  return _SimpleMatcher(mode: 5, expected: value, description: 'greater than ${_display(value)}');
+}
+export func lessThan(value: dynamic): Matcher {
+  return _SimpleMatcher(mode: 6, expected: value, description: 'less than ${_display(value)}');
+}
+export func closeTo(value: double, delta: double): Matcher {
+  if (!Math.isFinite(delta) || delta < 0.0) { throw Error(message: 'delta must be nonnegative and finite'); }
+  return _SimpleMatcher(mode: 7, expected: value, delta: delta, description: 'within ${delta} of ${value}');
+}
+export func contains(value: dynamic): Matcher {
+  return _SimpleMatcher(mode: 8, expected: value, description: 'contains ${_display(value)}');
+}
+export func hasLength(length: int): Matcher {
+  return _SimpleMatcher(mode: 9, expected: length, description: 'length ${length}');
+}
+export const isEmpty: Matcher = _SimpleMatcher(mode: 10, description: 'empty');
+export const isNotEmpty: Matcher = _SimpleMatcher(mode: 11, description: 'not empty');
+
+class _CompositeMatcher implements Matcher {
+  mode: int;
+  matchers: dynamic;
+  match(actual: dynamic): MatchResult {
+    if (this.mode == 0) {
+      const result = _wrap(this.matchers).match(actual);
+      return result.success ? _mismatch(actual, 'not ${result.description}', '') : _matched('not ${result.description}');
+    }
+    const count: int = this.matchers.length;
+    const differences: MatchDifference[] = [];
+    for (let index = 0; index < count; index++) {
+      const result = _wrap(this.matchers[index]).match(actual);
+      if (this.mode == 1 && !result.success) { return result; }
+      if (this.mode == 2 && result.success) { return result; }
+      const difference = result.difference;
+      if (difference != null) { differences.push(difference); }
+    }
+    if (this.mode == 1) { return _matched('all matchers'); }
+    return MatchResult(success: false, description: 'any matcher',
+                       difference: MatchDifference(path: '', actual: _display(actual), children: differences));
+  }
+}
+
+export func isNot(matcher: dynamic): Matcher { return _CompositeMatcher(mode: 0, matchers: matcher); }
+export func allOf(matchers: dynamic): Matcher {
+  if (_kind(matchers) != 1) { throw Error(message: 'allOf requires an array'); }
+  return _CompositeMatcher(mode: 1, matchers: matchers);
+}
+export func anyOf(matchers: dynamic): Matcher {
+  if (_kind(matchers) != 1) { throw Error(message: 'anyOf requires an array'); }
+  return _CompositeMatcher(mode: 2, matchers: matchers);
+}
+
+class _PredicateMatcher implements Matcher {
+  callback: dynamic;
+  description: string;
+  match(actual: dynamic): MatchResult {
+    const result: bool = this.callback(actual);
+    return result ? _matched(this.description) : _mismatch(actual, this.description, '');
+  }
+}
+
+export func predicate(callback: dynamic, description: string): Matcher {
+  return _PredicateMatcher(callback: callback, description: description);
+}
+
+class _ThrowsMatcher implements Matcher, AsyncMatcher {
+  expected: dynamic;
+  match(actual: dynamic): MatchResult {
+    try { actual(); }
+    catch (error: dynamic) { return _wrap(this.expected).match(error); }
+    return _mismatch(actual, 'a function throwing ${_display(this.expected)}', '');
+  }
+  async matchAsync(actual: dynamic): Future<MatchResult> {
+    try { await actual; }
+    catch (error: dynamic) { return _wrap(this.expected).match(error); }
+    return _mismatch(actual, 'a Future failing with ${_display(this.expected)}', '');
+  }
+}
+
+export func throwsA(matcher: dynamic): Matcher { return _ThrowsMatcher(expected: matcher); }
+
+func _assertMatch(actual: dynamic, result: MatchResult, reason: string?): void {
+  if (!result.success) {
+    let message = 'Expected: ${result.description}; actual: ${_display(actual)}';
+    const difference = result.difference;
+    if (difference != null && difference.path != '') { message = '${message}; at ${difference.path}'; }
+    if (reason != null) { message = '${message}; ${reason}'; }
+    throw TestFailure(message: message, difference: difference);
+  }
+}
+
+func _isAsyncExpectation(actual: dynamic, matcher: dynamic): bool {
+  return matcher is AsyncMatcher && (_kind(actual) == 4 || !(matcher is Matcher));
+}
+
+async func _evaluateLater(actual: dynamic, matcher: dynamic, reason: string?): Future<void> {
+  if (_isAsyncExpectation(actual, matcher)) {
+    const asynchronous = matcher as AsyncMatcher;
+    const result = await asynchronous.matchAsync(actual);
+    _assertMatch(actual, result, reason);
+  } else {
+    _assertMatch(actual, _wrap(matcher).match(actual), reason);
+  }
+}
+
+/// Matches synchronously or registers an asynchronous expectation with the current test.
+export func expect(actual: dynamic, matcher: dynamic, reason: string?): void {
+  if (_isAsyncExpectation(actual, matcher)) {
+    _control(0, _evaluateLater(actual, matcher, reason), null, null, null);
+  } else {
+    _assertMatch(actual, _wrap(matcher).match(actual), reason);
+  }
+}
+
+/// Returns the expectation Future. The current test also waits when the caller omits await.
+export func expectLater(actual: dynamic, matcher: dynamic, reason: string?): Future<void> {
+  const future = _evaluateLater(actual, matcher, reason);
+  _control(0, future, null, null, null);
+  return future;
+}
+
+class _CompletionMatcher implements AsyncMatcher {
+  expected: dynamic = null;
+  checkValue: bool = false;
+  async matchAsync(actual: dynamic): Future<MatchResult> {
+    if (!this.checkValue) { await actual; return _matched('a successfully completing Future'); }
+    const result: dynamic = await actual;
+    return _wrap(this.expected).match(result);
+  }
+}
+
+export const completes: AsyncMatcher = _CompletionMatcher();
+export func completion(matcher: dynamic): AsyncMatcher {
+  return _CompletionMatcher(expected: matcher, checkValue: true);
+}
+
+/// Keeps the test open until count calls occur, and rejects calls beyond max.
+export func expectAsync0(callback: dynamic, count: int?, max: int?): () => void {
+  const minimum = count ?? 1;
+  const maximum = max ?? minimum;
+  const identity: int = _control(1, callback, minimum, maximum, 0);
+  return (): void => {
+    const previous: int = _control(2, identity, null, null, null);
+    try {
+      _control(4, identity, null, null, null);
+      callback();
+    } finally { _control(3, previous, null, null, null); }
+  };
+}
+
+/// The argument type must be explicitly specialized, for example expectAsync1<int>(callback).
+export func expectAsync1<T>(callback: dynamic, count: int?, max: int?): (T) => void {
+  const minimum = count ?? 1;
+  const maximum = max ?? minimum;
+  const identity: int = _control(1, callback, minimum, maximum, 1);
+  return (value: T): void => {
+    const previous: int = _control(2, identity, null, null, null);
+    try {
+      _control(4, identity, null, null, null);
+      callback(value);
+    } finally { _control(3, previous, null, null, null); }
+  };
+}

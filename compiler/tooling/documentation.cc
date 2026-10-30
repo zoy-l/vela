@@ -6,6 +6,7 @@
 #include <expected>
 #include <ostream>
 #include <ranges>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -36,7 +37,9 @@ void TypeParameters(std::ostream& output, const std::vector<std::string>& parame
   output << '>';
 }
 
-void Parameters(std::ostream& output, const std::vector<frontend::Parameter>& parameters) {
+void Parameters(std::ostream& output,
+                const std::vector<frontend::Parameter>& parameters,
+                std::span<const std::string> optional = {}) {
   output << '(';
   for (std::size_t index = 0; index < parameters.size(); ++index) {
     if (index != 0) {
@@ -44,6 +47,9 @@ void Parameters(std::ostream& output, const std::vector<frontend::Parameter>& pa
     }
     const auto& parameter = parameters.at(index);
     output << parameter.name << ": " << parameter.type.ToString();
+    if (std::ranges::find(optional, parameter.name) != optional.end()) {
+      output << " = null";
+    }
   }
   output << ')';
 }
@@ -51,7 +57,7 @@ void Parameters(std::ostream& output, const std::vector<frontend::Parameter>& pa
 void Signature(std::ostream& output, const frontend::Function& function) {
   output << function.name;
   TypeParameters(output, function.type_parameters);
-  Parameters(output, function.parameters);
+  Parameters(output, function.parameters, function.optional_parameters);
   output << ": " << function.return_type.ToString();
 }
 

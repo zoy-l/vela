@@ -5,6 +5,7 @@
 #include <expected>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -12,6 +13,7 @@
 
 #include "base/json.h"
 #include "base/path.h"
+#include "compiler/frontend/sdk_modules.h"
 #include "compiler/frontend/source_loader.h"
 #include "compiler/tooling/file_uri.h"
 #include "compiler/tooling/semantic_index.h"
@@ -21,6 +23,10 @@ namespace vela::tooling::internal {
 namespace {
 
 constexpr std::int64_t kInvalidParams = -32602;
+
+std::string SourceUri(std::string_view path) {
+  return path.starts_with(frontend::kSdkSourcePrefix) ? std::string(path) : FileUri(Utf8Path(path));
+}
 
 yyjson_mut_val* JsonRange(yyjson_mut_doc* document, TextRange range) {
   auto* value = yyjson_mut_obj(document);
@@ -115,7 +121,7 @@ void LanguageServer::DocumentLinks(RpcCall call) {
   auto* result = yyjson_mut_arr(document);
   for (const auto& link : links) {
     auto* item = yyjson_mut_obj(document);
-    const auto target = FileUri(Utf8Path(link.path));
+    const auto target = SourceUri(link.path);
     AddJsonField(document, item, "target",
                  yyjson_mut_strncpy(document, target.data(), target.size()));
     AddJsonField(document, item, protocol::kRange, JsonRange(document, link.range));
@@ -249,13 +255,26 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
       result = JsonHover(document, index.FindHover(*offset, encoding_));
     } else if (const auto definition = index.FindDefinition(*offset, encoding_)) {
       result = yyjson_mut_obj(document);
-      const auto target = FileUri(Utf8Path(definition->path));
+      const auto target = SourceUri(definition->path);
       AddJsonField(document, result, protocol::kUri,
                    yyjson_mut_strncpy(document, target.data(), target.size()));
       AddJsonField(document, result, protocol::kRange, JsonRange(document, definition->range));
     }
   }
   AddJsonField(document, response.root(), protocol::kResult, result);
+  Send(response);
+}
+
+void LanguageServer::SdkSource(RpcCall call) {
+  const auto uri = JsonText(GetJsonField(call.params, protocol::kUri));
+  const auto source = uri ? frontend::SdkModuleSource(*uri) : std::nullopt;
+  if (!source) {
+    Error(call.identity, kInvalidParams, "uri must identify a registered SDK module");
+    return;
+  }
+  auto response = Response(call.identity);
+  AddJsonField(response.document(), response.root(), protocol::kResult,
+               yyjson_mut_strncpy(response.document(), source->data(), source->size()));
   Send(response);
 }
 

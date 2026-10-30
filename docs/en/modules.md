@@ -66,3 +66,10 @@ compilation cache, editor navigation and import links share the same resolution.
 Standard objects such as `Math` and `Error` are available without
 imports; `std:` imports are no longer supported.
 
+`import 'sdk:test';` loads the testing library from immutable source embedded in
+the distribution. SDK modules follow ordinary export, privacy and prefix rules.
+File and memory compilation, bytecode caches and language services share the
+`sdk:test` identity; memory inputs cannot override it. Unknown `sdk:` modules
+are errors and are never resolved as files. `builtin:` remains an internal
+standard-environment identity. See the [testing contract](../zh-CN/testing.md).
+

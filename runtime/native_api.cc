@@ -190,8 +190,9 @@ extern "C" VelaAotStatus vela_aot_v1_instantiate(VelaAotIsolate* isolate,
     const auto status = failure.status == NativeInstantiationStatus::OutOfMemory
                             ? ExecutionStatus::OutOfMemory
                             : ExecutionStatus::InvalidEntry;
-    return StoreError(*owner, status, Value::Null(),
-                      {.message = failure.message, .stack_trace = {}, .status = status}, error);
+    return StoreError(
+        *owner, status, Value::Null(),
+        {.message = failure.message, .stack_trace = {}, .status = status, .origin = {}}, error);
   }
   *instance = created->release();
   return VELA_AOT_RETURNED;
@@ -230,7 +231,7 @@ extern "C" VelaAotStatus vela_aot_v1_invoke(VelaAotInstance* instance,
                       execution.ExceptionDiagnostic(), error);
   }
   return StoreError(native->isolate(), status, Value::Null(),
-                    {.message = {}, .stack_trace = {}, .status = status}, error);
+                    {.message = {}, .stack_trace = {}, .status = status, .origin = {}}, error);
 }
 
 extern "C" VelaAotStatus vela_aot_v1_string_create(VelaAotIsolate* isolate,

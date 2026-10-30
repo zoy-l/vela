@@ -209,6 +209,8 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
                                                         const FunctionInfo* context) {
   FunctionInfo info;
   info.intrinsic = function.intrinsic;
+  info.optional_parameters.insert(function.optional_parameters.begin(),
+                                  function.optional_parameters.end());
   if (function.intrinsic == Builtin::IntParse || function.intrinsic == Builtin::IntTryParse) {
     info.optional_parameters.insert("radix");
   } else if (function.intrinsic == Builtin::DateFromUTC) {
@@ -299,14 +301,7 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
   if (function.body) {
     const auto flow = CheckSequence(*function.body, return_type);
     control_flow_.insert_or_assign(function.body.get(), flow);
-    bool allows_fallthrough = return_type.kind == Type::Kind::Void;
-    if (function.is_async && return_type.kind == Type::Kind::Future) {
-      const auto future_arguments = generic_arguments_.find(return_type.name);
-      allows_fallthrough = future_arguments != generic_arguments_.end() &&
-                           future_arguments->second.size() == 1 &&
-                           future_arguments->second.front().kind == Type::Kind::Void;
-    }
-    if (!allows_fallthrough && return_type.kind != Type::Kind::Invalid && flow.can_fall_through) {
+    if (!CanFallThrough(function, return_type) && flow.can_fall_through) {
       AddDiagnostic(function.location, "non-void function may fall through without returning");
     }
   }
@@ -314,6 +309,18 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
   owner_ = nullptr;
   in_constructor_ = false;
   in_async_function_ = false;
+}
+
+bool TypeChecker::CanFallThrough(const Function& function, const Type& return_type) const {
+  if (return_type.kind == Type::Kind::Void || return_type.kind == Type::Kind::Invalid) {
+    return true;
+  }
+  if (!function.is_async || return_type.kind != Type::Kind::Future) {
+    return false;
+  }
+  const auto arguments = generic_arguments_.find(return_type.name);
+  return arguments != generic_arguments_.end() && arguments->second.size() == 1 &&
+         arguments->second.front().kind == Type::Kind::Void;
 }
 
 TypeChecker::Type TypeChecker::CheckExpression(const Expression& expression, const Type* expected) {
@@ -652,7 +659,8 @@ TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression,
     }
     const auto field = class_info->second.fields.find(expression.callee->text);
     if (field != class_info->second.fields.end() &&
-        field->second.type.kind == Type::Kind::Function && !field->second.type.nullable) {
+        (field->second.type.kind == Type::Kind::Dynamic ||
+         (field->second.type.kind == Type::Kind::Function && !field->second.type.nullable))) {
       CheckAccess(field->second.visibility, object.name, expression.location);
       expression_types_.insert_or_assign(expression.callee.get(), field->second.type);
       return CheckIndirectCall(expression, field->second.type);

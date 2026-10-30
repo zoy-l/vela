@@ -22,6 +22,7 @@
 
 #include "base/declaration.h"
 #include "base/execution_status.h"
+#include "runtime/execution_context.h"
 #include "runtime/external_resources.h"
 #include "runtime/value.h"
 
@@ -41,7 +42,7 @@ enum class FutureCompletionError : std::uint8_t {
 };
 enum class FutureBindingError : std::uint8_t { DifferentIsolate };
 [[nodiscard]] ExecutionStatus FutureCompletionStatus(FutureCompletionError error) noexcept;
-enum class FuturePumpMode : std::uint8_t { AvailableWork, WaitForHost };
+enum class FuturePumpMode : std::uint8_t { AvailableWork, WaitForHost, ReadyWork };
 
 class HostEventSource final {
  public:
@@ -71,6 +72,7 @@ struct FutureDiagnostic final {
   std::string message;
   std::vector<FutureTraceFrame> stack_trace;
   ExecutionStatus status = ExecutionStatus::Thrown;
+  ErrorOrigin origin;
 };
 
 struct FutureResult final {
@@ -112,6 +114,8 @@ class Future final {
   };
   [[nodiscard]] static Future Sleep(std::chrono::milliseconds delay, FutureScheduler& scheduler);
   [[nodiscard]] FutureState state() const noexcept;
+  // 借用当前完成记录；所属线程使用，Future 的句柄覆盖借用期。
+  [[nodiscard]] const FutureResult& result() const noexcept;
   [[nodiscard]] bool is_pending() const noexcept { return state() == FutureState::Pending; }
   [[nodiscard]] bool IsCompleted() const noexcept;
   [[nodiscard]] std::optional<::vela::runtime::Value> value() const;
@@ -147,7 +151,8 @@ class Future final {
   std::expected<void, FutureCompletionError> Settle(FutureResult result);
   void Publish(FutureResult result);
   void NotifyObserver(std::function<void(const FutureResult&)> callback,
-                      std::shared_ptr<std::vector<::vela::runtime::Value>> references) const;
+                      std::shared_ptr<std::vector<::vela::runtime::Value>> references,
+                      std::optional<ExecutionContext> context) const;
   [[nodiscard]] std::expected<void, FutureCompletionError> CheckAdoption(
       const Future& source) const;
   void Follow(const Future& source);
@@ -225,6 +230,7 @@ class Timer final {
     std::atomic_bool cancelled{false};
     std::function<void()> callback;
     FutureScheduler* scheduler = nullptr;
+    std::optional<ExecutionContext> context;
   };
   static void Close(State& state) noexcept;
   explicit Timer(std::shared_ptr<State> state) : state_(std::move(state)) {}
@@ -245,6 +251,11 @@ class FutureScheduler final {
   FutureScheduler& operator=(FutureScheduler&&) = delete;
 
   void PostMicrotask(absl::AnyInvocable<void()> task);
+  [[nodiscard]] std::optional<ExecutionContext> context() const noexcept { return context_; }
+  void SetExecutionContext(std::optional<ExecutionContext> context) noexcept { context_ = context; }
+  [[nodiscard]] std::uint64_t NewErrorIdentity() noexcept {
+    return next_error_identity_.fetch_add(1, std::memory_order_relaxed);
+  }
   void SetUnhandledErrorHandler(ErrorCallback callback);
   void SetHandledErrorHandler(ErrorCallback callback);
   [[nodiscard]] Completer CreateCompleter();
@@ -303,13 +314,19 @@ class FutureScheduler final {
   std::atomic_size_t host_sources_{0};
   std::size_t suspended_frames_ = 0;
   std::size_t saved_state_bytes_ = 0;
-  std::deque<absl::AnyInvocable<void()>> microtasks_;
+  struct Microtask final {
+    std::optional<ExecutionContext> context;
+    absl::AnyInvocable<void()> action;
+  };
+  std::deque<Microtask> microtasks_;
   std::deque<absl::AnyInvocable<void()>> checkpoints_;
   std::priority_queue<Event, std::vector<Event>, EventOrder> events_;
   std::uint64_t next_sequence_ = 0;
   ErrorCallback unhandled_error_handler_;
   ErrorCallback handled_error_handler_;
   const std::thread::id owner_ = std::this_thread::get_id();
+  std::optional<ExecutionContext> context_;
+  std::atomic_uint64_t next_error_identity_{1};
 };
 
 }  // namespace vela::runtime

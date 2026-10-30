@@ -88,8 +88,8 @@ std::optional<std::size_t> CalleeToken(const std::vector<Token>& tokens, std::si
     --index;
   }
   const auto kind = tokens.at(index).kind;
-  return kind == TokenKind::Identifier || kind == TokenKind::Print ? std::optional(index)
-                                                                   : std::nullopt;
+  return frontend::IsMemberName(kind) || kind == TokenKind::Print ? std::optional(index)
+                                                                  : std::nullopt;
 }
 
 const Token& ArgumentEnd(std::span<const Token> arguments) {

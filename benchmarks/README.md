@@ -402,3 +402,18 @@ allocator bookkeeping. The retained regression suite compares existing VM
 integer loops, calls, fields, array traversal and array allocation with identical
 Release settings. See [the rolling aggregate summary](results/rolling_summary.json)
 for exact settings, variation, counters and comparison limits.
+
+The `testing/` suite measures source-test startup including compilation, cached
+loads of 1 and 16 suites, registration of 1,000 tests, 1,000 assertions, a
+2,048-level deep match, a 3-by-3 overlapping matcher relation, and 1 or 4
+concurrent suites. Execution cases exclude compilation. Every iteration checks
+the final test statuses. The overlap case evaluates all nine candidate pairs
+before finding a one-to-one assignment.
+
+Heap counters sample GC-accounted allocated and committed bytes after execution;
+`retained_bytes` follows collection. Concurrent counters sum independent Isolates
+while all workers remain alive. `process_peak_bytes` is the process resident
+high-water mark, including compilation and earlier cases; run a case in a fresh
+process to attribute that counter. These are distinct from instantaneous matcher
+stack usage. Measure the unchanged `async/` cases in the same Release build to
+check the ordinary asynchronous path.

@@ -96,7 +96,7 @@ Future FailedCallback(Isolate& isolate, ExecutionStatus status) {
   Future result(&isolate.scheduler());
   result.AttachHeap(isolate.heap());
   CompleteFutureError(isolate, result, Value::Null(),
-                      {.message = {}, .stack_trace = {}, .status = status});
+                      {.message = {}, .stack_trace = {}, .status = status, .origin = {}});
   return result;
 }
 

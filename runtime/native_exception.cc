@@ -23,7 +23,12 @@ namespace {
 FutureDiagnostic ResolveTrace(const NativeTraceFrame* frame,
                               ExecutionStatus status,
                               std::string_view message) {
-  FutureDiagnostic diagnostic{.message = std::string(message), .stack_trace = {}, .status = status};
+  FutureDiagnostic diagnostic{
+      .message = std::string(message),
+      .stack_trace = {},
+      .status = status,
+      .origin = {},
+  };
   for (; frame != nullptr; frame = frame->previous) {
     const auto& image = *frame->image;
     const auto position = frame->position;
@@ -46,7 +51,9 @@ FutureDiagnostic ResolveTrace(const NativeTraceFrame* frame,
 
 FutureDiagnostic NativeExecution::Diagnostic(ExecutionStatus status,
                                              std::string_view message) const {
-  return ResolveTrace(current_frame_, status, message);
+  auto diagnostic = ResolveTrace(current_frame_, status, message);
+  diagnostic.origin = {.context = isolate().scheduler().context(), .captured = true};
+  return diagnostic;
 }
 
 FutureDiagnostic NativeExecution::ExceptionDiagnostic() const {
@@ -99,7 +106,9 @@ ExecutionStatus NativeExecution::CreateException(Value payload,
     exception_allocation_failed_ = true;
     return ExecutionStatus::OutOfMemory;
   }
-  ExceptionData::From(*exception).diagnostic = diagnostic.release();
+  auto& envelope = ExceptionData::From(*exception);
+  diagnostic->origin = envelope.origin;
+  envelope.diagnostic = diagnostic.release();
   pending_exception_ = Value::Object(exception);
   return status;
 }

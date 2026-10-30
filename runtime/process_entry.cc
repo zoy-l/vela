@@ -2,6 +2,7 @@
 
 #include <ostream>
 #include <string_view>
+#include <utility>
 
 #include "base/diagnostic.h"
 #include "base/execution_status.h"
@@ -54,32 +55,36 @@ void WriteRuntimeDiagnostic(std::ostream& output, const FutureDiagnostic& diagno
   WriteTrace(output, diagnostic);
 }
 
-ProcessEntry::ProcessEntry(Isolate& isolate, std::ostream& errors)
-    : isolate_(isolate), errors_(errors) {
-  isolate_.scheduler().SetUnhandledErrorHandler([this](const Future& future, Value) {
+ProcessEntry::ProcessEntry(Isolate& isolate, std::ostream& errors, ErrorObserver observer)
+    : isolate_(&isolate), errors_(&errors), observer_(std::move(observer)) {
+  isolate_->scheduler().SetUnhandledErrorHandler([this](const Future& future, Value error) {
     background_failed_ = true;
-    WriteAsyncFailure(errors_, future, "unhandled Future error");
+    if (observer_) {
+      observer_(future, error);
+    } else {
+      WriteAsyncFailure(*errors_, future, "unhandled Future error");
+    }
   });
 }
 
 ProcessEntry::~ProcessEntry() {
-  isolate_.scheduler().SetUnhandledErrorHandler({});
+  isolate_->scheduler().SetUnhandledErrorHandler({});
 }
 
 int ProcessEntry::Finish(Value value) {
-  auto& scheduler = isolate_.scheduler();
+  auto& scheduler = isolate_->scheduler();
   const auto* future = value.IsObject() ? Heap::GetFuture(*value.AsObject()) : nullptr;
   auto root = future != nullptr ? future->Rooted() : Future::Value(value, &scheduler);
-  root.AttachHeap(isolate_.heap());
+  root.AttachHeap(isolate_->heap());
   root.Observe([](FutureState, Value) {});
   if (!scheduler.PumpUntil(root, FuturePumpMode::WaitForHost)) {
-    errors_ << "vela: async idle/deadlock: main has no pending work\n";
+    *errors_ << "vela: async idle/deadlock: main has no pending work\n";
     return kRuntimeErrorExitCode;
   }
   while (scheduler.PumpOne(FuturePumpMode::WaitForHost)) {
   }
   if (root.state() == FutureState::Failed) {
-    WriteAsyncFailure(errors_, root, "async main failed");
+    WriteAsyncFailure(*errors_, root, "async main failed");
     return kRuntimeErrorExitCode;
   }
   if (background_failed_) {
@@ -87,7 +92,7 @@ int ProcessEntry::Finish(Value value) {
   }
   const auto exit_code = ProcessExitCode(root.value().value_or(Value::Null()));
   if (!exit_code) {
-    errors_ << "vela: error: " << exit_code.error() << '\n';
+    *errors_ << "vela: error: " << exit_code.error() << '\n';
     return kRuntimeErrorExitCode;
   }
   return *exit_code;

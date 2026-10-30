@@ -123,11 +123,13 @@ runtime::FutureCall Execution::DescribeFutureCall(AsyncOperation operation,
           .status = ExecutionStatus::TypeError,
           .stack_trace = CaptureStack(),
           .message = "Future callback result does not match its result type",
+          .origin = {},
       }),
       .timeout_error = Diagnostic({
           .status = ExecutionStatus::Thrown,
           .stack_trace = CaptureStack(),
           .message = "Future timed out",
+          .origin = {},
       }),
   };
 }
@@ -139,6 +141,7 @@ std::expected<runtime::Value, ExecutionStatus> Execution::ValidateNativeFuture(
       .status = ExecutionStatus::TypeError,
       .stack_trace = CaptureStack(),
       .message = "native Future completion does not match its external declaration",
+      .origin = {},
   });
   const auto retained =
       globals_ != nullptr ? std::span(&globals_->storage, 1) : std::span<runtime::Value>();

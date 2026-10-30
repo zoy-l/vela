@@ -295,6 +295,12 @@ function activate(context) {
   }
   const { root, executable } = runtime;
   connection = new Connection(executable, root, output, diagnostics);
+  context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider("sdk", {
+    async provideTextDocumentContent(uri, token) {
+      await connection.ready;
+      return connection.request("vela/sdkSource", { uri: uri.toString() }, token);
+    }
+  }));
   const opened = new Map();
   const timers = new Map();
   const isVela = document => document.languageId === "vela" && document.uri.scheme === "file";

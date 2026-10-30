@@ -63,9 +63,9 @@ void CompleteFuture(Isolate& isolate, Future& future, const Future& source) {
   const auto message = ExecutionStatusName(status);
   const auto payload = CreateError(isolate.heap(), isolate.error_layout(),
                                    {.message = message, .code = ExecutionStatusCode(status)});
-  std::ignore =
-      future.CompleteError(payload.value_or(Value::Null()),
-                           {.message = std::string(message), .stack_trace = {}, .status = status});
+  std::ignore = future.CompleteError(
+      payload.value_or(Value::Null()),
+      {.message = std::string(message), .stack_trace = {}, .status = status, .origin = {}});
 }
 
 void CompleteFutureError(Isolate& isolate,

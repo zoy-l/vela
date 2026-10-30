@@ -447,6 +447,7 @@ class TypeChecker final {
   Type CheckEquality(const Expression& expression, const Type& left, const Type& right);
 
   FunctionInfo ResolveSignature(const Function& function, const FunctionInfo* context = nullptr);
+  [[nodiscard]] bool CanFallThrough(const Function& function, const Type& return_type) const;
   Type CheckMethodCall(const Expression& expression, const Type* expected);
   Type CheckBuiltinCall(const Expression& expression, Builtin builtin);
   Type CheckAssignment(const Expression& expression);

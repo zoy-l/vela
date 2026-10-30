@@ -121,6 +121,12 @@ enum class TokenRole : std::uint8_t {
   ConditionalOperator,
 };
 
+// 这些关键字在成员名位置没有语法歧义，声明和成员访问使用同一规则。
+[[nodiscard]] inline bool IsMemberName(TokenKind kind) noexcept {
+  return kind == TokenKind::Identifier || kind == TokenKind::Get || kind == TokenKind::Set ||
+         kind == TokenKind::Match;
+}
+
 struct Token final {
   // 字符串 token 保存已解码的 UTF-8 内容，其他 token 保存源码文本。
   std::string lexeme;
