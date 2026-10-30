@@ -3,6 +3,7 @@
 #include <string_view>
 #include <vector>
 
+#include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
@@ -99,7 +100,8 @@ TEST_P(JsonProgramTest, ExecutesWithGcAndReleasesTraversalState) {
   {
     const auto compiled = CompileSource(GetParam(), isolate);
     for (const auto& diagnostic : compiled.diagnostics) {
-      ADD_FAILURE() << diagnostic.location.line << ':' << diagnostic.message;
+      EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error)
+          << diagnostic.location.line << ':' << diagnostic.message;
     }
     ASSERT_TRUE(compiled.Succeeded());
     ExpectJsonAnswer(compiled.program, isolate);

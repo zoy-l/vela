@@ -7,6 +7,7 @@
 #include <string_view>
 #include <utility>
 
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/testing/result.h"
 #include "gtest/gtest.h"
 
@@ -27,8 +28,8 @@ SuiteResult Execute(std::string_view source, std::ostream& output, SuiteOptions 
   const auto compiled =
       compiler::CompileParsed(frontend::LoadSources({&input, 1}, input.path), isolate);
   for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.source_path << ':' << diagnostic.location.line << ' '
-                  << diagnostic.message;
+    EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error)
+        << diagnostic.source_path << ':' << diagnostic.location.line << ' ' << diagnostic.message;
   }
   if (!compiled.Succeeded()) {
     return {};

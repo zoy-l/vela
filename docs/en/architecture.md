@@ -118,7 +118,9 @@ APIs while aliases retain the same object identity; see [growable arrays](arrays
 See [compiler details](../../compiler/README.md) for
 current bytecode limits.
 
-Generic expansion produces concrete declarations before static checking.
+Semantic checking solves generic arguments through shared constraints, then
+materializes and checks concrete declarations on demand. Explicit and inferred
+calls share canonical specialization identities and resolved call targets.
 Resolved types retain structural element/signature/argument relationships;
 lowering does not parse type-name suffixes to recover array elements. Interface
 selectors, field offsets, and argument bindings are resolved before execution.

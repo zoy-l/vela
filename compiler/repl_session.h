@@ -32,7 +32,8 @@ struct SubmissionResult final {
 class ReplSession final {
  public:
   explicit ReplSession(const std::filesystem::path& directory,
-                       std::size_t gc_threshold = runtime::kDefaultGcThreshold);
+                       std::size_t gc_threshold = runtime::kDefaultGcThreshold,
+                       frontend::DiagnosticOptions options = {});
   ~ReplSession() = default;
   ReplSession(const ReplSession&) = delete;
   ReplSession& operator=(const ReplSession&) = delete;
@@ -52,6 +53,7 @@ class ReplSession final {
 
   std::filesystem::path path_;
   const std::size_t gc_threshold_;
+  frontend::DiagnosticOptions options_;
   std::optional<runtime::NativeBindings> bindings_;
   std::unique_ptr<runtime::Isolate> isolate_;
   std::unique_ptr<vm::VirtualMachine> machine_;

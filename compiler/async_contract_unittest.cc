@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
@@ -43,7 +44,7 @@ TEST_P(AsyncContractTest, ExecutesThroughCheckedBytecode) {
   });
   const auto compiled = CompileSource(test.source, isolate);
   for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
+    EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error) << diagnostic.message;
   }
   ASSERT_TRUE(compiled.Succeeded());
   const auto main = compiled.program.FindFunction("main");
@@ -188,7 +189,19 @@ func main(): int {
 INSTANTIATE_TEST_SUITE_P(
     AsyncSemantics,
     AsyncContractTest,
-    testing::Values(AsyncCase{"CallerContinues", R"(
+    testing::Values(AsyncCase{"UnifiedInferenceAcrossFactoriesAndAsyncReturns", R"(
+func empty<T>(): T[] { return []; }
+func ready(): Future<int> { return Future.value(40); }
+async func items(): Future<int[]> { return empty(); }
+async func main(): Future<int> {
+  const value: Future<int> = Future.value(ready());
+  const missing: Future<int?> = Future.value(null);
+  const pending: Completer<int> = Completer();
+  pending.complete(2);
+  return await value + await pending.future + (await items()).length + (await missing ?? 0);
+})",
+                              42},
+                    AsyncCase{"CallerContinues", R"(
 let order: int = 0;
 async func child(): Future<int> {
   order = 1;

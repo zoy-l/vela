@@ -22,7 +22,6 @@
 #include "compiler/frontend/parser.h"
 #include "compiler/frontend/sdk_modules.h"
 #include "compiler/frontend/source_loader.h"
-#include "compiler/frontend/specialization.h"
 #include "compiler/frontend/standard_environment.h"
 #include "compiler/frontend/token.h"
 #include "compiler/frontend/type_checker.h"
@@ -222,9 +221,11 @@ SemanticIndex::SemanticIndex(frontend::ParseResult loaded) : program_(std::move(
   CollectDeclarations();
   // 特化会展开别名并移除模板，先记录源码类型引用，保留其声明身份。
   VisitProgram();
-  const auto diagnostics = frontend::SpecializeGenerics(program_);
-  if (diagnostics.empty()) {
-    model_ = frontend::TypeChecker().Check(program_).model;
+  auto checked = frontend::TypeChecker().Check(program_);
+  // 未完成的表达式也需要已注册签名与局部类型；诊断不使部分语义事实失效。
+  // 特化初始化失败时尚未创建类型环境，不能进入受检索引阶段。
+  if (!checked.model.types.empty()) {
+    model_ = std::move(checked.model);
     CollectDeclarations();
     phase_ = IndexPhase::Checked;
     VisitProgram();
@@ -665,7 +666,11 @@ void SemanticIndex::IndexExpression(const Expression& expression) {
             Reference{.symbol = symbol->second, .expression = &expression});
       }
     } else {
-      AddReference(expression.location, expression.text, &expression);
+      const auto application = model_.generic_applications.find(&expression);
+      AddReference(
+          expression.location,
+          application == model_.generic_applications.end() ? expression.text : application->second,
+          &expression);
     }
   } else if (expression.kind == Expression::Kind::Member) {
     auto receiver = ReceiverFor(*expression.object);

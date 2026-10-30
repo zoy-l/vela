@@ -107,14 +107,14 @@ void CheckRefinements(benchmark::State& state) {
     source += "; } else { result += 1; }";
   }
   source += "return result; }";
-  const auto parsed = frontend::ParseSource(source);
+  auto parsed = frontend::ParseSource(source);
   if (!parsed.diagnostics.empty()) {
     state.SkipWithError("Refinement workload did not parse");
     return;
   }
   for (auto iteration : state) {
     auto checked = frontend::TypeChecker().Check(parsed.program);
-    if (!checked.diagnostics.empty()) {
+    if (!checked.Succeeded()) {
       state.SkipWithError("Refinement workload did not type check");
       break;
     }
@@ -144,14 +144,14 @@ void CheckBranchRefinements(benchmark::State& state, BranchKind kind) {
   }
   source +=
       kind == BranchKind::Match ? "_ => " + sum + ", }; }" : "default: return " + sum + "; } }";
-  const auto parsed = frontend::ParseSource(source);
+  auto parsed = frontend::ParseSource(source);
   if (!parsed.diagnostics.empty()) {
     state.SkipWithError("Branch refinement workload did not parse");
     return;
   }
   for (auto iteration : state) {
     auto checked = frontend::TypeChecker().Check(parsed.program);
-    if (!checked.diagnostics.empty()) {
+    if (!checked.Succeeded()) {
       state.SkipWithError("Branch refinement workload did not type check");
       break;
     }

@@ -4,7 +4,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <expected>
 #include <span>
 #include <string>
 #include <string_view>
@@ -17,11 +16,12 @@
 #include "compiler/frontend/source_loader.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/lowerer.h"
 
 namespace vela::ir {
 namespace {
 
-std::expected<Program, frontend::Diagnostics> Prepare(std::string_view source) {
+LoweringResult Prepare(std::string_view source) {
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   return PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
 }
@@ -31,8 +31,8 @@ TEST(PreparationTest, PreservesUnboundNativeImportsWithoutRuntimeState) {
 external func read(): int = "host.read";
 func main(): int { return read() + 2; }
 )");
-  ASSERT_TRUE(result.has_value());
-  const auto& functions = result->functions;
+  ASSERT_TRUE(result.Succeeded());
+  const auto& functions = result.program.functions;
   const auto found = std::ranges::find(functions, "host.read", &Function::native_symbol);
   ASSERT_NE(found, functions.end());
   ASSERT_TRUE(found->signature.has_value());
@@ -51,8 +51,8 @@ TEST(PreparationTest, KeepsWideVirtualRegistersBeforeBackendAllocation) {
   }
   source += "]; return values[299]; }";
   auto result = Prepare(source);
-  ASSERT_TRUE(result.has_value());
-  const auto& functions = result->functions;
+  ASSERT_TRUE(result.Succeeded());
+  const auto& functions = result.program.functions;
   const auto main = std::ranges::find(functions, "main", &Function::name);
   ASSERT_NE(main, functions.end());
   EXPECT_GT(main->register_count, 256U);
@@ -66,9 +66,9 @@ TEST(PreparationTest, OwnsLayoutsAndSourcePathsAfterFrontendDestructionAndResult
 class Box { value: int; }
 func main(): int { return Box(value: 42).value; }
 )");
-  ASSERT_TRUE(first.has_value());
-  auto prepared = std::move(*first);
-  first = std::unexpected(frontend::Diagnostics{});
+  ASSERT_TRUE(first.Succeeded());
+  auto prepared = std::move(first.program);
+  first = {};
   const auto& classes = prepared.layouts.classes;
   const auto found = std::ranges::find(classes, "Box", &layout::Class::name);
   ASSERT_NE(found, classes.end());
@@ -85,9 +85,9 @@ TEST(PreparationTest, ReportsImportedTypeErrorsBeforeLowering) {
       {.path = "library.vela", .text = "export func answer(): int { return true; }"},
   });
   const auto result = PrepareParsed(frontend::LoadSources(sources, "main.vela"));
-  ASSERT_FALSE(result.has_value());
-  ASSERT_FALSE(result.error().empty());
-  EXPECT_TRUE(result.error().front().source_path.ends_with("library.vela"));
+  ASSERT_FALSE(result.Succeeded());
+  ASSERT_FALSE(result.diagnostics.empty());
+  EXPECT_TRUE(result.diagnostics.front().source_path.ends_with("library.vela"));
 }
 
 TEST(PreparationTest, EmitsFieldDefaultsOnceInTheConstructorAcrossManyCallSites) {
@@ -100,8 +100,8 @@ TEST(PreparationTest, EmitsFieldDefaultsOnceInTheConstructorAcrossManyCallSites)
   }
   source += "}";
   const auto prepared = Prepare(source);
-  ASSERT_TRUE(prepared.has_value());
-  const auto& functions = prepared->functions;
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto& functions = prepared.program.functions;
   const auto initial = std::ranges::find(functions, "initial", &Function::name);
   ASSERT_NE(initial, functions.end());
   const auto target = static_cast<std::uint32_t>(initial - functions.begin());
@@ -122,12 +122,12 @@ TEST(PreparationTest, UnusedConstructorsDoNotIntroduceBodiesOrStringRoots) {
     SCOPED_TRACE(body);
     const auto prepared = Prepare("class Unused { value: string = 'unused-constructor-literal'; " +
                                   std::string(body) + " } func main(): int { return 42; }");
-    ASSERT_TRUE(prepared.has_value());
-    EXPECT_FALSE(std::ranges::any_of(prepared->functions, [](const Function& function) {
+    ASSERT_TRUE(prepared.Succeeded());
+    EXPECT_FALSE(std::ranges::any_of(prepared.program.functions, [](const Function& function) {
       return function.name == "Unused.$constructor";
     }));
-    EXPECT_EQ(std::ranges::find(prepared->strings, "unused-constructor-literal"),
-              prepared->strings.end());
+    EXPECT_EQ(std::ranges::find(prepared.program.strings, "unused-constructor-literal"),
+              prepared.program.strings.end());
   }
 }
 

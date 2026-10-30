@@ -199,8 +199,8 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
     options.load_deadline = runtime::FutureScheduler::Clock::now() + **timeout;
   }
   runtime::Isolate isolate;
-  const auto compiled =
-      compiler::CompileFileCached(PathText(path), configuration.root / ".cache/vela/test", isolate);
+  const auto compiled = compiler::CompileFileCached(
+      PathText(path), configuration.root / ".cache/vela/test", isolate, configuration.diagnostics);
   if (!compiled) {
     PublishFailure(reporter, result, identity, file,
                    {
@@ -214,6 +214,15 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
     return result;
   }
   for (const auto& diagnostic : compiled->compiled.diagnostics) {
+    if (diagnostic.severity == frontend::DiagnosticSeverity::Warning) {
+      ReportEvent warning(ReportEventType::Warning, identity);
+      std::ostringstream text;
+      frontend::WriteDiagnostic(text, diagnostic, PathText(path));
+      warning.file = file;
+      warning.text = text.str();
+      reporter.Emit(warning);
+      continue;
+    }
     PublishFailure(
         reporter, result, identity, file,
         {

@@ -7,6 +7,7 @@
 #include <string_view>
 #include <system_error>
 
+#include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
 #include "base/file.h"
@@ -58,7 +59,7 @@ class CompilationCacheTest : public testing::Test {
   }
   void ExpectRun(const CachedCompileResult& result, std::int64_t expected) {
     for (const auto& diagnostic : result.compiled.diagnostics) {
-      ADD_FAILURE() << diagnostic.message;
+      EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error) << diagnostic.message;
     }
     ASSERT_TRUE(result.compiled.Succeeded());
     const auto executed =
@@ -214,6 +215,32 @@ TEST_F(CompilationCacheTest, StandardEnvironmentAndUnicodePathsSurviveCacheHit) 
   ASSERT_TRUE(second);
   EXPECT_EQ(second->status, CacheStatus::Hit);
   ExpectRun(*second, kAnswer);
+}
+
+TEST_F(CompilationCacheTest, PreservesWarningsOnHitsAndRechecksChangedSeverity) {
+  Write("main.vela", "func main(): int { const value: dynamic = 42; return value; }");
+  const auto first = Compile();
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(first->compiled.Succeeded());
+  ASSERT_EQ(first->compiled.diagnostics.size(), 1U);
+  const auto hit = Compile();
+  ASSERT_TRUE(hit);
+  EXPECT_EQ(hit->status, CacheStatus::Hit);
+  ASSERT_EQ(hit->compiled.diagnostics.size(), 1U);
+  const auto& original = first->compiled.diagnostics.front();
+  const auto& restored = hit->compiled.diagnostics.front();
+  EXPECT_EQ(restored.code, original.code);
+  EXPECT_EQ(restored.severity, frontend::DiagnosticSeverity::Warning);
+  EXPECT_EQ(restored.location, original.location);
+  EXPECT_EQ(restored.source_path, original.source_path);
+  EXPECT_EQ(restored.message, original.message);
+  ExpectRun(*hit, kAnswer);
+  const auto strict =
+      CompileFileCached(PathText(directory() / "main.vela"), directory() / "cache", isolate(),
+                        {.implicit_dynamic_conversion = frontend::DiagnosticSeverity::Error});
+  ASSERT_TRUE(strict);
+  EXPECT_EQ(strict->status, CacheStatus::Stale);
+  EXPECT_FALSE(strict->compiled.Succeeded());
 }
 
 }  // namespace

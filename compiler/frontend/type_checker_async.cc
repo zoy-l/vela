@@ -87,28 +87,13 @@ TypeChecker::Type TypeChecker::MakeFutureType(const Expression& expression, cons
 
 TypeChecker::Type TypeChecker::CheckAsyncCallback(const Expression& expression,
                                                   std::span<const Type> parameters,
-                                                  CallbackPresence presence) {
+                                                  CallbackPresence presence,
+                                                  CallbackParameters contract) {
   FunctionInfo context;
   for (const auto& type : parameters) {
     AddParameter(context, std::to_string(context.parameters.size()), type);
   }
-  auto expected = FunctionType(context);
-  if (presence == CallbackPresence::Optional) {
-    expected = NullableType(expected);
-  }
-  auto type = CheckExpression(expression, &expected);
-  if (type.kind != Kind::Function || (type.nullable && presence == CallbackPresence::Required)) {
-    AddDiagnostic(expression.location, "async callback must be a non-null function");
-    return InvalidType();
-  }
-  const auto& signature = function_types_.at(NonNullable(type).name);
-  if (!IsValid(signature.return_type)) {
-    return InvalidType();
-  }
-  if (signature.parameters.size() != parameters.size()) {
-    AddDiagnostic(expression.location, "async callback parameter count does not match");
-  }
-  return type;
+  return CheckCallback(expression, std::move(context), CallbackArity::Exact, presence, contract);
 }
 
 TypeChecker::Type TypeChecker::CheckFutureCall(const Expression& expression, const Type* expected) {
@@ -129,23 +114,16 @@ TypeChecker::Type TypeChecker::CheckFutureValueFactory(const Expression& express
     AddDiagnostic(callee.location, "unknown Future factory '" + callee.text + "'");
     return InvalidType();
   }
-  std::optional<Type> context;
-  if (!callee.type_arguments.empty()) {
-    context = ResolveGenericType({
-        .name = "Future",
-        .location = callee.location,
-        .kind = TypeName::Kind::Generic,
-        .arguments = callee.type_arguments,
-    });
-  } else if (expected != nullptr && expected->kind == Kind::Future) {
-    context = NonNullable(*expected);
+  auto inference = CreateFutureInference(expression, expected);
+  if (!inference) {
+    return InvalidType();
   }
   if (expression.arguments.size() != 1) {
     AddDiagnostic(expression.location, "Future factory expects one argument");
     return InvalidType();
   }
-  const auto element =
-      context && IsValid(*context) ? generic_arguments_.at(context->name).front() : InvalidType();
+  const auto element = ResolveInferenceContext(
+      {.name = "$Value", .location = expression.location, .arguments = {}}, *inference);
   const auto argument =
       CheckExpression(*expression.arguments.front().value,
                       callee.text == "value" && IsValid(element) ? &element : nullptr);
@@ -157,35 +135,18 @@ TypeChecker::Type TypeChecker::CheckFutureValueFactory(const Expression& express
     if (!IsThrowable(argument)) {
       AddDiagnostic(expression.location, "Future.error requires a non-null throwable object");
     }
-    return context.value_or(MakeFutureType(expression, kVoid));
+    return InferFutureResult(expression, *inference, nullptr);
   }
-  if (context && argument.kind != Kind::Future) {
-    if (argument.kind != Kind::Dynamic && !CanAssign(element, argument)) {
-      AddDiagnostic(expression.location, "Future.value payload does not match its result type");
-    }
-    return *context;
-  }
-  const auto result = MakeFutureType(expression, argument);
-  if (context && IsValid(result) && !CanAssign(*context, result)) {
-    AddDiagnostic(expression.location, "Future.value payload does not match its result type");
-  }
-  return result;
+  return InferFutureResult(expression, *inference, &argument);
 }
 
 TypeChecker::Type TypeChecker::CheckFutureComputation(const Expression& expression,
                                                       const Type* expected) {
   const auto& callee = *expression.callee;
   const auto& method = callee.text;
-  std::optional<Type> context;
-  if (!callee.type_arguments.empty()) {
-    context = ResolveGenericType({
-        .name = "Future",
-        .location = callee.location,
-        .kind = TypeName::Kind::Generic,
-        .arguments = callee.type_arguments,
-    });
-  } else if (expected != nullptr && expected->kind == Kind::Future) {
-    context = NonNullable(*expected);
+  auto inference = CreateFutureInference(expression, expected);
+  if (!inference) {
+    return InvalidType();
   }
   const bool delayed = method == "delayed";
   const auto callback = Argument(expression, "computation", delayed ? 1 : 0);
@@ -197,13 +158,8 @@ TypeChecker::Type TypeChecker::CheckFutureComputation(const Expression& expressi
   if (!IsValid(type)) {
     return type;
   }
-  auto result = MakeFutureType(expression, function_types_.at(type.name).return_type);
-  if (context && IsValid(*context) && !CanAssign(*context, result)) {
-    AddDiagnostic(expression.location, "Future computation result does not match its context");
-  }
-  if (context) {
-    result = *context;
-  }
+  const auto produced = function_types_.at(type.name).return_type;
+  const auto result = InferFutureResult(expression, *inference, &produced);
   FunctionInfo signature;
   signature.return_type = result;
   if (delayed) {
@@ -258,26 +214,34 @@ void TypeChecker::AddFutureCleanup(const Expression& expression,
   AddParameter(signature, "cleanUp", callback_type, ParameterPresence::Optional);
 }
 
-TypeChecker::Type TypeChecker::FutureAggregationElement(const Expression& expression,
-                                                        const Type* expected) {
-  const bool wait = expression.callee->text == "wait";
-  Type element;
-  const auto& explicit_types = expression.callee->type_arguments;
-  if (explicit_types.size() == 1) {
-    element = ResolveType(explicit_types.front(), true);
-  } else if (!explicit_types.empty()) {
-    AddDiagnostic(expression.location, "Future aggregation accepts one type argument");
-  } else if (expected != nullptr && expected->kind == Kind::Future) {
-    element = generic_arguments_.at(NonNullable(*expected).name).front();
-    if (wait) {
-      if (element.kind == Kind::Array) {
-        element = array_elements_.at(element.name);
-      } else if (element.kind != Kind::Void) {
-        element = InvalidType();
-      }
-    }
+TypeChecker::Type TypeChecker::ProjectFutureAggregationContext(const Expression& expression,
+                                                               const Type* expected) {
+  auto result = expected != nullptr ? NonNullable(*expected) : InvalidType();
+  if (expression.callee->text != "wait" || result.kind != Kind::Future) {
+    return result;
   }
-  return element;
+  const auto payload = generic_arguments_.at(result.name).front();
+  if (payload.kind == Kind::Array) {
+    return MakeFutureType(expression, array_elements_.at(payload.name));
+  }
+  return payload.kind == Kind::Void ? result : InvalidType();
+}
+
+TypeChecker::Type TypeChecker::ProjectFutureArrayElement(const Expression& expression,
+                                                         const Type& values) {
+  if (!IsValid(values) || values.kind == Kind::Dynamic) {
+    return InvalidType();
+  }
+  if (values.kind != Kind::Array || values.nullable) {
+    AddDiagnostic(expression.location, "Future aggregation expects Future<T>[]");
+    return InvalidType();
+  }
+  const auto future = array_elements_.at(values.name);
+  if (future.kind != Kind::Future || future.nullable) {
+    AddDiagnostic(expression.location, "Future aggregation expects non-null Future<T> elements");
+    return InvalidType();
+  }
+  return generic_arguments_.at(future.name).front();
 }
 
 TypeChecker::Type TypeChecker::CheckFutureAggregation(const Expression& expression,
@@ -288,36 +252,33 @@ TypeChecker::Type TypeChecker::CheckFutureAggregation(const Expression& expressi
     AddDiagnostic(expression.location, "Future aggregation requires values");
     return InvalidType();
   }
-  auto element = FutureAggregationElement(expression, expected);
-  const auto context =
-      IsValid(element) ? ArrayType(MakeFutureType(expression, element)) : InvalidType();
-  auto values = CheckExpression(*expression.arguments.at(*input).value,
-                                IsValid(context) ? &context : nullptr);
-  const auto checked_values = values;
-  if (values.kind != Kind::Array || values.nullable) {
-    AddDiagnostic(expression.location, "Future aggregation expects Future<T>[]");
-    if (!IsValid(context)) {
-      return InvalidType();
-    }
-    // 保留显式类型实参或调用上下文建立的签名，供错误诊断和编辑器补全使用。
-    values = context;
-  }
-  const auto future = array_elements_.at(values.name);
-  if (future.kind != Kind::Future || future.nullable) {
-    AddDiagnostic(expression.location, "Future aggregation expects non-null Future<T> elements");
+  const auto expected_result = ProjectFutureAggregationContext(expression, expected);
+  auto inference =
+      CreateFutureInference(expression, IsValid(expected_result) ? &expected_result : nullptr);
+  if (!inference) {
     return InvalidType();
   }
-  const auto actual = generic_arguments_.at(future.name).front();
-  if (IsValid(element) && !IsSameType(element, actual)) {
-    AddDiagnostic(expression.location, "Future aggregation element type does not match");
+  const TypeName variable{.name = "$Value", .location = expression.location, .arguments = {}};
+  auto element = ResolveInferenceContext(variable, *inference);
+  const auto context =
+      IsValid(element) ? ArrayType(MakeFutureType(expression, element)) : InvalidType();
+  const auto values = CheckExpression(*expression.arguments.at(*input).value,
+                                      IsValid(context) ? &context : nullptr);
+  const auto actual = ProjectFutureArrayElement(expression, values);
+  if (IsValid(actual)) {
+    inference->Constrain(variable, DescribeType(actual), TypeInference::Evidence::Argument);
   }
-  element = actual;
+  element = ResolveInferenceContext(variable, *inference);
+  if (!IsValid(element)) {
+    AddDiagnostic(expression.location, "cannot infer Future aggregation element type");
+    return InvalidType();
+  }
   FunctionInfo signature;
   const auto collected = wait && element.kind != Kind::Void ? ArrayType(element) : element;
   signature.return_type = MakeFutureType(expression, collected);
-  AddParameter(signature, "values", values);
+  AddParameter(signature, "values", ArrayType(MakeFutureType(expression, element)));
   std::vector<std::optional<Type>> checked(expression.arguments.size());
-  checked.at(*input) = checked_values;
+  checked.at(*input) = values;
   if (wait) {
     AddParameter(signature, "eagerError", kBool, ParameterPresence::Optional);
     AddFutureCleanup(expression, signature, element, checked);
@@ -339,19 +300,8 @@ TypeChecker::Type TypeChecker::CheckAsyncConstruction(const Expression& expressi
   AsyncOperation operation = AsyncOperation::Count;
   if (expression.callee->text == "Completer") {
     operation = AsyncOperation::NewCompleter;
-    if (!expression.callee->type_arguments.empty()) {
-      type = ResolveGenericType({
-          .name = "Completer",
-          .location = expression.location,
-          .kind = TypeName::Kind::Generic,
-          .arguments = expression.callee->type_arguments,
-      });
-    } else if (expected != nullptr && expected->kind == Kind::Completer) {
-      type = NonNullable(*expected);
-    } else {
-      AddDiagnostic(expression.location,
-                    "Completer requires explicit or contextual type arguments");
-    }
+    const std::array<std::string, 1> parameters{"$Value"};
+    type = InferConstruction(expression, expected, "Completer", parameters);
   } else {
     operation = AsyncOperation::NewCancellationToken;
     type = types_.at("CancellationToken");
@@ -460,7 +410,7 @@ TypeChecker::Type TypeChecker::AddThenError(const Expression& expression,
   if (input && expression.arguments.at(*input).value->kind != Expression::Kind::NullLiteral) {
     const std::array<Type, 1> parameters{error_type};
     auto type = CheckAsyncCallback(*expression.arguments.at(*input).value, parameters,
-                                   CallbackPresence::Optional);
+                                   CallbackPresence::Optional, CallbackParameters::ExceptionFilter);
     if (IsValid(type)) {
       const auto actual = function_types_.at(NonNullable(type).name);
       if (actual.parameters.size() == 1) {
@@ -505,7 +455,9 @@ TypeChecker::Type TypeChecker::CheckFutureCallback(const Expression& expression,
   if (then && element.kind != Kind::Void) {
     parameters.push_back(element);
   }
-  auto callback = CheckAsyncCallback(*expression.arguments.at(*input).value, parameters);
+  auto callback = CheckAsyncCallback(
+      *expression.arguments.at(*input).value, parameters, CallbackPresence::Required,
+      !then && !cleanup ? CallbackParameters::ExceptionFilter : CallbackParameters::Assignable);
   if (!IsValid(callback)) {
     return callback;
   }
@@ -580,8 +532,7 @@ TypeChecker::Type TypeChecker::CheckFutureTimeout(const Expression& expression,
 }
 
 TypeChecker::Type TypeChecker::CheckAsyncMethod(const Expression& expression,
-                                                const Type& receiver,
-                                                const Type* expected) {
+                                                const Type& receiver) {
   const auto& method = expression.callee->text;
   auto result = InvalidType();
   if (receiver.kind == Kind::Completer && (method == "complete" || method == "completeError")) {
@@ -605,9 +556,6 @@ TypeChecker::Type TypeChecker::CheckAsyncMethod(const Expression& expression,
                                       });
   } else {
     AddDiagnostic(expression.location, "unknown async method '" + method + "'");
-  }
-  if (expected != nullptr && IsValid(result) && !CanAssign(*expected, result)) {
-    AddDiagnostic(expression.location, "async method result does not match its context");
   }
   return result;
 }

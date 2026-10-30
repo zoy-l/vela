@@ -49,12 +49,28 @@ func main(): void {
 
 赋值到 `dynamic` 保留原值、引用身份和语言类型。从 `dynamic` 进入具体类型时插入运行时类型检查；初始化、赋值、实参、返回值、字段、下标写入及跨入带类型槽位的闭包捕获遵循相同规则。检查成功不执行数值转换或容器转换，失败走现有受检查转换的错误路径。
 
+默认诊断 `implicit_dynamic_conversion` 会在这些隐式边界发出 warning，编辑器显示相同的诊断代码和级别。它指出可能失败的转换，不会在编译期猜测运行时 JSON 的实际内容。运行时检查继续执行，warning 不阻止生成程序。
+
 ```vela
 const values: dynamic[] = Json.parse('[7, "Vela", true]');
 const id: int = values[0];       // 运行时检查成功。
 const name: string = values[1];  // 运行时检查成功。
 const wrong: int = values[1];    // 抛出可捕获的类型转换错误。
 ```
+
+上述转换均产生 warning。显式 `as` 或有效的 `is` 收窄表达了检查意图，不产生该诊断。例如保留 null 默认值并检查非 null 字段类型：
+
+```vela
+const name = (root.get('name') as string?) ?? '';
+```
+
+项目可在 `vela.json` 中将该诊断提升为 error：
+
+```json
+{"diagnostics":{"implicit_dynamic_conversion":"error"}}
+```
+
+也可显式配置为 `"warning"`。普通源码命令和编辑器从入口文件目录向上查找最近的配置；没有配置时采用 warning。测试命令采用所选项目配置，嵌入 API 使用传入的 `DiagnosticOptions`，不隐式扫描宿主文件系统。编译器、REPL 和开发会话均区分 warning 与 error；严格配置在执行前拒绝程序。JSON 不享有来源例外，dynamic 的复合表达式及可空目标遵循同一规则。
 
 允许对动态接收者访问成员、调用方法、调用函数值、使用下标和运算符，并在运行时检查。分派以接收者真实类型及其已有公开 API 为准，在执行前检查成员存在性、可写性、实参名称与数量、参数类型和元素约束。不存在的成员或非法操作产生可捕获的类型错误。动态分派不能访问私有成员、增加实例字段或绕过只读属性。从对象取得的方法值必须保留接收者。
 

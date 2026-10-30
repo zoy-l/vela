@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <expected>
 #include <optional>
 #include <span>
 #include <string>
@@ -18,7 +17,6 @@
 #include "compiler/frontend/declaration_ids.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/parser.h"
-#include "compiler/frontend/specialization.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/ir.h"
@@ -284,23 +282,19 @@ LoweringResult PrepareProgram(const frontend::Program& source,
   return lowered;
 }
 
-std::expected<Program, frontend::Diagnostics> PrepareParsed(frontend::ParseResult parsed) {
+LoweringResult PrepareParsed(frontend::ParseResult parsed, frontend::DiagnosticOptions options) {
   if (!parsed.diagnostics.empty()) {
-    return std::unexpected(std::move(parsed.diagnostics));
+    return {.program = {}, .diagnostics = std::move(parsed.diagnostics)};
   }
-  auto specialized = frontend::SpecializeGenerics(parsed.program);
-  if (!specialized.empty()) {
-    return std::unexpected(std::move(specialized));
-  }
-  auto checked = frontend::TypeChecker().Check(parsed.program);
-  if (!checked.diagnostics.empty()) {
-    return std::unexpected(std::move(checked.diagnostics));
+  auto checked = frontend::TypeChecker(nullptr, options).Check(parsed.program);
+  if (!checked.Succeeded()) {
+    return {.program = {}, .diagnostics = std::move(checked.diagnostics)};
   }
   auto lowered = PrepareProgram(parsed.program, checked.model);
-  if (!lowered.Succeeded()) {
-    return std::unexpected(std::move(lowered.diagnostics));
+  for (auto& diagnostic : checked.diagnostics) {
+    lowered.diagnostics.push_back(std::move(diagnostic));
   }
-  return std::move(lowered.program);
+  return lowered;
 }
 
 }  // namespace vela::ir

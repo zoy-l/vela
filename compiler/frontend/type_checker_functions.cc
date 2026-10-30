@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/type_inference.h"
 
 namespace vela::frontend {
 
@@ -150,13 +151,11 @@ void TypeChecker::InferLambdaReturn(const Statement& statement) {
     return;
   }
   auto& inferred = lambda_scopes_.back().inferred_return;
-  if (!inferred || IsSameType(*inferred, value)) {
+  if (!inferred) {
     inferred = value;
-  } else if (value.kind == Type::Kind::Null && inferred->kind != Type::Kind::Void) {
-    inferred = NullableType(*inferred);
-  } else if ((inferred->kind == Type::Kind::Null && value.kind != Type::Kind::Void) ||
-             IsSameType(NonNullable(*inferred), NonNullable(value))) {
-    inferred = NullableType(value);
+  } else if (const auto common =
+                 TypeInference::CommonType(DescribeType(*inferred), DescribeType(value))) {
+    inferred = ResolveType(*common, true);
   } else {
     AddDiagnostic(statement.location,
                   "lambda return types do not match; add an explicit return type");

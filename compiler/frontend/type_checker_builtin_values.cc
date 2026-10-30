@@ -110,6 +110,16 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
   const auto key = "$builtin." + receiver.name + "." + expression.text + "." + type.name;
   if (const auto found = builtin_function_ids_.find(key); found != builtin_function_ids_.end()) {
     builtin_method_values_.insert_or_assign(&expression, found->second);
+    const auto& generated = generated_functions_.at(found->second);
+    const auto* returned = generated.declaration->body->statements.front()->expression.get();
+    DiagnoseDynamicConversion(expression, signature.return_type, expression_types_.at(returned));
+    for (const auto& argument : returned->arguments) {
+      const auto conversion = checked_conversions_.find(argument.value.get());
+      if (conversion != checked_conversions_.end()) {
+        DiagnoseDynamicConversion(expression, conversion->second,
+                                  expression_types_.at(argument.value.get()));
+      }
+    }
     return type;
   }
 
@@ -177,7 +187,7 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
       IsValid(actual->second) && actual->second.kind != Type::Kind::Void) {
     AddDiagnostic(expression.location, "builtin method result does not match the function type");
   }
-  return diagnostics_.size() == diagnostics ? type : InvalidType();
+  return HasErrors(std::span(diagnostics_).subspan(diagnostics)) ? InvalidType() : type;
 }
 
 }  // namespace vela::frontend

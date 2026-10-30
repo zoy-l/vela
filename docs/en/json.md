@@ -71,6 +71,11 @@ returns, fields, indexed writes, and closure captures that cross into a typed
 slot. A successful check does not perform numeric conversion or container
 conversion. Failure follows the existing checked-cast error path.
 
+The default `implicit_dynamic_conversion` diagnostic warns at implicit boundaries.
+Editors publish the same code and severity. This identifies a conversion that may
+fail; it cannot predict the contents of runtime JSON. Runtime checks still execute,
+and warnings do not prevent compilation.
+
 ```vela
 const values: dynamic[] = Json.parse('[7, "Vela", true]');
 const id: int = values[0];       // Runtime check succeeds.
@@ -106,6 +111,28 @@ result, or a dynamic operation. Mixed array literals are allowed in a
 `dynamic[]` context; an array literal in a `dynamic` context creates `dynamic[]`.
 Absent such a context, existing strict array and return-type inference remains
 in force. Unresolved names and inference failures never become dynamic.
+
+Each implicit conversion above warns. An explicit `as` or a valid `is` refinement
+expresses the check and does not warn. For example, preserve a null default while
+validating every non-null field value:
+
+```vela
+const name = (root.get('name') as string?) ?? '';
+```
+
+Projects may promote the diagnostic to an error in `vela.json`:
+
+```json
+{"diagnostics":{"implicit_dynamic_conversion":"error"}}
+```
+
+`"warning"` is also accepted. Source commands and editors search upward from the
+entry file's directory for the nearest configuration; without one, warnings are
+the default. Test commands use their selected project configuration. Embedding
+APIs take `DiagnosticOptions` without implicitly scanning the host filesystem.
+Compilation, REPL, and development sessions distinguish warnings from errors;
+strict configuration rejects the program before execution. JSON has no provenance
+exception, and composite dynamic expressions and nullable targets follow the same rule.
 
 ## Containers and business model conversion
 

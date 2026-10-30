@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "compiler/compiler.h"
+#include "compiler/frontend/diagnostic.h"
 #include "runtime/isolate.h"
 
 namespace vela::compiler {
@@ -23,6 +24,7 @@ struct CachedCompileResult final {
 [[nodiscard]] std::expected<CachedCompileResult, std::string> CompileFileCached(
     std::string_view path,
     const std::filesystem::path& cache_directory,
-    runtime::Isolate& isolate);
+    runtime::Isolate& isolate,
+    frontend::DiagnosticOptions options = {});
 
 }  // namespace vela::compiler

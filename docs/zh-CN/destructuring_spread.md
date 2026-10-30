@@ -39,7 +39,7 @@ const updated: Map<string, dynamic> = {...data, 'age': 8};
 
 解构覆盖局部和顶层声明、已有局部或参数的赋值，以及 `for (... in ...)` 的绑定。集合展开覆盖数组和 Map 字面量。对象模式显式列出要读取的成员；Map 模式显式列出要查找的键。
 
-以下内容不属于本设计：record、结构化 class 类型、`match` / `switch` 的结构模式与 guard、class 字段声明模式、函数/构造函数/lambda 的入参解构、调用展开、源码 rest 形参及 rest 函数类型、条目默认值、对象/Map rest、class 字段枚举和展开、Set 字面量、空安全展开、用户迭代器与 `for-of`。泛型继续要求显式类型实参，不增加约束或类型实参推断。
+以下内容不属于本设计：record、结构化 class 类型、`match` / `switch` 的结构模式与 guard、class 字段声明模式、函数/构造函数/lambda 的入参解构、调用展开、源码 rest 形参及 rest 函数类型、条目默认值、对象/Map rest、class 字段枚举和展开、Set 字面量、空安全展开、用户迭代器与 `for-of`。泛型调用沿用[统一类型推导](type_inference.md)；模式中的名义类型标注仍显式写出类型实参。
 
 已有 `push(1, 2)` 等内建方法的变长调用由现有 API 签名定义，不因本设计获得 `push(...values)` 语法。已有内建签名的 rest 元数据仍服务于真实调用方，本设计不将其扩展为用户声明语法。
 

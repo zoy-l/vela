@@ -118,7 +118,6 @@ void AddTimings(benchmark::State& state, const DevelopmentResult& result) {
   AddDuration(state, "source_ns", timings.source);
   AddDuration(state, "source_loading_ns", timings.frontend.loading);
   AddDuration(state, "type_checking_ns", timings.frontend.checking);
-  AddDuration(state, "specialization_ns", timings.frontend.specialization);
   AddDuration(state, "typed_ir_ns", timings.frontend.ir);
   AddDuration(state, "llvm_lowering_ns", timings.native.generation);
   AddDuration(state, "llvm_optimization_ns", timings.native.optimization);

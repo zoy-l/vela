@@ -41,7 +41,7 @@ class GenericChild<T> extends GenericBase<T> {
 func identity<T>(value: T): T { return value; }
 func callbacks<K, V>(values: Map<K, V>): (() => int)[] {
   const result: (() => int)[] = [];
-  for (const [key, value] in identity<Map<K, V>>(values)) {
+  for (const [key, value] in identity(values)) {
     result.push((): int => key.length + value);
   }
   return result;
@@ -161,7 +161,7 @@ export func calculate(operation: int): int {
            second.text == 'retained' && Optional().text == null ? 42 : 0;
   }
   if (operation == 2) {
-    const box = Explicit<int>(initial: 40);
+    const box = Explicit(initial: 40);
     collect();
     return box.text == 'default' ? box.value + box.adjustment() : 0;
   }
@@ -172,8 +172,8 @@ export func calculate(operation: int): int {
   }
   if (operation == 5) {
     const values = Map<string, int>(); values.set('ab', 38);
-    const getters = callbacks<string, int>(values);
-    const child = GenericChild<int>(value: 0);
+    const getters = callbacks(values);
+    const child = GenericChild(value: 0);
     collect();
     child.value = getters[0]();
     return child.read() + 2;

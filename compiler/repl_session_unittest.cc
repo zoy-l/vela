@@ -11,6 +11,7 @@
 
 #include "base/file.h"
 #include "compiler/compiler.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/repl_source.h"
 #include "gtest/gtest.h"
 
@@ -32,8 +33,8 @@ class ReplSessionTest : public testing::Test {
   void Execute(std::string_view text) {
     const auto result = session_.Submit(text);
     for (const auto& diagnostic : result.diagnostics) {
-      ADD_FAILURE() << diagnostic.source_path << ':' << diagnostic.location.line << ' '
-                    << diagnostic.message;
+      EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error)
+          << diagnostic.source_path << ':' << diagnostic.location.line << ' ' << diagnostic.message;
     }
     EXPECT_EQ(result.status, SubmissionStatus::Executed) << result.execution.message;
   }

@@ -2,11 +2,11 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <deque>
 #include <ranges>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -53,78 +53,20 @@ std::string SpecializationName(const std::string& base, const std::vector<TypeNa
   return result + '>';
 }
 
-class Specializer final : public AstCloneTransform {
- public:
-  explicit Specializer(Program& program) : program_(program) {}
-  ~Specializer() override = default;
-  Specializer(const Specializer&) = delete;
-  Specializer& operator=(const Specializer&) = delete;
-  Specializer(Specializer&&) = delete;
-  Specializer& operator=(Specializer&&) = delete;
+TypeName SubstitutePattern(TypeName type,
+                           const absl::flat_hash_map<std::string, TypeName>& substitutions) {
+  if (type.kind == TypeName::Kind::Named) {
+    if (const auto found = substitutions.find(type.name); found != substitutions.end()) {
+      return found->second;
+    }
+  }
+  for (auto& argument : type.arguments) {
+    argument = SubstitutePattern(std::move(argument), substitutions);
+  }
+  return type;
+}
 
-  Diagnostics Run(std::span<const GenericSpecialization> retained);
-
- private:
-  using Substitutions = absl::flat_hash_map<std::string, TypeName>;
-  template <class T>
-  struct Pending final {
-    T declaration;
-    Substitutions substitutions;
-    const T* source = nullptr;
-    std::size_t expansion_depth = 0;
-  };
-  struct Work final {
-    enum class Kind : std::uint8_t { Function, Class };
-    Kind kind;
-    std::size_t index;
-  };
-  void CollectDeclarations();
-  void CollectAliases();
-  void CollectFunctionTemplates();
-  void CollectClassTemplates();
-  void DescribeClassTemplate(const Class& owner);
-  void NormalizeAliases();
-  void Error(SourceLocation location, std::string message);
-  Substitutions Bind(const std::vector<std::string>& parameters,
-                     const std::vector<TypeName>& arguments,
-                     SourceLocation location);
-  void Normalize(TypeName& type, const Substitutions& substitutions);
-  void NormalizeType(TypeName& type, const Substitutions& substitutions);
-  void NormalizeTypeHead(TypeName& type);
-  TypeName CloneNormalizedType(const TypeName& source, const Substitutions& substitutions);
-  void NormalizeExpressionHead(Expression& expression,
-                               const Substitutions& substitutions,
-                               const Expression* object);
-  TypeName TransformType(const TypeName& source) override;
-  void TransformApplication(Expression& target, const Expression& source) override;
-  void BeginScope() override;
-  void EndScope() override;
-  void Declare(const std::string& name) override;
-  void Normalize(Expression* expression, const Substitutions& substitutions);
-  void Normalize(Statement* statement, const Substitutions& substitutions);
-  void Normalize(Function& function, const Substitutions& substitutions);
-  void Normalize(Class& owner, const Substitutions& substitutions);
-  void NormalizeScoped(Statement* statement, const Substitutions& substitutions);
-  [[nodiscard]] bool IsShadowed(const std::string& name) const;
-  std::string Instantiate(const std::string& name,
-                          const std::vector<TypeName>& arguments,
-                          SourceLocation location);
-
-  Program& program_;
-  Diagnostics diagnostics_;
-  absl::flat_hash_map<std::string, Function> function_templates_;
-  absl::flat_hash_map<std::string, Class> class_templates_;
-  absl::flat_hash_map<std::string, Program::TypeAlias> aliases_;
-  absl::flat_hash_set<std::string> instantiated_;
-  absl::flat_hash_set<std::string> active_aliases_;
-  std::deque<Pending<Function>> functions_;
-  std::deque<Pending<Class>> classes_;
-  std::vector<Work> work_;
-  std::vector<absl::flat_hash_set<std::string>> scopes_;
-  std::size_t type_depth_ = 0;
-  std::size_t expansion_depth_ = 0;
-  const Substitutions* clone_substitutions_ = nullptr;
-};
+}  // namespace
 
 void Specializer::Error(SourceLocation location, std::string message) {
   diagnostics_.push_back({
@@ -165,6 +107,13 @@ std::string Specializer::Instantiate(const std::string& name,
     return key;
   }
   instantiated_.insert(key);
+  expansion_depths_.emplace(key, expansion_depth_ + 1);
+  generic_types_.emplace(key, TypeName{
+                                  .name = name,
+                                  .location = location,
+                                  .kind = TypeName::Kind::Generic,
+                                  .arguments = arguments,
+                              });
   if (const auto origin = program_.origins.find(name); origin != program_.origins.end()) {
     auto concrete_origin = origin->second;
     concrete_origin.arguments = arguments;
@@ -592,7 +541,7 @@ void Specializer::NormalizeAliases() {
   }
 }
 
-Diagnostics Specializer::Run(std::span<const GenericSpecialization> retained) {
+Diagnostics Specializer::Initialize(std::span<const GenericSpecialization> retained) {
   CollectDeclarations();
   CollectAliases();
   CollectFunctionTemplates();
@@ -616,6 +565,13 @@ Diagnostics Specializer::Run(std::span<const GenericSpecialization> retained) {
     }
     Normalize(global.initializer.get(), {});
   }
+  Expand();
+  Publish();
+  expansion_depth_ = 0;
+  return TakeDiagnostics();
+}
+
+void Specializer::Expand() {
   // 深度优先处理依赖，保证指数分叉的展开递归先触达深度边界，而非耗尽整个宽度。
   while (diagnostics_.empty() && !work_.empty()) {
     const auto work = work_.back();
@@ -648,19 +604,99 @@ Diagnostics Specializer::Run(std::span<const GenericSpecialization> retained) {
       }
     }
   }
+}
+
+void Specializer::Publish() {
   for (auto& function : functions_) {
     program_.functions.push_back(std::move(function.declaration));
   }
   for (auto& owner : classes_) {
     program_.classes.push_back(std::move(owner.declaration));
   }
-  return std::move(diagnostics_);
+  functions_.clear();
+  classes_.clear();
 }
 
-}  // namespace
+const Function* Specializer::FunctionTemplate(std::string_view name) const {
+  const auto found = function_templates_.find(name);
+  return found == function_templates_.end() ? nullptr : &found->second;
+}
 
-Diagnostics SpecializeGenerics(Program& program, std::span<const GenericSpecialization> retained) {
-  return Specializer(program).Run(retained);
+const Class* Specializer::ClassTemplate(std::string_view name) const {
+  const auto found = class_templates_.find(name);
+  return found == class_templates_.end() ? nullptr : &found->second;
+}
+
+const Program::TypeAlias* Specializer::AliasTemplate(std::string_view name) const {
+  const auto found = aliases_.find(name);
+  return found == aliases_.end() || found->second.type_parameters.empty() ? nullptr
+                                                                          : &found->second;
+}
+
+TypeName Specializer::ExpandAlias(TypeName type, std::span<const std::string> parameters) {
+  if (type.kind == TypeName::Kind::Named &&
+      std::ranges::find(parameters, type.name) != parameters.end()) {
+    return type;
+  }
+  const auto alias = aliases_.find(type.name);
+  if (alias != aliases_.end()) {
+    const auto key = SpecializationName(type.name, type.arguments);
+    if (!active_aliases_.insert(key).second || active_aliases_.size() > kMaxTypeNesting) {
+      Error(type.location, "cyclic or expanding type alias '" + type.name + "'");
+      return type;
+    }
+    const auto bound = Bind(alias->second.type_parameters, type.arguments, type.location);
+    type = ExpandAlias(SubstitutePattern(alias->second.target, bound), parameters);
+    active_aliases_.erase(key);
+    return type;
+  }
+  for (auto& argument : type.arguments) {
+    argument = ExpandAlias(std::move(argument), parameters);
+  }
+  return type;
+}
+
+TypeName Specializer::DescribeType(TypeName type) const {
+  if (type.kind == TypeName::Kind::Named) {
+    if (const auto found = generic_types_.find(type.name); found != generic_types_.end()) {
+      type = found->second;
+    }
+  }
+  for (auto& argument : type.arguments) {
+    argument = DescribeType(std::move(argument));
+  }
+  return type;
+}
+
+std::string Specializer::Specialize(const std::string& name,
+                                    const std::vector<TypeName>& arguments,
+                                    SourceLocation location) {
+  const auto depth = expansion_depth_;
+  auto normalized = arguments;
+  for (auto& argument : normalized) {
+    Normalize(argument, {});
+  }
+  const auto result = Instantiate(name, normalized, location);
+  Expand();
+  expansion_depth_ = depth;
+  return result;
+}
+
+Diagnostics Specializer::TakeDiagnostics() {
+  return std::exchange(diagnostics_, {});
+}
+
+const Function& Specializer::function(std::size_t index) const {
+  return functions_.at(index).declaration;
+}
+
+const Class& Specializer::class_declaration(std::size_t index) const {
+  return classes_.at(index).declaration;
+}
+
+void Specializer::SetExpansionOwner(std::string_view name) {
+  const auto found = expansion_depths_.find(name);
+  expansion_depth_ = found == expansion_depths_.end() ? 0 : found->second;
 }
 
 }  // namespace vela::frontend

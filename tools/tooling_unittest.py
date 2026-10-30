@@ -266,7 +266,10 @@ class LanguageServerTest(unittest.TestCase):
             self.symbol_query("completion", source, source.index("Json.parse") + len("Json."), "members"),
             self.symbol_query("completion", source, source.index("print("), "globals"),
             request("textDocument/semanticTokens/full", {"textDocument": {"uri": self.uri}}, "tokens")])
-        self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+        diagnostics = self.diagnostics(messages)[-1]["diagnostics"]
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(diagnostics[0]["code"], "implicit_dynamic_conversion")
+        self.assertEqual(diagnostics[0]["severity"], 2)
         for identity, signature in (("type", "type dynamic"),
                                     ("parse", "Json.parse(source: string): dynamic"),
                                     ("stringify", "Json.stringify(value: dynamic): string"),
@@ -287,12 +290,46 @@ class LanguageServerTest(unittest.TestCase):
         messages = self.session([self.open(source),
             request("textDocument/formatting", {"textDocument": {"uri": self.uri}}, "format"),
             self.change([{"text": "func main(): void { const value: dynamic? = null; }"}])])
-        self.assertEqual(self.diagnostics(messages)[0]["diagnostics"], [])
+        diagnostic = self.diagnostics(messages)[0]["diagnostics"]
+        self.assertEqual(len(diagnostic), 1)
+        self.assertEqual(diagnostic[0]["severity"], 2)
+        self.assertEqual(diagnostic[0]["code"], "implicit_dynamic_conversion")
         self.assertTrue(any("already nullable" in item["message"]
                             for item in self.diagnostics(messages)[-1]["diagnostics"]))
         formatted = self.reply(messages, "format")["result"][0]["newText"]
         self.assertIn("const values: dynamic[] = [1, true, null];", formatted)
         self.assertIn("const value: int = values[0];", formatted)
+
+    def test_project_severity_and_explicit_checks_share_compiler_diagnostics(self) -> None:
+        (self.directory / "vela.json").write_text(
+            json.dumps({"diagnostics": {"implicit_dynamic_conversion": "error"}}),
+            encoding="utf-8", newline="\n")
+        source = "func main():void { const root=Json.parse('{}'); const name:string=root.get('name') ?? ''; }"
+        messages = self.session([self.open(source), self.change([{
+            "text": source.replace("root.get('name') ?? ''", "(root.get('name') as string?) ?? ''")
+        }])])
+        diagnostics = self.diagnostics(messages)
+        self.assertEqual(diagnostics[0]["diagnostics"][0]["severity"], 1)
+        self.assertEqual(diagnostics[0]["diagnostics"][0]["code"], "implicit_dynamic_conversion")
+        self.assertEqual(diagnostics[-1]["diagnostics"], [])
+
+    def test_inferred_generic_calls_provide_hover_and_lambda_member_completion(self) -> None:
+        source = ("class User { name:string; }\n"
+                  "func apply<T,U>(operation:(T)=>U,value:T):U { return operation(value); }\n"
+                  "func main():void { const name=apply(user=>user.name,User(name:'Vela')); }")
+        line = source.splitlines()[2]
+        messages = self.session([self.open(source),
+            request("textDocument/hover", {"textDocument": {"uri": self.uri},
+                "position": {"line": 2, "character": line.index("const name") + 7}}, "hover"),
+            self.symbol_query("completion", source, source.index("user.name") + len("user."), "members")])
+        self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+        self.assertIn("string", str(self.reply(messages, "hover")["result"]))
+        self.assertIn("name", {item["label"] for item in self.reply(messages, "members")["result"]})
+        items = self.argument_completions(
+            'class Box<T> { value: T; }\n'
+            'func main(): void { const box: Box<int> = Box(¦); }')
+        parameters = {item['label']: item['detail'] for item in items if item['label'].endswith(':')}
+        self.assertEqual(parameters, {'value:': 'value: int'})
 
     def test_hover_members_types_aliases_and_builtins(self) -> None:
         source = ("interface Readable { read(): int; }\n"

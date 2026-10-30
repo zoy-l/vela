@@ -9,12 +9,61 @@ compile-time inference; it does not introduce `any`, runtime type discovery, or
 numeric conversions. Named functions, methods, and external declarations retain
 explicit parameter and return annotations.
 
+## Generic calls and shared constraints
+
+Generic functions, class construction, and transparent generic constructor aliases
+may omit all type arguments. Arguments, expected result types, and callback
+signatures contribute structural constraints before specialization. Explicit type
+arguments remain valid. Type annotations such as `Box<int>` and `Map<string, int>`
+must remain complete; later statements do not determine an earlier variable's type.
+
+```typescript
+func identity<T>(value: T): T { return value; }
+func apply<T, U>(operation: (T) => U, value: T): U { return operation(value); }
+class Box<T> { value: T; }
+
+const id = identity(42);
+const box = Box(value: id);
+const operation: (int) => int = identity;
+const answer = apply(value => value + 2, 40);
+const scores: Map<string, int> = Map();
+```
+
+Ordinary arguments supply evidence before dependent lambdas, generic function
+values, and empty constructions are checked. Nested calls also wait when an
+output type variable requires context from later arguments. A callback may precede
+the argument that supplies its parameter types. Initializers, assignments, fields, constructor
+and function arguments, returns, conditionals, `??`, and `await` pass expected
+types through the same expression checker. An expected type is an inference hint;
+the final assignment relation still has to hold.
+
+Array `map/reduce`, Set/Map/Completer construction, Future factories, and user
+generics share the constraint solver. Future adoption and the array result of
+`wait` remain intrinsic API semantics. Ordinary callbacks require exact arity,
+array callbacks may omit trailing parameters, and exception callbacks filter by
+their declared throwable type. These contracts do not create separate inference rules.
+
+Inference merges equal types and existing nullable relationships. It does not
+merge int/double, invent union types or common application supertypes, or change
+the invariant arguments of existing containers. Array literals still construct
+storage under their array context. Insufficient evidence, conflicting constraints,
+and incompatible final arguments are compile errors; failure never defaults to
+dynamic. Thus `const values = Map()` and context-free `const operation = identity`
+remain invalid. Inference can include dynamic only when a declaration, argument,
+or operation actually has that type.
+
+Each generic call owns its inference variables. Solved canonical type arguments
+request specialization; explicit and inferred uses share the same concrete
+declaration. Inference variables never reach backends. Deferred checks retain
+flow facts from their source position and apply possible assignment/call effects
+at that position. Runtime evaluation remains exactly once, from left to right.
+
 ## Lambda parameters
 
 An expected function type supplies the types of omitted lambda parameters by
 position. This applies uniformly to annotated local/global variables, assignments,
 returns, class fields and constructor arguments, function arguments, arrays of
-callbacks, interfaces, and generic functions after explicit specialization.
+callbacks, interfaces, and generic calls after constraint solving.
 Aliases and nullable function types carry the same context. Explicit annotations
 are still allowed and must satisfy the expected signature.
 
@@ -91,7 +140,9 @@ AST annotation text. A regression test compares instruction streams and register
 counts for equivalent explicit and inferred callbacks.
 
 The language server uses the same checked signature for inferred parameter
-hover, completion, and definition lookup. Formatting preserves omitted annotations
+hover, completion, and definition lookup. Incomplete expressions retain registered
+signatures and established local types; diagnostics do not discard known semantic facts.
+Formatting preserves omitted annotations
 and supports both parenthesized and single-parameter forms.
 
 ## Implementation contracts

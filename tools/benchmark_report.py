@@ -357,7 +357,7 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                 lines.append(f"Geometric mean {backend} JIT/AOT excluding arithmetic and fields "
                              f"over {len(selected)} paired workloads: {ratio:.2f}x.")
     startup_fields = ("load_ns", "file_capture_ns", "engine_creation_ns", "source_total_ns", "code_total_ns",
-                      "source_loading_ns", "specialization_ns",
+                      "source_loading_ns",
                       "type_checking_ns", "typed_ir_ns", "llvm_lowering_ns", "llvm_optimization_ns",
                       "machine_compilation_ns", "linking_ns", "instantiation_ns",
                       "initial_publication_pause_ns", "first_execution_ns")

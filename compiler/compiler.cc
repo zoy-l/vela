@@ -411,27 +411,38 @@ CompileResult EncodeProgram(ir::Program program,
 
 }  // namespace
 
-CompileResult CompileParsed(frontend::ParseResult parsed, runtime::Isolate& isolate) {
-  auto prepared = ir::PrepareParsed(std::move(parsed));
-  if (!prepared) {
-    return {.program = {}, .diagnostics = std::move(prepared.error())};
+CompileResult CompileParsed(frontend::ParseResult parsed,
+                            runtime::Isolate& isolate,
+                            frontend::DiagnosticOptions options) {
+  auto prepared = ir::PrepareParsed(std::move(parsed), options);
+  if (!prepared.Succeeded()) {
+    return {.program = {}, .diagnostics = std::move(prepared.diagnostics)};
   }
-  return EncodeProgram(std::move(*prepared), isolate, nullptr);
+  auto compiled = EncodeProgram(std::move(prepared.program), isolate, nullptr);
+  for (auto& diagnostic : prepared.diagnostics) {
+    compiled.diagnostics.push_back(std::move(diagnostic));
+  }
+  return compiled;
 }
 
-CompileResult CompileSource(std::string_view source, runtime::Isolate& isolate) {
+CompileResult CompileSource(std::string_view source,
+                            runtime::Isolate& isolate,
+                            frontend::DiagnosticOptions options) {
   const frontend::SourceInput input{.path = "main.vela", .text = source};
-  return CompileParsed(frontend::LoadSources(std::span(&input, 1), input.path), isolate);
+  return CompileParsed(frontend::LoadSources(std::span(&input, 1), input.path), isolate, options);
 }
 
 CompileResult CompileModules(std::span<const frontend::SourceInput> sources,
                              std::string_view entry,
-                             runtime::Isolate& isolate) {
-  return CompileParsed(frontend::LoadSources(sources, entry), isolate);
+                             runtime::Isolate& isolate,
+                             frontend::DiagnosticOptions options) {
+  return CompileParsed(frontend::LoadSources(sources, entry), isolate, options);
 }
 
-CompileResult CompileFile(std::string_view path, runtime::Isolate& isolate) {
-  return CompileParsed(frontend::LoadProgram(path), isolate);
+CompileResult CompileFile(std::string_view path,
+                          runtime::Isolate& isolate,
+                          frontend::DiagnosticOptions options) {
+  return CompileParsed(frontend::LoadProgram(path), isolate, options);
 }
 
 CompileResult CompileProgram(const frontend::Program& source,

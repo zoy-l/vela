@@ -11,7 +11,6 @@
     "editor.links": true
   },
   "files.exclude": {
-    "**/.cache": true,
     "**/.cipd": true,
     "**/out": true
   },

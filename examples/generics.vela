@@ -13,8 +13,8 @@ class Box<T> {
 }
 
 func main(): void {
-  const operation: Operation<int> = identity<int>;
-  const value = Box<int>(value: operation(42));
+  const operation: Operation<int> = identity;
+  const value = Box(value: operation(42));
   print(value.get());
   print(identity<double>(1.5));
 }

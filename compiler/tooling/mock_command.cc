@@ -9,13 +9,13 @@
 #include <system_error>
 #include <vector>
 
-#include "base/diagnostic.h"
 #include "base/file.h"
 #include "base/path.h"
 #include "base/process_exit.h"
 #include "compiler/frontend/checker.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
+#include "compiler/project_config.h"
 
 namespace vela::tooling {
 namespace {
@@ -87,7 +87,7 @@ std::expected<MockOptions, std::string> ParseOptions(std::span<char*> arguments)
 
 void Diagnostics(std::ostream& errors, const frontend::Diagnostics& diagnostics) {
   for (const auto& diagnostic : diagnostics) {
-    WriteError(errors, diagnostic.source_path, diagnostic.location, diagnostic.message);
+    frontend::WriteDiagnostic(errors, diagnostic);
   }
 }
 
@@ -186,9 +186,15 @@ int MockCommand(std::span<char*> arguments, std::ostream& output, std::ostream& 
     }
   }
   // 同一个不可变模块缓存分别提供检查用 AST 和保留公开别名的生成用 AST。
-  const auto checked = frontend::CheckParsed(frontend::LoadProgram(options->input, cache, {}));
+  const auto diagnostics = compiler::LoadSourceDiagnosticOptions(Utf8Path(options->input));
+  if (!diagnostics) {
+    frontend::WriteDiagnostic(errors, compiler::ConfigurationDiagnostic(diagnostics.error()));
+    return diagnostics.error().exit_code;
+  }
+  const auto checked =
+      frontend::CheckParsed(frontend::LoadProgram(options->input, cache, {}), *diagnostics);
+  Diagnostics(errors, checked.diagnostics);
   if (!checked.Succeeded()) {
-    Diagnostics(errors, checked.diagnostics);
     return DiagnosticExit(checked.diagnostics);
   }
   const auto generated = GenerateMocks(program, options->interfaces, destination);
@@ -199,7 +205,7 @@ int MockCommand(std::span<char*> arguments, std::ostream& output, std::ostream& 
   const auto output_path = PathText(destination);
   const frontend::SourceInput overlay{.path = output_path, .text = *generated};
   const auto artifact =
-      frontend::CheckParsed(frontend::LoadProgram(output_path, cache, {&overlay, 1}));
+      frontend::CheckParsed(frontend::LoadProgram(output_path, cache, {&overlay, 1}), *diagnostics);
   if (!artifact.Succeeded()) {
     Diagnostics(errors, artifact.diagnostics);
     return DiagnosticExit(artifact.diagnostics) == kIoErrorExitCode ? kIoErrorExitCode

@@ -1,6 +1,8 @@
 #include "compiler/frontend/type_checker.h"
 
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -265,8 +267,10 @@ void TypeChecker::ResolveField(const Field& field,
   }
 }
 
-TypeChecker::Type TypeChecker::CheckClassConstruction(const ClassInfo& class_info,
-                                                      const Expression& expression) {
+TypeChecker::Type TypeChecker::CheckClassConstruction(
+    const ClassInfo& class_info,
+    const Expression& expression,
+    std::span<const std::optional<Type>> checked_arguments) {
   CheckAccess(class_info.constructor.visibility, class_info.type.name, expression.location);
   for (const CallArgument& argument : expression.arguments) {
     if (class_info.declaration->constructor_kind == ConstructorKind::Generated &&
@@ -274,7 +278,7 @@ TypeChecker::Type TypeChecker::CheckClassConstruction(const ClassInfo& class_inf
       AddDiagnostic(argument.location, "generated constructor arguments must be named");
     }
   }
-  return CheckFunctionCall(class_info.constructor, expression);
+  return CheckFunctionCall(class_info.constructor, expression, checked_arguments);
 }
 
 TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression,

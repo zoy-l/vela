@@ -18,6 +18,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_file.h"
 #include "compiler/frontend/source_loader.h"
+#include "compiler/project_config.h"
 #include "compiler/tooling/file_uri.h"
 #include "compiler/tooling/source_text.h"
 
@@ -27,6 +28,8 @@ namespace {
 struct EditorDiagnostic final {
   TextPosition position;
   std::string message;
+  frontend::DiagnosticSeverity severity;
+  frontend::DiagnosticCode code;
 };
 
 struct OpenSource final {
@@ -55,7 +58,14 @@ yyjson_mut_val* JsonDiagnostic(yyjson_mut_doc* document, const EditorDiagnostic&
   AddJsonField(document, range, protocol::kStart, JsonPosition(document, diagnostic.position));
   AddJsonField(document, range, protocol::kEnd, JsonPosition(document, diagnostic.position));
   AddJsonField(document, diagnostic_object, protocol::kRange, range);
-  AddJsonField(document, diagnostic_object, "severity", yyjson_mut_sint(document, 1));
+  AddJsonField(document, diagnostic_object, "severity",
+               yyjson_mut_sint(document,
+                               diagnostic.severity == frontend::DiagnosticSeverity::Error ? 1 : 2));
+  const auto code = frontend::DiagnosticCodeName(diagnostic.code);
+  if (!code.empty()) {
+    AddJsonField(document, diagnostic_object, "code",
+                 yyjson_mut_strncpy(document, code.data(), code.size()));
+  }
   AddJsonField(document, diagnostic_object, "source", yyjson_mut_str(document, "vela"));
   AddJsonField(document, diagnostic_object, protocol::kMessage,
                yyjson_mut_strncpy(document, diagnostic.message.data(), diagnostic.message.size()));
@@ -92,7 +102,10 @@ void DiagnosticCollection::Collect(std::string_view path) {
   auto loaded = frontend::LoadProgram(path, *modules_, overlays_);
   auto diagnostics = std::move(loaded.diagnostics);
   if (diagnostics.empty()) {
-    diagnostics = frontend::CheckProgram(loaded.program).diagnostics;
+    const auto options = compiler::LoadSourceDiagnosticOptions(Utf8Path(path));
+    diagnostics = options
+                      ? frontend::CheckProgram(loaded.program, *options).diagnostics
+                      : frontend::Diagnostics{compiler::ConfigurationDiagnostic(options.error())};
   }
   if (diagnostics.empty()) {
     return;
@@ -123,7 +136,12 @@ void DiagnosticCollection::Collect(std::string_view path) {
       position = index->second.PositionAt(text, diagnostic.location, encoding_);
     }
     auto& bucket = buckets_.try_emplace(uri).first->second;
-    bucket.push_back({.position = position, .message = diagnostic.message});
+    bucket.push_back({
+        .position = position,
+        .message = diagnostic.message,
+        .severity = diagnostic.severity,
+        .code = diagnostic.code,
+    });
   }
 }
 

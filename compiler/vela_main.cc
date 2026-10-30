@@ -22,6 +22,7 @@
 #include "compiler/frontend/checker.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
+#include "compiler/project_config.h"
 #include "compiler/testing/command.h"
 #include "compiler/tooling/debug_console.h"
 #include "compiler/tooling/development_console.h"
@@ -72,14 +73,19 @@ void PrintUsage(std::ostream& output) {
 
 void PrintDiagnostics(std::string_view path, const vela::frontend::Diagnostics& diagnostics) {
   for (const vela::frontend::Diagnostic& diagnostic : diagnostics) {
-    const std::string_view source = diagnostic.source_path.empty() ? path : diagnostic.source_path;
-    vela::WriteError(std::cerr, source, diagnostic.location, diagnostic.message);
+    vela::frontend::WriteDiagnostic(std::cerr, diagnostic, path);
   }
 }
 
 int CheckFile(std::string_view path_text) {
   const std::string path(path_text);
-  const vela::frontend::CheckResult result = vela::frontend::CheckFile(path);
+  const auto options = vela::compiler::LoadSourceDiagnosticOptions(vela::Utf8Path(path));
+  if (!options) {
+    vela::frontend::WriteDiagnostic(std::cerr,
+                                    vela::compiler::ConfigurationDiagnostic(options.error()));
+    return options.error().exit_code;
+  }
+  const vela::frontend::CheckResult result = vela::frontend::CheckFile(path, {}, *options);
   PrintDiagnostics(path, result.diagnostics);
   if (!result.Succeeded()) {
     return kSourceErrorExitCode;
@@ -143,8 +149,14 @@ int Execute(const vela::vm::Program& program,
 }
 
 int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
+  const auto options = vela::compiler::LoadSourceDiagnosticOptions(vela::Utf8Path(path));
+  if (!options) {
+    vela::frontend::WriteDiagnostic(std::cerr,
+                                    vela::compiler::ConfigurationDiagnostic(options.error()));
+    return options.error().exit_code;
+  }
   vela::runtime::Isolate isolate;
-  const auto cached = vela::compiler::CompileFileCached(path, ".cache/vela", isolate);
+  const auto cached = vela::compiler::CompileFileCached(path, ".cache/vela", isolate, *options);
   if (!cached) {
     vela::WriteError(std::cerr, path, vela::SourceLocation(), cached.error());
     return kIoErrorExitCode;
@@ -155,8 +167,14 @@ int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
 }
 
 int CompileFile(std::string_view path, const std::filesystem::path& output) {
+  const auto options = vela::compiler::LoadSourceDiagnosticOptions(vela::Utf8Path(path));
+  if (!options) {
+    vela::frontend::WriteDiagnostic(std::cerr,
+                                    vela::compiler::ConfigurationDiagnostic(options.error()));
+    return options.error().exit_code;
+  }
   vela::runtime::Isolate isolate;
-  const auto compiled = vela::compiler::CompileFile(path, isolate);
+  const auto compiled = vela::compiler::CompileFile(path, isolate, *options);
   PrintDiagnostics(path, compiled.diagnostics);
   if (!compiled.Succeeded()) {
     return kSourceErrorExitCode;
@@ -192,12 +210,19 @@ int ExecuteImage(std::string_view path) {
 enum class FormatMode : std::uint8_t { Output, Write, Check };
 
 int DocumentFile(std::string_view path, const std::filesystem::path& output) {
-  const auto documentation = vela::tooling::GenerateDocumentation(path);
-  if (!documentation) {
-    PrintDiagnostics(path, documentation.error());
+  const auto options = vela::compiler::LoadSourceDiagnosticOptions(vela::Utf8Path(path));
+  if (!options) {
+    vela::frontend::WriteDiagnostic(std::cerr,
+                                    vela::compiler::ConfigurationDiagnostic(options.error()));
+    return options.error().exit_code;
+  }
+  const auto documentation = vela::tooling::GenerateDocumentation(path, *options);
+  PrintDiagnostics(path, documentation.diagnostics);
+  if (!documentation.Succeeded()) {
     return kSourceErrorExitCode;
   }
-  const auto written = vela::WriteFileAtomically(output, std::as_bytes(std::span(*documentation)));
+  const auto written =
+      vela::WriteFileAtomically(output, std::as_bytes(std::span(documentation.markdown)));
   if (!written) {
     vela::WriteError(std::cerr, vela::PathText(output), vela::SourceLocation(), written.error());
     return kIoErrorExitCode;

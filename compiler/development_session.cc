@@ -57,7 +57,6 @@ void AddTimings(DevelopmentTimings& total, const DevelopmentTimings& addition) {
   total.native.linking += addition.native.linking;
   total.publication += addition.publication;
   total.frontend.loading += addition.frontend.loading;
-  total.frontend.specialization += addition.frontend.specialization;
   total.frontend.checking += addition.frontend.checking;
   total.frontend.ir += addition.frontend.ir;
 }
@@ -180,7 +179,7 @@ DevelopmentSession::DevelopmentSession(std::string entry,
       bindings_(std::move(bindings)),
       options_(std::move(options)),
       compiler_(std::move(compiler)),
-      sources_(std::make_shared<SourceSession>(entry_)),
+      sources_(std::make_shared<SourceSession>(entry_, options_.diagnostics)),
       isolate_(std::make_unique<runtime::Isolate>(bindings_, options_.gc_threshold)),
       endpoint_(isolate_->native_control().endpoint()) {
   isolate_->native_control().SetDebugger(options_.debugger);
@@ -260,7 +259,7 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
   const auto started = Clock::now();
   std::unique_ptr<SourceSession> replacement;
   if (operation == DevelopmentOperation::Reload) {
-    replacement = std::make_unique<SourceSession>(entry_);
+    replacement = std::make_unique<SourceSession>(entry_, options_.diagnostics);
   }
   auto source = replacement ? replacement->Prepare(FullUpdate(*previous, update))
                             : base.sources->Prepare(update, retained);
@@ -293,6 +292,7 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
     return std::unexpected(std::move(result));
   }
   result.timings.native = code->timings;
+  result.diagnostics = source->snapshot().diagnostics;
   result.timings.frontend = source->snapshot().timings;
   result.cache = code->cache;
   result.changes = Changes(*previous, source->snapshot(), update);

@@ -45,33 +45,35 @@ void TypeChecker::ResolveInterfaces(const Program& program) {
 }
 
 void TypeChecker::CheckImplementations(const Program& program) {
-  absl::flat_hash_set<std::string> merged;
-  absl::flat_hash_set<std::string> visiting;
   for (const auto& source : program.classes) {
     if (source.base_class) {
-      MergeBaseClass(source.name, merged, visiting);
+      MergeBaseClass(source.name, merged_classes_, visiting_classes_);
     }
   }
   for (const auto& source : program.classes) {
-    const auto found = classes_.find(source.name);
-    if (found == classes_.end()) {
-      continue;
-    }
-    const auto& owner = found->second;
-    for (const auto& name : owner.interfaces) {
-      for (const auto& [method_name, signature] : interfaces_.at(name).methods) {
-        auto qualified_name = name;
-        qualified_name += '.';
-        qualified_name += method_name;
-        const auto method = owner.methods.find(method_name);
-        if (method == owner.methods.end()) {
-          AddDiagnostic(source.location, "missing interface method '" + qualified_name + "'");
-          continue;
-        }
-        if (!MatchesImplementationSignature(method->second, signature)) {
-          AddDiagnostic(source.location,
-                        "interface method implementation does not match '" + qualified_name + "'");
-        }
+    CheckClassImplementation(source);
+  }
+}
+
+void TypeChecker::CheckClassImplementation(const Class& source) {
+  const auto found = classes_.find(source.name);
+  if (found == classes_.end()) {
+    return;
+  }
+  const auto& owner = found->second;
+  for (const auto& name : owner.interfaces) {
+    for (const auto& [method_name, signature] : interfaces_.at(name).methods) {
+      auto qualified_name = name;
+      qualified_name += '.';
+      qualified_name += method_name;
+      const auto method = owner.methods.find(method_name);
+      if (method == owner.methods.end()) {
+        AddDiagnostic(source.location, "missing interface method '" + qualified_name + "'");
+        continue;
+      }
+      if (!MatchesImplementationSignature(method->second, signature)) {
+        AddDiagnostic(source.location,
+                      "interface method implementation does not match '" + qualified_name + "'");
       }
     }
   }

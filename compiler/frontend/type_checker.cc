@@ -22,6 +22,7 @@
 #include "compiler/frontend/control_flow.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/initialization.h"
+#include "compiler/frontend/specialization.h"
 #include "compiler/frontend/standard_environment.h"
 
 namespace vela::frontend {
@@ -54,8 +55,20 @@ TypeChecker::Type TypeChecker::InvalidType() {
   return {};
 }
 
-TypeCheckResult TypeChecker::Check(const Program& program) {
+TypeCheckResult TypeChecker::Check(Program& program,
+                                   std::span<const GenericSpecialization> retained) {
+  Specializer specializer(program);
+  auto specialization_errors = specializer.Initialize(retained);
+  if (!specialization_errors.empty()) {
+    return {.diagnostics = std::move(specialization_errors), .model = {}};
+  }
+  specializer_ = &specializer;
+  registered_functions_ = 0;
+  registered_classes_ = 0;
+  merged_classes_.clear();
+  visiting_classes_.clear();
   diagnostics_.clear();
+  dynamic_diagnostics_.clear();
   function_count_ = program.functions.size();
   types_.clear();
   array_elements_.clear();
@@ -70,6 +83,7 @@ TypeCheckResult TypeChecker::Check(const Program& program) {
   captured_declarations_ = FindCapturedMutableDeclarations(program);
   next_binding_id_ = 0;
   expression_types_.clear();
+  generic_applications_.clear();
   checked_conversions_.clear();
   case_values_.clear();
   enum_values_.clear();
@@ -112,29 +126,33 @@ TypeCheckResult TypeChecker::Check(const Program& program) {
     static_cast<void>(
         ResolveType({.name = alias.name, .location = alias.location, .arguments = {}}, true));
   }
-  // 描述表在检查函数体前完成构建；检查期间仅修改作用域表，借用的描述信息保持有效。
+  // 普通声明先注册；检查函数体时按需注册特化，描述对象保持稳定地址。
   for (const Function& function : program.functions) {
+    specializer.SetExpansionOwner(function.name);
     CheckFunction(function, nullptr);
   }
   for (const Class& class_declaration : program.classes) {
-    const auto class_info = classes_.find(class_declaration.name);
-    if (class_info == classes_.end()) {
-      continue;
-    }
-    CheckFieldInitializers(class_declaration, class_info->second);
-    for (const Function& method : class_declaration.methods) {
-      CheckFunction(method, &class_info->second);
-    }
-    if (class_declaration.constructor) {
-      CheckFunction(*class_declaration.constructor, &class_info->second);
+    specializer.SetExpansionOwner(class_declaration.name);
+    CheckClassBody(class_declaration);
+  }
+  CheckPendingSpecializations();
+  specializer.Publish();
+  for (const auto& source : program.classes) {
+    if (const auto found = classes_.find(source.name); found != classes_.end()) {
+      found->second.declaration = &source;
     }
   }
+  function_count_ = program.functions.size();
   for (const Class& class_declaration : program.classes) {
     if (!class_declaration.base_class ||
         explicit_super_constructors_.contains(class_declaration.name)) {
       continue;
     }
-    const auto& base = classes_.at(class_declaration.base_class->name);
+    const auto base_class = classes_.find(class_declaration.base_class->name);
+    if (base_class == classes_.end()) {
+      continue;
+    }
+    const auto& base = base_class->second;
     const auto has_required_parameter = std::ranges::any_of(
         base.constructor.parameters, [&](const FunctionInfo::Parameter& parameter) -> bool {
           return !base.constructor.optional_parameters.contains(parameter.name);
@@ -157,6 +175,7 @@ TypeCheckResult TypeChecker::Check(const Program& program) {
   model.bindings = std::move(bindings_);
   model.captured_mutables = std::move(captured_mutables_);
   model.expression_types = std::move(expression_types_);
+  model.generic_applications = std::move(generic_applications_);
   model.checked_conversions = std::move(checked_conversions_);
   model.case_values = std::move(case_values_);
   model.enum_values = std::move(enum_values_);
@@ -180,7 +199,7 @@ TypeCheckResult TypeChecker::Check(const Program& program) {
   model.catch_types = std::move(catch_types_);
   model.argument_order = std::move(argument_order_);
   model.collection_constructions = std::move(collection_constructions_);
-  if (diagnostics_.empty()) {
+  if (!HasErrors(diagnostics_)) {
     for (const auto& owner : program.classes) {
       const auto initialization = CheckConstructorInitialization(owner, model);
       for (const auto& diagnostic : initialization) {
@@ -340,7 +359,7 @@ TypeChecker::Type TypeChecker::CheckExpressionType(const Expression& expression,
     case Expression::Kind::Await:
       return CheckAwait(expression, expected);
     case Expression::Kind::Conditional:
-      return CheckConditional(expression);
+      return CheckConditional(expression, expected);
     case Expression::Kind::TypeTest:
     case Expression::Kind::TypeCast:
       return CheckTypeOperation(expression);
@@ -370,11 +389,11 @@ TypeChecker::Type TypeChecker::CheckExpressionType(const Expression& expression,
     case Expression::Kind::BooleanLiteral:
       return {.kind = Type::Kind::Bool, .name = "bool"};
     case Expression::Kind::Name:
-      return LookupName(expression);
+      return LookupName(expression, expected);
     case Expression::Kind::Unary:
       return CheckUnary(expression);
     case Expression::Kind::Binary:
-      return CheckBinary(expression);
+      return CheckBinary(expression, expected);
     case Expression::Kind::Call:
       return CheckCall(expression, expected);
     case Expression::Kind::Member:
@@ -486,6 +505,11 @@ TypeChecker::Type TypeChecker::CheckDynamicCall(const Expression& expression) {
 
 TypeChecker::Type TypeChecker::CheckNamedCall(const Expression& expression, const Type* expected) {
   const auto& callee = *expression.callee;
+  if (specializer_->FunctionTemplate(callee.text) != nullptr ||
+      specializer_->ClassTemplate(callee.text) != nullptr ||
+      specializer_->AliasTemplate(callee.text) != nullptr) {
+    return InstantiateGeneric(callee, &expression, expected);
+  }
   if (const auto builtin = FindBuiltin(Type::Kind::Invalid, callee.text)) {
     return CheckBuiltinCall(expression, *builtin);
   }
@@ -520,19 +544,11 @@ TypeChecker::Type TypeChecker::CheckNamedCall(const Expression& expression, cons
   }
   const auto class_info = classes_.find(constructor_name);
   if (class_info != classes_.end()) {
-    const Type result = CheckClassConstruction(class_info->second, expression);
-    if (expected != nullptr && IsValid(result) && !CanAssign(*expected, result)) {
-      AddDiagnostic(expression.location, "constructed type does not match expected type");
-    }
-    return result;
+    return CheckClassConstruction(class_info->second, expression);
   }
   const auto function = functions_.find(callee.text);
   if (function != functions_.end()) {
-    const Type result = CheckFunctionCall(function->second, expression);
-    if (expected != nullptr && IsValid(result) && !CanAssign(*expected, result)) {
-      AddDiagnostic(expression.location, "function result does not match expected type");
-    }
-    return result;
+    return CheckFunctionCall(function->second, expression);
   }
 
   AddDiagnostic(expression.location, "expression is not callable");
@@ -599,10 +615,10 @@ TypeChecker::Type TypeChecker::CheckMethodReceiver(const Expression& expression,
                                                    const Type* expected) {
   if (receiver.kind == Type::Kind::Future || receiver.kind == Type::Kind::Completer ||
       receiver.kind == Type::Kind::Timer || receiver.kind == Type::Kind::CancellationToken) {
-    return CheckAsyncMethod(expression, receiver, expected);
+    return CheckAsyncMethod(expression, receiver);
   }
   if (receiver.kind == Type::Kind::Array) {
-    return CheckArrayMethod(expression, receiver);
+    return CheckArrayMethod(expression, receiver, expected);
   }
   if (receiver.kind == Type::Kind::Set || receiver.kind == Type::Kind::Map) {
     return CheckCollectionMethod(expression, receiver);
@@ -622,7 +638,7 @@ TypeChecker::Type TypeChecker::CheckMethodReceiver(const Expression& expression,
     return CheckFunctionCall(method->second, expression);
   }
   if (receiver.kind == Type::Kind::Class) {
-    return CheckInstanceCall(expression, receiver, expected);
+    return CheckInstanceCall(expression, receiver);
   }
   AddDiagnostic(expression.location, "expression is not callable");
   return InvalidType();
@@ -640,9 +656,7 @@ TypeChecker::Type TypeChecker::CheckStaticCall(const Expression& expression,
   return CheckIndirectCall(expression, CheckExpression(*expression.callee, nullptr));
 }
 
-TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression,
-                                                 const Type& object,
-                                                 const Type* expected) {
+TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression, const Type& object) {
   const auto class_info = classes_.find(object.name);
   if (class_info != classes_.end()) {
     const auto method = class_info->second.methods.find(expression.callee->text);
@@ -657,11 +671,7 @@ TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression,
         InvalidateCapturedRefinements();
         return CheckIndirectCall(expression, type);
       }
-      const Type result = CheckFunctionCall(method->second, expression);
-      if (expected != nullptr && IsValid(result) && !CanAssign(*expected, result)) {
-        AddDiagnostic(expression.location, "method result does not match expected type");
-      }
-      return result;
+      return CheckFunctionCall(method->second, expression);
     }
     const auto field = class_info->second.fields.find(expression.callee->text);
     if (field != class_info->second.fields.end() &&
@@ -760,7 +770,7 @@ TypeChecker::Type TypeChecker::CheckFunctionCall(
   return function.return_type;
 }
 
-TypeChecker::Type TypeChecker::LookupName(const Expression& expression) {
+TypeChecker::Type TypeChecker::LookupName(const Expression& expression, const Type* expected) {
   const auto* local = LookupLocal(expression.text);
   if (local != nullptr) {
     CaptureLocal(expression, *local);
@@ -769,6 +779,9 @@ TypeChecker::Type TypeChecker::LookupName(const Expression& expression) {
   }
   if (globals_.contains(expression.text)) {
     return ResolveGlobal(expression.text);
+  }
+  if (specializer_->FunctionTemplate(expression.text) != nullptr) {
+    return InstantiateGeneric(expression, nullptr, expected);
   }
   if (const auto function = functions_.find(expression.text); function != functions_.end()) {
     return FunctionType(function->second);
@@ -889,10 +902,11 @@ void TypeChecker::CheckReturn(const Statement& statement, const Type& return_typ
   if (!statement.expression) {
     AddDiagnostic(statement.location, "non-void function must return a value");
   } else {
-    const Type value =
-        CheckExpression(*statement.expression, in_async_function_ ? nullptr : &expected_type);
+    const Type value = CheckExpression(*statement.expression, &expected_type);
     if (!in_async_function_ || value.kind != Type::Kind::Dynamic) {
       RecordConversion(*statement.expression, expected_type, value);
+    } else {
+      DiagnoseDynamicConversion(*statement.expression, expected_type, value);
     }
     const bool adopts_future = in_async_function_ && return_type.kind == Type::Kind::Future &&
                                CanAssign(return_type, value);
@@ -1048,16 +1062,17 @@ TypeChecker::Type TypeChecker::CheckUnary(const Expression& expression) {
   return operand;
 }
 
-TypeChecker::Type TypeChecker::CheckConditional(const Expression& expression) {
+TypeChecker::Type TypeChecker::CheckConditional(const Expression& expression,
+                                                const Type* expected) {
   const auto condition = CheckExpression(*expression.operand, nullptr);
   CheckBooleanOperand(*expression.operand, condition, "conditional condition must be bool");
   const auto true_branch = refinements_.BeginBranch();
   RefineCondition(*expression.operand, ConditionTruth::AlwaysTrue);
-  auto when_true = CheckExpression(*expression.left, nullptr);
+  auto when_true = CheckExpression(*expression.left, expected);
   auto true_facts = refinements_.Capture(true_branch);
   const auto false_branch = refinements_.BeginBranch();
   RefineCondition(*expression.operand, ConditionTruth::AlwaysFalse);
-  auto when_false = CheckExpression(*expression.right, nullptr);
+  auto when_false = CheckExpression(*expression.right, expected);
   const auto false_facts = refinements_.Capture(false_branch);
   refinements_.Intersect(true_facts, false_facts);
   refinements_.Apply(true_facts);
@@ -1157,7 +1172,7 @@ TypeChecker::Type TypeChecker::CheckCompoundAssignmentTypes(const Expression& ex
   return result;
 }
 
-TypeChecker::Type TypeChecker::CheckBinary(const Expression& expression) {
+TypeChecker::Type TypeChecker::CheckBinary(const Expression& expression, const Type* expected) {
   if (expression.text == "=") {
     return CheckAssignment(expression);
   }
@@ -1165,7 +1180,9 @@ TypeChecker::Type TypeChecker::CheckBinary(const Expression& expression) {
       expression.text != "<=" && expression.text != "!=") {
     return CheckCompoundAssignment(expression);
   }
-  Type left = CheckExpression(*expression.left, nullptr);
+  const bool coalesce = expression.text == "??" && expected != nullptr;
+  const Type left_context = coalesce ? NullableType(*expected) : InvalidType();
+  Type left = CheckExpression(*expression.left, coalesce ? &left_context : nullptr);
   const bool logical = expression.text == "&&" || expression.text == "||";
   std::optional<Refinements::Checkpoint> after_left;
   if (logical) {
@@ -1173,7 +1190,7 @@ TypeChecker::Type TypeChecker::CheckBinary(const Expression& expression) {
     RefineCondition(*expression.left, expression.text == "&&" ? ConditionTruth::AlwaysTrue
                                                               : ConditionTruth::AlwaysFalse);
   }
-  const Type right = CheckExpression(*expression.right, nullptr);
+  const Type right = CheckExpression(*expression.right, coalesce ? expected : nullptr);
   if (logical) {
     auto changes = refinements_.Capture(*after_left);
     refinements_.Intersect(changes, {});

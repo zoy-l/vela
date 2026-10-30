@@ -12,7 +12,6 @@
 
 #include "compiler/frontend/declaration_ids.h"
 #include "compiler/frontend/source_loader.h"
-#include "compiler/frontend/specialization.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
@@ -35,12 +34,12 @@ TEST(ReachabilityTest, PrunedOverriddenGenericMethodsLeaveInstantiableLayoutDesc
           "return value.read() + value.value; }",
   };
   auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
-  ASSERT_TRUE(prepared);
+  ASSERT_TRUE(prepared.Succeeded());
   std::optional<std::uint32_t> main;
-  PruneNativeProgram(*prepared, {}, main);
+  PruneNativeProgram(prepared.program, {}, main);
   runtime::Isolate isolate;
   runtime::LayoutCache cache;
-  const auto layouts = runtime::InstantiateLayouts(prepared->layouts, isolate, cache);
+  const auto layouts = runtime::InstantiateLayouts(prepared.program.layouts, isolate, cache);
   EXPECT_FALSE(layouts.classes.empty());
 }
 
@@ -53,7 +52,6 @@ TEST(ReachabilityTest, CompactFunctionIndexesDoNotRenumberDeclarationOrVersionId
   };
   auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
   ASSERT_TRUE(parsed.diagnostics.empty());
-  ASSERT_TRUE(frontend::SpecializeGenerics(parsed.program).empty());
   const auto checked = frontend::TypeChecker().Check(parsed.program);
   ASSERT_TRUE(checked.diagnostics.empty());
   frontend::DeclarationIds identities;
@@ -86,15 +84,16 @@ TEST(ReachabilityTest, ErasedLocalValuesDoNotRetainUnreferencedClassMethods) {
         std::string(expression) + "; return erased as int; }";
     const frontend::SourceInput input{.path = "main.vela", .text = source};
     auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
-    ASSERT_TRUE(prepared.has_value());
+    ASSERT_TRUE(prepared.Succeeded());
     const std::array<std::string, 1> exports{"main"};
     std::optional<std::uint32_t> main;
-    PruneNativeProgram(*prepared, exports, main);
-    EXPECT_FALSE(std::ranges::any_of(prepared->functions, [](const ir::Function& function) {
+    PruneNativeProgram(prepared.program, exports, main);
+    EXPECT_FALSE(std::ranges::any_of(prepared.program.functions, [](const ir::Function& function) {
       return function.name.starts_with("Unused.");
     }));
-    EXPECT_TRUE(std::ranges::any_of(
-        prepared->functions, [](const ir::Function& function) { return function.name == "main"; }));
+    EXPECT_TRUE(std::ranges::any_of(prepared.program.functions, [](const ir::Function& function) {
+      return function.name == "main";
+    }));
   }
 }
 
@@ -117,14 +116,14 @@ TEST(ReachabilityTest, HostDynamicContractsAndDynamicDispatchRetainTheirMemberCl
         std::string(body);
     const frontend::SourceInput input{.path = "main.vela", .text = source};
     auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
-    ASSERT_TRUE(prepared.has_value());
+    ASSERT_TRUE(prepared.Succeeded());
     const std::array<std::string, 1> exports{"main"};
     std::optional<std::uint32_t> main;
-    PruneNativeProgram(*prepared, exports, main);
-    EXPECT_TRUE(std::ranges::any_of(prepared->functions, [](const ir::Function& function) {
+    PruneNativeProgram(prepared.program, exports, main);
+    EXPECT_TRUE(std::ranges::any_of(prepared.program.functions, [](const ir::Function& function) {
       return function.name == "Box.read";
     }));
-    EXPECT_TRUE(std::ranges::any_of(prepared->functions, [](const ir::Function& function) {
+    EXPECT_TRUE(std::ranges::any_of(prepared.program.functions, [](const ir::Function& function) {
       return function.name == "Box.toJson";
     }));
   }

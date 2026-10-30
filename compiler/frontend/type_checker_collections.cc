@@ -1,5 +1,6 @@
 #include "compiler/frontend/type_checker.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -70,27 +71,11 @@ TypeChecker::Type TypeChecker::ResolveGenericType(const TypeName& source) {
 TypeChecker::Type TypeChecker::CheckCollectionConstruction(const Expression& expression,
                                                            const Type* expected) {
   const auto& callee = *expression.callee;
-  Type type;
-  if (!callee.type_arguments.empty()) {
-    type = ResolveGenericType({
-        .name = callee.text,
-        .location = callee.location,
-        .kind = TypeName::Kind::Generic,
-        .arguments = callee.type_arguments,
-    });
-  } else if (expected != nullptr &&
-             ((callee.text == "Set" && expected->kind == Type::Kind::Set) ||
-              (callee.text == "Map" && expected->kind == Type::Kind::Map) ||
-              (callee.text != "Set" && callee.text != "Map" &&
-               (expected->kind == Type::Kind::Set || expected->kind == Type::Kind::Map)))) {
-    type = NonNullable(*expected);
-  } else {
-    AddDiagnostic(expression.location,
-                  "Set/Map construction requires explicit or contextual type arguments");
-  }
-  if (!expression.arguments.empty()) {
-    AddDiagnostic(expression.location, "Set/Map constructors do not accept arguments");
-  }
+  const bool set = callee.text == "Set" || (callee.text != "Map" && expected != nullptr &&
+                                            expected->kind == Type::Kind::Set);
+  const std::array<std::string, 2> parameters{"$Key", "$Value"};
+  const auto type = InferConstruction(expression, expected, set ? "Set" : "Map",
+                                      std::span(parameters).first(set ? 1 : 2));
   collection_constructions_.insert(&expression);
   return type;
 }

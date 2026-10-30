@@ -1,3 +1,4 @@
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_checker.h"
 
 #include <cstddef>
@@ -11,6 +12,10 @@
 namespace vela::frontend {
 
 TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, bool allow_void) {
+  if (type_name.kind == TypeName::Kind::Generic &&
+      specializer_->ClassTemplate(type_name.name) != nullptr) {
+    return ResolveClassInstantiation(type_name);
+  }
   if (type_name.kind == TypeName::Kind::Generic) {
     return ResolveGenericType(type_name);
   }
@@ -141,8 +146,30 @@ void TypeChecker::RecordConversion(const Expression& expression,
   if ((actual.kind == Type::Kind::Dynamic && target.kind != Type::Kind::Dynamic &&
        IsValid(target) && target.kind != Type::Kind::Void) ||
       (target.kind == Type::Kind::Dynamic && actual.kind == Type::Kind::Enum)) {
-    checked_conversions_.insert_or_assign(&expression, target);
+    const auto inserted = checked_conversions_.insert_or_assign(&expression, target).second;
+    if (inserted && actual.kind == Type::Kind::Dynamic) {
+      DiagnoseDynamicConversion(expression, target, actual);
+    }
   }
+}
+
+void TypeChecker::DiagnoseDynamicConversion(const Expression& expression,
+                                            const Type& target,
+                                            const Type& actual) {
+  if (actual.kind != Type::Kind::Dynamic || target.kind == Type::Kind::Dynamic ||
+      target.kind == Type::Kind::Void || !IsValid(target)) {
+    return;
+  }
+  const auto location = expression.location;
+  if (!dynamic_diagnostics_.emplace(location.source_id, location.line, location.column, target.name)
+           .second) {
+    return;
+  }
+  AddDiagnostic(expression.location, "implicit conversion from dynamic to '" + target.name +
+                                         "' may fail at runtime; use 'as' or narrow with 'is'");
+  auto& diagnostic = diagnostics_.back();
+  diagnostic.severity = options_.implicit_dynamic_conversion;
+  diagnostic.code = DiagnosticCode::ImplicitDynamicConversion;
 }
 
 void TypeChecker::CheckBooleanOperand(const Expression& expression,

@@ -7,11 +7,13 @@
 #include <string>
 #include <string_view>
 
-#include "base/diagnostic.h"
 #include "base/process_exit.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/project_config.h"
 #include "compiler/repl_session.h"
 #include "compiler/repl_source.h"
 #include "runtime/external_resources.h"
+#include "runtime/heap.h"
 #include "vm/vm.h"
 
 namespace vela::tooling {
@@ -52,7 +54,12 @@ int RunRepl(const std::filesystem::path& directory, ReplStreams streams) {
   auto& input = streams.input.get();
   auto& output = streams.output.get();
   auto& errors = streams.errors.get();
-  compiler::ReplSession session(directory);
+  const auto options = compiler::LoadSourceDiagnosticOptions(directory / "__vela_repl__.vela");
+  if (!options) {
+    frontend::WriteDiagnostic(errors, compiler::ConfigurationDiagnostic(options.error()));
+    return options.error().exit_code;
+  }
+  compiler::ReplSession session(directory, runtime::kDefaultGcThreshold, *options);
   session.isolate().SetOutput(output);
   errors << "Vela REPL (.help for commands)\n";
   std::string pending;
@@ -79,7 +86,7 @@ int RunRepl(const std::filesystem::path& directory, ReplStreams streams) {
       continue;
     }
     for (const auto& diagnostic : result.diagnostics) {
-      WriteError(errors, diagnostic.source_path, diagnostic.location, diagnostic.message);
+      frontend::WriteDiagnostic(errors, diagnostic);
     }
     if (result.status == compiler::SubmissionStatus::RuntimeError) {
       vm::WriteRuntimeError(errors, result.execution);

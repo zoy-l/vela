@@ -24,6 +24,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
 #include "compiler/ir/preparation.h"
+#include "compiler/project_config.h"
 
 namespace vela::compiler::aot {
 namespace {
@@ -73,7 +74,7 @@ std::expected<BuildArguments, std::string> ParseArguments(std::span<char*> argum
 
 void PrintDiagnostics(std::ostream& errors, const frontend::Diagnostics& diagnostics) {
   for (const auto& diagnostic : diagnostics) {
-    WriteError(errors, diagnostic.source_path, diagnostic.location, diagnostic.message);
+    frontend::WriteDiagnostic(errors, diagnostic);
   }
 }
 
@@ -110,12 +111,17 @@ int ExecuteBuild(BuildArguments arguments, std::ostream& errors) {
   }
   auto& options = arguments.options;
   options.module_name += '_' + ContentFingerprint(identity.bytes()).Hex();
-  auto prepared = ir::PrepareParsed(std::move(parsed));
-  if (!prepared) {
-    PrintDiagnostics(errors, prepared.error());
+  const auto diagnostics = LoadSourceDiagnosticOptions(Utf8Path(arguments.source));
+  if (!diagnostics) {
+    frontend::WriteDiagnostic(errors, ConfigurationDiagnostic(diagnostics.error()));
+    return diagnostics.error().exit_code;
+  }
+  auto prepared = ir::PrepareParsed(std::move(parsed), *diagnostics);
+  PrintDiagnostics(errors, prepared.diagnostics);
+  if (!prepared.Succeeded()) {
     return kSourceErrorExitCode;
   }
-  auto artifact = Compile(std::move(*prepared), options);
+  auto artifact = Compile(std::move(prepared.program), options);
   if (!artifact) {
     PrintDiagnostics(errors, artifact.error());
     return kSourceErrorExitCode;

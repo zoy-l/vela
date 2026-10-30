@@ -13,7 +13,6 @@
 #include "compiler/compiler.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
-#include "compiler/frontend/specialization.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/repl_identity.h"
 #include "compiler/repl_source.h"
@@ -24,9 +23,12 @@
 
 namespace vela::compiler {
 
-ReplSession::ReplSession(const std::filesystem::path& directory, std::size_t gc_threshold)
+ReplSession::ReplSession(const std::filesystem::path& directory,
+                         std::size_t gc_threshold,
+                         frontend::DiagnosticOptions options)
     : path_(directory / "__vela_repl__.vela"),
       gc_threshold_(gc_threshold),
+      options_(options),
       isolate_(std::make_unique<runtime::Isolate>(gc_threshold)),
       machine_(std::make_unique<vm::VirtualMachine>(*isolate_)) {}
 
@@ -59,18 +61,19 @@ CompileResult ReplSession::Compile(ReplSourceCandidate& prepared,
                                               },
                                               modules);
   auto diagnostics = std::move(loaded.diagnostics);
-  if (diagnostics.empty()) {
-    diagnostics = frontend::SpecializeGenerics(loaded.program);
-  }
   if (!diagnostics.empty()) {
     return {.program = {}, .diagnostics = std::move(diagnostics)};
   }
+  auto checked = frontend::TypeChecker(&compilation.interfaces, options_).Check(loaded.program);
   NameSessionLambdas(loaded.program);
-  auto checked = frontend::TypeChecker(&compilation.interfaces).Check(loaded.program);
-  if (!checked.diagnostics.empty()) {
+  if (!checked.Succeeded()) {
     return {.program = {}, .diagnostics = std::move(checked.diagnostics)};
   }
-  return CompileProgram(loaded.program, checked.model, *isolate_, &compilation);
+  auto compiled = CompileProgram(loaded.program, checked.model, *isolate_, &compilation);
+  for (auto& diagnostic : checked.diagnostics) {
+    compiled.diagnostics.push_back(std::move(diagnostic));
+  }
+  return compiled;
 }
 
 SubmissionResult ReplSession::Submit(std::string_view source) {
@@ -112,7 +115,12 @@ SubmissionResult ReplSession::Submit(std::string_view source) {
   }
   const auto status =
       execution.Succeeded() ? SubmissionStatus::Executed : SubmissionStatus::RuntimeError;
-  return {.status = status, .diagnostics = {}, .execution = std::move(execution)};
+  source_.Remap(compiled.diagnostics, current);
+  return {
+      .status = status,
+      .diagnostics = std::move(compiled.diagnostics),
+      .execution = std::move(execution),
+  };
 }
 
 }  // namespace vela::compiler

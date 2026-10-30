@@ -174,7 +174,7 @@ SDK 模块随 Vela 发行，使用不可变源码资源进入生产模块加载�
 
 Vela 没有 `FutureOr`。测试库的注册边界使用现有 `dynamic` 保存回调，并根据 callable 的真实签名校验；不增加 `testAsync`，也不把所有回调强制声明成返回 `Future<void>`。
 
-`test`、setup/teardown 和 `addTearDown` 接受可用零个实参调用的非空 callable。存在可选参数时使用已有默认实参规则，不能包含必须由调用方提供的参数。它可以返回 `void`、任意普通值或任意现有 `Future<T>`。普通值忽略，Future 的完成值忽略但必须等待成功或失败；同步 throw 与 Future 失败均进入相同的报告通道。泛型函数必须按现有语言规则先完成显式特化。
+`test`、setup/teardown 和 `addTearDown` 接受可用零个实参调用的非空 callable。存在可选参数时使用已有默认实参规则，不能包含必须由调用方提供的参数。它可以返回 `void`、任意普通值或任意现有 `Future<T>`。普通值忽略，Future 的完成值忽略但必须等待成功或失败；同步 throw 与 Future 失败均进入相同的报告通道。注册 API 的 body 参数为 dynamic，不提供泛型函数值所需的函数类型上下文；应传入已完成特化的函数值，或先通过函数类型标注完成推导。
 
 `group` 的注册回调必须为可用零个实参调用、返回 `void` 的同步 callable，执行后立即恢复外层注册作用域。不能让 async group 返回的 Future 被忽略，导致后续测试注册到错误分组。
 
@@ -457,7 +457,7 @@ func main(): void {
 
 当前 [`Interface`](../../compiler/frontend/ast.h) 只包含名称和方法；[生产解析器](../../compiler/frontend/parser_declarations.cc) 尚不支持接口类型参数、接口继承、接口属性或接口泛型方法。本扩展不把这些结构写成已有语言能力，也不为 mock 顺带扩展它们。现有接口方法的参数和返回类型可以引用如 `Box<int>` 的合法具体类型。
 
-普通类、构造函数、静态方法、顶层函数、扩展方法和内置对象不接受运行时替换。已有依赖应通过接口或函数值传入。回调依赖另提供 `MockFunction0<R>`、`MockFunction1<A, R>`、`MockFunction2<A, B, R>`，以及 `MockVoidFunction0`、`MockVoidFunction1<A>`、`MockVoidFunction2<A, B>`；泛型实参显式书写，R 不允许为 void。这些类型暴露可传给业务代码的 `function`、创建调用模式的 `query(...)` 和 `control`，复用同一记录与验证核心。更多参数的函数可通过生成接口适配，不引入隐含的语言参数数量上限。
+普通类、构造函数、静态方法、顶层函数、扩展方法和内置对象不接受运行时替换。已有依赖应通过接口或函数值传入。回调依赖另提供 `MockFunction0<R>`、`MockFunction1<A, R>`、`MockFunction2<A, B, R>`，以及 `MockVoidFunction0`、`MockVoidFunction1<A>`、`MockVoidFunction2<A, B>`；泛型实参由完整的目标类型标注提供，或在构造时显式书写，仅凭 MockSession 实参无法推导，R 不允许为 void。这些类型暴露可传给业务代码的 `function`、创建调用模式的 `query(...)` 和 `control`，复用同一记录与验证核心。更多参数的函数可通过生成接口适配，不引入隐含的语言参数数量上限。
 
 生成的真实接口方法保留原参数及返回类型。调用描述方法保留参数名称与数量，将各参数类型显式设为 dynamic，返回 `MockCall`；参数绑定后按原声明顺序归一化。因此 `load(42)` 与 `load(id: 42)` 描述相同模式，真实调用采用哪种书写方式不影响匹配。不会通过搜索测试表达式、猜测函数名或反向解析内部特化名称来重建签名。
 

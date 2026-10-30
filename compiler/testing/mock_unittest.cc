@@ -3,6 +3,7 @@
 #include <string_view>
 #include <utility>
 
+#include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
@@ -66,8 +67,9 @@ TEST_P(ScriptMockTest, ExecutesThroughSdkModulesAndTestScopesUnderGc) {
     const auto compiled =
         compiler::CompileParsed(frontend::LoadSources({&input, 1}, input.path), isolate);
     for (const auto& diagnostic : compiled.diagnostics) {
-      ADD_FAILURE() << diagnostic.source_path << ':' << diagnostic.location.line << ':'
-                    << diagnostic.location.column << ' ' << diagnostic.message;
+      EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error)
+          << diagnostic.source_path << ':' << diagnostic.location.line << ':'
+          << diagnostic.location.column << ' ' << diagnostic.message;
     }
     ASSERT_TRUE(compiled.Succeeded());
     Suite suite(isolate, compiled.program, {}, output);

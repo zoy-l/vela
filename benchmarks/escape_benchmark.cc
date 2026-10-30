@@ -135,12 +135,12 @@ std::expected<Compiled, std::string> Compile(const Problem& problem, EscapeOptim
   const auto text = Source(problem.workload);
   const frontend::SourceInput input{.path = "escape_benchmark.vela", .text = text};
   auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
-  if (!prepared) {
-    return std::unexpected(prepared.error().front().message);
+  if (!prepared.Succeeded()) {
+    return std::unexpected(prepared.diagnostics.front().message);
   }
   const auto started = Clock::now();
   auto artifact = compiler::aot::Compile(
-      std::move(*prepared),
+      std::move(prepared.program),
       {.exports = {"run"}, .escape = mode, .placement = compiler::NativeCodePlacement::Dynamic});
   const auto compilation = Clock::now() - started;
   if (!artifact) {

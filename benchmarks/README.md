@@ -135,7 +135,7 @@ shown separately and does not establish a general JIT performance advantage.
 
 `hot/steady/` excludes compilation and one verified warm-up invocation. Its
 counters separately record file capture, engine creation, source loading,
-specialization, checking, Typed IR, LLVM lowering/optimization, machine code,
+semantic checking (including inference and specialization), Typed IR, LLVM lowering/optimization, machine code,
 linking, instantiation, initial publication and first execution. Each JIT case
 compiles the entire corresponding source suite. dasProfile prepares its inputs
 after loading and before the first measured workload call; that preparation is

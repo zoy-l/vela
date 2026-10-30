@@ -1366,16 +1366,18 @@ Lowerer::LoweredValue Lowerer::LowerNamedCall(const frontend::Expression& expres
     Emit({.opcode = Opcode::LoadNull, .dst = result, .location = expression.location});
     return {.reg = result, .type = {.kind = frontend::TypeDescriptor::Kind::Void, .name = "void"}};
   }
-  const auto class_info = model_.classes.find(callee.text);
+  const auto application = model_.generic_applications.find(&callee);
+  const auto& name =
+      application == model_.generic_applications.end() ? callee.text : application->second;
+  const auto class_info = model_.classes.find(name);
   if (class_info != model_.classes.end()) {
     return LowerConstruction(expression, class_info->second.type);
   }
-  const auto alias = model_.types.find(callee.text);
+  const auto alias = model_.types.find(name);
   if (alias != model_.types.end() && alias->second.kind == frontend::TypeDescriptor::Kind::Class) {
     return LowerConstruction(expression, alias->second);
   }
-  return LowerInvocation(expression, model_.functions.at(callee.text),
-                         function_ids_.at(callee.text), nullptr);
+  return LowerInvocation(expression, model_.functions.at(name), function_ids_.at(name), nullptr);
 }
 
 Lowerer::LoweredValue Lowerer::LowerMethodCall(const frontend::Expression& expression) {

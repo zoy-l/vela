@@ -22,7 +22,9 @@
 
 #include "base/file.h"
 #include "base/json.h"
+#include "base/path.h"
 #include "base/process_exit.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/testing/pattern.h"
 #include "compiler/testing/settings.h"
 
@@ -447,7 +449,7 @@ std::expected<ProjectConfiguration, ConfigurationError> ParseProjectConfiguratio
   if (!indexed) {
     return std::unexpected(indexed.error());
   }
-  constexpr auto kSections = std::to_array<std::string_view>({"test"});
+  constexpr auto kSections = std::to_array<std::string_view>({"test", "diagnostics"});
   const auto fields = reader.Fields(root, {}, kSections);
   if (!fields) {
     return std::unexpected(fields.error());
@@ -456,7 +458,28 @@ std::expected<ProjectConfiguration, ConfigurationError> ParseProjectConfiguratio
       .file = file.lexically_normal(),
       .root = file.parent_path(),
       .test = std::nullopt,
+      .diagnostics = {},
   };
+  if (const auto* diagnostics = GetJsonField(root, "diagnostics")) {
+    constexpr auto kDiagnostics = std::to_array<std::string_view>({"implicit_dynamic_conversion"});
+    const auto diagnostic_fields = reader.Fields(diagnostics, "diagnostics", kDiagnostics);
+    if (!diagnostic_fields) {
+      return std::unexpected(diagnostic_fields.error());
+    }
+    if (const auto* value = GetJsonField(diagnostics, "implicit_dynamic_conversion")) {
+      const auto severity = reader.String(value, "diagnostics.implicit_dynamic_conversion");
+      if (!severity) {
+        return std::unexpected(severity.error());
+      }
+      if (*severity != "warning" && *severity != "error") {
+        return std::unexpected(reader.Error(value, "diagnostics.implicit_dynamic_conversion",
+                                            "must be 'warning' or 'error'"));
+      }
+      result.diagnostics.implicit_dynamic_conversion = *severity == "error"
+                                                           ? frontend::DiagnosticSeverity::Error
+                                                           : frontend::DiagnosticSeverity::Warning;
+    }
+  }
   if (const auto* test = GetJsonField(root, "test")) {
     auto settings = ReadTestSettings(reader, test);
     if (!settings) {
@@ -469,7 +492,8 @@ std::expected<ProjectConfiguration, ConfigurationError> ParseProjectConfiguratio
 
 std::expected<ProjectConfiguration, ConfigurationError> LoadProjectConfiguration(
     const std::filesystem::path& working_directory,
-    const std::optional<std::filesystem::path>& explicit_file) {
+    const std::optional<std::filesystem::path>& explicit_file,
+    ConfigurationRequirement requirement) {
   std::error_code error;
   const auto working = std::filesystem::absolute(working_directory, error);
   if (error) {
@@ -492,6 +516,14 @@ std::expected<ProjectConfiguration, ConfigurationError> LoadProjectConfiguration
       }
       const auto parent = directory.parent_path();
       if (parent == directory) {
+        if (requirement == ConfigurationRequirement::Optional) {
+          return ProjectConfiguration{
+              .file = {},
+              .root = working,
+              .test = std::nullopt,
+              .diagnostics = {},
+          };
+        }
         return std::unexpected(ConfigurationError{
             .file = candidate,
             .location = {},
@@ -513,6 +545,31 @@ std::expected<ProjectConfiguration, ConfigurationError> LoadProjectConfiguration
   }
   const void* storage = bytes->data();
   return ParseProjectConfiguration(canonical, {static_cast<const char*>(storage), bytes->size()});
+}
+
+std::expected<frontend::DiagnosticOptions, ConfigurationError> LoadSourceDiagnosticOptions(
+    const std::filesystem::path& source) {
+  std::error_code error;
+  const auto absolute = std::filesystem::absolute(source, error);
+  if (error) {
+    return std::unexpected(IoError(source, error.message()));
+  }
+  const auto configuration = LoadProjectConfiguration(absolute.parent_path(), std::nullopt,
+                                                      ConfigurationRequirement::Optional);
+  if (!configuration) {
+    return std::unexpected(configuration.error());
+  }
+  return configuration->diagnostics;
+}
+
+frontend::Diagnostic ConfigurationDiagnostic(const ConfigurationError& error) {
+  return {
+      .location = error.location,
+      .message = error.field.empty() ? error.message : error.field + ": " + error.message,
+      .source_path = PathText(error.file),
+      .kind = error.exit_code == kIoErrorExitCode ? frontend::DiagnosticKind::Io
+                                                  : frontend::DiagnosticKind::Source,
+  };
 }
 
 }  // namespace vela::compiler

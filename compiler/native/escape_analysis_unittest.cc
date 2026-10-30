@@ -40,8 +40,8 @@ export func sum(x: int, choose: bool): int {
   return alias.x + point.y;
 }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto plan = PlanEscapes(*program, FunctionIndex(*program, "sum"));
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "sum"));
   ASSERT_EQ(plan.allocations.size(), 1U);
   EXPECT_EQ(plan.allocations.front().decision, AllocationDecision::ScalarReplacement);
   for (const auto& instruction : plan.function.instructions) {
@@ -49,7 +49,7 @@ export func sum(x: int, choose: bool): int {
     EXPECT_NE(instruction.opcode, Opcode::GetField);
     EXPECT_NE(instruction.opcode, Opcode::SetField);
   }
-  const auto compiled = aot::Compile(*program, {.exports = {"sum"}, .preserve_ir = true});
+  const auto compiled = aot::Compile(program.program, {.exports = {"sum"}, .preserve_ir = true});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
   EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v1_new_instance"), std::string_view::npos);
   EXPECT_EQ(compiled->function_metrics.front().eliminated_allocations, 1U);
@@ -69,8 +69,8 @@ export func sum(count: int): int {
   return result + previous.x;
 }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto plan = PlanEscapes(*program, FunctionIndex(*program, "sum"));
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "sum"));
   ASSERT_EQ(plan.allocations.size(), 2U);
   EXPECT_NE(plan.allocations.back().decision, AllocationDecision::ScalarReplacement);
 }
@@ -87,8 +87,8 @@ export func sum(count: int): int {
   return result;
 }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto plan = PlanEscapes(*program, FunctionIndex(*program, "sum"));
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "sum"));
   ASSERT_EQ(plan.allocations.size(), 1U);
   EXPECT_EQ(plan.allocations.front().decision, AllocationDecision::ScalarReplacement);
 }
@@ -103,8 +103,8 @@ export func sum(): int {
   return first + point.x;
 }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto plan = PlanEscapes(*program, FunctionIndex(*program, "sum"));
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "sum"));
   ASSERT_EQ(plan.allocations.size(), 2U);
   for (const auto& allocation : plan.allocations) {
     EXPECT_EQ(allocation.decision, AllocationDecision::ScalarReplacement);
@@ -121,13 +121,13 @@ export func size(text: string): int {
   return box.text.length;
 }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto plan = PlanEscapes(*program, FunctionIndex(*program, "size"));
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "size"));
   ASSERT_EQ(plan.allocations.size(), 1U);
   const auto& allocation = plan.allocations.front();
   ASSERT_EQ(allocation.decision, AllocationDecision::ScalarReplacement);
-  const auto roots = PlanNativeRoots(plan.function, program->functions, program->native_mode,
-                                     NativeDebugging::Safepoints);
+  const auto roots = PlanNativeRoots(plan.function, program.program.functions,
+                                     program.program.native_mode, NativeDebugging::Safepoints);
   ASSERT_EQ(allocation.fields.size(), 1U);
   const auto field = allocation.fields.front();
   EXPECT_TRUE(roots.slots.at(field));
@@ -147,9 +147,9 @@ class Custom { x: int; constructor(value: int) { this.x = value; } }
 export func create(): Point { return Point(x: 42); }
 export func read(): int { return Custom(value: 42).x; }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto published = PlanEscapes(*program, FunctionIndex(*program, "create"));
-  const auto constructed = PlanEscapes(*program, FunctionIndex(*program, "read"));
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto published = PlanEscapes(program.program, FunctionIndex(program.program, "create"));
+  const auto constructed = PlanEscapes(program.program, FunctionIndex(program.program, "read"));
   ASSERT_EQ(published.allocations.size(), 1U);
   ASSERT_EQ(constructed.allocations.size(), 1U);
   EXPECT_EQ(published.allocations.front().decision, AllocationDecision::ScalarReplacement);
@@ -167,8 +167,8 @@ export func same(): bool {
   return first == alias && first != second;
 }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto compiled = aot::Compile(*program, {.exports = {"same"}, .preserve_ir = true});
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto compiled = aot::Compile(program.program, {.exports = {"same"}, .preserve_ir = true});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
   EXPECT_EQ(compiled->function_metrics.front().eliminated_allocations, 2U);
   EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v1_new_instance"), std::string_view::npos);
@@ -185,11 +185,11 @@ export func read(publishNow: bool): int {
   return point.x;
 }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto plan = PlanEscapes(*program, FunctionIndex(*program, "read"));
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "read"));
   ASSERT_EQ(plan.allocations.size(), 1U);
   EXPECT_TRUE(plan.allocations.front().materialized);
-  const auto compiled = aot::Compile(*program, {.exports = {"read"}, .preserve_ir = true});
+  const auto compiled = aot::Compile(program.program, {.exports = {"read"}, .preserve_ir = true});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
   for (const auto& metrics : compiled->function_metrics) {
     EXPECT_EQ(metrics.retained_allocations, 0U);
@@ -207,14 +207,14 @@ export func create(): Link {
   return first;
 }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto plan = PlanEscapes(*program, FunctionIndex(*program, "create"));
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "create"));
   ASSERT_EQ(plan.allocations.size(), 2U);
   for (const auto& allocation : plan.allocations) {
     EXPECT_EQ(allocation.decision, AllocationDecision::ScalarReplacement);
     EXPECT_TRUE(allocation.materialized);
   }
-  const auto compiled = aot::Compile(*program, {.exports = {"create"}, .preserve_ir = true});
+  const auto compiled = aot::Compile(program.program, {.exports = {"create"}, .preserve_ir = true});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
 }
 
@@ -230,8 +230,8 @@ export func read(): int {
   return erased is Box && erased is Sized && !(erased is Other) ? alias.value : 0;
 }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto compiled = aot::Compile(*program, {.exports = {"read"}, .preserve_ir = true});
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto compiled = aot::Compile(program.program, {.exports = {"read"}, .preserve_ir = true});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
   EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v1_new_instance"), std::string_view::npos);
   EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v1_type_test"), std::string_view::npos);
@@ -242,9 +242,10 @@ TEST(EscapeAnalysisTest, ValidationConfigurationCompilesTheSameSourceWithHeapSto
 class Point { x: int; }
 export func read(): int { return Point(x: 42).x; }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
   const auto compiled = aot::Compile(
-      *program, {.exports = {"read"}, .preserve_ir = true, .escape = EscapeOptimization::Disabled});
+      program.program,
+      {.exports = {"read"}, .preserve_ir = true, .escape = EscapeOptimization::Disabled});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
   EXPECT_NE(compiled->llvm_ir.find("@vela_native_v1_new_instance"), std::string_view::npos);
   EXPECT_EQ(compiled->function_metrics.front().eliminated_allocations, 0U);
@@ -265,10 +266,10 @@ export func read(): int {
   return box.value;
 }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto borrows = PlanBorrows(*program);
-  ASSERT_TRUE(borrows.at(FunctionIndex(*program, "update")));
-  const auto compiled = aot::Compile(*program, {.exports = {"read"}, .preserve_ir = true});
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto borrows = PlanBorrows(program.program);
+  ASSERT_TRUE(borrows.at(FunctionIndex(program.program, "update")));
+  const auto compiled = aot::Compile(program.program, {.exports = {"read"}, .preserve_ir = true});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
   const auto& metrics = compiled->function_metrics.at(FunctionIndex(compiled->program, "read"));
   EXPECT_EQ(metrics.stack_records, 1U);
@@ -277,7 +278,7 @@ export func read(): int {
   EXPECT_GT(borrowed.borrowed_frame_bytes, 0U);
   EXPECT_EQ(borrowed.borrowed_shadow_slots, 1U);
   const auto scalar = aot::Compile(
-      *program, {.exports = {"read"}, .escape = EscapeOptimization::ScalarReplacement});
+      program.program, {.exports = {"read"}, .escape = EscapeOptimization::ScalarReplacement});
   ASSERT_TRUE(scalar) << scalar.error().front().message;
   EXPECT_EQ(scalar->function_metrics.at(FunctionIndex(scalar->program, "read")).stack_records, 0U);
   EXPECT_EQ(scalar->function_metrics.at(FunctionIndex(scalar->program, "read")).sunk_allocations,
@@ -294,10 +295,10 @@ func forward(box: Box): void { host(box); }
 func capture(box: Box): () => int { return (): int => box.value; }
 async func suspend(box: Box): Future<int> { await sleep(1); return box.value; }
 )");
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto borrows = PlanBorrows(*program);
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto borrows = PlanBorrows(program.program);
   for (const auto* const name : {"save", "self", "forward", "capture", "suspend"}) {
-    EXPECT_FALSE(borrows.at(FunctionIndex(*program, name))) << name;
+    EXPECT_FALSE(borrows.at(FunctionIndex(program.program, name))) << name;
   }
 }
 
@@ -315,8 +316,8 @@ TEST(EscapeAnalysisTest, OverBudgetRecordsSelectHeapCallsBeforeBodyEmission) {
   }
   source += "); return read(box); }";
   const auto program = Prepare(source);
-  ASSERT_TRUE(program) << program.error().front().message;
-  const auto compiled = aot::Compile(*program, {.exports = {"run"}});
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto compiled = aot::Compile(program.program, {.exports = {"run"}});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
   const auto& metrics = compiled->function_metrics.at(FunctionIndex(compiled->program, "run"));
   EXPECT_EQ(metrics.stack_records, 0U);

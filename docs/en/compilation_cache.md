@@ -9,9 +9,12 @@ exit and diagnostic rules as `run`. The input source files are not required to
 execute the image. Source paths and PC mappings remain available for stack traces.
 
 `vela run source.vela` uses `.cache/vela` relative to its working directory.
-The embedding API `CompileFileCached(path, cache_directory, isolate)` exposes
+The embedding API `CompileFileCached(path, cache_directory, isolate, options)` exposes
 `Hit`, `Absent`, `Stale`, and `Invalid` results. `CompileFile` remains the explicit
-uncached compilation API. No global cache directory or environment changes are used.
+uncached compilation API; options are optional. No global cache directory or environment changes are used.
+Successful compilation warnings, including codes, source positions, and messages,
+remain available on cache hits. A diagnostic severity change invalidates the cache
+so a previous successful image cannot bypass strict checking.
 
 ## Identity and invalidation
 

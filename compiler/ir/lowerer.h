@@ -32,7 +32,7 @@ struct LoweringResult final {
   Program program;
   frontend::Diagnostics diagnostics;
 
-  [[nodiscard]] bool Succeeded() const noexcept { return diagnostics.empty(); }
+  [[nodiscard]] bool Succeeded() const noexcept { return !frontend::HasErrors(diagnostics); }
 };
 
 class Lowerer final {

@@ -124,7 +124,7 @@ CompileResult CompileBranchOverflow(CompilationState& state, runtime::Isolate& i
     return {.program = {}, .diagnostics = std::move(parsed.diagnostics)};
   }
   auto checked = frontend::TypeChecker().Check(parsed.program);
-  if (!checked.diagnostics.empty()) {
+  if (!checked.Succeeded()) {
     return {.program = {}, .diagnostics = std::move(checked.diagnostics)};
   }
   return CompileProgram(parsed.program, checked.model, isolate, &state);

@@ -74,7 +74,7 @@ class NativeDistributionTest(unittest.TestCase):
                                                     capture_output=True, text=True, encoding="utf-8", timeout=30)
                             self.assertEqual(native.returncode, vm.returncode, native.stderr + vm.stderr)
                             self.assertEqual(native.stdout, vm.stdout)
-                            self.assertEqual(native.stderr, vm.stderr)
+                            self.assertEqual(built.stderr + native.stderr, vm.stderr)
                         source.unlink()
                         count += 1
                         compared += 1

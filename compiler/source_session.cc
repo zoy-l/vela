@@ -186,8 +186,8 @@ SourceCandidate::SourceCandidate(std::shared_ptr<const SourceSessionIdentity> se
                                  std::shared_ptr<const CompiledSourceSnapshot> prepared)
     : session_(std::move(session)), base_(std::move(base)), prepared_(std::move(prepared)) {}
 
-SourceSession::SourceSession(const std::string& entry)
-    : identity_(std::make_shared<const SourceSessionIdentity>()) {
+SourceSession::SourceSession(const std::string& entry, frontend::DiagnosticOptions options)
+    : identity_(std::make_shared<const SourceSessionIdentity>()), options_(options) {
   auto initial = std::make_shared<CompiledSourceSnapshot>();
   initial->roots.push_back(Normalize(entry));
   current_ = std::move(initial);
@@ -255,19 +255,13 @@ std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
   }
   candidate->standard_names = parsed.program.standard_names;
   candidate->timings.loading = Clock::now() - started;
-  const auto specializing = Clock::now();
+  const auto checking = Clock::now();
   auto requests = frontend::RetainedSpecializations(parsed.program, base->identities, retained);
   if (!requests) {
     return std::unexpected(SourceError(std::move(requests.error())));
   }
-  auto specialized = frontend::SpecializeGenerics(parsed.program, *requests);
-  if (!specialized.empty()) {
-    return std::unexpected(SourceError(std::move(specialized)));
-  }
-  candidate->timings.specialization = Clock::now() - specializing;
-  const auto checking = Clock::now();
-  auto checked = frontend::TypeChecker().Check(parsed.program);
-  if (!checked.diagnostics.empty()) {
+  auto checked = frontend::TypeChecker(nullptr, options_).Check(parsed.program, *requests);
+  if (!checked.Succeeded()) {
     return std::unexpected(SourceError(std::move(checked.diagnostics)));
   }
   candidate->timings.checking = Clock::now() - checking;
@@ -282,6 +276,7 @@ std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
     return std::unexpected(SourceError(std::move(prepared.diagnostics)));
   }
   candidate->program = std::move(prepared.program);
+  candidate->diagnostics = std::move(checked.diagnostics);
   candidate->timings.ir = Clock::now() - lowering;
   return SourceCandidate(identity_, std::move(base), std::move(candidate));
 }

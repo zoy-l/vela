@@ -380,7 +380,7 @@ TEST(DevelopmentSessionTest, NewlyRequiredGenericSpecializationsRecompileWithinT
   auto& session = **created;
   ASSERT_EQ(Apply(session,
                   "func value<T>(input: T): int { return 1; } "
-                  "export func factory(): () => int { return () => value<int>(0); } "
+                  "export func factory(): () => int { return () => value(0); } "
                   "export func invoke(value: () => int): int { return value(); }")
                 .status,
             DevelopmentStatus::Accepted);

@@ -126,8 +126,10 @@ func genericDemo(): void {
 }
 ```
 
-Aliases are transparent names, not distinct nominal types. Generic arguments
-are explicit. The compiler specializes static generic uses,
+Aliases are transparent names, not distinct nominal types. Calls, construction,
+and function values with a function type context may infer type arguments under
+the [shared inference rules](type_inference.md); type annotations remain complete.
+The compiler specializes static generic uses,
 preserving primitive storage instead of boxing every `T` as a heap object.
 Equivalent transparent aliases reuse the same specialization. Function and
 class templates are checked when instantiated. Independent specializations have

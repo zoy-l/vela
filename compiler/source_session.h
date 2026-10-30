@@ -38,7 +38,6 @@ struct SourceUpdate final {
 
 struct SourceTimings final {
   std::chrono::nanoseconds loading{};
-  std::chrono::nanoseconds specialization{};
   std::chrono::nanoseconds checking{};
   std::chrono::nanoseconds ir{};
 };
@@ -53,6 +52,7 @@ struct CompiledSourceSnapshot final {
   frontend::ModuleCache modules;
   ir::Program program;
   SourceTimings timings;
+  frontend::Diagnostics diagnostics;
 };
 
 enum class SourceCandidateStatus : std::uint8_t {
@@ -88,7 +88,7 @@ class SourceCandidate final {
 // 开发会话才提交候选；失败候选和并行编译不会改变已提交基线。
 class SourceSession final {
  public:
-  explicit SourceSession(const std::string& entry);
+  explicit SourceSession(const std::string& entry, frontend::DiagnosticOptions options = {});
   [[nodiscard]] std::shared_ptr<const CompiledSourceSnapshot> snapshot() const noexcept;
   [[nodiscard]] std::expected<SourceCandidate, SourceCandidateError> Prepare(
       SourceUpdate update,
@@ -97,6 +97,7 @@ class SourceSession final {
 
  private:
   const std::shared_ptr<const SourceSessionIdentity> identity_;
+  frontend::DiagnosticOptions options_;
   mutable std::mutex mutex_;
   std::shared_ptr<const CompiledSourceSnapshot> current_;
 };

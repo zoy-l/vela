@@ -8,6 +8,7 @@
 #include <string_view>
 #include <system_error>
 
+#include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
 #include "base/process_exit.h"
@@ -30,6 +31,24 @@ TEST(ProjectConfigurationTest, LeavesMissingTestAndPathsForTheCommandBoundary) {
   EXPECT_TRUE(test->paths.empty());
   EXPECT_EQ(test->filename, "*_test.vela");
   EXPECT_EQ(configured->root, "project");
+}
+
+TEST(ProjectConfigurationTest, ConfiguresDynamicConversionSeverityAndRejectsUnknownLevels) {
+  const auto defaults = ParseProjectConfiguration("vela.json", "{}");
+  ASSERT_TRUE(defaults);
+  EXPECT_EQ(defaults->diagnostics.implicit_dynamic_conversion,
+            frontend::DiagnosticSeverity::Warning);
+  const auto strict = ParseProjectConfiguration(
+      "vela.json", R"({"diagnostics":{"implicit_dynamic_conversion":"error"}})");
+  ASSERT_TRUE(strict);
+  EXPECT_EQ(strict->diagnostics.implicit_dynamic_conversion, frontend::DiagnosticSeverity::Error);
+  for (const auto* source : {
+           R"({"diagnostics":null})",
+           R"({"diagnostics":{"implicit_dynamic_conversion":"off"}})",
+           R"({"diagnostics":{"unknown":"error"}})",
+       }) {
+    EXPECT_FALSE(ParseProjectConfiguration("vela.json", source));
+  }
 }
 
 TEST(ProjectConfigurationTest, PreservesTagSourceOrderAndExplicitFalseSkip) {

@@ -306,14 +306,15 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindCallParameters(
     return std::nullopt;
   }
   if (callee.kind == frontend::Expression::Kind::Name) {
-    const auto type = model_.types.find(callee.text);
-    const auto owner =
-        model_.classes.find(type == model_.types.end() ? callee.text : type->second.name);
+    const auto application = model_.generic_applications.find(&callee);
+    const auto& name =
+        application == model_.generic_applications.end() ? callee.text : application->second;
+    const auto type = model_.types.find(name);
+    const auto owner = model_.classes.find(type == model_.types.end() ? name : type->second.name);
     if (owner != model_.classes.end()) {
       return owner->second.constructor;
     }
-    if (const auto function = model_.functions.find(callee.text);
-        function != model_.functions.end()) {
+    if (const auto function = model_.functions.find(name); function != model_.functions.end()) {
       return function->second;
     }
     if (const auto builtin =

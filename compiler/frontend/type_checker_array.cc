@@ -1,10 +1,12 @@
 #include "base/array_algorithm.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_checker.h"
 
 #include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "base/builtin.h"
@@ -12,43 +14,6 @@
 #include "compiler/frontend/builtins.h"
 
 namespace vela::frontend {
-
-TypeChecker::Type TypeChecker::CheckArrayCallback(const Expression& expression,
-                                                  const FunctionInfo& expected) {
-  Type actual;
-  if (expression.kind == Expression::Kind::Lambda) {
-    const auto count = expression.function->parameters.size();
-    if (count > expected.parameters.size()) {
-      AddDiagnostic(expression.location, "array callback declares too many parameters");
-      return InvalidType();
-    }
-    auto context = expected;
-    context.parameters.resize(count);
-    const auto type = FunctionType(context);
-    actual = CheckExpression(expression, &type);
-    if (!IsValid(context.return_type) && type.name != actual.name) {
-      function_types_.erase(type.name);
-      types_.erase(type.name);
-    }
-  } else {
-    actual = CheckExpression(expression, nullptr);
-  }
-  if (actual.kind != Type::Kind::Function || actual.nullable) {
-    AddDiagnostic(expression.location, "array callback must be a non-null function");
-    return InvalidType();
-  }
-  const auto& signature = function_types_.at(actual.name);
-  if (signature.parameters.size() > expected.parameters.size()) {
-    AddDiagnostic(expression.location, "array callback declares too many parameters");
-    return InvalidType();
-  }
-  for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
-    if (!CanAssign(signature.parameters.at(index).type, expected.parameters.at(index).type)) {
-      AddDiagnostic(expression.location, "array callback parameter type does not match");
-    }
-  }
-  return actual;
-}
 
 TypeChecker::Type TypeChecker::CheckArrayAlgorithmResult(ArrayAlgorithm algorithm,
                                                          const Type& result,
@@ -80,52 +45,84 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithmResult(ArrayAlgorithm algorith
 
 TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
                                                    const Type& receiver,
-                                                   ArrayAlgorithm algorithm) {
+                                                   ArrayAlgorithm algorithm,
+                                                   const Type* expected) {
   const auto element = array_elements_.at(receiver.name);
   if (algorithm == ArrayAlgorithm::Sort) {
     static_cast<void>(ArrayType({.kind = Type::Kind::Int, .name = "int"}));
   }
-  auto accumulator = algorithm == ArrayAlgorithm::Map ? InvalidType() : element;
-  std::vector<std::optional<Type>> checked(expression.arguments.size());
-  std::optional<std::size_t> callback_index;
-  const std::string_view callback_name =
-      algorithm == ArrayAlgorithm::Sort ? "compareFn" : "callbackFn";
-  // 初值先提供累加器类型，但运行时仍按源码顺序求值全部实参。
-  for (std::size_t index = 0; index < expression.arguments.size(); ++index) {
-    const auto& argument = expression.arguments.at(index);
-    const bool positional = argument.name.empty();
-    if (argument.name == callback_name || (positional && index == 0)) {
-      callback_index = index;
-    } else if (algorithm == ArrayAlgorithm::Reduce &&
-               (argument.name == "initialValue" || (positional && index == 1))) {
-      accumulator = CheckExpression(*argument.value, nullptr);
-      checked.at(index) = accumulator;
+  auto method = ArrayAlgorithmSignature(algorithm, element, element);
+  auto callback = ArrayCallbackSignature(algorithm, element, element);
+  static_cast<void>(ArrayType(element));
+  InferenceSignature source;
+  source.optional_parameters = method.optional_parameters;
+  auto callback_type = DescribeType(FunctionType(callback));
+  const bool generic_result =
+      algorithm == ArrayAlgorithm::Map || algorithm == ArrayAlgorithm::Reduce ||
+      algorithm == ArrayAlgorithm::ForEach || algorithm == ArrayAlgorithm::Sort;
+  const TypeName variable{.name = "$Result", .location = expression.location, .arguments = {}};
+  if (generic_result && !expression.arguments.empty()) {
+    source.type_parameters.push_back(variable.name);
+    callback_type.arguments.back() = variable;
+    if (algorithm == ArrayAlgorithm::Reduce) {
+      callback_type.arguments.front() = variable;
     }
   }
-  auto method = ArrayAlgorithmSignature(algorithm, element, accumulator);
-  if (callback_index) {
-    const auto& callback = *expression.arguments.at(*callback_index).value;
-    auto expected = ArrayCallbackSignature(algorithm, element, accumulator);
-    if (algorithm == ArrayAlgorithm::ForEach || algorithm == ArrayAlgorithm::Sort) {
-      expected.return_type = InvalidType();
+  source.return_type = DescribeType(method.return_type);
+  if (algorithm == ArrayAlgorithm::Map) {
+    source.return_type = {
+        .name = {},
+        .location = expression.location,
+        .kind = TypeName::Kind::Array,
+        .arguments = {variable},
+    };
+  } else if (algorithm == ArrayAlgorithm::Reduce) {
+    source.return_type = variable;
+  }
+  source.parameters.push_back({
+      .type = std::move(callback_type),
+      .name = method.parameters.front().name,
+      .location = expression.location,
+  });
+  if (algorithm == ArrayAlgorithm::Reduce) {
+    source.parameters.push_back(
+        {.type = variable, .name = "initialValue", .location = expression.location});
+  }
+  auto inferred = InferInvocation(source, expression, expected, {}, CallbackArity::Prefix);
+  if (!inferred) {
+    return InvalidType();
+  }
+  method.return_type = inferred->signature.return_type;
+  for (std::size_t index = 0; index < inferred->arguments.size(); ++index) {
+    const auto& argument = expression.arguments.at(index);
+    if ((argument.name.empty() && index == 0) || argument.name == source.parameters.front().name) {
+      const auto actual = *inferred->arguments.at(index);
+      if (actual.kind != Type::Kind::Function) {
+        return InvalidType();
+      }
+      CheckCallbackContract(*argument.value, actual,
+                            function_types_.at(inferred->signature.parameters.front().type.name),
+                            CallbackArity::Prefix, CallbackParameters::Assignable);
+      const auto result = function_types_.at(actual.name).return_type;
+      if (algorithm == ArrayAlgorithm::Reduce) {
+        DiagnoseDynamicConversion(*argument.value, method.return_type, result);
+      }
+      method.return_type = CheckArrayAlgorithmResult(algorithm, result, method, argument.location);
+      inferred->signature.parameters.front().type = actual;
     }
-    const auto actual = CheckArrayCallback(callback, expected);
-    if (!IsValid(actual)) {
-      return InvalidType();
-    }
-    const auto result = function_types_.at(actual.name).return_type;
-    method.return_type = CheckArrayAlgorithmResult(algorithm, result, method, callback.location);
-    method.parameters.front().type = actual;
-    checked.at(*callback_index) = actual;
-  } else if (algorithm == ArrayAlgorithm::Sort && !CanFormatString(element)) {
+  }
+  if (algorithm == ArrayAlgorithm::Sort && expression.arguments.empty() &&
+      !CanFormatString(element)) {
     AddDiagnostic(expression.location, "sort requires a comparator for this element type");
   }
+  inferred->signature.return_type = method.return_type;
   array_algorithms_.insert_or_assign(&expression, algorithm);
-  return CheckFunctionCall(method, expression, checked);
+  return CheckFunctionCall(inferred->signature, expression, inferred->arguments);
 }
 
 TypeChecker::Type TypeChecker::CheckArrayMethod(const Expression& expression,
-                                                const Type& receiver) {
+                                                const Type& receiver,
+                                                const Type* expected) {
   const auto& name = expression.callee->text;
   const auto element = array_elements_.at(receiver.name);
   if (name == "join") {
@@ -137,7 +134,7 @@ TypeChecker::Type TypeChecker::CheckArrayMethod(const Expression& expression,
     return CheckBuiltinCall(expression, Builtin::ArrayJoin);
   }
   if (const auto algorithm = FindArrayAlgorithm(name)) {
-    return CheckArrayAlgorithm(expression, receiver, *algorithm);
+    return CheckArrayAlgorithm(expression, receiver, *algorithm, expected);
   }
   for (const auto& [method, builtin] : ArrayMethods()) {
     if (method == name) {

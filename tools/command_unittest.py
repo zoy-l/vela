@@ -52,6 +52,23 @@ class CommandTest(unittest.TestCase):
                 self.assertIn("error: non-empty switch branch must not fall through", result.stderr)
         self.assertFalse((self.directory / "invalid.vbc").exists())
 
+    def test_dynamic_warnings_survive_cache_hits_and_project_errors_block_execution(self) -> None:
+        self.write("func main():int { const value:dynamic=42; return value; }")
+        for arguments in [("check", self.entry), ("run", self.entry), ("run", self.entry),
+                          ("doc", self.entry, self.directory / "api.md")]:
+            result = self.command(*arguments, expected=42 if arguments[0] == "run" else 0)
+            self.assertIn("warning: [implicit_dynamic_conversion]", result.stderr)
+        (self.directory / "vela.json").write_text(
+            '{"diagnostics":{"implicit_dynamic_conversion":"error"}}',
+            encoding="utf-8", newline="\n")
+        for arguments in [("check", self.entry), ("run", self.entry),
+                          ("compile", self.entry, self.directory / "rejected.vbc"),
+                          ("doc", self.entry, self.directory / "rejected.md")]:
+            result = self.command(*arguments, expected=65)
+            self.assertIn("error: [implicit_dynamic_conversion]", result.stderr)
+        self.assertFalse((self.directory / "rejected.vbc").exists())
+        self.assertFalse((self.directory / "rejected.md").exists())
+
     def test_byte_views_survive_async_suspension_and_typed_containers(self) -> None:
         self.write("async func main(): Future<int> { "
                    "const data = ByteData.view(ByteArray(8)); data.setInt64(0,42); await 0; "

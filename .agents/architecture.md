@@ -24,6 +24,11 @@ for execution and validation.
   compiler connects frontend, IR, runtime, and VM; runtime does not depend on compiler.
 - Pass facts from the same upstream producer directly or bind them during construction.
   Intermediate layers must not create metadata mirrors solely for downstream checks.
+- Type inference belongs to the frontend's shared structural constraint solver and contextual
+  expression checker. Intrinsic APIs project their declared payload/callback contracts into those
+  mechanisms; they must not introduce independent inference engines. Specialization owns canonical
+  concrete declarations, while the semantic model supplies final signatures and call targets to
+  backends and editor tooling. Inference variables never reach IR or runtime.
 - Prefer O(1), O(log n), or O(n) algorithms and data structures. Use hashing, sorting, indexing, or
   bucketing for growing datasets; avoid unindexed nested scans.
 - New abstractions must serve a concrete responsibility: semantic conversion, ownership transfer,

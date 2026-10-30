@@ -96,7 +96,9 @@ Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Express
   } else if (static_member != model_.static_members.end()) {
     target = function_ids_.at(static_member->second.owner + "." + static_member->second.member);
   } else {
-    target = function_ids_.at(expression.text);
+    const auto application = model_.generic_applications.find(&expression);
+    target = function_ids_.at(
+        application == model_.generic_applications.end() ? expression.text : application->second);
   }
   if (lambda) {
     plan.mode = CallableMode::Closure;

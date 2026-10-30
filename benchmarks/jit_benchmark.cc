@@ -94,7 +94,6 @@ void ReportJitSetup(benchmark::State& state, const JitSetup& setup) {
   ReportDuration(state, "source_total_ns", timings.source);
   ReportDuration(state, "code_total_ns", timings.code);
   ReportDuration(state, "source_loading_ns", timings.frontend.loading);
-  ReportDuration(state, "specialization_ns", timings.frontend.specialization);
   ReportDuration(state, "type_checking_ns", timings.frontend.checking);
   ReportDuration(state, "typed_ir_ns", timings.frontend.ir);
   ReportDuration(state, "llvm_lowering_ns", timings.native.generation);

@@ -31,6 +31,12 @@ bool TypeChecker::Refinements::IsEmpty() const {
   return facts_.empty();
 }
 
+TypeChecker::Refinements TypeChecker::Refinements::Snapshot() const {
+  Refinements result;
+  result.facts_ = facts_;
+  return result;
+}
+
 void TypeChecker::Refinements::Save(std::uint32_t binding, const Type* previous) {
   if (branch_depth_ != 0) {
     undo_.push_back({

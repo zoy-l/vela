@@ -50,7 +50,8 @@ void SpecializeTemplates(benchmark::State& state, TemplateKind kind) {
     state.PauseTiming();
     auto program = frontend::CloneProgram(parsed.program, {});
     state.ResumeTiming();
-    const auto diagnostics = frontend::SpecializeGenerics(program);
+    frontend::Specializer specializer(program);
+    const auto diagnostics = specializer.Initialize({});
     if (!diagnostics.empty()) {
       state.SkipWithError("Generic workload did not specialize");
       break;

@@ -117,6 +117,7 @@ class DevelopmentCandidate final {
 };
 
 struct DevelopmentOptions final {
+  frontend::DiagnosticOptions diagnostics;
   std::size_t gc_threshold = runtime::kDefaultGcThreshold;
   std::string entry = "main";
   jit::CompileOptions compilation;

@@ -353,22 +353,23 @@ std::expected<std::string, frontend::Diagnostics> GenerateModuleDocumentation(
   return Documentation(parsed.program, source).Generate();
 }
 
-std::expected<std::string, frontend::Diagnostics> GenerateDocumentation(std::string_view entry) {
+DocumentationResult GenerateDocumentation(std::string_view entry,
+                                          frontend::DiagnosticOptions options) {
   auto graph = frontend::LoadModuleGraph(entry);
   if (!graph.diagnostics.empty()) {
-    return std::unexpected(std::move(graph.diagnostics));
+    return {.markdown = {}, .diagnostics = std::move(graph.diagnostics)};
   }
   auto documentation =
       Documentation(graph.modules.front().program, graph.sources.front().text).Generate();
   auto loaded = frontend::BindModuleGraph(std::move(graph));
   if (!loaded.diagnostics.empty()) {
-    return std::unexpected(std::move(loaded.diagnostics));
+    return {.markdown = {}, .diagnostics = std::move(loaded.diagnostics)};
   }
-  auto checked = frontend::CheckProgram(loaded.program);
+  auto checked = frontend::CheckProgram(loaded.program, options);
   if (!checked.Succeeded()) {
-    return std::unexpected(std::move(checked.diagnostics));
+    return {.markdown = {}, .diagnostics = std::move(checked.diagnostics)};
   }
-  return documentation;
+  return {.markdown = std::move(documentation), .diagnostics = std::move(checked.diagnostics)};
 }
 
 }  // namespace vela::tooling

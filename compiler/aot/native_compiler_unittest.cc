@@ -27,6 +27,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
 #include "compiler/ir/ir.h"
+#include "compiler/ir/lowerer.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/native/code_generator.h"
 #include "runtime/native_image.h"
@@ -34,7 +35,7 @@
 namespace vela::compiler::aot {
 namespace {
 
-std::expected<ir::Program, frontend::Diagnostics> Prepare(std::string_view source) {
+ir::LoweringResult Prepare(std::string_view source) {
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   return ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
 }
@@ -48,8 +49,8 @@ export func main(): int {
   return sum;
 }
 )");
-  ASSERT_TRUE(prepared.has_value());
-  const auto result = Compile(*prepared, {.exports = {"main"}, .preserve_ir = true});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"main"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   EXPECT_FALSE(result->object.empty());
   EXPECT_EQ(result->target, runtime::NativeTargetIdentity());
@@ -66,8 +67,8 @@ TEST(NativeCompilerTest, VerifiesBooleanNegationAndEmptyVoidBodies) {
 export func empty(): void {}
 export func negate(value: bool): bool { return !value; }
 )");
-  ASSERT_TRUE(prepared.has_value());
-  const auto result = Compile(*prepared, {.exports = {"empty", "negate"}});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"empty", "negate"}});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   EXPECT_FALSE(result->object.empty());
   EXPECT_TRUE(result->llvm_ir.empty());
@@ -88,8 +89,9 @@ export func select(value: int): int {
   };
 }
 )");
-  ASSERT_TRUE(prepared.has_value());
-  const auto result = Compile(*prepared, {.exports = {"choose", "select"}, .preserve_ir = true});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result =
+      Compile(prepared.program, {.exports = {"choose", "select"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   EXPECT_NE(result->llvm_ir.find("@switch.table.vela_aot_entry_0"), std::string::npos);
   EXPECT_NE(result->llvm_ir.find("@switch.table.vela_aot_entry_1"), std::string::npos);
@@ -99,8 +101,8 @@ TEST(NativeCompilerTest, ReferenceLeafFunctionsRegisterRootsOnlyAtFailure) {
   const auto prepared = Prepare(R"(
 export func read(values: int[], index: int): int { return values[index]; }
 )");
-  ASSERT_TRUE(prepared.has_value());
-  const auto result = Compile(*prepared, {.exports = {"read"}, .preserve_ir = true});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"read"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   const auto& text = result->llvm_ir;
   EXPECT_EQ(text.find("@vela_native_v1_frame_storage"), std::string::npos);
@@ -141,8 +143,8 @@ export func calculate(count: int): int {
   return result;
 }
 )");
-  ASSERT_TRUE(prepared.has_value());
-  const auto result = Compile(*prepared, {.exports = {"calculate"}, .preserve_ir = true});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"calculate"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   llvm::LLVMContext context;
   llvm::SMDiagnostic diagnostic;
@@ -177,9 +179,9 @@ export func text(value: string?): bool { return null == value; }
 export func integer(value: int?): bool { return value != null; }
 export func erased(value: dynamic): bool { return value == null; }
 )");
-  ASSERT_TRUE(prepared.has_value());
-  const auto result =
-      Compile(*prepared, {.exports = {"object", "text", "integer", "erased"}, .preserve_ir = true});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(
+      prepared.program, {.exports = {"object", "text", "integer", "erased"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   EXPECT_EQ(result->llvm_ir.find("@vela_native_v1_equal"), std::string::npos);
 }
@@ -190,8 +192,8 @@ export func order(values: int[], direction: int): void {
   values.sort((left, right): int => left > right ? direction : (left < right ? -direction : 0));
 }
 )");
-  ASSERT_TRUE(prepared.has_value());
-  const auto result = Compile(*prepared, {.exports = {"order"}, .preserve_ir = true});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"order"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   EXPECT_EQ(result->llvm_ir.find("@vela_native_v1_call_indirect"), std::string::npos);
   bool direct_comparator = false;
@@ -218,9 +220,9 @@ export func sum(values: double[]): double {
   return sum;
 }
 )");
-  ASSERT_TRUE(prepared.has_value());
+  ASSERT_TRUE(prepared.Succeeded());
   const auto result =
-      Compile(*prepared,
+      Compile(prepared.program,
               {.exports = {"widen", "truncate", "integer", "decimal", "sum"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   const auto& text = result->llvm_ir;
@@ -261,9 +263,9 @@ TEST(NativeCompilerTest, ReadsReadyGlobalsDirectlyAndInitializesOnlyOnTheOtherBr
 let count = 42;
 export func read(): int { return count; }
 )");
-  ASSERT_TRUE(prepared.has_value());
+  ASSERT_TRUE(prepared.Succeeded());
   const auto result =
-      Compile(*prepared,
+      Compile(prepared.program,
               {.optimization = NativeOptimization::None, .exports = {"read"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   llvm::LLVMContext context;
@@ -316,8 +318,8 @@ TEST(NativeCompilerTest, EliminatesMonotoneIntegerReductionsWithDynamicBounds) {
     const auto prepared =
         Prepare("export func sum(bound: int, initial: int, term: int, start: int): int { " +
                 std::string(source) + " return sum; }");
-    ASSERT_TRUE(prepared.has_value());
-    const auto result = Compile(*prepared, {.exports = {"sum"}, .preserve_ir = true});
+    ASSERT_TRUE(prepared.Succeeded());
+    const auto result = Compile(prepared.program, {.exports = {"sum"}, .preserve_ir = true});
     ASSERT_TRUE(result.has_value()) << result.error().front().message;
     llvm::LLVMContext context;
     llvm::SMDiagnostic diagnostic;
@@ -346,8 +348,8 @@ export func fields(bound: int): int {
   return box.value;
 }
 )");
-  ASSERT_TRUE(prepared.has_value());
-  const auto result = Compile(*prepared, {.exports = {"fields"}, .preserve_ir = true});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"fields"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   llvm::LLVMContext context;
   llvm::SMDiagnostic diagnostic;
@@ -367,8 +369,8 @@ TEST(NativeCompilerTest, PreservesArrayStorageWhenTemporaryValuesAreErasedToDyna
   const auto prepared = Prepare(R"(
 export func value(): dynamic { return [1, 2, 3] as dynamic; }
 )");
-  ASSERT_TRUE(prepared.has_value());
-  const auto result = Compile(*prepared, {.exports = {"value"}});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"value"}});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   EXPECT_FALSE(result->object.empty());
 }
@@ -377,9 +379,9 @@ TEST(NativeCompilerTest, ArrayAppendZeroExtendsLengthsBeforeAddressingElements) 
   const auto prepared = Prepare(R"(
 export func append(values: int[], value: int): int { return values.push(value); }
 )");
-  ASSERT_TRUE(prepared.has_value());
+  ASSERT_TRUE(prepared.Succeeded());
   const auto result = Compile(
-      *prepared,
+      prepared.program,
       {.optimization = NativeOptimization::None, .exports = {"append"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   // uint32 长度的最高位不是符号位；i32 GEP 会将 2 Gi 元素以上的位置符号扩展。
@@ -397,39 +399,41 @@ TEST(NativeCompilerTest, ExportsOnlyPublicFunctionsFromTheEntryModule) {
       {.path = "library.vela", .text = "export func imported(): int { return 2; }"},
   });
   const auto prepared = ir::PrepareParsed(frontend::LoadSources(sources, "main.vela"));
-  ASSERT_TRUE(prepared.has_value());
-  const auto private_export = Compile(*prepared, {.exports = {"hidden"}});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto private_export = Compile(prepared.program, {.exports = {"hidden"}});
   ASSERT_FALSE(private_export.has_value());
   EXPECT_NE(private_export.error().front().message.find("public entry-module"), std::string::npos);
-  const auto imported_export = Compile(*prepared, {.exports = {"imported"}});
+  const auto imported_export = Compile(prepared.program, {.exports = {"imported"}});
   ASSERT_FALSE(imported_export.has_value());
 }
 
 TEST(NativeCompilerTest, RejectsModuleNamesThatCannotProduceValidCHeaders) {
   const auto prepared = Prepare("export func value(): int { return 42; }");
-  ASSERT_TRUE(prepared.has_value());
-  const auto result = Compile(*prepared, {.module_name = "invalid-module", .exports = {"value"}});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result =
+      Compile(prepared.program, {.module_name = "invalid-module", .exports = {"value"}});
   ASSERT_FALSE(result.has_value());
   EXPECT_NE(result.error().front().message.find("C identifier"), std::string::npos);
 }
 
 TEST(NativeCompilerTest, EmitsPrivateAsyncMainAndRejectsCustomHostImports) {
   const auto prepared = Prepare("async func main(): Future<int> { return await 42; }");
-  ASSERT_TRUE(prepared.has_value());
-  const auto result = Compile(
-      *prepared, {.exports = {}, .entry_mode = NativeEntryMode::Executable, .preserve_ir = true});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result =
+      Compile(prepared.program,
+              {.exports = {}, .entry_mode = NativeEntryMode::Executable, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   EXPECT_NE(result->llvm_ir.find("define i32 @main()"), std::string::npos);
   EXPECT_NE(result->llvm_ir.find("@vela_native_v1_main"), std::string::npos);
   EXPECT_TRUE(result->exports.empty());
 
   const auto custom = Prepare("external func host(): int; func main(): int { return host(); }");
-  ASSERT_TRUE(custom.has_value());
+  ASSERT_TRUE(custom.Succeeded());
   const auto rejected =
-      Compile(*custom, {.exports = {}, .entry_mode = NativeEntryMode::Executable});
+      Compile(custom.program, {.exports = {}, .entry_mode = NativeEntryMode::Executable});
   ASSERT_FALSE(rejected.has_value());
   EXPECT_NE(rejected.error().front().message.find("custom host binding"), std::string::npos);
-  EXPECT_TRUE(Compile(*custom).has_value());
+  EXPECT_TRUE(Compile(custom.program).has_value());
 }
 
 TEST(NativeCompilerTest, RemovesUnusedImportsAndRetainsOnlySelectedEntryCode) {
@@ -438,8 +442,8 @@ external func unused(): int;
 func removed(): int { return unused(); }
 export func answer(): int { return 42; }
 )");
-  ASSERT_TRUE(prepared.has_value());
-  const auto result = Compile(*prepared, {.exports = {"answer"}, .preserve_ir = true});
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto result = Compile(prepared.program, {.exports = {"answer"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   ASSERT_EQ(result->program.functions.size(), 1U);
   EXPECT_EQ(result->program.functions.front().name, "answer");

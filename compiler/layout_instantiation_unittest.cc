@@ -79,8 +79,8 @@ func main(): void {
   layout::Program description;
   {
     auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
-    ASSERT_TRUE(prepared.has_value());
-    description = std::move(prepared->layouts);
+    ASSERT_TRUE(prepared.Succeeded());
+    description = std::move(prepared.program.layouts);
   }
   const auto node = std::ranges::find(description.classes, "Node", &layout::Class::name);
   ASSERT_NE(node, description.classes.end());
@@ -114,14 +114,14 @@ TEST(LayoutInstantiationTest, RollsBackUnpublishedLayoutsWithoutChangingSessionC
       .text = "class Box { value: string; } func main(values: Box[]): void {}",
   };
   auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
-  ASSERT_TRUE(prepared.has_value());
+  ASSERT_TRUE(prepared.Succeeded());
   runtime::Isolate isolate;
   runtime::LayoutCache committed;
   const auto before = isolate.layout_counts();
   {
     auto pending = committed;
     runtime::LayoutTransaction transaction(isolate);
-    const auto layouts = runtime::InstantiateLayouts(prepared->layouts, isolate, pending);
+    const auto layouts = runtime::InstantiateLayouts(prepared.program.layouts, isolate, pending);
     EXPECT_FALSE(layouts.classes.empty());
     EXPECT_GT(isolate.layout_counts().classes, before.classes);
   }

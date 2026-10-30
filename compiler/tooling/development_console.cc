@@ -22,7 +22,6 @@
 #include <thread>
 #include <utility>
 
-#include "base/diagnostic.h"
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "base/path.h"
@@ -33,6 +32,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/native/native_roots.h"
+#include "compiler/project_config.h"
 #include "compiler/repl_source.h"
 #include "compiler/source_session.h"
 #include "compiler/tooling/development_debugger.h"
@@ -160,8 +160,7 @@ class DevelopmentConsole final {
 
 void DevelopmentConsole::Diagnostics(const frontend::Diagnostics& diagnostics) const {
   for (const auto& diagnostic : diagnostics) {
-    WriteError(streams_.errors.get(), diagnostic.source_path, diagnostic.location,
-               diagnostic.message);
+    frontend::WriteDiagnostic(streams_.errors.get(), diagnostic);
   }
 }
 
@@ -485,6 +484,13 @@ int DevelopmentConsole::Run() {
     return kSourceErrorExitCode;
   }
   compiler::DevelopmentOptions options;
+  const auto diagnostics = compiler::LoadSourceDiagnosticOptions(Utf8Path(files_.entry()));
+  if (!diagnostics) {
+    frontend::WriteDiagnostic(streams_.errors.get(),
+                              compiler::ConfigurationDiagnostic(diagnostics.error()));
+    return diagnostics.error().exit_code;
+  }
+  options.diagnostics = *diagnostics;
   options.compilation = compilation_;
   options.compilation.debugging = compiler::native::NativeDebugging::SourceLines;
   options.progress = [this](const DevelopmentResult& result) {

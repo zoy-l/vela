@@ -4,7 +4,7 @@
 
 `vela compile source.vela output.vbc` 将字节码镜像写入磁盘文件而不立即执行。`vela exec output.vbc` 加载并严密校验该镜像，随后以与 `run` 命令相同的退出码和错误诊断规则执行 `main` 函数。执行字节码镜像无需依赖原始源文件存在；源文件路径和 PC 映射信息依然完备，可用于生成精准的调用栈。
 
-`vela run source.vela` 默认在其当前工作目录下使用 `.cache/vela` 缓存目录。宿主嵌入 API `CompileFileCached(path, cache_directory, isolate)` 返回 `Hit`（命中）、`Absent`（缺失）、`Stale`（过期）和 `Invalid`（无效）状态。`CompileFile` 仍作为显式的非缓存编译接口保留。系统不使用全局缓存目录或环境变量来定位缓存。
+`vela run source.vela` 默认在其当前工作目录下使用 `.cache/vela` 缓存目录。宿主嵌入 API `CompileFileCached(path, cache_directory, isolate, options)` 返回 `Hit`（命中）、`Absent`（缺失）、`Stale`（过期）和 `Invalid`（无效）状态，options 可省略。`CompileFile` 仍作为显式的非缓存编译接口保留。系统不使用全局缓存目录或环境变量来定位缓存。缓存保存成功编译的 warning，包括代码、来源位置和消息，命中后仍返回相同诊断；诊断级别配置改变会使缓存失效，不能借旧缓存绕过严格检查。
 
 ## 缓存身份与失效机制
 

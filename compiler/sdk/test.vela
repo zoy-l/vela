@@ -116,8 +116,8 @@ external func _inspect(operation: int, value: dynamic): dynamic;
 external func _same(left: dynamic, right: dynamic): bool;
 external func _control(operation: int, first: dynamic, second: dynamic,
                        third: dynamic, fourth: dynamic): dynamic;
-func _kind(value: dynamic): int { return _inspect(0, value); }
-func _display(value: dynamic): string { return _inspect(1, value); }
+func _kind(value: dynamic): int { return _inspect(0, value) as int; }
+func _display(value: dynamic): string { return _inspect(1, value) as string; }
 
 func _matched(description: string): MatchResult {
   return MatchResult(success: true, description: description);
@@ -256,7 +256,7 @@ class _DeepComparison {
       frame.actualItems = actualKind == 1 ? frame.actual : frame.actual.values();
       frame.expectedItems = expectedKind == 1 ? expected : expected.values();
     }
-    frame.length = frame.expectedItems.length;
+    frame.length = frame.expectedItems.length as int;
     if (frame.actualItems.length != frame.length) {
       return _mismatch(frame.actual, 'length ${frame.length}', '${_pathText(frame.path)}.length');
     }
@@ -302,7 +302,7 @@ class _DeepComparison {
       if (frame.kind == 2) {
         const key: dynamic = frame.expectedItems[frame.index];
         const path = _MatchPath(parent: frame.path, segment: '[${_display(key)}]');
-        if (!frame.actual.has(key)) {
+        if (!(frame.actual.has(key) as bool)) {
           completed = this.finish(_mismatch(frame.actual, 'a map containing key ${_display(key)}', _pathText(path)));
           continue;
         }
@@ -360,9 +360,9 @@ func _wrap(value: dynamic): Matcher {
 }
 
 func _length(value: dynamic): int {
-  if (value is string || _kind(value) == 1) { return value.length; }
+  if (value is string || _kind(value) == 1) { return value.length as int; }
   const kind = _kind(value);
-  if (kind == 2 || kind == 3) { return value.size; }
+  if (kind == 2 || kind == 3) { return value.size as int; }
   return -1;
 }
 
@@ -385,17 +385,17 @@ class _SimpleMatcher implements Matcher {
     }
     if (this.mode == 7) {
       if (!(actual is double)) { return false; }
-      const expected: double = this.expected;
+      const expected: double = this.expected as double;
       return Math.abs(actual - expected) <= this.delta;
     }
     if (this.mode == 8) {
-      if (actual is string && this.expected is string) { return actual.includes(this.expected); }
+      if (actual is string && this.expected is string) { return actual.includes(this.expected as string); }
       const kind = _kind(actual);
-      if (kind == 2) { return actual.has(this.expected); }
+      if (kind == 2) { return actual.has(this.expected) as bool; }
       if (kind != 1 && kind != 3) { return false; }
       const values: dynamic = kind == 1 ? actual : actual.values();
       const matcher = _wrap(this.expected);
-      const length: int = values.length;
+      const length: int = values.length as int;
       for (let index = 0; index < length; index++) {
         if (matcher.match(values[index]).success) { return true; }
       }
@@ -447,7 +447,7 @@ class _CompositeMatcher implements Matcher {
       const result = _wrap(this.matchers).match(actual);
       return result.success ? _mismatch(actual, 'not ${result.description}', '') : _matched('not ${result.description}');
     }
-    const count: int = this.matchers.length;
+    const count: int = this.matchers.length as int;
     const differences: MatchDifference[] = [];
     for (let index = 0; index < count; index++) {
       const result = _wrap(this.matchers[index]).match(actual);
@@ -476,7 +476,7 @@ class _PredicateMatcher implements Matcher {
   callback: dynamic;
   description: string;
   match(actual: dynamic): MatchResult {
-    const result: bool = this.callback(actual);
+    const result: bool = this.callback(actual) as bool;
     return result ? _matched(this.description) : _mismatch(actual, this.description, '');
   }
 }
@@ -560,9 +560,9 @@ export func completion(matcher: dynamic): AsyncMatcher {
 export func expectAsync0(callback: dynamic, count: int?, max: int?): () => void {
   const minimum = count ?? 1;
   const maximum = max ?? minimum;
-  const identity: int = _control(1, callback, minimum, maximum, 0);
+  const identity: int = _control(1, callback, minimum, maximum, 0) as int;
   return (): void => {
-    const previous: int = _control(2, identity, null, null, null);
+    const previous: int = _control(2, identity, null, null, null) as int;
     try {
       _control(4, identity, null, null, null);
       callback();

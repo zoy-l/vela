@@ -8,11 +8,13 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <variant>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+#include <absl/container/node_hash_map.h>
 
 #include "base/array_algorithm.h"
 #include "base/async_operation.h"
@@ -21,7 +23,9 @@
 #include "compiler/frontend/control_flow.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_file.h"
+#include "compiler/frontend/specialization.h"
 #include "compiler/frontend/symbol_ids.h"
+#include "compiler/frontend/type_inference.h"
 
 namespace vela::frontend {
 
@@ -153,6 +157,7 @@ struct SemanticModel final {
   absl::flat_hash_set<std::uint32_t> captured_mutables;
   // 借用受检 AST 的节点地址；模型只在该 AST 存活期间使用。
   absl::flat_hash_map<const Expression*, TypeDescriptor> expression_types;
+  absl::flat_hash_map<const Expression*, std::string> generic_applications;
   absl::flat_hash_map<const Expression*, TypeDescriptor> checked_conversions;
   absl::flat_hash_map<const Expression*, ConstantValue> case_values;
   absl::flat_hash_map<std::string, std::int64_t> enum_values;
@@ -163,8 +168,8 @@ struct SemanticModel final {
   absl::flat_hash_map<const Expression*, ArrayAlgorithm> array_algorithms;
   absl::flat_hash_map<const Statement*, TypeDescriptor> local_types;
   absl::flat_hash_map<const Statement*, StatementFlow> control_flow;
-  absl::flat_hash_map<std::string, ClassDescriptor> classes;
-  absl::flat_hash_map<std::string, FunctionDescriptor> functions;
+  absl::node_hash_map<std::string, ClassDescriptor> classes;
+  absl::node_hash_map<std::string, FunctionDescriptor> functions;
   absl::flat_hash_map<const Expression*, MemberReference> static_members;
   absl::flat_hash_map<std::string, InterfaceDescriptor> interfaces;
   absl::flat_hash_map<const Expression*, MemberReference> interface_members;
@@ -182,15 +187,24 @@ struct TypeCheckResult final {
   Diagnostics diagnostics;
   std::size_t function_count = 0;
   SemanticModel model;
+  [[nodiscard]] bool Succeeded() const { return !HasErrors(diagnostics); }
 };
 
 class TypeChecker final {
  public:
-  explicit TypeChecker(SymbolIds* interface_ids = nullptr) : interface_ids_(interface_ids) {}
-  [[nodiscard]] TypeCheckResult Check(const Program& program);
+  explicit TypeChecker(SymbolIds* interface_ids = nullptr, DiagnosticOptions options = {})
+      : interface_ids_(interface_ids), options_(options) {}
+  [[nodiscard]] TypeCheckResult Check(Program& program,
+                                      std::span<const GenericSpecialization> retained = {});
 
  private:
   SymbolIds* interface_ids_;
+  DiagnosticOptions options_;
+  Specializer* specializer_ = nullptr;
+  std::size_t registered_functions_ = 0;
+  std::size_t registered_classes_ = 0;
+  absl::flat_hash_set<std::string> merged_classes_;
+  absl::flat_hash_set<std::string> visiting_classes_;
   using Type = TypeDescriptor;
   using FunctionInfo = FunctionDescriptor;
   using ClassInfo = ClassDescriptor;
@@ -219,6 +233,7 @@ class TypeChecker final {
 
     [[nodiscard]] const Type* Find(std::uint32_t binding) const;
     [[nodiscard]] bool IsEmpty() const;
+    [[nodiscard]] Refinements Snapshot() const;
     void Set(std::uint32_t binding, Type type);
     void Erase(std::uint32_t binding);
     void Erase(const absl::flat_hash_set<std::uint32_t>& bindings);
@@ -242,6 +257,73 @@ class TypeChecker final {
 
   [[nodiscard]] static Type InvalidType();
   void AddDiagnostic(SourceLocation location, std::string message);
+  void RegisterSpecializations();
+  void CheckPendingSpecializations();
+  Type ResolveClassInstantiation(const TypeName& type_name);
+  void CheckClassImplementation(const Class& source);
+  void CheckClassBody(const Class& source);
+  Type InstantiateGeneric(const Expression& callee, const Expression* call, const Type* expected);
+  [[nodiscard]] TypeName DescribeType(const Type& type) const;
+  struct InferenceSignature final {
+    std::vector<std::string> type_parameters;
+    std::vector<Parameter> parameters;
+    TypeName return_type;
+    absl::flat_hash_set<std::string> optional_parameters;
+  };
+  struct InferredCall final {
+    std::vector<TypeName> type_arguments;
+    FunctionInfo signature;
+    std::vector<std::optional<Type>> arguments;
+  };
+  std::optional<InferenceSignature> GenericSignature(const Expression& callee);
+  static void SetConstructorParameters(const Class& owner, InferenceSignature& source);
+  std::optional<std::vector<TypeName>> InferFunctionValue(const InferenceSignature& source,
+                                                          const Expression& callee,
+                                                          const Type* expected);
+  enum class CallbackArity : std::uint8_t { Exact, Prefix };
+  enum class CallbackPresence : std::uint8_t { Required, Optional };
+  enum class CallbackParameters : std::uint8_t { Assignable, ExceptionFilter };
+  std::optional<InferredCall> InferInvocation(const InferenceSignature& source,
+                                              const Expression& expression,
+                                              const Type* expected,
+                                              std::span<const TypeName> explicit_arguments = {},
+                                              CallbackArity arity = CallbackArity::Exact);
+  std::optional<TypeInference> CreateInference(const InferenceSignature& source,
+                                               SourceLocation location,
+                                               const Type* expected,
+                                               std::span<const TypeName> explicit_arguments);
+  Type InferFutureResult(const Expression& expression,
+                         TypeInference& inference,
+                         const Type* actual);
+  std::optional<TypeInference> CreateFutureInference(const Expression& expression,
+                                                     const Type* expected);
+  Type ResolveInferenceContext(const TypeName& pattern, const TypeInference& inference);
+  std::vector<std::optional<Type>> CheckInferenceArguments(
+      std::span<const Expression* const> expressions,
+      std::span<const TypeName> patterns,
+      TypeInference& inference,
+      CallbackArity arity);
+  Type CheckInferenceArgument(const Expression& expression,
+                              const TypeName& pattern,
+                              const Type& context,
+                              TypeInference& inference,
+                              CallbackArity arity);
+  Type InferConstruction(const Expression& expression,
+                         const Type* expected,
+                         std::string_view name,
+                         std::span<const std::string> parameters);
+  [[nodiscard]] bool CanCheckExpression(const Expression& expression, const Type* expected);
+  bool CanInferInvocation(const Expression& expression, const Type* expected);
+  Type CheckCallback(const Expression& expression,
+                     FunctionInfo context,
+                     CallbackArity arity = CallbackArity::Exact,
+                     CallbackPresence presence = CallbackPresence::Required,
+                     CallbackParameters parameters = CallbackParameters::Assignable);
+  void CheckCallbackContract(const Expression& expression,
+                             const Type& actual,
+                             const FunctionInfo& context,
+                             CallbackArity arity,
+                             CallbackParameters parameters);
   void CheckBooleanOperand(const Expression& expression,
                            const Type& type,
                            std::string_view message);
@@ -278,11 +360,11 @@ class TypeChecker final {
   StatementFlow CheckSequence(const Statement& statement, const Type& return_type);
   StatementFlow CheckScopedStatement(const Statement& statement, const Type& return_type);
   StatementFlow CheckTry(const Statement& statement, const Type& return_type);
-  Type CheckArrayMethod(const Expression& expression, const Type& receiver);
+  Type CheckArrayMethod(const Expression& expression, const Type& receiver, const Type* expected);
   Type CheckArrayAlgorithm(const Expression& expression,
                            const Type& receiver,
-                           ArrayAlgorithm algorithm);
-  Type CheckArrayCallback(const Expression& expression, const FunctionInfo& expected);
+                           ArrayAlgorithm algorithm,
+                           const Type* expected);
   Type CheckArrayAlgorithmResult(ArrayAlgorithm algorithm,
                                  const Type& result,
                                  const FunctionInfo& method,
@@ -313,12 +395,13 @@ class TypeChecker final {
   Type CheckNamedCall(const Expression& expression, const Type* expected);
   Type CheckFutureCall(const Expression& expression, const Type* expected);
   Type MakeFutureType(const Expression& expression, const Type& element);
-  Type FutureAggregationElement(const Expression& expression, const Type* expected);
   Type CheckFutureAggregation(const Expression& expression, const Type* expected);
+  Type ProjectFutureAggregationContext(const Expression& expression, const Type* expected);
+  Type ProjectFutureArrayElement(const Expression& expression, const Type& values);
   Type CheckFutureComputation(const Expression& expression, const Type* expected);
   Type CheckFutureValueFactory(const Expression& expression, const Type* expected);
   Type CheckAsyncConstruction(const Expression& expression, const Type* expected);
-  Type CheckAsyncMethod(const Expression& expression, const Type& receiver, const Type* expected);
+  Type CheckAsyncMethod(const Expression& expression, const Type& receiver);
   Type CheckCompleterMethod(const Expression& expression, const Type& receiver);
   Type CheckFutureCallback(const Expression& expression, const Type& receiver);
   Type CheckFutureTimeout(const Expression& expression, const Type& receiver);
@@ -331,10 +414,10 @@ class TypeChecker final {
                         std::vector<std::optional<Type>>& checked);
   Type CheckTimerFactory(const Expression& expression);
   Type CheckAsyncProperty(const Expression& expression, const Type& receiver);
-  enum class CallbackPresence : std::uint8_t { Required, Optional };
   Type CheckAsyncCallback(const Expression& expression,
                           std::span<const Type> parameters,
-                          CallbackPresence presence = CallbackPresence::Required);
+                          CallbackPresence presence = CallbackPresence::Required,
+                          CallbackParameters contract = CallbackParameters::Assignable);
   Type RegisterAsyncCall(const Expression& expression,
                          AsyncCallDescriptor descriptor,
                          std::span<const std::optional<Type>> checked = {});
@@ -346,7 +429,7 @@ class TypeChecker final {
   Type CheckMethodReceiver(const Expression& expression,
                            const Type& receiver,
                            const Type* expected);
-  Type CheckInstanceCall(const Expression& expression, const Type& object, const Type* expected);
+  Type CheckInstanceCall(const Expression& expression, const Type& object);
   void CheckMemberAssignment(const Expression& member);
   Type CheckFunctionCall(const FunctionInfo& function,
                          const Expression& expression,
@@ -354,7 +437,9 @@ class TypeChecker final {
   std::optional<std::size_t> CallParameterIndex(const FunctionInfo& function,
                                                 const CallArgument& argument,
                                                 std::size_t positional);
-  Type CheckClassConstruction(const ClassInfo& class_info, const Expression& expression);
+  Type CheckClassConstruction(const ClassInfo& class_info,
+                              const Expression& expression,
+                              std::span<const std::optional<Type>> checked_arguments = {});
   Type CheckMemberAccess(const Expression& expression, const Type* expected);
   Type CheckStaticMember(const Expression& expression, const ClassInfo& owner);
   Type CheckObjectMember(const Expression& expression, const Type& object, const Type* expected);
@@ -368,7 +453,7 @@ class TypeChecker final {
                              const FunctionInfo& signature);
   Type ResolveType(const TypeName& type_name, bool allow_void);
   Type ArrayType(const Type& element);
-  Type LookupName(const Expression& expression);
+  Type LookupName(const Expression& expression, const Type* expected);
   [[nodiscard]] const LocalBinding* LookupLocal(std::string_view name) const;
   void BeginScope();
   void EndScope();
@@ -381,6 +466,9 @@ class TypeChecker final {
   [[nodiscard]] static bool IsSameType(const Type& left, const Type& right);
   [[nodiscard]] bool CanAssign(const Type& target, const Type& value) const;
   void RecordConversion(const Expression& expression, const Type& target, const Type& actual);
+  void DiagnoseDynamicConversion(const Expression& expression,
+                                 const Type& target,
+                                 const Type& actual);
   [[nodiscard]] static Type NonNullable(Type type);
   void RefineCondition(const Expression& condition, ConditionTruth outcome);
   void InvalidateAssignments(const Statement& statement);
@@ -436,9 +524,9 @@ class TypeChecker final {
   Type CheckArrayLiteral(const Expression& expression, const Type* expected);
 
   Type CheckUnary(const Expression& expression);
-  Type CheckConditional(const Expression& expression);
+  Type CheckConditional(const Expression& expression, const Type* expected);
 
-  Type CheckBinary(const Expression& expression);
+  Type CheckBinary(const Expression& expression, const Type* expected);
   Type CheckBinaryTypes(const Expression& expression, const Type& left, const Type& right);
   Type CheckLogicalTypes(const Expression& expression, const Type& left, const Type& right);
   Type CheckCoalesceTypes(const Expression& expression, const Type& left, const Type& right);
@@ -459,6 +547,8 @@ class TypeChecker final {
   Type CheckAwait(const Expression& expression, const Type* expected);
 
   Diagnostics diagnostics_;
+  absl::flat_hash_set<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t, std::string>>
+      dynamic_diagnostics_;
   std::size_t function_count_ = 0;
   absl::flat_hash_map<std::string, Type> types_;
   absl::flat_hash_map<std::string, Type> array_elements_;
@@ -477,6 +567,7 @@ class TypeChecker final {
   absl::flat_hash_set<std::uint32_t> captured_mutables_;
   absl::flat_hash_set<const void*> captured_declarations_;
   absl::flat_hash_map<const Expression*, Type> expression_types_;
+  absl::flat_hash_map<const Expression*, std::string> generic_applications_;
   absl::flat_hash_map<const Expression*, Type> checked_conversions_;
   absl::flat_hash_map<const Expression*, ConstantValue> case_values_;
   absl::flat_hash_map<std::uint32_t, ConstantValue> constant_bindings_;
@@ -489,8 +580,8 @@ class TypeChecker final {
   absl::flat_hash_map<const Expression*, ArrayAlgorithm> array_algorithms_;
   absl::flat_hash_map<const Statement*, Type> local_types_;
   absl::flat_hash_map<const Statement*, StatementFlow> control_flow_;
-  absl::flat_hash_map<std::string, ClassInfo> classes_;
-  absl::flat_hash_map<std::string, FunctionInfo> functions_;
+  absl::node_hash_map<std::string, ClassInfo> classes_;
+  absl::node_hash_map<std::string, FunctionInfo> functions_;
   std::vector<absl::flat_hash_map<std::string, LocalBinding>> scopes_;
   std::size_t loop_depth_ = 0;
   std::size_t switch_depth_ = 0;

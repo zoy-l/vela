@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 #include "gtest/gtest.h"
 
@@ -53,6 +54,221 @@ func main(): int {
 }
 
 class GenericErrorTest : public testing::TestWithParam<std::string_view> {};
+
+TEST(GenericTest, NestedOutputVariablesWaitForOuterArgumentEvidence) {
+  runtime::Isolate isolate;
+  const auto compiled = CompileSource(R"(
+func create<T, U>(value: T): U[] { return []; }
+func maybe<T, U>(value: T): U[]? { return null; }
+func identity<T>(value: T): T { return value; }
+func choose<T>(items: T[], value: T): T { return value; }
+class Box<T> { value: T; }
+func main(): int {
+  const first = choose(create(1), 20);
+  const second = choose(identity(create('input')), 22);
+  const boxes = choose(create(false), Box(value: first + second));
+  const conditional = choose(true ? create(0) : [], boxes.value);
+  const matched = choose(match (true) { true => create(0), false => [], }, conditional);
+  return choose(maybe(0) ?? [], matched);
+}
+)",
+                                      isolate);
+  for (const auto& diagnostic : compiled.diagnostics) {
+    ADD_FAILURE() << diagnostic.message;
+  }
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(GenericTest, InferredAndExplicitUsesHaveTheSameCodeAndRegisterLayout) {
+  constexpr std::string_view kExplicit = R"(
+func identity<T>(value: T): T { return value; }
+class Box<T> { value: T; }
+func main(): int {
+  const operation: (int) => int = identity<int>;
+  const box = Box<int>(value: identity<int>(40));
+  return box.value + operation(2);
+}
+)";
+  constexpr std::string_view kInferred = R"(
+func identity<T>(value: T): T { return value; }
+class Box<T> { value: T; }
+func main(): int {
+  const operation: (int) => int = identity;
+  const box = Box(value: identity(40));
+  return box.value + operation(2);
+}
+)";
+  runtime::Isolate isolate;
+  const auto explicit_result = CompileSource(kExplicit, isolate);
+  const auto inferred_result = CompileSource(kInferred, isolate);
+  ASSERT_TRUE(explicit_result.Succeeded());
+  ASSERT_TRUE(inferred_result.Succeeded());
+  const auto expected = explicit_result.program.functions();
+  const auto actual = inferred_result.program.functions();
+  ASSERT_EQ(actual.size(), expected.size());
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    const auto& left = expected.subspan(index).front();
+    const auto& right = actual.subspan(index).front();
+    EXPECT_EQ(left.name, right.name);
+    EXPECT_EQ(std::tie(left.code, left.register_count, left.parameter_count),
+              std::tie(right.code, right.register_count, right.parameter_count));
+  }
+}
+
+TEST(GenericTest, PreservesNestedTypeStructureAndInfersGenericCallbackValues) {
+  runtime::Isolate isolate;
+  const auto compiled = CompileSource(R"(
+class Box<T> { value: T; }
+func identity<T>(value: T): T { return value; }
+func unbox<T>(box: Box<T[]>): T[] { return box.value; }
+func apply<T, U>(operation: (T) => U, value: T): U { return operation(value); }
+func main(): int {
+  const values = unbox(Box(value: [40, 2]));
+  const copy = values.map(identity);
+  const texts = values.map(42.toString);
+  if (texts.join(',') != '42,42') { return 0; }
+  return apply(identity, copy[0] + copy[1]);
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded())
+      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(GenericTest, InfersVoidOnlyInPositionsThatPermitVoid) {
+  runtime::Isolate isolate;
+  const auto compiled = CompileSource(R"(
+func apply<T, U>(operation: (T) => U, value: T): U { return operation(value); }
+func main(): int {
+  let total = 0;
+  apply(value => { total += value; }, 42);
+  return total;
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded())
+      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(GenericTest, InfersCallsConstructorsFunctionValuesAndRecursiveBodies) {
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(R"(
+type Operation<T> = (T) => T;
+func identity<T>(value: T): T { return value; }
+func forward<T>(value: T, count: int): T {
+  if (count == 0) { return value; }
+  return forward(value, count - 1);
+}
+class Box<T> { value: T; get(): T { return this.value; } }
+func unbox<T>(box: Box<T>): T { return box.get(); }
+func main(): int {
+  const operation: Operation<int> = identity;
+  const box = Box(value: operation(40));
+  return unbox(box) + forward(identity(2), 3);
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded())
+      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
+  EXPECT_TRUE(compiled.program.FindFunction("identity<int>").IsValid());
+  EXPECT_TRUE(compiled.program.FindFunction("forward<int>").IsValid());
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(GenericTest, InfersCallbacksAfterIndependentArgumentsAndPropagatesNestedContexts) {
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(R"(
+func apply<T, U>(operation: (T) => U, value: T): U { return operation(value); }
+func identity<T>(value: T): T { return value; }
+func empty<T>(): T[] { return []; }
+class Box<T> { value: T; }
+func make(): Box<int[]> { return Box(value: empty()); }
+func main(): int {
+  const result = apply(value => value + 2, 40);
+  const nested: (int) => (int) => int = identity(left => right => left + right);
+  const arrays: int[][] = [empty(), true ? empty() : empty()];
+  return result + nested(1)(1) - 2 + make().value.length + arrays[0].length;
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded())
+      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(GenericTest, SharesArrayAndOrdinaryCallbackInference) {
+  runtime::Isolate isolate;
+  const auto compiled = CompileSource(R"(
+func apply<T, U>(operation: (T) => U, value: T): U { return operation(value); }
+func main(): int {
+  const items = [19, 20];
+  const mapped = items.map(value => value + 1);
+  const total = mapped.reduce((sum, value) => sum + value, 1);
+  return apply(value => value, total);
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded())
+      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(GenericTest, InfersTransparentGenericConstructorsAndExplicitConstructorParameters) {
+  runtime::Isolate isolate;
+  const auto compiled = CompileSource(R"(
+class Box<T> { value: T; constructor(input: T) { this.value = input; } }
+type Alias<Item> = Box<Item>;
+type Dictionary<Value> = Map<string, Value>;
+func main(): int {
+  const box = Alias(input: 40);
+  const values: Dictionary<int> = Dictionary();
+  values.set('answer', box.value + 2);
+  return values.get('answer') ?? 0;
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded())
+      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
+
+TEST(GenericTest, DeferredInferenceKeepsEarlierArgumentsBeforeLaterMutation) {
+  runtime::Isolate isolate;
+  const auto compiled = CompileSource(R"(
+let mutate: () => void = (): void => {};
+func create<T>(): T[] { mutate(); return []; }
+func choose<T>(first: T, second: T[]): T { return first; }
+func main(): int {
+  let value: int? = 42;
+  mutate = () => { value = null; };
+  if (value != null) { return choose(value, create()); }
+  return 0;
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded())
+      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
+  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  EXPECT_EQ(result.value.AsInteger(), 42);
+}
 
 TEST(GenericTest, ExecutesIndependentSpecializationsBeyond256AndRestoresWideCodeFromImage) {
   constexpr std::size_t kTypes = 257;
@@ -143,6 +359,17 @@ INSTANTIATE_TEST_SUITE_P(
     StaticArguments,
     GenericErrorTest,
     testing::Values(
+        "let mutate:()=>void=():void=>{}; func create<T>():T[]{mutate();return[];} "
+        "func choose<T>(first:T[],second:T):T{return second;} "
+        "func main():int{let value:int?=42;mutate=()=>{value=null;};"
+        "if(value!=null){return choose(create(),value);}return 0;}",
+        "func make<T>(): T[] { return []; } func main(): void { const items = make(); }",
+        "func id<T>(x:T):T{return x;} func main():void { const value = id; }",
+        "func choose<T>(x:T,y:T):T{return x;} func main():void { choose(1, 2.0); }",
+        "func id<T>(x:T):T{return x;} func main():void { const value: double = id(1); }",
+        "func id<T>(x:T[]):T[]{return x;} func main():void { const items = [1]; "
+        "const value: dynamic[] = id(items); }",
+        "func expand<T>(x: T): int { return expand([x]); } func main(): int { return expand(1); }",
         "func id<T>(x: T): T { return x; } func main(): int { return id<int, double>(1); }",
         "func id<T>(x: T): T { return x; } func main(): int { return id<int>(1.0); }",
         "type Cycle<T> = Cycle<T>; func main(): void { let x: Cycle<int> = 1; }",

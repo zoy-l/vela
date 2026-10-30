@@ -103,7 +103,7 @@ class BenchmarkReportTest(unittest.TestCase):
                           code_writable_bytes=0, external_field_bytes=128,
                           **dict.fromkeys(("load_ns", "source_total_ns", "code_total_ns",
                                            "file_capture_ns", "engine_creation_ns", "source_loading_ns",
-                                           "specialization_ns", "type_checking_ns", "typed_ir_ns",
+                                           "type_checking_ns", "typed_ir_ns",
                                            "llvm_lowering_ns", "llvm_optimization_ns", "machine_compilation_ns",
                                            "linking_ns", "instantiation_ns", "initial_publication_pause_ns",
                                            "first_execution_ns"), 1000)) for index in range(3)]

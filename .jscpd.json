@@ -1,0 +1,22 @@
+{
+    "formatsExts": {
+        "typescript": [
+            "vela"
+        ],
+        "cpp": [
+            "mm"
+        ],
+        "cpp-header": [
+            "h",
+            "ipp",
+            "tpp",
+            "inl"
+        ]
+    },
+    "reporters": [
+        "console",
+        "html",
+        "json"
+    ],
+    "output": "./.cache/jscpd"
+}

@@ -80,11 +80,11 @@ func _frames(trace: ByteArray): MockSourceFrame[] {
   for (let index = 0; index < values.length; index += 5) {
     result.push(
       MockSourceFrame(
-        functionName: values[index],
-        file: values[index + 1],
-        line: values[index + 2],
-        column: values[index + 3],
-        instruction: values[index + 4]
+        functionName: values[index] as string,
+        file: values[index + 1] as string,
+        line: values[index + 2] as int,
+        column: values[index + 3] as int,
+        instruction: values[index + 4] as int
       )
     );
   }
@@ -155,13 +155,13 @@ export class MockSession {
   private matching: bool = false;
 
   constructor() {
-    this.scope = _control(5, null, null, null, null);
+    this.scope = _control(5, null, null, null, null) as int;
     if (this.scope == 0) {
       _usage('MockSession requires an executing test, setUp or tearDown');
     }
     this.identity = _control(6, () => {
       this.close();
-    }, null, null, null);
+    }, null, null, null) as int;
   }
 
   get mockSessionID(): int {
@@ -281,7 +281,7 @@ export class MockControl {
         const invocation = record.invocation;
         if (includeVerified || !record.verified) {
           const error = MockVerificationFailure('unexpected call: ${invocation.methodName} #${invocation.sequence}');
-          const details = method.report('no interactions', 1, _contract(7, null, null));
+          const details = method.report('no interactions', 1, _contract(7, null, null) as ByteArray);
           details.calls = [invocation.report()];
           error.mock = details;
           throw error;
@@ -348,7 +348,7 @@ export class MockInvocation {
     const arguments: string[] = [];
     const count = this.values.length < _reportArgumentBudget ? this.values.length : _reportArgumentBudget;
     for (let index = 0; index < count; index ++) {
-      arguments.push(_inspect(1, this.values[index]));
+      arguments.push(_inspect(1, this.values[index]) as string);
     }
     return _CallReport(
       sequence: this.order,
@@ -389,13 +389,13 @@ export class MockCall {
       _usage('wrong number of mock arguments');
     }
     this.target = method;
-    this.source = _contract(7, null, null);
+    this.source = _contract(7, null, null) as ByteArray;
     const descriptions: string[] = [];
     for (const value in arguments) {
       const capture = value is _Capture;
       if (descriptions.length < _reportArgumentBudget) {
         descriptions.push(
-          value is testing.Matcher || capture ? '<matcher>' : _inspect(1, value)
+          value is testing.Matcher || capture ? '<matcher>' : _inspect(1, value) as string
         );
       }
       this.captures.push(capture);
@@ -469,14 +469,14 @@ class _Record {
 class _Wait {
   call: MockCall;
   completion: Completer<MockInvocation> = Completer<MockInvocation>();
-  trace: ByteArray = _contract(7, null, null);
+  trace: ByteArray = _contract(7, null, null) as ByteArray;
 
   private async evaluate(invocation: MockInvocation): Future<bool> {
     return this.call.match (invocation).success;
   }
 
   observe(invocation: MockInvocation): void {
-    if (_contract(10, this.evaluate(invocation), this.completion)) {
+    if (_contract(10, this.evaluate(invocation), this.completion) as bool) {
       this.completion.complete(invocation);
     }
   }
@@ -512,7 +512,7 @@ export class MockMethod {
   constructor(control: MockControl, name: string) {
     this.owner = control;
     this.name = name;
-    this.registeredAt = _contract(7, null, null);
+    this.registeredAt = _contract(7, null, null) as ByteArray;
     control.attach(this);
   }
 
@@ -526,10 +526,10 @@ export class MockMethod {
     if (!(count is int)) {
       _usage('mock method requires a real callable signature');
     }
-    this.count = count;
-    this.voidResult = _contract(0, signature, null);
+    this.count = count as int;
+    this.voidResult = _contract(0, signature, null) as bool;
     for (let index = 0; index < this.count; index ++) {
-      const parameter: string = _contract(3, signature, index);
+      const parameter: string = _contract(3, signature, index) as string;
       this.names.set(parameter, index);
     }
   }
@@ -583,7 +583,7 @@ export class MockMethod {
 
   validateValue(value: dynamic): void {
     if (
-      this.voidResult || _inspect(0, value) == 4 || !_contract(1, this.signature, value)
+      this.voidResult || _inspect(0, value) == 4 || !(_contract(1, this.signature, value) as bool)
     ) {
       _usage('thenReturn requires a non-Future value satisfying ${this.name}');
     }
@@ -592,7 +592,7 @@ export class MockMethod {
   validateCallback(callback: dynamic, isVoid: bool): void {
     const sample = this.describe([], 0);
     if (
-      isVoid != this.voidResult || !_contract(isVoid ? 5 : 4, callback, sample) || (!isVoid && !_contract(12, this.signature, callback))
+      isVoid != this.voidResult || !(_contract(isVoid ? 5 : 4, callback, sample) as bool) || (!isVoid && !(_contract(12, this.signature, callback) as bool))
     ) {
       _usage('response must accept MockInvocation and return the required value or void');
     }
@@ -618,7 +618,7 @@ export class MockMethod {
       arguments,
       this.names,
       this.registeredAt,
-      _contract(7, null, null)
+      _contract(7, null, null) as ByteArray
     );
   }
 
@@ -839,7 +839,7 @@ export class MockStub {
   }
   thenThrow(error: dynamic): void {
     this.check();
-    if (!_contract(6, null, error)) {
+    if (!(_contract(6, null, error) as bool)) {
       _usage('thenThrow requires a throwable object');
     }
     this.commit(2, error);
@@ -900,7 +900,7 @@ export class MockVerification {
     method.control.session.check();
     this.call = call;
     this.epoch = method.historyEpoch;
-    this.source = _contract(7, null, null);
+    this.source = _contract(7, null, null) as ByteArray;
     for (const record in method.history()) {
       if (record.verified) {
         continue;
@@ -998,7 +998,7 @@ export func verifyInOrder(calls: MockCall[]): MockVerificationResult {
   }
   const selected: _Record[] = [];
   const captured: dynamic[] = [];
-  const source: ByteArray = _contract(7, null, null);
+  const source: ByteArray = _contract(7, null, null) as ByteArray;
   let sequence = 0;
   for (const call in calls) {
     const method = call.method;

@@ -84,6 +84,33 @@ TEST(JitCompilerTest, MaterializesTheCompleteImageBeforePublishingNamedEntries) 
   EXPECT_EQ(result->AsInteger(), 42);
 }
 
+TEST(JitCompilerTest, InferredGenericsExecuteInBothNativeTiers) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+    const auto compiled = CompileText(**compiler, R"(
+func identity<T>(value: T): T { return value; }
+class Box<T> { value: T; }
+export func answer(): int {
+  const operation: (int) => int = identity;
+  const box = Box(value: identity(40));
+  return box.value + operation(2);
+}
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate(1);
+    auto publication = isolate.native_dispatch().Prepare(0, compiled->image);
+    ASSERT_TRUE(publication) << publication.error().message;
+    ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*publication)));
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", "answer");
+    ASSERT_TRUE(entry);
+    const auto result = entry->Invoke({});
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->AsInteger(), 42);
+  }
+}
+
 TEST(JitCompilerTest, VirtualClassFieldsRemainRootedAcrossUnrelatedAllocations) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
