@@ -1,0 +1,10 @@
+// 使用 vela dev 启动，在控制台输入 .call next。
+// 将增量改为 10 并保存：热重载保留 count；.reload 从零重建状态。
+let count = 0;
+
+func main(): void {}
+
+export func next(): int {
+  count += 1;
+  return count;
+}

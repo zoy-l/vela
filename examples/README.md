@@ -40,6 +40,17 @@ For example:
 
 ## Other examples
 
+Run [hot_reload.vela](hot_reload.vela) in the JIT development console:
+
+```powershell
+.\out\release\vela.exe dev .\examples\hot_reload.vela
+```
+
+Enter `.call next` to get `1`. Change `count += 1` to `count += 10` and save.
+After the console reports `accepted`, `.call next` returns `11`: Hot Reload
+preserves the counter. Enter `.reload`, wait for `accepted`, then `.call next`
+returns `10`: Reload rebuilds script state and reruns `main()`. Use `.quit` to exit.
+
 ```powershell
 .\out\debug\vela.exe run examples\hello.vela
 .\out\debug\vela.exe run examples\loop.vela
