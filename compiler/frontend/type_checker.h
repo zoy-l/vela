@@ -112,7 +112,7 @@ struct GeneratedFunction final {
 };
 
 struct AsyncCallDescriptor final {
-  AsyncOperation operation;
+  AsyncOperation operation = AsyncOperation::Count;
   FunctionDescriptor signature;
   bool receiver = false;
   std::optional<TypeDescriptor> runtime_type = std::nullopt;
