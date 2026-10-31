@@ -149,9 +149,9 @@ Async APIs, scheduling, host ownership, and performance boundaries are specified
 
 ## Remaining implementation and acceptance
 
-- [ ] Destructuring declarations, assignments, loop bindings, and array/Map
-  collection spread: all D0–D5 stages in the
-  [design (Chinese)](../zh-CN/destructuring_spread.md#9-实施阶段与验收).
+- [ ] Map literals: all M0–M5 stages in the
+  [Map literal design (Chinese)](../zh-CN/destructuring_spread.md#9-实施阶段与验收).
+  Destructuring and collection spread are deferred.
 - [ ] Linux x64 and macOS arm64 AOT target support packages and clean-host release
   acceptance. A4/A5 remain incomplete; see [AOT completion criteria](aot.md#implementation-stages-and-completion-criteria).
 - [ ] Linux x64 and macOS arm64 execution validation for JIT/hot reload and class
