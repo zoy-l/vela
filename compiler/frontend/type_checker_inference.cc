@@ -332,6 +332,13 @@ bool TypeChecker::CanCheckExpression(const Expression& expression, const Type* e
               std::ranges::all_of(expression.elements, [&](const auto& element) {
                 return CanCheckExpression(*element, nullptr);
               }));
+    case Expression::Kind::MapLiteral:
+      return (expected != nullptr && expected->kind == Type::Kind::Map) ||
+             (!expression.entries.empty() &&
+              std::ranges::all_of(expression.entries, [&](const auto& entry) {
+                return entry.key && entry.value && CanCheckExpression(*entry.key, nullptr) &&
+                       CanCheckExpression(*entry.value, nullptr);
+              }));
     case Expression::Kind::Name:
       return LookupLocal(expression.text) != nullptr ||
              specializer_->FunctionTemplate(expression.text) == nullptr ||

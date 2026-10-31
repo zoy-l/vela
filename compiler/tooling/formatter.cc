@@ -205,6 +205,7 @@ bool NeedsSpace(const FormatItem& left, const FormatItem& right) {
   if (current == TokenKind::Dot || current == TokenKind::Comma || current == TokenKind::Semicolon ||
       current == TokenKind::Colon || current == TokenKind::Question ||
       current == TokenKind::RightParen || current == TokenKind::RightBracket ||
+      (current == TokenKind::RightBrace && right.role == TokenRole::MapDelimiter) ||
       right.role == TokenRole::TypeDelimiter) {
     return false;
   }
@@ -213,6 +214,7 @@ bool NeedsSpace(const FormatItem& left, const FormatItem& right) {
   }
   if (previous == TokenKind::Dot || previous == TokenKind::LeftParen ||
       previous == TokenKind::LeftBracket ||
+      (previous == TokenKind::LeftBrace && left.role == TokenRole::MapDelimiter) ||
       (previous == TokenKind::Less && left.role == TokenRole::TypeDelimiter)) {
     return false;
   }
@@ -235,6 +237,7 @@ bool NeedsSpace(const FormatItem& left, const FormatItem& right) {
 
 struct Scope final {
   TokenKind opener = TokenKind::LeftBrace;
+  TokenRole role = TokenRole::Ordinary;
   bool multiline = false;
   bool case_indented = false;
 };
@@ -249,13 +252,22 @@ class Formatter final {
     for (std::size_t index = 0; index < items.size(); ++index) {
       const auto& item = items.subspan(index).front();
       widths.at(index + 1) = widths.at(index) + item.spelling().size() + 1;
-      if (item.kind == TokenKind::LeftParen || item.kind == TokenKind::LeftBracket) {
+      if (item.kind == TokenKind::LeftParen || item.kind == TokenKind::LeftBracket ||
+          (item.kind == TokenKind::LeftBrace && item.role == TokenRole::MapDelimiter)) {
         openers.push_back(index);
-      } else if ((item.kind == TokenKind::RightParen || item.kind == TokenKind::RightBracket) &&
+      } else if ((item.kind == TokenKind::RightParen || item.kind == TokenKind::RightBracket ||
+                  (item.kind == TokenKind::RightBrace && item.role == TokenRole::MapDelimiter)) &&
                  !openers.empty()) {
         const auto opening = openers.back();
         openers.pop_back();
         multiline_.at(opening) = widths.at(index + 1) - widths.at(opening) > kContinuationWidth;
+        if (item.role == TokenRole::MapDelimiter) {
+          const auto& start = items.subspan(opening).front();
+          multiline_.at(opening) =
+              multiline_.at(opening) ||
+              source.substr(start.offset, item.offset - start.offset).contains('\n') ||
+              items.subspan(index - 1).front().kind == TokenKind::Comma;
+        }
       }
     }
   }
@@ -312,13 +324,13 @@ void Formatter::Text(std::string_view text) {
 }
 
 void Formatter::Open(const FormatItem& item, std::size_t index) {
-  const auto brace = item.kind == TokenKind::LeftBrace;
+  const auto brace = item.kind == TokenKind::LeftBrace && item.role != TokenRole::MapDelimiter;
   const auto multiline = brace || multiline_.at(index);
   if (brace) {
     Space();
   }
   Text(item.text);
-  scopes_.push_back({.opener = item.kind, .multiline = multiline});
+  scopes_.push_back({.opener = item.kind, .role = item.role, .multiline = multiline});
   if (multiline) {
     ++indent_;
     Newline();
@@ -336,7 +348,7 @@ void Formatter::Close(const FormatItem& item, TokenKind next) {
     Newline();
   }
   Text(item.text);
-  if (item.kind != TokenKind::RightBrace) {
+  if (item.kind != TokenKind::RightBrace || scope.role == TokenRole::MapDelimiter) {
     return;
   }
   switch (next) {

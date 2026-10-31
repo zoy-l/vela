@@ -214,6 +214,10 @@ void Initialization::Walk(const Expression* expression, Initialized& initialized
   for (const auto& element : expression->elements) {
     Walk(element.get(), initialized);
   }
+  for (const auto& entry : expression->entries) {
+    Walk(entry.key.get(), initialized);
+    Walk(entry.value.get(), initialized);
+  }
 }
 
 Path Initialization::Loop(const Statement& statement, Initialized initialized) {

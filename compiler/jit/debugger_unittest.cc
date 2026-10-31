@@ -312,6 +312,31 @@ TEST_P(JitDebuggerTest, DeoptimizationDoesNotRepeatAnEnteredCallOrRunTheNewCalle
             GetParam() == NativeCodeTier::Optimized);
 }
 
+TEST_P(JitDebuggerTest, MapLiteralDeoptimizationKeepsTheMapAndPendingKeyWithoutReplay) {
+  const std::string common =
+      "let calls = 0; func checkpoint(): void {} "
+      "func key(): string { calls++; return 'answer'; } "
+      "export func count(): int { return calls; } ";
+  Load(common +
+       "func item(): int { calls++; checkpoint(); return 40; } "
+       "export func caller(): int { const map = {key(): item(), 'extra': 2}; "
+       "return (map.get('answer') ?? 0) + (map.get('extra') ?? 0); }");
+  auto candidate = Prepare(common +
+                           "func item(): int { calls += 100; return 100; } "
+                           "export func caller(): int { return 0; }");
+  ASSERT_TRUE(candidate);
+  compiler::test::CheckpointPublication publication(*session_);
+  publication.Stage(std::move(*candidate));
+  paused_ = [&](const runtime::NativeDebugContext& context) { publication.AtSafepoint(context); };
+  const auto value = session_->Invoke("main.vela", "caller");
+  ASSERT_TRUE(value);
+  EXPECT_EQ(publication.result().status, DevelopmentStatus::Accepted);
+  EXPECT_EQ(value->AsInteger(), 42);
+  EXPECT_EQ(session_->Invoke("main.vela", "count")->AsInteger(), 2);
+  EXPECT_EQ(session_->isolate().native_dispatch().deoptimized_frames() != 0,
+            GetParam() == NativeCodeTier::Optimized);
+}
+
 TEST_P(JitDebuggerTest, DeoptimizationPreservesThePendingExceptionAtTheOutermostRecovery) {
   Load(
       "class Failure { value: int; } func checkpoint(): void {} "

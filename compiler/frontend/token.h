@@ -119,6 +119,7 @@ enum class TokenRole : std::uint8_t {
   TypeDelimiter,
   PrefixOperator,
   ConditionalOperator,
+  MapDelimiter,
 };
 
 // 这些关键字在成员名位置没有语法歧义，声明和成员访问使用同一规则。

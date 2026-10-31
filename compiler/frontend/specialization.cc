@@ -435,6 +435,10 @@ void Specializer::Normalize(Expression* expression, const TypeSubstitutions& sub
   for (auto& element : expression->elements) {
     Normalize(element.get(), substitutions);
   }
+  for (auto& entry : expression->entries) {
+    Normalize(entry.key.get(), substitutions);
+    Normalize(entry.value.get(), substitutions);
+  }
   for (auto& argument : expression->arguments) {
     Normalize(argument.value.get(), substitutions);
   }

@@ -24,7 +24,10 @@
     { "name": "variable.other.property.vela", "match": "(?<=\\.)[A-Za-z_][A-Za-z_0-9]*\\b" },
     { "name": "variable.other.readwrite.vela", "match": "\\b[A-Za-z_][A-Za-z_0-9]*\\b" },
     { "name": "keyword.operator.vela", "match": "=>|==|!=|<=|>=|&&|\\|\\||[+*/!<>=?-]" },
-    { "name": "punctuation.accessor.vela", "match": "\\." }
+    { "name": "punctuation.accessor.vela", "match": "\\." },
+    { "name": "punctuation.section.braces.vela", "match": "[{}]" },
+    { "name": "punctuation.separator.key-value.vela", "match": ":" },
+    { "name": "punctuation.separator.vela", "match": "," }
   ],
   "repository": {
     "comments": {

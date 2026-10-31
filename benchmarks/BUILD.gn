@@ -94,8 +94,32 @@ action("aot_native_inputs") {
 
 dasprofile_directory = "$target_gen_dir/dasprofile_native"
 dasprofile_object = "$dasprofile_directory/workload.o"
+map_literal_directory = "$target_gen_dir/map_literal_native"
+map_literal_object = "$map_literal_directory/workload.o"
 if (target_os == "win") {
   dasprofile_object = "$dasprofile_directory/workload.obj"
+  map_literal_object = "$map_literal_directory/workload.obj"
+}
+
+action("map_literal_native_inputs") {
+  testonly = true
+  script = "//tools/map_literal_benchmarks.py"
+  inputs = [ "//tools/aot_benchmarks.py" ]
+  outputs = [
+    map_literal_object,
+    "$map_literal_object.h",
+    "$map_literal_object.aot.json",
+    "$map_literal_directory/workload.vela",
+    "$map_literal_directory/entries.h",
+    "$map_literal_directory/build_metrics.json",
+  ]
+  args = [
+    "--compiler",
+    rebase_path(aot_compiler, root_build_dir),
+    "--output",
+    rebase_path(map_literal_directory, root_build_dir),
+  ]
+  deps = [ "//compiler:vela" ]
 }
 
 executable("vela_aot_benchmarks") {
@@ -115,10 +139,13 @@ executable("vela_aot_benchmarks") {
     "heap_metrics.h",
     "jit_benchmark.cc",
     "jit_benchmark.h",
+    "map_literal_benchmark.cc",
+    "map_literal_benchmark.h",
     "process_memory.h",
     "reload_benchmark.cc",
     aot_object,
     dasprofile_object,
+    map_literal_object,
   ]
   if (target_os == "win") {
     sources += [ "process_memory_win.cc" ]
@@ -137,6 +164,7 @@ executable("vela_aot_benchmarks") {
   deps = [
     ":aot_native_inputs",
     ":dasprofile_native_inputs",
+    ":map_literal_native_inputs",
     "//compiler",
     "//compiler:aot",
     "//compiler:checkpoint_publication",

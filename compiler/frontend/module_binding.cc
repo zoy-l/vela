@@ -301,6 +301,10 @@ void ModuleBinding::BindExpression(Expression* expression) {
   for (auto& element : expression->elements) {
     BindExpression(element.get());
   }
+  for (auto& entry : expression->entries) {
+    BindExpression(entry.key.get());
+    BindExpression(entry.value.get());
+  }
   for (auto& argument : expression->arguments) {
     BindExpression(argument.value.get());
   }

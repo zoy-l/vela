@@ -8,10 +8,7 @@ Vela 采用 Dart 的 JSON 值模型：解析得到原生基本值、数组和有
 
 ```vela
 func main(): void {
-  const payload: Map<string, dynamic> = Map<string, dynamic>();
-  payload.set('name', 'Vela');
-  const items: dynamic[] = [1, true, null];
-  payload.set('items', items);
+  const payload: Map<string, dynamic> = {'name': 'Vela', 'items': [1, true, null]};
 
   const text: string = Json.stringify(payload);
   const root: dynamic = Json.parse(text);
@@ -20,7 +17,7 @@ func main(): void {
 }
 ```
 
-本规格覆盖内存字符串、JSON 所需的动态类型，以及通过公开 `toJson()` 方法转换对象。不加入文件、流或网络 I/O、通用 Map 字面量、reviver、replacer、自定义转换回调或格式化选项。[字节存储与视图](byte_data.md)具有独立的类型与所有权契约。
+本规格覆盖内存字符串、JSON 所需的动态类型，以及通过公开 `toJson()` 方法转换对象。不加入文件、流或网络 I/O、reviver、replacer、自定义转换回调或格式化选项。[Map 字面量](core_language.md#map-字面量)构造同一种原生 Map，不改变 JSON 的数字、null 或业务对象转换规则；JSON 编码仍要求实际对象键都是字符串。[字节存储与视图](byte_data.md)具有独立的类型与所有权契约。
 
 ## 公开 API 与值模型
 
@@ -119,10 +116,7 @@ class User {
   age: int;
 
   toJson(): Map<string, dynamic> {
-    const result: Map<string, dynamic> = Map<string, dynamic>();
-    result.set('name', this.name);
-    result.set('age', this.age);
-    return result;
+    return {'name': this.name, 'age': this.age};
   }
 }
 

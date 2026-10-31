@@ -99,6 +99,7 @@ class Documentation final {
   void ClassDeclaration(const frontend::Class& declaration);
   void Constructor(const frontend::Class& declaration);
   void FieldDeclaration(const frontend::Field& field);
+  void Initializer(const frontend::Expression& expression);
   void Method(const frontend::Function& method);
   void Emit(Declaration declaration);
 
@@ -194,9 +195,32 @@ void Documentation::FieldDeclaration(const frontend::Field& field) {
   }
   output_ << field.name << ": " << field.type.ToString();
   if (field.initializer) {
-    output_ << " = …";
+    Initializer(*field.initializer);
   }
   output_ << ";\n";
+}
+
+void Documentation::Initializer(const frontend::Expression& expression) {
+  output_ << " = ";
+  if (expression.kind != frontend::Expression::Kind::MapLiteral) {
+    output_ << "…";
+    return;
+  }
+  const auto& tokens = source_->tokens;
+  const auto start = std::ranges::find(tokens, expression.location, &frontend::Token::location);
+  auto end = start + 1;
+  std::size_t depth = 1;
+  while (depth != 0) {
+    if (end->kind == frontend::TokenKind::LeftBrace) {
+      ++depth;
+    } else if (end->kind == frontend::TokenKind::RightBrace) {
+      --depth;
+    }
+    ++end;
+  }
+  const auto& last = *(end - 1);
+  output_ << std::string_view(source_->text)
+                 .substr(start->offset, last.offset + last.length - start->offset);
 }
 
 void Documentation::Constructor(const frontend::Class& declaration) {
@@ -221,7 +245,7 @@ void Documentation::Constructor(const frontend::Class& declaration) {
     }
     output_ << field.name << ": " << field.type.ToString();
     if (field.initializer) {
-      output_ << " = …";
+      Initializer(*field.initializer);
     }
   }
   output_ << ");\n```\n\n";
@@ -285,7 +309,8 @@ void Documentation::Emit(Declaration declaration) {
       if (!global.type.name.empty()) {
         output_ << ": " << global.type.ToString();
       }
-      output_ << " = …;\n";
+      Initializer(*global.initializer);
+      output_ << ";\n";
       break;
     }
   }

@@ -77,6 +77,10 @@ void CaptureAnalysis::Walk(const Expression* expression) {
   for (const auto& element : expression->elements) {
     Walk(element.get());
   }
+  for (const auto& entry : expression->entries) {
+    Walk(entry.key.get());
+    Walk(entry.value.get());
+  }
   for (const auto& argument : expression->arguments) {
     Walk(argument.value.get());
   }

@@ -97,7 +97,8 @@ class Parser final {
   void IndexTypeApplications();
   bool MatchTypeGreater();
   [[nodiscard]] bool IsVariableDeclaration() const;
-  std::unique_ptr<Statement> ParseBlock();
+  enum class BlockKind : std::uint8_t { Ordinary, Lambda };
+  std::unique_ptr<Statement> ParseBlock(BlockKind kind = BlockKind::Ordinary);
   std::unique_ptr<Statement> ParseStatement();
   std::unique_ptr<Statement> ParseVariableDeclaration();
   std::unique_ptr<Statement> ParseReturnStatement();
@@ -125,6 +126,7 @@ class Parser final {
   std::unique_ptr<Expression> ParsePrimary();
   [[nodiscard]] bool IsLambda() const;
   std::unique_ptr<Expression> ParseArrayLiteral();
+  std::unique_ptr<Expression> ParseMapLiteral();
   enum class LambdaParameters : std::uint8_t { Parenthesized, Single };
   std::unique_ptr<Expression> ParseLambda(LambdaParameters parameters, bool is_async = false);
   std::unique_ptr<Expression> ParseMatch();

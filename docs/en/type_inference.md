@@ -77,6 +77,25 @@ declaration. Inference variables never reach backends. Deferred checks retain
 flow facts from their source position and apply possible assignment/call effects
 at that position. Runtime evaluation remains exactly once, from left to right.
 
+## Map literal contexts
+
+An expected `Map<K, V>` passes separate contexts into every key and value,
+including aliases, nullable containers, nested empty collections, lambdas and
+generic function values. Empty `{}` can wait for another generic argument to
+supply context: `apply({}, 42)` infers int for `T` in
+`apply<T>(values: Map<string, T>, value: T): T`.
+
+Without context, nonempty literals infer keys and values independently, without
+merging int/double or defaulting to dynamic. Null does not seed inference.
+Both `const m = {}` and `const m: dynamic = {}` report
+`empty map requires an expected map type`. Heterogeneous entries require explicit
+dynamic key/value types. Container arguments remain invariant; literal contexts
+check and convert entries without converting existing containers.
+
+A lambda returning a Map directly uses `value => ({'answer': value})`;
+`=> {}` always denotes a block. Map entries and nested expressions share the
+constraint solver and flow facts. Checking never changes runtime key/value order.
+
 ## Lambda parameters
 
 An expected function type supplies the types of omitted lambda parameters by

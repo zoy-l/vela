@@ -62,6 +62,18 @@ TEST_F(ReplSessionTest, BoundedGenericMethodsAndInterfacesPersistAcrossSubmissio
   EXPECT_EQ(output().str(), "42\n42\n");
 }
 
+TEST_F(ReplSessionTest, MapDeclarationsWithoutSemicolonsPersistAcrossMultilineSubmissions) {
+  EXPECT_EQ(session().Submit("const values: Map<string, int> = {'a':").status,
+            SubmissionStatus::Incomplete);
+  Execute("const values: Map<string, int> = {'a': 40, 'b': 2}");
+  Execute("const empty: Map<string, int> = {}");
+  Execute("const make: () => Map<string, int> = () => ({'answer': 42})");
+  session().isolate().heap().Collect();
+  Execute("(values.get('a') ?? 0) + (values.get('b') ?? 0)");
+  Execute("make().get('answer')");
+  EXPECT_EQ(output().str(), "42\n42\n");
+}
+
 TEST_F(ReplSessionTest, PersistsValuesAndInitializesOnceWithoutReplayingHistory) {
   Execute("func initial(): int { print(\"once\"); return 40; }");
   Execute("let value = initial();");

@@ -5,6 +5,18 @@
 namespace vela::tooling {
 namespace {
 
+TEST(DocumentationTest, PreservesMapKeyValueSourceWithoutEvaluatingInitializers) {
+  const auto result = GenerateModuleDocumentation(R"(
+func value(): int { throw 1; }
+export const data: Map<string, int> = {'answer': value()};
+export class Box { items: Map<string, Map<string, int>> = {'inner': {'answer': 42}}; }
+)");
+  ASSERT_TRUE(result);
+  EXPECT_TRUE(result->contains("data: Map<string, int> = {'answer': value()};"));
+  EXPECT_TRUE(
+      result->contains("items: Map<string, Map<string, int>> = {'inner': {'answer': 42}};"));
+}
+
 TEST(DocumentationTest, EmitsOnlyExportsInSourceOrderAndPreservesDocComments) {
   const auto result = GenerateModuleDocumentation(R"(
 /// Shared value.

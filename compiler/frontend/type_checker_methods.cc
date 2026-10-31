@@ -76,6 +76,19 @@ void TypeChecker::PrepareInferenceReceiver(const Expression& expression) {
     }
     return;
   }
+  if (expression.kind == Expression::Kind::MapLiteral) {
+    for (const auto& entry : expression.entries) {
+      if (entry.key) {
+        PrepareInferenceReceiver(*entry.key);
+        InvalidateAssignments(*entry.key);
+      }
+      if (entry.value) {
+        PrepareInferenceReceiver(*entry.value);
+        InvalidateAssignments(*entry.value);
+      }
+    }
+    return;
+  }
   if (expression.kind == Expression::Kind::Conditional) {
     PrepareInferenceExpression(*expression.operand);
     const auto true_branch = refinements_.BeginBranch();

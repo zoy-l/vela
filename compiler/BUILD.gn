@@ -65,6 +65,7 @@ source_set("frontend") {
     "frontend/module_binding.h",
     "frontend/parser.cc",
     "frontend/parser.h",
+    "frontend/parser_collections.cc",
     "frontend/parser_declarations.cc",
     "frontend/parser_exception.cc",
     "frontend/parser_types.cc",
@@ -559,6 +560,7 @@ executable("vela_frontend_tests") {
     "frontend/diagnostic_unittest.cc",
     "frontend/generic_contract_unittest.cc",
     "frontend/generic_inference_unittest.cc",
+    "frontend/map_literal_unittest.cc",
     "frontend/parser_unittest.cc",
     "frontend/refinement_unittest.cc",
     "frontend_unittest.cc",
@@ -568,6 +570,7 @@ executable("vela_frontend_tests") {
     "tooling/file_uri_unittest.cc",
     "tooling/formatter_unittest.cc",
     "tooling/json_rpc_unittest.cc",
+    "tooling/map_literal_unittest.cc",
     "tooling/semantic_generics_unittest.cc",
     "tooling/source_text_unittest.cc",
   ]

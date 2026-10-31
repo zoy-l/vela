@@ -8,6 +8,7 @@
 
 #include "compiler/compiler.h"
 #include "compiler/program_test_support.h"
+#include "compiler/test_sources.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "vm/bytecode_image.h"
@@ -31,6 +32,7 @@ INSTANTIATE_TEST_SUITE_P(
     ProductionPaths,
     BytecodeImageExecutionTest,
     testing::Values(
+        test::kMapLiteralSource,
         "func main(): int { return 42; }",
         "func main(): int { return (4000000000 - 3999999958); }",
         "func main(): int { if (1.5 * 2.0 == 3.0) { return 42; } return 0; }",

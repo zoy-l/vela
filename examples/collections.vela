@@ -8,8 +8,7 @@ func main(): void {
     print(ordered[index]);
   }
 
-  const scores = Map<string, int>();
-  scores.set("Vela", 42);
+  const scores = {'Vela': 42, 'Dart': 40};
   const score: int? = scores.get("Vela");
   if (score != null) {
     print(score);

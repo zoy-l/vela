@@ -95,9 +95,8 @@ InputBody NormalizeBody(std::string_view source, const frontend::LexResult& lexe
   const bool block_statement = first_kind == Token::LeftBrace || first_kind == Token::If ||
                                first_kind == Token::While || first_kind == Token::For ||
                                first_kind == Token::Switch || first_kind == Token::Try;
-  const bool needs_semicolon =
-      !body.terminated && !IsBlockDeclaration(lexed.tokens) &&
-      (last_kind != Token::RightBrace || (!body.declaration && !block_statement));
+  const bool needs_semicolon = !body.terminated && !IsBlockDeclaration(lexed.tokens) &&
+                               (last_kind != Token::RightBrace || !block_statement);
   if (needs_semicolon && lexed.tokens.size() > 1) {
     const auto& last = lexed.tokens.at(lexed.tokens.size() - 2);
     body.text.insert(last.offset + last.length, 1, ';');

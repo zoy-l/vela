@@ -40,6 +40,32 @@ their union, intersection and difference through the native ordered hash tables.
 Native benchmark sources use `*_benchmark.cc`. Generated symbol-table workloads
 also measure compilation at 32, 256, and 1024 declaration groups.
 
+The `maps/` suite compares Map literals with explicit `Map()` construction and
+ordered `set` calls for empty, four-entry, 128-entry, duplicate-key, dynamic and
+nested-reference maps. The generator derives both forms from the same entry
+list and independently calculates each checksum. VM, offline AOT and both JIT
+tiers execute all twelve workloads; `maps/compile/` measures the corresponding
+source-to-code compilation, excluding creation of the reusable JIT engine.
+
+Execution timing excludes compilation and collection between invocations.
+An independent warmed invocation with automatic GC disabled reports
+`allocation_bytes`, `allocated_objects`, `sample_collection_ns`,
+`sample_collected_objects` and post-collection `retained_bytes`. These describe
+the live heap increase from one complete construction and traversal, including
+iteration snapshots. Storage already freed during geometric growth and allocator
+bookkeeping are excluded. Code, register, frame, shadow-slot and root-store
+counters use the same boundaries as the other native benchmarks. The generated
+`map_literal_native/build_metrics.json` records production offline compilation
+and object size for the complete paired module.
+
+```powershell
+python -m tools.vl build release benchmarks
+out/release/vela_aot_benchmarks.exe --benchmark_filter=^maps/ --benchmark_min_time=0.05s --benchmark_repetitions=7 --benchmark_enable_random_interleaving=true --benchmark_out=out/benchmarks/map_literals.json --benchmark_out_format=json
+```
+
+Use the executable without `.exe` on Unix. Promote aggregate evidence only after
+every registered case and correctness check passes, following the retention rules.
+
 The representative suite contains nine algorithm/application workloads at two
 sizes, each implemented in Vela, optimized C++, LuaJIT with JIT enabled, and
 LuaJIT with JIT disabled. Run `python -m tools.vl bench --compare` to save raw

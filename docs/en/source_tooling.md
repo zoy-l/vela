@@ -32,6 +32,11 @@ separately even when lexed as one compound token, as in
 `type Items<T extends Reader<int>> = T[];`. Formatting neither type checks nor executes source; files with
 unresolved imports or temporarily inconsistent types can still be formatted.
 
+Map literals keep short entries on one line and use multiple lines for existing
+line breaks, trailing commas, or long entries. Empty maps remain `{}`. Colons
+separate key/value expressions with a following space. Required lambda parentheses,
+as in `value => ({'answer': value})`, remain intact.
+
 ## API documentation
 
 `vela doc FILE OUTPUT.md` checks the complete module graph and generates Markdown
@@ -45,8 +50,8 @@ includes functions, aliases, enums, interfaces, globals, class fields and method
 generic signatures, nullable/array/function types and named construction parameters.
 Private class members are omitted. Generated constructor signatures contain only
 public instance fields; explicit constructors expose their own parameter lists.
-Default expressions
-and executable bodies are represented by `…`, never evaluated. Inferred global
+Map literal initializers preserve their original key/value structure. Other default
+expressions and executable bodies use `…`. None are evaluated. Inferred global
 annotations remain omitted, matching their source declarations.
 
 `examples/documented_library.vela` is a complete example:
@@ -69,7 +74,7 @@ negotiated text positions. Editor functionality shares the production checker
 and formatter; it does not define an alternate language grammar.
 
 The server supports initialize/shutdown/exit, open/change/close/save,
-watched-file invalidation, versioned diagnostics, completion, hover, definition lookup, type-parameter rename, document links
+watched-file invalidation, versioned diagnostics, completion, hover, definition lookup, variable and type-parameter rename, document links
 and document formatting. Full semantic tokens classify user types and built-in types,
 including constructors, annotations, import references and generic parameters.
 UTF-16 is the default protocol encoding; clients advertising UTF-8 can use
@@ -78,8 +83,9 @@ invalid edits leave text and version unchanged. Stale versions are ignored.
 
 Unused generic definitions provide parameter/bound hover, definition lookup, and
 bound-member completion. `textDocument/prepareRename` and `textDocument/rename`
-rename only the selected type parameter's declaration and references, respecting
-owner/method shadowing and references inside bounds. Invalid identifiers,
+rename the selected variable or type parameter's declaration and references,
+including variable keys across modules, owner/method shadowing and bounds.
+String keys remain data and do not participate in variable renames. Invalid identifiers,
 duplicate parameters, and changes that capture or shadow another reference are
 rejected. The server returns edits without writing files. VS Code applies them
 through **Rename Symbol** (F2) and discards replies after document changes.

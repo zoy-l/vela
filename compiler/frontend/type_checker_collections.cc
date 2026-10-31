@@ -90,6 +90,59 @@ TypeChecker::Type TypeChecker::CheckCollectionConstruction(const Expression& exp
   return type;
 }
 
+TypeChecker::Type TypeChecker::CheckMapLiteral(const Expression& expression, const Type* expected) {
+  Type key_type;
+  Type value_type;
+  if (expected != nullptr && expected->kind == Type::Kind::Map) {
+    const auto map = NonNullable(*expected);
+    const auto& arguments = generic_arguments_.at(map.name);
+    key_type = arguments.front();
+    value_type = arguments.back();
+  }
+  const auto check = [this](const Expression& item, Type& target, std::string_view role) {
+    const auto actual = CheckExpression(item, IsValid(target) ? &target : nullptr);
+    if (!IsValid(actual)) {
+      return;
+    }
+    const auto prefix = "map " + std::string(role);
+    if (actual.kind == Type::Kind::Void) {
+      AddDiagnostic(item.location, prefix + " must be a value");
+    } else if (actual.kind == Type::Kind::Null && !IsValid(target)) {
+      AddDiagnostic(item.location, "null " + prefix + " requires an expected nullable type");
+    } else if (!IsValid(target)) {
+      target = actual;
+    } else if (!CanAssign(target, actual)) {
+      AddDiagnostic(item.location, prefix + " type does not match '" + TypeNameFor(target) + "'");
+    } else {
+      RecordConversion(item, target, actual);
+    }
+  };
+  for (const auto& entry : expression.entries) {
+    if (entry.key) {
+      check(*entry.key, key_type, "key");
+    }
+    if (entry.value) {
+      check(*entry.value, value_type, "value");
+    }
+    if (!entry.key || !entry.value) {
+      AddDiagnostic(expression.location, "map entries require a key and a value");
+    }
+  }
+  if (!IsValid(key_type) || !IsValid(value_type)) {
+    if (expression.entries.empty()) {
+      AddDiagnostic(expression.location, "empty map requires an expected map type");
+    }
+    return InvalidType();
+  }
+  return ResolveGenericType({
+      .name = std::string(kMapTypeName),
+      .location = expression.location,
+      .kind = TypeName::Kind::Generic,
+      .arguments = {DescribeType(key_type), DescribeType(value_type)},
+      .parameter = {},
+  });
+}
+
 std::optional<TypeChecker::BuiltinMethod> TypeChecker::ResolveCollectionMethod(
     const Type& receiver,
     std::string_view name) {

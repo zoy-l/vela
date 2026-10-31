@@ -275,7 +275,7 @@ void LanguageServer::Rename(RpcCall call, SemanticIndex& index, std::size_t offs
     Error(call.identity, kInvalidParams, "rename requires a new name");
     return;
   }
-  const auto edits = index.RenameTypeParameter(offset, *name, encoding_);
+  const auto edits = index.RenameSymbol(offset, *name, encoding_);
   if (!edits) {
     Error(call.identity, kInvalidParams, edits.error());
     return;
@@ -283,16 +283,18 @@ void LanguageServer::Rename(RpcCall call, SemanticIndex& index, std::size_t offs
   auto response = Response(call.identity);
   auto* document = response.document();
   auto* changes = yyjson_mut_obj(document);
-  if (!edits->empty()) {
-    auto* replacements = yyjson_mut_arr(document);
-    for (const auto& edit : *edits) {
-      auto* item = yyjson_mut_obj(document);
-      AddJsonField(document, item, protocol::kRange, JsonRange(document, edit.range));
-      AddJsonField(document, item, protocol::kNewText,
-                   yyjson_mut_strncpy(document, name->data(), name->size()));
-      yyjson_mut_arr_add_val(replacements, item);
+  for (const auto& edit : *edits) {
+    const auto uri = SourceUri(edit.path);
+    auto* replacements = yyjson_mut_obj_get(changes, uri.c_str());
+    if (replacements == nullptr) {
+      replacements = yyjson_mut_arr(document);
+      AddJsonField(document, changes, uri, replacements);
     }
-    AddJsonField(document, changes, SourceUri(edits->front().path), replacements);
+    auto* item = yyjson_mut_obj(document);
+    AddJsonField(document, item, protocol::kRange, JsonRange(document, edit.range));
+    AddJsonField(document, item, protocol::kNewText,
+                 yyjson_mut_strncpy(document, name->data(), name->size()));
+    yyjson_mut_arr_add_val(replacements, item);
   }
   auto* result = yyjson_mut_obj(document);
   AddJsonField(document, result, "changes", changes);

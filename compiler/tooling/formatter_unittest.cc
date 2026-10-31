@@ -3,12 +3,28 @@
 
 #include "gtest/gtest.h"
 
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/lexer.h"
 #include "compiler/frontend/token.h"
 #include "compiler/tooling/formatter.h"
 
 namespace vela::tooling {
 namespace {
+
+TEST(FormatterTest, FormatsMapEntriesAndPreservesLambdaParenthesesIdempotently) {
+  const auto formatted = FormatSource(
+      "func main():void{const empty:Map<string,int>={};"
+      "const make:(int)=>Map<string,int>=x=>({'key':x});"
+      "const values={true?'a':'b':{'inner':[1,2]},'last':3,};"
+      "print(make(42).get('key'));}");
+  ASSERT_TRUE(formatted) << frontend::DiagnosticsText(formatted.error());
+  EXPECT_TRUE(formatted->contains("= {};"));
+  EXPECT_TRUE(formatted->contains("x => ({'key': x})"));
+  EXPECT_TRUE(formatted->contains("true ? 'a' : 'b': {'inner': [1, 2]}"));
+  const auto second = FormatSource(*formatted);
+  ASSERT_TRUE(second) << frontend::DiagnosticsText(second.error());
+  EXPECT_EQ(*second, *formatted);
+}
 
 TEST(FormatterTest, FormatsBlocksDeclarationsAndControlFlow) {
   const auto result = FormatSource(

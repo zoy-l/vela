@@ -114,6 +114,12 @@ struct CallArgument final {
   std::unique_ptr<Expression> value;
 };
 
+struct MapEntry final {
+  // 未完成的编辑器输入允许缺少一侧；具有语法诊断的 AST 不能用于执行。
+  std::unique_ptr<Expression> key;
+  std::unique_ptr<Expression> value;
+};
+
 struct Expression final {
   enum class Kind : std::uint8_t {
     IntegerLiteral,
@@ -128,6 +134,7 @@ struct Expression final {
     Call,
     Member,
     ArrayLiteral,
+    MapLiteral,
     Index,
     Lambda,
     TypeTest,
@@ -151,6 +158,7 @@ struct Expression final {
   std::unique_ptr<Expression> object;
   std::unique_ptr<Expression> index;
   std::vector<std::unique_ptr<Expression>> elements;
+  std::vector<MapEntry> entries;
   std::vector<CallArgument> arguments;
   std::unique_ptr<Function> function;
   std::vector<TypeName> type_arguments;
@@ -165,7 +173,7 @@ struct Expression final {
   }
 };
 
-// 仅枚举六个可选操作数；列表、lambda、match 的遍历和作用域由访问者处理。
+// 仅枚举六个可选操作数；元素、Map 条目、lambda、match 的遍历和作用域由访问者处理。
 template <class Node>
 [[nodiscard]] auto ExpressionOperands(Node& expression) noexcept {
   return std::array{

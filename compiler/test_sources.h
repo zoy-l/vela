@@ -4,6 +4,95 @@
 
 namespace vela::compiler::test {
 
+inline constexpr std::string_view kMapLiteralSource = R"(
+let trace = '';
+func key(value: string): string { trace += 'k' + value; return value; }
+func item(value: int): int { trace += 'v' + value; return value; }
+func pair<K, V>(key: K, value: V): Map<K, V> { return {key: value}; }
+class Box { value: int; values: Map<string, int> = {'answer': 42}; }
+enum First { key }
+enum Second { key }
+export func main(): int {
+  trace = '';
+  const ordered = {key('a'): item(1), key('b'): item(2), key('a'): item(3),};
+  if (trace != 'kav1kbv2kav3' || ordered.size != 2 || ordered.get('a') != 3 ||
+      ordered.keys().join() != 'a,b') { return 0; }
+  let changing = 'before';
+  const saved = {changing: (changing = 'after').length};
+  if (!saved.has('before') || saved.has('after')) { return 0; }
+  const empty: Map<string, int> = {};
+  const another: Map<string, int> = {};
+  const identities = {empty: 1, another: 2};
+  empty.set('changed', 1);
+  if (identities.size != 2 || another.size != 0) { return 0; }
+  const nested: Map<string, int[][]> = {'items': [[], [40, 2]]};
+  const arrays = nested.get('items');
+  if (arrays == null || arrays[0].length != 0) { return 0; }
+  const object = Box(value: 42);
+  const references = {object: 'a' + 'b'};
+  if (references.has(Box(value: 42)) || references.get(object) != 'ab') { return 0; }
+  const shared = pair('object', object);
+  object.value = 41;
+  const found = shared.get('object');
+  if (found == null || found.value != 41 || found.values.get('answer') != 42) { return 0; }
+  const erased: Map<dynamic, dynamic> = {1: 'int', 1.0: 'double', null: true,
+                                       First.key: 1, Second.key: 2};
+  if (erased.size != 5 || erased.get(1) != 'int' || erased.get(1.0) != 'double') { return 0; }
+  const infinity = 1e308 * 1e308;
+  const nan = infinity - infinity;
+  const numbers = {0.0: 1, -0.0: 2, nan: 3, -nan: 4};
+  if (numbers.size != 2 || numbers.get(0.0) != 2 || numbers.get(nan) != 4) { return 0; }
+  const nullable: Map<string?, int?> = {null: null, 'answer': 42};
+  if (!nullable.has(null)) { return 0; }
+  let captured = 0;
+  const callbacks: Map<string, () => int> = {'next': () => { captured++; return captured; }};
+  const next = callbacks.get('next');
+  if (next == null || next() != 1 || next() != 2 || captured != 2) { return 0; }
+  const growing: Map<int, string> = {};
+  for (let index = 0; index < 256; index++) { growing.set(index, '${index}'); }
+  if (growing.size != 256 || growing.get(255) != '255') { return 0; }
+  trace = '';
+  return nullable.get('answer') ?? 0;
+}
+)";
+
+inline constexpr std::string_view kMapLiteralInitializationSource = R"(
+let attempts = 0;
+class Failure {}
+func next(): int { attempts++; if (attempts == 1) { throw Failure(); } return 40; }
+const values: Map<string, int> = {'answer': next(), 'extra': 2};
+const left: Map<string, int> = {'cycle': right.get('cycle') ?? 0};
+const right: Map<string, int> = {'cycle': left.get('cycle') ?? 0};
+export func main(): int {
+  try { values.get('answer'); } catch (failure: Failure) { }
+  if (attempts != 1) { return 0; }
+  const answer = values.get('answer');
+  if (attempts != 2 || answer != 40) { return 0; }
+  try { left.get('cycle'); }
+  catch (error: Error) {
+    if (error.code == 'CyclicInitialization') { return (answer ?? 0) + (values.get('extra') ?? 0); }
+  }
+  return 0;
+}
+)";
+
+inline constexpr std::string_view kMapLiteralAsyncSource = R"(
+let calls = 0;
+async func key(value: string): Future<string> { calls++; await sleep(1); return value; }
+async func item(value: int): Future<int> { calls++; await sleep(1); return value; }
+export async func main(): Future<int> {
+  const values = {await key('answer'): await item(40), await key('answer'): await item(42)};
+  if (calls != 4 || values.size != 1) { return 0; }
+  try {
+    const bad: dynamic = 'wrong';
+    const failed = {bad as int: await item(0), 2: await item(0)};
+  } catch (error: Error) {
+    if (calls == 4) { return values.get('answer') ?? 0; }
+  }
+  return 0;
+}
+)";
+
 inline constexpr std::string_view kGenericMethodsSource = R"(
 interface Mapper<T> { map<U>(value: U, operation: (U) => T): T; }
 class MapperImpl<T> implements Mapper<T> {

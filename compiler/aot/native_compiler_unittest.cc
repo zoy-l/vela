@@ -73,6 +73,8 @@ export func main(): int {
 TEST(NativeCompilerTest, EmitsConcreteGenericMethodsAndInterfaceSelectors) {
   for (const auto source : {
            ::vela::compiler::test::kGenericMethodsSource,
+           ::vela::compiler::test::kMapLiteralSource,
+           ::vela::compiler::test::kMapLiteralAsyncSource,
            ::vela::compiler::test::kWrappedGenericMethodValuesSource,
        }) {
     const auto prepared = Prepare(source);

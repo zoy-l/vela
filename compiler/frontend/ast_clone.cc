@@ -86,6 +86,7 @@ std::unique_ptr<Expression> AstCloner::CloneExpression(const Expression* source)
   result->type_arguments.reserve(source->type_arguments.size());
   result->arms.reserve(source->arms.size());
   result->elements.reserve(source->elements.size());
+  result->entries.reserve(source->entries.size());
   result->arguments.reserve(source->arguments.size());
   result->type = CloneType(source->type);
   for (const auto& type : source->type_arguments) {
@@ -102,6 +103,12 @@ std::unique_ptr<Expression> AstCloner::CloneExpression(const Expression* source)
   result->index = CloneExpression(source->index.get());
   for (const auto& element : source->elements) {
     result->elements.push_back(CloneExpression(element.get()));
+  }
+  for (const auto& entry : source->entries) {
+    result->entries.push_back({
+        .key = CloneExpression(entry.key.get()),
+        .value = CloneExpression(entry.value.get()),
+    });
   }
   for (const auto& argument : source->arguments) {
     result->arguments.push_back({

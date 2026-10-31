@@ -78,6 +78,24 @@ TEST_F(CompilationCacheTest, HitsInFreshIsolateWithoutPersistingRuntimeState) {
   EXPECT_EQ(result.value.AsInteger(), 42);
 }
 
+TEST_F(CompilationCacheTest, MapLiteralDependenciesInvalidateAndRestoreConcreteMetadata) {
+  Write("main.vela",
+        "import 'library.vela'; func main(): int { return values().get('answer') ?? 0; }");
+  Write("library.vela", "export func values(): Map<string,int> { return {'answer':42}; }");
+  const auto first = Compile();
+  ASSERT_TRUE(first) << first.error();
+  ExpectRun(*first, kAnswer);
+  const auto cached = Compile();
+  ASSERT_TRUE(cached) << cached.error();
+  EXPECT_EQ(cached->status, CacheStatus::Hit);
+  ExpectRun(*cached, kAnswer);
+  Write("library.vela", "export func values(): Map<string,int> { return {'answer':43}; }");
+  const auto changed = Compile();
+  ASSERT_TRUE(changed) << changed.error();
+  EXPECT_EQ(changed->status, CacheStatus::Stale);
+  ExpectRun(*changed, kChangedAnswer);
+}
+
 TEST_F(CompilationCacheTest, InvalidatesChangedDependencyEvenWithSameTimestampAndSize) {
   Write("main.vela", "import 'lib'; func main(): int { return answer(); }");
   Write("lib.vela", "export func answer(): int { return 42; }");

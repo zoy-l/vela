@@ -632,93 +632,96 @@ TEST_P(JitLanguageTest, ExecutesNativeProductionPathsWithPreciseRoots) {
   EXPECT_EQ(value.AsInteger(), 42);
 }
 
-INSTANTIATE_TEST_SUITE_P(NativeSemantics,
-                         JitLanguageTest,
-                         testing::Combine(testing::Values(
-                                              R"(
+INSTANTIATE_TEST_SUITE_P(
+    NativeSemantics,
+    JitLanguageTest,
+    testing::Combine(testing::Values(
+                         R"(
 func sum(count: int): int { if (count == 0) { return 0; } return count + sum(count - 1); }
 export func main(): int { let value = 0; for (let i = 0; i < 6; i++) { value += i; }
   switch (value) { case 15: return sum(6) << 1; default: return 0; } }
 )",
-                                              ::vela::compiler::test::kRecursiveStringGcSource,
-                                              ::vela::compiler::test::kGenericAsyncMethodsSource,
-                                              ::vela::compiler::test::kUnicodeConstructionSource,
-                                              R"(
+                         ::vela::compiler::test::kRecursiveStringGcSource,
+                         ::vela::compiler::test::kGenericAsyncMethodsSource,
+                         ::vela::compiler::test::kUnicodeConstructionSource,
+                         ::vela::compiler::test::kMapLiteralSource,
+                         ::vela::compiler::test::kMapLiteralAsyncSource,
+                         ::vela::compiler::test::kMapLiteralInitializationSource,
+                         R"(
 func counter(value: int): () => int { return (): int => { value++; return value; }; }
 export func main(): int { const next = counter(40); const values: (() => int)[] = [next];
   next(); return values[0](); }
 )",
-                                              R"(
+                         R"(
 interface Reader { read(): int; }
 class Base { stored: int = 40; read(): int { return this.stored; } }
 class Child extends Base implements Reader { override read(): int { return super.read() + 2; } }
 export func main(): int { const reader: Reader = Child(); const callback = reader.read;
   return callback(); }
 )",
-                                              R"(
+                         R"(
 func same<T>(value: T): T { return value; }
 class Box<T> { private stored: T; constructor(value: T) { this.stored = value; }
   read(): T { return this.stored; } }
 type IntegerBox = Box<int>;
 export func main(): int { return same<int>(IntegerBox(42).read()); }
 )",
-                                              R"(
+                         R"(
 let count = 0;
 func initial(): int { count++; return 40; }
 const value = initial();
 export func main(): int { const first = value; return first + value - 39 + count; }
 )",
-                                              R"(
+                         R"(
 func divide(value: int, denominator: int): int { return value / denominator; }
 export func main(): int { const result = divide(84, 2);
   try { const zero = 0; return 1 / zero; }
   catch (error: Error) { return error.code == 'DivisionByZero' ? result : 0; } }
 )",
-                                              R"(
+                         R"(
 enum Shade { light, dark }
 func choose(value: int?): int { return match (value) { null => 0, let present => present }; }
 export func main(): int { const selected = Shade.dark;
   return match (selected) { Shade.light => 0, Shade.dark => choose(42) }; }
 )",
-                                              R"(
+                         R"(
 export func main(): int { const values = [1, 2, 3]; values.push(4);
   const mapped = values.map((value: int): int => value * 2);
   return mapped.reduce((sum: int, value: int): int => sum + value, 0) + 22; }
 )",
-                                              R"(
+                         R"(
 class Item { value: int; }
 export func main(): int { const key = Item(value: 40); const values = Map<Item, string>();
   values.set(key, 'ab'); const text = values.get(key);
   if (text != null && !values.has(Item(value: 40))) { return key.value + text.length; }
   return 0; }
 )",
-                                              R"(
+                         R"(
 export func main(): int { const bytes = ByteArray(length: 8); const data = ByteData.view(bytes);
   const write: (int,int) => void = data.setInt32; write(0, 42);
   return data.getInt32(0) == 42 && bytes[3] == 42 ? 42 : 0; }
 )",
-                                              R"(
+                         R"(
 export func main(): int { const root: dynamic = Json.parse('{"items":[40,2]}');
   const values: dynamic[] = root.get('items'); return (values[0] as int) + (values[1] as int); }
 )",
-                                              R"(
+                         R"(
 export func main(): int { const found = RegExp('(?<digits>[0-9]+)').firstMatch('😀42');
   if (found != null) { return int.parse(found.namedGroup('digits') ?? '0'); } return 0; }
 )",
-                                              R"(
+                         R"(
 export async func main(): Future<int> {
   const values = await Future.wait([Future.value(20), Future.delayed(1, (): int => 22)]);
   return values[0] + values[1]; }
 )",
-                                              R"(
+                         R"(
 class Failure { value: int; }
 async func failed(): Future<int> { await sleep(1); throw Failure(value: 40); }
 export async func main(): Future<int> { let value = 0;
   try { value = await failed(); } catch (error: Failure) { value = error.value; }
   finally { value += 2; } return value; }
 )"),
-                                          testing::Values(NativeCodeTier::Baseline,
-                                                          NativeCodeTier::Optimized)));
+                     testing::Values(NativeCodeTier::Baseline, NativeCodeTier::Optimized)));
 
 std::binary_semaphore& StopSignal() {
   static std::binary_semaphore signal{0};

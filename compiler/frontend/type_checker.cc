@@ -382,6 +382,8 @@ TypeChecker::Type TypeChecker::CheckExpressionType(const Expression& expression,
       return {.kind = Type::Kind::String, .name = kStringTypeName};
     case Expression::Kind::ArrayLiteral:
       return CheckArrayLiteral(expression, expected);
+    case Expression::Kind::MapLiteral:
+      return CheckMapLiteral(expression, expected);
     case Expression::Kind::Index:
       return CheckIndex(expression);
     case Expression::Kind::BooleanLiteral:

@@ -3,8 +3,10 @@
 #include <cstdint>
 #include <string>
 
+#include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -40,6 +42,30 @@ Lowerer::LoweredValue Lowerer::LowerCollectionConstruction(const frontend::Expre
       .location = expression.location,
   });
   return {.reg = result, .type = type};
+}
+
+Lowerer::LoweredValue Lowerer::LowerMapLiteral(const frontend::Expression& expression) {
+  const auto map = LowerCollectionConstruction(expression);
+  for (const auto& entry : expression.entries) {
+    const auto location = entry.key->location;
+    const auto base = AllocateRegisterWindow(BuiltinArity(Builtin::MapSet), location);
+    Emit({.opcode = Opcode::Move, .dst = base, .lhs = map.reg, .location = location});
+    const auto key = LowerExpression(*entry.key);
+    // 在值表达式执行前保存已转换的键，防止赋值、调用或 await 改变键的来源。
+    Emit({.opcode = Opcode::Move, .dst = base + 1, .lhs = key.reg, .location = location});
+    const auto value = LowerExpression(*entry.value);
+    Emit({
+        .opcode = Opcode::Move,
+        .dst = base + 2,
+        .lhs = value.reg,
+        .location = entry.value->location,
+    });
+    const auto result = AllocateTemporary(location);
+    RecordValueType(
+        result, {.kind = frontend::TypeDescriptor::Kind::Void, .name = frontend::kVoidTypeName});
+    EmitBuiltinCall(Builtin::MapSet, result, base, location);
+  }
+  return map;
 }
 
 }  // namespace vela::ir

@@ -136,9 +136,10 @@ P0 行为详见[基础语言契约](language_basics.md)。
 - [x] 原生 Class 分配消除、路径物化、可重载优化帧恢复和封闭 AOT 私有栈记录（[契约](escape_analysis.md)）。
 - [x] 项目配置、源码测试运行器、异步断言及 Mock 生成与交互验证（[契约](testing.md)）。
 
+- [x] Map 字面量，已完成[Map 字面量设计](destructuring_spread.md#9-实施阶段与验收)的 M0–M5；解构与集合展开暂不纳入。
+
 ## 剩余实现与验收
 
-- [ ] Map 字面量，完整范围为[Map 字面量设计](destructuring_spread.md#9-实施阶段与验收)的 M0–M5；解构与集合展开暂不纳入。
 - [ ] AOT 的 Linux x64、macOS arm64 目标支持包和干净主机发行验收；A4/A5 尚未全部完成，见[AOT 完成条件](aot.md#实施阶段与完成条件)。
 - [ ] JIT/热重载和 Class 逃逸优化的 Linux x64、macOS arm64 执行验证，见[热重载验证](hot_reload.md#13-验证与性能标准)及[逃逸分析验证](escape_analysis.md#9-验证与性能证据)。
 - [ ] JIT 接近封闭 AOT 的性能目标；当前测量尚未达到，见[性能证据](hot_reload.md#13-验证与性能标准)。

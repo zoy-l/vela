@@ -24,6 +24,10 @@ void WalkExpression(Node* expression, Visitor visitor, const Function* parent) {
   for (auto& element : expression->elements) {
     WalkExpression(element.get(), visitor, parent);
   }
+  for (auto& entry : expression->entries) {
+    WalkExpression(entry.key.get(), visitor, parent);
+    WalkExpression(entry.value.get(), visitor, parent);
+  }
   for (auto& argument : expression->arguments) {
     WalkExpression(argument.value.get(), visitor, parent);
   }

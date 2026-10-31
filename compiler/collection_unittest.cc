@@ -1,11 +1,19 @@
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <string_view>
 
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
 #include "compiler/program_test_support.h"
+#include "compiler/test_sources.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "runtime/native_context.h"
+#include "runtime/native_function.h"
+#include "vm/execution_status.h"
+#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -27,8 +35,8 @@ TEST_P(CollectionLanguageTest, ExecutesTypedCollectionsUnderGcPressure) {
 
 INSTANTIATE_TEST_SUITE_P(OrderedStorage,
                          CollectionLanguageTest,
-                         testing::Values(
-                             R"(
+                         testing::Values(test::kMapLiteralSource,
+                                         R"(
 func main(): int {
   const values = Set<int>();
   values.add(40); values.add(1); values.add(2); values.delete(1); values.add(1);
@@ -39,7 +47,7 @@ func main(): int {
   return 0;
 }
 )",
-                             R"(
+                                         R"(
 func main(): int {
   const values: Map<string, int> = Map();
   values.set(key: "a" + "b", value: 40);
@@ -53,7 +61,7 @@ func main(): int {
   return 0;
 }
 )",
-                             R"(
+                                         R"(
 class Item { value: int; }
 func main(): int {
   const key = Item(value: 40);
@@ -65,7 +73,7 @@ func main(): int {
   return 0;
 }
 )",
-                             R"(
+                                         R"(
 func main(): int {
   const inner = Set<int>(); inner.add(42);
   const outer = Map<string, Set<int>>(); outer.set("items", inner);
@@ -75,7 +83,7 @@ func main(): int {
   return 0;
 }
 )",
-                             R"(
+                                         R"(
 func main(): int {
   const values = Map<int?, int?>();
   values.set(null, null); values.set(40, 42);
@@ -86,7 +94,7 @@ func main(): int {
   return 0;
 }
 )",
-                             R"(
+                                         R"(
 func main(): int {
   const infinity: double = 1e308 * 1e308;
   const nan: double = infinity - infinity;
@@ -96,7 +104,7 @@ func main(): int {
   return 0;
 }
 )",
-                             R"(
+                                         R"(
 class Box { value: int; }
 func main(): int {
   const values = Map<int, Box>();
@@ -106,7 +114,7 @@ func main(): int {
   return 0;
 }
 )",
-                             R"(
+                                         R"(
 func main(): int {
   const values = Map<int, int>(); values.set(1, 9); values.set(2, 30);
   let total = 0;
@@ -117,7 +125,7 @@ func main(): int {
   return total;
 }
 )",
-                             R"(
+                                         R"(
 func main(): int {
   const values = Set<int>(); values.add(1); values.add(41);
   let total = 0;
@@ -130,6 +138,81 @@ func main(): int {
 )"));
 
 class CollectionTypeErrorTest : public testing::TestWithParam<std::string_view> {};
+
+TEST(MapLiteralTest, KeepsMapAndKeyAliveAcrossSuspensionAndFailure) {
+  runtime::Isolate isolate(1);
+  const auto program = test::CompileCleanSource(test::kMapLiteralAsyncSource, isolate);
+  ASSERT_TRUE(program) << program.error();
+  const auto result = test::ExecuteFutureInteger(*program, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
+}
+
+TEST(MapLiteralTest, GlobalLiteralInitializationRetriesAndDetectsCycles) {
+  runtime::Isolate isolate(1);
+  const auto result = test::RunInteger(test::kMapLiteralInitializationSource, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
+}
+
+std::int64_t FreezeMapHeap(runtime::NativeContext& context) noexcept {
+  auto& heap = context.isolate().heap();
+  heap.SetAllocationLimit(heap.allocated_bytes());
+  return 1;
+}
+
+TEST(MapLiteralTest, AllocationAndInsertionFailuresStopAtTheirActualBoundaries) {
+  runtime::Isolate isolate;
+  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<FreezeMapHeap>("freeze")));
+  const auto program = test::CompileCleanSource(R"(
+external func freeze(): int;
+let calls = 0;
+func key(): int { calls++; return 1; }
+func item(): int { calls++; return 42; }
+func allocate(): int { const map = {key(): item()}; return map.size; }
+func insert(): int { const map = {freeze(): item(), key(): item()}; return map.size; }
+func count(): int { return calls; }
+)",
+                                                isolate);
+  ASSERT_TRUE(program) << program.error();
+  vm::VirtualMachine machine(isolate);
+  EXPECT_EQ(machine.Execute(program->FindFunction("count")).value.AsInteger(), 0);
+  auto& heap = isolate.heap();
+  heap.Collect();
+  const auto baseline = heap.allocated_bytes();
+  heap.SetAllocationLimit(baseline);
+  const auto allocation = machine.Execute(program->FindFunction("allocate"));
+  heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
+  EXPECT_EQ(allocation.status, vm::ExecutionStatus::OutOfMemory);
+  EXPECT_EQ(machine.Execute(program->FindFunction("count")).value.AsInteger(), 0);
+  const auto insertion = machine.Execute(program->FindFunction("insert"));
+  heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
+  EXPECT_EQ(insertion.status, vm::ExecutionStatus::OutOfMemory);
+  EXPECT_EQ(machine.Execute(program->FindFunction("count")).value.AsInteger(), 1);
+  heap.Collect();
+  EXPECT_EQ(heap.allocated_bytes(), baseline);
+}
+
+TEST(MapLiteralTest, ImplicitDynamicChecksRunBeforeTheFollowingExpressions) {
+  runtime::Isolate isolate(1);
+  const auto compiled = CompileSource(R"(
+let calls = 0;
+func item(): int { calls++; return 42; }
+func checked(key: dynamic, value: dynamic): Map<int, int> { return {key: value, 2: item()}; }
+func main(): int {
+  try { checked('wrong', 42); } catch (error: Error) { }
+  if (calls != 0) { return 0; }
+  try { checked(1, 'wrong'); } catch (error: Error) { }
+  return calls == 0 ? 42 : 0;
+}
+)",
+                                      isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  ASSERT_EQ(compiled.diagnostics.size(), 2U);
+  const auto result = test::ExecuteInteger(compiled.program, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
+}
 
 TEST_P(CollectionTypeErrorTest, RejectsInvalidKeysValuesAndImplicitConversions) {
   runtime::Isolate isolate;

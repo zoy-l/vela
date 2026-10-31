@@ -686,6 +686,7 @@ class TypeChecker final : private InferenceTypeRelations {
 
   Type CheckIndex(const Expression& expression);
   Type CheckArrayLiteral(const Expression& expression, const Type* expected);
+  Type CheckMapLiteral(const Expression& expression, const Type* expected);
 
   Type CheckUnary(const Expression& expression);
   Type CheckConditional(const Expression& expression, const Type* expected);

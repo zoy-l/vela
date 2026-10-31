@@ -112,7 +112,7 @@ class SemanticIndex final {
   [[nodiscard]] std::optional<Definition> PrepareRename(std::size_t offset,
                                                         PositionEncoding encoding) const;
   [[nodiscard]] std::expected<std::vector<Definition>, std::string>
-  RenameTypeParameter(std::size_t offset, std::string_view name, PositionEncoding encoding) const;
+  RenameSymbol(std::size_t offset, std::string_view name, PositionEncoding encoding) const;
   [[nodiscard]] std::vector<ImportLink> ImportLinks(PositionEncoding encoding) const;
   [[nodiscard]] std::vector<SemanticToken> SemanticTokens(PositionEncoding encoding) const;
   [[nodiscard]] std::vector<Completion> CompleteArguments(
@@ -155,9 +155,9 @@ class SemanticIndex final {
     std::size_t symbol = 0;
     const frontend::Expression* expression = nullptr;
   };
-  struct ParameterRename final {
+  struct SymbolRename final {
     std::size_t symbol = 0;
-    std::vector<std::size_t> offsets;
+    std::vector<Key> offsets;
     std::string_view name;
   };
   struct Receiver final {
@@ -167,12 +167,12 @@ class SemanticIndex final {
   };
   [[nodiscard]] std::size_t TokenAt(SourceLocation location) const;
   [[nodiscard]] const frontend::Token* QueryToken(std::size_t offset) const;
-  [[nodiscard]] std::optional<std::size_t> TypeParameterSymbol(std::size_t offset) const;
+  [[nodiscard]] std::optional<std::size_t> RenameTarget(std::size_t offset) const;
   [[nodiscard]] Key RenamedKey(Key key,
                                const SemanticIndex& renamed,
-                               const ParameterRename& request) const;
+                               const SymbolRename& request) const;
   [[nodiscard]] bool CanPreserveReferences(const SemanticIndex& renamed,
-                                           const ParameterRename& request) const;
+                                           const SymbolRename& request) const;
   [[nodiscard]] std::string DocumentationAt(SourceLocation location) const;
   [[nodiscard]] Completion ClassCompletion(const frontend::Class& declaration) const;
   [[nodiscard]] std::string DefaultValue(const frontend::Expression& expression) const;

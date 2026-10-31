@@ -12,10 +12,7 @@ class or node-construction API.
 
 ```vela
 func main(): void {
-  const payload: Map<string, dynamic> = Map<string, dynamic>();
-  payload.set('name', 'Vela');
-  const items: dynamic[] = [1, true, null];
-  payload.set('items', items);
+  const payload: Map<string, dynamic> = {'name': 'Vela', 'items': [1, true, null]};
 
   const text: string = Json.stringify(payload);
   const root: dynamic = Json.parse(text);
@@ -26,9 +23,11 @@ func main(): void {
 
 This specification covers in-memory strings, the dynamic type needed by JSON,
 and conversion through a public `toJson()` method. It does not add file, stream,
-or network I/O; general map literals; revivers; replacers; conversion callbacks;
+or network I/O; revivers; replacers; conversion callbacks;
 or formatting options. [Byte storage and views](byte_data.md) have separate
-types and ownership contracts.
+types and ownership contracts. [Map literals](core_language.md#map-literals)
+construct the same native Maps without changing JSON number, null or business
+object conversion rules. JSON encoding still requires actual string keys.
 
 ## Public API and value model
 
@@ -212,10 +211,7 @@ class User {
   age: int;
 
   toJson(): Map<string, dynamic> {
-    const result: Map<string, dynamic> = Map<string, dynamic>();
-    result.set('name', this.name);
-    result.set('age', this.age);
-    return result;
+    return {'name': this.name, 'age': this.age};
   }
 }
 

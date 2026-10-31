@@ -53,6 +53,71 @@ bool IsConstructing(runtime::NativeContext& context) noexcept {
   return context.isolate().native_control().IsInitializing();
 }
 
+std::int64_t FreezeMapHeap(runtime::NativeContext& context) noexcept {
+  auto& heap = context.isolate().heap();
+  heap.SetAllocationLimit(heap.allocated_bytes());
+  return 1;
+}
+
+TEST_P(JitStateTest, MapLiteralAllocationAndInsertionFailuresStopWithoutPublishingPartialMaps) {
+  ASSERT_TRUE(isolate_.RegisterNative(runtime::NativeFunction::Bind<FreezeMapHeap>("freeze")));
+  const auto update = Update(R"(
+external func freeze(): int;
+let calls = 0;
+func key(): int { calls++; return 1; }
+func item(): int { calls++; return 42; }
+export func allocate(): int { const map = {key(): item()}; return map.size; }
+export func insert(): int { const map = {freeze(): item(), key(): item()}; return map.size; }
+export func count(): int { return calls; }
+)");
+  ASSERT_TRUE(update) << update.error();
+  EXPECT_EQ(Entry("count").Invoke({})->AsInteger(), 0);
+  auto& heap = isolate_.heap();
+  heap.Collect();
+  const auto baseline = heap.allocated_bytes();
+  heap.SetAllocationLimit(baseline);
+  const auto allocation = Entry("allocate").Invoke({});
+  heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
+  ASSERT_FALSE(allocation);
+  EXPECT_EQ(allocation.error(), ExecutionStatus::OutOfMemory);
+  EXPECT_EQ(Entry("count").Invoke({})->AsInteger(), 0);
+  const auto insertion = Entry("insert").Invoke({});
+  heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
+  ASSERT_FALSE(insertion);
+  EXPECT_EQ(insertion.error(), ExecutionStatus::OutOfMemory);
+  EXPECT_EQ(Entry("count").Invoke({})->AsInteger(), 1);
+  heap.Collect();
+  EXPECT_EQ(heap.allocated_bytes(), baseline);
+}
+
+TEST_P(JitStateTest, MapLiteralContinuationsKeepTheirEntriesAndGlobalsAcrossReload) {
+  const std::string common =
+      "const ready = Completer<int>(); let calls = 0; "
+      "func key(): string { calls++; return 'answer'; } "
+      "const global = {key(): 7}; "
+      "export func count(): int { return calls; } "
+      "export func stored(): int { return global.get('answer') ?? 0; } "
+      "export func release(): void { ready.complete(40); } ";
+  auto update = Update(common +
+                       "export async func start(): Future<int> { "
+                       "const map = {key(): await ready.future, 'extra': 2}; "
+                       "return (map.get('answer') ?? 0) + (map.get('extra') ?? 0); }");
+  ASSERT_TRUE(update) << update.error();
+  EXPECT_EQ(Entry("stored").Invoke({})->AsInteger(), 7);
+  const runtime::RootedValue pending(isolate_, *Entry("start").Invoke({}));
+  EXPECT_EQ(Entry("count").Invoke({})->AsInteger(), 2);
+  update = Update(common +
+                  "export async func start(): Future<int> { "
+                  "const map = {'new': 100}; return map.get('new') ?? 0; }");
+  ASSERT_TRUE(update) << update.error();
+  isolate_.heap().Collect();
+  ASSERT_TRUE(Entry("release").Invoke({}));
+  EXPECT_TRUE(test::CompletesWithInteger(isolate_, pending.value(), 42));
+  EXPECT_TRUE(test::CompletesWithInteger(isolate_, *Entry("start").Invoke({}), 100));
+  EXPECT_EQ(Entry("stored").Invoke({})->AsInteger(), 7);
+  EXPECT_EQ(Entry("count").Invoke({})->AsInteger(), 2);
+}
+
 TEST_P(JitStateTest, ParentExpansionAndReorderingKeepIdentitySlotsAndOldReaders) {
   const std::string common =
       "export func make(): Child { return Child(); } "

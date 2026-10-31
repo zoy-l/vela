@@ -419,8 +419,8 @@ names.clear();                       // void
 const count: int = names.size;
 const items: string[] = names.values();
 
-const scores: Map<string, int> = Map<string, int>();
-scores.set("Vela", 42);              // void
+const scores: Map<string, int> = {'Vela': 42};
+scores.set('Dart', 40);              // void
 const score: int? = scores.get("Vela");
 const keys: string[] = scores.keys();
 const values: int[] = scores.values();
@@ -442,6 +442,37 @@ costs O(key byte length). Capacity growth and compaction
 occasionally cost O(size). Backing allocations count toward heap pressure and
 are released by GC. Arrays are growable `T[]`; no duplicate `List<T>` container
 is introduced. See [growable arrays](arrays.md).
+
+### Map literals
+
+`{key: value}` creates an ordinary `Map<K, V>`, with trailing commas and nested
+arrays or maps. Both sides are expressions: `key` reads a variable, while `'key'`
+is a string. A `Map<K, V>` context checks each entry; otherwise key and value
+types are inferred independently without merging int/double or heterogeneous
+types. Empty `{}` requires a Map context; dynamic alone does not determine its
+arguments. Null needs an established nullable or dynamic type; void is invalid.
+
+```vela
+const names = {'language': 'Vela'};
+const empty: Map<string, int> = {};
+const payload: Map<string, dynamic> = {'name': 'Vela', 'age': 7};
+const make: (int) => Map<string, int> = value => ({'answer': value});
+```
+
+Each evaluation creates a fresh Map, then evaluates each key, checks its
+conversion, evaluates its value, checks that conversion, and inserts the entry.
+Expressions run once in source order. Duplicate keys replace values while
+retaining first insertion order, and still evaluate every expression. Failure
+stops later entries and preserves external effects. Reference values are shared
+as with `set`; const does not freeze the collection.
+
+A statement beginning with `{` and a lambda's `=> {` always open blocks. Standalone
+Map expression statements and Map lambda expression bodies require parentheses.
+`=> {}` is an empty block; `() => ({})` returns an empty Map with a Map result
+context. Leading `<K, V>{...}`, field shorthand, Set literals, destructuring and
+collection spread are unsupported. See the [Map literal design (Chinese)](../zh-CN/destructuring_spread.md)
+for execution and tooling contracts. Existing `[key, value]` bindings in Map
+iteration remain available.
 
 ## Unicode code points and graphemes
 

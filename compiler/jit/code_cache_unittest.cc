@@ -103,6 +103,30 @@ TEST_F(JitCodeCacheTest, RelocatesCachedObjectsIntoIndependentLiveBatchesAndFres
   EXPECT_EQ(right_entry->Invoke({})->AsInteger(), 42);
 }
 
+TEST_F(JitCodeCacheTest, MapLiteralLayoutsRelocateOnCacheHitInBothTiers) {
+  SetDependency(
+      "export func value(): int { const data = {'answer': 40}; "
+      "return data.get('answer') ?? 0; }");
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    const auto first = Compile(**compiler, {.tier = tier});
+    ASSERT_TRUE(first) << frontend::DiagnosticsText(first.error());
+    EXPECT_EQ(first->cache, CodeCacheStatus::Miss);
+    const auto restored = Compile(**compiler, {.tier = tier});
+    ASSERT_TRUE(restored) << frontend::DiagnosticsText(restored.error());
+    EXPECT_EQ(restored->cache, CodeCacheStatus::Hit);
+    runtime::Isolate isolate(1);
+    auto& dispatch = isolate.native_dispatch();
+    auto prepared = dispatch.Prepare(0, restored->image);
+    ASSERT_TRUE(prepared);
+    ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
+    const auto entry = dispatch.FindEntry("main.vela", "answer");
+    ASSERT_TRUE(entry);
+    EXPECT_EQ(entry->Invoke({})->AsInteger(), 42);
+  }
+}
+
 TEST_F(JitCodeCacheTest, DependencyContentsAndCompilationModesHaveDistinctCacheIdentities) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler);

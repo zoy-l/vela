@@ -1045,8 +1045,48 @@ class LanguageServerTest(CommandTestCase):
                 self.assertEqual(self.reply(messages, 'rename')['result'],
                                  {'changes': {self.uri: expected}})
                 self.assertEqual(self.reply(messages, 'prepare')['result'], expected[-1]['range'])
-                self.assertIsNone(self.reply(messages, 'ordinary')['result'])
+                self.assertIsNotNone(self.reply(messages, 'ordinary')['result'])
                 self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+
+    def test_map_literal_variable_keys_rename_without_changing_string_keys(self) -> None:
+        source = ("func main(): void { const key = 'answer'; "
+                  "const values = {key: 42, 'key': 1}; }")
+        offsets = [source.index('key ='), source.index('{key') + 1]
+        rename = self.symbol_query('rename', source, offsets[-1], 'rename')
+        rename['params']['newName'] = 'label'
+        messages = self.session([
+            self.open(source), rename,
+            self.symbol_query('definition', source, offsets[-1], 'definition'),
+            self.symbol_query('prepareRename', source, source.index("'key'") + 1, 'string'),
+            request('textDocument/formatting', {'textDocument': {'uri': self.uri}}, 'format'),
+        ])
+        expected = []
+        for offset in offsets:
+            start = self.symbol_query('', source, offset)['params']['position']
+            end = self.symbol_query('', source, offset + 3)['params']['position']
+            expected.append({'range': {'start': start, 'end': end}, 'newText': 'label'})
+        self.assertEqual(self.reply(messages, 'rename')['result'], {'changes': {self.uri: expected}})
+        self.assertEqual(self.reply(messages, 'definition')['result']['range'], expected[0]['range'])
+        self.assertIsNone(self.reply(messages, 'string')['result'])
+        formatted = self.reply(messages, 'format')['result'][0]['newText']
+        self.assertIn("{key: 42, 'key': 1}", formatted)
+        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+
+    def test_map_literal_imported_key_rename_groups_edits_by_document(self) -> None:
+        library = "export let key = 'answer';"
+        library_uri = (self.directory / 'keys.vela').as_uri()
+        source = "import 'keys.vela'; func main(): void { const map = {key: 42, 'key': 1}; }"
+        offset = source.index('{key') + 1
+        rename = self.symbol_query('rename', source, offset, 'rename')
+        rename['params']['newName'] = 'label'
+        messages = self.session([self.open(library, library_uri), self.open(source), rename])
+        expected = {}
+        for text, uri, position in ((source, self.uri, offset),
+                                    (library, library_uri, library.index('key'))):
+            start = self.symbol_query('', text, position)['params']['position']
+            end = self.symbol_query('', text, position + 3)['params']['position']
+            expected[uri] = [{'range': {'start': start, 'end': end}, 'newText': 'label'}]
+        self.assertEqual(self.reply(messages, 'rename')['result'], {'changes': expected})
 
     def test_type_parameter_rename_rejects_capture_and_invalid_names(self) -> None:
         source = 'class Value {} func use<T, U>(value: T, other: Value): T { return value; }'

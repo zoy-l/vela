@@ -60,6 +60,10 @@ bool HasAssignments(const frontend::Expression& expression) {
   }
   return std::ranges::any_of(expression.elements,
                              [](const auto& child) -> bool { return HasAssignments(*child); }) ||
+         std::ranges::any_of(expression.entries,
+                             [](const auto& entry) -> bool {
+                               return HasAssignments(*entry.key) || HasAssignments(*entry.value);
+                             }) ||
          std::ranges::any_of(expression.arms,
                              [](const auto& arm) -> bool { return HasAssignments(*arm.value); }) ||
          std::ranges::any_of(expression.arguments, [](const auto& argument) -> bool {
@@ -849,6 +853,8 @@ Lowerer::LoweredValue Lowerer::LowerExpressionValue(const frontend::Expression& 
       return LowerStringInterpolation(expression);
     case frontend::Expression::Kind::ArrayLiteral:
       return LowerArrayLiteral(expression);
+    case frontend::Expression::Kind::MapLiteral:
+      return LowerMapLiteral(expression);
     case frontend::Expression::Kind::Index:
       return LowerIndex(expression);
     case frontend::Expression::Kind::Name:

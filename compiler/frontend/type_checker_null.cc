@@ -122,6 +122,14 @@ void TypeChecker::CollectAssignments(const Expression& expression, AssignmentEff
   for (const auto& child : expression.elements) {
     CollectAssignments(*child, effects);
   }
+  for (const auto& entry : expression.entries) {
+    if (entry.key) {
+      CollectAssignments(*entry.key, effects);
+    }
+    if (entry.value) {
+      CollectAssignments(*entry.value, effects);
+    }
+  }
   for (const auto& argument : expression.arguments) {
     CollectAssignments(*argument.value, effects);
   }

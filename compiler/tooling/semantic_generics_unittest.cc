@@ -138,7 +138,7 @@ func identity<T>(value: T): T { return value; }
     return;
   }
   const auto declaration = source.find("read<T") + 5;
-  const auto edits = index.RenameTypeParameter(declaration, "Element", PositionEncoding::Utf8);
+  const auto edits = index.RenameSymbol(declaration, "Element", PositionEncoding::Utf8);
   ASSERT_TRUE(edits) << edits.error();
   ASSERT_EQ(edits->size(), 3U);
   EXPECT_EQ(edits->at(0).range.start, text->PositionAt(declaration, PositionEncoding::Utf8));
@@ -166,8 +166,7 @@ TEST(GenericSemanticTest, RenameRejectsDuplicateParametersAndReferenceCapture) {
     SCOPED_TRACE(source);
     const frontend::SourceInput input{.path = "main.vela", .text = source};
     const SemanticIndex index(input.path, std::span(&input, 1));
-    const auto renamed =
-        index.RenameTypeParameter(source.find("<T") + 1, "U", PositionEncoding::Utf8);
+    const auto renamed = index.RenameSymbol(source.find("<T") + 1, "U", PositionEncoding::Utf8);
     EXPECT_FALSE(renamed);
   }
 }
@@ -176,7 +175,7 @@ TEST(GenericSemanticTest, RenameRejectsCapturingOwnerReferencesInMethodScope) {
   const std::string source = "class Box<T> { use<U>(value: T, other: U): T { return value; } }";
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   const SemanticIndex index(input.path, std::span(&input, 1));
-  EXPECT_FALSE(index.RenameTypeParameter(source.find("<U") + 1, "T", PositionEncoding::Utf8));
+  EXPECT_FALSE(index.RenameSymbol(source.find("<U") + 1, "T", PositionEncoding::Utf8));
 }
 
 TEST(GenericSemanticTest, RenamePreservesKnownFactsWithIncompleteTrailingInput) {
@@ -184,13 +183,12 @@ TEST(GenericSemanticTest, RenamePreservesKnownFactsWithIncompleteTrailingInput) 
       "func identity<T>(value: T): T { return value; }\nfunc incomplete<T extends";
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   const SemanticIndex index(input.path, std::span(&input, 1));
-  const auto renamed =
-      index.RenameTypeParameter(source.find("<T") + 1, "Result", PositionEncoding::Utf8);
+  const auto renamed = index.RenameSymbol(source.find("<T") + 1, "Result", PositionEncoding::Utf8);
   ASSERT_TRUE(renamed) << renamed.error();
   EXPECT_EQ(renamed->size(), 3U);
-  EXPECT_FALSE(index.PrepareRename(source.find("value;"), PositionEncoding::Utf8));
+  EXPECT_TRUE(index.PrepareRename(source.find("value;"), PositionEncoding::Utf8));
   for (const std::string_view name : {"class", "T,U", "", " T", "T/*comment*/"}) {
-    EXPECT_FALSE(index.RenameTypeParameter(source.find("<T") + 1, name, PositionEncoding::Utf8));
+    EXPECT_FALSE(index.RenameSymbol(source.find("<T") + 1, name, PositionEncoding::Utf8));
   }
 }
 

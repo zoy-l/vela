@@ -233,7 +233,7 @@ void Parser::Synchronize() {
   }
 }
 
-std::unique_ptr<Statement> Parser::ParseBlock() {
+std::unique_ptr<Statement> Parser::ParseBlock(BlockKind kind) {
   const std::optional<Token> left_brace = Expect(TokenKind::LeftBrace, "expected '{'");
   if (!left_brace.has_value()) {
     return nullptr;
@@ -250,15 +250,19 @@ std::unique_ptr<Statement> Parser::ParseBlock() {
     }
     const auto start = current_;
     std::unique_ptr<Statement> statement = ParseStatement();
+    if (kind == BlockKind::Lambda && block->statements.empty() && statement &&
+        statement->kind == Statement::Kind::Expression && Check(TokenKind::Colon)) {
+      AddDiagnostic(statement->location,
+                    "map literal in a lambda expression body requires parentheses; "
+                    "use => ({'key': value})");
+    }
     if (statement) {
       block->statements.push_back(std::move(statement));
     } else if (current_ == start || !Check(TokenKind::RightBrace)) {
       Synchronize();
     }
   }
-  if (!Expect(TokenKind::RightBrace, "expected '}' after block").has_value()) {
-    return nullptr;
-  }
+  static_cast<void>(Expect(TokenKind::RightBrace, "expected '}' after block"));
   return block;
 }
 
@@ -513,10 +517,10 @@ std::unique_ptr<Statement> Parser::ParseVariableDeclaration() {
     return nullptr;
   }
   statement->expression = ParseExpression();
-  if (!statement->expression ||
-      !Expect(TokenKind::Semicolon, "expected ';' after variable declaration")) {
+  if (!statement->expression) {
     return nullptr;
   }
+  static_cast<void>(Expect(TokenKind::Semicolon, "expected ';' after variable declaration"));
   return statement;
 }
 
@@ -530,9 +534,7 @@ std::unique_ptr<Statement> Parser::ParseReturnStatement() {
       return nullptr;
     }
   }
-  if (!Expect(TokenKind::Semicolon, "expected ';' after return statement").has_value()) {
-    return nullptr;
-  }
+  static_cast<void>(Expect(TokenKind::Semicolon, "expected ';' after return statement"));
   return statement;
 }
 
@@ -906,6 +908,9 @@ std::unique_ptr<Expression> Parser::ParsePrimary() {
   if (Match(TokenKind::LeftBracket)) {
     return ParseArrayLiteral();
   }
+  if (Match(TokenKind::LeftBrace)) {
+    return ParseMapLiteral();
+  }
   if (Match(TokenKind::True) || Match(TokenKind::False)) {
     auto expression = MakeExpression(Expression::Kind::BooleanLiteral, Previous().location);
     expression->boolean_value = Previous().kind == TokenKind::True;
@@ -933,24 +938,6 @@ std::unique_ptr<Expression> Parser::ParsePrimary() {
 
   AddDiagnostic(Peek().location, "expected expression");
   return nullptr;
-}
-
-std::unique_ptr<Expression> Parser::ParseArrayLiteral() {
-  auto expression = MakeExpression(Expression::Kind::ArrayLiteral, Previous().location);
-  while (!Check(TokenKind::RightBracket) && !IsAtEnd()) {
-    auto element = ParseExpression();
-    if (!element) {
-      return nullptr;
-    }
-    expression->elements.push_back(std::move(element));
-    if (!Match(TokenKind::Comma)) {
-      break;
-    }
-  }
-  if (!Expect(TokenKind::RightBracket, "expected ']' after array literal")) {
-    return nullptr;
-  }
-  return expression;
 }
 
 std::unique_ptr<Expression> Parser::ParseMatch() {
@@ -1038,7 +1025,7 @@ std::unique_ptr<Expression> Parser::ParseLambda(LambdaParameters parameters, boo
     return nullptr;
   }
   if (Check(TokenKind::LeftBrace)) {
-    function->body = ParseBlock();
+    function->body = ParseBlock(BlockKind::Lambda);
   } else {
     auto value = ParseExpression();
     if (!value) {

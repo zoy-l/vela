@@ -11,19 +11,26 @@
 
 #include "compiler/frontend/lexer.h"
 #include "compiler/frontend/source_loader.h"
+#include "compiler/frontend/standard_environment.h"
 #include "compiler/frontend/token.h"
 #include "compiler/tooling/source_text.h"
 
 namespace vela::tooling {
 
-std::optional<std::size_t> SemanticIndex::TypeParameterSymbol(std::size_t offset) const {
+std::optional<std::size_t> SemanticIndex::RenameTarget(std::size_t offset) const {
   const auto* token = QueryToken(offset);
   if (token == nullptr) {
     return std::nullopt;
   }
   const auto reference = references_.find({0, token->offset});
-  if (reference == references_.end() ||
-      symbols_.at(reference->second.symbol).role != Symbol::Role::TypeParameter) {
+  if (reference == references_.end()) {
+    return std::nullopt;
+  }
+  const auto& symbol = symbols_.at(reference->second.symbol);
+  if ((symbol.role != Symbol::Role::TypeParameter &&
+       symbol.completion.kind != CompletionKind::Variable &&
+       symbol.completion.kind != CompletionKind::Constant) ||
+      sources_.at(symbol.key.first).path.starts_with(frontend::kStandardSourcePrefix)) {
     return std::nullopt;
   }
   return reference->second.symbol;
@@ -31,7 +38,7 @@ std::optional<std::size_t> SemanticIndex::TypeParameterSymbol(std::size_t offset
 
 std::optional<Definition> SemanticIndex::PrepareRename(std::size_t offset,
                                                        PositionEncoding encoding) const {
-  if (!TypeParameterSymbol(offset)) {
+  if (!RenameTarget(offset)) {
     return std::nullopt;
   }
   const auto& token = *QueryToken(offset);
@@ -48,19 +55,18 @@ std::optional<Definition> SemanticIndex::PrepareRename(std::size_t offset,
 
 SemanticIndex::Key SemanticIndex::RenamedKey(Key key,
                                              const SemanticIndex& renamed,
-                                             const ParameterRename& request) const {
+                                             const SymbolRename& request) const {
   const auto& symbol = symbols_.at(request.symbol);
-  if (key.first == symbol.key.first) {
-    const auto before = static_cast<std::size_t>(
-        std::ranges::lower_bound(request.offsets, key.second) - request.offsets.begin());
-    key.second = key.second + (before * request.name.size()) - (before * symbol.length);
-  }
+  const auto first = std::ranges::lower_bound(request.offsets, Key{key.first, 0});
+  const auto last = std::ranges::lower_bound(request.offsets, key);
+  const auto before = static_cast<std::size_t>(last - first);
+  key.second = key.second + (before * request.name.size()) - (before * symbol.length);
   key.first = renamed.source_ids_.at(sources_.at(key.first).path);
   return key;
 }
 
 bool SemanticIndex::CanPreserveReferences(const SemanticIndex& renamed,
-                                          const ParameterRename& request) const {
+                                          const SymbolRename& request) const {
   if (references_.size() != renamed.references_.size()) {
     return false;
   }
@@ -73,7 +79,7 @@ bool SemanticIndex::CanPreserveReferences(const SemanticIndex& renamed,
   });
 }
 
-std::expected<std::vector<Definition>, std::string> SemanticIndex::RenameTypeParameter(
+std::expected<std::vector<Definition>, std::string> SemanticIndex::RenameSymbol(
     std::size_t offset,
     std::string_view name,
     PositionEncoding encoding) const {
@@ -83,45 +89,50 @@ std::expected<std::vector<Definition>, std::string> SemanticIndex::RenameTypePar
       lexed.tokens.front().offset != 0 || lexed.tokens.front().length != name.size()) {
     return std::unexpected("new name must be a Vela identifier");
   }
-  const auto selected = TypeParameterSymbol(offset);
+  const auto selected = RenameTarget(offset);
   if (!selected) {
-    return std::unexpected("rename requires a type parameter declaration or reference");
+    return std::unexpected("rename requires a variable or type parameter declaration or reference");
   }
   const auto& symbol = symbols_.at(*selected);
-  const auto selected_identity = std::ranges::find_if(
-      type_parameter_symbols_, [&](const auto& entry) { return entry.second == *selected; });
-  for (const auto& [identity, parameter] : type_parameter_symbols_) {
-    if (parameter != *selected && symbols_.at(parameter).completion.label == name &&
-        identity.owner == selected_identity->first.owner) {
-      return std::unexpected("new name duplicates another type parameter");
+  if (symbol.role == Symbol::Role::TypeParameter) {
+    const auto selected_identity = std::ranges::find_if(
+        type_parameter_symbols_, [&](const auto& entry) { return entry.second == *selected; });
+    for (const auto& [identity, parameter] : type_parameter_symbols_) {
+      if (parameter != *selected && symbols_.at(parameter).completion.label == name &&
+          identity.owner == selected_identity->first.owner) {
+        return std::unexpected("new name duplicates another type parameter");
+      }
     }
   }
-  ParameterRename request{.symbol = *selected, .offsets = {}, .name = name};
+  SymbolRename request{.symbol = *selected, .offsets = {}, .name = name};
   for (const auto& [key, reference] : references_) {
-    if (reference.symbol == *selected && key.first == symbol.key.first) {
-      request.offsets.push_back(key.second);
+    if (reference.symbol == *selected) {
+      request.offsets.push_back(key);
     }
   }
   std::ranges::sort(request.offsets);
-  const auto& source = sources_.at(symbol.key.first);
-  std::string text(source.text.text());
-  for (const auto position : std::views::reverse(request.offsets)) {
-    text.replace(position, symbol.length, name);
+  std::vector<std::string> texts;
+  texts.reserve(sources_.size());
+  for (const auto& input : sources_) {
+    texts.emplace_back(input.text.text());
+  }
+  for (const auto& [source, position] : std::views::reverse(request.offsets)) {
+    texts.at(source).replace(position, symbol.length, name);
   }
   std::vector<frontend::SourceInput> overlays;
   overlays.reserve(sources_.size());
-  for (const auto& input : sources_) {
-    overlays.push_back(
-        {.path = input.path, .text = input.path == source.path ? text : input.text.text()});
+  for (std::size_t index = 0; index < sources_.size(); ++index) {
+    overlays.push_back({.path = sources_.at(index).path, .text = texts.at(index)});
   }
-  // 由生产绑定器重新解析改名后的身份；引用集合必须保持，避免遮蔽或捕获其它类型。
+  // 由生产绑定器重新解析改名后的身份；引用集合必须保持，避免遮蔽或捕获其它符号。
   const SemanticIndex renamed(sources_.front().path, overlays);
   if (!CanPreserveReferences(renamed, request)) {
     return std::unexpected("new name changes the binding of another reference");
   }
   std::vector<Definition> edits;
   edits.reserve(request.offsets.size());
-  for (const auto position : request.offsets) {
+  for (const auto& [source_id, position] : request.offsets) {
+    const auto& source = sources_.at(source_id);
     edits.push_back({
         .path = source.path,
         .range =

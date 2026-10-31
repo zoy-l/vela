@@ -571,6 +571,10 @@ void SemanticIndex::VisitExpression(const Expression* expression, const Scope& s
   for (const auto& element : expression->elements) {
     VisitExpression(element.get(), scope);
   }
+  for (const auto& entry : expression->entries) {
+    VisitExpression(entry.key.get(), scope);
+    VisitExpression(entry.value.get(), scope);
+  }
   const auto target = expression->callee ? references_.find(KeyAt(expression->callee->location))
                                          : references_.end();
   if (phase_ != IndexPhase::SourceTypes && expression->kind == Expression::Kind::Call) {

@@ -301,6 +301,7 @@ class Lowerer final {
   std::uint32_t RegisterCollectionType(frontend::TypeDescriptor type);
 
   LoweredValue LowerArrayLiteral(const frontend::Expression& expression);
+  LoweredValue LowerMapLiteral(const frontend::Expression& expression);
   LoweredValue LowerArrayMutation(const frontend::Expression& expression);
   LoweredValue LowerArrayAlgorithm(const frontend::Expression& expression);
   RegisterId EmitArrayCallback(RegisterId callback,

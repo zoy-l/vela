@@ -1,6 +1,6 @@
 # Map 字面量设计
 
-> 状态：待实现。本文仅定义 Vela 的 Map 字面量，包括语法、类型推导、求值顺序及编译和运行时交付。解构与集合展开暂不纳入本设计。当前 Map 仍通过 `Map<K, V>()` 和 `set` 构造，不能直接运行下列新增语法。
+> 状态：M0–M5 已实现并完成 Windows x64 验收。本文定义 Vela 的 Map 字面量，包括语法、类型推导、求值顺序及编译和运行时交付。解构与集合展开暂不纳入本设计；`Map<K, V>()` 和 `set` 仍是普通集合 API。
 
 ```vela
 const scores: Map<string, int> = {'Vela': 42, 'Dart': 40};
@@ -15,14 +15,14 @@ const data: Map<string, dynamic> = {key: 'Vela', 'age': 7};
 
 ## 1. 当前基础与支持范围
 
-| 当前实现 | 所需变化 |
+| 生产路径 | 实现契约 |
 | --- | --- |
-| [`Expression`](../../compiler/frontend/ast.h) 支持数组字面量，没有 Map 字面量节点 | 增加有序键值条目，每个键和值保留独立表达式及源范围 |
-| [`parser.cc`](../../compiler/frontend/parser.cc) 的 `{` 用于语句块、lambda 代码块等结构 | 在表达式位置解析 Map 字面量，明确区分语句块和表达式 |
-| Map 已支持显式构造、键值类型和有序 `set` | 字面量复用同一类型、构造和插入契约 |
+| [`Expression`](../../compiler/frontend/ast.h) 的 `MapLiteral` 和有序 `MapEntry` | 键和值保留独立表达式与源码位置，源范围来自同一词法快照 |
+| [`parser_collections.cc`](../../compiler/frontend/parser_collections.cc) 与 [`parser.cc`](../../compiler/frontend/parser.cc) | 表达式位置解析 Map，lambda 与语句块保持独立语法，未完成条目保留已知部分 |
+| Map 显式构造、键值类型和有序 `set` | 字面量复用同一类型、构造和插入契约 |
 | [`SemanticModel`](../../compiler/frontend/type_checker.h) 发布表达式类型、调用与转换事实 | 发布字面量的具体 Map 类型和各条目的受检查转换 |
-| IR 与后端已有集合构造和 Map 写入路径 | 按源码顺序生成构造、键求值、值求值和插入 |
-| 格式化、语义索引、文档工具和 REPL 遍历已有表达式 | 接通键值表达式遍历、格式化及未完成输入恢复 |
+| IR 与后端的集合构造和 Map 写入路径 | 按源码顺序生成构造、键求值、值求值和插入，显式记录写入操作的 void 结果类型 |
+| 格式化、语义索引、文档工具和 REPL | 遍历键值表达式，保留 lambda 括号、文档键值结构及未完成输入，变量改名按模块返回编辑 |
 
 Map 字面量可用于初始化器、赋值右侧、实参、返回值、字段默认值及其它接受表达式的位置，支持嵌套 Map 和数组值。它不创建匿名 class 或独立的 JSON 对象类型。
 
@@ -174,7 +174,11 @@ Release 基准覆盖空、小型和大型 Map 字面量、重复键、动态键�
 
 构造 n 个条目应使用现有哈希索引与几何扩容，插入成本均摊 O(n)；字符串键另计其哈希读取的字节数。不接受通过反复复制累计结果形成的 O(n²) 构造路径。
 
-实现完成时同步更新中英文 [`core_language.md`](core_language.md)、[`json.md`](json.md)、[类型推导](type_inference.md)、[源码工具](source_tooling.md)及示例。JSON 继续映射为原生数组和 Map，字面量不改变 JSON 数字、null 或业务对象构造语义。设计阶段保留其它文档对当前实现的描述。
+中英文 [`core_language.md`](core_language.md)、[`json.md`](json.md)、[类型推导](type_inference.md)、[源码工具](source_tooling.md)及集合示例已同步。JSON 继续映射为原生数组和 Map，字面量不改变 JSON 数字、null 或业务对象构造语义。
+
+Windows x64 验收覆盖 Debug、Release 各 2,199 个 C++ 测试，182 个工具与独立发行测试、445 个 AOT/VM 程序对照，以及 659 个 C++ 文件的静态检查。原生宿主验证包括真实分配/插入失败和具体 Map 类型通过公开 ABI 的生命周期与类型边界。
+
+[`maps/` Release 基准](../../benchmarks/README.md)覆盖六种形状、两种写法、四个执行配置的编译与执行，共 96 个用例，各重复 7 次。[滚动汇总](../../benchmarks/results/rolling_summary.json)保留命令、源码身份、中位数、波动和计数器。字面量与等价 API 写法的执行侧采样分配、寄存器/帧及根槽指标一致，VM/JIT 报告的执行代码规模也一致，回收后的额外存活量均为零。单独编译的 AOT 对象包含源码等元数据，大小比约为 0.977–1.000。执行耗时比为约 0.915–1.259；最短用例的波动较大，不据此宣称速度优势。分配字节表示禁用自动 GC 的单次执行所增加的活跃堆存储，包含遍历快照，不包含扩容中已释放的旧存储或分配器记账。
 
 ## 10. 参考
 
