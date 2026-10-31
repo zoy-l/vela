@@ -46,7 +46,8 @@ using frontend::DiagnosticsText;
 using test::CompileText;
 
 double HostSquareRoot(double value) noexcept {
-  return value + 40.0;
+  constexpr double kHostOverrideOffset = 40.0;
+  return value + kHostOverrideOffset;
 }
 
 TEST(JitCompilerTest, SquareRootIntrinsicPreservesFloatingPointErrorsAndHostOverrides) {

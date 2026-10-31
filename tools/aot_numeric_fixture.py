@@ -1,4 +1,4 @@
-"""AOT numeric conversion boundaries and failure roots without VM execution."""
+"""AOT numeric conversion boundaries and failure roots in standalone execution."""
 
 SOURCE = """
 func truncate(value: double): int { return value.toInt(); }

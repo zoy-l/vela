@@ -149,7 +149,7 @@ def compiler_build_identity() -> str:
              ROOT / "third_party" / "BUILD.gn"}
     paths.update({ROOT / "third_party/unicode_data/manifest.json", ROOT / "tools/unicode_case.py"})
     paths.update((ROOT / "third_party").glob("*.gni"))
-    for directory in ("base", "compiler", "runtime", "vm", "build"):
+    for directory in ("base", "compiler", "runtime", "build"):
         paths.update(path for path in (ROOT / directory).rglob("*")
                      if path.suffix in {".h", ".cc", ".gn", ".gni"}
                      and not path.name.endswith("_unittest.cc"))

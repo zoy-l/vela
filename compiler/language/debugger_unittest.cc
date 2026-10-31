@@ -34,7 +34,13 @@ class CallbackDebugger final : public runtime::NativeDebugger {
     isolate_->native_control().SetDebugger(this);
   }
   ~CallbackDebugger() override { isolate_->native_control().SetDebugger(nullptr); }
-  void AtSafepoint(const runtime::NativeDebugContext& context) noexcept override { callback_(context); }
+  CallbackDebugger(const CallbackDebugger&) = delete;
+  CallbackDebugger& operator=(const CallbackDebugger&) = delete;
+  CallbackDebugger(CallbackDebugger&&) = delete;
+  CallbackDebugger& operator=(CallbackDebugger&&) = delete;
+  void AtSafepoint(const runtime::NativeDebugContext& context) noexcept override {
+    callback_(context);
+  }
 
  private:
   runtime::Isolate* isolate_;
@@ -63,7 +69,10 @@ void CollectAndCheckFrame(const runtime::NativeDebugContext& context,
   EXPECT_FALSE(frame.ReadRegister(frame.register_count()));
   for (const auto& [index, text] : strings) {
     const auto value = frame.ReadRegister(index);
-    ASSERT_TRUE(value && value->IsString());
+    if (!value) {
+      FAIL() << "live string register disappeared after collection";
+    }
+    ASSERT_TRUE(value->IsString());
     EXPECT_EQ(value->AsString()->value(), text);
   }
 }
@@ -76,7 +85,8 @@ async func main(): Future<int> {
   await 0;
   return await Future.value(40).then(transform);
 }
-)", isolate);
+)",
+                                                 isolate);
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   bool saw_transform = false;
   CallbackDebugger debugger(isolate, [&](const runtime::NativeDebugContext& context) {
@@ -98,7 +108,8 @@ func main(): int {
   const text = ["a", "b"].join("");
   return work(text) + 39;
 }
-)", isolate);
+)",
+                                                 isolate);
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   std::vector<std::string> frames;
   CallbackDebugger debugger(isolate, [&](const runtime::NativeDebugContext& context) {
@@ -123,7 +134,8 @@ func main(): int {
   const values: dynamic[] = Json.parse(text);
   return read() == values[0] && text == '[42,true,null]' ? 42 : 0;
 }
-)", isolate);
+)",
+                                                 isolate);
   ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   std::vector<std::string> frames;
   CallbackDebugger debugger(isolate, [&](const runtime::NativeDebugContext& context) {
@@ -143,7 +155,8 @@ func child(): int {
 func main(): int {
   return child();
 }
-)", isolate);
+)",
+                                                 isolate);
   ASSERT_TRUE(compiled.Succeeded());
   bool stopped_in_child = false;
   CallbackDebugger debugger(isolate, [&](const runtime::NativeDebugContext& context) {
@@ -173,18 +186,22 @@ TEST(DebuggerTest, StoppingAnInitializerResetsItsStateAndTerminatesTheRun) {
 func initialize(): int { print("once"); return 42; }
 let value = initialize();
 func main(): int { return value; }
-)", isolate);
+)",
+                                                 isolate);
   ASSERT_TRUE(compiled.Succeeded());
   {
     CallbackDebugger debugger(isolate, [](const runtime::NativeDebugContext& context) {
-      if (context.top_frame().name() == "initialize") { context.RequestStop(); }
+      if (context.top_frame().name() == "initialize") {
+        context.RequestStop();
+      }
     });
     EXPECT_EQ(test::Execute(*compiled.instance).status, ExecutionStatus::ExecutionStopped);
   }
   EXPECT_TRUE(output.str().empty());
   const auto& state = runtime::Heap::NativeProgram(*compiled.instance->state().front().AsObject());
-  const auto states = std::span(state.global_states,
-                               static_cast<std::size_t>(compiled.instance->image().global_initializers.size));
+  const auto states =
+      std::span(state.global_states,
+                static_cast<std::size_t>(compiled.instance->image().global_initializers.size));
   EXPECT_TRUE(std::ranges::none_of(states, [](auto value) {
     return value == runtime::NativeProgramState::GlobalState::Initializing;
   }));
@@ -208,9 +225,11 @@ func main(): int {
   catch (error: Failure) { return error.value; }
   finally { const text = ["allocated", "here"].join(" "); }
 }
-)", isolate);
+)",
+                                                 isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  CallbackDebugger debugger(isolate, [&](const runtime::NativeDebugContext&) { isolate.heap().Collect(); });
+  CallbackDebugger debugger(isolate,
+                            [&](const runtime::NativeDebugContext&) { isolate.heap().Collect(); });
   ExpectAnswer(*compiled.instance);
 }
 
@@ -220,7 +239,8 @@ TEST(DebuggerTest, DebugsAnImageAfterItsCompilerAndOriginalInstanceAreDestroyed)
   ASSERT_TRUE(compiled.Succeeded());
   runtime::Isolate isolate(1);
   auto instance = runtime::NativeInstance::Instantiate(
-      isolate, runtime::Heap::NativeProgram(*compiled.instance->state().front().AsObject()).image_owner);
+      isolate,
+      runtime::Heap::NativeProgram(*compiled.instance->state().front().AsObject()).image_owner);
   ASSERT_TRUE(instance);
   compiled.instance.reset();
   producer.heap().Collect();
@@ -242,7 +262,8 @@ TEST(DebuggerTest, ValidatesEntriesBeforeCallingTheObserver) {
             ExecutionStatus::InvalidEntry);
   const auto required = compiled.instance->FindFunction("required");
   ASSERT_TRUE(required);
-  EXPECT_EQ(runtime::ExecuteNativeFunction(*compiled.instance, *required).status, ExecutionStatus::TypeError);
+  EXPECT_EQ(runtime::ExecuteNativeFunction(*compiled.instance, *required).status,
+            ExecutionStatus::TypeError);
   EXPECT_EQ(instructions, 0U);
 }
 

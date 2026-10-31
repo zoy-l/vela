@@ -24,7 +24,7 @@ class Timer;
 class CancellationToken;
 struct TypeSignature;
 struct HeapObject;
-// Isolate 持有的名义接口身份；不占用可分配类的字节码索引。
+// Isolate 持有的名义接口身份；不占用可分配类的布局索引。
 struct InterfaceType final {};
 // 同一增量会话共享代码身份；函数编号只在该身份内有意义。
 struct CodeIdentity final {};

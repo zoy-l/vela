@@ -101,7 +101,7 @@ std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
   auto* items = input.AsObject();
   auto roots = std::to_array({Value::Null(), Value::Null()});
   RootRange root_range(heap, roots.data(), roots.size(), RootOwner::Runtime);
-  // 外部字节码可能复用 receiver；先快照，避免后缀移动覆盖待插入值。
+  // 输入可能复用 receiver；先快照，避免后缀移动覆盖待插入值。
   if (items == &array) {
     const auto copy = heap.SliceArray(array, 0, *length);
     if (!copy) {

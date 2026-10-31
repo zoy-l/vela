@@ -23,21 +23,18 @@
 namespace vela::runtime {
 namespace {
 
-std::expected<Value, ExecutionStatus> ExpandTrace(Heap& heap, Value source, Value output) {
-  const auto frames = ReadTestTrace(source);
-  if (!frames || !output.IsObject()) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  auto& array = *output.AsObject();
+std::expected<Value, ExecutionStatus> ExpandTrace(Heap& heap,
+                                                  std::span<const FutureTraceFrame> frames,
+                                                  HeapObject& array) {
   const auto* layout = Heap::ArrayTypeOf(array);
   if (layout == nullptr || !layout->element.dynamic) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   constexpr std::size_t kFrameWidth = 5;
-  if (!heap.ReserveArray(array, *Heap::ArrayLength(array) + (frames->size() * kFrameWidth))) {
+  if (!heap.ReserveArray(array, *Heap::ArrayLength(array) + (frames.size() * kFrameWidth))) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  for (const auto& frame : *frames) {
+  for (const auto& frame : frames) {
     for (const auto& text : {frame.function, frame.source_path}) {
       auto* string = heap.AllocateString(text);
       if (string == nullptr) {
@@ -111,19 +108,15 @@ bool IsResponseCompatible(const NativeInstance& instance,
 
 std::expected<Value, ExecutionStatus> Inspect(NativeExecution& execution,
                                               MockOperation operation,
-                                              Value signature_value,
+                                              const NativeCallableContract& contract,
                                               Value value) {
   const auto& instance = execution.instance();
-  const auto contract = InspectNativeCallable(instance, signature_value);
-  if (!contract) {
-    return Value::Boolean(false);
-  }
-  const auto parameters = contract->parameters;
-  const auto& signature = *contract->signature;
-  const auto types = contract->types;
+  const auto parameters = contract.parameters;
+  const auto& signature = *contract.signature;
+  const auto types = contract.types;
   switch (operation) {
     case MockOperation::AcceptsResponseSignature:
-      return Value::Boolean(IsResponseCompatible(instance, *contract, value));
+      return Value::Boolean(IsResponseCompatible(instance, contract, value));
     case MockOperation::IsVoid:
       return Value::Boolean(!signature.result);
     case MockOperation::AcceptsReturn:
@@ -137,7 +130,8 @@ std::expected<Value, ExecutionStatus> Inspect(NativeExecution& execution,
         return std::unexpected(ExecutionStatus::TypeError);
       }
       const auto index = static_cast<std::size_t>(value.AsInteger());
-      auto* name = execution.isolate().heap().AllocateString(parameters.subspan(index).front().name);
+      auto* name =
+          execution.isolate().heap().AllocateString(parameters.subspan(index).front().name);
       return name != nullptr ? std::expected<Value, ExecutionStatus>(Value::String(name))
                              : std::unexpected(ExecutionStatus::OutOfMemory);
     }
@@ -145,7 +139,7 @@ std::expected<Value, ExecutionStatus> Inspect(NativeExecution& execution,
     case MockOperation::AcceptsVoidAnswer: {
       const auto valid_result = operation == MockOperation::AcceptsAnswer
                                     ? signature.result.has_value()
-                                    : !signature.result && !contract->is_async;
+                                    : !signature.result && !contract.is_async;
       const auto valid_parameters =
           !parameters.empty() &&
           Heap::IsValueOfType(value, types.subspan(parameters.front().type).front()) &&
@@ -176,7 +170,8 @@ std::expected<Value, ExecutionStatus> ExecuteNativeMock(NativeExecution& executi
   }
   if (operation <= MockOperation::AcceptsVoidAnswer ||
       operation == MockOperation::AcceptsResponseSignature) {
-    return Inspect(execution, operation, signature_value, value);
+    const auto contract = InspectNativeCallable(execution.instance(), signature_value);
+    return contract ? Inspect(execution, operation, *contract, value) : Value::Boolean(false);
   }
   auto& isolate = execution.isolate();
   if (operation == MockOperation::CaptureTrace) {
@@ -184,7 +179,11 @@ std::expected<Value, ExecutionStatus> ExecuteNativeMock(NativeExecution& executi
                             execution.Diagnostic(ExecutionStatus::Returned, {}).stack_trace);
   }
   if (operation == MockOperation::ResolveTrace) {
-    return ExpandTrace(isolate.heap(), signature_value, value);
+    const auto frames = ReadTestTrace(signature_value);
+    if (!frames || !value.IsObject()) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    return ExpandTrace(isolate.heap(), *frames, *value.AsObject());
   }
   if (operation == MockOperation::RegisterFailure) {
     if (!signature_value.IsInteger() || signature_value.AsInteger() < 0 ||

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <span>
 
 #include "base/builtin.h"
@@ -47,6 +48,38 @@ std::uint8_t StoreObject(NativeValue* destination, HeapObject* object) noexcept 
   }
   *destination = EncodeNativeValue(Value::Object(object));
   return Status(ExecutionStatus::Returned);
+}
+
+std::expected<Value, ExecutionStatus> ExecuteNativeDate(NativeExecution& execution,
+                                                        Builtin builtin,
+                                                        std::span<const Value> arguments) {
+  const ClassLayout* layout = nullptr;
+  if (builtin == Builtin::DateToUTC) {
+    const auto index = static_cast<std::size_t>(arguments.subspan(1).front().AsInteger());
+    layout = execution.instance().layouts().classes.at(index);
+  }
+  const auto result = ExecuteDateBuiltin(builtin, arguments, execution.isolate().heap(), layout);
+  if (!result) {
+    const auto& error = result.error();
+    return std::unexpected(execution.HandleFailure(error.status, error.message));
+  }
+  return *result;
+}
+
+std::expected<Value, ExecutionStatus> ExecuteNativeRegExp(NativeExecution& execution,
+                                                          Builtin builtin,
+                                                          std::span<const Value> arguments) {
+  const ArrayLayout* layout = nullptr;
+  if (HasRegExpArrayLayout(builtin)) {
+    const auto index = static_cast<std::size_t>(arguments.back().AsInteger());
+    layout = execution.instance().layouts().arrays.at(index);
+  }
+  const auto result = ExecuteRegExpBuiltin(builtin, arguments, execution.isolate().heap(), layout);
+  if (!result) {
+    const auto& error = result.error();
+    return std::unexpected(execution.HandleFailure(error.status, error.message));
+  }
+  return *result;
 }
 
 }  // namespace
@@ -170,24 +203,10 @@ extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
     return StoreNativeResult(result, ExecuteNativeJson(*execution, builtin, decoded.front()));
   }
   if (builtin >= Builtin::DateParse && builtin <= Builtin::DateToUTC) {
-    const ClassLayout* layout = nullptr;
-    if (builtin == Builtin::DateToUTC) {
-      const auto index = static_cast<std::size_t>(decoded.subspan(1).front().AsInteger());
-      layout = execution->instance().layouts().classes.at(index);
-    }
-    const auto value = ExecuteDateBuiltin(builtin, decoded, heap, layout);
-    return value ? StoreNativeResult(result, *value)
-                 : Status(execution->HandleFailure(value.error().status, value.error().message));
+    return StoreNativeResult(result, ExecuteNativeDate(*execution, builtin, decoded));
   }
   if (IsRegExpBuiltin(builtin)) {
-    const ArrayLayout* layout = nullptr;
-    if (HasRegExpArrayLayout(builtin)) {
-      const auto index = static_cast<std::size_t>(decoded.back().AsInteger());
-      layout = execution->instance().layouts().arrays.at(index);
-    }
-    const auto value = ExecuteRegExpBuiltin(builtin, decoded, heap, layout);
-    return value ? StoreNativeResult(result, *value)
-                 : Status(execution->HandleFailure(value.error().status, value.error().message));
+    return StoreNativeResult(result, ExecuteNativeRegExp(*execution, builtin, decoded));
   }
   if (builtin == Builtin::BindRuntimeType || builtin == Builtin::CheckFuturePayload) {
     const auto value = decoded.front();

@@ -7,17 +7,17 @@
 #include <string>
 #include <string_view>
 
+#include <memory>
+#include <utility>
 #include "base/file.h"
+#include "base/path.h"
 #include "base/testing/directory.h"
-#include "compiler/test_support/program_test_support.h"
 #include "compiler/development/development_files.h"
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
-#include "base/path.h"
-#include <memory>
-#include <utility>
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/repl/repl_source.h"
+#include "compiler/test_support/program_test_support.h"
 #include "gtest/gtest.h"
 
 #include "runtime/heap/heap.h"
@@ -42,7 +42,8 @@ class ReplLanguageTest : public ::vela::test::DirectoryTest {
     const auto entry = PathText(directory() / "__repl_host__.vela");
     Write("__repl_host__.vela", "func main(): void {}");
     runtime::Isolate bindings;
-    ASSERT_TRUE(bindings.RegisterNative(runtime::NativeFunction::Bind<PersistentHostAnswer>("host.answer")));
+    ASSERT_TRUE(bindings.RegisterNative(
+        runtime::NativeFunction::Bind<PersistentHostAnswer>("host.answer")));
     DevelopmentOptions options;
     options.gc_threshold = 1;
     auto created = DevelopmentSession::Create(entry, bindings.FreezeBindings(), options);
@@ -57,7 +58,8 @@ class ReplLanguageTest : public ::vela::test::DirectoryTest {
     ASSERT_TRUE(candidate);
     (void)session_->Submit(std::move(*candidate));
     ASSERT_EQ(session_->Pump().status, DevelopmentStatus::Accepted);
-    repl_ = std::make_unique<DevelopmentRepl>(*session_, PathText(directory() / "__vela_repl__.vela"));
+    repl_ =
+        std::make_unique<DevelopmentRepl>(*session_, PathText(directory() / "__vela_repl__.vela"));
   }
   void Write(std::string_view name, std::string_view text) {
     ASSERT_TRUE(WriteFileAtomically(directory() / name, std::as_bytes(std::span(text))));
@@ -68,7 +70,8 @@ class ReplLanguageTest : public ::vela::test::DirectoryTest {
       EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error) << diagnostic.message;
     }
     if (result.update) {
-      EXPECT_FALSE(frontend::HasErrors(result.update->diagnostics)) << frontend::DiagnosticsText(result.update->diagnostics);
+      EXPECT_FALSE(frontend::HasErrors(result.update->diagnostics))
+          << frontend::DiagnosticsText(result.update->diagnostics);
     }
     EXPECT_EQ(result.status, SubmissionStatus::Executed)
         << (result.runtime_diagnostic ? result.runtime_diagnostic->message : "");
@@ -279,8 +282,9 @@ TEST_F(ReplLanguageTest, FailedCompilationRollsBackStateAndLayoutAllocations) {
   Execute("let value = 40;");
   const auto before = session().isolate().layout_counts();
   const auto old_source = std::string(repl().source());
-  const std::string bad = "class Pending { field: int = 0; } "
-                          "func construct(): int { const value = Pending(); return false; }";
+  const std::string bad =
+      "class Pending { field: int = 0; } "
+      "func construct(): int { const value = Pending(); return false; }";
   EXPECT_EQ(repl().Submit(bad).status, SubmissionStatus::Rejected);
   EXPECT_EQ(session().isolate().layout_counts(), before);
   EXPECT_EQ(repl().source(), old_source);
@@ -305,12 +309,15 @@ TEST_F(ReplLanguageTest, MapsHistoricalFunctionsAndCurrentCallerToSubmissionLoca
   Execute("func fail(): int {\n  return 1 / 0;\n}");
   const auto failed = repl().Submit("fail()");
   ASSERT_EQ(failed.status, SubmissionStatus::RuntimeError);
-  ASSERT_TRUE(failed.runtime_diagnostic);
-  ASSERT_EQ(failed.runtime_diagnostic->stack_trace.size(), 2U);
-  EXPECT_EQ(failed.runtime_diagnostic->stack_trace.front().source_path, "<repl:1>");
-  EXPECT_EQ(failed.runtime_diagnostic->stack_trace.front().line, 2U);
-  EXPECT_EQ(failed.runtime_diagnostic->stack_trace.back().source_path, "<repl:2>");
-  EXPECT_EQ(failed.runtime_diagnostic->stack_trace.back().line, 1U);
+  if (!failed.runtime_diagnostic) {
+    FAIL() << "runtime failure did not include a diagnostic";
+  }
+  const auto& trace = failed.runtime_diagnostic->stack_trace;
+  ASSERT_EQ(trace.size(), 2U);
+  EXPECT_EQ(trace.front().source_path, "<repl:1>");
+  EXPECT_EQ(trace.front().line, 2U);
+  EXPECT_EQ(trace.back().source_path, "<repl:2>");
+  EXPECT_EQ(trace.back().line, 1U);
 }
 
 TEST_F(ReplLanguageTest, IncompleteInputAndResetHaveNoEffects) {

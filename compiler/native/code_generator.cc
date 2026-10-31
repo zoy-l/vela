@@ -195,6 +195,66 @@ llvm::Function* AddResumeEntry(llvm::Module& module,
   return llvm::Function::Create(type, llvm::GlobalValue::InternalLinkage, symbol, module);
 }
 
+struct FunctionDeclarations final {
+  std::vector<GeneratedFunction> baseline;
+  std::vector<GeneratedFunction> optimized;
+  std::vector<std::optional<ir::ClassId>> borrowable;
+};
+
+std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
+    llvm::Module& module,
+    const ir::Program& program,
+    const std::string& module_name,
+    NativeCodeTier tier,
+    std::span<const std::optional<BorrowedFunction>> borrows) {
+  FunctionDeclarations declarations;
+  auto& generated = declarations.baseline;
+  auto& optimized = declarations.optimized;
+  auto& borrowable = declarations.borrowable;
+  const auto count = program.functions.size();
+  generated.reserve(count);
+  optimized.reserve(count);
+  borrowable.resize(count);
+  auto& context = module.getContext();
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto& function = program.functions.at(index);
+    const auto body_type = BodySignature(module, function);
+    if (!body_type) {
+      return std::unexpected(MakeDiagnostics(program, body_type.error(), &function));
+    }
+    auto* body = llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
+                                        module_name + "_body_" + std::to_string(index), module);
+    auto* pointer = llvm::PointerType::getUnqual(context);
+    auto* wrapper_type = llvm::FunctionType::get(
+        llvm::Type::getInt8Ty(context),
+        {pointer, pointer, llvm::Type::getInt64Ty(context), pointer}, false);
+    const auto symbol = module_name + "_entry_" + std::to_string(index);
+    auto* entry =
+        llvm::Function::Create(wrapper_type, llvm::GlobalValue::InternalLinkage, symbol, module);
+    auto* resume =
+        AddResumeEntry(module, function, module_name + "_resume_" + std::to_string(index));
+    GeneratedFunction baseline{.body = body, .entry = entry, .resume = resume};
+    auto current = baseline;
+    if (tier == NativeCodeTier::Optimized && function.native_symbol.empty()) {
+      current = AddRecoveryEntries(module, module_name + '_' + std::to_string(index), baseline);
+    }
+    if (CanInlineSmallFunction(function)) {
+      body->addFnAttr(llvm::Attribute::AlwaysInline);
+      current.body->addFnAttr(llvm::Attribute::AlwaysInline);
+    }
+    if (const auto& borrow = borrows.subspan(index).front()) {
+      baseline.borrowed =
+          llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
+                                 module_name + "_borrowed_" + std::to_string(index), module);
+      borrowable.at(index) = borrow->type;
+      current.borrowed = baseline.borrowed;
+    }
+    generated.push_back(baseline);
+    optimized.push_back(current);
+  }
+  return declarations;
+}
+
 }  // namespace
 
 void InitializeTarget() {
@@ -232,53 +292,19 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   output.context = std::make_unique<llvm::LLVMContext>();
   output.machine = std::move(*target);
   output.module = std::make_unique<llvm::Module>(module_name, *output.context);
-  auto& context = *output.context;
   auto& module = *output.module;
   module.setTargetTriple(output.machine->getTargetTriple());
   module.setDataLayout(output.machine->createDataLayout());
   module.setCodeModel(output.machine->getCodeModel());
-  std::vector<GeneratedFunction> generated;
-  std::vector<GeneratedFunction> optimized;
   const auto borrows = escape == EscapeOptimization::Enabled
                            ? PlanBorrows(program)
                            : std::vector<std::optional<BorrowedFunction>>(program.functions.size());
-  std::vector<std::optional<ir::ClassId>> borrowable(program.functions.size());
-  for (std::size_t index = 0; index < program.functions.size(); ++index) {
-    const auto& function = program.functions.at(index);
-    const auto body_type = BodySignature(module, function);
-    if (!body_type) {
-      return diagnostic(body_type.error(), &function);
-    }
-    auto* body = llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
-                                        module_name + "_body_" + std::to_string(index), module);
-    auto* pointer = llvm::PointerType::getUnqual(context);
-    auto* wrapper_type = llvm::FunctionType::get(
-        llvm::Type::getInt8Ty(context),
-        {pointer, pointer, llvm::Type::getInt64Ty(context), pointer}, false);
-    const auto symbol = module_name + "_entry_" + std::to_string(index);
-    auto* entry =
-        llvm::Function::Create(wrapper_type, llvm::GlobalValue::InternalLinkage, symbol, module);
-    auto* resume =
-        AddResumeEntry(module, function, module_name + "_resume_" + std::to_string(index));
-    GeneratedFunction baseline{.body = body, .entry = entry, .resume = resume};
-    auto current = baseline;
-    if (tier == NativeCodeTier::Optimized && function.native_symbol.empty()) {
-      current = AddRecoveryEntries(module, module_name + '_' + std::to_string(index), baseline);
-    }
-    if (CanInlineSmallFunction(function)) {
-      body->addFnAttr(llvm::Attribute::AlwaysInline);
-      current.body->addFnAttr(llvm::Attribute::AlwaysInline);
-    }
-    if (const auto& borrow = borrows.at(index)) {
-      baseline.borrowed =
-          llvm::Function::Create(*body_type, llvm::GlobalValue::InternalLinkage,
-                                 module_name + "_borrowed_" + std::to_string(index), module);
-      borrowable.at(index) = borrow->type;
-      current.borrowed = baseline.borrowed;
-    }
-    generated.push_back(baseline);
-    optimized.push_back(current);
+  const auto declarations = DeclareFunctions(module, program, module_name, tier, borrows);
+  if (!declarations) {
+    return std::unexpected(declarations.error());
   }
+  const auto& generated = declarations->baseline;
+  const auto& optimized = declarations->optimized;
   std::vector<llvm::Function*> entries;
   entries.reserve(generated.size());
   for (const auto& function : generated) {
@@ -292,7 +318,7 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
     const auto& function = program.functions.at(index);
     auto emitted = EmitFunction(module, program, image->data, index, generated, debugging,
-                                NativeCodeTier::Baseline, escape, borrowable);
+                                NativeCodeTier::Baseline, escape, declarations->borrowable);
     if (!emitted) {
       return diagnostic(emitted.error(), &function);
     }

@@ -15,6 +15,8 @@
 
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/checker_test_support.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
@@ -24,10 +26,8 @@
 #include "runtime/native/native_control.h"
 #include "runtime/native/native_debugger.h"
 #include "runtime/native/native_execution.h"
-#include "runtime/native/native_instance.h"
-#include "compiler/jit/compiler.h"
-#include "compiler/jit/source_compiler.h"
 #include "runtime/native/native_function.h"
+#include "runtime/native/native_instance.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 
@@ -132,8 +132,14 @@ enum class DebugAction : std::uint8_t { Continue, Stop };
 class NativeDebugger final : public runtime::NativeDebugger {
  public:
   NativeDebugger(runtime::Isolate& isolate, DebugAction action)
-      : isolate_(isolate), action_(action) { isolate_.native_control().SetDebugger(this); }
+      : isolate_(isolate), action_(action) {
+    isolate_.native_control().SetDebugger(this);
+  }
   ~NativeDebugger() override { isolate_.native_control().SetDebugger(nullptr); }
+  NativeDebugger(const NativeDebugger&) = delete;
+  NativeDebugger& operator=(const NativeDebugger&) = delete;
+  NativeDebugger(NativeDebugger&&) = delete;
+  NativeDebugger& operator=(NativeDebugger&&) = delete;
 
   void AtSafepoint(const runtime::NativeDebugContext& context) noexcept override {
     const auto& frame = context.top_frame();
@@ -150,7 +156,9 @@ class NativeDebugger final : public runtime::NativeDebugger {
     if (frames.size() > 1) {
       caller_name_ = frames.subspan(1).front().name();
     }
-    if (action_ == DebugAction::Stop) { context.RequestStop(); }
+    if (action_ == DebugAction::Stop) {
+      context.RequestStop();
+    }
   }
 
   [[nodiscard]] bool saw_native() const noexcept { return saw_native_; }
@@ -297,7 +305,7 @@ async func main(): Future<int> {
   return await pending;
 }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto result = test::ExecuteFutureInteger(*compiled.instance);
   ASSERT_TRUE(result) << result.error();
@@ -312,7 +320,7 @@ std::optional<runtime::Future> StartNativeFetch(runtime::Isolate& isolate) {
 external func fetch(): Future<int>;
 async func main(): Future<int> { return await fetch(); }
 )",
-                                      isolate);
+                                            isolate);
   if (!compiled.Succeeded()) {
     return std::nullopt;
   }
@@ -393,7 +401,7 @@ external func copy(text: string): string;
 external func collect(): void;
 func main(): string { collect(); return copy("你好" + " host"); }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto result = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(result.Succeeded());
@@ -441,7 +449,7 @@ func main(): string {
   try { fail(); } catch (error: Error) { return error.message; }
   return "not caught";
 })",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto result = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(result.Succeeded());
@@ -455,7 +463,7 @@ TEST(NativeBindingTest, NestedDirectHostCallsDoNotAllocateManagedArguments) {
 external func add(left: int, right: int): int;
 func main(): int { return add(add(10, 20), 12); }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto before = isolate.heap().object_count();
   const auto result = test::Execute(*compiled.instance);
@@ -485,7 +493,7 @@ func main(): string {
   return text + ':' + copied;
 }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto nested = compiled.instance->FindFunction("nested");
   ASSERT_TRUE(nested);
@@ -507,7 +515,7 @@ func main(): string {
   return callable('borrowed' + ' value') as string;
 }
 )",
-                                        isolate);
+                                              isolate);
   ASSERT_TRUE(entry) << entry.error();
   const auto result = test::Execute(**entry);
   ASSERT_TRUE(result.Succeeded()) << result.message;
@@ -521,7 +529,7 @@ TEST(NativeBindingTest, DebuggerSeesNativeDeclarationAndCanCollectBorrowedArgume
 external func copy(text: string): string;
 func main(): string { return copy('first' + ' second'); }
 )",
-                                        isolate);
+                                              isolate);
   ASSERT_TRUE(entry.Succeeded());
   NativeDebugger debugger(isolate, DebugAction::Continue);
   const auto result = test::Execute(*entry.instance);
@@ -577,7 +585,8 @@ TEST(NativeBindingTest, NativeFutureResumesAwaitingAsyncExecution) {
 
 TEST(NativeBindingTest, ForeignProgramCallablesCannotReuseLocalFunctionIndices) {
   runtime::Isolate isolate(1);
-  const auto producer = test::CompileSource("func main(): () => int { return (): int => 7; }", isolate);
+  const auto producer =
+      test::CompileSource("func main(): () => int { return (): int => 7; }", isolate);
   ASSERT_TRUE(producer.Succeeded());
   const auto produced = test::Execute(*producer.instance, "main");
   ASSERT_TRUE(produced.Succeeded());
@@ -592,7 +601,7 @@ async func main(): Future<int> {
   try { typed(); } catch (error: Error) { caught += 1; }
   return caught == 2 ? 42 : 0;
 })",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(consumer.Succeeded());
   runtime::FutureCompletionEndpoint completer;
   PendingFetchCompleter() = &completer;
@@ -611,7 +620,7 @@ TEST(NativeBindingTest, NativeFutureParametersUseHeapBackedCodec) {
 external func echo(input: Future<int>): Future<int>;
 async func main(): Future<int> { return await echo(Future.value(9)); }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto entry = compiled.instance->FindFunction("main");
   ASSERT_TRUE(entry.has_value());

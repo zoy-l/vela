@@ -13,8 +13,8 @@ Vela is a statically typed embedded scripting language designed specifically for
 ## Goals
 
 - **Native C++ Embedding**: Clean, type-safe host function bindings and independent `Isolate` execution environments with zero global state.
-- **Fast Register VM**: Predictable, efficient interpretation using a fixed-width register bytecode VM.
-- **Native AOT Compilation**: A native AOT compiler backend planned for later stages, built on the shared Typed Intermediate Representation (Typed IR).
+- **Native JIT Execution**: Just-in-time compilation, interactive execution and hot reload built on shared Typed IR.
+- **Native AOT Compilation**: Standalone executables and embeddable native artifacts built through the shared native code generator.
 - **Low-Latency Runtime**: An incremental, non-moving mark-and-sweep garbage collector designed to minimize pause times.
 
 ## Example

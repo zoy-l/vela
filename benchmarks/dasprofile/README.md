@@ -1,8 +1,8 @@
-# dasProfile: Vela AOT, VM and C++
+# dasProfile: Vela AOT, JIT and C++
 
 This directory contains all 16 workloads ported from
 [dasProfile](https://github.com/borisbat/dasProfile/tree/436d58d2840ff839550d44d32f98e10a15b57bf2),
-revision `436d58d2840ff839550d44d32f98e10a15b57bf2`. It runs Vela AOT, VM and C++ with
+revision `436d58d2840ff839550d44d32f98e10a15b57bf2`. It runs Vela AOT, reloadable JIT and C++ with
 matching inputs and checked results. The sources, adapters and build rules are
 self-contained in this repository.
 
@@ -13,11 +13,9 @@ python3 -m tools.vl bench --aot-compare
 The command builds Release, compiles [workloads.vela](workloads.vela) through
 the production `vela build --emit=obj` path, and links the object with
 [the C++ workloads](workloads.cc) into the existing `vela_aot_benchmarks`
-executable. Its 48 AOT/VM/C++ cases join the existing benchmark registry as
-`aot/native/dasprofile.*`, `aot/vm/dasprofile.*` and `aot/cpp/dasprofile.*`.
-The VM compiles the same source and calls `prepare` before warm-up and timing.
-The `^aot/` selection has 24 workloads and 80 cases, including the original first-call cases. It
-uses seven repetitions with random interleaving, and writes
+executable. Its AOT/C++ cases join the existing benchmark registry as
+`aot/native/dasprofile.*` and `aot/cpp/dasprofile.*`.
+The command uses seven repetitions with random interleaving, and writes
 `out/benchmarks/aot_comparison.json` plus its Markdown report. Each
 invocation checks its result. Runtime errors, incorrect checksums, missing
 cases and incomplete repetitions fail the comparison command.
@@ -30,11 +28,11 @@ python3 -m tools.vl bench --aot-compare -- \
   --benchmark_min_time=0.5s --benchmark_repetitions=5
 ```
 
-To compare all 24 workloads across AOT, VM and C++ with the same settings:
+To include both reloadable JIT tiers with the same settings:
 
 ```sh
-python3 -m tools.vl bench --aot-compare -- \
-  '--benchmark_filter=^aot/(native|vm|cpp)/' \
+python3 -m tools.vl bench --jit-compare -- \
+  '--benchmark_filter=^(aot/(native|cpp)/|hot/steady/)' \
   --benchmark_min_time=0.5s --benchmark_repetitions=5
 ```
 
@@ -45,8 +43,12 @@ python3 -m tools.vl bench --aot-compare -- \
   '--benchmark_filter=^aot/(native|cpp)/dasprofile\.(interop|sort)/'
 ```
 
+The JIT comparison requires C++, closed AOT and reloadable baseline/optimized
+JIT for each selected steady workload. Each JIT tier compiles the same source
+and calls `prepare` before warm-up and timing.
+
 Compilation, input preparation, native instantiation and one warm-up call are
-outside steady timing. VM compilation is also excluded. Loop work, result validation, ordinary allocations and
+outside steady timing. Loop work, result validation, ordinary allocations and
 automatic Vela GC remain timed. The AOT lane uses the runtime native invocation
 entry; it does not measure the public generated C++ facade. The `interop` case
 calls the same function in [host_kernel.cc](host_kernel.cc) through a Vela binding

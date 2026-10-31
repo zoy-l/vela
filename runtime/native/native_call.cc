@@ -115,6 +115,20 @@ Future FailedCallback(Isolate& isolate, ExecutionStatus status) {
   return result;
 }
 
+std::expected<Value, ExecutionStatus> ConvertCallbackArgument(const NativeInstance& instance,
+                                                              const TypeConstraint& type,
+                                                              Value value) {
+  if (!Heap::IsValueOfType(value, type)) {
+    return std::unexpected(ExecutionStatus::InvalidCast);
+  }
+  if (Heap::TypeOf(value).callable) {
+    if (const auto checked = ResolveNativeCallable(instance, value); !checked) {
+      return std::unexpected(checked.error());
+    }
+  }
+  return UnboxDynamicValue(value, type);
+}
+
 std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
                                                      const NativeCallback& callback,
                                                      std::span<const Value> arguments) {
@@ -146,16 +160,11 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
     if (typed) {
       const auto parameter =
           parameters.subspan(index + hidden - function.hidden_parameters).front();
-      const auto& type = types.at(parameter.type);
-      if (!Heap::IsValueOfType(value, type)) {
-        return std::unexpected(ExecutionStatus::InvalidCast);
+      const auto converted = ConvertCallbackArgument(instance, types.at(parameter.type), value);
+      if (!converted) {
+        return std::unexpected(converted.error());
       }
-      if (Heap::TypeOf(value).callable) {
-        if (const auto checked = ResolveNativeCallable(instance, value); !checked) {
-          return std::unexpected(checked.error());
-        }
-      }
-      value = UnboxDynamicValue(value, type);
+      value = *converted;
     }
     values.subspan(index + hidden).front() = value;
   }
@@ -336,9 +345,9 @@ std::expected<Value, ExecutionStatus> InvokeNativeFunction(NativeExecution& exec
     return std::unexpected(ExecutionStatus::InvalidEntry);
   }
   const RootRange roots(execution.isolate().heap(), arguments.data(), arguments.size(),
-                         RootOwner::Runtime);
+                        RootOwner::Runtime);
   return InvokeCallback(execution, {.target = {.function = function}, .function = &description},
-                         arguments);
+                        arguments);
 }
 
 std::expected<Value, ExecutionStatus> InvokeNativeCallable(NativeExecution& execution,
