@@ -33,26 +33,51 @@ class CommandTest(CommandTestCase):
         self.command("doc", self.entry, output)
         self.assertIn(signature, output.read_text(encoding="utf-8"))
 
-    def test_compiles_and_executes_an_image_after_sources_are_deleted(self) -> None:
-        self.write("func main(): int { return 42; }")
-        image = self.directory / "main.vbc"
-        self.command("compile", self.entry, image)
+    def cached_run(self, expected: int = 0) -> subprocess.CompletedProcess:
+        first = self.command("run", self.entry, expected=expected)
+        cache = self.directory / ".cache" / "vela" / "native" / "run"
+        files = list(cache.glob("*.vlobj"))
+        self.assertEqual(len(files), 1)
+        before = [(path.read_bytes(), path.stat().st_mtime_ns) for path in files]
+        cached = self.command("run", self.entry, expected=expected)
+        self.assertEqual(cached.stdout, first.stdout)
+        self.assertEqual(cached.stderr, first.stderr)
+        self.assertEqual([(path.read_bytes(), path.stat().st_mtime_ns) for path in files], before)
+        return cached
+
+    def test_native_object_integrity_survives_source_deletion(self) -> None:
+        self.write("export func main(): int { return 42; }")
+        image = self.directory / "main.o"
+        self.command("build", self.entry, "--emit=obj", "--export=main", "-o", image)
         self.entry.unlink()
-        self.command("exec", image, expected=42)
+        manifest = str(image) + ".aot.json"
+        self.command("build", "--verify-manifest=" + manifest)
         data = bytearray(image.read_bytes())
         data[-1] ^= 1
         image.write_bytes(data)
-        self.assertIn("checksum", self.command("exec", image, expected=65).stderr)
+        self.assertIn("different generation",
+                      self.command("build", "--verify-manifest=" + manifest, expected=65).stderr)
+
+    def test_corrupt_native_cache_is_recompiled_from_checked_source(self) -> None:
+        self.write("func main(): int { return 42; }")
+        self.cached_run(expected=42)
+        cache = next((self.directory / ".cache" / "vela" / "native" / "run").glob("*.vlobj"))
+        original = cache.read_bytes()
+        cache.write_bytes(b"corrupt")
+        self.command("run", self.entry, expected=42)
+        self.assertEqual(cache.read_bytes(), original)
+        self.entry.unlink()
+        self.command("run", self.entry, expected=65)
 
     def test_nonempty_switch_fallthrough_is_a_source_error(self) -> None:
         self.write("func main(): int { let value = 0; switch (1) { "
                    "case 1: value = 1; case 2: return 42; } return value; }")
         for arguments in [("check", self.entry), ("run", self.entry),
-                          ("compile", self.entry, self.directory / "invalid.vbc")]:
+                          ("build", self.entry, "--emit=obj", "-o", self.directory / "invalid.o")]:
             with self.subTest(command=arguments[0]):
                 result = self.command(*arguments, expected=65)
                 self.assertIn("error: non-empty switch branch must not fall through", result.stderr)
-        self.assertFalse((self.directory / "invalid.vbc").exists())
+        self.assertFalse((self.directory / "invalid.o").exists())
 
     def test_dynamic_warnings_survive_cache_hits_and_project_errors_block_execution(self) -> None:
         self.write("func main():int { const value:dynamic=42; return value; }")
@@ -64,11 +89,11 @@ class CommandTest(CommandTestCase):
             '{"diagnostics":{"implicit_dynamic_conversion":"error"}}',
             encoding="utf-8", newline="\n")
         for arguments in [("check", self.entry), ("run", self.entry),
-                          ("compile", self.entry, self.directory / "rejected.vbc"),
+                          ("build", self.entry, "--emit=obj", "-o", self.directory / "rejected.o"),
                           ("doc", self.entry, self.directory / "rejected.md")]:
             result = self.command(*arguments, expected=65)
             self.assertIn("error: [implicit_dynamic_conversion]", result.stderr)
-        self.assertFalse((self.directory / "rejected.vbc").exists())
+        self.assertFalse((self.directory / "rejected.o").exists())
         self.assertFalse((self.directory / "rejected.md").exists())
 
     def test_byte_views_survive_async_suspension_and_typed_containers(self) -> None:
@@ -77,20 +102,12 @@ class CommandTest(CommandTestCase):
                    "const saved: ByteData[] = [data]; "
                    "for (let i = 0; i < 1000; i++) { const temporary = ByteArray(1024); } "
                    "return saved[0].getInt64(0); }")
-        self.command("run", self.entry, expected=42)
-        image = self.directory / "async-bytes.vbc"
-        self.command("compile", self.entry, image)
-        self.entry.unlink()
-        self.command("exec", image, expected=42)
+        self.cached_run(expected=42)
 
-    def test_async_run_and_image_wait_for_background_timers(self) -> None:
+    def test_async_run_and_cache_hit_wait_for_background_timers(self) -> None:
         self.write("async func main(): Future<int> { "
                    "Timer.after(0, (): void => { print('timer'); }); return 42; }")
-        self.assertEqual(self.command("run", self.entry, expected=42).stdout, "timer\n")
-        image = self.directory / "async.vbc"
-        self.command("compile", self.entry, image)
-        self.entry.unlink()
-        self.assertEqual(self.command("exec", image, expected=42).stdout, "timer\n")
+        self.assertEqual(self.cached_run(expected=42).stdout, "timer\n")
 
     def test_full_case_mappings_match_pinned_ucd_inputs(self) -> None:
         data = (ROOT / "third_party/unicode_data/inputs/SpecialCasing.txt").read_text(encoding="utf-8")
@@ -105,20 +122,13 @@ class CommandTest(CommandTestCase):
                 statements.append(f"if ('{source}'.{method}() != '{expected}') {{ return 1; }}")
         self.assertGreater(len(statements), 200)
         self.write("func main(): int {\n" + "\n".join(statements) + "\nreturn 0; }")
-        self.command("run", self.entry)
-        image = self.directory / "case.vbc"
-        self.command("compile", self.entry, image)
-        self.entry.unlink()
-        self.command("exec", image)
+        self.cached_run()
 
-    def test_byte_api_source_tools_and_source_free_image_execution(self) -> None:
+    def test_byte_api_source_tools_and_cached_native_execution(self) -> None:
         self.write("export func make(size: int): ByteData { return ByteData.view(ByteArray(size)); }\n"
                    "func main(): int { const view = make(4); view.setInt32(0,42); return view.getInt32(0); }")
         self.format_and_document("func make(size: int): ByteData")
-        image = self.directory / "bytes.vbc"
-        self.command("compile", self.entry, image)
-        self.entry.unlink()
-        self.command("exec", image, expected=42)
+        self.cached_run(expected=42)
 
     def test_async_idle_and_background_errors_are_failures(self) -> None:
         self.write("func main(): Future<int> { return Future.race<int>([]); }")
@@ -144,15 +154,12 @@ class CommandTest(CommandTestCase):
         self.assertIn("async func load(): Future<int>", text)
         self.assertIn("func bind(value: int): () => string", text)
 
-    def test_json_dynamic_survive_documentation_formatting_images_and_repl(self) -> None:
+    def test_json_dynamic_survive_documentation_formatting_cache_and_repl(self) -> None:
         self.write("export func encode(value: dynamic): string { return Json.stringify(value); }\n"
                    "func main(): int { const root: dynamic = Json.parse('[40,true,null]'); "
                    "root[0] += 2; return encode(root) == '[42,true,null]' ? 42 : 0; }")
         self.format_and_document("func encode(value: dynamic): string")
-        image = self.directory / "json.vbc"
-        self.command("compile", self.entry, image)
-        self.entry.unlink()
-        self.command("exec", image, expected=42)
+        self.cached_run(expected=42)
         result = self.command("repl", commands=(
             "const root: dynamic = Json.parse('[40,true,null]');\n"
             "root[0] += 2;\nJson.stringify(root)\n.quit\n"))
@@ -249,11 +256,23 @@ func main(): void {
 
     def test_unicode_source_and_output_paths(self) -> None:
         self.entry = self.directory / "你好😀.vela"
-        self.write("func main(): int { return 42; }")
-        output = self.directory / "镜像😀.vbc"
+        self.write("export func main(): int { return 42; }")
+        output = self.directory / "原生😀.o"
         self.command("check", self.entry)
-        self.command("compile", self.entry, output)
-        self.command("exec", output, expected=42)
+        self.cached_run(expected=42)
+        self.command("build", self.entry, "--emit=obj", "--export=main", "-o", output)
+        self.command("build", "--verify-manifest=" + str(output) + ".aot.json")
+
+    def test_native_debugger_resumes_and_stops_async_main(self) -> None:
+        self.write("async func main(): Future<int> {\n"
+                   "  await sleep(1);\n  print('resumed');\n  return 42;\n}\n")
+        completed = self.command("debug", self.entry, commands="break 3\nc\nc\n", expected=42)
+        self.assertEqual(completed.stdout, "resumed\n")
+        self.assertRegex(completed.stderr, r"main pc=\d+ at [^\r\n]+:3:")
+        stopped = self.command("debug", self.entry, commands="break 3\nc\nquit\n")
+        self.assertEqual(stopped.stdout, "")
+        self.assertIn("debugger stopped", stopped.stderr)
+        self.assertNotIn("idle/deadlock", stopped.stderr)
 
     def test_function_breakpoint_stack_registers_and_finish(self) -> None:
         self.write("func child(value: int): int {\n  return value + 1;\n}\n"

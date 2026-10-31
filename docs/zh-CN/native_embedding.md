@@ -2,65 +2,122 @@
 
 [English](../en/native_embedding.md) | [**简体中文**](native_embedding.md)
 
-Vela 使用显式的虚拟机栈帧与可恢复的错误结果。C++ 异常、`longjmp` 以及隐式数值类型转换均不在这一边界之内。
+需要编译源码的宿主通过 `compiler::jit` 生成原生代码，再在自己的 Isolate 中创建
+`runtime::NativeInstance`。AOT 宿主把生成代码链接到同一运行时。
+源码构建链接 `//compiler:jit`；独立 AOT 宿主使用发行包的运行时库和生成的公共头文件。
+运行时库本身不包含源码编译器。
 
-## 强类型原生函数
+## 编译与执行
 
-在编译脚本前，先在宿主持有的 Isolate 实例上注册原生函数：
+下面的示例通过带类型的宿主绑定返回 `42`：
 
 ```cpp
+#include <cstdint>
+#include <expected>
+#include <string>
+
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_function.h"
+#include "runtime/native/native_instance.h"
+
 std::int64_t Add(std::int64_t left, std::int64_t right) noexcept {
   return left + right;
 }
 
-vela::runtime::Isolate isolate;
-auto registered = isolate.RegisterNative(
-    vela::runtime::NativeFunction::Bind<Add>("add"));
-```
-
-脚本端显式声明原生绑定：
-
-```typescript
+std::expected<std::int64_t, std::string> Run() {
+  vela::runtime::Isolate isolate;
+  if (!isolate.RegisterNative(vela::runtime::NativeFunction::Bind<Add>("add"))) {
+    return std::unexpected("cannot register add");
+  }
+  auto compiler = vela::compiler::jit::Compiler::Create();
+  if (!compiler) {
+    return std::unexpected(vela::frontend::DiagnosticsText(compiler.error()));
+  }
+  const auto compiled = vela::compiler::jit::CompileSource(**compiler, R"(
 external func add(left: int, right: int): int;
-
-func main(): int {
-  const operation: (int, int) => int = add;
-  return operation(40, 2);
+func main(): int { return add(40, 2); }
+)");
+  if (!compiled.Succeeded()) {
+    return std::unexpected(vela::frontend::DiagnosticsText(compiled.diagnostics));
+  }
+  const auto instance =
+      vela::runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+  if (!instance) {
+    return std::unexpected(instance.error().message);
+  }
+  const auto entry = (*instance)->FindFunction("main");
+  if (!entry) {
+    return std::unexpected("main is missing");
+  }
+  const auto result = vela::runtime::ExecuteNativeFunction(**instance, *entry);
+  if (!result.Succeeded()) {
+    return std::unexpected(result.message);
+  }
+  return result.value.AsInteger();
 }
 ```
 
-C++ 函数签名提供了完整的绑定契约。支持的原生参数类型包括 `std::int64_t`、`double`、`bool` 以及借用的 `std::string_view`。返回值类型还支持 `void` 和持有所有权的 `std::string`。原生函数可以返回 `std::expected<T, NativeError>` 以表达可恢复的宿主错误。原生函数必须声明为 `noexcept`；宿主算术越界与资源分配失败由宿主自身负责。绝不会为了适配签名而隐式静默转换 `int`、`float`、可空类型或形状不符的参数。
+映像不依赖 AST 或编译器继续存活。其共享所有者保活已链接代码与元数据，
+原生实例及保留的原生程序状态继续持有该所有者。不同实例拥有独立全局状态。
+保留状态的更新使用 `DevelopmentSession` 和 `DevelopmentRepl`，
+不直接替换封闭实例中的代码。详见[热重载](hot_reload.md)。
 
-堆限额和 `OutOfMemory` 约束实际发生的存储申请。原生优化可以省略不可观测的实例存储，或在对象需要真实身份时才申请堆存储；宿主不能依赖每次脚本构造都增加堆计数，也不能依赖 VM 与原生后端在同一次构造时报内存不足。进入宿主 ABI 的对象始终具有普通堆身份，借用和保根规则不变。详见[逃逸分析与物化](escape_analysis.md)。
+## 带类型的宿主绑定
 
-需要访问 Isolate、分配托管值或执行异步操作时，函数以 `NativeContext&` 作为第一个参数；普通 C++ 函数可以省略它，`Bind` 会推导出相同的脚本签名。AOT 的普通标量结果通过寄存器返回，标量 ABI 完全一致时直接调用原 C++ 函数指针；需要编解码或返回可失败结果时保留相应适配器。
+在创建实例前注册绑定。`NativeFunction::Bind<Function>` 从 `noexcept` C++ 函数推导签名。
+需要 Isolate、分配或异步操作的函数可将 `NativeContext&` 放在第一个参数；
+该参数不出现在脚本签名中。
 
-显式可空的字符串返回值使用 `std::optional<std::string>`（或包含它的 expected），此时脚本声明必须返回 `string?`。其它类型不会为了满足这一契约而发生类型提升。可选的显式符号支持带命名空间的宿主注册，无需语言引入 namespace 语法：`external func readLabel(): string? = "app.readLabel";`。
+参数支持 `std::int64_t`、`double`、`bool`、`std::string_view`、
+`Future` 和 `CancellationToken`。返回值还支持 `void`、拥有存储的 `std::string`、
+可空的 `std::optional<std::string>` 以及 `std::expected<T, NativeError>`。
+精确标量结果使用直接调用，托管或可失败结果经过受查 codec。
+不会隐式缩窄 int/float；宿主算术和资源失败由宿主负责。
 
-`external func` 没有函数体，也不支持泛型参数。在模块限定前，其符号名就是声明的函数名。声明遵循常规模块可见性与别名规则；宿主注册表在单个 Isolate 范围内全局生效。编译过程将每个声明链接至其持有的不可变绑定，并诊断未注册符号及签名不匹配错误。常规的静态语法检查无需执行或注册宿主代码即可直接校验 external 声明。原生函数值支持间接函数调用。重复注册相同符号将直接报错，而非静默覆盖已有契约。
+external 声明没有函数体或泛型参数。显式符号可以指定注册表名称，例如
+`external func label(): string? = "app.label";`。
+实例化将声明与接收方 Isolate 的不可变绑定比对；缺失绑定、签名不匹配及重复注册均报错。
+纯源码检查不要求注册，也不执行宿主函数。
 
-原生声明保存不可变绑定，不生成包装字节码。直接调用及解析后的间接调用借用调用者已保根的寄存器窗口，绑定适配器直接读取类型化载荷，不分配被调函数的寄存器文件，不经过 `Value` 参数中转缓冲，也不重复注册参数根。动态参数绑定使用独立的已保根参数窗口。轻量逻辑帧保留 external 声明的诊断和调试信息，宿主触发 GC 时也可观察调用参数。符号查找与实参数量验证在链接或加载边界完成；结构性字节码验证不能证明值类型，因此参数载荷仍由生成的绑定适配器检查。宿主返回的字符串会被验证为合法 UTF-8 并拷贝至 Isolate 堆中，非法文本直接报错。原生 Future 的成功载荷和错误值仍按声明验证，包括尚未完成的 Future。
+生成的调用在宿主执行期间维持逻辑栈帧和精确 GC 根。借用字符串只在调用期间有效，
+持久引用必须另行保根。返回字符串和错误消息检查 UTF-8。
+Future 返回值在尚未完成时也持续保留声明的载荷检查。
+重入脚本使用独立原生执行状态，保留外层调用的根。
 
-底层 `NativeFunction::Invoke` 借用 `RegisterView`，调用者须提供与声明完全一致的实参数量，并在整个调用期间保持该窗口被保根。返回的引用须在后续分配前保根。同一 VM 的重入调用使用独立寄存器存储，保护外层调用的槽位与借用字符串，使其在嵌套执行和 GC 期间保持有效。
+分配消除可能移除不可观察的对象存储。堆上限作用于实际存储请求，因此不能用源码构造次数
+推算堆分配次数。跨越宿主 ABI 的对象拥有堆身份，并遵循普通托管值的保根规则。
 
-## 宿主保根与生命周期
+## 值、Future 与关闭
 
-`runtime::RootedValue(isolate, value)` 拥有一个稳定的堆保根槽位。对其复制会共享该不可变槽位；移动或重新安置句柄不会导致保根地址失效。最后一个句柄析构时释放该根槽位。为句柄赋新值通过常规 RAII 机制安全替换旧根。Isolate 的生命周期必须长于从属于它的每一个程序、函数句柄、根区间及 `RootedValue`。这些 API 共享 Isolate 的单线程所有权，不引入共享并发访问。
+`ExecutionResult::value` 借用堆，包括错误载荷。下一次分配或 GC 前，使用
+`RootedValue(isolate, value)` 保留托管结果。副本共享一个不可变根槽，最后一个句柄释放它；
+读取 `value()` 不增加根。Isolate 必须晚于所属实例、执行、保根值及其他句柄销毁。
 
-虚拟机返回结果中的裸 `Value` 是从堆中借用的。如果它包含堆引用，在后续进行任何内存分配或垃圾回收之前，必须先为其创建 `RootedValue`。读取 `handle.value()` 不会创建新的根。原生参数仅在函数调用期间保持被保根；持久的宿主引用必须创建其自身的 `RootedValue`。
+异步结果通过 `RootFutureValue` 转为保根的 Future 句柄，宿主推进所属调度器。
+需要等待外部生产者时使用 `WaitForHost` 模式。
+命令行应用通过 `ProcessEntry` 应用退出码规则并排空后台任务；嵌入宿主自行管理事件循环。
 
-替换 Isolate 前，宿主先停止创建新借用并释放外部句柄。`Isolate::ReloadBlockers()` 列出剩余根、原生实例、不透明原生句柄、命名声明入口、待发布的原生候选、Program、Future、活动执行及尚在进行的宿主释放操作；每项包含资源种类、该 Isolate 内的身份和引用计数。仍有资源时，`TryStop()` 返回相同的诊断，不改变当前运行。成功后关闭完成端点、丢弃排队回调与 timer，并回收不可达状态；它不销毁 Isolate，所有者仍需先释放运行时存储，再销毁 Isolate。运行时根使用 `RootOwner::Runtime`；普通宿主 `RootRange` 默认为外部根。内部 retained 句柄只用于运行时所有权，不能代替宿主释放自身借用。
+脚本可调用值保留其原生程序状态。调用必须属于相同 Isolate，并具有兼容代码身份或相同
+可重载分派域。对可调用值保根即可使其所需代码保持可达。
+除明确提供跨线程完成或安全点端点的 API 外，宿主操作必须在 Isolate 所属线程执行。
 
-`Isolate::FreezeBindings()` 保存固定的原生注册集合；之后的注册返回 `NativeRegistrationError::BindingsFrozen`。用该 `NativeBindings` 快照创建新 Isolate 时，共享同一份不可变的 binding 实现与签名，脚本状态独立创建。
+替换 Isolate 前先释放外部借用。`ReloadBlockers()` 返回根区间、保根值、原生实例、
+句柄、入口、候选发布、Future、活动执行及正在进行的宿主访问。
+存在阻塞资源时，`TryStop()` 保留当前运行；成功时关闭完成端点、丢弃排队工作并回收不可达状态，
+Isolate 仍由所有者销毁。`FreezeBindings()` 禁止后续注册，并为新 Isolate 提供不可变绑定快照。
+运行时内部根不免除宿主的保根责任。
 
-脚本函数值引用其生产代码中的函数编号，调用时必须具有相同的代码身份；REPL 的连续提交共享这一身份。独立编译的 Program 无法调用通过原生 Future 载荷接收的其它 Program 的函数值，这类调用产生类型错误。保留堆中的函数值可以保留其类型身份；执行代码还需要保留生产它的 Program 或 FunctionHandle。
+## 诊断
 
-## 源码映射与错误诊断
+原生栈帧使用实际执行版本的源码位置。调用方指向调用指令，异步错误保留抛出与 await 边界。
+错误结果拥有解析后的函数名、路径和文本，可以晚于代码退休继续存活；
+成功执行不捕获调用轨迹。
 
-每条编译后的字节码指令在经过优化与寄存器分配后，均完整保留其源文件标识、行号与列号。位置映射仅记录变化量，所有函数共享一张不可变的源文件路径表。位置检索采用二分查找，仅在调用栈追踪或开发者工具明确请求时才执行。字节码镜像加载时会对外部映射做快照并执行严格校验（包括排序、指令范围及源码标识）。不包含映射的字节码依然是合法的独立程序。
-
-原生声明使用逻辑位置零表示源码映射及调试回调位置，不包含可执行字节码指令。
-
-运行时失败会捕获所有活跃的显式栈帧，最内层栈帧排在最前。调用方的 PC 指针明确指向 call 调用指令本身，而非紧随其后的下一条指令。追踪文本持有其自身的字符串副本，因此即使已编译程序被销毁，诊断文本依然持久有效。编译器错误与运行时错误统一格式为 `path:line:column: error: message`；运行时错误追加 `at function (path:line:column)` 栈帧。不含调试符号的字节码则打印指令偏移量。成功执行的程序不分配任何追踪对象。
-
-实现参考：Dart 的 external 函数声明模型（[语言规范](https://spec.dart.dev/DartLangSpecDraft.pdf)）、Luau 的显式栈帧行号检索（`VM/src/ldebug.cpp`）及其受保护执行机制（`VM/src/ldo.cpp`）。Vela 通过显式返回失败来保持 C++ RAII 栈展开机制的完整性，而非跨宿主栈帧进行非局部跳转。
+编译与运行时诊断使用 `path:line:column: error: message`，运行时错误追加
+`at function (path:line:column)`。缺少源码元数据时报告指令位置。
+该边界不使用 C++ 异常或非局部跳转，而是显式返回失败并保持宿主 RAII。
+另见[调试器](debugger.md)与[执行契约](native_execution.md)。

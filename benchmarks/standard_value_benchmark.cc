@@ -9,7 +9,7 @@
 
 #include "benchmarks/source.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/vm.h"
+#include "runtime/native/native_execution.h"
 
 namespace vela::benchmarks {
 
@@ -18,16 +18,15 @@ void SteadyValue(benchmark::State& state,
                  std::int64_t expected,
                  HeapBaseline baseline_timing) {
   runtime::Isolate isolate;
-  const auto entry = CompileBenchmarkEntry(state, source, isolate);
-  if (!entry) {
+  const auto instance = CompileBenchmarkSource(state, source, isolate);
+  if (!instance) {
     return;
   }
-  const auto& function = *entry;
+  const auto function = *instance->FindFunction("main");
   auto& heap = isolate.heap();
   heap.Collect();
   auto baseline = heap.allocated_bytes();
-  vm::VirtualMachine machine(isolate);
-  const auto warm = machine.Execute(function);
+  const auto warm = runtime::ExecuteNativeFunction(*instance, function);
   if (!warm.Succeeded() || !warm.value.IsInteger() || warm.value.AsInteger() != expected) {
     state.SkipWithError("Standard API warm-up returned an unexpected result");
     return;
@@ -41,10 +40,9 @@ void SteadyValue(benchmark::State& state,
   } else {
     state.counters["first_call_gc_bytes"] = static_cast<double>(heap.allocated_bytes() - baseline);
   }
-  state.counters["register_bytes"] = static_cast<double>(machine.register_bytes());
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    auto result = machine.Execute(function);
+    auto result = runtime::ExecuteNativeFunction(*instance, function);
     if (!result.Succeeded() || !result.value.IsInteger() || result.value.AsInteger() != expected) {
       state.SkipWithError("Standard API execution returned an unexpected result");
       return;

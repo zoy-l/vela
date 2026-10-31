@@ -26,8 +26,8 @@
 #include "runtime/isolate/isolate.h"
 #include "runtime/process/process_entry.h"
 #include "runtime/testing/test_bridge.h"
-#include "vm/program.h"
-#include "vm/vm.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_instance.h"
 
 namespace vela::testing {
 
@@ -44,11 +44,10 @@ struct SuiteOptions final {
   std::function<bool()> is_cancelled;
 };
 
-// Program 和 Isolate 由执行线程拥有，生命周期覆盖 Suite；报告只保留已复制的数据。
+// 原生实例由执行线程拥有，生命周期覆盖 Suite；报告只保留已复制的数据。
 class Suite final : public runtime::TestBridge {
  public:
-  Suite(runtime::Isolate& isolate,
-        const vm::Program& program,
+  Suite(runtime::NativeInstance& instance,
         SuiteOptions options,
         std::ostream& diagnostics);
   ~Suite() override;
@@ -142,7 +141,7 @@ class Suite final : public runtime::TestBridge {
               TestPhase phase,
               Node& scope,
               std::vector<TestError>& errors);
-  [[nodiscard]] vm::ExecutionResult Await(vm::ExecutionResult result,
+  [[nodiscard]] runtime::ExecutionResult Await(runtime::ExecutionResult result,
                                           std::optional<std::chrono::milliseconds> timeout,
                                           Node& scope,
                                           TestPhase phase);
@@ -152,7 +151,7 @@ class Suite final : public runtime::TestBridge {
                                      const std::function<bool()>& pending);
   void WaitExpectations(Node& scope, TestPhase phase, std::vector<TestError>& errors);
   void AbandonExpectations(Node& scope);
-  [[nodiscard]] vm::ExecutionResult WaitFailure(WaitStatus status) const;
+  [[nodiscard]] runtime::ExecutionResult WaitFailure(WaitStatus status) const;
   [[nodiscard]] std::expected<runtime::ExecutionContext, std::string> ExecutingContext();
   std::expected<runtime::Value, std::string> TrackExpectation(
       runtime::Value value,
@@ -174,10 +173,10 @@ class Suite final : public runtime::TestBridge {
   void DeliverError(const runtime::FutureResult& completion,
                     std::uint64_t identity,
                     TestPhase phase);
-  [[nodiscard]] TestError Describe(const vm::ExecutionResult& result, TestPhase phase) const;
+  [[nodiscard]] TestError Describe(const runtime::ExecutionResult& result, TestPhase phase) const;
   void DescribeMockFailure(runtime::Value value, TestError& error) const;
   void Unhandled(const runtime::Future& future, runtime::Value value);
-  void RecordError(const vm::ExecutionResult& failure,
+  void RecordError(const runtime::ExecutionResult& failure,
                    TestPhase phase,
                    std::vector<TestError>& errors);
   void RegistrationError(std::string category, std::string message);
@@ -186,9 +185,8 @@ class Suite final : public runtime::TestBridge {
   SuiteResult Finish();
 
   runtime::Isolate* isolate_;
-  const vm::Program* program_;
+  runtime::NativeInstance* instance_;
   SuiteOptions options_;
-  vm::VirtualMachine machine_;
   Node root_;
   Node* registration_scope_ = &root_;
   State state_ = State::Registering;

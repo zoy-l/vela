@@ -2,12 +2,9 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
-#include "compiler/frontend/typing/checker_test_support.h"
 #include "compiler/test_support/program_test_support.h"
+#include "compiler/frontend/typing/checker_test_support.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/execution_status.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -215,7 +212,7 @@ func main(): int {
 
 TEST(ExceptionTest, FinallyPreservesOriginalTraceAcrossNestedHandledExceptions) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(
+  const auto compiled = test::CompileSource(
       "class Failure {}\n"
       "func fail(): int { let zero = 0; return 1 / zero; }\n"
       "func main(): int {\n"
@@ -223,13 +220,13 @@ TEST(ExceptionTest, FinallyPreservesOriginalTraceAcrossNestedHandledExceptions) 
       "}",
       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  EXPECT_EQ(result.status, vm::ExecutionStatus::DivisionByZero);
+  const auto result = test::Execute(*compiled.instance, "main");
+  EXPECT_EQ(result.status, ExecutionStatus::DivisionByZero);
   ASSERT_EQ(result.stack_trace.size(), 2U);
   EXPECT_EQ(result.stack_trace.front().function, "fail");
-  EXPECT_EQ(result.stack_trace.front().location.line, 2U);
+  EXPECT_EQ(result.stack_trace.front().line, 2U);
   EXPECT_EQ(result.stack_trace.back().function, "main");
-  EXPECT_EQ(result.stack_trace.back().location.line, 4U);
+  EXPECT_EQ(result.stack_trace.back().line, 4U);
 }
 
 TEST(ExceptionTest, FailedGlobalInitializerUnwindsAndCanBeRetriedAfterCatch) {
@@ -253,7 +250,7 @@ func main(): int {
 
 TEST(ExceptionTest, RepeatedCaughtFailuresReleaseTheirEnvelopesAfterExecution) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 class Failure {}
 func main(): int {
   let index = 0;
@@ -264,11 +261,12 @@ func main(): int {
 })",
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto baseline = isolate.heap().allocated_bytes();
+  const auto result = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsInteger(), 42);
   isolate.heap().Collect();
-  EXPECT_EQ(isolate.heap().allocated_bytes(), 0U);
+  EXPECT_EQ(isolate.heap().allocated_bytes(), baseline);
 }
 
 class InvalidExceptionTest : public testing::TestWithParam<std::string_view> {};

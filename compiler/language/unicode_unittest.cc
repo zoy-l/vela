@@ -3,19 +3,16 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/execution_status.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
 
 TEST(UnicodeTest, SegmentsCombiningMarksEmojiFlagsHangulIndicAndLineBreaks) {
   runtime::Isolate isolate(1);
-  const auto entry = test::CompileEntry(R"(
+  const auto entry = test::CompileCleanSource(R"(
 func main(): bool {
   const text = "Ae\u0301\u{1F1E8}\u{1F1F3}\u{1F469}\u200D\u{1F4BB}\r\n\u1100\u1161\u11A8\u0915\u094D\u0937";
   const parts: string[] = text.graphemes();
@@ -38,7 +35,7 @@ func main(): bool {
                                         isolate);
   ASSERT_TRUE(entry) << entry.error();
   const auto retained = isolate.heap().object_count();
-  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
+  const auto result = test::Execute(**entry);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_TRUE(result.value.AsBoolean());
   isolate.heap().FinishCollection();
@@ -61,10 +58,10 @@ class GraphemeBoundsTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(GraphemeBoundsTest, RejectsInvalidSliceBounds) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(GetParam(), isolate);
+  const auto compiled = test::CompileSource(GetParam(), isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  EXPECT_EQ(vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main")).status,
-            vm::ExecutionStatus::IndexOutOfBounds);
+  EXPECT_EQ(test::Execute(*compiled.instance, "main").status,
+            ExecutionStatus::IndexOutOfBounds);
 }
 
 INSTANTIATE_TEST_SUITE_P(

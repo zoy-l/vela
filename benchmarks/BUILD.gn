@@ -5,6 +5,7 @@ executable("vela_benchmarks") {
     "byte_data_benchmark.cc",
     "compilation_cache_benchmark.cc",
     "completion_benchmark.cc",
+    "execution_benchmark.cc",
     "gc_strategy_benchmark.cc",
     "heap_metrics.cc",
     "heap_metrics.h",
@@ -32,16 +33,17 @@ executable("vela_benchmarks") {
     "temporary_directory.cc",
     "temporary_directory.h",
     "testing_benchmark.cc",
-    "vm_benchmark.cc",
   ]
   benchmark_source_dir = rebase_path("//benchmarks", "")
   defines = [ "VELA_BENCHMARK_SOURCE_DIR=\"$benchmark_source_dir\"" ]
   deps = [
     "//base:json",
     "//base:temporary_directory",
-    "//compiler",
+    "//compiler:development",
+    "//compiler:jit",
     "//compiler:testing",
     "//compiler:tooling",
+    "//runtime",
     "//third_party:benchmark_main",
     "//third_party:luajit",
     "//third_party:pcre2",
@@ -165,7 +167,6 @@ executable("vela_aot_benchmarks") {
     ":aot_native_inputs",
     ":dasprofile_native_inputs",
     ":map_literal_native_inputs",
-    "//compiler",
     "//compiler:aot",
     "//compiler:checkpoint_publication",
     "//compiler:development",

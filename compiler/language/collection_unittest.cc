@@ -5,15 +5,12 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_function.h"
-#include "vm/execution_status.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -25,7 +22,7 @@ TEST_P(CollectionLanguageTest, ExecutesTypedCollectionsUnderGcPressure) {
   const auto program = test::CompileCleanSource(GetParam(), isolate);
   ASSERT_TRUE(program) << program.error();
   const auto retained = isolate.heap().object_count();
-  const auto result = test::ExecuteInteger(*program, isolate);
+  const auto result = test::ExecuteInteger(**program);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
   isolate.heap().FinishCollection();
@@ -143,7 +140,7 @@ TEST(MapLiteralTest, KeepsMapAndKeyAliveAcrossSuspensionAndFailure) {
   runtime::Isolate isolate(1);
   const auto program = test::CompileCleanSource(test::kMapLiteralAsyncSource, isolate);
   ASSERT_TRUE(program) << program.error();
-  const auto result = test::ExecuteFutureInteger(*program, isolate);
+  const auto result = test::ExecuteFutureInteger(**program);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -175,27 +172,26 @@ func count(): int { return calls; }
 )",
                                                 isolate);
   ASSERT_TRUE(program) << program.error();
-  vm::VirtualMachine machine(isolate);
-  EXPECT_EQ(machine.Execute(program->FindFunction("count")).value.AsInteger(), 0);
+  EXPECT_EQ(test::Execute(**program, "count").value.AsInteger(), 0);
   auto& heap = isolate.heap();
   heap.Collect();
   const auto baseline = heap.allocated_bytes();
   heap.SetAllocationLimit(baseline);
-  const auto allocation = machine.Execute(program->FindFunction("allocate"));
+  const auto allocation = test::Execute(**program, "allocate");
   heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
-  EXPECT_EQ(allocation.status, vm::ExecutionStatus::OutOfMemory);
-  EXPECT_EQ(machine.Execute(program->FindFunction("count")).value.AsInteger(), 0);
-  const auto insertion = machine.Execute(program->FindFunction("insert"));
+  EXPECT_EQ(allocation.status, ExecutionStatus::OutOfMemory);
+  EXPECT_EQ(test::Execute(**program, "count").value.AsInteger(), 0);
+  const auto insertion = test::Execute(**program, "insert");
   heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
-  EXPECT_EQ(insertion.status, vm::ExecutionStatus::OutOfMemory);
-  EXPECT_EQ(machine.Execute(program->FindFunction("count")).value.AsInteger(), 1);
+  EXPECT_EQ(insertion.status, ExecutionStatus::OutOfMemory);
+  EXPECT_EQ(test::Execute(**program, "count").value.AsInteger(), 1);
   heap.Collect();
   EXPECT_EQ(heap.allocated_bytes(), baseline);
 }
 
 TEST(MapLiteralTest, ImplicitDynamicChecksRunBeforeTheFollowingExpressions) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 let calls = 0;
 func item(): int { calls++; return 42; }
 func checked(key: dynamic, value: dynamic): Map<int, int> { return {key: value, 2: item()}; }
@@ -209,14 +205,14 @@ func main(): int {
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
   ASSERT_EQ(compiled.diagnostics.size(), 2U);
-  const auto result = test::ExecuteInteger(compiled.program, isolate);
+  const auto result = test::ExecuteInteger(*compiled.instance);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
 
 TEST_P(CollectionTypeErrorTest, RejectsInvalidKeysValuesAndImplicitConversions) {
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileSource(GetParam(), isolate).Succeeded());
+  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(

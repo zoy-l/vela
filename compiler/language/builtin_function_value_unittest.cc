@@ -2,7 +2,6 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -27,9 +26,9 @@ TEST_P(BuiltinFunctionValueTest, PreservesReceiversAndReleasesThemAfterExecution
 
 TEST_P(BuiltinFunctionValueTest, ReloadsInFreshIsolateWithoutCompilerMetadata) {
   runtime::Isolate isolate(1);
-  const auto program = test::ReloadSource(GetParam(), isolate);
+  const auto program = test::ReinstantiateSource(GetParam(), isolate);
   ASSERT_TRUE(program) << program.error();
-  const auto result = test::ExecuteInteger(*program, isolate);
+  const auto result = test::ExecuteInteger(**program);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -255,7 +254,7 @@ class InvalidBuiltinFunctionValueTest : public testing::TestWithParam<std::strin
 
 TEST_P(InvalidBuiltinFunctionValueTest, RejectsUnresolvedOrIncompatibleSignatures) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(GetParam(), isolate);
+  const auto compiled = test::CompileSource(GetParam(), isolate);
   EXPECT_FALSE(compiled.Succeeded());
   EXPECT_FALSE(compiled.diagnostics.empty());
 }

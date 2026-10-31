@@ -13,7 +13,6 @@ enum class ExternalResourceKind : std::uint8_t {
   RootedValue,
   NativeInstance,
   NativeHandle,
-  Program,
   Future,
   Execution,
   HostAccess,

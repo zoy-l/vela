@@ -4,8 +4,10 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
@@ -68,6 +70,7 @@ class NativeInstance final {
 
   [[nodiscard]] Isolate& isolate() const noexcept { return *data_->isolate; }
   [[nodiscard]] const NativeImage& image() const noexcept { return *data_->image; }
+  [[nodiscard]] std::optional<std::uint32_t> FindFunction(std::string_view name) const noexcept;
   [[nodiscard]] const ProgramLayouts& layouts() const noexcept { return data_->layouts; }
   [[nodiscard]] const MemberTable& members() const noexcept { return data_->members; }
   [[nodiscard]] const CodeIdentity& code_identity() const noexcept { return *data_->code_identity; }

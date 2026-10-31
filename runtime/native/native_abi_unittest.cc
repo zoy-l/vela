@@ -251,11 +251,9 @@ TEST(NativeAbiTest, LeafFailureRetainsBorrowedRootsDuringExceptionAllocationAndR
   EXPECT_EQ(string->value(), "retained only by the cold leaf root range");
   EXPECT_EQ(execution.frame_count(), 0U);
   ASSERT_TRUE(execution.HasException());
-  const auto& error = ExceptionData::From(*execution.pending_exception().AsObject());
   const auto diagnostic = execution.ExceptionDiagnostic();
   ASSERT_EQ(diagnostic.stack_trace.size(), 1U);
   EXPECT_EQ(diagnostic.stack_trace.front().instruction, position.instruction);
-  EXPECT_EQ(error.trace().size(), 0U);
   static_cast<void>(execution.TakeException());
   heap.Collect();
   EXPECT_EQ(heap.object_count(), baseline);

@@ -5,11 +5,13 @@
 
 #include "benchmark/benchmark.h"
 
+#include <utility>
 #include "base/file.h"
 #include "base/path.h"
-#include "compiler/bytecode/compiler.h"
 #include "compiler/frontend/diagnostic.h"
-#include "vm/program.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
+#include "runtime/native/native_instance.h"
 
 namespace vela::benchmarks {
 
@@ -24,20 +26,31 @@ std::optional<std::string> LoadBenchmarkSource(benchmark::State& state, std::str
   return std::string(static_cast<const char*>(storage), bytes->size());
 }
 
-std::optional<vm::FunctionHandle> CompileBenchmarkEntry(benchmark::State& state,
-                                                        std::string_view source,
-                                                        runtime::Isolate& isolate) {
-  const auto compiled = compiler::CompileSource(source, isolate);
+std::unique_ptr<runtime::NativeInstance> CompileBenchmarkSource(benchmark::State& state,
+                                                                std::string_view source,
+                                                                runtime::Isolate& isolate) {
+  auto compiler = compiler::jit::Compiler::Create();
+  if (!compiler) {
+    state.SkipWithError(frontend::DiagnosticsText(compiler.error()));
+    return nullptr;
+  }
+  auto compiled = compiler::jit::CompileSource(**compiler, source);
   if (!compiled.Succeeded()) {
     state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
-    return std::nullopt;
+    return nullptr;
   }
-  auto entry = compiled.program.FindFunction("main");
-  if (!entry.IsValid() || entry.parameter_count() != 0) {
+  auto instance = runtime::NativeInstance::Instantiate(isolate, std::move(compiled.code.image));
+  if (!instance) {
+    state.SkipWithError(instance.error().message);
+    return nullptr;
+  }
+  const auto entry = (*instance)->FindFunction("main");
+  if (!entry || !(*instance)->call_signature(*entry).parameters.empty()) {
     state.SkipWithError("Benchmark requires a zero-argument main function");
-    return std::nullopt;
+    return nullptr;
   }
-  return entry;
+  return std::move(*instance);
 }
 
 }  // namespace vela::benchmarks
+#include <memory>

@@ -11,7 +11,7 @@
 
 namespace vela::runtime::internal {
 
-// VM 热分派和动态数值操作共用叶实现；内联使 VM 保留同一优化边界。
+// 原生分派和动态数值操作共用叶实现。
 struct NumericOperands final {
   Value left;
   Value right;

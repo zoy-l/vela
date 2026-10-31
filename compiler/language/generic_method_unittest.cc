@@ -3,9 +3,8 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
-#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/test_support/program_test_support.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/isolate/isolate.h"
 
@@ -21,18 +20,18 @@ TEST(GenericMethodTest, ExecutesOwnerMethodAndInterfaceApplications) {
 
 TEST(GenericMethodTest, RestoresConcreteSelectorsAndCapturedReceiversFromImage) {
   runtime::Isolate isolate(1);
-  const auto compiled = test::ReloadSource(test::kGenericMethodsSource, isolate);
+  const auto compiled = test::ReinstantiateSource(test::kGenericMethodsSource, isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
 
 TEST(GenericMethodTest, RestoresAsyncMethodFramesAndTypedExceptionsFromImage) {
   runtime::Isolate isolate(1);
-  const auto compiled = test::ReloadSource(test::kGenericAsyncMethodsSource, isolate);
+  const auto compiled = test::ReinstantiateSource(test::kGenericAsyncMethodsSource, isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteFutureInteger(*compiled, isolate);
+  const auto result = test::ExecuteFutureInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -66,7 +65,7 @@ func main(): int {
   runtime::Isolate isolate(1);
   const auto compiled = test::CompileCleanModules(inputs, "main.vela", isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -145,9 +144,9 @@ func main(): int {
 
 TEST(GenericMethodTest, DefersWrappedMethodValuesAndPreservesMatchBindingIdentity) {
   runtime::Isolate isolate(1);
-  const auto compiled = test::ReloadSource(test::kWrappedGenericMethodValuesSource, isolate);
+  const auto compiled = test::ReinstantiateSource(test::kWrappedGenericMethodValuesSource, isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -199,7 +198,7 @@ func main(): int { const owner: dynamic = Owner(); return owner.identity<int>(42
        }) {
     SCOPED_TRACE(source);
     runtime::Isolate isolate;
-    const auto compiled = CompileSource(source, isolate);
+    const auto compiled = test::CompileSource(source, isolate);
     EXPECT_FALSE(compiled.Succeeded());
     EXPECT_FALSE(compiled.diagnostics.empty());
   }

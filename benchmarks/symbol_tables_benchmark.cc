@@ -4,13 +4,16 @@
 
 #include "benchmark/benchmark.h"
 
-#include "compiler/bytecode/compiler.h"
+#include "benchmarks/source.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/type_checker.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/vm.h"
+#include "runtime/native/native_execution.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -29,7 +32,7 @@ std::string BuildSymbolSource(std::int64_t count) {
               "let local_with_a_long_name: int = parameter_with_a_long_name; "
               "return local_with_a_long_name + 1; }\n";
   }
-  // 只调用首个函数，使符号规模不受当前 Call 指令的 8 位函数编号限制。
+  // 固定执行负载，使测量只随声明和符号表规模增长。
   source += "func main(): int { return symbol_table_benchmark_function_0(10); }\n";
   return source;
 }
@@ -39,18 +42,12 @@ void CompileSymbolTables(benchmark::State& state) {
   // 在计时外验证生成的负载；测量区间只包括编译及其资源生命周期。
   {
     runtime::Isolate isolate;
-    const auto compiled = compiler::CompileSource(source, isolate);
-    if (!compiled.Succeeded()) {
+    const auto instance = CompileBenchmarkSource(state, source, isolate);
+    if (!instance) {
       state.SkipWithError("Symbol workload did not compile");
       return;
     }
-    const auto entry = compiled.program.FindFunction("main");
-    if (!entry.IsValid()) {
-      state.SkipWithError("Symbol workload has no main function");
-      return;
-    }
-    const auto entry_index = entry.index();
-    const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, entry_index);
+    const auto result = runtime::ExecuteNativeFunction(*instance, *instance->FindFunction("main"));
     constexpr std::int64_t kExpectedResult = 11;
     if (!result.Succeeded() || !result.value.IsInteger() ||
         result.value.AsInteger() != kExpectedResult) {
@@ -58,9 +55,13 @@ void CompileSymbolTables(benchmark::State& state) {
       return;
     }
   }
+  auto compiler = compiler::jit::Compiler::Create();
+  if (!compiler) {
+    state.SkipWithError(frontend::DiagnosticsText(compiler.error()));
+    return;
+  }
   for (auto iteration : state) {
-    runtime::Isolate isolate;
-    auto compiled = compiler::CompileSource(source, isolate);
+    auto compiled = compiler::jit::CompileSource(**compiler, source);
     if (!compiled.Succeeded()) {
       state.SkipWithError("Symbol workload did not compile");
       break;

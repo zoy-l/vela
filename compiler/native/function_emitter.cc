@@ -21,8 +21,10 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/MDBuilder.h>
+#include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Alignment.h>
+#include <llvm/Support/AtomicOrdering.h>
 
 #include "base/execution_status.h"
 #include "base/opcode.h"
@@ -80,6 +82,21 @@ void FunctionEmitter::SetPosition() {
   builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(position)), instruction_slot_);
 }
 
+void FunctionEmitter::PrepareRuntimeCall() {
+  if (leaf_entry_) {
+    return;
+  }
+  SetPosition();
+  StoreRoots(instruction_index_);
+  StoreCheckpoint();
+  StoreDebugValues();
+  if (checkpoint_ != nullptr) {
+    builder_.CreateStore(
+        builder_.getInt8(static_cast<std::uint8_t>(runtime::NativeCheckpointPhase::AwaitingResult)),
+        ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, phase)));
+  }
+}
+
 std::uint64_t FunctionEmitter::TracePosition() const {
   return runtime::EncodeNativeTracePosition({
       .function = static_cast<std::uint32_t>(function_index_),
@@ -88,12 +105,43 @@ std::uint64_t FunctionEmitter::TracePosition() const {
 }
 
 void FunctionEmitter::Poll() {
+  auto& context = module_.getContext();
+  auto* requests_address = builder_.CreateLoad(
+      builder_.getPtrTy(),
+      ByteAddress(body_->getArg(0), runtime::NativeMemoryLayout::kExecutionSafepointRequests));
+  // 请求字属于 Isolate，地址在整个执行期间固定；请求值仍必须在每个安全点原子读取。
+  requests_address->setMetadata(llvm::LLVMContext::MD_invariant_load,
+                                llvm::MDNode::get(context, {}));
+  auto* requests = builder_.CreateLoad(builder_.getInt8Ty(), requests_address);
+  requests->setAtomic(llvm::AtomicOrdering::Acquire);
+  llvm::Value* required = builder_.CreateICmpNE(requests, builder_.getInt8(0));
+  if (tier_ == NativeCodeTier::Optimized) {
+    // 被调用方可能已消耗发布请求并使当前帧失效；返回后仍须在下一安全点恢复。
+    auto* tier = builder_.CreateLoad(
+        builder_.getInt8Ty(), ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, tier)));
+    required = builder_.CreateOr(
+        required, builder_.CreateICmpEQ(
+                      tier, builder_.getInt8(static_cast<std::uint8_t>(NativeCodeTier::Baseline))));
+  }
+  auto* process = llvm::BasicBlock::Create(context, "safepoint.process", body_);
+  auto* ready = llvm::BasicBlock::Create(context, "safepoint.ready", body_);
+  builder_.CreateCondBr(required, process, ready,
+                        llvm::MDBuilder(context).createUnlikelyBranchWeights());
+  builder_.SetInsertPoint(process);
+  SetPosition();
+  if (source_.native_symbol.empty()) {
+    StoreRoots(instruction_index_);
+    StoreCheckpoint();
+  }
+  StoreDebugValues();
   auto poll = module_.getOrInsertFunction("vela_native_v3_safepoint", builder_.getInt8Ty(),
                                           builder_.getPtrTy());
   CheckStatus(builder_.CreateCall(poll, {body_->getArg(0)}));
   if (tier_ == NativeCodeTier::Optimized) {
     RecoverIfInvalidated();
   }
+  builder_.CreateBr(ready);
+  builder_.SetInsertPoint(ready);
 }
 
 void FunctionEmitter::Fail(llvm::Value* status) {
@@ -117,10 +165,8 @@ void FunctionEmitter::Fail(llvm::Value* status) {
     return;
   }
   SetPosition();
-  if (!source_.instructions.empty() &&
-      !ir::AnalyzeEffects(source_.instructions.at(instruction_index_)).MayCollectOnSuccess() &&
-      roots_.safepoints.at(instruction_index_) == 0) {
-    // 只有错误封套可能分配时，将保根写入也放到失败分支；成功路径上的借用无需登记。
+  if (!source_.instructions.empty()) {
+    // 失败封套可以分配；条件式运行时调用的成功分支可能尚未登记当前活动值。
     StoreRoots(instruction_index_);
   }
   auto failure = module_.getOrInsertFunction("vela_native_v1_failure", builder_.getInt8Ty(),
@@ -135,8 +181,12 @@ void FunctionEmitter::Fail(llvm::Value* status) {
     auto* has_exception = builder_.CreateCall(pending, {body_->getArg(0)});
     auto* unhandled = llvm::BasicBlock::Create(module_.getContext(), "unhandled", body_);
     // handler 的下一安全点会登记其活动值；此处到 handler 之间不再分配。
-    for (std::size_t slot = 0; slot < roots_.count; ++slot) {
-      ClearRoot(slot);
+    // 批量清空根区，避免每个失败点展开整个函数的根槽，生成平方规模的 LLVM IR。
+    if (roots_.count != 0) {
+      static_assert(static_cast<std::uint8_t>(runtime::ValueKind::Null) == 0);
+      builder_.CreateMemSet(root_slots_, builder_.getInt8(0),
+                            roots_.count * sizeof(runtime::Value),
+                            llvm::MaybeAlign(alignof(runtime::Value)));
     }
     const auto target = source_.handlers.at(*handler).target;
     builder_.CreateCondBr(builder_.CreateICmpNE(has_exception, builder_.getInt8(0)),
@@ -348,6 +398,11 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
     }
     arguments_ = builder_.CreateAlloca(fields.at(slots_.size()));
     result_ = builder_.CreateAlloca(fields.at(slots_.size() + 1));
+    if (roots_.debug_values) {
+      auto* values = builder_.CreateAlloca(fields.back());
+      values->setAlignment(llvm::Align(alignof(runtime::NativeDebugValue)));
+      debug_values_ = values;
+    }
     if (tier_ == NativeCodeTier::Optimized) {
       auto* checkpoint = builder_.CreateAlloca(fields.at(slots_.size() + 2));
       checkpoint->setAlignment(llvm::Align(alignof(runtime::NativeCheckpoint)));
@@ -364,7 +419,7 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
 }
 
 bool FunctionEmitter::CanUseLeafEntry() const {
-  if (program_.native_mode == NativeProgramMode::Reloadable || source_.is_async ||
+  if (roots_.debug_values || program_.native_mode == NativeProgramMode::Reloadable || source_.is_async ||
       !source_.native_symbol.empty() || !source_.handlers.empty() ||
       frame_bytes_ > kMaximumNativeStackBytes || !IsScalar(source_.return_type)) {
     return false;
@@ -399,6 +454,9 @@ void FunctionEmitter::BindFrameStorage() {
     }
     arguments_ = builder_.CreateStructGEP(frame_type_, frame_storage_, 0);
     result_ = builder_.CreateStructGEP(frame_type_, frame_storage_, 1);
+    if (roots_.debug_values) {
+      debug_values_ = builder_.CreateStructGEP(frame_type_, frame_storage_, 2);
+    }
     return;
   }
   if (frame_bytes_ <= kMaximumNativeStackBytes) {
@@ -413,6 +471,9 @@ void FunctionEmitter::BindFrameStorage() {
   const auto scratch = static_cast<unsigned>(slots_.size());
   arguments_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch);
   result_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 1);
+  if (roots_.debug_values) {
+    debug_values_ = builder_.CreateStructGEP(frame_type_, frame_storage_, frame_type_->getNumElements() - 1);
+  }
   if (tier_ == NativeCodeTier::Optimized) {
     checkpoint_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 2);
     checkpoint_values_ = builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + 3);
@@ -449,9 +510,10 @@ void FunctionEmitter::EmitImport() {
       builder_.CreateCall(helper, {context});
     }
   };
-  if (program_.native_mode == NativeProgramMode::Reloadable) {
+  if (program_.native_mode == NativeProgramMode::Reloadable || roots_.debug_values) {
     Poll();
   }
+  EmitIntrinsicImport();
   const auto& return_type = source_.return_type;
   auto* result_type = return_type.kind == Kind::Bool || return_type.kind == Kind::Void
                           ? builder_.getInt8Ty()
@@ -525,22 +587,20 @@ std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size
   builder_.SetInsertPoint(blocks_.at(index));
   const auto effects = ir::AnalyzeEffects(instruction);
   const auto safepoint = roots_.safepoints.at(index) != 0;
-  if (!leaf_entry_ && (effects.MayCollectOnSuccess() || safepoint)) {
-    // 调用者位置在进入被调用方前可见；纯检查仅在失败分支登记，算术成功路径不写位置。
-    SetPosition();
-    StoreRoots(index);
-    StoreCheckpoint();
-  }
   if (safepoint) {
     Poll();
   }
+  const auto conditional_call =
+      (instruction.opcode == Opcode::BuiltinCall &&
+       instruction.index == static_cast<std::uint32_t>(Builtin::ArrayPush)) ||
+      (instruction.opcode == Opcode::GetField && instruction.field_declaration.has_value()) ||
+      (instruction.opcode == Opcode::GetGlobal &&
+       program_.native_mode == NativeProgramMode::Closed);
+  if (effects.MayCollectOnSuccess() && !conditional_call) {
+    PrepareRuntimeCall();
+  }
   if (instruction.construction) {
     BeginConstruction();
-  }
-  if (checkpoint_ != nullptr && effects.MayCollectOnSuccess()) {
-    builder_.CreateStore(
-        builder_.getInt8(static_cast<std::uint8_t>(runtime::NativeCheckpointPhase::AwaitingResult)),
-        ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, phase)));
   }
   const auto emitted = EmitInstruction(instruction);
   if (!emitted) {
@@ -613,7 +673,9 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   EmitFrameEntry();
   BindFrameStorage();
   InitializeCheckpoint();
+  InitializeDebugValues();
   CacheImports();
+  CacheFields();
   BindArguments();
   InitializeRecords();
   if (!source_.native_symbol.empty()) {

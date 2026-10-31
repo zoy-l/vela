@@ -18,11 +18,24 @@ NativeDebugFrame::NativeDebugFrame(const NativeTraceFrame& frame) noexcept
     : image_(frame.image),
       function_(&image_->functions.values().subspan(frame.position.function).front()),
       instruction_(frame.position.instruction),
-      checkpoint_(frame.checkpoint) {
+      checkpoint_(frame.checkpoint),
+      frame_(&frame) {
   const auto locations = function_->locations.values();
   if (instruction_ < locations.size()) {
     location_ = locations.subspan(instruction_).front();
   }
+}
+
+std::size_t NativeDebugFrame::register_count() const noexcept {
+  return static_cast<std::size_t>(frame_->debug_count);
+}
+
+std::optional<Value> NativeDebugFrame::ReadRegister(std::size_t index) const noexcept {
+  if (index >= register_count()) {
+    return std::nullopt;
+  }
+  const auto& value = std::span(frame_->debug_values, register_count()).subspan(index).front();
+  return value.available != 0 ? std::optional(DecodeNativeValue(value.value)) : std::nullopt;
 }
 
 NativeCodeTier NativeDebugFrame::tier() const noexcept {

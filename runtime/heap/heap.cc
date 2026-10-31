@@ -16,7 +16,6 @@
 #include "runtime/isolate/isolate.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
-#include "runtime/value/register_storage.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
@@ -53,16 +52,6 @@ void RootRange::Detach() noexcept {
   }
   vela::runtime::Heap::UnregisterRoot(*this);
   heap_ = nullptr;
-}
-
-void RootRange::Attach(Heap& heap, RegisterView registers) noexcept {
-  Detach();
-  heap_ = &heap;
-  data_ = registers.payloads().data();
-  register_kinds_ = registers.kinds().data();
-  count_ = registers.size();
-  kind_ = Kind::Registers;
-  heap.RegisterRoot(*this);
 }
 
 Heap::Heap(std::size_t gc_threshold) noexcept
@@ -201,7 +190,7 @@ void Heap::Step(std::size_t work_budget) noexcept {
         --work_budget;
         continue;
       }
-      // VM 可在增量步骤之间改写根槽位；进入清扫前重新捕获当前根。
+      // 执行可在增量步骤之间改写根槽位；进入清扫前重新捕获当前根。
       MarkRoots();
       if (gray_ != nullptr) {
         continue;
@@ -297,24 +286,6 @@ void Heap::MarkRoots() noexcept {
 }
 
 void Heap::MarkRoot(const RootRange& root) noexcept {
-  if (root.kind_ == RootRange::Kind::Registers) {
-    const auto payloads = std::span(static_cast<const RegisterPayload*>(root.data_), root.count_);
-    const auto kinds = std::span(root.register_kinds_, root.count_);
-    for (std::size_t index = 0; index < root.count_; ++index) {
-      const auto kind = kinds.subspan(index).front();
-      const auto& payload = payloads.subspan(index).front();
-      if (kind == ValueKind::Object) {
-        if (auto* object = payload.Read<HeapObject*>(); object != nullptr) {
-          MarkObject(*object);
-        }
-      } else if (kind == ValueKind::String) {
-        if (auto* string = payload.Read<StringObject*>(); string != nullptr) {
-          MarkObject(string->header_);
-        }
-      }
-    }
-    return;
-  }
   if (root.kind_ == RootRange::Kind::Values) {
     for (const Value value : std::span(static_cast<const Value*>(root.data_), root.count_)) {
       MarkValue(value);

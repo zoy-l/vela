@@ -2,7 +2,6 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -27,9 +26,9 @@ TEST_P(ByteDataProgramTest, ExecutesWithGCAndReleasesOwnedStorage) {
 
 TEST_P(ByteDataProgramTest, ReloadsWithIndependentIsolateOwnership) {
   runtime::Isolate isolate(1);
-  const auto loaded = test::ReloadSource(GetParam(), isolate);
+  const auto loaded = test::ReinstantiateSource(GetParam(), isolate);
   ASSERT_TRUE(loaded) << loaded.error();
-  const auto result = test::ExecuteInteger(*loaded, isolate);
+  const auto result = test::ExecuteInteger(**loaded);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -189,7 +188,7 @@ class InvalidByteDataTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(InvalidByteDataTest, RejectsWrongTypesReadonlyPropertiesAndUnsupportedOperations) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(GetParam(), isolate);
+  const auto compiled = test::CompileSource(GetParam(), isolate);
   EXPECT_FALSE(compiled.Succeeded());
   EXPECT_FALSE(compiled.diagnostics.empty());
 }

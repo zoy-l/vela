@@ -1,5 +1,6 @@
 #include "compiler/native/function_emitter.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
@@ -147,6 +148,10 @@ void FunctionEmitter::EmitFrameEntry() {
     builder_.CreateStore(image_, ByteAddress(frame, offsetof(NativeTraceFrame, image)));
     builder_.CreateStore(llvm::ConstantPointerNull::get(builder_.getPtrTy()),
                          ByteAddress(frame, offsetof(NativeTraceFrame, checkpoint)));
+    builder_.CreateStore(llvm::ConstantPointerNull::get(pointer),
+                         ByteAddress(frame, offsetof(NativeTraceFrame, debug_values)));
+    builder_.CreateStore(builder_.getInt64(0),
+                         ByteAddress(frame, offsetof(NativeTraceFrame, debug_count)));
     const auto position = offsetof(NativeTraceFrame, position);
     builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
                          ByteAddress(frame, position + offsetof(runtime::TracePosition, function)));
@@ -181,6 +186,18 @@ void FunctionEmitter::CacheImports() {
     imports_.emplace(instruction.index,
                      LoadImport(builder_, module_, body_->getArg(0), instruction.index));
   }
+}
+
+void FunctionEmitter::CacheFields() {
+  if (std::ranges::none_of(source_.instructions, [](const auto& instruction) {
+        return instruction.field_declaration.has_value();
+      })) {
+    return;
+  }
+  auto caches = module_.getOrInsertFunction("vela_native_v9_field_caches", builder_.getPtrTy(),
+                                            builder_.getPtrTy(), builder_.getInt32Ty());
+  field_caches_ = builder_.CreateCall(
+      caches, {body_->getArg(0), builder_.getInt32(static_cast<std::uint32_t>(function_index_))});
 }
 
 void FunctionEmitter::BeginConstruction() {

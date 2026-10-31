@@ -3,10 +3,9 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/bytecode/compiler.h"
+#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/diagnostic.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -15,13 +14,13 @@ class DynamicConversionDiagnosticTest : public testing::TestWithParam<std::strin
 
 TEST_P(DynamicConversionDiagnosticTest, WarnsWithoutDisablingChecksAndCanBeAnError) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(GetParam(), isolate);
+  const auto compiled = test::CompileSource(GetParam(), isolate);
   ASSERT_TRUE(compiled.Succeeded());
   ASSERT_TRUE(std::ranges::any_of(compiled.diagnostics, [](const auto& diagnostic) {
     return diagnostic.code == frontend::DiagnosticCode::ImplicitDynamicConversion &&
            diagnostic.severity == frontend::DiagnosticSeverity::Warning;
   }));
-  const auto rejected = CompileSource(
+  const auto rejected = test::CompileSource(
       GetParam(), isolate, {.implicit_dynamic_conversion = frontend::DiagnosticSeverity::Error});
   EXPECT_FALSE(rejected.Succeeded());
   EXPECT_TRUE(frontend::HasErrors(rejected.diagnostics));
@@ -51,7 +50,7 @@ INSTANTIATE_TEST_SUITE_P(
 TEST(DynamicConversionDiagnosticTest, ExplicitChecksAndValidRefinementsDoNotWarn) {
   runtime::Isolate isolate;
   const auto compiled =
-      CompileSource(R"(
+      test::CompileSource(R"(
 func main(): int {
   const value: dynamic = Json.parse('42');
   const erased: dynamic = value;
@@ -63,14 +62,14 @@ func main(): int {
                     isolate, {.implicit_dynamic_conversion = frontend::DiagnosticSeverity::Error});
   ASSERT_TRUE(compiled.Succeeded());
   EXPECT_TRUE(compiled.diagnostics.empty());
-  const auto executed = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto executed = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(executed.Succeeded());
   EXPECT_EQ(executed.value.AsInteger(), 42);
 }
 
 TEST(DynamicConversionDiagnosticTest, ImplicitConversionStillThrowsAndPreservesCatchBehavior) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 func main(): int {
   const value: dynamic = 'wrong';
   try { const number: int = value; return number; }
@@ -80,14 +79,14 @@ func main(): int {
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
   ASSERT_EQ(compiled.diagnostics.size(), 1U);
-  const auto executed = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto executed = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(executed.Succeeded()) << executed.message;
   EXPECT_EQ(executed.value.AsInteger(), 42);
 }
 
 TEST(DynamicConversionDiagnosticTest, ReportsEachTypedBindingOfACachedDynamicResultAdapter) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 func main(): void {
   const values = Map<string, dynamic>();
   const first: (string) => int = values.get;

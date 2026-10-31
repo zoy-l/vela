@@ -5,11 +5,10 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
-#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/test_support/program_test_support.h"
+#include "compiler/ir/preparation_test_support.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/program.h"
 
 namespace vela::compiler {
 namespace {
@@ -110,7 +109,7 @@ class LambdaInferenceErrorTest : public testing::TestWithParam<std::string_view>
 
 TEST_P(LambdaInferenceErrorTest, RejectsMissingContextAndInconsistentConstraints) {
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileSource(GetParam(), isolate).Succeeded());
+  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -132,7 +131,7 @@ INSTANTIATE_TEST_SUITE_P(
         "func main(): void { [1, 2].map(x => {}); }",
         "func main(): void { const f = ("));
 
-TEST(LambdaInferenceCodegenTest, ProducesTheSameBytecodeAndRegistersAsExplicitAnnotations) {
+TEST(LambdaInferenceCodegenTest, ProducesTheSameTypedIRAsExplicitAnnotations) {
   constexpr std::string_view kExplicit = R"(
 func main(): int {
   const values = [3, 1, 2]; let total = 0;
@@ -147,20 +146,23 @@ func main(): int {
   values.forEach(value => { total = total + value; });
   return values.reduce((sum, value) => sum + value, 36);
 })";
-  runtime::Isolate isolate;
-  const auto annotated = CompileSource(kExplicit, isolate);
-  const auto inferred = CompileSource(kInferred, isolate);
+  const auto annotated = ir::test::Prepare(kExplicit);
+  const auto inferred = ir::test::Prepare(kInferred);
   ASSERT_TRUE(annotated.Succeeded());
   ASSERT_TRUE(inferred.Succeeded());
-  const auto expected = annotated.program.functions();
-  const auto actual = inferred.program.functions();
+  const auto& expected = annotated.program.functions;
+  const auto& actual = inferred.program.functions;
   ASSERT_EQ(actual.size(), expected.size());
   for (std::size_t index = 0; index < expected.size(); ++index) {
-    const auto& left = expected.subspan(index).front();
-    const auto& right = actual.subspan(index).front();
-    EXPECT_EQ(std::tie(left.code, left.register_count, left.parameter_count),
-              std::tie(right.code, right.register_count, right.parameter_count))
-        << left.name;
+    const auto& left = expected.at(index);
+    const auto& right = actual.at(index);
+    EXPECT_EQ(std::tie(left.register_count, left.parameter_count),
+              std::tie(right.register_count, right.parameter_count));
+    ASSERT_EQ(left.instructions.size(), right.instructions.size());
+    for (std::size_t position = 0; position < left.instructions.size(); ++position) {
+      EXPECT_EQ(ir::test::InstructionOperands(left.instructions.at(position)),
+                ir::test::InstructionOperands(right.instructions.at(position))) << left.name;
+    }
   }
 }
 
@@ -181,7 +183,7 @@ TEST(LambdaInferenceTest, PropagatesImportedGenericSignaturesIntoCallbacks) {
   runtime::Isolate isolate(1);
   const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }

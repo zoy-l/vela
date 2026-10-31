@@ -432,6 +432,16 @@ std::expected<void, NativeInstantiationError> NativeInstance::InitializeConstant
   return {};
 }
 
+std::optional<std::uint32_t> NativeInstance::FindFunction(std::string_view name) const noexcept {
+  const auto functions = image().functions.values();
+  for (std::size_t index = 0; index < functions.size(); ++index) {
+    if (functions.subspan(index).front().name.text() == name) {
+      return static_cast<std::uint32_t>(index);
+    }
+  }
+  return std::nullopt;
+}
+
 std::expected<std::unique_ptr<NativeInstance>, NativeInstantiationError>
 NativeInstance::Instantiate(Isolate& isolate, const NativeImage& image) {
   return Instantiate(isolate, image, {}, nullptr);

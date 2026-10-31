@@ -6,9 +6,62 @@
 #include <gtest/gtest.h>
 
 #include "base/execution_status.h"
+#include "runtime/native/native_debugger.h"
 
 namespace vela::runtime {
 namespace {
+
+TEST(NativeControlTest, SafepointRequestsPreserveIndependentSourcesUntilEachIsConsumed) {
+  NativeControl control;
+  const auto& requests = control.safepoint_requests();
+  EXPECT_EQ(requests.load(), 0);
+  int calls = 0;
+  ASSERT_TRUE(control.ScheduleSafepoint([&] { ++calls; }));
+  const auto endpoint = control.endpoint();
+  ASSERT_TRUE(endpoint.Post([&] { ++calls; }));
+  ASSERT_TRUE(endpoint.Post([&] { ++calls; }));
+  EXPECT_NE(requests.load(), 0);
+  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
+  EXPECT_EQ(calls, 1);
+  EXPECT_NE(requests.load(), 0);
+  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
+  EXPECT_EQ(calls, 2);
+  EXPECT_NE(requests.load(), 0);
+  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
+  EXPECT_EQ(calls, 3);
+  EXPECT_EQ(requests.load(), 0);
+
+  ASSERT_TRUE(control.ScheduleSafepoint([&] { ++calls; }));
+  std::jthread request([&] { endpoint.RequestStop(); });
+  request.join();
+  control.CancelSafepoint();
+  EXPECT_NE(requests.load(), 0);
+  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::ExecutionStopped);
+  EXPECT_EQ(calls, 3);
+}
+
+TEST(NativeControlTest, DetachingDebuggerDoesNotClearQueuedOrScheduledWork) {
+  class Debugger final : public NativeDebugger {
+   public:
+    void AtSafepoint(const NativeDebugContext& /*context*/) noexcept override {}
+  } debugger;
+  NativeControl control;
+  const auto& requests = control.safepoint_requests();
+  control.SetDebugger(&debugger);
+  EXPECT_NE(requests.load(), 0);
+  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
+  EXPECT_NE(requests.load(), 0);
+  int calls = 0;
+  ASSERT_TRUE(control.endpoint().Post([&] { ++calls; }));
+  ASSERT_TRUE(control.ScheduleSafepoint([&] { ++calls; }));
+  control.SetDebugger(nullptr);
+  EXPECT_NE(requests.load(), 0);
+  control.CancelSafepoint();
+  EXPECT_NE(requests.load(), 0);
+  EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(requests.load(), 0);
+}
 
 TEST(NativeControlTest, StopWaitsForTheOutermostHostBorrowToReturn) {
   NativeControl control;

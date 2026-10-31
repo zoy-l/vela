@@ -48,7 +48,7 @@ struct BoundArguments final {
     std::span<const TypeConstraint> types,
     const HeapObject& arguments,
     const BoundArguments& bound);
-// 返回 native/VM 参数表示，包含 enum 解箱、缺省空值和 rest 数组分配。
+// 返回原生调用参数表示，包含 enum 解箱、缺省空值和 rest 数组分配。
 [[nodiscard]] std::expected<Value, ExecutionStatus> ReadDynamicArgument(
     Heap& heap,
     const CallSignature& signature,

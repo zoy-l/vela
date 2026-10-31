@@ -257,7 +257,7 @@ source_set("interactive") {
     "cli/repl_console.cc",
     "cli/repl_console.h",
   ]
-  public_deps = [ ":compiler" ]
+  public_deps = [ ":development" ]
   deps = [
     ":console_input",
     ":project_configuration",
@@ -283,7 +283,7 @@ source_set("testing") {
     "testing/suite_report.cc",
   ]
   public_deps = [
-    ":compiler",
+    ":jit",
     ":tooling",
   ]
 }
@@ -307,37 +307,6 @@ source_set("repl_source") {
   public_deps = [ ":frontend" ]
 }
 
-source_set("compiler") {
-  include_dirs = [ "$root_gen_dir" ]
-  sources = [
-    "bytecode/compilation_cache.cc",
-    "bytecode/compilation_cache.h",
-    "bytecode/compilation_state.h",
-    "bytecode/compiler.cc",
-    "bytecode/compiler.h",
-    "bytecode/native_linker.cc",
-    "bytecode/native_linker.h",
-    "bytecode/register_allocator.cc",
-    "bytecode/register_allocator.h",
-    "repl/repl_identity.cc",
-    "repl/repl_identity.h",
-    "repl/repl_session.cc",
-    "repl/repl_session.h",
-  ]
-  public_deps = [
-    ":frontend",
-    ":ir",
-    ":repl_source",
-    ":source_session",
-    "//runtime",
-    "//vm",
-  ]
-  deps = [
-    ":cache_build_identity",
-    "//third_party:abseil",
-  ]
-}
-
 source_set("native") {
   sources = [
     "native/async_emitter.cc",
@@ -346,6 +315,7 @@ source_set("native") {
     "native/call_emitter.cc",
     "native/code_generator.cc",
     "native/code_generator.h",
+    "native/debug_emitter.cc",
     "native/deoptimization_emitter.cc",
     "native/escape_analysis.cc",
     "native/escape_analysis.h",
@@ -392,6 +362,8 @@ source_set("jit") {
     "jit/platform_support.h",
     "jit/runtime_symbols.cc",
     "jit/runtime_symbols.h",
+    "jit/source_compiler.cc",
+    "jit/source_compiler.h",
   ]
   deps = [ ":cache_build_identity" ]
   public_deps = [
@@ -452,10 +424,12 @@ executable("vela_jit_tests") {
     "development/development_files_unittest.cc",
     "development/development_repl_unittest.cc",
     "development/development_session_unittest.cc",
+    "development/repl_language_unittest.cc",
     "jit/callable_unittest.cc",
     "jit/code_cache_unittest.cc",
     "jit/compiler_unittest.cc",
     "jit/debugger_unittest.cc",
+    "jit/source_cache_unittest.cc",
     "jit/state_evolution_unittest.cc",
     "jit/test_support.cc",
     "jit/test_support.h",
@@ -464,6 +438,7 @@ executable("vela_jit_tests") {
     ":checkpoint_publication",
     ":development",
     ":jit",
+    ":program_test_support",
     ":source_session",
     ":test_sources",
     "//base:test_directory",
@@ -505,9 +480,9 @@ source_set("aot_driver") {
   ]
   deps = [
     ":aot",
-    ":compiler",
     ":project_configuration",
     "//base:json",
+    "//runtime",
     "//third_party:llvm",
   ]
 }
@@ -534,7 +509,6 @@ executable("vela") {
   deps = [
     ":aot_driver",
     ":build_info",
-    ":compiler",
     ":development_tools",
     ":interactive",
     ":testing",
@@ -588,7 +562,7 @@ source_set("program_test_support") {
     "test_support/program_test_support.cc",
     "test_support/program_test_support.h",
   ]
-  public_deps = [ ":compiler" ]
+  public_deps = [ ":jit" ]
 }
 
 source_set("test_sources") {
@@ -599,16 +573,9 @@ source_set("test_sources") {
 executable("vela_compiler_tests") {
   testonly = true
   sources = [
-    "bytecode/bytecode_image_unittest.cc",
-    "bytecode/compilation_cache_unittest.cc",
-    "bytecode/compiler_unittest.cc",
-    "bytecode/constant_pool_unittest.cc",
-    "bytecode/encoding_unittest.cc",
-    "bytecode/layout_instantiation_unittest.cc",
-    "bytecode/optimization_unittest.cc",
-    "bytecode/register_allocator_unittest.cc",
     "development/source_session_unittest.cc",
     "frontend/typing/checker_test_support.h",
+    "ir/layout_instantiation_unittest.cc",
     "ir/preparation_test_support.h",
     "language/async_contract_unittest.cc",
     "language/builtin_function_value_unittest.cc",
@@ -616,6 +583,7 @@ executable("vela_compiler_tests") {
     "language/cast_unittest.cc",
     "language/class_unittest.cc",
     "language/collection_unittest.cc",
+    "language/compilation_unittest.cc",
     "language/control_flow_unittest.cc",
     "language/debugger_unittest.cc",
     "language/double_unittest.cc",
@@ -627,6 +595,7 @@ executable("vela_compiler_tests") {
     "language/generic_unittest.cc",
     "language/global_unittest.cc",
     "language/import_unittest.cc",
+    "language/integer_literal_unittest.cc",
     "language/interface_unittest.cc",
     "language/json_unittest.cc",
     "language/lambda_inference_unittest.cc",
@@ -634,7 +603,10 @@ executable("vela_compiler_tests") {
     "language/match_unittest.cc",
     "language/module_unittest.cc",
     "language/native_binding_unittest.cc",
+    "language/native_image_unittest.cc",
+    "language/native_limits_unittest.cc",
     "language/numeric_conversion_unittest.cc",
+    "language/optimized_execution_unittest.cc",
     "language/recursion_unittest.cc",
     "language/regexp_unittest.cc",
     "language/sdk_modules_unittest.cc",
@@ -643,14 +615,13 @@ executable("vela_compiler_tests") {
     "language/string_gc_unittest.cc",
     "language/string_unittest.cc",
     "language/unicode_unittest.cc",
-    "repl/repl_session_unittest.cc",
     "testing/matchers_unittest.cc",
     "testing/mock_unittest.cc",
     "testing/suite_unittest.cc",
   ]
   deps = [
-    ":compiler",
     ":program_test_support",
+    ":source_session",
     ":test_sources",
     ":testing",
     "//base:test_directory",

@@ -5,9 +5,8 @@
 #include "gtest/gtest.h"
 
 #include "compiler/test_support/program_test_support.h"
+#include "compiler/ir/preparation_test_support.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/execution_status.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -40,9 +39,9 @@ func main(): bool {
 }
 )";
   runtime::Isolate isolate(1);
-  const auto entry = test::CompileEntry(source, isolate);
+  const auto entry = test::CompileCleanSource(source, isolate);
   ASSERT_TRUE(entry) << entry.error();
-  const auto result = vm::VirtualMachine(isolate).Execute(entry->program(), entry->index());
+  const auto result = test::Execute(**entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -51,12 +50,14 @@ func main(): bool {
 TEST(DoubleTest, DeduplicatesConstantsAndReturnsDouble) {
   runtime::Isolate isolate;
   const auto entry =
-      test::CompileEntry("func main(): double { return 42.5 + 42.5 + 42.5; }", isolate);
+      test::CompileCleanSource("func main(): double { return 42.5 + 42.5 + 42.5; }", isolate);
   ASSERT_TRUE(entry) << entry.error();
-  const auto& function = entry->program().functions().subspan(entry->index()).front();
+  const auto prepared = ir::test::Prepare("func main(): double { return 42.5 + 42.5 + 42.5; }");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto& function = prepared.program.functions.front();
   ASSERT_EQ(function.doubles.size(), 1U);
   EXPECT_DOUBLE_EQ(function.doubles.front(), 42.5);
-  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
+  const auto result = test::Execute(**entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsDouble());
   EXPECT_DOUBLE_EQ(result.value.AsDouble(), 127.5);
@@ -73,9 +74,9 @@ TEST_P(DoubleConstantTest, PreservesBinary64ConstantsAndSignedZero) {
   const auto& parameter = GetParam();
   SCOPED_TRACE(parameter.source);
   runtime::Isolate isolate;
-  const auto entry = test::CompileEntry(parameter.source, isolate);
+  const auto entry = test::CompileCleanSource(parameter.source, isolate);
   ASSERT_TRUE(entry) << entry.error();
-  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
+  const auto result = test::Execute(**entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsDouble());
   const double actual = result.value.AsDouble();
@@ -111,9 +112,9 @@ func main(): bool {
 }
 )";
   runtime::Isolate isolate;
-  const auto entry = test::CompileEntry(source, isolate);
+  const auto entry = test::CompileCleanSource(source, isolate);
   ASSERT_TRUE(entry) << entry.error();
-  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
+  const auto result = test::Execute(**entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -125,10 +126,10 @@ TEST_P(DoubleDivisionByZeroTest, ReportsDivisionByZero) {
   const auto source = GetParam();
   SCOPED_TRACE(source);
   runtime::Isolate isolate;
-  const auto entry = test::CompileEntry(source, isolate);
+  const auto entry = test::CompileCleanSource(source, isolate);
   ASSERT_TRUE(entry) << entry.error();
-  EXPECT_EQ(vm::VirtualMachine(isolate).Execute(*entry).status,
-            vm::ExecutionStatus::DivisionByZero);
+  EXPECT_EQ(test::Execute(**entry).status,
+            ExecutionStatus::DivisionByZero);
 }
 
 INSTANTIATE_TEST_SUITE_P(SignedZero,

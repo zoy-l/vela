@@ -18,16 +18,18 @@
 #include "base/file.h"
 #include "base/path.h"
 #include "benchmarks/process_memory.h"
+#include "benchmarks/source.h"
 #include "benchmarks/temporary_directory.h"
-#include "compiler/bytecode/compilation_cache.h"
-#include "compiler/bytecode/compiler.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/jit/code_cache.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/suite.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/bytecode_image.h"
-#include "vm/program.h"
+#include "runtime/native/native_instance.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -81,9 +83,9 @@ bool IsSuccessful(const testing::SuiteResult& result, std::size_t expected) {
          });
 }
 
-testing::SuiteResult RunSuite(runtime::Isolate& isolate, const vm::Program& program) {
+testing::SuiteResult RunSuite(runtime::NativeInstance& instance) {
   std::ostringstream diagnostics;
-  testing::Suite suite(isolate, program, {}, diagnostics);
+  testing::Suite suite(instance, {}, diagnostics);
   return suite.Run();
 }
 
@@ -91,8 +93,8 @@ void SmallStartup(benchmark::State& state) {
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
     runtime::Isolate isolate;
-    const auto compiled = compiler::CompileSource(kSmall, isolate);
-    if (!compiled.Succeeded() || !IsSuccessful(RunSuite(isolate, compiled.program), 1)) {
+    const auto instance = CompileBenchmarkSource(state, kSmall, isolate);
+    if (!instance || !IsSuccessful(RunSuite(*instance), 1)) {
       state.SkipWithError("small suite compilation or execution failed");
       return;
     }
@@ -101,14 +103,14 @@ void SmallStartup(benchmark::State& state) {
 
 void SuiteExecution(benchmark::State& state, std::string_view source, std::size_t expected) {
   runtime::Isolate isolate;
-  const auto compiled = compiler::CompileSource(source, isolate);
-  if (!compiled.Succeeded()) {
+  const auto instance = CompileBenchmarkSource(state, source, isolate);
+  if (!instance) {
     state.SkipWithError("cannot compile suite workload");
     return;
   }
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    if (!IsSuccessful(RunSuite(isolate, compiled.program), expected)) {
+    if (!IsSuccessful(RunSuite(*instance), expected)) {
       state.SkipWithError("suite returned an unexpected result");
       return;
     }
@@ -139,6 +141,10 @@ std::expected<std::vector<std::string>, std::string> PopulateSuiteCache(
   if (!source) {
     return std::unexpected(source.error());
   }
+  auto compiler = compiler::jit::Compiler::Create();
+  if (!compiler) {
+    return std::unexpected(frontend::DiagnosticsText(compiler.error()));
+  }
   std::vector<std::string> paths;
   paths.reserve(count);
   for (std::size_t index = 0; index < count; ++index) {
@@ -148,12 +154,10 @@ std::expected<std::vector<std::string>, std::string> PopulateSuiteCache(
       return std::unexpected(written.error());
     }
     paths.push_back(PathText(path));
-    runtime::Isolate isolate;
-    const auto populated = compiler::CompileFileCached(paths.back(), directory / "cache", isolate);
-    if (!populated) {
-      return std::unexpected(populated.error());
-    }
-    if (!populated->compiled.Succeeded()) {
+    const auto populated = compiler::jit::CompileFile(
+        **compiler, paths.back(),
+        {.diagnostics = {}, .compilation = {.code_cache = directory / "cache"}});
+    if (!populated.Succeeded()) {
       return std::unexpected("cannot compile SDK cache inputs");
     }
   }
@@ -166,6 +170,12 @@ void CacheBatch(benchmark::State& state) {
     return;
   }
   const auto& cache = temporary.path();
+  auto compiler = compiler::jit::Compiler::Create();
+  if (!compiler) {
+    state.SkipWithError(frontend::DiagnosticsText(compiler.error()));
+    return;
+  }
+
   const auto paths = PopulateSuiteCache(cache, static_cast<std::size_t>(state.range(0)));
   if (!paths) {
     state.SkipWithError(paths.error());
@@ -175,9 +185,14 @@ void CacheBatch(benchmark::State& state) {
     benchmark::DoNotOptimize(iteration);
     for (const auto& path : *paths) {
       runtime::Isolate isolate;
-      const auto compiled = compiler::CompileFileCached(path, cache / "cache", isolate);
-      if (!compiled || compiled->status != compiler::CacheStatus::Hit ||
-          !IsSuccessful(RunSuite(isolate, compiled->compiled.program), 1)) {
+      const auto compiled = compiler::jit::CompileFile(
+          **compiler, path, {.diagnostics = {}, .compilation = {.code_cache = cache / "cache"}});
+      if (!compiled.Succeeded() || compiled.code.cache != compiler::jit::CodeCacheStatus::Hit) {
+        state.SkipWithError("cached suite compilation failed or missed its cache");
+        break;
+      }
+      const auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+      if (!instance || !IsSuccessful(RunSuite(**instance), 1)) {
         state.SkipWithError("cached suite failed or missed its cache");
         break;
       }
@@ -190,15 +205,14 @@ void CacheBatch(benchmark::State& state) {
 }
 
 void ConcurrentSuites(benchmark::State& state) {
-  runtime::Isolate producer;
-  const auto compiled = compiler::CompileSource(kDeep, producer);
-  if (!compiled.Succeeded()) {
-    state.SkipWithError("cannot compile concurrent suite");
+  auto compiler = compiler::jit::Compiler::Create();
+  if (!compiler) {
+    state.SkipWithError(frontend::DiagnosticsText(compiler.error()));
     return;
   }
-  const auto image = vm::SaveBytecode(compiled.program, producer);
-  if (!image) {
-    state.SkipWithError(image.error().message);
+  const auto compiled = compiler::jit::CompileSource(**compiler, kDeep);
+  if (!compiled.Succeeded()) {
+    state.SkipWithError("cannot compile concurrent suite");
     return;
   }
   const auto count = static_cast<std::size_t>(state.range(0));
@@ -214,9 +228,9 @@ void ConcurrentSuites(benchmark::State& state) {
     for (std::size_t index = 0; index < count; ++index) {
       workers.emplace_back([&, index] {
         runtime::Isolate isolate;
-        const auto program = vm::LoadBytecode(*image, isolate);
+        const auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
         loaded.arrive_and_wait();
-        if (!program || !IsSuccessful(RunSuite(isolate, *program), 1)) {
+        if (!instance || !IsSuccessful(RunSuite(**instance), 1)) {
           failed = true;
         }
         allocated.at(index) = isolate.heap().allocated_bytes();

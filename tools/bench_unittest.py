@@ -16,7 +16,7 @@ from tools.benchmark_report import aot_comparison_report, comparison_report, jit
 from tools.escape_benchmark_report import aggregate_escape_results
 
 
-BACKENDS = ("cpp", "vm", "luajit_interp", "luajit")
+BACKENDS = ("cpp", "jit", "luajit_interp", "luajit")
 
 
 def case(backend: str, phase: str = "compare") -> str:
@@ -30,7 +30,7 @@ def sample(backend: str, elapsed: float, unit: str = "ns",
         "name": case(backend, phase), "real_time": elapsed, "cpu_time": 999999999,
         "time_unit": unit, "repetitions": repetitions, "repetition_index": repetition,
         "baseline_bytes": 100, "allocated_bytes": 150, "retained_bytes": 100,
-        "committed_bytes": 200, "register_bytes": 80, "warmup_calls": 128,
+        "committed_bytes": 200, "warmup_calls": 128,
         "warm_traces": traces, "traces": traces,
         "warm_jit_code_bytes": traces * 20, "jit_code_bytes": traces * 20,
     }
@@ -47,7 +47,7 @@ def native_samples(repetitions: int = 1) -> list[dict]:
                  baseline_heap_bytes=100, end_heap_bytes=100,
                  baseline_heap_objects=2, end_heap_objects=2)
             for backend, elapsed in (("cpp", 128), ("cpp_indirect", 192),
-                                     ("vm_control", 640), ("vm", 1920))
+                                     ("jit_control", 640), ("jit", 1920))
             for index in range(repetitions)]
 
 
@@ -91,10 +91,8 @@ class BenchmarkReportTest(unittest.TestCase):
         lifecycle["released_code_batches"] = 1
         self.assertEqual(len(aggregate_escape_results({"benchmarks": rows}, names, 1)), 4)
 
-    def test_reloadable_report_requires_five_checked_backends_and_code_retirement_evidence(self) -> None:
+    def test_reloadable_report_requires_four_checked_backends_and_code_retirement_evidence(self) -> None:
         rows = ported_aot_samples(3)
-        rows += [dict(row, name=row["name"].replace("/native/", "/vm/"), real_time=80,
-                      register_bytes=512) for row in rows if "/native/" in row["name"]]
         template = rows[0]
         for backend, elapsed in (("baseline", 40), ("optimized", 30)):
             rows += [dict(template, name=f"hot/steady/{backend}/dasprofile.queen/8/real_time",
@@ -109,7 +107,7 @@ class BenchmarkReportTest(unittest.TestCase):
                                            "first_execution_ns"), 1000)) for index in range(3)]
         names = sorted({row["name"] for row in rows})
         text = jit_comparison_report({"benchmarks": rows}, names, 3)
-        self.assertIn("| dasprofile.queen | 8 | 10.000 | 80.000 | 20.000 | 40.000 | 30.000 | 2.00x | 1.50x |", text)
+        self.assertIn("| dasprofile.queen | 8 | 10.000 | 20.000 | 40.000 | 30.000 | 2.00x | 1.50x |", text)
         self.assertIn("Geometric mean optimized JIT/AOT over 1 paired workloads: 1.50x.", text)
         missing = [row for row in rows if "/optimized/" not in row["name"]]
         with self.assertRaisesRegex(ValueError, "requires matching"):
@@ -154,25 +152,18 @@ class BenchmarkReportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "incorrect materialized object count"):
             jit_comparison_report(report, [name], 1)
 
-    def test_ported_vm_report_uses_matching_cpp_samples_and_checks_suspended_state(self) -> None:
+    def test_aot_report_rejects_retained_suspended_state(self) -> None:
         rows = ported_aot_samples(3)
-        rows += [dict(row, name=row['name'].replace('/native/', '/vm/'),
-                      real_time=100, register_bytes=512)
-                 for row in rows if '/native/' in row['name']]
-        names = sorted({row['name'] for row in rows})
-        text = aot_comparison_report({'benchmarks': rows}, names, 3)
-        self.assertIn('| dasprofile.queen | 8 | 20.000 | 100.000 | 10.000 |', text)
-        self.assertIn('Geometric mean VM/C++ over 1 paired workloads: 10.00x.', text)
-        self.assertIn('VM/C++', text)
-        rows[-1]['remaining_suspended_frames'] = 1
-        with self.assertRaisesRegex(ValueError, 'retained temporary state'):
-            aot_comparison_report({'benchmarks': rows}, names, 3)
+        names = sorted({row["name"] for row in rows})
+        rows[0]["remaining_suspended_frames"] = 1
+        with self.assertRaisesRegex(ValueError, "retained temporary state"):
+            aot_comparison_report({"benchmarks": rows}, names, 3)
 
     def test_aot_report_includes_ported_cpp_pairs_and_checks_references(self) -> None:
         rows = ported_aot_samples(3)
         names = sorted({row["name"] for row in rows})
         text = aot_comparison_report({"benchmarks": rows}, names, 3)
-        self.assertIn("| dasprofile.queen | 8 | 20.000 | - | 10.000 | - | - | 2.000 |", text)
+        self.assertIn("| dasprofile.queen | 8 | 20.000 | 10.000 | - | 2.000 |", text)
         self.assertIn("over 1 paired workloads: 2.00x", text)
         with self.assertRaisesRegex(ValueError, "missing"):
             aot_comparison_report({"benchmarks": rows[:3]}, names, 3)
@@ -199,7 +190,7 @@ class BenchmarkReportTest(unittest.TestCase):
     def test_aot_report_rejects_incomplete_samples_wrong_results_and_retained_tasks(self) -> None:
         rows = []
         names = []
-        for backend in ("native", "vm", "cpp"):
+        for backend in ("native", "cpp"):
             name = f"aot/{backend}/arithmetic/1000/real_time"
             names.append(name)
             rows.append({"name": name, "real_time": 1000, "time_unit": "ns", "result": 499500,
@@ -207,10 +198,10 @@ class BenchmarkReportTest(unittest.TestCase):
                          "committed_bytes": 200, "suspended_frames": 0, "saved_state_bytes": 0,
                          "remaining_suspended_frames": 0, "remaining_saved_bytes": 0,
                          "process_resident_bytes": 4096, "entry_frame_bytes": 256,
-                         "entry_shadow_slots": 2, "entry_static_root_stores": 3, "register_bytes": 128})
+                         "entry_shadow_slots": 2, "entry_static_root_stores": 3})
         report = aot_comparison_report({"benchmarks": rows}, names, 1)
-        self.assertIn("AOT/VM", report)
-        self.assertIn("| arithmetic | 1000 | 256 | 2 | 3 | 128 |", report)
+        self.assertIn("AOT/C++", report)
+        self.assertIn("| arithmetic | 1000 | 256 | 2 | 3 |", report)
         self.assertIn("| arithmetic | 1000 | cpp | 4096 |", report)
         self.assertIn("not measured machine-stack usage", report)
         with self.assertRaisesRegex(ValueError, "missing"):
@@ -228,7 +219,7 @@ class BenchmarkReportTest(unittest.TestCase):
         for backend, values in zip(BACKENDS, ((1, 3, 2), (8, 10, 12), (4, 5, 6), (1, 2, 3))):
             rows.extend(sample(backend, value, "us", repetition=index, repetitions=3)
                         for index, value in enumerate(values))
-        for phase, backends in (("first", ("vm", "luajit_interp", "luajit")),
+        for phase, backends in (("first", ("jit", "luajit_interp", "luajit")),
                                 ("compile", ("representative", "luajit"))):
             rows.extend(sample(backend, 3, "ms", phase, repetition=index, repetitions=3)
                         for backend in backends for index in range(3))
@@ -239,13 +230,13 @@ class BenchmarkReportTest(unittest.TestCase):
                                     "context": {"luajit_revision": "pinned"}}, names, 3)
         self.assertIn("| sieve | 10000 | 2.000 | 10.000 | 5.000 | 2.000 | 5.00x | 2.00x | 5.00x |", result)
         self.assertIn("3000.000", result)
-        self.assertIn("| sieve | 10000 | Vela | 100 | 150 | 100 | 200 | 80 |", result)
+        self.assertIn("| sieve | 10000 | Vela JIT | 100 | 150 | 100 | 200 |", result)
         self.assertIn("First invocation in a fresh state", result)
         self.assertIn("LuaJIT loads source into Lua bytecode", result)
         self.assertIn("luajit_revision: pinned", result)
 
     def test_converts_units_without_using_cpu_time(self) -> None:
-        rows = [sample("cpp", 1000), sample("vm", 0.000010, "s"),
+        rows = [sample("cpp", 1000), sample("jit", 0.000010, "s"),
                 sample("luajit_interp", 0.005, "ms"), sample("luajit", 2, "us")]
         result = comparison_report({"benchmarks": rows}, [case(backend) for backend in BACKENDS], 1)
         self.assertIn("| 1.000 | 10.000 | 5.000 | 2.000 | 10.00x | 2.00x | 5.00x |", result)
@@ -290,7 +281,7 @@ class BenchmarkReportTest(unittest.TestCase):
         self.assertIn("| 1.000 | 2.000 | - | - | 2.00x |", result)
 
     def test_documents_api_baseline_differences_only_for_selected_workloads(self) -> None:
-        entries = [sample("cpp", 1000), sample("vm", 5000)]
+        entries = [sample("cpp", 1000), sample("jit", 5000)]
         for entry in entries:
             entry["name"] = entry["name"].replace("sieve", "json_roundtrip")
         names = [entry["name"] for entry in entries]
@@ -298,7 +289,7 @@ class BenchmarkReportTest(unittest.TestCase):
         self.assertIn("pinned yyjson DOM arenas", result)
         self.assertIn("representation and contract differences", result)
         self.assertNotIn("ASCII character mapping", result)
-        ordinary_entries = [sample("cpp", 1000), sample("vm", 5000)]
+        ordinary_entries = [sample("cpp", 1000), sample("jit", 5000)]
         ordinary = comparison_report({"benchmarks": ordinary_entries},
                                      [entry["name"] for entry in ordinary_entries], 1)
         self.assertNotIn("Native baseline contracts", ordinary)
@@ -316,7 +307,7 @@ class BenchmarkReportTest(unittest.TestCase):
         self.assertIn("| integer | 64 | 2.000 | 3.000 | 10.000 | 30.000 | 20.000 | 3/3/3/3 |", result)
         self.assertIn("not paired samples", result)
         self.assertIn("not cumulative allocation counts", result)
-        self.assertIn("| integer | 64 | vm | 100 | 100 | 2 | 2 | 80 |", result)
+        self.assertIn("| integer | 64 | jit | 100 | 100 | 2 | 2 |", result)
 
     def test_native_report_rejects_incomplete_samples_and_bad_counters(self) -> None:
         rows = native_samples()
@@ -347,7 +338,7 @@ class BenchmarkReportTest(unittest.TestCase):
             with patch("tools.bench.build"), patch("tools.bench.subprocess.run", side_effect=execute):
                 with redirect_stdout(io.StringIO()):
                     run(parsed)
-            self.assertIn("VM native ns", report.with_suffix(".md").read_text(encoding="utf-8"))
+            self.assertIn("JIT native ns", report.with_suffix(".md").read_text(encoding="utf-8"))
 
     def test_runner_rejects_benchmark_error_even_when_process_succeeds(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela-bench-") as temporary:

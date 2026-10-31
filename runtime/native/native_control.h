@@ -22,8 +22,8 @@ enum class NativeSafepointError : std::uint8_t { AlreadyPending, Stopped };
 struct NativeSafepointQueue final {
   std::mutex mutex;
   std::deque<absl::AnyInvocable<void()>> actions;
-  std::atomic_bool available{false};
-  std::atomic_bool stop_requested{false};
+  // 各请求来源独占一个位；生成代码通过 acquire 读取同一状态，不能丢失并发投递。
+  std::atomic<std::uint8_t> requests{0};
   bool closed = false;
 };
 
@@ -51,6 +51,7 @@ class NativeControl final {
   NativeControl(NativeControl&&) = delete;
   NativeControl& operator=(NativeControl&&) = delete;
   [[nodiscard]] NativeSafepointEndpoint endpoint() const;
+  [[nodiscard]] const std::atomic<std::uint8_t>& safepoint_requests() const noexcept;
   void SetDebugger(NativeDebugger* debugger) noexcept;
   void RequestStop() const noexcept;
   void EnterHost() noexcept;

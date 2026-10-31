@@ -11,9 +11,10 @@
 
 namespace vela::compiler::native {
 
-enum class NativeDebugging : std::uint8_t { Safepoints, SourceLines };
+enum class NativeDebugging : std::uint8_t { Safepoints, SourceLines, Instructions };
 
 struct NativeRootPlan final {
+  bool debug_values = false;
   std::size_t count = 0;
   std::vector<std::optional<std::size_t>> slots;
   std::vector<std::vector<ir::RegisterId>> stores;

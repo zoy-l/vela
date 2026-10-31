@@ -3,7 +3,6 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
@@ -57,7 +56,7 @@ class InterfaceErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(InterfaceErrorTest, RejectsMissingOrIncompatibleExplicitImplementations) {
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileSource(GetParam(), isolate).Succeeded());
+  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(

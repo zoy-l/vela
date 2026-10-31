@@ -11,6 +11,7 @@
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/native_control.h"
 #include "runtime/process/process_exit.h"
 #include "runtime/value/value.h"
 
@@ -77,11 +78,17 @@ int ProcessEntry::Finish(Value value) {
   auto root = future != nullptr ? future->Rooted() : Future::Value(value, &scheduler);
   root.AttachHeap(isolate_->heap());
   root.Observe([](FutureState, Value) {});
-  if (!scheduler.PumpUntil(root, FuturePumpMode::WaitForHost)) {
-    *errors_ << "vela: async idle/deadlock: main has no pending work\n";
-    return kRuntimeErrorExitCode;
+  const auto& control = isolate_->native_control();
+  while (root.is_pending() && !control.IsStopRequested()) {
+    if (!scheduler.PumpOne(FuturePumpMode::WaitForHost)) {
+      *errors_ << "vela: async idle/deadlock: main has no pending work\n";
+      return kRuntimeErrorExitCode;
+    }
   }
-  while (scheduler.PumpOne(FuturePumpMode::WaitForHost)) {
+  while (!control.IsStopRequested() && scheduler.PumpOne(FuturePumpMode::WaitForHost)) {
+  }
+  if (control.IsStopRequested()) {
+    return 0;
   }
   if (root.state() == FutureState::Failed) {
     WriteAsyncFailure(*errors_, root, "async main failed");

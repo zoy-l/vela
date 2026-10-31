@@ -14,6 +14,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
+#include <llvm/IR/Attributes.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/LLVMContext.h>
@@ -35,6 +36,7 @@
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/borrow_analysis.h"
 #include "compiler/native/escape_analysis.h"
@@ -47,6 +49,20 @@
 
 namespace vela::compiler::native {
 namespace {
+
+bool CanInlineSmallFunction(const ir::Function& function) {
+  // 以源操作限制展开规模；安全点、溢出失败和恢复分支不应让几个标量操作失去内联。
+  constexpr std::size_t kMaximumInlineInstructions = 16;
+  if (function.is_async || !function.handlers.empty() ||
+      function.parameter_count > kMaximumInlineInstructions ||
+      function.instructions.size() > kMaximumInlineInstructions) {
+    return false;
+  }
+  return std::ranges::all_of(function.instructions, [](const ir::Instruction& instruction) {
+    return instruction.opcode == Opcode::Return ||
+           !ir::AnalyzeEffects(instruction).MayCollectOnSuccess();
+  });
+}
 
 std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
     NativeCodePlacement placement) {
@@ -201,6 +217,10 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
                                                             NativeCodeTier tier,
                                                             EscapeOptimization escape,
                                                             NativeCodePlacement placement) {
+  if (debugging == NativeDebugging::Instructions) {
+    // 逐指令检查需要真实对象与规范 IR 值，不让标量替换隐藏可观察的对象字段。
+    escape = EscapeOptimization::Disabled;
+  }
   const auto diagnostic = [&](std::string message, const ir::Function* function = nullptr) {
     return std::unexpected(MakeDiagnostics(program, std::move(message), function));
   };
@@ -244,6 +264,10 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
     auto current = baseline;
     if (tier == NativeCodeTier::Optimized && function.native_symbol.empty()) {
       current = AddRecoveryEntries(module, module_name + '_' + std::to_string(index), baseline);
+    }
+    if (CanInlineSmallFunction(function)) {
+      body->addFnAttr(llvm::Attribute::AlwaysInline);
+      current.body->addFnAttr(llvm::Attribute::AlwaysInline);
     }
     if (const auto& borrow = borrows.at(index)) {
       baseline.borrowed =

@@ -17,12 +17,20 @@
 #include "runtime/native/native_debugger.h"
 
 namespace vela::runtime {
+namespace {
+
+constexpr std::uint8_t kStopRequested = 1U << 0;
+constexpr std::uint8_t kQueuedAction = 1U << 1;
+constexpr std::uint8_t kPendingPublication = 1U << 2;
+constexpr std::uint8_t kDebuggerAttached = 1U << 3;
+
+}  // namespace
 
 NativeSafepointEndpoint::NativeSafepointEndpoint(std::shared_ptr<NativeSafepointQueue> queue)
     : queue_(std::move(queue)) {}
 
 void NativeSafepointEndpoint::RequestStop() const noexcept {
-  queue_->stop_requested.store(true, std::memory_order_release);
+  queue_->requests.fetch_or(kStopRequested, std::memory_order_release);
   const std::scoped_lock lock(queue_->mutex);
   queue_->closed = true;
 }
@@ -34,7 +42,7 @@ std::expected<void, NativeSafepointError> NativeSafepointEndpoint::Post(
     return std::unexpected(NativeSafepointError::Stopped);
   }
   queue_->actions.push_back(std::move(action));
-  queue_->available.store(true, std::memory_order_release);
+  queue_->requests.fetch_or(kQueuedAction, std::memory_order_release);
   return {};
 }
 
@@ -47,7 +55,8 @@ NativeControl::~NativeControl() {
     const std::scoped_lock lock(queue_->mutex);
     queue_->closed = true;
     retired.swap(queue_->actions);
-    queue_->available.store(false, std::memory_order_relaxed);
+    queue_->requests.fetch_and(static_cast<std::uint8_t>(~kQueuedAction),
+                               std::memory_order_relaxed);
   }
 }
 
@@ -55,8 +64,18 @@ NativeSafepointEndpoint NativeControl::endpoint() const {
   return NativeSafepointEndpoint(queue_);
 }
 
+const std::atomic<std::uint8_t>& NativeControl::safepoint_requests() const noexcept {
+  return queue_->requests;
+}
+
 void NativeControl::SetDebugger(NativeDebugger* debugger) noexcept {
   debugger_ = debugger;
+  if (debugger != nullptr) {
+    queue_->requests.fetch_or(kDebuggerAttached, std::memory_order_release);
+  } else {
+    queue_->requests.fetch_and(static_cast<std::uint8_t>(~kDebuggerAttached),
+                               std::memory_order_release);
+  }
 }
 
 void NativeControl::RequestStop() const noexcept {
@@ -104,11 +123,14 @@ std::expected<void, NativeSafepointError> NativeControl::ScheduleSafepoint(
     return std::unexpected(NativeSafepointError::AlreadyPending);
   }
   pending_ = std::move(action);
+  queue_->requests.fetch_or(kPendingPublication, std::memory_order_release);
   return {};
 }
 
 void NativeControl::CancelSafepoint() noexcept {
   pending_ = {};
+  queue_->requests.fetch_and(static_cast<std::uint8_t>(~kPendingPublication),
+                             std::memory_order_release);
 }
 
 ExecutionStatus NativeControl::ProcessSafepoint(NativeExecution* execution) {
@@ -117,18 +139,23 @@ ExecutionStatus NativeControl::ProcessSafepoint(NativeExecution* execution) {
   }
   processing_ = true;
   absl::AnyInvocable<void()> queued;
-  if (queue_->available.load(std::memory_order_acquire)) {
+  if ((queue_->requests.load(std::memory_order_acquire) & kQueuedAction) != 0) {
     {
       const std::scoped_lock lock(queue_->mutex);
       queued = std::move(queue_->actions.front());
       queue_->actions.pop_front();
-      queue_->available.store(!queue_->actions.empty(), std::memory_order_release);
+      if (queue_->actions.empty()) {
+        queue_->requests.fetch_and(static_cast<std::uint8_t>(~kQueuedAction),
+                                   std::memory_order_release);
+      }
     }
   }
   if (queued) {
     queued();
   } else if (CanPublish() && pending_) {
     auto action = std::move(pending_);
+    queue_->requests.fetch_and(static_cast<std::uint8_t>(~kPendingPublication),
+                               std::memory_order_release);
     action();
   }
   processing_ = false;
@@ -144,7 +171,7 @@ ExecutionStatus NativeControl::ProcessSafepoint(NativeExecution* execution) {
 }
 
 bool NativeControl::IsStopRequested() const noexcept {
-  return queue_->stop_requested.load(std::memory_order_acquire);
+  return (queue_->requests.load(std::memory_order_acquire) & kStopRequested) != 0;
 }
 
 NativeInitializationScope::NativeInitializationScope(NativeControl& control) noexcept

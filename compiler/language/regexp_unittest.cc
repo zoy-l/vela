@@ -4,27 +4,17 @@
 #include "gtest/gtest.h"
 
 #include "base/execution_status.h"
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/program.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
 
 class RegExpProgramTest : public testing::TestWithParam<std::string_view> {};
 
-void ExpectAnswer(const vm::Program& program, runtime::Isolate& isolate) {
-  const auto main = program.FindFunction("main");
-  if (main.is_async()) {
-    const auto result = test::ExecuteFutureInteger(program, isolate);
-    ASSERT_TRUE(result) << result.error();
-    EXPECT_EQ(*result, 42);
-    return;
-  }
-  const auto result = test::ExecuteInteger(program, isolate);
+void ExpectAnswer(runtime::NativeInstance& instance) {
+  const auto result = test::ExecuteFutureInteger(instance);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -35,7 +25,7 @@ TEST_P(RegExpProgramTest, ExecutesWithGCAndReleasesProgramsAndWorkBuffers) {
   {
     const auto program = test::CompileCleanSource(GetParam(), isolate);
     ASSERT_TRUE(program) << program.error();
-    ExpectAnswer(*program, isolate);
+    ExpectAnswer(**program);
   }
   isolate.heap().FinishCollection();
   isolate.heap().Collect();
@@ -44,9 +34,9 @@ TEST_P(RegExpProgramTest, ExecutesWithGCAndReleasesProgramsAndWorkBuffers) {
 
 TEST_P(RegExpProgramTest, RestoresSourceFreeImageInFreshIsolate) {
   runtime::Isolate isolate(1);
-  const auto loaded = test::ReloadSource(GetParam(), isolate);
+  const auto loaded = test::ReinstantiateSource(GetParam(), isolate);
   ASSERT_TRUE(loaded) << loaded.error();
-  ExpectAnswer(*loaded, isolate);
+  ExpectAnswer(**loaded);
 }
 
 INSTANTIATE_TEST_SUITE_P(ProductionContracts,
@@ -216,20 +206,20 @@ class RegExpRejectedTest : public testing::TestWithParam<std::string_view> {};
 
 TEST(RegExpFailureTraceTest, PreservesNativeDiagnosticAndSourceLocation) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(
+  const auto compiled = test::CompileSource(
       "func fail(): void {\n  RegExp('中(');\n}\nfunc main(): void { fail(); }", isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto result = test::Execute(*compiled.instance, "main");
   EXPECT_EQ(result.status, ExecutionStatus::RegExpSyntaxError);
   ASSERT_EQ(result.stack_trace.size(), 2);
   EXPECT_EQ(result.stack_trace.front().function, "fail");
-  EXPECT_EQ(result.stack_trace.front().location.line, 2);
+  EXPECT_EQ(result.stack_trace.front().line, 2);
   EXPECT_NE(result.message.find("offset 2"), std::string::npos);
 }
 
 TEST_P(RegExpRejectedTest, RejectsInvalidStaticContract) {
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileSource(GetParam(), isolate).Succeeded());
+  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(

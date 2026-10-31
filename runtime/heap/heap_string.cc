@@ -18,7 +18,6 @@
 #include "runtime/heap/element_storage.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
-#include "runtime/value/register_storage.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
 
@@ -256,13 +255,6 @@ std::expected<StringObject*, StringJoinError> Heap::JoinArray(const HeapObject& 
       [&layout, storage](std::size_t index) -> Value {
         return LoadElementStorage(layout, storage, index);
       },
-      [this](StringSize size) -> StringObject* { return AllocateStringStorage(size); });
-}
-
-std::expected<StringObject*, StringJoinError> Heap::JoinValues(RegisterView parts) noexcept {
-  return JoinFormatted(
-      parts.size(), {}, TextContext::Interpolation,
-      [parts](std::size_t index) -> Value { return parts.subspan(index).front().Read(); },
       [this](StringSize size) -> StringObject* { return AllocateStringStorage(size); });
 }
 

@@ -1,33 +1,148 @@
 #include "compiler/test_support/program_test_support.h"
 
-#include <algorithm>
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "runtime/async/future.h"
-#include "runtime/isolate/isolate.h"
-#include "vm/bytecode_image.h"
-#include "vm/program.h"
-#include "vm/vm.h"
+#include "runtime/async/future_operations.h"
+#include "runtime/heap/heap.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_instance.h"
 
 namespace vela::compiler::test {
 namespace {
 
-constexpr std::string_view kEntryPoint = "main";
+std::expected<std::unique_ptr<runtime::NativeInstance>, std::string> Clean(InstanceResult result) {
+  if (!result.Succeeded() || !result.diagnostics.empty()) {
+    return std::unexpected(frontend::DiagnosticsText(result.diagnostics));
+  }
+  return std::move(result.instance);
+}
 
-std::expected<std::int64_t, std::string> InvokeInteger(vm::VirtualMachine& machine,
-                                                       const vm::Program& program) {
-  const auto result = machine.Execute(program.FindFunction(kEntryPoint));
+}  // namespace
+
+InstanceResult CompileParsed(frontend::ParseResult parsed,
+                               runtime::Isolate& isolate,
+                               frontend::DiagnosticOptions options,
+                               jit::CompileOptions compilation) {
+  auto compiler = jit::Compiler::Create();
+  if (!compiler) {
+    return {.instance = {}, .diagnostics = std::move(compiler.error())};
+  }
+  auto compiled = jit::CompileParsed(**compiler, std::move(parsed),
+                                     {.diagnostics = options, .compilation = std::move(compilation)});
+  InstanceResult result{.instance = {}, .diagnostics = std::move(compiled.diagnostics)};
+  if (!compiled.Succeeded()) {
+    return result;
+  }
+  auto instance = runtime::NativeInstance::Instantiate(isolate, std::move(compiled.code.image));
+  if (!instance) {
+    result.diagnostics.push_back({.location = {}, .message = instance.error().message, .source_path = {}});
+  } else {
+    result.instance = std::move(*instance);
+  }
+  return result;
+}
+
+InstanceResult CompileSource(std::string_view source,
+                               runtime::Isolate& isolate,
+                               frontend::DiagnosticOptions options) {
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  return CompileModules(std::span(&input, 1), input.path, isolate, options);
+}
+
+InstanceResult CompileDebugSource(std::string_view source, runtime::Isolate& isolate) {
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  return CompileParsed(frontend::LoadSources(std::span(&input, 1), input.path), isolate, {},
+                        {.debugging = native::NativeDebugging::Instructions});
+}
+
+InstanceResult CompileModules(std::span<const frontend::SourceInput> sources,
+                                std::string_view entry,
+                                runtime::Isolate& isolate,
+                                frontend::DiagnosticOptions options) {
+  return CompileParsed(frontend::LoadSources(sources, entry), isolate, options);
+}
+
+InstanceResult CompileFile(std::string_view path,
+                             runtime::Isolate& isolate,
+                             frontend::DiagnosticOptions options) {
+  return CompileParsed(frontend::LoadProgram(path), isolate, options);
+}
+
+std::expected<std::unique_ptr<runtime::NativeInstance>, std::string> CompileCleanSource(
+    std::string_view source, runtime::Isolate& isolate) {
+  return Clean(CompileSource(source, isolate));
+}
+
+std::expected<std::unique_ptr<runtime::NativeInstance>, std::string> CompileCleanModules(
+    std::span<const frontend::SourceInput> sources, std::string_view entry, runtime::Isolate& isolate) {
+  return Clean(CompileModules(sources, entry, isolate));
+}
+
+std::expected<std::unique_ptr<runtime::NativeInstance>, std::string> ReinstantiateSource(
+    std::string_view source, runtime::Isolate& isolate) {
+  jit::SourceResult compiled;
+  {
+    auto compiler = jit::Compiler::Create();
+    if (!compiler) {
+      return std::unexpected(frontend::DiagnosticsText(compiler.error()));
+    }
+    compiled = jit::CompileSource(**compiler, source);
+  }
+  if (!compiled.Succeeded()) {
+    return std::unexpected(frontend::DiagnosticsText(compiled.diagnostics));
+  }
+  {
+    runtime::Isolate producer(1);
+    const auto instance = runtime::NativeInstance::Instantiate(producer, compiled.code.image);
+    if (!instance) {
+      return std::unexpected(instance.error().message);
+    }
+  }
+  auto instance = runtime::NativeInstance::Instantiate(isolate, std::move(compiled.code.image));
+  if (!instance) {
+    return std::unexpected(instance.error().message);
+  }
+  isolate.heap().Collect();
+  return std::move(*instance);
+}
+
+runtime::ExecutionResult Execute(runtime::NativeInstance& instance, std::string_view entry) {
+  const auto function = instance.FindFunction(entry);
+  if (!function) {
+    return {.status = ExecutionStatus::InvalidEntry, .stack_trace = {},
+            .message = "test source is missing entry: " + std::string(entry), .origin = {}};
+  }
+  return runtime::ExecuteNativeFunction(instance, *function);
+}
+
+runtime::Future StartFuture(runtime::NativeInstance& instance, std::string_view entry) {
+  auto& isolate = instance.isolate();
+  const auto result = Execute(instance, entry);
+  if (result.Succeeded()) {
+    return runtime::RootFutureValue(isolate, result.value);
+  }
+  runtime::Future future(&isolate.scheduler());
+  future.AttachHeap(isolate.heap());
+  runtime::CompleteFutureError(isolate, future, result.value,
+                                {.message = result.message, .stack_trace = result.stack_trace,
+                                 .status = result.status, .origin = result.origin});
+  return future;
+}
+
+std::expected<std::int64_t, std::string> ExecuteInteger(runtime::NativeInstance& instance) {
+  const auto result = Execute(instance);
   if (!result.Succeeded()) {
     return std::unexpected(result.message);
   }
@@ -37,77 +152,9 @@ std::expected<std::int64_t, std::string> InvokeInteger(vm::VirtualMachine& machi
   return result.value.AsInteger();
 }
 
-std::expected<std::vector<std::byte>, std::string> CompileImage(std::string_view source) {
-  runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(source, isolate);
-  if (!compiled.Succeeded()) {
-    return std::unexpected(frontend::DiagnosticsText(compiled.diagnostics));
-  }
-  auto saved = vm::SaveBytecode(compiled.program, isolate);
-  if (!saved) {
-    return std::unexpected(saved.error().message);
-  }
-  return std::move(*saved);
-}
-
-}  // namespace
-
-std::expected<vm::Program, std::string> CompileCleanSource(std::string_view source,
-                                                           runtime::Isolate& isolate) {
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  return CompileCleanModules(std::span(&input, 1), input.path, isolate);
-}
-
-std::expected<vm::Program, std::string> CompileCleanModules(
-    std::span<const frontend::SourceInput> sources,
-    std::string_view entry,
-    runtime::Isolate& isolate) {
-  auto compiled = CompileModules(sources, entry, isolate);
-  if (!compiled.Succeeded() || !compiled.diagnostics.empty()) {
-    return std::unexpected(frontend::DiagnosticsText(compiled.diagnostics));
-  }
-  return std::move(compiled.program);
-}
-
-std::expected<vm::FunctionHandle, std::string> CompileEntry(std::string_view source,
-                                                            runtime::Isolate& isolate) {
-  const auto program = CompileCleanSource(source, isolate);
-  if (!program) {
-    return std::unexpected(program.error());
-  }
-  auto entry = program->FindFunction(kEntryPoint);
-  if (!entry.IsValid()) {
-    return std::unexpected("test source must define main");
-  }
-  return entry;
-}
-
-std::expected<vm::Program, std::string> ReloadSource(std::string_view source,
-                                                     runtime::Isolate& isolate) {
-  auto image = CompileImage(source);
-  if (!image) {
-    return std::unexpected(image.error());
-  }
-  auto loaded = vm::LoadBytecode(*image, isolate);
-  if (!loaded) {
-    return std::unexpected(loaded.error().message);
-  }
-  std::ranges::fill(*image, std::byte{0});
-  image->clear();
-  isolate.heap().Collect();
-  return std::move(*loaded);
-}
-
-std::expected<std::int64_t, std::string> ExecuteInteger(const vm::Program& program,
-                                                        runtime::Isolate& isolate) {
-  vm::VirtualMachine machine(isolate);
-  return InvokeInteger(machine, program);
-}
-
 std::expected<std::int64_t, std::string> AwaitInteger(runtime::Future& future,
                                                       runtime::Isolate& isolate) {
-  const auto pumped = isolate.scheduler().PumpUntil(future);
-  if (!pumped) {
+  if (!isolate.scheduler().PumpUntil(future)) {
     return std::unexpected("test Future has no producer");
   }
   if (future.state() != runtime::FutureState::Succeeded) {
@@ -120,25 +167,19 @@ std::expected<std::int64_t, std::string> AwaitInteger(runtime::Future& future,
   return value.AsInteger();
 }
 
-std::expected<std::int64_t, std::string> ExecuteFutureInteger(const vm::Program& program,
-                                                              runtime::Isolate& isolate) {
-  const auto main = program.FindFunction(kEntryPoint);
-  auto future = vm::VirtualMachine(isolate).ExecuteFuture(program, main.index());
-  return AwaitInteger(future, isolate);
+std::expected<std::int64_t, std::string> ExecuteFutureInteger(runtime::NativeInstance& instance) {
+  auto future = StartFuture(instance);
+  return AwaitInteger(future, instance.isolate());
 }
 
-std::expected<std::array<std::int64_t, 2>, std::string> ExecuteProgramCopy(
-    const vm::Program& program,
-    runtime::Isolate& isolate) {
-  auto copy = program;
-  vm::VirtualMachine machine(isolate);
-  const auto first = InvokeInteger(machine, copy);
+std::expected<std::array<std::int64_t, 2>, std::string> ExecuteRepeated(
+    runtime::NativeInstance& instance) {
+  const auto first = ExecuteInteger(instance);
   if (!first) {
     return std::unexpected(first.error());
   }
-  copy = {};
-  isolate.heap().Collect();
-  const auto second = InvokeInteger(machine, program);
+  instance.isolate().heap().Collect();
+  const auto second = ExecuteInteger(instance);
   if (!second) {
     return std::unexpected(second.error());
   }
@@ -147,11 +188,11 @@ std::expected<std::array<std::int64_t, 2>, std::string> ExecuteProgramCopy(
 
 std::expected<std::int64_t, std::string> RunInteger(std::string_view source,
                                                     runtime::Isolate& isolate) {
-  const auto program = CompileCleanSource(source, isolate);
-  if (!program) {
-    return std::unexpected(program.error());
+  const auto instance = CompileCleanSource(source, isolate);
+  if (!instance) {
+    return std::unexpected(instance.error());
   }
-  return ExecuteInteger(*program, isolate);
+  return ExecuteInteger(**instance);
 }
 
 }  // namespace vela::compiler::test

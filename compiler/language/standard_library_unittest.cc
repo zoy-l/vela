@@ -7,16 +7,14 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
+#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/checker_test_support.h"
-#include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_function.h"
 #include "runtime/value/value.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -163,12 +161,12 @@ TEST(StandardLibraryTest, DoesNotRegisterConsoleBindings) {
 
 TEST(StandardClockTest, DateNowReturnsIntegerUnixMilliseconds) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource("func main(): int { return Date.now(); }", isolate);
+  const auto compiled = test::CompileSource("func main(): int { return Date.now(); }", isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto before = std::chrono::duration_cast<std::chrono::milliseconds>(
                           std::chrono::system_clock::now().time_since_epoch())
                           .count();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto result = test::Execute(*compiled.instance, "main");
   const auto after = std::chrono::duration_cast<std::chrono::milliseconds>(
                          std::chrono::system_clock::now().time_since_epoch())
                          .count();
@@ -179,12 +177,12 @@ TEST(StandardClockTest, DateNowReturnsIntegerUnixMilliseconds) {
 
 TEST(StandardClockTest, PerformanceNowReturnsFractionalMonotonicMilliseconds) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource("func main(): double { return performance.now(); }", isolate);
+  const auto compiled = test::CompileSource("func main(): double { return performance.now(); }", isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto before =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch())
           .count();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto result = test::Execute(*compiled.instance, "main");
   const auto after =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch())
           .count();
@@ -195,7 +193,7 @@ TEST(StandardClockTest, PerformanceNowReturnsFractionalMonotonicMilliseconds) {
 
 TEST(StandardLibraryTest, MapAllocatesOnlyOneResultArray) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(func main(): int {
+  const auto compiled = test::CompileSource(R"(func main(): int {
     const values = [1, 2, 3]; const mapped = values.map(value => value + 1);
     return mapped[0];
   })",
@@ -203,7 +201,7 @@ TEST(StandardLibraryTest, MapAllocatesOnlyOneResultArray) {
   ASSERT_TRUE(compiled.Succeeded());
   auto& heap = isolate.heap();
   const auto before = heap.object_count();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto result = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(result.Succeeded());
   // 原始数组、回调闭包和最终结果数组；循环不创建中间数组。
   EXPECT_EQ(heap.object_count(), before + 3);
@@ -399,16 +397,16 @@ double HostClock(runtime::NativeContext& /*unused*/) noexcept {
 TEST(StandardLibraryTest, ValidatesStaticExternalBindingsAndUsesExplicitHostRegistration) {
   runtime::Isolate isolate;
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<HostClock>("performance.now")));
-  const auto compiled = CompileSource("func main(): double { return performance.now(); }", isolate);
+  const auto compiled = test::CompileSource("func main(): double { return performance.now(); }", isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto result = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(result.Succeeded());
   EXPECT_DOUBLE_EQ(result.value.AsDouble(), 42.0);
-  EXPECT_FALSE(CompileSource("class Host { static external func missing(): int = 'missing'; } func "
+  EXPECT_FALSE(test::CompileSource("class Host { static external func missing(): int = 'missing'; } func "
                              "main(): int { return Host.missing(); }",
                              isolate)
                    .Succeeded());
-  EXPECT_FALSE(CompileSource("class Host { static external func clock(value: int): int = "
+  EXPECT_FALSE(test::CompileSource("class Host { static external func clock(value: int): int = "
                              "'performance.now'; } func main(): int { return Host.clock(1); }",
                              isolate)
                    .Succeeded());

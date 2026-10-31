@@ -13,11 +13,12 @@
 #include "runtime/async/future.h"
 #include "runtime/exceptions/exception.h"
 #include "runtime/heap/heap.h"
+#include "runtime/isolate/member_table.h"
+#include "runtime/native/native_instance.h"
 #include "runtime/strings/string.h"
+#include "runtime/testing/trace_value.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
-#include "vm/diagnostic.h"
-#include "vm/program.h"
 
 namespace vela::testing {
 namespace {
@@ -45,18 +46,16 @@ std::string_view FailureName(MockFailureKind kind) {
 
 class MockReportReader final {
  public:
-  explicit MockReportReader(const vm::Program& program)
-      : program_(&program), layouts_(program.functions().front().layouts.get()) {}
+  explicit MockReportReader(const runtime::MemberTable& members) : layouts_(&members) {}
   static std::vector<runtime::Value> Items(runtime::Value value);
-  [[nodiscard]] std::vector<runtime::FutureTraceFrame> Trace(runtime::Value value) const;
+  [[nodiscard]] static std::vector<runtime::FutureTraceFrame> Trace(runtime::Value value);
   static std::vector<std::string> Strings(runtime::Value value);
   static std::string Text(runtime::Value value);
   static std::int64_t Number(runtime::Value value);
   [[nodiscard]] TestError::MockDetails Read(runtime::Value value) const;
 
  private:
-  const vm::Program* program_;
-  const vm::LayoutTables* layouts_;
+  const runtime::MemberTable* layouts_;
 };
 
 std::vector<runtime::Value> MockReportReader::Items(runtime::Value value) {
@@ -98,16 +97,12 @@ std::vector<std::string> MockReportReader::Strings(runtime::Value value) {
   return strings;
 }
 
-std::vector<runtime::FutureTraceFrame> MockReportReader::Trace(runtime::Value value) const {
-  const auto positions = runtime::ReadTraceValue(value);
-  if (!positions) {
-    return {};
-  }
-  const auto resolved = program_->ResolveTrace(*positions);
+std::vector<runtime::FutureTraceFrame> MockReportReader::Trace(runtime::Value value) {
+  auto resolved = runtime::ReadTestTrace(value);
   if (!resolved) {
     return {};
   }
-  return vm::CopyFutureTrace(*resolved);
+  return std::move(*resolved);
 }
 
 TestError::MockDetails MockReportReader::Read(runtime::Value value) const {
@@ -153,8 +148,8 @@ void Suite::DescribeMockFailure(runtime::Value value, TestError& error) const {
     return;
   }
   error.category = FailureName(found->second);
-  const MockReportReader reader(*program_);
-  const auto& layouts = *program_->functions().front().layouts;
+  const auto& layouts = instance_->members();
+  const MockReportReader reader(layouts);
   const auto details = layouts.ReadPublicField(value, mock_fields::kDetails);
   if (!details.IsNull()) {
     error.mock = reader.Read(details);

@@ -6,7 +6,6 @@ group("default") {
   deps = [
     "//compiler:vela",
     "//runtime:vela_runtime",
-    "//vm",
   ]
 }
 
@@ -21,7 +20,6 @@ group("tests") {
     "//compiler:vela_ir_tests",
     "//compiler:vela_jit_tests",
     "//runtime:runtime_tests",
-    "//vm:vm_tests",
   ]
 }
 

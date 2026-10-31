@@ -2,11 +2,8 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/execution_status.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -43,7 +40,7 @@ func main(): int {
 
 TEST(TypeOperationTest, TestsNullableArraysAndScalars) {
   runtime::Isolate isolate;
-  const auto entry = test::CompileEntry(R"(
+  const auto entry = test::CompileCleanSource(R"(
 func main(): bool {
   const value: int? = 42;
   const array: int[]? = [42];
@@ -54,14 +51,14 @@ func main(): bool {
 )",
                                         isolate);
   ASSERT_TRUE(entry) << entry.error();
-  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
+  const auto result = test::Execute(**entry);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_TRUE(result.value.AsBoolean());
 }
 
 TEST(TypeOperationTest, ReportsCheckedCastFailure) {
   runtime::Isolate isolate;
-  const auto entry = test::CompileEntry(R"(
+  const auto entry = test::CompileCleanSource(R"(
 interface I {}
 class A implements I {}
 class B implements I {}
@@ -70,15 +67,15 @@ func main(): B { return require(A()); }
 )",
                                         isolate);
   ASSERT_TRUE(entry) << entry.error();
-  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
-  EXPECT_EQ(result.status, vm::ExecutionStatus::InvalidCast);
+  const auto result = test::Execute(**entry);
+  EXPECT_EQ(result.status, ExecutionStatus::InvalidCast);
 }
 
 class TypeOperationErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(TypeOperationErrorTest, RejectsConversionsAndInvalidatedRefinements) {
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileSource(GetParam(), isolate).Succeeded());
+  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(StrictTypes,

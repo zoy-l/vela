@@ -20,7 +20,7 @@ TEST_P(ScriptMatcherTest, MatchesAgainstIndependentExpectedResultsUnderGc) {
   runtime::Isolate isolate(1);
   const auto compiled = compiler::test::CompileCleanModules(inputs, "matcher.vela", isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = compiler::test::ExecuteInteger(*compiled, isolate);
+  const auto result = compiler::test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }

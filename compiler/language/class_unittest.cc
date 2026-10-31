@@ -4,11 +4,8 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/execution_status.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -256,7 +253,7 @@ class ClassContractErrorTest : public testing::TestWithParam<ClassError> {};
 TEST_P(ClassContractErrorTest, DiagnosesTheViolatedContract) {
   runtime::Isolate isolate;
   const auto& parameter = GetParam();
-  const auto compiled = CompileSource(parameter.source, isolate);
+  const auto compiled = test::CompileSource(parameter.source, isolate);
   EXPECT_FALSE(compiled.Succeeded());
   EXPECT_TRUE(std::ranges::any_of(compiled.diagnostics, [&](const auto& diagnostic) -> bool {
     return diagnostic.message.contains(parameter.message);
@@ -344,9 +341,9 @@ INSTANTIATE_TEST_SUITE_P(
             "immutable"},
         ClassError{"enum E { a,b } func main(): void { E.a = E.b; }", "immutable"}));
 
-TEST(StaticFieldTest, RetainsRootedStateAcrossExecutionsAndProgramCopies) {
+TEST(StaticFieldTest, RetainsRootedStateAcrossExecutionsAndCollection) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 class State {
   static value: int = 40;
   static text: string = "a" + "b";
@@ -359,7 +356,7 @@ func main(): int {
 )",
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto results = test::ExecuteProgramCopy(compiled.program, isolate);
+  const auto results = test::ExecuteRepeated(*compiled.instance);
   ASSERT_TRUE(results) << results.error();
   EXPECT_EQ(results->front(), 41);
   EXPECT_EQ(results->back(), 42);
@@ -367,16 +364,14 @@ func main(): int {
 
 TEST(StaticFieldTest, DiagnosesInitializationCyclesAndRetriesAfterFailure) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 class Cycle { static value: int = Cycle.other; static other: int = Cycle.value; }
 func main(): int { return Cycle.value; }
 )",
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  vm::VirtualMachine machine(isolate);
-  const auto entry = compiled.program.FindFunction("main");
-  EXPECT_EQ(machine.Execute(entry).status, vm::ExecutionStatus::CyclicInitialization);
-  EXPECT_EQ(machine.Execute(entry).status, vm::ExecutionStatus::CyclicInitialization);
+  EXPECT_EQ(test::Execute(*compiled.instance).status, ExecutionStatus::CyclicInitialization);
+  EXPECT_EQ(test::Execute(*compiled.instance).status, ExecutionStatus::CyclicInitialization);
 }
 
 TEST(ClassInitializationTest, EvaluatesExplicitArgumentsDefaultsAndBodyInOrder) {

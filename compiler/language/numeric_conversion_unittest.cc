@@ -2,11 +2,8 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/execution_status.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -25,10 +22,10 @@ func main(): bool {
 }
 )";
   runtime::Isolate isolate(1);
-  const auto entry = test::CompileEntry(source, isolate);
+  const auto entry = test::CompileCleanSource(source, isolate);
   ASSERT_TRUE(entry) << entry.error();
   const auto before = isolate.heap().allocated_bytes();
-  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
+  const auto result = test::Execute(**entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -39,10 +36,10 @@ class InvalidNumericConversionTest : public testing::TestWithParam<std::string_v
 
 TEST_P(InvalidNumericConversionTest, RejectsNonFiniteAndOutOfRangeDoubles) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(GetParam(), isolate);
+  const auto compiled = test::CompileSource(GetParam(), isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  EXPECT_EQ(result.status, vm::ExecutionStatus::InvalidNumericConversion);
+  const auto result = test::Execute(*compiled.instance, "main");
+  EXPECT_EQ(result.status, ExecutionStatus::InvalidNumericConversion);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -59,7 +56,7 @@ class NumericTypeBoundaryTest : public testing::TestWithParam<std::string_view> 
 
 TEST_P(NumericTypeBoundaryTest, RejectsImplicitConversionsAndInvalidReceivers) {
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileSource(GetParam(), isolate).Succeeded());
+  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(

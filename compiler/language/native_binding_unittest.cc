@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -12,7 +13,6 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/checker_test_support.h"
 #include "compiler/test_support/program_test_support.h"
@@ -21,15 +21,15 @@
 #include "runtime/heap/rooted_value.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_context.h"
+#include "runtime/native/native_control.h"
+#include "runtime/native/native_debugger.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_instance.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "runtime/native/native_function.h"
 #include "runtime/strings/string.h"
-#include "runtime/value/register_storage.h"
 #include "runtime/value/value.h"
-#include "vm/bytecode_image.h"
-#include "vm/debugger.h"
-#include "vm/execution_status.h"
-#include "vm/program.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -107,8 +107,8 @@ func main(): int {
 }
 
 struct Reentry final {
-  vm::VirtualMachine* machine = nullptr;
-  vm::FunctionHandle nested;
+  runtime::NativeInstance* instance;
+  std::uint32_t nested;
 };
 
 Reentry*& ActiveReentry() {
@@ -119,7 +119,7 @@ Reentry*& ActiveReentry() {
 std::expected<std::string, NativeError> ReenterWithBorrowedString(NativeContext& context,
                                                                   std::string_view text) noexcept {
   auto& active = *ActiveReentry();
-  const auto result = active.machine->Execute(active.nested);
+  const auto result = runtime::ExecuteNativeFunction(*active.instance, active.nested);
   if (!result.Succeeded()) {
     return std::unexpected(NativeError{.message = "nested execution failed"});
   }
@@ -127,15 +127,18 @@ std::expected<std::string, NativeError> ReenterWithBorrowedString(NativeContext&
   return std::string(text);
 }
 
-class NativeDebugger final : public vm::Debugger {
- public:
-  NativeDebugger(runtime::Isolate& isolate, vm::DebugAction action)
-      : isolate_(isolate), action_(action) {}
+enum class DebugAction : std::uint8_t { Continue, Stop };
 
-  vm::DebugAction BeforeInstruction(const vm::DebugContext& context) noexcept override {
-    const auto frame = context.current_frame();
+class NativeDebugger final : public runtime::NativeDebugger {
+ public:
+  NativeDebugger(runtime::Isolate& isolate, DebugAction action)
+      : isolate_(isolate), action_(action) { isolate_.native_control().SetDebugger(this); }
+  ~NativeDebugger() override { isolate_.native_control().SetDebugger(nullptr); }
+
+  void AtSafepoint(const runtime::NativeDebugContext& context) noexcept override {
+    const auto& frame = context.top_frame();
     if (frame.name() != "copy") {
-      return vm::DebugAction::Continue;
+      return;
     }
     saw_native_ = true;
     const auto value = frame.ReadRegister(0);
@@ -143,11 +146,11 @@ class NativeDebugger final : public vm::Debugger {
     if (value && value->IsString()) {
       argument_ = value->AsString()->value();
     }
-    const auto caller = context.Frame(1);
-    if (caller) {
-      caller_name_ = caller->name();
+    const auto frames = context.frames();
+    if (frames.size() > 1) {
+      caller_name_ = frames.subspan(1).front().name();
     }
-    return action_;
+    if (action_ == DebugAction::Stop) { context.RequestStop(); }
   }
 
   [[nodiscard]] bool saw_native() const noexcept { return saw_native_; }
@@ -159,7 +162,7 @@ class NativeDebugger final : public vm::Debugger {
   std::string argument_;
   std::string caller_name_;
   runtime::Isolate& isolate_;
-  vm::DebugAction action_;
+  DebugAction action_;
 };
 
 std::string CopyWithCollection(NativeContext& context, std::string_view text) noexcept {
@@ -244,27 +247,28 @@ TEST(NativeBindingTest, NativeFutureIsBoundAndItsPayloadIsCheckedBeforeScriptCon
   ASSERT_TRUE(BindFutureContract(isolate));
   const auto compiled = test::CompileCleanSource(kNativeFutureContract, isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteFutureInteger(*compiled, isolate);
+  const auto result = test::ExecuteFutureInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, kNativeFutureValue);
 }
 
 TEST(NativeBindingTest, NativeFuturePayloadChecksSurviveFreshIsolateImageLoading) {
-  std::vector<std::byte> image;
+  std::shared_ptr<const runtime::NativeImage> image;
   {
+    auto compiler = jit::Compiler::Create();
+    ASSERT_TRUE(compiler);
+    const auto code = jit::CompileSource(**compiler, kNativeFutureContract);
+    ASSERT_TRUE(code.Succeeded());
+    image = code.code.image;
     runtime::Isolate isolate;
     ASSERT_TRUE(BindFutureContract(isolate));
-    const auto compiled = CompileSource(kNativeFutureContract, isolate);
-    ASSERT_TRUE(compiled.Succeeded());
-    const auto saved = vm::SaveBytecode(compiled.program, isolate);
-    ASSERT_TRUE(saved);
-    image = *saved;
+    ASSERT_TRUE(runtime::NativeInstance::Instantiate(isolate, image));
   }
   runtime::Isolate isolate(1);
   ASSERT_TRUE(BindFutureContract(isolate));
-  const auto loaded = vm::LoadBytecode(image, isolate);
+  const auto loaded = runtime::NativeInstance::Instantiate(isolate, std::move(image));
   ASSERT_TRUE(loaded) << loaded.error().message;
-  const auto result = test::ExecuteFutureInteger(*loaded, isolate);
+  const auto result = test::ExecuteFutureInteger(**loaded);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, kNativeFutureValue);
 }
@@ -284,7 +288,7 @@ TEST(NativeBindingTest, CancellationTokenReachesNativeProducerWithoutCancellingF
   runtime::Isolate isolate(1);
   ASSERT_TRUE(
       isolate.RegisterNative(runtime::NativeFunction::Bind<WaitForCancellation>("waitCancel")));
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 external func waitCancel(token: CancellationToken): Future<int>;
 async func main(): Future<int> {
   const token = CancellationToken();
@@ -295,7 +299,7 @@ async func main(): Future<int> {
 )",
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto result = test::ExecuteFutureInteger(compiled.program, isolate);
+  const auto result = test::ExecuteFutureInteger(*compiled.instance);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, kNativeFutureValue);
 }
@@ -304,7 +308,7 @@ std::optional<runtime::Future> StartNativeFetch(runtime::Isolate& isolate) {
   if (!isolate.RegisterNative(runtime::NativeFunction::Bind<Fetch>("fetch"))) {
     return std::nullopt;
   }
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 external func fetch(): Future<int>;
 async func main(): Future<int> { return await fetch(); }
 )",
@@ -312,11 +316,11 @@ async func main(): Future<int> { return await fetch(); }
   if (!compiled.Succeeded()) {
     return std::nullopt;
   }
-  const auto entry = compiled.program.FindFunction("main");
-  if (!entry.IsValid()) {
+  const auto entry = compiled.instance->FindFunction("main");
+  if (!entry.has_value()) {
     return std::nullopt;
   }
-  return vm::VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
+  return test::StartFuture(*compiled.instance);
 }
 
 bool CompleteNativeFuture(runtime::FutureCompletionEndpoint& completer) {
@@ -356,12 +360,12 @@ export external func invert(value: bool): bool;
   EXPECT_TRUE(frontend::CheckTestModules(sources, "main.vela").Succeeded());
   const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
 
-TEST(NativeBindingTest, RejectsMissingBindingsAndAllSignatureMismatchesAtCompilation) {
+TEST(NativeBindingTest, RejectsMissingBindingsAndAllSignatureMismatchesBeforeExecution) {
   runtime::Isolate isolate;
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Scale>("scale")));
   const auto invalid = std::to_array<std::string_view>({
@@ -374,7 +378,7 @@ TEST(NativeBindingTest, RejectsMissingBindingsAndAllSignatureMismatchesAtCompila
       "external func scale<T>(value: T): T;",
   });
   for (const auto source : invalid) {
-    const auto compiled = CompileSource(source, isolate);
+    const auto compiled = test::CompileSource(source, isolate);
     EXPECT_FALSE(compiled.Succeeded()) << source;
     EXPECT_FALSE(compiled.diagnostics.empty());
   }
@@ -384,14 +388,14 @@ TEST(NativeBindingTest, StringArgumentsSurviveHostCollectionAndReturnedValueCanB
   runtime::Isolate isolate(1);
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<CopyWithCollection>("copy")));
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Collect>("collect")));
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 external func copy(text: string): string;
 external func collect(): void;
 func main(): string { collect(); return copy("你好" + " host"); }
 )",
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto result = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(result.Succeeded());
   const runtime::RootedValue handle(isolate, result.value);
   isolate.heap().Collect();
@@ -402,14 +406,14 @@ TEST(NativeBindingTest, HostFailureRetainsNativeDeclarationAndCallerTrace) {
   runtime::Isolate isolate;
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Fail>("fail")));
   const auto compiled =
-      CompileSource("external func fail(): void;\nfunc main(): void { fail(); }", isolate);
+      test::CompileSource("external func fail(): void;\nfunc main(): void { fail(); }", isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  EXPECT_EQ(result.status, vm::ExecutionStatus::NativeFailure);
+  const auto result = test::Execute(*compiled.instance, "main");
+  EXPECT_EQ(result.status, ExecutionStatus::NativeFailure);
   EXPECT_EQ(result.message, "host rejected request");
   ASSERT_EQ(result.stack_trace.size(), 2U);
   EXPECT_EQ(result.stack_trace.front().function, "fail");
-  EXPECT_EQ(result.stack_trace.front().location.line, 1U);
+  EXPECT_EQ(result.stack_trace.front().line, 1U);
   EXPECT_EQ(result.stack_trace.back().function, "main");
 }
 
@@ -418,21 +422,20 @@ TEST(NativeBindingTest, AcceptsNativeEntryAndRejectsInvalidUtf8FromHost) {
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Answer>("main")));
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<InvalidString>("invalid")));
   const auto compiled =
-      CompileSource("external func main(): int; external func invalid(): string;", isolate);
+      test::CompileSource("external func main(): int; external func invalid(): string;", isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  vm::VirtualMachine machine(isolate);
-  const auto result = machine.Execute(compiled.program.FindFunction("main"));
+  const auto result = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsInteger(), 42);
-  const auto failed = machine.Execute(compiled.program.FindFunction("invalid"));
-  EXPECT_EQ(failed.status, vm::ExecutionStatus::NativeFailure);
+  const auto failed = test::Execute(*compiled.instance, "invalid");
+  EXPECT_EQ(failed.status, ExecutionStatus::NativeFailure);
   EXPECT_EQ(failed.message, "native function returned invalid UTF-8");
 }
 
 TEST(NativeBindingTest, HostFailureCanBeCaughtAsStandardError) {
   runtime::Isolate isolate(1);
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Fail>("fail")));
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 external func fail(): void;
 func main(): string {
   try { fail(); } catch (error: Error) { return error.message; }
@@ -440,36 +443,33 @@ func main(): string {
 })",
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto result = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsString()->value(), "host rejected request");
 }
 
-TEST(NativeBindingTest, DirectNativeCallsRetainOnlyCallerRegisterCapacity) {
+TEST(NativeBindingTest, NestedDirectHostCallsDoNotAllocateManagedArguments) {
   runtime::Isolate isolate;
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Add>("add")));
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 external func add(left: int, right: int): int;
 func main(): int { return add(add(10, 20), 12); }
 )",
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  vm::VirtualMachine machine(isolate);
-  const auto result = machine.Execute(entry);
+  const auto before = isolate.heap().object_count();
+  const auto result = test::Execute(*compiled.instance);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsInteger(), kHostAnswer);
-  EXPECT_EQ(machine.register_bytes(),
-            compiled.program.functions().subspan(entry.index()).front().register_count *
-                runtime::kRegisterSlotBytes);
+  EXPECT_EQ(isolate.heap().object_count(), before);
 }
 
-TEST(NativeBindingTest, ReentryOnSameVmPreservesBorrowedArgumentsAndOuterRegisters) {
+TEST(NativeBindingTest, ReentryPreservesBorrowedArgumentsAndOuterNativeFrames) {
   runtime::Isolate isolate(1);
   ASSERT_TRUE(
       isolate.RegisterNative(runtime::NativeFunction::Bind<ReenterWithBorrowedString>("reenter")));
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Collect>("collect")));
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 external func reenter(text: string): string;
 external func collect(): void;
 func nested(): int {
@@ -487,10 +487,11 @@ func main(): string {
 )",
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  vm::VirtualMachine machine(isolate);
-  Reentry reentry{.machine = &machine, .nested = compiled.program.FindFunction("nested")};
+  const auto nested = compiled.instance->FindFunction("nested");
+  ASSERT_TRUE(nested);
+  Reentry reentry{.instance = compiled.instance.get(), .nested = *nested};
   ActiveReentry() = &reentry;
-  const auto result = machine.Execute(compiled.program.FindFunction("main"));
+  const auto result = test::Execute(*compiled.instance, "main");
   ActiveReentry() = nullptr;
   ASSERT_TRUE(result.Succeeded()) << result.message;
   EXPECT_EQ(result.value.AsString()->value(), "outer argument:outer argument");
@@ -499,7 +500,7 @@ func main(): string {
 TEST(NativeBindingTest, DynamicNativeCallsUseValidatedParametersAcrossCollection) {
   runtime::Isolate isolate(1);
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<CopyWithCollection>("copy")));
-  const auto entry = test::CompileEntry(R"(
+  const auto entry = test::CompileCleanSource(R"(
 external func copy(text: string): string;
 func main(): string {
   const callable: dynamic = copy;
@@ -508,7 +509,7 @@ func main(): string {
 )",
                                         isolate);
   ASSERT_TRUE(entry) << entry.error();
-  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
+  const auto result = test::Execute(**entry);
   ASSERT_TRUE(result.Succeeded()) << result.message;
   EXPECT_EQ(result.value.AsString()->value(), "borrowed value");
 }
@@ -516,23 +517,23 @@ func main(): string {
 TEST(NativeBindingTest, DebuggerSeesNativeDeclarationAndCanCollectBorrowedArguments) {
   runtime::Isolate isolate(1);
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<CopyWithCollection>("copy")));
-  const auto entry = test::CompileEntry(R"(
+  const auto entry = test::CompileDebugSource(R"(
 external func copy(text: string): string;
 func main(): string { return copy('first' + ' second'); }
 )",
                                         isolate);
-  ASSERT_TRUE(entry) << entry.error();
-  NativeDebugger debugger(isolate, vm::DebugAction::Continue);
-  const auto result = vm::VirtualMachine(isolate).Debug(*entry, debugger);
+  ASSERT_TRUE(entry.Succeeded());
+  NativeDebugger debugger(isolate, DebugAction::Continue);
+  const auto result = test::Execute(*entry.instance);
   ASSERT_TRUE(result.Succeeded()) << result.message;
   EXPECT_TRUE(debugger.saw_native());
   EXPECT_EQ(debugger.argument(), "first second");
   EXPECT_EQ(debugger.caller_name(), "main");
   EXPECT_EQ(result.value.AsString()->value(), "first second");
 
-  NativeDebugger stopping(isolate, vm::DebugAction::Stop);
-  const auto stopped = vm::VirtualMachine(isolate).Debug(*entry, stopping);
-  EXPECT_EQ(stopped.status, vm::ExecutionStatus::DebuggerStopped);
+  NativeDebugger stopping(isolate, DebugAction::Stop);
+  const auto stopped = test::Execute(*entry.instance);
+  EXPECT_EQ(stopped.status, ExecutionStatus::ExecutionStopped);
   EXPECT_TRUE(stopping.saw_native());
 }
 
@@ -545,22 +546,18 @@ TEST(NativeBindingTest, RegistrationRejectsDuplicatesAndHostCallsKeepArgumentsRo
   const auto invalid = isolate.RegisterNative(runtime::NativeFunction::Bind<Scale>(""));
   ASSERT_FALSE(invalid);
   EXPECT_EQ(invalid.error(), runtime::NativeRegistrationError::InvalidName);
-  const auto binding = isolate.FindNative("copy");
-  ASSERT_NE(binding, nullptr);
+  const auto compiled = test::CompileSource("external func copy(text: string): string;", isolate);
+  ASSERT_TRUE(compiled.Succeeded());
+  const auto entry = compiled.instance->FindFunction("copy");
+  ASSERT_TRUE(entry);
   auto* string = isolate.heap().AllocateString("retained argument");
-  std::array<runtime::RegisterPayload, 1> payloads{};
-  std::array<runtime::ValueKind, 1> kinds{};
-  const runtime::RegisterView input(payloads, kinds);
-  input.front().SetString(string);
-  runtime::RootRange roots;
-  roots.Attach(isolate.heap(), input);
-  const auto result = binding->Invoke(isolate, input);
-  ASSERT_TRUE(result);
-  EXPECT_EQ(result->AsString()->value(), "retained argument");
-  input.front().SetInteger(1);
-  const auto mismatched = binding->Invoke(isolate, input);
-  ASSERT_FALSE(mismatched);
-  EXPECT_EQ(mismatched.error().kind, runtime::NativeErrorKind::TypeMismatch);
+  std::array input{runtime::Value::String(string)};
+  const auto result = runtime::ExecuteNativeFunction(*compiled.instance, *entry, input);
+  ASSERT_TRUE(result.Succeeded());
+  EXPECT_EQ(result.value.AsString()->value(), "retained argument");
+  input.front() = runtime::Value::Integer(1);
+  const auto mismatched = runtime::ExecuteNativeFunction(*compiled.instance, *entry, input);
+  EXPECT_EQ(mismatched.status, ExecutionStatus::InvalidCast);
 }
 
 TEST(NativeBindingTest, NativeFutureResumesAwaitingAsyncExecution) {
@@ -580,13 +577,13 @@ TEST(NativeBindingTest, NativeFutureResumesAwaitingAsyncExecution) {
 
 TEST(NativeBindingTest, ForeignProgramCallablesCannotReuseLocalFunctionIndices) {
   runtime::Isolate isolate(1);
-  const auto producer = CompileSource("func main(): () => int { return (): int => 7; }", isolate);
+  const auto producer = test::CompileSource("func main(): () => int { return (): int => 7; }", isolate);
   ASSERT_TRUE(producer.Succeeded());
-  const auto produced = vm::VirtualMachine(isolate).Execute(producer.program.FindFunction("main"));
+  const auto produced = test::Execute(*producer.instance, "main");
   ASSERT_TRUE(produced.Succeeded());
   const runtime::RootedValue callable(isolate, produced.value);
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<Fetch>("fetch")));
-  const auto consumer = CompileSource(R"(external func fetch(): Future<dynamic>;
+  const auto consumer = test::CompileSource(R"(external func fetch(): Future<dynamic>;
 async func main(): Future<int> {
   const callable: dynamic = await fetch();
   const typed: () => int = callable;
@@ -599,8 +596,7 @@ async func main(): Future<int> {
   ASSERT_TRUE(consumer.Succeeded());
   runtime::FutureCompletionEndpoint completer;
   PendingFetchCompleter() = &completer;
-  auto result = vm::VirtualMachine(isolate).ExecuteFuture(
-      consumer.program, consumer.program.FindFunction("main").index());
+  auto result = test::StartFuture(*consumer.instance);
   PendingFetchCompleter() = nullptr;
   ASSERT_TRUE(completer.Complete(callable.value()));
   ASSERT_TRUE(isolate.scheduler().PumpUntil(result));
@@ -611,15 +607,15 @@ async func main(): Future<int> {
 TEST(NativeBindingTest, NativeFutureParametersUseHeapBackedCodec) {
   runtime::Isolate isolate;
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<EchoFuture>("echo")));
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 external func echo(input: Future<int>): Future<int>;
 async func main(): Future<int> { return await echo(Future.value(9)); }
 )",
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  auto root = vm::VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
+  const auto entry = compiled.instance->FindFunction("main");
+  ASSERT_TRUE(entry.has_value());
+  auto root = test::StartFuture(*compiled.instance);
   ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
   ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
   EXPECT_EQ(root.value().value_or(runtime::Value::Null()).AsInteger(), 9);

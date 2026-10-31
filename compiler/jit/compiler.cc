@@ -180,15 +180,16 @@ CodeResourceCounts Compiler::resource_counts() const noexcept {
 std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(
     const ir::Program& program,
     const CompileOptions& options) {
-  if (program.native_mode != NativeProgramMode::Reloadable || program.revision == 0) {
-    return std::unexpected(Diagnostic("JIT requires a versioned reloadable source candidate"));
+  const auto reloadable = program.native_mode == NativeProgramMode::Reloadable;
+  if (reloadable && program.revision == 0) {
+    return std::unexpected(Diagnostic("reloadable JIT requires a versioned source candidate"));
   }
   std::vector<std::uint8_t> exports;
   exports.reserve(program.functions.size());
   for (const auto& function : program.functions) {
     const auto identity = function.identity;
-    if (identity.revision != program.revision ||
-        (identity.local == 0 && identity.declaration == DeclarationId{})) {
+    if (reloadable && (identity.revision != program.revision ||
+                       (identity.local == 0 && identity.declaration == DeclarationId{}))) {
       return std::unexpected(Diagnostic("JIT function is missing its immutable version identity"));
     }
     exports.push_back(function.is_exported ? 1 : 0);

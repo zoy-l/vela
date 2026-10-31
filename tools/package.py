@@ -208,7 +208,7 @@ def create_package(executable: Path, runtime: Path, destination: Path,
                 (sdk_directory() / "bin" / executable_name(archive_name), archiver, "archive", f"LLVM {llvm_version}", "Apache-2.0 WITH LLVM-exception"),
                 (sdk_directory() / "bin" / executable_name(link_name), linker, "link", f"LLVM {llvm_version}", "Apache-2.0 WITH LLVM-exception")):
             files.append(copy_file(source, package, relative, role, owner, license_name))
-        # 嵌入宿主需要完整的公共头依赖；不打包 compiler/VM 执行实现。
+        # 嵌入宿主需要完整的公共头依赖；不打包编译器实现。
         for directory in ("base", "runtime"):
             for header in (ROOT / directory).rglob("*.h"):
                 relative = (Path("include") / header.relative_to(ROOT)).as_posix()

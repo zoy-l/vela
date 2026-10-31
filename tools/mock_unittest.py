@@ -21,7 +21,7 @@ class MockCommandTest(CommandTestCase):
         result = self.invoke("test", "--reporter=json", code=code)
         return [json.loads(line) for line in result.stdout.splitlines()]
 
-    def test_generated_interface_runs_through_all_vm_entry_paths(self):
+    def test_generated_interface_runs_through_native_run_cache_and_test_paths(self):
         self.write("api.vela", """
 export interface Repository {
   load(id: int): Future<string>;
@@ -60,13 +60,12 @@ func main(): void {
 """)
         self.invoke("check", "repository_test.vela")
         self.invoke("run", "repository_test.vela")
-        caches = list((self.directory / '.cache' / 'vela').glob('*.vlcache'))
+        cache_directory = self.directory / '.cache' / 'vela' / 'native' / 'run'
+        caches = list(cache_directory.glob('*.vlobj'))
         self.assertEqual(len(caches), 1)
         cached = [(path.read_bytes(), path.stat().st_mtime_ns) for path in caches]
         self.invoke("run", "repository_test.vela")
         self.assertEqual([(path.read_bytes(), path.stat().st_mtime_ns) for path in caches], cached)
-        self.invoke("compile", "repository_test.vela", "suite.vbc")
-        self.invoke("exec", "suite.vbc")
         self.write("vela.json", json.dumps({"test": {"paths": ["repository_test.vela"]}}))
         result = self.invoke("test", "--reporter=json")
         events = [json.loads(line) for line in result.stdout.splitlines()]
@@ -78,7 +77,8 @@ func main(): void {
         self.generate('--check', code=1)
         self.generate()
         self.invoke('run', 'repository_test.vela')
-        self.assertNotEqual([(path.read_bytes(), path.stat().st_mtime_ns) for path in caches], cached)
+        self.assertNotEqual(set(cache_directory.glob("*.vlobj")), set(caches))
+        self.assertEqual([(path.read_bytes(), path.stat().st_mtime_ns) for path in caches], cached)
         api.write_text(api.read_text(encoding='utf-8').replace('  added(value: int): void;\n', ''),
                        encoding='utf-8', newline='\n')
         self.generate()

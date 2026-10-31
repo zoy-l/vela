@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -24,8 +25,14 @@ struct FutureDiagnostic;
 struct FutureResult;
 struct NativeCheckpoint;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 8;
+inline constexpr std::uint32_t kNativeAbiVersion = 9;
 inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
+
+// 函数与指令编号属于当前执行持有的 NativeImage；异常保存前解析成独立的源码诊断。
+struct TracePosition final {
+  std::uint32_t function = 0;
+  std::uint32_t instruction = 0;
+};
 
 [[nodiscard]] constexpr std::uint64_t EncodeNativeTracePosition(TracePosition position) noexcept {
   return (static_cast<std::uint64_t>(position.function) << kNativeTraceInstructionBits) |
@@ -70,12 +77,19 @@ struct NativeFrameAccess final {
   void* storage = nullptr;
 };
 
+struct NativeDebugValue final {
+  NativeValue value;
+  std::uint8_t available = 0;
+};
+
 // 逻辑栈由生成代码的原生栈持有；资源帧独立按需构造。
 struct NativeTraceFrame final {
   TracePosition position;
   NativeTraceFrame* previous = nullptr;
   const NativeImage* image = nullptr;
   NativeCheckpoint* checkpoint = nullptr;
+  const NativeDebugValue* debug_values = nullptr;
+  std::uint64_t debug_count = 0;
 };
 
 class NativeFrame final {
@@ -163,6 +177,7 @@ class NativeExecution final {
   friend struct NativeMemoryLayout;
   NativeInstance* instance_;
   NativeContext context_;
+  const std::atomic<std::uint8_t>* safepoint_requests_;
   NativeTraceFrame* current_frame_ = nullptr;
   std::size_t frame_count_ = 0;
   std::uintptr_t stack_limit_ = 0;

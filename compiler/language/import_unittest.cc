@@ -7,16 +7,15 @@
 #include "gtest/gtest.h"
 
 #include "base/testing/directory.h"
-#include "compiler/bytecode/compiler.h"
+#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/typing/checker.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/strings/string.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
 
-class ImportTest : public test::DirectoryTest {
+class ImportTest : public ::vela::test::DirectoryTest {
  protected:
   void Write(const std::filesystem::path& filename, std::string_view source) {
     std::ofstream output(directory() / filename, std::ios::binary);
@@ -25,20 +24,20 @@ class ImportTest : public test::DirectoryTest {
   }
 
   frontend::CheckResult Check() { return frontend::CheckFile(EntryPath()); }
-  CompileResult Compile() { return CompileFile(EntryPath(), isolate_); }
+  test::InstanceResult Compile() { return test::CompileFile(EntryPath(), isolate_); }
   std::string RunText() {
     const auto compiled = Compile();
     if (!compiled.Succeeded()) {
       ADD_FAILURE() << "module compilation failed";
       return {};
     }
-    const auto main = compiled.program.FindFunction("main");
-    if (!main.IsValid()) {
+    const auto main = compiled.instance->FindFunction("main");
+    if (!main.has_value()) {
       ADD_FAILURE() << "missing main";
       return {};
     }
-    const auto index = main.index();
-    const auto result = vm::VirtualMachine(isolate_).Execute(compiled.program, index);
+    const auto index = *main;
+    const auto result = runtime::ExecuteNativeFunction(*compiled.instance, index);
     if (!result.Succeeded() || !result.value.IsString()) {
       ADD_FAILURE() << "module execution failed";
       return {};

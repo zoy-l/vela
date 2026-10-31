@@ -79,7 +79,7 @@ struct Function final {
   frontend::TypeDescriptor return_type;
   std::uint32_t parameter_count = 0;
   std::uint32_t register_count = 0;
-  // lowering 的虚拟值类型；只属于分流前的 IR，不描述 VM 物理寄存器的存储。
+  // lowering 的虚拟值类型；原生后端据此选择机器表示。
   std::vector<frontend::TypeDescriptor> value_types;
   std::vector<Instruction> instructions;
   std::vector<double> doubles;

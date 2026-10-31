@@ -76,7 +76,7 @@ class Value final {
     return result;
   }
 
-  // 显式的载荷与标签布局供 VM、GC 和 AOT 共用，不依赖标准库 variant 的私有表示。
+  // 显式的载荷与标签布局供 GC 和原生运行时共用，不依赖标准库 variant 的私有表示。
   // 以对象表示保存各类型，避免读取 inactive union 成员或指针经整数往返。
   alignas(std::uint64_t) std::array<std::byte, sizeof(std::uint64_t)> payload_ = {};
   ValueKind kind_ = ValueKind::Null;

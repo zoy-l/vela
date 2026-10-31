@@ -117,6 +117,7 @@ class ClassLayout final {
   friend class Isolate;
   friend class LayoutTransaction;
   friend class Heap;
+  friend struct NativeMemoryLayout;
 
   ClassLayout(std::uint32_t field_count, std::vector<std::uint32_t> reference_fields);
 

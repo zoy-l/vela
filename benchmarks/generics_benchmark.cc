@@ -12,7 +12,6 @@
 #include "base/native_program_mode.h"
 #include "benchmarks/process_memory.h"
 #include "compiler/aot/native_compiler.h"
-#include "compiler/bytecode/compiler.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
@@ -26,9 +25,6 @@
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_function.h"
 #include "runtime/value/value.h"
-#include "vm/bytecode.h"
-#include "vm/program.h"
-#include "vm/vm.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -181,39 +177,6 @@ void GenericFrontend(benchmark::State& state,
   ReportGenericPeak(state);
 }
 
-void GenericVm(benchmark::State& state, GenericVariant variant, GenericShape shape) {
-  const auto source = GenericSource(variant, shape, state.range(0), GenericPhase::Applications);
-  runtime::Isolate isolate;
-  if (!isolate.RegisterNative(runtime::NativeFunction::Bind<GenericInput>("input"))) {
-    state.SkipWithError("generic input registration failed");
-    return;
-  }
-  const auto compiled = compiler::CompileSource(source, isolate);
-  if (!compiled.Succeeded()) {
-    state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
-    return;
-  }
-  const auto entry = compiled.program.FindFunction("main");
-  const auto expected = ExpectedGenericResult(state.range(0));
-  vm::VirtualMachine machine(isolate);
-  std::size_t code_bytes = 0;
-  for (const auto& function : compiled.program.functions()) {
-    code_bytes += function.code.size() * sizeof(vm::Instruction);
-  }
-  for (auto iteration : state) {
-    auto result = machine.Execute(compiled.program, entry.index());
-    if (!result.Succeeded() || !result.value.IsInteger() || result.value.AsInteger() != expected) {
-      state.SkipWithError("generic VM checksum mismatch");
-      break;
-    }
-    benchmark::DoNotOptimize(result);
-  }
-  state.counters["bytecode_bytes"] = static_cast<double>(code_bytes);
-  state.counters["register_bytes"] = static_cast<double>(machine.register_bytes());
-  state.counters["result"] = static_cast<double>(expected);
-  ReportGenericPeak(state);
-}
-
 void GenericNative(benchmark::State& state,
                    GenericVariant variant,
                    GenericShape shape,
@@ -311,11 +274,6 @@ void RegisterGenericBenchmarks() {
             ->Arg(kLargeGenericCount)
             ->UseRealTime();
       }
-      benchmark::RegisterBenchmark("generics/vm/" + suffix, GenericVm, variant.variant, shape)
-          ->Arg(kSmallGenericCount)
-          ->Arg(kMediumGenericCount)
-          ->Arg(kLargeGenericCount)
-          ->UseRealTime();
       for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
         const auto name =
             "generics/" +

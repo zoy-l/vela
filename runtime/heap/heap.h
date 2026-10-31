@@ -22,7 +22,6 @@
 #include "runtime/exceptions/exception.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/value/object.h"
-#include "runtime/value/register_storage.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
@@ -58,17 +57,15 @@ class RootRange final {
   RootRange& operator=(RootRange&&) = delete;
 
   void Attach(Heap& heap, const Value* values, std::size_t count) noexcept;
-  void Attach(Heap& heap, RegisterView registers) noexcept;
   void Detach() noexcept;
 
  private:
   friend class Heap;
 
-  enum class Kind : std::uint8_t { Values, Strings, Registers };
+  enum class Kind : std::uint8_t { Values, Strings };
 
   Heap* heap_ = nullptr;
   const void* data_ = nullptr;
-  const ValueKind* register_kinds_ = nullptr;
   std::size_t count_ = 0;
   RootRange* next_ = nullptr;
   RootRange** previous_link_ = nullptr;
@@ -169,7 +166,7 @@ class Heap final {
   [[nodiscard]] static Timer* GetTimer(const HeapObject& object) noexcept;
   [[nodiscard]] HeapObject* AllocateCancellationToken(CancellationToken token) noexcept;
   [[nodiscard]] static CancellationToken* GetCancellationToken(const HeapObject& object) noexcept;
-  // VM 的异构全局槽属于 GC 对象，不作为脚本数组或 dynamic 类型暴露。
+  // 异构全局槽属于 GC 对象，不作为脚本数组或 dynamic 类型暴露。
   [[nodiscard]] HeapObject* AllocateValueSlots(std::size_t count) noexcept;
   [[nodiscard]] std::expected<void, ExecutionStatus> ExtendValueSlots(HeapObject& object,
                                                                       std::size_t count) noexcept;
@@ -232,8 +229,6 @@ class Heap final {
   // 输入须保根；只格式化 string/int/double/bool/null，不分配中间 GC 字符串。
   [[nodiscard]] std::expected<StringObject*, StringJoinError> JoinValues(
       std::span<const Value> parts) noexcept;
-  [[nodiscard]] std::expected<StringObject*, StringJoinError> JoinValues(
-      RegisterView parts) noexcept;
   [[nodiscard]] std::expected<StringObject*, StringJoinError> JoinArray(
       const HeapObject& array,
       std::string_view separator) noexcept;
@@ -274,7 +269,6 @@ class Heap final {
   [[nodiscard]] HeapObject* AllocateMutableString() noexcept;
   [[nodiscard]] HeapObject* AllocateException(HeapObject& payload,
                                               ExecutionStatus status,
-                                              std::span<const TracePosition> trace,
                                               std::string_view message) noexcept;
   // builder 来自本 Heap 的 AllocateMutableString；builder 与 text 须保根，text 为合法 UTF-8。
   [[nodiscard]] std::expected<void, ExecutionStatus> AppendString(HeapObject& builder,

@@ -93,7 +93,7 @@ class SourceTestingTest(CommandTestCase):
         self.configure(paths=["unit"])
         self.suite()
         self.events()
-        cache = list((self.directory / ".cache" / "vela" / "test").glob("*.vlcache"))
+        cache = list((self.directory / ".cache" / "vela" / "native" / "test").glob("*.vlobj"))
         self.assertEqual(len(cache), 1)
         before = [(path.stat().st_mtime_ns, path.read_bytes()) for path in cache]
         self.configure(paths=["unit"], concurrency=2, timeout="1m", reporter="expanded")
@@ -208,13 +208,11 @@ func main(): void {
         self.assertEqual(len(outputs), 8)
         self.assertEqual(len({event["suiteID"] for event in outputs}), 8)
 
-    def test_direct_run_and_bytecode_use_the_same_sdk_session_without_config(self):
+    def test_direct_and_cached_runs_use_the_native_sdk_session_without_config(self):
         path = self.suite("direct.vela", "expectLater(Future.value(42), completion(42)); print('captured');")
         result = self.invoke("run", str(path))
         self.assertIn("1 passed, 0 failed", result.stdout)
-        image = self.directory / "direct.vbc"
-        self.invoke("compile", str(path), str(image))
-        self.assertIn("1 passed, 0 failed", self.invoke("exec", str(image)).stdout)
+        self.assertIn("1 passed, 0 failed", self.invoke("run", str(path)).stdout)
         self.invoke("check", str(path))
         documentation = self.directory / "sdk.md"
         self.invoke("doc", "sdk:test", str(documentation))

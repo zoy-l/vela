@@ -13,15 +13,17 @@
 #include "base/file.h"
 #include "base/path.h"
 #include "base/testing/temporary_directory.h"
-#include "compiler/bytecode/compilation_cache.h"
-#include "compiler/bytecode/compiler.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/jit/code_cache.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/suite.h"
 #include "compiler/tooling/mock/mock_generator.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/program.h"
-#include "vm/vm.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_instance.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -91,15 +93,13 @@ std::expected<void, std::string> MockProject::Generate(Generation mode) const {
   return {};
 }
 
-std::expected<void, std::string> Execute(runtime::Isolate& isolate,
-                                         const vm::Program& program,
-                                         std::string_view name) {
+std::expected<void, std::string> Execute(runtime::NativeInstance& instance, std::string_view name) {
   testing::SuiteOptions options;
   options.select = [name](const testing::TestResult& test) -> std::expected<bool, std::string> {
     return test.name == name;
   };
   std::ostringstream diagnostics;
-  testing::Suite suite(isolate, program, std::move(options), diagnostics);
+  testing::Suite suite(instance, std::move(options), diagnostics);
   const auto result = suite.Run();
   if (result.exit_code != 0 || !result.errors.empty() || result.tests.size() != 1) {
     return std::unexpected("mock benchmark failed to load or select its test");
@@ -140,34 +140,41 @@ void CompilationTime(benchmark::State& state, Compilation mode) {
   }
   const auto path = project.source();
   const auto cache = project.cache();
+  auto compiler = compiler::jit::Compiler::Create();
+  if (!compiler) {
+    state.SkipWithError(frontend::DiagnosticsText(compiler.error()));
+    return;
+  }
   {
     runtime::Isolate isolate;
-    const auto populated = compiler::CompileFileCached(path, cache, isolate);
-    if (!populated || !populated->compiled.Succeeded() ||
-        !Execute(isolate, populated->compiled.program, "configured")) {
+    const auto populated = compiler::jit::CompileFile(
+        **compiler, path, {.diagnostics = {}, .compilation = {.code_cache = cache}});
+    if (!populated.Succeeded()) {
+      state.SkipWithError(frontend::DiagnosticsText(populated.diagnostics));
+      return;
+    }
+    const auto instance = runtime::NativeInstance::Instantiate(isolate, populated.code.image);
+    if (!instance || !Execute(**instance, "configured")) {
       state.SkipWithError("cannot prepare generated mock compilation benchmark");
       return;
     }
   }
+  compiler::jit::SourceOptions options;
+  if (mode == Compilation::Cache) {
+    options.compilation.code_cache = cache;
+  }
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    runtime::Isolate isolate;
-    if (mode == Compilation::Cache) {
-      auto compiled = compiler::CompileFileCached(path, cache, isolate);
-      if (!compiled || compiled->status != compiler::CacheStatus::Hit ||
-          !compiled->compiled.Succeeded()) {
-        state.SkipWithError("generated mock cache did not hit");
-        return;
-      }
-      benchmark::DoNotOptimize(compiled);
-    } else {
-      auto compiled = compiler::CompileFile(path, isolate);
-      if (!compiled.Succeeded()) {
-        state.SkipWithError("generated mock compilation failed");
-        return;
-      }
-      benchmark::DoNotOptimize(compiled);
+    auto compiled = compiler::jit::CompileFile(**compiler, path, options);
+    if (!compiled.Succeeded()) {
+      state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
+      return;
     }
+    if (mode == Compilation::Cache && compiled.code.cache != compiler::jit::CodeCacheStatus::Hit) {
+      state.SkipWithError("generated mock cache did not hit");
+      return;
+    }
+    benchmark::DoNotOptimize(compiled);
   }
 }
 
@@ -178,13 +185,22 @@ void ExecutionTime(benchmark::State& state, std::string_view name, std::int64_t 
     return;
   }
   runtime::Isolate isolate;
-  const auto compiled = compiler::CompileFile(project.source(), isolate);
+  auto compiler = compiler::jit::Compiler::Create();
+  if (!compiler) {
+    state.SkipWithError(frontend::DiagnosticsText(compiler.error()));
+    return;
+  }
+  const auto compiled = compiler::jit::CompileFile(**compiler, project.source());
   if (!compiled.Succeeded()) {
     state.SkipWithError("cannot compile mock workload");
     return;
   }
-  const auto& program = compiled.program;
-  if (const auto warmup = Execute(isolate, program, name); !warmup) {
+  const auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+  if (!instance) {
+    state.SkipWithError(instance.error().message);
+    return;
+  }
+  if (const auto warmup = Execute(**instance, name); !warmup) {
     state.SkipWithError(warmup.error());
     return;
   }
@@ -194,7 +210,7 @@ void ExecutionTime(benchmark::State& state, std::string_view name, std::int64_t 
   const auto baseline = heap.allocated_bytes();
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    if (const auto executed = Execute(isolate, program, name); !executed) {
+    if (const auto executed = Execute(**instance, name); !executed) {
       state.SkipWithError(executed.error());
       return;
     }
@@ -202,7 +218,7 @@ void ExecutionTime(benchmark::State& state, std::string_view name, std::int64_t 
   state.counters["allocated_bytes"] = static_cast<double>(heap.allocated_bytes());
   state.counters["committed_bytes"] = static_cast<double>(heap.committed_bytes());
   const auto comparisons =
-      vm::VirtualMachine(isolate).Execute(program.FindFunction("comparisonCount"));
+      runtime::ExecuteNativeFunction(**instance, *(*instance)->FindFunction("comparisonCount"));
   if (!comparisons.Succeeded() || !comparisons.value.IsInteger()) {
     state.SkipWithError("missing matcher comparison evidence");
     return;

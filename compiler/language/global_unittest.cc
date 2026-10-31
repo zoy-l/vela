@@ -3,13 +3,10 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
-#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/test_support/program_test_support.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/execution_status.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -45,14 +42,14 @@ export func read(): int { return current; }
   runtime::Isolate isolate(1);
   const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
 
-TEST(GlobalTest, GlobalClosuresAndTheirCellsStayRootedAcrossExecutionsAndProgramCopies) {
+TEST(GlobalTest, GlobalClosuresAndTheirCellsStayRootedAcrossExecutionsAndCollection) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileSource(R"(
 const counter = makeCounter();
 func makeCounter(): () => int {
   let value: int = 40;
@@ -62,7 +59,7 @@ func main(): int { return counter(); }
 )",
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto results = test::ExecuteProgramCopy(compiled.program, isolate);
+  const auto results = test::ExecuteRepeated(*compiled.instance);
   ASSERT_TRUE(results) << results.error();
   EXPECT_EQ(results->front(), 41);
   EXPECT_EQ(results->back(), 42);
@@ -70,15 +67,15 @@ func main(): int { return counter(); }
 
 TEST(GlobalTest, ExplicitTypesPermitForwardReferencesAndReportInitializationCycles) {
   runtime::Isolate isolate;
-  const auto entry = test::CompileEntry(R"(
+  const auto entry = test::CompileCleanSource(R"(
 const first: int = second;
 const second: int = first;
 func main(): int { return first; }
 )",
                                         isolate);
   ASSERT_TRUE(entry) << entry.error();
-  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
-  EXPECT_EQ(result.status, vm::ExecutionStatus::CyclicInitialization);
+  const auto result = test::Execute(**entry);
+  EXPECT_EQ(result.status, ExecutionStatus::CyclicInitialization);
 }
 
 TEST(GlobalTest, InferredInitializersFollowDependenciesAndLocalsShadowGlobals) {
@@ -98,7 +95,7 @@ class GlobalErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(GlobalErrorTest, RejectsInvalidBindingsAndInitializerContexts) {
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileSource(GetParam(), isolate).Succeeded());
+  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(

@@ -22,7 +22,8 @@
 #include "base/diagnostic.h"
 #include "base/path.h"
 #include "base/process_exit.h"
-#include "compiler/bytecode/compilation_cache.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "compiler/cli/standard_streams.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/project/project_config.h"
@@ -34,12 +35,13 @@
 #include "compiler/testing/suite.h"
 #include "runtime/async/future.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/program.h"
+#include "runtime/native/native_image.h"
+#include "runtime/native/native_instance.h"
 
 namespace vela::testing {
 namespace {
 
-// 信号处理只发布无锁标志；VM 和清理在所属 worker 的安全边界观察它。
+// 信号处理只发布无锁标志；执行与清理在所属 worker 的安全边界观察它。
 std::atomic_bool& CancellationFlag() {
   static std::atomic_bool flag{false};
   return flag;
@@ -144,15 +146,15 @@ class ScriptOutput final : public std::streambuf {
   std::string line_;
 };
 
-SuiteResult ExecuteSuite(const vm::Program& program,
-                         runtime::Isolate& isolate,
+SuiteResult ExecuteSuite(runtime::NativeInstance& instance,
                          SuiteOptions options,
                          SessionReporter& reporter) {
   const auto identity = options.suite;
   const auto file = options.file;
   options.emit = [&reporter](const ReportEvent& event) { reporter.Emit(event); };
   std::ostringstream diagnostics;
-  Suite suite(isolate, program, std::move(options), diagnostics);
+  auto& isolate = instance.isolate();
+  Suite suite(instance, std::move(options), diagnostics);
   ScriptOutput buffer(reporter, suite, identity, file);
   std::ostream captured(&buffer);
   auto& previous = isolate.output();
@@ -199,21 +201,24 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
     options.load_deadline = runtime::FutureScheduler::Clock::now() + **timeout;
   }
   runtime::Isolate isolate;
-  const auto compiled = compiler::CompileFileCached(
-      PathText(path), configuration.root / ".cache/vela/test", isolate, configuration.diagnostics);
-  if (!compiled) {
+  auto compiler = compiler::jit::Compiler::Create();
+  if (!compiler) {
     PublishFailure(reporter, result, identity, file,
                    {
                        .phase = TestPhase::Registration,
-                       .category = "IOError",
-                       .message = compiled.error(),
+                       .category = "CodeError",
+                       .message = frontend::DiagnosticsText(compiler.error()),
                        .trace = {},
                        .difference = std::nullopt,
                    },
-                   kIoErrorExitCode);
+                   kRuntimeErrorExitCode);
     return result;
   }
-  for (const auto& diagnostic : compiled->compiled.diagnostics) {
+  compiler::jit::SourceOptions compilation;
+  compilation.diagnostics = configuration.diagnostics;
+  compilation.compilation.code_cache = configuration.root / ".cache/vela/native/test";
+  const auto compiled = compiler::jit::CompileFile(**compiler, PathText(path), compilation);
+  for (const auto& diagnostic : compiled.diagnostics) {
     if (diagnostic.severity == frontend::DiagnosticSeverity::Warning) {
       ReportEvent warning(ReportEventType::Warning, identity);
       std::ostringstream text;
@@ -260,7 +265,15 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
                    1);
     return result;
   }
-  return ExecuteSuite(compiled->compiled.program, isolate, std::move(options), reporter);
+  auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+  if (!instance) {
+    PublishFailure(reporter, result, identity, file,
+                   {.phase = TestPhase::Registration, .category = "InstantiationError",
+                    .message = instance.error().message, .trace = {}, .difference = std::nullopt},
+                   kSourceErrorExitCode);
+    return result;
+  }
+  return ExecuteSuite(**instance, std::move(options), reporter);
 }
 
 enum class RunMode : std::uint8_t { Execute, List };
@@ -310,15 +323,13 @@ void PrintConfigurationError(std::ostream& errors, const compiler::Configuration
 
 }  // namespace
 
-bool HasTestModule(const vm::Program& program) {
-  return std::ranges::any_of(program.functions(), [](const auto& function) {
-    const auto& paths = function.source_paths;
-    return paths && std::ranges::find(*paths, "sdk:test") != paths->end();
+bool HasTestModule(const runtime::NativeInstance& instance) {
+  return std::ranges::any_of(instance.image().source_paths.values(), [](const auto& path) {
+    return path.text() == "sdk:test";
   });
 }
 
-int RunDirectSuite(const vm::Program& program,
-                   runtime::Isolate& isolate,
+int RunDirectSuite(runtime::NativeInstance& instance,
                    std::string_view file,
                    CommandStreams streams) {
   auto& output = streams.output.get();
@@ -339,7 +350,7 @@ int RunDirectSuite(const vm::Program& program,
   SuiteOptions options;
   options.file = file;
   options.is_cancelled = IsCancelled;
-  const auto result = ExecuteSuite(program, isolate, std::move(options), reporter);
+  const auto result = ExecuteSuite(instance, std::move(options), reporter);
   return Complete(std::span(&result, 1), reporter, RunMode::Execute);
 }
 

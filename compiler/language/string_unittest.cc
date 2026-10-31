@@ -5,15 +5,13 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
+#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/typing/checker_test_support.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
-#include "vm/execution_status.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -22,8 +20,8 @@ class StringLanguageTest : public testing::Test {
  protected:
   explicit StringLanguageTest(std::size_t gc_threshold = 1) : isolate_(gc_threshold) {}
 
-  vm::ExecutionResult Run(std::string_view source) {
-    compiled_ = CompileSource(source, isolate_);
+  runtime::ExecutionResult Run(std::string_view source) {
+    compiled_ = test::CompileSource(source, isolate_);
     if (!compiled_.Succeeded()) {
       for (const auto& diagnostic : compiled_.diagnostics) {
         ADD_FAILURE() << diagnostic.location.line << ':' << diagnostic.location.column << ": "
@@ -31,13 +29,13 @@ class StringLanguageTest : public testing::Test {
       }
       return {};
     }
-    const auto main = compiled_.program.FindFunction("main");
-    if (!main.IsValid()) {
+    const auto main = compiled_.instance->FindFunction("main");
+    if (!main.has_value()) {
       ADD_FAILURE() << "missing main";
       return {};
     }
-    const auto index = main.index();
-    return vm::VirtualMachine(isolate_).Execute(compiled_.program, index);
+    const auto index = *main;
+    return runtime::ExecuteNativeFunction(*compiled_.instance, index);
   }
 
   std::string Text(std::string_view source) {
@@ -50,11 +48,11 @@ class StringLanguageTest : public testing::Test {
   }
 
   runtime::Isolate& isolate() { return isolate_; }
-  CompileResult& compilation() { return compiled_; }
+  test::InstanceResult& compilation() { return compiled_; }
 
  private:
   runtime::Isolate isolate_;
-  CompileResult compiled_;
+  test::InstanceResult compiled_;
 };
 
 class StringAllocationTest : public StringLanguageTest {
@@ -66,7 +64,7 @@ class StringAllocationTest : public StringLanguageTest {
     auto& heap = isolate.heap();
     heap.Collect();
     const auto before = heap.object_count();
-    const auto result = vm::VirtualMachine(isolate).Execute(compilation().program, 0);
+    const auto result = test::Execute(*compilation().instance);
     ASSERT_TRUE(result.Succeeded()) << result.message;
     EXPECT_EQ(heap.object_count(), before + expected);
     EXPECT_EQ(result.value.AsString()->value(), expected_text);
@@ -273,7 +271,7 @@ func main(): Store {
   ASSERT_TRUE(result.Succeeded());
   auto value = result.value;
   runtime::RootRange root(isolate.heap(), &value, 1);
-  compiled = CompileResult();
+  compiled = test::InstanceResult();
   isolate.heap().Collect();
   const auto builder = *runtime::Heap::GetField(*value.AsObject(), 0);
   auto* snapshot = isolate.heap().BuildString(*builder.AsObject());
@@ -335,7 +333,7 @@ class StringBoundsTest : public StringLanguageTest,
 
 TEST_P(StringBoundsTest, ReturnsExplicitRuntimeBoundsError) {
   const auto result = Run(std::string("func main(): string { return ") + GetParam() + "; }");
-  EXPECT_EQ(result.status, vm::ExecutionStatus::IndexOutOfBounds);
+  EXPECT_EQ(result.status, ExecutionStatus::IndexOutOfBounds);
 }
 
 INSTANTIATE_TEST_SUITE_P(InvalidRanges,

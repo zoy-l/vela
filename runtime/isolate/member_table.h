@@ -29,6 +29,8 @@ class MemberTable final {
 
   [[nodiscard]] const std::vector<MemberDefinition>& members() const noexcept { return members_; }
   [[nodiscard]] const MemberDefinition* Find(Value receiver, std::string_view name) const;
+  // 诊断只读取已存储字段，不调用 getter 或运行初始化器。
+  [[nodiscard]] Value ReadPublicField(Value receiver, std::string_view name) const;
   [[nodiscard]] bool IsCanonicalReceiverType(std::uint32_t index) const;
 
  private:

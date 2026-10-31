@@ -7,18 +7,17 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
+#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/modules/source_file.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/checker.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/bytecode_image.h"
-#include "vm/vm.h"
+#include "runtime/native/native_program_state.h"
 
 namespace vela::compiler {
 namespace {
 
-TEST(SdkModulesTest, SharesIdentityAcrossMemoryModulesAndBytecodeImages) {
+TEST(SdkModulesTest, SharesIdentityAcrossMemoryModulesAndNativeInstances) {
   const auto sources = std::to_array<frontend::SourceInput>({
       {
           .path = "main.vela",
@@ -51,18 +50,17 @@ export func valid(): bool {
   ASSERT_TRUE(loaded.diagnostics.empty());
   EXPECT_EQ(std::ranges::count(loaded.program.sources, "sdk:test", &frontend::SourceFile::path), 1);
   runtime::Isolate isolate(1);
-  const auto compiled = CompileParsed(std::move(loaded), isolate);
+  const auto compiled = test::CompileParsed(std::move(loaded), isolate);
   for (const auto& diagnostic : compiled.diagnostics) {
     ADD_FAILURE() << diagnostic.source_path << ':' << diagnostic.location.line << ':'
                   << diagnostic.location.column << ' ' << diagnostic.message;
   }
   ASSERT_TRUE(compiled.Succeeded());
-  const auto image = vm::SaveBytecode(compiled.program, isolate);
-  ASSERT_TRUE(image);
+  const auto image = runtime::Heap::NativeProgram(*compiled.instance->state().front().AsObject()).image_owner;
   runtime::Isolate restored(1);
-  const auto program = vm::LoadBytecode(*image, restored);
+  const auto program = runtime::NativeInstance::Instantiate(restored, image);
   ASSERT_TRUE(program);
-  const auto executed = vm::VirtualMachine(restored).Execute(program->FindFunction("main"));
+  const auto executed = test::Execute(**program);
   ASSERT_TRUE(executed.Succeeded()) << executed.message;
   EXPECT_EQ(executed.value.AsInteger(), 42);
 }

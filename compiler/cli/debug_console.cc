@@ -23,6 +23,7 @@
 #include "base/execution_limits.h"
 #include "base/json.h"
 #include "base/path.h"
+#include "base/process_exit.h"
 #include "compiler/cli/console_input.h"
 #include "runtime/heap/heap.h"
 #include "runtime/regexp/regexp.h"
@@ -30,9 +31,13 @@
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
-#include "vm/debugger.h"
-#include "vm/program.h"
-#include "vm/vm.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_control.h"
+#include "runtime/native/native_debugger.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_image.h"
+#include "runtime/native/native_instance.h"
+#include "runtime/process/process_entry.h"
 
 namespace vela::tooling {
 
@@ -123,7 +128,7 @@ bool IsNewLine(const Point& current, const Point& previous) {
          current.instruction <= previous.instruction;
 }
 
-Point CurrentPoint(const vm::DebugFrame& frame, std::size_t depth) {
+Point CurrentPoint(const runtime::NativeDebugFrame& frame, std::size_t depth) {
   Point point{
       .path = std::string_view(),
       .function = frame.name(),
@@ -132,17 +137,17 @@ Point CurrentPoint(const vm::DebugFrame& frame, std::size_t depth) {
       .instruction = frame.instruction(),
   };
   if (const auto location = frame.location()) {
-    point.path = location->path;
-    point.line = location->position.line;
+    point.path = frame.source_path();
+    point.line = location->line;
   }
   return point;
 }
 
-void WriteFrame(std::ostream& output, const vm::DebugFrame& frame) {
+void WriteFrame(std::ostream& output, const runtime::NativeDebugFrame& frame) {
   output << frame.name() << " pc=" << frame.instruction();
   if (const auto source = frame.location()) {
-    output << " at " << source->path << ':' << source->position.line << ':'
-           << source->position.column;
+    output << " at " << frame.source_path() << ':' << source->line << ':'
+           << source->column;
   }
   output << '\n';
 }
@@ -186,18 +191,16 @@ void WriteDebugValue(std::ostream& output, runtime::Value value) {
   }
 }
 
-class ConsoleDebugger final : public vm::Debugger {
+class ConsoleDebugger final : public runtime::NativeDebugger {
  public:
-  ConsoleDebugger(vm::Program program, std::istream& input, std::ostream& output)
-      : program_(std::move(program)), input_(&input), output_(&output) {
-    for (const auto& function : program_.functions()) {
-      functions_.emplace(function.name);
-      if (function.source_paths == nullptr) {
-        continue;
-      }
-      for (const auto& mapping : function.source_mappings) {
-        const auto& path = function.source_paths->at(mapping.location.source_id);
-        source_lines_.try_emplace(path).first->second.insert(mapping.location.line);
+  ConsoleDebugger(const runtime::NativeImage& image, std::istream& input, std::ostream& output)
+      : input_(&input), output_(&output) {
+    const auto paths = image.source_paths.values();
+    for (const auto& function : image.functions.values()) {
+      functions_.emplace(function.name.text());
+      for (const auto& location : function.locations.values()) {
+        const auto path = paths.subspan(location.source_id).front().text();
+        source_lines_.try_emplace(std::string(path)).first->second.insert(location.line);
       }
     }
     // source_lines_ 此后不再变化，文件名索引可安全借用其字符串键。
@@ -205,30 +208,29 @@ class ConsoleDebugger final : public vm::Debugger {
       source_names_.try_emplace(PathText(Utf8Path(path).filename())).first->second.push_back(path);
     }
   }
-  vm::DebugAction BeforeInstruction(const vm::DebugContext& context) noexcept override;
+  void AtSafepoint(const runtime::NativeDebugContext& context) noexcept override;
 
  private:
   [[nodiscard]] bool ShouldStop(const Point& point) const;
   [[nodiscard]] bool IsBreakpoint(const Point& point) const;
-  vm::DebugAction Prompt(const vm::DebugContext& context);
+  ConsoleAction Prompt(const runtime::NativeDebugContext& context);
   ConsoleAction ExecuteCommand(Command command,
                                std::string_view arguments,
-                               const vm::DebugContext& context,
-                               vm::DebugFrame& selected);
+                               const runtime::NativeDebugContext& context,
+                               runtime::NativeDebugFrame& selected);
   [[nodiscard]] std::expected<std::string, std::string> ResolveSource(std::string_view text) const;
-  void AddBreakpoint(std::string_view text, const vm::DebugFrame& frame);
+  void AddBreakpoint(std::string_view text, const runtime::NativeDebugFrame& frame);
   void AddSourceBreakpoint(std::string_view path, std::uint32_t line);
   void DeleteBreakpoint(std::string_view text);
   void ListBreakpoints() const;
-  void Stack(const vm::DebugContext& context) const;
+  void Stack(const runtime::NativeDebugContext& context) const;
   void SelectFrame(std::string_view text,
-                   const vm::DebugContext& context,
-                   vm::DebugFrame& selected) const;
-  void Registers(const vm::DebugFrame& frame) const;
-  void Inspect(Command command, std::string_view text, const vm::DebugFrame& frame) const;
+                   const runtime::NativeDebugContext& context,
+                   runtime::NativeDebugFrame& selected) const;
+  void Registers(const runtime::NativeDebugFrame& frame) const;
+  void Inspect(Command command, std::string_view text, const runtime::NativeDebugFrame& frame) const;
   void Help() const;
 
-  vm::Program program_;
   std::istream* input_;
   std::ostream* output_;
   Mode mode_ = Mode::Entry;
@@ -268,21 +270,23 @@ bool ConsoleDebugger::IsBreakpoint(const Point& point) const {
   return found != source_breakpoints_.end() && found->second.contains(point.line);
 }
 
-vm::DebugAction ConsoleDebugger::BeforeInstruction(const vm::DebugContext& context) noexcept {
+void ConsoleDebugger::AtSafepoint(const runtime::NativeDebugContext& context) noexcept {
   if (mode_ == Mode::Continue && breakpoints_.empty()) {
-    return vm::DebugAction::Continue;
+    return;
   }
-  const auto current = context.current_frame();
-  const auto point = CurrentPoint(current, context.frame_count());
+  const auto current = context.top_frame();
+  const auto point = CurrentPoint(current, context.frames().size());
   auto& previous = previous_.at(point.depth - 1);
   const auto entered = !previous || IsNewLine(point, *previous);
   previous = point;
   if (!ShouldStop(point) && !(entered && IsBreakpoint(point))) {
-    return vm::DebugAction::Continue;
+    return;
   }
   last_stop_ = point;
   WriteFrame(*output_, current);
-  return Prompt(context);
+  if (Prompt(context) == ConsoleAction::Stop) {
+    context.RequestStop();
+  }
 }
 
 void ConsoleDebugger::Help() const {
@@ -292,13 +296,13 @@ void ConsoleDebugger::Help() const {
            << "field rN INDEX; element rN INDEX; help (h)\n";
 }
 
-vm::DebugAction ConsoleDebugger::Prompt(const vm::DebugContext& context) {
-  auto selected = context.current_frame();
+ConsoleAction ConsoleDebugger::Prompt(const runtime::NativeDebugContext& context) {
+  auto selected = context.top_frame();
   while (true) {
     *output_ << "debug> " << std::flush;
     std::string line;
     if (!std::getline(*input_, line)) {
-      return vm::DebugAction::Stop;
+      return ConsoleAction::Stop;
     }
     const auto [word, arguments] = Words(line);
     if (word.empty()) {
@@ -308,18 +312,18 @@ vm::DebugAction ConsoleDebugger::Prompt(const vm::DebugContext& context) {
     const auto command = found == kCommands.end() ? Command::Unknown : found->second;
     const auto action = ExecuteCommand(command, arguments, context, selected);
     if (action == ConsoleAction::Resume) {
-      return vm::DebugAction::Continue;
+      return ConsoleAction::Resume;
     }
     if (action == ConsoleAction::Stop) {
-      return vm::DebugAction::Stop;
+      return ConsoleAction::Stop;
     }
   }
 }
 
 ConsoleAction ConsoleDebugger::ExecuteCommand(Command command,
                                               std::string_view arguments,
-                                              const vm::DebugContext& context,
-                                              vm::DebugFrame& selected) {
+                                              const runtime::NativeDebugContext& context,
+                                              runtime::NativeDebugFrame& selected) {
   switch (command) {
     case Command::Continue:
       mode_ = Mode::Continue;
@@ -425,7 +429,7 @@ void ConsoleDebugger::AddSourceBreakpoint(std::string_view path, std::uint32_t l
   *output_ << "breakpoint " << identity << " at " << *source << ':' << *executable << '\n';
 }
 
-void ConsoleDebugger::AddBreakpoint(std::string_view text, const vm::DebugFrame& frame) {
+void ConsoleDebugger::AddBreakpoint(std::string_view text, const runtime::NativeDebugFrame& frame) {
   text = Unquote(text);
   if (const auto line = ParseConsoleIndex(text)) {
     const auto source = frame.location();
@@ -433,7 +437,7 @@ void ConsoleDebugger::AddBreakpoint(std::string_view text, const vm::DebugFrame&
       *output_ << "selected frame has no source mapping\n";
       return;
     }
-    AddSourceBreakpoint(source->path, *line);
+    AddSourceBreakpoint(frame.source_path(), *line);
     return;
   }
   const auto colon = text.find_last_of(':');
@@ -510,41 +514,46 @@ void ConsoleDebugger::ListBreakpoints() const {
   }
 }
 
-void ConsoleDebugger::Stack(const vm::DebugContext& context) const {
-  for (std::size_t depth = 0; const auto frame = context.Frame(depth); ++depth) {
-    *output_ << '#' << depth << ' ';
-    WriteFrame(*output_, *frame);
+void ConsoleDebugger::Stack(const runtime::NativeDebugContext& context) const {
+  std::size_t depth = 0;
+  for (const auto& frame : context.frames()) {
+    *output_ << '#' << depth++ << ' ';
+    WriteFrame(*output_, frame);
   }
 }
 
 void ConsoleDebugger::SelectFrame(std::string_view text,
-                                  const vm::DebugContext& context,
-                                  vm::DebugFrame& selected) const {
+                                  const runtime::NativeDebugContext& context,
+                                  runtime::NativeDebugFrame& selected) const {
   const auto depth = ParseConsoleIndex(text);
   if (!depth) {
     *output_ << "frame requires a nonnegative depth\n";
     return;
   }
-  const auto frame = context.Frame(*depth);
-  if (!frame) {
+  const auto frames = context.frames();
+  if (*depth >= frames.size()) {
     *output_ << "frame depth is out of range\n";
     return;
   }
-  selected = *frame;
+  selected = frames.subspan(*depth).front();
   WriteFrame(*output_, selected);
 }
 
-void ConsoleDebugger::Registers(const vm::DebugFrame& frame) const {
-  for (std::size_t index = 0; const auto value = frame.ReadRegister(index); ++index) {
+void ConsoleDebugger::Registers(const runtime::NativeDebugFrame& frame) const {
+  for (std::size_t index = 0; index < frame.register_count(); ++index) {
     *output_ << 'r' << index << " = ";
-    WriteDebugValue(*output_, *value);
+    if (const auto value = frame.ReadRegister(index)) {
+      WriteDebugValue(*output_, *value);
+    } else {
+      *output_ << "<unavailable>";
+    }
     *output_ << '\n';
   }
 }
 
 void ConsoleDebugger::Inspect(Command command,
                               std::string_view text,
-                              const vm::DebugFrame& frame) const {
+                              const runtime::NativeDebugFrame& frame) const {
   auto [name, rest] = Words(text);
   if (!name.starts_with('r')) {
     *output_ << "expected a register name such as r0\n";
@@ -596,12 +605,30 @@ void ConsoleDebugger::Inspect(Command command,
 
 }  // namespace
 
-vm::ExecutionResult RunDebugConsole(const vm::FunctionHandle& function,
-                                    runtime::Isolate& isolate,
-                                    std::istream& input,
-                                    std::ostream& output) {
-  ConsoleDebugger debugger(function.program(), input, output);
-  return vm::VirtualMachine(isolate).Debug(function, debugger);
+int RunDebugConsole(runtime::NativeInstance& instance,
+                                          std::uint32_t function,
+                                          std::istream& input,
+                                          std::ostream& output) {
+  ConsoleDebugger debugger(instance.image(), input, output);
+  auto& control = instance.isolate().native_control();
+  control.SetDebugger(&debugger);
+  runtime::ProcessEntry process(instance.isolate(), output);
+  const auto result = runtime::ExecuteNativeFunction(instance, function);
+  int code = kRuntimeErrorExitCode;
+  if (result.Succeeded()) {
+    code = process.Finish(result.value);
+  } else if (result.status != ExecutionStatus::ExecutionStopped) {
+    runtime::WriteRuntimeDiagnostic(output, {.message = result.message,
+                                            .stack_trace = result.stack_trace,
+                                            .status = result.status,
+                                            .origin = result.origin});
+  }
+  if (control.IsStopRequested()) {
+    output << "debugger stopped\n";
+    code = 0;
+  }
+  control.SetDebugger(nullptr);
+  return code;
 }
 
 }  // namespace vela::tooling

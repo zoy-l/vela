@@ -16,6 +16,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/Dominators.h>
+#include <llvm/IR/Function.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/LLVMContext.h>
@@ -84,6 +85,35 @@ TEST(NativeCompilerTest, EmitsConcreteGenericMethodsAndInterfaceSelectors) {
     EXPECT_FALSE(result->object.empty());
     EXPECT_EQ(result->exports.size(), 1U);
   }
+}
+
+TEST(NativeCompilerTest, ExceptionRootCleanupGeneratesLinearCodeSize) {
+  constexpr std::array<std::size_t, 2> kCallCounts{16, 64};
+  std::array<std::size_t, 2> sizes{};
+  for (std::size_t sample = 0; sample < kCallCounts.size(); ++sample) {
+    std::string source = R"(
+class Box { value: int; }
+func identity(value: Box): Box { return value; }
+export func main(): int { let total = 0; try {
+)";
+    for (std::size_t call = 0; call < kCallCounts.at(sample); ++call) {
+      source += "total += identity(Box(value: 1)).value;";
+    }
+    source += "} catch (error: Error) { return -1; } return total; }";
+    const auto prepared = Prepare(source);
+    ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+    const std::vector<std::uint8_t> exports(prepared.program.functions.size(), 0);
+    const auto generated = native::Generate(
+        prepared.program, "root_cleanup", exports, native::NativeDebugging::Safepoints,
+        NativeCodeTier::Baseline, native::EscapeOptimization::Disabled);
+    ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
+    for (const auto& function : *generated->module) {
+      sizes.at(sample) += function.getInstructionCount();
+    }
+  }
+  // 调用数扩大四倍时，异常根清理不能随失败点数与根槽数的乘积增长。
+  ASSERT_GT(sizes.front(), 0U);
+  EXPECT_LT(sizes.back(), sizes.front() * 5);
 }
 
 TEST(NativeCompilerTest, EmitsAsyncGenericMethodsWithConcreteExceptionLayouts) {

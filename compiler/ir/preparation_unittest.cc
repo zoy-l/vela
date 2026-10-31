@@ -38,6 +38,21 @@ func main(): int { return read() + 2; }
   EXPECT_EQ(found->return_type.kind, frontend::TypeDescriptor::Kind::Int);
 }
 
+TEST(PreparationTest, RuntimeInterfaceLayoutsExcludeAbstractTemplateApplications) {
+  const auto prepared = Prepare(R"(
+interface Reader<T> { read(): T; }
+class Value implements Reader<int> { read(): int { return 42; } }
+class Operations {
+  read<T extends Reader<int>>(value: T): int { return value.read(); }
+}
+func main(): int { return Operations().read(Value()); }
+)");
+  ASSERT_TRUE(prepared.Succeeded());
+  const auto& interfaces = prepared.program.layouts.interfaces;
+  ASSERT_EQ(interfaces.size(), 1U);
+  EXPECT_EQ(interfaces.front(), "Reader<int>");
+}
+
 TEST(PreparationTest, KeepsWideVirtualRegistersBeforeBackendAllocation) {
   constexpr int kArrayLength = 300;
   std::string source = "func main(): int { const values = [";
@@ -57,6 +72,28 @@ TEST(PreparationTest, KeepsWideVirtualRegistersBeforeBackendAllocation) {
   EXPECT_TRUE(std::ranges::any_of(main->instructions, [](const Instruction& instruction) {
     return instruction.opcode == Opcode::NewArray && instruction.immediate == kArrayLength;
   }));
+}
+
+TEST(PreparationTest, ClassInterfaceMetadataHasCanonicalOrder) {
+  constexpr std::uint32_t kInterfaces = 8;
+  std::string source;
+  for (std::uint32_t index = 0; index < kInterfaces; ++index) {
+    source += "interface I" + std::to_string(index) + " { read(): int; }";
+  }
+  source += "class Value implements ";
+  for (std::uint32_t index = kInterfaces; index > 0; --index) {
+    source += "I" + std::to_string(index - 1) + (index == 1 ? "" : ",");
+  }
+  source += "{ read(): int { return 42; } } func main(): int { return Value().read(); }";
+  const auto prepared = Prepare(source);
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto& classes = prepared.program.layouts.classes;
+  const auto found = std::ranges::find(classes, "Value", &layout::Class::name);
+  ASSERT_NE(found, classes.end());
+  ASSERT_EQ(found->interfaces.size(), kInterfaces);
+  for (std::uint32_t index = 0; index < kInterfaces; ++index) {
+    EXPECT_EQ(found->interfaces.at(index), index);
+  }
 }
 
 TEST(PreparationTest, OwnsLayoutsAndSourcePathsAfterFrontendDestructionAndResultMoves) {

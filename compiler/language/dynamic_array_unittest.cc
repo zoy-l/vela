@@ -4,28 +4,25 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
-#include "compiler/frontend/typing/checker_test_support.h"
 #include "compiler/test_support/program_test_support.h"
+#include "compiler/frontend/typing/checker_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/execution_status.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
 
 class DynamicArrayExecutionTest : public testing::TestWithParam<std::string_view> {};
 
-TEST_P(DynamicArrayExecutionTest, RunsTypedGrowthAndMutationThroughBytecodeImagesAndGc) {
+TEST_P(DynamicArrayExecutionTest, RunsTypedGrowthAndMutationThroughNativeImagesAndGc) {
   runtime::Isolate isolate(1);
-  const auto program = test::ReloadSource(GetParam(), isolate);
+  const auto program = test::ReinstantiateSource(GetParam(), isolate);
   ASSERT_TRUE(program) << program.error();
   auto& heap = isolate.heap();
   heap.FinishCollection();
   heap.Collect();
   const auto baseline = heap.object_count();
-  const auto result = test::ExecuteInteger(*program, isolate);
+  const auto result = test::ExecuteInteger(**program);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
   heap.FinishCollection();
@@ -265,12 +262,11 @@ TEST_P(ArrayCallbackMutationTest, DetectsMutationBeforeUsingCallbackResultsAndVm
   runtime::Isolate isolate(1);
   const auto source = "func main(): void { const values = [3, 1, 2]; " + std::string(GetParam()) +
                       " } func answer(): int { return 42; }";
-  const auto compiled = CompileSource(source, isolate);
+  const auto compiled = test::CompileSource(source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  vm::VirtualMachine machine(isolate);
-  const auto result = machine.Execute(compiled.program.FindFunction("main"));
-  EXPECT_EQ(result.status, vm::ExecutionStatus::ConcurrentModification) << result.message;
-  const auto answer = machine.Execute(compiled.program.FindFunction("answer"));
+  const auto result = test::Execute(*compiled.instance, "main");
+  EXPECT_EQ(result.status, ExecutionStatus::ConcurrentModification) << result.message;
+  const auto answer = test::Execute(*compiled.instance, "answer");
   ASSERT_TRUE(answer.Succeeded());
   EXPECT_EQ(answer.value.AsInteger(), 42);
 }

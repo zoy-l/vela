@@ -1,10 +1,12 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
 #include "runtime/heap/array_storage.h"
+#include "runtime/heap/instance_storage.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_program_state.h"
@@ -22,6 +24,9 @@ struct NativeMemoryLayout final {
   static constexpr auto kValueKind = offsetof(Value, kind_);
   static constexpr auto kObjectLength = offsetof(HeapObject, length);
   static constexpr auto kObjectNativePayload = offsetof(HeapObject, native_payload);
+  static constexpr auto kObjectLayout = offsetof(HeapObject, layout);
+  static constexpr auto kClassNominal = offsetof(ClassLayout, nominal_);
+  static constexpr auto kClassRevision = offsetof(ClassLayout, revision_);
   static constexpr auto kArrayData = sizeof(HeapObject) + offsetof(internal::ArrayStorage, data);
   static constexpr auto kArrayCapacity =
       sizeof(HeapObject) + offsetof(internal::ArrayStorage, capacity);
@@ -33,6 +38,8 @@ struct NativeMemoryLayout final {
   static constexpr auto kExecutionStackStatus = offsetof(NativeExecution, stack_status_);
   static constexpr auto kExecutionInstance = offsetof(NativeExecution, instance_);
   static constexpr auto kExecutionContext = offsetof(NativeExecution, context_);
+  static constexpr auto kExecutionSafepointRequests =
+      offsetof(NativeExecution, safepoint_requests_);
   static constexpr auto kExecutionException = offsetof(NativeExecution, pending_exception_);
   static constexpr auto kExecutionExceptionAllocationFailed =
       offsetof(NativeExecution, exception_allocation_failed_);
@@ -46,6 +53,11 @@ struct NativeMemoryLayout final {
 };
 
 static_assert(std::is_standard_layout_v<HeapObject>);
+static_assert(std::is_standard_layout_v<ClassLayout>);
+static_assert(std::is_standard_layout_v<InstanceStorage>);
+static_assert(std::is_standard_layout_v<NativeFieldCache>);
+static_assert(std::atomic<std::uint8_t>::is_always_lock_free);
+static_assert(sizeof(std::atomic<std::uint8_t>) == sizeof(std::uint8_t));
 static_assert(std::is_standard_layout_v<internal::ArrayStorage>);
 static_assert(std::is_standard_layout_v<NativeFrameAccess>);
 static_assert(std::is_standard_layout_v<NativeTraceFrame>);

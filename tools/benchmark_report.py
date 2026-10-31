@@ -9,17 +9,17 @@ from statistics import mean, median, stdev
 
 
 CASE = re.compile(
-    r"^(compare|first|compile)/(cpp|vm|luajit|luajit_interp|representative)/"
+    r"^(compare|first|compile)/(cpp|jit|luajit|luajit_interp|representative)/"
     r"([^/]+)/(\d+)(?:/real_time)?$")
 MICROSECONDS = {"ns": 0.001, "us": 1.0, "ms": 1000.0, "s": 1_000_000.0}
-LABELS = {"cpp": "C++", "vm": "Vela", "luajit_interp": "Lua interpreter",
+LABELS = {"cpp": "C++", "jit": "Vela JIT", "luajit_interp": "Lua interpreter",
           "luajit": "LuaJIT", "representative": "Vela compile"}
 NATIVE_CASE = re.compile(
-    r"^native/(cpp|cpp_indirect|vm|vm_control)/(empty|integer|double|string_borrow)/(\d+)/real_time$")
+    r"^native/(cpp|cpp_indirect|jit|jit_control)/(empty|integer|double|string_borrow)/(\d+)/real_time$")
 NATIVE_BASELINES = {
     "dynamic_values": "Mixed arrays: C++ std::variant<int64_t, string, bool>; Vela dynamic[] with is checks and typed reads.",
     "dynamic_dispatch": "Bound calls: C++ std::function with a statically typed signature; Vela resolves a public method on a dynamic receiver and checks the int result. C++ has no runtime member-name lookup.",
-    "json_roundtrip": "Construct, encode, decode and validate ordered records containing Unicode and mixed arrays. C++ uses pinned yyjson DOM arenas; Vela uses native Map/dynamic[] graphs, runtime checks and GC. The ratio includes these representation and contract differences, not only bytecode execution.",
+    "json_roundtrip": "Construct, encode, decode and validate ordered records containing Unicode and mixed arrays. C++ uses pinned yyjson DOM arenas; Vela uses native Map/dynamic[] graphs, runtime checks and GC. The ratio includes these representation and contract differences, not only generated-code execution.",
     "byte_data_little": "Zeroed byte buffer, unaligned 64-bit stores/loads and an owner-alias check; C++ vector<byte>/memcpy with explicit little endian.",
     "byte_data_big": "Zeroed byte buffer, unaligned 64-bit stores/loads and an owner-alias check; C++ vector<byte>/memcpy with explicit big endian.",
     "regexp_records": "Both compile pinned PCRE2 with UTF/UCP, matching newline/BSR settings, interpreter budgets and no JIT. Build Unicode input, collect nonempty matches, convert coordinates to code points, copy captures and parse numbers inside timing.",
@@ -67,7 +67,7 @@ def iteration_rows(report: dict, expected_cases: list[str], repetitions: int) ->
 
 
 def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: int) -> str:
-    pattern = re.compile(r"^aot/(native|vm|cpp|first_native)/([^/]+)/(\d+)/real_time$")
+    pattern = re.compile(r"^aot/(native|cpp|first_native)/([^/]+)/(\d+)/real_time$")
     if not expected_cases or any(pattern.fullmatch(name) is None for name in expected_cases):
         raise ValueError("No supported AOT comparison cases selected")
     rows = iteration_rows(report, expected_cases, repetitions)
@@ -91,8 +91,7 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
             continue
         fields = ("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes",
                   "suspended_frames", "saved_state_bytes", "remaining_suspended_frames", "remaining_saved_bytes")
-        fields += (("entry_frame_bytes", "entry_shadow_slots", "entry_static_root_stores")
-                   if backend == "native" else ("register_bytes",))
+        fields += ("entry_frame_bytes", "entry_shadow_slots", "entry_static_root_stores")
         values = {field: [entry[field] for entry in entries] for field in fields}
         if any(not math.isfinite(value) or value < 0 for numbers in values.values() for value in numbers):
             raise ValueError(f"{name}: invalid memory or suspended-state counter")
@@ -102,42 +101,34 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                 raise ValueError(f"{name}: retained temporary state after completion and GC")
         counters[backend, *key] = values
     if any(len(values) != 1 for values in checksums.values()):
-        raise ValueError("AOT, VM, and C++ checksums differ")
-    lines = ["Offline AOT, VM and C++: median wall microseconds per workload.",
+        raise ValueError("AOT and C++ checksums differ")
+    lines = ["Offline AOT and C++: median wall microseconds per workload.",
              f"Every selected case passed all {repetitions} repetitions and checksum checks.",
              "Steady execution excludes compilation, instantiation and warm-up. First native execution "
              "uses a fresh instance and includes lazy initialization, with instantiation excluded.",
              "C++ uses ordinary values, vector/string/unique_ptr ownership, and the same host kernel. "
              "Its async case queues two Future observation boundaries per element on the shared scheduler.",
              "Memory counters describe the Vela GC heap and saved continuations; they are not process RSS.", "",
-             "| Workload | Size | AOT us | VM us | C++ us | First AOT us | AOT/VM | AOT/C++ | CV AOT/VM/C++ | VM/C++ |",
-             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |"]
+             "| Workload | Size | AOT us | C++ us | First AOT us | AOT/C++ | CV AOT/C++ |",
+             "| --- | ---: | ---: | ---: | ---: | ---: | --- |"]
     keys = sorted({(workload, size) for _, workload, size in samples})
     paired_ratios = []
-    vm_ratios = []
     for workload, size in keys:
         values = {backend: samples.get((backend, workload, size), [])
-                  for backend in ("native", "vm", "cpp", "first_native")}
+                  for backend in ("native", "cpp", "first_native")}
         medians = {backend: median(times) for backend, times in values.items() if times}
         elapsed = [f"{medians[backend]:.3f}" if backend in medians else "-" for backend in values]
         ratios = [f"{medians['native'] / medians[backend]:.3f}" if "native" in medians and backend in medians
-                  else "-" for backend in ("vm", "cpp")]
-        cvs = "/".join(variation(values[backend]) if values[backend] else "-" for backend in ("native", "vm", "cpp"))
-        vm_ratio = medians["vm"] / medians["cpp"] if "vm" in medians and "cpp" in medians else None
-        lines.append("| " + " | ".join([workload, str(size), *elapsed, *ratios, cvs,
-                                       f"{vm_ratio:.3f}" if vm_ratio is not None else "-"]) + " |")
+                  else "-" for backend in ("cpp",)]
+        cvs = "/".join(variation(values[backend]) if values[backend] else "-" for backend in ("native", "cpp"))
+        lines.append("| " + " | ".join([workload, str(size), *elapsed, *ratios, cvs]) + " |")
         if "native" in medians and "cpp" in medians:
             paired_ratios.append(medians["native"] / medians["cpp"])
-        if vm_ratio is not None:
-            vm_ratios.append(vm_ratio)
     if paired_ratios:
         geometric_mean = math.exp(mean(math.log(value) for value in paired_ratios))
         lines.extend(["", f"Geometric mean AOT/C++ over {len(paired_ratios)} paired workloads: {geometric_mean:.2f}x."])
-    if vm_ratios:
-        geometric_mean = math.exp(mean(math.log(value) for value in vm_ratios))
-        lines.extend(["", f"Geometric mean VM/C++ over {len(vm_ratios)} paired workloads: {geometric_mean:.2f}x."])
     if any(workload.startswith("dasprofile.") for workload, _ in keys):
-        lines.extend(["", "The ported dasProfile workloads share Vela source between AOT and VM. Input preparation is excluded; "
+        lines.extend(["", "The ported dasProfile workloads use the same source as the JIT comparisons. Input preparation is excluded; "
                       "each timed call checks its result, and particle positions advance between calls. "
                       "Floating-point work uses double; sorting is stable on both sides. "
                       "Vela retains checked int64 arithmetic, managed containers and GC ownership. "
@@ -150,12 +141,12 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
         lines.append("| " + " | ".join([workload, str(size), backend, *values]) + " |")
     lines.extend(["", "Native frame storage is the declared LLVM frame aggregate before optimization; "
                   "it is not measured machine-stack usage. Root stores count planned safepoint writes before LLVM optimization.", "",
-                  "| Workload | Size | AOT frame storage bytes | AOT shadow slots | AOT static root stores | VM register bytes |",
-                  "| --- | ---: | ---: | ---: | ---: | ---: |"])
+                  "| Workload | Size | AOT frame storage bytes | AOT shadow slots | AOT static root stores |",
+                  "| --- | ---: | ---: | ---: | ---: |"])
     for workload, size in keys:
         columns = []
         for backend, field in (("native", "entry_frame_bytes"), ("native", "entry_shadow_slots"),
-                               ("native", "entry_static_root_stores"), ("vm", "register_bytes")):
+                               ("native", "entry_static_root_stores")):
             values = counters.get((backend, workload, size), {}).get(field)
             columns.append(f"{median(values):.0f}" if values else "-")
         lines.append("| " + " | ".join([workload, str(size), *columns]) + " |")
@@ -183,8 +174,8 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
         samples[phase, backend, workload, size] = times
         if phase != "compare" or backend == "cpp":
             continue
-        fields = (("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes", "register_bytes")
-                  if backend == "vm" else
+        fields = (("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes")
+                  if backend == "jit" else
                   ("baseline_bytes", "allocated_bytes", "retained_bytes", "warmup_calls",
                    "warm_traces", "traces", "warm_jit_code_bytes", "jit_code_bytes"))
         values = {}
@@ -203,7 +194,7 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
 
     lines = ["Median wall time per complete workload (microseconds).",
              "Ratios are Vela / the named backend; lower is better.",
-             "Execution excludes source loading, bytecode compilation, input setup and warm-up; "
+             "Execution excludes source loading, native compilation, input setup and warm-up; "
              "normal GC and subsequent JIT tracing remain timed.",
              f"Every selected case passed all {repetitions} repetitions.", ""]
     context = report.get("context", {})
@@ -217,7 +208,7 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
         if not keys:
             return
         lines.extend([title, ""])
-        ratios = tuple(backend for backend in backends if backend != "vm") if phase != "compile" else ()
+        ratios = tuple(backend for backend in backends if backend != "jit") if phase != "compile" else ()
         columns = ["Workload", "Size", *(LABELS[backend] + " (us)" for backend in backends),
                    *("Vela/" + LABELS[backend] for backend in ratios),
                    "Samples " + "/".join(LABELS[backend] for backend in backends),
@@ -228,28 +219,28 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
             values = {backend: samples.get((phase, backend, workload, size), []) for backend in backends}
             medians = {backend: median(times) for backend, times in values.items() if times}
             elapsed = [f"{medians[backend]:.3f}" if backend in medians else "-" for backend in backends]
-            compared = [f'{medians["vm"] / medians[backend]:.2f}x'
-                        if "vm" in medians and backend in medians else "-" for backend in ratios]
+            compared = [f'{medians["jit"] / medians[backend]:.2f}x'
+                        if "jit" in medians and backend in medians else "-" for backend in ratios]
             counts = "/".join(str(len(values[backend])) for backend in backends)
             cvs = "/".join(variation(values[backend]) if values[backend] else "-" for backend in backends)
             lines.append("| " + " | ".join([workload, str(size), *elapsed, *compared, counts, cvs]) + " |")
         lines.append("")
 
-    table("compare", ("cpp", "vm", "luajit_interp", "luajit"), "Steady execution after warm-up.")
-    table("first", ("vm", "luajit_interp", "luajit"),
+    table("compare", ("cpp", "jit", "luajit_interp", "luajit"), "Steady execution after warm-up.")
+    table("first", ("jit", "luajit_interp", "luajit"),
           "First invocation in a fresh state. Setup, compilation and destruction are excluded; "
           "LuaJIT tracing during this invocation is included.")
     table("compile", ("representative", "luajit"),
-          "Compilation in a fresh state. Vela performs semantic analysis, optimization and bytecode "
+          "Compilation in a fresh state. Vela performs semantic analysis, optimization and native code "
           "preparation; LuaJIT loads source into Lua bytecode. These are distinct compiler boundaries.")
 
     lines.extend(["Heap snapshots in bytes (medians), including rooted input and program/library objects.",
                   "Retained is after full GC; these counters are not process RSS. "
                   "JIT code bytes sum live trace machine code, excluding unused reserved code pages.", "",
-                  "| Workload | Size | Backend | Baseline | End heap | After GC | Committed | Registers | "
+                  "| Workload | Size | Backend | Baseline | End heap | After GC | Committed | "
                   "Warm calls | Warm traces | Final traces | Warm JIT code | Final JIT code |",
-                  "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"])
-    fields = ("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes", "register_bytes",
+                  "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"])
+    fields = ("baseline_bytes", "allocated_bytes", "retained_bytes", "committed_bytes",
               "warmup_calls", "warm_traces", "traces", "warm_jit_code_bytes", "jit_code_bytes")
     for (backend, workload, size), values in sorted(counters.items(), key=lambda item: (item[0][1:],
                                                                                      item[0][0])):
@@ -258,14 +249,14 @@ def comparison_report(report: dict, expected_cases: list[str], repetitions: int)
     notes = [(name, note) for name, note in NATIVE_BASELINES.items()
              if any(workload == name for _, _, workload, _ in samples)]
     if notes:
-        lines.extend(["", "Native baseline contracts (workload-local construction and ordinary VM GC are timed; final collection is excluded).",
+        lines.extend(["", "Native baseline contracts (workload-local construction and ordinary GC are timed; final collection is excluded).",
                       "C++ may inline or vectorize these implementations; ratios compare complete workloads.", ""])
         lines.extend(f"- `{name}`: {note}" for name, note in notes)
     return "\n".join(lines) + "\n"
 
 
 def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: int) -> str:
-    pattern = re.compile(r"^(?:aot/(native|vm|cpp)|hot/steady/(baseline|optimized))/([^/]+)/(\d+)/real_time$")
+    pattern = re.compile(r"^(?:aot/(native|cpp)|hot/steady/(baseline|optimized))/([^/]+)/(\d+)/real_time$")
     lifecycle_pattern = re.compile(
         r"^hot/(baseline|optimized)/(edits|closures|instances|continuations|rebuild|active|virtual)(?:/(\d+))?/manual_time$")
     rows = iteration_rows(report, expected_cases, repetitions)
@@ -321,19 +312,19 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                     value = entry[field]
                     if not math.isfinite(value) or value < 0:
                         raise ValueError(f"{name}: invalid {field}")
-    backends = ("cpp", "vm", "native", "baseline", "optimized")
+    backends = ("cpp", "native", "baseline", "optimized")
     keys = sorted(checksums)
     for key in keys:
         if len(checksums[key]) != 1 or any((backend, *key) not in samples for backend in backends):
-            raise ValueError(f"{key}: requires matching C++, VM, AOT, baseline and optimized JIT samples")
+            raise ValueError(f"{key}: requires matching C++, AOT, baseline and optimized JIT samples")
     lines = ["Reloadable JIT comparison: median wall microseconds per complete workload.",
              f"All selected cases passed all {repetitions} repetitions.",
              "Compilation and warm-up are excluded from steady timing. Named dispatch, precise roots, "
              "safepoints, external fields and ordinary GC remain enabled. Optimized code retains "
              "old-version baseline recovery; the closed AOT comparison uses its normal layout and call policy.",
              "Arithmetic that C++ simplifies as a whole is a separate case; its ratio does not predict JIT gains.", "",
-             "| Workload | Size | C++ us | VM us | AOT us | Baseline us | Optimized us | Baseline/AOT | Optimized/AOT | CV C++/VM/AOT/baseline/optimized |",
-             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
+             "| Workload | Size | C++ us | AOT us | Baseline us | Optimized us | Baseline/AOT | Optimized/AOT | CV C++/AOT/baseline/optimized |",
+             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
     ratios = {backend: [] for backend in ("baseline", "optimized")}
     for key in keys:
         values = {backend: samples[backend, *key] for backend in backends}
@@ -383,11 +374,11 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                   "Compilation peak is the process lifetime "
                   "resident high-water mark sampled after compilation; run one case in a fresh process "
                   "to attribute it to that workload.", "",
-                  "| Workload | Size | Backend | Heap after GC | External fields | Executable | Read-only image | Writable image | Code batches | Resident | Constant payload | Debug payload | Compilation process peak | VM registers |",
-                  "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"])
+                  "| Workload | Size | Backend | Heap after GC | External fields | Executable | Read-only image | Writable image | Code batches | Resident | Constant payload | Debug payload | Compilation process peak |",
+                  "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"])
     fields = ("retained_bytes", "external_field_bytes", "code_executable_bytes", "code_read_only_bytes",
               "code_writable_bytes", "code_batches", "process_resident_bytes", "constant_payload_bytes",
-              "debug_payload_bytes", "compilation_peak_resident_bytes", "register_bytes")
+              "debug_payload_bytes", "compilation_peak_resident_bytes")
     for key in keys:
         for backend in backends:
             entries = counters[backend, *key]
@@ -443,27 +434,27 @@ def native_call_report(report: dict, expected_cases: list[str], repetitions: int
         samples[backend, workload, count] = [
             entry["real_time"] * MICROSECONDS[entry["time_unit"]] * 1000 / count
             for entry in entries]
-        if backend in {"vm", "vm_control"}:
+        if backend in {"jit", "jit_control"}:
             fields = ("baseline_heap_bytes", "end_heap_bytes", "baseline_heap_objects",
-                      "end_heap_objects", "register_bytes")
+                      "end_heap_objects")
             values = {field: [entry[field] for entry in entries] for field in fields}
             if any(not math.isfinite(value) or value < 0
                    for numbers in values.values() for value in numbers):
-                raise ValueError(f"{name}: invalid heap or register counter")
+                raise ValueError(f"{name}: invalid heap counter")
             heaps[backend, workload, count] = values
 
-    backends = ("cpp", "cpp_indirect", "vm_control", "vm")
+    backends = ("cpp", "cpp_indirect", "jit_control", "jit")
     lines = ["Native call comparison: median wall nanoseconds per call/loop iteration.",
              f"Every selected case passed all {repetitions} repetitions.",
-             "C++ uses the same non-inlined kernels and NativeContext as the VM. "
+             "C++ uses the same non-inlined kernels and NativeContext as the JIT. "
              "The indirect target is hidden from the compiler before timing.",
-             "VM totals include loop work, checksum accumulation, native binding adapters and entry/exit "
+             "JIT totals include loop work, checksum accumulation, native binding adapters and entry/exit "
              "amortized over the batch. Registration, compilation and warm-up are excluded.",
-             "VM minus control subtracts independent medians, not paired samples. It estimates "
-             "the additional native path including changed bytecode/register work, not an isolated "
+             "JIT minus control subtracts independent medians, not paired samples. It estimates "
+             "the additional native path including changed generated code, not an isolated "
              "ABI cost. The string control uses the known kernel result.", "",
-             "| Workload | Calls/batch | C++ direct ns | C++ indirect ns | VM control ns | VM native ns | "
-             "VM minus control ns | Samples direct/indirect/control/native | CV direct/indirect/control/native |",
+             "| Workload | Calls/batch | C++ direct ns | C++ indirect ns | JIT control ns | JIT native ns | "
+             "JIT minus control ns | Samples direct/indirect/control/native | CV direct/indirect/control/native |",
              "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |"]
     keys = sorted({(workload, count) for _, workload, count in samples})
     for workload, count in keys:
@@ -475,12 +466,12 @@ def native_call_report(report: dict, expected_cases: list[str], repetitions: int
         counts = "/".join(str(len(times)) for times in values)
         cvs = "/".join(variation(times) if times else "-" for times in values)
         lines.append("| " + " | ".join([workload, str(count), *elapsed, delta, counts, cvs]) + " |")
-    lines.extend(["", "VM GC heap snapshots and retained register capacity, in bytes/objects. "
+    lines.extend(["", "JIT GC heap snapshots, in bytes/objects. "
                   "These are live snapshots, not cumulative allocation counts, host malloc counts "
                   "or process RSS.", "",
                   "| Workload | Calls/batch | Backend | Baseline heap bytes | End heap bytes | "
-                  "Baseline objects | End objects | Register bytes |",
-                  "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |"])
+                  "Baseline objects | End objects |",
+                  "| --- | ---: | --- | ---: | ---: | ---: | ---: |"])
     for (backend, workload, count), fields in sorted(heaps.items(), key=lambda item: (item[0][1:], item[0][0])):
         numbers = [f"{median(values):.0f}" for values in fields.values()]
         lines.append("| " + " | ".join([workload, str(count), backend, *numbers]) + " |")

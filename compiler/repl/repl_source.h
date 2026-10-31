@@ -37,7 +37,7 @@ struct ReplSourceCandidate final {
   frontend::ParsedSource parsed;
 };
 
-// VM 与 JIT 复用的追加源码事务；仅在后端接受后 Commit，历史语句不会成为新入口。
+// 追加源码事务仅在开发会话接受后 Commit，历史语句不会成为新入口。
 class ReplSource final {
  public:
   [[nodiscard]] std::expected<ReplSourceCandidate, ReplSourceError> Prepare(

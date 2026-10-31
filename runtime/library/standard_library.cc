@@ -97,43 +97,47 @@ std::expected<double, NativeError> Log([[maybe_unused]] NativeContext& context,
   return std::log(value);
 }
 
-absl::flat_hash_map<std::string, std::shared_ptr<const NativeFunction>> MakeBindings() {
-  absl::flat_hash_map<std::string, std::shared_ptr<const NativeFunction>> bindings;
-  const auto add = [&bindings](NativeFunction function) -> void {
-    const std::string name(function.name());
-    bindings.emplace(name, std::make_shared<const NativeFunction>(std::move(function)));
-  };
-  add(NativeFunction::Bind<PerformanceNow>("performance.now"));
-  add(NativeFunction::Bind<DateNow>("Date.now"));
-  add(NativeFunction::Bind<Seed>("Random.seed"));
-  add(NativeFunction::Bind<NextDouble>("Math.random"));
-  add(NativeFunction::Bind<NextInt>("Random.nextInt"));
-  add(NativeFunction::Bind<Sqrt>("Math.sqrt"));
-  add(NativeFunction::Bind<Log>("Math.log"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::sin)>>("Math.sin"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::cos)>>("Math.cos"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::tan)>>("Math.tan"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::floor)>>("Math.floor"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::ceil)>>("Math.ceil"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::round)>>("Math.round"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::trunc)>>("Math.trunc"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::fabs)>>("Math.abs"));
-  add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::exp)>>("Math.exp"));
-  add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::pow)>>("Math.pow"));
-  add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::fmin)>>("Math.min"));
-  add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::fmax)>>("Math.max"));
-  add(NativeFunction::Bind<Clamp>("Math.clamp"));
-  add(NativeFunction::Bind<IsFinite>("Math.isFinite"));
-  add(NativeFunction::Bind<IsNaN>("Math.isNaN"));
-  return bindings;
-}
-
 }  // namespace
 
 std::shared_ptr<const NativeFunction> FindStandardNative(std::string_view name) {
-  static const auto bindings = MakeBindings();
-  const auto found = bindings.find(name);
-  return found == bindings.end() ? nullptr : found->second;
+  static const auto standard_bindings = [] {
+    absl::flat_hash_map<std::string, std::shared_ptr<const NativeFunction>> bindings;
+    const auto add = [&bindings](NativeFunction function,
+                                 NativeFunction::Intrinsic intrinsic =
+                                     NativeFunction::Intrinsic::None) -> void {
+      function.aot_entry_.intrinsic = intrinsic;
+      const std::string binding_name(function.name());
+      bindings.emplace(binding_name, std::make_shared<const NativeFunction>(std::move(function)));
+    };
+    add(NativeFunction::Bind<PerformanceNow>("performance.now"));
+    add(NativeFunction::Bind<DateNow>("Date.now"));
+    add(NativeFunction::Bind<Seed>("Random.seed"));
+    add(NativeFunction::Bind<NextDouble>("Math.random"));
+    add(NativeFunction::Bind<NextInt>("Random.nextInt"));
+    add(NativeFunction::Bind<Sqrt>("Math.sqrt"), NativeFunction::Intrinsic::SquareRoot);
+    add(NativeFunction::Bind<Log>("Math.log"));
+    add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::sin)>>("Math.sin"));
+    add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::cos)>>("Math.cos"));
+    add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::tan)>>("Math.tan"));
+    add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::floor)>>("Math.floor"));
+    add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::ceil)>>("Math.ceil"));
+    add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::round)>>("Math.round"));
+    add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::trunc)>>("Math.trunc"));
+    add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::fabs)>>("Math.abs"));
+    add(NativeFunction::Bind<Unary<static_cast<double (*)(double)>(std::exp)>>("Math.exp"));
+    add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::pow)>>(
+        "Math.pow"));
+    add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::fmin)>>(
+        "Math.min"));
+    add(NativeFunction::Bind<Binary<static_cast<double (*)(double, double)>(std::fmax)>>(
+        "Math.max"));
+    add(NativeFunction::Bind<Clamp>("Math.clamp"));
+    add(NativeFunction::Bind<IsFinite>("Math.isFinite"));
+    add(NativeFunction::Bind<IsNaN>("Math.isNaN"));
+    return bindings;
+  }();
+  const auto found = standard_bindings.find(name);
+  return found == standard_bindings.end() ? nullptr : found->second;
 }
 
 }  // namespace vela::runtime

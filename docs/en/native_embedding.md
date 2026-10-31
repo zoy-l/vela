@@ -2,149 +2,141 @@
 
 [**English**](native_embedding.md) | [简体中文](../zh-CN/native_embedding.md)
 
+A source-embedding host uses `compiler::jit` to compile native code, then creates
+a `runtime::NativeInstance` in its Isolate. AOT hosts link emitted code with the
+same runtime. Source builds link `//compiler:jit`; standalone AOT hosts use the
+distribution's runtime library and generated public header. The runtime alone
+does not include a source compiler.
 
-Vela uses explicit VM frames and recoverable error results. C++ exceptions,
-`longjmp`, and implicit numeric coercions are not part of this boundary.
+## Compile and execute
 
-## Typed native functions
-
-Register functions on the owning isolate before compilation:
+This example returns `42` through a typed host binding:
 
 ```cpp
+#include <cstdint>
+#include <expected>
+#include <string>
+
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_function.h"
+#include "runtime/native/native_instance.h"
+
 std::int64_t Add(std::int64_t left, std::int64_t right) noexcept {
   return left + right;
 }
 
-vela::runtime::Isolate isolate;
-auto registered = isolate.RegisterNative(
-    vela::runtime::NativeFunction::Bind<Add>("add"));
-```
-
-The script declares the binding explicitly:
-
-```typescript
+std::expected<std::int64_t, std::string> Run() {
+  vela::runtime::Isolate isolate;
+  if (!isolate.RegisterNative(vela::runtime::NativeFunction::Bind<Add>("add"))) {
+    return std::unexpected("cannot register add");
+  }
+  auto compiler = vela::compiler::jit::Compiler::Create();
+  if (!compiler) {
+    return std::unexpected(vela::frontend::DiagnosticsText(compiler.error()));
+  }
+  const auto compiled = vela::compiler::jit::CompileSource(**compiler, R"(
 external func add(left: int, right: int): int;
-
-func main(): int {
-  const operation: (int, int) => int = add;
-  return operation(40, 2);
+func main(): int { return add(40, 2); }
+)");
+  if (!compiled.Succeeded()) {
+    return std::unexpected(vela::frontend::DiagnosticsText(compiled.diagnostics));
+  }
+  const auto instance =
+      vela::runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+  if (!instance) {
+    return std::unexpected(instance.error().message);
+  }
+  const auto entry = (*instance)->FindFunction("main");
+  if (!entry) {
+    return std::unexpected("main is missing");
+  }
+  const auto result = vela::runtime::ExecuteNativeFunction(**instance, *entry);
+  if (!result.Succeeded()) {
+    return std::unexpected(result.message);
+  }
+  return result.value.AsInteger();
 }
 ```
 
-The C++ signature supplies the complete binding contract. Supported parameters
-are `std::int64_t`, `double`, `bool`, and borrowed `std::string_view`. Return
-types additionally include `void` and owned `std::string`. A function may return
-`std::expected<T, NativeError>` for a recoverable host failure. Functions must
-be `noexcept`; host arithmetic and resource failures remain the host's
-responsibility. An `int`, `float`, nullable value, or differently shaped signature
-is never silently converted to match a binding.
+The image is independent of the AST and compiler lifetime. Its shared owner retains
+linked code and metadata; native instances and retained native program state keep
+that owner alive. Separate instances have independent globals. Use
+`DevelopmentSession` and `DevelopmentRepl` for state-preserving updates, rather
+than replacing a closed instance's code. See [hot reload](../zh-CN/hot_reload.md).
 
-Heap limits and `OutOfMemory` apply to actual storage requests. Native optimization
-may remove unobservable instance storage or delay allocation until heap identity
-is required. Hosts cannot assume that every script constructor increases heap
-counters or that the VM and native backends fail at the same constructor. Objects
-passed through the host ABI always have ordinary heap identity and follow the
-existing borrowing and rooting rules. See
-[escape analysis and materialization](../zh-CN/escape_analysis.md).
+## Typed host bindings
 
-Functions that need the Isolate, allocation or asynchronous operations take
-`NativeContext&` as their first parameter. Ordinary C++ functions may omit it;
-`Bind` derives the same script signature in either form. In AOT, plain scalar
-results return in registers. Exact scalar signatures call the original function
-pointer directly, while codecs and fallible results retain the required adapters.
+Register bindings before instance creation. `NativeFunction::Bind<Function>`
+derives the signature from a `noexcept` C++ function. `NativeContext&` may be the
+first parameter when the function needs its Isolate, allocation or asynchronous
+operations; it is omitted from the script signature.
 
-An explicitly nullable string return uses `std::optional<std::string>` (or an
-expected containing it), and the declaration must return `string?`. Other types
-are not promoted to satisfy that return contract. An optional explicit symbol
-supports namespaced host registries without language namespace syntax:
-`external func readLabel(): string? = "app.readLabel";`.
+Supported parameters include `std::int64_t`, `double`, `bool`,
+`std::string_view`, `Future` and `CancellationToken`. Results also support
+`void`, owned `std::string`, nullable `std::optional<std::string>`, and
+`std::expected<T, NativeError>`. Exact scalar results use direct calls; managed
+and fallible results use checked codecs. There is no implicit int/float narrowing.
+Host arithmetic and resource failures remain the host's responsibility.
 
-`external func` has no body or generic parameters. Its symbol is the declared
-name before module qualification. Declarations follow ordinary module visibility
-and aliases; the host registry is isolate-wide. Compilation links each declaration
-to an owned immutable binding and diagnoses unregistered symbols and signature
-mismatches. Ordinary source checking can check external declarations without
-executing or registering host code. Native function values support indirect calls.
-Duplicate registrations fail rather than replacing existing contracts.
+An external declaration has no body or generic parameters. An explicit symbol may
+name a registry entry, for example
+`external func label(): string? = "app.label";`.
+Instantiation checks the declaration against the receiving Isolate's immutable
+binding. Missing bindings, mismatched signatures and duplicate registrations are
+errors. Source checking does not require registration or execute host code.
 
-Native declarations contain an immutable binding and no wrapper bytecode. Direct
-and resolved indirect calls borrow the caller's rooted register window; the
-adapter reads typed payloads in place. They allocate no callee register file or
-intermediate `Value` argument buffer and register no duplicate argument roots.
-Dynamic argument binding prepares its own rooted parameter window. A lightweight
-logical frame preserves the external declaration in diagnostics and debugger
-callbacks, including when the host triggers collection. Name lookup and arity
-validation happen at linking/loading. Payload types are checked by the generated
-binding adapter because structural bytecode validation does not prove value types.
-Returned strings are validated as UTF-8 and copied into the isolate heap. Invalid
-text is an error, not replacement text. Native Future results retain declaration
-validation for successful payloads and error values, including pending completion.
+Generated calls retain logical frames and precise roots while the host runs.
+Borrowed strings are valid only for the call; persistent values need host roots.
+Returned strings and error messages are checked for UTF-8. Future results retain
+their declared payload checks through pending completion. Nested script entry
+uses independent native execution state and preserves the outer call's roots.
 
-The low-level `NativeFunction::Invoke` borrows a `RegisterView`: its caller must
-provide the exact declared argument count and keep that window rooted throughout
-the invocation. Reference results must be rooted before subsequent allocation.
-Reentering the same VM uses independent register storage, preserving the outer
-invocation's slots and borrowed strings across nested execution and collection.
+Allocation elimination may remove unobservable object storage. Heap limits apply
+to actual storage requests, so source constructors are not allocation counters.
+Objects that cross the host ABI have heap identity and follow the same rooting
+rules as other managed objects.
 
-## Host roots and lifetime
+## Values, futures and shutdown
 
-`runtime::RootedValue(isolate, value)` owns a stable heap root slot. Copies share
-that immutable slot; moving or relocating the handle cannot invalidate the root
-address. The last handle releases the root. Assigning a new handle replaces the
-old root through ordinary RAII. The isolate must outlive every program, function
-handle, root range, and rooted value that belongs to it. These APIs share the
-isolate's single-thread ownership; they do not introduce shared concurrent access.
+`ExecutionResult::value` is borrowed, including error payloads. Before another
+allocation or GC, retain a managed result with `RootedValue(isolate, value)`.
+Copies share one immutable root slot; the final handle releases it. A read through
+`value()` does not create a new root. The Isolate must outlive instances,
+executions, rooted values and other handles belonging to it.
 
-A VM result's bare `Value` is borrowed from the heap. If it contains a heap
-reference, create a `RootedValue` before any subsequent allocation or collection.
-Reading `handle.value()` does not create another root. Native parameters remain
-rooted only for the duration of invocation; persistent host references need their
-own `RootedValue`.
+For asynchronous results, `RootFutureValue` creates a rooted Future handle and
+the host pumps the owning scheduler. A host waiting for external producers uses
+the scheduler's `WaitForHost` mode. Command-line applications use `ProcessEntry`
+to apply exit-code rules and drain background work; an embedded host controls
+its own event loop.
 
-Before replacing an Isolate, the host stops creating new borrows and releases its
-external handles. `Isolate::ReloadBlockers()` lists remaining roots, native instances,
-opaque native handles, named declaration entries, prepared native publications,
-Programs, Futures, active execution and host releases still in progress. Each entry
-identifies the resource kind, its identity within that Isolate, and its reference count.
-`TryStop()` returns the same diagnostics without changing the
-running state when resources remain. On success it closes completion endpoints,
-discards queued callbacks and timers, and collects unreachable state. It does not
-destroy the Isolate; the owner releases its runtime storage before destroying it.
-Runtime roots use `RootOwner::Runtime`; ordinary host `RootRange` instances are
-external by default. Internal retained handles are reserved for runtime ownership,
-and do not remove the host's obligation to release its own borrows.
+A script callable retains its native program state. Invocation must use the same
+Isolate and compatible code identity or reloadable dispatch domain. Keeping the
+callable rooted keeps the needed code reachable; no separate bytecode handle is
+required. Host operations are confined to the Isolate thread except APIs that
+explicitly expose cross-thread completion or safepoint endpoints.
 
-`Isolate::FreezeBindings()` captures the fixed native registration set and prevents
-further registration with `NativeRegistrationError::BindingsFrozen`. Constructing a
-new Isolate from that `NativeBindings` snapshot shares the same immutable binding
-implementations and signatures while creating independent script state.
+Before replacing an Isolate, release external borrows. `ReloadBlockers()` reports
+root ranges, rooted values, native instances/handles/entries/candidates, Futures,
+active executions and host access in progress. `TryStop()` preserves the current
+run when blockers remain. On success it closes completion endpoints, discards
+queued work and collects unreachable state; the owner still destroys the Isolate.
+`FreezeBindings()` prevents later registration and supplies immutable bindings
+for a fresh Isolate. Runtime-owned roots do not remove host rooting obligations.
 
-Script callable values refer to function indices in their producing Program.
-Invocation requires the producing code identity, shared across REPL submissions; independently compiled
-programs cannot invoke each other's callable values received through native Future payloads. Such
-invocations fail with a type error. Retaining a callable's heap value preserves
-its type identity; retain the producing Program or FunctionHandle to execute its code.
+## Diagnostics
 
-## Source mappings and errors
+Native frames retain source locations from the code version actually executing.
+Caller locations identify calls; asynchronous errors preserve throw and await
+boundaries. Error results own resolved function names, paths and text so they
+survive code retirement. Successful execution does not capture a trace.
 
-Every compiled instruction retains its source identity, line and column through
-optimization and register allocation. Position mappings store only changes, and
-functions share one immutable source-path table. Lookup uses binary search and
-only runs when a trace or tooling requests it. Bytecode loading snapshots and
-validates external mappings, including ordering, instruction bounds and source
-identity. Bytecode without mappings remains a valid source-independent program.
-Native declarations use logical position zero for their source mapping and
-debugger callback; they have no executable bytecode instructions.
-
-Runtime failures capture all live explicit frames, innermost first. Caller PCs
-identify the call instruction rather than the following instruction. Trace text
-owns its strings, so diagnostics survive destruction of the compiled program.
-Compiler and runtime errors share `path:line:column: error: message`; runtime
-errors append `at function (path:line:column)` frames. Bytecode without symbols
-reports the instruction offset. Successful executions allocate no trace.
-
-Implementation references: Dart's external-function declaration model
-([language specification](https://spec.dart.dev/DartLangSpecDraft.pdf)), Luau's
-explicit-frame line lookup (`C:/Users/zoy/Documents/luau/VM/src/ldebug.cpp`), and
-its protected execution (`VM/src/ldo.cpp`). Vela keeps C++ RAII unwinding intact
-by returning explicit failures instead of jumping across host stack frames.
+Compiler and runtime errors use `path:line:column: error: message`; runtime
+diagnostics append `at function (path:line:column)`. Missing source metadata is
+reported through instruction positions. C++ exceptions and nonlocal jumps are
+not part of this boundary: failures propagate as explicit results while preserving
+host RAII. See [debugging](debugger.md) and [execution contracts](native_execution.md).

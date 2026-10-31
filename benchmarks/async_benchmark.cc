@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -6,9 +7,10 @@
 
 #include "benchmarks/source.h"
 #include "runtime/async/future.h"
+#include "runtime/async/future_operations.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/native_execution.h"
 #include "runtime/value/value.h"
-#include "vm/vm.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -34,6 +36,17 @@ async func main(): Future<int> {
 
 enum class Collection : std::uint8_t { Automatic, WhileSuspended };
 
+std::optional<runtime::Future> StartFuture(benchmark::State& state,
+                                           runtime::NativeInstance& instance,
+                                           std::uint32_t entry) {
+  const auto result = runtime::ExecuteNativeFunction(instance, entry);
+  if (!result.Succeeded()) {
+    state.SkipWithError(result.message);
+    return std::nullopt;
+  }
+  return runtime::RootFutureValue(instance.isolate(), result.value);
+}
+
 bool IsAnswer(const runtime::Future& result, std::int64_t expected) {
   const auto value = result.value();
   return result.state() == runtime::FutureState::Succeeded && value && value->IsInteger() &&
@@ -45,18 +58,19 @@ void SteadyExecution(benchmark::State& state,
                      std::int64_t expected,
                      Collection collection) {
   runtime::Isolate isolate;
-  const auto entry = CompileBenchmarkEntry(state, source, isolate);
-  if (!entry) {
+  const auto instance = CompileBenchmarkSource(state, source, isolate);
+  if (!instance) {
     return;
   }
-  const auto& program = entry->program();
-  const auto entry_index = entry->index();
-  vm::VirtualMachine machine(isolate);
+  const auto entry_index = *instance->FindFunction("main");
   auto& scheduler = isolate.scheduler();
   auto& heap = isolate.heap();
   const auto before = heap.allocated_bytes();
   {
-    auto result = machine.ExecuteFuture(program, entry_index);
+    auto result = StartFuture(state, *instance, entry_index);
+    if (!result) {
+      return;
+    }
     const auto frames = scheduler.suspended_frame_count();
     const auto saved = scheduler.saved_state_bytes();
     state.counters["suspended_frames"] = static_cast<double>(frames);
@@ -64,23 +78,25 @@ void SteadyExecution(benchmark::State& state,
     state.counters["saved_bytes_per_frame"] =
         frames == 0 ? 0.0 : static_cast<double>(saved) / static_cast<double>(frames);
     state.counters["first_async_bytes"] = static_cast<double>(heap.allocated_bytes() - before);
-    if (!scheduler.PumpUntil(result) || !IsAnswer(result, expected)) {
+    if (!scheduler.PumpUntil(*result) || !IsAnswer(*result, expected)) {
       state.SkipWithError("Async warm-up failed or returned an unexpected value");
       return;
     }
   }
-  state.counters["register_bytes"] = static_cast<double>(machine.register_bytes());
   heap.FinishCollection();
   heap.Collect();
   const auto retained = heap.allocated_bytes();
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    auto result = machine.ExecuteFuture(program, entry_index);
+    auto result = StartFuture(state, *instance, entry_index);
+    if (!result) {
+      return;
+    }
     if (collection == Collection::WhileSuspended) {
       heap.FinishCollection();
       heap.Collect();
     }
-    if (!scheduler.PumpUntil(result) || !IsAnswer(result, expected)) {
+    if (!scheduler.PumpUntil(*result) || !IsAnswer(*result, expected)) {
       state.SkipWithError("Async execution failed or returned an unexpected value");
       return;
     }
@@ -100,18 +116,19 @@ void FirstExecution(benchmark::State& state) {
     state.PauseTiming();
     {
       runtime::Isolate isolate;
-      const auto entry = CompileBenchmarkEntry(state, kNoAwait, isolate);
-      if (!entry) {
+      const auto instance = CompileBenchmarkSource(state, kNoAwait, isolate);
+      if (!instance) {
         return;
       }
-      const auto& program = entry->program();
-      const auto entry_index = entry->index();
-      vm::VirtualMachine machine(isolate);
+      const auto entry_index = *instance->FindFunction("main");
       state.ResumeTiming();
-      auto result = machine.ExecuteFuture(program, entry_index);
+      auto result = StartFuture(state, *instance, entry_index);
+      if (!result) {
+        return;
+      }
       benchmark::DoNotOptimize(result);
       state.PauseTiming();
-      if (!IsAnswer(result, kAnswer)) {
+      if (!IsAnswer(*result, kAnswer)) {
         state.SkipWithError("First async call failed or returned an unexpected value");
         return;
       }

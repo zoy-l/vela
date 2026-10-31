@@ -84,6 +84,7 @@ class FunctionEmitter final {
   void CheckStatus(llvm::Value* status);
   void Fail(llvm::Value* status);
   void SetPosition();
+  void PrepareRuntimeCall();
   std::uint64_t TracePosition() const;
   void Poll();
   static llvm::Function* SelectBody(const GeneratedFunction& function, NativeEntryKind kind);
@@ -92,6 +93,8 @@ class FunctionEmitter final {
   llvm::Value* ResumeState();
   void InitializeCheckpoint();
   void StoreCheckpoint();
+  void InitializeDebugValues();
+  void StoreDebugValues();
   llvm::Constant* VirtualGraph(std::size_t instruction);
   void RecoverIfInvalidated();
   void EmitRecoveryDispatch();
@@ -104,6 +107,7 @@ class FunctionEmitter final {
   void EmitInteger(const ir::Instruction& instruction);
   void EmitDouble(const ir::Instruction& instruction);
   void EmitNumericConversion(const ir::Instruction& instruction, Builtin builtin);
+  void EmitIntrinsicImport();
   void EmitComparison(const ir::Instruction& instruction);
   void EmitValueEquality(const ir::Instruction& instruction);
   llvm::Value* ByteAddress(llvm::Value* object, std::uint64_t offset);
@@ -112,6 +116,7 @@ class FunctionEmitter final {
   void WriteHeapValue(llvm::Value* address, ir::RegisterId reg);
   void EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg);
   void EmitField(const ir::Instruction& instruction);
+  void EmitReloadableField(const ir::Instruction& instruction, llvm::Value* object);
   void EmitGlobal(const ir::Instruction& instruction);
   void EmitGlobalLoad(const ir::Instruction& instruction);
   void EmitGlobalStore(const ir::Instruction& instruction);
@@ -145,6 +150,7 @@ class FunctionEmitter final {
   void BindFrameStorage();
   void EmitFrameEntry();
   void CacheImports();
+  void CacheFields();
   void EmitImport();
   llvm::Value* Output();
   void EmitAsyncFailure(llvm::Value* status);
@@ -184,6 +190,8 @@ class FunctionEmitter final {
   llvm::Value* recovery_storage_ = nullptr;
   llvm::Value* virtual_references_ = nullptr;
   llvm::Value* trace_frame_ = nullptr;
+  llvm::Value* debug_values_ = nullptr;
+  llvm::Value* field_caches_ = nullptr;
   bool leaf_entry_ = false;
   llvm::StructType* frame_type_ = nullptr;
   std::uint64_t frame_bytes_ = 0;

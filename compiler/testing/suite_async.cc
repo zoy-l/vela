@@ -19,9 +19,6 @@
 #include "runtime/heap/heap.h"
 #include "runtime/testing/test_bridge.h"
 #include "runtime/value/value.h"
-#include "vm/diagnostic.h"
-#include "vm/execution_status.h"
-#include "vm/vm.h"
 
 namespace vela::testing {
 
@@ -89,15 +86,15 @@ Suite::WaitStatus Suite::WaitUntil(Node& scope,
   return WaitStatus::Completed;
 }
 
-vm::ExecutionResult Suite::WaitFailure(WaitStatus status) const {
+runtime::ExecutionResult Suite::WaitFailure(WaitStatus status) const {
   auto& scheduler = isolate_->scheduler();
-  auto failure_status = vm::ExecutionStatus::AsyncIdle;
+  auto failure_status = ExecutionStatus::AsyncIdle;
   std::string message = "test Future has no producer";
   if (status == WaitStatus::Cancelled) {
-    failure_status = vm::ExecutionStatus::ExecutionStopped;
+    failure_status = ExecutionStatus::ExecutionStopped;
     message = "test session cancelled";
   } else if (status == WaitStatus::TimedOut) {
-    failure_status = vm::ExecutionStatus::Thrown;
+    failure_status = ExecutionStatus::Thrown;
     message = "TestTimeout: no test activity before the deadline";
   }
   return {
@@ -145,13 +142,13 @@ void Suite::WaitExpectations(Node& scope, TestPhase phase, std::vector<TestError
         break;
       }
     }
-    failure.stack_trace = vm::CopyExecutionTrace(*trace);
+    failure.stack_trace = *trace;
     RecordError(failure, phase, errors);
     AbandonExpectations(scope);
   }
 }
 
-vm::ExecutionResult Suite::Await(vm::ExecutionResult result,
+runtime::ExecutionResult Suite::Await(runtime::ExecutionResult result,
                                  std::optional<std::chrono::milliseconds> timeout,
                                  Node& scope,
                                  TestPhase phase) {
@@ -187,7 +184,7 @@ vm::ExecutionResult Suite::Await(vm::ExecutionResult result,
     return WaitFailure(status);
   }
   if (future.state() == runtime::FutureState::Failed) {
-    return vm::FutureFailure(future.result());
+    return runtime::FutureFailure(future.result());
   }
   result.value = future.result().value;
   return result;
@@ -410,7 +407,7 @@ void Suite::DeliverError(const runtime::FutureResult& completion,
                          std::uint64_t identity,
                          TestPhase phase) {
   auto& scope = *scopes_.at(identity);
-  const auto failure = vm::FutureFailure(completion);
+  const auto failure = runtime::FutureFailure(completion);
   if (scope.result) {
     auto& result = result_.tests.at(*scope.result);
     RecordError(failure, phase, result.errors);

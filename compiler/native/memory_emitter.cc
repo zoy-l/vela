@@ -1,6 +1,7 @@
 #include "base/native_program_mode.h"
 #include "compiler/native/function_emitter.h"
 
+#include <cstddef>
 #include <cstdint>
 
 #include <llvm/IR/BasicBlock.h>
@@ -17,6 +18,7 @@
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
+#include "runtime/heap/instance_storage.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/native/native_operations.h"
@@ -140,38 +142,8 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   const auto reading = instruction.opcode == Opcode::GetField;
   auto* object = Reference(reading ? instruction.lhs : instruction.dst);
   Check(builder_.CreateIsNotNull(object), ExecutionStatus::TypeError);
-  const auto field = instruction.field_declaration;
-  if (field) {
-    const auto origin = origins_.subspan(instruction_index_).front();
-    const auto& canonical = program_.functions.at(function_index_).instructions.at(origin);
-    auto* value = reading ? result_ : Pack(Encode(instruction.lhs), 0);
-    if (!reading &&
-        (canonical.opcode != instruction.opcode || canonical.field_declaration != field)) {
-      auto helper = module_.getOrInsertFunction(
-          "vela_native_v7_store_materialized_field", builder_.getInt8Ty(), builder_.getPtrTy(),
-          builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
-      CheckStatus(builder_.CreateCall(
-          helper, {body_->getArg(0), object, builder_.getInt64(field->value), value}));
-      return;
-    }
-    auto helper = module_.getOrInsertFunction(
-        reading ? "vela_native_v3_load_field" : "vela_native_v3_store_field", builder_.getInt8Ty(),
-        builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getInt64Ty(),
-        builder_.getPtrTy());
-    const auto access = runtime::EncodeNativeTracePosition({
-        .function = static_cast<std::uint32_t>(function_index_),
-        .instruction = *field_accesses_.at(origin),
-    });
-    CheckStatus(builder_.CreateCall(helper, {
-                                                body_->getArg(0),
-                                                object,
-                                                builder_.getInt64(field->value),
-                                                builder_.getInt64(access),
-                                                value,
-                                            }));
-    if (reading) {
-      Unpack(instruction.dst);
-    }
+  if (instruction.field_declaration) {
+    EmitReloadableField(instruction, object);
     return;
   }
   // 字段编号由静态成员解析确定，实际对象布局在入口边界验证；无需逐次查找布局。
@@ -191,6 +163,98 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
       CheckStatus(builder_.CreateCall(helper, {body_->getArg(0), object}));
     }
   }
+}
+
+void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, llvm::Value* object) {
+  using runtime::FieldState;
+  using runtime::InstanceStorage;
+  using runtime::NativeFieldCache;
+  using runtime::NativeMemoryLayout;
+  const auto reading = instruction.opcode == Opcode::GetField;
+  const auto field = *instruction.field_declaration;
+  const auto origin = origins_.subspan(instruction_index_).front();
+  const auto& canonical = program_.functions.at(function_index_).instructions.at(origin);
+  if (!reading &&
+      (canonical.opcode != instruction.opcode || canonical.field_declaration != field)) {
+    auto helper = module_.getOrInsertFunction(
+        "vela_native_v7_store_materialized_field", builder_.getInt8Ty(), builder_.getPtrTy(),
+        builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
+    CheckStatus(
+        builder_.CreateCall(helper, {body_->getArg(0), object, builder_.getInt64(field.value),
+                                     Pack(Encode(instruction.lhs), 0)}));
+    return;
+  }
+  const auto access_index = *field_accesses_.at(origin);
+  auto* cache = ByteAddress(field_caches_, access_index * sizeof(NativeFieldCache));
+  auto* layout = builder_.CreateLoad(builder_.getPtrTy(),
+                                     ByteAddress(object, NativeMemoryLayout::kObjectLayout));
+  auto* nominal = builder_.CreateLoad(builder_.getPtrTy(),
+                                      ByteAddress(layout, NativeMemoryLayout::kClassNominal));
+  auto* revision = builder_.CreateLoad(builder_.getInt64Ty(),
+                                       ByteAddress(layout, NativeMemoryLayout::kClassRevision));
+  auto* cached_type = builder_.CreateLoad(builder_.getPtrTy(),
+                                          ByteAddress(cache, offsetof(NativeFieldCache, type)));
+  auto* cached_revision = builder_.CreateLoad(
+      builder_.getInt64Ty(), ByteAddress(cache, offsetof(NativeFieldCache, revision)));
+  auto& context = module_.getContext();
+  auto* cached = llvm::BasicBlock::Create(context, "field.cached", body_);
+  auto* ready = llvm::BasicBlock::Create(context, "field.ready", body_);
+  auto* resolve = llvm::BasicBlock::Create(context, "field.resolve", body_);
+  auto* done = llvm::BasicBlock::Create(context, "field.done", body_);
+  builder_.CreateCondBr(builder_.CreateAnd(builder_.CreateICmpEQ(nominal, cached_type),
+                                           builder_.CreateICmpEQ(revision, cached_revision)),
+                        cached, resolve, llvm::MDBuilder(context).createLikelyBranchWeights());
+  builder_.SetInsertPoint(cached);
+  auto* slot = builder_.CreateLoad(builder_.getInt32Ty(),
+                                   ByteAddress(cache, offsetof(NativeFieldCache, slot)));
+  // 字段块可在提交时迁移；只在本安全点之后读取，地址不跨任何运行时调用保留。
+  auto* storage = builder_.CreateLoad(
+      builder_.getPtrTy(), ByteAddress(object, NativeMemoryLayout::kObjectNativePayload));
+  auto* values = ByteAddress(storage, sizeof(InstanceStorage));
+  auto* count = builder_.CreateLoad(builder_.getInt32Ty(),
+                                    ByteAddress(storage, offsetof(InstanceStorage, count)));
+  auto* states = builder_.CreateGEP(NativeRecordType(context), values,
+                                    builder_.CreateZExt(count, builder_.getInt64Ty()));
+  auto* wide_slot = builder_.CreateZExt(slot, builder_.getInt64Ty());
+  auto* state_address = builder_.CreateGEP(builder_.getInt8Ty(), states, wide_slot);
+  auto* state = builder_.CreateLoad(builder_.getInt8Ty(), state_address);
+  auto* accessible =
+      reading ? builder_.CreateICmpEQ(
+                    state, builder_.getInt8(static_cast<std::uint8_t>(FieldState::Ready)))
+              : builder_.CreateICmpNE(
+                    state, builder_.getInt8(static_cast<std::uint8_t>(FieldState::Initializing)));
+  builder_.CreateCondBr(accessible, ready, resolve,
+                        llvm::MDBuilder(context).createLikelyBranchWeights());
+  builder_.SetInsertPoint(ready);
+  auto* address = builder_.CreateGEP(NativeRecordType(context), values, wide_slot);
+  if (reading) {
+    const auto& type = source_.value_types.at(instruction.dst);
+    Store(instruction.dst, ReadHeapValue(address, type), type);
+  } else {
+    WriteHeapValue(address, instruction.lhs);
+    builder_.CreateStore(builder_.getInt8(static_cast<std::uint8_t>(FieldState::Ready)),
+                         state_address);
+    EmitWriteBarrier(object, instruction.lhs);
+  }
+  builder_.CreateBr(done);
+  builder_.SetInsertPoint(resolve);
+  if (reading) {
+    PrepareRuntimeCall();
+  }
+  auto helper = module_.getOrInsertFunction(
+      reading ? "vela_native_v3_load_field" : "vela_native_v3_store_field", builder_.getInt8Ty(),
+      builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getInt64Ty(),
+      builder_.getPtrTy());
+  const auto access = runtime::EncodeNativeTracePosition(
+      {.function = static_cast<std::uint32_t>(function_index_), .instruction = access_index});
+  auto* value = reading ? result_ : Pack(Encode(instruction.lhs), 0);
+  CheckStatus(builder_.CreateCall(helper, {body_->getArg(0), object, builder_.getInt64(field.value),
+                                           builder_.getInt64(access), value}));
+  if (reading) {
+    Unpack(instruction.dst);
+  }
+  builder_.CreateBr(done);
+  builder_.SetInsertPoint(done);
 }
 
 llvm::Value* FunctionEmitter::ProgramData() {
@@ -251,6 +315,7 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
   builder_.CreateBr(loaded);
   builder_.SetInsertPoint(initialize);
   // 惰性初始化、循环初始化与失败重试仍由状态所有者处理。
+  PrepareRuntimeCall();
   auto helper = module_.getOrInsertFunction("vela_native_v2_initialize_global",
                                             builder_.getInt8Ty(), pointer, builder_.getInt32Ty(),
                                             builder_.getInt64Ty(), builder_.getInt8Ty(), pointer);
@@ -400,6 +465,8 @@ void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Built
   auto* append = llvm::BasicBlock::Create(module_.getContext(), "array.append", body_);
   builder_.CreateCondBr(builder_.CreateICmpULT(length, capacity), append, grow);
   builder_.SetInsertPoint(grow);
+  // 容量充足时没有 GC 或脚本调用；只在真正扩容前发布根和恢复状态。
+  PrepareRuntimeCall();
   const auto reg = instruction.lhs + 1;
   auto helper =
       module_.getOrInsertFunction("vela_native_v1_array_grow", builder_.getInt8Ty(),

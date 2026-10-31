@@ -101,7 +101,7 @@ ExecutionStatus NativeExecution::CreateException(Value payload,
     exception_allocation_failed_ = true;
     return ExecutionStatus::OutOfMemory;
   }
-  auto* exception = isolate().heap().AllocateException(*payload.AsObject(), status, {}, message);
+  auto* exception = isolate().heap().AllocateException(*payload.AsObject(), status, message);
   if (exception == nullptr) {
     exception_allocation_failed_ = true;
     return ExecutionStatus::OutOfMemory;

@@ -5,7 +5,8 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/testing/result.h"
@@ -13,6 +14,7 @@
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/native_instance.h"
 
 namespace vela::testing {
 namespace {
@@ -45,14 +47,18 @@ func main(): void {
   });
 })",
     };
+    auto compiler = compiler::jit::Compiler::Create();
+    ASSERT_TRUE(compiler);
     const auto compiled =
-        compiler::CompileParsed(frontend::LoadSources({&input, 1}, input.path), isolate);
+        compiler::jit::CompileParsed(**compiler, frontend::LoadSources({&input, 1}, input.path));
     ASSERT_TRUE(compiled.Succeeded());
+    auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+    ASSERT_TRUE(instance);
     std::ostringstream output;
     isolate.SetOutput(output);
     SuiteOptions options;
     options.is_cancelled = [&output] { return output.str().contains("observing\n"); };
-    Suite suite(isolate, compiled.program, std::move(options), output);
+    Suite suite(**instance, std::move(options), output);
     const auto result = suite.Run();
     ASSERT_EQ(result.tests.size(), 1U);
     EXPECT_EQ(result.tests.front().status, TestStatus::Cancelled);
@@ -69,10 +75,14 @@ TEST_P(ScriptMockTest, ExecutesThroughSdkModulesAndTestScopesUnderGc) {
   isolate.SetOutput(output);
   {
     const frontend::SourceInput input{.path = "mock_test.vela", .text = GetParam()};
+    auto compiler = compiler::jit::Compiler::Create();
+    ASSERT_TRUE(compiler);
     const auto compiled =
-        compiler::CompileParsed(frontend::LoadSources({&input, 1}, input.path), isolate);
+        compiler::jit::CompileParsed(**compiler, frontend::LoadSources({&input, 1}, input.path));
     ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
-    Suite suite(isolate, compiled.program, {}, output);
+    auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+    ASSERT_TRUE(instance);
+    Suite suite(**instance, {}, output);
     const auto result = suite.Run();
     EXPECT_EQ(result.exit_code, 0) << output.str();
     ASSERT_FALSE(result.tests.empty());

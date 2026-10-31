@@ -18,6 +18,7 @@
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_deoptimization.h"
+#include "runtime/native/native_abi.h"
 #include "runtime/value/value.h"
 namespace vela::compiler::native {
 namespace {
@@ -116,10 +117,15 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
   }
   fields.push_back(llvm::ArrayType::get(NativeRecordType(context), *scratch_count));
   fields.push_back(NativeRecordType(context));
+  auto* debug_storage = llvm::ArrayType::get(
+      llvm::Type::getInt8Ty(context), escape.function.register_count * sizeof(runtime::NativeDebugValue));
+  std::vector<llvm::Type*> recovery_fields{fields.at(escape.function.register_count),
+                                          fields.at(escape.function.register_count + 1)};
+  if (roots.debug_values) {
+    recovery_fields.push_back(debug_storage);
+  }
   if (tier == NativeCodeTier::Optimized) {
-    auto* recovery_storage = llvm::StructType::get(
-        context,
-        {fields.at(escape.function.register_count), fields.at(escape.function.register_count + 1)});
+    auto* recovery_storage = llvm::StructType::get(context, recovery_fields);
     fields.push_back(
         llvm::ArrayType::get(llvm::Type::getInt8Ty(context), sizeof(runtime::NativeCheckpoint)));
     fields.push_back(
@@ -129,10 +135,7 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
                                           escape.checkpoints.empty() ? 0 : escape.reference_count));
   }
   if (kind == NativeEntryKind::RecoverInitial || kind == NativeEntryKind::RecoverResume) {
-    auto* type = llvm::StructType::get(context, {
-                                                    fields.at(escape.function.register_count),
-                                                    fields.at(escape.function.register_count + 1),
-                                                });
+    auto* type = llvm::StructType::get(context, recovery_fields);
     return NativeFrameLayout{
         .type = type,
         .bytes =
@@ -144,6 +147,9 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
       fields.push_back(
           llvm::ArrayType::get(llvm::PointerType::getUnqual(context), site.fields.size()));
     }
+  }
+  if (roots.debug_values) {
+    fields.push_back(debug_storage);
   }
   auto* type = llvm::StructType::get(context, fields);
   return NativeFrameLayout{

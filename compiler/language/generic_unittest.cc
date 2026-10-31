@@ -5,10 +5,10 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
+#include "compiler/ir/preparation_test_support.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/bytecode_image.h"
+#include "runtime/native/native_program_state.h"
 
 namespace vela::compiler {
 namespace {
@@ -43,9 +43,9 @@ func main(): int {
 )",
                                                  isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  EXPECT_TRUE(compiled->FindFunction("identity<int>").IsValid());
-  EXPECT_FALSE(compiled->FindFunction("identity<Id>").IsValid());
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  EXPECT_TRUE((*compiled)->FindFunction("identity<int>").has_value());
+  EXPECT_FALSE((*compiled)->FindFunction("identity<Id>").has_value());
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -91,9 +91,9 @@ func main(): int { return read(C()) + map(value => value + 2, IntReader()); }
 )",
                                                  isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  EXPECT_TRUE(compiled->FindFunction("read<B>").IsValid());
-  EXPECT_FALSE(compiled->FindFunction("read<C>").IsValid());
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  EXPECT_TRUE((*compiled)->FindFunction("read<B>").has_value());
+  EXPECT_FALSE((*compiled)->FindFunction("read<C>").has_value());
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -140,7 +140,7 @@ func main(): int {
   EXPECT_EQ(*result, 42);
 }
 
-TEST(GenericTest, InferredAndExplicitUsesHaveTheSameCodeAndRegisterLayout) {
+TEST(GenericTest, InferredAndExplicitUsesHaveTheSameTypedIR) {
   constexpr std::string_view kExplicit = R"(
 func identity<T>(value: T): T { return value; }
 class Box<T> { value: T; }
@@ -159,20 +159,24 @@ func main(): int {
   return box.value + operation(2);
 }
 )";
-  runtime::Isolate isolate;
-  const auto explicit_result = test::CompileCleanSource(kExplicit, isolate);
-  const auto inferred_result = test::CompileCleanSource(kInferred, isolate);
-  ASSERT_TRUE(explicit_result) << explicit_result.error();
-  ASSERT_TRUE(inferred_result) << inferred_result.error();
-  const auto expected = explicit_result->functions();
-  const auto actual = inferred_result->functions();
+  const auto explicit_result = ir::test::Prepare(kExplicit);
+  const auto inferred_result = ir::test::Prepare(kInferred);
+  ASSERT_TRUE(explicit_result.Succeeded());
+  ASSERT_TRUE(inferred_result.Succeeded());
+  const auto& expected = explicit_result.program.functions;
+  const auto& actual = inferred_result.program.functions;
   ASSERT_EQ(actual.size(), expected.size());
   for (std::size_t index = 0; index < expected.size(); ++index) {
-    const auto& left = expected.subspan(index).front();
-    const auto& right = actual.subspan(index).front();
+    const auto& left = expected.at(index);
+    const auto& right = actual.at(index);
     EXPECT_EQ(left.name, right.name);
-    EXPECT_EQ(std::tie(left.code, left.register_count, left.parameter_count),
-              std::tie(right.code, right.register_count, right.parameter_count));
+    EXPECT_EQ(std::tie(left.register_count, left.parameter_count),
+              std::tie(right.register_count, right.parameter_count));
+    ASSERT_EQ(left.instructions.size(), right.instructions.size());
+    for (std::size_t position = 0; position < left.instructions.size(); ++position) {
+      EXPECT_EQ(ir::test::InstructionOperands(left.instructions.at(position)),
+                ir::test::InstructionOperands(right.instructions.at(position)));
+    }
   }
 }
 
@@ -230,9 +234,9 @@ func main(): int {
 )",
                                                  isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  EXPECT_TRUE(compiled->FindFunction("identity<int>").IsValid());
-  EXPECT_TRUE(compiled->FindFunction("forward<int>").IsValid());
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  EXPECT_TRUE((*compiled)->FindFunction("identity<int>").has_value());
+  EXPECT_TRUE((*compiled)->FindFunction("forward<int>").has_value());
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -332,15 +336,14 @@ TEST(GenericTest, ExecutesIndependentSpecializationsBeyond256AndRestoresWideCode
   runtime::Isolate isolate;
   const auto compiled = test::CompileCleanSource(source, isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, kTypes * 2);
-  const auto image = vm::SaveBytecode(*compiled, isolate);
-  ASSERT_TRUE(image);
+  const auto image = runtime::Heap::NativeProgram(*(*compiled)->state().front().AsObject()).image_owner;
   runtime::Isolate restored;
-  const auto loaded = vm::LoadBytecode(*image, restored);
+  const auto loaded = runtime::NativeInstance::Instantiate(restored, image);
   ASSERT_TRUE(loaded) << loaded.error().message;
-  const auto resumed = test::ExecuteInteger(*loaded, restored);
+  const auto resumed = test::ExecuteInteger(**loaded);
   ASSERT_TRUE(resumed) << resumed.error();
   EXPECT_EQ(*resumed, kTypes * 2);
 }
@@ -385,7 +388,7 @@ func main(): int {
 
 TEST_P(GenericErrorTest, RejectsInvalidInstantiationAndExpandingRecursion) {
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileSource(GetParam(), isolate).Succeeded());
+  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -437,7 +440,7 @@ TEST(GenericTest, DiagnosesDeepTypeSyntaxBeforeRecursiveDestructionCanOverflow) 
     type += "[]";
   }
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileSource("func main(value: " + type + "): void {}", isolate).Succeeded());
+  EXPECT_FALSE(test::CompileSource("func main(value: " + type + "): void {}", isolate).Succeeded());
 }
 
 TEST(GenericTest, FusedInstantiationPreservesMatchCatchFinallyAndLambdaScopes) {
@@ -523,7 +526,7 @@ func main(): int { return apply<int>(Map<string, int>()); }
        }) {
     SCOPED_TRACE(source);
     runtime::Isolate isolate;
-    const auto compiled = CompileSource(source, isolate);
+    const auto compiled = test::CompileSource(source, isolate);
     EXPECT_FALSE(compiled.Succeeded());
     ASSERT_FALSE(compiled.diagnostics.empty());
     EXPECT_TRUE(compiled.diagnostics.front().message.contains(

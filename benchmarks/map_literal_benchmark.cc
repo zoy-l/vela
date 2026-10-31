@@ -17,7 +17,6 @@
 #include "base/native_program_mode.h"
 #include "benchmarks/map_literal_native/entries.h"
 #include "compiler/aot/native_compiler.h"
-#include "compiler/bytecode/compiler.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
@@ -30,17 +29,14 @@
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/value/value.h"
-#include "vm/bytecode.h"
-#include "vm/vm.h"
 
 namespace vela::benchmarks {
 namespace {
 
 constexpr std::string_view kMapPath = "map.vela";
 using Clock = std::chrono::steady_clock;
-enum class MapBackend : std::uint8_t { Vm, Aot, Baseline, Optimized };
+enum class MapBackend : std::uint8_t { Aot, Baseline, Optimized };
 constexpr auto kCompileBackends = std::to_array<std::pair<MapBackend, std::string_view>>({
-    {MapBackend::Vm, "vm"},
     {MapBackend::Aot, "aot"},
     {MapBackend::Baseline, "baseline"},
     {MapBackend::Optimized, "optimized"},
@@ -94,28 +90,6 @@ void RunMap(benchmark::State& state,
       break;
     }
   }
-}
-
-void MapVm(benchmark::State& state, MapLiteralCase problem) {
-  runtime::Isolate isolate(std::numeric_limits<std::size_t>::max());
-  const auto compiled = compiler::CompileSource(problem.source, isolate);
-  if (!compiled.Succeeded()) {
-    state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
-    return;
-  }
-  const auto entry = compiled.program.FindFunction("main");
-  vm::VirtualMachine machine(isolate);
-  RunMap(state, problem, isolate.heap(), [&]() -> std::expected<runtime::Value, std::string> {
-    const auto result = machine.Execute(entry);
-    return result.Succeeded() ? std::expected<runtime::Value, std::string>(result.value)
-                              : std::unexpected(result.message);
-  });
-  std::size_t bytes = 0;
-  for (const auto& function : compiled.program.functions()) {
-    bytes += function.code.size() * sizeof(vm::Instruction);
-  }
-  state.counters["code_bytes"] = static_cast<double>(bytes);
-  state.counters["register_bytes"] = static_cast<double>(machine.register_bytes());
 }
 
 void MapAot(benchmark::State& state, MapLiteralCase problem) {
@@ -190,18 +164,6 @@ void MapJit(benchmark::State& state, MapLiteralCase problem, NativeCodeTier tier
 std::expected<std::size_t, std::string> CompileMap(const MapLiteralCase& problem,
                                                    MapBackend backend,
                                                    compiler::jit::Compiler& compiler) {
-  if (backend == MapBackend::Vm) {
-    runtime::Isolate isolate;
-    const auto compiled = compiler::CompileSource(problem.source, isolate);
-    if (!compiled.Succeeded()) {
-      return std::unexpected(frontend::DiagnosticsText(compiled.diagnostics));
-    }
-    std::size_t bytes = 0;
-    for (const auto& function : compiled.program.functions()) {
-      bytes += function.code.size() * sizeof(vm::Instruction);
-    }
-    return bytes;
-  }
   if (backend == MapBackend::Aot) {
     const frontend::SourceInput input{.path = kMapPath, .text = problem.source};
     const auto prepared =
@@ -254,7 +216,6 @@ void MapCompilation(benchmark::State& state, MapLiteralCase problem, MapBackend 
 const auto kMapRegistration = [] {
   for (const auto& problem : kMapLiteralCases) {
     const auto suffix = std::string(problem.name);
-    benchmark::RegisterBenchmark("maps/vm/" + suffix, MapVm, problem)->UseRealTime();
     benchmark::RegisterBenchmark("maps/aot/" + suffix, MapAot, problem)->UseRealTime();
     benchmark::RegisterBenchmark("maps/baseline/" + suffix, MapJit, problem,
                                  NativeCodeTier::Baseline)

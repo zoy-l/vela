@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -16,7 +17,6 @@
 #include "base/layout_description.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_context.h"
-#include "runtime/value/register_storage.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
@@ -44,8 +44,6 @@ struct NativeCodec;
 template <>
 struct NativeCodec<std::int64_t> final {
   static constexpr auto kType = NativeType::Integer;
-  static bool IsCompatible(Value value) { return value.IsInteger(); }
-  static std::int64_t Decode(Value value) { return value.AsInteger(); }
   static NativeResult Encode(NativeContext& /*unused*/, std::int64_t value) {
     return Value::Integer(value);
   }
@@ -54,8 +52,6 @@ struct NativeCodec<std::int64_t> final {
 template <>
 struct NativeCodec<double> final {
   static constexpr auto kType = NativeType::Double;
-  static bool IsCompatible(Value value) { return value.IsDouble(); }
-  static double Decode(Value value) { return value.AsDouble(); }
   static NativeResult Encode(NativeContext& /*unused*/, double value) {
     return Value::Double(value);
   }
@@ -64,8 +60,6 @@ struct NativeCodec<double> final {
 template <>
 struct NativeCodec<bool> final {
   static constexpr auto kType = NativeType::Boolean;
-  static bool IsCompatible(Value value) { return value.IsBoolean(); }
-  static bool Decode(Value value) { return value.AsBoolean(); }
   static NativeResult Encode(NativeContext& /*unused*/, bool value) {
     return Value::Boolean(value);
   }
@@ -74,7 +68,6 @@ struct NativeCodec<bool> final {
 template <>
 struct NativeCodec<std::string_view> final {
   static constexpr auto kType = NativeType::String;
-  static bool IsCompatible(Value value) { return value.IsString(); }
   static std::string_view Decode(Value value);
   static NativeResult Encode(NativeContext& context, std::string_view text) {
     return context.String(text);
@@ -105,7 +98,6 @@ struct NativeCodec<std::optional<std::string>> final {
 template <>
 struct NativeCodec<Future> final {
   static constexpr auto kType = NativeType::Future;
-  static bool IsCompatible(Value value);
   static Future Decode(Value value);
   static NativeResult Encode(NativeContext& context, const Future& future);
 };
@@ -113,7 +105,6 @@ struct NativeCodec<Future> final {
 template <>
 struct NativeCodec<CancellationToken> final {
   static constexpr auto kType = NativeType::CancellationToken;
-  static bool IsCompatible(Value value);
   static CancellationToken Decode(Value value);
   static NativeResult Encode(NativeContext& context, const CancellationToken& token);
 };
@@ -209,20 +200,6 @@ struct NativeAdapterBase {
     }
   }
 
-  template <std::size_t... Indices>
-  static NativeResult Invoke(NativeContext& context,
-                             RegisterView values,
-                             std::index_sequence<Indices...> /*unused*/) {
-    // Program 验证实参数量；载荷类型仍须在宿主边界检查，原始字节码不保证类型流正确。
-    if (!(NativeCodec<Args>::IsCompatible(values.subspan(Indices).front()) && ...)) {
-      return std::unexpected(NativeError{
-          .kind = NativeErrorKind::TypeMismatch,
-          .message = "native argument type mismatch",
-      });
-    }
-    return InvokeDecoded(context, NativeCodec<Args>::Decode(values.subspan(Indices).front())...);
-  }
-
   static NativeResult InvokeDecoded(NativeContext& context, Args... arguments) {
     if constexpr (std::is_void_v<R>) {
       InvokeFunction(context, std::forward<Args>(arguments)...);
@@ -242,10 +219,6 @@ struct NativeAdapterBase {
         return NativeCodec<Result>::Encode(context, result);
       }
     }
-  }
-
-  static NativeResult Call(NativeContext& context, RegisterView values) {
-    return Invoke(context, values, std::index_sequence_for<Args...>());
   }
 
   static std::uint8_t AotCall(NativeExecution* execution,
@@ -297,9 +270,11 @@ class NativeFunction final {
   // 生成代码从槽读取入口，并按实例化时验证的签名调用。
   using AotEntrySlot = const void*;
   enum class AotCallKind : std::uint8_t { Checked, Direct, DirectWithContext };
+  enum class Intrinsic : std::uint8_t { None, SquareRoot };
   struct AotEntry final {
     AotEntrySlot slot = nullptr;
     AotCallKind kind = AotCallKind::Checked;
+    Intrinsic intrinsic = Intrinsic::None;
   };
   template <auto Function>
   [[nodiscard]] static NativeFunction Bind(std::string name) {
@@ -317,8 +292,7 @@ class NativeFunction final {
       }
     }();
     return NativeFunction(std::move(name), Adapter::Parameters(),
-                          internal::NativeCodec<typename Adapter::Result>::kType, &Adapter::Call,
-                          kEntry);
+                          internal::NativeCodec<typename Adapter::Result>::kType, kEntry);
   }
 
   [[nodiscard]] std::string_view name() const noexcept { return name_; }
@@ -327,26 +301,20 @@ class NativeFunction final {
   [[nodiscard]] const AotEntry& aot_entry() const noexcept { return aot_entry_; }
   [[nodiscard]] bool IsSignatureCompatible(const CallSignature& signature,
                                            std::span<const layout::Type> types) const;
-  // 实参数量须等于 parameters().size()，参数窗口须由调用者持续保根。
-  // 不复制参数或重复注册根；返回引用须在下一次分配前写入根槽或 RootedValue。
-  [[nodiscard]] NativeResult Invoke(Isolate& isolate, RegisterView arguments) const;
 
  private:
-  using Callback = NativeResult (*)(NativeContext&, RegisterView);
+  friend std::shared_ptr<const NativeFunction> FindStandardNative(std::string_view name);
   NativeFunction(std::string name,
                  std::vector<NativeType> parameters,
                  NativeType result_type,
-                 Callback callback,
                  AotEntry aot_entry)
       : name_(std::move(name)),
         parameters_(std::move(parameters)),
         result_type_(result_type),
-        callback_(callback),
         aot_entry_(aot_entry) {}
   std::string name_;
   std::vector<NativeType> parameters_;
   NativeType result_type_;
-  Callback callback_;
   AotEntry aot_entry_;
 };
 

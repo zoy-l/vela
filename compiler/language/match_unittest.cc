@@ -2,7 +2,6 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
@@ -69,7 +68,7 @@ class MatchErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(MatchErrorTest, RejectsMissingDuplicateAndIncompatiblePatterns) {
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileSource(GetParam(), isolate).Succeeded());
+  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(

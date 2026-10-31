@@ -11,11 +11,13 @@
 #include "compiler/testing/result.h"
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/native_instance.h"
 #include "runtime/value/value.h"
 
 namespace vela::testing {
@@ -25,8 +27,13 @@ SuiteResult Execute(std::string_view source, std::ostream& output, SuiteOptions 
   runtime::Isolate isolate(1);
   isolate.SetOutput(output);
   const frontend::SourceInput input{.path = "suite.vela", .text = source};
+  auto compiler = compiler::jit::Compiler::Create();
+  EXPECT_TRUE(compiler) << frontend::DiagnosticsText(compiler.error());
+  if (!compiler) {
+    return {};
+  }
   const auto compiled =
-      compiler::CompileParsed(frontend::LoadSources({&input, 1}, input.path), isolate);
+      compiler::jit::CompileParsed(**compiler, frontend::LoadSources({&input, 1}, input.path));
   for (const auto& diagnostic : compiled.diagnostics) {
     EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error)
         << diagnostic.source_path << ':' << diagnostic.location.line << ' ' << diagnostic.message;
@@ -34,7 +41,12 @@ SuiteResult Execute(std::string_view source, std::ostream& output, SuiteOptions 
   if (!compiled.Succeeded()) {
     return {};
   }
-  Suite suite(isolate, compiled.program, std::move(options), output);
+  auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+  EXPECT_TRUE(instance);
+  if (!instance) {
+    return {};
+  }
+  Suite suite(**instance, std::move(options), output);
   return suite.Run();
 }
 
@@ -389,7 +401,9 @@ TEST(ScriptSuiteTest, ClosingSuiteReleasesTimersFramesRootsAndHostEndpoints) {
   marker.reset();
   std::ostringstream output;
   {
-    const auto compiled = compiler::CompileSource(R"(
+    auto compiler = compiler::jit::Compiler::Create();
+    ASSERT_TRUE(compiler);
+    const auto compiled = compiler::jit::CompileSource(**compiler, R"(
 import 'sdk:test';
 async func background(): Future<void> { await sleep(100000); fail('closed'); }
 func main(): void {
@@ -397,11 +411,12 @@ func main(): void {
     background();
     Timer.periodic(100000, () => { fail('closed timer'); });
   });
-})",
-                                                  isolate);
+})");
     ASSERT_TRUE(compiled.Succeeded());
+    auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+    ASSERT_TRUE(instance);
     {
-      Suite suite(isolate, compiled.program, {}, output);
+      Suite suite(**instance, {}, output);
       const auto result = suite.Run();
       ASSERT_EQ(result.tests.size(), 1U);
       EXPECT_EQ(result.tests.front().status, TestStatus::Passed);

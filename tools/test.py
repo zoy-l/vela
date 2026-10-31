@@ -22,7 +22,6 @@ TEST_EXECUTABLES = {
     "jit": "vela_jit_tests",
     "compiler": "vela_compiler_tests",
     "runtime": "runtime_tests",
-    "vm": "vm_tests",
 }
 
 

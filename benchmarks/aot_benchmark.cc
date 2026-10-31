@@ -20,7 +20,6 @@
 #include "benchmarks/dasprofile/workloads.h"
 #include "benchmarks/heap_metrics.h"
 #include "benchmarks/jit_benchmark.h"
-#include "compiler/bytecode/compiler.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -31,7 +30,6 @@
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/value/value.h"
-#include "vm/vm.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -181,46 +179,6 @@ void JitSteady(benchmark::State& state, AotBenchmarkCase problem, NativeCodeTier
   }
   ReportJitSetup(state, *setup);
   ReportJitMemory(state, session);
-}
-
-void VmSteady(benchmark::State& state, AotBenchmarkCase problem) {
-  runtime::Isolate isolate;
-  if (const auto registered = RegisterHost(isolate); !registered) {
-    state.SkipWithError(registered.error());
-    return;
-  }
-  const auto compiled = compiler::CompileFile(VELA_AOT_BENCHMARK_SOURCE, isolate);
-  if (!compiled.Succeeded()) {
-    state.SkipWithError(compiled.diagnostics.front().message);
-    return;
-  }
-  vm::VirtualMachine machine(isolate);
-  const auto entry = compiled.program.FindFunction(problem.name);
-  const auto invoke = [&]() -> std::expected<Sample, std::string> {
-    const auto result = machine.Execute(entry);
-    if (!result.Succeeded()) {
-      return std::unexpected(result.message);
-    }
-    return ResolveResult(isolate, result.value, problem.completion);
-  };
-  const auto warm = invoke();
-  if (!warm || warm->value != problem.expected) {
-    state.SkipWithError(warm ? "VM warm-up checksum mismatch" : warm.error());
-    return;
-  }
-  CollectHeapBaseline(state, isolate.heap());
-  state.counters["register_bytes"] = static_cast<double>(machine.register_bytes());
-  ReportSample(state, *warm);
-  for (auto iteration : state) {
-    benchmark::DoNotOptimize(iteration);
-    auto result = invoke();
-    if (!result || result->value != problem.expected) {
-      state.SkipWithError(result ? "VM checksum mismatch" : result.error());
-      return;
-    }
-    benchmark::DoNotOptimize(result->value);
-  }
-  ReportAotHeap(state, isolate);
 }
 
 std::expected<Sample, std::string> CppAsync(runtime::Isolate& isolate, std::int64_t size) {
@@ -385,7 +343,6 @@ int RegisterAotBenchmarks() {
   for (const auto& problem : kAotBenchmarkCases) {
     const auto suffix = std::string(problem.name) + "/" + std::to_string(problem.size);
     benchmark::RegisterBenchmark("aot/native/" + suffix, NativeSteady, problem)->UseRealTime();
-    benchmark::RegisterBenchmark("aot/vm/" + suffix, VmSteady, problem)->UseRealTime();
     benchmark::RegisterBenchmark("aot/cpp/" + suffix, CppSteady, problem)->UseRealTime();
     benchmark::RegisterBenchmark("aot/first_native/" + suffix, NativeFirst, problem)->UseRealTime();
     benchmark::RegisterBenchmark("hot/steady/baseline/" + suffix, JitSteady, problem,

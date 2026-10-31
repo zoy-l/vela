@@ -6,11 +6,10 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
+#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/checker.h"
 #include "compiler/frontend/typing/checker_test_support.h"
-#include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
@@ -75,7 +74,7 @@ TEST(ModuleTest, ResolvesExtensionlessImportsToVelaAndSharesIdentityWithExplicit
   runtime::Isolate isolate;
   const auto compiled = test::CompileCleanModules(sources, "app/main.vela", isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 41);
 }
@@ -127,7 +126,7 @@ export func read(value: Box): int { return value.value; }
   runtime::Isolate isolate(1);
   const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -157,7 +156,7 @@ export func make(): () => int {
   runtime::Isolate isolate(1);
   const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -182,7 +181,7 @@ func main(): int {
   runtime::Isolate isolate;
   const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -224,7 +223,7 @@ export class Derived<T extends int> extends lib.Base<T> {
   runtime::Isolate isolate(1);
   const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
   ASSERT_TRUE(compiled) << compiled.error();
-  const auto result = test::ExecuteInteger(*compiled, isolate);
+  const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -306,7 +305,7 @@ export func visible(): int { return leaf(); }
   });
   EXPECT_FALSE(frontend::CheckTestModules(sources, "main.vela").Succeeded());
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileModules(sources, "main.vela", isolate).Succeeded());
+  EXPECT_FALSE(test::CompileModules(sources, "main.vela", isolate).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -335,7 +334,7 @@ func main(): int { return read(); }
       {.path = "lib.vela", .text = "export func read(): int { return secret(); }"},
   });
   runtime::Isolate isolate;
-  const auto compiled = CompileModules(sources, "main.vela", isolate);
+  const auto compiled = test::CompileModules(sources, "main.vela", isolate);
   ASSERT_FALSE(compiled.Succeeded());
   EXPECT_EQ(compiled.diagnostics.front().source_path, "lib.vela");
   EXPECT_TRUE(compiled.diagnostics.front().message.contains("secret"));
@@ -354,7 +353,7 @@ func main(): int { return invalid<int>(1); }
       {.path = "lib.vela", .text = "export type Item = int;"},
   });
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileModules(sources, "main.vela", isolate).Succeeded());
+  EXPECT_FALSE(test::CompileModules(sources, "main.vela", isolate).Succeeded());
 }
 
 TEST(ModuleTest, ConflictingExportsRequirePrefixes) {
@@ -367,14 +366,14 @@ TEST(ModuleTest, ConflictingExportsRequirePrefixes) {
       {.path = "b.vela", .text = "export func f(): int { return 2; }"},
   });
   runtime::Isolate isolate;
-  const auto compiled = CompileModules(sources, "main.vela", isolate);
+  const auto compiled = test::CompileModules(sources, "main.vela", isolate);
   ASSERT_FALSE(compiled.Succeeded());
   EXPECT_TRUE(compiled.diagnostics.front().message.contains("conflicting imported name"));
 }
 
 TEST(ModuleTest, UnsuppliedMemoryImportsDoNotReadTheDisk) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource("import \"examples/imports/math.vela\";", isolate);
+  const auto compiled = test::CompileSource("import \"examples/imports/math.vela\";", isolate);
   ASSERT_FALSE(compiled.Succeeded());
   EXPECT_TRUE(compiled.diagnostics.front().message.contains("was not supplied"));
 }

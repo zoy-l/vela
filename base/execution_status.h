@@ -21,7 +21,6 @@ enum class ExecutionStatus : std::uint8_t {
   InvalidIsolate,
   NativeFailure,
   Thrown,
-  DebuggerStopped,
   ConcurrentModification,
   JsonDecodeError,
   JsonEncodeError,

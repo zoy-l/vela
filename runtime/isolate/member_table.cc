@@ -52,4 +52,12 @@ const MemberDefinition* MemberTable::Find(Value receiver, std::string_view name)
   return member == member_indices_.end() ? nullptr : &members_.at(member->second);
 }
 
+Value MemberTable::ReadPublicField(Value receiver, std::string_view name) const {
+  const auto* member = Find(receiver, name);
+  if (member == nullptr || member->kind != MemberKind::Field) {
+    return Value::Null();
+  }
+  return *Heap::GetField(*receiver.AsObject(), member->target);
+}
+
 }  // namespace vela::runtime

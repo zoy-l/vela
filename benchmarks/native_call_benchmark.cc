@@ -10,20 +10,20 @@
 #include "benchmarks/source.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/native_execution.h"
 #include "runtime/native/native_function.h"
-#include "vm/vm.h"
 
 namespace vela::benchmarks {
 namespace {
 
 enum class Workload : std::uint8_t { Empty, Integer, Double, StringBorrow };
 enum class CallPath : std::uint8_t { Direct, Indirect };
-enum class VmPath : std::uint8_t { Native, Control };
+enum class ScriptPath : std::uint8_t { Native, Control };
 
 constexpr std::string_view kBorrowedText = "vela-native";
 constexpr std::int64_t kBorrowedResult = 129;
 constexpr double kArithmeticSeriesDivisor = 2.0;
-// 两种批量大小用于观察宿主进入 VM 的固定成本能否被摊薄。
+// 两种批量大小用于观察宿主进入 JIT 的固定成本能否被摊薄。
 constexpr std::array<std::int64_t, 2> kBatchSizes{64, 4096};
 
 template <Workload Case>
@@ -102,24 +102,24 @@ void Cpp(benchmark::State& state) {
 }
 
 template <Workload Case>
-std::string Source(std::int64_t count, VmPath path) {
+std::string Source(std::int64_t count, ScriptPath path) {
   std::string declaration;
   std::string operation;
   if constexpr (Case == Workload::Empty) {
     declaration = "external func host(): void;";
-    operation = path == VmPath::Native ? "host(); sum += index + 1;" : "sum += index + 1;";
+    operation = path == ScriptPath::Native ? "host(); sum += index + 1;" : "sum += index + 1;";
   } else if constexpr (Case == Workload::Integer) {
     declaration = "external func host(value: int): int;";
-    operation = path == VmPath::Native ? "sum += host(index);" : "sum += index + 1;";
+    operation = path == ScriptPath::Native ? "sum += host(index);" : "sum += index + 1;";
   } else if constexpr (Case == Workload::Double) {
     declaration = "external func host(value: double): double;";
-    operation = path == VmPath::Native
+    operation = path == ScriptPath::Native
                     ? "sum += host(index.toDouble());"
                     : "sum += index.toDouble() + " + std::to_string(kNativeDoubleIncrement) + ";";
   } else {
     declaration = "external func host(text: string): int;";
-    operation = path == VmPath::Native ? "sum += host('" + std::string(kBorrowedText) + "');"
-                                       : "sum += " + std::to_string(kBorrowedResult) + ";";
+    operation = path == ScriptPath::Native ? "sum += host('" + std::string(kBorrowedText) + "');"
+                                           : "sum += " + std::to_string(kBorrowedResult) + ";";
   }
   const auto* type = Case == Workload::Double ? "double" : "int";
   const auto* zero = Case == Workload::Double ? "0.0" : "0";
@@ -129,7 +129,7 @@ std::string Source(std::int64_t count, VmPath path) {
 }
 
 template <Workload Case>
-bool IsExpected(const vm::ExecutionResult& result, Sum<Case> expected) {
+bool IsExpected(const runtime::ExecutionResult& result, Sum<Case> expected) {
   if (!result.Succeeded()) {
     return false;
   }
@@ -141,22 +141,21 @@ bool IsExpected(const vm::ExecutionResult& result, Sum<Case> expected) {
 }
 
 template <Workload Case>
-void Vm(benchmark::State& state, VmPath path) {
+void Jit(benchmark::State& state, ScriptPath path) {
   runtime::Isolate isolate;
   if (!isolate.RegisterNative(runtime::NativeFunction::Bind<Kernel<Case>()>("host"))) {
     state.SkipWithError("Cannot register native benchmark function");
     return;
   }
   const auto count = state.range(0);
-  const auto entry = CompileBenchmarkEntry(state, Source<Case>(count, path), isolate);
-  if (!entry) {
+  const auto instance = CompileBenchmarkSource(state, Source<Case>(count, path), isolate);
+  if (!instance) {
     return;
   }
-  const auto& function = *entry;
-  vm::VirtualMachine machine(isolate);
+  const auto function = *instance->FindFunction("main");
   const auto expected = Expected<Case>(count);
-  if (!IsExpected<Case>(machine.Execute(function), expected)) {
-    state.SkipWithError("Native VM warm-up failed or checksum mismatched");
+  if (!IsExpected<Case>(runtime::ExecuteNativeFunction(*instance, function), expected)) {
+    state.SkipWithError("Native JIT warm-up failed or checksum mismatched");
     return;
   }
   auto& heap = isolate.heap();
@@ -164,13 +163,12 @@ void Vm(benchmark::State& state, VmPath path) {
   heap.Collect();
   const auto baseline_objects = heap.object_count();
   const auto baseline_bytes = heap.allocated_bytes();
-  const auto register_bytes = machine.register_bytes();
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    auto result = machine.Execute(function);
+    auto result = runtime::ExecuteNativeFunction(*instance, function);
     benchmark::DoNotOptimize(result);
     if (!IsExpected<Case>(result, expected)) {
-      state.SkipWithError("Native VM execution failed or checksum mismatched");
+      state.SkipWithError("Native JIT execution failed or checksum mismatched");
       return;
     }
   }
@@ -179,11 +177,6 @@ void Vm(benchmark::State& state, VmPath path) {
   state.counters["end_heap_bytes"] = static_cast<double>(heap.allocated_bytes());
   state.counters["baseline_heap_objects"] = static_cast<double>(baseline_objects);
   state.counters["end_heap_objects"] = static_cast<double>(heap.object_count());
-  state.counters["register_bytes"] = static_cast<double>(register_bytes);
-  if (machine.register_bytes() != register_bytes) {
-    state.SkipWithError("Native benchmark register capacity grew after warm-up");
-    return;
-  }
   ReportCalls(state, count);
 }
 
@@ -197,10 +190,10 @@ void Register(std::string_view name) {
     benchmark::RegisterBenchmark("native/cpp_indirect/" + suffix, Cpp<Case, CallPath::Indirect>)
         ->Arg(count)
         ->UseRealTime();
-    benchmark::RegisterBenchmark("native/vm/" + suffix, Vm<Case>, VmPath::Native)
+    benchmark::RegisterBenchmark("native/jit/" + suffix, Jit<Case>, ScriptPath::Native)
         ->Arg(count)
         ->UseRealTime();
-    benchmark::RegisterBenchmark("native/vm_control/" + suffix, Vm<Case>, VmPath::Control)
+    benchmark::RegisterBenchmark("native/jit_control/" + suffix, Jit<Case>, ScriptPath::Control)
         ->Arg(count)
         ->UseRealTime();
   }

@@ -805,6 +805,12 @@ NativeFieldCache& NativeProgramState::field_cache(std::uint64_t access) {
   return field_caches.at(position.function).at(position.instruction);
 }
 
+extern "C" NativeFieldCache* vela_native_v9_field_caches(NativeExecution* execution,
+                                                         std::uint32_t function) noexcept {
+  auto& state = Heap::NativeProgram(*execution->instance().state().front().AsObject());
+  return state.field_caches.at(function).data();
+}
+
 std::optional<std::uint32_t> NativeFieldCache::Resolve(const ClassLayout& layout,
                                                        DeclarationId field) noexcept {
   const auto* nominal = &layout.nominal_type();

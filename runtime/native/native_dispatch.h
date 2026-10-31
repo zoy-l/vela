@@ -217,6 +217,9 @@ class NativeDispatch final {
 extern "C" std::uint8_t vela_native_v3_load_global(NativeExecution* execution,
                                                    std::uint64_t declaration,
                                                    NativeValue* result);
+// 缓存数组由当前函数版本持有，借用期覆盖本次调用及恢复；提交只更新缓存内容。
+extern "C" NativeFieldCache* vela_native_v9_field_caches(NativeExecution* execution,
+                                                         std::uint32_t function) noexcept;
 extern "C" std::uint8_t vela_native_v3_store_global(NativeExecution* execution,
                                                     std::uint64_t declaration,
                                                     const NativeValue* value) noexcept;

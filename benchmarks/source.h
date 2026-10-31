@@ -1,10 +1,11 @@
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 
-#include "vm/program.h"
+#include "runtime/native/native_instance.h"
 
 namespace benchmark {
 class State;
@@ -16,8 +17,8 @@ class Isolate;
 namespace vela::benchmarks {
 
 std::optional<std::string> LoadBenchmarkSource(benchmark::State& state, std::string_view filename);
-std::optional<vm::FunctionHandle> CompileBenchmarkEntry(benchmark::State& state,
-                                                        std::string_view source,
-                                                        runtime::Isolate& isolate);
+std::unique_ptr<runtime::NativeInstance> CompileBenchmarkSource(benchmark::State& state,
+                                                                std::string_view source,
+                                                                runtime::Isolate& isolate);
 
 }  // namespace vela::benchmarks

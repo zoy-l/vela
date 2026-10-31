@@ -58,8 +58,6 @@ StatusDescription DescribeStatus(ExecutionStatus status) noexcept {
       return {.code = "NativeFailure", .message = "native function failed"};
     case ExecutionStatus::Thrown:
       return {.code = "Thrown", .message = "unhandled exception"};
-    case ExecutionStatus::DebuggerStopped:
-      return {.code = "DebuggerStopped", .message = "debugger stopped execution"};
     case ExecutionStatus::ConcurrentModification:
       return {
           .code = "ConcurrentModification",

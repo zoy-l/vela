@@ -2,14 +2,14 @@
 
 #include <iosfwd>
 
-#include "runtime/isolate/isolate.h"
-#include "vm/program.h"
-#include "vm/vm.h"
+#include <cstdint>
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_instance.h"
 
 namespace vela::tooling {
 
-[[nodiscard]] vm::ExecutionResult RunDebugConsole(const vm::FunctionHandle& function,
-                                                  runtime::Isolate& isolate,
+[[nodiscard]] int RunDebugConsole(runtime::NativeInstance& instance,
+                                                  std::uint32_t function,
                                                   std::istream& input,
                                                   std::ostream& output);
 

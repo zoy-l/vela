@@ -3,11 +3,10 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/bytecode.h"
-#include "vm/vm.h"
+#include "compiler/ir/preparation_test_support.h"
+#include "compiler/ir/ir.h"
 
 namespace vela::compiler {
 namespace {
@@ -16,9 +15,9 @@ class FlowExecutionTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(FlowExecutionTest, ExecutesEveryReachableExit) {
   runtime::Isolate isolate;
-  const auto entry = test::CompileEntry(GetParam(), isolate);
+  const auto entry = test::CompileCleanSource(GetParam(), isolate);
   ASSERT_TRUE(entry) << entry.error();
-  const auto result = vm::VirtualMachine(isolate).Execute(entry->program(), entry->index());
+  const auto result = test::Execute(**entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -55,28 +54,24 @@ INSTANTIATE_TEST_SUITE_P(
            } return state.value == 1; })"));
 
 TEST(ControlFlowCompilerTest, OmitsUnreachableLoopIncrementAndBackEdge) {
-  runtime::Isolate isolate;
-  const auto compiled = CompileSource(
-      "func main(): int { for (let i = 0; i < 2; i = i + 1) { return 1; } return 2; }", isolate);
+  const auto compiled = ir::test::Prepare(
+      "func main(): int { for (let i = 0; i < 2; i = i + 1) { return 1; } return 2; }");
   ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  EXPECT_FALSE(std::ranges::any_of(entry.code(), [](vm::Instruction instruction) -> bool {
-    const auto opcode = vm::DecodeOp(instruction);
-    return opcode == vm::OpCode::AddInt || opcode == vm::OpCode::Jump;
+  const auto entry = std::ranges::find(compiled.program.functions, "main", &ir::Function::name);
+  ASSERT_NE(entry, compiled.program.functions.end());
+  EXPECT_FALSE(std::ranges::any_of(entry->instructions, [](const ir::Instruction& instruction) -> bool {
+    return instruction.opcode == Opcode::AddInt || instruction.opcode == Opcode::Jump;
   }));
 }
 
 TEST(ControlFlowCompilerTest, CompilesAnInfiniteLoopWithoutRegisterOperands) {
-  runtime::Isolate isolate;
-  const auto compiled = CompileSource("func spin(): int { for (;;) {} }", isolate);
+  const auto compiled = ir::test::Prepare("func spin(): int { for (;;) {} }");
   ASSERT_TRUE(compiled.Succeeded());
-  const auto function = compiled.program.FindFunction("spin");
-  ASSERT_TRUE(function.IsValid());
-  ASSERT_EQ(function.code().size(), 1U);
-  EXPECT_EQ(function.register_count(), 1U);
-  EXPECT_EQ(vm::DecodeOp(function.code().front()), vm::OpCode::Jump);
-  EXPECT_EQ(vm::DecodeImm16(function.code().front()), -1);
+  const auto function = std::ranges::find(compiled.program.functions, "spin", &ir::Function::name);
+  ASSERT_NE(function, compiled.program.functions.end());
+  ASSERT_EQ(function->instructions.size(), 1U);
+  EXPECT_EQ(function->instructions.front().opcode, Opcode::Jump);
+  EXPECT_EQ(function->instructions.front().index, 0U);
 }
 
 }  // namespace

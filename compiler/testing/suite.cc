@@ -27,39 +27,39 @@
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/rooted_value.h"
+#include "runtime/isolate/member_table.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_image.h"
+#include "runtime/native/native_instance.h"
 #include "runtime/strings/string.h"
 #include "runtime/testing/test_bridge.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
-#include "vm/diagnostic.h"
-#include "vm/execution_status.h"
-#include "vm/program.h"
-#include "vm/vm.h"
 
 namespace vela::testing {
 namespace {
 
 constexpr std::size_t kDifferenceNodeBudget = 256;
 
-bool IsSuiteMain(const vm::FunctionStorage& function) {
-  const auto& signature = function.signature;
-  if (!signature) {
+bool IsSuiteMain(const runtime::NativeInstance& instance, std::uint32_t index) {
+  const auto& function = instance.image().functions.values().subspan(index).front();
+  if ((function.flags & runtime::kNativeTypedFunction) == 0 || function.parameter_count != 0) {
     return false;
   }
-  const auto& result = signature->result;
-  if (!function.is_async) {
+  const auto& result = instance.call_signature(index).result;
+  if ((function.flags & runtime::kNativeAsyncFunction) == 0) {
     return !result;
   }
   if (!result) {
     return false;
   }
-  const auto& type = function.layouts->types().subspan(*result).front();
+  const auto& type = instance.layouts().types.at(*result);
   return type.object_kind == runtime::ObjectKind::Future && type.signature != nullptr &&
          !type.signature->result;
 }
 
-std::optional<Difference> CopyDifference(const vm::LayoutTables& layouts, runtime::Value value) {
+std::optional<Difference> CopyDifference(const runtime::MemberTable& layouts, runtime::Value value) {
   if (value.IsNull()) {
     return std::nullopt;
   }
@@ -149,19 +149,17 @@ constexpr std::size_t kTearDownAll = 3;
 
 }  // namespace
 
-Suite::Suite(runtime::Isolate& isolate,
-             const vm::Program& program,
+Suite::Suite(runtime::NativeInstance& instance,
              SuiteOptions options,
              std::ostream& diagnostics)
-    : isolate_(&isolate),
-      program_(&program),
+    : isolate_(&instance.isolate()),
+      instance_(&instance),
       options_(std::move(options)),
-      machine_(isolate),
-      process_(isolate, diagnostics, [this](const auto& future, auto value) {
+      process_(*isolate_, diagnostics, [this](const auto& future, auto value) {
         Unhandled(future, value);
       }) {
-  assert(isolate.test_bridge() == nullptr);
-  isolate.SetTestBridge(this);
+  assert(isolate_->test_bridge() == nullptr);
+  isolate_->SetTestBridge(this);
   scopes_.emplace(0, &root_);
   phases_.emplace(0, TestPhase::Registration);
   for (const auto& tag : options_.settings.tags) {
@@ -407,12 +405,12 @@ std::expected<void, std::string> Suite::Select(Node& node,
   return {};
 }
 
-TestError Suite::Describe(const vm::ExecutionResult& result, TestPhase phase) const {
+TestError Suite::Describe(const runtime::ExecutionResult& result, TestPhase phase) const {
   TestError error{
       .phase = phase,
       .category = std::string(ExecutionStatusCode(result.status)),
       .message = result.message,
-      .trace = vm::CopyFutureTrace(result.stack_trace),
+      .trace = result.stack_trace,
       .difference = std::nullopt,
   };
   if (result.value.IsNull() && result.message.starts_with("TestTimeout:")) {
@@ -423,12 +421,12 @@ TestError Suite::Describe(const vm::ExecutionResult& result, TestPhase phase) co
     runtime::WriteValue(output, result.value);
     error.message = output.str();
   }
-  const auto& layouts = *program_->functions().front().layouts;
+  const auto& layouts = instance_->members();
   error.difference = CopyDifference(layouts, layouts.ReadPublicField(result.value, "difference"));
   if (error.difference) {
     error.category = "TestFailure";
   }
-  const auto* message = layouts.FindMember(result.value, "message");
+  const auto* message = layouts.Find(result.value, "message");
   if (message != nullptr && message->kind == MemberKind::Field) {
     const auto* value = runtime::Heap::GetField(*result.value.AsObject(), message->target);
     if (value != nullptr && value->IsString()) {
@@ -461,10 +459,10 @@ void Suite::Invoke(const Callback& callback,
     scope.cancelled = true;
     return;
   }
-  auto result = Await(machine_.Invoke(*program_, callback.value.value()), scope.effective_timeout,
+  auto result = Await(runtime::ExecuteNativeCallable(*instance_, callback.value.value()), scope.effective_timeout,
                       scope, phase);
   if (result.stack_trace.empty() && !result.Succeeded()) {
-    result.stack_trace = vm::CopyExecutionTrace(callback.trace);
+    result.stack_trace = callback.trace;
   }
   const runtime::RootRange result_root(isolate_->heap(), &result.value, 1,
                                        runtime::RootOwner::Runtime);
@@ -550,7 +548,7 @@ void Suite::RunTest(Node& test,
   while (entered != 0) {
     RunHooks(*ancestry.at(--entered), kTearDown, TestPhase::TearDown, test, errors);
   }
-  // SDK 范围收尾必须晚于全部用户清理，且通过普通 VM 帧执行并推进错误检查点。
+  // SDK 范围收尾必须晚于全部用户清理，通过原生调用执行并推进错误检查点。
   while (!test.finalizers.empty()) {
     auto callback = std::move(test.finalizers.back());
     test.finalizers.pop_back();
@@ -614,9 +612,8 @@ SuiteResult Suite::Run() {
     RecordError(WaitFailure(WaitStatus::Cancelled), TestPhase::Registration, result_.errors);
     return Finish();
   }
-  const auto main = program_->FindFunction("main");
-  if (!main.IsValid() || main.parameter_count() != 0 ||
-      !IsSuiteMain(program_->functions().subspan(main.index()).front())) {
+  const auto main = instance_->FindFunction("main");
+  if (!main || !IsSuiteMain(*instance_, *main)) {
     RegistrationError("RegistrationError",
                       "test suite requires main(): void or main(): Future<void>");
     return Finish();
@@ -628,7 +625,7 @@ SuiteResult Suite::Run() {
                                 *options_.load_deadline - root_.heartbeat));
   }
   const auto registered =
-      Await(machine_.Execute(main), *load_timeout, root_, TestPhase::Registration);
+      Await(runtime::ExecuteNativeFunction(*instance_, *main), *load_timeout, root_, TestPhase::Registration);
   const runtime::RootRange registration_root(isolate_->heap(), &registered.value, 1,
                                              runtime::RootOwner::Runtime);
   if (!registered.Succeeded()) {
@@ -670,13 +667,13 @@ void Suite::Unhandled(const runtime::Future& future, runtime::Value value) {
   DeliverError(completion, origin->scope, phase);
 }
 
-void Suite::RecordError(const vm::ExecutionResult& failure,
+void Suite::RecordError(const runtime::ExecutionResult& failure,
                         TestPhase phase,
                         std::vector<TestError>& errors) {
   const auto identity = failure.origin.identity;
-  if (failure.status == vm::ExecutionStatus::OutOfMemory ||
-      failure.status == vm::ExecutionStatus::InvalidIsolate ||
-      failure.status == vm::ExecutionStatus::InvalidEntry) {
+  if (failure.status == ExecutionStatus::OutOfMemory ||
+      failure.status == ExecutionStatus::InvalidIsolate ||
+      failure.status == ExecutionStatus::InvalidEntry) {
     result_.exit_code = kRuntimeErrorExitCode;
   }
   if (identity != 0 && !reported_errors_.insert(identity).second) {

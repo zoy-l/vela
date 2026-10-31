@@ -36,6 +36,28 @@ struct NativeResolvedCallable final {
     const NativeInstance& caller,
     Value callable);
 
+// 借用 callable 所保活版本的签名；调用者必须在使用期间保根 callable。
+struct NativeCallableContract final {
+  const CallSignature* signature = nullptr;
+  std::span<const CallSignature::Parameter> parameters;
+  std::span<const TypeConstraint> types;
+  bool is_async = false;
+};
+
+[[nodiscard]] std::expected<NativeCallableContract, ExecutionStatus> InspectNativeCallable(
+    const NativeInstance& caller,
+    Value callable);
+
+// 受信任的脚本驱动可调用内部声明；参数仍按真实签名校验并填充省略的可选实参。
+[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeFunction(
+    NativeExecution& execution,
+    std::uint32_t function,
+    std::span<const Value> arguments = {});
+[[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeCallable(
+    NativeExecution& execution,
+    Value callable,
+    std::span<const Value> arguments = {});
+
 // 公开命名/版本入口与 AOT 宿主包装共用参数检查；Value 参数在执行期间保根。
 [[nodiscard]] std::expected<Value, ExecutionStatus> InvokeNativeEntry(NativeExecution& execution,
                                                                       std::uint32_t function,

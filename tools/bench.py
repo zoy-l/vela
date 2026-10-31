@@ -21,9 +21,9 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--variant", choices=BUILD_VARIANTS, default="release")
     comparison = parser.add_mutually_exclusive_group()
     comparison.add_argument("--compare", action="store_true", help="Compare Vela, C++, LuaJIT and LuaJIT interpreter")
-    comparison.add_argument("--native-compare", action="store_true", help="Compare VM native calls with direct and indirect C++ calls")
-    comparison.add_argument("--aot-compare", action="store_true", help="Compare offline AOT, VM and C++ workloads")
-    comparison.add_argument("--jit-compare", action="store_true", help="Compare reloadable baseline and optimized JIT with offline AOT, VM and C++")
+    comparison.add_argument("--native-compare", action="store_true", help="Compare JIT native calls with direct and indirect C++ calls")
+    comparison.add_argument("--aot-compare", action="store_true", help="Compare offline AOT and C++ workloads")
+    comparison.add_argument("--jit-compare", action="store_true", help="Compare reloadable baseline and optimized JIT with offline AOT and C++")
     comparison.add_argument("--escape-compare", action="store_true", help="Compare heap, scalar replacement and private borrowing with virtual-frame reload")
     parser.add_argument("--report", type=Path, help="Comparison JSON output (default: out/benchmarks/comparison.json)")
     options, forwarded = split_forwarded_arguments(arguments)
@@ -63,14 +63,14 @@ def run(parsed: argparse.Namespace) -> None:
     comparing = parsed.compare or parsed.native_compare or parsed.aot_compare or parsed.jit_compare or parsed.escape_compare
     if comparing:
         filename = "comparison.json"
-        filter_pattern = "^(compare/|first/(vm|luajit|luajit_interp)/|compile/(representative|luajit)/)"
+        filter_pattern = "^(compare/|first/(jit|luajit|luajit_interp)/|compile/(representative|luajit)/)"
         if parsed.native_compare:
             filename, filter_pattern = "native_comparison.json", "^native/"
         elif parsed.aot_compare:
             filename, filter_pattern = "aot_comparison.json", "^aot/"
         elif parsed.jit_compare:
             filename = "jit_comparison.json"
-            filter_pattern = "^(aot/(native|vm|cpp)/|hot/)"
+            filter_pattern = "^(aot/(native|cpp)/|hot/)"
         elif parsed.escape_compare:
             filename = "escape_comparison.json"
             filter_pattern = "^(escape/|hot/(baseline|optimized)/virtual/)"

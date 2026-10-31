@@ -65,7 +65,7 @@ llvm::StructType* NativeRecordType(llvm::LLVMContext& context) {
 
 llvm::StructType* NativeImportType(llvm::LLVMContext& context) {
   return llvm::StructType::get(llvm::PointerType::getUnqual(context),
-                               llvm::Type::getInt8Ty(context));
+                               llvm::Type::getInt8Ty(context), llvm::Type::getInt8Ty(context));
 }
 
 llvm::Value* LoadImport(Builder& builder,
@@ -83,11 +83,14 @@ llvm::Value* LoadImport(Builder& builder,
       builder.CreateLoad(builder.getPtrTy(), address(offsetof(NativeFunction::AotEntry, slot)));
   auto* kind =
       builder.CreateLoad(builder.getInt8Ty(), address(offsetof(NativeFunction::AotEntry, kind)));
+  auto* intrinsic = builder.CreateLoad(builder.getInt8Ty(),
+                                       address(offsetof(NativeFunction::AotEntry, intrinsic)));
   // 槽类型只在此擦除，循环内只传实际入口和由 C++ 签名确定的调用约定。
   auto* target = builder.CreateLoad(builder.getPtrTy(), slot);
   llvm::Value* result = llvm::PoisonValue::get(NativeImportType(module.getContext()));
   result = builder.CreateInsertValue(result, target, 0);
-  return builder.CreateInsertValue(result, kind, 1);
+  result = builder.CreateInsertValue(result, kind, 1);
+  return builder.CreateInsertValue(result, intrinsic, 2);
 }
 
 llvm::Type* PayloadType(llvm::LLVMContext& context, Kind kind) {

@@ -20,7 +20,7 @@ struct CallableTarget final {
   CallableMode mode = CallableMode::Plain;
 };
 
-// 类型编号引用所属函数的规范类型表；同一契约贯穿 IR、镜像和 VM 动态调用。
+// 类型编号引用所属函数的规范类型表；同一契约贯穿 IR、原生映像和动态调用。
 struct CallSignature final {
   struct Parameter final {
     std::string name;

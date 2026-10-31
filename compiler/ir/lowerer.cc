@@ -296,6 +296,8 @@ Class Lowerer::BuildClass(const frontend::Class& source_class,
     const auto& interface = model_.interfaces.at(name);
     output_class.interfaces.push_back(interface.index);
   }
+  // 语义层使用集合查询实现关系；输出按运行时编号规范化，避免哈希顺序改变原生缓存键。
+  std::ranges::sort(output_class.interfaces);
   for (const auto& [signature, target] : class_info.interface_targets) {
     const auto selected = interface_method_ids_.find(signature.first + '.' + signature.second);
     if (selected != interface_method_ids_.end()) {
@@ -1891,7 +1893,7 @@ Lowerer::LoweredValue Lowerer::LowerUnary(const frontend::Expression& expression
     });
     return {.reg = result, .type = operand.type};
   }
-  AddDiagnostic(expression.location, "unsupported unary operation in bootstrap VM");
+  AddDiagnostic(expression.location, "unsupported unary operation");
   return {.reg = result, .type = InvalidType()};
 }
 
@@ -1993,7 +1995,7 @@ Lowerer::LoweredValue Lowerer::LowerBinaryValue(const frontend::Expression& expr
     const auto operation =
         SelectBinaryOpcode(expression.text, {.kind = Kind::Int, .name = frontend::kIntTypeName});
     if (!operation) {
-      AddDiagnostic(expression.location, "unsupported binary operation in bootstrap VM");
+      AddDiagnostic(expression.location, "unsupported binary operation");
       return {.reg = 0, .type = InvalidType()};
     }
     const auto selector = EmitTemporary({
@@ -2035,7 +2037,7 @@ Lowerer::LoweredValue Lowerer::LowerBinaryValue(const frontend::Expression& expr
   }
   const auto opcode = SelectBinaryOpcode(expression.text, left.type);
   if (!opcode) {
-    AddDiagnostic(expression.location, "unsupported binary operation in bootstrap VM");
+    AddDiagnostic(expression.location, "unsupported binary operation");
     return {.reg = 0, .type = InvalidType()};
   }
   const auto result = EmitTemporary({

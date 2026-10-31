@@ -26,7 +26,7 @@ class NativeDistributionTest(unittest.TestCase):
                               static_library_name("vela_runtime"), destination,
                               Path(specification) if specification else None)
 
-    def test_existing_language_corpus_matches_vm(self) -> None:
+    def test_existing_language_corpus_matches_jit(self) -> None:
         categories = [
             "class", "interface", "generic", "generic_method", "test_sources", "global", "exception", "dynamic_array",
             "double", "numeric_conversion", "byte_data", "collection", "function_value",
@@ -51,7 +51,7 @@ class NativeDistributionTest(unittest.TestCase):
                 if category == "test_sources":
                     corpus = ROOT / "compiler/test_support/test_sources.h"
                 elif category == "optimization":
-                    corpus = ROOT / "compiler/bytecode/optimization_unittest.cc"
+                    corpus = ROOT / "compiler/language/optimized_execution_unittest.cc"
                 else:
                     corpus = ROOT / "compiler/language" / (category + "_unittest.cc")
                 contents = corpus.read_text(encoding="utf-8")
@@ -65,26 +65,26 @@ class NativeDistributionTest(unittest.TestCase):
                     with self.subTest(category=category, case=index):
                         source = work / f"{category}_{index}.vela"
                         source.write_text(source_text, encoding="utf-8", newline="\n")
-                        vm = subprocess.run([str(original), "run", str(source)], cwd=work,
+                        jit = subprocess.run([str(original), "run", str(source)], cwd=work,
                                             capture_output=True, text=True, encoding="utf-8", timeout=30)
                         application = work / executable_name("app")
                         built = subprocess.run([str(compiler), "build", str(source), "-o", str(application)],
                                                cwd=work, env=environment, capture_output=True,
                                                text=True, encoding="utf-8", timeout=30)
-                        if vm.returncode == 65:
+                        if jit.returncode == 65:
                             self.assertEqual(built.returncode, 65, built.stderr)
-                            self.assertEqual(built.stderr, vm.stderr)
+                            self.assertEqual(built.stderr, jit.stderr)
                         else:
                             self.assertEqual(built.returncode, 0, built.stderr)
                             native = subprocess.run([str(application)], cwd=work, env=environment,
                                                     capture_output=True, text=True, encoding="utf-8", timeout=30)
-                            self.assertEqual(native.returncode, vm.returncode, native.stderr + vm.stderr)
-                            self.assertEqual(native.stdout, vm.stdout)
-                            self.assertEqual(built.stderr + native.stderr, vm.stderr)
+                            self.assertEqual(native.returncode, jit.returncode, native.stderr + jit.stderr)
+                            self.assertEqual(native.stdout, jit.stdout)
+                            self.assertEqual(built.stderr + native.stderr, jit.stderr)
                         source.unlink()
                         count += 1
                         compared += 1
-                print(f"AOT/VM corpus: {category}: {count} cases", flush=True)
+                print(f"AOT/JIT corpus: {category}: {count} cases", flush=True)
             if not selected:
                 self.assertGreater(compared, 350)
 
@@ -126,12 +126,12 @@ class NativeDistributionTest(unittest.TestCase):
                     source = work / (name + " 中.vela")
                     source.write_text(text + "\n", encoding="utf-8", newline="\n")
                     sources.append(source)
-                    vm = run([original, "run", source], expected, None)
+                    jit = run([original, "run", source], expected, None)
                     app = work / executable_name(name + " 原生")
                     run([compiler, "build", source, "-o", app])
                     native = run([app], expected)
-                    self.assertEqual(native.stdout, vm.stdout)
-                    self.assertEqual(native.stderr, vm.stderr)
+                    self.assertEqual(native.stdout, jit.stdout)
+                    self.assertEqual(native.stderr, jit.stderr)
                     applications.append((app, expected, native.stdout, native.stderr))
 
             libraries = []

@@ -23,6 +23,7 @@
 #include "runtime/value/callable.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_buffer.h"
 #include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
@@ -120,15 +121,25 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
   const auto& function = *callback.function;
   const auto& target = callback.target;
   const auto hidden = target.implicit ? 1U : 0U;
-  if (function.parameter_count != arguments.size() + hidden) {
+  if (function.parameter_count < arguments.size() + hidden) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto& types = execution.instance().layouts().types;
+  const auto& instance = execution.instance();
+  const auto& types = instance.layouts().types;
   const auto typed = (function.flags & kNativeTypedFunction) != 0;
   const auto parameters = function.parameters.values();
-  std::vector<NativeValue> input(function.parameter_count);
+  if (!typed && function.parameter_count != arguments.size() + hidden) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  ValueBuffer storage(function.parameter_count);
+  if (!storage.IsAllocated()) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  const auto values = storage.values();
+  auto& heap = execution.isolate().heap();
+  const RootRange roots(heap, values.data(), values.size(), RootOwner::Runtime);
   if (target.implicit) {
-    input.front() = EncodeNativeValue(*target.implicit);
+    values.front() = *target.implicit;
   }
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     auto value = arguments.subspan(index).front();
@@ -139,9 +150,31 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
       if (!Heap::IsValueOfType(value, type)) {
         return std::unexpected(ExecutionStatus::InvalidCast);
       }
+      if (Heap::TypeOf(value).callable) {
+        if (const auto checked = ResolveNativeCallable(instance, value); !checked) {
+          return std::unexpected(checked.error());
+        }
+      }
       value = UnboxDynamicValue(value, type);
     }
-    input.at(index + hidden) = EncodeNativeValue(value);
+    values.subspan(index + hidden).front() = value;
+  }
+  for (std::size_t index = arguments.size() + hidden; index < values.size(); ++index) {
+    const auto parameter = parameters.subspan(index - function.hidden_parameters).front();
+    if ((parameter.flags & kNativeRestParameter) != 0) {
+      auto* empty = heap.AllocateArray(*types.at(parameter.type).array, 0);
+      if (empty == nullptr) {
+        return std::unexpected(ExecutionStatus::OutOfMemory);
+      }
+      values.subspan(index).front() = Value::Object(empty);
+    } else if ((parameter.flags & kNativeOptionalParameter) == 0) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+  }
+  std::vector<NativeValue> input;
+  input.reserve(values.size());
+  for (const auto value : values) {
+    input.push_back(EncodeNativeValue(value));
   }
   return InvokeNativeTarget(execution, target.function, input);
 }
@@ -251,6 +284,29 @@ std::expected<NativeResolvedCallable, ExecutionStatus> ResolveNativeCallable(
   return NativeResolvedCallable{.state = resolved->environment, .target = resolved->target};
 }
 
+std::expected<NativeCallableContract, ExecutionStatus> InspectNativeCallable(
+    const NativeInstance& caller,
+    Value callable) {
+  const auto resolved = ResolveNativeCallable(caller, callable);
+  if (!resolved) {
+    return std::unexpected(resolved.error());
+  }
+  const auto& state = Heap::NativeProgram(*resolved->state);
+  const auto index = resolved->target.function;
+  const auto& function = state.image->functions.values().subspan(index).front();
+  if ((function.flags & kNativeTypedFunction) == 0) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto& signature = state.signatures.at(index);
+  const auto skipped = (resolved->target.implicit ? 1U : 0U) - signature.hidden_parameters;
+  return NativeCallableContract{
+      .signature = &signature,
+      .parameters = std::span(signature.parameters).subspan(skipped),
+      .types = state.layouts.types,
+      .is_async = (function.flags & kNativeAsyncFunction) != 0,
+  };
+}
+
 std::expected<Value, ExecutionStatus> InvokeNativeEntry(NativeExecution& execution,
                                                         std::uint32_t function,
                                                         std::span<const Value> input) {
@@ -265,26 +321,39 @@ std::expected<Value, ExecutionStatus> InvokeNativeEntry(NativeExecution& executi
       parameters.size() != input.size()) {
     return std::unexpected(ExecutionStatus::InvalidEntry);
   }
-  const RootRange input_root(execution.isolate().heap(), input.data(), input.size(),
-                             RootOwner::Runtime);
-  std::vector<NativeValue> arguments;
-  arguments.reserve(input.size());
-  const auto& types = instance.layouts().types;
-  for (std::size_t index = 0; index < input.size(); ++index) {
-    auto value = input.subspan(index).front();
-    const auto& type = types.at(parameters.at(index).type);
-    if (!Heap::IsValueOfType(value, type)) {
-      return std::unexpected(ExecutionStatus::InvalidCast);
-    }
-    if (Heap::TypeOf(value).callable) {
-      if (const auto callable = ResolveNativeCallable(instance, value); !callable) {
-        return std::unexpected(callable.error());
-      }
-    }
-    value = UnboxDynamicValue(value, type);
-    arguments.push_back(EncodeNativeValue(value));
+  return InvokeNativeFunction(execution, function, input);
+}
+
+std::expected<Value, ExecutionStatus> InvokeNativeFunction(NativeExecution& execution,
+                                                           std::uint32_t function,
+                                                           std::span<const Value> arguments) {
+  const auto functions = execution.instance().image().functions.values();
+  if (function >= functions.size()) {
+    return std::unexpected(ExecutionStatus::InvalidEntry);
   }
-  return InvokeNativeTarget(execution, function, arguments);
+  const auto& description = functions.subspan(function).front();
+  if (description.hidden_parameters != 0) {
+    return std::unexpected(ExecutionStatus::InvalidEntry);
+  }
+  const RootRange roots(execution.isolate().heap(), arguments.data(), arguments.size(),
+                         RootOwner::Runtime);
+  return InvokeCallback(execution, {.target = {.function = function}, .function = &description},
+                         arguments);
+}
+
+std::expected<Value, ExecutionStatus> InvokeNativeCallable(NativeExecution& execution,
+                                                           Value callable,
+                                                           std::span<const Value> arguments) {
+  auto& heap = execution.isolate().heap();
+  const RootRange callable_root(heap, &callable, 1, RootOwner::Runtime);
+  const RootRange arguments_root(heap, arguments.data(), arguments.size(), RootOwner::Runtime);
+  const auto callback = ResolveNativeCallback(Domain(execution.instance()), callable);
+  if (!callback) {
+    return std::unexpected(callback.error());
+  }
+  auto origin = NativeInstance::Borrow(*callback->environment);
+  const NativeInstanceScope scope(execution, origin);
+  return InvokeCallback(execution, *callback, arguments);
 }
 
 std::expected<Value, ExecutionStatus> internal::BoxNativeEnumResult(NativeExecution& execution,

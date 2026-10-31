@@ -14,7 +14,6 @@
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_context.h"
 #include "runtime/strings/string.h"
-#include "runtime/value/register_storage.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
@@ -121,11 +120,6 @@ NativeResult NativeContext::CancellationValue(const CancellationToken& token) co
   return Value::Object(object);
 }
 
-bool internal::NativeCodec<CancellationToken>::IsCompatible(Value value) {
-  return value.IsObject() && value.AsObject() != nullptr &&
-         Heap::GetCancellationToken(*value.AsObject()) != nullptr;
-}
-
 CancellationToken internal::NativeCodec<CancellationToken>::Decode(Value value) {
   return *Heap::GetCancellationToken(*value.AsObject());
 }
@@ -139,22 +133,12 @@ std::string_view internal::NativeCodec<std::string_view>::Decode(Value value) {
   return value.AsString()->value();
 }
 
-bool internal::NativeCodec<Future>::IsCompatible(Value value) {
-  return value.IsObject() && value.AsObject() != nullptr &&
-         Heap::GetFuture(*value.AsObject()) != nullptr;
-}
-
 Future internal::NativeCodec<Future>::Decode(Value value) {
   return Heap::GetFuture(*value.AsObject())->Rooted();
 }
 
 NativeResult internal::NativeCodec<Future>::Encode(NativeContext& context, const Future& future) {
   return context.FutureValue(future);
-}
-
-NativeResult NativeFunction::Invoke(Isolate& isolate, RegisterView arguments) const {
-  NativeContext context(isolate);
-  return internal::ValidateNativeResult(callback_(context, arguments));
 }
 
 NativeResult internal::ValidateNativeResult(NativeResult result) {

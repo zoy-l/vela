@@ -2,7 +2,6 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -17,7 +16,7 @@ TEST_P(FunctionValueTest, ExecutesUnderCollectionPressure) {
   const auto program = test::CompileCleanSource(GetParam(), isolate);
   ASSERT_TRUE(program) << program.error();
   const auto retained = isolate.heap().object_count();
-  const auto result = test::ExecuteInteger(*program, isolate);
+  const auto result = test::ExecuteInteger(**program);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
   isolate.heap().FinishCollection();
@@ -151,7 +150,7 @@ class FunctionTypeErrorTest : public testing::TestWithParam<std::string_view> {}
 
 TEST_P(FunctionTypeErrorTest, RejectsInvalidSignaturesCapturesAndAliases) {
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileSource(GetParam(), isolate).Succeeded());
+  EXPECT_FALSE(test::CompileSource(GetParam(), isolate).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(

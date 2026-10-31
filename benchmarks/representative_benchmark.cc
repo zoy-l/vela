@@ -23,12 +23,13 @@ extern "C" {
 #include "benchmarks/native_standard_workloads.h"
 #include "benchmarks/native_workloads.h"
 #include "benchmarks/source.h"
-#include "compiler/bytecode/compiler.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
-#include "vm/vm.h"
+#include "runtime/native/native_execution.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -319,12 +320,12 @@ struct Sources final {
   std::string workload;
   std::string input;
 
-  compiler::CompileResult Compile(runtime::Isolate& isolate) const {
+  compiler::jit::SourceResult Compile(compiler::jit::Compiler& compiler) const {
     const auto modules = std::to_array<frontend::SourceInput>({
         {.path = path, .text = workload},
         {.path = kInputModule, .text = input},
     });
-    return compiler::CompileModules(modules, path, isolate);
+    return compiler::jit::CompileModules(compiler, modules, path);
   }
 };
 
@@ -348,7 +349,7 @@ std::optional<Sources> LoadSources(benchmark::State& state,
   return Sources{.path = path, .workload = std::move(*source), .input = std::move(*input)};
 }
 
-bool IsExpected(const vm::ExecutionResult& result, Problem problem) {
+bool IsExpected(const runtime::ExecutionResult& result, Problem problem) {
   return result.Succeeded() && result.value.IsInteger() &&
          result.value.AsInteger() == problem.expected;
 }
@@ -358,9 +359,13 @@ void Compile(benchmark::State& state, Workload workload, Problem problem) {
   if (!sources) {
     return;
   }
+  auto compiler = compiler::jit::Compiler::Create();
+  if (!compiler) {
+    state.SkipWithError(frontend::DiagnosticsText(compiler.error()));
+    return;
+  }
   for (auto iteration : state) {
-    runtime::Isolate isolate;
-    auto compiled = sources->Compile(isolate);
+    auto compiled = sources->Compile(**compiler);
     if (!compiled.Succeeded()) {
       state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
       return;
@@ -371,25 +376,35 @@ void Compile(benchmark::State& state, Workload workload, Problem problem) {
       static_cast<double>(sources->workload.size() + sources->input.size());
 }
 
-void Vm(benchmark::State& state, Workload workload, Problem problem) {
+void Jit(benchmark::State& state, Workload workload, Problem problem) {
   const auto sources = LoadSources(state, workload, problem);
   if (!sources) {
     return;
   }
   runtime::Isolate isolate;
-  const auto compiled = sources->Compile(isolate);
+  auto compiler = compiler::jit::Compiler::Create();
+  if (!compiler) {
+    state.SkipWithError(frontend::DiagnosticsText(compiler.error()));
+    return;
+  }
+  const auto compiled = sources->Compile(**compiler);
   if (!compiled.Succeeded()) {
     state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
     return;
   }
-  vm::VirtualMachine machine(isolate);
-  const auto setup = machine.Execute(compiled.program.FindFunction(kSetupEntry));
+  const auto loaded = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+  if (!loaded) {
+    state.SkipWithError(loaded.error().message);
+    return;
+  }
+  auto& instance = **loaded;
+  const auto setup = runtime::ExecuteNativeFunction(instance, *instance.FindFunction(kSetupEntry));
   if (!setup.Succeeded()) {
     state.SkipWithError("Input preparation failed: " + setup.message);
     return;
   }
-  const auto entry = compiled.program.FindFunction(kWorkloadEntry);
-  const auto warm = machine.Execute(entry);
+  const auto entry = *instance.FindFunction(kWorkloadEntry);
+  const auto warm = runtime::ExecuteNativeFunction(instance, entry);
   if (!IsExpected(warm, problem)) {
     state.SkipWithError("Warm-up failed or checksum mismatched: " + warm.message);
     return;
@@ -400,9 +415,8 @@ void Vm(benchmark::State& state, Workload workload, Problem problem) {
   heap.Collect();
   const auto baseline_bytes = heap.allocated_bytes();
   state.counters["baseline_bytes"] = static_cast<double>(baseline_bytes);
-  state.counters["register_bytes"] = static_cast<double>(machine.register_bytes());
   for (auto iteration : state) {
-    auto result = machine.Execute(entry);
+    auto result = runtime::ExecuteNativeFunction(instance, entry);
     benchmark::DoNotOptimize(result);
     if (!IsExpected(result, problem)) {
       state.SkipWithError("Execution failed or checksum mismatched: " + result.message);
@@ -563,7 +577,7 @@ void CompileLua(benchmark::State& state, Workload workload, Problem /*problem*/)
   state.counters["source_bytes"] = static_cast<double>(source->size());
 }
 
-void FirstVm(benchmark::State& state, Workload workload, Problem problem) {
+void FirstJit(benchmark::State& state, Workload workload, Problem problem) {
   const auto sources = LoadSources(state, workload, problem);
   if (!sources) {
     return;
@@ -573,22 +587,33 @@ void FirstVm(benchmark::State& state, Workload workload, Problem problem) {
     state.PauseTiming();
     {
       runtime::Isolate isolate;
-      const auto compiled = sources->Compile(isolate);
+      auto compiler = compiler::jit::Compiler::Create();
+      if (!compiler) {
+        state.SkipWithError(frontend::DiagnosticsText(compiler.error()));
+        return;
+      }
+      const auto compiled = sources->Compile(**compiler);
       if (!compiled.Succeeded()) {
         state.ResumeTiming();
         state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
         return;
       }
-      vm::VirtualMachine machine(isolate);
-      const auto setup = machine.Execute(compiled.program.FindFunction(kSetupEntry));
+      const auto loaded = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
+      if (!loaded) {
+        state.SkipWithError(loaded.error().message);
+        return;
+      }
+      auto& instance = **loaded;
+      const auto setup =
+          runtime::ExecuteNativeFunction(instance, *instance.FindFunction(kSetupEntry));
       if (!setup.Succeeded()) {
         state.ResumeTiming();
         state.SkipWithError("Input preparation failed: " + setup.message);
         return;
       }
-      const auto entry = compiled.program.FindFunction(kWorkloadEntry);
+      const auto entry = *instance.FindFunction(kWorkloadEntry);
       state.ResumeTiming();
-      auto result = machine.Execute(entry);
+      auto result = runtime::ExecuteNativeFunction(instance, entry);
       benchmark::DoNotOptimize(result);
       state.PauseTiming();
       if (!IsExpected(result, problem)) {
@@ -636,7 +661,7 @@ int RegisterWorkloads() {
     for (const auto problem : workload.problems) {
       const auto suffix = std::string(workload.name) + "/" + std::to_string(problem.size);
       benchmark::RegisterBenchmark("compare/cpp/" + suffix, Cpp, workload, problem)->UseRealTime();
-      benchmark::RegisterBenchmark("compare/vm/" + suffix, Vm, workload, problem)->UseRealTime();
+      benchmark::RegisterBenchmark("compare/jit/" + suffix, Jit, workload, problem)->UseRealTime();
       benchmark::RegisterBenchmark("compare/luajit/" + suffix, Lua, workload, problem, LuaMode::Jit)
           ->UseRealTime();
       benchmark::RegisterBenchmark("compare/luajit_interp/" + suffix, Lua, workload, problem,
@@ -646,7 +671,8 @@ int RegisterWorkloads() {
           ->UseRealTime();
       benchmark::RegisterBenchmark("compile/luajit/" + suffix, CompileLua, workload, problem)
           ->UseRealTime();
-      benchmark::RegisterBenchmark("first/vm/" + suffix, FirstVm, workload, problem)->UseRealTime();
+      benchmark::RegisterBenchmark("first/jit/" + suffix, FirstJit, workload, problem)
+          ->UseRealTime();
       benchmark::RegisterBenchmark("first/luajit/" + suffix, FirstLua, workload, problem,
                                    LuaMode::Jit)
           ->UseRealTime();

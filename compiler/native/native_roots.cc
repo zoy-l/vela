@@ -53,7 +53,7 @@ void PlanSafepoints(NativeRootPlan& plan, const ir::Function& function, NativeDe
     const auto source_line =
         debugging == NativeDebugging::SourceLines &&
         (index == 0 || instruction.location.line != instructions.at(index - 1).location.line);
-    if (index == 0 || backward || source_line || instruction.opcode == Opcode::Return ||
+    if (debugging == NativeDebugging::Instructions || index == 0 || backward || source_line || instruction.opcode == Opcode::Return ||
         ir::AnalyzeEffects(instruction).MayCollectOnSuccess()) {
       plan.safepoints.at(index) = 1;
     }
@@ -121,6 +121,7 @@ void PlanRematerialization(NativeRootPlan& plan,
 NativeRootPlan InitializeRoots(const ir::Function& function, NativeProgramMode mode,
                                NativeDebugging debugging, NativeRecoveryRequirements recovery) {
   NativeRootPlan plan;
+  plan.debug_values = debugging == NativeDebugging::Instructions;
   plan.slots.resize(function.register_count);
   plan.stores.resize(function.instructions.size());
   plan.clears.resize(function.instructions.size());
@@ -131,7 +132,7 @@ NativeRootPlan InitializeRoots(const ir::Function& function, NativeProgramMode m
   plan.minimum_temporary_count = recovery.minimum_temporary_count;
   if (!recovery.safepoints.empty()) {
     plan.safepoints.assign(recovery.safepoints.begin(), recovery.safepoints.end());
-  } else if (mode == NativeProgramMode::Reloadable) {
+  } else if (mode == NativeProgramMode::Reloadable || plan.debug_values) {
     PlanSafepoints(plan, function, debugging);
   }
   return plan;

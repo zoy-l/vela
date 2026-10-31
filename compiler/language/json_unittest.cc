@@ -4,15 +4,12 @@
 #include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/rooted_value.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
-#include "vm/program.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -23,7 +20,7 @@ class DynamicDiagnosticTest : public testing::TestWithParam<std::string_view> {}
 
 TEST_P(DynamicDiagnosticTest, RejectsInvalidInferenceAndStaticContainerConversions) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(GetParam(), isolate);
+  const auto compiled = test::CompileSource(GetParam(), isolate);
   EXPECT_FALSE(compiled.Succeeded());
   EXPECT_FALSE(compiled.diagnostics.empty());
 }
@@ -51,15 +48,15 @@ class DynamicNominalIdentityTest : public testing::TestWithParam<std::string_vie
 
 TEST_P(DynamicNominalIdentityTest, IndependentCompilationsRetainNominalSignatureIdentity) {
   runtime::Isolate isolate(1);
-  const auto first = CompileSource(GetParam(), isolate);
+  const auto first = test::CompileSource(GetParam(), isolate);
   ASSERT_TRUE(first.Succeeded());
-  const auto value = vm::VirtualMachine(isolate).Execute(first.program.FindFunction("main"));
+  const auto value = test::Execute(*first.instance, "main");
   ASSERT_TRUE(value.Succeeded()) << value.message;
   const runtime::RootedValue rooted(isolate, value.value);
-  const auto second = CompileSource(GetParam(), isolate);
+  const auto second = test::CompileSource(GetParam(), isolate);
   ASSERT_TRUE(second.Succeeded());
-  const auto original_types = first.program.functions().front().layouts->types();
-  const auto foreign_types = second.program.functions().front().layouts->types();
+  const auto original_types = first.instance->layouts().types;
+  const auto foreign_types = second.instance->layouts().types;
   EXPECT_TRUE(std::ranges::any_of(original_types, [](const auto& type) { return type.callable; }));
   EXPECT_TRUE(std::ranges::all_of(original_types, [&rooted](const auto& type) {
     return !type.callable || runtime::Heap::IsValueOfType(rooted.value(), type);
@@ -81,8 +78,8 @@ func accept(value: Marker): int { return 42; }
 func main(): (Marker) => int { return accept; }
 )"));
 
-void ExpectJsonAnswer(const vm::Program& program, runtime::Isolate& isolate) {
-  const auto result = test::ExecuteFutureInteger(program, isolate);
+void ExpectJsonAnswer(runtime::NativeInstance& instance) {
+  const auto result = test::ExecuteFutureInteger(instance);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, 42);
 }
@@ -91,13 +88,13 @@ TEST_P(JsonProgramTest, ExecutesWithGcAndReleasesTraversalState) {
   runtime::Isolate isolate(1);
   const auto baseline = isolate.heap().allocated_bytes();
   {
-    const auto compiled = CompileSource(GetParam(), isolate);
+    const auto compiled = test::CompileSource(GetParam(), isolate);
     for (const auto& diagnostic : compiled.diagnostics) {
       EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error)
           << diagnostic.location.line << ':' << diagnostic.message;
     }
     ASSERT_TRUE(compiled.Succeeded());
-    ExpectJsonAnswer(compiled.program, isolate);
+    ExpectJsonAnswer(*compiled.instance);
   }
   isolate.heap().FinishCollection();
   isolate.heap().Collect();
@@ -106,9 +103,9 @@ TEST_P(JsonProgramTest, ExecutesWithGcAndReleasesTraversalState) {
 
 TEST_P(JsonProgramTest, RestoresImageInFreshIsolate) {
   runtime::Isolate isolate(1);
-  const auto loaded = test::ReloadSource(GetParam(), isolate);
+  const auto loaded = test::ReinstantiateSource(GetParam(), isolate);
   ASSERT_TRUE(loaded) << loaded.error();
-  ExpectJsonAnswer(*loaded, isolate);
+  ExpectJsonAnswer(**loaded);
 }
 
 INSTANTIATE_TEST_SUITE_P(ProductionContracts,

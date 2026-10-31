@@ -84,7 +84,7 @@ void CompleteFutureError(Isolate& isolate,
                          Value payload,
                          const FutureDiagnostic& diagnostic) {
   const auto status = diagnostic.status;
-  if (payload.IsNull() && status != ExecutionStatus::DebuggerStopped) {
+  if (payload.IsNull() && status != ExecutionStatus::ExecutionStopped) {
     payload = CreateError(
                   isolate.heap(), isolate.error_layout(),
                   {

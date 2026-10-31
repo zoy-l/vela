@@ -6,11 +6,10 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/bytecode/compiler.h"
+#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/checker_test_support.h"
-#include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
@@ -232,7 +231,7 @@ TEST_P(BasicLanguageErrorTest, RejectsInvalidProgramsWithLocatedDiagnostics) {
            diagnostic.location.column > 0;
   }));
   runtime::Isolate isolate;
-  EXPECT_FALSE(CompileSource(parameter.source, isolate).Succeeded());
+  EXPECT_FALSE(test::CompileSource(parameter.source, isolate).Succeeded());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -318,7 +317,7 @@ TEST(DiagnosticLocationTest, TracksSourcesThroughMultiSourceCompilation) {
       {.path = "main.vela", .text = "import \"broken.vela\"; func valid(): int { return 1; }"},
       {.path = "broken.vela", .text = "func invalid(): int {\n  return missing;\n}"},
   });
-  const auto compiled = CompileModules(sources, "main.vela", isolate);
+  const auto compiled = test::CompileModules(sources, "main.vela", isolate);
   ASSERT_FALSE(compiled.Succeeded());
   const auto& diagnostic = compiled.diagnostics.front();
   EXPECT_EQ(diagnostic.source_path, "broken.vela");

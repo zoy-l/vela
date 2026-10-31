@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <semaphore>
@@ -33,6 +36,7 @@
 #include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_image.h"
+#include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 
 namespace vela::compiler::jit {
@@ -40,6 +44,59 @@ namespace {
 
 using frontend::DiagnosticsText;
 using test::CompileText;
+
+double HostSquareRoot(double value) noexcept {
+  return value + 40.0;
+}
+
+TEST(JitCompilerTest, SquareRootIntrinsicPreservesFloatingPointErrorsAndHostOverrides) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+    const auto compiled = CompileText(**compiler, R"(
+export func root(value: double): double { return Math.sqrt(value); }
+export func failure(): string {
+  try { return Math.sqrt(-1.0).toString(); }
+  catch (error: Error) { return error.message; }
+}
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    EXPECT_NE(compiled->llvm_ir.find("llvm.sqrt.f64"), std::string::npos);
+    runtime::Isolate isolate(1);
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", "root");
+    ASSERT_TRUE(entry);
+    for (const auto value : {4.0, -0.0, std::numeric_limits<double>::infinity(),
+                             std::numeric_limits<double>::quiet_NaN()}) {
+      const auto result = entry->Invoke(std::array{runtime::Value::Double(value)});
+      ASSERT_TRUE(result);
+      const auto actual = result->AsDouble();
+      if (std::isnan(value)) {
+        EXPECT_TRUE(std::isnan(actual));
+      } else {
+        EXPECT_EQ(std::bit_cast<std::uint64_t>(actual),
+                  std::bit_cast<std::uint64_t>(std::sqrt(value)));
+      }
+    }
+    const auto failure = isolate.native_dispatch().FindEntry("main.vela", "failure");
+    ASSERT_TRUE(failure);
+    const auto failed = failure->Invoke({});
+    ASSERT_TRUE(failed);
+    EXPECT_EQ(failed->AsString()->value(), "sqrt argument must be nonnegative");
+
+    runtime::Isolate overridden;
+    ASSERT_TRUE(
+        overridden.RegisterNative(runtime::NativeFunction::Bind<HostSquareRoot>("Math.sqrt")));
+    static_cast<void>(overridden.FreezeBindings());
+    ASSERT_TRUE(test::PublishImage(overridden, compiled->image));
+    const auto replacement = overridden.native_dispatch().FindEntry("main.vela", "root");
+    ASSERT_TRUE(replacement);
+    const auto result = replacement->Invoke(std::array{runtime::Value::Double(2.0)});
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->AsDouble(), 42.0);
+  }
+}
 
 TEST(JitCompilerTest, MaterializesTheCompleteImageBeforePublishingNamedEntries) {
   auto compiler = Compiler::Create();
@@ -821,34 +878,37 @@ TEST(JitCompilerTest, AddedModulesExposeTheirExportsWithoutRunningUserInitialize
 }
 
 TEST(JitCompilerTest, CrossThreadStopExitsANonAllocatingLoopWithoutRunningFinally) {
-  auto compiler = Compiler::Create();
-  ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
-  const auto compiled = CompileText(**compiler, R"(
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+    const auto compiled = CompileText(**compiler, R"(
 external func entered(): void;
 external func finalized(): void;
 export func main(): void { entered(); try { while (true) {} } finally { finalized(); } }
-)");
-  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-  runtime::Isolate isolate;
-  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Entered>("entered")));
-  ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Finalized>("finalized")));
-  static_cast<void>(isolate.FreezeBindings());
-  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
-  const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
-  ASSERT_TRUE(entry);
-  std::jthread request([&] {
-    constexpr auto kEntryTimeout = std::chrono::seconds(10);
-    const auto entered = StopSignal().try_acquire_for(kEntryTimeout);
-    EXPECT_TRUE(entered);
-    if (entered) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    isolate.native_control().RequestStop();
-  });
-  const auto result = entry->Invoke({});
-  ASSERT_FALSE(result);
-  EXPECT_EQ(result.error(), ExecutionStatus::ExecutionStopped);
-  EXPECT_FALSE(isolate.native_control().HasHostBorrow());
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate;
+    ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Entered>("entered")));
+    ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Finalized>("finalized")));
+    static_cast<void>(isolate.FreezeBindings());
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
+    ASSERT_TRUE(entry);
+    std::jthread request([&] {
+      constexpr auto kEntryTimeout = std::chrono::seconds(10);
+      const auto entered = StopSignal().try_acquire_for(kEntryTimeout);
+      EXPECT_TRUE(entered);
+      if (entered) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      }
+      isolate.native_control().RequestStop();
+    });
+    const auto result = entry->Invoke({});
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), ExecutionStatus::ExecutionStopped);
+    EXPECT_FALSE(isolate.native_control().HasHostBorrow());
+  }
 }
 
 }  // namespace

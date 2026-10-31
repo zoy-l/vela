@@ -42,6 +42,7 @@ NativeFrame::~NativeFrame() {
 NativeExecution::NativeExecution(NativeInstance& instance) noexcept
     : instance_(&instance),
       context_(instance.isolate()),
+      safepoint_requests_(&isolate().native_control().safepoint_requests()),
       exception_root_(isolate().heap(), &pending_exception_, 1, RootOwner::Runtime),
       execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {
   const auto bounds = CurrentNativeStackBounds();

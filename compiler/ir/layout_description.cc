@@ -263,6 +263,10 @@ layout::Class LayoutDescription::DescribeClass(const Class& type) {
 layout::Program LayoutDescription::Build() {
   const auto& program = *program_;
   for (const auto& [name, descriptor] : model_->interfaces) {
+    // 模板定义检查的抽象应用没有运行时编号，不能覆盖具体接口的布局身份。
+    if (descriptor.type.is_abstract) {
+      continue;
+    }
     if (result_.interfaces.size() <= descriptor.index) {
       result_.interfaces.resize(static_cast<std::size_t>(descriptor.index) + 1);
     }

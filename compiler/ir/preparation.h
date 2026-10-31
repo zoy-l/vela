@@ -21,7 +21,7 @@ struct PreparationOptions final {
 };
 
 // 返回的 IR 拥有全部布局描述和源码路径，不借用 AST、语义模型或运行时状态。
-// 此边界不执行 VM 寄存器分配或原生符号绑定。
+// 原生代码生成与符号绑定由后续阶段执行。
 [[nodiscard]] LoweringResult PrepareParsed(frontend::ParseResult parsed,
                                            frontend::DiagnosticOptions options = {});
 
