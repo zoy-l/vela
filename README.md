@@ -19,7 +19,7 @@ Vela is a statically typed embedded scripting language designed specifically for
 
 ## Example
 
-```vela
+```typescript
 interface Entity {
   render(): string;
 }

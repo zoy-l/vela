@@ -19,7 +19,7 @@ Vela 是一个专为原生 C++ 应用设计的静态类型嵌入式脚本语言�
 
 ## 示例代码
 
-```vela
+```typescript
 interface Entity {
   render(): string;
 }
