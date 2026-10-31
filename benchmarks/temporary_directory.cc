@@ -1,5 +1,6 @@
 #include "benchmarks/temporary_directory.h"
 
+#include <filesystem>
 #include <system_error>
 #include <utility>
 

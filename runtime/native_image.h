@@ -161,6 +161,7 @@ struct NativeDeclarationDescription final {
   NativeText name;
   NativeTable<NativeText> type_parameters;
   NativeTable<NativeText> enum_members;
+  NativeText generic_signature;
   DeclarationId definition;
 };
 

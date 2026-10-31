@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/node_hash_map.h>
 
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
@@ -278,24 +279,28 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindCallParameters(
     return std::nullopt;
   }
   const auto& call = *found->second;
-  if (const auto builtin = model_.builtin_calls.find(&call);
-      builtin != model_.builtin_calls.end() &&
+  const auto& facts = FactsFor(call);
+  if (const auto builtin = facts.builtin_calls.find(&call);
+      builtin != facts.builtin_calls.end() &&
       (builtin->second == Builtin::NewByteArray || builtin->second == Builtin::NewRegExp)) {
     return frontend::BuiltinSignature(builtin->second);
   }
-  if (const auto async = model_.async_calls.find(&call); async != model_.async_calls.end()) {
+  if (const auto async = facts.async_calls.find(&call); async != facts.async_calls.end()) {
     return async->second.signature;
   }
   const auto& callee = *call.callee;
+  if (callee.kind == frontend::Expression::Kind::Member) {
+    return FindMemberCallParameters(call);
+  }
   // 函数值只接受位置实参；不把内部的数字参数名暴露为命名实参补全。
-  if (model_.bindings.contains(&callee) || model_.globals.contains(callee.text) ||
-      model_.expression_types.contains(&callee)) {
+  if (facts.bindings.contains(&callee) || model_.globals.contains(callee.text) ||
+      facts.expression_types.contains(&callee)) {
     return std::nullopt;
   }
   if (callee.kind == frontend::Expression::Kind::Name) {
-    const auto application = model_.generic_applications.find(&callee);
+    const auto application = facts.generic_applications.find(&callee);
     const auto& name =
-        application == model_.generic_applications.end() ? callee.text : application->second;
+        application == facts.generic_applications.end() ? callee.text : application->second;
     const auto type = model_.types.find(name);
     const auto owner = model_.classes.find(type == model_.types.end() ? name : type->second.name);
     if (owner != model_.classes.end()) {
@@ -308,8 +313,6 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindCallParameters(
             frontend::FindBuiltin(frontend::TypeDescriptor::Kind::Invalid, callee.text)) {
       return frontend::BuiltinSignature(*builtin);
     }
-  } else if (callee.kind == frontend::Expression::Kind::Member) {
-    return FindMemberCallParameters(call);
   }
   return std::nullopt;
 }
@@ -318,17 +321,50 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindMemberCallParamet
     const frontend::Expression& call) const {
   const auto& callee = *call.callee;
   auto receiver = ReceiverFor(*callee.object);
-  if (const auto member = model_.static_members.find(&call);
-      member != model_.static_members.end()) {
-    receiver.type.name = member->second.owner;
+  const auto& facts = FactsFor(call);
+  for (const auto* members : {
+           &facts.static_members,
+           &facts.instance_members,
+           &facts.interface_members,
+           &facts.super_members,
+       }) {
+    const auto member =
+        members == &facts.super_members ? members->find(&callee) : members->find(&call);
+    if (member != members->end()) {
+      const auto& reference = member->second;
+      if (const auto owner = model_.classes.find(reference.owner); owner != model_.classes.end()) {
+        return owner->second.methods.at(reference.member);
+      }
+      return model_.interfaces.at(reference.owner).methods.at(reference.member);
+    }
   }
-  const absl::flat_hash_map<std::string, frontend::FunctionDescriptor>* methods = nullptr;
+  const absl::node_hash_map<std::string, frontend::FunctionDescriptor>* methods = nullptr;
+  const absl::flat_hash_map<std::string, frontend::MethodTemplate>* templates = nullptr;
   if (const auto class_type = model_.classes.find(receiver.type.name);
       class_type != model_.classes.end()) {
     methods = &class_type->second.methods;
+    templates = &class_type->second.method_templates;
   } else if (const auto interface_type = model_.interfaces.find(receiver.type.name);
              interface_type != model_.interfaces.end()) {
     methods = &interface_type->second.methods;
+    templates = &interface_type->second.method_templates;
+  }
+  if (templates != nullptr && templates->contains(callee.text)) {
+    const auto type = facts.expression_types.find(&callee);
+    if (type != facts.expression_types.end() &&
+        type->second.kind == frontend::TypeDescriptor::Kind::Function) {
+      const auto& checked = model_.function_types.at(type->second.name);
+      const auto& declaration = *templates->at(callee.text).declaration;
+      frontend::FunctionDescriptor signature;
+      signature.return_type = checked.return_type;
+      for (std::size_t index = 0; index < declaration.parameters.size(); ++index) {
+        signature.AddParameter(declaration.parameters.at(index).name,
+                               checked.parameters.at(index).type);
+      }
+      signature.optional_parameters.insert(declaration.optional_parameters.begin(),
+                                           declaration.optional_parameters.end());
+      return signature;
+    }
   }
   if (methods != nullptr) {
     const auto method = methods->find(callee.text);

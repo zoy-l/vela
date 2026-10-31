@@ -56,18 +56,24 @@ std::int64_t NativeInitializer(runtime::NativeContext& /*context*/) noexcept {
 class NativeIncrementProgramTest : public testing::Test {
  protected:
   NativeIncrementProgramTest() {
-    native.name = "increment";
-    native.native = std::make_shared<const runtime::NativeFunction>(
+    native_.name = "increment";
+    native_.native = std::make_shared<const runtime::NativeFunction>(
         runtime::NativeFunction::Bind<NativeIncrement>("increment"));
-    native.parameter_count = 1;
-    native.register_count = 1;
+    native_.parameter_count = 1;
+    native_.register_count = 1;
   }
 
-  runtime::Isolate isolate;
-  FunctionStorage native;
+  runtime::Isolate& owner() { return isolate_; }
+  FunctionStorage& native_function() { return native_; }
+
+ private:
+  runtime::Isolate isolate_;
+  FunctionStorage native_;
 };
 
 TEST_F(NativeIncrementProgramTest, RejectsNativeBytecodeBodiesAndMismatchedParameterCounts) {
+  auto& native = native_function();
+  auto& isolate = owner();
   EXPECT_TRUE(Program::Create({native}, isolate));
   native.code = {EncodeABC(OpCode::Return, 0, 0, 0)};
   EXPECT_FALSE(Program::Create({native}, isolate));
@@ -80,6 +86,8 @@ TEST_F(NativeIncrementProgramTest, RejectsNativeBytecodeBodiesAndMismatchedParam
 }
 
 TEST_F(NativeIncrementProgramTest, RawBytecodeNativeCallsStillCheckArgumentPayloadTypes) {
+  auto& native = native_function();
+  auto& isolate = owner();
   FunctionStorage caller;
   caller.name = "caller";
   caller.register_count = 1;
@@ -99,6 +107,8 @@ TEST_F(NativeIncrementProgramTest, RawBytecodeNativeCallsStillCheckArgumentPaylo
 }
 
 TEST_F(NativeIncrementProgramTest, RejectsNativeTypeSignaturesThatDisagreeWithBinding) {
+  auto& native = native_function();
+  auto& isolate = owner();
   native.layouts = std::make_shared<const LayoutTables>(
       std::vector<runtime::ClassLayout*>(), std::vector<const runtime::ArrayLayout*>(),
       std::vector<const runtime::CollectionLayout*>(),

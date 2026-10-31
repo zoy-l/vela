@@ -26,7 +26,7 @@ std::unique_ptr<Expression> Name(std::string text, SourceLocation location) {
 }
 
 TypeName NamedType(const TypeDescriptor& type, SourceLocation location) {
-  return {.name = std::string(type.name), .location = location, .arguments = {}};
+  return {.name = std::string(type.name), .location = location, .arguments = {}, .parameter = {}};
 }
 
 }  // namespace

@@ -26,8 +26,10 @@ inside interpolations. Single and double quotes both produce `string` values
 and support `${...}` interpolation. Formatting uses single quotes, including
 nested string literals inside interpolation, escapes apostrophes, and removes
 unnecessary double-quote escapes. Other escape spellings and interpolation
-expression layout remain unchanged. Reformatting is idempotent and preserves every language token's kind
-and decoded value. Formatting neither type checks nor executes source; files with
+expression layout remain unchanged. Reformatting is idempotent and preserves syntax
+and decoded values. Type closings and an adjacent assignment can be formatted
+separately even when lexed as one compound token, as in
+`type Items<T extends Reader<int>> = T[];`. Formatting neither type checks nor executes source; files with
 unresolved imports or temporarily inconsistent types can still be formatted.
 
 ## API documentation
@@ -67,12 +69,20 @@ negotiated text positions. Editor functionality shares the production checker
 and formatter; it does not define an alternate language grammar.
 
 The server supports initialize/shutdown/exit, open/change/close/save,
-watched-file invalidation, versioned diagnostics, completion, hover, definition lookup, document links
+watched-file invalidation, versioned diagnostics, completion, hover, definition lookup, type-parameter rename, document links
 and document formatting. Full semantic tokens classify user types and built-in types,
 including constructors, annotations, import references and generic parameters.
 UTF-16 is the default protocol encoding; clients advertising UTF-8 can use
 byte positions. Incremental edits are applied in order and committed atomically;
 invalid edits leave text and version unchanged. Stale versions are ignored.
+
+Unused generic definitions provide parameter/bound hover, definition lookup, and
+bound-member completion. `textDocument/prepareRename` and `textDocument/rename`
+rename only the selected type parameter's declaration and references, respecting
+owner/method shadowing and references inside bounds. Invalid identifiers,
+duplicate parameters, and changes that capture or shadow another reference are
+rejected. The server returns edits without writing files. VS Code applies them
+through **Rename Symbol** (F2) and discards replies after document changes.
 
 All open document overlays participate in each module check. Imported-file
 diagnostics use the exact loaded source snapshots, including syntax errors.

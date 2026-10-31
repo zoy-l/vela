@@ -1,6 +1,8 @@
-# 泛型约束与推导设计
+# 泛型约束与推导
 
-> 状态：待实现。本设计采用 Dart 风格的泛型声明、上界约束与约束驱动推导，形成适合 Vela 的完整泛型契约；不以兼容 Dart 整套类型系统为目标。现有的基本类型、显式数值转换、容器不变性、受检查 dynamic、单态化和紧凑存储继续有效。当前编译器尚不能运行本文新增的上界、泛型接口和泛型方法语法。
+[English](../en/generics.md) | [**简体中文**](generics.md)
+
+Vela 支持泛型声明、单一上界和约束驱动推导。本文规定其声明、静态检查、具体执行和工具契约。语法采用 Dart 风格，保留 Vela 的基本类型、显式数值转换、容器不变性、受检查 dynamic、单态化和紧凑存储。
 
 ```vela
 interface Comparable<T> {
@@ -50,20 +52,19 @@ func main(): int {
 - 泛型函数和方法可以按普通函数上下文具体化；不新增可在运行时反复应用不同类型实参的多态函数值、泛型 lambda 或运行时泛型代码生成。
 - external 及宿主原生符号继续暴露具体签名，不增加开放泛型宿主 ABI。
 
-类型推导的当前行为见[类型推导](type_inference.md)，值和容器规则见[核心语言](core_language.md)。这些文档在本设计实现前继续描述现有行为。
+上下文规则见[类型推导](type_inference.md)，值和容器规则见[核心语言](core_language.md)，完整可运行示例见 [`examples/generics.vela`](../../examples/generics.vela)。
 
-## 2. 当前实现与剩余生产路径
+## 2. 实现职责
 
-| 当前基础 | 本设计需要完成的变化 |
+| 生产路径 | 契约来源 |
 | --- | --- |
-| [`ParseTypeParameters`](../../compiler/frontend/parser_types.cc) 只解析名字，返回字符串列表 | 类型参数具有声明身份、源范围、可选上界及真实类型引用 |
-| [`AST`](../../compiler/frontend/ast.h) 的函数、class 和别名保存类型参数名；interface 没有类型参数 | 所有泛型声明使用统一参数节点，补齐泛型接口及方法的解析和表示 |
-| [`ParseClassMember` / `ParseInterface`](../../compiler/frontend/parser_declarations.cc) 尚未接通方法自己的类型参数 | 区分类参数和方法参数，接通声明、实现、方法值及接口调用 |
-| [`TypeInference`](../../compiler/frontend/type_inference.h) 按结构合并证据 | 支持符号类型参数、名义父类型投影、参数依赖和递归上界的联合求解 |
-| [`Specializer`](../../compiler/frontend/specialization.h) 规范化并生成具体函数和 class | 增加泛型接口与方法应用，消费已验证实参，不另行推导或决定约束语义 |
-| 泛型模板在具体实例化后接受完整类型检查 | 所有可达模块中的泛型定义先按抽象参数检查，具体化再验证具体布局和执行契约 |
-| [`CanAssign`](../../compiler/frontend/type_checker_types.cc) 同时处理静态赋值及 dynamic 边界 | 约束证明与受检查转换分开，统一静态名义关系，不能把可转换当成已满足上界 |
-| 声明来源、IR 元数据、缓存和重载记录类型参数名 | 保留参数身份及规范化约束，工具和重载不能从生成名字或 token 偏移恢复它们 |
+| [`AST`](../../compiler/frontend/ast.h)、parser 和模块绑定 | 统一参数节点保存身份、源范围、上界及真实类型引用 |
+| [`TypeChecker`](../../compiler/frontend/type_checker.h) | 抽象定义检查、静态名义关系、dynamic 转换与已解析方法目标 |
+| [`TypeInference`](../../compiler/frontend/type_inference.h) | 统一保存证据、传播依赖和名义投影，确定唯一有效实参 |
+| [`Specializer`](../../compiler/frontend/specialization.h) | 规范化并唯一化函数、class、interface 和方法的已确定应用 |
+| [`SemanticModel`](../../compiler/frontend/type_checker.h) | 分开发布定义事实与执行事实，提供参数身份、规范应用和具体签名 |
+| [声明身份](../../compiler/frontend/declaration_ids.h)、IR、缓存及原生镜像 | 保留规范化约束及稳定声明/应用身份，执行类型只使用具体实参 |
+| [语义索引](../../compiler/tooling/semantic_index.h) | 直接消费前端事实，提供未实例化定义的查询及类型参数重命名 |
 
 ## 3. 声明与类型应用
 

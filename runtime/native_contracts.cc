@@ -84,6 +84,11 @@ std::expected<void, NativeContractViolation> CheckDeclarationContract(
         .declaration = declaration.identity,
         .message = "enum members or their order changed; Reload is required",
     });
+  } else if (declaration.generic_signature.text() != found->second->generic_signature.text()) {
+    return std::unexpected(NativeContractViolation{
+        .declaration = declaration.identity,
+        .message = "generic declaration signature changed; Reload is required",
+    });
   }
   return {};
 }

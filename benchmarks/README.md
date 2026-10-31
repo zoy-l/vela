@@ -61,6 +61,27 @@ calibration, timing, repetitions, aggregates, filtering, and JSON/CSV output.
 For a fixed execution count, use `--benchmark_min_time=3000x`; repetitions are
 separate samples controlled by `--benchmark_repetitions`.
 
+`vela_aot_benchmarks` also registers `generics/` comparisons for bounded generics,
+unbounded generics, and equivalent handwritten concrete functions. Scalar and
+recursive nominal-projection workloads use 4, 16, and 32 declarations. The
+`check/definitions` cases check unused definitions; `check/applications` additionally
+checks inferred calls and materializes applications. These frontend timings exclude
+loading and AST cloning and include checking/result lifetimes. Counters report
+concrete function/type specializations. VM, baseline JIT, and optimized JIT cases
+check the same runtime checksum and report bytecode/register or executable bytes.
+Native cases also record the size of a separately emitted closed Release AOT object;
+that counter is not a timing of linked AOT execution.
+
+```powershell
+python -m tools.vl build release benchmarks
+out/release/vela_aot_benchmarks.exe --benchmark_filter=^generics/ --benchmark_min_time=0.2s --benchmark_repetitions=7
+```
+
+Run each selected case in a fresh process to attribute `process_peak_resident_bytes`
+to that workload. Process peaks include setup and runtime/library initialization;
+they are distinct from the timed checker or execution region. Compare frontend
+cost, generated sizes, and runtime measurements separately.
+
 `--compare` defaults to seven repetitions, at least 0.2 seconds per case, and
 random interleaving. It queries the executable's filtered benchmark registry
 before execution and requires every selected case and repetition in the report;

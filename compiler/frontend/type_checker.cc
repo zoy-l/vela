@@ -1,6 +1,5 @@
 #include "compiler/frontend/type_checker.h"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,8 +8,12 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
+
+#include <absl/container/flat_hash_set.h>
+
 #include "base/builtin.h"
 #include "base/byte_access.h"
 #include "compiler/frontend/ast.h"
@@ -18,7 +21,6 @@
 #include "compiler/frontend/capture_analysis.h"
 #include "compiler/frontend/control_flow.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/initialization.h"
 #include "compiler/frontend/specialization.h"
 #include "compiler/frontend/standard_environment.h"
 #include "compiler/frontend/type_names.h"
@@ -32,13 +34,35 @@ TypeChecker::Type TypeChecker::InvalidType() {
 TypeCheckResult TypeChecker::Check(Program& program,
                                    std::span<const GenericSpecialization> retained) {
   Specializer specializer(program);
-  auto specialization_errors = specializer.Initialize(retained);
+  auto specialization_errors = specializer.Initialize();
+  if (!specialization_errors.empty()) {
+    return {.diagnostics = std::move(specialization_errors), .model = {}};
+  }
+  return CheckPrepared(program, specializer, retained);
+}
+
+TypeCheckResult TypeChecker::CheckPrepared(Program& program,
+                                           Specializer& specializer,
+                                           std::span<const GenericSpecialization> retained) {
+  auto specialization_errors = specializer.Retain(retained);
   if (!specialization_errors.empty()) {
     return {.diagnostics = std::move(specialization_errors), .model = {}};
   }
   specializer_ = &specializer;
   registered_functions_ = 0;
   registered_classes_ = 0;
+  registered_interfaces_ = 0;
+  registered_methods_ = 0;
+  checked_functions_ = 0;
+  checked_classes_ = 0;
+  checked_methods_ = 0;
+  next_interface_index_ = 0;
+  type_parameters_.clear();
+  bound_checks_.clear();
+  pending_applications_.clear();
+  checked_applications_.clear();
+  failed_templates_.clear();
+  definitions_ = {};
   merged_classes_.clear();
   visiting_classes_.clear();
   diagnostics_.clear();
@@ -57,6 +81,8 @@ TypeCheckResult TypeChecker::Check(Program& program,
   captured_declarations_ = FindCapturedMutableDeclarations(program);
   next_binding_id_ = 0;
   expression_types_.clear();
+  prepared_expressions_.clear();
+  prepared_matches_.clear();
   generic_applications_.clear();
   checked_conversions_.clear();
   case_values_.clear();
@@ -72,6 +98,12 @@ TypeCheckResult TypeChecker::Check(Program& program,
   classes_.clear();
   functions_.clear();
   static_members_.clear();
+  instance_members_.clear();
+  interface_bindings_.clear();
+  queued_interface_bindings_.clear();
+  interface_implementers_.clear();
+  registered_implementers_.clear();
+  checking_definitions_ = false;
   globals_.clear();
   checking_globals_.clear();
   checked_globals_.clear();
@@ -92,14 +124,18 @@ TypeCheckResult TypeChecker::Check(Program& program,
   sources_ = program.sources;
 
   CollectTypes(program);
+  RegisterTemplateParameters(program);
   ResolveInterfaces(program);
   ResolveDeclarations(program);
   ResolveGlobals(program);
   CheckImplementations(program);
   for (const auto& alias : program.aliases) {
-    static_cast<void>(
-        ResolveType({.name = alias.name, .location = alias.location, .arguments = {}}, true));
+    static_cast<void>(ResolveType(
+        {.name = alias.name, .location = alias.location, .arguments = {}, .parameter = {}}, true));
   }
+  // 泛型定义先在抽象参数环境下检查，具体特化之后只验证具体布局与执行契约。
+  CheckDefinitions(program);
+  RestoreMethodSpecializations(retained);
   // 普通声明先注册；检查函数体时按需注册特化，描述对象保持稳定地址。
   for (const Function& function : program.functions) {
     specializer.SetExpansionOwner(function.name);
@@ -107,80 +143,60 @@ TypeCheckResult TypeChecker::Check(Program& program,
   }
   for (const Class& class_declaration : program.classes) {
     specializer.SetExpansionOwner(class_declaration.name);
-    CheckClassBody(class_declaration);
+    CheckClassBody(class_declaration, classes_.at(class_declaration.name));
   }
-  CheckPendingSpecializations();
+  while (true) {
+    CheckPendingSpecializations();
+    DrainInterfaceBindings();
+    if (!DrainBoundChecks() && checked_functions_ == specializer.function_count() &&
+        checked_classes_ == specializer.class_count() &&
+        checked_methods_ == specializer.method_count()) {
+      break;
+    }
+  }
   specializer.Publish();
   for (const auto& source : program.classes) {
     if (const auto found = classes_.find(source.name); found != classes_.end()) {
       found->second.declaration = &source;
     }
   }
-  function_count_ = program.functions.size();
-  for (const Class& class_declaration : program.classes) {
-    if (!class_declaration.base_class ||
-        explicit_super_constructors_.contains(class_declaration.name)) {
-      continue;
-    }
-    const auto base_class = classes_.find(class_declaration.base_class->name);
-    if (base_class == classes_.end()) {
-      continue;
-    }
-    const auto& base = base_class->second;
-    const auto has_required_parameter = std::ranges::any_of(
-        base.constructor.parameters, [&](const FunctionInfo::Parameter& parameter) -> bool {
-          return !base.constructor.optional_parameters.contains(parameter.name);
-        });
-    if (has_required_parameter) {
-      AddDiagnostic(class_declaration.constructor ? class_declaration.constructor->location
-                                                  : class_declaration.location,
-                    "derived constructor must call super(...) because the base constructor has "
-                    "required parameters");
+  for (const auto& source : program.interfaces) {
+    auto& interface = interfaces_.at(source.name);
+    for (const auto& method : source.methods) {
+      if (method.application) {
+        interface.method_applications.insert_or_assign(method.name, &method);
+      }
     }
   }
-
+  function_count_ = program.functions.size();
   SemanticModel model;
+  for (const auto& [identity, parameter] : type_parameters_) {
+    if (parameter.bound) {
+      model.parameter_bounds.emplace(identity, *parameter.bound);
+    }
+  }
   model.globals = std::move(globals_);
   model.types = std::move(types_);
   model.array_elements = std::move(array_elements_);
   model.function_types = std::move(function_types_);
-  model.lambdas = std::move(lambdas_);
-  model.lambda_indices = std::move(lambda_indices_);
-  model.bindings = std::move(bindings_);
   model.captured_mutables = std::move(captured_mutables_);
-  model.expression_types = std::move(expression_types_);
-  model.generic_applications = std::move(generic_applications_);
-  model.checked_conversions = std::move(checked_conversions_);
-  model.case_values = std::move(case_values_);
   model.enum_values = std::move(enum_values_);
-  model.builtin_calls = std::move(builtin_calls_);
-  model.async_calls = std::move(async_calls_);
-  model.generated_functions = std::move(generated_functions_);
-  model.builtin_method_values = std::move(builtin_method_values_);
-  model.array_algorithms = std::move(array_algorithms_);
-  model.local_types = std::move(local_types_);
-  model.control_flow = std::move(control_flow_);
   model.classes = std::move(classes_);
   model.functions = std::move(functions_);
-  model.static_members = std::move(static_members_);
   model.interfaces = std::move(interfaces_);
-  model.interface_members = std::move(interface_members_);
-  model.super_members = std::move(super_members_);
   model.explicit_super_constructors = std::move(explicit_super_constructors_);
-  model.type_operands = std::move(type_operands_);
   model.generic_arguments = std::move(generic_arguments_);
-  model.match_bindings = std::move(match_bindings_);
-  model.catch_types = std::move(catch_types_);
-  model.argument_order = std::move(argument_order_);
-  model.collection_constructions = std::move(collection_constructions_);
-  if (!HasErrors(diagnostics_)) {
-    for (const auto& owner : program.classes) {
-      const auto initialization = CheckConstructorInitialization(owner, model);
-      for (const auto& diagnostic : initialization) {
-        AddDiagnostic(diagnostic.location, diagnostic.message);
-      }
-    }
-  }
+  static_cast<NodeFacts&>(model) = TakeNodeFacts();
+  model.type_applications = specializer.TakeTypeApplications();
+  model.definitions = std::move(definitions_);
+  // 模板与其特化的声明解析可能在同一源码位置给出相同诊断，只保留首次出现。
+  absl::flat_hash_set<std::tuple<std::string, std::uint32_t, std::uint32_t, std::string>> reported;
+  std::erase_if(diagnostics_, [&](const Diagnostic& diagnostic) {
+    return !reported
+                .emplace(diagnostic.source_path, diagnostic.location.line,
+                         diagnostic.location.column, diagnostic.message)
+                .second;
+  });
   return {
       .diagnostics = std::move(diagnostics_),
       .function_count = function_count_,
@@ -215,6 +231,7 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
   info.storage = function.storage;
   info.is_getter = function.is_getter;
   info.is_setter = function.is_setter;
+  info.is_generic_application = function.application.has_value();
   if (!function.return_type.name.empty()) {
     info.return_type = ResolveType(function.return_type, true);
   } else if (context != nullptr) {
@@ -245,32 +262,32 @@ TypeChecker::FunctionInfo TypeChecker::ResolveSignature(const Function& function
 }
 
 void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner) {
+  if (owner == nullptr) {
+    const auto found = functions_.find(function.name);
+    if (found != functions_.end()) {
+      // 检查函数体可能登记新的函数签名，不能跨 rehash 借用表内描述。
+      const auto signature = found->second;
+      CheckFunctionBody(function, signature, owner);
+    }
+    return;
+  }
+  const auto found = owner->methods.find(function.name);
+  if (found == owner->methods.end()) {
+    return;
+  }
+  const auto signature =
+      function.is_getter || function.is_setter ? ResolveSignature(function) : found->second;
+  CheckFunctionBody(function, signature, owner);
+}
+
+void TypeChecker::CheckFunctionBody(const Function& function,
+                                    const FunctionInfo& function_info,
+                                    const ClassInfo* owner) {
   owner_ = owner;
   in_async_function_ = function.is_async;
   refinements_.Clear();
   constant_bindings_.clear();
-  Type return_type;
-  FunctionInfo accessor_info;
-  const FunctionInfo* function_info = nullptr;
-  if (owner == nullptr) {
-    const auto found = functions_.find(function.name);
-    if (found == functions_.end()) {
-      return;
-    }
-    function_info = &found->second;
-  } else {
-    const auto found = owner->methods.find(function.name);
-    if (found == owner->methods.end()) {
-      return;
-    }
-    if (function.is_getter || function.is_setter) {
-      accessor_info = ResolveSignature(function);
-      function_info = &accessor_info;
-    } else {
-      function_info = &found->second;
-    }
-  }
-  return_type = function_info->return_type;
+  const auto return_type = function_info.return_type;
   in_constructor_ = owner != nullptr && function.name == "$constructor";
   if (function.is_async && return_type.kind != Type::Kind::Future) {
     AddDiagnostic(function.return_type.location, "async function return type must be Future<T>");
@@ -284,9 +301,10 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
                                            .id = next_binding_id_++,
                                            .scope = scopes_.size() - 1,
                                        });
-    bindings_.emplace(&function, LookupLocal("this")->id);
+    // 方法节点在发布泛型方法应用时可能移动；接收者绑定以函数体节点为键。
+    bindings_.emplace(function.body.get(), LookupLocal("this")->id);
   }
-  DeclareFunctionParameters(function, *function_info, BindingKind::Mutable);
+  DeclareFunctionParameters(function, function_info, BindingKind::Mutable);
   if (function.body) {
     const auto flow = CheckSequence(*function.body, return_type);
     control_flow_.insert_or_assign(function.body.get(), flow);
@@ -313,6 +331,13 @@ bool TypeChecker::CanFallThrough(const Function& function, const Type& return_ty
 }
 
 TypeChecker::Type TypeChecker::CheckExpression(const Expression& expression, const Type* expected) {
+  if (const auto prepared = prepared_expressions_.find(&expression);
+      prepared != prepared_expressions_.end()) {
+    auto result = std::move(prepared->second);
+    prepared_expressions_.erase(prepared);
+    refinements_.Apply(result.refinements);
+    return result.type;
+  }
   auto type = CheckExpressionType(expression, expected);
   if (expression.kind == Expression::Kind::Call) {
     InvalidateCapturedRefinements();
@@ -345,7 +370,10 @@ TypeChecker::Type TypeChecker::CheckExpressionType(const Expression& expression,
       return {.kind = Type::Kind::String, .name = kStringTypeName};
     case Expression::Kind::StringInterpolation:
       for (const auto& part : expression.elements) {
-        const auto type = CheckExpression(*part, nullptr);
+        auto type = CheckExpression(*part, nullptr);
+        if (type.kind == Type::Kind::Parameter) {
+          type = ParameterCapability(type, part->location);
+        }
         if (!CanFormatString(type) && IsValid(type)) {
           AddDiagnostic(part->location,
                         "interpolation requires string, int, double, bool, or null");
@@ -379,6 +407,9 @@ TypeChecker::Type TypeChecker::CheckAwait(const Expression& expression, const Ty
   }
   const auto context = expected != nullptr ? MakeFutureType(expression, *expected) : InvalidType();
   auto operand = CheckExpression(*expression.operand, IsValid(context) ? &context : nullptr);
+  if (operand.kind == Type::Kind::Parameter) {
+    operand = ParameterCapability(operand, expression.operand->location);
+  }
   if (operand.kind != Type::Kind::Future) {
     return operand;
   }
@@ -436,6 +467,9 @@ TypeChecker::Type TypeChecker::CheckCall(const Expression& expression, const Typ
 }
 
 TypeChecker::Type TypeChecker::CheckIndirectCall(const Expression& expression, const Type& type) {
+  if (type.kind == Type::Kind::Parameter) {
+    return CheckIndirectCall(expression, ParameterCapability(type, expression.callee->location));
+  }
   if (type.kind == Type::Kind::Dynamic) {
     return CheckDynamicCall(expression);
   }
@@ -496,8 +530,9 @@ TypeChecker::Type TypeChecker::CheckNamedCall(const Expression& expression, cons
   }
   std::string constructor_name = callee.text;
   if (aliases_.contains(callee.text)) {
-    const auto alias_type =
-        ResolveType({.name = callee.text, .location = callee.location, .arguments = {}}, false);
+    const auto alias_type = ResolveType(
+        {.name = callee.text, .location = callee.location, .arguments = {}, .parameter = {}},
+        false);
     if (alias_type.nullable) {
       AddDiagnostic(callee.location, "nullable type aliases are not constructible");
       return InvalidType();
@@ -527,19 +562,27 @@ TypeChecker::Type TypeChecker::CheckNamedCall(const Expression& expression, cons
 
 TypeChecker::Type TypeChecker::CheckMethodCall(const Expression& expression, const Type* expected) {
   if (const auto* owner = StaticOwner(*expression.callee)) {
-    return CheckStaticCall(expression, *owner);
+    return CheckStaticCall(expression, *owner, expected);
   }
   const auto& receiver = *expression.callee->object;
   if (receiver.kind == Expression::Kind::Name && receiver.text == "super") {
-    return CheckSuperMethodCall(expression);
+    return CheckSuperMethodCall(expression, expected);
   }
   Type context;
   if (receiver.kind == Expression::Kind::ArrayLiteral && receiver.elements.empty() &&
       expression.callee->text == "join") {
     context = ArrayType({.kind = Type::Kind::String, .name = kStringTypeName});
   }
-  const Type object = CheckExpression(receiver, IsValid(context) ? &context : nullptr);
+  auto object = CheckExpression(receiver, IsValid(context) ? &context : nullptr);
+  if (object.kind == Type::Kind::Parameter) {
+    object = ParameterCapability(object, receiver.location);
+  }
   if (object.kind == Type::Kind::Dynamic) {
+    if (!expression.callee->type_arguments.empty()) {
+      AddDiagnostic(expression.callee->location,
+                    "generic methods require a statically known class or interface receiver");
+      return InvalidType();
+    }
     expression_types_.insert_or_assign(expression.callee.get(), object);
     InvalidateCapturedRefinements();
     return CheckDynamicCall(expression);
@@ -554,14 +597,24 @@ TypeChecker::Type TypeChecker::CheckMethodCall(const Expression& expression, con
   const Type receiver_type = object.nullable ? NonNullable(object) : object;
   Type result = CheckMethodReceiver(expression, receiver_type, expected);
   if (expression.callee->null_safe && IsValid(result) && result.kind != Type::Kind::Void) {
-    result = NullableType(std::move(result));
+    result = NullableType(result);
   }
   return result;
 }
 
-TypeChecker::Type TypeChecker::CheckSuperMethodCall(const Expression& expression) {
+TypeChecker::Type TypeChecker::CheckSuperMethodCall(const Expression& expression,
+                                                    const Type* expected) {
   const auto* base = CheckSuperClass(expression.location);
   if (base == nullptr) {
+    return InvalidType();
+  }
+  if (const auto method = base->method_templates.find(expression.callee->text);
+      method != base->method_templates.end()) {
+    return CheckGenericMethod(method->second, *expression.callee, &expression, expected,
+                              MethodAccess::Super);
+  }
+  if (!expression.callee->type_arguments.empty()) {
+    AddDiagnostic(expression.callee->location, "type arguments require a generic method");
     return InvalidType();
   }
   const auto method = base->methods.find(expression.callee->text);
@@ -570,7 +623,7 @@ TypeChecker::Type TypeChecker::CheckSuperMethodCall(const Expression& expression
     return InvalidType();
   }
   super_members_.insert_or_assign(expression.callee.get(), MemberReference{
-                                                               .owner = *owner_->base_class,
+                                                               .owner = method->second.member_owner,
                                                                .member = expression.callee->text,
                                                            });
   return CheckFunctionCall(method->second, expression);
@@ -594,6 +647,15 @@ TypeChecker::Type TypeChecker::CheckMethodReceiver(const Expression& expression,
   }
   if (receiver.kind == Type::Kind::Interface) {
     const auto& owner = interfaces_.at(receiver.name);
+    if (const auto method = owner.method_templates.find(expression.callee->text);
+        method != owner.method_templates.end()) {
+      return CheckGenericMethod(method->second, *expression.callee, &expression, expected,
+                                MethodAccess::Instance);
+    }
+    if (!expression.callee->type_arguments.empty()) {
+      AddDiagnostic(expression.callee->location, "type arguments require a generic method");
+      return InvalidType();
+    }
     const auto method = owner.methods.find(expression.callee->text);
     if (method == owner.methods.end()) {
       AddDiagnostic(expression.location, "expression is not callable");
@@ -605,31 +667,53 @@ TypeChecker::Type TypeChecker::CheckMethodReceiver(const Expression& expression,
     return CheckFunctionCall(method->second, expression);
   }
   if (receiver.kind == Type::Kind::Class) {
-    return CheckInstanceCall(expression, receiver);
+    return CheckInstanceCall(expression, receiver, expected);
   }
   AddDiagnostic(expression.location, "expression is not callable");
   return InvalidType();
 }
 
 TypeChecker::Type TypeChecker::CheckStaticCall(const Expression& expression,
-                                               const ClassInfo& owner) {
+                                               const ClassInfo& owner,
+                                               const Type* expected) {
+  if (const auto method = owner.method_templates.find(expression.callee->text);
+      method != owner.method_templates.end()) {
+    return CheckGenericMethod(method->second, *expression.callee, &expression, expected,
+                              MethodAccess::Static);
+  }
+  if (!expression.callee->type_arguments.empty()) {
+    AddDiagnostic(expression.callee->location, "type arguments require a generic method");
+    return InvalidType();
+  }
   const auto method = owner.methods.find(expression.callee->text);
   if (method != owner.methods.end() && method->second.storage == MemberStorage::Static) {
-    CheckAccess(method->second.visibility, owner.type.name, expression.location);
+    CheckAccess(method->second.visibility, method->second.member_owner, expression.location);
     static_members_.insert_or_assign(
         &expression,
-        MemberReference{.owner = std::string(owner.type.name), .member = expression.callee->text});
+        MemberReference{.owner = method->second.member_owner, .member = expression.callee->text});
     return CheckFunctionCall(method->second, expression);
   }
   return CheckIndirectCall(expression, CheckExpression(*expression.callee, nullptr));
 }
 
-TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression, const Type& object) {
+TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression,
+                                                 const Type& object,
+                                                 const Type* expected) {
   const auto class_info = classes_.find(object.name);
   if (class_info != classes_.end()) {
+    const auto& owner = class_info->second;
+    if (const auto method = owner.method_templates.find(expression.callee->text);
+        method != owner.method_templates.end()) {
+      return CheckGenericMethod(method->second, *expression.callee, &expression, expected,
+                                MethodAccess::Instance);
+    }
+    if (!expression.callee->type_arguments.empty()) {
+      AddDiagnostic(expression.callee->location, "type arguments require a generic method");
+      return InvalidType();
+    }
     const auto method = class_info->second.methods.find(expression.callee->text);
     if (method != class_info->second.methods.end()) {
-      CheckAccess(method->second.visibility, object.name, expression.location);
+      CheckAccess(method->second.visibility, method->second.member_owner, expression.location);
       if (method->second.storage == MemberStorage::Static) {
         AddDiagnostic(expression.location, "static method must be accessed through its class");
       }
@@ -639,6 +723,9 @@ TypeChecker::Type TypeChecker::CheckInstanceCall(const Expression& expression, c
         InvalidateCapturedRefinements();
         return CheckIndirectCall(expression, type);
       }
+      instance_members_.insert_or_assign(
+          &expression,
+          MemberReference{.owner = method->second.member_owner, .member = expression.callee->text});
       return CheckFunctionCall(method->second, expression);
     }
     const auto field = class_info->second.fields.find(expression.callee->text);
@@ -909,6 +996,9 @@ TypeChecker::Type TypeChecker::CheckIntegerLiteral(const Expression& expression)
 
 TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
   Type object = CheckExpression(*expression.object, nullptr);
+  if (object.kind == Type::Kind::Parameter) {
+    object = ParameterCapability(object, expression.object->location);
+  }
   const Type index = CheckExpression(*expression.index, nullptr);
   const Type integer{.kind = Type::Kind::Int, .name = kIntTypeName};
   RecordConversion(*expression.index, integer, index);
@@ -943,14 +1033,14 @@ TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
   }
   if (object.kind == Type::Kind::ByteArray) {
     Type result{.kind = Type::Kind::Int, .name = kIntTypeName};
-    return expression.null_safe ? NullableType(std::move(result)) : result;
+    return expression.null_safe ? NullableType(result) : result;
   }
   if (object.kind != Type::Kind::Array) {
     return InvalidType();
   }
   auto result = array_elements_.at(object.name);
   if (expression.null_safe) {
-    result = NullableType(std::move(result));
+    result = NullableType(result);
   }
   return result;
 }
@@ -995,6 +1085,9 @@ TypeChecker::Type TypeChecker::CheckArrayLiteral(const Expression& expression,
 
 TypeChecker::Type TypeChecker::CheckUnary(const Expression& expression) {
   Type operand = CheckExpression(*expression.operand, nullptr);
+  if (operand.kind == Type::Kind::Parameter) {
+    operand = ParameterCapability(operand, expression.operand->location);
+  }
   if ((expression.text == "++" || expression.text == "--") &&
       builtin_calls_.contains(expression.operand.get())) {
     AddDiagnostic(expression.operand->location,
@@ -1177,6 +1270,9 @@ TypeChecker::Type TypeChecker::CheckEquality(const Expression& expression,
   if (null_comparison) {
     return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
   }
+  if (left.kind == Type::Kind::Parameter || right.kind == Type::Kind::Parameter) {
+    return CheckBoundBinaryTypes(expression, left, right);
+  }
   if (left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) {
     const Type dynamic{.kind = Type::Kind::Dynamic, .name = kDynamicTypeName};
     RecordConversion(*expression.left, dynamic, left);
@@ -1208,6 +1304,9 @@ TypeChecker::Type TypeChecker::CheckBinaryTypes(const Expression& expression,
   if (expression.text == "??") {
     return CheckCoalesceTypes(expression, left, right);
   }
+  if (left.kind == Type::Kind::Parameter || right.kind == Type::Kind::Parameter) {
+    return CheckBoundBinaryTypes(expression, left, right);
+  }
   if ((left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) &&
       left.kind != Type::Kind::Void && right.kind != Type::Kind::Void) {
     const Type dynamic{.kind = Type::Kind::Dynamic, .name = kDynamicTypeName};
@@ -1235,6 +1334,17 @@ TypeChecker::Type TypeChecker::CheckBinaryTypes(const Expression& expression,
     return InvalidType();
   }
   return left;
+}
+
+TypeChecker::Type TypeChecker::CheckBoundBinaryTypes(const Expression& expression,
+                                                     const Type& left,
+                                                     const Type& right) {
+  const auto left_capability = ParameterCapability(left, expression.left->location);
+  const auto right_capability = ParameterCapability(right, expression.right->location);
+  if (!IsValid(left_capability) || !IsValid(right_capability)) {
+    return InvalidType();
+  }
+  return CheckBinaryTypes(expression, left_capability, right_capability);
 }
 
 TypeChecker::Type TypeChecker::CheckLogicalTypes(const Expression& expression,

@@ -13,12 +13,14 @@ struct CheckpointPublication final : runtime::NativeDebugger {
   void AtSafepoint(const runtime::NativeDebugContext& context) noexcept override;
   // 行断点或故障注入场景确认安全点后，直接消费候选，不改变其检查/注入时序。
   void PublishPending();
-
-  std::optional<DevelopmentCandidate> pending;
-  DevelopmentResult result;
+  void Stage(DevelopmentCandidate candidate);
+  [[nodiscard]] bool HasPending() const { return pending_.has_value(); }
+  [[nodiscard]] const DevelopmentResult& result() const { return result_; }
 
  private:
   DevelopmentSession& session_;
+  std::optional<DevelopmentCandidate> pending_;
+  DevelopmentResult result_;
 };
 
 }  // namespace vela::compiler::test

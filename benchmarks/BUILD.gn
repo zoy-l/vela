@@ -110,6 +110,7 @@ executable("vela_aot_benchmarks") {
     "dasprofile/workloads.cc",
     "dasprofile/workloads.h",
     "escape_benchmark.cc",
+    "generics_benchmark.cc",
     "heap_metrics.cc",
     "heap_metrics.h",
     "jit_benchmark.cc",

@@ -46,7 +46,7 @@ class JitCodeCacheTest : public test::DirectoryTest {
       return std::unexpected(prepared.error().diagnostics);
     }
     auto cached = options;
-    cached.code_cache = directory_;
+    cached.code_cache = directory();
     return compiler.Compile(prepared->snapshot().program, cached);
   }
   void SetDependency(std::string source) { dependency_ = std::move(source); }

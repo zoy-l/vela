@@ -95,7 +95,8 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   comparisons.
 - Preserve externally fixed native ABI and LLVM override signatures. `vl lint` excludes
   `bugprone-easily-swappable-parameters` in `runtime/native_operations.cc` and
-  `compiler/jit/platform_support_win.cc`: generated C entries and ORC resource-transfer callbacks
+  `compiler/jit/platform_support_win.cc` and `compiler/jit/code_resources.cc`: generated C entries
+  and ORC resource-transfer callbacks
   retain their specified positional scalar arguments. Keep their parameter roles explicit; use
   strong types for new internal interfaces instead of extending this exception.
 - Centralize protocol keys shared between modules as `inline constexpr std::string_view` constants.

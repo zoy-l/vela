@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <initializer_list>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -81,6 +82,26 @@ std::uint32_t FunctionFlags(const ir::Function& function, std::uint8_t exported)
     flags |= runtime::kNativeEnumResult;
   }
   return flags;
+}
+
+std::optional<DeclarationId> BindingTarget(const ir::Program& program,
+                                           const ir::Instruction& instruction) {
+  if (instruction.opcode == Opcode::CallInterface) {
+    return program.selector_declarations.at(instruction.index);
+  }
+  std::optional<FunctionIdentity> function;
+  if (instruction.opcode == Opcode::Call) {
+    function = program.functions.at(instruction.index).identity;
+  } else if (instruction.opcode == Opcode::NewInstance) {
+    const auto& callable = program.classes.at(instruction.index).callable;
+    if (callable) {
+      if (callable->mode == CallableMode::InterfaceMethod) {
+        return program.selector_declarations.at(callable->function);
+      }
+      function = program.functions.at(callable->function).identity;
+    }
+  }
+  return function && function->local == 0 ? std::optional(function->declaration) : std::nullopt;
 }
 
 class ImageEmitter final {
@@ -274,7 +295,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
                                    });
   declaration_ = RecordType<NativeDeclarationDescription>(
       "vela.declaration",
-      std::to_array<llvm::Type*>({wide_, wide_, word_, text_, table_, table_, wide_}),
+      std::to_array<llvm::Type*>({wide_, wide_, word_, text_, table_, table_, text_, wide_}),
       std::array{
           offsetof(NativeDeclarationDescription, identity),
           offsetof(NativeDeclarationDescription, owner),
@@ -282,6 +303,7 @@ ImageEmitter::ImageEmitter(llvm::Module& module)
           offsetof(NativeDeclarationDescription, name),
           offsetof(NativeDeclarationDescription, type_parameters),
           offsetof(NativeDeclarationDescription, enum_members),
+          offsetof(NativeDeclarationDescription, generic_signature),
           offsetof(NativeDeclarationDescription, definition),
       });
   function_ = RecordType<NativeFunctionDescription>(
@@ -429,6 +451,7 @@ llvm::Constant* ImageEmitter::Declarations(std::span<const ir::Declaration> decl
                                                  Text(declaration.name),
                                                  Texts(declaration.type_parameters),
                                                  Texts(declaration.enum_members),
+                                                 Text(declaration.generic_signature),
                                                  Wide(declaration.definition.value),
                                              }));
   }
@@ -671,26 +694,15 @@ llvm::Constant* ImageEmitter::Dependencies(const ir::Program& program,
           program.functions.at(callable->function).identity.local != 0) {
         versions.push_back(callable->function);
         version_positions.push_back(position);
-      } else if (callable && callable->mode != CallableMode::InterfaceMethod) {
-        const auto target = program.functions.at(callable->function).identity.declaration;
-        bindings.push_back(
-            Record(binding_, {
-                                 Wide(target.value),
-                                 Wide(instruction.binding_receiver.value_or(DeclarationId{}).value),
-                             }));
-        binding_positions.push_back(position);
       }
     }
-    if (instruction.opcode == Opcode::Call) {
-      const auto identity = program.functions.at(instruction.index).identity;
-      if (identity.local == 0) {
-        bindings.push_back(
-            Record(binding_, {
-                                 Wide(identity.declaration.value),
-                                 Wide(instruction.binding_receiver.value_or(DeclarationId{}).value),
-                             }));
-        binding_positions.push_back(position);
-      }
+    if (const auto target = BindingTarget(program, instruction)) {
+      bindings.push_back(
+          Record(binding_, {
+                               Wide(target->value),
+                               Wide(instruction.binding_receiver.value_or(DeclarationId{}).value),
+                           }));
+      binding_positions.push_back(position);
     }
     if (instruction.construction && instruction.construction->generated) {
       const auto& construction = *instruction.construction;

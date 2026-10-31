@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <ranges>
 #include <string>
 #include <utility>
 #include <vector>
@@ -48,14 +49,17 @@ class ModuleBinding final {
   void BindImports();
   void AddImport(const Program::Import& imported, std::uint32_t dependency, ModuleScope& scope);
   void BindProgram(Program& program);
-  void BindClass(Class& declaration);
-  void BindFunction(Function& function);
+  void BindClass(Class& declaration, const std::string& owner);
+  void BindInterface(Interface& declaration, const std::string& owner);
+  void BindFunction(Function& function, const std::string& owner);
+  // 先登记整个参数列表再绑定上界，允许上界引用列表中后出现的参数。
+  void BeginTypeParameters(std::vector<TypeParameter>& parameters, const std::string& owner);
   void BindType(TypeName& type);
   void BindExpression(Expression* expression);
   void BindStatement(Statement* statement);
   void BindScoped(Statement* statement);
   [[nodiscard]] bool IsLocal(const std::string& name) const;
-  [[nodiscard]] bool IsTypeParameter(const std::string& name) const;
+  [[nodiscard]] const TypeParameter* FindTypeParameter(const std::string& name) const;
   std::string Resolve(const std::string& name, SourceLocation location);
   std::string ExportedName(std::uint32_t dependency,
                            const std::string& name,
@@ -67,7 +71,8 @@ class ModuleBinding final {
   Diagnostics diagnostics_;
   std::uint32_t current_ = 0;
   std::vector<absl::flat_hash_set<std::string>> locals_;
-  std::vector<absl::flat_hash_set<std::string>> type_parameters_;
+  // 参数节点由正在绑定的声明拥有；作用域只在绑定该声明期间借用。
+  std::vector<absl::flat_hash_map<std::string, const TypeParameter*>> type_parameters_;
 };
 
 void ModuleBinding::Error(SourceLocation location, std::string message) {
@@ -99,17 +104,15 @@ void ModuleBinding::Declare(const Declaration& declaration,
           "duplicate " + std::string(category) + " '" + declaration.name + "'");
   }
   scope.names.try_emplace(declaration.name, target);
-  std::vector<std::string> parameters;
-  if constexpr (requires { declaration.type_parameters; }) {
-    parameters = declaration.type_parameters;
-  }
+  // 类型参数的身份与上界在绑定声明后写入，来源只记录已解析的形式。
   module.program.origins.emplace(target, DeclarationOrigin{
                                              .module_uri = sources_.at(index).path,
                                              .name = declaration.name,
                                              .kind = kind,
                                              .arguments = {},
-                                             .type_parameters = std::move(parameters),
+                                             .type_parameters = {},
                                              .members = {},
+                                             .generic_signature = {},
                                          });
 }
 
@@ -174,9 +177,30 @@ bool ModuleBinding::IsLocal(const std::string& name) const {
                              [&name](const auto& scope) -> bool { return scope.contains(name); });
 }
 
-bool ModuleBinding::IsTypeParameter(const std::string& name) const {
-  return std::ranges::any_of(type_parameters_,
-                             [&name](const auto& scope) -> bool { return scope.contains(name); });
+const TypeParameter* ModuleBinding::FindTypeParameter(const std::string& name) const {
+  for (const auto& scope : std::views::reverse(type_parameters_)) {
+    if (const auto found = scope.find(name); found != scope.end()) {
+      return found->second;
+    }
+  }
+  return nullptr;
+}
+
+void ModuleBinding::BeginTypeParameters(std::vector<TypeParameter>& parameters,
+                                        const std::string& owner) {
+  auto& scope = type_parameters_.emplace_back();
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
+    auto& parameter = parameters.at(index);
+    parameter.identity = {.owner = owner, .index = static_cast<std::uint32_t>(index)};
+    if (!scope.try_emplace(parameter.name, &parameter).second) {
+      Error(parameter.location, "duplicate generic parameter '" + parameter.name + "'");
+    }
+  }
+  for (auto& parameter : parameters) {
+    if (parameter.bound) {
+      BindType(*parameter.bound);
+    }
+  }
 }
 
 std::string ModuleBinding::ExportedName(std::uint32_t dependency,
@@ -219,10 +243,27 @@ void ModuleBinding::BindType(TypeName& type) {
   for (auto& argument : type.arguments) {
     BindType(argument);
   }
-  if ((type.kind == TypeName::Kind::Named || type.kind == TypeName::Kind::Generic) &&
-      !IsTypeParameter(type.name.substr(0, type.name.find('.')))) {
-    type.name = Resolve(type.name, type.location);
+  if (type.kind != TypeName::Kind::Named && type.kind != TypeName::Kind::Generic) {
+    return;
   }
+  if (const auto* parameter = FindTypeParameter(type.name)) {
+    if (type.kind == TypeName::Kind::Generic) {
+      Error(type.location, "generic parameter '" + type.name + "' does not accept type arguments");
+      return;
+    }
+    type.kind = TypeName::Kind::Parameter;
+    type.parameter = parameter->identity;
+    return;
+  }
+  // 类型参数在其作用域内遮蔽同名导入前缀；参数没有可限定访问的成员类型。
+  if (const auto separator = type.name.find('.');
+      separator != std::string::npos &&
+      (FindTypeParameter(type.name.substr(0, separator)) != nullptr)) {
+    Error(type.location, "generic parameter '" + type.name.substr(0, separator) +
+                             "' does not declare member types");
+    return;
+  }
+  type.name = Resolve(type.name, type.location);
 }
 
 void ModuleBinding::BindExpression(Expression* expression) {
@@ -241,6 +282,11 @@ void ModuleBinding::BindExpression(Expression* expression) {
   } else if (expression->kind == Expression::Kind::Name && !IsLocal(expression->text)) {
     if (scopes_.at(current_).prefixes.contains(expression->text)) {
       Error(expression->location, "an import prefix must be followed by an exported member");
+    } else if (FindTypeParameter(expression->text) != nullptr) {
+      // 上界只提供静态能力，不提供构造或静态成员；需要实例时显式传入工厂函数。
+      Error(expression->location, "generic parameter '" + expression->text +
+                                      "' is not a value; pass a function such as () => " +
+                                      expression->text);
     } else {
       expression->text = Resolve(expression->text, expression->location);
     }
@@ -268,7 +314,7 @@ void ModuleBinding::BindExpression(Expression* expression) {
     locals_.pop_back();
   }
   if (expression->function) {
-    BindFunction(*expression->function);
+    BindFunction(*expression->function, {});
   }
 }
 
@@ -325,8 +371,8 @@ void ModuleBinding::BindStatement(Statement* statement) {
   }
 }
 
-void ModuleBinding::BindFunction(Function& function) {
-  type_parameters_.emplace_back(function.type_parameters.begin(), function.type_parameters.end());
+void ModuleBinding::BindFunction(Function& function, const std::string& owner) {
+  BeginTypeParameters(function.type_parameters, owner);
   locals_.emplace_back();
   BindType(function.return_type);
   for (auto& parameter : function.parameters) {
@@ -338,9 +384,8 @@ void ModuleBinding::BindFunction(Function& function) {
   type_parameters_.pop_back();
 }
 
-void ModuleBinding::BindClass(Class& declaration) {
-  type_parameters_.emplace_back(declaration.type_parameters.begin(),
-                                declaration.type_parameters.end());
+void ModuleBinding::BindClass(Class& declaration, const std::string& owner) {
+  BeginTypeParameters(declaration.type_parameters, owner);
   if (declaration.base_class) {
     BindType(*declaration.base_class);
   }
@@ -352,37 +397,49 @@ void ModuleBinding::BindClass(Class& declaration) {
     BindExpression(field.initializer.get());
   }
   for (auto& method : declaration.methods) {
-    BindFunction(method);
+    BindFunction(method, owner + '.' + method.name);
   }
   if (declaration.constructor) {
-    BindFunction(*declaration.constructor);
+    BindFunction(*declaration.constructor, {});
+  }
+  type_parameters_.pop_back();
+}
+
+void ModuleBinding::BindInterface(Interface& declaration, const std::string& owner) {
+  BeginTypeParameters(declaration.type_parameters, owner);
+  for (auto& method : declaration.methods) {
+    BindFunction(method, owner + '.' + method.name);
   }
   type_parameters_.pop_back();
 }
 
 void ModuleBinding::BindProgram(Program& program) {
+  const auto target = [&](const auto& declaration) -> std::string {
+    return scopes_.at(current_).declarations.at(declaration.name).target;
+  };
   const auto rename = [&](auto& declaration) -> void {
-    declaration.name = scopes_.at(current_).declarations.at(declaration.name).target;
+    declaration.name = target(declaration);
+    if constexpr (requires { declaration.type_parameters; }) {
+      program.origins.at(declaration.name).type_parameters = declaration.type_parameters;
+    }
   };
   for (auto& function : program.functions) {
-    BindFunction(function);
+    BindFunction(function, target(function));
     rename(function);
   }
   for (auto& declaration : program.classes) {
-    BindClass(declaration);
+    BindClass(declaration, target(declaration));
     rename(declaration);
   }
   for (auto& declaration : program.enums) {
     rename(declaration);
   }
   for (auto& declaration : program.interfaces) {
-    for (auto& method : declaration.methods) {
-      BindFunction(method);
-    }
+    BindInterface(declaration, target(declaration));
     rename(declaration);
   }
   for (auto& alias : program.aliases) {
-    type_parameters_.emplace_back(alias.type_parameters.begin(), alias.type_parameters.end());
+    BeginTypeParameters(alias.type_parameters, target(alias));
     BindType(alias.target);
     type_parameters_.pop_back();
     rename(alias);

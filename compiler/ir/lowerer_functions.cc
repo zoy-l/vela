@@ -59,6 +59,7 @@ Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Express
   const auto static_member = model_.static_members.find(&expression);
   const auto builtin = model_.builtin_method_values.find(&expression);
   const auto super = model_.super_members.find(&expression);
+  const auto instance = model_.instance_members.find(&expression);
   const bool method = expression.kind == frontend::Expression::Kind::Member &&
                       static_member == model_.static_members.end();
   FunctionValuePlan plan;
@@ -73,20 +74,15 @@ Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Express
     if (super != model_.super_members.end()) {
       const auto* self = FindLocal("this");
       receiver = ReadLocal(*self, expression.location);
-      target = function_ids_.at(FindMethodOwner(super->second.owner, expression.text) + "." +
-                                expression.text);
+      target = function_ids_.at(super->second.owner + "." + super->second.member);
     } else {
       receiver = LowerExpression(*expression.object);
-      const auto name = receiver->type.nullable
-                            ? receiver->type.name.substr(0, receiver->type.name.size() - 1)
-                            : receiver->type.name;
       if (builtin != model_.builtin_method_values.end()) {
         target = function_ids_.at(model_.generated_functions.at(builtin->second).declaration->name);
       } else if (interface != model_.interface_members.end()) {
         target = interface_method_ids_.at(interface->second.owner + "." + interface->second.member);
       } else {
-        target = function_ids_.at(FindMethodOwner(std::string(name), expression.text) + "." +
-                                  expression.text);
+        target = function_ids_.at(instance->second.owner + "." + instance->second.member);
       }
     }
     captures.push_back({

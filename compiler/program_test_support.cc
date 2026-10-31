@@ -1,13 +1,23 @@
 #include "compiler/program_test_support.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
+#include <cstdint>
+#include <expected>
+#include <span>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "compiler/compiler.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/source_loader.h"
+#include "runtime/future.h"
+#include "runtime/isolate.h"
 #include "vm/bytecode_image.h"
+#include "vm/program.h"
 #include "vm/vm.h"
 
 namespace vela::compiler::test {
@@ -120,12 +130,13 @@ std::expected<std::int64_t, std::string> ExecuteFutureInteger(const vm::Program&
 std::expected<std::array<std::int64_t, 2>, std::string> ExecuteProgramCopy(
     const vm::Program& program,
     runtime::Isolate& isolate) {
-  const auto copy = program;
+  auto copy = program;
   vm::VirtualMachine machine(isolate);
   const auto first = InvokeInteger(machine, copy);
   if (!first) {
     return std::unexpected(first.error());
   }
+  copy = {};
   isolate.heap().Collect();
   const auto second = InvokeInteger(machine, program);
   if (!second) {

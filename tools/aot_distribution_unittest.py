@@ -28,7 +28,7 @@ class NativeDistributionTest(unittest.TestCase):
 
     def test_existing_language_corpus_matches_vm(self) -> None:
         categories = [
-            "class", "interface", "generic", "global", "exception", "dynamic_array",
+            "class", "interface", "generic", "generic_method", "test_sources", "global", "exception", "dynamic_array",
             "double", "numeric_conversion", "byte_data", "collection", "function_value",
             "builtin_function_value", "string", "regexp", "json", "standard_library", "async_contract",
             "language_basics", "control_flow", "match", "cast", "optimization", "recursion",
@@ -48,7 +48,8 @@ class NativeDistributionTest(unittest.TestCase):
             compiler = package / "bin" / executable_name("vela")
             compared = 0
             for category in categories:
-                contents = (ROOT / "compiler" / (category + "_unittest.cc")).read_text(encoding="utf-8")
+                filename = "test_sources.h" if category == "test_sources" else category + "_unittest.cc"
+                contents = (ROOT / "compiler" / filename).read_text(encoding="utf-8")
                 cases = re.finditer(r'R"(\w*)\((.*?)\)\1"', contents, re.DOTALL)
                 count = 0
                 for index, match in enumerate(cases):

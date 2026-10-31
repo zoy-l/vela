@@ -1,5 +1,6 @@
 #include "compiler/frontend/type_checker.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <optional>
@@ -12,12 +13,14 @@
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
+#include "compiler/frontend/type_inference.h"
+#include "compiler/frontend/type_name.h"
 #include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 
 TypeChecker::Type TypeChecker::NullableType(Type type) {
-  type = MakeNullableType(std::move(type));
+  type = MakeNullableType(type);
   types_.try_emplace(type.name, type);
   return type;
 }
@@ -60,10 +63,15 @@ TypeChecker::Type TypeChecker::ResolveGenericType(const TypeName& source) {
     if (kind == Type::Kind::Set || kind == Type::Kind::Map) {
       static_cast<void>(ArrayType(argument));
     }
-    arguments.push_back(std::move(argument));
+    arguments.push_back(argument);
   }
   name += '>';
-  Type type{.kind = kind, .name = InternTypeName(name)};
+  Type type{
+      .kind = kind,
+      .name = InternTypeName(name),
+      .is_abstract =
+          std::ranges::any_of(arguments, [](const auto& argument) { return argument.is_abstract; }),
+  };
   types_.try_emplace(name, type);
   generic_arguments_.try_emplace(name, std::move(arguments));
   return type;
@@ -75,7 +83,7 @@ TypeChecker::Type TypeChecker::CheckCollectionConstruction(const Expression& exp
   const bool set =
       callee.text == kSetTypeName ||
       (callee.text != kMapTypeName && expected != nullptr && expected->kind == Type::Kind::Set);
-  const std::array<std::string, 2> parameters{"$Key", "$Value"};
+  const std::array parameters{IntrinsicTypeParameter("$Key"), IntrinsicTypeParameter("$Value")};
   const auto type = InferConstruction(expression, expected, set ? kSetTypeName : kMapTypeName,
                                       std::span(parameters).first(set ? 1 : 2));
   collection_constructions_.insert(&expression);

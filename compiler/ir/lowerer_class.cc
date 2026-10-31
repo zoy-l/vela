@@ -129,7 +129,8 @@ ClassId Lowerer::RegisterEnumType(const frontend::TypeDescriptor& type) {
   }
   layout.field_order = {"$value"};
   layout.field_types = {
-      {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName}};
+      {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName},
+  };
   program_.classes.push_back(std::move(layout));
   class_ids_.emplace(name, index);
   return index;
@@ -162,11 +163,11 @@ Lowerer::LoweredValue Lowerer::LowerTypeOperation(const frontend::Expression& ex
   const auto& target = model_.type_operands.at(&expression);
   auto value = LowerExpression(*expression.operand);
   if (expression.kind == frontend::Expression::Kind::TypeCast) {
-    return LowerConversion(std::move(value), target, expression.location);
+    return LowerConversion(value, target, expression.location);
   }
   if (value.type.kind == frontend::TypeDescriptor::Kind::Enum) {
     value = LowerConversion(
-        std::move(value),
+        value,
         {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = frontend::kDynamicTypeName},
         expression.location);
   }

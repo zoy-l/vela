@@ -173,6 +173,59 @@ TEST_P(JitCallableTest, FixedStandardDeclarationsRemainAvailableToRetainedOldCod
   EXPECT_EQ(current_result->AsInteger(), 44);
 }
 
+TEST_P(JitCallableTest, GenericMethodClosuresRetainConcreteVersionsAfterCallsDisappear) {
+  const auto declarations = [](int increment) {
+    return "interface Mapper<T> { read<U extends int>(value: U): int; } "
+           "class Owner<T> implements Mapper<T> { offset: int; "
+           "read<U extends int>(value: U): int { return this.offset + value + " +
+           std::to_string(increment) +
+           "; } } "
+           "export func call(callback: (int) => int): int { return callback(20); } ";
+  };
+  const auto initial = Publish(declarations(0) + R"(
+export func boundFactory(): (int) => int { return Owner<string>(offset: 20).read<int>; }
+export func interfaceFactory(): (int) => int {
+  const owner: Mapper<string> = Owner<string>(offset: 20);
+  return owner.read<int>;
+}
+)");
+  ASSERT_TRUE(initial) << initial.error();
+  auto& dispatch = isolate_.native_dispatch();
+  const auto call = dispatch.FindEntry("main.vela", "call");
+  ASSERT_TRUE(call);
+  const std::array names{"boundFactory", "interfaceFactory"};
+  std::vector<runtime::NativeVersionEntry> factories;
+  std::vector<runtime::RootedValue> callbacks;
+  for (const auto* name : names) {
+    const auto factory = dispatch.FindEntry("main.vela", name);
+    ASSERT_TRUE(factory);
+    const auto captured = factory->Capture();
+    const auto callback = factory->Invoke({});
+    ASSERT_TRUE(captured);
+    ASSERT_TRUE(callback);
+    factories.push_back(*captured);
+    callbacks.emplace_back(isolate_, *callback);
+  }
+  const auto retained = dispatch.RetainedDeclarations();
+  const auto updated = test::UpdateSource(*compiler_, source_, isolate_, declarations(2) + R"(
+export func boundFactory(): (int) => int { return (value: int): int => 0; }
+export func interfaceFactory(): (int) => int { return (value: int): int => 0; }
+)",
+                                          GetParam(), retained);
+  ASSERT_TRUE(updated) << updated.error();
+  isolate_.heap().Collect();
+  for (std::size_t index = 0; index < factories.size(); ++index) {
+    SCOPED_TRACE(names.at(index));
+    const std::array previous_argument{callbacks.at(index).value()};
+    ASSERT_TRUE(test::ReturnsInteger(*call, 40, previous_argument));
+    const auto created = factories.at(index).Invoke({});
+    ASSERT_TRUE(created);
+    const runtime::RootedValue callback(isolate_, *created);
+    const std::array current_argument{callback.value()};
+    ASSERT_TRUE(test::ReturnsInteger(*call, 42, current_argument));
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(Tiers,
                          JitCallableTest,
                          testing::Values(NativeCodeTier::Baseline, NativeCodeTier::Optimized));

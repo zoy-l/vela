@@ -4,12 +4,54 @@ func identity<T>(value: T): T {
   return value;
 }
 
-class Box<T> {
+interface Reader<T> {
+  read(): T;
+}
+
+class Box<T> implements Reader<T> {
   value: T;
 
   get(): T {
     return this.value;
   }
+
+  read(): T {
+    return this.value;
+  }
+
+  transform<U>(operation: (T) => U): U {
+    return operation(this.value);
+  }
+}
+
+func read<T extends Reader<E>, E>(source: T): E {
+  return source.read();
+}
+
+interface Mapper {
+  map<T extends Reader<E>, E>(source: T): E;
+}
+
+class Projection implements Mapper {
+  map<T extends Reader<E>, E>(source: T): E {
+    return source.read();
+  }
+}
+
+interface Comparable<T> {
+  compareTo(other: T): int;
+}
+
+class Score implements Comparable<Score> {
+  value: int;
+
+  compareTo(other: Score): int {
+    return this.value - other.value;
+  }
+}
+
+func compare<T extends Comparable<T>>(left: T, right: T): int {
+  return left.compareTo(right);
 }
 
 func main(): void {
@@ -17,4 +59,10 @@ func main(): void {
   const value = Box(value: operation(42));
   print(value.get());
   print(identity<double>(1.5));
+  print(read(value));
+  print(value.transform(number => number.toString()));
+  const mapper: Mapper = Projection();
+  const project: (Box<int>) => int = mapper.map;
+  print(project(value));
+  print(compare(Score(value: 42), Score(value: 40)));
 }

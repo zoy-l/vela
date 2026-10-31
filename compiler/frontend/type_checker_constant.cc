@@ -33,12 +33,14 @@ namespace {
 std::optional<ConstantValue> IntegerConstant(std::string_view operation,
                                              std::int64_t left,
                                              std::int64_t right) {
-  constexpr std::array<std::pair<std::string_view, Opcode>, 4> kArithmetic = {{
-      {"+", Opcode::AddInt},
-      {"-", Opcode::SubInt},
-      {"*", Opcode::MulInt},
-      {"/", Opcode::DivInt},
-  }};
+  constexpr std::array<std::pair<std::string_view, Opcode>, 4> kArithmetic = {
+      {
+          {"+", Opcode::AddInt},
+          {"-", Opcode::SubInt},
+          {"*", Opcode::MulInt},
+          {"/", Opcode::DivInt},
+      },
+  };
   for (const auto& [symbol, opcode] : kArithmetic) {
     if (operation == symbol) {
       const auto result = EvaluateIntegerArithmetic(opcode, left, right);

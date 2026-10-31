@@ -1,4 +1,7 @@
 #include "benchmarks/source.h"
+#include <optional>
+#include <string>
+#include <string_view>
 
 #include "benchmark/benchmark.h"
 
@@ -6,6 +9,7 @@
 #include "base/path.h"
 #include "compiler/compiler.h"
 #include "compiler/frontend/diagnostic.h"
+#include "vm/program.h"
 
 namespace vela::benchmarks {
 
@@ -28,7 +32,7 @@ std::optional<vm::FunctionHandle> CompileBenchmarkEntry(benchmark::State& state,
     state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
     return std::nullopt;
   }
-  const auto entry = compiled.program.FindFunction("main");
+  auto entry = compiled.program.FindFunction("main");
   if (!entry.IsValid() || entry.parameter_count() != 0) {
     state.SkipWithError("Benchmark requires a zero-argument main function");
     return std::nullopt;

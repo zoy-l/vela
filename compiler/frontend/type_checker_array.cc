@@ -12,6 +12,7 @@
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
+#include "compiler/frontend/type_inference.h"
 #include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
@@ -53,6 +54,11 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
     static_cast<void>(ArrayType({.kind = Type::Kind::Int, .name = kIntTypeName}));
   }
   auto method = ArrayAlgorithmSignature(algorithm, element, element);
+  const auto& callback_parameter = method.parameters.front();
+  if (expression.arguments.empty() &&
+      !method.optional_parameters.contains(callback_parameter.name)) {
+    return CheckFunctionCall(method, expression);
+  }
   auto callback = ArrayCallbackSignature(algorithm, element, element);
   static_cast<void>(ArrayType(element));
   InferenceSignature source;
@@ -61,9 +67,10 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
   const bool generic_result =
       algorithm == ArrayAlgorithm::Map || algorithm == ArrayAlgorithm::Reduce ||
       algorithm == ArrayAlgorithm::ForEach || algorithm == ArrayAlgorithm::Sort;
-  const TypeName variable{.name = "$Result", .location = expression.location, .arguments = {}};
+  const auto result_parameter = IntrinsicTypeParameter("$Result");
+  const auto variable = ParameterTypeName(result_parameter, expression.location);
   if (generic_result && !expression.arguments.empty()) {
-    source.type_parameters.push_back(variable.name);
+    source.type_parameters.push_back(result_parameter);
     callback_type.arguments.back() = variable;
     if (algorithm == ArrayAlgorithm::Reduce) {
       callback_type.arguments.front() = variable;
@@ -76,13 +83,14 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
         .location = expression.location,
         .kind = TypeName::Kind::Array,
         .arguments = {variable},
+        .parameter = {},
     };
   } else if (algorithm == ArrayAlgorithm::Reduce) {
     source.return_type = variable;
   }
   source.parameters.push_back({
       .type = std::move(callback_type),
-      .name = method.parameters.front().name,
+      .name = callback_parameter.name,
       .location = expression.location,
   });
   if (algorithm == ArrayAlgorithm::Reduce) {
@@ -113,7 +121,7 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
     }
   }
   if (algorithm == ArrayAlgorithm::Sort && expression.arguments.empty() &&
-      !CanFormatString(element)) {
+      !CanFormatString(ParameterCapability(element, expression.location))) {
     AddDiagnostic(expression.location, "sort requires a comparator for this element type");
   }
   inferred->signature.return_type = method.return_type;
@@ -127,7 +135,8 @@ TypeChecker::Type TypeChecker::CheckArrayMethod(const Expression& expression,
   const auto& name = expression.callee->text;
   const auto element = array_elements_.at(receiver.name);
   if (name == "join") {
-    if (!CanFormatString(element)) {
+    const auto formatted = ParameterCapability(element, expression.location);
+    if (!CanFormatString(formatted)) {
       AddDiagnostic(expression.location,
                     "join requires string, int, double, or bool elements (possibly nullable)");
       return InvalidType();

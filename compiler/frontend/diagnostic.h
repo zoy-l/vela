@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <iosfwd>
 #include <span>
@@ -37,6 +38,11 @@ using Diagnostics = std::vector<Diagnostic>;
   return std::ranges::any_of(diagnostics, [](const Diagnostic& diagnostic) {
     return diagnostic.severity == DiagnosticSeverity::Error;
   });
+}
+
+[[nodiscard]] inline std::size_t ErrorCount(std::span<const Diagnostic> diagnostics) {
+  return static_cast<std::size_t>(
+      std::ranges::count(diagnostics, DiagnosticSeverity::Error, &Diagnostic::severity));
 }
 
 [[nodiscard]] std::string_view DiagnosticCodeName(DiagnosticCode code);

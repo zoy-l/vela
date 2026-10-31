@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <expected>
 #include <iterator>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -19,6 +18,7 @@
 #include "base/callable.h"
 #include "base/execution_limits.h"
 #include "base/integer_arithmetic.h"
+#include "base/opcode.h"
 #include "base/regexp.h"
 #include "runtime/byte_operations.h"
 #include "runtime/exception.h"
@@ -436,8 +436,10 @@ StepResult Execution::ExecuteInstruction(ActiveFrame& active, Instruction instru
     case OpCode::GreaterEqualDouble:
       return StoreResult(values.subspan(operand_a).front(),
                          runtime::internal::DoubleOperation(
-                             opcode, {.left = values.subspan(operand_b).front().Read(),
-                                      .right = values.subspan(operand_c).front().Read()}));
+                             opcode, {
+                                         .left = values.subspan(operand_b).front().Read(),
+                                         .right = values.subspan(operand_c).front().Read(),
+                                     }));
     case OpCode::NegDouble: {
       const auto operand = values.subspan(operand_b).front();
       if (!operand.IsDouble()) {
@@ -468,8 +470,10 @@ StepResult Execution::ExecuteInstruction(ActiveFrame& active, Instruction instru
     case OpCode::GreaterEqualInt:
       return StoreResult(values.subspan(operand_a).front(),
                          runtime::internal::IntegerOperation(
-                             opcode, {.left = values.subspan(operand_b).front().Read(),
-                                      .right = values.subspan(operand_c).front().Read()}));
+                             opcode, {
+                                         .left = values.subspan(operand_b).front().Read(),
+                                         .right = values.subspan(operand_c).front().Read(),
+                                     }));
     case OpCode::NegInt:
     case OpCode::BitNotInt: {
       const auto operand = values.subspan(operand_b).front();

@@ -71,7 +71,7 @@ static_assert(kSignatures.size() == static_cast<std::size_t>(Builtin::StringGrap
 FunctionDescriptor MakeBuiltinSignature(TypeDescriptor result,
                                         std::initializer_list<BuiltinParameter> parameters) {
   FunctionDescriptor signature;
-  signature.return_type = std::move(result);
+  signature.return_type = result;
   for (const auto& parameter : parameters) {
     signature.AddParameter(std::string(parameter.name), parameter.type);
   }
@@ -316,6 +316,7 @@ bool IsBuiltinName(std::string_view name) {
 }
 
 std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {
+  const bool numeric = receiver == Kind::Int || receiver == Kind::Double;
   if (receiver == Kind::RegExp || receiver == Kind::RegExpMatch) {
     return FindMember(RegExpMethods(receiver), name);
   }
@@ -347,12 +348,11 @@ std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {
     if (name == kMutableStringTypeName) {
       return Builtin::NewMutableString;
     }
-  } else if ((receiver == Kind::Int || receiver == Kind::Double) && name == "toInt") {
+  } else if (numeric && name == "toInt") {
     return Builtin::NumericToInt;
-  } else if ((receiver == Kind::Int || receiver == Kind::Double) && name == "toDouble") {
+  } else if (numeric && name == "toDouble") {
     return Builtin::NumericToDouble;
-  } else if ((receiver == Kind::Int || receiver == Kind::Double || receiver == Kind::Bool) &&
-             name == "toString") {
+  } else if ((numeric || receiver == Kind::Bool) && name == "toString") {
     return Builtin::ScalarToString;
   } else if (receiver == Kind::MutableString) {
     if (name == "append") {

@@ -114,6 +114,23 @@ std::vector<FormatItem> Items(std::string_view source, const frontend::LexResult
     if (token.kind == TokenKind::EndOfFile) {
       break;
     }
+    const auto closing = token.type_closing_length;
+    if (closing != 0) {
+      items.push_back({
+          .kind = TokenKind::Greater,
+          .role = TokenRole::TypeDelimiter,
+          .text = source.substr(token.offset, closing),
+          .offset = token.offset,
+      });
+      if (closing < token.length) {
+        items.push_back({
+            .kind = TokenKind::Equal,
+            .text = source.substr(token.offset + closing, token.length - closing),
+            .offset = token.offset + closing,
+        });
+      }
+      continue;
+    }
     auto end = token.offset + token.length;
     if (token.kind == TokenKind::StringHead) {
       index = StringTailIndex(tokens, index);

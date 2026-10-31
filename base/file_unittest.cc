@@ -43,7 +43,7 @@ class FileTest : public test::DirectoryTest {
  protected:
   void ExpectFileCount(std::size_t count) {
     std::error_code error;
-    const std::filesystem::directory_iterator entries(directory_, error);
+    const std::filesystem::directory_iterator entries(directory(), error);
     ASSERT_FALSE(error);
     EXPECT_EQ(
         static_cast<std::size_t>(std::distance(entries, std::filesystem::directory_iterator())),

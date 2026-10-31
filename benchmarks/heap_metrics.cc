@@ -1,4 +1,5 @@
 #include "benchmarks/heap_metrics.h"
+#include <cstddef>
 
 #include "benchmark/benchmark.h"
 

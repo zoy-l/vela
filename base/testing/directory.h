@@ -13,6 +13,7 @@ class DirectoryTest : public ::testing::Test {
   void TearDown() override;
   [[nodiscard]] const std::filesystem::path& directory() const noexcept { return directory_; }
 
+ private:
   std::filesystem::path directory_;
 };
 

@@ -99,8 +99,10 @@ struct Declaration final {
   DeclarationId owner;
   DeclarationKind kind = DeclarationKind::Function;
   std::string name;
+  // 每个类型参数的规范契约文本，参数重命名不改变内容；用于判断热重载是否需要 Reload。
   std::vector<std::string> type_parameters;
   std::vector<std::string> enum_members;
+  std::string generic_signature;
   DeclarationId definition;
 };
 

@@ -39,6 +39,8 @@ inline constexpr std::string_view kLine = "line";
 inline constexpr std::string_view kCharacter = "character";
 inline constexpr std::string_view kDiagnostics = "diagnostics";
 inline constexpr std::string_view kPosition = "position";
+inline constexpr std::string_view kNewName = "newName";
+inline constexpr std::string_view kNewText = "newText";
 inline constexpr std::string_view kMessage = "message";
 inline constexpr std::string_view kSdkSource = "vela/sdkSource";
 }  // namespace protocol
@@ -69,7 +71,7 @@ class LanguageServer final {
 
  private:
   enum class State : std::uint8_t { New, Initialized, Shutdown };
-  enum class SymbolQuery : std::uint8_t { Completion, Definition, Hover };
+  enum class SymbolQuery : std::uint8_t { Completion, Definition, Hover, PrepareRename, Rename };
   void Dispatch(const yyjson_val* request);
   void Initialize(RpcCall call);
   void Request(std::string_view method, RpcCall call);
@@ -83,6 +85,7 @@ class LanguageServer final {
   [[nodiscard]] std::expected<void, std::string> Close(const yyjson_val* params);
   void Format(RpcCall call);
   void Query(RpcCall call, SymbolQuery query);
+  void Rename(RpcCall call, SemanticIndex& index, std::size_t offset);
   [[nodiscard]] std::vector<Completion> CompletionsFor(std::string_view uri,
                                                        const ServerDocument& opened,
                                                        std::size_t offset);

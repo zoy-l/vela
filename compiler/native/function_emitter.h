@@ -124,7 +124,10 @@ class FunctionEmitter final {
   std::expected<void, std::string> EmitReference(const ir::Instruction& instruction);
   llvm::Value* Encode(ir::RegisterId reg);
   llvm::Value* Pack(llvm::Value* encoded, std::size_t index);
-  void PackArguments(ir::RegisterId first, std::size_t count, std::size_t offset = 0);
+  enum class ArgumentPrefix : std::uint8_t { None, Implicit };
+  void PackArguments(ir::RegisterId first,
+                     std::size_t count,
+                     ArgumentPrefix prefix = ArgumentPrefix::None);
   void Unpack(ir::RegisterId reg);
   void CompleteCall(llvm::Value* status, ir::RegisterId result);
   void StoreRoots(std::size_t index);

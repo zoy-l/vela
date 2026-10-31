@@ -22,14 +22,16 @@ TEST(AnalysisTest, InvalidIntegerConstantsKeepTheirOperationsAndExceptionEdges) 
     std::int64_t left;
     std::int64_t right;
   };
-  constexpr std::array<Case, 6> kCases = {{
-      {Opcode::AddInt, kMaximum, 1},
-      {Opcode::SubInt, kMinimum, 1},
-      {Opcode::MulInt, kMaximum, 2},
-      {Opcode::DivInt, kMinimum, -1},
-      {Opcode::DivInt, 42, 0},
-      {Opcode::NegInt, kMinimum, 0},
-  }};
+  constexpr std::array<Case, 6> kCases = {
+      {
+          {.opcode = Opcode::AddInt, .left = kMaximum, .right = 1},
+          {.opcode = Opcode::SubInt, .left = kMinimum, .right = 1},
+          {.opcode = Opcode::MulInt, .left = kMaximum, .right = 2},
+          {.opcode = Opcode::DivInt, .left = kMinimum, .right = -1},
+          {.opcode = Opcode::DivInt, .left = 42, .right = 0},
+          {.opcode = Opcode::NegInt, .left = kMinimum, .right = 0},
+      },
+  };
   for (const auto& scenario : kCases) {
     SCOPED_TRACE(static_cast<int>(scenario.opcode));
     Function function;

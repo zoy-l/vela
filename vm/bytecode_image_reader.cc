@@ -30,6 +30,10 @@ namespace {
 using internal::kNoImageId;
 using internal::ReadNumbers;
 
+constexpr std::size_t kMinimumTableBytes = 5 * sizeof(std::uint64_t);
+constexpr std::size_t kMinimumFunctionBytes =
+    (10 * sizeof(std::uint64_t)) + (2 * sizeof(std::uint16_t)) + sizeof(std::uint8_t);
+
 template <class T>
 std::expected<std::vector<T*>, BinaryError> ReadReferences(BinaryReader& reader,
                                                            std::span<T* const> values) {
@@ -145,7 +149,7 @@ std::expected<std::vector<std::shared_ptr<const LayoutTables>>, BinaryError> Rea
     BinaryReader& input,
     const internal::LoadedLayouts& layouts) {
   return internal::ReadRecords<std::shared_ptr<const LayoutTables>>(
-      input, 5 * sizeof(std::uint64_t),
+      input, kMinimumTableBytes,
       [&layouts](
           BinaryReader& reader) -> std::expected<std::shared_ptr<const LayoutTables>, BinaryError> {
         auto classes = ReadReferences(reader, std::span(layouts.classes));
@@ -403,8 +407,7 @@ std::expected<Program, BinaryError> ReadPayload(BinaryReader& reader, runtime::I
       .paths = *paths,
   };
   auto functions = internal::ReadRecords<FunctionStorage>(
-      reader, (10 * sizeof(std::uint64_t)) + (2 * sizeof(std::uint16_t)) + sizeof(std::uint8_t),
-      [&image](BinaryReader&) { return image.ReadFunction(); });
+      reader, kMinimumFunctionBytes, [&image](BinaryReader&) { return image.ReadFunction(); });
   if (!functions) {
     return std::unexpected(functions.error());
   }

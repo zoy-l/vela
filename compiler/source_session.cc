@@ -42,14 +42,70 @@ SourceCandidateError SourceError(frontend::Diagnostics diagnostics) {
   };
 }
 
+SourceCandidateError ContractError(DeclarationId declaration,
+                                   const std::string& module,
+                                   const std::string& name,
+                                   const std::string& message) {
+  return {
+      .status = SourceCandidateStatus::RequiresReload,
+      .diagnostics =
+          {
+              {
+                  .location = {},
+                  .message = name + ": " + message + "; Reload is required",
+                  .source_path = module,
+              },
+          },
+      .declaration = declaration,
+  };
+}
+
+struct MemberContract final {
+  const frontend::DeclarationOrigin* origin;
+  const frontend::DeclarationOrigin::Member* member;
+};
+using MemberContracts =
+    absl::flat_hash_map<std::tuple<DeclarationId, DeclarationKind, std::string>, MemberContract>;
+
+std::expected<void, SourceCandidateError> CheckMemberContracts(
+    const CompiledSourceSnapshot& previous,
+    const MemberContracts& contracts) {
+  const auto records = previous.identities.records();
+  for (const auto& declaration : previous.program.declarations) {
+    const auto& key =
+        records.subspan(static_cast<std::size_t>(declaration.identity.value)).front().key;
+    const auto found = contracts.find({key.owner, key.kind, key.name});
+    if (!key.arguments.empty() || found == contracts.end()) {
+      continue;
+    }
+    const auto& contract = found->second;
+    const auto& member = *contract.member;
+    std::string message;
+    if (declaration.type_parameters != member.type_parameters) {
+      message = "generic method parameter list changed";
+    } else if (declaration.generic_signature != member.generic_signature) {
+      message = "generic method signature changed";
+    }
+    if (!message.empty()) {
+      const auto& origin = *contract.origin;
+      return std::unexpected(ContractError(declaration.identity, origin.module_uri,
+                                           origin.name + '.' + member.name, message));
+    }
+  }
+  return {};
+}
+
 std::expected<void, SourceCandidateError> CheckDeclarationContracts(
     const CompiledSourceSnapshot& previous,
     const frontend::Program& source) {
   using Key = std::tuple<std::string, DeclarationKind, std::string>;
   absl::flat_hash_map<Key, const frontend::DeclarationOrigin*> origins;
   for (const auto& [name, origin] : source.origins) {
-    origins.emplace(Key{origin.module_uri, origin.kind, origin.name}, &origin);
+    if (origin.arguments.empty()) {
+      origins.emplace(Key{origin.module_uri, origin.kind, origin.name}, &origin);
+    }
   }
+  MemberContracts members;
   const auto records = previous.identities.records();
   for (const auto& declaration : previous.program.declarations) {
     const auto& key =
@@ -68,27 +124,25 @@ std::expected<void, SourceCandidateError> CheckDeclarationContracts(
     std::string message;
     if (found == origins.end()) {
       if (nominal) {
-        message = "nominal type was deleted or changed kind; Reload is required";
+        message = "nominal type was deleted or changed kind";
       }
-    } else if (declaration.type_parameters != found->second->type_parameters) {
-      message = "generic parameter list changed; Reload is required";
+    } else if (declaration.type_parameters != frontend::DescribeTypeParameterContracts(
+                                                  found->second->type_parameters, source.origins)) {
+      message = "generic parameter list changed";
+    } else if (declaration.generic_signature != found->second->generic_signature) {
+      message = "generic declaration signature changed";
     }
     if (!message.empty()) {
-      return std::unexpected(SourceCandidateError{
-          .status = SourceCandidateStatus::RequiresReload,
-          .diagnostics =
-              {
-                  {
-                      .location = {},
-                      .message = key.name + ": " + message,
-                      .source_path = owner.name,
-                  },
-              },
-          .declaration = declaration.identity,
-      });
+      return std::unexpected(ContractError(declaration.identity, owner.name, key.name, message));
+    }
+    if (found != origins.end()) {
+      for (const auto& member : found->second->members) {
+        members.emplace(std::tuple(declaration.identity, member.kind, member.name),
+                        MemberContract{.origin = found->second, .member = &member});
+      }
     }
   }
-  return {};
+  return CheckMemberContracts(previous, members);
 }
 
 std::expected<void, SourceCandidateError> ApplyChanges(CompiledSourceSnapshot& candidate,
@@ -249,18 +303,24 @@ std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
   if (!parsed.diagnostics.empty()) {
     return std::unexpected(SourceError(std::move(parsed.diagnostics)));
   }
+  candidate->standard_names = parsed.program.standard_names;
+  candidate->timings.loading = Clock::now() - started;
+  const auto checking = Clock::now();
+  frontend::Specializer specializer(parsed.program);
+  auto preparation_errors = specializer.Initialize();
+  if (!preparation_errors.empty()) {
+    return std::unexpected(SourceError(std::move(preparation_errors)));
+  }
   const auto contracts = CheckDeclarationContracts(*base, parsed.program);
   if (!contracts) {
     return std::unexpected(contracts.error());
   }
-  candidate->standard_names = parsed.program.standard_names;
-  candidate->timings.loading = Clock::now() - started;
-  const auto checking = Clock::now();
   auto requests = frontend::RetainedSpecializations(parsed.program, base->identities, retained);
   if (!requests) {
     return std::unexpected(SourceError(std::move(requests.error())));
   }
-  auto checked = frontend::TypeChecker(nullptr, options_).Check(parsed.program, *requests);
+  auto checked = frontend::TypeChecker(nullptr, options_)
+                     .CheckPrepared(parsed.program, specializer, *requests);
   if (!checked.Succeeded()) {
     return std::unexpected(SourceError(std::move(checked.diagnostics)));
   }

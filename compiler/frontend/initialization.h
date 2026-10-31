@@ -1,12 +1,26 @@
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
+#include <cstddef>
+#include <span>
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/control_flow.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_checker.h"
 
 namespace vela::frontend {
 
-[[nodiscard]] Diagnostics CheckConstructorInitialization(const Class& owner,
-                                                         const SemanticModel& model);
+struct ConstructorInitializationFacts final {
+  const ClassDescriptor* owner{};
+  const ClassDescriptor* base = nullptr;
+  std::span<const LambdaDescriptor> lambdas;
+  const absl::flat_hash_map<const Expression*, std::size_t>* lambda_indices{};
+  const absl::flat_hash_map<const Statement*, StatementFlow>* control_flow{};
+  bool has_explicit_super_call = false;
+};
+
+[[nodiscard]] Diagnostics CheckConstructorInitialization(
+    const Class& owner,
+    const ConstructorInitializationFacts& facts);
 
 }  // namespace vela::frontend

@@ -8,6 +8,7 @@
 #include "base/mock_operation.h"
 #include "compiler/testing/report.h"
 #include "compiler/testing/result.h"
+#include "runtime/object.h"
 
 namespace vela::testing {
 

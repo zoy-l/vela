@@ -421,17 +421,17 @@ void VirtualReload(benchmark::State& state, NativeCodeTier tier) {
       state.SkipWithError(candidate.error());
       return;
     }
-    pause.pending = std::move(*candidate);
+    pause.Stage(std::move(*candidate));
     const auto value = session.RunEntry();
     state.SetIterationTime(std::chrono::duration<double>(Clock::now() - started).count());
-    if (!value || value->AsInteger() != kSaved + version || pause.pending ||
-        pause.result.status != DevelopmentStatus::Accepted ||
-        pause.result.timings.publication.materialized_objects !=
+    if (!value || value->AsInteger() != kSaved + version || pause.HasPending() ||
+        pause.result().status != DevelopmentStatus::Accepted ||
+        pause.result().timings.publication.materialized_objects !=
             (tier == NativeCodeTier::Optimized ? 1U : 0U)) {
       state.SkipWithError("virtual object reload or original caller recovery failed");
       return;
     }
-    AddTimings(state, pause.result);
+    AddTimings(state, pause.result());
   }
   std::move(detach_debugger).Invoke();
   AverageTimings(state, state.iterations());

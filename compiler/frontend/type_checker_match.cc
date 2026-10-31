@@ -1,8 +1,10 @@
 #include "compiler/frontend/type_checker.h"
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_names.h"
@@ -76,7 +78,9 @@ void TypeChecker::CheckMatchResult(const Expression& expression,
                                    const Type* expected,
                                    Type& result) {
   const auto arm_type = CheckExpression(expression, IsValid(result) ? &result : nullptr);
-  if (!IsValid(result)) {
+  const bool unresolved_return = result.kind == Type::Kind::Function &&
+                                 !IsValid(function_types_.at(NonNullable(result).name).return_type);
+  if (!IsValid(result) || unresolved_return) {
     result = arm_type;
   } else if (IsValid(arm_type) && !CanAssign(result, arm_type)) {
     if (expected == nullptr && CanAssign(arm_type, result)) {
@@ -87,24 +91,57 @@ void TypeChecker::CheckMatchResult(const Expression& expression,
   }
 }
 
-TypeChecker::Type TypeChecker::CheckMatch(const Expression& expression, const Type* expected) {
-  const auto selector = CheckExpression(*expression.operand, nullptr);
-  std::optional<RefinementDelta> exits;
-  MatchCoverage coverage;
-  Type result = expected == nullptr ? InvalidType() : *expected;
-  for (const auto& arm : expression.arms) {
+TypeChecker::Type TypeChecker::EnterMatchArm(const Expression& selector_expression,
+                                             const MatchArm& arm,
+                                             const Type& selector,
+                                             MatchCoverage& coverage,
+                                             PreparedMatchArm* prepared) {
+  Type narrowed;
+  if (prepared != nullptr) {
+    narrowed = prepared->narrowed;
+    scopes_.back() = std::move(prepared->scope);
+  } else {
     if (IsMatchComplete(selector, coverage)) {
       AddDiagnostic(arm.location, "unreachable match arm");
     }
+    narrowed = CheckMatchPattern(arm, selector, coverage);
+  }
+  if (selector_expression.kind == Expression::Kind::Name) {
+    if (const auto* binding = LookupLocal(selector_expression.text)) {
+      refinements_.Set(binding->id, narrowed);
+    }
+  }
+  return narrowed;
+}
+
+TypeChecker::Type TypeChecker::CheckMatch(const Expression& expression,
+                                          const Type* expected,
+                                          MatchPhase phase) {
+  std::vector<PreparedMatchArm> prepared;
+  const auto found = prepared_matches_.find(&expression);
+  const bool resumed = found != prepared_matches_.end();
+  if (resumed) {
+    prepared = std::move(found->second);
+    prepared_matches_.erase(found);
+  }
+  const bool preparing = phase == MatchPhase::Prepare;
+  const auto selector = preparing ? PrepareInferenceExpression(*expression.operand)
+                                  : CheckExpression(*expression.operand, nullptr);
+  std::optional<RefinementDelta> exits;
+  MatchCoverage coverage;
+  Type result = expected == nullptr ? InvalidType() : *expected;
+  for (std::size_t index = 0; index < expression.arms.size(); ++index) {
+    const auto& arm = expression.arms.at(index);
     const auto branch = refinements_.BeginBranch();
     BeginScope();
-    const auto narrowed = CheckMatchPattern(arm, selector, coverage);
-    if (expression.operand->kind == Expression::Kind::Name) {
-      if (const auto* binding = LookupLocal(expression.operand->text)) {
-        refinements_.Set(binding->id, narrowed);
-      }
+    const auto narrowed = EnterMatchArm(*expression.operand, arm, selector, coverage,
+                                        resumed ? &prepared.at(index) : nullptr);
+    if (preparing) {
+      PrepareInferenceReceiver(*arm.value);
+      prepared.push_back({.narrowed = narrowed, .scope = scopes_.back()});
+    } else {
+      CheckMatchResult(*arm.value, expected, result);
     }
-    CheckMatchResult(*arm.value, expected, result);
     EndScope();
     auto changes = refinements_.Capture(branch);
     if (exits) {
@@ -113,12 +150,15 @@ TypeChecker::Type TypeChecker::CheckMatch(const Expression& expression, const Ty
       exits = std::move(changes);
     }
   }
-  if (expression.arms.empty() || !IsMatchComplete(selector, coverage)) {
+  if (!resumed && (expression.arms.empty() || !IsMatchComplete(selector, coverage))) {
     AddDiagnostic(expression.location,
                   "match is not exhaustive; cover every value or add a wildcard/binding arm");
   }
   if (exits) {
     refinements_.Apply(*exits);
+  }
+  if (preparing) {
+    prepared_matches_.emplace(&expression, std::move(prepared));
   }
   return result;
 }

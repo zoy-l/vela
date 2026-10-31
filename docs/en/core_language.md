@@ -101,7 +101,7 @@ callback algorithm values require a function type context. For example, inferred
 Defaults are evaluated by the underlying method at invocation, not at binding.
 No dynamic dispatcher or second callable ABI is introduced.
 
-## Generic functions, classes, and aliases
+## Generic functions, classes, interfaces, methods, and aliases
 
 ```typescript
 type UserId = int;
@@ -131,8 +131,19 @@ and function values with a function type context may infer type arguments under
 the [shared inference rules](type_inference.md); type annotations remain complete.
 The compiler specializes static generic uses,
 preserving primitive storage instead of boxing every `T` as a heap object.
-Equivalent transparent aliases reuse the same specialization. Function and
-class templates are checked when instantiated. Independent specializations have
+Equivalent transparent aliases and equal explicit/inferred applications reuse
+the same specialization. Functions, classes, interfaces, aliases, and instance/static
+methods can declare parameters; owner and method parameters have distinct identities.
+
+Each parameter may have one `extends` bound. Bounds can reference other parameters,
+including later ones, and support recursive constraints such as
+`T extends Comparable<T>`. Every loaded definition must be valid even when unused.
+Unbounded T has no arbitrary members, and a bound does not authorize `T()` construction.
+Dynamic and nullable values cannot prove a non-null bound. Generic implementations
+and overrides must have equivalent parameter counts, normalized bounds, and
+signatures after parameter renaming. See [generics](generics.md) for the complete rules.
+
+Independent specializations have
 no fixed count limit. Generic dependency expansion and type nesting are each
 bounded to 128 levels; exceeding either produces a diagnostic. Dependencies are
 expanded depth first so branching recursive templates reach that boundary

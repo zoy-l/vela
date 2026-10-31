@@ -1,6 +1,7 @@
 #include "compiler/ir/lowerer.h"
 
 #include <cstdint>
+#include <string>
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_checker.h"

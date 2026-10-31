@@ -15,11 +15,7 @@ void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth ou
   }
   if (condition.kind == Kind::TypeTest && outcome == Truth::AlwaysTrue &&
       condition.operand->kind == Kind::Name) {
-    const auto* binding = LookupLocal(condition.operand->text);
-    const auto target = type_operands_.find(&condition);
-    if (binding != nullptr && target != type_operands_.end()) {
-      refinements_.Set(binding->id, target->second);
-    }
+    RefineTypeTest(condition);
     return;
   }
   if (condition.kind != Kind::Binary) {
@@ -46,7 +42,7 @@ void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth ou
     return;
   }
   const auto* binding = LookupLocal(name->text);
-  if (binding == nullptr || !binding->type.nullable) {
+  if (binding == nullptr || !IsPotentiallyNullable(binding->type)) {
     return;
   }
   if ((condition.text == "!=") == (outcome == Truth::AlwaysTrue)) {
@@ -54,6 +50,19 @@ void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth ou
   } else {
     refinements_.Erase(binding->id);
   }
+}
+
+void TypeChecker::RefineTypeTest(const Expression& condition) {
+  const auto* binding = LookupLocal(condition.operand->text);
+  const auto target = type_operands_.find(&condition);
+  if (binding == nullptr || target == type_operands_.end()) {
+    return;
+  }
+  const auto type =
+      binding->type.kind == Type::Kind::Parameter && IsSubtype(binding->type, target->second)
+          ? NonNullable(binding->type)
+          : target->second;
+  refinements_.Set(binding->id, type);
 }
 
 void TypeChecker::CollectAssignments(const Expression& expression, AssignmentEffects& effects) {

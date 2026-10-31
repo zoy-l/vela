@@ -30,6 +30,7 @@
 #include "compiler/ir/preparation.h"
 #include "compiler/ir/preparation_test_support.h"
 #include "compiler/native/code_generator.h"
+#include "compiler/test_sources.h"
 #include "runtime/native_image.h"
 
 namespace vela::compiler::aot {
@@ -67,6 +68,28 @@ export func main(): int {
   EXPECT_NE(result->header.find("VelaAotStatus vela_aot_export_1"), std::string::npos);
   EXPECT_NE(result->header.find("Call_main"), std::string::npos);
   EXPECT_EQ(result->instantiate_symbol, "vela_aot_instantiate");
+}
+
+TEST(NativeCompilerTest, EmitsConcreteGenericMethodsAndInterfaceSelectors) {
+  for (const auto source : {
+           ::vela::compiler::test::kGenericMethodsSource,
+           ::vela::compiler::test::kWrappedGenericMethodValuesSource,
+       }) {
+    const auto prepared = Prepare(source);
+    ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+    const auto result = Compile(prepared.program, {.exports = {"main"}, .preserve_ir = true});
+    ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+    EXPECT_FALSE(result->object.empty());
+    EXPECT_EQ(result->exports.size(), 1U);
+  }
+}
+
+TEST(NativeCompilerTest, EmitsAsyncGenericMethodsWithConcreteExceptionLayouts) {
+  const auto prepared = Prepare(::vela::compiler::test::kGenericAsyncMethodsSource);
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  const auto result = Compile(prepared.program, {.exports = {"main"}});
+  ASSERT_TRUE(result) << frontend::DiagnosticsText(result.error());
+  EXPECT_FALSE(result->object.empty());
 }
 
 TEST(NativeCompilerTest, VerifiesBooleanNegationAndEmptyVoidBodies) {

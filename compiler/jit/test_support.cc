@@ -1,12 +1,25 @@
 #include "compiler/jit/test_support.h"
 
+#include <cstdint>
+#include <expected>
+#include <memory>
+#include <span>
+#include <string>
 #include <utility>
 
+#include "base/declaration.h"
 #include "base/execution_status.h"
+#include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/source_session.h"
+#include "gtest/gtest.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
+#include "runtime/native_dispatch.h"
+#include "runtime/native_image.h"
 #include "runtime/rooted_value.h"
+#include "runtime/value.h"
 
 namespace vela::compiler::jit::test {
 
@@ -14,10 +27,13 @@ std::expected<SourceCandidate, SourceCandidateError> PrepareText(
     const SourceSession& source,
     std::string text,
     std::span<const DeclarationId> retained) {
-  return source.Prepare({.base_revision = source.snapshot()->revision,
-                         .changes = {{.path = "main.vela", .text = std::move(text)}},
-                         .added_roots = {}},
-                        retained);
+  return source.Prepare(
+      {
+          .base_revision = source.snapshot()->revision,
+          .changes = {{.path = "main.vela", .text = std::move(text)}},
+          .added_roots = {},
+      },
+      retained);
 }
 
 std::expected<CompiledImage, frontend::Diagnostics> CompileText(Compiler& compiler,

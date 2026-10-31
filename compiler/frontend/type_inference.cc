@@ -1,24 +1,23 @@
 #include "compiler/frontend/type_inference.h"
+#include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
-namespace {
 
-bool IsSame(const TypeName& left, const TypeName& right) {
-  if (left.kind != right.kind ||
-      ((left.kind == TypeName::Kind::Named || left.kind == TypeName::Kind::Generic) &&
-       left.name != right.name) ||
-      left.arguments.size() != right.arguments.size()) {
+bool TypeInference::IsSame(const TypeName& left, const TypeName& right) {
+  if (!IsSameTypeConstructor(left, right) || left.arguments.size() != right.arguments.size()) {
     return false;
   }
   for (std::size_t index = 0; index < left.arguments.size(); ++index) {
@@ -29,8 +28,15 @@ bool IsSame(const TypeName& left, const TypeName& right) {
   return true;
 }
 
+bool TypeInference::HasUnspecifiedType(const TypeName& type) {
+  return (type.kind == TypeName::Kind::Named && type.name.empty()) ||
+         std::ranges::any_of(type.arguments, HasUnspecifiedType);
+}
+
+namespace {
+
 TypeName Nullable(TypeName type) {
-  if (type.kind == TypeName::Kind::Nullable || type.name == kDynamicTypeName) {
+  if (IsNullableTypeName(type)) {
     return type;
   }
   TypeName result{
@@ -38,6 +44,7 @@ TypeName Nullable(TypeName type) {
       .location = type.location,
       .kind = TypeName::Kind::Nullable,
       .arguments = {},
+      .parameter = {},
   };
   result.arguments.push_back(std::move(type));
   return result;
@@ -45,33 +52,35 @@ TypeName Nullable(TypeName type) {
 
 }  // namespace
 
-TypeInference::TypeInference(std::span<const std::string> parameters)
-    : parameters_(parameters.begin(), parameters.end()) {
-  for (const auto& parameter : parameters) {
-    variables_.try_emplace(parameter);
+TypeParameter IntrinsicTypeParameter(std::string_view name) {
+  return {
+      .name = std::string(name),
+      .location = {},
+      .bound = std::nullopt,
+      .identity = {.owner = std::string(name), .index = 0},
+  };
+}
+
+TypeName IntrinsicTypeVariable(std::string_view name, SourceLocation location) {
+  return ParameterTypeName(IntrinsicTypeParameter(name), location);
+}
+
+TypeInference::TypeInference(std::span<const TypeParameter> parameters,
+                             InferenceTypeRelations& relations)
+    : relations_(&relations), parameters_(parameters.begin(), parameters.end()) {
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
+    const auto& parameter = parameters.subspan(index).front();
+    variables_.try_emplace(parameter.identity);
+    parameter_indices_.emplace(parameter.identity, index);
   }
 }
 
-void TypeInference::Bind(const std::string& name, const TypeName& type, Evidence evidence) {
-  auto& variable = variables_.at(name);
-  if (variable.type && variable.type->name == kNullTypeName && type.name != kNullTypeName &&
-      type.name != kVoidTypeName) {
-    variable = {.type = Nullable(type), .evidence = evidence};
-    return;
+const TypeParameter* TypeInference::FindParameter(const TypeName& pattern) const {
+  if (pattern.kind != TypeName::Kind::Parameter) {
+    return nullptr;
   }
-  if (!variable.type || evidence > variable.evidence) {
-    variable = {.type = type, .evidence = evidence};
-    std::erase(conflicts_, name);
-    return;
-  }
-  if (evidence < variable.evidence || IsSame(*variable.type, type)) {
-    return;
-  }
-  if (auto common = CommonType(*variable.type, type)) {
-    variable.type = std::move(common);
-  } else if (std::ranges::find(conflicts_, name) == conflicts_.end()) {
-    conflicts_.push_back(name);
-  }
+  const auto found = parameter_indices_.find(pattern.parameter);
+  return found == parameter_indices_.end() ? nullptr : &parameters_.at(found->second);
 }
 
 std::optional<TypeName> TypeInference::CommonType(const TypeName& left, const TypeName& right) {
@@ -94,41 +103,91 @@ std::optional<TypeName> TypeInference::CommonType(const TypeName& left, const Ty
 }
 
 void TypeInference::Constrain(const TypeName& pattern, const TypeName& actual, Evidence evidence) {
+  constraints_.push_back({.pattern = pattern, .actual = actual, .evidence = evidence});
+  const auto relation = EvidenceRelation(evidence);
+  Match(pattern, actual, evidence, evidence == Evidence::Explicit ? Relation::Equal : relation);
+  Propagate();
+  SelectCandidates();
+}
+
+TypeInference::Relation TypeInference::EvidenceRelation(Evidence evidence) {
+  switch (evidence) {
+    case Evidence::Context:
+      return Relation::Context;
+    case Evidence::Callback:
+      return Relation::Callback;
+    default:
+      return Relation::Input;
+  }
+}
+
+TypeInference::Relation TypeInference::ArgumentRelation(const TypeName& pattern,
+                                                        Relation relation,
+                                                        std::size_t index) const {
+  // 数组 intrinsic 按调用方向转换每个参数和结果；普通函数值仍使用整体不变契约。
+  if (relation == Relation::Callback) {
+    return index + 1 == pattern.arguments.size() ? Relation::Conversion : Relation::Context;
+  }
+  return relations_->IsInvariantType(pattern) ? Relation::Equal : relation;
+}
+
+void TypeInference::Match(const TypeName& pattern,
+                          const TypeName& actual,
+                          Evidence evidence,
+                          Relation relation) {
   if (actual.kind == TypeName::Kind::Named && actual.name.empty()) {
     return;
   }
-  if (pattern.kind == TypeName::Kind::Named && variables_.contains(pattern.name)) {
-    Bind(pattern.name, actual, evidence);
+  if (const auto* parameter = FindParameter(pattern)) {
+    Bind(*parameter, actual, evidence, relation);
     return;
   }
   if (pattern.kind == TypeName::Kind::Nullable) {
     if (actual.name != kNullTypeName) {
-      Constrain(pattern.arguments.front(),
-                actual.kind == TypeName::Kind::Nullable ? actual.arguments.front() : actual,
-                evidence);
+      Match(pattern.arguments.front(),
+            actual.kind == TypeName::Kind::Nullable ? actual.arguments.front() : actual, evidence,
+            relation);
     }
     return;
   }
-  if (evidence == Evidence::Context && actual.kind == TypeName::Kind::Nullable) {
-    Constrain(pattern, actual.arguments.front(), evidence);
+  if (actual.kind == TypeName::Kind::Nullable) {
+    Match(pattern, actual.arguments.front(), evidence, relation);
     return;
   }
-  if (pattern.kind != actual.kind || pattern.arguments.size() != actual.arguments.size() ||
-      ((pattern.kind == TypeName::Kind::Named || pattern.kind == TypeName::Kind::Generic) &&
-       pattern.name != actual.name)) {
+  if (!IsSameTypeConstructor(pattern, actual)) {
+    const auto projections = relation == Relation::Context ? SupertypeProjections(pattern, actual)
+                                                           : SupertypeProjections(actual, pattern);
+    for (const auto& projection : projections) {
+      if (relation == Relation::Context) {
+        Match(projection, actual, evidence, relation);
+      } else {
+        Match(pattern, projection, evidence, relation);
+      }
+    }
+    return;
+  }
+  if (pattern.arguments.size() != actual.arguments.size()) {
     return;
   }
   for (std::size_t index = 0; index < pattern.arguments.size(); ++index) {
-    Constrain(pattern.arguments.at(index), actual.arguments.at(index), evidence);
+    const auto argument_relation = ArgumentRelation(pattern, relation, index);
+    Match(pattern.arguments.at(index), actual.arguments.at(index), evidence, argument_relation);
   }
 }
 
+std::span<const TypeName> TypeInference::SupertypeProjections(const TypeName& source,
+                                                              const TypeName& constructor) const {
+  const auto key = std::pair(CanonicalTypeText(source), CanonicalTypeText(constructor));
+  if (const auto found = projections_.find(key); found != projections_.end()) {
+    return found->second;
+  }
+  auto projected = relations_->ProjectSupertypes({.subtype = &source, .supertype = &constructor});
+  return projections_.emplace(key, std::move(projected)).first->second;
+}
+
 std::optional<TypeName> TypeInference::Substitute(const TypeName& pattern) const {
-  if (pattern.kind == TypeName::Kind::Named) {
-    const auto found = variables_.find(pattern.name);
-    if (found != variables_.end()) {
-      return found->second.type;
-    }
+  if (FindParameter(pattern) != nullptr) {
+    return variables_.at(pattern.parameter).type;
   }
   TypeName result = pattern;
   for (auto& argument : result.arguments) {
@@ -138,47 +197,45 @@ std::optional<TypeName> TypeInference::Substitute(const TypeName& pattern) const
     }
     argument = std::move(*resolved);
   }
-  return result;
-}
-
-std::vector<std::string> TypeInference::Unresolved() const {
-  std::vector<std::string> result;
-  for (const auto& parameter : parameters_) {
-    const auto& variable = variables_.at(parameter);
-    if (!variable.type || variable.type->name == kNullTypeName) {
-      result.push_back(parameter);
-    }
+  if (pattern.kind == TypeName::Kind::Nullable &&
+      FindParameter(pattern.arguments.front()) != nullptr &&
+      IsNullableTypeName(result.arguments.front())) {
+    return std::move(result.arguments.front());
   }
   return result;
 }
 
 bool TypeInference::CanResolveFrom(std::span<const TypeName> inputs) const {
-  const auto contains = [](const auto& self, const TypeName& pattern,
-                           const std::string& name) -> bool {
-    if (pattern.kind == TypeName::Kind::Named && pattern.name == name) {
-      return true;
+  absl::flat_hash_set<TypeParameterId> available;
+  std::vector<TypeParameterId> pending;
+  const auto collect = [&](const auto& self, const TypeName& type) -> void {
+    if (const auto* parameter = FindParameter(type)) {
+      if (available.insert(parameter->identity).second) {
+        pending.push_back(parameter->identity);
+      }
     }
-    return std::ranges::any_of(pattern.arguments,
-                               [&](const auto& argument) { return self(self, argument, name); });
+    for (const auto& argument : type.arguments) {
+      self(self, argument);
+    }
   };
-  return std::ranges::all_of(Unresolved(), [&](const auto& name) {
-    return std::ranges::any_of(inputs,
-                               [&](const auto& input) { return contains(contains, input, name); });
-  });
-}
-
-std::optional<TypeInference::Solution> TypeInference::Solve() const {
-  if (!conflicts_.empty()) {
-    return std::nullopt;
-  }
-  Solution result;
-  for (const auto& [name, variable] : variables_) {
-    if (!variable.type || variable.type->name == kNullTypeName) {
-      return std::nullopt;
+  for (const auto& parameter : parameters_) {
+    const auto& variable = variables_.at(parameter.identity);
+    if (variable.type && variable.type->name != kNullTypeName) {
+      collect(collect, ParameterTypeName(parameter, parameter.location));
     }
-    result.variables_.emplace(name, *variable.type);
   }
-  return result;
+  for (const auto& input : inputs) {
+    collect(collect, input);
+  }
+  while (!pending.empty()) {
+    auto identity = std::move(pending.back());
+    pending.pop_back();
+    const auto& parameter = parameters_.at(parameter_indices_.at(identity));
+    if (parameter.bound) {
+      collect(collect, *parameter.bound);
+    }
+  }
+  return available.size() == parameters_.size();
 }
 
 TypeName TypeInference::Solution::Substitute(TypeName pattern) const {

@@ -3,8 +3,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
+#include <llvm/ADT/ArrayRef.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -34,8 +36,9 @@ llvm::Constant* EmitConstantTable(llvm::Module& module,
   if (!values.empty()) {
     auto* type = llvm::ArrayType::get(element, values.size());
     auto* contents = llvm::ConstantArray::get(type, values);
-    data = new llvm::GlobalVariable(module, type, true, llvm::GlobalValue::PrivateLinkage, contents,
-                                    name);
+    auto* global = new llvm::GlobalVariable(module, type, true, llvm::GlobalValue::PrivateLinkage,
+                                            contents, name);
+    data = global;
   }
   return llvm::ConstantStruct::get(
       table, {data, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), values.size())});

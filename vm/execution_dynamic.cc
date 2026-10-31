@@ -64,15 +64,18 @@ std::expected<Execution::ResolvedCallable, ExecutionStatus> Execution::ResolveCa
   return runtime::ResolveCallable(value, program_.code_identity(), functions_.size());
 }
 
-std::expected<std::span<const CallSignature::Parameter>, ExecutionStatus>
-Execution::CallableParameters(const ResolvedCallable& callable) const {
+std::expected<Execution::CallableContract, ExecutionStatus> Execution::ResolveCallableContract(
+    const ResolvedCallable& callable) const {
   const auto& function = functions_.subspan(callable.function).front();
   const auto& signature = function.signature;
   if (!signature) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto skipped = (callable.implicit ? 1U : 0U) - signature->hidden_parameters;
-  return std::span(signature->parameters).subspan(skipped);
+  return CallableContract{
+      .signature = &*signature,
+      .parameters = std::span(signature->parameters).subspan(skipped),
+  };
 }
 
 StepResult Execution::EnterDynamicCall(ActiveFrame& active,
@@ -82,7 +85,9 @@ StepResult Execution::EnterDynamicCall(ActiveFrame& active,
                                        std::uint8_t destination) {
   const auto callable = plan.method
                             ? std::expected<ResolvedCallable, ExecutionStatus>(ResolvedCallable{
-                                  .function = *plan.method, .implicit = plan.value})
+                                  .function = *plan.method,
+                                  .implicit = plan.value,
+                              })
                             : ResolveCallable(plan.value);
   if (!callable) {
     return std::unexpected(callable.error());

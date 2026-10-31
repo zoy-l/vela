@@ -23,8 +23,11 @@ TypeChecker::Type TypeChecker::CheckTypeOperation(const Expression& expression) 
                             : nullptr;
   const bool dynamic_source = source.kind == Type::Kind::Dynamic ||
                               (binding != nullptr && binding->type.kind == Type::Kind::Dynamic);
+  const bool parameter_relation =
+      (source.kind == Type::Kind::Parameter || target.kind == Type::Kind::Parameter) &&
+      (IsSubtype(source, target) || IsSubtype(target, source));
   if (source.kind != Type::Kind::Null && !dynamic_source && target.kind != Type::Kind::Dynamic &&
-      !(source_nominal && target_nominal) &&
+      !(source_nominal && target_nominal) && !parameter_relation &&
       !IsSameType(NonNullable(source), NonNullable(target))) {
     AddDiagnostic(
         expression.location,

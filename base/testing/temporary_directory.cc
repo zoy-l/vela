@@ -3,6 +3,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <expected>
+#include <filesystem>
+#include <string>
 #include <system_error>
 
 namespace vela::test {

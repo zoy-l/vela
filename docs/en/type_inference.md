@@ -11,16 +11,15 @@ explicit parameter and return annotations.
 
 ## Generic calls and shared constraints
 
-This document describes the current implementation. Planned declaration bounds,
-generic definition checking, and bound-driven inference are specified in the
-[generic system design (Chinese)](../zh-CN/generics.md). That design retains Vela
-value types, container invariance, and monomorphization rather than adopting the
-entire Dart type system.
+Generic declarations may specify one `extends` bound per parameter. Definitions
+in every loaded module are checked before instantiation, using only the capabilities
+declared by those bounds. See [generics](generics.md) for declaration and execution contracts.
 
-Generic functions, class construction, and transparent generic constructor aliases
-may omit all type arguments. Arguments, expected result types, and callback
-signatures contribute structural constraints before specialization. Explicit type
-arguments remain valid. Type annotations such as `Box<int>` and `Map<string, int>`
+Generic functions, instance/static methods, class construction, and transparent
+generic constructor aliases may omit all type arguments. Arguments, expected
+result types, callback signatures, and declaration bounds contribute constraints
+before specialization. Explicit arguments fix their parameters; inference cannot
+replace them. Type annotations such as `Box<int>` and `Map<string, int>`
 must remain complete; later statements do not determine an earlier variable's type.
 
 ```typescript
@@ -49,14 +48,28 @@ generics share the constraint solver. Future adoption and the array result of
 array callbacks may omit trailing parameters, and exception callbacks filter by
 their declared throwable type. These contracts do not create separate inference rules.
 
-Inference merges equal types and existing nullable relationships. It does not
-merge int/double, invent union types or common application supertypes, or change
-the invariant arguments of existing containers. Array literals still construct
-storage under their array context. Insufficient evidence, conflicting constraints,
-and incompatible final arguments are compile errors; failure never defaults to
-dynamic. Thus `const values = Map()` and context-free `const operation = identity`
-remain invalid. Inference can include dynamic only when a declaration, argument,
-or operation actually has that type.
+Without a relevant declaration bound, inference merges equal types and existing
+nullable relationships. Bounds can additionally supply evidence through actual
+class inheritance or explicit interface implementation: `T extends Reader<E>` can
+infer E as int from T's `Reader<int>` implementation. Parameter dependencies and
+F-bounds propagate together and must produce a unique most-specific valid solution.
+Inference does not guess arbitrary application supertypes, merge int/double, invent
+union types, or change invariant container arguments. Array literals still use
+their array context.
+
+Insufficient evidence, conflicting constraints, and incompatible final arguments
+are errors. Inference never defaults to dynamic or fills a missing argument with
+its bound. `const values = Map()`, context-free `const operation = identity`, and
+a context-free `empty()` for a declaration `empty<T extends Reader<int>>(): T[]` cannot obtain missing
+arguments this way. Dynamic cannot prove an explicit bound; an unbounded result
+can include dynamic only when the source actually has that type.
+
+```vela
+interface Reader<E> { read(): E; }
+class IntReader implements Reader<int> { read(): int { return 42; } }
+func read<T extends Reader<E>, E>(source: T): E { return source.read(); }
+func main(): int { return read(IntReader()); }
+```
 
 Each generic call owns its inference variables. Solved canonical type arguments
 request specialization; explicit and inferred uses share the same concrete

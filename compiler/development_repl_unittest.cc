@@ -56,10 +56,10 @@ class DevelopmentReplTest : public test::DirectoryTest {
   }
 
   void Write(std::string_view path, std::string_view text) {
-    ASSERT_TRUE(WriteFileAtomically(directory_ / Utf8Path(path), std::as_bytes(std::span(text))));
+    ASSERT_TRUE(WriteFileAtomically(directory() / Utf8Path(path), std::as_bytes(std::span(text))));
   }
   [[nodiscard]] std::string Path(std::string_view path) const {
-    return PathText(directory_ / Utf8Path(path));
+    return PathText(directory() / Utf8Path(path));
   }
   void Execute(std::string_view input) {
     const auto result = repl_->Submit(input);
@@ -111,6 +111,23 @@ class DevelopmentReplTest : public test::DirectoryTest {
   std::unique_ptr<DevelopmentSession> session_;
   std::unique_ptr<DevelopmentRepl> repl_;
 };
+
+TEST_F(DevelopmentReplTest, BoundedGenericMethodsRetainApplicationsAfterRejectedSubmissions) {
+  Execute("interface Reader<E> { read(): E; }");
+  Execute("class Number implements Reader<int> { read(): int { return 41; } }");
+  Execute("class Mapper { map<T extends Reader<E>, E>(value: T): E { return value.read(); } }");
+  Execute("const mapper = Mapper();");
+  Execute("const operation: (Number) => int = mapper.map;");
+  const auto history = std::string(repl().source());
+  EXPECT_EQ(repl().Submit("func unfinished<T extends Reader<").status,
+            SubmissionStatus::Incomplete);
+  EXPECT_EQ(repl().Submit("const invalid = mapper.map(42);").status, SubmissionStatus::Rejected);
+  EXPECT_EQ(repl().source(), history);
+  session().isolate().heap().Collect();
+  Execute("operation(Number()) + 1");
+  Execute("mapper.map(Number()) + 1");
+  EXPECT_EQ(output(), "42\n42\n");
+}
 
 TEST_F(DevelopmentReplTest, AppendsDeclarationsAndStatementsWithoutReplayingTheirEffects) {
   Execute("func initial(): int { print('once'); return 40; }");

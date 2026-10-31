@@ -30,6 +30,24 @@ TEST(FormatterTest, UsesParserRolesForGenericsAndPrefixOperators) {
   EXPECT_TRUE(result->contains("return -a.a;"));
 }
 
+TEST(FormatterTest, PreservesNestedBoundsAndGenericMethodDeclarationsAndApplications) {
+  const auto result = FormatSource(
+      "interface Reader<T>{read<U extends Map<string,Future<T[]>>>(value:U):T;}"
+      "class Box<T extends Reader<int>>{"
+      "apply<U extends Map<string,Future<T[]>>>(value:U):U{return value;}}"
+      "type Values<T extends Reader<int>>=Map<string,Future<T[]>>;"
+      "func use<T extends U,U extends Reader<int>>(value:T):int{return value.read<Map<"
+      "string,Future<int[]>>>(Map<string,Future<int[]>>());}");
+  ASSERT_TRUE(result) << result.error().front().message;
+  EXPECT_TRUE(result->contains("read<U extends Map<string, Future<T[]>>>(value: U): T;"));
+  EXPECT_TRUE(result->contains("class Box<T extends Reader<int>>"));
+  EXPECT_TRUE(result->contains("func use<T extends U, U extends Reader<int>>"));
+  EXPECT_TRUE(result->contains("read<Map<string, Future<int[]>>>(Map<string, Future<int[]>>());"));
+  const auto repeated = FormatSource(*result);
+  ASSERT_TRUE(repeated);
+  EXPECT_EQ(*repeated, *result);
+}
+
 TEST(FormatterTest, SpacesConditionalOperatorsWithoutChangingNullableTypesOrNamedArguments) {
   const auto result = FormatSource(
       "func choose(value:int?,flag:bool):int?{return flag?(value??0):flag?null:-1;}"

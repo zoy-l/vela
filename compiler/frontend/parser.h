@@ -48,6 +48,7 @@ class Parser final {
  private:
   [[nodiscard]] const Token& Peek() const;
   [[nodiscard]] const Token& Previous() const;
+  const Token& Advance();
   [[nodiscard]] bool IsAtEnd() const;
   [[nodiscard]] bool Check(TokenKind kind) const;
   bool Match(TokenKind kind);
@@ -75,6 +76,7 @@ class Parser final {
   std::optional<Program::Import> ParseImport();
   std::optional<Class> ParseClass();
   std::optional<Interface> ParseInterface();
+  std::optional<Function> ParseInterfaceMethod();
   std::optional<Function> ParseFunction();
   std::unique_ptr<Statement> ParseTry();
   std::unique_ptr<Statement> ParseThrow();
@@ -89,7 +91,7 @@ class Parser final {
   std::optional<std::string> ParseQualifiedTypeName();
   std::optional<TypeName> ParseParenthesizedType();
   std::optional<Program::TypeAlias> ParseTypeAlias();
-  std::vector<std::string> ParseTypeParameters();
+  std::optional<std::vector<TypeParameter>> ParseTypeParameters();
   std::vector<TypeName> ParseTypeArguments();
   [[nodiscard]] bool IsTypeApplication();
   void IndexTypeApplications();
@@ -133,7 +135,9 @@ class Parser final {
 
   std::span<Token> tokens_;
   std::size_t current_ = 0;
-  std::size_t pending_type_greater_ = 0;
+  std::size_t previous_index_ = 0;
+  std::optional<Token> remainder_;
+  std::optional<Token> previous_split_;
   std::vector<std::size_t> type_application_ends_;
   Diagnostics diagnostics_;
   std::size_t type_parse_depth_ = 0;

@@ -12,6 +12,10 @@ const mock = {
   workspace: { textDocuments: [] },
   Uri: { parse: value => ({ toString: () => value }) },
   Range: class { constructor(...values) { this.values = values; } },
+  WorkspaceEdit: class {
+    constructor() { this.replacements = []; }
+    replace(uri, range, newText) { this.replacements.push({ uri, range, newText }); }
+  },
   Diagnostic: class { constructor(range, message, severity) { Object.assign(this, { range, message, severity }); } },
   CompletionItem: class { constructor(label, kind) { Object.assign(this, { label, kind }); } },
   Location: class { constructor(uri, range) { Object.assign(this, { uri, range }); } },
@@ -186,6 +190,11 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
       providers.completion = provider;
       return { dispose() {} };
     },
+    registerRenameProvider(selector, provider) {
+      assert.equal(selector.language, "vela");
+      providers.rename = provider;
+      return { dispose() {} };
+    },
     registerDefinitionProvider(selector, provider) {
       assert.equal(selector.scheme, "file");
       providers.definition = provider;
@@ -218,6 +227,11 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
     }
     assert.equal(params.position.line, 2);
     assert.equal(params.position.character, 5);
+    if (method.endsWith("prepareRename")) return range;
+    if (method.endsWith("/rename")) {
+      assert.equal(params.newName, "Element");
+      return { changes: { "file:///test.vela": [{ range, newText: params.newName }] } };
+    }
     if (method.endsWith("hover")) return { contents: { kind: "markdown", value: "```vela\nvalue: int\n```" }, range };
     return method.endsWith("completion")
       ? [{ label: "value:", kind: 5, detail: "value: int", sortText: "0value:",
@@ -226,7 +240,7 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
   }};
   const context = { subscriptions: [] };
   const refreshLinks = registerSymbolProviders(context, client, async () => { events.push("flush"); });
-  assert.equal(context.subscriptions.length, 7);
+  assert.equal(context.subscriptions.length, 8);
   const completions = await providers.completion.provideCompletionItems(document, position, token);
   assert.equal(completions[0].label, "value:");
   assert.equal(completions[0].kind, 4);
@@ -241,6 +255,13 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
   assert.equal(hover.contents.value, "```vela\nvalue: int\n```");
   assert.equal(hover.contents.isTrusted, false);
   assert.deepEqual(hover.range.values, [2, 3, 2, 7]);
+  const prepared = await providers.rename.prepareRename(document, position, token);
+  assert.deepEqual(prepared.values, [2, 3, 2, 7]);
+  const renamed = await providers.rename.provideRenameEdits(document, position, "Element", token);
+  assert.equal(renamed.replacements.length, 1);
+  assert.equal(renamed.replacements[0].uri.toString(), "file:///test.vela");
+  assert.deepEqual(renamed.replacements[0].range.values, [2, 3, 2, 7]);
+  assert.equal(renamed.replacements[0].newText, "Element");
   const semantic = await providers.semantic.provideDocumentSemanticTokens(document, token);
   assert.deepEqual(Array.from(semantic.data), [0, 0, 4, 0, 1]);
   const links = await providers.links.provideDocumentLinks(document, token);
@@ -258,6 +279,8 @@ test("VS Code symbol providers synchronize text, map protocol results and discar
   assert.equal((await providers.completion.provideCompletionItems(document, position, token)).length, 0);
   assert.equal(await providers.definition.provideDefinition(document, position, token), null);
   assert.equal(await providers.hover.provideHover(document, position, token), null);
+  assert.equal(await providers.rename.prepareRename(document, position, token), null);
+  assert.equal(await providers.rename.provideRenameEdits(document, position, "Element", token), null);
   assert.equal(await providers.semantic.provideDocumentSemanticTokens(document, token), null);
   assert.equal((await providers.links.provideDocumentLinks(document, token)).length, 0);
   token.isCancellationRequested = true;

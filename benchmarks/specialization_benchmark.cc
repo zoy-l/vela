@@ -1,11 +1,12 @@
 #include <cstdint>
+#include <span>
 #include <string>
 
 #include <benchmark/benchmark.h>
 
 #include "compiler/frontend/ast_clone.h"
 #include "compiler/frontend/checker.h"
-#include "compiler/frontend/parser.h"
+#include "compiler/frontend/source_loader.h"
 #include "compiler/frontend/specialization.h"
 
 namespace vela::benchmarks {
@@ -36,7 +37,8 @@ void SpecializeTemplates(benchmark::State& state, TemplateKind kind) {
     source += kind == TemplateKind::Function ? "());" : "()).read();";
   }
   source += "}";
-  const auto parsed = frontend::ParseSource(source);
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  const auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
   if (!parsed.diagnostics.empty()) {
     state.SkipWithError("Generic workload did not parse");
     return;
@@ -51,7 +53,7 @@ void SpecializeTemplates(benchmark::State& state, TemplateKind kind) {
     auto program = frontend::CloneProgram(parsed.program, {});
     state.ResumeTiming();
     frontend::Specializer specializer(program);
-    const auto diagnostics = specializer.Initialize({});
+    const auto diagnostics = specializer.Initialize();
     if (!diagnostics.empty()) {
       state.SkipWithError("Generic workload did not specialize");
       break;

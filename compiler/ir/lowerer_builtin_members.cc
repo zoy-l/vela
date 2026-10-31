@@ -43,7 +43,7 @@ void Lowerer::RegisterBuiltinMembers() {
   std::ranges::sort(names);
   std::vector<frontend::TypeDescriptor> receivers;
   for (const auto& [name, type] : model_.types) {
-    if (name == type.name && !type.nullable && type.kind != Kind::Invalid &&
+    if (name == type.name && !type.is_abstract && !type.nullable && type.kind != Kind::Invalid &&
         type.kind != Kind::Null && type.kind != Kind::Void && type.kind != Kind::Dynamic &&
         type.kind != Kind::Class && type.kind != Kind::Interface && type.kind != Kind::Enum &&
         type.kind != Kind::Function) {

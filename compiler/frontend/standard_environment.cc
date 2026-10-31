@@ -408,6 +408,7 @@ Diagnostics AddStandardEnvironment(Program& program) {
                                              .arguments = {},
                                              .type_parameters = {},
                                              .members = {},
+                                             .generic_signature = {},
                                          });
     }
     for (const auto& enumeration : parsed.enums) {
@@ -418,6 +419,7 @@ Diagnostics AddStandardEnvironment(Program& program) {
                                                    .arguments = {},
                                                    .type_parameters = {},
                                                    .members = {},
+                                                   .generic_signature = {},
                                                });
     }
     AppendProgram(program, std::move(parsed));

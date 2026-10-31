@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <span>
 #include <string>
@@ -108,6 +109,10 @@ class SemanticIndex final {
   [[nodiscard]] std::optional<Definition> FindDefinition(std::size_t offset,
                                                          PositionEncoding encoding) const;
   [[nodiscard]] std::optional<Hover> FindHover(std::size_t offset, PositionEncoding encoding) const;
+  [[nodiscard]] std::optional<Definition> PrepareRename(std::size_t offset,
+                                                        PositionEncoding encoding) const;
+  [[nodiscard]] std::expected<std::vector<Definition>, std::string>
+  RenameTypeParameter(std::size_t offset, std::string_view name, PositionEncoding encoding) const;
   [[nodiscard]] std::vector<ImportLink> ImportLinks(PositionEncoding encoding) const;
   [[nodiscard]] std::vector<SemanticToken> SemanticTokens(PositionEncoding encoding) const;
   [[nodiscard]] std::vector<Completion> CompleteArguments(
@@ -131,7 +136,7 @@ class SemanticIndex final {
     std::size_t depth = 0;
   };
   struct Symbol final {
-    enum class Role : std::uint8_t { Ordinary, Parameter };
+    enum class Role : std::uint8_t { Ordinary, Parameter, TypeParameter };
     Completion completion;
     std::string owner;
     Role role = Role::Ordinary;
@@ -150,6 +155,11 @@ class SemanticIndex final {
     std::size_t symbol = 0;
     const frontend::Expression* expression = nullptr;
   };
+  struct ParameterRename final {
+    std::size_t symbol = 0;
+    std::vector<std::size_t> offsets;
+    std::string_view name;
+  };
   struct Receiver final {
     frontend::TypeDescriptor type;
     frontend::MemberStorage storage = frontend::MemberStorage::Instance;
@@ -157,18 +167,38 @@ class SemanticIndex final {
   };
   [[nodiscard]] std::size_t TokenAt(SourceLocation location) const;
   [[nodiscard]] const frontend::Token* QueryToken(std::size_t offset) const;
+  [[nodiscard]] std::optional<std::size_t> TypeParameterSymbol(std::size_t offset) const;
+  [[nodiscard]] Key RenamedKey(Key key,
+                               const SemanticIndex& renamed,
+                               const ParameterRename& request) const;
+  [[nodiscard]] bool CanPreserveReferences(const SemanticIndex& renamed,
+                                           const ParameterRename& request) const;
   [[nodiscard]] std::string DocumentationAt(SourceLocation location) const;
   [[nodiscard]] Completion ClassCompletion(const frontend::Class& declaration) const;
   [[nodiscard]] std::string DefaultValue(const frontend::Expression& expression) const;
-  void MarkTypeParameters(SourceLocation location, std::span<const std::string> parameters);
+  void MarkTypeParameters(std::span<const frontend::TypeParameter> parameters);
   [[nodiscard]] std::optional<Completion> BuiltinCompletion(const frontend::Token& token) const;
+  [[nodiscard]] static std::string HoverSignature(const Completion& completion,
+                                                  const std::string& owner,
+                                                  Symbol::Role role);
   [[nodiscard]] Key KeyAt(SourceLocation location) const;
   [[nodiscard]] Scope Extent(const frontend::Statement& statement) const;
   std::size_t AddSymbol(SourceLocation location, CompletionKind kind, std::string detail);
+  template <class Declaration>
+  std::size_t DeclareSymbol(const Declaration& declaration,
+                            CompletionKind kind,
+                            const std::string& detail);
+  template <class Declaration>
+  std::size_t DeclareMember(std::string_view owner,
+                            const Declaration& declaration,
+                            CompletionKind kind,
+                            const std::string& detail);
   void AddReference(SourceLocation location,
                     std::string_view name,
                     const frontend::Expression* expression = nullptr);
   void CollectDeclarations();
+  void CollectClass(const frontend::Class& declaration);
+  void CollectInterface(const frontend::Interface& declaration);
   void BindIntrinsicSignature(std::size_t symbol,
                               const frontend::Class& owner,
                               const frontend::Function& method);
@@ -183,6 +213,15 @@ class SemanticIndex final {
   void VisitForEach(const frontend::Statement& statement, const Scope& scope);
   void VisitExpression(const frontend::Expression* expression, const Scope& scope);
   void VisitProgram();
+  void VisitClass(const frontend::Class& declaration, const Scope& root);
+  void VisitInterface(const frontend::Interface& declaration, const Scope& root);
+  void VisitDefinitions(const Scope& root);
+  [[nodiscard]] const frontend::NodeFacts& Facts() const;
+  [[nodiscard]] const frontend::NodeFacts& FactsFor(const frontend::Expression& expression) const;
+  [[nodiscard]] std::string DisplayType(frontend::TypeDescriptor type) const;
+  [[nodiscard]] std::string DisplaySignature(const frontend::FunctionDescriptor& signature) const;
+  [[nodiscard]] frontend::TypeDescriptor Capability(frontend::TypeDescriptor type) const;
+  [[nodiscard]] std::vector<std::string_view> MemberOwners(frontend::TypeDescriptor type) const;
   void DeclareLocal(const void* node,
                     SourceLocation location,
                     std::string detail,
@@ -222,13 +261,13 @@ class SemanticIndex final {
   absl::flat_hash_map<Key, Receiver> receivers_;
   absl::flat_hash_map<Key, const frontend::Expression*> calls_;
   absl::flat_hash_map<Key, std::uint32_t> type_parameters_;
-  absl::flat_hash_set<std::string> context_type_parameters_;
+  absl::flat_hash_map<frontend::TypeParameterId, std::size_t> type_parameter_symbols_;
   absl::flat_hash_map<std::size_t, std::uint32_t> import_targets_;
   absl::flat_hash_map<std::string, std::uint32_t> prefixes_;
   std::vector<std::vector<std::size_t>> exports_;
   std::vector<std::size_t> visible_;
   std::vector<Local> locals_;
-  enum class IndexPhase : std::uint8_t { SourceTypes, Checked };
+  enum class IndexPhase : std::uint8_t { SourceTypes, Checked, Definitions };
   IndexPhase phase_ = IndexPhase::SourceTypes;
   std::string context_class_;
 };

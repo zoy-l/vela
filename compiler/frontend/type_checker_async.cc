@@ -1,11 +1,11 @@
 #include "base/async_operation.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_inference.h"
 #include "compiler/frontend/type_names.h"
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -70,9 +70,16 @@ TypeChecker::Type TypeChecker::MakeFutureType(const Expression& expression, cons
       .name = std::string(kFutureTypeName),
       .location = expression.location,
       .kind = TypeName::Kind::Generic,
-      .arguments = {{.name = std::string(element.name),
-                     .location = expression.location,
-                     .arguments = {}}},
+      .arguments =
+          {
+              {
+                  .name = std::string(element.name),
+                  .location = expression.location,
+                  .arguments = {},
+                  .parameter = {},
+              },
+          },
+      .parameter = {},
   });
 }
 
@@ -113,8 +120,8 @@ TypeChecker::Type TypeChecker::CheckFutureValueFactory(const Expression& express
     AddDiagnostic(expression.location, "Future factory expects one argument");
     return InvalidType();
   }
-  const auto element = ResolveInferenceContext(
-      {.name = "$Value", .location = expression.location, .arguments = {}}, *inference);
+  const auto element =
+      ResolveInferenceContext(IntrinsicTypeVariable("$Value", expression.location), *inference);
   const auto argument =
       CheckExpression(*expression.arguments.front().value,
                       callee.text == "value" && IsValid(element) ? &element : nullptr);
@@ -249,7 +256,7 @@ TypeChecker::Type TypeChecker::CheckFutureAggregation(const Expression& expressi
   if (!inference) {
     return InvalidType();
   }
-  const TypeName variable{.name = "$Value", .location = expression.location, .arguments = {}};
+  const auto variable = IntrinsicTypeVariable("$Value", expression.location);
   auto element = ResolveInferenceContext(variable, *inference);
   const auto context =
       IsValid(element) ? ArrayType(MakeFutureType(expression, element)) : InvalidType();
@@ -291,7 +298,7 @@ TypeChecker::Type TypeChecker::CheckAsyncConstruction(const Expression& expressi
   AsyncOperation operation = AsyncOperation::Count;
   if (expression.callee->text == kCompleterTypeName) {
     operation = AsyncOperation::NewCompleter;
-    const std::array<std::string, 1> parameters{"$Value"};
+    const std::array parameters{IntrinsicTypeParameter("$Value")};
     type = InferConstruction(expression, expected, kCompleterTypeName, parameters);
   } else {
     operation = AsyncOperation::NewCancellationToken;

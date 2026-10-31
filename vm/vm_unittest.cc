@@ -85,16 +85,22 @@ TEST(VmTest, RegExpArrayBuiltinRejectsMissingLayoutMetadata) {
 class VmStringGcTest : public testing::Test {
  protected:
   void SetUp() override {
-    constants.front() = isolate.heap().AllocateString("x");
-    ASSERT_NE(constants.front(), nullptr);
+    constants_.front() = isolate_.heap().AllocateString("x");
+    ASSERT_NE(constants_.front(), nullptr);
   }
 
-  Isolate isolate{1};
-  std::array<runtime::StringObject*, 1> constants{};
-  RootRange roots{isolate.heap(), constants};
+  Isolate& owner() { return isolate_; }
+  const std::array<runtime::StringObject*, 1>& strings() const { return constants_; }
+
+ private:
+  Isolate isolate_{1};
+  std::array<runtime::StringObject*, 1> constants_{};
+  RootRange roots_{isolate_.heap(), constants_};
 };
 
 TEST_F(VmStringGcTest, StringConcatSupportsAliasedDestinationsAcrossSafepoints) {
+  auto& isolate = owner();
+  const auto& constants = strings();
   constexpr auto kCode = std::to_array<Instruction>({
       EncodeABC(OpCode::LoadString, 0, 0, 0),
       EncodeABC(OpCode::StringConcat, 0, 0, 0),
@@ -113,6 +119,8 @@ TEST_F(VmStringGcTest, StringConcatSupportsAliasedDestinationsAcrossSafepoints) 
 }
 
 TEST_F(VmStringGcTest, InterpolationAndBuilderAllowAliasedDestinationsAcrossSafepoints) {
+  auto& isolate = owner();
+  const auto& constants = strings();
   constexpr auto kCode = std::to_array<Instruction>({
       EncodeABC(OpCode::LoadString, 0, 0, 0),
       EncodeABC(OpCode::LoadString, 1, 0, 0),
@@ -135,6 +143,8 @@ TEST_F(VmStringGcTest, InterpolationAndBuilderAllowAliasedDestinationsAcrossSafe
 }
 
 TEST_F(VmStringGcTest, JoinAllowsDestinationToOverwriteRootedInputArray) {
+  auto& isolate = owner();
+  const auto& constants = strings();
   const auto* layout = isolate.CreateArrayLayout({.element = {.kind = runtime::ValueKind::String}});
   const std::array<const runtime::ArrayLayout*, 1> arrays = {layout};
   constexpr auto kCode = std::to_array<Instruction>({

@@ -8,6 +8,7 @@
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_inference.h"
+#include "compiler/frontend/type_name.h"
 #include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
@@ -56,7 +57,14 @@ TypeDescriptor MakeFunctionType(const FunctionDescriptor& signature) {
   }
   name += ") => ";
   name += signature.return_type.name;
-  return {.kind = TypeDescriptor::Kind::Function, .name = InternTypeName(std::move(name))};
+  return {
+      .kind = TypeDescriptor::Kind::Function,
+      .name = InternTypeName(std::move(name)),
+      .is_abstract =
+          signature.return_type.is_abstract ||
+          std::ranges::any_of(signature.parameters,
+                              [](const auto& parameter) { return parameter.type.is_abstract; }),
+  };
 }
 
 TypeChecker::Type TypeChecker::FunctionType(const FunctionInfo& signature) {

@@ -204,13 +204,13 @@ StepResult Execution::ExecuteMockCallable(MockInspection inspection) {
     destination.SetBoolean(false);
     return {};
   }
-  const auto parameter_view = CallableParameters(*callable);
-  if (!parameter_view) {
-    return std::unexpected(parameter_view.error());
+  const auto contract = ResolveCallableContract(*callable);
+  if (!contract) {
+    return std::unexpected(contract.error());
   }
-  const auto parameters = *parameter_view;
+  const auto parameters = contract->parameters;
   const auto& function = functions_.subspan(callable->function).front();
-  const auto& signature = *function.signature;
+  const auto& signature = *contract->signature;
   const auto types = function.View().types;
   switch (operation) {
     case MockOperation::AcceptsResponseSignature:

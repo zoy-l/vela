@@ -350,6 +350,8 @@ INSTANTIATE_TEST_SUITE_P(
     StrictSignatures,
     InvalidStandardApiTest,
     testing::Values(
+        "func main(): void { [1].map(); }",
+        "func main(): void { [1].reduce(); }",
         "func main(): void { [1].sort((a: int, b: int): bool => true); }",
         "func main(): void { [1].some((a: double): bool => true); }",
         "func main(): void { [1].map((a: int): void => {}); }",

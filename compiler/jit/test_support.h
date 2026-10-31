@@ -10,6 +10,7 @@
 
 #include "base/declaration.h"
 #include "base/native_program_mode.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/source_session.h"
 #include "runtime/isolate.h"

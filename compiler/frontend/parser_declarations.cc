@@ -49,7 +49,11 @@ std::optional<Class> Parser::ParseClass() {
   Class declaration;
   declaration.name = name->lexeme;
   declaration.location = name->location;
-  declaration.type_parameters = ParseTypeParameters();
+  auto type_parameters = ParseTypeParameters();
+  if (!type_parameters) {
+    return std::nullopt;
+  }
+  declaration.type_parameters = std::move(*type_parameters);
   if (Match(TokenKind::Extends)) {
     auto base = ParseType();
     if (!base) {
@@ -93,7 +97,7 @@ Parser::MemberModifiers Parser::ParseMemberModifiers() {
   };
   while (Check(TokenKind::Private) || Check(TokenKind::Static) || Check(TokenKind::Override) ||
          is_accessor_modifier()) {
-    const auto modifier = tokens_.subspan(current_++).front();
+    const auto modifier = Advance();
     if (modifier.kind == TokenKind::Private) {
       if (has_visibility) {
         AddDiagnostic(modifier.location, "duplicate visibility modifier");
@@ -186,16 +190,20 @@ Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
   }
   std::optional<Token> member;
   if (IsMemberName(Peek().kind)) {
-    member = tokens_.subspan(current_++).front();
+    member = Advance();
   } else {
     AddDiagnostic(Peek().location, "expected field or method name");
   }
   if (!member) {
     return MemberParseResult::Failed;
   }
-  if (Check(TokenKind::LeftParen)) {
+  if (Check(TokenKind::LeftParen) || Check(TokenKind::Less)) {
     auto method = ParseFunctionBody(*member, {}, is_async);
     if (!method) {
+      return MemberParseResult::Failed;
+    }
+    if ((modifiers.is_getter || modifiers.is_setter) && !method->type_parameters.empty()) {
+      AddDiagnostic(method->location, "accessors cannot declare generic parameters");
       return MemberParseResult::Failed;
     }
     append_method(std::move(*method));
@@ -239,50 +247,66 @@ std::optional<Field> Parser::ParseField(const Token& name, MemberModifiers modif
 
 std::optional<Interface> Parser::ParseInterface() {
   const auto name = Expect(TokenKind::Identifier, "expected interface name");
-  if (!name || !Expect(TokenKind::LeftBrace, "expected '{' after interface name")) {
+  if (!name) {
     return std::nullopt;
   }
   Interface declaration;
   declaration.name = name->lexeme;
   declaration.location = name->location;
+  auto type_parameters = ParseTypeParameters();
+  if (!type_parameters || !Expect(TokenKind::LeftBrace, "expected '{' after interface name")) {
+    return std::nullopt;
+  }
+  declaration.type_parameters = std::move(*type_parameters);
   while (!Check(TokenKind::RightBrace) && !IsAtEnd()) {
-    const auto member = Peek();
-    if (!IsMemberName(member.kind)) {
-      AddDiagnostic(Peek().location, "expected interface method name");
+    auto method = ParseInterfaceMethod();
+    if (!method) {
       return std::nullopt;
     }
-    ++current_;
-    if (!Expect(TokenKind::LeftParen, "expected '(' after interface method name")) {
-      return std::nullopt;
-    }
-    Function method;
-    method.name = member.lexeme;
-    method.location = member.location;
-    while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
-      auto parameter = ParseParameter();
-      if (!parameter) {
-        return std::nullopt;
-      }
-      method.parameters.push_back(std::move(*parameter));
-      if (!Match(TokenKind::Comma)) {
-        break;
-      }
-    }
-    if (!Expect(TokenKind::RightParen, "expected ')' after interface parameters") ||
-        !Expect(TokenKind::Colon, "expected ':' before interface return type")) {
-      return std::nullopt;
-    }
-    auto returned = ParseType();
-    if (!returned || !Expect(TokenKind::Semicolon, "expected ';' after interface method")) {
-      return std::nullopt;
-    }
-    method.return_type = std::move(*returned);
-    declaration.methods.push_back(std::move(method));
+    declaration.methods.push_back(std::move(*method));
   }
   if (!Expect(TokenKind::RightBrace, "expected '}' after interface body")) {
     return std::nullopt;
   }
   return declaration;
+}
+
+std::optional<Function> Parser::ParseInterfaceMethod() {
+  const auto member = Peek();
+  if (!IsMemberName(member.kind)) {
+    AddDiagnostic(Peek().location, "expected interface method name");
+    return std::nullopt;
+  }
+  Advance();
+  Function method;
+  method.name = member.lexeme;
+  method.location = member.location;
+  auto type_parameters = ParseTypeParameters();
+  if (!type_parameters ||
+      !Expect(TokenKind::LeftParen, "expected '(' after interface method name")) {
+    return std::nullopt;
+  }
+  method.type_parameters = std::move(*type_parameters);
+  while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
+    auto parameter = ParseParameter();
+    if (!parameter) {
+      return std::nullopt;
+    }
+    method.parameters.push_back(std::move(*parameter));
+    if (!Match(TokenKind::Comma)) {
+      break;
+    }
+  }
+  if (!Expect(TokenKind::RightParen, "expected ')' after interface parameters") ||
+      !Expect(TokenKind::Colon, "expected ':' before interface return type")) {
+    return std::nullopt;
+  }
+  auto returned = ParseType();
+  if (!returned || !Expect(TokenKind::Semicolon, "expected ';' after interface method")) {
+    return std::nullopt;
+  }
+  method.return_type = std::move(*returned);
+  return method;
 }
 
 std::optional<Function> Parser::ParseFunction() {
@@ -303,13 +327,13 @@ std::optional<Function> Parser::ParseFunctionBody(const Token& name,
                                                   std::string native_symbol,
                                                   bool is_async) {
   auto type_parameters = ParseTypeParameters();
-  if (!Expect(TokenKind::LeftParen, "expected '(' after function name")) {
+  if (!type_parameters || !Expect(TokenKind::LeftParen, "expected '(' after function name")) {
     return std::nullopt;
   }
   Function function;
   function.name = name.lexeme;
   function.location = name.location;
-  function.type_parameters = std::move(type_parameters);
+  function.type_parameters = std::move(*type_parameters);
   function.native_symbol = std::move(native_symbol);
   function.is_async = is_async;
   if (function.is_async && !function.native_symbol.empty()) {
@@ -368,7 +392,7 @@ std::optional<Parameter> Parser::ParseParameter(ParameterTyping typing) {
       return std::nullopt;
     }
     return Parameter{
-        .type = {.name = {}, .location = name->location, .arguments = {}},
+        .type = {.name = {}, .location = name->location, .arguments = {}, .parameter = {}},
         .name = name->lexeme,
         .location = name->location,
     };

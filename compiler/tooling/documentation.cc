@@ -18,20 +18,25 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/parser.h"
 #include "compiler/frontend/source_loader.h"
+#include "compiler/frontend/token.h"
 
 namespace vela::tooling {
 namespace {
 
-void TypeParameters(std::ostream& output, const std::vector<std::string>& parameters) {
+void TypeParameters(std::ostream& output, const std::vector<frontend::TypeParameter>& parameters) {
   if (parameters.empty()) {
     return;
   }
   output << '<';
   for (std::size_t index = 0; index < parameters.size(); ++index) {
+    const auto& parameter = parameters.at(index);
     if (index != 0) {
       output << ", ";
     }
-    output << parameters.at(index);
+    output << parameter.name;
+    if (parameter.bound) {
+      output << " extends " << parameter.bound->ToString();
+    }
   }
   output << '>';
 }
@@ -243,7 +248,9 @@ void Documentation::Emit(Declaration declaration) {
       return;
     case Declaration::Kind::Interface: {
       const auto& interface = program.interfaces.at(declaration.index);
-      output_ << "interface " << interface.name << " {\n";
+      output_ << "interface " << interface.name;
+      TypeParameters(output_, interface.type_parameters);
+      output_ << " {\n";
       for (const auto& method : interface.methods) {
         output_ << "  ";
         Signature(output_, method);

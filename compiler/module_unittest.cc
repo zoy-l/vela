@@ -199,7 +199,7 @@ func main(): int { return Derived<int>(value: 20).read(); }
       {
           .path = "base.vela",
           .text = R"(
-export class Base<T> { stored: T; read(): T { return this.stored; } }
+export class Base<T extends int> { stored: T; read(): int { return this.stored; } }
 export func values<T>(value: T): T[] { return [value, value]; }
 )",
       },
@@ -207,9 +207,9 @@ export func values<T>(value: T): T[] { return [value, value]; }
           .path = "derived.vela",
           .text = R"(
 import 'base.vela' as lib;
-export class Derived<T> extends lib.Base<T> {
+export class Derived<T extends int> extends lib.Base<T> {
   constructor(value: T) { super(stored: value); }
-  override read(): T {
+  override read(): int {
     let result = super.read();
     for (const lib in lib.values<T>(this.stored)) {
       const capture = (): T => lib;

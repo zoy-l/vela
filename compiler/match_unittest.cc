@@ -5,7 +5,6 @@
 #include "compiler/compiler.h"
 #include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {

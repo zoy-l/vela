@@ -35,9 +35,14 @@ class DeclarationBinder final {
                        DeclarationId definition = {});
   frontend::TypeIdentity Type(const frontend::TypeName& source);
   DeclarationId Origin(const frontend::DeclarationOrigin& origin);
+  DeclarationId Method(DeclarationId owner,
+                       DeclarationKind kind,
+                       const frontend::Function& method,
+                       DeclarationId definition);
   void BindFunction(const frontend::Function& function, DeclarationId identity);
   void BindExpression(const frontend::Expression* expression, DeclarationId identity);
   void BindClass(const frontend::Class& owner);
+  void BindInterface(const frontend::Interface& interface);
   void InheritFields();
 
   const frontend::Program* source_;
@@ -95,6 +100,9 @@ frontend::TypeIdentity DeclarationBinder::Type(const frontend::TypeName& source)
     case frontend::TypeName::Kind::Function:
       result.kind = Kind::Function;
       break;
+    case frontend::TypeName::Kind::Parameter:
+      // 持久执行类型只来自已验证的具体应用；抽象定义事实不进入此绑定阶段。
+      std::unreachable();
   }
   if (source.kind == frontend::TypeName::Kind::Named ||
       source.kind == frontend::TypeName::Kind::Generic) {
@@ -117,6 +125,27 @@ frontend::TypeIdentity DeclarationBinder::Type(const frontend::TypeName& source)
     result.arguments.push_back(Type(argument));
   }
   return result;
+}
+
+DeclarationId DeclarationBinder::Method(DeclarationId owner,
+                                        DeclarationKind kind,
+                                        const frontend::Function& method,
+                                        DeclarationId definition) {
+  const auto& name = method.application ? method.application->name : method.name;
+  const auto source =
+      definition == DeclarationId{} ? DeclarationId{} : Member(definition, kind, name);
+  const auto declaration = Member(owner, kind, name, source);
+  if (!method.application) {
+    return declaration;
+  }
+  std::vector<frontend::TypeIdentity> arguments;
+  arguments.reserve(method.application->arguments.size());
+  for (const auto& argument : method.application->arguments) {
+    arguments.push_back(Type(argument));
+  }
+  return identities_->Get(
+      {.owner = declaration, .kind = kind, .name = name, .arguments = std::move(arguments)},
+      source == DeclarationId{} ? declaration : source);
 }
 
 void DeclarationBinder::BindFunction(const frontend::Function& function, DeclarationId identity) {
@@ -189,9 +218,15 @@ void DeclarationBinder::BindClass(const frontend::Class& owner) {
       key += "$set.";
     }
     key += method.name;
-    const auto identity = member(kind, method.name);
+    const auto identity = Method(declaration, kind, method, definition);
     result_.named_functions.emplace(std::move(key), identity);
     BindFunction(method, identity);
+  }
+  for (const auto& method : owner.method_templates) {
+    const auto kind = method.storage == frontend::MemberStorage::Static
+                          ? DeclarationKind::StaticMethod
+                          : DeclarationKind::Method;
+    static_cast<void>(Method(declaration, kind, method, definition));
   }
   for (const auto& field : owner.fields) {
     const auto is_static = field.storage == frontend::MemberStorage::Static;
@@ -244,6 +279,21 @@ void DeclarationBinder::InheritFields() {
   }
 }
 
+void DeclarationBinder::BindInterface(const frontend::Interface& interface) {
+  const auto declaration = result_.nominals.at(interface.name);
+  const auto& origin = source_->origins.at(interface.name);
+  const auto definition = origin.arguments.empty()
+                              ? DeclarationId{}
+                              : Member(modules_.at(origin.module_uri), origin.kind, origin.name);
+  for (const auto& method : interface.methods) {
+    result_.selectors.emplace(interface.name + '.' + method.name,
+                              Method(declaration, DeclarationKind::Selector, method, definition));
+  }
+  for (const auto& method : interface.method_templates) {
+    static_cast<void>(Method(declaration, DeclarationKind::Selector, method, definition));
+  }
+}
+
 DeclarationBindings DeclarationBinder::Run() {
   identities_->BeginUpdate();
   std::vector<std::string> modules;
@@ -289,11 +339,7 @@ DeclarationBindings DeclarationBinder::Run() {
     BindClass(owner);
   }
   for (const auto& interface : source_->interfaces) {
-    const auto declaration = result_.nominals.at(interface.name);
-    for (const auto& method : interface.methods) {
-      result_.selectors.emplace(interface.name + '.' + method.name,
-                                Member(declaration, DeclarationKind::Selector, method.name));
-    }
+    BindInterface(interface);
   }
   for (const auto& global : source_->globals) {
     BindExpression(global.initializer.get(), result_.named_functions.at("$global." + global.name));

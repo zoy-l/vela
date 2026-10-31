@@ -22,10 +22,11 @@ namespace {
 class DevelopmentFilesTest : public test::DirectoryTest {
  protected:
   void Write(std::string_view path, std::string_view source) {
-    ASSERT_TRUE(WriteFileAtomically(directory_ / Utf8Path(path), std::as_bytes(std::span(source))));
+    ASSERT_TRUE(
+        WriteFileAtomically(directory() / Utf8Path(path), std::as_bytes(std::span(source))));
   }
   [[nodiscard]] std::string Path(std::string_view path) const {
-    return PathText(directory_ / Utf8Path(path));
+    return PathText(directory() / Utf8Path(path));
   }
 };
 

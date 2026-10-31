@@ -26,12 +26,12 @@ StepResult Execution::ValidateTestFinalizer(runtime::Value value) {
   if (!resolved) {
     return std::unexpected(resolved.error());
   }
-  const auto parameters = CallableParameters(*resolved);
-  if (!parameters) {
-    return std::unexpected(parameters.error());
+  const auto contract = ResolveCallableContract(*resolved);
+  if (!contract) {
+    return std::unexpected(contract.error());
   }
   const auto& function = functions_.subspan(resolved->function).front();
-  if (function.is_async || function.signature->result || !parameters->empty()) {
+  if (function.is_async || contract->signature->result || !contract->parameters.empty()) {
     error_message_ =
         "test scope finalizer must be synchronous, accept no arguments and return void";
     return std::unexpected(ExecutionStatus::TypeError);
@@ -63,11 +63,11 @@ StepResult Execution::ExecuteTestRegistration(ActiveFrame& active, Instruction i
       error_message_ = "test callback must be a non-null callable from this program";
       return std::unexpected(resolved.error());
     }
-    const auto parameters = CallableParameters(*resolved);
-    if (!parameters) {
-      return std::unexpected(parameters.error());
+    const auto contract = ResolveCallableContract(*resolved);
+    if (!contract) {
+      return std::unexpected(contract.error());
     }
-    if (std::ranges::any_of(*parameters, [](const auto& parameter) -> bool {
+    if (std::ranges::any_of(contract->parameters, [](const auto& parameter) -> bool {
           return !parameter.optional && !parameter.rest;
         })) {
       error_message_ = "test callback must accept zero arguments";
@@ -75,7 +75,7 @@ StepResult Execution::ExecuteTestRegistration(ActiveFrame& active, Instruction i
     }
     const auto& function = functions_.subspan(resolved->function).front();
     if (operation == runtime::TestOperation::EnterGroup &&
-        (function.is_async || function.signature->result)) {
+        (function.is_async || contract->signature->result)) {
       error_message_ = "group callback must be synchronous and return void";
       return std::unexpected(ExecutionStatus::TypeError);
     }
@@ -128,13 +128,14 @@ StepResult Execution::ExecuteTestControl(ActiveFrame& active, Instruction instru
       error_message_ = "expectAsync requires a callable with the requested arity";
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    const auto parameters = CallableParameters(*resolved);
-    if (!parameters) {
-      return std::unexpected(parameters.error());
+    const auto contract = ResolveCallableContract(*resolved);
+    if (!contract) {
+      return std::unexpected(contract.error());
     }
+    const auto parameters = contract->parameters;
     const auto count = static_cast<std::size_t>(arity.AsInteger());
-    if (parameters->size() < count ||
-        std::ranges::any_of(parameters->subspan(count), [](const auto& parameter) -> bool {
+    if (parameters.size() < count ||
+        std::ranges::any_of(parameters.subspan(count), [](const auto& parameter) -> bool {
           return !parameter.optional && !parameter.rest;
         })) {
       error_message_ = "expectAsync callback does not accept the requested arguments";

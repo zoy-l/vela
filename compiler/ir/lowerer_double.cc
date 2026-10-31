@@ -61,7 +61,8 @@ Lowerer::LoweredValue Lowerer::LowerDoubleLiteral(const frontend::Expression& ex
   });
   return {
       .reg = reg,
-      .type = {.kind = frontend::TypeDescriptor::Kind::Double, .name = frontend::kDoubleTypeName}};
+      .type = {.kind = frontend::TypeDescriptor::Kind::Double, .name = frontend::kDoubleTypeName},
+  };
 }
 
 }  // namespace vela::ir

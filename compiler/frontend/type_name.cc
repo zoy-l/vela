@@ -1,5 +1,8 @@
 #include "compiler/frontend/type_name.h"
 
+#include <algorithm>
+#include <array>
+#include <cstddef>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -13,63 +16,38 @@ namespace vela::frontend {
 namespace {
 
 std::string_view CanonicalTypeName(std::string_view name) noexcept {
-  if (name == kNullTypeName)
-    return kNullTypeName;
-  if (name == kVoidTypeName)
-    return kVoidTypeName;
-  if (name == kDynamicTypeName)
-    return kDynamicTypeName;
-  if (name == kBoolTypeName)
-    return kBoolTypeName;
-  if (name == kIntTypeName)
-    return kIntTypeName;
-  if (name == kDoubleTypeName)
-    return kDoubleTypeName;
-  if (name == kStringTypeName)
-    return kStringTypeName;
-  if (name == kMutableStringTypeName)
-    return kMutableStringTypeName;
-  if (name == kByteArrayTypeName)
-    return kByteArrayTypeName;
-  if (name == kByteDataTypeName)
-    return kByteDataTypeName;
-  if (name == kRegExpTypeName)
-    return kRegExpTypeName;
-  if (name == kRegExpMatchTypeName)
-    return kRegExpMatchTypeName;
-  if (name == kEndianTypeName)
-    return kEndianTypeName;
-  if (name == kFutureTypeName)
-    return kFutureTypeName;
-  if (name == kCompleterTypeName)
-    return kCompleterTypeName;
-  if (name == kTimerTypeName)
-    return kTimerTypeName;
-  if (name == kCancellationTokenTypeName)
-    return kCancellationTokenTypeName;
-  if (name == kSetTypeName)
-    return kSetTypeName;
-  if (name == kMapTypeName)
-    return kMapTypeName;
-  if (name == kErrorTypeName)
-    return kErrorTypeName;
-  if (name == kTimeoutExceptionTypeName)
-    return kTimeoutExceptionTypeName;
-  if (name == kDateTypeName)
-    return kDateTypeName;
-  if (name == kDatePartsTypeName)
-    return kDatePartsTypeName;
-  if (name == kJsonTypeName)
-    return kJsonTypeName;
-  if (name == kMathTypeName)
-    return kMathTypeName;
-  if (name == kRandomTypeName)
-    return kRandomTypeName;
-  if (name == kPerformanceTypeName)
-    return kPerformanceTypeName;
-  if (name == kSleepFunctionName)
-    return kSleepFunctionName;
-  return {};
+  static constexpr auto names = std::to_array<std::string_view>({
+      kNullTypeName,
+      kVoidTypeName,
+      kDynamicTypeName,
+      kBoolTypeName,
+      kIntTypeName,
+      kDoubleTypeName,
+      kStringTypeName,
+      kMutableStringTypeName,
+      kByteArrayTypeName,
+      kByteDataTypeName,
+      kRegExpTypeName,
+      kRegExpMatchTypeName,
+      kEndianTypeName,
+      kFutureTypeName,
+      kCompleterTypeName,
+      kTimerTypeName,
+      kCancellationTokenTypeName,
+      kSetTypeName,
+      kMapTypeName,
+      kErrorTypeName,
+      kTimeoutExceptionTypeName,
+      kDateTypeName,
+      kDatePartsTypeName,
+      kJsonTypeName,
+      kMathTypeName,
+      kRandomTypeName,
+      kPerformanceTypeName,
+      kSleepFunctionName,
+  });
+  const auto found = std::ranges::find(names, name);
+  return found == names.end() ? std::string_view() : *found;
 }
 
 struct TypeNameHash final {
@@ -105,12 +83,14 @@ TypeNamePool& Pool() {
 }  // namespace
 
 std::string_view InternTypeName(std::string_view name) {
-  if (name.empty())
+  if (name.empty()) {
     return {};
-  if (const auto canonical = CanonicalTypeName(name); !canonical.empty())
+  }
+  if (const auto canonical = CanonicalTypeName(name); !canonical.empty()) {
     return canonical;
+  }
   auto& pool = Pool();
-  const std::lock_guard lock(pool.mutex);
+  const std::scoped_lock lock(pool.mutex);
   if (const auto found = pool.values.find(name); found != pool.values.end()) {
     return *found;
   }
@@ -118,12 +98,14 @@ std::string_view InternTypeName(std::string_view name) {
 }
 
 std::string_view InternTypeName(std::string&& name) {
-  if (name.empty())
+  if (name.empty()) {
     return {};
-  if (const auto canonical = CanonicalTypeName(name); !canonical.empty())
+  }
+  if (const auto canonical = CanonicalTypeName(name); !canonical.empty()) {
     return canonical;
+  }
   auto& pool = Pool();
-  const std::lock_guard lock(pool.mutex);
+  const std::scoped_lock lock(pool.mutex);
   if (const auto found = pool.values.find(name); found != pool.values.end()) {
     return *found;
   }

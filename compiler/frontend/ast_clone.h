@@ -27,6 +27,9 @@ class AstCloneTransform {
 // 模板与源码快照保持只读；每个绑定/特化实例拥有独立节点身份。
 [[nodiscard]] Function CloneFunction(const Function& source, AstCloneTransform& transform);
 [[nodiscard]] Class CloneClass(const Class& source, AstCloneTransform& transform);
+// 只复制声明结构与字段初始化表达式；函数体置空，用于只需要成员签名的抽象应用。
+[[nodiscard]] Class CloneClassDeclaration(const Class& source, AstCloneTransform& transform);
+[[nodiscard]] Interface CloneInterface(const Interface& source, AstCloneTransform& transform);
 // 单个解析单元的位置重定位到合并程序或交互提交中的实际起点。
 [[nodiscard]] Program CloneProgram(const Program& source, SourceLocation origin);
 

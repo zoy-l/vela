@@ -19,7 +19,7 @@ namespace {
 class ImportTest : public test::DirectoryTest {
  protected:
   void Write(const std::filesystem::path& filename, std::string_view source) {
-    std::ofstream output(directory_ / filename, std::ios::binary);
+    std::ofstream output(directory() / filename, std::ios::binary);
     output.write(source.data(), static_cast<std::streamsize>(source.size()));
     ASSERT_TRUE(output.good());
   }
@@ -48,7 +48,7 @@ class ImportTest : public test::DirectoryTest {
 
  private:
   [[nodiscard]] std::string EntryPath() const {
-    const auto encoded = (directory_ / "main.vela").generic_u8string();
+    const auto encoded = (directory() / "main.vela").generic_u8string();
     return {encoded.begin(), encoded.end()};
   }
 

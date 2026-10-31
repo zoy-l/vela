@@ -206,11 +206,12 @@ RegisterId Lowerer::CheckArrayCallbackResult(RegisterId value,
     value = validated;
   }
   const auto& callback_result = inputs.signature->return_type;
-  const auto expected_result =
-      algorithm == ArrayAlgorithm::Reduce
-          ? result_type
-          : frontend::TypeDescriptor{.kind = frontend::TypeDescriptor::Kind::Bool,
-                                     .name = frontend::kBoolTypeName};
+  const auto expected_result = algorithm == ArrayAlgorithm::Reduce
+                                   ? result_type
+                                   : frontend::TypeDescriptor{
+                                         .kind = frontend::TypeDescriptor::Kind::Bool,
+                                         .name = frontend::kBoolTypeName,
+                                     };
   if (!inputs.validation_plan && callback_result.kind == frontend::TypeDescriptor::Kind::Dynamic &&
       algorithm != ArrayAlgorithm::Map && algorithm != ArrayAlgorithm::ForEach) {
     value = LowerConversion({.reg = value, .type = callback_result}, expected_result, location).reg;

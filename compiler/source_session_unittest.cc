@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include "base/callable.h"
 #include "base/declaration.h"
 #include "compiler/ir/ir.h"
 
@@ -110,6 +111,111 @@ TEST(SourceSessionTest, GenericContractChangesAreReportedBeforeRetainedSpecializ
     EXPECT_NE(rejected.error().declaration, DeclarationId{});
     EXPECT_EQ(session.snapshot()->revision, 1U);
   }
+}
+
+TEST(SourceSessionTest, UninstantiatedBoundsAndMethodSignaturesRequireReloadWhenTheyChange) {
+  struct Scenario final {
+    std::string_view before;
+    std::string_view after;
+  };
+  for (const auto& scenario : std::array{
+           Scenario{
+               .before = "func read<T extends int>(value: T): T { return value; }",
+               .after = "func read<T extends double>(value: T): T { return value; }",
+           },
+           Scenario{
+               .before =
+                   "type Bound = int; func read<T extends Bound>(value: T): T { return value; }",
+               .after =
+                   "type Bound = double; func read<T extends Bound>(value: T): T { return value; }",
+           },
+           Scenario{
+               .before = "class Box<A> { map<T extends int>(value: T): T { return value; } }",
+               .after = "class Box<A> { map<T extends double>(value: T): T { return value; } }",
+           },
+           Scenario{
+               .before = "class Box<A> { map<T>(value: T): T { return value; } }",
+               .after = "class Box<A> { map<T,U>(value: T): T { return value; } }",
+           },
+           Scenario{
+               .before = "interface Mapper<A> { map<T>(): T[]; }",
+               .after = "interface Mapper<A> { map<T>(): T?; }",
+           },
+           Scenario{
+               .before = "interface Reader<T> { read(): T; }",
+               .after = "interface Reader<T> { read(): int; }",
+           },
+           Scenario{
+               .before = "func read<T>(value: T): T { return value; }",
+               .after = "func read<T>(value: T): T[] { return [value]; }",
+           },
+       }) {
+    SCOPED_TRACE(scenario.after);
+    SourceSession session("main.vela");
+    const auto first = session.Prepare({
+        .changes = {{.path = "main.vela", .text = std::string(scenario.before)}},
+        .added_roots = {},
+    });
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(session.Commit(*first));
+    const auto changed = session.Prepare({
+        .base_revision = 1,
+        .changes = {{.path = "main.vela", .text = std::string(scenario.after)}},
+        .added_roots = {},
+    });
+    ASSERT_FALSE(changed);
+    EXPECT_EQ(changed.error().status, SourceCandidateStatus::RequiresReload);
+    EXPECT_NE(changed.error().declaration, DeclarationId{});
+  }
+}
+
+TEST(SourceSessionTest, AlphaRenamesAndTransparentBoundsPreserveMethodContractsAndApplications) {
+  SourceSession session("main.vela");
+  const auto first = session.Prepare({
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = R"(
+interface Reader<A> { read(): A; }
+type View<X> = Reader<X>;
+class Item implements Reader<int> { read(): int { return 42; } }
+class Box<A> { map<B extends View<A>>(value: B): A { return value.read(); } }
+func read<T extends View<int>>(value: T): int { return value.read(); }
+func main(): int { return Box<int>().map(Item()) + read(Item()); }
+)",
+              },
+          },
+      .added_roots = {},
+  });
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(session.Commit(*first));
+  const auto* method = Function(first->snapshot().program, "Box<int>.map<Item>");
+  ASSERT_NE(method, nullptr);
+  const std::array retained{method->identity.declaration};
+  const auto renamed = session.Prepare(
+      {
+          .base_revision = 1,
+          .changes =
+              {
+                  {
+                      .path = "main.vela",
+                      .text = R"(
+interface Reader<X> { read(): X; }
+type View<Y> = Reader<Y>;
+class Item implements Reader<int> { read(): int { return 42; } }
+class Box<X> { map<Y extends Reader<X>>(value: Y): X { return value.read(); } }
+func read<R extends Reader<int>>(value: R): int { return value.read(); }
+)",
+                  },
+              },
+          .added_roots = {},
+      },
+      retained);
+  ASSERT_TRUE(renamed);
+  const auto* current = Function(renamed->snapshot().program, "Box<int>.map<Item>");
+  ASSERT_NE(current, nullptr);
+  EXPECT_EQ(current->identity.declaration, method->identity.declaration);
 }
 
 TEST(SourceSessionTest, StaleAndForeignCandidatesCannotPublishIntoAnotherBaseline) {
@@ -416,6 +522,101 @@ TEST(SourceSessionTest, RetainedNestedTypeArgumentsRebindAcrossAliasesAndRemoved
   });
   ASSERT_NE(current, updated.end());
   EXPECT_EQ(current->identity.revision, 2U);
+}
+
+TEST(SourceSessionTest, RetainedMethodApplicationsKeepOwnerAndMethodArgumentsSeparate) {
+  SourceSession session("main.vela");
+  const std::string declarations = R"(
+class Box<T> {
+  identity<U>(value: U): U { return value; }
+  static copy<U>(value: U): U { return value; }
+}
+)";
+  const auto first = session.Prepare({
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = declarations + R"(
+func main(): int { return Box<string>().identity(20) + Box<string>.copy(22); }
+func unused(): string { return Box<int>().identity('unused'); }
+)",
+              },
+          },
+      .added_roots = {},
+  });
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(session.Commit(*first));
+  const auto* identity = Function(first->snapshot().program, "Box<string>.identity<int>");
+  const auto* copy = Function(first->snapshot().program, "Box<string>.copy<int>");
+  ASSERT_NE(identity, nullptr);
+  ASSERT_NE(copy, nullptr);
+  const std::array retained{identity->identity.declaration, copy->identity.declaration};
+  const auto next = session.Prepare(
+      {
+          .base_revision = 1,
+          .changes = {{.path = "main.vela", .text = declarations}},
+          .added_roots = {},
+      },
+      retained);
+  ASSERT_TRUE(next);
+  const auto* current = Function(next->snapshot().program, "Box<string>.identity<int>");
+  const auto* static_current = Function(next->snapshot().program, "Box<string>.copy<int>");
+  ASSERT_NE(current, nullptr);
+  ASSERT_NE(static_current, nullptr);
+  EXPECT_EQ(current->identity.declaration, identity->identity.declaration);
+  EXPECT_EQ(static_current->identity.declaration, copy->identity.declaration);
+  EXPECT_EQ(Class(next->snapshot().program, "Box<int>"), nullptr);
+}
+
+TEST(SourceSessionTest, RetainedGenericSelectorsRebuildEveryRetainedImplementation) {
+  SourceSession session("main.vela");
+  const std::string declarations = R"(
+interface Mapper<T> { map<U>(value: U, operation: (U) => T): T; }
+class Implementation<T> implements Mapper<T> {
+  map<U>(value: U, operation: (U) => T): T { return operation(value); }
+}
+)";
+  const auto first = session.Prepare({
+      .changes =
+          {
+              {
+                  .path = "main.vela",
+                  .text = declarations + R"(
+func main(): int {
+  const mapper: Mapper<int> = Implementation<int>();
+  return mapper.map('42', value => int.parse(value));
+}
+)",
+              },
+          },
+      .added_roots = {},
+  });
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(session.Commit(*first));
+  const auto& before = first->snapshot().program;
+  ASSERT_EQ(before.selector_declarations.size(), 1U);
+  const auto selector = before.selector_declarations.front();
+  const auto* owner = Class(before, "Implementation<int>");
+  ASSERT_NE(owner, nullptr);
+  const std::array retained{selector, owner->declaration};
+  const auto next = session.Prepare(
+      {
+          .base_revision = 1,
+          .changes = {{.path = "main.vela", .text = declarations}},
+          .added_roots = {},
+      },
+      retained);
+  ASSERT_TRUE(next);
+  const auto& after = next->snapshot().program;
+  ASSERT_EQ(after.selector_declarations.size(), 1U);
+  EXPECT_EQ(after.selector_declarations.front(), selector);
+  const auto* implementation = Function(after, "Implementation<int>.map<string>");
+  ASSERT_NE(implementation, nullptr);
+  const auto* current_owner = Class(after, "Implementation<int>");
+  ASSERT_NE(current_owner, nullptr);
+  ASSERT_EQ(current_owner->dispatch_targets.size(), 1U);
+  EXPECT_NE(current_owner->dispatch_targets.front(), kInvalidFunctionTarget);
 }
 
 TEST(SourceSessionTest, AcceptedSyntaxIsReusedAndDeletedModulesCannotBeLoadedFromTheCache) {

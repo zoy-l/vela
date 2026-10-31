@@ -155,6 +155,8 @@ struct Token final {
   SourceLocation location;
   TokenKind kind = TokenKind::EndOfFile;
   TokenRole role = TokenRole::Ordinary;
+  // 类型解析消费的 '>' 前缀长度；保留原始复合 token，供格式化拆分其后的 '='。
+  std::size_t type_closing_length = 0;
 };
 
 struct SourceComment final {

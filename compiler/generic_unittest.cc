@@ -52,6 +52,72 @@ func main(): int {
 
 class GenericErrorTest : public testing::TestWithParam<std::string_view> {};
 
+TEST(GenericTest, ExecutesBoundedDefinitionsWithConcreteInterfaceApplications) {
+  runtime::Isolate isolate;
+  const auto result = test::RunInteger(R"(
+interface Comparable<T> { compareTo(other: T): int; }
+class Score implements Comparable<Score> {
+  value: int;
+  compareTo(other: Score): int { return this.value - other.value; }
+}
+func compare<T extends Comparable<T>>(left: T, right: T): int {
+  return left.compareTo(right);
+}
+func main(): int {
+  const left = Score(value: 44);
+  const right = Score(value: 2);
+  const operation: (Score, Score) => int = compare;
+  return operation(left, right);
+}
+)",
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
+}
+
+TEST(GenericTest, InfersPayloadsAndUsesTheProvenFBoundParentSpecialization) {
+  runtime::Isolate isolate;
+  const auto compiled = test::CompileCleanSource(R"(
+interface Reader<E> { read(): E; }
+class IntReader implements Reader<int> { read(): int { return 20; } }
+class A<T> { read(): int { return 20; } }
+class B extends A<B> {}
+class C extends B {}
+func read<X extends A<X>>(value: X): int { return value.read(); }
+func map<T extends Reader<E>, E, U>(operation: (E) => U, source: T): U {
+  return operation(source.read());
+}
+func main(): int { return read(C()) + map(value => value + 2, IntReader()); }
+)",
+                                                 isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  EXPECT_TRUE(compiled->FindFunction("read<B>").IsValid());
+  EXPECT_FALSE(compiled->FindFunction("read<C>").IsValid());
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
+}
+
+TEST(GenericTest, BoundEvidenceDoesNotRepeatArgumentsOrDeferTheirRuntimeEffects) {
+  runtime::Isolate isolate;
+  const auto result = test::RunInteger(R"(
+interface Reader<E> { read(): E; }
+class IntReader implements Reader<int> { read(): int { return 41; } }
+let calls: int = 0;
+func make(): IntReader { calls += 1; return IntReader(); }
+func apply<T extends Reader<E>, E, U>(operation: (E) => U, source: T): U {
+  return operation(source.read());
+}
+func main(): int {
+  const value = apply(item => item + calls, make());
+  return value + (calls - 1) * 100;
+}
+)",
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
+}
+
 TEST(GenericTest, NestedOutputVariablesWaitForOuterArgumentEvidence) {
   runtime::Isolate isolate;
   const auto result = test::RunInteger(R"(
@@ -290,7 +356,7 @@ func collect<T>(values: T[]): (() => T)[] {
   }
   return result;
 }
-func pairs<K, V>(values: Map<K, V>): (() => int)[] {
+func pairs<K extends string, V extends int>(values: Map<K, V>): (() => int)[] {
   const result: (() => int)[] = [];
   for (const [key, value] in values) {
     result.push((): int => key.length + value);

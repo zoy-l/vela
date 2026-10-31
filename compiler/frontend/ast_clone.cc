@@ -1,8 +1,10 @@
 #include "compiler/frontend/ast_clone.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
 
@@ -11,11 +13,14 @@ namespace {
 
 class AstCloner final {
  public:
+  enum class Bodies : std::uint8_t { Include, Exclude };
   explicit AstCloner(std::optional<SourceLocation> origin = std::nullopt,
-                     AstCloneTransform* transform = nullptr)
-      : origin_(origin), transform_(transform) {}
+                     AstCloneTransform* transform = nullptr,
+                     Bodies bodies = Bodies::Include)
+      : origin_(origin), transform_(transform), bodies_(bodies) {}
   Function CloneFunction(const Function& source);
   Class CloneClass(const Class& source);
+  Interface CloneInterface(const Interface& source);
   Program CloneProgram(const Program& source);
 
  private:
@@ -35,10 +40,25 @@ class AstCloner final {
         .location = Relocate(source.location),
         .kind = source.kind,
         .arguments = {},
+        .parameter = source.parameter,
     };
     result.arguments.reserve(source.arguments.size());
     for (const auto& argument : source.arguments) {
       result.arguments.push_back(CloneType(argument));
+    }
+    return result;
+  }
+  [[nodiscard]] std::vector<TypeParameter> CloneTypeParameters(
+      const std::vector<TypeParameter>& source) const {
+    std::vector<TypeParameter> result;
+    result.reserve(source.size());
+    for (const auto& parameter : source) {
+      result.push_back({
+          .name = parameter.name,
+          .location = Relocate(parameter.location),
+          .bound = parameter.bound ? std::optional(CloneType(*parameter.bound)) : std::nullopt,
+          .identity = parameter.identity,
+      });
     }
     return result;
   }
@@ -48,6 +68,7 @@ class AstCloner final {
   Field CloneField(const Field& source);
   std::optional<SourceLocation> origin_;
   AstCloneTransform* transform_;
+  Bodies bodies_;
 };
 
 std::unique_ptr<Expression> AstCloner::CloneExpression(const Expression* source) {
@@ -218,9 +239,16 @@ Function AstCloner::CloneFunction(const Function& source) {
       transform_->Declare(parameter.name);
     }
   }
-  result.body = CloneStatement(source.body.get());
+  result.body = bodies_ == Bodies::Include ? CloneStatement(source.body.get()) : nullptr;
   result.location = Relocate(source.location);
-  result.type_parameters = source.type_parameters;
+  result.type_parameters = CloneTypeParameters(source.type_parameters);
+  if (source.application) {
+    Function::Application application{.name = source.application->name, .arguments = {}};
+    for (const auto& argument : source.application->arguments) {
+      application.arguments.push_back(CloneType(argument));
+    }
+    result.application = std::move(application);
+  }
   result.visibility = source.visibility;
   result.storage = source.storage;
   result.export_kind = source.export_kind;
@@ -273,21 +301,14 @@ Program AstCloner::CloneProgram(const Program& source) {
   for (auto& alias : result.aliases) {
     alias.location = Relocate(alias.location);
     alias.target = CloneType(alias.target);
+    alias.type_parameters = CloneTypeParameters(alias.type_parameters);
   }
   for (const auto& function : source.functions) {
     result.functions.push_back(CloneFunction(function));
   }
   result.interfaces.reserve(source.interfaces.size());
   for (const auto& declaration : source.interfaces) {
-    Interface copy;
-    copy.name = declaration.name;
-    copy.location = Relocate(declaration.location);
-    copy.export_kind = declaration.export_kind;
-    copy.methods.reserve(declaration.methods.size());
-    for (const auto& method : declaration.methods) {
-      copy.methods.push_back(CloneFunction(method));
-    }
-    result.interfaces.push_back(std::move(copy));
+    result.interfaces.push_back(CloneInterface(declaration));
   }
   for (const auto& owner : source.classes) {
     result.classes.push_back(CloneClass(owner));
@@ -305,16 +326,30 @@ Program AstCloner::CloneProgram(const Program& source) {
   return result;
 }
 
+Interface AstCloner::CloneInterface(const Interface& source) {
+  Interface result;
+  result.name = source.name;
+  result.location = Relocate(source.location);
+  result.type_parameters = CloneTypeParameters(source.type_parameters);
+  result.export_kind = source.export_kind;
+  for (const auto& method : source.methods) {
+    result.methods.push_back(CloneFunction(method));
+  }
+  for (const auto& method : source.method_templates) {
+    result.method_templates.push_back(CloneFunction(method));
+  }
+  return result;
+}
+
 Class AstCloner::CloneClass(const Class& source) {
   Class result;
   result.name = source.name;
   result.location = Relocate(source.location);
-  result.type_parameters = source.type_parameters;
+  result.type_parameters = CloneTypeParameters(source.type_parameters);
   result.constructor_kind = source.constructor_kind;
   result.export_kind = source.export_kind;
   result.interfaces.reserve(source.interfaces.size());
   result.fields.reserve(source.fields.size());
-  result.methods.reserve(source.methods.size());
   if (source.base_class) {
     result.base_class = CloneType(*source.base_class);
   }
@@ -326,6 +361,9 @@ Class AstCloner::CloneClass(const Class& source) {
   }
   for (const auto& method : source.methods) {
     result.methods.push_back(CloneFunction(method));
+  }
+  for (const auto& method : source.method_templates) {
+    result.method_templates.push_back(CloneFunction(method));
   }
   if (source.constructor) {
     result.constructor = std::make_unique<Function>(CloneFunction(*source.constructor));
@@ -340,6 +378,12 @@ Function CloneFunction(const Function& source, AstCloneTransform& transform) {
 }
 Class CloneClass(const Class& source, AstCloneTransform& transform) {
   return AstCloner(std::nullopt, &transform).CloneClass(source);
+}
+Class CloneClassDeclaration(const Class& source, AstCloneTransform& transform) {
+  return AstCloner(std::nullopt, &transform, AstCloner::Bodies::Exclude).CloneClass(source);
+}
+Interface CloneInterface(const Interface& source, AstCloneTransform& transform) {
+  return AstCloner(std::nullopt, &transform).CloneInterface(source);
 }
 Program CloneProgram(const Program& source, SourceLocation origin) {
   return AstCloner(origin).CloneProgram(source);

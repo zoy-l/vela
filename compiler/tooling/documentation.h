@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 
+#include "base/source_location.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/token.h"
 

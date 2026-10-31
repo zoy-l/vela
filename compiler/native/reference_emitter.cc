@@ -38,7 +38,10 @@ void FunctionEmitter::Unpack(ir::RegisterId reg) {
   Store(reg, DecodeValue(builder_, record, type), type);
 }
 
-void FunctionEmitter::PackArguments(ir::RegisterId first, std::size_t count, std::size_t offset) {
+void FunctionEmitter::PackArguments(ir::RegisterId first,
+                                    std::size_t count,
+                                    ArgumentPrefix prefix) {
+  const auto offset = static_cast<std::size_t>(prefix);
   for (std::size_t argument = 0; argument < count; ++argument) {
     Pack(Encode(static_cast<ir::RegisterId>(first + argument)), argument + offset);
   }
@@ -149,7 +152,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
     }
     case Opcode::CallIndirect: {
       const auto count = instruction.index;
-      PackArguments(instruction.lhs, count, 1);
+      PackArguments(instruction.lhs, count, ArgumentPrefix::Implicit);
       auto* callable = Pack(Encode(instruction.rhs), static_cast<std::size_t>(count) + 1);
       auto helper =
           module_.getOrInsertFunction("vela_native_v1_call_indirect", status_type, pointer, pointer,

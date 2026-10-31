@@ -20,13 +20,16 @@ constexpr std::size_t Index(Builtin builtin) {
   return static_cast<std::size_t>(builtin) - static_cast<std::size_t>(Builtin::NewRegExp);
 }
 
-std::span<const Member> SelectMembers(Kind receiver,
-                                      std::span<const Member> pattern,
-                                      std::span<const Member> match) noexcept {
+struct MemberGroups final {
+  std::span<const Member> pattern;
+  std::span<const Member> match;
+};
+
+std::span<const Member> SelectMembers(Kind receiver, MemberGroups members) noexcept {
   if (receiver == Kind::RegExp) {
-    return pattern;
+    return members.pattern;
   }
-  return receiver == Kind::RegExpMatch ? match : std::span<const Member>();
+  return receiver == Kind::RegExpMatch ? members.match : std::span<const Member>();
 }
 
 }  // namespace
@@ -38,7 +41,10 @@ const FunctionDescriptor& RegExpBuiltinSignature(Builtin builtin) {
     const TypeDescriptor boolean{.kind = Kind::Bool, .name = kBoolTypeName};
     const TypeDescriptor text{.kind = Kind::String, .name = kStringTypeName};
     const TypeDescriptor nullable_text{
-        .kind = Kind::String, .name = kNullableStringTypeName, .nullable = true};
+        .kind = Kind::String,
+        .name = kNullableStringTypeName,
+        .nullable = true,
+    };
     const TypeDescriptor pattern{.kind = Kind::RegExp, .name = kRegExpTypeName};
     const TypeDescriptor match{.kind = Kind::RegExpMatch, .name = kRegExpMatchTypeName};
     const TypeDescriptor nullable_match{
@@ -122,7 +128,7 @@ std::span<const Member> RegExpMethods(Kind receiver) {
       {"groups", Builtin::RegExpMatchGroups},
       {"namedGroup", Builtin::RegExpMatchNamedGroup},
   });
-  return SelectMembers(receiver, pattern, match);
+  return SelectMembers(receiver, {.pattern = pattern, .match = match});
 }
 
 std::span<const Member> RegExpProperties(Kind receiver) {
@@ -141,7 +147,7 @@ std::span<const Member> RegExpProperties(Kind receiver) {
       {"groupCount", Builtin::RegExpMatchGroupCount},
       {"groupNames", Builtin::RegExpMatchGroupNames},
   });
-  return SelectMembers(receiver, pattern, match);
+  return SelectMembers(receiver, {.pattern = pattern, .match = match});
 }
 
 }  // namespace vela::frontend

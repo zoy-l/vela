@@ -20,20 +20,49 @@
 
 namespace vela::frontend {
 
+// 类型参数以所属泛型声明的规范路径和参数序号标识；同名而作用域不同的参数不是同一类型。
+struct TypeParameterId final {
+  std::string owner;
+  std::uint32_t index = 0;
+
+  bool operator==(const TypeParameterId&) const = default;
+  template <class H>
+  friend H AbslHashValue(H state, const TypeParameterId& identity) {
+    return H::combine(std::move(state), identity.owner, identity.index);
+  }
+};
+
 struct TypeName final {
-  enum class Kind : std::uint8_t { Named, Array, Nullable, Function, Generic };
+  enum class Kind : std::uint8_t { Named, Array, Nullable, Function, Generic, Parameter };
   std::string name;
   SourceLocation location;
   Kind kind = Kind::Named;
   // 数组和可空类型有一个子类型，函数按参数顺序保存子类型，最后一项为返回类型。
   std::vector<TypeName> arguments;
+  // 仅 Parameter 使用：模块绑定按词法作用域确定身份，name 只用于显示。
+  TypeParameterId parameter;
 
   [[nodiscard]] std::string ToString() const;
 };
 
-[[nodiscard]] TypeName SubstituteTypeName(
-    TypeName type,
-    const absl::flat_hash_map<std::string, TypeName>& substitutions);
+// 声明中的类型参数；上界与引用它的类型使用同一参数身份。
+struct TypeParameter final {
+  std::string name;
+  SourceLocation location;
+  std::optional<TypeName> bound;
+  TypeParameterId identity;
+};
+
+using TypeSubstitutions = absl::flat_hash_map<TypeParameterId, TypeName>;
+
+// 参数具体化为已有可空类型或 dynamic 时，T? 不形成第二层可空包装。
+[[nodiscard]] TypeName SubstituteTypeName(TypeName type, const TypeSubstitutions& substitutions);
+[[nodiscard]] bool IsNullableTypeName(const TypeName& type);
+[[nodiscard]] TypeName ParameterTypeName(const TypeParameter& parameter, SourceLocation location);
+[[nodiscard]] bool HasTypeParameters(const TypeName& type);
+[[nodiscard]] bool IsSameTypeConstructor(const TypeName& left, const TypeName& right);
+// 与 ToString 相同的结构文本，但类型参数附带身份，作为特化与类型表的唯一键。
+[[nodiscard]] std::string CanonicalTypeText(const TypeName& type);
 [[nodiscard]] std::optional<std::string_view> CompoundAssignmentOperation(std::string_view text);
 
 // 名称绑定前的声明来源；键使用绑定后的符号名，值不受导入别名或模块排序影响。
@@ -43,14 +72,17 @@ struct DeclarationOrigin final {
     DeclarationKind kind = DeclarationKind::Field;
     std::string name;
     bool has_initializer = false;
+    std::vector<std::string> type_parameters;
+    std::string generic_signature;
   };
   std::string module_uri;
   std::string name;
   DeclarationKind kind = DeclarationKind::Function;
   std::vector<TypeName> arguments;
   // 模板离开 AST 后仍保留声明结构；具体特化暂时不可达不代表这些声明已删除。
-  std::vector<std::string> type_parameters;
+  std::vector<TypeParameter> type_parameters;
   std::vector<Member> members;
+  std::string generic_signature;
 };
 
 struct Expression;
@@ -128,16 +160,18 @@ struct Expression final {
   // 文本语法由 lexer/parser 保证，各阶段共用有符号范围检查。
   [[nodiscard]] std::optional<std::int64_t> IntegerValue() const noexcept {
     std::int64_t value = 0;
-    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+    const auto parsed = std::from_chars(text.data(), std::to_address(text.end()), value);
     return parsed.ec == std::errc() ? std::optional(value) : std::nullopt;
   }
 };
 
 // 仅枚举六个可选操作数；列表、lambda、match 的遍历和作用域由访问者处理。
 template <class Node>
-[[nodiscard]] std::array<Node*, 6> ExpressionOperands(Node& expression) noexcept {
-  return {expression.left.get(),   expression.right.get(),  expression.operand.get(),
-          expression.callee.get(), expression.object.get(), expression.index.get()};
+[[nodiscard]] auto ExpressionOperands(Node& expression) noexcept {
+  return std::array{
+      expression.left.get(),   expression.right.get(),  expression.operand.get(),
+      expression.callee.get(), expression.object.get(), expression.index.get(),
+  };
 }
 
 struct Parameter final {
@@ -212,12 +246,18 @@ struct Statement final {
 
 struct Function final {
   enum class Role : std::uint8_t { Ordinary, InteractiveEntry, RetiredEntry };
+  struct Application final {
+    std::string name;
+    std::vector<TypeName> arguments;
+  };
   std::string name;
   TypeName return_type;
   std::vector<Parameter> parameters;
   std::unique_ptr<Statement> body;
   SourceLocation location;
-  std::vector<std::string> type_parameters;
+  std::vector<TypeParameter> type_parameters;
+  // 方法应用保留模板名及已验证实参；持久身份和工具直接读取，不从执行名称反向解析。
+  std::optional<Application> application;
   Visibility visibility = Visibility::Public;
   MemberStorage storage = MemberStorage::Instance;
   ExportKind export_kind = ExportKind::Local;
@@ -248,8 +288,10 @@ struct Class final {
   std::string name;
   std::vector<Field> fields;
   std::vector<Function> methods;
+  // 声明了自身类型参数的方法不进入执行用方法表；调用点的具体应用在检查结束时追加到 methods。
+  std::vector<Function> method_templates;
   SourceLocation location;
-  std::vector<std::string> type_parameters;
+  std::vector<TypeParameter> type_parameters;
   std::unique_ptr<Function> constructor;
   ConstructorKind constructor_kind = ConstructorKind::Generated;
   std::vector<TypeName> interfaces;
@@ -265,7 +307,9 @@ struct Class final {
 struct Interface final {
   std::string name;
   std::vector<Function> methods;
+  std::vector<Function> method_templates;
   SourceLocation location;
+  std::vector<TypeParameter> type_parameters;
   ExportKind export_kind = ExportKind::Local;
 };
 
@@ -283,7 +327,7 @@ struct Program final {
     std::string name;
     TypeName target;
     SourceLocation location;
-    std::vector<std::string> type_parameters;
+    std::vector<TypeParameter> type_parameters;
     ExportKind export_kind = ExportKind::Local;
   };
   struct Import final {
@@ -302,6 +346,17 @@ struct Program final {
   std::vector<Interface> interfaces;
   std::vector<Global> globals;
   absl::flat_hash_map<std::string, DeclarationOrigin> origins;
+  // 特化把泛型模板移出执行用声明；模板在特化初始化后不再增删，定义检查事实与工具共用这些节点。
+  struct Templates final {
+    std::vector<Function> functions;
+    std::vector<Class> classes;
+    std::vector<Interface> interfaces;
+    std::vector<TypeAlias> aliases;
+    // 实参含类型参数的抽象应用只提供成员签名，不进入执行用声明；检查期间按需追加。
+    std::vector<std::unique_ptr<Class>> class_applications;
+    std::vector<std::unique_ptr<Interface>> interface_applications;
+  };
+  Templates templates;
 };
 
 }  // namespace vela::frontend

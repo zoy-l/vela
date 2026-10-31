@@ -1,5 +1,7 @@
 #include "base/testing/directory.h"
+#include <gtest/gtest.h>
 
+#include <filesystem>
 #include <system_error>
 #include <utility>
 

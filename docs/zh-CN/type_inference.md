@@ -6,9 +6,9 @@ Vela 在两个方向上对表达式进行类型检查：表达式自身合成（
 
 ## 泛型调用与统一约束
 
-本文描述当前实现。尚未实现的声明上界、泛型定义检查及上界驱动推导见[泛型系统设计](generics.md)；该设计保留现有值类型、容器不变性和单态化，不采用 Dart 整套类型系统。
+泛型声明可以使用单一 `extends` 上界。所有已加载模块中的泛型定义在未实例化时也接受检查；类型参数只能使用其已声明的能力。完整声明与执行契约见[泛型系统](generics.md)。
 
-泛型函数、类构造和透明泛型构造别名允许省略全部类型实参。编译器从调用实参、外围预期类型和回调签名收集结构化约束，再确定具体特化。显式类型实参仍然有效；类型标注中的 `Box<int>`、`Map<string, int>` 等仍须写完整，不从后续语句反推类型。
+泛型函数、实例/静态方法、类构造和透明泛型构造别名允许省略全部类型实参。编译器从调用实参、外围预期类型、回调签名和声明上界收集约束，再确定具体特化。显式类型实参固定对应参数，不能被推导改写；类型标注中的 `Box<int>`、`Map<string, int>` 等仍须写完整，不从后续语句反推类型。
 
 ```typescript
 func identity<T>(value: T): T { return value; }
@@ -26,7 +26,16 @@ const scores: Map<string, int> = Map();
 
 数组 `map/reduce`、Set/Map/Completer 构造、Future 工厂和用户泛型共用类型约束求解器。Future 对载荷采用和 `wait` 结果数组的处理属于各自公开 API 的语义；普通回调严格匹配参数数量，数组回调允许末尾参数省略，异常回调按声明的异常类型筛选。这些调用契约不改变共同的推导规则。
 
-推导只合并相同类型及现有的可空关系，不隐式合并 int/double，不创造联合类型或猜测共同业务父类型。已有容器的类型实参保持不变性；数组字面量仍按其数组上下文创建存储。信息不足、约束冲突或最终实参不匹配时产生编译错误，不降级为 dynamic。`const values = Map()` 和无函数类型上下文的 `const operation = identity` 因此仍然报错。只有声明、实参或操作本身确实具有 dynamic 类型时，推导结果才可能包含 dynamic。
+没有相关声明上界时，推导只合并相同类型及现有的可空关系。上界还可通过真实的 class 继承或显式接口实现提供证据，例如 `T extends Reader<E>` 可从具体 T 的 `Reader<int>` 实现推导 E 为 int。参数依赖及 F-bound 一起传播，结果必须是唯一的最具体有效解；不会猜测任意业务父类型。推导不隐式合并 int/double，不创造联合类型，已有容器的实参保持不变性。数组字面量仍按其上下文创建存储。
+
+信息不足、约束冲突或最终实参不匹配时产生编译错误，不降级为 dynamic，也不把上界作为缺省实参。`const values = Map()`、无函数上下文的 `const operation = identity`，以及对 `empty<T extends Reader<int>>(): T[]` 的无上下文调用 `empty()`，都不能据此获得类型实参。dynamic 不能证明显式上界；只有声明、实参或操作本身具有 dynamic 类型时，无上界推导结果才可能包含 dynamic。
+
+```vela
+interface Reader<E> { read(): E; }
+class IntReader implements Reader<int> { read(): int { return 42; } }
+func read<T extends Reader<E>, E>(source: T): E { return source.read(); }
+func main(): int { return read(IntReader()); }
+```
 
 每个泛型调用使用独立的推导变量域，求解完成后按规范类型实参请求特化。显式和推断得到的同一组类型实参复用同一个具体声明；后端不持有推导变量。延迟检查保留表达式所在源码位置的流分析事实，并在源码位置应用潜在赋值或调用效果；它不改变运行时实参的从左到右、精确一次求值顺序。
 

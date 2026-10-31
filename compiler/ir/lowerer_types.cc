@@ -92,8 +92,10 @@ void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
     case Opcode::NewInstance:
       RecordValueType(
           instruction.dst,
-          {.kind = Kind::Class,
-           .name = frontend::InternTypeName(program_.classes.at(instruction.index).name)});
+          {
+              .kind = Kind::Class,
+              .name = frontend::InternTypeName(program_.classes.at(instruction.index).name),
+          });
       break;
     case Opcode::NewArray:
     case Opcode::NewDynamicArray:

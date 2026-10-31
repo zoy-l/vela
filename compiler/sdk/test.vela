@@ -574,9 +574,9 @@ export func expectAsync0(callback: dynamic, count: int?, max: int?): () => void 
 export func expectAsync1<T>(callback: dynamic, count: int?, max: int?): (T) => void {
   const minimum = count ?? 1;
   const maximum = max ?? minimum;
-  const identity: int = _control(1, callback, minimum, maximum, 1);
+  const identity: int = _control(1, callback, minimum, maximum, 1) as int;
   return (value: T): void => {
-    const previous: int = _control(2, identity, null, null, null);
+    const previous: int = _control(2, identity, null, null, null) as int;
     try {
       _control(4, identity, null, null, null);
       callback(value);

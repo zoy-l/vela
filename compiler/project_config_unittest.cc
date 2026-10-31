@@ -140,11 +140,11 @@ class ProjectConfigurationFileTest : public test::DirectoryTest {
     test::DirectoryTest::SetUp();
     ASSERT_FALSE(HasFatalFailure());
     std::error_code error;
-    std::filesystem::create_directories(directory_ / "project" / "nested", error);
+    std::filesystem::create_directories(directory() / "project" / "nested", error);
     ASSERT_FALSE(error);
   }
   void Write(const std::filesystem::path& relative, std::string_view text) {
-    std::ofstream output(directory_ / relative, std::ios::binary);
+    std::ofstream output(directory() / relative, std::ios::binary);
     output.write(text.data(), static_cast<std::streamsize>(text.size()));
     ASSERT_TRUE(output.good());
   }

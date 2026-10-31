@@ -1,7 +1,6 @@
 #include "compiler/ir/lowerer.h"
 
 #include <cstddef>
-#include <cstdint>
 #include <vector>
 
 #include "base/builtin.h"

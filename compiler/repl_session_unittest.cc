@@ -46,6 +46,22 @@ class ReplSessionTest : public testing::Test {
   ReplSession session_;
 };
 
+TEST_F(ReplSessionTest, BoundedGenericMethodsAndInterfacesPersistAcrossSubmissions) {
+  Execute("interface Reader<E> { read(): E; }");
+  Execute("class Number implements Reader<int> { read(): int { return 41; } }");
+  Execute("class Mapper { map<T extends Reader<E>, E>(value: T): E { return value.read(); } }");
+  Execute("func read<T extends Reader<E>, E>(value: T): E { return value.read(); }");
+  Execute("const mapper = Mapper();");
+  Execute("const operation: (Number) => int = mapper.map;");
+  EXPECT_EQ(session().Submit("func unfinished<T extends Reader<").status,
+            SubmissionStatus::Incomplete);
+  EXPECT_EQ(session().Submit("const invalid = mapper.map(42);").status, SubmissionStatus::Rejected);
+  session().isolate().heap().Collect();
+  Execute("operation(Number()) + 1");
+  Execute("read(Number()) + 1");
+  EXPECT_EQ(output().str(), "42\n42\n");
+}
+
 TEST_F(ReplSessionTest, PersistsValuesAndInitializesOnceWithoutReplayingHistory) {
   Execute("func initial(): int { print(\"once\"); return 40; }");
   Execute("let value = initial();");
@@ -338,7 +354,7 @@ TEST_F(ReplSessionTest, TrailingCommentsAndBlockLambdaExpressionsKeepTheirSyntax
 class ReplModuleSessionTest : public test::DirectoryTest {
  protected:
   void Write(std::string_view name, std::string_view text) {
-    ASSERT_TRUE(WriteFileAtomically(directory_ / name, std::as_bytes(std::span(text))));
+    ASSERT_TRUE(WriteFileAtomically(directory() / name, std::as_bytes(std::span(text))));
   }
   static void Execute(ReplSession& session, std::string_view text) {
     EXPECT_EQ(session.Submit(text).status, SubmissionStatus::Executed);

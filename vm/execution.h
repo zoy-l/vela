@@ -143,8 +143,13 @@ class Execution final {
                                   runtime::RegisterView parameters);
   [[nodiscard]] std::expected<ResolvedCallable, ExecutionStatus> ResolveCallable(
       runtime::Value value) const;
-  [[nodiscard]] std::expected<std::span<const CallSignature::Parameter>, ExecutionStatus>
-  CallableParameters(const ResolvedCallable& callable) const;
+  // 借用当前不可变程序的签名；Execution 的程序所有权覆盖此视图的使用期。
+  struct CallableContract final {
+    const CallSignature* signature = nullptr;
+    std::span<const CallSignature::Parameter> parameters;
+  };
+  [[nodiscard]] std::expected<CallableContract, ExecutionStatus> ResolveCallableContract(
+      const ResolvedCallable& callable) const;
   [[nodiscard]] static std::expected<std::size_t, ExecutionStatus> ReadLayoutIndex(
       runtime::Value value,
       std::size_t count);

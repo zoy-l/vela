@@ -52,7 +52,7 @@ void TypeChecker::Refinements::Set(std::uint32_t binding, Type type) {
     return;
   }
   Save(binding, previous);
-  facts_.insert_or_assign(binding, std::move(type));
+  facts_.insert_or_assign(binding, type);
 }
 
 void TypeChecker::Refinements::Erase(std::uint32_t binding) {
@@ -91,10 +91,10 @@ TypeChecker::Refinements::Checkpoint TypeChecker::Refinements::BeginBranch() {
 void TypeChecker::Refinements::Discard(Checkpoint checkpoint) {
   // 分支按嵌套顺序退出；恢复直接写入事实表，不把撤销动作再次记入日志。
   while (undo_.size() > checkpoint.offset) {
-    auto change = std::move(undo_.back());
+    auto change = undo_.back();
     undo_.pop_back();
     if (change.previous) {
-      facts_.insert_or_assign(change.binding, std::move(*change.previous));
+      facts_.insert_or_assign(change.binding, *change.previous);
     } else {
       facts_.erase(change.binding);
     }

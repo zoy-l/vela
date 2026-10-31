@@ -62,7 +62,8 @@ bool IsThis(const Expression& expression) {
 
 class Initialization final {
  public:
-  Initialization(const Class& owner, const SemanticModel& model) : owner_(owner), model_(model) {}
+  Initialization(const Class& owner, const ConstructorInitializationFacts& facts)
+      : owner_(owner), facts_(facts) {}
   ~Initialization() = default;
   Initialization(const Initialization&) = delete;
   Initialization& operator=(const Initialization&) = delete;
@@ -94,7 +95,7 @@ class Initialization final {
   Path ApplyFinalizers(Initialized initialized, std::size_t depth);
 
   const Class& owner_;
-  const SemanticModel& model_;
+  const ConstructorInitializationFacts& facts_;
   absl::flat_hash_map<std::string_view, std::size_t> field_indices_;
   Diagnostics diagnostics_;
   std::vector<Control> controls_;
@@ -126,12 +127,11 @@ void Initialization::WalkSuper(const Expression& expression, Initialized& initia
     Error(expression.location, "super(...) must be called exactly once on each constructor path");
   }
   initialized.base = Initialized::Base::Complete;
-  const auto base_class = owner_.base_class;
-  if (!base_class) {
+  const auto* base = facts_.base;
+  if (base == nullptr) {
     return;
   }
-  const auto& base = model_.classes.at(base_class->name);
-  for (const auto& name : base.field_order) {
+  for (const auto& name : base->field_order) {
     initialized.Insert(field_indices_.at(name));
   }
 }
@@ -143,7 +143,7 @@ bool Initialization::WalkSpecial(const Expression& expression, Initialized& init
     return true;
   }
   if (expression.kind == Expression::Kind::Lambda) {
-    const auto& lambda = model_.lambdas.at(model_.lambda_indices.at(&expression));
+    const auto& lambda = facts_.lambdas.subspan(facts_.lambda_indices->at(&expression)).front();
     if (std::ranges::any_of(lambda.captures, [](const Capture& capture) -> bool {
           return capture.name == "this";
         })) {
@@ -240,7 +240,7 @@ Path Initialization::Loop(const Statement& statement, Initialized initialized) {
   }
   auto exits = std::move(controls_.at(control).breaks);
   controls_.pop_back();
-  const bool always = model_.control_flow.at(&statement).condition == ConditionTruth::AlwaysTrue;
+  const bool always = facts_.control_flow->at(&statement).condition == ConditionTruth::AlwaysTrue;
   return always ? exits : Merge(std::move(exits), initialized);
 }
 
@@ -282,7 +282,7 @@ Path Initialization::Walk(const Statement& statement, Initialized initialized) {
     }
     case Statement::Kind::If: {
       Walk(statement.condition.get(), initialized);
-      const auto condition = model_.control_flow.at(&statement).condition;
+      const auto condition = facts_.control_flow->at(&statement).condition;
       if (condition == ConditionTruth::AlwaysTrue) {
         return Walk(*statement.then_branch, std::move(initialized));
       }
@@ -383,15 +383,15 @@ Path Initialization::Try(const Statement& statement, const Initialized& initiali
 
 Diagnostics Initialization::Run() {
   Initialized initialized;
-  const auto& info = model_.classes.at(owner_.name);
+  const auto& info = *facts_.owner;
   const auto& fields = info.field_order;
   field_indices_.reserve(fields.size());
   for (std::size_t index = 0; index < fields.size(); ++index) {
     field_indices_.emplace(fields.at(index), index);
   }
   initialized.fields.resize((fields.size() + Initialized::kWordBits - 1) / Initialized::kWordBits);
-  if (owner_.base_class && !model_.explicit_super_constructors.contains(owner_.name)) {
-    const auto& base = model_.classes.at(owner_.base_class->name);
+  if (facts_.base != nullptr && !facts_.has_explicit_super_call) {
+    const auto& base = *facts_.base;
     initialized.base = Initialized::Base::Complete;
     for (const auto& name : base.field_order) {
       initialized.Insert(field_indices_.at(name));
@@ -417,8 +417,9 @@ Diagnostics Initialization::Run() {
 
 }  // namespace
 
-Diagnostics CheckConstructorInitialization(const Class& owner, const SemanticModel& model) {
-  return Initialization(owner, model).Run();
+Diagnostics CheckConstructorInitialization(const Class& owner,
+                                           const ConstructorInitializationFacts& facts) {
+  return Initialization(owner, facts).Run();
 }
 
 }  // namespace vela::frontend

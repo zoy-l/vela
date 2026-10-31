@@ -110,6 +110,7 @@ class LanguageServerTest(CommandTestCase):
                 self.assertTrue(capabilities["documentFormattingProvider"])
                 self.assertTrue(capabilities["definitionProvider"])
                 self.assertTrue(capabilities["hoverProvider"])
+                self.assertEqual(capabilities["renameProvider"], {"prepareProvider": True})
                 self.assertEqual(capabilities['documentLinkProvider'], {'resolveProvider': False})
                 self.assertEqual(capabilities["completionProvider"]["triggerCharacters"], [".", "(", ","])
                 self.assertNotIn("signatureHelpProvider", capabilities)
@@ -1017,6 +1018,46 @@ class LanguageServerTest(CommandTestCase):
             self.open("func main("), request("textDocument/formatting", {"textDocument": {"uri": self.uri}}, 2),
         ])
         self.assertEqual(self.reply(messages, 2)["error"]["code"], -32803)
+
+    def test_type_parameter_rename_tracks_bounds_and_shadowed_scopes(self) -> None:
+        source = ("const banner = '😀'; interface Reader<E> { read(): E; }\n"
+                  "class Box<T> { value: T;\n"
+                  "  read<T extends Reader<int>, U extends T>(value: T, other: U): int {\n"
+                  "    return value.read();\n  }\n}\n"
+                  "func identity<T>(value: T): T { return value; }\n")
+        offsets = [source.index('read<T') + 5, source.index('U extends T') + 10,
+                   source.index('value: T, other') + 7]
+        for encoding in ('utf-8', 'utf-16'):
+            with self.subTest(encoding=encoding):
+                rename = self.symbol_query('rename', source, offsets[-1], 'rename', encoding)
+                rename['params']['newName'] = 'Element'
+                messages = self.session([
+                    self.open(source),
+                    self.symbol_query('prepareRename', source, offsets[-1], 'prepare', encoding),
+                    rename,
+                    self.symbol_query('prepareRename', source, source.index('value.read'),
+                                      'ordinary', encoding)], encoding)
+                expected = []
+                for offset in offsets:
+                    start = self.symbol_query('', source, offset, encoding=encoding)['params']['position']
+                    end = self.symbol_query('', source, offset + 1, encoding=encoding)['params']['position']
+                    expected.append({'range': {'start': start, 'end': end}, 'newText': 'Element'})
+                self.assertEqual(self.reply(messages, 'rename')['result'],
+                                 {'changes': {self.uri: expected}})
+                self.assertEqual(self.reply(messages, 'prepare')['result'], expected[-1]['range'])
+                self.assertIsNone(self.reply(messages, 'ordinary')['result'])
+                self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
+
+    def test_type_parameter_rename_rejects_capture_and_invalid_names(self) -> None:
+        source = 'class Value {} func use<T, U>(value: T, other: Value): T { return value; }'
+        messages = [self.open(source)]
+        for name in ('U', 'Value', 'class', 'T,U', '', ' T'):
+            rename = self.symbol_query('rename', source, source.index('<T') + 1, name)
+            rename['params']['newName'] = name
+            messages.append(rename)
+        replies = self.session(messages)
+        for name in ('U', 'Value', 'class', 'T,U', '', ' T'):
+            self.assertEqual(self.reply(replies, name)['error']['code'], -32602)
 
     def symbol_query(self, method: str, source: str, offset: int,
                      identity: str = "query", encoding: str = "utf-16") -> dict:

@@ -28,6 +28,7 @@
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_context.h"
+#include "runtime/native_contracts.h"
 #include "runtime/native_dispatch.h"
 #include "runtime/native_function.h"
 #include "runtime/native_image.h"
@@ -81,6 +82,49 @@ export func answer(): int {
     const auto entry = isolate.native_dispatch().FindEntry("main.vela", "answer");
     ASSERT_TRUE(entry);
     ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
+  }
+}
+
+TEST(JitCompilerTest, GenericMethodsAndInterfaceSelectorsExecuteInBothNativeTiers) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    for (const auto source : {
+             ::vela::compiler::test::kGenericMethodsSource,
+             ::vela::compiler::test::kWrappedGenericMethodValuesSource,
+         }) {
+      auto compiler = Compiler::Create();
+      ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+      const auto compiled = CompileText(**compiler, std::string(source), tier);
+      ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+      runtime::Isolate isolate(1);
+      ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+      const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
+      ASSERT_TRUE(entry);
+      ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
+    }
+  }
+}
+
+TEST(JitCompilerTest, NativeImagesCompareUnusedGenericMethodContractsByIdentity) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+  const std::string entry = " export func answer(): int { return 42; }";
+  const auto initial =
+      CompileText(**compiler, "interface Mapper<T> { map<U extends int>(value: U): U; }" + entry);
+  const auto renamed =
+      CompileText(**compiler, "interface Mapper<A> { map<B extends int>(value: B): B; }" + entry);
+  ASSERT_TRUE(initial) << DiagnosticsText(initial.error());
+  ASSERT_TRUE(renamed) << DiagnosticsText(renamed.error());
+  EXPECT_TRUE(runtime::CheckNativeNominalContracts(*initial->image, *renamed->image));
+  for (const auto* declaration : {
+           "interface Mapper<T> { map<U extends double>(value: U): U; }",
+           "interface Mapper<T> { map<U extends int>(value: U): U[]; }",
+       }) {
+    const auto changed = CompileText(**compiler, declaration + entry);
+    ASSERT_TRUE(changed) << DiagnosticsText(changed.error());
+    const auto checked = runtime::CheckNativeNominalContracts(*initial->image, *changed->image);
+    ASSERT_FALSE(checked);
+    EXPECT_NE(checked.error().declaration, DeclarationId{});
+    EXPECT_EQ(checked.error().status, runtime::NativeContractStatus::RequiresReload);
   }
 }
 
@@ -597,6 +641,7 @@ export func main(): int { let value = 0; for (let i = 0; i < 6; i++) { value += 
   switch (value) { case 15: return sum(6) << 1; default: return 0; } }
 )",
                                               ::vela::compiler::test::kRecursiveStringGcSource,
+                                              ::vela::compiler::test::kGenericAsyncMethodsSource,
                                               ::vela::compiler::test::kUnicodeConstructionSource,
                                               R"(
 func counter(value: int): () => int { return (): int => { value++; return value; }; }

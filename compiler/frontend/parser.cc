@@ -77,7 +77,7 @@ void Parser::ParseDeclaration(Program& program) {
   };
   const auto kind = Peek().kind;
   if (kind != TokenKind::Func && kind != TokenKind::External && kind != TokenKind::Async) {
-    ++current_;
+    Advance();
   }
   switch (kind) {
     case TokenKind::External:
@@ -158,15 +158,22 @@ std::optional<Program::Import> Parser::ParseImport() {
 }
 
 void Parser::AnnotatePrevious(TokenRole role) {
-  tokens_.subspan(current_ - 1).front().role = role;
+  tokens_.subspan(previous_index_).front().role = role;
 }
 
 const Token& Parser::Peek() const {
-  return tokens_.subspan(current_).front();
+  return remainder_ ? *remainder_ : tokens_.subspan(current_).front();
 }
 
 const Token& Parser::Previous() const {
-  return tokens_.subspan(current_ - 1).front();
+  return previous_split_ ? *previous_split_ : tokens_.subspan(previous_index_).front();
+}
+
+const Token& Parser::Advance() {
+  previous_index_ = current_++;
+  previous_split_ = std::move(remainder_);
+  remainder_.reset();
+  return Previous();
 }
 
 bool Parser::IsAtEnd() const {
@@ -181,21 +188,21 @@ bool Parser::Match(TokenKind kind) {
   if (!Check(kind)) {
     return false;
   }
-  ++current_;
+  Advance();
   return true;
 }
 
 std::optional<Token> Parser::TakeName() {
   const auto kind = Peek().kind;
   if (kind == TokenKind::Identifier || kind == TokenKind::Get || kind == TokenKind::Set) {
-    return tokens_.subspan(current_++).front();
+    return Advance();
   }
   return std::nullopt;
 }
 
 std::optional<Token> Parser::Expect(TokenKind kind, std::string message) {
   if (Check(kind)) {
-    return tokens_.subspan(current_++).front();
+    return Advance();
   }
   AddDiagnostic(Peek().location, std::move(message));
   return std::nullopt;
@@ -212,7 +219,7 @@ void Parser::Synchronize() {
     return;
   }
   if (!IsAtEnd()) {
-    ++current_;
+    Advance();
   }
   while (!IsAtEnd()) {
     if (Previous().kind == TokenKind::Semicolon || Check(TokenKind::Class) ||
@@ -222,7 +229,7 @@ void Parser::Synchronize() {
         Check(TokenKind::External)) {
       return;
     }
-    ++current_;
+    Advance();
   }
 }
 
@@ -316,7 +323,7 @@ std::unique_ptr<Statement> Parser::ParseForStatement() {
       return nullptr;
     }
   } else {
-    ++current_;
+    Advance();
   }
   if (!Check(TokenKind::Semicolon)) {
     statement->condition = ParseExpression();
@@ -484,7 +491,7 @@ std::unique_ptr<Statement> Parser::ParseWhileStatement() {
 }
 
 std::unique_ptr<Statement> Parser::ParseVariableDeclaration() {
-  const Token keyword = tokens_.subspan(current_++).front();
+  const Token keyword = Advance();
   const auto name = TakeName();
   if (!name) {
     return nullptr;
@@ -558,7 +565,7 @@ std::unique_ptr<Expression> Parser::ParseAssignment() {
            Check(TokenKind::ShiftUnsignedRightEqual);
   };
   if (is_assignment()) {
-    const Token operator_token = tokens_.subspan(current_++).front();
+    const Token operator_token = Advance();
     const SourceLocation location = operator_token.location;
     std::unique_ptr<Expression> right = ParseAssignment();
     if (!right) {
@@ -650,7 +657,7 @@ std::unique_ptr<Expression> Parser::ParseBinary(std::uint8_t minimum_precedence)
     if (precedence < minimum_precedence || (below_relational && precedence > kEqualityPrecedence)) {
       return expression;
     }
-    const auto operation = tokens_.subspan(current_++).front();
+    const auto operation = Advance();
     auto right = ParseBinary(precedence + 1);
     if (!right) {
       return nullptr;
@@ -666,7 +673,7 @@ std::unique_ptr<Expression> Parser::ParseBinary(std::uint8_t minimum_precedence)
 std::unique_ptr<Expression> Parser::ParseRelational() {
   std::unique_ptr<Expression> expression = ParseBinary(kShiftPrecedence);
   while (Check(TokenKind::Is) || Check(TokenKind::As)) {
-    const auto operation = tokens_.subspan(current_++).front();
+    const auto operation = Advance();
     auto type = ParseType();
     if (!type || !expression) {
       return nullptr;
@@ -791,7 +798,7 @@ bool Parser::ParsePostfixMember(std::unique_ptr<Expression>& expression) {
   }
   std::optional<Token> member;
   if (IsMemberName(Peek().kind)) {
-    member = tokens_.subspan(current_++).front();
+    member = Advance();
   } else {
     AddDiagnostic(Peek().location,
                   null_safe ? "expected member name after '?.'" : "expected member name after '.'");
@@ -967,7 +974,7 @@ std::unique_ptr<Expression> Parser::ParseMatch() {
       arm.kind = MatchArm::Kind::Binding;
       arm.binding = name->lexeme;
     } else if (Check(TokenKind::Identifier) && Peek().lexeme == "_") {
-      ++current_;
+      Advance();
       arm.kind = MatchArm::Kind::Wildcard;
     } else {
       arm.pattern = ParseExpression();
@@ -1001,7 +1008,7 @@ std::unique_ptr<Expression> Parser::ParseLambda(LambdaParameters parameters, boo
   if (parameters == LambdaParameters::Single) {
     const auto& name = Previous();
     function->parameters.push_back({
-        .type = {.name = {}, .location = name.location, .arguments = {}},
+        .type = {.name = {}, .location = name.location, .arguments = {}, .parameter = {}},
         .name = name.lexeme,
         .location = name.location,
     });
@@ -1060,7 +1067,7 @@ std::unique_ptr<Expression> Parser::ParseString() {
     return literal;
   }
   auto interpolation = MakeExpression(Expression::Kind::StringInterpolation, Peek().location);
-  ++current_;
+  Advance();
   while (true) {
     auto literal = MakeExpression(Expression::Kind::StringLiteral, Previous().location);
     literal->text = Previous().lexeme;
@@ -1089,8 +1096,8 @@ std::vector<CallArgument> Parser::ParseArguments() {
     argument.location = Peek().location;
     if (Check(TokenKind::Identifier) && current_ + 1 < tokens_.size() &&
         tokens_.subspan(current_ + 1).front().kind == TokenKind::Colon) {
-      argument.name = tokens_.subspan(current_++).front().lexeme;
-      ++current_;
+      argument.name = Advance().lexeme;
+      Advance();
     }
     argument.value = ParseExpression();
     if (!argument.value) {

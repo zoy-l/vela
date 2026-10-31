@@ -57,7 +57,10 @@ StatementFlow TypeChecker::CheckStatement(const Statement& statement, const Type
       flow.can_fall_through = false;
       break;
     case Statement::Kind::Throw: {
-      const auto type = CheckExpression(*statement.expression, nullptr);
+      auto type = CheckExpression(*statement.expression, nullptr);
+      if (type.kind == Type::Kind::Parameter) {
+        type = ParameterCapability(type, statement.expression->location);
+      }
       if (type.kind != Type::Kind::Dynamic &&
           ((type.kind != Type::Kind::Class && type.kind != Type::Kind::Interface) ||
            type.nullable)) {
@@ -259,7 +262,10 @@ StatementFlow TypeChecker::CheckLoopExit(const Statement& statement,
 
 StatementFlow TypeChecker::CheckForEach(const Statement& statement, const Type& return_type) {
   BeginScope();
-  const auto iterable = CheckExpression(*statement.iterable, nullptr);
+  auto iterable = CheckExpression(*statement.iterable, nullptr);
+  if (iterable.kind == Type::Kind::Parameter) {
+    iterable = ParameterCapability(iterable, statement.iterable->location);
+  }
   LoopAssignments assignments(statement);
   if (!refinements_.IsEmpty()) {
     InvalidateAssignments(assignments.Body());

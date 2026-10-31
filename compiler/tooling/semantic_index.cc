@@ -26,7 +26,6 @@
 #include "compiler/frontend/token.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/frontend/type_names.h"
-#include "compiler/tooling/builtin_documentation.h"
 #include "compiler/tooling/documentation.h"
 #include "compiler/tooling/semantic_syntax.h"
 #include "compiler/tooling/source_text.h"
@@ -81,26 +80,6 @@ using frontend::Expression;
 using frontend::Statement;
 using frontend::TokenKind;
 using frontend::TypeName;
-
-std::string TypeText(const TypeName& type) {
-  return DisplaySymbolName(type.ToString());
-}
-
-std::string Signature(const frontend::Function& function) {
-  return DisplaySymbolName(FunctionSignature(function));
-}
-
-std::string GenericName(std::string_view source_name, std::span<const std::string> parameters) {
-  auto name = DisplaySymbolName(source_name);
-  if (!parameters.empty()) {
-    name += '<';
-    for (const auto& parameter : parameters) {
-      name += (name.back() == '<' ? "" : ", ") + parameter;
-    }
-    name += '>';
-  }
-  return name;
-}
 
 void CloseCompletionDelimiters(std::string& text, std::span<const frontend::Token> tokens) {
   std::vector<TokenKind> closing;
@@ -333,115 +312,6 @@ std::size_t SemanticIndex::AddSymbol(SourceLocation location,
   return found->second;
 }
 
-void SemanticIndex::CollectDeclarations() {
-  const auto declare = [this](const auto& declaration, CompletionKind kind,
-                              const std::string& detail) -> std::size_t {
-    const auto symbol_id = AddSymbol(declaration.location, kind, detail);
-    symbols_.at(symbol_id).export_kind = declaration.export_kind;
-    names_.insert_or_assign(declaration.name, symbol_id);
-    return symbol_id;
-  };
-  const auto member = [this](std::string_view owner, const auto& declaration, CompletionKind kind,
-                             const std::string& detail) -> std::size_t {
-    const auto symbol_id = AddSymbol(declaration.location, kind, detail);
-    auto& symbol = symbols_.at(symbol_id);
-    if (symbol.owner.empty()) {
-      symbol.owner = DisplaySymbolName(owner);
-    }
-    symbol.visibility = declaration.visibility;
-    symbol.storage = declaration.storage;
-    members_.try_emplace(owner).first->second.insert_or_assign(declaration.name, symbol_id);
-    return symbol_id;
-  };
-  for (const auto& declaration : program_.functions) {
-    const auto symbol = declare(declaration, CompletionKind::Function, Signature(declaration));
-    CollectParameters(symbol, declaration);
-  }
-  for (const auto& declaration : program_.globals) {
-    const auto checked = model_.globals.find(declaration.name);
-    declare(declaration,
-            declaration.binding == frontend::BindingKind::Constant ? CompletionKind::Constant
-                                                                   : CompletionKind::Variable,
-            TypeText(declaration.type));
-    if (checked != model_.globals.end()) {
-      symbols_.at(names_.at(declaration.name)).completion.detail =
-          DisplaySymbolName(checked->second.type.name);
-    }
-  }
-  for (const auto& declaration : program_.aliases) {
-    declare(declaration, CompletionKind::Type,
-            "type " + GenericName(declaration.name, declaration.type_parameters) + " = " +
-                TypeText(declaration.target));
-  }
-  for (const auto& declaration : program_.classes) {
-    const auto completion = ClassCompletion(declaration);
-    const auto class_symbol = declare(declaration, completion.kind, completion.detail);
-    for (const auto& field : declaration.fields) {
-      const auto field_symbol =
-          member(declaration.name, field, CompletionKind::Field, TypeText(field.type));
-      if (declaration.IsConstructorField(field)) {
-        parameters_.try_emplace(class_symbol)
-            .first->second.insert_or_assign(field.name, field_symbol);
-      }
-    }
-    for (const auto& method : declaration.methods) {
-      const auto method_symbol =
-          member(declaration.name, method, CompletionKind::Method, Signature(method));
-      BindIntrinsicSignature(method_symbol, declaration, method);
-      CollectParameters(method_symbol, method);
-    }
-    if (declaration.constructor &&
-        declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
-      CollectParameters(class_symbol, *declaration.constructor);
-    }
-  }
-  for (const auto& declaration : program_.interfaces) {
-    declare(declaration, CompletionKind::Interface, "interface");
-    for (const auto& method : declaration.methods) {
-      const auto method_symbol =
-          member(declaration.name, method, CompletionKind::Method, Signature(method));
-      CollectParameters(method_symbol, method);
-    }
-  }
-  for (const auto& declaration : program_.enums) {
-    declare(declaration, CompletionKind::Enum, "enum");
-    CollectEnumMembers(declaration);
-  }
-}
-
-void SemanticIndex::BindIntrinsicSignature(std::size_t symbol,
-                                           const frontend::Class& owner,
-                                           const frontend::Function& method) {
-  if (!method.intrinsic) {
-    return;
-  }
-  if (const auto checked = model_.classes.find(owner.name); checked != model_.classes.end()) {
-    symbols_.at(symbol).completion.detail = BuiltinDetail(checked->second.methods.at(method.name));
-  }
-}
-
-void SemanticIndex::CollectEnumMembers(const frontend::Enum& declaration) {
-  auto& members = members_.try_emplace(declaration.name).first->second;
-  const auto owner = DisplaySymbolName(declaration.name);
-  std::size_t ordinal = 0;
-  for (const auto& value : declaration.members) {
-    const auto symbol_id = AddSymbol(value.location, CompletionKind::EnumMember,
-                                     owner + '.' + value.name + " = " + std::to_string(ordinal++));
-    symbols_.at(symbol_id).storage = frontend::MemberStorage::Static;
-    members.insert_or_assign(value.name, symbol_id);
-  }
-}
-
-void SemanticIndex::CollectParameters(std::size_t symbol, const frontend::Function& function) {
-  auto& declared = parameters_.try_emplace(symbol).first->second;
-  for (const auto& parameter : function.parameters) {
-    const auto parameter_id =
-        AddSymbol(parameter.location, CompletionKind::Variable, TypeText(parameter.type));
-    declared.insert_or_assign(parameter.name, parameter_id);
-    symbols_.at(parameter_id).role = Symbol::Role::Parameter;
-  }
-}
-
 void SemanticIndex::AddReference(SourceLocation location,
                                  std::string_view name,
                                  const Expression* expression) {
@@ -454,13 +324,15 @@ void SemanticIndex::AddReference(SourceLocation location,
 }
 
 void SemanticIndex::VisitType(const TypeName& type) {
-  if (type.name.empty()) {
-    return;
-  }
-  if (context_type_parameters_.contains(type.name)) {
+  if (type.kind == TypeName::Kind::Parameter) {
     type_parameters_.try_emplace(KeyAt(type.location), 0U);
+    if (const auto parameter = type_parameter_symbols_.find(type.parameter);
+        parameter != type_parameter_symbols_.end()) {
+      references_.insert_or_assign(KeyAt(type.location), Reference{.symbol = parameter->second});
+    }
   }
-  if (type.kind == TypeName::Kind::Named || type.kind == TypeName::Kind::Generic) {
+  if (!type.name.empty() &&
+      (type.kind == TypeName::Kind::Named || type.kind == TypeName::Kind::Generic)) {
     auto token = TokenAt(type.location);
     const auto& tokens = sources_.at(type.location.source_id).tokens;
     // qualified type 的 location 指向导入前缀，定义属于最后一个标识符。
@@ -483,9 +355,13 @@ void SemanticIndex::DeclareLocal(const void* node,
   if (phase_ == IndexPhase::SourceTypes) {
     return;
   }
-  const auto symbol = AddSymbol(location, CompletionKind::Variable, std::move(detail));
+  const auto symbol = AddSymbol(location, CompletionKind::Variable, detail);
+  if (phase_ == IndexPhase::Definitions) {
+    symbols_.at(symbol).completion.detail = std::move(detail);
+  }
   locals_.push_back({.symbol = symbol, .scope = scope, .available = available});
-  if (const auto binding = model_.bindings.find(node); binding != model_.bindings.end()) {
+  const auto& facts = Facts();
+  if (const auto binding = facts.bindings.find(node); binding != facts.bindings.end()) {
     bindings_.insert_or_assign(binding->second, symbol);
   }
 }
@@ -493,29 +369,27 @@ void SemanticIndex::DeclareLocal(const void* node,
 void SemanticIndex::VisitFunction(const frontend::Function& function,
                                   const Scope& scope,
                                   const frontend::FunctionDescriptor* signature) {
-  auto previous_parameters = context_type_parameters_;
-  MarkTypeParameters(function.location, function.type_parameters);
+  MarkTypeParameters(function.type_parameters);
   VisitType(function.return_type);
   auto body = function.body ? Extent(*function.body) : scope;
   body.depth = scope.depth + 1;
   for (const auto& parameter : function.parameters) {
     VisitType(parameter.type);
     if (function.body) {
-      auto detail = TypeText(parameter.type);
+      auto detail = DisplaySymbolName(parameter.type.ToString());
       if (signature != nullptr) {
         const auto parameter_index = signature->parameter_indices.find(parameter.name);
         if (parameter_index != signature->parameter_indices.end()) {
-          detail = DisplaySymbolName(signature->parameters.at(parameter_index->second).type.name);
+          detail = DisplayType(signature->parameters.at(parameter_index->second).type);
         }
       }
       DeclareLocal(&parameter, parameter.location, std::move(detail), body, body.begin);
-      if (phase_ == IndexPhase::Checked) {
+      if (phase_ != IndexPhase::SourceTypes) {
         symbols_.at(declarations_.at(KeyAt(parameter.location))).role = Symbol::Role::Parameter;
       }
     }
   }
   VisitStatement(function.body.get(), body);
-  context_type_parameters_ = std::move(previous_parameters);
 }
 
 void SemanticIndex::VisitStatement(const Statement* statement, Scope scope) {
@@ -535,11 +409,13 @@ void SemanticIndex::VisitStatement(const Statement* statement, Scope scope) {
   VisitStatement(statement->initializer.get(), scope);
   VisitExpression(statement->expression.get(), scope);
   if (statement->kind == Statement::Kind::VariableDeclaration) {
-    const auto type = model_.local_types.find(statement);
-    const auto detail = type == model_.local_types.end() ? TypeText(statement->type)
-                                                         : DisplaySymbolName(type->second.name);
+    const auto& types = Facts().local_types;
+    const auto type = types.find(statement);
+    const auto detail = type == types.end() ? DisplaySymbolName(statement->type.ToString())
+                                            : DisplayType(type->second);
     DeclareLocal(statement, statement->location, detail, scope, Extent(*statement).end);
-    if (phase_ == IndexPhase::Checked && statement->binding == frontend::BindingKind::Constant) {
+    if (phase_ != IndexPhase::SourceTypes &&
+        statement->binding == frontend::BindingKind::Constant) {
       symbols_.at(declarations_.at(KeyAt(statement->location))).completion.kind =
           CompletionKind::Constant;
     }
@@ -569,7 +445,8 @@ void SemanticIndex::VisitStatement(const Statement* statement, Scope scope) {
     nested.depth = scope.depth + 1;
     VisitType(clause.type);
     if (!clause.name.empty()) {
-      DeclareLocal(&clause, clause.location, TypeText(clause.type), nested, nested.begin);
+      DeclareLocal(&clause, clause.location, DisplaySymbolName(clause.type.ToString()), nested,
+                   nested.begin);
     }
     VisitStatement(clause.body.get(), nested);
   }
@@ -582,17 +459,18 @@ void SemanticIndex::VisitForEach(const Statement& statement, const Scope& scope)
   body.depth = scope.depth + 1;
   std::string first_type;
   std::string second_type;
-  const auto iterable = model_.expression_types.find(statement.iterable.get());
-  if (iterable != model_.expression_types.end()) {
+  const auto& types = Facts().expression_types;
+  const auto iterable = types.find(statement.iterable.get());
+  if (iterable != types.end()) {
     const auto& type = iterable->second;
     if (const auto element = model_.array_elements.find(type.name);
         element != model_.array_elements.end()) {
-      first_type = DisplaySymbolName(element->second.name);
+      first_type = DisplayType(element->second);
     } else if (const auto arguments = model_.generic_arguments.find(type.name);
                arguments != model_.generic_arguments.end() && !arguments->second.empty()) {
-      first_type = DisplaySymbolName(arguments->second.front().name);
+      first_type = DisplayType(arguments->second.front());
       if (statement.destructuring && arguments->second.size() == 2) {
-        second_type = DisplaySymbolName(arguments->second.back().name);
+        second_type = DisplayType(arguments->second.back());
       }
     }
   }
@@ -615,13 +493,16 @@ void SemanticIndex::VisitForEach(const Statement& statement, const Scope& scope)
 SemanticIndex::Receiver SemanticIndex::ReceiverFor(const Expression& expression) const {
   Receiver receiver;
   receiver.context_class = context_class_;
-  const auto type = model_.expression_types.find(&expression);
-  if (type != model_.expression_types.end()) {
-    receiver.type = type->second;
-  } else if (expression.kind == Expression::Kind::Name && !model_.bindings.contains(&expression)) {
+  const auto& facts = FactsFor(expression);
+  const auto type = facts.expression_types.find(&expression);
+  if (type != facts.expression_types.end()) {
+    receiver.type = Capability(type->second);
+  } else if (expression.kind == Expression::Kind::Name && !facts.bindings.contains(&expression)) {
     if (expression.text == "Future") {
-      receiver.type = {.kind = frontend::TypeDescriptor::Kind::Future,
-                       .name = frontend::kFutureTypeName};
+      receiver.type = {
+          .kind = frontend::TypeDescriptor::Kind::Future,
+          .name = frontend::kFutureTypeName,
+      };
       receiver.storage = frontend::MemberStorage::Static;
       return receiver;
     }
@@ -638,18 +519,19 @@ void SemanticIndex::IndexExpression(const Expression& expression) {
     return;
   }
   if (expression.kind == Expression::Kind::Name) {
-    const auto binding = model_.bindings.find(&expression);
-    if (binding != model_.bindings.end()) {
+    const auto& facts = Facts();
+    const auto binding = facts.bindings.find(&expression);
+    if (binding != facts.bindings.end()) {
       if (const auto symbol = bindings_.find(binding->second); symbol != bindings_.end()) {
         references_.insert_or_assign(
             KeyAt(expression.location),
             Reference{.symbol = symbol->second, .expression = &expression});
       }
     } else {
-      const auto application = model_.generic_applications.find(&expression);
+      const auto application = facts.generic_applications.find(&expression);
       AddReference(
           expression.location,
-          application == model_.generic_applications.end() ? expression.text : application->second,
+          application == facts.generic_applications.end() ? expression.text : application->second,
           &expression);
     }
   } else if (expression.kind == Expression::Kind::Member) {
@@ -659,12 +541,15 @@ void SemanticIndex::IndexExpression(const Expression& expression) {
       receiver.type.name = receiver.type.name.substr(0, receiver.type.name.size() - 1);
     }
     const auto key = KeyAt(expression.location);
-    const auto found = members_.find(receiver.type.name);
-    if (found != members_.end()) {
-      const auto member = found->second.find(expression.text);
-      if (member != found->second.end()) {
-        references_.insert_or_assign(
-            key, Reference{.symbol = member->second, .expression = &expression});
+    for (const auto owner : MemberOwners(receiver.type)) {
+      const auto found = members_.find(owner);
+      if (found != members_.end()) {
+        const auto member = found->second.find(expression.text);
+        if (member != found->second.end()) {
+          references_.insert_or_assign(
+              key, Reference{.symbol = member->second, .expression = &expression});
+          break;
+        }
       }
     }
     receivers_.insert_or_assign(key, std::move(receiver));
@@ -688,7 +573,7 @@ void SemanticIndex::VisitExpression(const Expression* expression, const Scope& s
   }
   const auto target = expression->callee ? references_.find(KeyAt(expression->callee->location))
                                          : references_.end();
-  if (phase_ == IndexPhase::Checked && expression->kind == Expression::Kind::Call) {
+  if (phase_ != IndexPhase::SourceTypes && expression->kind == Expression::Kind::Call) {
     calls_.insert_or_assign(KeyAt(expression->callee->location), expression);
   }
   const auto parameters =
@@ -721,10 +606,11 @@ void SemanticIndex::VisitExpression(const Expression* expression, const Scope& s
     VisitExpression(arm.value.get(), nested);
   }
   if (expression->function) {
-    const auto lambda = model_.lambda_indices.find(expression);
-    const auto* signature = lambda == model_.lambda_indices.end()
+    const auto& facts = Facts();
+    const auto lambda = facts.lambda_indices.find(expression);
+    const auto* signature = lambda == facts.lambda_indices.end()
                                 ? nullptr
-                                : &model_.lambdas.at(lambda->second).signature;
+                                : &facts.lambdas.at(lambda->second).signature;
     VisitFunction(*expression->function, scope, signature);
   }
 }
@@ -735,40 +621,61 @@ void SemanticIndex::VisitProgram() {
     VisitFunction(function, root);
   }
   for (const auto& declaration : program_.classes) {
-    context_class_ = declaration.name;
-    MarkTypeParameters(declaration.location, declaration.type_parameters);
-    if (declaration.base_class) {
-      VisitType(*declaration.base_class);
-    }
-    for (const auto& type : declaration.interfaces) {
-      VisitType(type);
-    }
-    for (const auto& field : declaration.fields) {
-      VisitType(field.type);
-      VisitExpression(field.initializer.get(), root);
-    }
-    for (const auto& method : declaration.methods) {
-      VisitFunction(method, root);
-    }
-    if (declaration.constructor) {
-      VisitFunction(*declaration.constructor, root);
-    }
-    context_class_.clear();
-    context_type_parameters_.clear();
+    VisitClass(declaration, root);
   }
   for (const auto& declaration : program_.interfaces) {
-    for (const auto& method : declaration.methods) {
-      VisitFunction(method, root);
-    }
+    VisitInterface(declaration, root);
   }
   for (const auto& alias : program_.aliases) {
-    MarkTypeParameters(alias.location, alias.type_parameters);
+    MarkTypeParameters(alias.type_parameters);
     VisitType(alias.target);
-    context_type_parameters_.clear();
   }
   for (const auto& global : program_.globals) {
     VisitType(global.type);
     VisitExpression(global.initializer.get(), root);
+  }
+  if (phase_ != IndexPhase::SourceTypes) {
+    VisitDefinitions(root);
+  }
+}
+
+void SemanticIndex::VisitClass(const frontend::Class& declaration, const Scope& root) {
+  context_class_ = declaration.name;
+  MarkTypeParameters(declaration.type_parameters);
+  if (declaration.base_class) {
+    VisitType(*declaration.base_class);
+  }
+  for (const auto& type : declaration.interfaces) {
+    VisitType(type);
+  }
+  for (const auto& field : declaration.fields) {
+    VisitType(field.type);
+    VisitExpression(field.initializer.get(), root);
+  }
+  for (const auto& method : declaration.methods) {
+    VisitFunction(method, root);
+  }
+  const auto previous = phase_;
+  if (phase_ != IndexPhase::SourceTypes) {
+    phase_ = IndexPhase::Definitions;
+  }
+  for (const auto& method : declaration.method_templates) {
+    VisitFunction(method, root);
+  }
+  phase_ = previous;
+  if (declaration.constructor) {
+    VisitFunction(*declaration.constructor, root);
+  }
+  context_class_.clear();
+}
+
+void SemanticIndex::VisitInterface(const frontend::Interface& declaration, const Scope& root) {
+  MarkTypeParameters(declaration.type_parameters);
+  for (const auto& method : declaration.methods) {
+    VisitFunction(method, root);
+  }
+  for (const auto& method : declaration.method_templates) {
+    VisitFunction(method, root);
   }
 }
 
@@ -906,80 +813,6 @@ std::string SemanticIndex::DocumentationAt(SourceLocation location) const {
   return DocumentationComment(source.text.text(), source.comments, location);
 }
 
-std::string SemanticIndex::DefaultValue(const Expression& expression) const {
-  const auto& source = sources_.at(expression.location.source_id);
-  const auto& token = source.tokens.at(TokenAt(expression.location));
-  switch (expression.kind) {
-    case Expression::Kind::IntegerLiteral:
-      return expression.text;
-    case Expression::Kind::DoubleLiteral:
-    case Expression::Kind::BooleanLiteral:
-    case Expression::Kind::StringLiteral:
-    case Expression::Kind::NullLiteral:
-      return std::string(source.text.text().substr(token.offset, token.length));
-    case Expression::Kind::Unary:
-      return token.lexeme + DefaultValue(*expression.operand);
-    default:
-      return "…";
-  }
-}
-
-Completion SemanticIndex::ClassCompletion(const frontend::Class& declaration) const {
-  if (frontend::IsStandardTypeNamespace(program_, declaration)) {
-    return {
-        .label = declaration.name,
-        .detail = declaration.name == "ByteArray" || declaration.name == "ByteData" ||
-                          declaration.name == "RegExp" || declaration.name == "RegExpMatch"
-                      ? std::string(BuiltinTypeDetail(declaration.name))
-                      : declaration.name,
-        .kind = CompletionKind::Type,
-        .documentation = {},
-    };
-  }
-  auto text = "class " + GenericName(declaration.name, declaration.type_parameters) + " {\n  ";
-  if (declaration.constructor &&
-      declaration.constructor->visibility == frontend::Visibility::Private) {
-    text += "private ";
-  }
-  text += "constructor(";
-  if (declaration.constructor_kind == frontend::ConstructorKind::Explicit) {
-    for (const auto& parameter : declaration.constructor->parameters) {
-      text += (text.back() == '(' ? "" : ", ") + parameter.name + ": " + TypeText(parameter.type);
-    }
-  } else {
-    for (const auto& field : declaration.fields) {
-      if (!declaration.IsConstructorField(field)) {
-        continue;
-      }
-      text += (text.back() == '(' ? "" : ", ") + field.name + ": " + TypeText(field.type);
-      if (field.initializer) {
-        text += " = " + DefaultValue(*field.initializer);
-      }
-    }
-  }
-  return {
-      .label = declaration.name,
-      .detail = text + ");\n}",
-      .kind = CompletionKind::Class,
-      .documentation = {},
-  };
-}
-
-void SemanticIndex::MarkTypeParameters(SourceLocation location,
-                                       std::span<const std::string> parameters) {
-  if (parameters.empty()) {
-    return;
-  }
-  context_type_parameters_.insert(parameters.begin(), parameters.end());
-  const auto& tokens = sources_.at(location.source_id).tokens;
-  auto index = TokenAt(location) + 2;
-  for (std::size_t parameter = 0; parameter < parameters.size(); ++parameter) {
-    const auto& token = tokens.at(index);
-    type_parameters_.insert_or_assign(Key{location.source_id, token.offset}, kSemanticDeclaration);
-    index += 2;
-  }
-}
-
 std::vector<Completion> SemanticIndex::CompleteArguments(
     const ArgumentCompletionQuery& query) const {
   std::vector<Completion> result;
@@ -994,7 +827,7 @@ std::vector<Completion> SemanticIndex::CompleteArguments(
         !parameter.name.starts_with(query.prefix)) {
       continue;
     }
-    auto detail = parameter.name + ": " + DisplaySymbolName(parameter.type.name);
+    auto detail = parameter.name + ": " + DisplayType(parameter.type);
     if (signature->optional_parameters.contains(parameter.name)) {
       detail += " = …";
     }

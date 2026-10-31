@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "compiler/frontend/source_loader.h"
+#include "compiler/ir/lowerer.h"
 #include "compiler/ir/preparation.h"
 
 namespace vela::ir::test {

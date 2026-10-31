@@ -115,6 +115,7 @@ struct VersionedImage final {
         .name = Text("main.vela"),
         .type_parameters = {},
         .enum_members = {},
+        .generic_signature = {},
         .definition = {},
     };
     declarations.at(1) = {
@@ -124,6 +125,7 @@ struct VersionedImage final {
         .name = Text("answer"),
         .type_parameters = {},
         .enum_members = {},
+        .generic_signature = {},
         .definition = {},
     };
     declarations.back() = {
@@ -133,6 +135,7 @@ struct VersionedImage final {
         .name = Text("caller"),
         .type_parameters = {},
         .enum_members = {},
+        .generic_signature = {},
         .definition = {},
     };
     image.functions = Table(functions);

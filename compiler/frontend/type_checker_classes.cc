@@ -13,6 +13,7 @@
 
 #include "compiler/frontend/builtins.h"
 #include "compiler/frontend/standard_environment.h"
+#include "compiler/frontend/type_name.h"
 #include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
@@ -168,10 +169,21 @@ void TypeChecker::ResolveClassMethods(const Class& class_declaration, ClassInfo&
   for (const Function& method : class_declaration.methods) {
     ResolveClassMethod(method, info);
   }
+  for (const auto& method : class_declaration.method_templates) {
+    if (info.fields.contains(method.name) || info.static_fields.contains(method.name) ||
+        info.methods.contains(method.name) ||
+        !info.method_templates
+             .emplace(method.name,
+                      MethodTemplate{.owner = class_declaration.name, .declaration = &method})
+             .second) {
+      AddDiagnostic(method.location, "duplicate member '" + method.name + "'");
+    }
+  }
 }
 
 void TypeChecker::ResolveClassMethod(const Function& method, ClassInfo& info) {
   FunctionInfo method_info = ResolveSignature(method);
+  method_info.member_owner = info.type.name;
   if (info.fields.contains(method.name) || info.static_fields.contains(method.name)) {
     AddDiagnostic(method.location, "member name is already used by a field");
   }
@@ -297,21 +309,10 @@ const TypeChecker::ClassInfo* TypeChecker::CheckSuperClass(SourceLocation locati
 TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression,
                                                  const Type* expected) {
   if (const auto* owner = StaticOwner(expression)) {
-    return CheckStaticMember(expression, *owner);
+    return CheckStaticMember(expression, *owner, expected);
   }
   if (expression.object->kind == Expression::Kind::Name && expression.object->text == "super") {
-    const auto* base = CheckSuperClass(expression.location);
-    if (base == nullptr) {
-      return InvalidType();
-    }
-    const auto method = base->methods.find(expression.text);
-    if (method == base->methods.end()) {
-      AddDiagnostic(expression.location, "unknown super member '" + expression.text + "'");
-      return InvalidType();
-    }
-    super_members_.insert_or_assign(
-        &expression, MemberReference{.owner = *owner_->base_class, .member = expression.text});
-    return method->second.is_getter ? method->second.return_type : FunctionType(method->second);
+    return CheckSuperMember(expression, expected);
   }
   if (expression.object->kind == Expression::Kind::Name &&
       LookupLocal(expression.object->text) == nullptr) {
@@ -325,20 +326,58 @@ TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression,
     }
   }
 
-  const Type object = CheckExpression(*expression.object, nullptr);
+  auto object = CheckExpression(*expression.object, nullptr);
+  if (object.kind == Type::Kind::Parameter) {
+    object = ParameterCapability(object, expression.object->location);
+  }
   if (object.nullable) {
     if (!expression.null_safe) {
       AddDiagnostic(expression.object->location, "nullable receiver requires a non-null check");
       return InvalidType();
     }
     auto result = CheckObjectMember(expression, NonNullable(object), expected);
-    return IsValid(result) ? NullableType(std::move(result)) : result;
+    return IsValid(result) ? NullableType(result) : result;
   }
   return CheckObjectMember(expression, object, expected);
 }
 
+TypeChecker::Type TypeChecker::CheckSuperMember(const Expression& expression,
+                                                const Type* expected) {
+  const auto* base = CheckSuperClass(expression.location);
+  if (base == nullptr) {
+    return InvalidType();
+  }
+  if (const auto method = base->method_templates.find(expression.text);
+      method != base->method_templates.end()) {
+    return CheckGenericMethod(method->second, expression, nullptr, expected, MethodAccess::Super);
+  }
+  if (!expression.type_arguments.empty()) {
+    AddDiagnostic(expression.location, "type arguments require a generic method");
+    return InvalidType();
+  }
+  const auto method = base->methods.find(expression.text);
+  if (method == base->methods.end()) {
+    AddDiagnostic(expression.location, "unknown super member '" + expression.text + "'");
+    return InvalidType();
+  }
+  super_members_.insert_or_assign(&expression, MemberReference{
+                                                   .owner = method->second.member_owner,
+                                                   .member = expression.text,
+                                               });
+  return method->second.is_getter ? method->second.return_type : FunctionType(method->second);
+}
+
 TypeChecker::Type TypeChecker::CheckStaticMember(const Expression& expression,
-                                                 const ClassInfo& owner) {
+                                                 const ClassInfo& owner,
+                                                 const Type* expected) {
+  if (const auto method = owner.method_templates.find(expression.text);
+      method != owner.method_templates.end()) {
+    return CheckGenericMethod(method->second, expression, nullptr, expected, MethodAccess::Static);
+  }
+  if (!expression.type_arguments.empty()) {
+    AddDiagnostic(expression.location, "type arguments require a generic method");
+    return InvalidType();
+  }
   const auto field = owner.static_fields.find(expression.text);
   if (field != owner.static_fields.end()) {
     CheckAccess(field->second.visibility, owner.type.name, expression.location);
@@ -349,10 +388,10 @@ TypeChecker::Type TypeChecker::CheckStaticMember(const Expression& expression,
   }
   const auto method = owner.methods.find(expression.text);
   if (method != owner.methods.end() && method->second.storage == MemberStorage::Static) {
-    CheckAccess(method->second.visibility, owner.type.name, expression.location);
+    CheckAccess(method->second.visibility, method->second.member_owner, expression.location);
     static_members_.insert_or_assign(
         &expression,
-        MemberReference{.owner = std::string(owner.type.name), .member = expression.text});
+        MemberReference{.owner = method->second.member_owner, .member = expression.text});
     return FunctionType(method->second);
   }
   AddDiagnostic(expression.location, "class access requires a declared static member");
@@ -363,6 +402,11 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
                                                  const Type& object,
                                                  const Type* expected) {
   if (object.kind == Type::Kind::Dynamic) {
+    if (!expression.type_arguments.empty()) {
+      AddDiagnostic(expression.location,
+                    "generic methods require a statically known class or interface receiver");
+      return InvalidType();
+    }
     InvalidateCapturedRefinements();
     return object;
   }
@@ -380,6 +424,15 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
   }
   if (object.kind == Type::Kind::Interface) {
     const auto& owner = interfaces_.at(object.name);
+    if (const auto method = owner.method_templates.find(expression.text);
+        method != owner.method_templates.end()) {
+      return CheckGenericMethod(method->second, expression, nullptr, expected,
+                                MethodAccess::Instance);
+    }
+    if (!expression.type_arguments.empty()) {
+      AddDiagnostic(expression.location, "type arguments require a generic method");
+      return InvalidType();
+    }
     const auto method = owner.methods.find(expression.text);
     if (method != owner.methods.end()) {
       interface_members_.insert_or_assign(
@@ -392,28 +445,44 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
     return CheckBuiltinMethodValue(expression, object, expected);
   }
   const auto class_info = classes_.find(object.name);
-  if (class_info == classes_.end()) {
+  return class_info == classes_.end() ? InvalidType()
+                                      : CheckClassMember(expression, class_info->second, expected);
+}
+
+TypeChecker::Type TypeChecker::CheckClassMember(const Expression& expression,
+                                                const ClassInfo& owner,
+                                                const Type* expected) {
+  if (const auto method = owner.method_templates.find(expression.text);
+      method != owner.method_templates.end()) {
+    return CheckGenericMethod(method->second, expression, nullptr, expected,
+                              MethodAccess::Instance);
+  }
+  if (!expression.type_arguments.empty()) {
+    AddDiagnostic(expression.location, "type arguments require a generic method");
     return InvalidType();
   }
-  const auto field = class_info->second.fields.find(expression.text);
-  if (field == class_info->second.fields.end()) {
-    const auto method = class_info->second.methods.find(expression.text);
-    if (method != class_info->second.methods.end()) {
+  const auto field = owner.fields.find(expression.text);
+  if (field == owner.fields.end()) {
+    const auto method = owner.methods.find(expression.text);
+    if (method != owner.methods.end()) {
       if (method->second.is_getter) {
-        CheckAccess(method->second.visibility, object.name, expression.location);
+        CheckAccess(method->second.visibility, method->second.member_owner, expression.location);
         InvalidateCapturedRefinements();
         return method->second.return_type;
       }
-      CheckAccess(method->second.visibility, object.name, expression.location);
+      CheckAccess(method->second.visibility, method->second.member_owner, expression.location);
       if (method->second.storage == MemberStorage::Static) {
         AddDiagnostic(expression.location, "static method must be accessed through its class");
       }
+      instance_members_.insert_or_assign(
+          &expression,
+          MemberReference{.owner = method->second.member_owner, .member = expression.text});
       return FunctionType(method->second);
     }
     AddDiagnostic(expression.location, "unknown field '" + expression.text + "'");
     return InvalidType();
   }
-  CheckAccess(field->second.visibility, object.name, expression.location);
+  CheckAccess(field->second.visibility, owner.type.name, expression.location);
   return field->second.type;
 }
 

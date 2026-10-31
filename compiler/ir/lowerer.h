@@ -98,8 +98,6 @@ class Lowerer final {
   void BuildClassTable();
   [[nodiscard]] Class BuildClass(const frontend::Class& source_class,
                                  const frontend::ClassDescriptor& class_info);
-  [[nodiscard]] std::string FindMethodOwner(std::string method_owner,
-                                            std::string_view method_name) const;
   void BuildInterfaceSelectors();
   void BuildFunctionTable();
   std::uint32_t AddFunctionId(const std::string& name,
@@ -198,8 +196,7 @@ class Lowerer final {
   LoweredValue LowerTypeOperation(const frontend::Expression& expression);
   std::uint32_t RegisterRuntimeType(const frontend::TypeDescriptor& type);
   ClassId RegisterEnumType(const frontend::TypeDescriptor& type);
-  void RegisterClassMembers(const frontend::Class& source,
-                            const frontend::ClassDescriptor& descriptor);
+  void RegisterClassMembers(const frontend::ClassDescriptor& descriptor);
   void RegisterBuiltinMembers();
   void RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std::string_view name);
   void RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& receiver,

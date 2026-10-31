@@ -2,8 +2,6 @@
 
 #include <gtest/gtest.h>
 
-#include <utility>
-
 #include "base/opcode.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
@@ -19,7 +17,7 @@ ir::Function AwaitWithDeadParameter(frontend::TypeDescriptor type) {
   function.parameter_count = 2;
   function.register_count = 3;
   function.value_types = {
-      std::move(type),
+      type,
       {.kind = Kind::Future, .name = "Future<int>"},
       {.kind = Kind::Int, .name = "int"},
   };

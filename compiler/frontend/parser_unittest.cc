@@ -39,6 +39,33 @@ TEST(ParserTest, PreservesBinaryPrecedenceAndLeftAssociativity) {
   }
 }
 
+TEST(ParserTest, SplitsTypeClosingsFromAdjacentAssignmentWithoutConsumingOuterCommas) {
+  for (const std::string_view source : {
+           "type Identity<T>=T;",
+           "type Bounded<T extends Box<int>>=T;",
+           "type Bounded<T extends Box<Box<int>>>=T;",
+           "type Bounded<T extends Box<Box<Box<int>>>>=T;",
+           "func use():void{const value:Box<int>=Box<int>();}",
+           "func use():void{const value:Box<Box<int>>=Box<Box<int>>();}",
+           "func use():void{const value:Box<Box<Box<int>>>=Box<Box<Box<int>>>();}",
+       }) {
+    SCOPED_TRACE(source);
+    const auto parsed = ParseSource(source);
+    EXPECT_TRUE(parsed.diagnostics.empty());
+  }
+  const auto parsed = ParseSource(
+      "func use<T extends Map<string,Map<int,int>>,U>(value:Map<string,Map<int,int>>,other:U):U"
+      "{return other;}");
+  ASSERT_TRUE(parsed.diagnostics.empty());
+  const auto& function = parsed.program.functions.front();
+  ASSERT_EQ(function.type_parameters.size(), 2U);
+  EXPECT_EQ(function.type_parameters.back().name, "U");
+  ASSERT_EQ(function.parameters.size(), 2U);
+  EXPECT_EQ(function.parameters.back().type.name, "U");
+  EXPECT_EQ(function.parameters.front().type.arguments.size(), 2U);
+  EXPECT_EQ(function.parameters.front().type.arguments.back().arguments.size(), 2U);
+}
+
 TEST(ParserTest, PreservesTypeOperatorGrammarAndAssignmentAssociativity) {
   const auto typed = ParseSource("func f(): bool { return (a + b as int) < c << d; }");
   ASSERT_TRUE(typed.diagnostics.empty());

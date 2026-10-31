@@ -60,7 +60,7 @@ yyjson_mut_val* JsonCompletion(yyjson_mut_doc* document,
   }
   auto* edit = yyjson_mut_obj(document);
   AddJsonField(document, edit, protocol::kRange, JsonRange(document, range));
-  AddJsonField(document, edit, "newText",
+  AddJsonField(document, edit, protocol::kNewText,
                yyjson_mut_strncpy(document, insertion.data(), insertion.size()));
   AddJsonField(document, item, "textEdit", edit);
   return item;
@@ -222,6 +222,10 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
     Error(call.identity, kInvalidParams, offset.error());
     return;
   }
+  if (query == SymbolQuery::Rename) {
+    Rename(call, IndexFor(*uri, opened), *offset);
+    return;
+  }
   auto response = Response(call.identity);
   auto* document = response.document();
   auto* result = yyjson_mut_null(document);
@@ -247,7 +251,11 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
   } else {
     // 同版本的跳转与悬停复用 AST/语义索引；文档或磁盘依赖变化时统一失效。
     auto& index = IndexFor(*uri, opened);
-    if (query == SymbolQuery::Hover) {
+    if (query == SymbolQuery::PrepareRename) {
+      if (const auto declaration = index.PrepareRename(*offset, encoding_)) {
+        result = JsonRange(document, declaration->range);
+      }
+    } else if (query == SymbolQuery::Hover) {
       result = JsonHover(document, index.FindHover(*offset, encoding_));
     } else if (const auto definition = index.FindDefinition(*offset, encoding_)) {
       result = yyjson_mut_obj(document);
@@ -257,6 +265,37 @@ void LanguageServer::Query(RpcCall call, SymbolQuery query) {
       AddJsonField(document, result, protocol::kRange, JsonRange(document, definition->range));
     }
   }
+  AddJsonField(document, response.root(), protocol::kResult, result);
+  Send(response);
+}
+
+void LanguageServer::Rename(RpcCall call, SemanticIndex& index, std::size_t offset) {
+  const auto name = JsonText(GetJsonField(call.params, protocol::kNewName));
+  if (!name) {
+    Error(call.identity, kInvalidParams, "rename requires a new name");
+    return;
+  }
+  const auto edits = index.RenameTypeParameter(offset, *name, encoding_);
+  if (!edits) {
+    Error(call.identity, kInvalidParams, edits.error());
+    return;
+  }
+  auto response = Response(call.identity);
+  auto* document = response.document();
+  auto* changes = yyjson_mut_obj(document);
+  if (!edits->empty()) {
+    auto* replacements = yyjson_mut_arr(document);
+    for (const auto& edit : *edits) {
+      auto* item = yyjson_mut_obj(document);
+      AddJsonField(document, item, protocol::kRange, JsonRange(document, edit.range));
+      AddJsonField(document, item, protocol::kNewText,
+                   yyjson_mut_strncpy(document, name->data(), name->size()));
+      yyjson_mut_arr_add_val(replacements, item);
+    }
+    AddJsonField(document, changes, SourceUri(edits->front().path), replacements);
+  }
+  auto* result = yyjson_mut_obj(document);
+  AddJsonField(document, result, "changes", changes);
   AddJsonField(document, response.root(), protocol::kResult, result);
   Send(response);
 }

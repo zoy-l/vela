@@ -8,6 +8,7 @@
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/Layer.h>
 #include <llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h>
+#include <llvm/Support/Error.h>
 #include <llvm/TargetParser/Triple.h>
 
 #include "compiler/jit/platform_support.h"

@@ -240,6 +240,41 @@ TEST_P(JitStateTest, OldConstructionPlansRejectNewRequiredFieldsWithoutAnyLiveIn
   EXPECT_TRUE(Entry("make").Invoke({}));
 }
 
+TEST_P(JitStateTest, SuspendedGenericInterfaceMethodsKeepTheirConcreteVersionAfterAlphaRename) {
+  const std::string common =
+      "const ready = Completer<void>(); "
+      "const worker: Delayed = Worker(); "
+      "export func release(): void { ready.complete(); } ";
+  auto update = Update(
+      "interface Delayed { later<T extends int>(value: T): Future<int>; } "
+      "class Worker implements Delayed { "
+      "async later<T extends int>(value: T): Future<int> { await ready.future; return value + 1; } "
+      "} " +
+      common + "export func start(): Future<int> { return worker.later(41); }");
+  ASSERT_TRUE(update) << update.error();
+  const runtime::RootedValue pending(isolate_, *Entry("start").Invoke({}));
+  update = Update(
+      "interface Delayed { later<U extends int>(value: U): Future<int>; } "
+      "class Worker implements Delayed { "
+      "async later<U extends int>(value: U): Future<int> { await ready.future; return value + 2; } "
+      "} " +
+      common + "export func start(): Future<int> { return Future.value(100); }");
+  ASSERT_TRUE(update) << update.error();
+  isolate_.heap().Collect();
+  const auto incompatible = Update(
+      "interface Delayed { later<U extends double>(value: U): Future<int>; } "
+      "class Worker implements Delayed { "
+      "async later<U extends double>(value: U): Future<int> { await ready.future; return 0; } } " +
+      common + "export func start(): Future<int> { return Future.value(100); }");
+  ASSERT_FALSE(incompatible);
+  EXPECT_EQ(isolate_.native_dispatch().revision(), 2U);
+  ASSERT_TRUE(Entry("release").Invoke({}));
+  ASSERT_TRUE(test::CompletesWithInteger(isolate_, pending.value(), 42));
+  const auto current = Entry("start").Invoke({});
+  ASSERT_TRUE(current);
+  ASSERT_TRUE(test::CompletesWithInteger(isolate_, *current, 100));
+}
+
 TEST_P(JitStateTest, SuspendedOldFramesKeepTheirFieldDependenciesUntilTheyFinish) {
   auto update = Update(
       "class Box { stored: int = 42; } "

@@ -189,13 +189,15 @@ void MockGenerator::RegisterPublicAlias(const frontend::Program::TypeAlias& alia
       .location = alias.location,
       .kind = frontend::TypeName::Kind::Generic,
       .arguments = {},
+      .parameter = {},
   };
   std::vector<std::string> parameters;
   parameters.reserve(alias.type_parameters.size());
   for (std::size_t index = 0; index < alias.type_parameters.size(); ++index) {
     const auto name = "$mockParameter" + std::to_string(index);
     parameters.push_back(name);
-    application.arguments.push_back({.name = name, .location = alias.location, .arguments = {}});
+    application.arguments.push_back(
+        {.name = name, .location = alias.location, .arguments = {}, .parameter = {}});
   }
   auto target = Expand(application);
   // Identity<T> 一类别名仍需公开命名 T，不能为私有类型提供新名字。
@@ -233,6 +235,7 @@ std::optional<frontend::TypeName> MockGenerator::NameGenericAlias(const frontend
         .location = type.location,
         .kind = frontend::TypeName::Kind::Generic,
         .arguments = {},
+        .parameter = {},
     };
     naming_aliases_.insert(alias.name);
     bool complete = true;
@@ -289,9 +292,10 @@ frontend::TypeName MockGenerator::Expand(const frontend::TypeName& type) const {
     return result;
   }
   const auto& declaration = *alias->second;
-  absl::flat_hash_map<std::string, frontend::TypeName> substitutions;
+  frontend::TypeSubstitutions substitutions;
   for (std::size_t index = 0; index < declaration.type_parameters.size(); ++index) {
-    substitutions.emplace(declaration.type_parameters.at(index), result.arguments.at(index));
+    substitutions.emplace(declaration.type_parameters.at(index).identity,
+                          result.arguments.at(index));
   }
   return Expand(frontend::SubstituteTypeName(declaration.target, substitutions));
 }
@@ -352,6 +356,7 @@ std::optional<frontend::TypeName> MockGenerator::FindTypeName(const frontend::Ty
         .name = alias->second,
         .location = type.location,
         .arguments = {},
+        .parameter = {},
     };
   }
   if (auto named = NameGenericAlias(expanded)) {

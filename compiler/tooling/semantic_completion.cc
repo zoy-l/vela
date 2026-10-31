@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
@@ -174,8 +175,8 @@ void AddRegExpCompletions(std::vector<Completion>& result, Kind kind) {
 
 std::optional<Completion> SemanticIndex::BuiltinCompletion(const frontend::Token& token) const {
   if (const auto call = calls_.find(Key{0, token.offset}); call != calls_.end()) {
-    if (const auto async = model_.async_calls.find(call->second);
-        async != model_.async_calls.end()) {
+    const auto& asynchronous = FactsFor(*call->second).async_calls;
+    if (const auto async = asynchronous.find(call->second); async != asynchronous.end()) {
       const auto& callee = *call->second->callee;
       const auto receiver =
           async->second.receiver ? ReceiverFor(*callee.object).type.kind : Kind::Invalid;
@@ -216,13 +217,17 @@ std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receive
   if (receiver.type.nullable || receiver.type.kind == Kind::Invalid) {
     return result;
   }
-  const auto members = members_.find(receiver.type.name);
-  if (members != members_.end()) {
+  absl::flat_hash_set<std::string> visible;
+  for (const auto owner : MemberOwners(receiver.type)) {
+    const auto members = members_.find(owner);
+    if (members == members_.end()) {
+      continue;
+    }
     for (const auto& [name, symbol_id] : members->second) {
       const auto& symbol = symbols_.at(symbol_id);
       if (symbol.storage == receiver.storage &&
-          (symbol.visibility == frontend::Visibility::Public ||
-           receiver.context_class == receiver.type.name)) {
+          (symbol.visibility == frontend::Visibility::Public || receiver.context_class == owner) &&
+          visible.insert(symbol.completion.label).second) {
         result.push_back(symbol.completion);
       }
     }

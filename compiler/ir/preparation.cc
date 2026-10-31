@@ -5,6 +5,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -161,11 +162,27 @@ void BindReloadableAccesses(Program& program) {
   }
 }
 
+DeclarationId TopLevelDeclaration(const DeclarationBindings& bindings,
+                                  const frontend::DeclarationOrigin& origin,
+                                  const std::string& name) {
+  if (origin.kind == DeclarationKind::Function) {
+    return bindings.named_functions.at(name);
+  }
+  if (origin.kind == DeclarationKind::Global) {
+    return bindings.globals.at(name);
+  }
+  return bindings.nominals.at(name);
+}
+
 void DescribeDeclarations(Program& program,
                           const frontend::Program& source,
                           const DeclarationBindings& bindings,
                           std::span<const frontend::DeclarationRecord> records) {
   absl::flat_hash_map<DeclarationId, std::vector<std::string>> type_parameters;
+  absl::flat_hash_map<DeclarationId, std::string> signatures;
+  absl::flat_hash_map<std::tuple<DeclarationId, DeclarationKind, std::string>,
+                      const frontend::DeclarationOrigin::Member*>
+      member_contracts;
   absl::flat_hash_map<DeclarationId, std::vector<std::string>> enum_members;
   for (const auto& enumeration : source.enums) {
     auto& members = enum_members.try_emplace(bindings.nominals.at(enumeration.name)).first->second;
@@ -174,31 +191,44 @@ void DescribeDeclarations(Program& program,
     }
   }
   for (const auto& [name, origin] : source.origins) {
-    if (origin.arguments.empty() && !origin.type_parameters.empty()) {
-      const auto identity = origin.kind == DeclarationKind::Function
-                                ? bindings.named_functions.at(name)
-                                : bindings.nominals.at(name);
-      type_parameters.emplace(identity, origin.type_parameters);
+    if (!origin.arguments.empty()) {
+      continue;
+    }
+    const auto identity = TopLevelDeclaration(bindings, origin, name);
+    type_parameters.emplace(
+        identity, frontend::DescribeTypeParameterContracts(origin.type_parameters, source.origins));
+    signatures.emplace(identity, origin.generic_signature);
+    for (const auto& member : origin.members) {
+      member_contracts.emplace(std::tuple(identity, member.kind, member.name), &member);
     }
   }
   for (std::size_t index = 0; index < records.size(); ++index) {
     const auto& record = records.subspan(index).front();
-    if (!record.retired) {
-      const DeclarationId identity{static_cast<std::uint64_t>(index)};
-      const auto parameters = type_parameters.find(identity);
-      const auto members = enum_members.find(identity);
-      program.declarations.push_back({
-          .identity = identity,
-          .owner = record.key.owner,
-          .kind = record.key.kind,
-          .name = record.key.name,
-          .type_parameters =
-              parameters == type_parameters.end() ? std::vector<std::string>{} : parameters->second,
-          .enum_members =
-              members == enum_members.end() ? std::vector<std::string>{} : members->second,
-          .definition = record.definition,
-      });
+    if (record.retired) {
+      continue;
     }
+    const DeclarationId identity{static_cast<std::uint64_t>(index)};
+    auto parameters = type_parameters.find(identity);
+    const auto contract =
+        member_contracts.find({record.key.owner, record.key.kind, record.key.name});
+    if (record.key.arguments.empty() && contract != member_contracts.end()) {
+      parameters = type_parameters.emplace(identity, contract->second->type_parameters).first;
+      signatures.emplace(identity, contract->second->generic_signature);
+    }
+    const auto signature = signatures.find(identity);
+    const auto members = enum_members.find(identity);
+    program.declarations.push_back({
+        .identity = identity,
+        .owner = record.key.owner,
+        .kind = record.key.kind,
+        .name = record.key.name,
+        .type_parameters =
+            parameters == type_parameters.end() ? std::vector<std::string>{} : parameters->second,
+        .enum_members =
+            members == enum_members.end() ? std::vector<std::string>{} : members->second,
+        .generic_signature = signature == signatures.end() ? std::string() : signature->second,
+        .definition = record.definition,
+    });
   }
 }
 

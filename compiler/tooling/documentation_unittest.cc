@@ -97,6 +97,25 @@ export type Nested = Map<string, ((int[]) => string?)?>;
   EXPECT_TRUE(result->contains("type Nested = Map<string, ((int[]) => string?)?>;"));
 }
 
+TEST(DocumentationTest, PreservesBoundsOwnerParametersAndMethodParameters) {
+  const auto result = GenerateModuleDocumentation(R"(
+export interface Reader<T> { read<U extends Map<string, Future<T[]>>>(value: U): T; }
+export class Box<T extends Reader<int>> {
+  value: T;
+  apply<U extends T>(value: U): U { return value; }
+}
+export type Values<T extends Reader<int>> = Map<string, Future<T[]>>;
+export func read<T extends Reader<E>, E>(value: T): E { return value.read(); }
+)");
+  ASSERT_TRUE(result);
+  EXPECT_TRUE(result->contains("interface Reader<T>"));
+  EXPECT_TRUE(result->contains("read<U extends Map<string, Future<T[]>>>(value: U): T;"));
+  EXPECT_TRUE(result->contains("class Box<T extends Reader<int>>"));
+  EXPECT_TRUE(result->contains("apply<U extends T>(value: U): U;"));
+  EXPECT_TRUE(result->contains("type Values<T extends Reader<int>> = Map<string, Future<T[]>>;"));
+  EXPECT_TRUE(result->contains("func read<T extends Reader<E>, E>(value: T): E;"));
+}
+
 TEST(DocumentationTest, DocumentsEmptyPublicSurfaceAndRejectsSyntaxErrors) {
   const auto empty = GenerateModuleDocumentation("func main(): void {}");
   ASSERT_TRUE(empty);

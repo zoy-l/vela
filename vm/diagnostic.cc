@@ -4,7 +4,9 @@
 #include <span>
 #include <vector>
 
+#include "runtime/future.h"
 #include "runtime/process_entry.h"
+#include "vm/debug_info.h"
 #include "vm/execution.h"
 #include "vm/vm.h"
 

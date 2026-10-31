@@ -4,7 +4,6 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
-#include "compiler/frontend/diagnostic.h"
 #include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
 #include "vm/bytecode.h"

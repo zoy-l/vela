@@ -230,6 +230,38 @@ function registerSymbolProviders(context, client, flush) {
         return new vscode.Hover(contents, editorRange(result.range));
       }
     }),
+    vscode.languages.registerRenameProvider(selector, {
+      async prepareRename(document, position, token) {
+        const version = document.version;
+        if (token.isCancellationRequested) return null;
+        await flush(document);
+        if (document.isClosed || token.isCancellationRequested) return null;
+        const range = await client.request("textDocument/prepareRename", {
+          textDocument: { uri: document.uri.toString() },
+          position: { line: position.line, character: position.character }
+        }, token);
+        if (token.isCancellationRequested || document.version !== version || !range) return null;
+        return editorRange(range);
+      },
+      async provideRenameEdits(document, position, newName, token) {
+        const version = document.version;
+        if (token.isCancellationRequested) return null;
+        await flush(document);
+        if (document.isClosed || token.isCancellationRequested) return null;
+        const result = await client.request("textDocument/rename", {
+          textDocument: { uri: document.uri.toString() },
+          position: { line: position.line, character: position.character }, newName
+        }, token);
+        if (token.isCancellationRequested || document.version !== version || !result) return null;
+        const edits = new vscode.WorkspaceEdit();
+        for (const [uri, replacements] of Object.entries(result.changes)) {
+          for (const replacement of replacements) {
+            edits.replace(vscode.Uri.parse(uri), editorRange(replacement.range), replacement.newText);
+          }
+        }
+        return edits;
+      }
+    }),
     vscode.languages.registerDefinitionProvider(selector, {
       async provideDefinition(document, position, token) {
         const version = document.version;

@@ -34,14 +34,14 @@ class CompilationCacheTest : public test::DirectoryTest {
     Write("main.vela", "func main(): int { return 42; }");
   }
   void Write(const std::filesystem::path& name, std::string_view text) {
-    const auto path = directory_ / name;
+    const auto path = directory() / name;
     std::error_code error;
     std::filesystem::create_directories(path.parent_path(), error);
     ASSERT_FALSE(error);
     ASSERT_TRUE(WriteFileAtomically(path, std::as_bytes(std::span(text))));
   }
   std::expected<CachedCompileResult, std::string> Compile(std::string_view entry = "main.vela") {
-    return CompileFileCached(PathText(directory_ / Utf8Path(entry)), directory_ / "cache",
+    return CompileFileCached(PathText(directory() / Utf8Path(entry)), directory() / "cache",
                              isolate_);
   }
   void ExpectRun(const CachedCompileResult& result, std::int64_t expected) {
@@ -121,6 +121,46 @@ TEST_F(CompilationCacheTest, InvalidSourceCannotExecuteOrReplaceOldImage) {
   const auto restored = Compile();
   ASSERT_TRUE(restored);
   EXPECT_EQ(restored->status, CacheStatus::Hit);
+}
+
+TEST_F(CompilationCacheTest,
+       GenericMethodImagesRestoreAndChangedBoundsInvalidateTheirDependencies) {
+  Write("main.vela", R"(
+import 'library.vela';
+func main(): int { return Operations().read(Value()); }
+)");
+  const std::string declarations = R"(
+export interface Reader<T> { read(): T; }
+export class Value implements Reader<int> { read(): int { return 42; } }
+export class Operations {
+  read<T extends Reader<int>>(value: T): int { return value.read(); }
+}
+)";
+  Write("library.vela", declarations);
+  const auto first = Compile();
+  ASSERT_TRUE(first) << first.error();
+  EXPECT_EQ(first->status, CacheStatus::Absent);
+  ExpectRun(*first, kAnswer);
+  const auto restored = Compile();
+  ASSERT_TRUE(restored) << restored.error();
+  EXPECT_EQ(restored->status, CacheStatus::Hit);
+  ExpectRun(*restored, kAnswer);
+  Write("library.vela", R"(
+export interface Reader<T> { read(): T; }
+export class Value implements Reader<int> { read(): int { return 42; } }
+export class Operations {
+  read<T extends Reader<string>>(value: T): int { return 42; }
+}
+)");
+  const auto rejected = Compile();
+  ASSERT_TRUE(rejected) << rejected.error();
+  EXPECT_EQ(rejected->status, CacheStatus::Stale);
+  EXPECT_FALSE(rejected->compiled.Succeeded());
+  Write("library.vela", declarations);
+  const auto previous = Compile();
+  ASSERT_TRUE(previous) << previous.error();
+  EXPECT_EQ(previous->status, CacheStatus::Hit);
+  ExpectRun(*previous, kAnswer);
 }
 
 TEST_F(CompilationCacheTest, JsonAndDynamicDispatchRetainMetadataInFreshIsolateCacheHit) {

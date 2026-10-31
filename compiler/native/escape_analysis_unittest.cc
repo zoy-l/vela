@@ -11,7 +11,6 @@
 #include "base/opcode.h"
 #include "compiler/aot/native_compiler.h"
 #include "compiler/ir/ir.h"
-#include "compiler/ir/preparation.h"
 #include "compiler/ir/preparation_test_support.h"
 #include "compiler/native/borrow_analysis.h"
 #include "compiler/native/native_roots.h"

@@ -143,6 +143,9 @@ void LanguageServer::Initialize(RpcCall call) {
                yyjson_mut_bool(document, true));
   AddJsonField(document, capabilities, "definitionProvider", yyjson_mut_bool(document, true));
   AddJsonField(document, capabilities, "hoverProvider", yyjson_mut_bool(document, true));
+  auto* rename = yyjson_mut_obj(document);
+  AddJsonField(document, rename, "prepareProvider", yyjson_mut_bool(document, true));
+  AddJsonField(document, capabilities, "renameProvider", rename);
   auto* links = yyjson_mut_obj(document);
   AddJsonField(document, links, "resolveProvider", yyjson_mut_bool(document, false));
   AddJsonField(document, capabilities, "documentLinkProvider", links);
@@ -208,6 +211,10 @@ void LanguageServer::Request(std::string_view method, RpcCall call) {
     Query(call, SymbolQuery::Definition);
   } else if (method == "textDocument/hover") {
     Query(call, SymbolQuery::Hover);
+  } else if (method == "textDocument/prepareRename") {
+    Query(call, SymbolQuery::PrepareRename);
+  } else if (method == "textDocument/rename") {
+    Query(call, SymbolQuery::Rename);
   } else if (method == "textDocument/documentLink") {
     DocumentLinks(call);
   } else if (method == protocol::kSdkSource) {

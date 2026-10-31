@@ -39,7 +39,7 @@ class GenericChild<T> extends GenericBase<T> {
   set value(next: T): void { this.stored = next; }
 }
 func identity<T>(value: T): T { return value; }
-func callbacks<K, V>(values: Map<K, V>): (() => int)[] {
+func callbacks<K extends string, V extends int>(values: Map<K, V>): (() => int)[] {
   const result: (() => int)[] = [];
   for (const [key, value] in identity(values)) {
     result.push((): int => key.length + value);

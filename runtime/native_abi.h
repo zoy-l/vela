@@ -24,7 +24,7 @@ struct FutureDiagnostic;
 struct FutureResult;
 struct NativeCheckpoint;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 7;
+inline constexpr std::uint32_t kNativeAbiVersion = 8;
 inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
 [[nodiscard]] constexpr std::uint64_t EncodeNativeTracePosition(TracePosition position) noexcept {

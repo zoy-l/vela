@@ -130,6 +130,7 @@ layout::Type LayoutDescription::Type(const SourceType& type) {
     case Source::Invalid:
     case Source::Null:
     case Source::Void:
+    case Source::Parameter:
       std::unreachable();
   }
   return result;

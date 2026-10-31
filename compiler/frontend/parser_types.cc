@@ -20,7 +20,7 @@ std::optional<Program::TypeAlias> Parser::ParseTypeAlias() {
     return std::nullopt;
   }
   auto type_parameters = ParseTypeParameters();
-  if (!Expect(TokenKind::Equal, "expected '=' after type alias name")) {
+  if (!type_parameters || !Expect(TokenKind::Equal, "expected '=' after type alias name")) {
     return std::nullopt;
   }
   const auto target = ParseType();
@@ -31,12 +31,12 @@ std::optional<Program::TypeAlias> Parser::ParseTypeAlias() {
       .name = name->lexeme,
       .target = *target,
       .location = name->location,
-      .type_parameters = std::move(type_parameters),
+      .type_parameters = std::move(*type_parameters),
   };
 }
 
-std::vector<std::string> Parser::ParseTypeParameters() {
-  std::vector<std::string> parameters;
+std::optional<std::vector<TypeParameter>> Parser::ParseTypeParameters() {
+  std::vector<TypeParameter> parameters;
   if (!Match(TokenKind::Less)) {
     return parameters;
   }
@@ -44,16 +44,31 @@ std::vector<std::string> Parser::ParseTypeParameters() {
   while (true) {
     const auto name = Expect(TokenKind::Identifier, "expected generic parameter name");
     if (!name) {
-      return {};
+      return std::nullopt;
     }
-    parameters.push_back(name->lexeme);
+    TypeParameter parameter{
+        .name = name->lexeme,
+        .location = name->location,
+        .bound = std::nullopt,
+        .identity = {},
+    };
+    if (Match(TokenKind::Extends)) {
+      auto bound = ParseType();
+      if (!bound) {
+        return std::nullopt;
+      }
+      parameter.bound = std::move(*bound);
+    }
+    parameters.push_back(std::move(parameter));
     if (!Match(TokenKind::Comma)) {
       break;
     }
   }
-  if (MatchTypeGreater()) {
-    AnnotatePrevious(TokenRole::TypeDelimiter);
+  if (!MatchTypeGreater()) {
+    AddDiagnostic(Peek().location, "expected '>' after generic parameters");
+    return std::nullopt;
   }
+  AnnotatePrevious(TokenRole::TypeDelimiter);
   return parameters;
 }
 
@@ -123,9 +138,8 @@ std::optional<TypeName> Parser::ParseTypeBody() {
 }
 
 std::optional<TypeName> Parser::ParseTypeSuffixes(TypeName result, std::size_t depth) {
-  while (pending_type_greater_ == 0 &&
-         (Check(TokenKind::Question) || Check(TokenKind::QuestionQuestion) ||
-          Check(TokenKind::LeftBracket))) {
+  while (Check(TokenKind::Question) || Check(TokenKind::QuestionQuestion) ||
+         Check(TokenKind::LeftBracket)) {
     if (depth >= kMaxTypeNesting) {
       AddDiagnostic(Peek().location, "type nesting exceeds the limit of 128");
       return std::nullopt;
@@ -139,6 +153,7 @@ std::optional<TypeName> Parser::ParseTypeSuffixes(TypeName result, std::size_t d
             .location = result.location,
             .kind = TypeName::Kind::Nullable,
             .arguments = {},
+            .parameter = {},
         };
         wrapper.arguments.push_back(std::move(result));
         result = std::move(wrapper);
@@ -156,6 +171,7 @@ std::optional<TypeName> Parser::ParseTypeSuffixes(TypeName result, std::size_t d
         .location = result.location,
         .kind = kind,
         .arguments = {},
+        .parameter = {},
     };
     wrapper.arguments.push_back(std::move(result));
     result = std::move(wrapper);
@@ -169,7 +185,7 @@ std::optional<TypeName> Parser::ParseTypeSuffixes(TypeName result, std::size_t d
 }
 
 std::optional<std::string> Parser::ParseQualifiedTypeName() {
-  auto name = tokens_.subspan(current_++).front().lexeme;
+  auto name = Advance().lexeme;
   while (Match(TokenKind::Dot)) {
     const auto member = Expect(TokenKind::Identifier, "expected qualified type name after '.'");
     if (!member) {
@@ -271,22 +287,48 @@ bool Parser::IsTypeApplication() {
 }
 
 bool Parser::MatchTypeGreater() {
-  if (pending_type_greater_ != 0) {
-    --pending_type_greater_;
+  const auto kind = Peek().kind;
+  if (kind == TokenKind::Greater) {
+    auto& token = tokens_.subspan(current_).front();
+    token.type_closing_length = Peek().offset - token.offset + 1;
+    Advance();
     return true;
   }
-  if (Match(TokenKind::Greater)) {
-    return true;
+  TokenKind suffix = kind;
+  switch (kind) {
+    case TokenKind::GreaterEqual:
+      suffix = TokenKind::Equal;
+      break;
+    case TokenKind::ShiftRight:
+      suffix = TokenKind::Greater;
+      break;
+    case TokenKind::ShiftRightEqual:
+      suffix = TokenKind::GreaterEqual;
+      break;
+    case TokenKind::ShiftUnsignedRight:
+      suffix = TokenKind::ShiftRight;
+      break;
+    case TokenKind::ShiftUnsignedRightEqual:
+      suffix = TokenKind::ShiftRightEqual;
+      break;
+    default:
+      return false;
   }
-  if (Match(TokenKind::ShiftRight)) {
-    pending_type_greater_ = 1;
-    return true;
-  }
-  if (Match(TokenKind::ShiftUnsignedRight)) {
-    pending_type_greater_ = 2;
-    return true;
-  }
-  return false;
+  auto remainder = Peek();
+  auto& token = tokens_.subspan(current_).front();
+  token.type_closing_length = remainder.offset - token.offset + 1;
+  previous_split_ = remainder;
+  previous_split_->kind = TokenKind::Greater;
+  previous_split_->lexeme = ">";
+  previous_split_->length = 1;
+  previous_index_ = current_;
+  remainder.kind = suffix;
+  remainder.lexeme.erase(0, 1);
+  ++remainder.offset;
+  ++remainder.location.column;
+  --remainder.length;
+  remainder_ = std::move(remainder);
+  return true;
 }
 
 }  // namespace vela::frontend

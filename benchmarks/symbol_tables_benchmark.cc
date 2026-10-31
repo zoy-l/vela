@@ -1,10 +1,12 @@
 #include <cstdint>
+#include <span>
 #include <string>
 
 #include "benchmark/benchmark.h"
 
 #include "compiler/compiler.h"
 #include "compiler/frontend/parser.h"
+#include "compiler/frontend/source_loader.h"
 #include "compiler/frontend/token.h"
 #include "compiler/frontend/type_checker.h"
 #include "runtime/isolate.h"
@@ -107,7 +109,8 @@ void CheckRefinements(benchmark::State& state) {
     source += "; } else { result += 1; }";
   }
   source += "return result; }";
-  auto parsed = frontend::ParseSource(source);
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
   if (!parsed.diagnostics.empty()) {
     state.SkipWithError("Refinement workload did not parse");
     return;
@@ -144,7 +147,8 @@ void CheckBranchRefinements(benchmark::State& state, BranchKind kind) {
   }
   source +=
       kind == BranchKind::Match ? "_ => " + sum + ", }; }" : "default: return " + sum + "; } }";
-  auto parsed = frontend::ParseSource(source);
+  const frontend::SourceInput input{.path = "main.vela", .text = source};
+  auto parsed = frontend::LoadSources(std::span(&input, 1), input.path);
   if (!parsed.diagnostics.empty()) {
     state.SkipWithError("Branch refinement workload did not parse");
     return;

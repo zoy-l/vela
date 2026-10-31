@@ -53,7 +53,8 @@ export func valid(): bool {
   runtime::Isolate isolate(1);
   const auto compiled = CompileParsed(std::move(loaded), isolate);
   for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
+    ADD_FAILURE() << diagnostic.source_path << ':' << diagnostic.location.line << ':'
+                  << diagnostic.location.column << ' ' << diagnostic.message;
   }
   ASSERT_TRUE(compiled.Succeeded());
   const auto image = vm::SaveBytecode(compiled.program, isolate);

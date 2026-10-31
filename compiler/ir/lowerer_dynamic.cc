@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,8 +19,7 @@
 
 namespace vela::ir {
 
-void Lowerer::RegisterClassMembers(const frontend::Class& source,
-                                   const frontend::ClassDescriptor& descriptor) {
+void Lowerer::RegisterClassMembers(const frontend::ClassDescriptor& descriptor) {
   const auto receiver = RegisterRuntimeType(descriptor.type);
   for (const auto& name : descriptor.field_order) {
     const auto& field = descriptor.fields.at(name);
@@ -42,10 +42,11 @@ void Lowerer::RegisterClassMembers(const frontend::Class& source,
   std::ranges::sort(names);
   for (const auto& name : names) {
     const auto& signature = descriptor.methods.at(name);
-    if (name == "$constructor" || signature.storage != frontend::MemberStorage::Instance) {
+    if (name == "$constructor" || signature.storage != frontend::MemberStorage::Instance ||
+        signature.is_generic_application) {
       continue;
     }
-    const auto owner = FindMethodOwner(source.name, name);
+    const auto& owner = signature.member_owner;
     if (signature.is_getter || signature.is_setter) {
       RegisterClassProperty(receiver, *FindClass(owner), name);
       continue;

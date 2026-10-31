@@ -235,22 +235,29 @@ std::expected<void, NativeContractViolation> RetainedContracts::CheckBinding(
     const NativeBindingDependency& binding,
     const DeclarationIndex& source) const {
   const auto& original = *source.at(binding.target);
+  const auto parent = source.find(original.owner);
+  // 泛型应用的 owner 是模板声明；名字绑定检查模板在接收者中的归属，具体代码仍按应用身份选择。
+  const auto& declaration =
+      parent != source.end() && parent->second->kind == original.kind ? *parent->second : original;
   const auto target = declarations_.find(binding.target);
-  const auto receiver = binding.receiver == DeclarationId{} ? original.owner : binding.receiver;
-  const auto* member = FindMember(receiver, original);
+  const auto receiver = binding.receiver == DeclarationId{} ? declaration.owner : binding.receiver;
+  const auto* member = FindMember(receiver, declaration);
   if (target == declarations_.end()) {
     if (previous_declarations_.contains(binding.target) && member != nullptr &&
-        member->kind != original.kind) {
+        member->kind != declaration.kind) {
       return std::unexpected(
           Violation(function, binding.target,
                     "would change a retained name binding kind; Reload is required"));
     }
     return {};
   }
-  if (member != nullptr && member->identity != binding.target) {
+  if (member != nullptr && member->identity != declaration.identity) {
     return std::unexpected(Violation(
         function, binding.target,
         "would bind a retained member access to another declaration; Reload is required"));
+  }
+  if (static_cast<DeclarationKind>(declaration.kind) == DeclarationKind::Selector) {
+    return {};
   }
   const auto implementation = functions_.find(binding.target);
   if (implementation == functions_.end() && target->second->definition != DeclarationId{}) {
@@ -261,7 +268,7 @@ std::expected<void, NativeContractViolation> RetainedContracts::CheckBinding(
   }
   if (implementation != functions_.end() &&
       (implementation->second->flags & kNativePrivateFunction) != 0 &&
-      function.dependencies->lexical_class != target->second->owner) {
+      function.dependencies->lexical_class != declaration.owner) {
     return std::unexpected(Violation(
         function, binding.target,
         "would access a private function outside its declaring class; Reload is required"));

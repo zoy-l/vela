@@ -9,6 +9,11 @@ external func collect(): void = 'binding.collect';
 external func scale(value: double): double = 'binding.scale';
 external func noop(): void = 'binding.noop';
 
+interface HostOperation { apply<T extends int>(value: T): int; }
+class StepOperation implements HostOperation {
+  apply<T extends int>(value: T): int { return step(value); }
+}
+
 export func calculate(operation: int): int {
   if (operation == 0) {
     let result = 0;
@@ -25,6 +30,11 @@ export func calculate(operation: int): int {
     collect();
     const length = measure(text);
     return length + text.length;
+  }
+  if (operation == 4) {
+    const bridge: HostOperation = StepOperation();
+    const invoke: (int) => int = bridge.apply;
+    return invoke(41);
   }
   try { return step(-1); }
   catch (error: Error) {
@@ -67,7 +77,7 @@ void CheckBindings(std::int64_t failure_result) {
   const auto instance = NativeInstance::Instantiate(isolate, *BINDING_IMAGE());
   ASSERT_TRUE(instance.has_value()) << instance.error().message;
   NativeExecution execution(**instance);
-  const std::array<std::int64_t, 4> expected{500500, 42, 16, failure_result};
+  const std::array<std::int64_t, 5> expected{500500, 42, 16, failure_result, 42};
   for (std::size_t operation = 0; operation < expected.size(); ++operation) {
     const std::array arguments{Integer(static_cast<std::int64_t>(operation))};
     NativeValue result;

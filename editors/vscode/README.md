@@ -1,7 +1,7 @@
 # Vela for Visual Studio Code
 
 Adds `.vela` syntax highlighting, comments/brackets, code completion, go to
-definition, hover information, diagnostics, document formatting and file execution. Semantic features use the native
+definition, type-parameter rename, hover information, diagnostics, document formatting and file execution. Semantic features use the native
 `vela lsp` server and its production compiler frontend. The extension has no npm dependencies.
 
 Build Vela, then package the extension from the repository root:
@@ -39,8 +39,10 @@ method intercepts **Ctrl+Space**. **F12** and **Ctrl+Click** jump to declaration
 On an `import` path or its alias declaration, they open the imported local file.
 Import paths use VS Code's native document links for underlining and opening;
 keep **Editor: Links** enabled. `import 'math';` resolves to `math.vela`.
-Queries synchronize unsaved text immediately. Completion respects lexical scope,
-private/static members and nullable type refinement. After installing an updated
+Queries synchronize unsaved text immediately. **F2** renames a type parameter
+and its bound/signature/body references while keeping shadowed parameters separate.
+Conflicting names are rejected. Completion respects lexical scope, private/static
+members and nullable type refinement. After installing an updated
 VSIX or rebuilding the server, run **Developer: Reload Window**.
 
 Hover over a name to see its type or function signature and adjacent `///`

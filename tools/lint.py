@@ -22,6 +22,7 @@ CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"}
 # These fixed ABI signatures and fallible array owners are documented in .agents/cpp_style.md.
 SCOPED_CHECK_EXCEPTIONS = {
     "compiler/jit/platform_support_win.cc": ("bugprone-easily-swappable-parameters",),
+    "compiler/jit/code_resources.cc": ("bugprone-easily-swappable-parameters",),
     "runtime/native_operations.cc": ("bugprone-easily-swappable-parameters",),
     "runtime/native_instance.cc": ("cppcoreguidelines-avoid-c-arrays", "modernize-avoid-c-arrays"),
 }

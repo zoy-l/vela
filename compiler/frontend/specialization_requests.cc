@@ -31,6 +31,8 @@ class SpecializationRequests final {
  private:
   [[nodiscard]] const std::string* Name(DeclarationId declaration) const;
   [[nodiscard]] std::optional<TypeName> Type(const TypeIdentity& identity) const;
+  std::expected<std::optional<GenericSpecialization>, Diagnostic> Request(
+      const DeclarationRecord& record) const;
   std::span<const DeclarationRecord> records_;
   absl::flat_hash_map<OriginKey, std::string> names_;
 };
@@ -105,6 +107,54 @@ std::optional<TypeName> SpecializationRequests::Type(const TypeIdentity& identit
   return type;
 }
 
+std::expected<std::optional<GenericSpecialization>, Diagnostic> SpecializationRequests::Request(
+    const DeclarationRecord& record) const {
+  const bool method = record.key.kind == DeclarationKind::Method ||
+                      record.key.kind == DeclarationKind::StaticMethod ||
+                      record.key.kind == DeclarationKind::Selector;
+  auto owner = record.key.owner;
+  if (method) {
+    owner = records_.subspan(static_cast<std::size_t>(owner.value)).front().key.owner;
+  }
+  const auto* name = Name(owner);
+  // 模板本身删除时仍遵循目标已删除语义，不为旧声明复活新身份。
+  if (name == nullptr) {
+    return std::nullopt;
+  }
+  GenericSpecialization request{.name = *name, .arguments = {}};
+  const auto convert =
+      [&](std::span<const TypeIdentity> arguments) -> std::optional<std::vector<TypeName>> {
+    std::vector<TypeName> result;
+    for (const auto& argument : arguments) {
+      auto type = Type(argument);
+      if (!type) {
+        return std::nullopt;
+      }
+      result.push_back(std::move(*type));
+    }
+    return result;
+  };
+  const auto& owner_record = records_.subspan(static_cast<std::size_t>(owner.value)).front();
+  auto arguments = convert(record.key.arguments);
+  auto owner_arguments =
+      method ? convert(owner_record.key.arguments) : std::optional(std::vector<TypeName>{});
+  if (!arguments || !owner_arguments) {
+    return std::unexpected(Diagnostic{
+        .location = {},
+        .message = "retained generic specialization depends on a deleted type",
+        .source_path = {},
+    });
+  }
+  if (method) {
+    request.arguments = std::move(*owner_arguments);
+    request.method =
+        Function::Application{.name = record.key.name, .arguments = std::move(*arguments)};
+  } else {
+    request.arguments = std::move(*arguments);
+  }
+  return request;
+}
+
 std::expected<std::vector<GenericSpecialization>, Diagnostics> SpecializationRequests::Run(
     std::span<const DeclarationId> declarations) {
   std::vector<GenericSpecialization> requests;
@@ -128,24 +178,12 @@ std::expected<std::vector<GenericSpecialization>, Diagnostics> SpecializationReq
     const auto& record = records_.subspan(static_cast<std::size_t>(identity.value)).front();
     pending.push_back(record.key.owner);
     if (!record.retired && !record.key.arguments.empty()) {
-      const auto* name = Name(identity);
-      // 模板本身删除时仍遵循目标已删除语义，不为旧声明复活新身份。
-      if (name != nullptr) {
-        GenericSpecialization request{.name = *name, .arguments = {}};
-        for (const auto& argument : record.key.arguments) {
-          auto type = Type(argument);
-          if (!type) {
-            return std::unexpected(Diagnostics{
-                {
-                    .location = {},
-                    .message = "retained generic specialization depends on a deleted type",
-                    .source_path = {},
-                },
-            });
-          }
-          request.arguments.push_back(std::move(*type));
-        }
-        requests.push_back(std::move(request));
+      auto request = Request(record);
+      if (!request) {
+        return std::unexpected(Diagnostics{std::move(request.error())});
+      }
+      if (*request) {
+        requests.push_back(std::move(**request));
       }
     }
   }
