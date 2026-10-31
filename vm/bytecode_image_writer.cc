@@ -14,7 +14,6 @@
 #include <absl/container/flat_hash_map.h>
 
 #include "base/binary.h"
-#include "base/fingerprint.h"
 #include "runtime/isolate.h"
 #include "runtime/native_function.h"
 #include "runtime/object.h"
@@ -347,10 +346,7 @@ std::expected<std::vector<std::byte>, BinaryError> SaveBytecode(const Program& p
   result.Write(
       std::as_bytes(std::span(internal::kImageMagic.data(), internal::kImageMagic.size())));
   result.Write(kBytecodeImageVersion);
-  const auto fingerprint = ContentFingerprint(image.writer.bytes());
-  result.Write(fingerprint.low);
-  result.Write(fingerprint.high);
-  result.Write(image.writer.bytes());
+  result.WriteChecksummed(image.writer.bytes());
   return std::move(result).Take();
 }
 

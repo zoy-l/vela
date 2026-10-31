@@ -39,6 +39,7 @@
 #include "compiler/frontend/ast.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/native_values.h"
 #include "runtime/native_abi.h"
 #include "runtime/native_build_identity.h"
 #include "runtime/native_image.h"
@@ -444,15 +445,7 @@ llvm::Constant* ImageEmitter::Text(std::string_view value) {
 }
 
 llvm::Constant* ImageEmitter::Table(llvm::Type* element, llvm::ArrayRef<llvm::Constant*> values) {
-  llvm::Constant* storage = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_));
-  if (!values.empty()) {
-    auto* array = llvm::ConstantArray::get(llvm::ArrayType::get(element, values.size()), values);
-    auto* global = new llvm::GlobalVariable(module_, array->getType(), true,
-                                            llvm::GlobalValue::PrivateLinkage, array, "vela.table");
-    storage = global;
-  }
-  return Record(table_,
-                {storage, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), values.size())});
+  return EmitConstantTable(module_, table_, element, values, "vela.table");
 }
 
 llvm::Constant* ImageEmitter::Numbers(std::span<const std::uint32_t> values) {

@@ -164,6 +164,8 @@ class Suite final : public runtime::TestBridge {
   std::expected<runtime::Value, std::string> EnterCallback(runtime::Value identity);
   std::expected<runtime::Value, std::string> ExitCallback(runtime::Value ticket);
   std::expected<runtime::Value, std::string> CheckCallback(runtime::Value identity);
+  [[nodiscard]] std::expected<CallbackExpectation*, std::string> FindCallback(
+      runtime::Value identity);
   [[nodiscard]] runtime::Value CurrentTestScope() const;
   std::expected<runtime::Value, std::string> RegisterFinalizer(
       runtime::Value callback,
@@ -178,7 +180,7 @@ class Suite final : public runtime::TestBridge {
   void RecordError(const vm::ExecutionResult& failure,
                    TestPhase phase,
                    std::vector<TestError>& errors);
-
+  void RegistrationError(std::string category, std::string message);
   void Emit(ReportEvent event) const;
   void EmitTest(const Node& node, ReportEventType type) const;
   SuiteResult Finish();

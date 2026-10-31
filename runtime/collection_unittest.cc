@@ -87,20 +87,11 @@ TEST_F(OrderedCollectionTest, IteratorRejectsGrowthBeforeReadingCachedStorage) {
   EXPECT_EQ(iterator->Next().error(), ExecutionStatus::ConcurrentModification);
 }
 
-TEST(CollectionTest, IteratorSeesValueUpdates) {
-  Isolate isolate;
-  auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateCollectionLayout({
-      .keys = {.element = {.kind = ValueKind::Integer}},
-      .values = ArrayLayout{.element = {.kind = ValueKind::Integer}},
-  });
-  const auto value = Value::Object(heap.AllocateCollection(*layout));
-  RootRange root(heap, &value, 1);
-  auto& map = *value.AsObject();
-  ASSERT_TRUE(heap.InsertCollection(map, Value::Integer(1), Value::Integer(10)));
-  auto iterator = Heap::IterateCollection(map);
+TEST_F(OrderedCollectionTest, IteratorSeesValueUpdates) {
+  ASSERT_TRUE(heap().InsertCollection(map(), Value::Integer(1), Value::Integer(10)));
+  auto iterator = Heap::IterateCollection(map());
   ASSERT_TRUE(iterator);
-  ASSERT_EQ(heap.InsertCollection(map, Value::Integer(1), Value::Integer(42)),
+  ASSERT_EQ(heap().InsertCollection(map(), Value::Integer(1), Value::Integer(42)),
             CollectionInsert::Updated);
   const auto entry = iterator->Next();
   ASSERT_TRUE(entry);
@@ -123,24 +114,29 @@ TEST_F(OrderedCollectionTest, IteratorRejectsStructuralChangesAfterEnd) {
   EXPECT_EQ(iterator->Next().error(), ExecutionStatus::ConcurrentModification);
 }
 
-TEST(CollectionTest, ClearsEntriesAndAllowsReuse) {
-  Isolate isolate;
-  auto& heap = isolate.heap();
-  const auto* layout = isolate.CreateCollectionLayout({
-      .keys = {.element = {.kind = ValueKind::Integer}},
-      .values = ArrayLayout{.element = {.kind = ValueKind::Integer}},
-  });
-  Value value = Value::Object(heap.AllocateCollection(*layout));
-  RootRange root(heap, &value, 1);
-  auto& map = *value.AsObject();
-  ASSERT_TRUE(heap.InsertCollection(map, Value::Integer(1), Value::Integer(42)));
-  ASSERT_TRUE(Heap::ClearCollection(map));
-  EXPECT_EQ(Heap::CollectionLength(map), 0U);
-  EXPECT_FALSE(*Heap::HasCollectionKey(map, Value::Integer(1)));
-  EXPECT_EQ(Heap::RemoveCollection(map, Value::Integer(1)), CollectionRemove::Missing);
-  ASSERT_EQ(heap.InsertCollection(map, Value::Integer(42), Value::Integer(42)),
+TEST_F(OrderedCollectionTest, ClearsEntriesAndAllowsReuse) {
+  ASSERT_TRUE(heap().InsertCollection(map(), Value::Integer(1), Value::Integer(42)));
+  ASSERT_TRUE(Heap::ClearCollection(map()));
+  EXPECT_EQ(Heap::CollectionLength(map()), 0U);
+  EXPECT_FALSE(*Heap::HasCollectionKey(map(), Value::Integer(1)));
+  EXPECT_EQ(Heap::RemoveCollection(map(), Value::Integer(1)), CollectionRemove::Missing);
+  ASSERT_EQ(heap().InsertCollection(map(), Value::Integer(42), Value::Integer(42)),
             CollectionInsert::Inserted);
-  EXPECT_EQ(Heap::CollectionLength(map), 1U);
+  EXPECT_EQ(Heap::CollectionLength(map()), 1U);
+}
+
+TEST_F(OrderedCollectionTest, RejectsWrongKeyTypesBeforeEmptyAndPopulatedLookups) {
+  const auto wrong = Value::Boolean(true);
+  EXPECT_EQ(Heap::HasCollectionKey(map(), wrong).error(), ExecutionStatus::TypeError);
+  EXPECT_EQ(Heap::GetCollectionValue(map(), wrong).error(), ExecutionStatus::TypeError);
+  EXPECT_EQ(Heap::RemoveCollection(map(), wrong).error(), ExecutionStatus::TypeError);
+  const auto key = Value::Integer(1);
+  ASSERT_TRUE(heap().InsertCollection(map(), key, Value::Integer(42)));
+  EXPECT_EQ(Heap::HasCollectionKey(map(), wrong).error(), ExecutionStatus::TypeError);
+  EXPECT_EQ(Heap::GetCollectionValue(map(), wrong).error(), ExecutionStatus::TypeError);
+  EXPECT_EQ(Heap::RemoveCollection(map(), wrong).error(), ExecutionStatus::TypeError);
+  EXPECT_EQ(Heap::CollectionLength(map()), 1U);
+  EXPECT_EQ(Heap::GetCollectionValue(map(), key)->AsInteger(), 42);
 }
 
 TEST(CollectionTest, CanonicalizesNanAndSignedZeroKeyEquality) {

@@ -2,7 +2,6 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -13,6 +12,7 @@
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 
@@ -25,16 +25,16 @@ TypeChecker::Type TypeChecker::NullableType(Type type) {
 TypeChecker::Type TypeChecker::ResolveGenericType(const TypeName& source) {
   Type::Kind kind = Type::Kind::Invalid;
   std::size_t count = 2;
-  if (source.name == "Future") {
+  if (source.name == kFutureTypeName) {
     kind = Type::Kind::Future;
     count = 1;
-  } else if (source.name == "Completer") {
+  } else if (source.name == kCompleterTypeName) {
     kind = Type::Kind::Completer;
     count = 1;
-  } else if (source.name == "Set") {
+  } else if (source.name == kSetTypeName) {
     kind = Type::Kind::Set;
     count = 1;
-  } else if (source.name == "Map") {
+  } else if (source.name == kMapTypeName) {
     kind = Type::Kind::Map;
   }
   if (kind == Type::Kind::Invalid || source.arguments.size() != count) {
@@ -55,14 +55,15 @@ TypeChecker::Type TypeChecker::ResolveGenericType(const TypeName& source) {
       AddDiagnostic(source.location, "Future payload types must be flattened");
       return InvalidType();
     }
-    name += (index == 0 ? "" : ", ") + argument.name;
+    name += index == 0 ? "" : ", ";
+    name += argument.name;
     if (kind == Type::Kind::Set || kind == Type::Kind::Map) {
       static_cast<void>(ArrayType(argument));
     }
     arguments.push_back(std::move(argument));
   }
   name += '>';
-  Type type{.kind = kind, .name = name};
+  Type type{.kind = kind, .name = InternTypeName(name)};
   types_.try_emplace(name, type);
   generic_arguments_.try_emplace(name, std::move(arguments));
   return type;
@@ -71,10 +72,11 @@ TypeChecker::Type TypeChecker::ResolveGenericType(const TypeName& source) {
 TypeChecker::Type TypeChecker::CheckCollectionConstruction(const Expression& expression,
                                                            const Type* expected) {
   const auto& callee = *expression.callee;
-  const bool set = callee.text == "Set" || (callee.text != "Map" && expected != nullptr &&
-                                            expected->kind == Type::Kind::Set);
+  const bool set =
+      callee.text == kSetTypeName ||
+      (callee.text != kMapTypeName && expected != nullptr && expected->kind == Type::Kind::Set);
   const std::array<std::string, 2> parameters{"$Key", "$Value"};
-  const auto type = InferConstruction(expression, expected, set ? "Set" : "Map",
+  const auto type = InferConstruction(expression, expected, set ? kSetTypeName : kMapTypeName,
                                       std::span(parameters).first(set ? 1 : 2));
   collection_constructions_.insert(&expression);
   return type;
@@ -103,16 +105,11 @@ std::optional<CollectionMethod> ResolveCollectionBuiltin(const TypeDescriptor& r
                                                          std::string_view name) {
   using Type = TypeDescriptor;
   FunctionDescriptor signature;
-  signature.return_type = {.kind = Type::Kind::Void, .name = "void"};
-  const auto add = [&](std::string parameter, Type type) -> void {
-    signature.parameter_indices.emplace(parameter,
-                                        static_cast<std::uint32_t>(signature.parameters.size()));
-    signature.parameters.push_back({.name = std::move(parameter), .type = std::move(type)});
-  };
+  signature.return_type = {.kind = Type::Kind::Void, .name = kVoidTypeName};
   const auto operation = receiver.kind == Type::Kind::Set ? FindSetOperation(name) : std::nullopt;
   if (operation) {
     signature.return_type = receiver;
-    add("other", receiver);
+    signature.AddParameter("other", receiver);
     return CollectionMethod{.operation = *operation, .signature = std::move(signature)};
   }
   Builtin builtin = Builtin::CollectionSize;
@@ -124,18 +121,18 @@ std::optional<CollectionMethod> ResolveCollectionBuiltin(const TypeDescriptor& r
     } else {
       builtin = Builtin::SetAdd;
     }
-    signature.return_type = {.kind = Type::Kind::Bool, .name = "bool"};
-    add(receiver.kind == Type::Kind::Set ? "value" : "key", arguments.front());
+    signature.return_type = {.kind = Type::Kind::Bool, .name = kBoolTypeName};
+    signature.AddParameter(receiver.kind == Type::Kind::Set ? "value" : "key", arguments.front());
   } else if (name == "clear") {
     builtin = Builtin::CollectionClear;
   } else if (name == "get" && receiver.kind == Type::Kind::Map) {
     builtin = Builtin::MapGet;
-    add("key", arguments.front());
+    signature.AddParameter("key", arguments.front());
     signature.return_type = MakeNullableType(arguments.back());
   } else if (name == "set" && receiver.kind == Type::Kind::Map) {
     builtin = Builtin::MapSet;
-    add("key", arguments.front());
-    add("value", arguments.back());
+    signature.AddParameter("key", arguments.front());
+    signature.AddParameter("value", arguments.back());
   } else if (name == "values" || (name == "keys" && receiver.kind == Type::Kind::Map)) {
     const bool keys = name == "keys" || receiver.kind == Type::Kind::Set;
     builtin = keys ? Builtin::CollectionKeys : Builtin::CollectionValues;

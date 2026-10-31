@@ -13,6 +13,7 @@
 #include "base/member.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -84,7 +85,7 @@ void Lowerer::RegisterClassProperty(std::uint32_t receiver,
     if (method.name != name || method.visibility != frontend::Visibility::Public) {
       continue;
     }
-    auto key = owner.type.name;
+    auto key = std::string(owner.type.name);
     key += method.is_getter ? ".$get." : ".$set.";
     key += name;
     if (method.is_getter) {
@@ -115,11 +116,11 @@ std::pair<RegisterId, RegisterId> Lowerer::LowerDynamicArguments(
   const auto location = expression.location;
   const frontend::TypeDescriptor dynamic{
       .kind = frontend::TypeDescriptor::Kind::Dynamic,
-      .name = "dynamic",
+      .name = frontend::kDynamicTypeName,
   };
   const frontend::TypeDescriptor string{
       .kind = frontend::TypeDescriptor::Kind::String,
-      .name = "string",
+      .name = frontend::kStringTypeName,
   };
   const auto count = static_cast<std::int64_t>(expression.arguments.size());
   const auto arguments = EmitTemporary({
@@ -169,8 +170,9 @@ Lowerer::LoweredValue Lowerer::LowerDynamicMember(const frontend::Expression& ex
   const auto receiver = LowerExpression(*expression.object);
   const auto location = expression.location;
   const auto result = AllocateTemporary(location);
-  const auto null_jump = current_function_->instructions.size();
+  std::optional<std::size_t> null_jump;
   if (expression.null_safe) {
+    null_jump = current_function_->instructions.size();
     Emit({.opcode = Opcode::JumpIfNull, .lhs = receiver.reg, .location = location});
   }
   frontend::Expression name;
@@ -179,15 +181,7 @@ Lowerer::LoweredValue Lowerer::LowerDynamicMember(const frontend::Expression& ex
   const auto text = LowerStringLiteral(name);
   const std::array values{receiver.reg, text.reg};
   EmitBuiltinCall(operation, result, values, location);
-  if (expression.null_safe) {
-    const auto end_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::Jump, .location = location});
-    current_function_->instructions.at(null_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-    Emit({.opcode = Opcode::LoadNull, .dst = result, .location = location});
-    current_function_->instructions.at(end_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-  }
+  FinishNullSafe(null_jump, result, location);
   return {.reg = result, .type = model_.expression_types.at(&expression)};
 }
 
@@ -196,22 +190,15 @@ Lowerer::LoweredValue Lowerer::LowerDynamicMethodCall(const frontend::Expression
   const auto plan = LowerDynamicMember(callee, Builtin::DynamicResolveCall);
   const auto location = expression.location;
   const auto result = AllocateTemporary(location);
-  const auto null_jump = current_function_->instructions.size();
+  std::optional<std::size_t> null_jump;
   if (callee.null_safe) {
+    null_jump = current_function_->instructions.size();
     Emit({.opcode = Opcode::JumpIfNull, .lhs = plan.reg, .location = location});
   }
   const auto [arguments, names] = LowerDynamicArguments(expression);
   const std::array values{plan.reg, arguments, names};
   EmitBuiltinCall(Builtin::DynamicMethodCall, result, values, location);
-  if (callee.null_safe) {
-    const auto end_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::Jump, .location = location});
-    current_function_->instructions.at(null_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-    Emit({.opcode = Opcode::LoadNull, .dst = result, .location = location});
-    current_function_->instructions.at(end_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-  }
+  FinishNullSafe(null_jump, result, location);
   return {.reg = result, .type = model_.expression_types.at(&expression)};
 }
 
@@ -250,6 +237,15 @@ Lowerer::LoweredValue Lowerer::LowerDynamicCompoundAssignment(
 RegisterId Lowerer::LowerFuturePayload(const LoweredValue& value,
                                        const frontend::TypeDescriptor& future,
                                        frontend::SourceLocation location) {
+  using Kind = frontend::TypeDescriptor::Kind;
+  if (value.type.kind == Kind::Enum) {
+    return LowerConversion(value, {.kind = Kind::Dynamic, .name = frontend::kDynamicTypeName},
+                           location)
+        .reg;
+  }
+  if (value.type.kind != Kind::Dynamic) {
+    return value.reg;
+  }
   const auto identity = EmitTemporary({
       .opcode = Opcode::LoadInt,
       .immediate = RegisterRuntimeType(future),

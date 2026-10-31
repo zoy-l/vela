@@ -1,7 +1,6 @@
 #include "runtime/regexp.h"
 
 #include <algorithm>
-#include <array>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -17,6 +16,7 @@
 
 #include "base/builtin.h"
 #include "base/execution_status.h"
+#include "base/regexp_diagnostic.h"
 #include "base/utf8.h"
 #include "runtime/heap.h"
 #include "runtime/object.h"
@@ -111,15 +111,6 @@ class Boundaries final {
   std::span<std::size_t> points_;
 };
 
-std::string EngineMessage(int code) {
-  constexpr std::size_t kDiagnosticCapacity = 256;
-  std::array<PCRE2_UCHAR, kDiagnosticCapacity> text{};
-  const auto size = pcre2_get_error_message(code, text.data(), text.size());
-  const void* bytes = text.data();
-  return size >= 0 ? std::string(static_cast<const char*>(bytes), static_cast<std::size_t>(size))
-                   : "PCRE2 error " + std::to_string(code);
-}
-
 Result Compile(std::span<const Value> arguments, Heap& heap) {
   const auto source = arguments.front();
   const auto multi_line = arguments.subspan(1).front();
@@ -162,9 +153,9 @@ Result Compile(std::span<const Value> arguments, Heap& heap) {
     if (error == PCRE2_ERROR_HEAP_FAILED) {
       return Failure(ExecutionStatus::OutOfMemory);
     }
-    return Failure(
-        ExecutionStatus::RegExpSyntaxError,
-        EngineMessage(error) + " at offset " + std::to_string(Utf8Length(text.substr(0, offset))));
+    return Failure(ExecutionStatus::RegExpSyntaxError,
+                   RegExpErrorMessage(error) + " at offset " +
+                       std::to_string(Utf8Length(text.substr(0, offset))));
   }
   auto result = Allocated(
       heap.AllocateRegExp({.source = source.AsString(), .code = code.get(), .options = options}));
@@ -209,9 +200,9 @@ std::unexpected<RegExpFailure> MatchFailure(int error) {
   }
   if (error == PCRE2_ERROR_MATCHLIMIT || error == PCRE2_ERROR_DEPTHLIMIT ||
       error == PCRE2_ERROR_HEAPLIMIT) {
-    return Failure(ExecutionStatus::RegExpLimitError, EngineMessage(error));
+    return Failure(ExecutionStatus::RegExpLimitError, RegExpErrorMessage(error));
   }
-  return Failure(ExecutionStatus::RegExpExecutionError, EngineMessage(error));
+  return Failure(ExecutionStatus::RegExpExecutionError, RegExpErrorMessage(error));
 }
 
 Result Materialize(Heap& heap,

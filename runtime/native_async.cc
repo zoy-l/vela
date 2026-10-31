@@ -26,11 +26,14 @@
 #include "runtime/native_call.h"
 #include "runtime/native_image.h"
 #include "runtime/native_instance.h"
+#include "runtime/native_result_internal.h"
 #include "runtime/native_version.h"
 #include "runtime/value.h"
 #include "runtime/value_operations.h"
 
 namespace vela::runtime {
+
+using internal::StoreNativeResult;
 
 namespace {
 
@@ -47,14 +50,6 @@ FutureCall DescribeFutureCall(NativeExecution& execution,
                                          "Future callback result does not match its result type"),
       .timeout_error = execution.Diagnostic(ExecutionStatus::Thrown, "Future timed out"),
   };
-}
-
-std::uint8_t Store(NativeValue* result, std::expected<Value, ExecutionStatus> value) {
-  if (!value) {
-    return static_cast<std::uint8_t>(value.error());
-  }
-  *result = EncodeNativeValue(*value);
-  return static_cast<std::uint8_t>(ExecutionStatus::Returned);
 }
 
 std::expected<Value, ExecutionStatus> BindResult(NativeExecution& execution,
@@ -126,10 +121,7 @@ class NativeSuspendedFrame final : public std::enable_shared_from_this<NativeSus
   }
 
   void Suspend(std::uint32_t instruction, Value source, std::span<const NativeValue> saved) {
-    auto* input = source.IsObject() ? Heap::GetFuture(*source.AsObject()) : nullptr;
-    auto future =
-        input != nullptr ? input->Rooted() : Future::Value(source, &isolate_->scheduler());
-    future.AttachHeap(isolate_->heap());
+    auto future = RootFutureValue(*isolate_, source);
     point_.instruction = instruction;
     version_.SetSuspended(instruction);
     for (std::size_t index = 0; index < saved.size(); ++index) {
@@ -215,18 +207,18 @@ extern "C" std::uint8_t vela_native_v1_new_future(NativeExecution* execution,
                                                   NativeValue* result) {
   const auto value = DecodeNativeValue(*payload);
   auto& isolate = execution->isolate();
-  return Store(result, error != 0
-                           ? AllocateFutureError(
-                                 isolate, value,
-                                 execution->Diagnostic(ExecutionStatus::Thrown,
-                                                       ErrorMessage(value, isolate.error_layout())))
-                           : AllocateFutureValue(isolate, value));
+  return StoreNativeResult(
+      result, error != 0 ? AllocateFutureError(
+                               isolate, value,
+                               execution->Diagnostic(ExecutionStatus::Thrown,
+                                                     ErrorMessage(value, isolate.error_layout())))
+                         : AllocateFutureValue(isolate, value));
 }
 
 extern "C" std::uint8_t vela_native_v1_sleep(NativeExecution* execution,
                                              std::int64_t milliseconds,
                                              NativeValue* result) {
-  return Store(result, AllocateSleepFuture(execution->isolate(), milliseconds));
+  return StoreNativeResult(result, AllocateSleepFuture(execution->isolate(), milliseconds));
 }
 
 extern "C" std::uint8_t vela_native_v1_async_return(NativeExecution* execution,
@@ -237,7 +229,7 @@ extern "C" std::uint8_t vela_native_v1_async_return(NativeExecution* execution,
   auto* nested = value.IsObject() ? Heap::GetFuture(*value.AsObject()) : nullptr;
   const auto future = nested != nullptr ? std::expected<Value, ExecutionStatus>(value)
                                         : AllocateFutureValue(execution->isolate(), value);
-  return Store(result, future ? BindResult(*execution, function, *future) : future);
+  return StoreNativeResult(result, future ? BindResult(*execution, function, *future) : future);
 }
 
 extern "C" std::uint8_t vela_native_v1_async_call(NativeExecution* execution,
@@ -258,7 +250,8 @@ extern "C" std::uint8_t vela_native_v1_async_call(NativeExecution* execution,
         ErrorMessage(decoded.subspan(1).front(), execution->isolate().error_layout()));
   }
   if (IsAsyncStateOperation(state)) {
-    return Store(result, ExecuteAsyncState(state, decoded, execution->isolate(), diagnostic));
+    return StoreNativeResult(result,
+                             ExecuteAsyncState(state, decoded, execution->isolate(), diagnostic));
   }
   const auto& instance = execution->instance();
   const auto& layouts = instance.layouts();
@@ -273,8 +266,8 @@ extern "C" std::uint8_t vela_native_v1_async_call(NativeExecution* execution,
       call.wait_layout = layouts.arrays.at(static_cast<std::size_t>(index));
     }
   }
-  return Store(result,
-               ExecuteFutureOperation(execution->isolate(), call, NativeFutureCallbacks(instance)));
+  return StoreNativeResult(
+      result, ExecuteFutureOperation(execution->isolate(), call, NativeFutureCallbacks(instance)));
 }
 
 extern "C" std::uint8_t vela_native_v1_async_error(NativeExecution* execution,
@@ -292,7 +285,7 @@ extern "C" std::uint8_t vela_native_v1_async_error(NativeExecution* execution,
     return static_cast<std::uint8_t>(bound.error());
   }
   std::ignore = execution->TakeException();
-  return Store(result, bound);
+  return StoreNativeResult(result, bound);
 }
 
 extern "C" std::uint8_t vela_native_v1_suspend(NativeExecution* execution,
@@ -304,8 +297,9 @@ extern "C" std::uint8_t vela_native_v1_suspend(NativeExecution* execution,
                                                std::uint64_t count,
                                                std::uint64_t capacity,
                                                NativeValue* result) {
-  return Store(result, Suspend(*execution, function, {.entry = entry, .instruction = instruction},
-                               DecodeNativeValue(*source), std::span(saved, count), capacity));
+  return StoreNativeResult(
+      result, Suspend(*execution, function, {.entry = entry, .instruction = instruction},
+                      DecodeNativeValue(*source), std::span(saved, count), capacity));
 }
 
 extern "C" void vela_native_v1_resuspend(NativeResumeState* state,
@@ -342,7 +336,7 @@ extern "C" std::uint8_t vela_native_v1_resume_outcome(NativeExecution* execution
   const auto& completion = *state->completion;
   state->frame->ReleaseSaved();
   return completion.state == FutureState::Succeeded
-             ? Store(result, completion.value)
+             ? StoreNativeResult(result, completion.value)
              : static_cast<std::uint8_t>(execution->RestoreFutureError(completion));
 }
 

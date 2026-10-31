@@ -79,12 +79,29 @@ export func calculate(operation: int, start: int, bound: int, initial: int, term
 
 HOST_TESTS = r'''
 extern "C" const NativeImage* INTEGER_LOOP_IMAGE() noexcept;
+using NativeIntegerLoopTest = NativeImageTest<INTEGER_LOOP_IMAGE>;
+using NativeIntegerLoopGcTest = NativeImageTest<INTEGER_LOOP_IMAGE, 1>;
 
-TEST(NativeIntegerLoopTest, DynamicBoundsAndWideIntermediatesKeepExactResults) {
-  Isolate isolate;
-  const auto instance = NativeInstance::Instantiate(isolate, *INTEGER_LOOP_IMAGE());
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
+std::array<NativeValue, 5> IntegerLoopArguments(std::span<const std::int64_t> values) {
+  return {Integer(values[0]), Integer(values[1]), Integer(values[2]),
+          Integer(values[3]), Integer(values[4])};
+}
+
+void ExpectIntegerLoopCases(NativeExecution& execution,
+                            std::span<const std::array<std::int64_t, 6>> cases) {
+  for (const auto& item : cases) {
+    SCOPED_TRACE(::testing::PrintToString(item));
+    const auto arguments = IntegerLoopArguments(item);
+    NativeValue result;
+    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
+    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), item[5]);
+    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_FALSE(execution.HasException());
+  }
+}
+
+TEST_F(NativeIntegerLoopTest, DynamicBoundsAndWideIntermediatesKeepExactResults) {
+  NativeExecution execution(*instance);
   const auto minimum = std::numeric_limits<std::int64_t>::min();
   const auto maximum = std::numeric_limits<std::int64_t>::max();
   const std::array<std::array<std::int64_t, 6>, 20> cases{{
@@ -102,24 +119,11 @@ TEST(NativeIntegerLoopTest, DynamicBoundsAndWideIntermediatesKeepExactResults) {
       {3, 0, 4, 0, 0, -6}, {4, 0, 1, minimum, minimum, 0},
       {5, -4, 5, 17, 0, 17}, {9, 0, 4, maximum - 2, 0, 49},
   }};
-  for (const auto& item : cases) {
-    SCOPED_TRACE(::testing::PrintToString(item));
-    const std::array arguments{Integer(item[0]), Integer(item[1]), Integer(item[2]),
-                               Integer(item[3]), Integer(item[4])};
-    NativeValue result;
-    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), item[5]);
-    EXPECT_EQ(execution.frame_count(), 0U);
-    EXPECT_FALSE(execution.HasException());
-  }
+  ExpectIntegerLoopCases(execution, cases);
 }
 
-TEST(NativeIntegerLoopTest, OverflowKeepsItsStatusAndOriginalSourcePosition) {
-  Isolate isolate(1);
-  const auto* image = INTEGER_LOOP_IMAGE();
-  const auto instance = NativeInstance::Instantiate(isolate, *image);
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
+TEST_F(NativeIntegerLoopGcTest, OverflowKeepsItsStatusAndOriginalSourcePosition) {
+  NativeExecution execution(*instance);
   const auto minimum = std::numeric_limits<std::int64_t>::min();
   const auto maximum = std::numeric_limits<std::int64_t>::max();
   const std::array<std::array<std::int64_t, 5>, 8> cases{{
@@ -132,16 +136,11 @@ TEST(NativeIntegerLoopTest, OverflowKeepsItsStatusAndOriginalSourcePosition) {
   const std::array<std::uint32_t, 5> lines{INTEGER_LOOP_TRACE_LINES};
   for (const auto& item : cases) {
     SCOPED_TRACE(::testing::PrintToString(item));
-    const std::array arguments{Integer(item[0]), Integer(item[1]), Integer(item[2]),
-                               Integer(item[3]), Integer(item[4])};
+    const auto arguments = IntegerLoopArguments(item);
     NativeValue result;
     ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, arguments, result), ExecutionStatus::IntegerOverflow);
-    EXPECT_EQ(execution.frame_count(), 0U);
-    ASSERT_TRUE(execution.HasException());
-    isolate.heap().Collect();
-    const auto& exception = ExceptionData::From(*execution.pending_exception().AsObject());
-    EXPECT_EQ(exception.status, ExecutionStatus::IntegerOverflow);
-    EXPECT_EQ(exception.message(), "integer overflow");
+    ASSERT_NO_FATAL_FAILURE(ExpectPendingException(isolate, execution, ExecutionStatus::IntegerOverflow,
+                                                  "integer overflow"));
     const auto diagnostic = execution.ExceptionDiagnostic();
     const auto& trace = diagnostic.stack_trace;
     ASSERT_FALSE(trace.empty());
@@ -151,23 +150,14 @@ TEST(NativeIntegerLoopTest, OverflowKeepsItsStatusAndOriginalSourcePosition) {
   }
 }
 
-TEST(NativeIntegerLoopTest, ObservedPrefixesAndOtherFailureExitsRemainOrdered) {
-  Isolate isolate(1);
-  const auto instance = NativeInstance::Instantiate(isolate, *INTEGER_LOOP_IMAGE());
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
+TEST_F(NativeIntegerLoopGcTest, ObservedPrefixesAndOtherFailureExitsRemainOrdered) {
+  NativeExecution execution(*instance);
   const auto minimum = std::numeric_limits<std::int64_t>::min();
   const auto maximum = std::numeric_limits<std::int64_t>::max();
   const std::array<std::array<std::int64_t, 6>, 2> cases{{
       {6, 0, 4, maximum - 2, 0, maximum - 1}, {7, 0, 4, maximum - 2, 0, 3},
   }};
-  for (const auto& item : cases) {
-    const std::array arguments{Integer(item[0]), Integer(item[1]), Integer(item[2]),
-                               Integer(item[3]), Integer(item[4])};
-    NativeValue result;
-    ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), item[5]);
-  }
+  ExpectIntegerLoopCases(execution, cases);
   const std::array crossing{Integer(5), Integer(-4), Integer(5), Integer(minimum + 2), Integer(0)};
   NativeValue result;
   EXPECT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, crossing, result), ExecutionStatus::IntegerOverflow);
@@ -176,11 +166,8 @@ TEST(NativeIntegerLoopTest, ObservedPrefixesAndOtherFailureExitsRemainOrdered) {
   EXPECT_EQ(execution.frame_count(), 0U);
 }
 
-TEST(NativeIntegerLoopTest, MatchesCheckedArithmeticAcrossSmallRangesAndIntegerEndpoints) {
-  Isolate isolate;
-  const auto instance = NativeInstance::Instantiate(isolate, *INTEGER_LOOP_IMAGE());
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
+TEST_F(NativeIntegerLoopTest, MatchesCheckedArithmeticAcrossSmallRangesAndIntegerEndpoints) {
+  NativeExecution execution(*instance);
   const auto minimum = std::numeric_limits<std::int64_t>::min();
   const auto maximum = std::numeric_limits<std::int64_t>::max();
   const std::array<std::int64_t, 7> initials{minimum, minimum + 1, -7, 0, 7, maximum - 1, maximum};

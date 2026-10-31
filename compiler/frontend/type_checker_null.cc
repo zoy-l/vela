@@ -64,14 +64,7 @@ void TypeChecker::CollectAssignments(const Expression& expression, AssignmentEff
       expression.left->kind == Expression::Kind::Name) {
     effects.names.insert(expression.left->text);
   }
-  for (const auto* child : {
-           expression.left.get(),
-           expression.right.get(),
-           expression.operand.get(),
-           expression.callee.get(),
-           expression.object.get(),
-           expression.index.get(),
-       }) {
+  for (const auto* child : ExpressionOperands(expression)) {
     if (child != nullptr) {
       CollectAssignments(*child, effects);
     }

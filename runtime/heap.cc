@@ -12,6 +12,7 @@
 #include "runtime/exception.h"
 #include "runtime/external_resources.h"
 #include "runtime/instance_storage.h"
+#include "runtime/intrusive_link_internal.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "runtime/register_storage.h"
@@ -73,6 +74,12 @@ Heap::~Heap() {
 
 Heap::Heap(Isolate& isolate, std::size_t gc_threshold) noexcept : Heap(gc_threshold) {
   isolate_ = &isolate;
+}
+
+void Heap::ReleaseExternalStorage(void* storage, std::size_t bytes) noexcept {
+  allocated_bytes_ -= bytes;
+  committed_bytes_ -= bytes;
+  ::operator delete(storage);
 }
 
 HeapObject* Heap::AllocateFuture(Future future) noexcept {
@@ -241,12 +248,7 @@ void Heap::RegisterRoot(RootRange& root) noexcept {
   if (root.owner_ != RootOwner::Runtime) {
     root.identity_ = next_root_identity_++;
   }
-  root.previous_link_ = &roots_;
-  root.next_ = roots_;
-  if (root.next_ != nullptr) {
-    root.next_->previous_link_ = &root.next_;
-  }
-  roots_ = &root;
+  internal::PrependIntrusive(root, roots_, &RootRange::next_, &RootRange::previous_link_);
   if (phase_ != GcPhase::Idle) {
     MarkRoot(root);
     if (phase_ == GcPhase::Sweep) {
@@ -281,15 +283,7 @@ void Heap::AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const 
 }
 
 void Heap::UnregisterRoot(RootRange& root) noexcept {
-  if (root.previous_link_ == nullptr) {
-    return;
-  }
-  *root.previous_link_ = root.next_;
-  if (root.next_ != nullptr) {
-    root.next_->previous_link_ = root.previous_link_;
-  }
-  root.next_ = nullptr;
-  root.previous_link_ = nullptr;
+  internal::UnlinkIntrusive(root, &RootRange::next_, &RootRange::previous_link_);
 }
 
 void Heap::MarkRoots() noexcept {

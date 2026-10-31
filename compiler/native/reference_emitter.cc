@@ -13,6 +13,7 @@
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native_memory_layout.h"
@@ -35,6 +36,17 @@ void FunctionEmitter::Unpack(ir::RegisterId reg) {
   auto* record = builder_.CreateLoad(NativeRecordType(module_.getContext()), result_);
   const auto& type = source_.value_types.at(reg);
   Store(reg, DecodeValue(builder_, record, type), type);
+}
+
+void FunctionEmitter::PackArguments(ir::RegisterId first, std::size_t count, std::size_t offset) {
+  for (std::size_t argument = 0; argument < count; ++argument) {
+    Pack(Encode(static_cast<ir::RegisterId>(first + argument)), argument + offset);
+  }
+}
+
+void FunctionEmitter::CompleteCall(llvm::Value* status, ir::RegisterId result) {
+  CheckStatus(status);
+  Unpack(result);
 }
 
 void FunctionEmitter::StoreRoots(std::size_t index) {
@@ -87,15 +99,13 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
     EmitArrayBuiltin(instruction, builtin);
     return {};
   }
-  for (std::size_t argument = 0; argument < BuiltinArity(builtin); ++argument) {
-    Pack(Encode(static_cast<ir::RegisterId>(instruction.lhs + argument)), argument);
-  }
+  PackArguments(instruction.lhs, BuiltinArity(builtin));
   auto helper = module_.getOrInsertFunction("vela_native_v1_builtin", builder_.getInt8Ty(),
                                             builder_.getPtrTy(), builder_.getInt32Ty(),
                                             builder_.getPtrTy(), builder_.getPtrTy());
-  CheckStatus(builder_.CreateCall(
-      helper, {body_->getArg(0), builder_.getInt32(instruction.index), arguments_, result_}));
-  Unpack(instruction.dst);
+  auto* status = builder_.CreateCall(
+      helper, {body_->getArg(0), builder_.getInt32(instruction.index), arguments_, result_});
+  CompleteCall(status, instruction.dst);
   return {};
 }
 
@@ -139,9 +149,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
     }
     case Opcode::CallIndirect: {
       const auto count = instruction.index;
-      for (std::size_t argument = 0; argument < count; ++argument) {
-        Pack(Encode(static_cast<ir::RegisterId>(instruction.lhs + argument)), argument + 1);
-      }
+      PackArguments(instruction.lhs, count, 1);
       auto* callable = Pack(Encode(instruction.rhs), static_cast<std::size_t>(count) + 1);
       auto helper =
           module_.getOrInsertFunction("vela_native_v1_call_indirect", status_type, pointer, pointer,
@@ -152,9 +160,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
     }
     case Opcode::CallInterface: {
       const auto count = static_cast<std::size_t>(instruction.immediate);
-      for (std::size_t argument = 0; argument < count; ++argument) {
-        Pack(Encode(static_cast<ir::RegisterId>(instruction.lhs + argument)), argument);
-      }
+      PackArguments(instruction.lhs, count);
       if (program_.native_mode == NativeProgramMode::Reloadable) {
         const auto selector = program_.selector_declarations.at(instruction.index);
         auto helper = module_.getOrInsertFunction("vela_native_v3_call_interface", status_type,
@@ -176,12 +182,9 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
                                    {context, index, arguments_, builder_.getInt64(count), result_});
       break;
     }
-    case Opcode::GetGlobal: {
-      EmitGlobalLoad(instruction);
-      return {};
-    }
+    case Opcode::GetGlobal:
     case Opcode::SetGlobal: {
-      EmitGlobalStore(instruction);
+      EmitGlobal(instruction);
       return {};
     }
     case Opcode::IsType:
@@ -192,7 +195,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       auto* matches = builder_.CreateCall(helper, {context, index, value});
       auto* condition = builder_.CreateICmpNE(matches, builder_.getInt8(0));
       if (instruction.opcode == Opcode::IsType) {
-        Store(instruction.dst, condition, {.kind = Kind::Bool, .name = "bool"});
+        Store(instruction.dst, condition, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
       } else {
         Check(condition, ExecutionStatus::InvalidCast);
         Store(instruction.dst, Load(instruction.lhs), source_.value_types.at(instruction.lhs));
@@ -248,9 +251,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       break;
     }
     case Opcode::StringInterpolate: {
-      for (std::size_t argument = 0; argument < instruction.rhs; ++argument) {
-        Pack(Encode(static_cast<ir::RegisterId>(instruction.lhs + argument)), argument);
-      }
+      PackArguments(instruction.lhs, instruction.rhs);
       auto helper = module_.getOrInsertFunction("vela_native_v1_interpolate", status_type, pointer,
                                                 pointer, builder_.getInt64Ty(), pointer);
       status = builder_.CreateCall(
@@ -268,11 +269,10 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       return std::unexpected("native lowering is not implemented for opcode " +
                              std::to_string(static_cast<unsigned>(instruction.opcode)));
   }
-  CheckStatus(status);
-  Unpack(instruction.dst);
+  CompleteCall(status, instruction.dst);
   if (instruction.opcode == Opcode::NotEqualString) {
     Store(instruction.dst, builder_.CreateNot(Load(instruction.dst)),
-          {.kind = Kind::Bool, .name = "bool"});
+          {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
   }
   return {};
 }

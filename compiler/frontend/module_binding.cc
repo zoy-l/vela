@@ -249,14 +249,7 @@ void ModuleBinding::BindExpression(Expression* expression) {
   for (auto& argument : expression->type_arguments) {
     BindType(argument);
   }
-  for (auto* child : {
-           expression->left.get(),
-           expression->right.get(),
-           expression->operand.get(),
-           expression->callee.get(),
-           expression->object.get(),
-           expression->index.get(),
-       }) {
+  for (auto* child : ExpressionOperands(*expression)) {
     BindExpression(child);
   }
   for (auto& element : expression->elements) {
@@ -289,9 +282,7 @@ void ModuleBinding::BindStatement(Statement* statement) {
   if (statement == nullptr) {
     return;
   }
-  const bool scope = statement->kind == Statement::Kind::Block ||
-                     statement->kind == Statement::Kind::For ||
-                     statement->kind == Statement::Kind::ForEach;
+  const bool scope = statement->IntroducesScope();
   if (scope) {
     locals_.emplace_back();
   }

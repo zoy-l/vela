@@ -1,12 +1,16 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <utility>
 
 #include "gtest/gtest.h"
 
 #include "base/binary.h"
+#include "base/fingerprint.h"
 
 namespace vela {
 namespace {
@@ -51,6 +55,32 @@ TEST(BinaryTest, ReadsTheSameCountWidthAsWriters) {
   EXPECT_EQ(reader.Count(sizeof(std::uint32_t)), 1U);
   EXPECT_EQ(reader.Read<std::uint32_t>(), 42U);
   EXPECT_EQ(reader.remaining(), 0U);
+}
+
+TEST(BinaryTest, ChecksummedPayloadKeepsItsWireFormatAndRejectsDamage) {
+  constexpr std::string_view kPayload = "cache payload";
+  const auto payload = std::as_bytes(std::span(kPayload));
+  BinaryWriter writer;
+  writer.WriteChecksummed(payload);
+  BinaryReader reader(writer.bytes());
+  const auto checksum = reader.Record<std::uint64_t, std::uint64_t>();
+  ASSERT_TRUE(checksum);
+  const auto expected = ContentFingerprint(payload);
+  EXPECT_EQ(std::get<0>(*checksum), expected.low);
+  EXPECT_EQ(std::get<1>(*checksum), expected.high);
+  for (std::size_t count = 0; count < writer.bytes().size(); ++count) {
+    BinaryReader truncated(writer.bytes().first(count));
+    EXPECT_FALSE(truncated.ChecksummedRemainder());
+  }
+  BinaryReader intact(writer.bytes());
+  const auto decoded = intact.ChecksummedRemainder();
+  ASSERT_TRUE(decoded);
+  EXPECT_TRUE(std::ranges::equal(*decoded, payload));
+  EXPECT_EQ(intact.remaining(), 0U);
+  auto damaged = std::move(writer).Take();
+  damaged.back() ^= std::byte{1};
+  BinaryReader corrupted(damaged);
+  EXPECT_FALSE(corrupted.ChecksummedRemainder());
 }
 
 }  // namespace

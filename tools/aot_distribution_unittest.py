@@ -13,6 +13,7 @@ import tempfile
 import unittest
 
 from tools.config import ROOT, executable_name, static_library_name, toolchain_tools
+from tools.test_support import native_command, vela_executable
 from tools.package import create_package
 
 
@@ -39,8 +40,7 @@ class NativeDistributionTest(unittest.TestCase):
             categories = requested
         with tempfile.TemporaryDirectory(prefix="vela-语言对照 ") as temporary:
             work = Path(temporary)
-            original = Path(os.environ.get("VELA_TEST_EXECUTABLE",
-                                          ROOT / "out/debug" / executable_name("vela")))
+            original = vela_executable()
             package = work / "toolchain"
             roots = self.package(original, package)
             environment = dict(os.environ, **roots)
@@ -85,8 +85,7 @@ class NativeDistributionTest(unittest.TestCase):
     def test_packaged_builds_and_source_free_execution(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela-发行包 ") as temporary:
             work = Path(temporary)
-            original = Path(os.environ.get("VELA_TEST_EXECUTABLE",
-                                          ROOT / "out/debug" / executable_name("vela")))
+            original = vela_executable()
             output = original.parent
             package = work / "toolchain 中"
             roots = self.package(original, package)
@@ -98,11 +97,7 @@ class NativeDistributionTest(unittest.TestCase):
 
             def run(arguments: list[str | Path], expected: int = 0,
                     env: dict[str, str] | None = environment) -> subprocess.CompletedProcess:
-                result = subprocess.run(list(map(str, arguments)), cwd=work, env=env,
-                                        capture_output=True, text=True, encoding="utf-8",
-                                        errors="replace", timeout=120, check=False)
-                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
-                return result
+                return native_command(self, arguments, expected, env, cwd=work)
 
             fixtures = [
                 ("scalar", "func main(): int { return 42; }", 42),

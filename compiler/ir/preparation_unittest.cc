@@ -17,14 +17,12 @@
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
+#include "compiler/ir/preparation_test_support.h"
 
 namespace vela::ir {
 namespace {
 
-LoweringResult Prepare(std::string_view source) {
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  return PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
-}
+using test::Prepare;
 
 TEST(PreparationTest, PreservesUnboundNativeImportsWithoutRuntimeState) {
   auto result = Prepare(R"(

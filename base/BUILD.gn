@@ -1,5 +1,6 @@
 source_set("base") {
   sources = [
+    "arity.h",
     "array_algorithm.h",
     "async_operation.h",
     "binary.cc",
@@ -18,6 +19,7 @@ source_set("base") {
     "file_publication.h",
     "fingerprint.cc",
     "fingerprint.h",
+    "integer_arithmetic.h",
     "layout_description.h",
     "member.h",
     "mock_operation.h",
@@ -47,18 +49,48 @@ source_set("json") {
   public_deps = [ "//third_party:yyjson" ]
 }
 
+source_set("regexp_diagnostic") {
+  sources = [
+    "regexp_diagnostic.cc",
+    "regexp_diagnostic.h",
+  ]
+  deps = [ "//third_party:pcre2" ]
+}
+
+source_set("temporary_directory") {
+  testonly = true
+  sources = [
+    "testing/temporary_directory.cc",
+    "testing/temporary_directory.h",
+  ]
+}
+
+source_set("test_directory") {
+  testonly = true
+  sources = [
+    "testing/directory.cc",
+    "testing/directory.h",
+  ]
+  public_deps = [
+    ":temporary_directory",
+    "//third_party:gtest",
+  ]
+}
+
 executable("base_tests") {
   testonly = true
   sources = [
     "binary_unittest.cc",
     "file_unittest.cc",
     "fingerprint_unittest.cc",
+    "integer_arithmetic_unittest.cc",
     "json_unittest.cc",
     "utf8_unittest.cc",
   ]
   deps = [
     ":base",
     ":json",
+    ":test_directory",
     "//third_party:gtest_main",
   ]
 }

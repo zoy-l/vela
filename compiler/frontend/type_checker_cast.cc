@@ -1,6 +1,9 @@
 #include "compiler/frontend/type_checker.h"
 
+#include <string>
+
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 
@@ -29,7 +32,7 @@ TypeChecker::Type TypeChecker::CheckTypeOperation(const Expression& expression) 
     return InvalidType();
   }
   return expression.kind == Expression::Kind::TypeTest
-             ? Type{.kind = Type::Kind::Bool, .name = "bool"}
+             ? Type{.kind = Type::Kind::Bool, .name = kBoolTypeName}
              : target;
 }
 

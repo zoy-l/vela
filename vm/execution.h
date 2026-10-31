@@ -14,6 +14,7 @@
 #include "base/async_operation.h"
 #include "base/callable.h"
 #include "base/member.h"
+#include "base/mock_operation.h"
 #include "runtime/callable.h"
 #include "runtime/dynamic_call.h"
 #include "runtime/exception.h"
@@ -65,16 +66,6 @@ struct FutureRegisters final {
   std::uint32_t layout = 0;
 };
 
-struct AsyncArguments final {
-  AsyncOperation operation = AsyncOperation::Count;
-  runtime::RegisterView values;
-  runtime::RegisterReference destination;
-  std::optional<runtime::TypeConstraint> runtime_type = std::nullopt;
-  [[nodiscard]] runtime::Value At(std::size_t index) const {
-    return values.subspan(index).front().Read();
-  }
-};
-
 struct SuspensionPoint final {
   std::uint32_t function = 0;
   std::size_t program_counter = 0;
@@ -118,9 +109,32 @@ class Execution final {
  private:
   using DynamicCallStyle = runtime::DynamicCallStyle;
   using ResolvedCallable = runtime::ResolvedCallable;
+  [[clang::always_inline]] static StepResult StoreResult(
+      runtime::RegisterReference destination,
+      const std::expected<runtime::Value, ExecutionStatus>& result) {
+    if (!result) {
+      return std::unexpected(result.error());
+    }
+    destination = *result;
+    return {};
+  }
+  template <class Error>
+  StepResult StoreDiagnosticResult(runtime::RegisterReference destination,
+                                   const std::expected<runtime::Value, Error>& result) {
+    return StoreResult(destination, result.transform_error([this](const Error& error) {
+      error_message_ = error.message;
+      return error.status;
+    }));
+  }
   struct FrameEntry final {
     std::uint32_t function = 0;
     std::uint8_t destination = 0;
+  };
+  struct MockInspection final {
+    MockOperation operation;
+    runtime::Value signature;
+    runtime::Value value;
+    runtime::RegisterReference destination;
   };
   StepResult CopyDynamicArguments(const CallSignature& signature,
                                   std::span<const runtime::TypeConstraint> types,
@@ -129,12 +143,16 @@ class Execution final {
                                   runtime::RegisterView parameters);
   [[nodiscard]] std::expected<ResolvedCallable, ExecutionStatus> ResolveCallable(
       runtime::Value value) const;
+  [[nodiscard]] std::expected<std::span<const CallSignature::Parameter>, ExecutionStatus>
+  CallableParameters(const ResolvedCallable& callable) const;
+  [[nodiscard]] static std::expected<std::size_t, ExecutionStatus> ReadLayoutIndex(
+      runtime::Value value,
+      std::size_t count);
   StepResult EnterDynamicCall(ActiveFrame& active,
-                              const ResolvedCallable& callable,
+                              const runtime::DynamicCallPlan& plan,
                               const runtime::HeapObject& arguments,
                               const runtime::HeapObject& names,
-                              std::uint8_t destination,
-                              DynamicCallStyle style);
+                              std::uint8_t destination);
   template <bool Debugging>
   ExecutionResult RunImpl(std::uint32_t entry_function, Debugger* debugger) noexcept;
   template <bool Debugging>
@@ -175,8 +193,8 @@ class Execution final {
   StepResult ExecuteTestRegistration(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteTestControl(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteMockInspection(ActiveFrame& active, Instruction instruction);
-  StepResult ExecuteMockObservation(ActiveFrame& active, Instruction instruction) const;
-  StepResult ExecuteMockCallable(ActiveFrame& active, Instruction instruction);
+  StepResult ExecuteMockObservation(MockInspection inspection) const;
+  StepResult ExecuteMockCallable(MockInspection inspection);
   [[nodiscard]] bool IsMockResponseCompatible(const FunctionStorage& function,
                                               runtime::Value value) const;
   StepResult ValidateTestFinalizer(runtime::Value value);
@@ -208,9 +226,6 @@ class Execution final {
   StepResult ExecuteRegExp(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteAsync(ActiveFrame& active, Instruction instruction);
   StepResult ExecuteDynamicAsync(ActiveFrame& active, Instruction instruction);
-  StepResult ExecuteAsyncState(const AsyncArguments& call);
-  StepResult ExecuteFutureCall(const AsyncArguments& call,
-                               const runtime::ArrayLayout* wait_layout = nullptr);
   [[nodiscard]] runtime::FutureCallbacks MakeFutureCallbacks();
   [[nodiscard]] runtime::FutureCall DescribeFutureCall(
       AsyncOperation operation,
@@ -248,6 +263,7 @@ class Execution final {
                              std::string_view message);
   ExecutionStatus RestoreFutureError(const runtime::FutureResult& completion);
   std::optional<ExecutionResult> CompleteAsyncError(ActiveFrame& active);
+  [[nodiscard]] ExecutionResult ExceptionResult() const;
   std::optional<ExecutionResult> HandleError(ExecutionStatus status);
   StepResult ExecuteException(ActiveFrame& active, Instruction instruction);
   void ResetInitializer(ActiveFrame& active) noexcept;

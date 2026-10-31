@@ -32,6 +32,7 @@
 #include "runtime/test_bridge.h"
 #include "runtime/value.h"
 #include "runtime/value_io.h"
+#include "vm/diagnostic.h"
 #include "vm/execution_status.h"
 #include "vm/program.h"
 #include "vm/vm.h"
@@ -411,21 +412,11 @@ TestError Suite::Describe(const vm::ExecutionResult& result, TestPhase phase) co
       .phase = phase,
       .category = std::string(ExecutionStatusCode(result.status)),
       .message = result.message,
-      .trace = {},
+      .trace = vm::CopyFutureTrace(result.stack_trace),
       .difference = std::nullopt,
   };
   if (result.value.IsNull() && result.message.starts_with("TestTimeout:")) {
     error.category = "TestTimeout";
-  }
-  for (const auto& frame : result.stack_trace) {
-    error.trace.push_back({
-        .function = frame.function,
-        .source_path = frame.source_path,
-        .line = frame.location.line,
-        .column = frame.location.column,
-        .instruction = frame.instruction,
-        .identity = {},
-    });
   }
   if (error.message.empty()) {
     std::ostringstream output;
@@ -473,14 +464,7 @@ void Suite::Invoke(const Callback& callback,
   auto result = Await(machine_.Invoke(*program_, callback.value.value()), scope.effective_timeout,
                       scope, phase);
   if (result.stack_trace.empty() && !result.Succeeded()) {
-    for (const auto& frame : callback.trace) {
-      result.stack_trace.push_back({
-          .function = frame.function,
-          .source_path = frame.source_path,
-          .location = {.line = frame.line, .column = frame.column},
-          .instruction = frame.instruction,
-      });
-    }
+    result.stack_trace = vm::CopyExecutionTrace(callback.trace);
   }
   const runtime::RootRange result_root(isolate_->heap(), &result.value, 1,
                                        runtime::RootOwner::Runtime);
@@ -633,16 +617,8 @@ SuiteResult Suite::Run() {
   const auto main = program_->FindFunction("main");
   if (!main.IsValid() || main.parameter_count() != 0 ||
       !IsSuiteMain(program_->functions().subspan(main.index()).front())) {
-    result_.errors.push_back({
-        .phase = TestPhase::Registration,
-        .category = "RegistrationError",
-        .message = "test suite requires main(): void or main(): Future<void>",
-        .trace = {},
-        .difference = std::nullopt,
-    });
-    ReportEvent event(ReportEventType::Error);
-    event.error = result_.errors.back();
-    Emit(std::move(event));
+    RegistrationError("RegistrationError",
+                      "test suite requires main(): void or main(): Future<void>");
     return Finish();
   }
   auto load_timeout = options_.settings.suite_load_timeout.Apply(kDefaultTimeout);
@@ -671,28 +647,10 @@ SuiteResult Suite::Run() {
   const auto selected = Select(root_, {}, {});
   if (!selected) {
     if (result_.errors.empty()) {
-      result_.errors.push_back({
-          .phase = TestPhase::Registration,
-          .category = "RegistrationError",
-          .message = selected.error(),
-          .trace = {},
-          .difference = std::nullopt,
-      });
-      ReportEvent event(ReportEventType::Error);
-      event.error = result_.errors.back();
-      Emit(std::move(event));
+      RegistrationError("RegistrationError", selected.error());
     }
   } else if (result_.tests.empty()) {
-    result_.errors.push_back({
-        .phase = TestPhase::Registration,
-        .category = "EmptyResult",
-        .message = "no tests selected",
-        .trace = {},
-        .difference = std::nullopt,
-    });
-    ReportEvent event(ReportEventType::Error);
-    event.error = result_.errors.back();
-    Emit(std::move(event));
+    RegistrationError("EmptyResult", "no tests selected");
   } else if (!options_.list) {
     std::vector<Node*> ancestry;
     RunGroup(root_, ancestry, {});

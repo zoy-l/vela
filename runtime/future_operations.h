@@ -16,6 +16,8 @@ namespace vela::runtime {
 
 class Isolate;
 
+// 已有 Future 取得外部根；普通值形成绑定到此 Isolate 的已完成 Future。
+[[nodiscard]] Future RootFutureValue(Isolate& isolate, Value value);
 [[nodiscard]] std::expected<Value, ExecutionStatus> AllocateFutureValue(Isolate& isolate,
                                                                         Value value);
 [[nodiscard]] std::expected<Value, ExecutionStatus>

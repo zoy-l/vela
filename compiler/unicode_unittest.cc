@@ -4,6 +4,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "vm/execution_status.h"
@@ -14,7 +15,7 @@ namespace {
 
 TEST(UnicodeTest, SegmentsCombiningMarksEmojiFlagsHangulIndicAndLineBreaks) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto entry = test::CompileEntry(R"(
 func main(): bool {
   const text = "Ae\u0301\u{1F1E8}\u{1F1F3}\u{1F469}\u200D\u{1F4BB}\r\n\u1100\u1161\u11A8\u0915\u094D\u0937";
   const parts: string[] = text.graphemes();
@@ -34,13 +35,10 @@ func main(): bool {
          "".graphemeSlice(0, 0) == "";
 }
 )",
-                                      isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
+                                        isolate);
+  ASSERT_TRUE(entry) << entry.error();
   const auto retained = isolate.heap().object_count();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_TRUE(result.value.AsBoolean());
   isolate.heap().FinishCollection();
@@ -54,11 +52,9 @@ TEST(UnicodeTest, AllocatesExactDynamicArraysBeyondLiteralLengthEncoding) {
       "func main(): int { const text = \"" + std::string(1000, 'a') +
       "\"; const points = text.codePoints(); const graphemes = text.graphemes(); "
       "return points.length + graphemes.length + points[999]; }";
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 2097);
+  const auto result = test::RunInteger(source, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 2097);
 }
 
 class GraphemeBoundsTest : public testing::TestWithParam<std::string_view> {};

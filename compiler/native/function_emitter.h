@@ -84,6 +84,7 @@ class FunctionEmitter final {
   void CheckStatus(llvm::Value* status);
   void Fail(llvm::Value* status);
   void SetPosition();
+  std::uint64_t TracePosition() const;
   void Poll();
   static llvm::Function* SelectBody(const GeneratedFunction& function, NativeEntryKind kind);
   [[nodiscard]] bool IsRecovering() const noexcept;
@@ -99,16 +100,19 @@ class FunctionEmitter final {
   void EndConstruction();
   void AbortConstructions();
   void Finish(llvm::Value* status);
+  llvm::SwitchInst* ResumeDispatch(llvm::Value* instruction);
   void EmitInteger(const ir::Instruction& instruction);
   void EmitDouble(const ir::Instruction& instruction);
   void EmitNumericConversion(const ir::Instruction& instruction, Builtin builtin);
   void EmitComparison(const ir::Instruction& instruction);
   void EmitValueEquality(const ir::Instruction& instruction);
   llvm::Value* ByteAddress(llvm::Value* object, std::uint64_t offset);
+  llvm::Value* ProgramData();
   llvm::Value* ReadHeapValue(llvm::Value* address, const SourceType& type);
   void WriteHeapValue(llvm::Value* address, ir::RegisterId reg);
   void EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg);
   void EmitField(const ir::Instruction& instruction);
+  void EmitGlobal(const ir::Instruction& instruction);
   void EmitGlobalLoad(const ir::Instruction& instruction);
   void EmitGlobalStore(const ir::Instruction& instruction);
   const layout::Type& ArrayElement(const ir::Instruction& instruction) const;
@@ -120,7 +124,9 @@ class FunctionEmitter final {
   std::expected<void, std::string> EmitReference(const ir::Instruction& instruction);
   llvm::Value* Encode(ir::RegisterId reg);
   llvm::Value* Pack(llvm::Value* encoded, std::size_t index);
+  void PackArguments(ir::RegisterId first, std::size_t count, std::size_t offset = 0);
   void Unpack(ir::RegisterId reg);
+  void CompleteCall(llvm::Value* status, ir::RegisterId result);
   void StoreRoots(std::size_t index);
   void ClearRoots(std::size_t index);
   llvm::Value* RootAddress(std::size_t slot);

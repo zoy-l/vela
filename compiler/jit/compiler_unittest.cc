@@ -9,7 +9,6 @@
 #include <memory>
 #include <optional>
 #include <semaphore>
-#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -22,7 +21,9 @@
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/jit/test_support.h"
 #include "compiler/source_session.h"
+#include "compiler/test_sources.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -30,34 +31,14 @@
 #include "runtime/native_dispatch.h"
 #include "runtime/native_function.h"
 #include "runtime/native_image.h"
-#include "runtime/native_instance.h"
 #include "runtime/rooted_value.h"
 #include "runtime/value.h"
 
 namespace vela::compiler::jit {
 namespace {
 
-std::string DiagnosticsText(const frontend::Diagnostics& diagnostics) {
-  std::string text;
-  for (const auto& diagnostic : diagnostics) {
-    text += diagnostic.source_path + ':' + std::to_string(diagnostic.location.line) + ": " +
-            diagnostic.message + '\n';
-  }
-  return text;
-}
-
-std::expected<CompiledImage, frontend::Diagnostics> CompileText(
-    Compiler& compiler,
-    std::string source,
-    NativeCodeTier tier = NativeCodeTier::Baseline) {
-  SourceSession session("main.vela");
-  const auto prepared = session.Prepare(
-      {.changes = {{.path = "main.vela", .text = std::move(source)}}, .added_roots = {}});
-  if (!prepared) {
-    return std::unexpected(prepared.error().diagnostics);
-  }
-  return compiler.Compile(prepared->snapshot().program, {.tier = tier, .preserve_ir = true});
-}
+using frontend::DiagnosticsText;
+using test::CompileText;
 
 TEST(JitCompilerTest, MaterializesTheCompleteImageBeforePublishingNamedEntries) {
   auto compiler = Compiler::Create();
@@ -74,14 +55,10 @@ TEST(JitCompilerTest, MaterializesTheCompleteImageBeforePublishingNamedEntries) 
   ASSERT_NE(target, functions.end());
   EXPECT_EQ(target->identity.revision, 1U);
   runtime::Isolate isolate(1);
-  auto publication = isolate.native_dispatch().Prepare(0, compiled->image);
-  ASSERT_TRUE(publication) << publication.error().message;
-  ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*publication)));
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   const auto entry = isolate.native_dispatch().FindEntry("main.vela", "answer");
   ASSERT_TRUE(entry);
-  const auto result = entry->Invoke({});
-  ASSERT_TRUE(result);
-  EXPECT_EQ(result->AsInteger(), 42);
+  ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
 }
 
 TEST(JitCompilerTest, InferredGenericsExecuteInBothNativeTiers) {
@@ -100,14 +77,10 @@ export func answer(): int {
                                       tier);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     runtime::Isolate isolate(1);
-    auto publication = isolate.native_dispatch().Prepare(0, compiled->image);
-    ASSERT_TRUE(publication) << publication.error().message;
-    ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*publication)));
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
     const auto entry = isolate.native_dispatch().FindEntry("main.vela", "answer");
     ASSERT_TRUE(entry);
-    const auto result = entry->Invoke({});
-    ASSERT_TRUE(result);
-    EXPECT_EQ(result->AsInteger(), 42);
+    ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
   }
 }
 
@@ -132,14 +105,10 @@ export func read(): int {
   EXPECT_EQ(compiled->function_metrics.at(index).eliminated_allocations, 1U);
   EXPECT_NE(compiled->llvm_ir.find("_virtual_"), std::string::npos);
   runtime::Isolate isolate(1);
-  auto publication = isolate.native_dispatch().Prepare(0, compiled->image);
-  ASSERT_TRUE(publication) << publication.error().message;
-  ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*publication)));
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   const auto entry = isolate.native_dispatch().FindEntry("main.vela", "read");
   ASSERT_TRUE(entry);
-  const auto result = entry->Invoke({});
-  ASSERT_TRUE(result);
-  EXPECT_EQ(result->AsInteger(), 42);
+  ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
 }
 
 TEST(JitCompilerTest, AsyncResumptionKeepsItsMachineCodeAfterTheCompilerIsDestroyed) {
@@ -152,23 +121,13 @@ TEST(JitCompilerTest, AsyncResumptionKeepsItsMachineCodeAfterTheCompilerIsDestro
                     "async func later(): Future<int> { await sleep(1); return 42; } "
                     "export func start(): Future<int> { return later(); }");
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    auto prepared = isolate.native_dispatch().Prepare(0, compiled->image);
-    ASSERT_TRUE(prepared) << prepared.error().message;
-    ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*prepared)));
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   }
   const auto entry = isolate.native_dispatch().FindEntry("main.vela", "start");
   ASSERT_TRUE(entry);
   const auto started = entry->Invoke({});
   ASSERT_TRUE(started);
-  const runtime::RootedValue root(isolate, *started);
-  auto* future = runtime::Heap::GetFuture(*root.value().AsObject());
-  ASSERT_NE(future, nullptr);
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost));
-  const auto completed = future->value();
-  if (!completed) {
-    FAIL() << "Future did not complete with a value";
-  }
-  EXPECT_EQ(completed->AsInteger(), 42);
+  ASSERT_TRUE(test::CompletesWithInteger(isolate, *started, 42));
 }
 
 TEST(JitCompilerTest, VirtualObjectsEndBeforeAwaitAndLiveObjectsUseHeapContinuationState) {
@@ -191,9 +150,7 @@ export async func live(): Future<int> {
                                     NativeCodeTier::Optimized);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
   runtime::Isolate isolate(1);
-  auto publication = isolate.native_dispatch().Prepare(0, compiled->image);
-  ASSERT_TRUE(publication) << publication.error().message;
-  ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*publication)));
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   const auto functions = compiled->image->functions.values();
   for (const auto* const name : {"dead", "live"}) {
     const auto found = std::ranges::find(functions, name,
@@ -208,16 +165,8 @@ export async func live(): Future<int> {
     const auto started = entry->Invoke({});
     ASSERT_TRUE(started);
     const runtime::RootedValue root(isolate, *started);
-    auto* future = runtime::Heap::GetFuture(*root.value().AsObject());
-    ASSERT_NE(future, nullptr);
     isolate.heap().Collect();
-    ASSERT_TRUE(isolate.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost));
-    const auto completed = future->value();
-    if (completed) {
-      EXPECT_EQ(completed->AsInteger(), 42);
-    } else {
-      FAIL() << "Future did not complete with a value";
-    }
+    ASSERT_TRUE(test::CompletesWithInteger(isolate, root.value(), 42));
   }
   isolate.heap().Collect();
   EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
@@ -245,9 +194,7 @@ export func read(): int {
     const auto compiled = CompileText(**compiler, source, tier);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
     runtime::Isolate isolate(1);
-    auto publication = isolate.native_dispatch().Prepare(0, compiled->image);
-    ASSERT_TRUE(publication) << publication.error().message;
-    ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*publication)));
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
     const auto entry = isolate.native_dispatch().FindEntry("main.vela", "read");
     ASSERT_TRUE(entry);
     const auto result = entry->Invoke({});
@@ -275,53 +222,22 @@ TEST(JitCompilerTest, CapturedMachineCodeKeepsItsBodyAndCallsTheLatestNamedImple
   SourceSession source("main.vela");
   runtime::Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
-  const auto first = source.Prepare({
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = "export func answer(): int { return 40; } "
-                          "export func caller(): int { return answer(); }",
-              },
-          },
-      .added_roots = {},
-  });
+  const auto first = test::PrepareText(source,
+                                       "export func answer(): int { return 40; } "
+                                       "export func caller(): int { return answer(); }");
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
-  {
-    const auto compiled = (*compiler)->Compile(first->snapshot().program);
-    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    auto prepared = dispatch.Prepare(0, compiled->image);
-    ASSERT_TRUE(prepared) << prepared.error().message;
-    ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
-    ASSERT_TRUE(source.Commit(*first));
-  }
+  ASSERT_TRUE(test::PublishSource(**compiler, source, isolate, *first));
   const auto answer = dispatch.FindEntry("main.vela", "answer");
   const auto caller = dispatch.FindEntry("main.vela", "caller");
   ASSERT_TRUE(answer);
   ASSERT_TRUE(caller);
   std::optional<runtime::NativeVersionEntry> old_answer = *answer->Capture();
   std::optional<runtime::NativeVersionEntry> old_caller = *caller->Capture();
-  const auto next = source.Prepare({
-      .base_revision = 1,
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = "export func answer(): int { return 42; } "
-                          "export func caller(): int { return answer() + 100; }",
-              },
-          },
-      .added_roots = {},
-  });
+  const auto next = test::PrepareText(source,
+                                      "export func answer(): int { return 42; } "
+                                      "export func caller(): int { return answer() + 100; }");
   ASSERT_TRUE(next) << DiagnosticsText(next.error().diagnostics);
-  {
-    const auto compiled = (*compiler)->Compile(next->snapshot().program);
-    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    auto prepared = dispatch.Prepare(1, compiled->image);
-    ASSERT_TRUE(prepared) << prepared.error().message;
-    ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
-    ASSERT_TRUE(source.Commit(*next));
-  }
+  ASSERT_TRUE(test::PublishSource(**compiler, source, isolate, *next));
   EXPECT_EQ(answer->Invoke({})->AsInteger(), 42);
   EXPECT_EQ(caller->Invoke({})->AsInteger(), 142);
   EXPECT_EQ(old_answer->Invoke({})->AsInteger(), 40);
@@ -340,31 +256,17 @@ TEST(JitCompilerTest, GlobalAndStaticSlotsAreSharedByOldAndNewCodeAndPendingCand
   SourceSession source("main.vela");
   runtime::Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
-  const auto first = source.Prepare({
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = "let score = 10; const title = 'old'; let cold = 20; "
-                          "class Counter { static value: int = 4; } "
-                          "export func answer(): int { "
-                          "return score + Counter.value + (title == 'old' ? 1 : 1000); } "
-                          "export func edit(): void { score = 42; Counter.value = 7; } "
-                          "export func bump(): int { score++; return score; } "
-                          "export func readCold(): int { return cold; }",
-              },
-          },
-      .added_roots = {},
-  });
+  const auto first =
+      test::PrepareText(source,
+                        "let score = 10; const title = 'old'; let cold = 20; "
+                        "class Counter { static value: int = 4; } "
+                        "export func answer(): int { "
+                        "return score + Counter.value + (title == 'old' ? 1 : 1000); } "
+                        "export func edit(): void { score = 42; Counter.value = 7; } "
+                        "export func bump(): int { score++; return score; } "
+                        "export func readCold(): int { return cold; }");
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
-  {
-    const auto compiled = (*compiler)->Compile(first->snapshot().program);
-    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    auto prepared = dispatch.Prepare(0, compiled->image);
-    ASSERT_TRUE(prepared) << prepared.error().message;
-    ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
-    ASSERT_TRUE(source.Commit(*first));
-  }
+  ASSERT_TRUE(test::PublishSource(**compiler, source, isolate, *first));
   const auto answer = dispatch.FindEntry("main.vela", "answer");
   const auto edit = dispatch.FindEntry("main.vela", "edit");
   const auto bump = dispatch.FindEntry("main.vela", "bump");
@@ -382,23 +284,15 @@ TEST(JitCompilerTest, GlobalAndStaticSlotsAreSharedByOldAndNewCodeAndPendingCand
   const auto initial = answer->Invoke({});
   ASSERT_TRUE(initial);
   EXPECT_EQ(initial->AsInteger(), 15);
-  const auto next = source.Prepare({
-      .base_revision = 1,
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = "let added = 3; let cold = 200; const title = 'new'; let score = 100; "
-                          "class Counter { static value: int = 400; } "
-                          "export func answer(): int { "
-                          "return score + Counter.value + (title == 'old' ? 1 : 1000) + 100; } "
-                          "export func edit(): void { score = 1000; } "
-                          "export func bump(): int { score += 100; return score; } "
-                          "export func readCold(): int { return cold + added; }",
-              },
-          },
-      .added_roots = {},
-  });
+  const auto next =
+      test::PrepareText(source,
+                        "let added = 3; let cold = 200; const title = 'new'; let score = 100; "
+                        "class Counter { static value: int = 400; } "
+                        "export func answer(): int { "
+                        "return score + Counter.value + (title == 'old' ? 1 : 1000) + 100; } "
+                        "export func edit(): void { score = 1000; } "
+                        "export func bump(): int { score += 100; return score; } "
+                        "export func readCold(): int { return cold + added; }");
   ASSERT_TRUE(next) << DiagnosticsText(next.error().diagnostics);
   const auto compiled = (*compiler)->Compile(next->snapshot().program);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
@@ -443,9 +337,7 @@ TEST(JitCompilerTest, SharedGlobalInitializationRetriesFailuresAndDetectsCycles)
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
   runtime::Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
-  auto prepared = dispatch.Prepare(0, compiled->image);
-  ASSERT_TRUE(prepared) << prepared.error().message;
-  ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   const auto read = dispatch.FindEntry("main.vela", "read");
   const auto repair = dispatch.FindEntry("main.vela", "repair");
   ASSERT_TRUE(read);
@@ -478,26 +370,10 @@ TEST(JitCompilerTest, NominalTypesInHostCallsAndContainersSurviveLayoutVersions)
       "export func wrap(value: Box): Box[] { return [value]; } "
       "export func check(values: Box[], value: dynamic): bool { "
       "return values[0] == value && value is Box && value is Reader; } ";
-  const auto first = source.Prepare({
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text =
-                      declarations + "export func read(value: Box): int { return value.value; }",
-              },
-          },
-      .added_roots = {},
-  });
+  const auto first = test::PrepareText(
+      source, declarations + "export func read(value: Box): int { return value.value; }");
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
-  {
-    const auto compiled = (*compiler)->Compile(first->snapshot().program);
-    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    auto prepared = dispatch.Prepare(0, compiled->image);
-    ASSERT_TRUE(prepared) << prepared.error().message;
-    ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
-    ASSERT_TRUE(source.Commit(*first));
-  }
+  ASSERT_TRUE(test::PublishSource(**compiler, source, isolate, *first));
   const auto make = dispatch.FindEntry("main.vela", "make");
   const auto wrap = dispatch.FindEntry("main.vela", "wrap");
   const auto read = dispatch.FindEntry("main.vela", "read");
@@ -513,27 +389,11 @@ TEST(JitCompilerTest, NominalTypesInHostCallsAndContainersSurviveLayoutVersions)
   const auto wrapped = wrap->Invoke(object_argument);
   ASSERT_TRUE(wrapped);
   const runtime::RootedValue array(isolate, *wrapped);
-  const auto next = source.Prepare({
-      .base_revision = 1,
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = "class Added { other: string = 'new'; } " + declarations +
-                          "export func read(value: Box): int { return value.value + 2; }",
-              },
-          },
-      .added_roots = {},
-  });
+  const auto next = test::PrepareText(
+      source, "class Added { other: string = 'new'; } " + declarations +
+                  "export func read(value: Box): int { return value.value + 2; }");
   ASSERT_TRUE(next) << DiagnosticsText(next.error().diagnostics);
-  {
-    const auto compiled = (*compiler)->Compile(next->snapshot().program);
-    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    auto prepared = dispatch.Prepare(1, compiled->image);
-    ASSERT_TRUE(prepared) << prepared.error().message;
-    ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
-    ASSERT_TRUE(source.Commit(*next));
-  }
+  ASSERT_TRUE(test::PublishSource(**compiler, source, isolate, *next));
   isolate.heap().Collect();
   EXPECT_EQ((*compiler)->resource_counts().batches, 1U);
   const auto result = read->Invoke(object_argument);
@@ -557,26 +417,11 @@ TEST_P(JitContractTest, RejectsIncompatibleCallsAndSlotsWithoutChangingThePublis
   SourceSession source("main.vela");
   runtime::Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
-  const auto first = source.Prepare({
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = "let value = 40; export func answer(input: int): int { "
-                          "return value + input; }",
-              },
-          },
-      .added_roots = {},
-  });
+  const auto first = test::PrepareText(source,
+                                       "let value = 40; export func answer(input: int): int { "
+                                       "return value + input; }");
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
-  {
-    const auto compiled = (*compiler)->Compile(first->snapshot().program);
-    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    auto prepared = dispatch.Prepare(0, compiled->image);
-    ASSERT_TRUE(prepared) << prepared.error().message;
-    ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
-    ASSERT_TRUE(source.Commit(*first));
-  }
+  ASSERT_TRUE(test::PublishSource(**compiler, source, isolate, *first));
   const auto answer = dispatch.FindEntry("main.vela", "answer");
   ASSERT_TRUE(answer);
   const auto previous = answer->Capture();
@@ -586,21 +431,9 @@ TEST_P(JitContractTest, RejectsIncompatibleCallsAndSlotsWithoutChangingThePublis
   ASSERT_TRUE(initialized);
   EXPECT_EQ(initialized->AsInteger(), 42);
   const auto counts = isolate.layout_counts();
-  const auto next = source.Prepare({
-      .base_revision = 1,
-      .changes = {{.path = "main.vela", .text = std::string(GetParam())}},
-      .added_roots = {},
-  });
+  const auto next = test::PrepareText(source, std::string(GetParam()));
   ASSERT_TRUE(next) << DiagnosticsText(next.error().diagnostics);
-  {
-    const auto compiled = (*compiler)->Compile(next->snapshot().program);
-    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    const auto prepared = dispatch.Prepare(1, compiled->image);
-    ASSERT_FALSE(prepared);
-    EXPECT_EQ(prepared.error().status, runtime::NativePublicationStatus::RequiresReload);
-    EXPECT_NE(prepared.error().declaration, DeclarationId{});
-    EXPECT_FALSE(prepared.error().message.empty());
-  }
+  ASSERT_TRUE(test::RequiresReload(**compiler, isolate, *next));
   EXPECT_EQ(dispatch.revision(), 1U);
   EXPECT_EQ(source.snapshot()->revision, 1U);
   EXPECT_EQ(isolate.layout_counts(), counts);
@@ -643,47 +476,18 @@ TEST_P(JitNominalContractTest, RejectsTypeContractChangesIncludingUninstantiated
   runtime::Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
   const auto change = GetParam();
-  const auto first = source.Prepare({
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = std::string(change.before) + " export func answer(): int { return 42; }",
-              },
-          },
-      .added_roots = {},
-  });
+  const auto first = test::PrepareText(
+      source, std::string(change.before) + " export func answer(): int { return 42; }");
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
-  {
-    const auto compiled = (*compiler)->Compile(first->snapshot().program);
-    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    auto prepared = dispatch.Prepare(0, compiled->image);
-    ASSERT_TRUE(prepared) << prepared.error().message;
-    ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
-    ASSERT_TRUE(source.Commit(*first));
-  }
+  ASSERT_TRUE(test::PublishSource(**compiler, source, isolate, *first));
   const auto counts = isolate.layout_counts();
-  const auto next = source.Prepare({
-      .base_revision = 1,
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = std::string(change.after) + " export func answer(): int { return 0; }",
-              },
-          },
-      .added_roots = {},
-  });
+  const auto next = test::PrepareText(
+      source, std::string(change.after) + " export func answer(): int { return 0; }");
   if (!next) {
     EXPECT_EQ(next.error().status, SourceCandidateStatus::RequiresReload);
     EXPECT_NE(next.error().declaration, DeclarationId{});
   } else {
-    const auto compiled = (*compiler)->Compile(next->snapshot().program);
-    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    const auto prepared = dispatch.Prepare(1, compiled->image);
-    ASSERT_FALSE(prepared);
-    EXPECT_EQ(prepared.error().status, runtime::NativePublicationStatus::RequiresReload);
-    EXPECT_NE(prepared.error().declaration, DeclarationId{});
+    ASSERT_TRUE(test::RequiresReload(**compiler, isolate, *next));
   }
   EXPECT_EQ(isolate.layout_counts(), counts);
   EXPECT_EQ(dispatch.revision(), 1U);
@@ -718,29 +522,15 @@ TEST(JitCompilerTest, OldInterfaceCallsSelectCurrentMethodsByStableSelectors) {
   SourceSession source("main.vela");
   runtime::Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
-  const auto first = source.Prepare({
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = "interface Reader { read(): int; other(): int; } "
-                          "class Box implements Reader { "
-                          "read(): int { return 40; } other(): int { return 1; } } "
-                          "export func make(): Box { return Box(); } "
-                          "export func call(value: Reader): int { return value.read(); }",
-              },
-          },
-      .added_roots = {},
-  });
+  const auto first =
+      test::PrepareText(source,
+                        "interface Reader { read(): int; other(): int; } "
+                        "class Box implements Reader { "
+                        "read(): int { return 40; } other(): int { return 1; } } "
+                        "export func make(): Box { return Box(); } "
+                        "export func call(value: Reader): int { return value.read(); }");
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
-  {
-    const auto compiled = (*compiler)->Compile(first->snapshot().program);
-    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    auto prepared = dispatch.Prepare(0, compiled->image);
-    ASSERT_TRUE(prepared) << prepared.error().message;
-    ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
-    ASSERT_TRUE(source.Commit(*first));
-  }
+  ASSERT_TRUE(test::PublishSource(**compiler, source, isolate, *first));
   const auto make = dispatch.FindEntry("main.vela", "make");
   const auto call = dispatch.FindEntry("main.vela", "call");
   ASSERT_TRUE(make);
@@ -750,28 +540,15 @@ TEST(JitCompilerTest, OldInterfaceCallsSelectCurrentMethodsByStableSelectors) {
   const auto created = make->Invoke({});
   ASSERT_TRUE(created);
   const runtime::RootedValue receiver(isolate, *created);
-  const auto next = source.Prepare({
-      .base_revision = 1,
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = "interface Reader { other(): int; read(): int; } "
-                          "class Box implements Reader { "
-                          "other(): int { return 100; } read(): int { return 42; } } "
-                          "export func make(): Box { return Box(); } "
-                          "export func call(value: Reader): int { return value.read() + 1; }",
-              },
-          },
-      .added_roots = {},
-  });
+  const auto next =
+      test::PrepareText(source,
+                        "interface Reader { other(): int; read(): int; } "
+                        "class Box implements Reader { "
+                        "other(): int { return 100; } read(): int { return 42; } } "
+                        "export func make(): Box { return Box(); } "
+                        "export func call(value: Reader): int { return value.read() + 1; }");
   ASSERT_TRUE(next) << DiagnosticsText(next.error().diagnostics);
-  const auto compiled = (*compiler)->Compile(next->snapshot().program);
-  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-  auto prepared = dispatch.Prepare(1, compiled->image);
-  ASSERT_TRUE(prepared) << prepared.error().message;
-  ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
-  ASSERT_TRUE(source.Commit(*next));
+  ASSERT_TRUE(test::PublishSource(**compiler, source, isolate, *next));
   isolate.heap().Collect();
   const std::array arguments{receiver.value()};
   const auto previous = old_call->Invoke(arguments);
@@ -793,9 +570,7 @@ TEST_P(JitLanguageTest, ExecutesNativeProductionPathsWithPreciseRoots) {
   const auto compiled = CompileText(**compiler, std::string(source), tier);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
   runtime::Isolate isolate(1);
-  auto prepared = isolate.native_dispatch().Prepare(0, compiled->image);
-  ASSERT_TRUE(prepared) << prepared.error().message;
-  ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*prepared)));
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
   ASSERT_TRUE(entry);
   const auto result = entry->Invoke({});
@@ -821,32 +596,8 @@ func sum(count: int): int { if (count == 0) { return 0; } return count + sum(cou
 export func main(): int { let value = 0; for (let i = 0; i < 6; i++) { value += i; }
   switch (value) { case 15: return sum(6) << 1; default: return 0; } }
 )",
-                                              R"(
-func descend(depth: int): int {
-  const text = '${depth}';
-  if (depth == 0) { return text.length + 41; }
-  const answer = descend(depth - 1);
-  return text.length > 0 ? answer : 0;
-}
-export func main(): int { return descend(512); }
-)",
-                                              R"(
-export func main(): int {
-  const text = 'A中😀e\u0301\0';
-  const joined = [text, text].join('界');
-  const absent: string? = null;
-  const formatted = '${text}/${42}/${true}/${absent}';
-  const builder = String(); builder.append(text); builder.append('ß');
-  const snapshot = builder.toString();
-  const forward = String(); const backward = String();
-  const dynamicText: dynamic = text;
-  for (let i = 0; i < dynamicText.length; i++) { forward.append(dynamicText[i]); }
-  for (let i = text.length - 1; i >= 0; i--) { backward.append(text[i]); }
-  return joined.length == 13 && formatted.length == 19 && snapshot.length == 7 &&
-         snapshot.toUpperCase().length == 8 && forward.toString() == text &&
-         backward.toString() == '\0\u0301e😀中A' && joined.slice(6, 9) == '界A中' ? 42 : 0;
-}
-)",
+                                              ::vela::compiler::test::kRecursiveStringGcSource,
+                                              ::vela::compiler::test::kUnicodeConstructionSource,
                                               R"(
 func counter(value: int): () => int { return (): int => { value++; return value; }; }
 export func main(): int { const next = counter(40); const values: (() => int)[] = [next];
@@ -975,14 +726,10 @@ export func main(): int {
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&CopyText>("copyText")));
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Reject>("reject")));
   static_cast<void>(isolate.FreezeBindings());
-  auto prepared = isolate.native_dispatch().Prepare(0, compiled->image);
-  ASSERT_TRUE(prepared) << prepared.error().message;
-  ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*prepared)));
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
   ASSERT_TRUE(entry);
-  const auto result = entry->Invoke({});
-  ASSERT_TRUE(result) << ExecutionStatusName(result.error());
-  EXPECT_EQ(result->AsInteger(), 42);
+  ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
   EXPECT_FALSE(isolate.native_control().HasHostBorrow());
 }
 
@@ -1000,17 +747,9 @@ TEST(JitCompilerTest, AddedModulesExposeTheirExportsWithoutRunningUserInitialize
       runtime::NativeFunction::Bind<&UnexpectedInitialization>("initialized")));
   static_cast<void>(isolate.FreezeBindings());
   auto& dispatch = isolate.native_dispatch();
-  const auto first = source.Prepare({
-      .changes = {{.path = "main.vela", .text = "export func answer(): int { return 40; }"}},
-      .added_roots = {},
-  });
+  const auto first = test::PrepareText(source, "export func answer(): int { return 40; }");
   ASSERT_TRUE(first) << DiagnosticsText(first.error().diagnostics);
-  const auto initial_code = (*compiler)->Compile(first->snapshot().program);
-  ASSERT_TRUE(initial_code) << DiagnosticsText(initial_code.error());
-  auto initial = dispatch.Prepare(0, initial_code->image);
-  ASSERT_TRUE(initial) << initial.error().message;
-  ASSERT_TRUE(dispatch.Publish(std::move(*initial)));
-  ASSERT_TRUE(source.Commit(*first));
+  ASSERT_TRUE(test::PublishSource(**compiler, source, isolate, *first));
   const auto original = dispatch.FindEntry("main.vela", "answer");
   ASSERT_TRUE(original);
   const auto added = source.Prepare({
@@ -1026,12 +765,7 @@ TEST(JitCompilerTest, AddedModulesExposeTheirExportsWithoutRunningUserInitialize
       .added_roots = {"added.vela"},
   });
   ASSERT_TRUE(added) << DiagnosticsText(added.error().diagnostics);
-  const auto code = (*compiler)->Compile(added->snapshot().program);
-  ASSERT_TRUE(code) << DiagnosticsText(code.error());
-  auto prepared = dispatch.Prepare(1, code->image);
-  ASSERT_TRUE(prepared) << prepared.error().message;
-  ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
-  ASSERT_TRUE(source.Commit(*added));
+  ASSERT_TRUE(test::PublishSource(**compiler, source, isolate, *added));
   const auto loaded = dispatch.FindEntry("added.vela", "answer");
   ASSERT_TRUE(loaded);
   EXPECT_EQ(loaded->Invoke({})->AsInteger(), 42);
@@ -1051,9 +785,7 @@ export func main(): void { entered(); try { while (true) {} } finally { finalize
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Entered>("entered")));
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Finalized>("finalized")));
   static_cast<void>(isolate.FreezeBindings());
-  auto prepared = isolate.native_dispatch().Prepare(0, compiled->image);
-  ASSERT_TRUE(prepared) << prepared.error().message;
-  ASSERT_TRUE(isolate.native_dispatch().Publish(std::move(*prepared)));
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
   ASSERT_TRUE(entry);
   std::jthread request([&] {

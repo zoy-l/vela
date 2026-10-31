@@ -205,14 +205,7 @@ void Initialization::Walk(const Expression* expression, Initialized& initialized
   if (WalkSpecial(*expression, initialized)) {
     return;
   }
-  for (const auto* child : {
-           expression->left.get(),
-           expression->right.get(),
-           expression->operand.get(),
-           expression->callee.get(),
-           expression->object.get(),
-           expression->index.get(),
-       }) {
+  for (const auto* child : ExpressionOperands(*expression)) {
     Walk(child, initialized);
   }
   for (const auto& argument : expression->arguments) {

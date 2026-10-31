@@ -1,9 +1,11 @@
 #include "base/utf8.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "gtest/gtest.h"
 
@@ -46,6 +48,33 @@ TEST(Utf8Test, AllUnicodeScalarsProduceValidatedUtf8AndRoundTrip) {
     EXPECT_EQ(decoded.value, point);
     EXPECT_EQ(decoded.width, width);
   }
+}
+
+TEST(Utf8Test, PrefixValidationKeepsByteOffsetsAndStopsBeforeTheNextPoint) {
+  constexpr auto kInvalid = std::to_array<std::pair<std::string_view, std::size_t>>({
+      {"", 0},
+      {"\xc0\x80", 0},
+      {"\xed\xa0\x80", 0},
+      {"\xf4\x90\x80\x80", 0},
+      {"\xe2\x82", 0},
+      {"\xe2!\x80", 1},
+      {"\xe2\x82!", 2},
+  });
+  for (const auto& [text, offset] : kInvalid) {
+    SCOPED_TRACE(offset);
+    const auto prefix = ReadUtf8Prefix(text);
+    ASSERT_FALSE(prefix);
+    EXPECT_EQ(prefix.error(), offset);
+    if (!text.empty()) {
+      EXPECT_EQ(InvalidUtf8Offset(std::string("ok") + std::string(text)), offset + 2);
+    }
+  }
+  const auto prefix = ReadUtf8Prefix("\xc2\xa2\xff");
+  ASSERT_TRUE(prefix);
+  EXPECT_EQ(prefix->value, 0xa2U);
+  EXPECT_EQ(prefix->width, 2U);
+  const auto empty = InvalidUtf8Offset("");
+  EXPECT_FALSE(empty);
 }
 
 }  // namespace

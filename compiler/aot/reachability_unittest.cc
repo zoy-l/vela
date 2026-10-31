@@ -15,25 +15,28 @@
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
+#include "compiler/ir/preparation_test_support.h"
 #include "runtime/isolate.h"
 #include "runtime/program_layouts.h"
 
 namespace vela::compiler::aot {
 namespace {
 
+void PruneMain(ir::Program& program) {
+  const std::array<std::string, 1> exports{"main"};
+  std::optional<std::uint32_t> main;
+  PruneNativeProgram(program, exports, main);
+}
+
 TEST(ReachabilityTest, PrunedOverriddenGenericMethodsLeaveInstantiableLayoutDescriptions) {
-  const frontend::SourceInput input{
-      .path = "main.vela",
-      .text =
-          "func identity<T>(value: T): T { return value; } "
-          "class Base<T> { value: T; read(): T { return this.value; } } "
-          "class Derived<T> extends Base<T> { extra: T; "
-          "constructor { super(value: this.extra); } "
-          "override read(): T { return identity<T>(this.extra); } } "
-          "func main(): int { const value = Derived<int>(extra: 21); "
-          "return value.read() + value.value; }",
-  };
-  auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
+  auto prepared = ir::test::Prepare(
+      "func identity<T>(value: T): T { return value; } "
+      "class Base<T> { value: T; read(): T { return this.value; } } "
+      "class Derived<T> extends Base<T> { extra: T; "
+      "constructor { super(value: this.extra); } "
+      "override read(): T { return identity<T>(this.extra); } } "
+      "func main(): int { const value = Derived<int>(extra: 21); "
+      "return value.read() + value.value; }");
   ASSERT_TRUE(prepared.Succeeded());
   std::optional<std::uint32_t> main;
   PruneNativeProgram(prepared.program, {}, main);
@@ -64,9 +67,7 @@ TEST(ReachabilityTest, CompactFunctionIndexesDoNotRenumberDeclarationOrVersionId
   ASSERT_NE(old, program.functions.end());
   const auto identity = old->identity;
   const auto old_index = old - program.functions.begin();
-  const std::array<std::string, 1> exports{"main"};
-  std::optional<std::uint32_t> main;
-  PruneNativeProgram(program, exports, main);
+  PruneMain(program);
   const auto current = std::ranges::find(program.functions, "used", &ir::Function::name);
   ASSERT_NE(current, program.functions.end());
   EXPECT_NE(current - program.functions.begin(), old_index);
@@ -82,12 +83,9 @@ TEST(ReachabilityTest, ErasedLocalValuesDoNotRetainUnreferencedClassMethods) {
         "func parsed(): dynamic { return Json.parse('42'); } "
         "export func main(): int { const erased: dynamic = " +
         std::string(expression) + "; return erased as int; }";
-    const frontend::SourceInput input{.path = "main.vela", .text = source};
-    auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
+    auto prepared = ir::test::Prepare(source);
     ASSERT_TRUE(prepared.Succeeded());
-    const std::array<std::string, 1> exports{"main"};
-    std::optional<std::uint32_t> main;
-    PruneNativeProgram(prepared.program, exports, main);
+    PruneMain(prepared.program);
     EXPECT_FALSE(std::ranges::any_of(prepared.program.functions, [](const ir::Function& function) {
       return function.name.starts_with("Unused.");
     }));
@@ -114,12 +112,9 @@ TEST(ReachabilityTest, HostDynamicContractsAndDynamicDispatchRetainTheirMemberCl
         "class Box { value: int = 42; read(): int { return this.value; } "
         "toJson(): int { return this.value; } } class Holder { value: dynamic; } " +
         std::string(body);
-    const frontend::SourceInput input{.path = "main.vela", .text = source};
-    auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
+    auto prepared = ir::test::Prepare(source);
     ASSERT_TRUE(prepared.Succeeded());
-    const std::array<std::string, 1> exports{"main"};
-    std::optional<std::uint32_t> main;
-    PruneNativeProgram(prepared.program, exports, main);
+    PruneMain(prepared.program);
     EXPECT_TRUE(std::ranges::any_of(prepared.program.functions, [](const ir::Function& function) {
       return function.name == "Box.read";
     }));

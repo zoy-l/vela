@@ -51,6 +51,7 @@ class Parser final {
   [[nodiscard]] bool IsAtEnd() const;
   [[nodiscard]] bool Check(TokenKind kind) const;
   bool Match(TokenKind kind);
+  std::optional<Token> TakeName();
   std::optional<Token> Expect(TokenKind kind, std::string message);
   void AnnotatePrevious(TokenRole role);
   void AddDiagnostic(SourceLocation location, std::string message);

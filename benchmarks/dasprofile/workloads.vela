@@ -1,3 +1,5 @@
+import '../spectral_norm.vela' as spectral;
+
 func remainder(value: int, divisor: int): int { let result = value; result %= divisor; return result; }
 external func addOne(value: int): int = 'dasprofile.addOne';
 
@@ -178,34 +180,8 @@ func fibRecursive(value: int): int {
 }
 export func fibonacciRecursive(): int { return fibRecursive(31); }
 
-func matrixMultiply(input: double[], output: double[], transpose: bool): void {
-  for (let i = 0; i < 500; i++) {
-    let sum = 0.0;
-    for (let j = 0; j < 500; j++) {
-      const index = transpose ? j : i;
-      const denominator = (i + j) * (i + j + 1) / 2 + index + 1;
-      sum += input[j] / denominator.toDouble();
-    }
-    output[i] = sum;
-  }
-}
-
 export func spectralNorm(): double {
-  const u: double[] = [];
-  const v: double[] = [];
-  const temporary: double[] = [];
-  u.reserve(500); v.reserve(500); temporary.reserve(500);
-  for (let i = 0; i < 500; i++) { u.push(1.0); v.push(0.0); temporary.push(0.0); }
-  for (let round = 0; round < 2; round++) {
-    matrixMultiply(u, temporary, false);
-    matrixMultiply(temporary, v, true);
-    matrixMultiply(v, temporary, false);
-    matrixMultiply(temporary, u, true);
-  }
-  let numerator = 0.0;
-  let denominator = 0.0;
-  for (let i = 0; i < 500; i++) { numerator += u[i] * v[i]; denominator += v[i] * v[i]; }
-  return Math.sqrt(numerator / denominator);
+  return spectral.run();
 }
 
 func level(cx: double, cy: double): int {

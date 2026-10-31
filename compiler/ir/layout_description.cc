@@ -19,10 +19,11 @@ using SourceType = frontend::TypeDescriptor;
 
 std::string TypeKey(const SourceType& type) {
   if (!type.nullable) {
-    return type.name;
+    return std::string(type.name);
   }
-  return type.kind == SourceType::Kind::Function ? type.name.substr(1, type.name.size() - 3)
-                                                 : type.name.substr(0, type.name.size() - 1);
+  return type.kind == SourceType::Kind::Function
+             ? std::string(type.name.substr(1, type.name.size() - 3))
+             : std::string(type.name.substr(0, type.name.size() - 1));
 }
 
 bool HasReference(SourceType::Kind kind) {

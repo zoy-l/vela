@@ -29,6 +29,7 @@
 #include "runtime/native_abi.h"
 #include "runtime/native_build_identity.h"
 #include "runtime/native_function.h"
+#include "runtime/native_global_internal.h"
 #include "runtime/native_image.h"
 #include "runtime/native_program_state.h"
 #include "runtime/object.h"
@@ -332,28 +333,23 @@ std::expected<Value, ExecutionStatus> NativeInstance::InitializeGlobal(NativeExe
   auto& state = std::span(data_->global_states, data_->image->global_initializers.size)
                     .subspan(index)
                     .front();
-  if (state == NativeProgramState::GlobalState::Initializing) {
-    return std::unexpected(ExecutionStatus::CyclicInitialization);
-  }
-  state = NativeProgramState::GlobalState::Initializing;
   const auto function = data_->image->global_initializers.values().subspan(index).front();
   const auto entry = data_->image->functions.values().subspan(function).front().entry;
-  NativeValue result;
-  const auto status = static_cast<ExecutionStatus>(entry(&execution, nullptr, 0, &result));
-  if (status != ExecutionStatus::Returned) {
-    state = NativeProgramState::GlobalState::Uninitialized;
-    return std::unexpected(status);
+  const auto value = internal::InitializeNativeGlobal(execution, entry, state);
+  if (!value) {
+    return value;
   }
-  const auto value = DecodeNativeValue(result);
-  StoreGlobal(index, value);
+  StoreGlobal(index, *value);
   return value;
 }
 
 void NativeInstance::StoreGlobal(std::size_t index, Value value) noexcept {
-  data_->isolate->heap().SetValueSlot(*data_->values.at(NativeProgramState::kGlobals).AsObject(),
-                                      index, value);
-  std::span(data_->global_states, data_->image->global_initializers.size).subspan(index).front() =
-      NativeProgramState::GlobalState::Ready;
+  auto& state = std::span(data_->global_states, data_->image->global_initializers.size)
+                    .subspan(index)
+                    .front();
+  internal::StoreNativeGlobal(data_->isolate->heap(),
+                              *data_->values.at(NativeProgramState::kGlobals).AsObject(), index,
+                              state, value);
 }
 
 std::expected<void, NativeInstantiationError> NativeInstance::BindImports(

@@ -71,14 +71,7 @@ void CaptureAnalysis::Walk(const Expression* expression) {
     Walk(*expression->function);
     --lambda_depth_;
   }
-  for (const auto* child : {
-           expression->left.get(),
-           expression->right.get(),
-           expression->operand.get(),
-           expression->callee.get(),
-           expression->object.get(),
-           expression->index.get(),
-       }) {
+  for (const auto* child : ExpressionOperands(*expression)) {
     Walk(child);
   }
   for (const auto& element : expression->elements) {
@@ -110,9 +103,7 @@ void CaptureAnalysis::Walk(const Statement* statement) {
   if (statement == nullptr) {
     return;
   }
-  const bool has_scope = statement->kind == Statement::Kind::Block ||
-                         statement->kind == Statement::Kind::For ||
-                         statement->kind == Statement::Kind::ForEach;
+  const bool has_scope = statement->IntroducesScope();
   if (has_scope) {
     scopes_.emplace_back();
   }

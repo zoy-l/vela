@@ -1,47 +1,26 @@
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
-#include <ios>
-#include <iterator>
-#include <optional>
-#include <string>
 #include <string_view>
 
 #include "benchmark/benchmark.h"
 
+#include "benchmarks/heap_metrics.h"
+#include "benchmarks/source.h"
 #include "compiler/compiler.h"
+#include "compiler/frontend/diagnostic.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
+#include "vm/program.h"
 #include "vm/vm.h"
 
 namespace vela::benchmarks {
 namespace {
-
-std::optional<std::string> LoadSource(benchmark::State& state, std::string_view filename) {
-  const auto path = std::filesystem::path(VELA_BENCHMARK_SOURCE_DIR) / filename;
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    state.SkipWithError("Cannot open benchmark source: " + path.string());
-    return std::nullopt;
-  }
-  return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-}
-
-void ReportCompileFailure(benchmark::State& state, const compiler::CompileResult& compiled) {
-  std::string message;
-  for (const auto& diagnostic : compiled.diagnostics) {
-    message += std::to_string(diagnostic.location.line) + ":" +
-               std::to_string(diagnostic.location.column) + ": " + diagnostic.message + "\n";
-  }
-  state.SkipWithError(message);
-}
 
 bool IsExpectedResult(const vm::ExecutionResult& result, std::int64_t expected) {
   return result.Succeeded() && result.value.IsInteger() && result.value.AsInteger() == expected;
 }
 
 void Compile(benchmark::State& state, std::string_view filename) {
-  const auto source = LoadSource(state, filename);
+  const auto source = LoadBenchmarkSource(state, filename);
   if (!source) {
     return;
   }
@@ -49,7 +28,7 @@ void Compile(benchmark::State& state, std::string_view filename) {
     runtime::Isolate isolate;
     auto compiled = compiler::CompileSource(*source, isolate);
     if (!compiled.Succeeded()) {
-      ReportCompileFailure(state, compiled);
+      state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
       break;
     }
     benchmark::DoNotOptimize(compiled);
@@ -57,7 +36,7 @@ void Compile(benchmark::State& state, std::string_view filename) {
 }
 
 void FirstExecution(benchmark::State& state, std::string_view filename, std::int64_t expected) {
-  const auto source = LoadSource(state, filename);
+  const auto source = LoadBenchmarkSource(state, filename);
   if (!source) {
     return;
   }
@@ -66,20 +45,15 @@ void FirstExecution(benchmark::State& state, std::string_view filename, std::int
     {
       // 每次使用新的 Isolate 和字节码；编译、验证及销毁不计入首次执行时间。
       runtime::Isolate isolate;
-      const auto compiled = compiler::CompileSource(*source, isolate);
-      if (!compiled.Succeeded()) {
-        ReportCompileFailure(state, compiled);
+      const auto entry = CompileBenchmarkEntry(state, *source, isolate);
+      if (!entry) {
         return;
       }
-      const auto entry = compiled.program.FindFunction("main");
-      if (!entry.IsValid() || entry.parameter_count() != 0) {
-        state.SkipWithError("Benchmark requires a zero-argument main function");
-        return;
-      }
-      const auto entry_index = entry.index();
+      const auto entry_index = entry->index();
+      const auto& program = entry->program();
       vm::VirtualMachine machine(isolate);
       state.ResumeTiming();
-      auto result = machine.Execute(compiled.program, entry_index);
+      auto result = machine.Execute(program, entry_index);
       benchmark::DoNotOptimize(result);
       state.PauseTiming();
       if (!IsExpectedResult(result, expected)) {
@@ -92,23 +66,17 @@ void FirstExecution(benchmark::State& state, std::string_view filename, std::int
 }
 
 void SteadyExecution(benchmark::State& state, std::string_view filename, std::int64_t expected) {
-  const auto source = LoadSource(state, filename);
+  const auto source = LoadBenchmarkSource(state, filename);
   if (!source) {
     return;
   }
   runtime::Isolate isolate;
-  const auto compiled = compiler::CompileSource(*source, isolate);
-  if (!compiled.Succeeded()) {
-    ReportCompileFailure(state, compiled);
+  const auto entry = CompileBenchmarkEntry(state, *source, isolate);
+  if (!entry) {
     return;
   }
-  const auto entry = compiled.program.FindFunction("main");
-  if (!entry.IsValid() || entry.parameter_count() != 0) {
-    state.SkipWithError("Benchmark requires a zero-argument main function");
-    return;
-  }
-  const auto entry_index = entry.index();
-  const auto program = compiled.program;
+  const auto entry_index = entry->index();
+  const auto& program = entry->program();
   vm::VirtualMachine machine(isolate);
   const auto first = machine.Execute(program, entry_index);
   if (!IsExpectedResult(first, expected)) {
@@ -129,13 +97,8 @@ void SteadyExecution(benchmark::State& state, std::string_view filename, std::in
     }
   }
   state.counters["heap_objects"] = static_cast<double>(heap.object_count());
-  state.counters["allocated_bytes"] = static_cast<double>(heap.allocated_bytes());
-  state.counters["committed_bytes"] = static_cast<double>(heap.committed_bytes());
-  // 先结束可能仍在运行的增量周期，再启动无 VM 帧的新周期，排除浮动垃圾。
-  heap.FinishCollection();
-  heap.Collect();
+  ReportHeap(state, heap);
   state.counters["retained_objects"] = static_cast<double>(heap.object_count());
-  state.counters["retained_bytes"] = static_cast<double>(heap.allocated_bytes());
   state.counters["result"] = static_cast<double>(expected);
 }
 

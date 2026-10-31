@@ -29,20 +29,28 @@ StepResult Execution::ExecuteTypeBinding(ActiveFrame& active, Instruction instru
   const auto arguments = values.subspan(DecodeC(instruction), 2);
   const auto index = arguments.subspan(1).front();
   const auto types = active.function->layouts->types();
-  if (!index.IsInteger() || index.AsInteger() < 0 ||
-      static_cast<std::size_t>(index.AsInteger()) >= types.size()) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  const auto offset = ReadLayoutIndex(index, types.size());
+  if (!offset) {
+    return std::unexpected(offset.error());
   }
-  const auto& type = types.subspan(static_cast<std::size_t>(index.AsInteger())).front();
+  const auto& type = types.subspan(*offset).front();
   const auto value = arguments.front().Read();
   const auto result = builtin == Builtin::CheckFuturePayload
                           ? runtime::CheckFuturePayload(value, type)
                           : runtime::BindValueType(value, type);
-  if (!result) {
-    return std::unexpected(result.error());
+  return StoreResult(values.subspan(DecodeA(instruction)).front(), result);
+}
+
+std::expected<std::size_t, ExecutionStatus> Execution::ReadLayoutIndex(runtime::Value value,
+                                                                       std::size_t count) {
+  if (!value.IsInteger()) {
+    return std::unexpected(ExecutionStatus::TypeError);
   }
-  values.subspan(DecodeA(instruction)).front() = *result;
-  return {};
+  const auto index = value.AsInteger();
+  if (index < 0 || std::cmp_greater_equal(index, count)) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  return static_cast<std::size_t>(index);
 }
 
 std::expected<runtime::Value, ExecutionStatus> Execution::BoxDynamicValue(
@@ -56,13 +64,31 @@ std::expected<Execution::ResolvedCallable, ExecutionStatus> Execution::ResolveCa
   return runtime::ResolveCallable(value, program_.code_identity(), functions_.size());
 }
 
+std::expected<std::span<const CallSignature::Parameter>, ExecutionStatus>
+Execution::CallableParameters(const ResolvedCallable& callable) const {
+  const auto& function = functions_.subspan(callable.function).front();
+  const auto& signature = function.signature;
+  if (!signature) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto skipped = (callable.implicit ? 1U : 0U) - signature->hidden_parameters;
+  return std::span(signature->parameters).subspan(skipped);
+}
+
 StepResult Execution::EnterDynamicCall(ActiveFrame& active,
-                                       const ResolvedCallable& callable,
+                                       const runtime::DynamicCallPlan& plan,
                                        const runtime::HeapObject& arguments,
                                        const runtime::HeapObject& names,
-                                       std::uint8_t destination,
-                                       DynamicCallStyle style) {
-  const auto& function = functions_.subspan(callable.function).front();
+                                       std::uint8_t destination) {
+  const auto callable = plan.method
+                            ? std::expected<ResolvedCallable, ExecutionStatus>(ResolvedCallable{
+                                  .function = *plan.method, .implicit = plan.value})
+                            : ResolveCallable(plan.value);
+  if (!callable) {
+    return std::unexpected(callable.error());
+  }
+  const auto style = plan.method ? DynamicCallStyle::Method : DynamicCallStyle::Function;
+  const auto& function = functions_.subspan(callable->function).front();
   const auto& signature = function.signature;
   if (!signature) {
     return std::unexpected(ExecutionStatus::TypeError);
@@ -70,7 +96,7 @@ StepResult Execution::EnterDynamicCall(ActiveFrame& active,
   const auto& call_signature = *signature;
   const auto types = function.View().types;
   const auto bound =
-      runtime::BindDynamicArguments(call_signature, callable, arguments, names, style);
+      runtime::BindDynamicArguments(call_signature, *callable, arguments, names, style);
   if (!bound) {
     return std::unexpected(bound.error());
   }
@@ -78,13 +104,13 @@ StepResult Execution::EnterDynamicCall(ActiveFrame& active,
       !checked) {
     return checked;
   }
-  const auto entered = EnterFrame({.function = callable.function, .destination = destination});
+  const auto entered = EnterFrame({.function = callable->function, .destination = destination});
   if (!entered) {
     return std::unexpected(entered.error());
   }
   auto parameters = *entered;
-  if (callable.implicit) {
-    parameters.front() = *callable.implicit;
+  if (callable->implicit) {
+    parameters.front() = *callable->implicit;
     parameters = parameters.subspan(1);
   }
   if (auto copied = CopyDynamicArguments(call_signature, types, arguments, *bound, parameters);
@@ -113,17 +139,14 @@ StepResult Execution::CopyDynamicArguments(const CallSignature& signature,
 
 StepResult Execution::ExecuteDynamicCall(ActiveFrame& active, Instruction instruction) {
   const auto input = active.frame.registers().subspan(DecodeC(instruction), 3);
-  const auto callable = ResolveCallable(input.front().Read());
+  const auto callable = input.front().Read();
   const auto arguments = input.subspan(1).front().Read();
   const auto names = input.subspan(2).front().Read();
-  if (!callable) {
-    return std::unexpected(callable.error());
-  }
   if (!arguments.IsObject() || !names.IsObject()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  return EnterDynamicCall(active, *callable, *arguments.AsObject(), *names.AsObject(),
-                          DecodeA(instruction), DynamicCallStyle::Function);
+  return EnterDynamicCall(active, {.value = callable}, *arguments.AsObject(), *names.AsObject(),
+                          DecodeA(instruction));
 }
 
 std::expected<runtime::Value, ExecutionStatus> Execution::CreateDynamicCallPlan(
@@ -253,9 +276,7 @@ StepResult Execution::WriteDynamicMember(ActiveFrame& active,
   if (!runtime::Heap::IsValueOfType(value, *type)) {
     return std::unexpected(ExecutionStatus::InvalidCast);
   }
-  if (!value.IsNull() && type->nominal != nullptr && type->nominal->IsEnum()) {
-    value = *runtime::Heap::GetField(*value.AsObject(), 0);
-  }
+  value = runtime::UnboxDynamicValue(value, *type);
   if (member.kind == MemberKind::Field) {
     static_cast<void>(isolate_.heap().SetField(*receiver.AsObject(), member.target, value));
     values.subspan(DecodeA(instruction)).front() = input.subspan(2).front();
@@ -287,19 +308,8 @@ StepResult Execution::ExecuteDynamicMethodCall(ActiveFrame& active, Instruction 
   if (!plan) {
     return std::unexpected(plan.error());
   }
-  const auto& method = plan->method;
-  const auto style = method ? DynamicCallStyle::Method : DynamicCallStyle::Function;
-  std::expected<ResolvedCallable, ExecutionStatus> callable;
-  if (method) {
-    callable = ResolvedCallable{.function = *method, .implicit = plan->value};
-  } else {
-    callable = ResolveCallable(plan->value);
-  }
-  if (!callable) {
-    return std::unexpected(callable.error());
-  }
-  return EnterDynamicCall(active, *callable, *arguments.AsObject(), *names.AsObject(),
-                          DecodeA(instruction), style);
+  return EnterDynamicCall(active, *plan, *arguments.AsObject(), *names.AsObject(),
+                          DecodeA(instruction));
 }
 
 }  // namespace vela::vm::internal

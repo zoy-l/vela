@@ -6,13 +6,13 @@
 #include <expected>
 #include <limits>
 #include <memory>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+#include <llvm/ADT/StringRef.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/Dominators.h>
@@ -27,17 +27,24 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
 #include "compiler/ir/ir.h"
-#include "compiler/ir/lowerer.h"
 #include "compiler/ir/preparation.h"
+#include "compiler/ir/preparation_test_support.h"
 #include "compiler/native/code_generator.h"
 #include "runtime/native_image.h"
 
 namespace vela::compiler::aot {
 namespace {
 
-ir::LoweringResult Prepare(std::string_view source) {
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  return ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
+using ir::test::Prepare;
+
+std::unique_ptr<llvm::Module> ParseModule(std::string_view text, llvm::LLVMContext& context) {
+  llvm::SMDiagnostic diagnostic;
+  auto module =
+      llvm::parseAssemblyString(llvm::StringRef(text.data(), text.size()), diagnostic, context);
+  if (module == nullptr) {
+    ADD_FAILURE() << diagnostic.getMessage().str();
+  }
+  return module;
 }
 
 TEST(NativeCompilerTest, EmitsOfflineObjectWithScalarCallsAndControlFlow) {
@@ -147,8 +154,7 @@ export func calculate(count: int): int {
   const auto result = Compile(prepared.program, {.exports = {"calculate"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   llvm::LLVMContext context;
-  llvm::SMDiagnostic diagnostic;
-  const auto module = llvm::parseAssemblyString(result->llvm_ir, diagnostic, context);
+  const auto module = ParseModule(result->llvm_ir, context);
   ASSERT_NE(module, nullptr);
   std::size_t direct_loops = 0;
   for (auto& function : *module) {
@@ -232,8 +238,7 @@ export func sum(values: double[]): double {
   EXPECT_NE(text.find("fptosi double"), std::string::npos);
   EXPECT_NE(text.find("@vela_native_v2_leaf_failure"), std::string::npos);
   llvm::LLVMContext context;
-  llvm::SMDiagnostic diagnostic;
-  const auto module = llvm::parseAssemblyString(text, diagnostic, context);
+  const auto module = ParseModule(text, context);
   ASSERT_NE(module, nullptr);
   std::size_t loop_blocks = 0;
   for (auto& function : *module) {
@@ -269,8 +274,7 @@ export func read(): int { return count; }
               {.optimization = NativeOptimization::None, .exports = {"read"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   llvm::LLVMContext context;
-  llvm::SMDiagnostic diagnostic;
-  const auto module = llvm::parseAssemblyString(result->llvm_ir, diagnostic, context);
+  const auto module = ParseModule(result->llvm_ir, context);
   ASSERT_NE(module, nullptr);
   ASSERT_EQ(result->exports.size(), 1U);
   const auto* body =
@@ -322,8 +326,7 @@ TEST(NativeCompilerTest, EliminatesMonotoneIntegerReductionsWithDynamicBounds) {
     const auto result = Compile(prepared.program, {.exports = {"sum"}, .preserve_ir = true});
     ASSERT_TRUE(result.has_value()) << result.error().front().message;
     llvm::LLVMContext context;
-    llvm::SMDiagnostic diagnostic;
-    const auto module = llvm::parseAssemblyString(result->llvm_ir, diagnostic, context);
+    const auto module = ParseModule(result->llvm_ir, context);
     ASSERT_NE(module, nullptr);
     for (auto& function : *module) {
       if (function.isDeclaration()) {
@@ -352,8 +355,7 @@ export func fields(bound: int): int {
   const auto result = Compile(prepared.program, {.exports = {"fields"}, .preserve_ir = true});
   ASSERT_TRUE(result.has_value()) << result.error().front().message;
   llvm::LLVMContext context;
-  llvm::SMDiagnostic diagnostic;
-  const auto module = llvm::parseAssemblyString(result->llvm_ir, diagnostic, context);
+  const auto module = ParseModule(result->llvm_ir, context);
   ASSERT_NE(module, nullptr);
   for (auto& function : *module) {
     if (function.isDeclaration()) {
@@ -449,8 +451,7 @@ export func answer(): int { return 42; }
   EXPECT_EQ(result->program.functions.front().name, "answer");
   EXPECT_EQ(result->exports.front().function, 0U);
   llvm::LLVMContext context;
-  llvm::SMDiagnostic diagnostic;
-  const auto module = llvm::parseAssemblyString(result->llvm_ir, diagnostic, context);
+  const auto module = ParseModule(result->llvm_ir, context);
   ASSERT_NE(module, nullptr);
   EXPECT_EQ(module->getFunction("vela_native_v1_import"), nullptr);
 }

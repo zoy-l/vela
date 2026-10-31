@@ -10,6 +10,7 @@
 #include "base/builtin.h"
 #include "base/execution_status.h"
 #include "base/opcode.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
 
@@ -83,7 +84,7 @@ void FunctionEmitter::EmitInteger(const ir::Instruction& instruction) {
         llvm_unreachable("integer opcode dispatch must be exhaustive");
     }
   }
-  Store(instruction.dst, result, {.kind = Kind::Int, .name = "int"});
+  Store(instruction.dst, result, {.kind = Kind::Int, .name = frontend::kIntTypeName});
 }
 
 void FunctionEmitter::EmitDouble(const ir::Instruction& instruction) {
@@ -112,7 +113,7 @@ void FunctionEmitter::EmitDouble(const ir::Instruction& instruction) {
         llvm_unreachable("double opcode dispatch must be exhaustive");
     }
   }
-  Store(instruction.dst, result, {.kind = Kind::Double, .name = "double"});
+  Store(instruction.dst, result, {.kind = Kind::Double, .name = frontend::kDoubleTypeName});
 }
 
 void FunctionEmitter::EmitNumericConversion(const ir::Instruction& instruction, Builtin builtin) {
@@ -121,7 +122,7 @@ void FunctionEmitter::EmitNumericConversion(const ir::Instruction& instruction, 
   if (builtin == Builtin::NumericToDouble) {
     auto* converted =
         kind == Kind::Int ? builder_.CreateSIToFP(value, builder_.getDoubleTy()) : value;
-    Store(instruction.dst, converted, {.kind = Kind::Double, .name = "double"});
+    Store(instruction.dst, converted, {.kind = Kind::Double, .name = frontend::kDoubleTypeName});
     return;
   }
   if (kind == Kind::Double) {
@@ -135,7 +136,7 @@ void FunctionEmitter::EmitNumericConversion(const ir::Instruction& instruction, 
           ExecutionStatus::InvalidNumericConversion);
     value = builder_.CreateFPToSI(value, builder_.getInt64Ty());
   }
-  Store(instruction.dst, value, {.kind = Kind::Int, .name = "int"});
+  Store(instruction.dst, value, {.kind = Kind::Int, .name = frontend::kIntTypeName});
 }
 
 void FunctionEmitter::EmitComparison(const ir::Instruction& instruction) {
@@ -184,7 +185,7 @@ void FunctionEmitter::EmitComparison(const ir::Instruction& instruction) {
     default:
       llvm_unreachable("comparison opcode dispatch must be exhaustive");
   }
-  Store(instruction.dst, result, {.kind = Kind::Bool, .name = "bool"});
+  Store(instruction.dst, result, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
 }
 
 void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
@@ -194,7 +195,7 @@ void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
     const auto reg = left_type.kind == Kind::Null ? instruction.rhs : instruction.lhs;
     auto* present = IsPresent(builder_, Load(reg), source_.value_types.at(reg));
     auto* result = instruction.opcode == Opcode::EqualValue ? builder_.CreateNot(present) : present;
-    Store(instruction.dst, result, {.kind = Kind::Bool, .name = "bool"});
+    Store(instruction.dst, result, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
     return;
   }
   if (!IsScalar(left_type) || !IsScalar(right_type)) {
@@ -207,7 +208,7 @@ void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
     if (instruction.opcode == Opcode::NotEqualValue) {
       result = builder_.CreateNot(result);
     }
-    Store(instruction.dst, result, {.kind = Kind::Bool, .name = "bool"});
+    Store(instruction.dst, result, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
     return;
   }
   auto* left = Load(instruction.lhs);
@@ -228,7 +229,7 @@ void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
   auto* both_present = builder_.CreateAnd(left_present, right_present);
   auto* equal = builder_.CreateOr(both_null, builder_.CreateAnd(both_present, payload_equal));
   auto* result = instruction.opcode == Opcode::EqualValue ? equal : builder_.CreateNot(equal);
-  Store(instruction.dst, result, {.kind = Kind::Bool, .name = "bool"});
+  Store(instruction.dst, result, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
 }
 
 }  // namespace vela::compiler::native

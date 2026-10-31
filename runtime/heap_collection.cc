@@ -20,6 +20,7 @@
 #include "runtime/object.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
+#include "runtime/value_operations.h"
 
 namespace vela::runtime {
 namespace {
@@ -138,36 +139,11 @@ std::size_t HashKey(Value value) noexcept {
 }
 
 bool IsSameKey(Value left, Value right) noexcept {
-  if (left.kind() != right.kind()) {
-    return false;
+  if (left.kind() == ValueKind::Double && right.kind() == ValueKind::Double &&
+      std::isnan(left.AsDouble()) && std::isnan(right.AsDouble())) {
+    return true;
   }
-  switch (left.kind()) {
-    case ValueKind::Null:
-      return true;
-    case ValueKind::Boolean:
-      return left.AsBoolean() == right.AsBoolean();
-    case ValueKind::Integer:
-      return left.AsInteger() == right.AsInteger();
-    case ValueKind::Double: {
-      const auto left_number = left.AsDouble();
-      const auto right_number = right.AsDouble();
-      return left_number == right_number || (std::isnan(left_number) && std::isnan(right_number));
-    }
-    case ValueKind::String:
-      return left.AsString()->value() == right.AsString()->value();
-    case ValueKind::Object: {
-      const auto* layout = Heap::ClassOf(*left.AsObject());
-      if (layout != nullptr && layout->IsEnum()) {
-        const auto* right_layout = Heap::ClassOf(*right.AsObject());
-        return right_layout != nullptr &&
-               &layout->nominal_type() == &right_layout->nominal_type() &&
-               Heap::GetField(*left.AsObject(), 0)->AsInteger() ==
-                   Heap::GetField(*right.AsObject(), 0)->AsInteger();
-      }
-      return left.AsObject() == right.AsObject();
-    }
-  }
-  std::unreachable();
+  return IsEqualValue(left, right);
 }
 
 struct Slot final {
@@ -199,6 +175,28 @@ Slot FindSlot(const Table& table,
     }
     bucket = (bucket + 1) & mask;
   }
+}
+
+struct CollectionLookup final {
+  Table table;
+  Slot slot;
+};
+
+std::expected<CollectionLookup, ExecutionStatus> FindEntry(const HeapObject& object,
+                                                           Value key) noexcept {
+  const auto* layout = Heap::CollectionTypeOf(object);
+  if (layout == nullptr) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  if (!Heap::IsValueOfType(key, layout->keys.element_type())) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  const auto& storage = Storage(object);
+  if (storage.size == 0) {
+    return CollectionLookup{};
+  }
+  const auto table = View(storage, *layout);
+  return CollectionLookup{.table = table, .slot = FindSlot(table, *layout, key, HashKey(key))};
 }
 
 void LinkTail(CollectionStorage& storage, const Table& table, std::uint32_t entry) noexcept {
@@ -273,9 +271,9 @@ std::expected<void, ExecutionStatus> Heap::GrowCollection(HeapObject& object) no
       ++replacement.size;
     }
   }
-  allocated_bytes_ += bytes - current.bytes;
-  committed_bytes_ += bytes - current.bytes;
-  ::operator delete(current.data);
+  ReleaseExternalStorage(current.data, current.bytes);
+  allocated_bytes_ += bytes;
+  committed_bytes_ += bytes;
   current = replacement;
   return {};
 }
@@ -345,53 +343,36 @@ std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollectionHashed(
 
 std::expected<bool, ExecutionStatus> Heap::HasCollectionKey(const HeapObject& object,
                                                             Value key) noexcept {
-  if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto& layout = *object.collection_layout();
-  if (!IsValueOfType(key, layout.keys.element_type())) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto& storage = Storage(object);
-  return storage.size != 0 && FindSlot(View(storage, layout), layout, key, HashKey(key)).found;
+  return FindEntry(object, key).transform([](const auto& entry) { return entry.slot.found; });
 }
 
 std::expected<Value, ExecutionStatus> Heap::GetCollectionValue(const HeapObject& object,
                                                                Value key) noexcept {
-  if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  const auto entry = FindEntry(object, key);
+  if (!entry) {
+    return std::unexpected(entry.error());
   }
   const auto& layout = *object.collection_layout();
-  if (!layout.values || !IsValueOfType(key, layout.keys.element_type())) {
+  if (!layout.values) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto& storage = Storage(object);
-  if (storage.size == 0) {
-    return Value::Null();
-  }
-  const auto table = View(storage, layout);
-  const auto slot = FindSlot(table, layout, key, HashKey(key));
-  return slot.found ? LoadElementStorage(*layout.values, table.values, slot.entry) : Value::Null();
+  const auto& slot = entry->slot;
+  return slot.found ? LoadElementStorage(*layout.values, entry->table.values, slot.entry)
+                    : Value::Null();
 }
 
 std::expected<CollectionRemove, ExecutionStatus> Heap::RemoveCollection(HeapObject& object,
                                                                         Value key) noexcept {
-  if (object.kind != ObjectKind::Collection) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  const auto entry = FindEntry(object, key);
+  if (!entry) {
+    return std::unexpected(entry.error());
   }
-  const auto& layout = *object.collection_layout();
-  if (!IsValueOfType(key, layout.keys.element_type())) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  auto& storage = Storage(object);
-  if (storage.size == 0) {
-    return CollectionRemove::Missing;
-  }
-  const auto table = View(storage, layout);
-  const auto slot = FindSlot(table, layout, key, HashKey(key));
+  const auto& slot = entry->slot;
   if (!slot.found) {
     return CollectionRemove::Missing;
   }
+  auto& storage = Storage(object);
+  const auto& table = entry->table;
   const auto previous = table.previous.subspan(slot.entry).front();
   const auto next = table.next.subspan(slot.entry).front();
   if (previous == kEmpty) {
@@ -585,9 +566,7 @@ void Heap::MarkCollection(HeapObject& object) noexcept {
 
 void Heap::ReleaseCollection(HeapObject& object) noexcept {
   auto& storage = Storage(object);
-  allocated_bytes_ -= storage.bytes;
-  committed_bytes_ -= storage.bytes;
-  ::operator delete(storage.data);
+  ReleaseExternalStorage(storage.data, storage.bytes);
   std::destroy_at(&storage);
 }
 

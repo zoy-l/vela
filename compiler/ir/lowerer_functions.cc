@@ -38,7 +38,8 @@ ClassId Lowerer::CallableClass(std::uint32_t function_id,
   Class layout;
   layout.name = "$callable" + std::to_string(key);
   layout.callable = CallableTarget{.function = function_id, .mode = mode};
-  layout.callable_type = type.nullable ? type.name.substr(1, type.name.size() - 3) : type.name;
+  layout.callable_type = type.nullable ? std::string(type.name.substr(1, type.name.size() - 3))
+                                       : std::string(type.name);
   for (const auto& capture : captures) {
     layout.field_order.push_back(capture.name);
     layout.field_types.push_back(
@@ -84,7 +85,8 @@ Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Express
       } else if (interface != model_.interface_members.end()) {
         target = interface_method_ids_.at(interface->second.owner + "." + interface->second.member);
       } else {
-        target = function_ids_.at(FindMethodOwner(name, expression.text) + "." + expression.text);
+        target = function_ids_.at(FindMethodOwner(std::string(name), expression.text) + "." +
+                                  expression.text);
       }
     }
     captures.push_back({
@@ -131,7 +133,7 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
   });
   if (declarations_ != nullptr && receiver && mode == CallableMode::BoundMethod) {
     const auto& type = receiver->type;
-    auto name = type.name;
+    auto name = std::string(type.name);
     if (model_.super_members.contains(&expression)) {
       name = *model_.classes.at(name).base_class;
     } else if (type.nullable) {
@@ -152,15 +154,7 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
         .location = expression.location,
     });
   }
-  if (null_jump) {
-    const auto end_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::Jump, .location = expression.location});
-    current_function_->instructions.at(*null_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-    Emit({.opcode = Opcode::LoadNull, .dst = object, .location = expression.location});
-    current_function_->instructions.at(end_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-  }
+  FinishNullSafe(null_jump, object, expression.location);
   return {.reg = object, .type = function_type};
 }
 
@@ -176,16 +170,7 @@ Lowerer::LoweredValue Lowerer::LowerIndirectCall(const frontend::Expression& exp
   });
   const auto count = expression.arguments.size();
   const auto base = AllocateRegisterWindow(count, expression.location);
-  for (std::size_t index = 0; index < count; ++index) {
-    const auto& argument = expression.arguments.at(index);
-    const auto value = LowerExpression(*argument.value);
-    Emit({
-        .opcode = Opcode::Move,
-        .dst = static_cast<RegisterId>(base + index),
-        .lhs = value.reg,
-        .location = argument.location,
-    });
-  }
+  LowerArguments(expression, base);
   const auto result = AllocateTemporary(expression.location);
   Emit({
       .opcode = Opcode::CallIndirect,

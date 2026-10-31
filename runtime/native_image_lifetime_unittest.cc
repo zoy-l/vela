@@ -1,10 +1,8 @@
 #include "runtime/native_instance.h"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <string_view>
 
 #include <gtest/gtest.h>
 
@@ -16,20 +14,15 @@
 #include "runtime/native_abi.h"
 #include "runtime/native_async.h"
 #include "runtime/native_image.h"
+#include "runtime/native_image_test_support.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
 namespace {
 
-NativeText Text(std::string_view value) {
-  return {.data = value.data(), .size = value.size()};
-}
-
-template <class T, std::size_t Size>
-NativeTable<T> Table(const std::array<T, Size>& values) {
-  return {.data = values.data(), .size = values.size()};
-}
+using test::Table;
+using test::Text;
 
 // 动态代码所有者同时提供映像及其全部借用表；别名 shared_ptr 不能只保活映像头。
 struct AsyncImage final {

@@ -311,10 +311,9 @@ std::expected<std::span<char>, ExecutionStatus> Heap::AppendStringStorage(
       return std::unexpected(ExecutionStatus::OutOfMemory);
     }
     std::ranges::copy(std::span(buffer.data, length), memory);
-    const auto old_capacity = buffer.capacity;
-    ::operator delete(buffer.data);
-    allocated_bytes_ += capacity - old_capacity;
-    committed_bytes_ += capacity - old_capacity;
+    ReleaseExternalStorage(buffer.data, buffer.capacity);
+    allocated_bytes_ += capacity;
+    committed_bytes_ += capacity;
     buffer = {.data = memory, .capacity = capacity};
   }
   builder.length = static_cast<std::uint32_t>(new_length);
@@ -328,9 +327,7 @@ StringObject* Heap::BuildString(const HeapObject& builder) noexcept {
 
 void Heap::ReleaseMutableString(HeapObject& object) noexcept {
   auto& buffer = Buffer(object);
-  allocated_bytes_ -= buffer.capacity;
-  committed_bytes_ -= buffer.capacity;
-  ::operator delete(buffer.data);
+  ReleaseExternalStorage(buffer.data, buffer.capacity);
   std::destroy_at(&buffer);
 }
 

@@ -16,6 +16,8 @@
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_name.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -24,7 +26,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
                                            std::string_view name,
                                            ArrayAlgorithm algorithm) {
   using Kind = frontend::TypeDescriptor::Kind;
-  const frontend::TypeDescriptor dynamic{.kind = Kind::Dynamic, .name = "dynamic"};
+  const frontend::TypeDescriptor dynamic{.kind = Kind::Dynamic, .name = frontend::kDynamicTypeName};
   const auto& element = model_.array_elements.at(receiver.name);
   auto callback_signature = frontend::ArrayCallbackSignature(algorithm, element, dynamic);
   callback_signature.return_type = dynamic;
@@ -54,7 +56,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
                                      frontend::MakeFunctionType(callback_signature));
   program_.functions.at(callback_target).value_types.front() = {
       .kind = Kind::Class,
-      .name = program_.classes.at(closure).name,
+      .name = frontend::InternTypeName(program_.classes.at(closure).name),
   };
 
   auto signature = frontend::ArrayAlgorithmSignature(algorithm, element, dynamic);
@@ -86,21 +88,11 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   EmitBuiltinCall(Builtin::DynamicArrayPrepare, plan, prepare, {});
   const std::array plan_argument{plan};
   EmitBuiltinCall(Builtin::DynamicArrayCallback, 1, plan_argument, {});
-  const auto length = EmitTemporary({
-      .opcode = Opcode::BuiltinCall,
-      .lhs = 0,
-      .index = static_cast<std::uint32_t>(Builtin::ArrayLength),
-      .location = {},
-  });
+  const auto length = AllocateTemporary({});
+  EmitBuiltinCall(Builtin::ArrayLength, length, 0, {});
   const auto guard = AllocateRegisterWindow(2, {});
   Emit({.opcode = Opcode::Move, .dst = guard, .lhs = 0, .location = {}});
-  Emit({
-      .opcode = Opcode::BuiltinCall,
-      .dst = guard + 1,
-      .lhs = 0,
-      .index = static_cast<std::uint32_t>(Builtin::ArrayMutation),
-      .location = {},
-  });
+  EmitBuiltinCall(Builtin::ArrayMutation, guard + 1, 0, {});
   std::optional<RegisterId> output;
   if (algorithm == ArrayAlgorithm::Map) {
     output = AllocateTemporary({});
@@ -124,12 +116,8 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
   if (default_sort) {
     current_function_->instructions.at(*default_sort).index =
         static_cast<std::uint32_t>(current_function_->instructions.size());
-    const auto sorted = EmitTemporary({
-        .opcode = Opcode::BuiltinCall,
-        .lhs = 0,
-        .index = static_cast<std::uint32_t>(Builtin::ArraySortDefault),
-        .location = {},
-    });
+    const auto sorted = AllocateTemporary({});
+    EmitBuiltinCall(Builtin::ArraySortDefault, sorted, 0, {});
     Emit({.opcode = Opcode::Return, .dst = sorted, .location = {}});
   }
   function.register_count = next_register_;

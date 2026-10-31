@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import os
 import json
 from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
 import unittest
 
 from tools.config import ROOT, executable_name, static_library_name, toolchain_tools
+from tools.test_support import CommandTestCase, native_command
 from tools.aot_async_fixture import HOST_TESTS as ASYNC_COMPOSITION_TESTS, SOURCE as ASYNC_COMPOSITION_SOURCE
 from tools.aot_api_fixture import HOST_TESTS as PUBLIC_API_TESTS, SOURCE as PUBLIC_API_SOURCE
 from tools.aot_memory_fixture import HOST_TESTS as MEMORY_TESTS, SOURCE as MEMORY_SOURCE
@@ -34,6 +33,8 @@ HOST_TESTS = r'''
 #include <cstdint>
 #include <expected>
 #include <limits>
+#include <initializer_list>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -111,6 +112,85 @@ std::string CopyWithGc(NativeContext& context, std::string_view text) noexcept {
 }
 double Scale(NativeContext&, double value, bool enabled) noexcept { return enabled ? value * 2 : value; }
 void Collect(NativeContext& context) noexcept { context.isolate().heap().Collect(); }
+
+template <const NativeImage* (*Image)() noexcept, std::size_t GcThreshold = kDefaultGcThreshold>
+class NativeImageTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    auto created = NativeInstance::Instantiate(isolate, *image);
+    ASSERT_TRUE(created.has_value()) << created.error().message;
+    instance = std::move(*created);
+  }
+
+  Isolate isolate{GcThreshold};
+  const NativeImage* image = Image();
+  std::unique_ptr<NativeInstance> instance;
+};
+
+template <const NativeImage* (*Image)() noexcept>
+class CollectingImageTest : public NativeImageTest<Image, 1> {
+ protected:
+  void SetUp() override {
+    ASSERT_TRUE(this->isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
+    NativeImageTest<Image, 1>::SetUp();
+  }
+};
+
+using NativeAsyncTest = NativeImageTest<ASYNC_IMAGE, 1>;
+
+void StartReleasedTask(Isolate& isolate, const NativeImage& image, Entry entry,
+                        std::span<const NativeValue> arguments, Value& value) {
+  const auto instance = NativeInstance::Instantiate(isolate, image);
+  ASSERT_TRUE(instance.has_value()) << instance.error().message;
+  NativeExecution execution(**instance);
+  NativeValue result;
+  ASSERT_EQ(Execute(entry, execution, arguments, result), ExecutionStatus::Returned);
+  value = DecodeNativeValue(result);
+}
+
+void ExpectPendingException(Isolate& isolate, NativeExecution& execution,
+                            ExecutionStatus status, std::string_view message) {
+  EXPECT_EQ(execution.frame_count(), 0U);
+  ASSERT_TRUE(execution.HasException());
+  isolate.heap().Collect();
+  const auto& exception = ExceptionData::From(*execution.pending_exception().AsObject());
+  EXPECT_EQ(exception.status, status);
+  EXPECT_EQ(exception.message(), message);
+}
+
+void ExpectIntegerOperations(Entry entry, NativeExecution& execution,
+                             std::initializer_list<std::int64_t> operations) {
+  for (const auto operation : operations) {
+    SCOPED_TRACE(operation);
+    const std::array arguments{Integer(operation)};
+    NativeValue result;
+    ASSERT_EQ(Execute(entry, execution, arguments, result), ExecutionStatus::Returned);
+    EXPECT_EQ(result.kind, NativeValueKind::Integer);
+    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42);
+    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_FALSE(execution.HasException());
+  }
+}
+
+void ExpectFutureAnswer(Isolate& isolate, const Future& future) {
+  ASSERT_EQ(future.state(), FutureState::Succeeded);
+  ASSERT_TRUE(future.value().has_value());
+  EXPECT_EQ(future.value()->AsInteger(), 42);
+  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
+  EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
+}
+
+void CompleteOnHostThread(Isolate& isolate, Future& future,
+                          FutureCompletionEndpoint& producer, std::int64_t value) {
+  EXPECT_FALSE(future.IsCompleted());
+  std::atomic<bool> completed = false;
+  std::thread worker([&] { completed.store(producer.Complete(Value::Integer(value)).has_value()); });
+  const auto pumped = isolate.scheduler().PumpUntil(future, FuturePumpMode::WaitForHost);
+  worker.join();
+  ASSERT_TRUE(pumped);
+  EXPECT_TRUE(completed.load());
+}
+
 std::expected<void, NativeError> Fail(NativeContext&) noexcept {
   return std::unexpected(NativeError{.message = "host rejected request"});
 }
@@ -294,15 +374,7 @@ TEST(NativeHostTest, TypedCatchesFinallyAndExceptionPayloadSurviveCollection) {
   const auto instance = NativeInstance::Instantiate(isolate, *EXCEPTION_IMAGE());
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
-  for (const auto operation : {0, 1, 2, 4, 5, 6, 7, 8, 9}) {
-    const std::array arguments{Integer(operation)};
-    NativeValue result;
-    ASSERT_EQ(Execute(EXCEPTION_ENTRY, execution, arguments, result), ExecutionStatus::Returned)
-        << operation;
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
-    EXPECT_FALSE(execution.HasException());
-  }
+  ExpectIntegerOperations(EXCEPTION_ENTRY, execution, {0, 1, 2, 4, 5, 6, 7, 8, 9});
 }
 
 TEST(NativeHostTest, RethrowKeepsOriginalLogicalSourceStackAfterAllFramesExit) {
@@ -314,12 +386,8 @@ TEST(NativeHostTest, RethrowKeepsOriginalLogicalSourceStackAfterAllFramesExit) {
   const std::array arguments{Integer(3)};
   NativeValue result;
   ASSERT_EQ(Execute(EXCEPTION_ENTRY, execution, arguments, result), ExecutionStatus::DivisionByZero);
-  EXPECT_EQ(execution.frame_count(), 0U);
-  ASSERT_TRUE(execution.HasException());
-  isolate.heap().Collect();
-  const auto& exception = ExceptionData::From(*execution.pending_exception().AsObject());
-  EXPECT_EQ(exception.status, ExecutionStatus::DivisionByZero);
-  EXPECT_EQ(exception.message(), "division by zero");
+  ASSERT_NO_FATAL_FAILURE(ExpectPendingException(isolate, execution, ExecutionStatus::DivisionByZero,
+                                                "division by zero"));
   const auto diagnostic = execution.ExceptionDiagnostic();
   const auto& trace = diagnostic.stack_trace;
   ASSERT_EQ(trace.size(), 3U);
@@ -374,14 +442,7 @@ TEST(NativeHostTest, TypedImportsShareCodecsGcAndHostFailureMessages) {
   const auto instance = NativeInstance::Instantiate(isolate, *NATIVE_IMAGE());
   ASSERT_TRUE(instance.has_value()) << instance.error().message;
   NativeExecution execution(**instance);
-  for (const auto operation : {0, 1, 2, 3, 4}) {
-    const std::array arguments{Integer(operation)};
-    NativeValue result;
-    ASSERT_EQ(Execute(NATIVE_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
-    EXPECT_FALSE(execution.HasException());
-  }
+  ExpectIntegerOperations(NATIVE_ENTRY, execution, {0, 1, 2, 3, 4});
 }
 
 TEST(NativeHostTest, ImportedFuturePayloadAndErrorAreCheckedWithoutVmExecution) {
@@ -435,13 +496,7 @@ TEST(NativeHostTest, DatesAndRegularExpressionsUseSharedRuntimeSemanticsUnderGcP
   const auto instance = NativeInstance::Instantiate(isolate, *CALENDAR_IMAGE());
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
-  for (const auto operation : {0, 1, 2, 3}) {
-    const std::array arguments{Integer(operation)};
-    NativeValue result;
-    ASSERT_EQ(Execute(CALENDAR_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
-  }
+  ExpectIntegerOperations(CALENDAR_ENTRY, execution, {0, 1, 2, 3});
 }
 
 TEST(NativeHostTest, JsonTraversesNativeToJsonMethodsAndPreservesFailuresAndCycles) {
@@ -449,15 +504,7 @@ TEST(NativeHostTest, JsonTraversesNativeToJsonMethodsAndPreservesFailuresAndCycl
   const auto instance = NativeInstance::Instantiate(isolate, *JSON_IMAGE());
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
-  for (const auto operation : {0, 1, 2, 3, 4, 5, 6, 7}) {
-    const std::array arguments{Integer(operation)};
-    NativeValue result;
-    ASSERT_EQ(Execute(JSON_ENTRY, execution, arguments, result), ExecutionStatus::Returned)
-        << operation;
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
-    EXPECT_FALSE(execution.HasException());
-  }
+  ExpectIntegerOperations(JSON_ENTRY, execution, {0, 1, 2, 3, 4, 5, 6, 7});
 }
 
 TEST(NativeHostTest, ClosuresSharedMutationAndBoundInterfaceMethodsCallNativeTargets) {
@@ -531,11 +578,8 @@ TEST(NativeHostTest, ClosuresRetainTheirOriginInstancesAndReleaseUnreachableProg
   EXPECT_EQ(isolate.heap().object_count(), baseline);
 }
 
-TEST(NativeHostTest, NativeAwaitResumesTypedLocalsExceptionsFinallyAndEnumPayloads) {
-  Isolate isolate(1);
-  const auto instance = NativeInstance::Instantiate(isolate, *ASYNC_IMAGE());
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
+TEST_F(NativeAsyncTest, NativeAwaitResumesTypedLocalsExceptionsFinallyAndEnumPayloads) {
+  NativeExecution execution(*instance);
   for (const auto operation : {0, 1, 2, 3, 4, 5, 6}) {
     const std::array arguments{Integer(operation)};
     NativeValue result;
@@ -558,12 +602,9 @@ TEST(NativeHostTest, NativeAwaitResumesTypedLocalsExceptionsFinallyAndEnumPayloa
     }
     if (operation == 2 || operation == 3) { EXPECT_TRUE(future->IsCompleted()); }
     ASSERT_TRUE(isolate.scheduler().PumpUntil(*future));
-    ASSERT_EQ(future->state(), FutureState::Succeeded) << operation;
-    ASSERT_TRUE(future->value().has_value());
-    EXPECT_EQ(future->value()->AsInteger(), 42) << operation;
+    SCOPED_TRACE(operation);
+    ExpectFutureAnswer(isolate, *future);
     EXPECT_EQ(execution.frame_count(), 0U);
-    EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
-    EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
   }
 }
 
@@ -573,33 +614,20 @@ TEST(NativeHostTest, SuspendedNativeTasksRetainStateAfterExternalInstanceRelease
   {
     Value value;
     RootRange root(isolate.heap(), &value, 1);
-    {
-      const auto instance = NativeInstance::Instantiate(isolate, *ASYNC_IMAGE());
-      ASSERT_TRUE(instance.has_value());
-      NativeExecution execution(**instance);
-      const std::array arguments{Integer(4)};
-      NativeValue result;
-      ASSERT_EQ(Execute(ASYNC_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
-      value = DecodeNativeValue(result);
-    }
+    const std::array arguments{Integer(4)};
+    ASSERT_NO_FATAL_FAILURE(StartReleasedTask(isolate, *ASYNC_IMAGE(), ASYNC_ENTRY, arguments, value));
     EXPECT_GT(isolate.scheduler().suspended_frame_count(), 0U);
     isolate.heap().Collect();
     auto* future = Heap::GetFuture(*value.AsObject());
     ASSERT_TRUE(isolate.scheduler().PumpUntil(*future));
-    ASSERT_TRUE(future->value().has_value());
-    EXPECT_EQ(future->value()->AsInteger(), 42);
-    EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
-    EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
+    ExpectFutureAnswer(isolate, *future);
   }
   isolate.heap().Collect();
   EXPECT_EQ(isolate.heap().object_count(), baseline);
 }
 
-TEST(NativeHostTest, NativeAsyncErrorsKeepOriginalSourceAndAwaitBoundaries) {
-  Isolate isolate(1);
-  const auto instance = NativeInstance::Instantiate(isolate, *ASYNC_IMAGE());
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
+TEST_F(NativeAsyncTest, NativeAsyncErrorsKeepOriginalSourceAndAwaitBoundaries) {
+  NativeExecution execution(*instance);
   const std::array arguments{Integer(7)};
   NativeValue result;
   ASSERT_EQ(Execute(ASYNC_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
@@ -636,11 +664,8 @@ TEST(NativeHostTest, UnreachableNativeAwaitCyclesReleaseSnapshotsAndProgramState
   EXPECT_EQ(isolate.heap().object_count(), baseline);
 }
 
-TEST(NativeHostTest, NativeAwaitSnapshotsRetainOnlyLiveDefinitions) {
-  Isolate isolate(1);
-  const auto instance = NativeInstance::Instantiate(isolate, *ASYNC_IMAGE());
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
+TEST_F(NativeAsyncTest, NativeAwaitSnapshotsRetainOnlyLiveDefinitions) {
+  NativeExecution execution(*instance);
   const std::array arguments{Integer(9)};
   NativeValue result;
   ASSERT_EQ(Execute(ASYNC_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
@@ -651,9 +676,7 @@ TEST(NativeHostTest, NativeAwaitSnapshotsRetainOnlyLiveDefinitions) {
   isolate.heap().Collect();
   auto* future = Heap::GetFuture(*value.AsObject());
   ASSERT_TRUE(isolate.scheduler().PumpUntil(*future));
-  ASSERT_TRUE(future->value().has_value());
-  EXPECT_EQ(future->value()->AsInteger(), 42);
-  EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
+  ExpectFutureAnswer(isolate, *future);
 }
 
 TEST(NativeHostTest, NativeAwaitReceivesHostThreadCompletionAfterInstanceRelease) {
@@ -663,49 +686,27 @@ TEST(NativeHostTest, NativeAwaitReceivesHostThreadCompletionAfterInstanceRelease
   ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Fetch>("fetch")));
   Value value;
   RootRange root(isolate.heap(), &value, 1);
-  {
-    const auto instance = NativeInstance::Instantiate(isolate, *ASYNC_HOST_IMAGE());
-    ASSERT_TRUE(instance.has_value());
-    NativeExecution execution(**instance);
-    NativeValue result;
-    ASSERT_EQ(Execute(ASYNC_HOST_ENTRY, execution, {}, result), ExecutionStatus::Returned);
-    value = DecodeNativeValue(result);
-  }
+  ASSERT_NO_FATAL_FAILURE(StartReleasedTask(isolate, *ASYNC_HOST_IMAGE(), ASYNC_HOST_ENTRY, {}, value));
   ActiveProducer() = nullptr;
   isolate.heap().Collect();
   auto* future = Heap::GetFuture(*value.AsObject());
   ASSERT_NE(future, nullptr);
-  EXPECT_FALSE(future->IsCompleted());
-  std::atomic<bool> completed = false;
-  std::thread worker([&] { completed.store(producer.Complete(Value::Integer(37)).has_value()); });
-  const auto pumped = isolate.scheduler().PumpUntil(*future, FuturePumpMode::WaitForHost);
-  worker.join();
-  ASSERT_TRUE(pumped);
-  EXPECT_TRUE(completed.load());
-  ASSERT_TRUE(future->value().has_value());
-  EXPECT_EQ(future->value()->AsInteger(), 42);
-  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
-  EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
+  ASSERT_NO_FATAL_FAILURE(CompleteOnHostThread(isolate, *future, producer, 37));
+  ExpectFutureAnswer(isolate, *future);
 }
 '''
 
 
-class NativeObjectTest(unittest.TestCase):
+class NativeObjectTest(CommandTestCase):
+    directory_prefix = "vela-aot-原生 "
+
     def setUp(self) -> None:
-        temporary = tempfile.TemporaryDirectory(prefix="vela-aot-原生 ")
-        self.addCleanup(temporary.cleanup)
-        self.directory = Path(temporary.name)
-        self.executable = Path(os.environ.get(
-            "VELA_TEST_EXECUTABLE", ROOT / "out" / "debug" / executable_name("vela")))
+        super().setUp()
         self.output = self.executable.parent
         self.tools = toolchain_tools()
 
     def command(self, arguments: list[str | Path], expected: int = 0) -> subprocess.CompletedProcess:
-        result = subprocess.run(list(map(str, arguments)), capture_output=True,
-                                text=True, encoding="utf-8", errors="replace",
-                                cwd=self.directory, timeout=120, check=False)
-        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
-        return result
+        return native_command(self, arguments, expected, cwd=self.directory)
 
     def emit(self, name: str, source: str) -> tuple[Path, dict]:
         entry = self.directory / (name + ".vela")

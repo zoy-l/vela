@@ -4,8 +4,8 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -22,16 +22,14 @@ class Answer implements Used { read(): int { return 42; } }
 func main(): int { const answer: Used = Answer(); return answer.read(); }
 )";
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto result = test::RunInteger(source, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(InterfaceTest, DispatchesConcreteImplementationsAndBindsMethodValues) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 interface Measurable { measure(): int; }
 class Rectangle implements Measurable {
   width: int;
@@ -50,14 +48,9 @@ func main(): int {
   return area(items[0]) + bound();
 }
 )",
-                                      isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << static_cast<int>(result.status);
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 class InterfaceErrorTest : public testing::TestWithParam<std::string_view> {};

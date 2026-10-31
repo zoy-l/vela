@@ -23,15 +23,6 @@
 namespace vela::benchmarks {
 namespace {
 
-std::string Describe(const frontend::Diagnostics& diagnostics) {
-  std::string message;
-  for (const auto& diagnostic : diagnostics) {
-    message += diagnostic.source_path + ':' + std::to_string(diagnostic.location.line) + ": " +
-               diagnostic.message + '\n';
-  }
-  return message;
-}
-
 void ReportDuration(benchmark::State& state, const char* name, std::chrono::nanoseconds duration) {
   state.counters[name] = static_cast<double>(duration.count());
 }
@@ -48,7 +39,7 @@ std::expected<JitSetup, std::string> LoadJitWorkload(const std::string& path,
   auto update = files.Capture(compiler::CompiledSourceSnapshot{});
   setup.capture = Clock::now() - capturing;
   if (!update) {
-    return std::unexpected(Describe(update.error()));
+    return std::unexpected(frontend::DiagnosticsText(update.error()));
   }
   const auto starting = Clock::now();
   compiler::DevelopmentOptions development;
@@ -57,13 +48,13 @@ std::expected<JitSetup, std::string> LoadJitWorkload(const std::string& path,
                                                       std::move(development));
   setup.engine = Clock::now() - starting;
   if (!session) {
-    return std::unexpected(Describe(session.error()));
+    return std::unexpected(frontend::DiagnosticsText(session.error()));
   }
   setup.session = std::move(*session);
   auto candidate = setup.session->Prepare(std::move(*update), compiler::DevelopmentOperation::Load);
   if (!candidate) {
     const auto& error = candidate.error();
-    return std::unexpected(error.message + '\n' + Describe(error.diagnostics));
+    return std::unexpected(error.message + '\n' + frontend::DiagnosticsText(error.diagnostics));
   }
   const auto peak = PeakResidentBytes();
   if (!peak) {
@@ -73,7 +64,7 @@ std::expected<JitSetup, std::string> LoadJitWorkload(const std::string& path,
   (void)setup.session->Submit(std::move(*candidate));
   const auto loaded = setup.session->Pump();
   if (loaded.status != compiler::DevelopmentStatus::Accepted) {
-    return std::unexpected(loaded.message + '\n' + Describe(loaded.diagnostics));
+    return std::unexpected(loaded.message + '\n' + frontend::DiagnosticsText(loaded.diagnostics));
   }
   setup.load = Clock::now() - capturing;
   return setup;
@@ -108,10 +99,11 @@ void ReportJitSetup(benchmark::State& state, const JitSetup& setup) {
 }
 
 void ReportJitMemory(benchmark::State& state, compiler::DevelopmentSession& session) {
-  ReportAotHeap(state, session.isolate());
+  auto& isolate = session.isolate();
+  ReportAotHeap(state, isolate);
   const auto code = session.code_resources();
-  const auto& heap = session.isolate().heap();
-  const auto layouts = session.isolate().layout_counts();
+  const auto& heap = isolate.heap();
+  const auto layouts = isolate.layout_counts();
   state.counters["code_batches"] = static_cast<double>(code.batches);
   state.counters["code_functions"] = static_cast<double>(code.functions);
   state.counters["code_executable_bytes"] = static_cast<double>(code.executable_bytes);
@@ -122,6 +114,13 @@ void ReportJitMemory(benchmark::State& state, compiler::DevelopmentSession& sess
   state.counters["external_field_bytes"] = static_cast<double>(heap.instance_field_bytes());
   state.counters["class_layouts"] = static_cast<double>(layouts.classes);
   state.counters["nominal_types"] = static_cast<double>(layouts.nominal_types);
+}
+
+void ReportJitFirstExecution(benchmark::State& state,
+                             std::chrono::steady_clock::time_point started) {
+  ReportDuration(state, "first_execution_ns",
+                 std::chrono::duration_cast<std::chrono::nanoseconds>(
+                     std::chrono::steady_clock::now() - started));
 }
 
 }  // namespace vela::benchmarks

@@ -301,8 +301,7 @@ std::expected<void, std::string> VerifyNativeLibrary(const std::filesystem::path
   if (!bytes) {
     return std::unexpected(bytes.error());
   }
-  const void* storage = bytes->data();
-  const auto parsed = JsonDocument::Parse({static_cast<const char*>(storage), bytes->size()});
+  const auto parsed = JsonDocument::Parse(*bytes);
   if (!parsed) {
     return std::unexpected("invalid native library manifest: " + parsed.error().message);
   }

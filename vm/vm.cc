@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -17,11 +18,13 @@
 #include "base/byte_access.h"
 #include "base/callable.h"
 #include "base/execution_limits.h"
+#include "base/integer_arithmetic.h"
 #include "base/regexp.h"
 #include "runtime/byte_operations.h"
 #include "runtime/exception.h"
 #include "runtime/native_context.h"
 #include "vm/debugger.h"
+#include "vm/diagnostic.h"
 #include "vm/execution.h"
 #include "vm/execution_status.h"
 #include "vm/program.h"
@@ -93,30 +96,6 @@ void ConsumeFutureCompletion(std::expected<void, T> completion) {
   if (!completion) {
     std::unreachable();
   }
-}
-
-[[clang::always_inline]] StepResult IntegerOperation(OpCode opcode,
-                                                     runtime::RegisterReference destination,
-                                                     BinaryOperands operands) noexcept {
-  const auto result = runtime::internal::IntegerOperation(
-      opcode, {.left = operands.left.Read(), .right = operands.right.Read()});
-  if (!result) {
-    return std::unexpected(result.error());
-  }
-  destination = *result;
-  return {};
-}
-
-[[clang::always_inline]] StepResult DoubleOperation(OpCode opcode,
-                                                    runtime::RegisterReference destination,
-                                                    BinaryOperands operands) noexcept {
-  const auto result = runtime::internal::DoubleOperation(
-      opcode, {.left = operands.left.Read(), .right = operands.right.Read()});
-  if (!result) {
-    return std::unexpected(result.error());
-  }
-  destination = *result;
-  return {};
 }
 
 [[clang::always_inline]] StepResult BooleanOperation(OpCode opcode,
@@ -241,20 +220,10 @@ ExecutionResult Execution::DebugRun(std::uint32_t entry_function, Debugger& debu
 runtime::FutureDiagnostic Execution::Diagnostic(const ExecutionResult& result) {
   runtime::FutureDiagnostic diagnostic{
       .message = result.message,
-      .stack_trace = {},
+      .stack_trace = CopyFutureTrace(result.stack_trace),
       .status = result.status,
       .origin = result.origin,
   };
-  for (const auto& frame : result.stack_trace) {
-    diagnostic.stack_trace.push_back({
-        .function = frame.function,
-        .source_path = frame.source_path,
-        .line = frame.location.line,
-        .column = frame.location.column,
-        .instruction = frame.instruction,
-        .identity = {},
-    });
-  }
   return diagnostic;
 }
 
@@ -292,10 +261,8 @@ runtime::Future Execution::InvokeFuture(runtime::Isolate& isolate,
   FrameSlots<RegisterFile> registers;
   Execution execution(isolate, program, registers, std::move(debug_session));
   const auto invoked = execution.Invoke(callable, arguments);
-  if (invoked.Succeeded() && invoked.value.IsObject()) {
-    if (const auto* source = runtime::Heap::GetFuture(*invoked.value.AsObject())) {
-      return source->Rooted();
-    }
+  if (invoked.Succeeded()) {
+    return runtime::RootFutureValue(isolate, invoked.value);
   }
   runtime::Future result(&isolate.scheduler());
   result.AttachHeap(isolate.heap());
@@ -316,17 +283,10 @@ ExecutionStatus Execution::RestoreFutureError(const runtime::FutureResult& compl
   }
   auto& exception = runtime::ExceptionData::From(*pending_exception_.AsObject());
   exception.diagnostic = std::make_unique<runtime::FutureDiagnostic>(diagnostic).release();
-  const auto boundary = CaptureStack();
-  for (const auto& frame : boundary) {
-    exception.diagnostic->stack_trace.push_back({
-        .function = frame.function,
-        .source_path = frame.source_path,
-        .line = frame.location.line,
-        .column = frame.location.column,
-        .instruction = frame.instruction,
-        .identity = {},
-    });
-  }
+  auto boundary = CopyFutureTrace(CaptureStack());
+  auto& trace = exception.diagnostic->stack_trace;
+  trace.insert(trace.end(), std::make_move_iterator(boundary.begin()),
+               std::make_move_iterator(boundary.end()));
   return diagnostic.status;
 }
 
@@ -408,9 +368,7 @@ ExecutionResult Execution::Invoke(runtime::Value callable,
       const auto parameter =
           signature.parameters.at(index + hidden - signature.hidden_parameters).type;
       const auto& type = function.layouts->types().subspan(parameter).front();
-      if (!value.IsNull() && type.nominal != nullptr && type.nominal->IsEnum()) {
-        value = *runtime::Heap::GetField(*value.AsObject(), 0);
-      }
+      value = runtime::UnboxDynamicValue(value, type);
     }
     values.subspan(index + hidden).front() = value;
   }
@@ -476,9 +434,10 @@ StepResult Execution::ExecuteInstruction(ActiveFrame& active, Instruction instru
     case OpCode::LessEqualDouble:
     case OpCode::GreaterDouble:
     case OpCode::GreaterEqualDouble:
-      return DoubleOperation(
-          opcode, values.subspan(operand_a).front(),
-          {.left = values.subspan(operand_b).front(), .right = values.subspan(operand_c).front()});
+      return StoreResult(values.subspan(operand_a).front(),
+                         runtime::internal::DoubleOperation(
+                             opcode, {.left = values.subspan(operand_b).front().Read(),
+                                      .right = values.subspan(operand_c).front().Read()}));
     case OpCode::NegDouble: {
       const auto operand = values.subspan(operand_b).front();
       if (!operand.IsDouble()) {
@@ -507,9 +466,10 @@ StepResult Execution::ExecuteInstruction(ActiveFrame& active, Instruction instru
     case OpCode::LessEqualInt:
     case OpCode::GreaterInt:
     case OpCode::GreaterEqualInt:
-      return IntegerOperation(
-          opcode, values.subspan(operand_a).front(),
-          {.left = values.subspan(operand_b).front(), .right = values.subspan(operand_c).front()});
+      return StoreResult(values.subspan(operand_a).front(),
+                         runtime::internal::IntegerOperation(
+                             opcode, {.left = values.subspan(operand_b).front().Read(),
+                                      .right = values.subspan(operand_c).front().Read()}));
     case OpCode::NegInt:
     case OpCode::BitNotInt: {
       const auto operand = values.subspan(operand_b).front();
@@ -521,10 +481,11 @@ StepResult Execution::ExecuteInstruction(ActiveFrame& active, Instruction instru
         values.subspan(operand_a).front().SetInteger(~value);
         return {};
       }
-      if (value == std::numeric_limits<std::int64_t>::min()) {
-        return std::unexpected(ExecutionStatus::IntegerOverflow);
+      const auto negated = EvaluateIntegerArithmetic(Opcode::SubInt, 0, value);
+      if (!negated) {
+        return std::unexpected(negated.error());
       }
-      values.subspan(operand_a).front().SetInteger(-value);
+      values.subspan(operand_a).front().SetInteger(*negated);
       return {};
     }
     case OpCode::NotBool:
@@ -763,11 +724,7 @@ StepResult Execution::AllocateFuture(ActiveFrame& active,
   const auto value = error_flag != 0
                          ? runtime::AllocateFutureError(isolate_, payload, ThrowDiagnostic(payload))
                          : runtime::AllocateFutureValue(isolate_, payload);
-  if (!value) {
-    return std::unexpected(value.error());
-  }
-  active.frame.registers().subspan(registers.destination).front() = *value;
-  return {};
+  return StoreResult(active.frame.registers().subspan(registers.destination).front(), value);
 }
 
 StepResult Execution::AllocateSleep(ActiveFrame& active, FutureRegisters registers) {
@@ -776,11 +733,7 @@ StepResult Execution::AllocateSleep(ActiveFrame& active, FutureRegisters registe
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto value = runtime::AllocateSleepFuture(isolate_, delay.AsInteger());
-  if (!value) {
-    return std::unexpected(value.error());
-  }
-  active.frame.registers().subspan(registers.destination).front() = *value;
-  return {};
+  return StoreResult(active.frame.registers().subspan(registers.destination).front(), value);
 }
 
 StepResult Execution::AllocateCollection(ActiveFrame& active, FutureRegisters registers) {
@@ -839,11 +792,7 @@ StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instructio
     const auto input = std::span(arguments).first(count);
     values.subspan(DecodeC(instruction), count).CopyTo(input);
     const auto result = runtime::ExecuteByteBuiltin(builtin, input, isolate_.heap());
-    if (!result) {
-      return std::unexpected(result.error());
-    }
-    values.subspan(DecodeA(instruction)).front() = *result;
-    return {};
+    return StoreResult(values.subspan(DecodeA(instruction)).front(), result);
   }
   if (builtin == Builtin::DateParse || builtin == Builtin::DateToISOString ||
       builtin == Builtin::DateFromUTC || builtin == Builtin::DateToUTC) {
@@ -852,11 +801,7 @@ StepResult Execution::ExecuteBuiltin(ActiveFrame& active, Instruction instructio
   auto values = active.frame.registers();
   const auto arguments = values.subspan(DecodeC(instruction), BuiltinArity(builtin));
   const auto result = ExecuteValueBuiltin(builtin, arguments, isolate_.heap());
-  if (!result) {
-    return std::unexpected(result.error());
-  }
-  values.subspan(DecodeA(instruction)).front() = *result;
-  return {};
+  return StoreResult(values.subspan(DecodeA(instruction)).front(), result);
 }
 
 StepResult Execution::ExecuteDynamic(ActiveFrame& active, Instruction instruction) {
@@ -867,11 +812,7 @@ StepResult Execution::ExecuteDynamic(ActiveFrame& active, Instruction instructio
   const auto values = active.frame.registers();
   values.subspan(DecodeC(instruction), count).CopyTo(arguments);
   const auto result = runtime::ExecuteDynamicValue(builtin, arguments, isolate_.heap());
-  if (!result) {
-    return std::unexpected(result.error());
-  }
-  values.subspan(DecodeA(instruction)).front() = *result;
-  return {};
+  return StoreResult(values.subspan(DecodeA(instruction)).front(), result);
 }
 
 StepResult Execution::CompleteCallSetup() {
@@ -956,18 +897,13 @@ StepResult Execution::StringOperation(OpCode opcode,
                                       runtime::Value left,
                                       runtime::Value right) {
   if (opcode == OpCode::StringConcat) {
-    const auto result = runtime::ConcatenateValues(isolate_.heap(), left, right);
-    if (!result) {
-      return std::unexpected(result.error());
-    }
-    destination = *result;
-  } else {
-    const auto equal = runtime::CompareStrings(left, right);
-    if (!equal) {
-      return std::unexpected(equal.error());
-    }
-    destination.SetBoolean(opcode == OpCode::EqualString ? *equal : !*equal);
+    return StoreResult(destination, runtime::ConcatenateValues(isolate_.heap(), left, right));
   }
+  const auto equal = runtime::CompareStrings(left, right);
+  if (!equal) {
+    return std::unexpected(equal.error());
+  }
+  destination.SetBoolean(opcode == OpCode::EqualString ? *equal : !*equal);
   return {};
 }
 
@@ -983,12 +919,7 @@ StepResult Execution::ArrayOperation(OpCode opcode,
   if (opcode == OpCode::SetIndex) {
     return runtime::WriteIndex(isolate_.heap(), object.AsObject(), index.AsInteger(), right);
   }
-  const auto result = runtime::ReadIndex(object.AsObject(), index.AsInteger());
-  if (!result) {
-    return std::unexpected(result.error());
-  }
-  destination = *result;
-  return {};
+  return StoreResult(destination, runtime::ReadIndex(object.AsObject(), index.AsInteger()));
 }
 
 void Execution::Jump(ActiveFrame& active, std::int16_t offset) noexcept {
@@ -1252,10 +1183,8 @@ ExecutionResult VirtualMachine::Invoke(const Program& program,
 runtime::Future VirtualMachine::ExecuteFuture(const Program& program,
                                               std::uint32_t entry_function) noexcept {
   const auto executed = Execute(program, entry_function);
-  if (executed.Succeeded() && executed.value.IsObject()) {
-    if (const auto* source = runtime::Heap::GetFuture(*executed.value.AsObject())) {
-      return source->Rooted();
-    }
+  if (executed.Succeeded()) {
+    return runtime::RootFutureValue(isolate_, executed.value);
   }
   runtime::Future result(&isolate_.scheduler());
   result.AttachHeap(isolate_.heap());
@@ -1318,22 +1247,7 @@ ExecutionResult VirtualMachine::ExecuteImpl(const Program& program,
             .origin = {},
         };
       } else if (root.state() == runtime::FutureState::Failed) {
-        const auto diagnostic = root.error_diagnostic().value_or(runtime::FutureDiagnostic{});
-        result = {
-            .value = root.error().value_or(runtime::Value::Null()),
-            .status = diagnostic.status,
-            .stack_trace = {},
-            .message = diagnostic.message,
-            .origin = diagnostic.origin,
-        };
-        for (const auto& frame : diagnostic.stack_trace) {
-          result.stack_trace.push_back({
-              .function = frame.function,
-              .source_path = frame.source_path,
-              .location = {.line = frame.line, .column = frame.column},
-              .instruction = frame.instruction,
-          });
-        }
+        result = FutureFailure(root.result());
       } else {
         result.value = root.value().value_or(runtime::Value::Null());
       }

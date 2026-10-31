@@ -10,34 +10,13 @@
 #include <llvm/IR/GlobalValue.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Module.h>
-#include <llvm/IR/Type.h>
 
 #include "compiler/native/escape_analysis.h"
+#include "compiler/native/native_values.h"
 #include "runtime/instance_storage.h"
 #include "runtime/native_image.h"
 
 namespace vela::compiler::native {
-namespace {
-
-llvm::Constant* EmitTable(llvm::Module& module,
-                          llvm::StructType* table,
-                          llvm::Type* element,
-                          const std::vector<llvm::Constant*>& values,
-                          const std::string& name) {
-  auto& context = module.getContext();
-  llvm::Constant* data = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context));
-  if (!values.empty()) {
-    auto* type = llvm::ArrayType::get(element, values.size());
-    auto* contents = llvm::ConstantArray::get(type, values);
-    auto* global = new llvm::GlobalVariable(module, type, true, llvm::GlobalValue::PrivateLinkage,
-                                            contents, name);
-    data = global;
-  }
-  return llvm::ConstantStruct::get(
-      table, {data, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), values.size())});
-}
-
-}  // namespace
 
 llvm::Constant* FunctionEmitter::VirtualGraph(std::size_t instruction) {
   const auto& checkpoint = escape_.checkpoints.at(instruction);
@@ -87,7 +66,7 @@ llvm::Constant* FunctionEmitter::VirtualGraph(std::size_t instruction) {
             builder_.getInt32(allocation.type),
             builder_.getInt32(static_cast<std::uint32_t>(object.allocation)),
             builder_.getInt32(static_cast<std::uint32_t>(*roots_.slots.at(allocation.reference))),
-            EmitTable(module_, table, field_type, fields, fields_name),
+            EmitConstantTable(module_, table, field_type, fields, fields_name),
         }));
   }
   std::vector<llvm::Constant*> aliases;
@@ -101,8 +80,8 @@ llvm::Constant* FunctionEmitter::VirtualGraph(std::size_t instruction) {
   auto* graph_type = llvm::StructType::get(context, {table, table});
   auto* contents = llvm::ConstantStruct::get(
       graph_type, {
-                      EmitTable(module_, table, object_type, objects, prefix + "_objects"),
-                      EmitTable(module_, table, alias_type, aliases, prefix + "_aliases"),
+                      EmitConstantTable(module_, table, object_type, objects, prefix + "_objects"),
+                      EmitConstantTable(module_, table, alias_type, aliases, prefix + "_aliases"),
                   });
   auto* graph = new llvm::GlobalVariable(module_, graph_type, true,
                                          llvm::GlobalValue::PrivateLinkage, contents, prefix);

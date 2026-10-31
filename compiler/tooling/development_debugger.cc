@@ -1,22 +1,20 @@
 #include "compiler/tooling/development_debugger.h"
 
 #include <algorithm>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 
 #include "base/native_program_mode.h"
 #include "base/path.h"
 #include "compiler/development_session.h"
 #include "compiler/source_session.h"
+#include "compiler/tooling/console_input.h"
 #include "runtime/native_control.h"
 #include "runtime/native_debugger.h"
 
@@ -25,17 +23,6 @@ namespace {
 
 constexpr std::string_view kSourceCommand = ".source";
 constexpr std::string_view kBreakCommand = ".break";
-
-std::optional<std::uint32_t> ParseIndex(std::string_view text) {
-  std::uint32_t value = 0;
-  const auto* begin = std::to_address(text.begin());
-  const auto* end = std::to_address(text.end());
-  const auto parsed = std::from_chars(begin, end, value);
-  if (parsed.ec != std::errc{} || parsed.ptr != end) {
-    return std::nullopt;
-  }
-  return value;
-}
 
 }  // namespace
 
@@ -96,8 +83,8 @@ void DevelopmentDebugger::Break(std::string_view arguments) {
     return;
   }
   const auto separator = arguments.find_last_of(' ');
-  const auto line =
-      ParseIndex(separator == std::string_view::npos ? arguments : arguments.substr(separator + 1));
+  const auto line = ParseConsoleIndex(
+      separator == std::string_view::npos ? arguments : arguments.substr(separator + 1));
   if (!line || *line == 0) {
     *errors_ << "usage: .break [MODULE] LINE | .break clear\n";
     return;
@@ -144,7 +131,8 @@ void DevelopmentDebugger::Source(std::string_view argument) const {
     *errors_ << "no paused script frame\n";
     return;
   }
-  const auto index = argument.empty() ? std::optional<std::uint32_t>(0) : ParseIndex(argument);
+  const auto index =
+      argument.empty() ? std::optional<std::uint32_t>(0) : ParseConsoleIndex(argument);
   const auto frames = paused_->frames();
   if (!index || *index >= frames.size()) {
     *errors_ << "usage: .source [FRAME_INDEX]\n";

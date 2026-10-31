@@ -12,7 +12,6 @@
 #include "base/async_operation.h"
 #include "base/binary.h"
 #include "base/builtin.h"
-#include "base/fingerprint.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
@@ -34,10 +33,7 @@ std::vector<std::byte> Image(std::span<const std::byte> payload) {
   constexpr std::string_view kMagic = "VELABC01";
   writer.Write(std::as_bytes(std::span(kMagic)));
   writer.Write(kBytecodeImageVersion);
-  const auto checksum = ContentFingerprint(payload);
-  writer.Write(checksum.low);
-  writer.Write(checksum.high);
-  writer.Write(payload);
+  writer.WriteChecksummed(payload);
   return std::move(writer).Take();
 }
 
@@ -217,19 +213,23 @@ TEST(BytecodeImageBoundaryTest, LoadsMinimalValidImageAndRejectsExtraDataAndHuge
   EXPECT_FALSE(LoadBytecode(Image(changed.bytes()), isolate));
 }
 
+void WriteEmptyClass(BinaryWriter& body, internal::StandardClass standard, std::uint32_t fields) {
+  body.Write(static_cast<std::uint8_t>(standard));
+  body.Write(fields);
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint8_t{0});
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint64_t{0});
+  body.Write(std::uint8_t{0});
+  body.Write(kNoPool);
+}
+
 TEST(BytecodeImageBoundaryTest, RejectsMalformedStandardDatePartsLayouts) {
   for (const auto fields : {0U, 6U, 8U}) {
     BinaryWriter body;
     body.Write(std::uint64_t{0});
     body.Write(std::uint64_t{1});
-    body.Write(static_cast<std::uint8_t>(internal::StandardClass::DateParts));
-    body.Write(fields);
-    body.Write(std::uint64_t{0});
-    body.Write(std::uint8_t{0});
-    body.Write(std::uint64_t{0});
-    body.Write(std::uint64_t{0});
-    body.Write(std::uint8_t{0});
-    body.Write(kNoPool);
+    WriteEmptyClass(body, internal::StandardClass::DateParts, fields);
     body.Write(kNoPool);
     runtime::Isolate isolate;
     const auto loaded = LoadBytecode(Image(body.bytes()), isolate);
@@ -244,16 +244,9 @@ TEST(BytecodeImageBoundaryTest, FailedLoadingReleasesPartiallyCreatedLayoutMetad
   BinaryWriter body;
   body.Write(std::uint64_t{0});
   body.Write(std::uint64_t{1});
-  body.Write(std::uint8_t{0});
-  body.Write(std::uint32_t{0});
-  body.Write(std::uint64_t{0});
-  body.Write(std::uint8_t{0});
-  body.Write(std::uint64_t{0});
-  body.Write(std::uint64_t{0});
-  body.Write(std::uint8_t{0});
+  WriteEmptyClass(body, internal::StandardClass::None, 0);
   body.Write(kNoPool);
-  body.Write(kNoPool);
-  // 完整类记录后缺少数组表；进入重建并分配布局后才失败。
+  // 完整类记录之后数组表长度非法；布局已分配，失败时必须回收。
   EXPECT_FALSE(LoadBytecode(Image(body.bytes()), isolate));
   EXPECT_EQ(isolate.layout_counts(), initial);
 }

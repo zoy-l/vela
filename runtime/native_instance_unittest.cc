@@ -1,10 +1,8 @@
 #include "runtime/native_instance.h"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <string_view>
 #include <utility>
 
 #include <gtest/gtest.h>
@@ -16,20 +14,15 @@
 #include "runtime/native_context.h"
 #include "runtime/native_function.h"
 #include "runtime/native_image.h"
+#include "runtime/native_image_test_support.h"
 #include "runtime/rooted_value.h"
 #include "runtime/string.h"
 
 namespace vela::runtime {
 namespace {
 
-NativeText Text(std::string_view text) {
-  return {.data = text.data(), .size = text.size()};
-}
-
-template <class T, std::size_t Size>
-NativeTable<T> Table(const std::array<T, Size>& values) {
-  return {.data = values.data(), .size = values.size()};
-}
+using test::Table;
+using test::Text;
 
 NativeImage Image() {
   NativeImage image;

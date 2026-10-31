@@ -391,7 +391,6 @@ int TestCommand(std::span<const std::string_view> arguments, CommandStreams stre
   std::vector<std::jthread> workers;
   const auto count = std::min<std::size_t>(settings.concurrency, paths->size());
   workers.reserve(count);
-  workers.reserve(count);
   for (std::size_t worker = 0; worker < count; ++worker) {
     workers.emplace_back([&] {
       while (!IsCancelled()) {

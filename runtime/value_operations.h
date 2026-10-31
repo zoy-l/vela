@@ -31,5 +31,7 @@ namespace vela::runtime {
 [[nodiscard]] std::expected<Value, ExecutionStatus> BoxDynamicValue(Heap& heap,
                                                                     Value value,
                                                                     const TypeConstraint& type);
+// 调用方已验证值满足 type；仅将非空枚举装箱值转换为其存储表示。
+[[nodiscard]] Value UnboxDynamicValue(Value value, const TypeConstraint& type) noexcept;
 
 }  // namespace vela::runtime

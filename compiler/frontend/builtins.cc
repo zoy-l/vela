@@ -2,14 +2,12 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <initializer_list>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "base/array_algorithm.h"
 #include "base/builtin.h"
@@ -18,74 +16,67 @@
 #include "compiler/frontend/byte_builtins.h"
 #include "compiler/frontend/regexp_builtins.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_name.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 namespace {
 
 using Kind = TypeDescriptor::Kind;
 
-struct ParameterSpec final {
-  std::string_view name;
-  Kind kind;
-  std::string_view type;
-};
-
-FunctionDescriptor Signature(Kind kind,
-                             std::string_view type,
-                             std::initializer_list<ParameterSpec> parameters) {
-  FunctionDescriptor function;
-  function.return_type = {.kind = kind, .name = std::string(type)};
-  for (const auto& parameter : parameters) {
-    function.parameter_indices.emplace(parameter.name,
-                                       static_cast<std::uint32_t>(function.parameters.size()));
-    function.parameters.push_back({
-        .name = std::string(parameter.name),
-        .type = {.kind = parameter.kind, .name = std::string(parameter.type)},
-    });
+std::optional<Builtin> FindMember(std::span<const std::pair<std::string_view, Builtin>> members,
+                                  std::string_view name) {
+  for (const auto& [member, builtin] : members) {
+    if (member == name) {
+      return builtin;
+    }
   }
-  return function;
+  return std::nullopt;
 }
 
 const auto kSignatures = [] {
+  const TypeDescriptor text{.kind = Kind::String, .name = kStringTypeName};
+  const TypeDescriptor integer{.kind = Kind::Int, .name = kIntTypeName};
+  const TypeDescriptor boolean{.kind = Kind::Bool, .name = kBoolTypeName};
   auto signatures = std::to_array<FunctionDescriptor>({
-      Signature(Kind::String, "string", {}),
-      Signature(Kind::String, "string",
-                {
-                    {.name = "separator", .kind = Kind::String, .type = "string"},
-                }),
-      Signature(Kind::MutableString, "String", {}),
-      Signature(Kind::Void, "void", {{.name = "text", .kind = Kind::String, .type = "string"}}),
-      Signature(Kind::String, "string", {}),
-      Signature(Kind::Int, "int", {}),
-      Signature(Kind::Int, "int", {}),
-      Signature(Kind::String, "string",
-                {
-                    {.name = "start", .kind = Kind::Int, .type = "int"},
-                    {.name = "end", .kind = Kind::Int, .type = "int"},
-                }),
-      Signature(Kind::Int, "int", {{.name = "text", .kind = Kind::String, .type = "string"}}),
-      Signature(Kind::Bool, "bool", {{.name = "text", .kind = Kind::String, .type = "string"}}),
-      Signature(Kind::Bool, "bool", {{.name = "prefix", .kind = Kind::String, .type = "string"}}),
-      Signature(Kind::Bool, "bool", {{.name = "suffix", .kind = Kind::String, .type = "string"}}),
-      Signature(Kind::String, "string", {{.name = "index", .kind = Kind::Int, .type = "int"}}),
-      Signature(Kind::Int, "int", {}),
-      Signature(Kind::Double, "double", {}),
-      Signature(Kind::Int, "int", {}),
-      Signature(Kind::Array, "int[]", {}),
-      Signature(Kind::Array, "string[]", {}),
-      Signature(Kind::Int, "int", {}),
-      Signature(Kind::String, "string",
-                {
-                    {.name = "start", .kind = Kind::Int, .type = "int"},
-                    {.name = "end", .kind = Kind::Int, .type = "int"},
-                }),
+      MakeBuiltinSignature(text, {}),
+      MakeBuiltinSignature(text, {{.name = "separator", .type = text}}),
+      MakeBuiltinSignature({.kind = Kind::MutableString, .name = kMutableStringTypeName}, {}),
+      MakeBuiltinSignature({.kind = Kind::Void, .name = kVoidTypeName},
+                           {{.name = "text", .type = text}}),
+      MakeBuiltinSignature(text, {}),
+      MakeBuiltinSignature(integer, {}),
+      MakeBuiltinSignature(integer, {}),
+      MakeBuiltinSignature(text,
+                           {{.name = "start", .type = integer}, {.name = "end", .type = integer}}),
+      MakeBuiltinSignature(integer, {{.name = "text", .type = text}}),
+      MakeBuiltinSignature(boolean, {{.name = "text", .type = text}}),
+      MakeBuiltinSignature(boolean, {{.name = "prefix", .type = text}}),
+      MakeBuiltinSignature(boolean, {{.name = "suffix", .type = text}}),
+      MakeBuiltinSignature(text, {{.name = "index", .type = integer}}),
+      MakeBuiltinSignature(integer, {}),
+      MakeBuiltinSignature({.kind = Kind::Double, .name = kDoubleTypeName}, {}),
+      MakeBuiltinSignature(integer, {}),
+      MakeBuiltinSignature({.kind = Kind::Array, .name = kIntArrayTypeName}, {}),
+      MakeBuiltinSignature({.kind = Kind::Array, .name = kStringArrayTypeName}, {}),
+      MakeBuiltinSignature(integer, {}),
   });
   signatures.at(static_cast<std::size_t>(Builtin::ArrayJoin)).optional_parameters = {"separator"};
   return signatures;
 }();
-static_assert(kSignatures.size() == static_cast<std::size_t>(Builtin::CollectionSize));
+static_assert(kSignatures.size() == static_cast<std::size_t>(Builtin::StringGraphemeSlice));
 
 }  // namespace
+
+FunctionDescriptor MakeBuiltinSignature(TypeDescriptor result,
+                                        std::initializer_list<BuiltinParameter> parameters) {
+  FunctionDescriptor signature;
+  signature.return_type = std::move(result);
+  for (const auto& parameter : parameters) {
+    signature.AddParameter(std::string(parameter.name), parameter.type);
+  }
+  return signature;
+}
 
 bool CanFormatString(const TypeDescriptor& type) noexcept {
   return type.kind == Kind::String || type.kind == Kind::Int || type.kind == Kind::Double ||
@@ -137,24 +128,19 @@ std::span<const std::pair<std::string_view, Builtin>> ArrayMethods() noexcept {
 FunctionDescriptor ArrayMethodSignature(Builtin builtin, const TypeDescriptor& element) {
   const auto receiver = MakeArrayType(element);
   FunctionDescriptor signature;
-  signature.return_type = {.kind = Kind::Void, .name = "void"};
-  const TypeDescriptor integer{.kind = Kind::Int, .name = "int"};
-  const auto parameter = [&signature](std::string_view name, const TypeDescriptor& type) -> void {
-    signature.parameter_indices.emplace(name,
-                                        static_cast<std::uint32_t>(signature.parameters.size()));
-    signature.parameters.push_back({.name = std::string(name), .type = type});
-  };
+  signature.return_type = {.kind = Kind::Void, .name = kVoidTypeName};
+  const TypeDescriptor integer{.kind = Kind::Int, .name = kIntTypeName};
   switch (builtin) {
     case Builtin::ArraySlice:
       signature.return_type = receiver;
-      parameter("start", integer);
-      parameter("end", integer);
+      signature.AddParameter("start", integer);
+      signature.AddParameter("end", integer);
       signature.optional_parameters = {"start", "end"};
       break;
     case Builtin::ArrayPush:
     case Builtin::ArrayUnshift:
       signature.return_type = integer;
-      parameter("items", element);
+      signature.AddParameter("items", element);
       signature.parameters.back().rest = true;
       break;
     case Builtin::ArrayPop:
@@ -163,21 +149,21 @@ FunctionDescriptor ArrayMethodSignature(Builtin builtin, const TypeDescriptor& e
       break;
     case Builtin::ArraySplice:
       signature.return_type = receiver;
-      parameter("start", integer);
-      parameter("deleteCount", integer);
-      parameter("items", element);
+      signature.AddParameter("start", integer);
+      signature.AddParameter("deleteCount", integer);
+      signature.AddParameter("items", element);
       signature.parameters.back().rest = true;
       signature.optional_parameters = {"start", "deleteCount"};
       break;
     case Builtin::ArrayFill:
       signature.return_type = receiver;
-      parameter("value", element);
-      parameter("start", integer);
-      parameter("end", integer);
+      signature.AddParameter("value", element);
+      signature.AddParameter("start", integer);
+      signature.AddParameter("end", integer);
       signature.optional_parameters = {"start", "end"};
       break;
     case Builtin::ArrayReserve:
-      parameter("capacity", integer);
+      signature.AddParameter("capacity", integer);
       break;
     case Builtin::ArrayReverse:
       signature.return_type = receiver;
@@ -203,26 +189,24 @@ FunctionDescriptor ArrayCallbackSignature(ArrayAlgorithm algorithm,
                                           const TypeDescriptor& element,
                                           const TypeDescriptor& accumulator) {
   FunctionDescriptor callback;
-  callback.return_type = {.kind = Kind::Void, .name = "void"};
+  callback.return_type = {.kind = Kind::Void, .name = kVoidTypeName};
   const auto parameter = [&callback](const TypeDescriptor& type) -> void {
-    const auto key = std::to_string(callback.parameters.size());
-    callback.parameter_indices.emplace(key, static_cast<std::uint32_t>(callback.parameters.size()));
-    callback.parameters.push_back({.name = key, .type = type});
+    callback.AddParameter(std::to_string(callback.parameters.size()), type);
   };
   if (algorithm == ArrayAlgorithm::Sort) {
     parameter(element);
-    callback.return_type = {.kind = Kind::Int, .name = "int"};
+    callback.return_type = {.kind = Kind::Int, .name = kIntTypeName};
   } else if (algorithm == ArrayAlgorithm::Reduce) {
     parameter(accumulator);
     callback.return_type = accumulator;
   } else if (algorithm == ArrayAlgorithm::Map) {
     callback.return_type = accumulator;
   } else if (algorithm != ArrayAlgorithm::ForEach) {
-    callback.return_type = {.kind = Kind::Bool, .name = "bool"};
+    callback.return_type = {.kind = Kind::Bool, .name = kBoolTypeName};
   }
   parameter(element);
   if (algorithm != ArrayAlgorithm::Sort) {
-    parameter({.kind = Kind::Int, .name = "int"});
+    parameter({.kind = Kind::Int, .name = kIntTypeName});
     parameter(MakeArrayType(element));
   }
   return callback;
@@ -239,13 +223,14 @@ FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
     }
     name += parameter.type.name;
   }
-  name += ") => " + callback.return_type.name;
+  name += ") => ";
+  name += callback.return_type.name;
   FunctionDescriptor method;
-  method.return_type = {.kind = Kind::Void, .name = "void"};
+  method.return_type = {.kind = Kind::Void, .name = kVoidTypeName};
   if (algorithm == ArrayAlgorithm::Some || algorithm == ArrayAlgorithm::Every) {
-    method.return_type = {.kind = Kind::Bool, .name = "bool"};
+    method.return_type = {.kind = Kind::Bool, .name = kBoolTypeName};
   } else if (algorithm == ArrayAlgorithm::FindIndex) {
-    method.return_type = {.kind = Kind::Int, .name = "int"};
+    method.return_type = {.kind = Kind::Int, .name = kIntTypeName};
   } else if (algorithm == ArrayAlgorithm::Map) {
     method.return_type = MakeArrayType(accumulator);
   } else if (algorithm == ArrayAlgorithm::Reduce) {
@@ -258,17 +243,18 @@ FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
   if (algorithm == ArrayAlgorithm::Sort) {
     parameter = "compareFn";
   }
-  method.parameter_indices.emplace(parameter, static_cast<std::uint32_t>(method.parameters.size()));
-  method.parameters.push_back(
-      {.name = parameter, .type = {.kind = Kind::Function, .name = std::move(name)}});
+  method.AddParameter(std::move(parameter),
+                      {.kind = Kind::Function, .name = InternTypeName(std::move(name))});
   if (algorithm == ArrayAlgorithm::Reduce) {
-    method.parameter_indices.emplace("initialValue", 1);
-    method.parameters.push_back({.name = "initialValue", .type = accumulator});
+    method.AddParameter("initialValue", accumulator);
   }
   return method;
 }
 
 const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
+  if (builtin == Builtin::StringGraphemeSlice) {
+    return kSignatures.at(static_cast<std::size_t>(Builtin::StringSlice));
+  }
   if (builtin == Builtin::ArrayCapacity || builtin == Builtin::CollectionSize) {
     return kSignatures.at(static_cast<std::size_t>(Builtin::ArrayLength));
   }
@@ -279,17 +265,16 @@ const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
     return ByteBuiltinSignature(builtin);
   }
   if (builtin == Builtin::StringToLowerCase || builtin == Builtin::StringToUpperCase) {
-    static const auto signature = Signature(Kind::String, "string", {});
+    static const auto signature =
+        MakeBuiltinSignature({.kind = Kind::String, .name = kStringTypeName}, {});
     return signature;
   }
   return kSignatures.at(static_cast<std::size_t>(builtin));
 }
 
 std::optional<Builtin> FindBuiltinProperty(Kind receiver, std::string_view name) {
-  for (const auto& [member, builtin] : RegExpProperties(receiver)) {
-    if (member == name) {
-      return builtin;
-    }
+  if (const auto builtin = FindMember(RegExpProperties(receiver), name)) {
+    return builtin;
   }
   if (receiver == Kind::ByteArray && name == "length") {
     return Builtin::ByteArrayLength;
@@ -321,19 +306,21 @@ std::optional<Builtin> FindBuiltinProperty(Kind receiver, std::string_view name)
 }
 
 bool IsBuiltinName(std::string_view name) {
-  return name == "dynamic" || name == "int" || name == "double" || name == "bool" ||
-         name == "string" || name == "void" || name == "Set" || name == "Map" || name == "Future" ||
-         name == "Completer" || name == "Timer" || name == "CancellationToken" ||
-         name == "ByteData" || name == "RegExpMatch" || name == "sleep" ||
+  return name == kDynamicTypeName || name == kIntTypeName || name == kDoubleTypeName ||
+         name == kBoolTypeName || name == kStringTypeName || name == kVoidTypeName ||
+         name == kSetTypeName || name == kMapTypeName || name == kFutureTypeName ||
+         name == kCompleterTypeName || name == kTimerTypeName ||
+         name == kCancellationTokenTypeName || name == kByteDataTypeName ||
+         name == kRegExpMatchTypeName || name == kSleepFunctionName ||
          FindBuiltin(Kind::Invalid, name).has_value();
 }
 
 std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {
-  if (const auto builtin = FindRegExpBuiltin(receiver, name)) {
-    return builtin;
+  if (receiver == Kind::RegExp || receiver == Kind::RegExpMatch) {
+    return FindMember(RegExpMethods(receiver), name);
   }
-  if (const auto builtin = FindByteBuiltin(receiver, name)) {
-    return builtin;
+  if (receiver == Kind::ByteArray || receiver == Kind::ByteData) {
+    return FindMember(ByteMethods(receiver), name);
   }
   if (receiver == Kind::String) {
     constexpr auto methods = std::to_array<std::pair<std::string_view, Builtin>>({
@@ -348,15 +335,16 @@ std::optional<Builtin> FindBuiltin(Kind receiver, std::string_view name) {
         {"startsWith", Builtin::StringStartsWith},
         {"endsWith", Builtin::StringEndsWith},
     });
-    for (const auto& [method, builtin] : methods) {
-      if (name == method) {
-        return builtin;
-      }
-    }
-    return std::nullopt;
+    return FindMember(methods, name);
   }
   if (receiver == Kind::Invalid) {
-    if (name == "String") {
+    if (name == kByteArrayTypeName) {
+      return Builtin::NewByteArray;
+    }
+    if (name == kRegExpTypeName) {
+      return Builtin::NewRegExp;
+    }
+    if (name == kMutableStringTypeName) {
       return Builtin::NewMutableString;
     }
   } else if ((receiver == Kind::Int || receiver == Kind::Double) && name == "toInt") {

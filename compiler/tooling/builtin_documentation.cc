@@ -140,9 +140,12 @@ std::string BuiltinDetail(const frontend::FunctionDescriptor& signature) {
     }
     const auto type_name =
         parameter.rest ? frontend::MakeArrayType(parameter.type).name : parameter.type.name;
-    text += ": " + type_name;
+    text += ": ";
+    text += type_name;
   }
-  return text + "): " + signature.return_type.name;
+  text += "): ";
+  text += signature.return_type.name;
+  return text;
 }
 
 std::string_view BuiltinDocumentation(Kind receiver, std::string_view name) {

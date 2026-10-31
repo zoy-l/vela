@@ -13,14 +13,11 @@
 
 #include "base/binary.h"
 #include "base/callable.h"
-#include "runtime/date.h"
-#include "runtime/error.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
 
 namespace vela::vm::internal {
-namespace {
 
 std::expected<bool, BinaryError> ReadFlag(BinaryReader& reader) {
   const auto flag = reader.Read<std::uint8_t>();
@@ -32,6 +29,20 @@ std::expected<bool, BinaryError> ReadFlag(BinaryReader& reader) {
   }
   return *flag != 0;
 }
+
+std::expected<ImageParameterFlags, BinaryError> ReadParameterFlags(BinaryReader& reader) {
+  const auto optional = ReadFlag(reader);
+  if (!optional) {
+    return std::unexpected(optional.error());
+  }
+  const auto rest = ReadFlag(reader);
+  if (!rest) {
+    return std::unexpected(rest.error());
+  }
+  return ImageParameterFlags{.optional = *optional, .rest = *rest};
+}
+
+namespace {
 
 struct ImageClass final {
   runtime::ClassLayout* layout = nullptr;
@@ -125,21 +136,14 @@ std::expected<ImageClass, BinaryError> ReadClass(
                           !options.interfaces.empty() || !options.dispatch_targets.empty())) {
     return std::unexpected(reader.Error("invalid enum identity layout"));
   }
-  if (*standard == static_cast<std::uint8_t>(StandardClass::Error)) {
-    auto& layout = isolate.error_layout();
+  if (*standard != static_cast<std::uint8_t>(StandardClass::None)) {
+    const auto is_error = *standard == static_cast<std::uint8_t>(StandardClass::Error);
+    auto& layout = is_error ? isolate.error_layout() : isolate.date_parts_layout();
     if (*fields != layout.field_count() ||
         !std::ranges::equal(*references, layout.reference_fields()) || options.callable ||
         !options.interfaces.empty() || !options.dispatch_targets.empty() || options.is_enum) {
-      return std::unexpected(reader.Error("invalid standard Error layout"));
-    }
-    return ImageClass{.layout = &layout};
-  }
-  if (*standard == static_cast<std::uint8_t>(StandardClass::DateParts)) {
-    auto& layout = isolate.date_parts_layout();
-    if (*fields != layout.field_count() ||
-        !std::ranges::equal(*references, layout.reference_fields()) || options.callable ||
-        !options.interfaces.empty() || !options.dispatch_targets.empty() || options.is_enum) {
-      return std::unexpected(reader.Error("invalid standard DateParts layout"));
+      return std::unexpected(reader.Error(is_error ? "invalid standard Error layout"
+                                                   : "invalid standard DateParts layout"));
     }
     return ImageClass{.layout = &layout};
   }
@@ -147,18 +151,6 @@ std::expected<ImageClass, BinaryError> ReadClass(
       .layout = isolate.CreateClassLayout(*fields, *references, std::move(options)),
       .signature = *callable_type,
   };
-}
-
-template <class T>
-std::expected<T*, std::string> ResolvePointer(std::uint64_t index, std::span<T* const> values) {
-  if (index == kNoImageId) {
-    return nullptr;
-  }
-  if (index >= values.size() ||
-      values.subspan(static_cast<std::size_t>(index)).front() == nullptr) {
-    return std::unexpected("invalid layout reference");
-  }
-  return values.subspan(static_cast<std::size_t>(index)).front();
 }
 
 class LayoutLoader final {
@@ -389,18 +381,14 @@ std::expected<ImageCollection, BinaryError> ReadCollection(BinaryReader& reader)
 
 std::expected<ImageSignature::Parameter, BinaryError> ReadSignatureParameter(BinaryReader& reader) {
   const auto type = ReadElement(reader);
-  const auto optional = ReadFlag(reader);
-  const auto rest = ReadFlag(reader);
   if (!type) {
     return std::unexpected(type.error());
   }
-  if (!optional) {
-    return std::unexpected(optional.error());
+  const auto flags = ReadParameterFlags(reader);
+  if (!flags) {
+    return std::unexpected(flags.error());
   }
-  if (!rest) {
-    return std::unexpected(rest.error());
-  }
-  return ImageSignature::Parameter{.type = *type, .optional = *optional, .rest = *rest};
+  return ImageSignature::Parameter{.type = *type, .optional = flags->optional, .rest = flags->rest};
 }
 
 std::expected<ImageSignature, BinaryError> ReadSignature(BinaryReader& reader) {
@@ -443,20 +431,8 @@ std::expected<void, BinaryError> BindClassTypes(BinaryReader& reader,
 }  // namespace
 
 std::expected<std::vector<std::string>, BinaryError> ReadTexts(BinaryReader& reader) {
-  const auto count = reader.Count(sizeof(std::uint64_t));
-  if (!count) {
-    return std::unexpected(count.error());
-  }
-  std::vector<std::string> texts;
-  texts.reserve(*count);
-  for (std::size_t index = 0; index < *count; ++index) {
-    auto text = reader.Text();
-    if (!text) {
-      return std::unexpected(text.error());
-    }
-    texts.push_back(std::move(*text));
-  }
-  return texts;
+  return ReadRecords<std::string>(reader, sizeof(std::uint64_t),
+                                  [](BinaryReader& input) { return input.Text(); });
 }
 
 std::expected<ImageElement, BinaryError> ReadElement(BinaryReader& reader) {

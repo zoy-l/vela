@@ -12,6 +12,7 @@ source_set("vm") {
     "debugger.cc",
     "debugger.h",
     "diagnostic.cc",
+    "diagnostic.h",
     "exception_handler.h",
     "execution.h",
     "execution_async.cc",

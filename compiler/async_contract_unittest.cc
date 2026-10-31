@@ -3,17 +3,16 @@
 #include <limits>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/value.h"
-#include "vm/bytecode_image.h"
 #include "vm/vm.h"
 
 namespace vela::compiler {
@@ -25,15 +24,15 @@ struct AsyncCase final {
   std::int64_t expected;
 };
 
-class AsyncContractTest : public testing::TestWithParam<AsyncCase> {};
-
-void ExpectFutureInteger(const runtime::Future& result, std::int64_t expected) {
-  ASSERT_EQ(result.state(), runtime::FutureState::Succeeded)
-      << result.error_diagnostic().value_or(runtime::FutureDiagnostic{}).message;
-  const auto value = result.value().value_or(runtime::Value::Null());
-  ASSERT_TRUE(value.IsInteger());
-  EXPECT_EQ(value.AsInteger(), expected);
+void CollectAndExpectNoAsyncState(runtime::Isolate& isolate) {
+  isolate.heap().Collect();
+  const auto& scheduler = isolate.scheduler();
+  EXPECT_EQ(scheduler.suspended_frame_count(), 0U);
+  EXPECT_EQ(scheduler.saved_state_bytes(), 0U);
+  EXPECT_EQ(isolate.heap().object_count(), 0U);
 }
+
+class AsyncContractTest : public testing::TestWithParam<AsyncCase> {};
 
 TEST_P(AsyncContractTest, ExecutesThroughCheckedBytecode) {
   const auto& test = GetParam();
@@ -51,68 +50,59 @@ TEST_P(AsyncContractTest, ExecutesThroughCheckedBytecode) {
   ASSERT_TRUE(main.IsValid());
   auto result = vm::VirtualMachine(isolate).ExecuteFuture(compiled.program, main.index());
   isolate.heap().Collect();
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(result));
-  ExpectFutureInteger(result, test.expected);
+  const auto value = test::AwaitInteger(result, isolate);
+  ASSERT_TRUE(value) << value.error();
+  EXPECT_EQ(*value, test.expected);
   EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0);
 }
 
 TEST_P(AsyncContractTest, LoadsWithoutCompilerStateInFreshIsolate) {
-  const auto& test = GetParam();
-  std::vector<std::byte> image;
-  {
-    runtime::Isolate isolate;
-    const auto compiled = CompileSource(test.source, isolate);
-    ASSERT_TRUE(compiled.Succeeded());
-    const auto saved = vm::SaveBytecode(compiled.program, isolate);
-    ASSERT_TRUE(saved) << saved.error().message;
-    image = *saved;
-  }
+  const auto& scenario = GetParam();
   runtime::Isolate isolate(1);
-  const auto program = vm::LoadBytecode(image, isolate);
-  ASSERT_TRUE(program) << program.error().message;
-  image.clear();
+  const auto program = test::ReloadSource(scenario.source, isolate);
+  ASSERT_TRUE(program) << program.error();
   auto result =
       vm::VirtualMachine(isolate).ExecuteFuture(*program, program->FindFunction("main").index());
   isolate.heap().Collect();
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(result));
-  ExpectFutureInteger(result, test.expected);
+  const auto value = test::AwaitInteger(result, isolate);
+  ASSERT_TRUE(value) << value.error();
+  EXPECT_EQ(*value, scenario.expected);
 }
 
 TEST(AsyncLifetimeTest, UnreachablePendingFramesAreCollected) {
   runtime::Isolate isolate(1);
   {
-    const auto compiled = CompileSource(R"(
+    const auto program = test::CompileCleanSource(R"(
 async func orphan(): Future<void> { await Completer<void>().future; }
 func main(): int { orphan(); return 0; }
 )",
-                                        isolate);
-    ASSERT_TRUE(compiled.Succeeded());
-    ASSERT_TRUE(
-        vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main")).Succeeded());
+                                                  isolate);
+    ASSERT_TRUE(program) << program.error();
+    const auto result = test::ExecuteInteger(*program, isolate);
+    ASSERT_TRUE(result) << result.error();
+    EXPECT_EQ(*result, 0);
     EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 1);
   }
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0);
-  EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0);
-  EXPECT_EQ(isolate.heap().object_count(), 0);
+  CollectAndExpectNoAsyncState(isolate);
 }
 
 TEST(AsyncLifetimeTest, RepeatedAwaitAllocatesOneResultFuturePerActivation) {
   runtime::Isolate isolate(std::numeric_limits<std::size_t>::max());
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileCleanSource(R"(
 async func main(): Future<int> {
   for (let index = 0; index < 64; index++) { await Future.value(index); }
   return 42;
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
+                                                 isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
   const auto baseline = isolate.heap().object_count();
-  auto result = vm::VirtualMachine(isolate).ExecuteFuture(
-      compiled.program, compiled.program.FindFunction("main").index());
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(result));
+  auto result =
+      vm::VirtualMachine(isolate).ExecuteFuture(*compiled, compiled->FindFunction("main").index());
+  const auto value = test::AwaitInteger(result, isolate);
+  ASSERT_TRUE(value) << value.error();
   constexpr std::int64_t kExpectedResult = 42;
-  ExpectFutureInteger(result, kExpectedResult);
+  EXPECT_EQ(*value, kExpectedResult);
   EXPECT_EQ(isolate.heap().object_count() - baseline, 65U);
   EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
   EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
@@ -121,39 +111,36 @@ async func main(): Future<int> {
 TEST(AsyncLifetimeTest, UnreachableResuspendedActivationIsCollected) {
   runtime::Isolate isolate(1);
   {
-    const auto compiled = CompileSource(R"(
+    const auto program = test::CompileCleanSource(R"(
 async func orphan(): Future<void> { await 0; await Completer<void>().future; }
 func main(): int { orphan(); return 0; }
 )",
-                                        isolate);
-    ASSERT_TRUE(compiled.Succeeded());
-    ASSERT_TRUE(
-        vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main")).Succeeded());
+                                                  isolate);
+    ASSERT_TRUE(program) << program.error();
+    const auto result = test::ExecuteInteger(*program, isolate);
+    ASSERT_TRUE(result) << result.error();
+    EXPECT_EQ(*result, 0);
     ASSERT_TRUE(isolate.scheduler().PumpOne());
     EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 1U);
   }
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
-  EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
-  EXPECT_EQ(isolate.heap().object_count(), 0U);
+  CollectAndExpectNoAsyncState(isolate);
 }
 
 TEST(AsyncLifetimeTest, PendingGlobalProducerDoesNotRootItsOwnProgram) {
   runtime::Isolate isolate(1);
   {
-    const auto compiled = CompileSource(R"(
+    const auto program = test::CompileCleanSource(R"(
 const producer = Completer<void>();
 async func task(): Future<void> { await producer.future; }
 func main(): int { task(); return 0; }
 )",
-                                        isolate);
-    ASSERT_TRUE(compiled.Succeeded());
-    ASSERT_TRUE(
-        vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main")).Succeeded());
+                                                  isolate);
+    ASSERT_TRUE(program) << program.error();
+    const auto result = test::ExecuteInteger(*program, isolate);
+    ASSERT_TRUE(result) << result.error();
+    EXPECT_EQ(*result, 0);
   }
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0);
-  EXPECT_EQ(isolate.heap().object_count(), 0);
+  CollectAndExpectNoAsyncState(isolate);
 }
 
 TEST(AsyncLifetimeTest, EmptyRaceReportsIdleWithoutKeepingProcessAlive) {
@@ -170,20 +157,20 @@ TEST(AsyncLifetimeTest, EmptyRaceReportsIdleWithoutKeepingProcessAlive) {
 TEST(AsyncLifetimeTest, PendingAggregateAndCallbacksDoNotRootTheirOwnProgram) {
   runtime::Isolate isolate(1);
   {
-    const auto compiled = CompileSource(R"(
+    const auto program = test::CompileCleanSource(R"(
 const producer = Completer<int>();
 func main(): int {
   Future.wait([producer.future, producer.future]).then(values => values.length);
   return 0;
 }
 )",
-                                        isolate);
-    ASSERT_TRUE(compiled.Succeeded());
-    ASSERT_TRUE(
-        vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main")).Succeeded());
+                                                  isolate);
+    ASSERT_TRUE(program) << program.error();
+    const auto result = test::ExecuteInteger(*program, isolate);
+    ASSERT_TRUE(result) << result.error();
+    EXPECT_EQ(*result, 0);
   }
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.heap().object_count(), 0);
+  CollectAndExpectNoAsyncState(isolate);
 }
 
 INSTANTIATE_TEST_SUITE_P(

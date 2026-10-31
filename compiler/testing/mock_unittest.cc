@@ -3,10 +3,10 @@
 #include <string_view>
 #include <utility>
 
-#include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/suite.h"
@@ -18,6 +18,16 @@ namespace vela::testing {
 namespace {
 
 class ScriptMockTest : public ::testing::TestWithParam<std::string_view> {};
+
+void ExpectReleasedSuite(runtime::Isolate& isolate) {
+  isolate.heap().FinishCollection();
+  isolate.heap().Collect();
+  EXPECT_EQ(isolate.heap().object_count(), 0U);
+  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
+  EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
+  EXPECT_TRUE(isolate.ReloadBlockers().empty());
+  EXPECT_FALSE(isolate.scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork));
+}
 
 TEST(ScriptMockLifetimeTest, CancellationClosesPendingObservationsAndReleasesAllRoots) {
   runtime::Isolate isolate(1);
@@ -50,12 +60,7 @@ func main(): void {
       return error.category == "MockSessionClosed";
     }));
   }
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.heap().object_count(), 0U);
-  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
-  EXPECT_TRUE(isolate.ReloadBlockers().empty());
-  EXPECT_FALSE(isolate.scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork));
+  ExpectReleasedSuite(isolate);
 }
 
 TEST_P(ScriptMockTest, ExecutesThroughSdkModulesAndTestScopesUnderGc) {
@@ -66,12 +71,7 @@ TEST_P(ScriptMockTest, ExecutesThroughSdkModulesAndTestScopesUnderGc) {
     const frontend::SourceInput input{.path = "mock_test.vela", .text = GetParam()};
     const auto compiled =
         compiler::CompileParsed(frontend::LoadSources({&input, 1}, input.path), isolate);
-    for (const auto& diagnostic : compiled.diagnostics) {
-      EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error)
-          << diagnostic.source_path << ':' << diagnostic.location.line << ':'
-          << diagnostic.location.column << ' ' << diagnostic.message;
-    }
-    ASSERT_TRUE(compiled.Succeeded());
+    ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
     Suite suite(isolate, compiled.program, {}, output);
     const auto result = suite.Run();
     EXPECT_EQ(result.exit_code, 0) << output.str();
@@ -83,13 +83,7 @@ TEST_P(ScriptMockTest, ExecutesThroughSdkModulesAndTestScopesUnderGc) {
       EXPECT_EQ(test.status, TestStatus::Passed);
     }
   }
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.heap().object_count(), 0U);
-  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
-  EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
-  EXPECT_TRUE(isolate.ReloadBlockers().empty());
-  EXPECT_FALSE(isolate.scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork));
+  ExpectReleasedSuite(isolate);
 }
 
 INSTANTIATE_TEST_SUITE_P(Core,

@@ -14,6 +14,7 @@
 #include "base/source_location.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -55,12 +56,7 @@ RegisterId Lowerer::EmitArrayCallback(RegisterId callback,
   });
   RecordValueType(result, signature.return_type);
   // 同一个已求值的 receiver/version 调用窗口跨所有迭代复用，避免逐次物化检查参数。
-  static_cast<void>(EmitTemporary({
-      .opcode = Opcode::BuiltinCall,
-      .lhs = guard,
-      .index = static_cast<std::uint32_t>(Builtin::ArrayCheckMutation),
-      .location = location,
-  }));
+  EmitBuiltinCall(Builtin::ArrayCheckMutation, AllocateTemporary(location), guard, location);
   return result;
 }
 
@@ -87,12 +83,8 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
     });
   }
   if (algorithm == ArrayAlgorithm::Sort && signature == nullptr) {
-    const auto result = EmitTemporary({
-        .opcode = Opcode::BuiltinCall,
-        .lhs = base,
-        .index = static_cast<std::uint32_t>(Builtin::ArraySortDefault),
-        .location = location,
-    });
+    const auto result = AllocateTemporary(location);
+    EmitBuiltinCall(Builtin::ArraySortDefault, result, base, location);
     return {.reg = result, .type = model_.expression_types.at(&expression)};
   }
   using Comparison = ArrayAlgorithmRegisters::Comparison;
@@ -104,22 +96,12 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
                      ? Comparison::Double
                      : Comparison::Integer;
   }
-  const auto length = EmitTemporary({
-      .opcode = Opcode::BuiltinCall,
-      .lhs = base,
-      .index = static_cast<std::uint32_t>(Builtin::ArrayLength),
-      .location = location,
-  });
+  const auto length = AllocateTemporary(location);
+  EmitBuiltinCall(Builtin::ArrayLength, length, base, location);
   const auto callback = base + 1;
   const auto guard = AllocateRegisterWindow(2, location);
   Emit({.opcode = Opcode::Move, .dst = guard, .lhs = base, .location = location});
-  Emit({
-      .opcode = Opcode::BuiltinCall,
-      .dst = guard + 1,
-      .lhs = base,
-      .index = static_cast<std::uint32_t>(Builtin::ArrayMutation),
-      .location = location,
-  });
+  EmitBuiltinCall(Builtin::ArrayMutation, guard + 1, base, location);
   return LowerArrayTraversal(
       {
           .array = base,
@@ -144,18 +126,14 @@ Lowerer::LoweredValue Lowerer::LowerArraySortTraversal(const ArrayAlgorithmRegis
   Emit({.opcode = Opcode::Move, .dst = arguments, .lhs = base, .location = location});
   Emit({.opcode = Opcode::LoadInt, .dst = arguments + 1, .location = location});
   Emit({.opcode = Opcode::Move, .dst = arguments + 2, .lhs = length, .location = location});
-  const auto work = EmitTemporary({
-      .opcode = Opcode::BuiltinCall,
-      .lhs = arguments,
-      .index = static_cast<std::uint32_t>(Builtin::ArraySlice),
-      .location = location,
-  });
+  const auto work = AllocateTemporary(location);
+  EmitBuiltinCall(Builtin::ArraySlice, work, arguments, location);
   RecordValueType(work, result_type);
   const auto positions = EmitTemporary({
       .opcode = Opcode::NewDynamicArray,
       .lhs = length,
-      .index = RegisterArrayType(
-          frontend::MakeArrayType({.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"})),
+      .index = RegisterArrayType(frontend::MakeArrayType(
+          {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName})),
       .location = location,
   });
   const auto zero = EmitTemporary({.opcode = Opcode::LoadInt, .location = location});
@@ -221,7 +199,7 @@ RegisterId Lowerer::CheckArrayCallbackResult(RegisterId value,
                                      ? result_type
                                      : frontend::TypeDescriptor{
                                            .kind = frontend::TypeDescriptor::Kind::Bool,
-                                           .name = "bool",
+                                           .name = frontend::kBoolTypeName,
                                        });
     }
     EmitBuiltinCall(Builtin::DynamicArrayValidate, validated, checked, location);
@@ -231,7 +209,8 @@ RegisterId Lowerer::CheckArrayCallbackResult(RegisterId value,
   const auto expected_result =
       algorithm == ArrayAlgorithm::Reduce
           ? result_type
-          : frontend::TypeDescriptor{.kind = frontend::TypeDescriptor::Kind::Bool, .name = "bool"};
+          : frontend::TypeDescriptor{.kind = frontend::TypeDescriptor::Kind::Bool,
+                                     .name = frontend::kBoolTypeName};
   if (!inputs.validation_plan && callback_result.kind == frontend::TypeDescriptor::Kind::Dynamic &&
       algorithm != ArrayAlgorithm::Map && algorithm != ArrayAlgorithm::ForEach) {
     value = LowerConversion({.reg = value, .type = callback_result}, expected_result, location).reg;
@@ -300,7 +279,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayTraversal(const ArrayAlgorithmRegisters
   const auto& element_type = inputs.element_type;
   const frontend::TypeDescriptor integer{
       .kind = frontend::TypeDescriptor::Kind::Int,
-      .name = "int",
+      .name = frontend::kIntTypeName,
   };
   auto argument_types = algorithm == Algorithm::Reduce
                             ? std::vector{result_type, element_type, integer, receiver_type}
@@ -360,7 +339,8 @@ RegisterId Lowerer::EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
   if (inputs.validation_plan) {
     const std::array arguments{*inputs.validation_plan, comparison};
     const auto result = AllocateTemporary(location);
-    RecordValueType(result, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
+    RecordValueType(result,
+                    {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
     EmitBuiltinCall(Builtin::DynamicArrayValidate, result, arguments, location);
     comparison = result;
   }
@@ -400,8 +380,10 @@ RegisterId Lowerer::EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
       {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = left, .location = location});
   const auto right_position = EmitTemporary(
       {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = right, .location = location});
-  RecordValueType(left_position, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
-  RecordValueType(right_position, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
+  RecordValueType(left_position,
+                  {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
+  RecordValueType(right_position,
+                  {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
   Emit({
       .opcode = Opcode::LessInt,
       .dst = less,
@@ -458,8 +440,10 @@ void Lowerer::LowerArraySiftDown(RegisterId root,
       {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = root, .location = location});
   const auto child_position = EmitTemporary(
       {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = child, .location = location});
-  RecordValueType(root_position, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
-  RecordValueType(child_position, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
+  RecordValueType(root_position,
+                  {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
+  RecordValueType(child_position,
+                  {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
   Emit({
       .opcode = Opcode::SetIndex,
       .dst = inputs.positions,
@@ -526,8 +510,10 @@ void Lowerer::LowerArraySort(const ArrayAlgorithmRegisters& inputs,
       {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = zero, .location = location});
   const auto last_position = EmitTemporary(
       {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = end, .location = location});
-  RecordValueType(first_position, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
-  RecordValueType(last_position, {.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"});
+  RecordValueType(first_position,
+                  {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
+  RecordValueType(last_position,
+                  {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
   Emit({
       .opcode = Opcode::SetIndex,
       .dst = inputs.positions,

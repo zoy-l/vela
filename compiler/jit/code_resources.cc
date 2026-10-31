@@ -115,9 +115,11 @@ class ResourceAccounting final : public llvm::orc::LinkGraphLinkingLayer::Plugin
                                    llvm::orc::ResourceKey destination_key,
                                    llvm::orc::ResourceKey source_key) override {
     const std::scoped_lock lock(mutex_);
-    if (registered_.contains(source_key)) {
-      registered_.try_emplace(destination_key).first->second.Add(registered_.at(source_key));
-      registered_.erase(source_key);
+    const auto found = registered_.find(source_key);
+    if (found != registered_.end()) {
+      const auto memory = found->second;
+      registered_.erase(found);
+      registered_.try_emplace(destination_key).first->second.Add(memory);
     }
   }
 

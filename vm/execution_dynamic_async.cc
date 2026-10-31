@@ -1,7 +1,6 @@
 #include "vm/execution.h"
 
 #include <array>
-#include <expected>
 #include <span>
 
 #include "base/async_operation.h"
@@ -26,11 +25,7 @@ StepResult Execution::ExecuteDynamicAsync(ActiveFrame& active, Instruction instr
   const auto result = runtime::ExecuteDynamicAsyncOperation(
       isolate_, DescribeFutureCall(AsyncOperation::Count, values),
       active.function->layouts->types(), MakeFutureCallbacks(), diagnostic);
-  if (!result) {
-    return std::unexpected(result.error());
-  }
-  active.frame.registers().subspan(DecodeA(instruction)).front() = *result;
-  return {};
+  return StoreResult(active.frame.registers().subspan(DecodeA(instruction)).front(), result);
 }
 
 }  // namespace vela::vm::internal

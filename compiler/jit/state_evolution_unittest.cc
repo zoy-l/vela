@@ -14,8 +14,8 @@
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "compiler/jit/compiler.h"
+#include "compiler/jit/test_support.h"
 #include "compiler/source_session.h"
-#include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_context.h"
@@ -36,34 +36,8 @@ struct JitStateTest : public testing::TestWithParam<NativeCodeTier> {
   }
 
   std::expected<void, std::string> Update(std::string text) {
-    const auto revision = source_.snapshot()->revision;
-    auto& dispatch = isolate_.native_dispatch();
-    const auto retained = dispatch.RetainedDeclarations();
-    const auto source = source_.Prepare(
-        {
-            .base_revision = revision,
-            .changes = {{.path = "main.vela", .text = std::move(text)}},
-            .added_roots = {},
-        },
-        retained);
-    if (!source) {
-      return std::unexpected(source.error().diagnostics.front().message);
-    }
-    const auto compiled = compiler_->Compile(source->snapshot().program, {.tier = GetParam()});
-    if (!compiled) {
-      return std::unexpected(compiled.error().front().message);
-    }
-    auto candidate = dispatch.Prepare(revision, compiled->image);
-    if (!candidate) {
-      return std::unexpected(candidate.error().message);
-    }
-    if (const auto published = dispatch.Publish(std::move(*candidate)); !published) {
-      return std::unexpected(published.error().message);
-    }
-    if (const auto committed = source_.Commit(*source); !committed) {
-      return std::unexpected("source commit failed");
-    }
-    return {};
+    const auto retained = isolate_.native_dispatch().RetainedDeclarations();
+    return test::UpdateSource(*compiler_, source_, isolate_, std::move(text), GetParam(), retained);
   }
 
   runtime::NativeNamedEntry Entry(std::string_view name) {
@@ -281,14 +255,7 @@ TEST_P(JitStateTest, SuspendedOldFramesKeepTheirFieldDependenciesUntilTheyFinish
   update = Update(changed);
   ASSERT_FALSE(update);
   EXPECT_NE(update.error().find("deleted field"), std::string::npos);
-  auto* future = runtime::Heap::GetFuture(*pending.value().AsObject());
-  ASSERT_NE(future, nullptr);
-  ASSERT_TRUE(isolate_.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost));
-  const auto completed_value = future->value();
-  if (!completed_value) {
-    FAIL() << "Future did not complete with a value";
-  }
-  EXPECT_EQ(completed_value->AsInteger(), 42);
+  ASSERT_TRUE(test::CompletesWithInteger(isolate_, pending.value(), 42));
   update = Update(changed);
   ASSERT_TRUE(update) << update.error();
 }
@@ -307,14 +274,7 @@ TEST_P(JitStateTest, SuspendedFramesOnlyKeepFieldAccessesReachableFromTheirAwait
                         "export async func read(value: Box): Future<int> { return 0; }");
   ASSERT_TRUE(updated) << updated.error();
   ASSERT_TRUE(Entry("release").Invoke({}));
-  auto* future = runtime::Heap::GetFuture(*pending.value().AsObject());
-  ASSERT_NE(future, nullptr);
-  ASSERT_TRUE(isolate_.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost));
-  const auto completed_value = future->value();
-  if (!completed_value) {
-    FAIL() << "Future did not complete with a value";
-  }
-  EXPECT_EQ(completed_value->AsInteger(), 42);
+  ASSERT_TRUE(test::CompletesWithInteger(isolate_, pending.value(), 42));
   isolate_.heap().Collect();
   EXPECT_EQ(compiler_->resource_counts().batches, 1U);
 }
@@ -362,30 +322,21 @@ TEST_P(JitStateTest, AQueuedPublicationMigratesAtAPreciseSafepointAndOldFramesCa
                        "export func caller(value: Box): int { return helper(value); }");
   ASSERT_TRUE(update) << update.error();
   const runtime::RootedValue object(isolate_, *Entry("make").Invoke({}));
-  const auto source = source_.Prepare({
-      .base_revision = 1,
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = common +
-                          "func helper(value: Box): int { return value.stored + 2; } "
-                          "export func caller(value: Box): int { return helper(value) + 100; }",
-              },
-          },
-      .added_roots = {},
-  });
-  ASSERT_TRUE(source);
-  const auto compiled = compiler_->Compile(source->snapshot().program, {.tier = GetParam()});
-  ASSERT_TRUE(compiled);
+  const auto compiled =
+      test::CompileUpdate(*compiler_, source_,
+                          common +
+                              "func helper(value: Box): int { return value.stored + 2; } "
+                              "export func caller(value: Box): int { return helper(value) + 100; }",
+                          GetParam());
+  ASSERT_TRUE(compiled) << compiled.error();
   auto& dispatch = isolate_.native_dispatch();
-  auto candidate = dispatch.Prepare(1, compiled->image);
+  auto candidate = dispatch.Prepare(1, compiled->code.image);
   ASSERT_TRUE(candidate);
   bool published = false;
   ASSERT_TRUE(isolate_.native_control().ScheduleSafepoint([&] {
     const auto result = dispatch.Publish(std::move(*candidate));
     ASSERT_TRUE(result) << result.error().message;
-    ASSERT_TRUE(source_.Commit(*source));
+    ASSERT_TRUE(source_.Commit(compiled->source));
     published = true;
   }));
   const auto result = Entry("caller").Invoke(std::array{object.value()});
@@ -436,14 +387,7 @@ TEST_P(JitStateTest, AwaitingConstructorArgumentsDoesNotSuspendAnInitializationB
   ASSERT_TRUE(update) << update.error();
   const runtime::RootedValue result(isolate_, *Entry("main").Invoke({}));
   EXPECT_FALSE(isolate_.native_control().IsInitializing());
-  auto* future = runtime::Heap::GetFuture(*result.value().AsObject());
-  ASSERT_NE(future, nullptr);
-  ASSERT_TRUE(isolate_.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost));
-  const auto completed_value = future->value();
-  if (!completed_value) {
-    FAIL() << "Future did not complete with a value";
-  }
-  EXPECT_EQ(completed_value->AsInteger(), 42);
+  ASSERT_TRUE(test::CompletesWithInteger(isolate_, result.value(), 42));
   EXPECT_FALSE(isolate_.native_control().IsInitializing());
 }
 
@@ -453,22 +397,11 @@ TEST_P(JitStateTest, FieldBlockPreparationFailureLeavesEveryObjectAndTheCandidat
   ASSERT_TRUE(update) << update.error();
   const runtime::RootedValue first(isolate_, *Entry("make").Invoke({}));
   const runtime::RootedValue second(isolate_, *Entry("make").Invoke({}));
-  const auto source = source_.Prepare({
-      .base_revision = 1,
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = "class Box { value: int = 100; extra: int = 2; } " + common,
-              },
-          },
-      .added_roots = {},
-  });
-  ASSERT_TRUE(source);
-  const auto compiled = compiler_->Compile(source->snapshot().program, {.tier = GetParam()});
-  ASSERT_TRUE(compiled);
+  const auto compiled = test::CompileUpdate(
+      *compiler_, source_, "class Box { value: int = 100; extra: int = 2; } " + common, GetParam());
+  ASSERT_TRUE(compiled) << compiled.error();
   auto& dispatch = isolate_.native_dispatch();
-  auto candidate = dispatch.Prepare(1, compiled->image);
+  auto candidate = dispatch.Prepare(1, compiled->code.image);
   ASSERT_TRUE(candidate);
   auto& heap = isolate_.heap();
   heap.FinishCollection();
@@ -504,7 +437,7 @@ TEST_P(JitStateTest, FieldBlockPreparationFailureLeavesEveryObjectAndTheCandidat
   EXPECT_EQ(heap.allocated_bytes(), bytes);
   heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
   ASSERT_TRUE(dispatch.Publish(std::move(*candidate)));
-  ASSERT_TRUE(source_.Commit(*source));
+  ASSERT_TRUE(source_.Commit(compiled->source));
   EXPECT_EQ(dispatch.revision(), 2U);
 }
 
@@ -654,23 +587,13 @@ TEST_P(JitStateTest, AGenericDependencyCreatedAfterCompilationRequiresRepreparin
       "func value<T>(input: T): int { return 40; } "
       "export func old(): () => int { return () => value<int>(0); }");
   ASSERT_TRUE(update) << update.error();
-  const auto source = source_.Prepare({
-      .base_revision = 1,
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = "func value<T>(input: T): int { return 42; } "
-                          "export func old(): () => int { return () => 0; }",
-              },
-          },
-      .added_roots = {},
-  });
-  ASSERT_TRUE(source);
-  const auto compiled = compiler_->Compile(source->snapshot().program, {.tier = GetParam()});
-  ASSERT_TRUE(compiled);
+  const auto compiled = test::CompileUpdate(*compiler_, source_,
+                                            "func value<T>(input: T): int { return 42; } "
+                                            "export func old(): () => int { return () => 0; }",
+                                            GetParam());
+  ASSERT_TRUE(compiled) << compiled.error();
   auto& dispatch = isolate_.native_dispatch();
-  auto candidate = dispatch.Prepare(1, compiled->image);
+  auto candidate = dispatch.Prepare(1, compiled->code.image);
   ASSERT_TRUE(candidate);
   const runtime::RootedValue callback(isolate_, *Entry("old").Invoke({}));
   const auto published = dispatch.Publish(std::move(*candidate));
@@ -678,7 +601,7 @@ TEST_P(JitStateTest, AGenericDependencyCreatedAfterCompilationRequiresRepreparin
   EXPECT_EQ(published.error().status, runtime::NativePublicationStatus::NeedsCompilation);
   EXPECT_EQ(dispatch.revision(), 1U);
   EXPECT_EQ(source_.snapshot()->revision, 1U);
-  update = Update(*source->snapshot().sources.at("main.vela"));
+  update = Update(*compiled->source.snapshot().sources.at("main.vela"));
   ASSERT_TRUE(update) << update.error();
 }
 
@@ -743,29 +666,19 @@ TEST_P(JitStateTest, FailedConstantPreparationReleasesObjectsBeforeRollingBackTh
       "class Box { value: int = 42; } "
       "export func answer(): int { return Box().value; }");
   ASSERT_TRUE(update) << update.error();
-  const auto source = source_.Prepare({
-      .base_revision = 1,
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text = "class Box { value: int = 100; } "
-                          "export func answer(): int { return Box().value; } "
-                          "export func text(): string { return '" +
-                          std::string(4096, 'x') + "'; }",
-              },
-          },
-      .added_roots = {},
-  });
-  ASSERT_TRUE(source);
-  const auto compiled = compiler_->Compile(source->snapshot().program, {.tier = GetParam()});
-  ASSERT_TRUE(compiled);
+  const auto compiled = test::CompileUpdate(*compiler_, source_,
+                                            "class Box { value: int = 100; } "
+                                            "export func answer(): int { return Box().value; } "
+                                            "export func text(): string { return '" +
+                                                std::string(4096, 'x') + "'; }",
+                                            GetParam());
+  ASSERT_TRUE(compiled) << compiled.error();
   isolate_.heap().Collect();
   const auto layouts = isolate_.layout_counts();
   const auto bytes = isolate_.heap().allocated_bytes();
   for (const auto allowance : std::array<std::size_t, 4>{0, 64, 128, 256}) {
     isolate_.heap().SetAllocationLimit(bytes + allowance);
-    const auto candidate = isolate_.native_dispatch().Prepare(1, compiled->image);
+    const auto candidate = isolate_.native_dispatch().Prepare(1, compiled->code.image);
     ASSERT_FALSE(candidate);
     EXPECT_EQ(candidate.error().status, runtime::NativePublicationStatus::InstantiationFailed);
     isolate_.heap().SetAllocationLimit(std::numeric_limits<std::size_t>::max());
@@ -815,34 +728,23 @@ TEST_P(JitStateTest, DiscardedCandidatesReleaseNewNominalsEnumsAndInternedSchema
   ASSERT_TRUE(Update("export func answer(): int { return 42; }"));
   isolate_.heap().Collect();
   const auto initial = isolate_.layout_counts();
-  const auto prepared = source_.Prepare({
-      .base_revision = 1,
-      .changes =
-          {
-              {
-                  .path = "main.vela",
-                  .text =
-                      "interface Readable { read(): int; } "
-                      "enum Mode { first, second } "
-                      "class Added implements Readable { "
-                      "value: int = 42; read(): int { return this.value; } } "
-                      "export func answer(): int { return 42; } "
-                      "export func values(): Added[] { return []; } "
-                      "export func lookup(): Map<string, Added> { return Map<string, Added>(); } "
-                      "export func future(value: Added): Future<Added> { return "
-                      "Future.value(value); } "
-                      "export func mode(): Mode { return Mode.second; }",
-              },
-          },
-      .added_roots = {},
-  });
-  ASSERT_TRUE(prepared);
-  const auto compiled = compiler_->Compile(prepared->snapshot().program, {.tier = GetParam()});
-  ASSERT_TRUE(compiled);
+  const auto compiled = test::CompileUpdate(
+      *compiler_, source_,
+      "interface Readable { read(): int; } "
+      "enum Mode { first, second } "
+      "class Added implements Readable { "
+      "value: int = 42; read(): int { return this.value; } } "
+      "export func answer(): int { return 42; } "
+      "export func values(): Added[] { return []; } "
+      "export func lookup(): Map<string, Added> { return Map<string, Added>(); } "
+      "export func future(value: Added): Future<Added> { return Future.value(value); } "
+      "export func mode(): Mode { return Mode.second; }",
+      GetParam());
+  ASSERT_TRUE(compiled) << compiled.error();
   constexpr std::uint32_t kDiscardedCandidates = 6;
   for (std::uint32_t iteration = 0; iteration < kDiscardedCandidates; ++iteration) {
     {
-      const auto candidate = isolate_.native_dispatch().Prepare(1, compiled->image);
+      const auto candidate = isolate_.native_dispatch().Prepare(1, compiled->code.image);
       ASSERT_TRUE(candidate);
       isolate_.heap().Collect();
       EXPECT_GT(isolate_.layout_counts().nominal_types, initial.nominal_types);
@@ -854,14 +756,14 @@ TEST_P(JitStateTest, DiscardedCandidatesReleaseNewNominalsEnumsAndInternedSchema
   // 自动 GC 常在实例化事务内完成；事务退出后也必须兑现延迟的元数据清扫。
   constexpr std::uint32_t kAutomaticGcAttempts = 64;
   for (std::uint32_t iteration = 0; iteration < kAutomaticGcAttempts; ++iteration) {
-    const auto candidate = isolate_.native_dispatch().Prepare(1, compiled->image);
+    const auto candidate = isolate_.native_dispatch().Prepare(1, compiled->code.image);
     ASSERT_TRUE(candidate);
   }
   constexpr std::size_t kTransientNominalLimit = 8;
   EXPECT_LE(isolate_.layout_counts().nominal_types, initial.nominal_types + kTransientNominalLimit);
   isolate_.heap().Collect();
   EXPECT_EQ(isolate_.layout_counts(), initial);
-  auto accepted = isolate_.native_dispatch().Prepare(1, compiled->image);
+  auto accepted = isolate_.native_dispatch().Prepare(1, compiled->code.image);
   ASSERT_TRUE(accepted);
   ASSERT_TRUE(isolate_.native_dispatch().Publish(std::move(*accepted)));
   const auto enumeration = Entry("mode").Invoke({});

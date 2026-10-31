@@ -127,6 +127,25 @@ enum class TokenRole : std::uint8_t {
          kind == TokenKind::Match;
 }
 
+[[nodiscard]] constexpr bool IsDeclarationStart(TokenKind kind) noexcept {
+  switch (kind) {
+    case TokenKind::Import:
+    case TokenKind::Export:
+    case TokenKind::External:
+    case TokenKind::Func:
+    case TokenKind::Async:
+    case TokenKind::Class:
+    case TokenKind::Interface:
+    case TokenKind::Enum:
+    case TokenKind::Type:
+    case TokenKind::Let:
+    case TokenKind::Const:
+      return true;
+    default:
+      return false;
+  }
+}
+
 struct Token final {
   // 字符串 token 保存已解码的 UTF-8 内容，其他 token 保存源码文本。
   std::string lexeme;

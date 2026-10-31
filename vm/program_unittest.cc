@@ -39,6 +39,11 @@ constexpr auto kInvalidOpcode = static_cast<OpCode>(0xff);
 constexpr std::int16_t kOutsideJump = 5;
 constexpr std::uint32_t kOriginalLine = 7;
 constexpr std::uint32_t kChangedLine = 99;
+constexpr auto kDivisionByZeroCode = std::to_array<Instruction>({
+    EncodeAImm16(OpCode::LoadInt, 0, 0),
+    EncodeABC(OpCode::DivInt, 0, 0, 0),
+    EncodeABC(OpCode::Return, 0, 0, 0),
+});
 
 std::int64_t NativeIncrement(runtime::NativeContext& /*context*/, std::int64_t value) noexcept {
   return value + 1;
@@ -48,13 +53,21 @@ std::int64_t NativeInitializer(runtime::NativeContext& /*context*/) noexcept {
   return kExpectedResult;
 }
 
-TEST(ProgramTest, RejectsNativeBytecodeBodiesAndMismatchedParameterCounts) {
+class NativeIncrementProgramTest : public testing::Test {
+ protected:
+  NativeIncrementProgramTest() {
+    native.name = "increment";
+    native.native = std::make_shared<const runtime::NativeFunction>(
+        runtime::NativeFunction::Bind<NativeIncrement>("increment"));
+    native.parameter_count = 1;
+    native.register_count = 1;
+  }
+
   runtime::Isolate isolate;
   FunctionStorage native;
-  native.native = std::make_shared<const runtime::NativeFunction>(
-      runtime::NativeFunction::Bind<NativeIncrement>("increment"));
-  native.parameter_count = 1;
-  native.register_count = 1;
+};
+
+TEST_F(NativeIncrementProgramTest, RejectsNativeBytecodeBodiesAndMismatchedParameterCounts) {
   EXPECT_TRUE(Program::Create({native}, isolate));
   native.code = {EncodeABC(OpCode::Return, 0, 0, 0)};
   EXPECT_FALSE(Program::Create({native}, isolate));
@@ -66,14 +79,7 @@ TEST(ProgramTest, RejectsNativeBytecodeBodiesAndMismatchedParameterCounts) {
   EXPECT_FALSE(Program::Create({native}, isolate));
 }
 
-TEST(ProgramTest, RawBytecodeNativeCallsStillCheckArgumentPayloadTypes) {
-  runtime::Isolate isolate;
-  FunctionStorage native;
-  native.name = "increment";
-  native.native = std::make_shared<const runtime::NativeFunction>(
-      runtime::NativeFunction::Bind<NativeIncrement>("increment"));
-  native.parameter_count = 1;
-  native.register_count = 1;
+TEST_F(NativeIncrementProgramTest, RawBytecodeNativeCallsStillCheckArgumentPayloadTypes) {
   FunctionStorage caller;
   caller.name = "caller";
   caller.register_count = 1;
@@ -92,13 +98,7 @@ TEST(ProgramTest, RawBytecodeNativeCallsStillCheckArgumentPayloadTypes) {
   EXPECT_EQ(result.stack_trace.back().function, "caller");
 }
 
-TEST(ProgramTest, RejectsNativeTypeSignaturesThatDisagreeWithBinding) {
-  runtime::Isolate isolate;
-  FunctionStorage native;
-  native.native = std::make_shared<const runtime::NativeFunction>(
-      runtime::NativeFunction::Bind<NativeIncrement>("increment"));
-  native.parameter_count = 1;
-  native.register_count = 1;
+TEST_F(NativeIncrementProgramTest, RejectsNativeTypeSignaturesThatDisagreeWithBinding) {
   native.layouts = std::make_shared<const LayoutTables>(
       std::vector<runtime::ClassLayout*>(), std::vector<const runtime::ArrayLayout*>(),
       std::vector<const runtime::CollectionLayout*>(),
@@ -234,13 +234,8 @@ TEST(ProgramTest, LoadsUnsigned16IntegerAndDoubleConstantIndicesAndSnapshotsPool
 
 TEST(ProgramTest, ValidatesExceptionRangesAndCatchTargetsBeforeExecution) {
   runtime::Isolate isolate;
-  const auto code = std::to_array<Instruction>({
-      EncodeAImm16(OpCode::LoadInt, 0, 0),
-      EncodeABC(OpCode::DivInt, 0, 0, 0),
-      EncodeABC(OpCode::Return, 0, 0, 0),
-      EncodeABC(OpCode::Catch, 0, 0, 0),
-      EncodeABC(OpCode::Return, 0, 0, 0),
-  });
+  std::vector<Instruction> code(kDivisionByZeroCode.begin(), kDivisionByZeroCode.end());
+  code.insert(code.end(), {EncodeABC(OpCode::Catch, 0, 0, 0), EncodeABC(OpCode::Return, 0, 0, 0)});
   auto handlers = std::to_array<ExceptionHandler>({{.begin = 1, .end = 2, .target = 3}});
   Function function;
   function.code = code;
@@ -262,17 +257,12 @@ TEST(ProgramTest, ValidatesExceptionRangesAndCatchTargetsBeforeExecution) {
 
 TEST(ProgramTest, LoadsOwnedDebugInfoAndTracesBytecodeWithoutSymbols) {
   runtime::Isolate isolate;
-  const auto code = std::to_array<Instruction>({
-      EncodeAImm16(OpCode::LoadInt, 0, 0),
-      EncodeABC(OpCode::DivInt, 0, 0, 0),
-      EncodeABC(OpCode::Return, 0, 0, 0),
-  });
   std::array<std::string, 1> paths = {"original.vela"};
   std::array<SourceMapping, 1> mappings = {
       {{.instruction = 0, .location = {.line = kOriginalLine}}},
   };
   Function input;
-  input.code = code;
+  input.code = kDivisionByZeroCode;
   input.register_count = 1;
   input.debug = {.name = "divide", .source_paths = paths, .mappings = mappings};
   auto program = Program::Load(std::span(&input, 1), isolate);

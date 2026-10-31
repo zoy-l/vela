@@ -17,6 +17,7 @@
 #include "runtime/object.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
+#include "runtime/value_operations.h"
 
 namespace vela::runtime {
 
@@ -96,12 +97,6 @@ struct ArgumentBinding final {
   }
 };
 
-Value Unbox(Value value, const TypeConstraint& type) {
-  return !value.IsNull() && type.nominal != nullptr && type.nominal->IsEnum()
-             ? *Heap::GetField(*value.AsObject(), 0)
-             : value;
-}
-
 std::expected<Value, ExecutionStatus> PackRest(Heap& heap,
                                                const HeapObject& arguments,
                                                const BoundArguments& bound,
@@ -112,7 +107,7 @@ std::expected<Value, ExecutionStatus> PackRest(Heap& heap,
   }
   for (std::uint32_t item = 0; item < bound.rest_count; ++item) {
     const auto value = *Heap::GetElement(arguments, bound.rest_start + item);
-    std::ignore = heap.SetElement(*array, item, Unbox(value, type.element));
+    std::ignore = heap.SetElement(*array, item, UnboxDynamicValue(value, type.element));
   }
   return Value::Object(array);
 }
@@ -196,7 +191,8 @@ std::expected<Value, ExecutionStatus> ReadDynamicArgument(Heap& heap,
     return PackRest(heap, arguments, bound, *type.array);
   }
   const auto source = bound.source_indices.at(index);
-  return source == kUnassigned ? Value::Null() : Unbox(*Heap::GetElement(arguments, source), type);
+  return source == kUnassigned ? Value::Null()
+                               : UnboxDynamicValue(*Heap::GetElement(arguments, source), type);
 }
 
 }  // namespace vela::runtime

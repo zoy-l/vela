@@ -10,18 +10,18 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
 
 #include "base/binary.h"
-#include "base/fingerprint.h"
 #include "runtime/isolate.h"
 #include "runtime/layout_transaction.h"
 #include "runtime/native_function.h"
 #include "runtime/object.h"
 #include "vm/bytecode_image_internal.h"
+#include "vm/debug_info.h"
+#include "vm/exception_handler.h"
 #include "vm/program.h"
 
 namespace vela::vm {
@@ -40,13 +40,11 @@ std::expected<std::vector<T*>, BinaryError> ReadReferences(BinaryReader& reader,
   std::vector<T*> result;
   result.reserve(indices->size());
   for (const auto index : *indices) {
-    if (index == kNoImageId) {
-      result.push_back(nullptr);
-    } else if (index >= values.size()) {
-      return std::unexpected(reader.Error("invalid layout-table index"));
-    } else {
-      result.push_back(values.subspan(static_cast<std::size_t>(index)).front());
+    const auto value = internal::ResolvePointer(index, values);
+    if (!value) {
+      return std::unexpected(reader.Error(value.error()));
     }
+    result.push_back(*value);
   }
   return result;
 }
@@ -94,34 +92,31 @@ std::expected<MemberDefinition, BinaryError> ReadMember(BinaryReader& reader) {
 
 std::expected<CallSignature::Parameter, BinaryError> ReadCallParameter(BinaryReader& reader) {
   auto name = reader.Text();
-  const auto fields = reader.Record<std::uint32_t, std::uint8_t, std::uint8_t>();
   if (!name) {
     return std::unexpected(name.error());
   }
-  if (!fields) {
-    return std::unexpected(fields.error());
+  const auto type = reader.Read<std::uint32_t>();
+  if (!type) {
+    return std::unexpected(type.error());
   }
-  const auto [type, optional, rest] = *fields;
-  if (optional > 1 || rest > 1) {
-    return std::unexpected(reader.Error("invalid call parameter flags"));
+  const auto flags = internal::ReadParameterFlags(reader);
+  if (!flags) {
+    return std::unexpected(flags.error());
   }
   return CallSignature::Parameter{
       .name = std::move(*name),
-      .type = type,
-      .optional = optional != 0,
-      .rest = rest != 0,
+      .type = *type,
+      .optional = flags->optional,
+      .rest = flags->rest,
   };
 }
 
 std::expected<std::optional<CallSignature>, BinaryError> ReadCallSignature(BinaryReader& reader) {
-  const auto present = reader.Read<std::uint8_t>();
+  const auto present = internal::ReadFlag(reader);
   if (!present) {
     return std::unexpected(present.error());
   }
-  if (*present > 1) {
-    return std::unexpected(reader.Error("invalid call signature flag"));
-  }
-  if (*present == 0) {
+  if (!*present) {
     return std::optional<CallSignature>{};
   }
   const auto header = reader.Record<std::uint8_t, std::uint32_t>();
@@ -147,130 +142,122 @@ std::expected<std::optional<CallSignature>, BinaryError> ReadCallSignature(Binar
 }
 
 std::expected<std::vector<std::shared_ptr<const LayoutTables>>, BinaryError> ReadTables(
-    BinaryReader& reader,
+    BinaryReader& input,
     const internal::LoadedLayouts& layouts) {
-  const auto count = reader.Count(5 * sizeof(std::uint64_t));
-  if (!count) {
-    return std::unexpected(count.error());
-  }
-  std::vector<std::shared_ptr<const LayoutTables>> tables;
-  for (std::size_t index = 0; index < *count; ++index) {
-    auto classes = ReadReferences(reader, std::span(layouts.classes));
-    auto arrays = ReadReferences(reader, std::span(layouts.arrays));
-    auto collections = ReadReferences(reader, std::span(layouts.collections));
-    if (!classes) {
-      return std::unexpected(classes.error());
-    }
-    if (!arrays) {
-      return std::unexpected(arrays.error());
-    }
-    if (!collections) {
-      return std::unexpected(collections.error());
-    }
-    auto types = internal::ReadRecords<runtime::TypeConstraint>(
-        reader, internal::kElementBytes,
-        [&layouts](BinaryReader& input) { return ReadType(input, layouts); });
-    if (!types) {
-      return std::unexpected(types.error());
-    }
-    constexpr auto kMemberBytes = sizeof(std::uint64_t) + (4 * sizeof(std::uint32_t)) + 1;
-    auto members = internal::ReadRecords<MemberDefinition>(reader, kMemberBytes, ReadMember);
-    if (!members) {
-      return std::unexpected(members.error());
-    }
-    tables.push_back(std::make_shared<const LayoutTables>(std::move(*classes), std::move(*arrays),
-                                                          std::move(*collections),
-                                                          std::move(*types), std::move(*members)));
-  }
-  return tables;
+  return internal::ReadRecords<std::shared_ptr<const LayoutTables>>(
+      input, 5 * sizeof(std::uint64_t),
+      [&layouts](
+          BinaryReader& reader) -> std::expected<std::shared_ptr<const LayoutTables>, BinaryError> {
+        auto classes = ReadReferences(reader, std::span(layouts.classes));
+        auto arrays = ReadReferences(reader, std::span(layouts.arrays));
+        auto collections = ReadReferences(reader, std::span(layouts.collections));
+        if (!classes) {
+          return std::unexpected(classes.error());
+        }
+        if (!arrays) {
+          return std::unexpected(arrays.error());
+        }
+        if (!collections) {
+          return std::unexpected(collections.error());
+        }
+        auto types = internal::ReadRecords<runtime::TypeConstraint>(
+            reader, internal::kElementBytes,
+            [&layouts](BinaryReader& type_input) { return ReadType(type_input, layouts); });
+        if (!types) {
+          return std::unexpected(types.error());
+        }
+        constexpr auto kMemberBytes = sizeof(std::uint64_t) + (4 * sizeof(std::uint32_t)) + 1;
+        auto members = internal::ReadRecords<MemberDefinition>(reader, kMemberBytes, ReadMember);
+        if (!members) {
+          return std::unexpected(members.error());
+        }
+        return std::make_shared<const LayoutTables>(std::move(*classes), std::move(*arrays),
+                                                    std::move(*collections), std::move(*types),
+                                                    std::move(*members));
+      });
 }
 
 std::expected<std::vector<std::shared_ptr<const StringConstants>>, BinaryError> ReadStrings(
-    BinaryReader& reader,
+    BinaryReader& input,
     runtime::Isolate& isolate) {
-  const auto count = reader.Count(sizeof(std::uint64_t));
-  if (!count) {
-    return std::unexpected(count.error());
-  }
-  std::vector<std::shared_ptr<const StringConstants>> pools;
-  for (std::size_t index = 0; index < *count; ++index) {
-    const auto strings = reader.Count(1);
-    if (!strings) {
-      return std::unexpected(strings.error());
-    }
-    auto pool = std::make_shared<StringConstants>(isolate.heap(), *strings);
-    for (std::size_t string = 0; string < *strings; ++string) {
-      const auto present = reader.Read<std::uint8_t>();
-      if (!present) {
-        return std::unexpected(present.error());
-      }
-      if (*present > 1) {
-        return std::unexpected(reader.Error("invalid string-constant flag"));
-      }
-      if (*present == 0) {
-        continue;
-      }
-      const auto text = reader.Text();
-      if (!text) {
-        return std::unexpected(text.error());
-      }
-      auto* value = isolate.heap().AllocateString(*text);
-      if (value == nullptr) {
-        return std::unexpected(reader.Error("out of memory loading string constants"));
-      }
-      pool->values.at(string) = value;
-    }
-    pools.push_back(std::move(pool));
-  }
-  return pools;
+  return internal::ReadRecords<std::shared_ptr<const StringConstants>>(
+      input, sizeof(std::uint64_t),
+      [&isolate](BinaryReader& reader)
+          -> std::expected<std::shared_ptr<const StringConstants>, BinaryError> {
+        const auto strings = reader.Count(1);
+        if (!strings) {
+          return std::unexpected(strings.error());
+        }
+        auto pool = std::make_shared<StringConstants>(isolate.heap(), *strings);
+        for (std::size_t string = 0; string < *strings; ++string) {
+          const auto present = internal::ReadFlag(reader);
+          if (!present) {
+            return std::unexpected(present.error());
+          }
+          if (!*present) {
+            continue;
+          }
+          const auto text = reader.Text();
+          if (!text) {
+            return std::unexpected(text.error());
+          }
+          auto* value = isolate.heap().AllocateString(*text);
+          if (value == nullptr) {
+            return std::unexpected(reader.Error("out of memory loading string constants"));
+          }
+          pool->values.at(string) = value;
+        }
+        return pool;
+      });
 }
 
 std::expected<std::vector<std::shared_ptr<const std::vector<std::string>>>, BinaryError> ReadPaths(
-    BinaryReader& reader) {
-  const auto count = reader.Count(sizeof(std::uint64_t));
-  if (!count) {
-    return std::unexpected(count.error());
-  }
-  std::vector<std::shared_ptr<const std::vector<std::string>>> pools;
-  for (std::size_t index = 0; index < *count; ++index) {
-    auto paths = internal::ReadTexts(reader);
-    if (!paths) {
-      return std::unexpected(paths.error());
-    }
-    pools.push_back(std::make_shared<const std::vector<std::string>>(std::move(*paths)));
-  }
-  return pools;
+    BinaryReader& input) {
+  return internal::ReadRecords<std::shared_ptr<const std::vector<std::string>>>(
+      input, sizeof(std::uint64_t),
+      [](BinaryReader& reader)
+          -> std::expected<std::shared_ptr<const std::vector<std::string>>, BinaryError> {
+        auto paths = internal::ReadTexts(reader);
+        if (!paths) {
+          return std::unexpected(paths.error());
+        }
+        return std::make_shared<const std::vector<std::string>>(std::move(*paths));
+      });
 }
 
 std::expected<void, BinaryError> ReadDebug(BinaryReader& reader, FunctionStorage& function) {
-  const auto mappings = reader.Count(4 * sizeof(std::uint32_t));
+  auto mappings = internal::ReadRecords<SourceMapping>(
+      reader, 4 * sizeof(std::uint32_t),
+      [](BinaryReader& input) -> std::expected<SourceMapping, BinaryError> {
+        const auto mapping =
+            input.Record<std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t>();
+        if (!mapping) {
+          return std::unexpected(mapping.error());
+        }
+        const auto [instruction, line, column, source_id] = *mapping;
+        return SourceMapping{
+            .instruction = instruction,
+            .location = {.line = line, .column = column, .source_id = source_id},
+        };
+      });
   if (!mappings) {
     return std::unexpected(mappings.error());
   }
-  for (std::size_t index = 0; index < *mappings; ++index) {
-    const auto mapping =
-        reader.Record<std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t>();
-    if (!mapping) {
-      return std::unexpected(mapping.error());
-    }
-    const auto [instruction, line, column, source_id] = *mapping;
-    function.source_mappings.push_back({
-        .instruction = instruction,
-        .location = {.line = line, .column = column, .source_id = source_id},
-    });
-  }
-  const auto handlers = reader.Count(3 * sizeof(std::uint32_t));
+  auto handlers = internal::ReadRecords<ExceptionHandler>(
+      reader, 3 * sizeof(std::uint32_t),
+      [](BinaryReader& input) -> std::expected<ExceptionHandler, BinaryError> {
+        const auto handler = input.Record<std::uint32_t, std::uint32_t, std::uint32_t>();
+        if (!handler) {
+          return std::unexpected(handler.error());
+        }
+        const auto [begin, end, target] = *handler;
+        return ExceptionHandler{.begin = begin, .end = end, .target = target};
+      });
   if (!handlers) {
     return std::unexpected(handlers.error());
   }
-  for (std::size_t index = 0; index < *handlers; ++index) {
-    const auto handler = reader.Record<std::uint32_t, std::uint32_t, std::uint32_t>();
-    if (!handler) {
-      return std::unexpected(handler.error());
-    }
-    const auto [begin, end, target] = *handler;
-    function.handlers.push_back({.begin = begin, .end = end, .target = target});
-  }
+  function.source_mappings = std::move(*mappings);
+  function.handlers = std::move(*handlers);
   return {};
 }
 
@@ -408,11 +395,6 @@ std::expected<Program, BinaryError> ReadPayload(BinaryReader& reader, runtime::I
   if (!paths) {
     return std::unexpected(paths.error());
   }
-  const auto count = reader.Count((10 * sizeof(std::uint64_t)) + (2 * sizeof(std::uint16_t)) +
-                                  sizeof(std::uint8_t));
-  if (!count) {
-    return std::unexpected(count.error());
-  }
   const ImageReader image{
       .reader = &reader,
       .isolate = &isolate,
@@ -420,13 +402,11 @@ std::expected<Program, BinaryError> ReadPayload(BinaryReader& reader, runtime::I
       .strings = *strings,
       .paths = *paths,
   };
-  std::vector<FunctionStorage> functions;
-  for (std::size_t index = 0; index < *count; ++index) {
-    auto function = image.ReadFunction();
-    if (!function) {
-      return std::unexpected(function.error());
-    }
-    functions.push_back(std::move(*function));
+  auto functions = internal::ReadRecords<FunctionStorage>(
+      reader, (10 * sizeof(std::uint64_t)) + (2 * sizeof(std::uint16_t)) + sizeof(std::uint8_t),
+      [&image](BinaryReader&) { return image.ReadFunction(); });
+  if (!functions) {
+    return std::unexpected(functions.error());
   }
   auto initializers = ReadNumbers<std::uint32_t>(reader);
   if (!initializers) {
@@ -435,7 +415,7 @@ std::expected<Program, BinaryError> ReadPayload(BinaryReader& reader, runtime::I
   if (reader.remaining() != 0) {
     return std::unexpected(reader.Error("trailing bytecode image data"));
   }
-  auto program = Program::Create(std::move(functions), isolate, std::move(*initializers));
+  auto program = Program::Create(std::move(*functions), isolate, std::move(*initializers));
   if (!program) {
     const auto& error = program.error();
     return std::unexpected(reader.Error("function " + std::to_string(error.function) +
@@ -458,20 +438,16 @@ std::expected<Program, BinaryError> LoadBytecode(std::span<const std::byte> byte
                                                           internal::kImageMagic.size())))) {
     return std::unexpected(reader.Error("invalid bytecode image magic"));
   }
-  const auto header = reader.Record<std::uint32_t, std::uint64_t, std::uint64_t>();
-  if (!header) {
-    return std::unexpected(header.error());
+  const auto version = reader.Read<std::uint32_t>();
+  if (!version) {
+    return std::unexpected(version.error());
   }
-  const auto [version, low, high] = *header;
-  if (version != kBytecodeImageVersion) {
+  if (*version != kBytecodeImageVersion) {
     return std::unexpected(reader.Error("unsupported bytecode image version"));
   }
-  const auto payload = reader.Take(reader.remaining());
+  const auto payload = reader.ChecksummedRemainder();
   if (!payload) {
     return std::unexpected(payload.error());
-  }
-  if (ContentFingerprint(*payload) != Fingerprint{.low = low, .high = high}) {
-    return std::unexpected(reader.Error("bytecode image checksum mismatch"));
   }
   BinaryReader body(*payload);
   runtime::LayoutTransaction transaction(isolate);

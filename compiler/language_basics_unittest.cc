@@ -10,6 +10,7 @@
 #include "compiler/frontend/checker_test_support.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
 #include "vm/vm.h"
 
@@ -27,19 +28,9 @@ TEST_P(BasicLanguageExecutionTest, ChecksCompilesAndExecutesWithGcPressure) {
   const auto& parameter = GetParam();
   SCOPED_TRACE(parameter.source);
   runtime::Isolate isolate{1};
-  const auto compiled = CompileSource(parameter.source, isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ':' << diagnostic.location.column << ' '
-                  << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  const auto index = entry.index();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, index);
-  ASSERT_TRUE(result.Succeeded());
-  ASSERT_TRUE(result.value.IsInteger());
-  EXPECT_EQ(result.value.AsInteger(), parameter.expected);
+  const auto result = test::RunInteger(parameter.source, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, parameter.expected);
 }
 
 INSTANTIATE_TEST_SUITE_P(

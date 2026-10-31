@@ -6,6 +6,8 @@
 #include "base/regexp.h"
 #include "compiler/frontend/builtins.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_name.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -44,7 +46,7 @@ void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
     case Opcode::ShiftLeftInt:
     case Opcode::ShiftRightInt:
     case Opcode::ShiftUnsignedRightInt:
-      RecordValueType(instruction.dst, {.kind = Kind::Int, .name = "int"});
+      RecordValueType(instruction.dst, {.kind = Kind::Int, .name = frontend::kIntTypeName});
       break;
     case Opcode::LoadDouble:
     case Opcode::AddDouble:
@@ -52,7 +54,7 @@ void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
     case Opcode::MulDouble:
     case Opcode::DivDouble:
     case Opcode::NegDouble:
-      RecordValueType(instruction.dst, {.kind = Kind::Double, .name = "double"});
+      RecordValueType(instruction.dst, {.kind = Kind::Double, .name = frontend::kDoubleTypeName});
       break;
     case Opcode::LoadBool:
     case Opcode::NotBool:
@@ -77,19 +79,21 @@ void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
     case Opcode::EqualValue:
     case Opcode::NotEqualValue:
     case Opcode::IsType:
-      RecordValueType(instruction.dst, {.kind = Kind::Bool, .name = "bool"});
+      RecordValueType(instruction.dst, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
       break;
     case Opcode::LoadString:
     case Opcode::StringConcat:
     case Opcode::StringInterpolate:
-      RecordValueType(instruction.dst, {.kind = Kind::String, .name = "string"});
+      RecordValueType(instruction.dst, {.kind = Kind::String, .name = frontend::kStringTypeName});
       break;
     case Opcode::LoadNull:
-      RecordValueType(instruction.dst, {.kind = Kind::Null, .name = "null"});
+      RecordValueType(instruction.dst, {.kind = Kind::Null, .name = frontend::kNullTypeName});
       break;
     case Opcode::NewInstance:
-      RecordValueType(instruction.dst,
-                      {.kind = Kind::Class, .name = program_.classes.at(instruction.index).name});
+      RecordValueType(
+          instruction.dst,
+          {.kind = Kind::Class,
+           .name = frontend::InternTypeName(program_.classes.at(instruction.index).name)});
       break;
     case Opcode::NewArray:
     case Opcode::NewDynamicArray:
@@ -102,14 +106,15 @@ void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
       if (const auto& type = program_.runtime_types.at(instruction.index);
           type.kind == Kind::Enum) {
         // enum 的受查转换先产生盒装对象；序号由独立 GetField 定义。
-        RecordValueType(instruction.dst, {.kind = Kind::Dynamic, .name = "dynamic"});
+        RecordValueType(instruction.dst,
+                        {.kind = Kind::Dynamic, .name = frontend::kDynamicTypeName});
       } else {
         RecordValueType(instruction.dst, type);
       }
       break;
     case Opcode::Catch:
     case Opcode::ExceptionValue:
-      RecordValueType(instruction.dst, {.kind = Kind::Dynamic, .name = "dynamic"});
+      RecordValueType(instruction.dst, {.kind = Kind::Dynamic, .name = frontend::kDynamicTypeName});
       break;
     case Opcode::BuiltinCall: {
       const auto builtin = static_cast<Builtin>(instruction.index);
@@ -119,15 +124,16 @@ void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
           IsRegExpBuiltin(builtin)) {
         RecordValueType(instruction.dst, frontend::BuiltinSignature(builtin).return_type);
       } else if (builtin == Builtin::ArrayMutation) {
-        RecordValueType(instruction.dst, {.kind = Kind::Int, .name = "int"});
+        RecordValueType(instruction.dst, {.kind = Kind::Int, .name = frontend::kIntTypeName});
       } else if (builtin == Builtin::ArrayCheckMutation) {
-        RecordValueType(instruction.dst, {.kind = Kind::Void, .name = "void"});
+        RecordValueType(instruction.dst, {.kind = Kind::Void, .name = frontend::kVoidTypeName});
       } else if (builtin == Builtin::CollectionKeys || builtin == Builtin::CollectionValues) {
         // 投影填充调用窗口中的目标数组，并返回同一个数组。
         const auto type = current_function_->value_types.at(instruction.lhs + 1);
         RecordValueType(instruction.dst, type);
       } else if (builtin >= Builtin::DynamicBinary && builtin < Builtin::Count) {
-        RecordValueType(instruction.dst, {.kind = Kind::Dynamic, .name = "dynamic"});
+        RecordValueType(instruction.dst,
+                        {.kind = Kind::Dynamic, .name = frontend::kDynamicTypeName});
       }
       break;
     }

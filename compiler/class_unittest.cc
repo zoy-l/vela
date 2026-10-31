@@ -5,6 +5,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"
@@ -16,14 +17,9 @@ class ClassConstructionTest : public testing::TestWithParam<std::string_view> {}
 
 TEST_P(ClassConstructionTest, InitializesFieldsAndExecutesConstructorUnderGcPressure) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(GetParam(), isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto result = test::RunInteger(GetParam(), isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 INSTANTIATE_TEST_SUITE_P(GeneratedAndExplicitConstructors,
@@ -363,15 +359,10 @@ func main(): int {
 )",
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto copy = compiled.program;
-  vm::VirtualMachine machine(isolate);
-  const auto first = machine.Execute(copy.FindFunction("main"));
-  ASSERT_TRUE(first.Succeeded());
-  EXPECT_EQ(first.value.AsInteger(), 41);
-  isolate.heap().Collect();
-  const auto second = machine.Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(second.Succeeded());
-  EXPECT_EQ(second.value.AsInteger(), 42);
+  const auto results = test::ExecuteProgramCopy(compiled.program, isolate);
+  ASSERT_TRUE(results) << results.error();
+  EXPECT_EQ(results->front(), 41);
+  EXPECT_EQ(results->back(), 42);
 }
 
 TEST(StaticFieldTest, DiagnosesInitializationCyclesAndRetriesAfterFailure) {
@@ -390,7 +381,7 @@ func main(): int { return Cycle.value; }
 
 TEST(ClassInitializationTest, EvaluatesExplicitArgumentsDefaultsAndBodyInOrder) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 class Trace {
   static value: int = 0;
   static mark(value: int): int { Trace.value = Trace.value * 10 + value; return value; }
@@ -406,19 +397,14 @@ func main(): int {
   return Trace.value;
 }
 )",
-                                      isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 2134);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 2134);
 }
 
 TEST(ClassInitializationTest, DefaultsRunOnlyWhenOmittedAndCreateIndependentCollections) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 class Trace {
   static calls: int = 0;
   static next(): int { Trace.calls++; return Trace.calls; }
@@ -434,19 +420,14 @@ func main(): int {
          first.values[0] == 42 && second.values.length == 0 && supplied.values.length == 0 ? 42 : 0;
 }
 )",
-                                      isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(ClassInitializationTest, DefaultsUseDeclarationScopeBeforeConstructorParameters) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 let seed = 40;
 class Generated { value: int = seed; }
 class Explicit { value: int = seed; constructor(seed: int) { this.value += seed; } }
@@ -455,11 +436,9 @@ func main(): int {
   return Generated().value + Explicit(seed: 2).value - 40;
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(ClassInitializationTest, OptionalFieldsCrossMaskWordsWithoutAFullFieldArgumentWindow) {
@@ -475,14 +454,9 @@ TEST(ClassInitializationTest, OptionalFieldsCrossMaskWordsWithoutAFullFieldArgum
       "value128: 12); return Trace.calls == 126 ? "
       "box.value63 + box.value64 + box.value127 + box.value128 : 0; }";
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(source, isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto result = test::RunInteger(source, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 }  // namespace

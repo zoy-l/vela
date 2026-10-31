@@ -1,3 +1,5 @@
+import 'spectral_norm.vela' as spectral;
+
 external func workloadSize(): int = 'benchmark.size';
 
 external func hostStep(value: int): int = 'benchmark.step';
@@ -86,41 +88,6 @@ export async func asyncWork(): Future<int> {
   return sum;
 }
 
-func matrixMultiply(input: double[], output: double[], transpose: bool): void {
-  for (let i = 0; i < 500; i ++) {
-    let sum = 0.0;
-    for (let j = 0; j < 500; j ++) {
-      const index = transpose ? j : i;
-      const denominator = (i + j) * (i + j + 1) / 2 + index + 1;
-      sum += input[j] / denominator.toDouble();
-    }
-    output[i] = sum;
-  }
-}
-
 export func spectralNorm(): int {
-  const u: double[] = [];
-  const v: double[] = [];
-  const temporary: double[] = [];
-  u.reserve(500);
-  v.reserve(500);
-  temporary.reserve(500);
-  for (let i = 0; i < 500; i ++) {
-    u.push(1.0);
-    v.push(0.0);
-    temporary.push(0.0);
-  }
-  for (let round = 0; round < 2; round ++) {
-    matrixMultiply(u, temporary, false);
-    matrixMultiply(temporary, v, true);
-    matrixMultiply(v, temporary, false);
-    matrixMultiply(temporary, u, true);
-  }
-  let numerator = 0.0;
-  let denominator = 0.0;
-  for (let i = 0; i < 500; i ++) {
-    numerator += u[i] * v[i];
-    denominator += v[i] * v[i];
-  }
-  return (Math.sqrt(numerator / denominator) * 1000000000.0).toInt();
+  return (spectral.run() * 1000000000.0).toInt();
 }

@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 from tools.build import build
+from tools.command_line import split_forwarded_arguments
 from tools.config import BUILD_VARIANTS, executable_name, output_directory
 
 
@@ -28,10 +29,8 @@ TEST_EXECUTABLES = {
 def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("test_arguments", nargs="*", metavar="VARIANT_OR_SELECTION")
-    values = list(sys.argv[1:] if arguments is None else arguments)
-    separator = values.index("--") if "--" in values else len(values)
-    parsed = parser.parse_args(values[:separator])
-    gtest_arguments = values[separator + 1:]
+    options, gtest_arguments = split_forwarded_arguments(arguments)
+    parsed = parser.parse_args(options)
     values = list(parsed.test_arguments)
     variant = "debug"
     if values and values[0] in BUILD_VARIANTS:

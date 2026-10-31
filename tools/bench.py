@@ -12,6 +12,7 @@ import sys
 from tools.benchmark_report import aot_comparison_report, comparison_report, jit_comparison_report, native_call_report
 from tools.escape_benchmark_report import escape_comparison_report
 from tools.build import build
+from tools.command_line import split_forwarded_arguments
 from tools.config import BUILD_VARIANTS, ROOT, executable_name, output_directory
 
 
@@ -25,10 +26,9 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     comparison.add_argument("--jit-compare", action="store_true", help="Compare reloadable baseline and optimized JIT with offline AOT, VM and C++")
     comparison.add_argument("--escape-compare", action="store_true", help="Compare heap, scalar replacement and private borrowing with virtual-frame reload")
     parser.add_argument("--report", type=Path, help="Comparison JSON output (default: out/benchmarks/comparison.json)")
-    values = list(sys.argv[1:] if arguments is None else arguments)
-    separator = values.index("--") if "--" in values else len(values)
-    parsed = parser.parse_args(values[:separator])
-    parsed.benchmark_arguments = values[separator + 1:]
+    options, forwarded = split_forwarded_arguments(arguments)
+    parsed = parser.parse_args(options)
+    parsed.benchmark_arguments = forwarded
     comparing = parsed.compare or parsed.native_compare or parsed.aot_compare or parsed.jit_compare or parsed.escape_compare
     if parsed.report and not comparing:
         parser.error("--report requires a comparison mode")

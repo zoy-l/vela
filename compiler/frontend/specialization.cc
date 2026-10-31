@@ -20,17 +20,18 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/standard_environment.h"
 #include "compiler/frontend/type_limits.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 namespace {
 
 bool IsBuiltinGenericExpression(const Expression& expression, const Expression* object) {
-  if (expression.text == "Set" || expression.text == "Map" || expression.text == "Future" ||
-      expression.text == "Completer") {
+  if (expression.text == kSetTypeName || expression.text == kMapTypeName ||
+      expression.text == kFutureTypeName || expression.text == kCompleterTypeName) {
     return true;
   }
   return expression.kind == Expression::Kind::Member && object != nullptr &&
-         object->kind == Expression::Kind::Name && object->text == "Future";
+         object->kind == Expression::Kind::Name && object->text == kFutureTypeName;
 }
 
 bool IsTypeWithinLimit(const TypeName& type, std::size_t depth = 1) {
@@ -51,19 +52,6 @@ std::string SpecializationName(const std::string& base, const std::vector<TypeNa
     result += arguments.at(index).ToString();
   }
   return result + '>';
-}
-
-TypeName SubstitutePattern(TypeName type,
-                           const absl::flat_hash_map<std::string, TypeName>& substitutions) {
-  if (type.kind == TypeName::Kind::Named) {
-    if (const auto found = substitutions.find(type.name); found != substitutions.end()) {
-      return found->second;
-    }
-  }
-  for (auto& argument : type.arguments) {
-    argument = SubstitutePattern(std::move(argument), substitutions);
-  }
-  return type;
 }
 
 }  // namespace
@@ -197,8 +185,8 @@ void Specializer::NormalizeTypeHead(TypeName& type) {
     return;
   }
   if (type.kind == TypeName::Kind::Generic) {
-    if (type.name == "Set" || type.name == "Map" || type.name == "Future" ||
-        type.name == "Completer") {
+    if (type.name == kSetTypeName || type.name == kMapTypeName || type.name == kFutureTypeName ||
+        type.name == kCompleterTypeName) {
       return;
     }
     type.name = Instantiate(type.name, type.arguments, type.location);
@@ -277,7 +265,8 @@ void Specializer::NormalizeExpressionHead(Expression& expression,
     };
     Normalize(type, substitutions);
     if (type.kind == TypeName::Kind::Named ||
-        (type.kind == TypeName::Kind::Generic && (type.name == "Set" || type.name == "Map"))) {
+        (type.kind == TypeName::Kind::Generic &&
+         (type.name == kSetTypeName || type.name == kMapTypeName))) {
       expression.text = type.name;
       expression.type_arguments = type.arguments;
     } else {
@@ -304,14 +293,7 @@ void Specializer::Normalize(Expression* expression, const Substitutions& substit
     Normalize(argument, substitutions);
   }
   NormalizeExpressionHead(*expression, substitutions, expression->object.get());
-  for (auto* child : {
-           expression->left.get(),
-           expression->right.get(),
-           expression->operand.get(),
-           expression->callee.get(),
-           expression->object.get(),
-           expression->index.get(),
-       }) {
+  for (auto* child : ExpressionOperands(*expression)) {
     Normalize(child, substitutions);
   }
   for (auto& element : expression->elements) {
@@ -338,9 +320,7 @@ void Specializer::Normalize(Statement* statement, const Substitutions& substitut
   if (statement == nullptr) {
     return;
   }
-  const bool has_scope = statement->kind == Statement::Kind::Block ||
-                         statement->kind == Statement::Kind::For ||
-                         statement->kind == Statement::Kind::ForEach;
+  const bool has_scope = statement->IntroducesScope();
   if (has_scope) {
     scopes_.emplace_back();
   }
@@ -646,7 +626,7 @@ TypeName Specializer::ExpandAlias(TypeName type, std::span<const std::string> pa
       return type;
     }
     const auto bound = Bind(alias->second.type_parameters, type.arguments, type.location);
-    type = ExpandAlias(SubstitutePattern(alias->second.target, bound), parameters);
+    type = ExpandAlias(SubstituteTypeName(alias->second.target, bound), parameters);
     active_aliases_.erase(key);
     return type;
   }

@@ -33,6 +33,15 @@ def variation(values: list[float]) -> str:
     return f"{stdev(values) / mean(values):.1%}" if len(values) > 1 else "-"
 
 
+def checked_result(name: str, entry: dict) -> float:
+    result = entry["result"]
+    expected = entry.get("expected_result", result)
+    if (not math.isfinite(result) or not math.isfinite(expected) or
+            not math.isclose(result, expected, rel_tol=1e-12, abs_tol=1e-10)):
+        raise ValueError(f"{name}: checksum mismatch")
+    return expected
+
+
 def iteration_rows(report: dict, expected_cases: list[str], repetitions: int) -> dict[str, list[dict]]:
     expected = set(expected_cases)
     if not expected or repetitions < 1:
@@ -73,12 +82,7 @@ def aot_comparison_report(report: dict, expected_cases: list[str], repetitions: 
         if backend == "first_native":
             continue
         for entry in entries:
-            result = entry["result"]
-            expected = entry.get("expected_result", result)
-            if (not math.isfinite(result) or not math.isfinite(expected) or
-                    not math.isclose(result, expected, rel_tol=1e-12, abs_tol=1e-10)):
-                raise ValueError(f"{name}: checksum mismatch")
-            checksums[key].add(expected)
+            checksums[key].add(checked_result(name, entry))
         resident = [entry["process_resident_bytes"] for entry in entries]
         if any(not math.isfinite(value) or value <= 0 for value in resident):
             raise ValueError(f"{name}: invalid process resident-memory counter")
@@ -299,12 +303,7 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                                  for entry in entries]
         counters[backend, *key] = entries
         for entry in entries:
-            result = entry["result"]
-            expected = entry.get("expected_result", result)
-            if (not math.isfinite(result) or not math.isfinite(expected) or
-                    not math.isclose(result, expected, rel_tol=1e-12, abs_tol=1e-10)):
-                raise ValueError(f"{name}: checksum mismatch")
-            checksums[key].add(expected)
+            checksums[key].add(checked_result(name, entry))
             resident = entry["process_resident_bytes"]
             if not math.isfinite(resident) or resident <= 0:
                 raise ValueError(f"{name}: invalid resident-memory counter")

@@ -131,14 +131,12 @@ std::expected<CacheImage, BinaryError> ReadImage(BinaryReader& reader) {
 std::expected<CacheImage, BinaryError> DecodeImage(std::span<const std::byte> bytes) {
   BinaryReader reader(bytes);
   const auto magic = reader.Take(kCacheMagic.size());
-  const auto checksum = reader.Record<std::uint64_t, std::uint64_t>();
-  if (!magic || !checksum || !std::ranges::equal(*magic, std::as_bytes(std::span(kCacheMagic)))) {
+  if (!magic || !std::ranges::equal(*magic, std::as_bytes(std::span(kCacheMagic)))) {
     return std::unexpected(reader.Error("invalid compilation cache signature"));
   }
-  const auto payload = reader.Take(reader.remaining());
-  const auto [low, high] = *checksum;
-  if (ContentFingerprint(*payload) != Fingerprint{.low = low, .high = high}) {
-    return std::unexpected(reader.Error("compilation cache checksum mismatch"));
+  const auto payload = reader.ChecksummedRemainder();
+  if (!payload) {
+    return std::unexpected(payload.error());
   }
   BinaryReader body(*payload);
   return ReadImage(body);
@@ -229,10 +227,7 @@ std::expected<CachedCompileResult, std::string> Rebuild(std::string_view path,
   body.Write(*bytecode);
   BinaryWriter image;
   image.Write(std::as_bytes(std::span(kCacheMagic)));
-  const auto checksum = ContentFingerprint(body.bytes());
-  image.Write(checksum.low);
-  image.Write(checksum.high);
-  image.Write(body.bytes());
+  image.WriteChecksummed(body.bytes());
   std::error_code error;
   std::filesystem::create_directories(cache_path.parent_path(), error);
   if (error) {

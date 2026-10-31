@@ -1,6 +1,5 @@
 #include "compiler/jit/code_cache.h"
 
-#include <chrono>
 #include <expected>
 #include <filesystem>
 #include <memory>
@@ -13,6 +12,7 @@
 
 #include "base/file.h"
 #include "base/native_program_mode.h"
+#include "base/testing/directory.h"
 #include "compiler/development_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
@@ -24,25 +24,8 @@
 namespace vela::compiler::jit {
 namespace {
 
-class JitCodeCacheTest : public testing::Test {
+class JitCodeCacheTest : public test::DirectoryTest {
  public:
-  void SetUp() override {
-    std::error_code error;
-    const auto temporary = std::filesystem::temp_directory_path(error);
-    ASSERT_FALSE(error);
-    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-    directory_ = temporary / ("vela-jit-cache-" + std::to_string(suffix));
-    created_ = std::filesystem::create_directory(directory_, error);
-    ASSERT_FALSE(error);
-    ASSERT_TRUE(created_);
-  }
-  void TearDown() override {
-    if (created_) {
-      std::error_code error;
-      std::filesystem::remove_all(directory_, error);
-      EXPECT_FALSE(error);
-    }
-  }
   std::expected<CompiledImage, frontend::Diagnostics> Compile(Compiler& compiler,
                                                               const CompileOptions& options) {
     SourceSession source("main.vela");
@@ -66,13 +49,10 @@ class JitCodeCacheTest : public testing::Test {
     cached.code_cache = directory_;
     return compiler.Compile(prepared->snapshot().program, cached);
   }
-  [[nodiscard]] const std::filesystem::path& directory() const noexcept { return directory_; }
   void SetDependency(std::string source) { dependency_ = std::move(source); }
 
  private:
-  std::filesystem::path directory_;
   std::string dependency_ = "export func value(): int { return 40; }";
-  bool created_ = false;
 };
 
 TEST_F(JitCodeCacheTest, RelocatesCachedObjectsIntoIndependentLiveBatchesAndFreshIsolates) {

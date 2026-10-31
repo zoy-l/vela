@@ -7,38 +7,44 @@
 
 #include "benchmark/benchmark.h"
 
-#include "compiler/compiler.h"
+#include "benchmarks/source.h"
 #include "runtime/isolate.h"
 #include "vm/vm.h"
 
 namespace vela::benchmarks {
 
-void SteadyValue(benchmark::State& state, std::string_view source, std::int64_t expected) {
+void SteadyValue(benchmark::State& state,
+                 std::string_view source,
+                 std::int64_t expected,
+                 HeapBaseline baseline_timing) {
   runtime::Isolate isolate;
-  const auto compiled = compiler::CompileSource(source, isolate);
-  if (!compiled.Succeeded()) {
-    std::string message = "Standard API benchmark compilation failed";
-    for (const auto& diagnostic : compiled.diagnostics) {
-      message += "\n" + diagnostic.message;
-    }
-    state.SkipWithError(message);
+  const auto entry = CompileBenchmarkEntry(state, source, isolate);
+  if (!entry) {
     return;
   }
-  const auto entry = compiled.program.FindFunction("main");
+  const auto& function = *entry;
   auto& heap = isolate.heap();
   heap.Collect();
-  const auto baseline = heap.allocated_bytes();
+  auto baseline = heap.allocated_bytes();
   vm::VirtualMachine machine(isolate);
-  const auto warm = machine.Execute(entry);
+  const auto warm = machine.Execute(function);
   if (!warm.Succeeded() || !warm.value.IsInteger() || warm.value.AsInteger() != expected) {
     state.SkipWithError("Standard API warm-up returned an unexpected result");
     return;
   }
-  state.counters["first_call_gc_bytes"] = static_cast<double>(heap.allocated_bytes() - baseline);
+  if (baseline_timing == HeapBaseline::AfterWarmup) {
+    // 全局正则模式在预热时初始化；临时分配以这些持久对象为基线。
+    heap.FinishCollection();
+    heap.Collect();
+    baseline = heap.allocated_bytes();
+    state.counters["persistent_bytes"] = static_cast<double>(baseline);
+  } else {
+    state.counters["first_call_gc_bytes"] = static_cast<double>(heap.allocated_bytes() - baseline);
+  }
   state.counters["register_bytes"] = static_cast<double>(machine.register_bytes());
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    auto result = machine.Execute(entry);
+    auto result = machine.Execute(function);
     if (!result.Succeeded() || !result.value.IsInteger() || result.value.AsInteger() != expected) {
       state.SkipWithError("Standard API execution returned an unexpected result");
       return;

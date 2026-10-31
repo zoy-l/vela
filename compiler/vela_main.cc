@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <iostream>
 #include <span>
@@ -77,12 +78,20 @@ void PrintDiagnostics(std::string_view path, const vela::frontend::Diagnostics& 
   }
 }
 
-int CheckFile(std::string_view path_text) {
-  const std::string path(path_text);
-  const auto options = vela::compiler::LoadSourceDiagnosticOptions(vela::Utf8Path(path));
+std::expected<vela::frontend::DiagnosticOptions, vela::compiler::ConfigurationError>
+ReadDiagnosticOptions(std::string_view path) {
+  auto options = vela::compiler::LoadSourceDiagnosticOptions(vela::Utf8Path(path));
   if (!options) {
     vela::frontend::WriteDiagnostic(std::cerr,
                                     vela::compiler::ConfigurationDiagnostic(options.error()));
+  }
+  return options;
+}
+
+int CheckFile(std::string_view path_text) {
+  const std::string path(path_text);
+  const auto options = ReadDiagnosticOptions(path);
+  if (!options) {
     return options.error().exit_code;
   }
   const vela::frontend::CheckResult result = vela::frontend::CheckFile(path, {}, *options);
@@ -149,10 +158,8 @@ int Execute(const vela::vm::Program& program,
 }
 
 int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
-  const auto options = vela::compiler::LoadSourceDiagnosticOptions(vela::Utf8Path(path));
+  const auto options = ReadDiagnosticOptions(path);
   if (!options) {
-    vela::frontend::WriteDiagnostic(std::cerr,
-                                    vela::compiler::ConfigurationDiagnostic(options.error()));
     return options.error().exit_code;
   }
   vela::runtime::Isolate isolate;
@@ -167,10 +174,8 @@ int RunFile(std::string_view path, ExecutionMode mode = ExecutionMode::Run) {
 }
 
 int CompileFile(std::string_view path, const std::filesystem::path& output) {
-  const auto options = vela::compiler::LoadSourceDiagnosticOptions(vela::Utf8Path(path));
+  const auto options = ReadDiagnosticOptions(path);
   if (!options) {
-    vela::frontend::WriteDiagnostic(std::cerr,
-                                    vela::compiler::ConfigurationDiagnostic(options.error()));
     return options.error().exit_code;
   }
   vela::runtime::Isolate isolate;

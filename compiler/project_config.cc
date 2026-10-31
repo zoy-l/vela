@@ -420,17 +420,19 @@ std::expected<testing::Settings, ConfigurationError> ReadTestSettings(
   return result;
 }
 
-ConfigurationError IoError(const std::filesystem::path& file, std::string message) {
+}  // namespace
+
+ConfigurationError ConfigurationError::FileError(const std::filesystem::path& file,
+                                                 std::string message,
+                                                 int exit_code) {
   return {
       .file = file,
       .location = {},
       .field = {},
       .message = std::move(message),
-      .exit_code = kIoErrorExitCode,
+      .exit_code = exit_code,
   };
 }
-
-}  // namespace
 
 std::expected<ProjectConfiguration, ConfigurationError> ParseProjectConfiguration(
     const std::filesystem::path& file,
@@ -497,7 +499,8 @@ std::expected<ProjectConfiguration, ConfigurationError> LoadProjectConfiguration
   std::error_code error;
   const auto working = std::filesystem::absolute(working_directory, error);
   if (error) {
-    return std::unexpected(IoError(working_directory, error.message()));
+    return std::unexpected(
+        ConfigurationError::FileError(working_directory, error.message(), kIoErrorExitCode));
   }
   std::filesystem::path file;
   if (explicit_file) {
@@ -508,7 +511,8 @@ std::expected<ProjectConfiguration, ConfigurationError> LoadProjectConfiguration
       const auto candidate = directory / "vela.json";
       const auto status = std::filesystem::status(candidate, error);
       if (error && error != std::errc::no_such_file_or_directory) {
-        return std::unexpected(IoError(candidate, error.message()));
+        return std::unexpected(
+            ConfigurationError::FileError(candidate, error.message(), kIoErrorExitCode));
       }
       if (std::filesystem::exists(status)) {
         file = candidate;
@@ -537,11 +541,12 @@ std::expected<ProjectConfiguration, ConfigurationError> LoadProjectConfiguration
   }
   const auto canonical = std::filesystem::canonical(file, error);
   if (error) {
-    return std::unexpected(IoError(file, error.message()));
+    return std::unexpected(ConfigurationError::FileError(file, error.message(), kIoErrorExitCode));
   }
   const auto bytes = ReadBinaryFile(canonical);
   if (!bytes) {
-    return std::unexpected(IoError(canonical, bytes.error()));
+    return std::unexpected(
+        ConfigurationError::FileError(canonical, bytes.error(), kIoErrorExitCode));
   }
   const void* storage = bytes->data();
   return ParseProjectConfiguration(canonical, {static_cast<const char*>(storage), bytes->size()});
@@ -552,7 +557,8 @@ std::expected<frontend::DiagnosticOptions, ConfigurationError> LoadSourceDiagnos
   std::error_code error;
   const auto absolute = std::filesystem::absolute(source, error);
   if (error) {
-    return std::unexpected(IoError(source, error.message()));
+    return std::unexpected(
+        ConfigurationError::FileError(source, error.message(), kIoErrorExitCode));
   }
   const auto configuration = LoadProjectConfiguration(absolute.parent_path(), std::nullopt,
                                                       ConfigurationRequirement::Optional);

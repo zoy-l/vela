@@ -20,6 +20,7 @@
 #include "compiler/frontend/regexp_builtins.h"
 #include "compiler/frontend/token.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/tooling/builtin_documentation.h"
 
 namespace vela::tooling {
@@ -27,13 +28,35 @@ namespace {
 
 using Kind = frontend::TypeDescriptor::Kind;
 
+void AddPropertyCompletion(std::vector<Completion>& result,
+                           std::string_view name,
+                           std::string detail = std::string(frontend::kIntTypeName)) {
+  result.push_back({
+      .label = std::string(name),
+      .detail = std::move(detail),
+      .kind = CompletionKind::Property,
+      .documentation = {},
+  });
+}
+
+void AddMethodCompletion(std::vector<Completion>& result,
+                         std::string_view name,
+                         std::string detail) {
+  result.push_back({
+      .label = std::string(name),
+      .detail = std::move(detail),
+      .kind = CompletionKind::Method,
+      .documentation = {},
+  });
+}
+
 void AddBuiltins(std::vector<Completion>& result, Kind kind) {
   if (kind == Kind::Invalid) {
     result.push_back({
-        .label = "sleep",
+        .label = std::string(frontend::kSleepFunctionName),
         .detail = "(milliseconds: int): Future<void>",
         .kind = CompletionKind::Function,
-        .documentation = std::string(BuiltinDocumentation(kind, "sleep")),
+        .documentation = std::string(BuiltinDocumentation(kind, frontend::kSleepFunctionName)),
     });
     result.push_back({
         .label = "print",
@@ -43,8 +66,8 @@ void AddBuiltins(std::vector<Completion>& result, Kind kind) {
     });
   }
   constexpr auto kNames = std::to_array<std::string_view>({
-      "String",
-      "RegExp",
+      frontend::kMutableStringTypeName,
+      frontend::kRegExpTypeName,
       "toString",
       "toInt",
       "toDouble",
@@ -122,7 +145,7 @@ void AddByteCompletions(std::vector<Completion>& result, Kind kind) {
   }
   result.push_back({
       .label = kind == Kind::ByteArray ? "length" : "byteLength",
-      .detail = "int",
+      .detail = std::string(frontend::kIntTypeName),
       .kind = CompletionKind::Property,
       .documentation = {},
   });
@@ -140,7 +163,7 @@ void AddRegExpCompletions(std::vector<Completion>& result, Kind kind) {
   for (const auto& [name, builtin] : frontend::RegExpProperties(kind)) {
     result.push_back({
         .label = std::string(name),
-        .detail = frontend::BuiltinSignature(builtin).return_type.name,
+        .detail = std::string(frontend::BuiltinSignature(builtin).return_type.name),
         .kind = CompletionKind::Property,
         .documentation = std::string(BuiltinDocumentation(kind, name)),
     });
@@ -205,26 +228,20 @@ std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receive
     }
   }
   if (receiver.storage == frontend::MemberStorage::Static) {
-    const auto method = [&result](std::string name, std::string detail) {
-      result.push_back({
-          .label = std::move(name),
-          .detail = std::move(detail),
-          .kind = CompletionKind::Method,
-          .documentation = {},
-      });
-    };
-    if (receiver.type.name == "Future") {
-      method("value", "(value: T): Future<T>");
-      method("error", "(error: Error): Future<T>");
-      method("sync", "(computation: () => T): Future<T>");
-      method("microtask", "(computation: () => T): Future<T>");
-      method("delayed", "(milliseconds: int, computation: () => T): Future<T>");
-      method("wait",
-             "(values: Future<T>[], eagerError?: bool, cleanUp?: ((T) => void)?): Future<T[]>");
-      method("race", "(values: Future<T>[]): Future<T>");
+    if (receiver.type.name == frontend::kFutureTypeName) {
+      AddMethodCompletion(result, "value", "(value: T): Future<T>");
+      AddMethodCompletion(result, "error", "(error: Error): Future<T>");
+      AddMethodCompletion(result, "sync", "(computation: () => T): Future<T>");
+      AddMethodCompletion(result, "microtask", "(computation: () => T): Future<T>");
+      AddMethodCompletion(result, "delayed",
+                          "(milliseconds: int, computation: () => T): Future<T>");
+      AddMethodCompletion(
+          result, "wait",
+          "(values: Future<T>[], eagerError?: bool, cleanUp?: ((T) => void)?): Future<T[]>");
+      AddMethodCompletion(result, "race", "(values: Future<T>[]): Future<T>");
     } else if (receiver.type.kind == Kind::Timer) {
-      method("after", "(milliseconds: int, callback: () => void): Timer");
-      method("periodic", "(milliseconds: int, callback: () => void): Timer");
+      AddMethodCompletion(result, "after", "(milliseconds: int, callback: () => void): Timer");
+      AddMethodCompletion(result, "periodic", "(milliseconds: int, callback: () => void): Timer");
     }
     for (auto& completion : result) {
       if (completion.documentation.empty()) {
@@ -245,46 +262,36 @@ std::vector<Completion> SemanticIndex::MemberCompletions(const Receiver& receive
 void SemanticIndex::AddAsyncCompletions(std::vector<Completion>& result,
                                         const frontend::TypeDescriptor& type) const {
   const auto kind = type.kind;
-  const auto property = [&result](std::string_view name, std::string detail = "int") -> void {
-    result.push_back({
-        .label = std::string(name),
-        .detail = std::move(detail),
-        .kind = CompletionKind::Property,
-        .documentation = {},
-    });
-  };
-  const auto method = [&result](std::string_view name, std::string detail) -> void {
-    result.push_back({
-        .label = std::string(name),
-        .detail = std::move(detail),
-        .kind = CompletionKind::Method,
-        .documentation = {},
-    });
-  };
   if (kind == Kind::Future || kind == Kind::Completer) {
     const auto found = model_.generic_arguments.find(type.name);
     if (found == model_.generic_arguments.end()) {
       return;
     }
     const auto& element = found->second.front();
+    const auto element_name = std::string(element.name);
+    const auto type_name = std::string(type.name);
     if (kind == Kind::Completer) {
-      property("future", "Future<" + element.name + ">");
-      property("isCompleted", "bool");
-      method("complete",
-             element.kind == Kind::Void ? "(): void" : "(value: " + element.name + "): void");
-      method("completeError", "(error: Error): void");
+      AddPropertyCompletion(result, "future", "Future<" + element_name + ">");
+      AddPropertyCompletion(result, "isCompleted", std::string(frontend::kBoolTypeName));
+      AddMethodCompletion(
+          result, "complete",
+          element.kind == Kind::Void ? "(): void" : "(value: " + element_name + "): void");
+      AddMethodCompletion(result, "completeError", "(error: Error): void");
     } else {
-      const auto on_value = element.kind == Kind::Void ? "()" : "(" + element.name + ")";
-      method("then", "(onValue: " + on_value + " => R, onError?: ((Error) => R)?): Future<R>");
-      method("catchError", "(onError: (Error) => " + element.name + "): " + type.name);
-      method("whenComplete", "(action: () => void): " + type.name);
-      method("timeout",
-             "(milliseconds: int, onTimeout?: (() => " + element.name + ")?): " + type.name);
+      const auto on_value = element.kind == Kind::Void ? "()" : "(" + element_name + ")";
+      AddMethodCompletion(result, "then",
+                          "(onValue: " + on_value + " => R, onError?: ((Error) => R)?): Future<R>");
+      AddMethodCompletion(result, "catchError",
+                          "(onError: (Error) => " + element_name + "): " + type_name);
+      AddMethodCompletion(result, "whenComplete", "(action: () => void): " + type_name);
+      AddMethodCompletion(
+          result, "timeout",
+          "(milliseconds: int, onTimeout?: (() => " + element_name + ")?): " + type_name);
     }
   } else if (kind == Kind::Timer || kind == Kind::CancellationToken) {
-    method("cancel", "(): void");
+    AddMethodCompletion(result, "cancel", "(): void");
     if (kind == Kind::CancellationToken) {
-      property("isCancelled", "bool");
+      AddPropertyCompletion(result, "isCancelled", std::string(frontend::kBoolTypeName));
     }
   }
 }
@@ -298,31 +305,15 @@ void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
     return;
   }
   AddBuiltins(result, kind);
-  const auto property = [&result](std::string_view name, std::string detail = "int") -> void {
-    result.push_back({
-        .label = std::string(name),
-        .detail = std::move(detail),
-        .kind = CompletionKind::Property,
-        .documentation = {},
-    });
-  };
-  const auto method = [&result](std::string_view name, std::string detail) -> void {
-    result.push_back({
-        .label = std::string(name),
-        .detail = std::move(detail),
-        .kind = CompletionKind::Method,
-        .documentation = {},
-    });
-  };
   AddAsyncCompletions(result, type);
   if (kind == Kind::Array || kind == Kind::String) {
-    property("length");
+    AddPropertyCompletion(result, "length");
   }
   if (kind == Kind::String) {
-    property("byteLength");
-    property("graphemeLength");
+    AddPropertyCompletion(result, "byteLength");
+    AddPropertyCompletion(result, "graphemeLength");
   } else if (kind == Kind::Array) {
-    property("capacity");
+    AddPropertyCompletion(result, "capacity");
     const auto element = model_.array_elements.find(type.name);
     if (element != model_.array_elements.end()) {
       AddArrayElementMethods(result, element->second);
@@ -333,22 +324,29 @@ void SemanticIndex::AddContainerCompletions(std::vector<Completion>& result,
       return;
     }
     const auto& types = arguments->second;
-    property("size");
+    const auto key_name = std::string(types.front().name);
+    const auto value_name = std::string(types.back().name);
+    const auto collection_name = std::string(type.name);
+    AddPropertyCompletion(result, "size");
     const std::string_view parameter = kind == Kind::Set ? "value: " : "key: ";
-    method("has", "(" + std::string(parameter) + types.front().name + "): bool");
-    method("delete", "(" + std::string(parameter) + types.front().name + "): bool");
-    method("clear", "(): void");
-    method("values", "(): " + types.back().name + "[]");
+    AddMethodCompletion(result, "has", "(" + std::string(parameter) + key_name + "): bool");
+    AddMethodCompletion(result, "delete", "(" + std::string(parameter) + key_name + "): bool");
+    AddMethodCompletion(result, "clear", "(): void");
+    AddMethodCompletion(result, "values", "(): " + value_name + "[]");
     if (kind == Kind::Set) {
-      method("add", "(value: " + types.front().name + "): bool");
-      method("union", "(other: " + type.name + "): " + type.name);
-      method("intersection", "(other: " + type.name + "): " + type.name);
-      method("difference", "(other: " + type.name + "): " + type.name);
+      AddMethodCompletion(result, "add", "(value: " + key_name + "): bool");
+      AddMethodCompletion(result, "union", "(other: " + collection_name + "): " + collection_name);
+      AddMethodCompletion(result, "intersection",
+                          "(other: " + collection_name + "): " + collection_name);
+      AddMethodCompletion(result, "difference",
+                          "(other: " + collection_name + "): " + collection_name);
     } else {
-      method("keys", "(): " + types.front().name + "[]");
-      method("get", "(key: " + types.front().name + "): " + types.back().name +
-                        (types.back().nullable ? "" : "?"));
-      method("set", "(key: " + types.front().name + ", value: " + types.back().name + "): void");
+      AddMethodCompletion(result, "keys", "(): " + key_name + "[]");
+      AddMethodCompletion(
+          result, "get",
+          "(key: " + key_name + "): " + value_name + (types.back().nullable ? "" : "?"));
+      AddMethodCompletion(result, "set",
+                          "(key: " + key_name + ", value: " + value_name + "): void");
     }
   }
 }
@@ -458,26 +456,26 @@ std::vector<Completion> SemanticIndex::Complete(std::size_t offset) const {
       });
     }
     constexpr auto kTypes = std::to_array<std::string_view>({
-        "dynamic",
-        "int",
-        "double",
-        "bool",
-        "string",
-        "void",
-        "Set",
-        "Map",
-        "RegExpMatch",
-        "Future",
-        "Completer",
-        "Timer",
-        "CancellationToken",
-        "TimeoutException",
-        "Math",
-        "Random",
-        "performance",
-        "Date",
-        "Json",
-        "Error",
+        frontend::kDynamicTypeName,
+        frontend::kIntTypeName,
+        frontend::kDoubleTypeName,
+        frontend::kBoolTypeName,
+        frontend::kStringTypeName,
+        frontend::kVoidTypeName,
+        frontend::kSetTypeName,
+        frontend::kMapTypeName,
+        frontend::kRegExpMatchTypeName,
+        frontend::kFutureTypeName,
+        frontend::kCompleterTypeName,
+        frontend::kTimerTypeName,
+        frontend::kCancellationTokenTypeName,
+        frontend::kTimeoutExceptionTypeName,
+        frontend::kMathTypeName,
+        frontend::kRandomTypeName,
+        frontend::kPerformanceTypeName,
+        frontend::kDateTypeName,
+        frontend::kJsonTypeName,
+        frontend::kErrorTypeName,
     });
     for (const auto type : kTypes) {
       selected.try_emplace(

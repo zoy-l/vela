@@ -4,7 +4,7 @@
 
 #include "benchmark/benchmark.h"
 
-#include "compiler/compiler.h"
+#include "benchmarks/source.h"
 #include "runtime/future.h"
 #include "runtime/isolate.h"
 #include "runtime/value.h"
@@ -40,31 +40,23 @@ bool IsAnswer(const runtime::Future& result, std::int64_t expected) {
          value->AsInteger() == expected;
 }
 
-void CompileFailure(benchmark::State& state, const compiler::CompileResult& compiled) {
-  std::string message = "Async benchmark compilation failed";
-  for (const auto& diagnostic : compiled.diagnostics) {
-    message += "\n" + diagnostic.message;
-  }
-  state.SkipWithError(message);
-}
-
 void SteadyExecution(benchmark::State& state,
                      std::string_view source,
                      std::int64_t expected,
                      Collection collection) {
   runtime::Isolate isolate;
-  const auto compiled = compiler::CompileSource(source, isolate);
-  if (!compiled.Succeeded()) {
-    CompileFailure(state, compiled);
+  const auto entry = CompileBenchmarkEntry(state, source, isolate);
+  if (!entry) {
     return;
   }
-  const auto entry = compiled.program.FindFunction("main");
+  const auto& program = entry->program();
+  const auto entry_index = entry->index();
   vm::VirtualMachine machine(isolate);
   auto& scheduler = isolate.scheduler();
   auto& heap = isolate.heap();
   const auto before = heap.allocated_bytes();
   {
-    auto result = machine.ExecuteFuture(compiled.program, entry.index());
+    auto result = machine.ExecuteFuture(program, entry_index);
     const auto frames = scheduler.suspended_frame_count();
     const auto saved = scheduler.saved_state_bytes();
     state.counters["suspended_frames"] = static_cast<double>(frames);
@@ -83,7 +75,7 @@ void SteadyExecution(benchmark::State& state,
   const auto retained = heap.allocated_bytes();
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    auto result = machine.ExecuteFuture(compiled.program, entry.index());
+    auto result = machine.ExecuteFuture(program, entry_index);
     if (collection == Collection::WhileSuspended) {
       heap.FinishCollection();
       heap.Collect();
@@ -108,15 +100,15 @@ void FirstExecution(benchmark::State& state) {
     state.PauseTiming();
     {
       runtime::Isolate isolate;
-      const auto compiled = compiler::CompileSource(kNoAwait, isolate);
-      if (!compiled.Succeeded()) {
-        CompileFailure(state, compiled);
+      const auto entry = CompileBenchmarkEntry(state, kNoAwait, isolate);
+      if (!entry) {
         return;
       }
-      const auto entry = compiled.program.FindFunction("main");
+      const auto& program = entry->program();
+      const auto entry_index = entry->index();
       vm::VirtualMachine machine(isolate);
       state.ResumeTiming();
-      auto result = machine.ExecuteFuture(compiled.program, entry.index());
+      auto result = machine.ExecuteFuture(program, entry_index);
       benchmark::DoNotOptimize(result);
       state.PauseTiming();
       if (!IsAnswer(result, kAnswer)) {

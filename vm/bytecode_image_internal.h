@@ -24,6 +24,31 @@ inline constexpr auto kNoImageId = std::numeric_limits<std::uint64_t>::max();
 inline constexpr std::string_view kImageMagic = "VELABC01";
 inline constexpr std::size_t kElementBytes = 3 + (5 * sizeof(std::uint64_t));
 
+[[nodiscard]] std::expected<bool, BinaryError> ReadFlag(BinaryReader& reader);
+
+struct ImageParameterFlags final {
+  bool optional = false;
+  bool rest = false;
+};
+
+[[nodiscard]] std::expected<ImageParameterFlags, BinaryError> ReadParameterFlags(
+    BinaryReader& reader);
+
+template <class T>
+std::expected<T*, std::string> ResolvePointer(std::uint64_t index, std::span<T* const> values) {
+  if (index == kNoImageId) {
+    return nullptr;
+  }
+  if (index >= values.size()) {
+    return std::unexpected("invalid layout reference");
+  }
+  auto* value = values.subspan(static_cast<std::size_t>(index)).front();
+  if (value == nullptr) {
+    return std::unexpected("invalid layout reference");
+  }
+  return value;
+}
+
 template <class T, class RecordReader>
 std::expected<std::vector<T>, BinaryError> ReadRecords(BinaryReader& reader,
                                                        std::size_t minimum_bytes,

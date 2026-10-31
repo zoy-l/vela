@@ -12,6 +12,7 @@
 #include "compiler/compiler.h"
 #include "compiler/frontend/source_loader.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
 #include "runtime/string.h"
 #include "vm/program.h"
@@ -23,6 +24,7 @@ namespace {
 constexpr std::size_t kBeyondByteIndex = kMaxFrameRegisters + 1;
 constexpr std::size_t kLongBranchStatements = 17000;
 constexpr std::size_t kLongFunctionCalls = 1000;
+constexpr std::string_view kWideFunctionName = "f256";
 
 std::string FunctionSource(std::size_t count) {
   std::string source;
@@ -36,11 +38,9 @@ std::string FunctionSource(std::size_t count) {
 TEST(EncodingTest, CallsFunctionIndex256WithoutTruncation) {
   runtime::Isolate isolate;
   const auto source = FunctionSource(kBeyondByteIndex) + "func main(): int { return f256(); }";
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 256);
+  const auto result = test::RunInteger(source, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 256);
 }
 
 TEST(EncodingTest, AllowsFunctionIndex255AndAnEntryBeyondTheByteIndexRange) {
@@ -63,9 +63,9 @@ TEST(EncodingTest, AllocatesClassIndex256) {
   }
   source += "func main(): C256 { return C256(); }";
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_TRUE(result.value.IsObject());
 }
@@ -77,9 +77,9 @@ TEST(EncodingTest, LoadsStringConstantIndex256WithoutTruncation) {
               "\"; }\n";
   }
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("f256"));
+  const auto program = test::CompileCleanSource(source, isolate);
+  ASSERT_TRUE(program) << program.error();
+  const auto result = vm::VirtualMachine(isolate).Execute(program->FindFunction(kWideFunctionName));
   ASSERT_TRUE(result.Succeeded());
   EXPECT_EQ(result.value.AsString()->value(), "s256");
 }
@@ -104,9 +104,9 @@ TEST(EncodingTest, AllocatesArrayLayoutIndex256) {
     source += "func f" + std::to_string(index) + "(): " + type + "[] { return []; }\n";
   }
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("f256"));
+  const auto program = test::CompileCleanSource(source, isolate);
+  ASSERT_TRUE(program) << program.error();
+  const auto result = vm::VirtualMachine(isolate).Execute(program->FindFunction(kWideFunctionName));
   ASSERT_TRUE(result.Succeeded());
   EXPECT_TRUE(result.value.IsObject());
 }
@@ -177,13 +177,9 @@ TEST(EncodingTest, ReusesRegistersAndAddressesFieldsBeyondByteIndexRange) {
 
 TEST(EncodingTest, PreservesArithmeticResultsOutsideTheImmediateRange) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource("func main(): int { return 20000 + 20000; }", isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto main = compiled.program.FindFunction("main");
-  ASSERT_TRUE(main.IsValid());
-  const auto result = vm::VirtualMachine(isolate).Execute(main);
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 40000);
+  const auto result = test::RunInteger("func main(): int { return 20000 + 20000; }", isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 40000);
   EXPECT_TRUE(CompileSource("func main(): int { return 32768; }", isolate).Succeeded());
 }
 

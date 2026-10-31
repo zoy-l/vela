@@ -2,10 +2,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <filesystem>
-#include <fstream>
-#include <ios>
-#include <iterator>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -23,9 +19,12 @@ extern "C" {
 #include <lualib.h>
 }
 #include <luajit_build.h>
+#include "benchmarks/heap_metrics.h"
 #include "benchmarks/native_standard_workloads.h"
 #include "benchmarks/native_workloads.h"
+#include "benchmarks/source.h"
 #include "compiler/compiler.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/source_loader.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -33,6 +32,10 @@ extern "C" {
 
 namespace vela::benchmarks {
 namespace {
+
+constexpr std::string_view kInputModule = "workloads/input.vela";
+constexpr std::string_view kSetupEntry = "benchmarkSetup";
+constexpr std::string_view kWorkloadEntry = "benchmarkEntry";
 
 struct Problem final {
   std::int64_t size;
@@ -319,44 +322,30 @@ struct Sources final {
   compiler::CompileResult Compile(runtime::Isolate& isolate) const {
     const auto modules = std::to_array<frontend::SourceInput>({
         {.path = path, .text = workload},
-        {.path = "workloads/input.vela", .text = input},
+        {.path = kInputModule, .text = input},
     });
     return compiler::CompileModules(modules, path, isolate);
   }
 };
 
-std::optional<std::string> ReadSource(benchmark::State& state, std::string_view filename) {
-  const auto path = std::filesystem::path(VELA_BENCHMARK_SOURCE_DIR) / filename;
-  std::ifstream stream(path, std::ios::binary);
-  if (!stream) {
-    state.SkipWithError("Cannot open benchmark source: " + path.string());
-    return std::nullopt;
-  }
-  return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
-}
-
 std::optional<Sources> LoadSources(benchmark::State& state,
                                    const Workload& workload,
                                    Problem problem) {
   const auto path = "workloads/" + std::string(workload.name) + ".vela";
-  auto source = ReadSource(state, path);
-  auto input = ReadSource(state, "workloads/input.vela");
+  auto source = LoadBenchmarkSource(state, path);
+  auto input = LoadBenchmarkSource(state, kInputModule);
   if (!source || !input) {
     return std::nullopt;
   }
   // 包装入口只提供负载规模；保留独立脚本中的 main，便于直接运行相同实现。
-  *source += "\nfunc benchmarkSetup(): void { data.prepare(" + std::to_string(problem.size) +
-             "); }\nfunc benchmarkEntry(): int { return run(); }\n";
+  source->append("\nfunc ")
+      .append(kSetupEntry)
+      .append("(): void { data.prepare(")
+      .append(std::to_string(problem.size))
+      .append("); }\nfunc ")
+      .append(kWorkloadEntry)
+      .append("(): int { return run(); }\n");
   return Sources{.path = path, .workload = std::move(*source), .input = std::move(*input)};
-}
-
-void ReportDiagnostics(benchmark::State& state, const compiler::CompileResult& compiled) {
-  std::string message;
-  for (const auto& diagnostic : compiled.diagnostics) {
-    message += diagnostic.source_path + ":" + std::to_string(diagnostic.location.line) + ":" +
-               std::to_string(diagnostic.location.column) + ": " + diagnostic.message + "\n";
-  }
-  state.SkipWithError(message);
 }
 
 bool IsExpected(const vm::ExecutionResult& result, Problem problem) {
@@ -373,7 +362,7 @@ void Compile(benchmark::State& state, Workload workload, Problem problem) {
     runtime::Isolate isolate;
     auto compiled = sources->Compile(isolate);
     if (!compiled.Succeeded()) {
-      ReportDiagnostics(state, compiled);
+      state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
       return;
     }
     benchmark::DoNotOptimize(compiled);
@@ -390,16 +379,16 @@ void Vm(benchmark::State& state, Workload workload, Problem problem) {
   runtime::Isolate isolate;
   const auto compiled = sources->Compile(isolate);
   if (!compiled.Succeeded()) {
-    ReportDiagnostics(state, compiled);
+    state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
     return;
   }
   vm::VirtualMachine machine(isolate);
-  const auto setup = machine.Execute(compiled.program.FindFunction("benchmarkSetup"));
+  const auto setup = machine.Execute(compiled.program.FindFunction(kSetupEntry));
   if (!setup.Succeeded()) {
     state.SkipWithError("Input preparation failed: " + setup.message);
     return;
   }
-  const auto entry = compiled.program.FindFunction("benchmarkEntry");
+  const auto entry = compiled.program.FindFunction(kWorkloadEntry);
   const auto warm = machine.Execute(entry);
   if (!IsExpected(warm, problem)) {
     state.SkipWithError("Warm-up failed or checksum mismatched: " + warm.message);
@@ -420,12 +409,8 @@ void Vm(benchmark::State& state, Workload workload, Problem problem) {
       return;
     }
   }
-  state.counters["allocated_bytes"] = static_cast<double>(heap.allocated_bytes());
-  state.counters["committed_bytes"] = static_cast<double>(heap.committed_bytes());
-  heap.FinishCollection();
-  heap.Collect();
-  state.counters["retained_bytes"] = static_cast<double>(heap.allocated_bytes());
-  if (heap.allocated_bytes() != baseline_bytes) {
+  const auto retained = ReportHeap(state, heap);
+  if (retained != baseline_bytes) {
     state.SkipWithError("Execution retained temporary heap values after collection");
     return;
   }
@@ -434,7 +419,7 @@ void Vm(benchmark::State& state, Workload workload, Problem problem) {
 
 std::optional<std::string> ReadLuaSource(benchmark::State& state, const Workload& workload) {
   const auto name = workload.capacity == ArrayCapacity::Reserved ? "array_growth" : workload.name;
-  return ReadSource(state, "workloads/" + std::string(name) + ".lua");
+  return LoadBenchmarkSource(state, "workloads/" + std::string(name) + ".lua");
 }
 
 std::expected<void, std::string> CheckLua(LuaProgram& program, Problem problem) {
@@ -591,17 +576,17 @@ void FirstVm(benchmark::State& state, Workload workload, Problem problem) {
       const auto compiled = sources->Compile(isolate);
       if (!compiled.Succeeded()) {
         state.ResumeTiming();
-        ReportDiagnostics(state, compiled);
+        state.SkipWithError(frontend::DiagnosticsText(compiled.diagnostics));
         return;
       }
       vm::VirtualMachine machine(isolate);
-      const auto setup = machine.Execute(compiled.program.FindFunction("benchmarkSetup"));
+      const auto setup = machine.Execute(compiled.program.FindFunction(kSetupEntry));
       if (!setup.Succeeded()) {
         state.ResumeTiming();
         state.SkipWithError("Input preparation failed: " + setup.message);
         return;
       }
-      const auto entry = compiled.program.FindFunction("benchmarkEntry");
+      const auto entry = compiled.program.FindFunction(kWorkloadEntry);
       state.ResumeTiming();
       auto result = machine.Execute(entry);
       benchmark::DoNotOptimize(result);

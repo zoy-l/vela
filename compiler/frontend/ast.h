@@ -1,9 +1,13 @@
 #pragma once
 
+#include <array>
+#include <charconv>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
@@ -26,6 +30,11 @@ struct TypeName final {
 
   [[nodiscard]] std::string ToString() const;
 };
+
+[[nodiscard]] TypeName SubstituteTypeName(
+    TypeName type,
+    const absl::flat_hash_map<std::string, TypeName>& substitutions);
+[[nodiscard]] std::optional<std::string_view> CompoundAssignmentOperation(std::string_view text);
 
 // 名称绑定前的声明来源；键使用绑定后的符号名，值不受导入别名或模块排序影响。
 // 泛型具体化保留模板来源及规范化实参，不从生成名称反向解析身份。
@@ -101,7 +110,6 @@ struct Expression final {
   std::string text;
   bool null_safe = false;
   bool postfix = false;
-  std::int64_t integer_value = 0;
   double double_value = 0.0;
   bool boolean_value = false;
   std::unique_ptr<Expression> left;
@@ -116,7 +124,21 @@ struct Expression final {
   std::vector<TypeName> type_arguments;
   TypeName type;
   std::vector<MatchArm> arms;
+
+  // 文本语法由 lexer/parser 保证，各阶段共用有符号范围检查。
+  [[nodiscard]] std::optional<std::int64_t> IntegerValue() const noexcept {
+    std::int64_t value = 0;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+    return parsed.ec == std::errc() ? std::optional(value) : std::nullopt;
+  }
 };
+
+// 仅枚举六个可选操作数；列表、lambda、match 的遍历和作用域由访问者处理。
+template <class Node>
+[[nodiscard]] std::array<Node*, 6> ExpressionOperands(Node& expression) noexcept {
+  return {expression.left.get(),   expression.right.get(),  expression.operand.get(),
+          expression.callee.get(), expression.object.get(), expression.index.get()};
+}
 
 struct Parameter final {
   TypeName type;
@@ -182,6 +204,10 @@ struct Statement final {
   std::unique_ptr<Expression> iterable;
   std::string second_name;
   bool destructuring = false;
+
+  [[nodiscard]] bool IntroducesScope() const noexcept {
+    return kind == Kind::Block || kind == Kind::For || kind == Kind::ForEach;
+  }
 };
 
 struct Function final {

@@ -14,6 +14,7 @@
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -127,7 +128,8 @@ ClassId Lowerer::RegisterEnumType(const frontend::TypeDescriptor& type) {
     layout.declaration = declarations_->nominals.at(name);
   }
   layout.field_order = {"$value"};
-  layout.field_types = {{.kind = frontend::TypeDescriptor::Kind::Int, .name = "int"}};
+  layout.field_types = {
+      {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName}};
   program_.classes.push_back(std::move(layout));
   class_ids_.emplace(name, index);
   return index;
@@ -163,9 +165,10 @@ Lowerer::LoweredValue Lowerer::LowerTypeOperation(const frontend::Expression& ex
     return LowerConversion(std::move(value), target, expression.location);
   }
   if (value.type.kind == frontend::TypeDescriptor::Kind::Enum) {
-    value = LowerConversion(std::move(value),
-                            {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},
-                            expression.location);
+    value = LowerConversion(
+        std::move(value),
+        {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = frontend::kDynamicTypeName},
+        expression.location);
   }
   const auto index = RegisterRuntimeType(target);
   const auto result = AllocateTemporary(expression.location);
@@ -298,7 +301,7 @@ void Lowerer::EmitConstructorInitialization(const frontend::ClassDescriptor& inf
                                             frontend::SourceLocation location) {
   const auto& source = *info.declaration;
   const bool generated = source.constructor_kind == frontend::ConstructorKind::Generated;
-  const auto name = info.type.name + ".$constructor";
+  const auto name = std::string(info.type.name) + ".$constructor";
   std::uint32_t target = 0;
   if (const auto existing = function_ids_.find(name); existing != function_ids_.end()) {
     target = existing->second;

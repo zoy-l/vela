@@ -1,6 +1,5 @@
 #include <array>
 #include <barrier>
-#include <chrono>
 #include <cstddef>
 #include <expected>
 #include <filesystem>
@@ -15,6 +14,7 @@
 
 #include "base/file.h"
 #include "base/path.h"
+#include "base/testing/directory.h"
 
 namespace vela {
 namespace {
@@ -39,26 +39,8 @@ std::expected<void, std::string> ReadVersions(const std::filesystem::path& path,
   return {};
 }
 
-class FileTest : public testing::Test {
+class FileTest : public test::DirectoryTest {
  protected:
-  void SetUp() override {
-    std::error_code error;
-    const auto temporary = std::filesystem::temp_directory_path(error);
-    ASSERT_FALSE(error);
-    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-    directory_ = temporary / ("vela-files-" + std::to_string(suffix));
-    created_ = std::filesystem::create_directory(directory_, error);
-    ASSERT_TRUE(created_);
-    ASSERT_FALSE(error);
-  }
-  void TearDown() override {
-    if (created_) {
-      std::error_code error;
-      std::filesystem::remove_all(directory_, error);
-      EXPECT_FALSE(error);
-    }
-  }
-  [[nodiscard]] const std::filesystem::path& directory() const { return directory_; }
   void ExpectFileCount(std::size_t count) {
     std::error_code error;
     const std::filesystem::directory_iterator entries(directory_, error);
@@ -67,10 +49,6 @@ class FileTest : public testing::Test {
         static_cast<std::size_t>(std::distance(entries, std::filesystem::directory_iterator())),
         count);
   }
-
- private:
-  std::filesystem::path directory_;
-  bool created_ = false;
 };
 
 TEST_F(FileTest, RoundTripsUnicodeEmptyFilesAndReplacesExistingContents) {

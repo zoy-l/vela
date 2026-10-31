@@ -1,4 +1,3 @@
-#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -12,6 +11,7 @@
 
 #include "base/file.h"
 #include "base/path.h"
+#include "base/testing/directory.h"
 #include "compiler/compilation_cache.h"
 #include "runtime/isolate.h"
 #include "runtime/native_context.h"
@@ -26,25 +26,12 @@ constexpr std::int64_t kChangedAnswer = 43;
 constexpr std::int64_t kNextCount = 44;
 constexpr double kDoubleAnswer = 42.0;
 
-class CompilationCacheTest : public testing::Test {
+class CompilationCacheTest : public test::DirectoryTest {
  protected:
   void SetUp() override {
-    std::error_code error;
-    const auto temporary = std::filesystem::temp_directory_path(error);
-    ASSERT_FALSE(error);
-    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-    directory_ = temporary / ("vela-cache-" + std::to_string(suffix));
-    created_ = std::filesystem::create_directory(directory_, error);
-    ASSERT_TRUE(created_);
-    ASSERT_FALSE(error);
+    test::DirectoryTest::SetUp();
+    ASSERT_FALSE(HasFatalFailure());
     Write("main.vela", "func main(): int { return 42; }");
-  }
-  void TearDown() override {
-    if (created_) {
-      std::error_code error;
-      std::filesystem::remove_all(directory_, error);
-      EXPECT_FALSE(error);
-    }
   }
   void Write(const std::filesystem::path& name, std::string_view text) {
     const auto path = directory_ / name;
@@ -67,13 +54,10 @@ class CompilationCacheTest : public testing::Test {
     ASSERT_TRUE(executed.Succeeded()) << executed.message;
     EXPECT_EQ(executed.value.AsInteger(), expected);
   }
-  [[nodiscard]] const std::filesystem::path& directory() const { return directory_; }
   runtime::Isolate& isolate() { return isolate_; }
 
  private:
-  std::filesystem::path directory_;
   runtime::Isolate isolate_{1};
-  bool created_ = false;
 };
 
 TEST_F(CompilationCacheTest, HitsInFreshIsolateWithoutPersistingRuntimeState) {

@@ -176,10 +176,7 @@ void FunctionEmitter::EmitRecoveryDispatch() {
   auto* instruction = builder_.CreateLoad(
       builder_.getInt32Ty(),
       ByteAddress(checkpoint, offsetof(runtime::NativeCheckpoint, instruction)));
-  auto* invalid = llvm::BasicBlock::Create(module_.getContext(), "invalid.checkpoint", body_);
-  auto* dispatch = builder_.CreateSwitch(instruction, invalid);
-  builder_.SetInsertPoint(invalid);
-  Finish(Status(builder_, ExecutionStatus::InvalidEntry));
+  auto* dispatch = ResumeDispatch(instruction);
   for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
     if (roots_.safepoints.at(index) == 0) {
       continue;

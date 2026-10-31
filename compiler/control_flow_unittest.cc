@@ -5,6 +5,7 @@
 
 #include "compiler/compiler.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
 #include "vm/bytecode.h"
 #include "vm/vm.h"
@@ -16,15 +17,9 @@ class FlowExecutionTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(FlowExecutionTest, ExecutesEveryReachableExit) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(GetParam(), isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  const auto index = entry.index();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, index);
+  const auto entry = test::CompileEntry(GetParam(), isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = vm::VirtualMachine(isolate).Execute(entry->program(), entry->index());
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());

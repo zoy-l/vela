@@ -22,16 +22,19 @@
 #include "runtime/external_resources.h"
 #include "runtime/heap.h"
 #include "runtime/instance_storage.h"
+#include "runtime/intrusive_link_internal.h"
 #include "runtime/isolate.h"
 #include "runtime/native_abi.h"
 #include "runtime/native_call.h"
 #include "runtime/native_contracts.h"
 #include "runtime/native_control.h"
+#include "runtime/native_global_internal.h"
 #include "runtime/native_image.h"
 #include "runtime/native_instance.h"
 #include "runtime/native_materialization.h"
 #include "runtime/native_metadata.h"
 #include "runtime/native_program_state.h"
+#include "runtime/native_result_internal.h"
 #include "runtime/native_version.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
@@ -80,6 +83,13 @@ struct NativeDispatchSnapshot final {
       const NativeImage& description,
       const NativeDispatchSnapshot* previous_snapshot);
   void IndexLayouts(const NativeImage& description, const NativeInstance& instance);
+  std::expected<GlobalEntry*, ExecutionStatus> FindGlobal(DeclarationId declaration) {
+    const auto found = globals.find(declaration);
+    if (found == globals.end()) {
+      return std::unexpected(ExecutionStatus::TargetDeleted);
+    }
+    return &found->second;
+  }
   Value state;
   RootRange root;
   ExternalResource preparation;
@@ -346,10 +356,9 @@ std::uint64_t NativeDispatch::revision() const noexcept {
   return current_ == nullptr ? 0 : Heap::NativeProgram(*current_->state.AsObject()).image->revision;
 }
 
-std::expected<NativePreparedPublication, NativePublicationError> NativeDispatch::Prepare(
-    std::uint64_t base_revision,
-    std::shared_ptr<const NativeImage> image) {
-  const auto started = std::chrono::steady_clock::now();
+std::expected<void, NativePublicationError> NativeDispatch::CheckPublication(
+    const NativeDispatch* owner,
+    std::uint64_t base_revision) const {
   if (closed_ || isolate_->native_control().IsStopRequested()) {
     return std::unexpected(NativePublicationError{
         .status = NativePublicationStatus::Stopped,
@@ -357,12 +366,22 @@ std::expected<NativePreparedPublication, NativePublicationError> NativeDispatch:
         .declaration = {},
     });
   }
-  if (base_revision != revision()) {
+  if (owner != this || base_revision != revision()) {
     return std::unexpected(NativePublicationError{
         .status = NativePublicationStatus::Stale,
         .message = "native publication baseline is stale",
         .declaration = {},
     });
+  }
+  return {};
+}
+
+std::expected<NativePreparedPublication, NativePublicationError> NativeDispatch::Prepare(
+    std::uint64_t base_revision,
+    std::shared_ptr<const NativeImage> image) {
+  const auto started = std::chrono::steady_clock::now();
+  if (const auto checked = CheckPublication(this, base_revision); !checked) {
+    return std::unexpected(checked.error());
   }
   if (image->native_mode != static_cast<std::uint32_t>(NativeProgramMode::Reloadable) ||
       image->revision != base_revision + 1) {
@@ -422,19 +441,8 @@ std::expected<NativePublicationTimings, NativePublicationError> NativeDispatch::
   const auto started = Clock::now();
   NativePublicationTimings timings;
   timings.instantiation = candidate.preparation_;
-  if (closed_ || isolate_->native_control().IsStopRequested()) {
-    return std::unexpected(NativePublicationError{
-        .status = NativePublicationStatus::Stopped,
-        .message = "native publication is stopped",
-        .declaration = {},
-    });
-  }
-  if (candidate.owner_ != this || candidate.base_revision_ != revision()) {
-    return std::unexpected(NativePublicationError{
-        .status = NativePublicationStatus::Stale,
-        .message = "native publication baseline is stale",
-        .declaration = {},
-    });
+  if (const auto checked = CheckPublication(candidate.owner_, candidate.base_revision_); !checked) {
+    return std::unexpected(checked.error());
   }
   if (!isolate_->native_control().CanPublish()) {
     return std::unexpected(NativePublicationError{
@@ -618,36 +626,26 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadGlobal(NativeExecution
   if (closed_) {
     return std::unexpected(ExecutionStatus::ExecutionStopped);
   }
-  const auto found = current_->globals.find(declaration);
-  if (found == current_->globals.end()) {
-    return std::unexpected(ExecutionStatus::TargetDeleted);
+  const auto found = current_->FindGlobal(declaration);
+  if (!found) {
+    return std::unexpected(found.error());
   }
-  const auto& entry = found->second;
+  const auto& entry = **found;
   auto& slot = *entry.slot;
   using State = NativeProgramState::GlobalState;
   if (slot.state == State::Ready) {
     return Heap::ValueSlots(*slot.storage.AsObject()).front();
   }
-  if (slot.state == State::Initializing) {
-    return std::unexpected(ExecutionStatus::CyclicInitialization);
-  }
   const NativeInitializationScope initialization(isolate_->native_control());
   auto instance = NativeInstance::Borrow(*current_->state.AsObject());
   const NativeInstanceScope scope(execution, instance);
-  slot.state = State::Initializing;
-  NativeValue result;
-  const auto status = static_cast<ExecutionStatus>(instance.image()
-                                                       .functions.values()
-                                                       .subspan(entry.initializer)
-                                                       .front()
-                                                       .entry(&execution, nullptr, 0, &result));
-  if (status != ExecutionStatus::Returned) {
-    slot.state = State::Uninitialized;
-    return std::unexpected(status);
+  const auto initializer =
+      instance.image().functions.values().subspan(entry.initializer).front().entry;
+  const auto value = internal::InitializeNativeGlobal(execution, initializer, slot.state);
+  if (!value) {
+    return value;
   }
-  const auto value = DecodeNativeValue(result);
-  isolate_->heap().SetValueSlot(*slot.storage.AsObject(), 0, value);
-  slot.state = State::Ready;
+  internal::StoreNativeGlobal(isolate_->heap(), *slot.storage.AsObject(), 0, slot.state, *value);
   return value;
 }
 
@@ -656,13 +654,12 @@ std::expected<void, ExecutionStatus> NativeDispatch::StoreGlobal(DeclarationId d
   if (closed_) {
     return std::unexpected(ExecutionStatus::ExecutionStopped);
   }
-  const auto found = current_->globals.find(declaration);
-  if (found == current_->globals.end()) {
-    return std::unexpected(ExecutionStatus::TargetDeleted);
+  const auto found = current_->FindGlobal(declaration);
+  if (!found) {
+    return std::unexpected(found.error());
   }
-  auto& slot = *found->second.slot;
-  isolate_->heap().SetValueSlot(*slot.storage.AsObject(), 0, value);
-  slot.state = NativeProgramState::GlobalState::Ready;
+  auto& slot = *(**found).slot;
+  internal::StoreNativeGlobal(isolate_->heap(), *slot.storage.AsObject(), 0, slot.state, value);
   return {};
 }
 
@@ -670,12 +667,8 @@ extern "C" std::uint8_t vela_native_v3_load_global(NativeExecution* execution,
                                                    std::uint64_t declaration,
                                                    NativeValue* result) {
   auto& dispatch = *Heap::NativeProgram(*execution->instance().state().front().AsObject()).dispatch;
-  const auto loaded = dispatch.LoadGlobal(*execution, DeclarationId{declaration});
-  if (!loaded) {
-    return static_cast<std::uint8_t>(loaded.error());
-  }
-  *result = EncodeNativeValue(*loaded);
-  return static_cast<std::uint8_t>(ExecutionStatus::Returned);
+  return internal::StoreNativeResult(result,
+                                     dispatch.LoadGlobal(*execution, DeclarationId{declaration}));
 }
 
 extern "C" std::uint8_t vela_native_v3_store_global(NativeExecution* execution,
@@ -692,19 +685,13 @@ void NativeDispatch::Close() noexcept {
 }
 
 void NativeDispatch::RegisterExecution(NativeExecution& execution) noexcept {
-  execution.version_next_ = executions_;
-  execution.version_previous_link_ = &executions_;
-  if (executions_ != nullptr) {
-    executions_->version_previous_link_ = &execution.version_next_;
-  }
-  executions_ = &execution;
+  internal::PrependIntrusive(execution, executions_, &NativeExecution::version_next_,
+                             &NativeExecution::version_previous_link_);
 }
 
 void NativeDispatch::UnregisterExecution(NativeExecution& execution) noexcept {
-  *execution.version_previous_link_ = execution.version_next_;
-  if (execution.version_next_ != nullptr) {
-    execution.version_next_->version_previous_link_ = execution.version_previous_link_;
-  }
+  internal::UnlinkIntrusive(execution, &NativeExecution::version_next_,
+                            &NativeExecution::version_previous_link_);
 }
 
 void NativeDispatch::AppendExecutionFunctions(
@@ -787,9 +774,7 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadFieldAt(NativeExecutio
     return std::unexpected(status);
   }
   const auto value = DecodeNativeValue(result);
-  storage.values().subspan(slot).front() = value;
-  state = FieldState::Ready;
-  isolate_->heap().WriteBarrier(object, value);
+  static_cast<void>(isolate_->heap().SetField(object, slot, value));
   return value;
 }
 
@@ -811,9 +796,7 @@ std::expected<void, ExecutionStatus> NativeDispatch::StoreFieldAt(HeapObject& ob
   if (state == FieldState::Initializing) {
     return std::unexpected(ExecutionStatus::CyclicInitialization);
   }
-  storage.values().subspan(slot).front() = value;
-  state = FieldState::Ready;
-  isolate_->heap().WriteBarrier(object, value);
+  static_cast<void>(isolate_->heap().SetField(object, slot, value));
   return {};
 }
 
@@ -865,13 +848,9 @@ extern "C" std::uint8_t vela_native_v3_load_field(NativeExecution* execution,
                                                   std::uint64_t access,
                                                   NativeValue* result) {
   auto& state = Heap::NativeProgram(*execution->instance().state().front().AsObject());
-  const auto loaded = state.dispatch->LoadField(*execution, *object, DeclarationId{field},
-                                                state.field_cache(access));
-  if (!loaded) {
-    return static_cast<std::uint8_t>(loaded.error());
-  }
-  *result = EncodeNativeValue(*loaded);
-  return static_cast<std::uint8_t>(ExecutionStatus::Returned);
+  return internal::StoreNativeResult(
+      result, state.dispatch->LoadField(*execution, *object, DeclarationId{field},
+                                        state.field_cache(access)));
 }
 
 extern "C" std::uint8_t vela_native_v3_store_field(NativeExecution* execution,

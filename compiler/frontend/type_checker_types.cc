@@ -8,8 +8,19 @@
 #include <utility>
 
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
+
+void FunctionDescriptor::AddParameter(std::string name,
+                                      TypeDescriptor type,
+                                      ParameterPresence presence) {
+  if (presence == ParameterPresence::Optional) {
+    optional_parameters.insert(name);
+  }
+  parameter_indices.emplace(name, static_cast<std::uint32_t>(parameters.size()));
+  parameters.push_back({.name = std::move(name), .type = std::move(type)});
+}
 
 TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, bool allow_void) {
   if (type_name.kind == TypeName::Kind::Generic &&
@@ -39,15 +50,14 @@ TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, bool allow
     const auto count = type_name.arguments.size() - 1;
     for (std::size_t index = 0; index < count; ++index) {
       const auto parameter = ResolveType(type_name.arguments.at(index), false);
-      const auto key = std::to_string(index);
-      signature.parameter_indices.emplace(key,
-                                          static_cast<std::uint32_t>(signature.parameters.size()));
-      signature.parameters.push_back({.name = key, .type = parameter});
-      name += (index == 0 ? "" : ", ") + parameter.name;
+      signature.AddParameter(std::to_string(index), parameter);
+      name += index == 0 ? "" : ", ";
+      name += parameter.name;
     }
     signature.return_type = ResolveType(type_name.arguments.back(), true);
-    name += ") => " + signature.return_type.name;
-    Type result{.kind = Type::Kind::Function, .name = name};
+    name += ") => ";
+    name += signature.return_type.name;
+    Type result{.kind = Type::Kind::Function, .name = InternTypeName(name)};
     function_types_.try_emplace(name, std::move(signature));
     types_.try_emplace(name, result);
     return result;
@@ -76,19 +86,22 @@ TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, bool allow
 }
 
 TypeDescriptor MakeArrayType(const TypeDescriptor& element) {
+  const std::string name = element.kind == TypeDescriptor::Kind::Function
+                               ? "(" + std::string(element.name) + ")[]"
+                               : std::string(element.name) + "[]";
   return {
       .kind = TypeDescriptor::Kind::Array,
-      .name = (element.kind == TypeDescriptor::Kind::Function ? "(" + element.name + ")"
-                                                              : element.name) +
-              "[]",
+      .name = InternTypeName(name),
   };
 }
 
 TypeDescriptor MakeNullableType(TypeDescriptor type) {
   if (!type.nullable && type.kind != TypeDescriptor::Kind::Dynamic) {
     type.nullable = true;
-    type.name =
-        type.kind == TypeDescriptor::Kind::Function ? "(" + type.name + ")?" : type.name + '?';
+    const std::string name = type.kind == TypeDescriptor::Kind::Function
+                                 ? "(" + std::string(type.name) + ")?"
+                                 : std::string(type.name) + '?';
+    type.name = InternTypeName(name);
   }
   return type;
 }
@@ -107,7 +120,7 @@ bool TypeChecker::IsSameType(const Type& left, const Type& right) {
 TypeChecker::Type TypeChecker::NonNullable(Type type) {
   if (type.nullable) {
     type.nullable = false;
-    type.name.pop_back();
+    type.name = type.name.substr(0, type.name.size() - 1);
     if (type.kind == Type::Kind::Function) {
       type.name = type.name.substr(1, type.name.size() - 2);
     }
@@ -165,7 +178,8 @@ void TypeChecker::DiagnoseDynamicConversion(const Expression& expression,
            .second) {
     return;
   }
-  AddDiagnostic(expression.location, "implicit conversion from dynamic to '" + target.name +
+  AddDiagnostic(expression.location, "implicit conversion from dynamic to '" +
+                                         std::string(target.name) +
                                          "' may fail at runtime; use 'as' or narrow with 'is'");
   auto& diagnostic = diagnostics_.back();
   diagnostic.severity = options_.implicit_dynamic_conversion;
@@ -175,7 +189,7 @@ void TypeChecker::DiagnoseDynamicConversion(const Expression& expression,
 void TypeChecker::CheckBooleanOperand(const Expression& expression,
                                       const Type& type,
                                       std::string_view message) {
-  const Type boolean{.kind = Type::Kind::Bool, .name = "bool"};
+  const Type boolean{.kind = Type::Kind::Bool, .name = kBoolTypeName};
   RecordConversion(expression, boolean, type);
   if (!CanAssign(boolean, type)) {
     AddDiagnostic(expression.location, std::string(message));
@@ -191,7 +205,7 @@ bool TypeChecker::IsValid(const Type& type) {
 }
 
 std::string TypeChecker::TypeNameFor(const Type& type) {
-  return type.name.empty() ? "<invalid>" : type.name;
+  return type.name.empty() ? "<invalid>" : std::string(type.name);
 }
 
 }  // namespace vela::frontend

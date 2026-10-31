@@ -26,6 +26,7 @@
 #include "base/execution_status.h"
 #include "base/opcode.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "runtime/native_abi.h"
@@ -65,9 +66,24 @@ void FunctionEmitter::Finish(llvm::Value* status) {
   builder_.CreateBr(cleanup_);
 }
 
+llvm::SwitchInst* FunctionEmitter::ResumeDispatch(llvm::Value* instruction) {
+  auto* invalid = llvm::BasicBlock::Create(module_.getContext(), "invalid.resume", body_);
+  auto* dispatch = builder_.CreateSwitch(instruction, invalid);
+  builder_.SetInsertPoint(invalid);
+  Finish(Status(builder_, ExecutionStatus::InvalidEntry));
+  return dispatch;
+}
+
 void FunctionEmitter::SetPosition() {
   const auto position = origins_.empty() ? 0 : origins_.subspan(instruction_index_).front();
   builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(position)), instruction_slot_);
+}
+
+std::uint64_t FunctionEmitter::TracePosition() const {
+  return runtime::EncodeNativeTracePosition({
+      .function = static_cast<std::uint32_t>(function_index_),
+      .instruction = static_cast<std::uint32_t>(origins_.subspan(instruction_index_).front()),
+  });
 }
 
 void FunctionEmitter::Poll() {
@@ -90,13 +106,9 @@ void FunctionEmitter::Fail(llvm::Value* status) {
         "vela_native_v2_leaf_failure", builder_.getInt8Ty(), builder_.getPtrTy(),
         builder_.getInt64Ty(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
     auto* roots = live.empty() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : root_slots_;
-    const auto position = runtime::EncodeNativeTracePosition({
-        .function = static_cast<std::uint32_t>(function_index_),
-        .instruction = static_cast<std::uint32_t>(origins_.subspan(instruction_index_).front()),
-    });
     Finish(builder_.CreateCall(failure, {
                                             body_->getArg(0),
-                                            builder_.getInt64(position),
+                                            builder_.getInt64(TracePosition()),
                                             status,
                                             roots,
                                             builder_.getInt64(live.size()),
@@ -171,20 +183,21 @@ void FunctionEmitter::CheckStatus(llvm::Value* status) {
 void FunctionEmitter::EmitConstant(const ir::Instruction& instruction) {
   switch (instruction.opcode) {
     case Opcode::LoadNull:
-      Store(instruction.dst, builder_.getFalse(), {.kind = Kind::Null, .name = "null"});
+      Store(instruction.dst, builder_.getFalse(),
+            {.kind = Kind::Null, .name = frontend::kNullTypeName});
       break;
     case Opcode::LoadBool:
       Store(instruction.dst, builder_.getInt1(instruction.immediate != 0),
-            {.kind = Kind::Bool, .name = "bool"});
+            {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
       break;
     case Opcode::LoadInt:
       Store(instruction.dst, builder_.getInt64(std::bit_cast<std::uint64_t>(instruction.immediate)),
-            {.kind = Kind::Int, .name = "int"});
+            {.kind = Kind::Int, .name = frontend::kIntTypeName});
       break;
     case Opcode::LoadDouble:
       Store(instruction.dst,
             llvm::ConstantFP::get(builder_.getDoubleTy(), source_.doubles.at(instruction.index)),
-            {.kind = Kind::Double, .name = "double"});
+            {.kind = Kind::Double, .name = frontend::kDoubleTypeName});
       break;
     default:
       std::unreachable();
@@ -251,12 +264,12 @@ std::expected<void, std::string> FunctionEmitter::EmitInstruction(
       auto* right = Payload(instruction.rhs);
       auto* result = instruction.opcode == Opcode::AndBool ? builder_.CreateAnd(left, right)
                                                            : builder_.CreateOr(left, right);
-      Store(instruction.dst, result, {.kind = Kind::Bool, .name = "bool"});
+      Store(instruction.dst, result, {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
       break;
     }
     case Opcode::NotBool:
       Store(instruction.dst, builder_.CreateNot(Payload(instruction.lhs)),
-            {.kind = Kind::Bool, .name = "bool"});
+            {.kind = Kind::Bool, .name = frontend::kBoolTypeName});
       break;
     case Opcode::Jump:
       builder_.CreateBr(blocks_.at(instruction.index));
@@ -730,7 +743,8 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   }
   NativeFunctionMetrics metrics{.shadow_slots = roots.count, .frame_bytes = initial.frame_bytes()};
   AccumulateMetrics(metrics, escape, roots);
-  if (generated.subspan(function_index).front().resume != nullptr) {
+  const auto& function = generated.subspan(function_index).front();
+  if (function.resume != nullptr) {
     FunctionEmitter resume(module, program, image, function_index, escape, generated, roots,
                            NativeEntryKind::Resume, tier);
     if (const auto emitted = resume.Emit(); !emitted) {
@@ -738,7 +752,6 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     }
     metrics.frame_bytes = std::max(metrics.frame_bytes, resume.frame_bytes());
   }
-  const auto& function = generated.subspan(function_index).front();
   if (tier == NativeCodeTier::Baseline && function.recovery != nullptr) {
     FunctionEmitter recovery(module, program, image, function_index, escape, generated, roots,
                              NativeEntryKind::RecoverInitial, tier);

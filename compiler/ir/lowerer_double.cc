@@ -1,5 +1,6 @@
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 
@@ -9,9 +10,8 @@
 #include <string_view>
 
 namespace vela::ir {
-namespace {
 
-std::optional<Opcode> SelectDoubleOpcode(std::string_view operation) {
+std::optional<Opcode> Lowerer::SelectDoubleOpcode(std::string_view operation) {
   if (operation == "+") {
     return Opcode::AddDouble;
   }
@@ -45,8 +45,6 @@ std::optional<Opcode> SelectDoubleOpcode(std::string_view operation) {
   return std::nullopt;
 }
 
-}  // namespace
-
 Lowerer::LoweredValue Lowerer::LowerDoubleLiteral(const frontend::Expression& expression) {
   const auto bits = std::bit_cast<std::uint64_t>(expression.double_value);
   const auto next = static_cast<std::uint32_t>(current_function_->doubles.size());
@@ -61,35 +59,9 @@ Lowerer::LoweredValue Lowerer::LowerDoubleLiteral(const frontend::Expression& ex
       .index = entry->second,
       .location = expression.location,
   });
-  return {.reg = reg, .type = {.kind = frontend::TypeDescriptor::Kind::Double, .name = "double"}};
-}
-
-Lowerer::LoweredValue Lowerer::LowerDoubleBinary(const frontend::Expression& expression,
-                                                 const LoweredValue& left,
-                                                 const LoweredValue& right) {
-  const auto opcode = SelectDoubleOpcode(expression.text);
-  if (!opcode) {
-    AddDiagnostic(expression.location, "unsupported double operation");
-    return {};
-  }
-  const RegisterId result = AllocateTemporary(expression.location);
-  Emit({
-      .opcode = *opcode,
-      .dst = result,
-      .lhs = left.reg,
-      .rhs = right.reg,
-      .location = expression.location,
-  });
-  const bool comparison = expression.text == "==" || expression.text == "!=" ||
-                          expression.text == "<" || expression.text == "<=" ||
-                          expression.text == ">" || expression.text == ">=";
   return {
-      .reg = result,
-      .type = comparison ? frontend::TypeDescriptor{.kind = frontend::TypeDescriptor::Kind::Bool,
-                                                    .name = "bool",
-                        }
-                         : left.type,
-  };
+      .reg = reg,
+      .type = {.kind = frontend::TypeDescriptor::Kind::Double, .name = frontend::kDoubleTypeName}};
 }
 
 }  // namespace vela::ir

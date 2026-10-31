@@ -1,4 +1,3 @@
-#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -13,6 +12,7 @@
 
 #include "base/file.h"
 #include "base/path.h"
+#include "base/testing/temporary_directory.h"
 #include "compiler/compilation_cache.h"
 #include "compiler/compiler.h"
 #include "compiler/testing/result.h"
@@ -52,17 +52,11 @@ class MockProject final {
 };
 
 std::expected<void, std::string> MockProject::Prepare() {
-  std::error_code error;
-  const auto temporary = std::filesystem::temp_directory_path(error);
-  if (error) {
-    return std::unexpected(error.message());
+  auto directory = ::vela::test::CreateTemporaryDirectory();
+  if (!directory) {
+    return std::unexpected(directory.error());
   }
-  const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-  const auto directory = temporary / ("vela-mock-benchmark-" + std::to_string(suffix));
-  if (!std::filesystem::create_directory(directory, error)) {
-    return std::unexpected(error ? error.message() : "mock benchmark directory already exists");
-  }
-  directory_ = directory;
+  directory_ = std::move(*directory);
   for (const auto* file : {"mock_api.vela", "mock_workload.vela"}) {
     const auto contents = ReadBinaryFile(std::filesystem::path(VELA_BENCHMARK_SOURCE_DIR) / file);
     if (!contents) {

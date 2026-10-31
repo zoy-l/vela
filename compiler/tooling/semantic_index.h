@@ -164,7 +164,7 @@ class SemanticIndex final {
   [[nodiscard]] std::optional<Completion> BuiltinCompletion(const frontend::Token& token) const;
   [[nodiscard]] Key KeyAt(SourceLocation location) const;
   [[nodiscard]] Scope Extent(const frontend::Statement& statement) const;
-  std::size_t AddSymbol(SourceLocation location, Completion completion);
+  std::size_t AddSymbol(SourceLocation location, CompletionKind kind, std::string detail);
   void AddReference(SourceLocation location,
                     std::string_view name,
                     const frontend::Expression* expression = nullptr);
@@ -185,7 +185,6 @@ class SemanticIndex final {
   void VisitProgram();
   void DeclareLocal(const void* node,
                     SourceLocation location,
-                    std::string_view name,
                     std::string detail,
                     Scope scope,
                     std::size_t available);

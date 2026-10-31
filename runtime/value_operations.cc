@@ -155,4 +155,10 @@ std::expected<Value, ExecutionStatus> BoxDynamicValue(Heap& heap,
                            : std::unexpected(ExecutionStatus::OutOfMemory);
 }
 
+Value UnboxDynamicValue(Value value, const TypeConstraint& type) noexcept {
+  return !value.IsNull() && type.nominal != nullptr && type.nominal->IsEnum()
+             ? *Heap::GetField(*value.AsObject(), 0)
+             : value;
+}
+
 }  // namespace vela::runtime

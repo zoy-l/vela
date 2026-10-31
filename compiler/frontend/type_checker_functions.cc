@@ -2,15 +2,24 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_inference.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
+
+void TypeChecker::DeclareFunctionParameters(const Function& function,
+                                            const FunctionInfo& signature,
+                                            BindingKind kind) {
+  for (const auto& parameter : function.parameters) {
+    const auto& type = signature.parameters.at(signature.parameter_indices.at(parameter.name)).type;
+    DeclareLocal(parameter.name, type, parameter.location, kind, &parameter);
+  }
+}
 
 void TypeChecker::CheckGeneratedFunction(std::size_t index) {
   const auto* function = generated_functions_.at(index).declaration.get();
@@ -25,11 +34,7 @@ void TypeChecker::CheckGeneratedFunction(std::size_t index) {
   const auto loop = std::exchange(loop_depth_, 0);
   const auto switching = std::exchange(switch_depth_, 0);
   BeginScope();
-  for (std::size_t parameter = 0; parameter < function->parameters.size(); ++parameter) {
-    const auto& declaration = function->parameters.at(parameter);
-    DeclareLocal(declaration.name, signature.parameters.at(parameter).type, declaration.location,
-                 BindingKind::Constant, &declaration);
-  }
+  DeclareFunctionParameters(*function, signature, BindingKind::Constant);
   const auto flow = CheckBlock(*function->body, signature.return_type);
   control_flow_.insert_or_assign(function->body.get(), flow);
   EndScope();
@@ -46,10 +51,12 @@ void TypeChecker::CheckGeneratedFunction(std::size_t index) {
 TypeDescriptor MakeFunctionType(const FunctionDescriptor& signature) {
   std::string name = "(";
   for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
-    name += (index == 0 ? "" : ", ") + signature.parameters.at(index).type.name;
+    name += index == 0 ? "" : ", ";
+    name += signature.parameters.at(index).type.name;
   }
-  name += ") => " + signature.return_type.name;
-  return {.kind = TypeDescriptor::Kind::Function, .name = std::move(name)};
+  name += ") => ";
+  name += signature.return_type.name;
+  return {.kind = TypeDescriptor::Kind::Function, .name = InternTypeName(std::move(name))};
 }
 
 TypeChecker::Type TypeChecker::FunctionType(const FunctionInfo& signature) {
@@ -59,8 +66,7 @@ TypeChecker::Type TypeChecker::FunctionType(const FunctionInfo& signature) {
   for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
     const auto& parameter = signature.parameters.at(index).type;
     const auto key = std::to_string(index);
-    positional.parameter_indices.emplace(key, static_cast<std::uint32_t>(index));
-    positional.parameters.push_back({.name = key, .type = parameter});
+    positional.AddParameter(key, parameter);
   }
   function_types_.try_emplace(result.name, std::move(positional));
   types_.try_emplace(result.name, result);
@@ -116,16 +122,12 @@ TypeChecker::Type TypeChecker::CheckLambda(const Expression& expression, const T
   const auto previous_loop = std::exchange(loop_depth_, 0);
   const auto previous_switch = std::exchange(switch_depth_, 0);
   BeginScope();
-  for (const auto& parameter : function.parameters) {
-    DeclareLocal(parameter.name,
-                 signature.parameters.at(signature.parameter_indices.at(parameter.name)).type,
-                 parameter.location, BindingKind::Mutable, &parameter);
-  }
+  DeclareFunctionParameters(function, signature, BindingKind::Mutable);
   const auto flow = CheckSequence(*function.body, signature.return_type);
   control_flow_.insert_or_assign(function.body.get(), flow);
   if (!IsValid(signature.return_type)) {
     signature.return_type = lambda_scopes_.back().inferred_return.value_or(
-        Type{.kind = Type::Kind::Void, .name = "void"});
+        Type{.kind = Type::Kind::Void, .name = kVoidTypeName});
     if (signature.return_type.kind == Type::Kind::Null) {
       AddDiagnostic(function.location,
                     "null-only lambda requires an explicit nullable return type");
@@ -146,7 +148,7 @@ TypeChecker::Type TypeChecker::CheckLambda(const Expression& expression, const T
 
 void TypeChecker::InferLambdaReturn(const Statement& statement) {
   const auto value = statement.expression ? CheckExpression(*statement.expression, nullptr)
-                                          : Type{.kind = Type::Kind::Void, .name = "void"};
+                                          : Type{.kind = Type::Kind::Void, .name = kVoidTypeName};
   if (!IsValid(value)) {
     return;
   }

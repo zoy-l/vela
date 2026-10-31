@@ -26,6 +26,30 @@ std::span<std::byte> Storage(HeapObject& array, const ArrayLayout& layout, std::
 
 }  // namespace
 
+std::expected<const ArrayLayout*, ArrayAccessError> Heap::ElementLayout(
+    const HeapObject& array,
+    std::uint32_t index) noexcept {
+  if (array.kind != ObjectKind::Array) {
+    return std::unexpected(ArrayAccessError::NotArray);
+  }
+  if (index >= array.length) {
+    return std::unexpected(ArrayAccessError::OutOfBounds);
+  }
+  return array.array_layout();
+}
+
+std::expected<const ArrayLayout*, ArrayAccessError> Heap::ValueLayout(const HeapObject& array,
+                                                                      Value value) noexcept {
+  if (array.kind != ObjectKind::Array) {
+    return std::unexpected(ArrayAccessError::NotArray);
+  }
+  const auto* layout = array.array_layout();
+  if (!Heap::IsValueOfType(value, layout->element_type())) {
+    return std::unexpected(ArrayAccessError::ElementTypeMismatch);
+  }
+  return layout;
+}
+
 HeapObject* Heap::AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept {
   return AllocateArrayStorage(layout, length, {});
 }
@@ -60,9 +84,7 @@ HeapObject* Heap::AllocateArrayStorage(const ArrayLayout& layout,
   committed_bytes_ += external_bytes;
   const auto allocation = AllocateRaw(header_bytes);
   if (allocation.memory == nullptr) {
-    allocated_bytes_ -= external_bytes;
-    committed_bytes_ -= external_bytes;
-    ::operator delete(memory);
+    ReleaseExternalStorage(memory, external_bytes);
     return nullptr;
   }
   auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
@@ -118,26 +140,22 @@ std::expected<std::span<std::int64_t>, ArrayAccessError> Heap::IntegerElements(
 
 std::expected<Value, ArrayAccessError> Heap::GetElement(const HeapObject& array,
                                                         std::uint32_t index) noexcept {
-  if (array.kind != ObjectKind::Array) {
-    return std::unexpected(ArrayAccessError::NotArray);
+  const auto checked = ElementLayout(array, index);
+  if (!checked) {
+    return std::unexpected(checked.error());
   }
-  if (index >= array.length) {
-    return std::unexpected(ArrayAccessError::OutOfBounds);
-  }
-  const auto& layout = *array.array_layout();
+  const auto& layout = **checked;
   return LoadElementStorage(layout, internal::ArrayBytes(array, layout), index);
 }
 
 std::expected<void, ArrayAccessError> Heap::SetElement(HeapObject& array,
                                                        std::uint32_t index,
                                                        Value value) noexcept {
-  if (array.kind != ObjectKind::Array) {
-    return std::unexpected(ArrayAccessError::NotArray);
+  const auto checked = ElementLayout(array, index);
+  if (!checked) {
+    return std::unexpected(checked.error());
   }
-  if (index >= array.length) {
-    return std::unexpected(ArrayAccessError::OutOfBounds);
-  }
-  const auto& layout = *array.array_layout();
+  const auto& layout = **checked;
   if (!IsValueOfType(value, layout.element_type())) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
@@ -184,9 +202,7 @@ std::expected<void, ArrayAccessError> Heap::ReserveArrayStorage(HeapObject& arra
     std::memcpy(memory, buffer.data, array.length * element_size);
   }
   if (buffer.data != internal::InlineArrayData(buffer)) {
-    allocated_bytes_ -= previous_bytes;
-    committed_bytes_ -= previous_bytes;
-    ::operator delete(buffer.data);
+    ReleaseExternalStorage(buffer.data, previous_bytes);
   }
   buffer.data = memory;
   buffer.capacity = static_cast<std::uint32_t>(capacity);
@@ -212,13 +228,11 @@ std::expected<void, ArrayAccessError> Heap::GrowArray(HeapObject& array, Value v
 
 std::expected<std::uint32_t, ArrayAccessError> Heap::PushArray(HeapObject& array,
                                                                Value value) noexcept {
-  if (array.kind != ObjectKind::Array) {
-    return std::unexpected(ArrayAccessError::NotArray);
+  const auto checked = ValueLayout(array, value);
+  if (!checked) {
+    return std::unexpected(checked.error());
   }
-  const auto& layout = *array.array_layout();
-  if (!IsValueOfType(value, layout.element_type())) {
-    return std::unexpected(ArrayAccessError::ElementTypeMismatch);
-  }
+  const auto& layout = **checked;
   const auto grown = GrowArray(array, value);
   if (!grown) {
     return std::unexpected(grown.error());
@@ -302,11 +316,8 @@ std::expected<void, ArrayAccessError> Heap::ReplaceArrayRange(HeapObject& array,
 
 std::expected<Value, ArrayAccessError> Heap::RemoveArrayElement(HeapObject& array,
                                                                 std::uint32_t index) noexcept {
-  if (array.kind != ObjectKind::Array) {
-    return std::unexpected(ArrayAccessError::NotArray);
-  }
-  if (index >= array.length) {
-    return std::unexpected(ArrayAccessError::OutOfBounds);
+  if (const auto checked = ElementLayout(array, index); !checked) {
+    return std::unexpected(checked.error());
   }
   return RemoveArrayStorage(array, index);
 }
@@ -367,9 +378,7 @@ void Heap::ReleaseArray(HeapObject& array) noexcept {
   auto& buffer = internal::ArrayBuffer(array);
   if (buffer.data != internal::InlineArrayData(buffer)) {
     const auto bytes = buffer.capacity * array.array_layout()->element_size();
-    allocated_bytes_ -= bytes;
-    committed_bytes_ -= bytes;
-    ::operator delete(buffer.data);
+    ReleaseExternalStorage(buffer.data, bytes);
   }
   std::destroy_at(&buffer);
 }
@@ -401,13 +410,11 @@ std::expected<void, ArrayAccessError> Heap::FillArray(HeapObject& array,
                                                       Value value,
                                                       std::uint32_t start,
                                                       std::uint32_t end) noexcept {
-  if (array.kind != ObjectKind::Array) {
-    return std::unexpected(ArrayAccessError::NotArray);
+  const auto checked = ValueLayout(array, value);
+  if (!checked) {
+    return std::unexpected(checked.error());
   }
-  const auto& layout = *array.array_layout();
-  if (!IsValueOfType(value, layout.element_type())) {
-    return std::unexpected(ArrayAccessError::ElementTypeMismatch);
-  }
+  const auto& layout = **checked;
   if (start > end || end > array.length) {
     return std::unexpected(ArrayAccessError::OutOfBounds);
   }

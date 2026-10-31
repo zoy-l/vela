@@ -105,6 +105,9 @@ source_set("frontend") {
     "frontend/type_inference.cc",
     "frontend/type_inference.h",
     "frontend/type_limits.h",
+    "frontend/type_name.cc",
+    "frontend/type_name.h",
+    "frontend/type_names.h",
   ]
   public_deps = [
     "//base",
@@ -158,6 +161,7 @@ executable("vela_ir_tests") {
   testonly = true
   sources = [
     "ir/analysis_unittest.cc",
+    "ir/preparation_test_support.h",
     "ir/preparation_unittest.cc",
   ]
   deps = [
@@ -178,6 +182,7 @@ source_set("project_configuration") {
   public_deps = [
     ":frontend",
     "//base:json",
+    "//base:regexp_diagnostic",
     "//third_party:pcre2",
   ]
 }
@@ -208,6 +213,7 @@ source_set("tooling") {
     "tooling/semantic_hover.cc",
     "tooling/semantic_index.cc",
     "tooling/semantic_index.h",
+    "tooling/semantic_syntax.h",
     "tooling/semantic_tokens.cc",
     "tooling/source_text.cc",
     "tooling/source_text.h",
@@ -227,6 +233,13 @@ source_set("tooling") {
   }
 }
 
+source_set("console_input") {
+  sources = [
+    "tooling/console_input.cc",
+    "tooling/console_input.h",
+  ]
+}
+
 source_set("interactive") {
   sources = [
     "tooling/debug_console.cc",
@@ -236,6 +249,7 @@ source_set("interactive") {
   ]
   public_deps = [ ":compiler" ]
   deps = [
+    ":console_input",
     ":project_configuration",
     "//base:json",
   ]
@@ -363,6 +377,8 @@ source_set("jit") {
     "jit/code_resources.h",
     "jit/compiler.cc",
     "jit/compiler.h",
+    "jit/engine.cc",
+    "jit/engine.h",
     "jit/platform_support.h",
     "jit/runtime_symbols.cc",
     "jit/runtime_symbols.h",
@@ -405,7 +421,19 @@ source_set("development_tools") {
     "tooling/development_debugger.h",
   ]
   public_deps = [ ":development" ]
-  deps = [ ":project_configuration" ]
+  deps = [
+    ":console_input",
+    ":project_configuration",
+  ]
+}
+
+source_set("checkpoint_publication") {
+  testonly = true
+  sources = [
+    "checkpoint_publication.cc",
+    "checkpoint_publication.h",
+  ]
+  public_deps = [ ":development" ]
 }
 
 executable("vela_jit_tests") {
@@ -419,11 +447,16 @@ executable("vela_jit_tests") {
     "jit/compiler_unittest.cc",
     "jit/debugger_unittest.cc",
     "jit/state_evolution_unittest.cc",
+    "jit/test_support.cc",
+    "jit/test_support.h",
   ]
   deps = [
+    ":checkpoint_publication",
     ":development",
     ":jit",
     ":source_session",
+    ":test_sources",
+    "//base:test_directory",
     "//third_party:gtest_main",
   ]
   if (target_os == "win") {
@@ -474,6 +507,7 @@ executable("vela_aot_tests") {
   sources = [
     "aot/native_compiler_unittest.cc",
     "aot/reachability_unittest.cc",
+    "ir/preparation_test_support.h",
     "native/escape_analysis_unittest.cc",
   ]
   deps = [
@@ -527,8 +561,23 @@ executable("vela_frontend_tests") {
   deps = [
     ":frontend",
     ":tooling",
+    "//base:test_directory",
     "//third_party:gtest_main",
   ]
+}
+
+source_set("program_test_support") {
+  testonly = true
+  sources = [
+    "program_test_support.cc",
+    "program_test_support.h",
+  ]
+  public_deps = [ ":compiler" ]
+}
+
+source_set("test_sources") {
+  testonly = true
+  sources = [ "test_sources.h" ]
 }
 
 executable("vela_compiler_tests") {
@@ -557,6 +606,7 @@ executable("vela_compiler_tests") {
     "global_unittest.cc",
     "import_unittest.cc",
     "interface_unittest.cc",
+    "ir/preparation_test_support.h",
     "json_unittest.cc",
     "lambda_inference_unittest.cc",
     "language_basics_unittest.cc",
@@ -583,7 +633,10 @@ executable("vela_compiler_tests") {
   ]
   deps = [
     ":compiler",
+    ":program_test_support",
+    ":test_sources",
     ":testing",
+    "//base:test_directory",
     "//runtime",
     "//third_party:gtest_main",
   ]

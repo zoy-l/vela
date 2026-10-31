@@ -82,11 +82,19 @@ TEST(VmTest, RegExpArrayBuiltinRejectsMissingLayoutMetadata) {
   EXPECT_EQ(result.status, ExecutionStatus::TypeError);
 }
 
-TEST(VmTest, StringConcatSupportsAliasedDestinationsAcrossSafepoints) {
-  Isolate isolate(1);
+class VmStringGcTest : public testing::Test {
+ protected:
+  void SetUp() override {
+    constants.front() = isolate.heap().AllocateString("x");
+    ASSERT_NE(constants.front(), nullptr);
+  }
+
+  Isolate isolate{1};
   std::array<runtime::StringObject*, 1> constants{};
-  RootRange constant_roots(isolate.heap(), constants);
-  constants.front() = isolate.heap().AllocateString("x");
+  RootRange roots{isolate.heap(), constants};
+};
+
+TEST_F(VmStringGcTest, StringConcatSupportsAliasedDestinationsAcrossSafepoints) {
   constexpr auto kCode = std::to_array<Instruction>({
       EncodeABC(OpCode::LoadString, 0, 0, 0),
       EncodeABC(OpCode::StringConcat, 0, 0, 0),
@@ -104,11 +112,7 @@ TEST(VmTest, StringConcatSupportsAliasedDestinationsAcrossSafepoints) {
   EXPECT_EQ(result.value.AsString()->value(), "xxxxxxxxxx");
 }
 
-TEST(VmTest, InterpolationAndBuilderAllowAliasedDestinationsAcrossSafepoints) {
-  Isolate isolate(1);
-  std::array<runtime::StringObject*, 1> constants{};
-  RootRange roots(isolate.heap(), constants);
-  constants.front() = isolate.heap().AllocateString("x");
+TEST_F(VmStringGcTest, InterpolationAndBuilderAllowAliasedDestinationsAcrossSafepoints) {
   constexpr auto kCode = std::to_array<Instruction>({
       EncodeABC(OpCode::LoadString, 0, 0, 0),
       EncodeABC(OpCode::LoadString, 1, 0, 0),
@@ -130,11 +134,7 @@ TEST(VmTest, InterpolationAndBuilderAllowAliasedDestinationsAcrossSafepoints) {
   EXPECT_EQ(result.value.AsString()->value(), "xx");
 }
 
-TEST(VmTest, JoinAllowsDestinationToOverwriteRootedInputArray) {
-  Isolate isolate(1);
-  std::array<runtime::StringObject*, 1> constants{};
-  RootRange roots(isolate.heap(), constants);
-  constants.front() = isolate.heap().AllocateString("x");
+TEST_F(VmStringGcTest, JoinAllowsDestinationToOverwriteRootedInputArray) {
   const auto* layout = isolate.CreateArrayLayout({.element = {.kind = runtime::ValueKind::String}});
   const std::array<const runtime::ArrayLayout*, 1> arrays = {layout};
   constexpr auto kCode = std::to_array<Instruction>({
@@ -185,8 +185,6 @@ TEST(VmTest, IntegerExecution) {
   };
   Function function;
   function.code = code;
-  function.classes = std::span<vela::runtime::ClassLayout* const>();
-  function.strings = std::span<vela::runtime::StringObject* const>();
   function.register_count = 3;
 
   Isolate isolate;
@@ -210,7 +208,6 @@ TEST(VmTest, FrameRegistersStayRootedAcrossCollection) {
   Function function;
   function.code = code;
   function.classes = std::span<vela::runtime::ClassLayout* const>(classes.data(), classes.size());
-  function.strings = std::span<vela::runtime::StringObject* const>();
   function.register_count = 4;
 
   const auto result = LoadAndExecute(isolate, function);
@@ -230,37 +227,31 @@ TEST(VmTest, FrameRegistersStayRootedAcrossCollection) {
   EXPECT_EQ(isolate.heap().object_count(), 0U);
 }
 
-TEST(VmTest, RejectsUnknownOpcodeDuringLoading) {
-  constexpr std::array<Instruction, 1> code = {EncodeABC(static_cast<OpCode>(0xff), 0, 0, 0)};
+class VmInvalidInstructionTest : public testing::TestWithParam<Instruction> {};
+
+TEST_P(VmInvalidInstructionTest, RejectsUnknownOpcodeAndInvalidSourceRegisterDuringLoading) {
+  const std::array<Instruction, 2> code = {GetParam(), EncodeABC(OpCode::Return, 0, 0, 0)};
   Function function;
   function.code = code;
-  function.classes = std::span<vela::runtime::ClassLayout* const>();
-  function.strings = std::span<vela::runtime::StringObject* const>();
-  function.register_count = 1;
-
-  Isolate isolate;
-  EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
-}
-
-TEST(VmTest, DivisionRejectsInvalidSourceRegister) {
-  constexpr std::array<Instruction, 2> code = {
-      EncodeABC(OpCode::DivInt, 0, 0, 1),
-      EncodeABC(OpCode::Return, 0, 0, 0),
-  };
-  Function function;
-  function.code = code;
-  function.classes = std::span<vela::runtime::ClassLayout* const>();
-  function.strings = std::span<vela::runtime::StringObject* const>();
   function.register_count = 1;
   Isolate isolate;
   EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
 }
 
-TEST(VmTest, RejectsInvalidArrayLayoutIndices) {
+INSTANTIATE_TEST_SUITE_P(InvalidInstructions,
+                         VmInvalidInstructionTest,
+                         testing::Values(EncodeABC(static_cast<OpCode>(0xff), 0, 0, 0),
+                                         EncodeABC(OpCode::DivInt, 0, 0, 1)));
+
+class VmIntegerArrayTest : public testing::Test {
+ protected:
   runtime::Isolate isolate;
-  const auto* layout =
+  const runtime::ArrayLayout* layout =
       isolate.CreateArrayLayout({.element = {.kind = runtime::ValueKind::Integer}});
   const std::array<const runtime::ArrayLayout*, 1> layouts = {layout};
+};
+
+TEST_F(VmIntegerArrayTest, RejectsInvalidArrayLayoutIndices) {
   const auto code = std::to_array<Instruction>({
       EncodeABC(OpCode::NewArray, 0, 1, 1),
       EncodeABC(OpCode::Return, 0, 0, 0),
@@ -281,11 +272,7 @@ TEST(VmTest, RejectsInvalidArrayLayoutIndices) {
   EXPECT_FALSE(Program::Load(std::span(&function, 1), isolate).has_value());
 }
 
-TEST(VmTest, RejectsWrongArrayStoreAndNonArrayIndexing) {
-  runtime::Isolate isolate;
-  const auto* layout =
-      isolate.CreateArrayLayout({.element = {.kind = runtime::ValueKind::Integer}});
-  const std::array<const runtime::ArrayLayout*, 1> layouts = {layout};
+TEST_F(VmIntegerArrayTest, RejectsWrongArrayStoreAndNonArrayIndexing) {
   const auto code = std::to_array<Instruction>({
       EncodeABC(OpCode::NewArray, 0, 0, 1),
       EncodeAImm16(OpCode::LoadInt, 1, 0),

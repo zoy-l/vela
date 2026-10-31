@@ -1,13 +1,12 @@
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <ios>
 #include <string>
 #include <string_view>
-#include <system_error>
 
 #include "gtest/gtest.h"
 
+#include "base/testing/directory.h"
 #include "compiler/compiler.h"
 #include "compiler/frontend/checker.h"
 #include "runtime/isolate.h"
@@ -17,27 +16,8 @@
 namespace vela::compiler {
 namespace {
 
-class ImportTest : public testing::Test {
+class ImportTest : public test::DirectoryTest {
  protected:
-  void SetUp() override {
-    std::error_code error;
-    const auto temporary = std::filesystem::temp_directory_path(error);
-    ASSERT_FALSE(error);
-    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-    directory_ = temporary / ("vela-string-imports-" + std::to_string(suffix));
-    created_ = std::filesystem::create_directory(directory_, error);
-    ASSERT_TRUE(created_);
-    ASSERT_FALSE(error);
-  }
-
-  void TearDown() override {
-    if (created_) {
-      std::error_code error;
-      std::filesystem::remove_all(directory_, error);
-      EXPECT_FALSE(error);
-    }
-  }
-
   void Write(const std::filesystem::path& filename, std::string_view source) {
     std::ofstream output(directory_ / filename, std::ios::binary);
     output.write(source.data(), static_cast<std::streamsize>(source.size()));
@@ -72,8 +52,6 @@ class ImportTest : public testing::Test {
     return {encoded.begin(), encoded.end()};
   }
 
-  std::filesystem::path directory_;
-  bool created_ = false;
   runtime::Isolate isolate_{1};
 };
 

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <span>
 #include <string>
@@ -25,42 +26,57 @@ constexpr std::uint32_t kContinuationPayload = 0x3F;
 constexpr unsigned kContinuationBits = 6;
 }  // namespace
 
+std::expected<Utf8Point, std::size_t> ReadUtf8Prefix(std::string_view text) noexcept {
+  if (text.empty()) {
+    return std::unexpected(0U);
+  }
+  const auto first = static_cast<unsigned char>(text.front());
+  if (first < kContinuationTag) {
+    return Utf8Point{.value = first, .width = 1};
+  }
+  std::uint32_t point = first;
+  std::size_t remaining = 0;
+  std::uint32_t minimum = 0;
+  if (first >= kTwoByteFirst && first <= kTwoByteLast) {
+    point = first & kTwoBytePayload;
+    remaining = 1;
+    minimum = kContinuationTag;
+  } else if (first >= kThreeByteTag && first <= kThreeByteLast) {
+    point = first & kThreeBytePayload;
+    remaining = 2;
+    minimum = kThreeByteMinimum;
+  } else if (first >= kFourByteTag && first <= kFourByteLast) {
+    point = first & kFourBytePayload;
+    remaining = 3;
+    minimum = kSupplementaryFirst;
+  } else {
+    return std::unexpected(0U);
+  }
+  if (remaining >= text.size()) {
+    return std::unexpected(0U);
+  }
+  const auto width = remaining + 1;
+  for (std::size_t index = 1; index < width; ++index) {
+    const auto next = static_cast<unsigned char>(text.substr(index).front());
+    if ((next & kContinuationMask) != kContinuationTag) {
+      return std::unexpected(index);
+    }
+    point = (point << kContinuationBits) | (next & kContinuationPayload);
+  }
+  if (point < minimum || point > kUnicodeMaximum ||
+      (point >= kHighSurrogateFirst && point <= kLowSurrogateLast)) {
+    return std::unexpected(0U);
+  }
+  return Utf8Point{.value = point, .width = width};
+}
+
 std::optional<std::size_t> InvalidUtf8Offset(std::string_view text) noexcept {
   for (std::size_t index = 0; index < text.size();) {
-    const auto start = index;
-    const auto first = static_cast<unsigned char>(text.substr(index++).front());
-    std::uint32_t point = first;
-    std::size_t remaining = 0;
-    std::uint32_t minimum = 0;
-    if (first >= kTwoByteFirst && first <= kTwoByteLast) {
-      point = first & kTwoBytePayload;
-      remaining = 1;
-      minimum = kContinuationTag;
-    } else if (first >= kThreeByteTag && first <= kThreeByteLast) {
-      point = first & kThreeBytePayload;
-      remaining = 2;
-      minimum = kThreeByteMinimum;
-    } else if (first >= kFourByteTag && first <= kFourByteLast) {
-      point = first & kFourBytePayload;
-      remaining = 3;
-      minimum = kSupplementaryFirst;
-    } else if (first >= kContinuationTag) {
-      return start;
+    const auto point = ReadUtf8Prefix(text.substr(index));
+    if (!point) {
+      return index + point.error();
     }
-    if (remaining > text.size() - index) {
-      return start;
-    }
-    for (std::size_t count = 0; count < remaining; ++count) {
-      const auto next = static_cast<unsigned char>(text.substr(index++).front());
-      if ((next & kContinuationMask) != kContinuationTag) {
-        return index - 1;
-      }
-      point = (point << kContinuationBits) | (next & kContinuationPayload);
-    }
-    if (point < minimum || point > kUnicodeMaximum ||
-        (point >= kHighSurrogateFirst && point <= kLowSurrogateLast)) {
-      return start;
-    }
+    index += point->width;
   }
   return std::nullopt;
 }

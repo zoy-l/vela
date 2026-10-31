@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import io
 import json
-import os
-from pathlib import Path
 import subprocess
-import tempfile
 import unittest
 
-from tools.config import ROOT, executable_name
+from tools.config import ROOT
+from tools.test_support import CommandTestCase
 
 
 def frame(message: dict) -> bytes:
@@ -27,15 +25,13 @@ def request(method: str, params: dict | None = None, identity: int | str | None 
     return message
 
 
-class LanguageServerTest(unittest.TestCase):
+class LanguageServerTest(CommandTestCase):
+    directory_prefix = "vela-lsp-"
+
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="vela-lsp-")
-        self.addCleanup(self.temporary.cleanup)
-        self.directory = Path(self.temporary.name).resolve()
+        super().setUp()
         self.entry = self.directory / "main.vela"
         self.uri = self.entry.as_uri()
-        self.executable = Path(os.environ.get(
-            "VELA_TEST_EXECUTABLE", ROOT / "out" / "debug" / executable_name("vela")))
 
     def decode(self, wire: bytes) -> list[dict]:
         stream = io.BytesIO(wire)
@@ -83,6 +79,26 @@ class LanguageServerTest(unittest.TestCase):
         return [message["params"] for message in messages
                 if message.get("method") == "textDocument/publishDiagnostics"
                 and message["params"]["uri"] == (uri or self.uri)]
+
+    def check_hovers(self, source: str, checks: list[tuple[str, str]]) -> list[dict]:
+        messages = self.session([self.open(source), *[
+            self.symbol_query("hover", source, source.index(marker), str(index))
+            for index, (marker, _) in enumerate(checks)]])
+        self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
+        for index, (_, expected) in enumerate(checks):
+            hover = self.reply(messages, str(index))["result"]
+            self.assertIsNotNone(hover, expected)
+            self.assertIn(expected, hover["contents"]["value"])
+        return messages
+
+    def check_definitions(self, source: str, queries: list[tuple[int, int, int]]) -> None:
+        messages = self.session([self.open(source), *[
+            self.symbol_query("definition", source, offset, str(index))
+            for index, (offset, _, _) in enumerate(queries)]])
+        for index, (_, line, character) in enumerate(queries):
+            target = self.reply(messages, str(index))["result"]
+            self.assertEqual(target["uri"], self.uri)
+            self.assertEqual(target["range"]["start"], {"line": line, "character": character})
 
     def test_lifecycle_and_encoding_negotiation(self) -> None:
         for encoding in ("utf-8", "utf-16"):
@@ -352,14 +368,8 @@ class LanguageServerTest(unittest.TestCase):
                    ("has(count", "(method) Set<int>.has(value: int): bool"),
                    ("print(text", "func print(value): void"),
                    ("Readable", "interface Readable")]
-        messages = self.session([self.open(source), *[
-            self.symbol_query("hover", source, source.index(needle), str(index))
-            for index, (needle, _) in enumerate(queries)]])
-        self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
-        for index, (_, signature) in enumerate(queries):
-            hover = self.reply(messages, str(index))["result"]
-            self.assertIsNotNone(hover, signature)
-            self.assertIn(f"```vela\n{signature}\n```", hover["contents"]["value"])
+        messages = self.check_hovers(source, [(marker, f"```vela\n{signature}\n```")
+                                              for marker, signature in queries])
         self.assertIn("Current count.", self.reply(messages, "1")["result"]["contents"]["value"])
 
     def test_standard_globals_and_collection_methods_complete_and_hover_without_imports(self) -> None:
@@ -467,12 +477,7 @@ class LanguageServerTest(unittest.TestCase):
                   ('Maybe<T>', 'type Maybe<T> = T?'), ('Maybe<int>', 'type Maybe<T> = T?'),
                   ('Handlers =', 'type Handlers = ((int) => string)[]'),
                   ('OptionalHandler =', 'type OptionalHandler = ((int) => string)?')]
-        messages = self.session([self.open(source), *[
-            self.symbol_query('hover', source, source.index(marker), str(index))
-            for index, (marker, _) in enumerate(checks)]])
-        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
-        for index, (_, expected) in enumerate(checks):
-            self.assertIn(expected, self.reply(messages, str(index))['result']['contents']['value'])
+        messages = self.check_hovers(source, checks)
         self.assertIn('Converts values to text.', self.reply(messages, '1')['result']['contents']['value'])
 
     def test_imported_member_hover_keeps_qualified_names_without_internal_prefixes(self) -> None:
@@ -485,13 +490,9 @@ class LanguageServerTest(unittest.TestCase):
         checks = [('Readable)', 'interface Readable'), ('dark)', '(enum member) Mode.dark = 1'),
                   ('read(2)', '(method) Readable.read(scale: int): int'),
                   ('Callback<int>', 'type Callback<T> = (T) => string')]
-        messages = self.session([self.open(source), *[
-            self.symbol_query('hover', source, source.index(marker), str(index))
-            for index, (marker, _) in enumerate(checks)]])
-        self.assertEqual(self.diagnostics(messages)[-1]['diagnostics'], [])
-        for index, (_, expected) in enumerate(checks):
+        messages = self.check_hovers(source, checks)
+        for index in range(len(checks)):
             hover = self.reply(messages, str(index))['result']['contents']['value']
-            self.assertIn(expected, hover)
             self.assertNotIn('$module', hover)
 
     def test_intrinsic_hover_explains_units_returns_and_mutation(self) -> None:
@@ -852,14 +853,7 @@ class LanguageServerTest(unittest.TestCase):
                    ("operation(identity", "const operation: (int) => int"),
                    ("identity<int>", "func identity<T>(value: T): T"),
                    ("sqrt(9.0)", "(method) Math.sqrt(")]
-        messages = self.session([self.open(source), *[
-            self.symbol_query("hover", source, source.index(needle), str(index))
-            for index, (needle, _) in enumerate(queries)]])
-        self.assertEqual(self.diagnostics(messages)[-1]["diagnostics"], [])
-        for index, (_, signature) in enumerate(queries):
-            hover = self.reply(messages, str(index))["result"]
-            self.assertIsNotNone(hover, signature)
-            self.assertIn(signature, hover["contents"]["value"])
+        messages = self.check_hovers(source, queries)
         self.assertIn("Returns the input.", self.reply(messages, "2")["result"]["contents"]["value"])
 
     def test_hover_ranges_use_negotiated_encoding_and_identifier_boundaries(self) -> None:
@@ -1281,13 +1275,7 @@ class LanguageServerTest(unittest.TestCase):
         queries = [(source.index("= seed") + 2, 0, source.index("seed:")),
                    (source.index("print(value)") + 6, 2, len("  { const ")),
                    (source.index("=> value") + 3, 1, len("  const "))]
-        messages = self.session([self.open(source), *[
-            self.symbol_query("definition", source, offset, str(index))
-            for index, (offset, _, _) in enumerate(queries)]])
-        for index, (_, line, character) in enumerate(queries):
-            target = self.reply(messages, str(index))["result"]
-            self.assertEqual(target["uri"], self.uri)
-            self.assertEqual(target["range"]["start"], {"line": line, "character": character})
+        self.check_definitions(source, queries)
 
     def test_definition_resolves_members_enums_and_type_annotations(self) -> None:
         source = ("enum Color { red, blue }\n"
@@ -1382,12 +1370,7 @@ class LanguageServerTest(unittest.TestCase):
         queries = [(source.index("value: 1"), 0, source.index("value:")),
                    (source.index("left: box"), 1, len("func add(")),
                    (source.index("right: 2"), 1, source.splitlines()[1].index("right:"))]
-        messages = self.session([self.open(source), *[
-            self.symbol_query("definition", source, offset, str(index))
-            for index, (offset, _, _) in enumerate(queries)]])
-        for index, (_, line, character) in enumerate(queries):
-            target = self.reply(messages, str(index))["result"]
-            self.assertEqual(target["range"]["start"], {"line": line, "character": character})
+        self.check_definitions(source, queries)
 
     def test_for_catch_and_match_bindings_stay_in_their_scopes(self) -> None:
         source = ("class Failure { message: string; }\n"
@@ -1582,12 +1565,7 @@ class LanguageServerTest(unittest.TestCase):
         queries = [(source.index("answer();") + len("answer"), 1, len("func ")),
                    (source.index("box.value") + len("box"), 2, source.splitlines()[2].index("box =")),
                    (source.index("box.value") + len("box.value"), 0, source.index("value:"))]
-        messages = self.session([self.open(source), *[
-            self.symbol_query("definition", source, offset, str(index))
-            for index, (offset, _, _) in enumerate(queries)]])
-        for index, (_, line, character) in enumerate(queries):
-            target = self.reply(messages, str(index))["result"]
-            self.assertEqual(target["range"]["start"], {"line": line, "character": character})
+        self.check_definitions(source, queries)
 
     def test_exception_example_completes_and_navigates_while_a_statement_is_unfinished(self) -> None:
         source = (ROOT / "examples" / "exceptions.vela").read_text(encoding="utf-8")

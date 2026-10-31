@@ -1,6 +1,5 @@
 #include "compiler/project_config.h"
 
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <ios>
@@ -12,6 +11,7 @@
 #include "gtest/gtest.h"
 
 #include "base/process_exit.h"
+#include "base/testing/directory.h"
 #include "compiler/testing/settings.h"
 
 namespace vela::compiler {
@@ -134,31 +134,20 @@ TEST(ProjectConfigurationTest, LocatesEscapedDuplicateKeysAndNestedFieldErrors) 
   EXPECT_EQ(typed.error().location.column, 27U);
 }
 
-class ProjectConfigurationFileTest : public ::testing::Test {
+class ProjectConfigurationFileTest : public test::DirectoryTest {
  protected:
   void SetUp() override {
+    test::DirectoryTest::SetUp();
+    ASSERT_FALSE(HasFatalFailure());
     std::error_code error;
-    const auto temporary = std::filesystem::temp_directory_path(error);
-    ASSERT_FALSE(error);
-    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-    directory_ = temporary / ("vela-config-" + std::to_string(suffix));
     std::filesystem::create_directories(directory_ / "project" / "nested", error);
     ASSERT_FALSE(error);
-  }
-  void TearDown() override {
-    std::error_code error;
-    std::filesystem::remove_all(directory_, error);
-    EXPECT_FALSE(error);
   }
   void Write(const std::filesystem::path& relative, std::string_view text) {
     std::ofstream output(directory_ / relative, std::ios::binary);
     output.write(text.data(), static_cast<std::streamsize>(text.size()));
     ASSERT_TRUE(output.good());
   }
-  [[nodiscard]] const std::filesystem::path& directory() const { return directory_; }
-
- private:
-  std::filesystem::path directory_;
 };
 
 TEST_F(ProjectConfigurationFileTest, FindsNearestConfigAndPublishesAnOwnedSnapshot) {

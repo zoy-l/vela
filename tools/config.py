@@ -208,13 +208,17 @@ def configure(variant: str, *, cc_wrapper: str = "sccache") -> Path:
     return output
 
 
-def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("variant", choices=BUILD_VARIANTS, default="debug", nargs="?")
+def add_compiler_wrapper_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--cc-wrapper", default="sccache",
         help="Compiler wrapper executable (default: sccache; pass an empty string to disable)",
     )
+
+
+def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("variant", choices=BUILD_VARIANTS, default="debug", nargs="?")
+    add_compiler_wrapper_argument(parser)
     return parser.parse_args(arguments)
 
 

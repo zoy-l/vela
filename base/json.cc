@@ -102,6 +102,13 @@ const yyjson_val* JsonDocument::root() const noexcept {
   return yyjson_doc_get_root(document_.get());
 }
 
+std::expected<JsonDocument, JsonError> JsonDocument::Parse(std::span<const std::byte> bytes,
+                                                           yyjson_read_flag flags,
+                                                           const yyjson_alc* allocator) {
+  const void* storage = bytes.data();
+  return Parse(std::string_view(static_cast<const char*>(storage), bytes.size()), flags, allocator);
+}
+
 yyjson_val* JsonDocument::root() noexcept {
   return yyjson_doc_get_root(document_.get());
 }

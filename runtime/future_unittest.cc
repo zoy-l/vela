@@ -17,6 +17,7 @@
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/string.h"
+#include "runtime/thread_destruction_test_support.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -161,7 +162,6 @@ TEST(FutureTest, ConcurrentProducersKeepPerProducerFifo) {
   workers.reserve(kProducers);
   int notifications = 0;
   bool in_order = true;
-  workers.reserve(kProducers);
   for (int thread = 0; thread < kProducers; ++thread) {
     workers.emplace_back([&, thread] {
       for (int index = 0; index < kMessages; ++index) {
@@ -186,7 +186,6 @@ TEST(FutureTest, ConcurrentCompletionHasOneWinner) {
   auto completer = scheduler.CreateHostCompleter();
   std::atomic_int winners{0};
   std::vector<std::thread> producers;
-  producers.reserve(kThreadCount);
   producers.reserve(kThreadCount);
   for (int index = 0; index < kThreadCount; ++index) {
     producers.emplace_back([&, index] {
@@ -232,7 +231,6 @@ TEST(FutureTest, ConcurrentCancellationObserversRunExactlyOnce) {
   CancellationToken token;
   std::atomic_int called{0};
   std::vector<std::thread> observers;
-  observers.reserve(kThreadCount);
   observers.reserve(kThreadCount);
   for (int index = 0; index < kThreadCount; ++index) {
     observers.emplace_back([&] {
@@ -394,18 +392,9 @@ TEST(FutureTest, HostProducerAllowsIdlePumpAndBlockingPumpToHaveDifferentBehavio
 }
 
 TEST(FutureTest, FinalHostHandleDestroysPendingCallbacksOnOwnerThread) {
-  struct Resource final {
-    explicit Resource(std::thread::id& output) : destroyed_on(&output) {}
-    ~Resource() { *destroyed_on = std::this_thread::get_id(); }
-    Resource(const Resource&) = delete;
-    Resource& operator=(const Resource&) = delete;
-    Resource(Resource&&) = delete;
-    Resource& operator=(Resource&&) = delete;
-    std::thread::id* destroyed_on;
-  };
   FutureScheduler scheduler;
   std::thread::id destroyed_on;
-  auto resource = std::make_shared<Resource>(destroyed_on);
+  auto resource = std::make_shared<test::DestructionThread>(destroyed_on);
   Future future(&scheduler);
   future.ObserveResult([resource](const FutureResult&) {});
   resource.reset();

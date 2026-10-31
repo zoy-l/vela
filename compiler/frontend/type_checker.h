@@ -26,6 +26,7 @@
 #include "compiler/frontend/specialization.h"
 #include "compiler/frontend/symbol_ids.h"
 #include "compiler/frontend/type_inference.h"
+#include "compiler/frontend/type_name.h"
 
 namespace vela::frontend {
 
@@ -60,7 +61,7 @@ struct TypeDescriptor final {
   };
 
   Kind kind = Kind::Invalid;
-  std::string name;
+  std::string_view name;
   bool nullable = false;
 };
 
@@ -68,6 +69,7 @@ struct TypeDescriptor final {
 [[nodiscard]] TypeDescriptor MakeNullableType(TypeDescriptor type);
 
 struct FunctionDescriptor final {
+  enum class ParameterPresence : std::uint8_t { Required, Optional };
   struct Parameter final {
     std::string name;
     TypeDescriptor type;
@@ -84,6 +86,10 @@ struct FunctionDescriptor final {
   bool is_setter = false;
   std::optional<TypeDescriptor> setter_parameter_type;
   std::optional<TypeDescriptor> setter_return_type;
+
+  void AddParameter(std::string name,
+                    TypeDescriptor type,
+                    ParameterPresence presence = ParameterPresence::Required);
 };
 
 [[nodiscard]] TypeDescriptor MakeFunctionType(const FunctionDescriptor& signature);
@@ -352,10 +358,14 @@ class TypeChecker final {
                       absl::flat_hash_set<std::string>& visiting);
   void CheckFunction(const Function& function, const ClassInfo* owner);
   void CheckGeneratedFunction(std::size_t index);
+  void DeclareFunctionParameters(const Function& function,
+                                 const FunctionInfo& signature,
+                                 BindingKind kind);
   void CheckFieldInitializers(const Class& owner, const ClassInfo& info);
   void CheckAccess(Visibility visibility, std::string_view owner, SourceLocation location);
   [[nodiscard]] const ClassInfo* StaticOwner(const Expression& member) const;
   StatementFlow CheckStatement(const Statement& statement, const Type& return_type);
+  static StatementFlow MergeBranches(StatementFlow left, StatementFlow right);
   StatementFlow CheckBlock(const Statement& statement, const Type& return_type);
   StatementFlow CheckSequence(const Statement& statement, const Type& return_type);
   StatementFlow CheckScopedStatement(const Statement& statement, const Type& return_type);
@@ -426,6 +436,7 @@ class TypeChecker final {
   Type CheckDynamicCall(const Expression& expression);
   Type CheckStaticCall(const Expression& expression, const ClassInfo& owner);
   Type CheckSuperMethodCall(const Expression& expression);
+  const ClassInfo* CheckSuperClass(SourceLocation location);
   Type CheckMethodReceiver(const Expression& expression,
                            const Type& receiver,
                            const Type* expected);
@@ -504,6 +515,9 @@ class TypeChecker final {
   StatementFlow CheckIf(const Statement& statement, const Type& return_type);
 
   StatementFlow CheckWhile(const Statement& statement, const Type& return_type);
+  StatementFlow CheckLoopExit(const Statement& statement,
+                              ConditionTruth condition,
+                              StatementFlow body);
 
   StatementFlow CheckFor(const Statement& statement, const Type& return_type);
   StatementFlow CheckForEach(const Statement& statement, const Type& return_type);
@@ -539,6 +553,7 @@ class TypeChecker final {
   Type CheckMethodCall(const Expression& expression, const Type* expected);
   Type CheckBuiltinCall(const Expression& expression, Builtin builtin);
   Type CheckAssignment(const Expression& expression);
+  bool CheckAssignmentTarget(const Expression& target);
   Type CheckCompoundAssignment(const Expression& expression);
   Type CheckCompoundAssignmentTypes(const Expression& expression,
                                     std::string_view operation,

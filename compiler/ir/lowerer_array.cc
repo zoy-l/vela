@@ -18,24 +18,8 @@ Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& ex
   const auto receiver = LowerExpression(*expression.callee->object);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = location});
   if (!splice && expression.arguments.empty()) {
-    const auto result = EmitTemporary({
-        .opcode = Opcode::BuiltinCall,
-        .lhs = base,
-        .index = static_cast<std::uint32_t>(Builtin::ArrayLength),
-        .location = location,
-    });
-    return {.reg = result, .type = model_.expression_types.at(&expression)};
-  }
-  if (builtin == Builtin::ArrayPush && expression.arguments.size() == 1) {
-    // 单元素 push 直接使用现有标量操作，避免每次追加都分配和复制一个临时数组。
-    const auto value = LowerExpression(*expression.arguments.front().value);
-    Emit({.opcode = Opcode::Move, .dst = base + 1, .lhs = value.reg, .location = location});
-    const auto result = EmitTemporary({
-        .opcode = Opcode::BuiltinCall,
-        .lhs = base,
-        .index = static_cast<std::uint32_t>(Builtin::ArrayPush),
-        .location = location,
-    });
+    const auto result = AllocateTemporary(location);
+    EmitBuiltinCall(Builtin::ArrayLength, result, base, location);
     return {.reg = result, .type = model_.expression_types.at(&expression)};
   }
   if (splice) {
@@ -88,12 +72,8 @@ Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& ex
   if (builtin == Builtin::ArrayPush) {
     builtin = Builtin::ArrayPushMany;
   }
-  const auto result = EmitTemporary({
-      .opcode = Opcode::BuiltinCall,
-      .lhs = base,
-      .index = static_cast<std::uint32_t>(builtin),
-      .location = location,
-  });
+  const auto result = AllocateTemporary(location);
+  EmitBuiltinCall(builtin, result, base, location);
   return {.reg = result, .type = model_.expression_types.at(&expression)};
 }
 
@@ -160,13 +140,7 @@ Lowerer::LoweredValue Lowerer::LowerIndex(const frontend::Expression& expression
     Emit({.opcode = Opcode::JumpIfNull, .lhs = array.reg, .location = expression.location});
     const LoweredValue index = LowerExpression(*expression.index);
     EmitIndexRead(result, array, index.reg, expression.location);
-    const auto end_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::Jump, .location = expression.location});
-    current_function_->instructions.at(null_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-    Emit({.opcode = Opcode::LoadNull, .dst = result, .location = expression.location});
-    current_function_->instructions.at(end_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
+    FinishNullSafe(null_jump, result, expression.location);
     return {.reg = result, .type = model_.expression_types.at(&expression)};
   }
   const LoweredValue stable_array = SnapshotBefore(array, *expression.index);

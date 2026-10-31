@@ -126,7 +126,7 @@ Function Lowerer::CreateMemberFunction(const frontend::TypeDescriptor& receiver,
                                        const frontend::FunctionDescriptor& signature) {
   using Kind = frontend::TypeDescriptor::Kind;
   Function function;
-  function.name = "$dynamic." + receiver.name + "." + std::string(name);
+  function.name = std::string("$dynamic.") + std::string(receiver.name) + "." + std::string(name);
   static_cast<void>(AddFunctionId(function.name));
   program_.functions.resize(persistent_ == nullptr ? function_ids_.size()
                                                    : persistent_->functions.size());
@@ -203,12 +203,8 @@ void Lowerer::RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
     } else if (builtin == Builtin::StringGraphemes) {
       count_builtin = Builtin::StringGraphemeLength;
     }
-    const auto count = EmitTemporary({
-        .opcode = Opcode::BuiltinCall,
-        .lhs = base,
-        .index = static_cast<std::uint32_t>(count_builtin),
-        .location = {},
-    });
+    const auto count = AllocateTemporary({});
+    EmitBuiltinCall(count_builtin, count, base, {});
     Emit({
         .opcode = Opcode::NewDynamicArray,
         .dst = base + 1,
@@ -221,7 +217,7 @@ void Lowerer::RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
     auto type = function.return_type;
     if (type.nullable) {
       type.nullable = false;
-      type.name.pop_back();
+      type.name = type.name.substr(0, type.name.size() - 1);
     }
     Emit({
         .opcode = Opcode::LoadInt,
@@ -230,12 +226,8 @@ void Lowerer::RegisterBuiltinMember(const frontend::TypeDescriptor& receiver,
         .location = {},
     });
   }
-  const auto result = EmitTemporary({
-      .opcode = Opcode::BuiltinCall,
-      .lhs = base,
-      .index = static_cast<std::uint32_t>(builtin),
-      .location = {},
-  });
+  const auto result = AllocateTemporary({});
+  EmitBuiltinCall(builtin, result, base, {});
   Emit({.opcode = Opcode::Return, .dst = result, .location = {}});
   function.register_count = next_register_;
   PublishMemberFunction(receiver, name, kind, signature, std::move(function));

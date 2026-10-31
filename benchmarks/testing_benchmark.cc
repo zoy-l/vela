@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <atomic>
 #include <barrier>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -19,6 +18,7 @@
 #include "base/file.h"
 #include "base/path.h"
 #include "benchmarks/process_memory.h"
+#include "benchmarks/temporary_directory.h"
 #include "compiler/compilation_cache.h"
 #include "compiler/compiler.h"
 #include "compiler/testing/result.h"
@@ -161,18 +161,14 @@ std::expected<std::vector<std::string>, std::string> PopulateSuiteCache(
 }
 
 void CacheBatch(benchmark::State& state) {
-  std::error_code error;
-  const auto temporary = std::filesystem::temp_directory_path(error);
-  if (error) {
-    state.SkipWithError(error.message());
+  const BenchmarkDirectory temporary(state);
+  if (!temporary.IsValid()) {
     return;
   }
-  const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-  const auto cache = temporary / ("vela-testing-benchmark-" + std::to_string(suffix));
+  const auto& cache = temporary.path();
   const auto paths = PopulateSuiteCache(cache, static_cast<std::size_t>(state.range(0)));
   if (!paths) {
     state.SkipWithError(paths.error());
-    std::filesystem::remove_all(cache, error);
     return;
   }
   for (auto iteration : state) {
@@ -189,10 +185,6 @@ void CacheBatch(benchmark::State& state) {
     if (state.skipped()) {
       break;
     }
-  }
-  std::filesystem::remove_all(cache, error);
-  if (error) {
-    state.SkipWithError(error.message());
   }
   state.SetItemsProcessed(state.iterations() * state.range(0));
 }

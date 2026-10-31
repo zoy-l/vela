@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "runtime/future.h"
+#include "runtime/future_operations.h"
 #include "runtime/heap.h"
 #include "runtime/register_storage.h"
 #include "runtime/value.h"
@@ -57,10 +58,7 @@ runtime::Future& SuspendedFrame::result() {
 void SuspendedFrame::Suspend(SuspensionPoint point,
                              runtime::Value source,
                              runtime::RegisterView registers) {
-  const auto* input = source.IsObject() ? runtime::Heap::GetFuture(*source.AsObject()) : nullptr;
-  auto future =
-      input != nullptr ? input->Rooted() : runtime::Future::Value(source, &isolate_->scheduler());
-  future.AttachHeap(isolate_->heap());
+  auto future = runtime::RootFutureValue(*isolate_, source);
   point_ = point;
   indices_.clear();
   for (std::size_t index = 0; index < registers.size(); ++index) {

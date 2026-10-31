@@ -1,19 +1,18 @@
 #include "compiler/development_repl.h"
 
-#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 
 #include <gtest/gtest.h>
 
 #include "base/file.h"
 #include "base/path.h"
+#include "base/testing/directory.h"
 #include "compiler/development_files.h"
 #include "compiler/development_session.h"
 #include "compiler/repl_source.h"
@@ -24,22 +23,12 @@
 namespace vela::compiler {
 namespace {
 
-class DevelopmentReplTest : public testing::Test {
+class DevelopmentReplTest : public test::DirectoryTest {
  protected:
   void SetUp() override {
-    CreateDirectory();
+    test::DirectoryTest::SetUp();
     ASSERT_FALSE(HasFatalFailure());
     LoadSession();
-  }
-
-  void CreateDirectory() {
-    std::error_code error;
-    const auto temporary = std::filesystem::temp_directory_path(error);
-    ASSERT_FALSE(error);
-    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-    directory_ = temporary / ("vela-development-repl-" + std::to_string(suffix));
-    ASSERT_TRUE(std::filesystem::create_directory(directory_, error));
-    ASSERT_FALSE(error);
   }
 
   void LoadSession() {
@@ -63,9 +52,7 @@ class DevelopmentReplTest : public testing::Test {
   void TearDown() override {
     repl_.reset();
     session_.reset();
-    std::error_code error;
-    std::filesystem::remove_all(directory_, error);
-    EXPECT_FALSE(error);
+    test::DirectoryTest::TearDown();
   }
 
   void Write(std::string_view path, std::string_view text) {
@@ -119,7 +106,6 @@ class DevelopmentReplTest : public testing::Test {
   [[nodiscard]] std::string output() const { return output_.str(); }
 
  private:
-  std::filesystem::path directory_;
   std::ostringstream output_;
   std::unique_ptr<DevelopmentFiles> files_;
   std::unique_ptr<DevelopmentSession> session_;

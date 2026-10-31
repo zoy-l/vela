@@ -1,11 +1,10 @@
 #include "runtime/native_dispatch.h"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <optional>
-#include <string_view>
 #include <utility>
 
 #include <gtest/gtest.h>
@@ -22,6 +21,7 @@
 #include "runtime/native_call.h"
 #include "runtime/native_control.h"
 #include "runtime/native_image.h"
+#include "runtime/native_image_test_support.h"
 #include "runtime/native_instance.h"
 #include "runtime/rooted_value.h"
 #include "runtime/value.h"
@@ -29,14 +29,8 @@
 namespace vela::runtime {
 namespace {
 
-NativeText Text(std::string_view text) {
-  return {.data = text.data(), .size = text.size()};
-}
-
-template <class T, std::size_t Size>
-NativeTable<T> Table(const std::array<T, Size>& values) {
-  return {.data = values.data(), .size = values.size()};
-}
+using test::Table;
+using test::Text;
 
 constexpr DeclarationId kModule{1};
 constexpr DeclarationId kAnswer{10};
@@ -166,14 +160,23 @@ std::shared_ptr<const NativeImage> Image(const std::shared_ptr<VersionedImage>& 
   return {owner, &owner->image};
 }
 
+std::expected<NativePublicationTimings, NativePublicationError> PublishVersion(
+    NativeDispatch& dispatch,
+    std::uint64_t base_revision,
+    const std::shared_ptr<VersionedImage>& owner) {
+  auto prepared = dispatch.Prepare(base_revision, Image(owner));
+  if (!prepared) {
+    return std::unexpected(prepared.error());
+  }
+  return dispatch.Publish(std::move(*prepared));
+}
+
 TEST(NativeDispatchTest, NamedEntrySelectsCurrentVersionAndCapturedEntryKeepsItsOriginalCode) {
   Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
   auto first = std::make_shared<VersionedImage>(1, OldAnswer);
   const std::weak_ptr<VersionedImage> old_lifetime = first;
-  auto prepared = dispatch.Prepare(0, Image(first));
-  ASSERT_TRUE(prepared);
-  ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
+  ASSERT_TRUE(PublishVersion(dispatch, 0, first));
   const auto entry = dispatch.FindEntry("main.vela", "answer");
   ASSERT_TRUE(entry);
   EXPECT_EQ(entry->Invoke({})->AsInteger(), 40);
@@ -184,9 +187,7 @@ TEST(NativeDispatchTest, NamedEntrySelectsCurrentVersionAndCapturedEntryKeepsIts
   ASSERT_TRUE(old_caller);
   auto second = std::make_shared<VersionedImage>(2, NewAnswer);
   std::swap(second->functions.front(), second->functions.back());
-  auto next = dispatch.Prepare(1, Image(second));
-  ASSERT_TRUE(next);
-  ASSERT_TRUE(dispatch.Publish(std::move(*next)));
+  ASSERT_TRUE(PublishVersion(dispatch, 1, second));
   first.reset();
   isolate.heap().Collect();
   EXPECT_FALSE(old_lifetime.expired());
@@ -242,16 +243,12 @@ TEST(NativeDispatchTest, NamedEntryDoesNotKeepHistoricalCodeAlive) {
   auto& dispatch = isolate.native_dispatch();
   auto first = std::make_shared<VersionedImage>(1, OldAnswer);
   const std::weak_ptr<VersionedImage> lifetime = first;
-  auto prepared = dispatch.Prepare(0, Image(first));
-  ASSERT_TRUE(prepared);
-  ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
+  ASSERT_TRUE(PublishVersion(dispatch, 0, first));
   const auto named = dispatch.FindEntry("main.vela", "answer");
   ASSERT_TRUE(named);
   auto version = std::optional<NativeVersionEntry>(*named->Capture());
   auto second = std::make_shared<VersionedImage>(2, NewAnswer);
-  auto replacement = dispatch.Prepare(1, Image(second));
-  ASSERT_TRUE(replacement);
-  ASSERT_TRUE(dispatch.Publish(std::move(*replacement)));
+  ASSERT_TRUE(PublishVersion(dispatch, 1, second));
   first.reset();
   isolate.heap().Collect();
   EXPECT_FALSE(lifetime.expired());
@@ -300,9 +297,7 @@ TEST(NativeDispatchTest, DeletedDeclarationNeverResolvesToAnotherFunctionAtTheSa
   Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
   const auto first = std::make_shared<VersionedImage>(1, OldAnswer);
-  auto prepared = dispatch.Prepare(0, Image(first));
-  ASSERT_TRUE(prepared);
-  ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
+  ASSERT_TRUE(PublishVersion(dispatch, 0, first));
   const auto entry = dispatch.FindEntry("main.vela", "answer");
   ASSERT_TRUE(entry);
   const auto old_caller = dispatch.FindEntry("main.vela", "caller")->Capture();
@@ -310,9 +305,7 @@ TEST(NativeDispatchTest, DeletedDeclarationNeverResolvesToAnotherFunctionAtTheSa
   const auto second = std::make_shared<VersionedImage>(2, NewAnswer);
   second->functions.front().identity.declaration = kReplacement;
   second->declarations.at(1).identity = kReplacement;
-  auto replacement = dispatch.Prepare(1, Image(second));
-  ASSERT_TRUE(replacement);
-  ASSERT_TRUE(dispatch.Publish(std::move(*replacement)));
+  ASSERT_TRUE(PublishVersion(dispatch, 1, second));
   const auto deleted = entry->Invoke({});
   ASSERT_FALSE(deleted);
   EXPECT_EQ(deleted.error(), ExecutionStatus::TargetDeleted);
@@ -325,17 +318,13 @@ TEST(NativeDispatchTest, ExceptionFramesResolveAgainstTheirOwnImmutableSourceVer
   Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
   const auto first = std::make_shared<VersionedImage>(1, OldAnswer);
-  auto prepared = dispatch.Prepare(0, Image(first));
-  ASSERT_TRUE(prepared);
-  ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
+  ASSERT_TRUE(PublishVersion(dispatch, 0, first));
   const auto old_target = dispatch.Resolve(kCaller);
   ASSERT_TRUE(old_target);
   auto old_instance = NativeInstance::Borrow(*old_target->state);
   NativeExecution execution(old_instance);
   const auto second = std::make_shared<VersionedImage>(2, Fail);
-  auto replacement = dispatch.Prepare(1, Image(second));
-  ASSERT_TRUE(replacement);
-  ASSERT_TRUE(dispatch.Publish(std::move(*replacement)));
+  ASSERT_TRUE(PublishVersion(dispatch, 1, second));
   NativeValue output;
   EXPECT_EQ(static_cast<ExecutionStatus>(CallLatest(&execution, nullptr, 0, &output)),
             ExecutionStatus::DivisionByZero);
@@ -353,9 +342,7 @@ TEST(NativeDispatchTest, CallableValuesUseTheirProducingVersionAcrossCallsAndFut
   Isolate isolate(1);
   auto& dispatch = isolate.native_dispatch();
   const auto first = std::make_shared<VersionedImage>(1, OldAnswer);
-  auto prepared = dispatch.Prepare(0, Image(first));
-  ASSERT_TRUE(prepared);
-  ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
+  ASSERT_TRUE(PublishVersion(dispatch, 0, first));
   const auto old_target = dispatch.Resolve(kAnswer);
   ASSERT_TRUE(old_target);
   auto old_instance = NativeInstance::Borrow(*old_target->state);
@@ -366,9 +353,7 @@ TEST(NativeDispatchTest, CallableValuesUseTheirProducingVersionAcrossCallsAndFut
   const RootedValue value(isolate, Value::Object(closure));
   const auto second = std::make_shared<VersionedImage>(2, NewAnswer);
   std::swap(second->functions.front(), second->functions.back());
-  auto replacement = dispatch.Prepare(1, Image(second));
-  ASSERT_TRUE(replacement);
-  ASSERT_TRUE(dispatch.Publish(std::move(*replacement)));
+  ASSERT_TRUE(PublishVersion(dispatch, 1, second));
   const auto latest = dispatch.Resolve(kAnswer);
   ASSERT_TRUE(latest);
   auto instance = NativeInstance::Borrow(*latest->state);

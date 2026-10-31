@@ -26,12 +26,8 @@ StepResult Execution::ExecuteDynamicArray(ActiveFrame& active, Instruction instr
     if (!request) {
       return std::unexpected(request.error());
     }
-    const auto callable = ResolveCallable(request->callback);
-    if (!callable) {
-      return std::unexpected(callable.error());
-    }
-    return EnterDynamicCall(active, *callable, *request->arguments, *request->names,
-                            DecodeA(instruction), DynamicCallStyle::Function);
+    return EnterDynamicCall(active, {.value = request->callback}, *request->arguments,
+                            *request->names, DecodeA(instruction));
   }
   std::expected<runtime::Value, ExecutionStatus> value;
   if (builtin == Builtin::DynamicArrayPrepare) {
@@ -49,11 +45,7 @@ StepResult Execution::ExecuteDynamicArray(ActiveFrame& active, Instruction instr
   } else {
     value = runtime::ReadDynamicArrayOperation(builtin, input);
   }
-  if (!value) {
-    return std::unexpected(value.error());
-  }
-  registers.subspan(DecodeA(instruction)).front() = *value;
-  return {};
+  return StoreResult(registers.subspan(DecodeA(instruction)).front(), value);
 }
 
 }  // namespace vela::vm::internal

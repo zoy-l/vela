@@ -7,7 +7,7 @@ import argparse
 import subprocess
 import sys
 
-from tools.config import BUILD_VARIANTS, configure, toolchain_tools
+from tools.config import BUILD_VARIANTS, add_compiler_wrapper_argument, configure, toolchain_tools
 
 
 ROOT_TARGETS = {"default", "tests", "benchmarks"}
@@ -16,10 +16,7 @@ ROOT_TARGETS = {"default", "tests", "benchmarks"}
 def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build_arguments", nargs="*", metavar="VARIANT_OR_TARGET")
-    parser.add_argument(
-        "--cc-wrapper", default="sccache",
-        help="Compiler wrapper executable (default: sccache; pass an empty string to disable)",
-    )
+    add_compiler_wrapper_argument(parser)
     parsed = parser.parse_args(arguments)
     values = list(parsed.build_arguments)
     variant = "debug"

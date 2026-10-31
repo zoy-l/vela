@@ -24,7 +24,7 @@ namespace {
 constexpr std::int64_t kParseError = -32700;
 constexpr std::int64_t kInvalidRequest = -32600;
 constexpr std::int64_t kMethodNotFound = -32601;
-constexpr std::int64_t kInvalidParams = -32602;
+using protocol::kInvalidParams;
 constexpr std::int64_t kNotInitialized = -32002;
 
 void WriteServerFailure(std::ostream& output, std::string_view message) {

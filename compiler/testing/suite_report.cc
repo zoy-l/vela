@@ -2,15 +2,27 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <utility>
 
 #include "base/mock_operation.h"
 #include "compiler/testing/report.h"
 #include "compiler/testing/result.h"
-#include "runtime/future.h"
-#include "runtime/object.h"
 
 namespace vela::testing {
+
+void Suite::RegistrationError(std::string category, std::string message) {
+  result_.errors.push_back({
+      .phase = TestPhase::Registration,
+      .category = std::move(category),
+      .message = std::move(message),
+      .trace = {},
+      .difference = std::nullopt,
+  });
+  ReportEvent event(ReportEventType::Error);
+  event.error = result_.errors.back();
+  Emit(std::move(event));
+}
 
 void Suite::RegisterMockFailure(const runtime::NominalType& type, MockFailureKind kind) {
   mock_failures_.try_emplace(&type, kind);

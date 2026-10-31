@@ -1,6 +1,5 @@
 #include "compiler/development_files.h"
 
-#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <span>
@@ -13,38 +12,21 @@
 
 #include "base/file.h"
 #include "base/path.h"
+#include "base/testing/directory.h"
 #include "compiler/development_session.h"
 #include "compiler/source_session.h"
 
 namespace vela::compiler {
 namespace {
 
-class DevelopmentFilesTest : public testing::Test {
+class DevelopmentFilesTest : public test::DirectoryTest {
  protected:
-  void SetUp() override {
-    std::error_code error;
-    const auto temporary = std::filesystem::temp_directory_path(error);
-    ASSERT_FALSE(error);
-    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-    directory_ = temporary / ("vela-development-" + std::to_string(suffix));
-    const auto created = std::filesystem::create_directory(directory_, error);
-    ASSERT_TRUE(created);
-    ASSERT_FALSE(error);
-  }
-  void TearDown() override {
-    std::error_code error;
-    std::filesystem::remove_all(directory_, error);
-    EXPECT_FALSE(error);
-  }
   void Write(std::string_view path, std::string_view source) {
     ASSERT_TRUE(WriteFileAtomically(directory_ / Utf8Path(path), std::as_bytes(std::span(source))));
   }
   [[nodiscard]] std::string Path(std::string_view path) const {
     return PathText(directory_ / Utf8Path(path));
   }
-
- private:
-  std::filesystem::path directory_;
 };
 
 TEST_F(DevelopmentFilesTest, CapturedTextsStayImmutableWhenFilesChangeBeforeCompilation) {

@@ -1,13 +1,12 @@
 #include <algorithm>
 #include <cstddef>
-#include <span>
+#include <string_view>
 #include <utility>
 
 #include <gtest/gtest.h>
 
 #include "base/layout_description.h"
-#include "compiler/frontend/source_loader.h"
-#include "compiler/ir/preparation.h"
+#include "compiler/ir/preparation_test_support.h"
 #include "runtime/isolate.h"
 #include "runtime/layout_transaction.h"
 #include "runtime/object.h"
@@ -58,9 +57,7 @@ void ExpectNestedFuture(const runtime::LayoutCache& cache, const runtime::ClassL
 }
 
 TEST(LayoutInstantiationTest, OwnsNestedTypesAfterFrontendDestructionAndBindsPerIsolate) {
-  const frontend::SourceInput input{
-      .path = "main.vela",
-      .text = R"(
+  constexpr std::string_view kSource = R"(
 interface Readable { read(): int; }
 class Node implements Readable {
   next: Node?;
@@ -74,11 +71,10 @@ func main(): void {
   const nodes: Node[][] = [];
   const view: Readable = Node(next: null);
 }
-)",
-  };
+)";
   layout::Program description;
   {
-    auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
+    auto prepared = ir::test::Prepare(kSource);
     ASSERT_TRUE(prepared.Succeeded());
     description = std::move(prepared.program.layouts);
   }
@@ -109,11 +105,8 @@ func main(): void {
 }
 
 TEST(LayoutInstantiationTest, RollsBackUnpublishedLayoutsWithoutChangingSessionCache) {
-  const frontend::SourceInput input{
-      .path = "main.vela",
-      .text = "class Box { value: string; } func main(values: Box[]): void {}",
-  };
-  auto prepared = ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
+  auto prepared =
+      ir::test::Prepare("class Box { value: string; } func main(values: Box[]): void {}");
   ASSERT_TRUE(prepared.Succeeded());
   runtime::Isolate isolate;
   runtime::LayoutCache committed;

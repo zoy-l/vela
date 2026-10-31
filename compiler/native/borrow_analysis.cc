@@ -10,6 +10,7 @@
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/escape_analysis.h"
@@ -132,7 +133,7 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
     plan.function.value_types.push_back(fields.at(field));
   }
   const auto marker = plan.function.register_count++;
-  plan.function.value_types.push_back({.kind = Kind::Null, .name = "null"});
+  plan.function.value_types.push_back({.kind = Kind::Null, .name = frontend::kNullTypeName});
   const std::vector<std::optional<std::size_t>> allocations(source.instructions.size());
   const auto states =
       Solve(source, program, graph, allocations, plan, state_size, std::move(entry));

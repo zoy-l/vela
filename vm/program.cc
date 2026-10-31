@@ -1113,14 +1113,7 @@ std::expected<std::vector<StackFrame>, ExecutionStatus> Program::ResolveTrace(
       return std::unexpected(ExecutionStatus::TypeError);
     }
     const auto& function = code.subspan(position.function).front();
-    const auto source_paths = function.source_paths != nullptr
-                                  ? std::span<const std::string>(*function.source_paths)
-                                  : std::span<const std::string>();
-    const DebugInfo debug{
-        .name = function.name,
-        .source_paths = source_paths,
-        .mappings = function.source_mappings,
-    };
+    const auto debug = function.View().debug;
     StackFrame frame{
         .function = function.name,
         .source_path = {},

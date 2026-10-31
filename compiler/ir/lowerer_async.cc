@@ -1,5 +1,6 @@
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 
@@ -17,25 +18,6 @@
 #include "base/member.h"
 
 namespace vela::ir {
-namespace {
-
-enum class ParameterPresence : std::uint8_t { Required, Optional };
-
-void AddDynamicParameter(frontend::FunctionDescriptor& signature,
-                         std::string name,
-                         ParameterPresence presence = ParameterPresence::Required) {
-  if (presence == ParameterPresence::Optional) {
-    signature.optional_parameters.insert(name);
-  }
-  signature.parameter_indices.emplace(name,
-                                      static_cast<std::uint32_t>(signature.parameters.size()));
-  signature.parameters.push_back({
-      .name = std::move(name),
-      .type = {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},
-  });
-}
-
-}  // namespace
 
 void Lowerer::RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std::string_view name) {
   using Kind = frontend::TypeDescriptor::Kind;
@@ -145,15 +127,17 @@ void Lowerer::RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std:
   }
   const auto operation = member->operation;
   frontend::FunctionDescriptor signature;
-  signature.return_type = {.kind = Kind::Dynamic, .name = "dynamic"};
+  const frontend::TypeDescriptor dynamic{.kind = Kind::Dynamic, .name = frontend::kDynamicTypeName};
+  signature.return_type = dynamic;
+  using ParameterPresence = frontend::FunctionDescriptor::ParameterPresence;
   if (!member->first.empty()) {
     const bool optional = operation == AsyncOperation::CompleterComplete &&
                           model_.generic_arguments.at(receiver.name).front().kind == Kind::Void;
-    AddDynamicParameter(signature, std::string(member->first),
-                        optional ? ParameterPresence::Optional : ParameterPresence::Required);
+    signature.AddParameter(std::string(member->first), dynamic,
+                           optional ? ParameterPresence::Optional : ParameterPresence::Required);
   }
   if (!member->second.empty()) {
-    AddDynamicParameter(signature, std::string(member->second), ParameterPresence::Optional);
+    signature.AddParameter(std::string(member->second), dynamic, ParameterPresence::Optional);
   }
   auto function = CreateMemberFunction(receiver, name, signature);
   current_function_ = &function;
@@ -167,10 +151,10 @@ void Lowerer::RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std:
   });
   const auto metadata = EmitTemporary({
       .opcode = Opcode::LoadInt,
-      .immediate =
-          operation == AsyncOperation::Timeout
-              ? static_cast<std::int64_t>(RegisterRuntimeType(model_.types.at("TimeoutException")))
-              : -1,
+      .immediate = operation == AsyncOperation::Timeout
+                       ? static_cast<std::int64_t>(RegisterRuntimeType(
+                             model_.types.at(frontend::kTimeoutExceptionTypeName)))
+                       : -1,
       .location = {},
   });
   const std::array<RegisterId, 5> arguments{
@@ -201,21 +185,14 @@ void Lowerer::LowerAsyncArguments(const frontend::Expression& expression,
       std::unreachable();
     }
     const auto& element = model_.generic_arguments.at(receiver->type.name).front();
-    payload = &model_.types.at("Future<" + element.name + ">");
+    payload = &model_.types.at(std::string("Future<") + std::string(element.name) + ">");
   }
   const auto& order = model_.argument_order.at(&expression);
   for (std::size_t index = 0; index < expression.arguments.size(); ++index) {
     const auto& argument = expression.arguments.at(index);
     auto value = LowerExpression(*argument.value);
-    if (operation == AsyncOperation::CompleterComplete &&
-        value.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+    if (operation == AsyncOperation::CompleterComplete) {
       value.reg = LowerFuturePayload(value, *payload, argument.location);
-    }
-    if (operation == AsyncOperation::CompleterComplete &&
-        value.type.kind == frontend::TypeDescriptor::Kind::Enum) {
-      value = LowerConversion(value,
-                              {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},
-                              argument.location);
     }
     Emit({
         .opcode = Opcode::Move,
@@ -288,15 +265,7 @@ Lowerer::LoweredValue Lowerer::LowerAsyncCall(const frontend::Expression& expres
       .index = static_cast<std::uint32_t>(operation),
       .location = expression.location,
   });
-  if (null_jump) {
-    const auto end_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::Jump, .location = expression.location});
-    current_function_->instructions.at(*null_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-    Emit({.opcode = Opcode::LoadNull, .dst = result, .location = expression.location});
-    current_function_->instructions.at(end_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-  }
+  FinishNullSafe(null_jump, result, expression.location);
   return {.reg = result, .type = model_.expression_types.at(&expression)};
 }
 

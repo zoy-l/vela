@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -13,6 +12,7 @@
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 namespace {
@@ -26,7 +26,7 @@ std::unique_ptr<Expression> Name(std::string text, SourceLocation location) {
 }
 
 TypeName NamedType(const TypeDescriptor& type, SourceLocation location) {
-  return {.name = type.name, .location = location, .arguments = {}};
+  return {.name = std::string(type.name), .location = location, .arguments = {}};
 }
 
 }  // namespace
@@ -57,18 +57,16 @@ std::optional<TypeChecker::FunctionInfo> TypeChecker::InferBuiltinMethod(const T
 std::optional<TypeChecker::FunctionInfo> TypeChecker::InferAsyncMethod(const Type& receiver,
                                                                        std::string_view name) {
   FunctionInfo signature;
-  signature.return_type = {.kind = Type::Kind::Void, .name = "void"};
+  signature.return_type = {.kind = Type::Kind::Void, .name = kVoidTypeName};
   if ((receiver.kind == Type::Kind::Timer || receiver.kind == Type::Kind::CancellationToken) &&
       name == "cancel") {
     return signature;
   }
   if (receiver.kind == Type::Kind::Completer && (name == "complete" || name == "completeError")) {
-    const auto element =
-        name == "completeError" ? types_.at("Error") : generic_arguments_.at(receiver.name).front();
+    const auto element = name == "completeError" ? types_.at(kErrorTypeName)
+                                                 : generic_arguments_.at(receiver.name).front();
     if (element.kind != Type::Kind::Void) {
-      signature.parameters.push_back(
-          {.name = name == "complete" ? "value" : "error", .type = element});
-      signature.parameter_indices.emplace(signature.parameters.front().name, 0);
+      signature.AddParameter(name == "complete" ? "value" : "error", element);
     }
     return signature;
   }
@@ -107,7 +105,8 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
                                                      const Type& receiver,
                                                      const FunctionInfo& signature) {
   auto type = FunctionType(signature);
-  const auto key = "$builtin." + receiver.name + "." + expression.text + "." + type.name;
+  const auto key = std::string("$builtin.") + std::string(receiver.name) + "." + expression.text +
+                   "." + std::string(type.name);
   if (const auto found = builtin_function_ids_.find(key); found != builtin_function_ids_.end()) {
     builtin_method_values_.insert_or_assign(&expression, found->second);
     const auto& generated = generated_functions_.at(found->second);
@@ -134,8 +133,7 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
   });
   FunctionInfo implementation;
   implementation.return_type = signature.return_type;
-  implementation.parameters.push_back({.name = "$receiver", .type = receiver});
-  implementation.parameter_indices.emplace("$receiver", 0);
+  implementation.AddParameter("$receiver", receiver);
 
   auto call = std::make_unique<Expression>();
   call->kind = Expression::Kind::Call;
@@ -153,8 +151,7 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
         .name = name,
         .location = expression.location,
     });
-    implementation.parameter_indices.emplace(name, static_cast<std::uint32_t>(index + 1));
-    implementation.parameters.push_back({.name = name, .type = parameter});
+    implementation.AddParameter(name, parameter);
     call->arguments.push_back(
         {.name = {}, .location = expression.location, .value = Name(name, expression.location)});
   }

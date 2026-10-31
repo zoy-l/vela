@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <optional>
 #include <span>
 #include <utility>
@@ -12,6 +11,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "base/integer_arithmetic.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 
@@ -126,22 +126,14 @@ void ThreadJumps(Function& function) {
 }
 
 std::optional<Constant> EvaluateIntegers(Opcode opcode, std::int64_t left, std::int64_t right) {
-  std::int64_t value = 0;
   switch (opcode) {
     case Opcode::AddInt:
-      return __builtin_add_overflow(left, right, &value) ? std::nullopt
-                                                         : std::optional<Constant>(value);
     case Opcode::SubInt:
-      return __builtin_sub_overflow(left, right, &value) ? std::nullopt
-                                                         : std::optional<Constant>(value);
     case Opcode::MulInt:
-      return __builtin_mul_overflow(left, right, &value) ? std::nullopt
-                                                         : std::optional<Constant>(value);
-    case Opcode::DivInt:
-      if (right == 0 || (left == std::numeric_limits<std::int64_t>::min() && right == -1)) {
-        return std::nullopt;
-      }
-      return left / right;
+    case Opcode::DivInt: {
+      const auto value = EvaluateIntegerArithmetic(opcode, left, right);
+      return value ? std::optional<Constant>(*value) : std::nullopt;
+    }
     case Opcode::EqualInt:
       return left == right;
     case Opcode::NotEqualInt:
@@ -167,10 +159,9 @@ std::optional<Constant> EvaluateUnary(const Instruction& instruction, const Cons
     return !std::get<bool>(operand);
   }
   if (instruction.opcode == Opcode::NegInt && std::holds_alternative<std::int64_t>(operand)) {
-    const auto value = std::get<std::int64_t>(operand);
-    if (value != std::numeric_limits<std::int64_t>::min()) {
-      return -value;
-    }
+    const auto value =
+        EvaluateIntegerArithmetic(Opcode::SubInt, 0, std::get<std::int64_t>(operand));
+    return value ? std::optional<Constant>(*value) : std::nullopt;
   }
   return std::nullopt;
 }

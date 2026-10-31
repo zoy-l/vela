@@ -1,8 +1,9 @@
 #pragma once
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+
+#include "base/arity.h"
 
 namespace vela {
 
@@ -79,13 +80,7 @@ enum class AsyncOperation : std::uint8_t {
   }
 }
 
-inline constexpr std::size_t kMaximumAsyncArity = [] {
-  std::size_t maximum = 0;
-  for (std::uint32_t index = 0; index < static_cast<std::uint32_t>(AsyncOperation::Count);
-       ++index) {
-    maximum = std::max(maximum, AsyncArity(static_cast<AsyncOperation>(index)));
-  }
-  return maximum;
-}();
+inline constexpr std::size_t kMaximumAsyncArity =
+    MaximumOperationArity(AsyncOperation::Count, AsyncArity);
 
 }  // namespace vela

@@ -3,6 +3,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"
@@ -12,7 +13,7 @@ namespace {
 
 TEST(TypeOperationTest, TestsAndNarrowsInterfacesWithoutChangingObjectIdentity) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 interface Measurable { measure(): int; }
 interface Named { name(): string; }
 class Rectangle implements Measurable, Named {
@@ -35,19 +36,14 @@ func main(): int {
   return narrow(rectangle);
 }
 )",
-                                      isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(TypeOperationTest, TestsNullableArraysAndScalars) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto entry = test::CompileEntry(R"(
 func main(): bool {
   const value: int? = 42;
   const array: int[]? = [42];
@@ -56,25 +52,25 @@ func main(): bool {
          !(absent is string) && (value as int) == 42 && (array as int[])[0] == 42;
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+                                        isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
   ASSERT_TRUE(result.Succeeded());
   EXPECT_TRUE(result.value.AsBoolean());
 }
 
 TEST(TypeOperationTest, ReportsCheckedCastFailure) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto entry = test::CompileEntry(R"(
 interface I {}
 class A implements I {}
 class B implements I {}
 func require(value: I): B { return value as B; }
 func main(): B { return require(A()); }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+                                        isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
   EXPECT_EQ(result.status, vm::ExecutionStatus::InvalidCast);
 }
 

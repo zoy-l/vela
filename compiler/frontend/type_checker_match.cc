@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 
@@ -54,13 +55,13 @@ TypeChecker::Type TypeChecker::CheckMatchPattern(const MatchArm& arm,
       AddDiagnostic(arm.location, "null pattern requires a nullable selector");
     }
     coverage.null = true;
-    return {.kind = Type::Kind::Null, .name = "null"};
+    return {.kind = Type::Kind::Null, .name = kNullTypeName};
   }
   Type narrowed = selector;
   if (coverage.null) {
     narrowed = base;
   } else if (coverage.values && selector.nullable) {
-    narrowed = {.kind = Type::Kind::Null, .name = "null"};
+    narrowed = {.kind = Type::Kind::Null, .name = kNullTypeName};
   }
   if (arm.kind == MatchArm::Kind::Binding &&
       DeclareLocal(arm.binding, narrowed, arm.location, BindingKind::Mutable, &arm)) {

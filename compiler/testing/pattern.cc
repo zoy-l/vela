@@ -1,6 +1,5 @@
 #include "compiler/testing/pattern.h"
 
-#include <array>
 #include <cstddef>
 #include <expected>
 #include <memory>
@@ -10,18 +9,10 @@
 
 #include <pcre2.h>
 
+#include "base/regexp_diagnostic.h"
+
 namespace vela::testing {
 namespace {
-
-constexpr std::size_t kErrorCapacity = 256;
-
-std::string RegexError(int code) {
-  std::array<PCRE2_UCHAR, kErrorCapacity> buffer{};
-  const auto length = pcre2_get_error_message(code, buffer.data(), buffer.size());
-  const void* data = buffer.data();
-  return length >= 0 ? std::string(static_cast<const char*>(data), static_cast<std::size_t>(length))
-                     : "regular expression error " + std::to_string(code);
-}
 
 void Literal(std::string& output, char character) {
   if (std::string_view("\\.^$|()[]{}*+?").contains(character)) {
@@ -135,7 +126,7 @@ std::expected<Pattern, std::string> Pattern::Regex(std::string_view source) {
       pcre2_compile(static_cast<PCRE2_SPTR>(data), source.size(),
                     PCRE2_UTF | PCRE2_UCP | PCRE2_NEVER_BACKSLASH_C, &error, &offset, nullptr);
   if (code == nullptr) {
-    return std::unexpected(RegexError(error) + " at byte " + std::to_string(offset));
+    return std::unexpected(RegExpErrorMessage(error) + " at byte " + std::to_string(offset));
   }
   return Pattern(code);
 }
@@ -161,7 +152,7 @@ std::expected<bool, std::string> Pattern::IsMatch(std::string_view text) const {
     return false;
   }
   if (matched < 0) {
-    return std::unexpected(RegexError(matched));
+    return std::unexpected(RegExpErrorMessage(matched));
   }
   return true;
 }

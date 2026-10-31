@@ -1,15 +1,11 @@
-#include <algorithm>
-#include <cstddef>
 #include <string_view>
-#include <vector>
 
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
-#include "vm/bytecode_image.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -20,15 +16,9 @@ TEST_P(BuiltinFunctionValueTest, PreservesReceiversAndReleasesThemAfterExecution
   runtime::Isolate isolate(1);
   const auto retained = isolate.heap().object_count();
   {
-    const auto compiled = CompileSource(GetParam(), isolate);
-    for (const auto& diagnostic : compiled.diagnostics) {
-      ADD_FAILURE() << diagnostic.location.line << ':' << diagnostic.message;
-    }
-    ASSERT_TRUE(compiled.Succeeded());
-    const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-    ASSERT_TRUE(result.Succeeded()) << result.message;
-    ASSERT_TRUE(result.value.IsInteger());
-    EXPECT_EQ(result.value.AsInteger(), 42);
+    const auto result = test::RunInteger(GetParam(), isolate);
+    ASSERT_TRUE(result) << result.error();
+    EXPECT_EQ(*result, 42);
   }
   isolate.heap().FinishCollection();
   isolate.heap().Collect();
@@ -36,23 +26,12 @@ TEST_P(BuiltinFunctionValueTest, PreservesReceiversAndReleasesThemAfterExecution
 }
 
 TEST_P(BuiltinFunctionValueTest, ReloadsInFreshIsolateWithoutCompilerMetadata) {
-  std::vector<std::byte> image;
-  {
-    runtime::Isolate isolate(1);
-    const auto compiled = CompileSource(GetParam(), isolate);
-    ASSERT_TRUE(compiled.Succeeded());
-    const auto saved = vm::SaveBytecode(compiled.program, isolate);
-    ASSERT_TRUE(saved) << saved.error().message;
-    image = *saved;
-  }
   runtime::Isolate isolate(1);
-  const auto program = vm::LoadBytecode(image, isolate);
-  ASSERT_TRUE(program) << program.error().message;
-  std::ranges::fill(image, std::byte{0});
-  isolate.heap().Collect();
-  const auto result = vm::VirtualMachine(isolate).Execute(program->FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto program = test::ReloadSource(GetParam(), isolate);
+  ASSERT_TRUE(program) << program.error();
+  const auto result = test::ExecuteInteger(*program, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 INSTANTIATE_TEST_SUITE_P(ProductionPaths,

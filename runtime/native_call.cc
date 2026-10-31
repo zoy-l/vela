@@ -48,6 +48,20 @@ NativeCallDomain Domain(const NativeInstance& instance) {
   };
 }
 
+std::uint8_t InvokeResolvedDeclaration(NativeExecution* execution,
+                                       const NativeResolvedDeclaration& target,
+                                       const NativeValue* arguments,
+                                       std::uint64_t count,
+                                       NativeValue* result) {
+  auto origin = NativeInstance::Borrow(*target.state);
+  const NativeInstanceScope scope(*execution, origin);
+  return origin.image()
+      .functions.values()
+      .subspan(target.function)
+      .front()
+      .entry(execution, arguments, count, result);
+}
+
 std::expected<NativeCallback, ExecutionStatus> ResolveNativeCallback(const NativeCallDomain& domain,
                                                                      Value callable) {
   auto* object = callable.IsObject() ? callable.AsObject() : nullptr;
@@ -125,9 +139,7 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
       if (!Heap::IsValueOfType(value, type)) {
         return std::unexpected(ExecutionStatus::InvalidCast);
       }
-      if (!value.IsNull() && type.nominal != nullptr && type.nominal->IsEnum()) {
-        value = *Heap::GetField(*value.AsObject(), 0);
-      }
+      value = UnboxDynamicValue(value, type);
     }
     input.at(index + hidden) = EncodeNativeValue(value);
   }
@@ -149,14 +161,7 @@ Future InvokeFutureCallback(const NativeCallDomain& domain,
   NativeExecution execution(instance);
   const auto invoked = InvokeCallback(execution, *callback, arguments);
   if (invoked) {
-    const auto value = *invoked;
-    auto* nested = value.IsObject() ? Heap::GetFuture(*value.AsObject()) : nullptr;
-    if (nested != nullptr) {
-      return nested->Rooted();
-    }
-    auto result = Future::Value(value, &isolate.scheduler());
-    result.AttachHeap(isolate.heap());
-    return result;
+    return RootFutureValue(isolate, *invoked);
   }
   const auto status = execution.HandleFailure(invoked.error());
   if (!execution.HasException()) {
@@ -276,9 +281,7 @@ std::expected<Value, ExecutionStatus> InvokeNativeEntry(NativeExecution& executi
         return std::unexpected(callable.error());
       }
     }
-    if (!value.IsNull() && type.nominal != nullptr && type.nominal->IsEnum()) {
-      value = *Heap::GetField(*value.AsObject(), 0);
-    }
+    value = UnboxDynamicValue(value, type);
     arguments.push_back(EncodeNativeValue(value));
   }
   return InvokeNativeTarget(execution, function, arguments);
@@ -365,13 +368,7 @@ extern "C" std::uint8_t vela_native_v3_call_declaration(NativeExecution* executi
                                                    std::to_string(dispatch.revision()))
             : status);
   }
-  auto origin = NativeInstance::Borrow(*target->state);
-  const NativeInstanceScope scope(*execution, origin);
-  return origin.image()
-      .functions.values()
-      .subspan(target->function)
-      .front()
-      .entry(execution, arguments, count, result);
+  return InvokeResolvedDeclaration(execution, *target, arguments, count, result);
 }
 
 extern "C" std::uint8_t vela_native_v3_call_interface(NativeExecution* execution,
@@ -395,13 +392,7 @@ extern "C" std::uint8_t vela_native_v3_call_interface(NativeExecution* execution
                                                    std::to_string(dispatch.revision()))
             : status);
   }
-  auto origin = NativeInstance::Borrow(*target->state);
-  const NativeInstanceScope scope(*execution, origin);
-  return origin.image()
-      .functions.values()
-      .subspan(target->function)
-      .front()
-      .entry(execution, arguments, count, result);
+  return InvokeResolvedDeclaration(execution, *target, arguments, count, result);
 }
 
 }  // namespace vela::runtime

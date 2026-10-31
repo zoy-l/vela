@@ -5,6 +5,7 @@
 #include <expected>
 #include <optional>
 #include <span>
+#include <utility>
 
 #include "base/async_operation.h"
 #include "runtime/async_state.h"
@@ -22,71 +23,50 @@ namespace vela::vm::internal {
 StepResult Execution::ExecuteAsync(ActiveFrame& active, Instruction instruction) {
   const auto operation = static_cast<AsyncOperation>(DecodeB(instruction));
   const auto registers = active.frame.registers();
-  AsyncArguments call{
-      .operation = operation,
-      .values = registers.subspan(DecodeC(instruction), AsyncArity(operation)),
-      .destination = registers.subspan(DecodeA(instruction)).front(),
-  };
+  const auto count = AsyncArity(operation);
+  std::array<runtime::Value, kMaximumAsyncArity> storage;
+  const auto arguments = std::span(storage).first(count);
+  registers.subspan(DecodeC(instruction), count).CopyTo(arguments);
+  const auto destination = registers.subspan(DecodeA(instruction)).front();
+  if (IsAsyncStateOperation(operation)) {
+    const auto diagnostic = operation == AsyncOperation::CompleterError
+                                ? ThrowDiagnostic(arguments.subspan(1).front())
+                                : runtime::FutureDiagnostic();
+    return StoreResult(destination,
+                       runtime::ExecuteAsyncState(operation, arguments, isolate_, diagnostic));
+  }
   const auto& layouts = *active.function->layouts;
+  std::optional<runtime::TypeConstraint> runtime_type;
   if (operation == AsyncOperation::Then || operation == AsyncOperation::CatchError ||
       operation == AsyncOperation::Timeout) {
-    const auto index = call.At(AsyncArity(operation) - 1);
+    const auto index = arguments.back();
     const auto types = layouts.types();
-    if (!index.IsInteger() || index.AsInteger() < 0 ||
-        static_cast<std::size_t>(index.AsInteger()) >= types.size()) {
-      return std::unexpected(ExecutionStatus::TypeError);
+    const auto offset = ReadLayoutIndex(index, types.size());
+    if (!offset) {
+      return std::unexpected(offset.error());
     }
-    call.runtime_type = types.subspan(static_cast<std::size_t>(index.AsInteger())).front();
-  }
-  if (IsAsyncStateOperation(operation)) {
-    return ExecuteAsyncState(call);
+    runtime_type = types.subspan(*offset).front();
   }
   const runtime::ArrayLayout* wait_layout = nullptr;
   if (operation == AsyncOperation::Wait) {
-    const auto index = call.At(3);
+    const auto index = arguments.subspan(3).front();
     const auto arrays = layouts.arrays();
-    if (!index.IsInteger() || index.AsInteger() < -1 ||
-        (index.AsInteger() >= 0 && static_cast<std::size_t>(index.AsInteger()) >= arrays.size())) {
+    if (!index.IsInteger()) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    if (index.AsInteger() >= 0) {
-      wait_layout = arrays.subspan(static_cast<std::size_t>(index.AsInteger())).front();
+    const auto offset = index.AsInteger();
+    if (offset < -1 || (offset >= 0 && std::cmp_greater_equal(offset, arrays.size()))) {
+      return std::unexpected(ExecutionStatus::TypeError);
+    }
+    if (offset >= 0) {
+      wait_layout = arrays.subspan(static_cast<std::size_t>(offset)).front();
     }
   }
-  return ExecuteFutureCall(call, wait_layout);
-}
-
-StepResult Execution::ExecuteAsyncState(const AsyncArguments& call) {
-  std::array<runtime::Value, kMaximumAsyncArity> storage;
-  const auto arguments = std::span(storage).first(call.values.size());
-  call.values.CopyTo(arguments);
-  const auto diagnostic = call.operation == AsyncOperation::CompleterError
-                              ? ThrowDiagnostic(call.At(1))
-                              : runtime::FutureDiagnostic();
-  const auto result = runtime::ExecuteAsyncState(call.operation, arguments, isolate_, diagnostic);
-  if (!result) {
-    return std::unexpected(result.error());
-  }
-  auto destination = call.destination;
-  destination = *result;
-  return {};
-}
-
-StepResult Execution::ExecuteFutureCall(const AsyncArguments& call,
-                                        const runtime::ArrayLayout* wait_layout) {
-  std::array<runtime::Value, kMaximumAsyncArity> storage;
-  const auto arguments = std::span(storage).first(call.values.size());
-  call.values.CopyTo(arguments);
-  auto description = DescribeFutureCall(call.operation, arguments);
-  description.runtime_type = call.runtime_type;
-  description.wait_layout = wait_layout;
-  const auto result = runtime::ExecuteFutureOperation(isolate_, description, MakeFutureCallbacks());
-  if (!result) {
-    return std::unexpected(result.error());
-  }
-  auto destination = call.destination;
-  destination = *result;
-  return {};
+  auto call = DescribeFutureCall(operation, arguments);
+  call.runtime_type = runtime_type;
+  call.wait_layout = wait_layout;
+  return StoreResult(destination,
+                     runtime::ExecuteFutureOperation(isolate_, call, MakeFutureCallbacks()));
 }
 
 runtime::FutureCallbacks Execution::MakeFutureCallbacks() {

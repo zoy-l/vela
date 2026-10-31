@@ -4,6 +4,7 @@
 #include <optional>
 
 #include "runtime/heap.h"
+#include "runtime/intrusive_link_internal.h"
 #include "runtime/isolate.h"
 #include "runtime/native_program_state.h"
 #include "runtime/object.h"
@@ -32,24 +33,12 @@ void NativeFunctionRoot::RegisterDependency() noexcept {
   if (retained_ == nullptr || previous_link_ != nullptr) {
     return;
   }
-  next_ = retained_->function_roots;
-  previous_link_ = &retained_->function_roots;
-  if (next_ != nullptr) {
-    next_->previous_link_ = &next_;
-  }
-  *previous_link_ = this;
+  internal::PrependIntrusive(*this, retained_->function_roots, &NativeFunctionRoot::next_,
+                             &NativeFunctionRoot::previous_link_);
 }
 
 void NativeFunctionRoot::UnregisterDependency() noexcept {
-  if (previous_link_ == nullptr) {
-    return;
-  }
-  *previous_link_ = next_;
-  if (next_ != nullptr) {
-    next_->previous_link_ = previous_link_;
-  }
-  previous_link_ = nullptr;
-  next_ = nullptr;
+  internal::UnlinkIntrusive(*this, &NativeFunctionRoot::next_, &NativeFunctionRoot::previous_link_);
 }
 
 void NativeFunctionRoot::SetExecuting() noexcept {

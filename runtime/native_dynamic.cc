@@ -182,10 +182,7 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
   if (!Heap::IsValueOfType(original, *type)) {
     return std::unexpected(ExecutionStatus::InvalidCast);
   }
-  auto value = original;
-  if (!value.IsNull() && type->nominal != nullptr && type->nominal->IsEnum()) {
-    value = *Heap::GetField(*value.AsObject(), 0);
-  }
+  const auto value = UnboxDynamicValue(original, *type);
   if (member.kind == MemberKind::Field) {
     auto& object = *receiver.AsObject();
     const auto* layout = Heap::ClassOf(object);

@@ -111,37 +111,15 @@ export func calculate(operation: int): int {
 
 HOST_TESTS = r'''
 extern "C" const NativeImage* MEMORY_IMAGE() noexcept;
+using NativeMemoryTest = CollectingImageTest<MEMORY_IMAGE>;
 
-TEST(NativeMemoryTest, FieldsAndArraysPreserveTypedNullableAndDynamicStorage) {
-  Isolate isolate(1);
-  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
-  const auto instance = NativeInstance::Instantiate(isolate, *MEMORY_IMAGE());
-  ASSERT_TRUE(instance.has_value()) << instance.error().message;
-  NativeExecution execution(**instance);
-  for (const auto operation : {0, 1, 2, 3, 4, 8}) {
-    const std::array arguments{Integer(operation)};
-    NativeValue result;
-    ASSERT_EQ(Execute(MEMORY_ENTRY, execution, arguments, result), ExecutionStatus::Returned)
-        << operation;
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
-    EXPECT_FALSE(execution.HasException());
-  }
+TEST_F(NativeMemoryTest, FieldsAndArraysPreserveTypedNullableAndDynamicStorage) {
+  NativeExecution execution(*instance);
+  ExpectIntegerOperations(MEMORY_ENTRY, execution, {0, 1, 2, 3, 4, 8});
 }
 
-TEST(NativeMemoryTest, WideAndNegativeIndicesKeepExceptionRootsAndCleanupFrames) {
-  Isolate isolate(1);
-  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
-  const auto instance = NativeInstance::Instantiate(isolate, *MEMORY_IMAGE());
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
-  for (const auto operation : {5, 6, 7}) {
-    const std::array arguments{Integer(operation)};
-    NativeValue result;
-    ASSERT_EQ(Execute(MEMORY_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
-    EXPECT_FALSE(execution.HasException());
-  }
+TEST_F(NativeMemoryTest, WideAndNegativeIndicesKeepExceptionRootsAndCleanupFrames) {
+  NativeExecution execution(*instance);
+  ExpectIntegerOperations(MEMORY_ENTRY, execution, {5, 6, 7});
 }
 '''

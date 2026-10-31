@@ -6,7 +6,7 @@
 #include "gtest/gtest.h"
 
 #include "base/execution_status.h"
-#include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -40,11 +40,9 @@ func main(): Shade {
 }
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto function = compiled.program.FindFunction("main");
-  ASSERT_TRUE(function.IsValid());
-  const auto result = VirtualMachine(isolate).Execute(function);
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = VirtualMachine(isolate).Execute(*entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsObject());
   const auto* layout = runtime::Heap::ClassOf(*result.value.AsObject());
@@ -62,14 +60,9 @@ func main(): int {
 }
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto function = compiled.program.FindFunction("main");
-  ASSERT_TRUE(function.IsValid());
-  const auto result = VirtualMachine(isolate).Execute(function);
-  ASSERT_EQ(result.status, ExecutionStatus::Returned);
-  ASSERT_TRUE(result.value.IsInteger());
-  EXPECT_EQ(result.value.AsInteger(), kExpectedSum);
+  const auto result = test::RunInteger(source, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, kExpectedSum);
 }
 
 TEST(CompilerTest, NullSafeAccessCoalescesAndSkipsArgumentsAndIndices) {
@@ -94,17 +87,9 @@ func main(): int {
 }
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  const auto result = VirtualMachine(isolate).Execute(compiled.program, entry.index());
-  ASSERT_TRUE(result.Succeeded());
-  ASSERT_TRUE(result.value.IsInteger());
-  EXPECT_EQ(result.value.AsInteger(), kExpectedSum);
+  const auto result = test::RunInteger(source, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, kExpectedSum);
 }
 
 TEST(CompilerTest, CoalescePreservesStorageAndSkipsUnneededDefaults) {
@@ -134,14 +119,9 @@ func main(): bool {
 }
 )";
   Isolate isolate(1);
-  const auto compiled = CompileSource(source, isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  const auto result = VirtualMachine(isolate).Execute(compiled.program, entry.index());
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = VirtualMachine(isolate).Execute(*entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -155,19 +135,15 @@ async func main(): Future<int> {
 }
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto function = compiled.program.FindFunction("main");
-  ASSERT_TRUE(function.IsValid());
-  ASSERT_TRUE(function.is_async());
-  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, function.index());
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  ASSERT_TRUE(entry->is_async());
+  auto root = VirtualMachine(isolate).ExecuteFuture(entry->program(), entry->index());
   EXPECT_EQ(root.state(), runtime::FutureState::Succeeded);
   EXPECT_FALSE(isolate.scheduler().PumpOne());
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
-  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
-  const auto value = root.value();
-  ASSERT_TRUE(value.has_value());
-  EXPECT_EQ(value.value_or(Value::Null()).AsInteger(), kAsyncResult);
+  const auto value = test::AwaitInteger(root, isolate);
+  ASSERT_TRUE(value) << value.error();
+  EXPECT_EQ(*value, kAsyncResult);
 }
 
 TEST(CompilerTest, SuspendsAsyncMainAtAwaitAndResumesThroughScheduler) {
@@ -179,15 +155,13 @@ async func main(): Future<int> {
 }
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto function = compiled.program.FindFunction("main");
-  ASSERT_TRUE(function.IsValid());
-  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, function.index());
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  auto root = VirtualMachine(isolate).ExecuteFuture(entry->program(), entry->index());
   EXPECT_EQ(root.state(), runtime::FutureState::Pending);
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
-  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
-  EXPECT_EQ(root.value().value_or(Value::Null()).AsInteger(), kAsyncResult);
+  const auto value = test::AwaitInteger(root, isolate);
+  ASSERT_TRUE(value) << value.error();
+  EXPECT_EQ(*value, kAsyncResult);
 }
 
 TEST(CompilerTest, AsyncFailureRetainsDiagnosticAcrossRootFuture) {
@@ -197,12 +171,9 @@ async func main(): Future<void> {
 }
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-
-  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  auto root = VirtualMachine(isolate).ExecuteFuture(entry->program(), entry->index());
   ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
   ASSERT_EQ(root.state(), runtime::FutureState::Failed);
   const auto diagnostic = root.error_diagnostic();
@@ -221,18 +192,15 @@ async func main(): Future<int> {
 }
 )";
   Isolate isolate(1);
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-
-  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  auto root = VirtualMachine(isolate).ExecuteFuture(entry->program(), entry->index());
   ASSERT_EQ(root.state(), runtime::FutureState::Pending);
   AllocateAndCollectTemporaryStrings(isolate);
 
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
-  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
-  EXPECT_EQ(root.value().value_or(Value::Null()).AsInteger(), 7);
+  const auto value = test::AwaitInteger(root, isolate);
+  ASSERT_TRUE(value) << value.error();
+  EXPECT_EQ(*value, 7);
 }
 
 TEST(CompilerTest, FutureWaitAndRaceAreAvailableToVelaCode) {
@@ -245,17 +213,12 @@ async func main(): Future<int> {
 }
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
-  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
-  EXPECT_EQ(root.value().value_or(Value::Null()).AsInteger(), 7);
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  auto root = VirtualMachine(isolate).ExecuteFuture(entry->program(), entry->index());
+  const auto value = test::AwaitInteger(root, isolate);
+  ASSERT_TRUE(value) << value.error();
+  EXPECT_EQ(*value, 7);
 }
 
 TEST(CompilerTest, FutureWaitCollectsPendingResultsInInputOrder) {
@@ -271,14 +234,12 @@ async func main(): Future<int> {
 }
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
-  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
-  EXPECT_EQ(root.value().value_or(Value::Null()).AsInteger(), 56);
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  auto root = VirtualMachine(isolate).ExecuteFuture(entry->program(), entry->index());
+  const auto value = test::AwaitInteger(root, isolate);
+  ASSERT_TRUE(value) << value.error();
+  EXPECT_EQ(*value, 56);
 }
 
 TEST(CompilerTest, FutureSyncInvokesComputationAndReturnsFuture) {
@@ -288,14 +249,12 @@ async func main(): Future<int> {
 }
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
-  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
-  EXPECT_EQ(root.value().value_or(Value::Null()).AsInteger(), 8);
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  auto root = VirtualMachine(isolate).ExecuteFuture(entry->program(), entry->index());
+  const auto value = test::AwaitInteger(root, isolate);
+  ASSERT_TRUE(value) << value.error();
+  EXPECT_EQ(*value, 8);
 }
 
 TEST(CompilerTest, FutureDelayedAndMicrotaskInvokeCallbacks) {
@@ -307,17 +266,12 @@ async func main(): Future<int> {
 }
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  auto root = VirtualMachine(isolate).ExecuteFuture(compiled.program, entry.index());
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
-  ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);
-  EXPECT_EQ(root.value().value_or(Value::Null()).AsInteger(), 13);
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  auto root = VirtualMachine(isolate).ExecuteFuture(entry->program(), entry->index());
+  const auto value = test::AwaitInteger(root, isolate);
+  ASSERT_TRUE(value) << value.error();
+  EXPECT_EQ(*value, 13);
 }
 
 TEST(CompilerTest, CompilesNestedClassConstruction) {
@@ -336,11 +290,9 @@ func main(): App {
 )";
 
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto function = compiled.program.FindFunction("main");
-  ASSERT_TRUE(function.IsValid());
-  const auto result = VirtualMachine(isolate).Execute(function);
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = VirtualMachine(isolate).Execute(*entry);
   ASSERT_EQ(result.status, ExecutionStatus::Returned);
   ASSERT_TRUE(result.value.IsObject());
   ASSERT_NE(result.value.AsObject(), nullptr);
@@ -373,12 +325,9 @@ func main(): int {
 )";
 
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto function = compiled.program.FindFunction("main");
-  ASSERT_TRUE(function.IsValid());
-  const auto entry = function.index();
-  const auto result = VirtualMachine(isolate).Execute(compiled.program, entry);
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = VirtualMachine(isolate).Execute(entry->program(), entry->index());
   ASSERT_EQ(result.status, ExecutionStatus::Returned);
   ASSERT_TRUE(result.value.IsInteger());
   EXPECT_EQ(result.value.AsInteger(), kExpectedSum);
@@ -399,14 +348,9 @@ func main(): int {
 
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto function = compiled.program.FindFunction("main");
-  ASSERT_TRUE(function.IsValid());
-  const auto result = VirtualMachine(isolate).Execute(function);
-  ASSERT_EQ(result.status, ExecutionStatus::Returned);
-  ASSERT_TRUE(result.value.IsInteger());
-  EXPECT_EQ(result.value.AsInteger(), kExpectedLoopSum);
+  const auto result = test::RunInteger(source, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, kExpectedLoopSum);
 }
 
 TEST(CompilerTest, ExecutesLanguageFeaturesAndNamedMethodArguments) {
@@ -437,11 +381,9 @@ func main(): bool {
 }
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto function = compiled.program.FindFunction("main");
-  ASSERT_TRUE(function.IsValid());
-  const auto result = VirtualMachine(isolate).Execute(compiled.program, function.index());
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = VirtualMachine(isolate).Execute(entry->program(), entry->index());
   ASSERT_EQ(result.status, ExecutionStatus::Returned);
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -456,14 +398,9 @@ TEST(CompilerTest, ExecutesLoopWithWideJumpTarget) {
   }
   source += "counter = counter + 1; } return value; }";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto function = compiled.program.FindFunction("main");
-  ASSERT_TRUE(function.IsValid());
-  const auto result = VirtualMachine(isolate).Execute(function);
-  ASSERT_TRUE(result.Succeeded());
-  ASSERT_TRUE(result.value.IsInteger());
-  EXPECT_EQ(result.value.AsInteger(), kUpdateCount);
+  const auto result = test::RunInteger(source, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, kUpdateCount);
 }
 
 TEST(CompilerTest, PreservesSymbolsAndShadowingAcrossTableGrowth) {
@@ -474,8 +411,8 @@ TEST(CompilerTest, PreservesSymbolsAndShadowingAcrossTableGrowth) {
   for (std::int64_t index = 0; index < kSymbolCount; ++index) {
     const std::string suffix = std::to_string(index);
     source += "enum SymbolEnum" + suffix + " { first, second }\n";
-    source += "class SymbolClass" + suffix +
-              " { value: int; read(): int { return this.value; } }\n";
+    source +=
+        "class SymbolClass" + suffix + " { value: int; read(): int { return this.value; } }\n";
     source += "func symbol_function_" + suffix + "(value: int): int { return value; }\n";
   }
   source += "func main(): int { let sum: int = 0;\n";
@@ -500,18 +437,9 @@ TEST(CompilerTest, PreservesSymbolsAndShadowingAcrossTableGrowth) {
   source += "return symbol_function_0(instance.read()); }\n";
 
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  const auto entry_index = entry.index();
-  const auto result = VirtualMachine(isolate).Execute(compiled.program, entry_index);
-  ASSERT_TRUE(result.Succeeded());
-  ASSERT_TRUE(result.value.IsInteger());
-  EXPECT_EQ(result.value.AsInteger(), kExpectedResult);
+  const auto result = test::RunInteger(source, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, kExpectedResult);
 }
 
 TEST(CompilerTest, ExecutesTypedArraysAcrossCallsMethodsAndAssignments) {
@@ -555,15 +483,9 @@ func main(): bool {
 }
 )";
   Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  const auto index = entry.index();
-  const auto result = VirtualMachine(isolate).Execute(compiled.program, index);
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = VirtualMachine(isolate).Execute(entry->program(), entry->index());
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -578,11 +500,9 @@ func main(): Store {
 }
 )";
   Isolate isolate(1);
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  const auto result = VirtualMachine(isolate).Execute(entry);
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = VirtualMachine(isolate).Execute(*entry);
   ASSERT_TRUE(result.Succeeded());
   Value root = result.value;
   auto& heap = isolate.heap();
@@ -611,11 +531,9 @@ TEST(CompilerTest, ReportsArrayBoundsErrors) {
   for (const auto source : kSources) {
     SCOPED_TRACE(source);
     Isolate isolate;
-    const auto compiled = CompileSource(source, isolate);
-    ASSERT_TRUE(compiled.Succeeded());
-    const auto entry = compiled.program.FindFunction("main");
-    ASSERT_TRUE(entry.IsValid());
-    EXPECT_EQ(VirtualMachine(isolate).Execute(entry).status, ExecutionStatus::IndexOutOfBounds);
+    const auto entry = test::CompileEntry(source, isolate);
+    ASSERT_TRUE(entry) << entry.error();
+    EXPECT_EQ(VirtualMachine(isolate).Execute(*entry).status, ExecutionStatus::IndexOutOfBounds);
   }
 }
 

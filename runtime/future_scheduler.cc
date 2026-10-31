@@ -173,6 +173,17 @@ Completer FutureScheduler::CreateHostCompleter() {
 }
 
 Timer FutureScheduler::After(std::chrono::milliseconds delay, std::function<void()> callback) {
+  return ScheduleTimer(delay, std::chrono::milliseconds(0), std::move(callback));
+}
+
+Timer FutureScheduler::Periodic(std::chrono::milliseconds interval,
+                                std::function<void()> callback) {
+  return ScheduleTimer(interval, interval, std::move(callback));
+}
+
+Timer FutureScheduler::ScheduleTimer(std::chrono::milliseconds delay,
+                                     std::chrono::milliseconds interval,
+                                     std::function<void()> callback) {
   assert(IsOwnerThread());
   auto state = std::make_shared<Timer::State>();
   state->callback = std::move(callback);
@@ -180,22 +191,6 @@ Timer FutureScheduler::After(std::chrono::milliseconds delay, std::function<void
   state->context = context_;
   events_.push(Event{
       .deadline = Clock::now() + delay,
-      .sequence = next_sequence_++,
-      .interval = std::chrono::milliseconds(0),
-      .state = state,
-  });
-  return Timer(std::move(state));
-}
-
-Timer FutureScheduler::Periodic(std::chrono::milliseconds interval,
-                                std::function<void()> callback) {
-  assert(IsOwnerThread());
-  auto state = std::make_shared<Timer::State>();
-  state->callback = std::move(callback);
-  state->scheduler = this;
-  state->context = context_;
-  events_.push(Event{
-      .deadline = Clock::now() + interval,
       .sequence = next_sequence_++,
       .interval = interval,
       .state = state,

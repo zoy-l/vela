@@ -252,13 +252,11 @@ std::expected<std::uint64_t, ExecutionStatus> Encode(const ByteAccess& access, V
   return std::bit_cast<std::uint64_t>(number);
 }
 
-Result TypedAccess(const ByteAccess& access, Builtin builtin, std::span<const Value> arguments) {
-  const auto input = arguments.front();
-  if (!input.IsObject() || input.AsObject() == nullptr || !Heap::IsByteData(*input.AsObject())) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto bytes =
-      Access(Heap::ByteDataBytes(*input.AsObject()), arguments.subspan(1).front(), access.width);
+Result TypedAccess(const ByteAccess& access,
+                   Builtin builtin,
+                   std::span<const Value> arguments,
+                   Bytes storage) {
+  const auto bytes = Access(storage, arguments.subspan(1).front(), access.width);
   if (!bytes) {
     return std::unexpected(bytes.error());
   }
@@ -289,15 +287,17 @@ std::expected<Value, ExecutionStatus> ExecuteByteBuiltin(Builtin builtin,
   if (builtin == Builtin::ByteArrayFrom) {
     return FromArray(arguments.front(), heap);
   }
-  if (builtin == Builtin::ByteDataLength) {
+  const auto* access = FindByteAccess(builtin);
+  if (builtin == Builtin::ByteDataLength || access != nullptr) {
     const auto input = arguments.front();
-    if (!input.IsObject() || input.AsObject() == nullptr || !Heap::IsByteData(*input.AsObject())) {
+    auto* object = input.IsObject() ? input.AsObject() : nullptr;
+    if (object == nullptr || !Heap::IsByteData(*object)) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    return Value::Integer(static_cast<std::int64_t>(Heap::ByteDataBytes(*input.AsObject()).size()));
-  }
-  if (const auto* access = FindByteAccess(builtin); access != nullptr) {
-    return TypedAccess(*access, builtin, arguments);
+    const auto bytes = Heap::ByteDataBytes(*object);
+    return builtin == Builtin::ByteDataLength
+               ? Result(Value::Integer(static_cast<std::int64_t>(bytes.size())))
+               : TypedAccess(*access, builtin, arguments, bytes);
   }
   const auto owner = Owner(arguments.front());
   if (!owner) {

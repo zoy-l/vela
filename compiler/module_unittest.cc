@@ -10,8 +10,8 @@
 #include "compiler/frontend/checker.h"
 #include "compiler/frontend/checker_test_support.h"
 #include "compiler/frontend/source_loader.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -73,14 +73,11 @@ TEST(ModuleTest, ResolvesExtensionlessImportsToVelaAndSharesIdentityWithExplicit
       {.path = "app/lib", .text = "this is not a Vela module"},
   });
   runtime::Isolate isolate;
-  const auto compiled = CompileModules(sources, "app/main.vela", isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 41);
+  const auto compiled = test::CompileCleanModules(sources, "app/main.vela", isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 41);
 }
 
 TEST(ModuleTest, DoesNotSearchForExtensionlessFilesOrDirectoryEntryPoints) {
@@ -128,15 +125,11 @@ export func read(value: Box): int { return value.value; }
   });
   EXPECT_TRUE(frontend::CheckTestModules(sources, "main.vela").Succeeded());
   runtime::Isolate isolate(1);
-  const auto compiled = CompileModules(sources, "main.vela", isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.source_path << ":" << diagnostic.location.line << ": "
-                  << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(ModuleTest, ClosuresAndFunctionCyclesResolveTheirDefiningModule) {
@@ -162,11 +155,11 @@ export func make(): () => int {
       },
   });
   runtime::Isolate isolate(1);
-  const auto compiled = CompileModules(sources, "main.vela", isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(ModuleTest, LocalVariablesShadowImportPrefixesAndImportedFunctions) {
@@ -187,11 +180,11 @@ func main(): int {
       {.path = "lib.vela", .text = "export func value(input: int): int { return input; }"},
   });
   runtime::Isolate isolate;
-  const auto compiled = CompileModules(sources, "main.vela", isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(ModuleTest, BindsImportedGenericBasesAndIterablesBeforeLoopShadowing) {
@@ -229,15 +222,11 @@ export class Derived<T> extends lib.Base<T> {
       },
   });
   runtime::Isolate isolate(1);
-  const auto compiled = CompileModules(sources, "main.vela", isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.source_path << ':' << diagnostic.location.line << ": "
-                  << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(ModuleTest, SharesImmutableSyntaxAcrossRootsWithIndependentBindingsAndLocations) {

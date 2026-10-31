@@ -18,10 +18,7 @@
 #include <llvm/ExecutionEngine/Orc/AbsoluteSymbols.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
 #include <llvm/ExecutionEngine/Orc/CoreContainers.h>
-#include <llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
-#include <llvm/ExecutionEngine/Orc/Layer.h>
-#include <llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
 #include <llvm/Support/Error.h>
 #include <llvm/Support/MemoryBuffer.h>
@@ -31,8 +28,7 @@
 #include "compiler/frontend/source_loader.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/jit/code_resources.h"
-#include "compiler/jit/platform_support.h"
-#include "compiler/jit/runtime_symbols.h"
+#include "compiler/jit/engine.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/escape_analysis.h"
 #include "runtime/heap.h"
@@ -146,24 +142,9 @@ std::expected<Compiled, std::string> Compile(const Problem& problem, EscapeOptim
   if (!artifact) {
     return std::unexpected(artifact.error().front().message);
   }
-  llvm::orc::LLJITBuilder builder;
-  llvm::orc::JITTargetMachineBuilder target(llvm::Triple(artifact->target));
-  target.setCPU("generic");
-  builder.setJITTargetMachineBuilder(std::move(target));
-  builder.setObjectLinkingLayerCreator(
-      [](llvm::orc::ExecutionSession& session)
-          -> llvm::Expected<std::unique_ptr<llvm::orc::ObjectLayer>> {
-        return std::make_unique<llvm::orc::ObjectLinkingLayer>(session);
-      });
-  auto engine = builder.create();
+  auto engine = compiler::jit::CreateEngine(llvm::Triple(artifact->target));
   if (!engine) {
     return std::unexpected(llvm::toString(engine.takeError()));
-  }
-  if (auto error = compiler::jit::DefineRuntimeSymbols(**engine)) {
-    return std::unexpected(llvm::toString(std::move(error)));
-  }
-  if (auto error = compiler::jit::InstallPlatformSupport(**engine)) {
-    return std::unexpected(llvm::toString(std::move(error)));
   }
   llvm::orc::SymbolMap api;
   const auto bind = [&](const char* name, auto* function) {
@@ -273,8 +254,9 @@ void Escape(benchmark::State& state, Problem problem, EscapeOptimization mode) {
   runtime::NativeExecution execution(**instance);
   const auto& artifact = compiled->artifact;
   const auto& metrics = artifact.function_metrics.at(artifact.exports.front().function);
-  state.counters["result"] = static_cast<double>(Expected(problem));
-  state.counters["expected_result"] = static_cast<double>(Expected(problem));
+  const auto expected = static_cast<double>(Expected(problem));
+  state.counters["result"] = expected;
+  state.counters["expected_result"] = expected;
   state.counters["entry_frame_bytes"] = static_cast<double>(metrics.frame_bytes);
   state.counters["entry_shadow_slots"] = static_cast<double>(metrics.shadow_slots);
   state.counters["compile_ns"] = static_cast<double>(compiled->compilation.count());

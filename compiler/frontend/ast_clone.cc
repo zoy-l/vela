@@ -60,7 +60,6 @@ std::unique_ptr<Expression> AstCloner::CloneExpression(const Expression* source)
   result->text = source->text;
   result->null_safe = source->null_safe;
   result->postfix = source->postfix;
-  result->integer_value = source->integer_value;
   result->double_value = source->double_value;
   result->boolean_value = source->boolean_value;
   result->type_arguments.reserve(source->type_arguments.size());
@@ -132,9 +131,7 @@ std::unique_ptr<Statement> AstCloner::CloneStatement(const Statement* source) {
   if (source == nullptr) {
     return nullptr;
   }
-  const bool has_scope = source->kind == Statement::Kind::Block ||
-                         source->kind == Statement::Kind::For ||
-                         source->kind == Statement::Kind::ForEach;
+  const bool has_scope = source->IntroducesScope();
   if (transform_ != nullptr && has_scope) {
     transform_->BeginScope();
   }

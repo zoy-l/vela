@@ -11,6 +11,8 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/program_test_support.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "vm/bytecode_image.h"
@@ -23,6 +25,7 @@ namespace vela::compiler {
 namespace {
 
 constexpr std::int64_t kExpectedAnswer = 42;
+constexpr std::string_view kEntryPoint = "main";
 
 class CallbackDebugger final : public vm::Debugger {
  public:
@@ -35,6 +38,25 @@ class CallbackDebugger final : public vm::Debugger {
  private:
   std::function<vm::DebugAction(const vm::DebugContext&)> callback_;
 };
+
+class CountingDebugger final : public vm::Debugger {
+ public:
+  vm::DebugAction BeforeInstruction(const vm::DebugContext& /*unused*/) noexcept override {
+    ++instructions;
+    return vm::DebugAction::Continue;
+  }
+
+  std::size_t instructions = 0;
+};
+
+void ExpectDebugAnswer(const vm::FunctionHandle& entry,
+                       runtime::Isolate& isolate,
+                       vm::Debugger& debugger) {
+  const auto result = vm::VirtualMachine(isolate).Debug(entry, debugger);
+  ASSERT_TRUE(result.Succeeded()) << result.message;
+  ASSERT_TRUE(result.value.IsInteger());
+  EXPECT_EQ(result.value.AsInteger(), kExpectedAnswer);
+}
 
 void CollectAndCheckFrame(const vm::DebugContext& context,
                           runtime::Isolate& isolate,
@@ -63,7 +85,7 @@ void ExpectChildStack(const vm::DebugContext& context) {
     ADD_FAILURE() << "missing caller";
     return;
   }
-  EXPECT_EQ(caller->name(), "main");
+  EXPECT_EQ(caller->name(), kEntryPoint);
   ExpectCallerLocation(*caller);
 }
 
@@ -81,31 +103,28 @@ void ExpectNoInitializingGlobals(const vm::Program& program) {
 
 TEST(DebuggerTest, ContinuesThroughAwaitAndScheduledCallbacks) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto entry = test::CompileEntry(R"(
 func transform(value: int): int { return value + 2; }
 async func main(): Future<int> {
   await 0;
   return await Future.value(40).then(transform);
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
+                                        isolate);
+  ASSERT_TRUE(entry) << entry.error();
   bool saw_transform = false;
   CallbackDebugger debugger([&](const vm::DebugContext& context) {
     isolate.heap().Collect();
     saw_transform = saw_transform || context.current_frame().name() == "transform";
     return vm::DebugAction::Continue;
   });
-  const auto result =
-      vm::VirtualMachine(isolate).Debug(compiled.program.FindFunction("main"), debugger);
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  ExpectDebugAnswer(*entry, isolate, debugger);
   EXPECT_TRUE(saw_transform);
 }
 
 TEST(DebuggerTest, RootsLiveRegistersDuringEveryPausedInstruction) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto entry = test::CompileEntry(R"(
 func work(text: string): int {
   const values: string[] = [text, text + "!"];
   return values[1].length;
@@ -117,8 +136,8 @@ func main(): int {
   return work(text) + 39;
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
+                                        isolate);
+  ASSERT_TRUE(entry) << entry.error();
   std::size_t instructions = 0;
   std::vector<std::string> frames;
   CallbackDebugger debugger([&](const vm::DebugContext& context) -> vm::DebugAction {
@@ -126,10 +145,7 @@ func main(): int {
     CollectAndCheckFrame(context, isolate, frames);
     return vm::DebugAction::Continue;
   });
-  const auto result =
-      vm::VirtualMachine(isolate).Debug(compiled.program.FindFunction("main"), debugger);
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), kExpectedAnswer);
+  ExpectDebugAnswer(*entry, isolate, debugger);
   EXPECT_GT(instructions, 0U);
   EXPECT_NE(std::ranges::find(frames, "work"), frames.end());
 }
@@ -151,23 +167,20 @@ func main(): int {
 }
 )",
                                       isolate);
-  ASSERT_TRUE(compiled.Succeeded());
+  ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
   std::vector<std::string> frames;
   CallbackDebugger debugger([&](const vm::DebugContext& context) {
     CollectAndCheckFrame(context, isolate, frames);
     return vm::DebugAction::Continue;
   });
-  const auto result =
-      vm::VirtualMachine(isolate).Debug(compiled.program.FindFunction("main"), debugger);
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), kExpectedAnswer);
+  ExpectDebugAnswer(compiled.program.FindFunction(kEntryPoint), isolate, debugger);
   EXPECT_NE(std::ranges::find(frames, "Payload.toJson"), frames.end());
   EXPECT_NE(std::ranges::find(frames, "Payload.read"), frames.end());
 }
 
 TEST(DebuggerTest, ReportsTheCurrentInstructionAndTheCallersCallSite) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto entry = test::CompileEntry(R"(
 func child(): int {
   return 42;
 }
@@ -175,8 +188,8 @@ func main(): int {
   return child();
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
+                                        isolate);
+  ASSERT_TRUE(entry) << entry.error();
   bool stopped_in_child = false;
   CallbackDebugger debugger([&](const vm::DebugContext& context) -> vm::DebugAction {
     if (context.current_frame().name() != "child") {
@@ -186,8 +199,7 @@ func main(): int {
     ExpectChildStack(context);
     return vm::DebugAction::Stop;
   });
-  const auto result =
-      vm::VirtualMachine(isolate).Debug(compiled.program.FindFunction("main"), debugger);
+  const auto result = vm::VirtualMachine(isolate).Debug(*entry, debugger);
   EXPECT_EQ(result.status, vm::ExecutionStatus::DebuggerStopped);
   EXPECT_TRUE(stopped_in_child);
 }
@@ -196,21 +208,21 @@ TEST(DebuggerTest, StoppingAnInitializerDetachesRootsAndResetsItsInitializingSta
   runtime::Isolate isolate(1);
   std::ostringstream output;
   isolate.SetOutput(output);
-  const auto compiled = CompileSource(R"(
+  const auto entry = test::CompileEntry(R"(
 func initialize(): int { print("once"); return 42; }
 let value = initialize();
 func main(): int { return value; }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
+                                        isolate);
+  ASSERT_TRUE(entry) << entry.error();
   CallbackDebugger debugger(StopBeforeInitialize);
   vm::VirtualMachine machine(isolate);
-  const auto stopped = machine.Debug(compiled.program.FindFunction("main"), debugger);
+  const auto stopped = machine.Debug(*entry, debugger);
   EXPECT_EQ(stopped.status, vm::ExecutionStatus::DebuggerStopped);
   EXPECT_TRUE(output.str().empty());
-  ExpectNoInitializingGlobals(compiled.program);
+  ExpectNoInitializingGlobals(entry->program());
   isolate.heap().Collect();
-  const auto resumed = machine.Execute(compiled.program.FindFunction("main"));
+  const auto resumed = machine.Execute(*entry);
   ASSERT_TRUE(resumed.Succeeded());
   EXPECT_EQ(resumed.value.AsInteger(), kExpectedAnswer);
   EXPECT_EQ(output.str(), "once\n");
@@ -218,7 +230,7 @@ func main(): int { return value; }
 
 TEST(DebuggerTest, PreservesExceptionAndFinallySemantics) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto entry = test::CompileEntry(R"(
 class Failure { value: int; }
 func fail(): int { throw Failure(value: 42); }
 func main(): int {
@@ -227,52 +239,39 @@ func main(): int {
   finally { const text = ["allocated", "here"].join(" "); }
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
+                                        isolate);
+  ASSERT_TRUE(entry) << entry.error();
   CallbackDebugger debugger([&](const vm::DebugContext& /*unused*/) -> vm::DebugAction {
     isolate.heap().Collect();
     return vm::DebugAction::Continue;
   });
-  const auto result =
-      vm::VirtualMachine(isolate).Debug(compiled.program.FindFunction("main"), debugger);
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), kExpectedAnswer);
+  ExpectDebugAnswer(*entry, isolate, debugger);
 }
 
 TEST(DebuggerTest, DebugsLoadedImages) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource("func main(): int { return 42; }", isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto saved = vm::SaveBytecode(compiled.program, isolate);
+  const auto program = test::CompileCleanSource("func main(): int { return 42; }", isolate);
+  ASSERT_TRUE(program) << program.error();
+  const auto saved = vm::SaveBytecode(*program, isolate);
   ASSERT_TRUE(saved);
   const auto loaded = vm::LoadBytecode(*saved, isolate);
   ASSERT_TRUE(loaded);
-  std::size_t instructions = 0;
-  CallbackDebugger debugger([&](const vm::DebugContext& /*unused*/) -> vm::DebugAction {
-    ++instructions;
-    return vm::DebugAction::Continue;
-  });
-  const auto result = vm::VirtualMachine(isolate).Debug(loaded->FindFunction("main"), debugger);
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), kExpectedAnswer);
-  EXPECT_GT(instructions, 0U);
+  CountingDebugger debugger;
+  ExpectDebugAnswer(loaded->FindFunction(kEntryPoint), isolate, debugger);
+  EXPECT_GT(debugger.instructions, 0U);
 }
 
 TEST(DebuggerTest, ValidatesEntriesBeforeCallingTheObserver) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource("func main(): int { return 42; }", isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  std::size_t instructions = 0;
-  CallbackDebugger debugger([&](const vm::DebugContext& /*unused*/) -> vm::DebugAction {
-    ++instructions;
-    return vm::DebugAction::Continue;
-  });
+  const auto entry = test::CompileEntry("func main(): int { return 42; }", isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  CountingDebugger debugger;
   runtime::Isolate other;
-  EXPECT_EQ(vm::VirtualMachine(other).Debug(compiled.program.FindFunction("main"), debugger).status,
+  EXPECT_EQ(vm::VirtualMachine(other).Debug(*entry, debugger).status,
             vm::ExecutionStatus::InvalidIsolate);
   EXPECT_EQ(vm::VirtualMachine(isolate).Debug(vm::FunctionHandle(), debugger).status,
             vm::ExecutionStatus::InvalidEntry);
-  EXPECT_EQ(instructions, 0U);
+  EXPECT_EQ(debugger.instructions, 0U);
 }
 
 }  // namespace

@@ -7,7 +7,7 @@
 #include "benchmark/benchmark.h"
 
 #include "benchmarks/native_call_kernels.h"
-#include "compiler/compiler.h"
+#include "benchmarks/source.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_function.h"
@@ -148,19 +148,14 @@ void Vm(benchmark::State& state, VmPath path) {
     return;
   }
   const auto count = state.range(0);
-  const auto compiled = compiler::CompileSource(Source<Case>(count, path), isolate);
-  if (!compiled.Succeeded()) {
-    std::string message = "Native benchmark compilation failed";
-    for (const auto& diagnostic : compiled.diagnostics) {
-      message += "\n" + diagnostic.message;
-    }
-    state.SkipWithError(message);
+  const auto entry = CompileBenchmarkEntry(state, Source<Case>(count, path), isolate);
+  if (!entry) {
     return;
   }
-  const auto entry = compiled.program.FindFunction("main");
+  const auto& function = *entry;
   vm::VirtualMachine machine(isolate);
   const auto expected = Expected<Case>(count);
-  if (!IsExpected<Case>(machine.Execute(entry), expected)) {
+  if (!IsExpected<Case>(machine.Execute(function), expected)) {
     state.SkipWithError("Native VM warm-up failed or checksum mismatched");
     return;
   }
@@ -172,7 +167,7 @@ void Vm(benchmark::State& state, VmPath path) {
   const auto register_bytes = machine.register_bytes();
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    auto result = machine.Execute(entry);
+    auto result = machine.Execute(function);
     benchmark::DoNotOptimize(result);
     if (!IsExpected<Case>(result, expected)) {
       state.SkipWithError("Native VM execution failed or checksum mismatched");

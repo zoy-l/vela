@@ -33,6 +33,8 @@ class BinaryWriter final {
   }
   void Write(std::string_view text);
   void Write(std::span<const std::byte> bytes);
+  // 固定 XXH3-128 的 low/high 两个小端字后紧跟 payload，不另写长度。
+  void WriteChecksummed(std::span<const std::byte> payload);
   [[nodiscard]] std::span<const std::byte> bytes() const noexcept { return bytes_; }
   [[nodiscard]] std::vector<std::byte> Take() && noexcept { return std::move(bytes_); }
 
@@ -82,6 +84,8 @@ class BinaryReader final {
   [[nodiscard]] std::expected<std::string, BinaryError> Text();
   [[nodiscard]] std::expected<std::size_t, BinaryError> Count(std::size_t minimum_element_bytes);
   [[nodiscard]] std::expected<std::span<const std::byte>, BinaryError> Take(std::size_t count);
+  // 消费指纹及全部剩余输入；成功结果借用构造时的缓冲。
+  [[nodiscard]] std::expected<std::span<const std::byte>, BinaryError> ChecksummedRemainder();
   [[nodiscard]] std::size_t remaining() const noexcept { return bytes_.size() - offset_; }
   [[nodiscard]] std::size_t offset() const noexcept { return offset_; }
   [[nodiscard]] BinaryError Error(std::string message) const;

@@ -18,6 +18,7 @@
 #include "benchmarks/aot_benchmark_types.h"
 #include "benchmarks/aot_native/entries.h"
 #include "benchmarks/dasprofile/workloads.h"
+#include "benchmarks/heap_metrics.h"
 #include "benchmarks/jit_benchmark.h"
 #include "compiler/compiler.h"
 #include "runtime/future.h"
@@ -120,9 +121,7 @@ void NativeSteady(benchmark::State& state, AotBenchmarkCase problem) {
     state.SkipWithError(warm ? "native warm-up checksum mismatch" : warm.error());
     return;
   }
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  state.counters["baseline_bytes"] = static_cast<double>(isolate.heap().allocated_bytes());
+  CollectHeapBaseline(state, isolate.heap());
   ReportSample(state, *warm);
   state.counters["entry_shadow_slots"] = static_cast<double>(problem.shadow_slots);
   state.counters["entry_frame_bytes"] = static_cast<double>(problem.frame_bytes);
@@ -164,18 +163,12 @@ void JitSteady(benchmark::State& state, AotBenchmarkCase problem, NativeCodeTier
   };
   const auto first_started = std::chrono::steady_clock::now();
   const auto warm = run();
-  state.counters["first_execution_ns"] =
-      static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                              std::chrono::steady_clock::now() - first_started)
-                              .count());
+  ReportJitFirstExecution(state, first_started);
   if (!warm || warm->value != problem.expected) {
     state.SkipWithError(warm ? "JIT warm-up checksum mismatch" : warm.error());
     return;
   }
-  auto& heap = session.isolate().heap();
-  heap.FinishCollection();
-  heap.Collect();
-  state.counters["baseline_bytes"] = static_cast<double>(heap.allocated_bytes());
+  CollectHeapBaseline(state, session.isolate().heap());
   ReportSample(state, *warm);
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
@@ -215,9 +208,7 @@ void VmSteady(benchmark::State& state, AotBenchmarkCase problem) {
     state.SkipWithError(warm ? "VM warm-up checksum mismatch" : warm.error());
     return;
   }
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  state.counters["baseline_bytes"] = static_cast<double>(isolate.heap().allocated_bytes());
+  CollectHeapBaseline(state, isolate.heap());
   state.counters["register_bytes"] = static_cast<double>(machine.register_bytes());
   ReportSample(state, *warm);
   for (auto iteration : state) {

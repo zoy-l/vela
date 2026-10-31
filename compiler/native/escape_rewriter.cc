@@ -9,6 +9,7 @@
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/escape_analysis.h"
@@ -53,15 +54,15 @@ class ScalarRewriter final {
       for (std::size_t field = 0; field < types.size(); ++field) {
         allocation.fields.at(field) = AddValue(types.at(field));
       }
-      allocation.reference = AddValue({
+      allocation.reference = AddValue(frontend::MakeNullableType({
           .kind = frontend::TypeDescriptor::Kind::Class,
-          .name = type.name + '?',
-          .nullable = true,
-      });
+          .name = type.name,
+      }));
       plan_->reference_count = node + 1;
     }
     if (!plan_->checkpoints.empty()) {
-      marker_ = AddValue({.kind = frontend::TypeDescriptor::Kind::Null, .name = "null"});
+      marker_ =
+          AddValue({.kind = frontend::TypeDescriptor::Kind::Null, .name = frontend::kNullTypeName});
     }
   }
 
@@ -96,6 +97,17 @@ class ScalarRewriter final {
   }
 
  private:
+  template <typename Visitor>
+  void ForEachVirtualObject(std::uint64_t objects, Visitor visit) {
+    while (objects != 0) {
+      const auto node = static_cast<std::size_t>(std::countr_zero(objects));
+      objects &= objects - 1;
+      if (IsVirtual(*plan_, node)) {
+        visit(node, plan_->allocations.at(node));
+      }
+    }
+  }
+
   void RecordCheckpoint(const State& values) {
     if (plan_->checkpoints.empty()) {
       return;
@@ -111,14 +123,8 @@ class ScalarRewriter final {
         checkpoint.required.push_back(reg);
       }
     }
-    auto pending = Reachable(*plan_, values, objects);
-    while (pending != 0) {
-      const auto node = static_cast<std::size_t>(std::countr_zero(pending));
-      pending &= pending - 1;
-      if (!IsVirtual(*plan_, node)) {
-        continue;
-      }
-      const auto& allocation = plan_->allocations.at(node);
+    const auto reachable = Reachable(*plan_, values, objects);
+    ForEachVirtualObject(reachable, [&](std::size_t node, const AllocationSite& allocation) {
       const auto& type = program_->classes.at(allocation.type);
       EscapeObjectSnapshot snapshot{.allocation = node, .fields = {}};
       checkpoint.required.push_back(allocation.reference);
@@ -136,7 +142,7 @@ class ScalarRewriter final {
         }
       }
       checkpoint.objects.push_back(std::move(snapshot));
-    }
+    });
     std::ranges::sort(checkpoint.required);
     const auto duplicate = std::ranges::unique(checkpoint.required);
     checkpoint.required.erase(duplicate.begin(), duplicate.end());
@@ -177,14 +183,7 @@ class ScalarRewriter final {
     const auto graph = Reachable(*plan_, values, bit);
     const auto group_start = plan_->function.instructions.size();
     std::vector<ir::RegisterId> temporaries(plan_->allocations.size());
-    auto pending = graph;
-    while (pending != 0) {
-      const auto node = static_cast<std::size_t>(std::countr_zero(pending));
-      pending &= pending - 1;
-      if (!IsVirtual(*plan_, node)) {
-        continue;
-      }
-      auto& allocation = plan_->allocations.at(node);
+    ForEachVirtualObject(graph, [&](std::size_t node, AllocationSite& allocation) {
       allocation.materialized = true;
       const auto temporary = AddValue(plan_->function.value_types.at(allocation.reference));
       temporaries.at(node) = temporary;
@@ -194,15 +193,8 @@ class ScalarRewriter final {
           .index = allocation.type,
           .location = {},
       });
-    }
-    pending = graph;
-    while (pending != 0) {
-      const auto node = static_cast<std::size_t>(std::countr_zero(pending));
-      pending &= pending - 1;
-      if (!IsVirtual(*plan_, node)) {
-        continue;
-      }
-      const auto& allocation = plan_->allocations.at(node);
+    });
+    ForEachVirtualObject(graph, [&](std::size_t node, const AllocationSite& allocation) {
       for (std::size_t field = 0; field < allocation.fields.size(); ++field) {
         const auto child = ScalarObject(*plan_, values.at(allocation.state_offset + field));
         Emit({
@@ -218,15 +210,8 @@ class ScalarRewriter final {
                     : std::nullopt,
         });
       }
-    }
-    pending = graph;
-    while (pending != 0) {
-      const auto node = static_cast<std::size_t>(std::countr_zero(pending));
-      pending &= pending - 1;
-      if (!IsVirtual(*plan_, node)) {
-        continue;
-      }
-      const auto& allocation = plan_->allocations.at(node);
+    });
+    ForEachVirtualObject(graph, [&](std::size_t node, const AllocationSite& allocation) {
       Emit({
           .opcode = Opcode::Move,
           .dst = allocation.reference,
@@ -236,7 +221,7 @@ class ScalarRewriter final {
       for (const auto field : allocation.fields) {
         Emit({.opcode = Opcode::LoadNull, .dst = field, .location = {}});
       }
-    }
+    });
     if (program_->native_mode == NativeProgramMode::Reloadable) {
       auto& first = plan_->function.instructions.at(group_start);
       first.construction = ir::Construction{

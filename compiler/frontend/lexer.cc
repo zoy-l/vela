@@ -7,6 +7,7 @@
 #include <utility>
 #include "base/utf8.h"
 #include "compiler/frontend/token.h"
+#include "compiler/frontend/type_names.h"
 
 #include <absl/container/flat_hash_map.h>
 
@@ -43,7 +44,7 @@ const absl::flat_hash_map<std::string_view, TokenKind> kKeywords = {
     {"if", TokenKind::If},
     {"return", TokenKind::Return},
     {"true", TokenKind::True},
-    {"void", TokenKind::Void},
+    {kVoidTypeName, TokenKind::Void},
     {"while", TokenKind::While},
     {"import", TokenKind::Import},
     {"export", TokenKind::Export},
@@ -60,7 +61,7 @@ const absl::flat_hash_map<std::string_view, TokenKind> kKeywords = {
     {"switch", TokenKind::Switch},
     {"case", TokenKind::Case},
     {"default", TokenKind::Default},
-    {"null", TokenKind::Null},
+    {kNullTypeName, TokenKind::Null},
 };
 
 bool IsIdentifierStart(char character) {

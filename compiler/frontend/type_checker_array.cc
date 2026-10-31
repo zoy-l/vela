@@ -12,6 +12,7 @@
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 
@@ -35,7 +36,7 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithmResult(ArrayAlgorithm algorith
   if (algorithm == ArrayAlgorithm::ForEach) {
     return method.return_type;
   }
-  const Type boolean{.kind = Type::Kind::Bool, .name = "bool"};
+  const Type boolean{.kind = Type::Kind::Bool, .name = kBoolTypeName};
   const auto& expected = algorithm == ArrayAlgorithm::Reduce ? method.return_type : boolean;
   if (!CanAssign(expected, result)) {
     AddDiagnostic(location, "array callback return type does not match");
@@ -49,7 +50,7 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
                                                    const Type* expected) {
   const auto element = array_elements_.at(receiver.name);
   if (algorithm == ArrayAlgorithm::Sort) {
-    static_cast<void>(ArrayType({.kind = Type::Kind::Int, .name = "int"}));
+    static_cast<void>(ArrayType({.kind = Type::Kind::Int, .name = kIntTypeName}));
   }
   auto method = ArrayAlgorithmSignature(algorithm, element, element);
   auto callback = ArrayCallbackSignature(algorithm, element, element);

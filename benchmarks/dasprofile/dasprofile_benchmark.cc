@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include <benchmark/benchmark.h>
@@ -15,8 +16,10 @@
 #include "benchmarks/aot_benchmark_memory.h"
 #include "benchmarks/dasprofile/workloads.h"
 #include "benchmarks/dasprofile_native/entries.h"
+#include "benchmarks/heap_metrics.h"
 #include "benchmarks/jit_benchmark.h"
 #include "compiler/compiler.h"
+#include "compiler/frontend/source_loader.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_abi.h"
@@ -28,6 +31,9 @@
 
 namespace vela::benchmarks::dasprofile {
 namespace {
+
+constexpr const char* kAddOneBinding = "dasprofile.addOne";
+constexpr std::string_view kPrepareVmEntry = "prepareVmInput";
 
 bool IsExpected(double actual, double expected) {
   return std::isfinite(actual) &&
@@ -68,7 +74,7 @@ void Jit(benchmark::State& state, Case problem, NativeCodeTier tier) {
   runtime::NativeBindings bindings;
   {
     runtime::Isolate isolate;
-    if (!isolate.RegisterNative(runtime::NativeFunction::Bind<AddOne>("dasprofile.addOne"))) {
+    if (!isolate.RegisterNative(runtime::NativeFunction::Bind<AddOne>(kAddOneBinding))) {
       state.SkipWithError("C++ binding registration failed");
       return;
     }
@@ -90,18 +96,12 @@ void Jit(benchmark::State& state, Case problem, NativeCodeTier tier) {
   }
   const auto first_started = std::chrono::steady_clock::now();
   const auto warm = InvokeJitWorkload(session, problem.name);
-  state.counters["first_execution_ns"] =
-      static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                              std::chrono::steady_clock::now() - first_started)
-                              .count());
+  ReportJitFirstExecution(state, first_started);
   if (!warm || !IsExpected(Number(*warm), problem.expected)) {
     state.SkipWithError("JIT warm-up checksum mismatch");
     return;
   }
-  auto& heap = session.isolate().heap();
-  heap.FinishCollection();
-  heap.Collect();
-  state.counters["baseline_bytes"] = static_cast<double>(heap.allocated_bytes());
+  CollectHeapBaseline(state, session.isolate().heap());
   state.counters["result"] = problem.expected;
   state.counters["expected_result"] = problem.expected;
   auto expected = problem.expected;
@@ -126,7 +126,7 @@ void Jit(benchmark::State& state, Case problem, NativeCodeTier tier) {
 
 void Native(benchmark::State& state, Case problem) {
   runtime::Isolate isolate;
-  if (!isolate.RegisterNative(runtime::NativeFunction::Bind<AddOne>("dasprofile.addOne"))) {
+  if (!isolate.RegisterNative(runtime::NativeFunction::Bind<AddOne>(kAddOneBinding))) {
     state.SkipWithError("C++ binding registration failed");
     return;
   }
@@ -156,9 +156,7 @@ void Native(benchmark::State& state, Case problem) {
   }
   state.counters["result"] = number;
   state.counters["expected_result"] = problem.expected;
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  state.counters["baseline_bytes"] = static_cast<double>(isolate.heap().allocated_bytes());
+  CollectHeapBaseline(state, isolate.heap());
   state.counters["suspended_frames"] =
       static_cast<double>(isolate.scheduler().suspended_frame_count());
   state.counters["saved_state_bytes"] =
@@ -187,7 +185,7 @@ void Native(benchmark::State& state, Case problem) {
 
 void Vm(benchmark::State& state, Case problem) {
   runtime::Isolate isolate;
-  if (!isolate.RegisterNative(runtime::NativeFunction::Bind<AddOne>("dasprofile.addOne"))) {
+  if (!isolate.RegisterNative(runtime::NativeFunction::Bind<AddOne>(kAddOneBinding))) {
     state.SkipWithError("C++ binding registration failed");
     return;
   }
@@ -199,15 +197,21 @@ void Vm(benchmark::State& state, Case problem) {
   const void* storage = bytes->data();
   std::string source(static_cast<const char*>(storage), bytes->size());
   // VM 宿主入口不接受实参；只给计时外的 prepare 补一个无参入口，不改写工作负载。
-  source += "\nfunc prepareVmInput(): int { return prepare(" +
+  source += "\nfunc ";
+  source += kPrepareVmEntry;
+  source += "(): int { return prepare(" +
             std::to_string(static_cast<std::int64_t>(problem.workload)) + "); }\n";
-  const auto compiled = compiler::CompileSource(source, isolate);
+  const std::array sources{
+      frontend::SourceInput{.path = VELA_DASPROFILE_BENCHMARK_SOURCE, .text = source},
+  };
+  const auto compiled =
+      compiler::CompileParsed(frontend::LoadProgram(sources.front().path, sources), isolate);
   if (!compiled.Succeeded()) {
     state.SkipWithError(compiled.diagnostics.front().message);
     return;
   }
   vm::VirtualMachine machine(isolate);
-  const auto prepared = machine.Execute(compiled.program.FindFunction("prepareVmInput"));
+  const auto prepared = machine.Execute(compiled.program.FindFunction(kPrepareVmEntry));
   if (!prepared.Succeeded()) {
     state.SkipWithError(prepared.message);
     return;
@@ -225,9 +229,7 @@ void Vm(benchmark::State& state, Case problem) {
   }
   state.counters["result"] = number;
   state.counters["expected_result"] = problem.expected;
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  state.counters["baseline_bytes"] = static_cast<double>(isolate.heap().allocated_bytes());
+  CollectHeapBaseline(state, isolate.heap());
   state.counters["register_bytes"] = static_cast<double>(machine.register_bytes());
   state.counters["suspended_frames"] =
       static_cast<double>(isolate.scheduler().suspended_frame_count());

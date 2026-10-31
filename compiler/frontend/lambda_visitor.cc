@@ -18,14 +18,7 @@ void WalkExpression(Node* expression, Visitor visitor, const Function* parent) {
     auto& function = *expression->function;
     WalkStatement(function.body.get(), visitor, &function);
   }
-  for (auto* child : {
-           expression->left.get(),
-           expression->right.get(),
-           expression->operand.get(),
-           expression->callee.get(),
-           expression->object.get(),
-           expression->index.get(),
-       }) {
+  for (auto* child : ExpressionOperands(*expression)) {
     WalkExpression(child, visitor, parent);
   }
   for (auto& element : expression->elements) {

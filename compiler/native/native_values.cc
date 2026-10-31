@@ -5,32 +5,41 @@
 #include <cstdint>
 #include <vector>
 
-#include <llvm/ADT/SmallVector.h>
-#include <llvm/Analysis/CGSCCPassManager.h>
-#include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/GlobalValue.h>
+#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Instructions.h>
-#include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
-#include <llvm/IR/PassManager.h>
-#include <llvm/IR/Verifier.h>
-#include <llvm/Support/ErrorHandling.h>
-#include <llvm/Target/TargetMachine.h>
-#include <llvm/TargetParser/Triple.h>
+#include <llvm/IR/Type.h>
 
 #include "base/execution_status.h"
 #include "compiler/frontend/type_checker.h"
 #include "compiler/ir/ir.h"
-#include "compiler/native/native_image_emitter.h"
 #include "runtime/native_abi.h"
 #include "runtime/native_function.h"
 
 namespace vela::compiler::native {
+
+llvm::Constant* EmitConstantTable(llvm::Module& module,
+                                  llvm::StructType* table,
+                                  llvm::Type* element,
+                                  llvm::ArrayRef<llvm::Constant*> values,
+                                  const std::string& name) {
+  auto& context = module.getContext();
+  llvm::Constant* data = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context));
+  if (!values.empty()) {
+    auto* type = llvm::ArrayType::get(element, values.size());
+    auto* contents = llvm::ConstantArray::get(type, values);
+    data = new llvm::GlobalVariable(module, type, true, llvm::GlobalValue::PrivateLinkage, contents,
+                                    name);
+  }
+  return llvm::ConstantStruct::get(
+      table, {data, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), values.size())});
+}
 
 bool IsScalar(const SourceType& type) {
   return type.kind == Kind::Int || type.kind == Kind::Enum || type.kind == Kind::Double ||
@@ -101,6 +110,17 @@ llvm::Type* ValueType(llvm::LLVMContext& context, const SourceType& type) {
 
 llvm::ConstantInt* Status(Builder& builder, ExecutionStatus status) {
   return builder.getInt8(static_cast<std::uint8_t>(status));
+}
+
+void ReturnOnFailure(Builder& builder, llvm::Function& function, llvm::Value* status) {
+  auto& context = function.getContext();
+  auto* returned = llvm::BasicBlock::Create(context, "returned", &function);
+  auto* failed = llvm::BasicBlock::Create(context, "failed", &function);
+  builder.CreateCondBr(builder.CreateICmpEQ(status, Status(builder, ExecutionStatus::Returned)),
+                       returned, failed);
+  Builder failure(failed);
+  failure.CreateRet(status);
+  builder.SetInsertPoint(returned);
 }
 
 std::uint8_t NativeKind(Kind kind) {
@@ -311,13 +331,7 @@ void EmitWrapper(llvm::Module& module,
   } else {
     status = builder.CreateCall(body, arguments);
   }
-  auto* returned = llvm::BasicBlock::Create(context, "returned", entry);
-  auto* failed = llvm::BasicBlock::Create(context, "failed", entry);
-  builder.CreateCondBr(builder.CreateICmpEQ(status, Status(builder, ExecutionStatus::Returned)),
-                       returned, failed);
-  Builder failure(failed);
-  failure.CreateRet(status);
-  builder.SetInsertPoint(returned);
+  ReturnOnFailure(builder, *entry, status);
   llvm::Value* value = builder.getFalse();
   if (source.return_type.kind != Kind::Void) {
     value = builder.CreateLoad(result_type, result);

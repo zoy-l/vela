@@ -1,14 +1,12 @@
 #include <array>
-#include <sstream>
 #include <string_view>
 
 #include "gtest/gtest.h"
 
-#include "compiler/compiler.h"
 #include "compiler/frontend/source_loader.h"
+#include "compiler/program_test_support.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
-#include "vm/vm.h"
 
 namespace vela::testing {
 namespace {
@@ -20,20 +18,11 @@ TEST_P(ScriptMatcherTest, MatchesAgainstIndependentExpectedResultsUnderGc) {
       {.path = "matcher.vela", .text = GetParam()},
   });
   runtime::Isolate isolate(1);
-  const auto compiled =
-      compiler::CompileParsed(frontend::LoadSources(inputs, "matcher.vela"), isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.source_path << ':' << diagnostic.location.line << ':'
-                  << diagnostic.location.column << ' ' << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  std::ostringstream diagnostic;
-  if (!result.Succeeded()) {
-    vm::WriteRuntimeError(diagnostic, result);
-  }
-  ASSERT_TRUE(result.Succeeded()) << diagnostic.str();
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto compiled = compiler::test::CompileCleanModules(inputs, "matcher.vela", isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto result = compiler::test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 INSTANTIATE_TEST_SUITE_P(DeepAndExtensible,

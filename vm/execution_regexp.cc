@@ -2,10 +2,8 @@
 #include "vm/execution.h"
 
 #include <array>
-#include <cstddef>
 #include <expected>
 #include <span>
-#include <utility>
 
 #include "base/builtin.h"
 #include "base/regexp.h"
@@ -32,11 +30,11 @@ StepResult Execution::ExecuteRegExp(ActiveFrame& active, Instruction instruction
     }
     const auto index = arguments.back();
     const auto arrays = tables->arrays();
-    if (!index.IsInteger() || index.AsInteger() < 0 ||
-        std::cmp_greater_equal(index.AsInteger(), arrays.size())) {
-      return std::unexpected(ExecutionStatus::TypeError);
+    const auto offset = ReadLayoutIndex(index, arrays.size());
+    if (!offset) {
+      return std::unexpected(offset.error());
     }
-    layout = arrays.subspan(static_cast<std::size_t>(index.AsInteger())).front();
+    layout = arrays.subspan(*offset).front();
     const auto expected_kind = builtin == Builtin::RegExpAllMatches ? runtime::ValueKind::Object
                                                                     : runtime::ValueKind::String;
     if (layout->element.kind != expected_kind ||
@@ -47,12 +45,7 @@ StepResult Execution::ExecuteRegExp(ActiveFrame& active, Instruction instruction
     }
   }
   const auto result = runtime::ExecuteRegExpBuiltin(builtin, arguments, isolate_.heap(), layout);
-  if (!result) {
-    error_message_ = result.error().message;
-    return std::unexpected(result.error().status);
-  }
-  registers.subspan(DecodeA(instruction)).front() = *result;
-  return {};
+  return StoreDiagnosticResult(registers.subspan(DecodeA(instruction)).front(), result);
 }
 
 }  // namespace vela::vm::internal

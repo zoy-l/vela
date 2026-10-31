@@ -4,38 +4,22 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
-import subprocess
-import tempfile
 import unittest
 
-from tools.config import ROOT, executable_name
+from tools.test_support import CommandTestCase
 
 
-class MockCommandTest(unittest.TestCase):
-    def setUp(self) -> None:
-        temporary = tempfile.TemporaryDirectory(prefix="vela-mock-")
-        self.addCleanup(temporary.cleanup)
-        self.directory = Path(temporary.name).resolve()
-        self.executable = Path(os.environ.get(
-            "VELA_TEST_EXECUTABLE", ROOT / "out" / "debug" / executable_name("vela")))
-
-    def write(self, name: str, content: str) -> Path:
-        path = self.directory / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8", newline="\n")
-        return path
-
-    def invoke(self, *arguments: str, code: int = 0):
-        result = subprocess.run([str(self.executable), *arguments], cwd=self.directory,
-                                capture_output=True, text=True, encoding="utf-8",
-                                timeout=30, check=False)
-        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
-        return result
+class MockCommandTest(CommandTestCase):
+    directory_prefix = "vela-mock-"
 
     def generate(self, *options: str, code: int = 0):
         return self.invoke("mock", "api.vela", "--interface", "Repository",
                            "-o", "repository.mocks.vela", *options, code=code)
+
+    def report_events(self, name: str, code: int = 0) -> list[dict]:
+        self.write("vela.json", json.dumps({"test": {"paths": [name]}}))
+        result = self.invoke("test", "--reporter=json", code=code)
+        return [json.loads(line) for line in result.stdout.splitlines()]
 
     def test_generated_interface_runs_through_all_vm_entry_paths(self):
         self.write("api.vela", """
@@ -194,9 +178,7 @@ func main(): void {
   });
 }
 """)
-        self.write("vela.json", '{"test":{"paths":["wait_test.vela"]}}')
-        result = self.invoke("test", "--reporter=json", code=1)
-        events = [json.loads(line) for line in result.stdout.splitlines()]
+        events = self.report_events("wait_test.vela", code=1)
         errors = [event for event in events if event["type"] == "error"]
         self.assertIn("TestTimeout", [error["category"] for error in errors])
         self.assertNotIn("AsyncIdle", [error["category"] for error in errors])
@@ -224,9 +206,7 @@ func main(): void {
 }
 """
         self.write("report_test.vela", source)
-        self.write("vela.json", '{"test":{"paths":["report_test.vela"]}}')
-        result = self.invoke("test", "--reporter=json", code=1)
-        events = [json.loads(line) for line in result.stdout.splitlines()]
+        events = self.report_events("report_test.vela", code=1)
         errors = [event for event in events if event["type"] == "error"]
         self.assertEqual(len(errors), 3)
         missing, verification, ordinary = errors
@@ -275,9 +255,7 @@ func main(): void {
   });
 }
 """)
-        self.write("vela.json", '{"test":{"paths":["wait_test.vela"]}}')
-        result = self.invoke("test", "--reporter=json", code=1)
-        events = [json.loads(line) for line in result.stdout.splitlines()]
+        events = self.report_events("wait_test.vela", code=1)
         errors = [event for event in events if event["type"] == "error"]
         self.assertEqual(len(errors), 1)
         error = errors[0]
@@ -301,10 +279,8 @@ func main(): void {
   });
 }
 """)
-        self.write("vela.json", '{"test":{"paths":["reset_test.vela"]}}')
-        result = self.invoke("test", "--reporter=json", code=1)
-        errors = [event for line in result.stdout.splitlines()
-                  if (event := json.loads(line))["type"] == "error"]
+        errors = [event for event in self.report_events("reset_test.vela", code=1)
+                  if event["type"] == "error"]
         self.assertEqual([error["category"] for error in errors], ["MockReset", "MockReset"])
         locations = [{frame["line"] for frame in error["mock"]["verificationTrace"]
                       if frame["file"].endswith("reset_test.vela")} for error in errors]

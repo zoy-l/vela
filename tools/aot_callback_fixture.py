@@ -91,46 +91,20 @@ export func calculate(operation: int): int {
 HOST_TESTS = r'''
 #include "runtime/native_call.h"
 extern "C" const NativeImage* CALLBACK_IMAGE() noexcept;
+using NativeCallbackTest = CollectingImageTest<CALLBACK_IMAGE>;
 
-TEST(NativeCallbackTest, StableSnapshotsAndMutatingCallbacksKeepTheirContractsUnderGc) {
-  Isolate isolate(1);
-  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
-  const auto instance = NativeInstance::Instantiate(isolate, *CALLBACK_IMAGE());
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
-  for (const auto operation : {0, 1, 2, 3, 9, 10}) {
-    const std::array arguments{Integer(operation)};
-    NativeValue result;
-    ASSERT_EQ(Execute(CALLBACK_ENTRY, execution, arguments, result), ExecutionStatus::Returned)
-        << operation;
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
-    EXPECT_FALSE(execution.HasException());
-  }
+TEST_F(NativeCallbackTest, StableSnapshotsAndMutatingCallbacksKeepTheirContractsUnderGc) {
+  NativeExecution execution(*instance);
+  ExpectIntegerOperations(CALLBACK_ENTRY, execution, {0, 1, 2, 3, 9, 10});
 }
 
-TEST(NativeCallbackTest, NullPresenceReassignmentAndMutableCapturesUseTheirCurrentValues) {
-  Isolate isolate(1);
-  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
-  const auto instance = NativeInstance::Instantiate(isolate, *CALLBACK_IMAGE());
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
-  for (const auto operation : {5, 6, 7, 8, 11}) {
-    const std::array arguments{Integer(operation)};
-    NativeValue result;
-    ASSERT_EQ(Execute(CALLBACK_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
-  }
+TEST_F(NativeCallbackTest, NullPresenceReassignmentAndMutableCapturesUseTheirCurrentValues) {
+  NativeExecution execution(*instance);
+  ExpectIntegerOperations(CALLBACK_ENTRY, execution, {5, 6, 7, 8, 11});
 }
 
-TEST(NativeCallbackTest, ColdReferenceLeafFailuresKeepTheirOriginalSourceAndCallerTrace) {
-  Isolate isolate(1);
-  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
-  const auto* image = CALLBACK_IMAGE();
-  const auto instance = NativeInstance::Instantiate(isolate, *image);
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
+TEST_F(NativeCallbackTest, ColdReferenceLeafFailuresKeepTheirOriginalSourceAndCallerTrace) {
+  NativeExecution execution(*instance);
   const std::array arguments{Integer(4)};
   NativeValue result;
   ASSERT_EQ(Execute(CALLBACK_ENTRY, execution, arguments, result), ExecutionStatus::IndexOutOfBounds);
@@ -145,13 +119,8 @@ TEST(NativeCallbackTest, ColdReferenceLeafFailuresKeepTheirOriginalSourceAndCall
   EXPECT_EQ(trace.back().function, "calculate");
 }
 
-TEST(NativeCallbackTest, EnumResultMetadataBoxesScalarPayloadsAndPreservesNullableResults) {
-  Isolate isolate(1);
-  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
-  const auto* image = CALLBACK_IMAGE();
-  const auto instance = NativeInstance::Instantiate(isolate, *image);
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
+TEST_F(NativeCallbackTest, EnumResultMetadataBoxesScalarPayloadsAndPreservesNullableResults) {
+  NativeExecution execution(*instance);
   const auto functions = image->functions.values();
   const auto found = std::ranges::find(functions, "pickEnum", [](const auto& function) {
     return function.name.text();

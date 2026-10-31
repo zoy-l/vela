@@ -26,15 +26,15 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction) {
     auto helper = module_.getOrInsertFunction(
         "vela_native_v3_call_declaration", builder_.getInt8Ty(), builder_.getPtrTy(),
         builder_.getInt64Ty(), builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
-    CheckStatus(
-        builder_.CreateCall(helper, {
-                                        body_->getArg(0),
-                                        builder_.getInt64(callee.identity.declaration.value),
-                                        arguments_,
-                                        builder_.getInt64(callee.parameter_count),
-                                        result_,
-                                    }));
-    Unpack(instruction.dst);
+    CompleteCall(builder_.CreateCall(helper,
+                                     {
+                                         body_->getArg(0),
+                                         builder_.getInt64(callee.identity.declaration.value),
+                                         arguments_,
+                                         builder_.getInt64(callee.parameter_count),
+                                         result_,
+                                     }),
+                 instruction.dst);
     return;
   }
   std::vector<llvm::Value*> arguments{body_->getArg(0)};

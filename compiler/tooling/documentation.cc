@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <expected>
 #include <ostream>
-#include <ranges>
 #include <span>
 #include <sstream>
 #include <string>
@@ -55,10 +54,7 @@ void Parameters(std::ostream& output,
 }
 
 void Signature(std::ostream& output, const frontend::Function& function) {
-  output << function.name;
-  TypeParameters(output, function.type_parameters);
-  Parameters(output, function.parameters, function.optional_parameters);
-  output << ": " << function.return_type.ToString();
+  output << function.name << FunctionSignature(function);
 }
 
 struct Declaration final {
@@ -88,18 +84,8 @@ void AddDeclarations(std::vector<Declaration>& output,
 
 class Documentation final {
  public:
-  Documentation(const frontend::Program& program, std::string_view source) : program_(&program) {
-    std::size_t start = 0;
-    while (start < source.size()) {
-      const auto newline = source.find('\n', start);
-      lines_.push_back(source.substr(
-          start, newline == std::string_view::npos ? source.size() - start : newline - start));
-      if (newline == std::string_view::npos) {
-        break;
-      }
-      start = newline + 1;
-    }
-  }
+  Documentation(const frontend::Program& program, const frontend::SourceSnapshot& source)
+      : program_(&program), source_(&source) {}
   std::string Generate();
 
  private:
@@ -112,35 +98,15 @@ class Documentation final {
   void Emit(Declaration declaration);
 
   const frontend::Program* program_;
-  std::vector<std::string_view> lines_;
+  const frontend::SourceSnapshot* source_;
   std::ostringstream output_;
 };
 
 void Documentation::Comment(SourceLocation location) {
-  std::vector<std::string_view> comments;
-  auto line = static_cast<std::size_t>(location.line - 1);
-  while (line != 0) {
-    auto text = lines_.at(--line);
-    const auto start = text.find_first_not_of(" \t");
-    if (start == std::string_view::npos || !text.substr(start).starts_with("///")) {
-      break;
-    }
-    text.remove_prefix(start + 3);
-    if (text.starts_with(' ')) {
-      text.remove_prefix(1);
-    }
-    if (text.ends_with('\r')) {
-      text.remove_suffix(1);
-    }
-    comments.push_back(text);
+  const auto comment = DocumentationComment(source_->text, source_->comments, location);
+  if (!comment.empty()) {
+    output_ << comment << "\n\n";
   }
-  if (comments.empty()) {
-    return;
-  }
-  for (const auto text : std::views::reverse(comments)) {
-    output_ << text << '\n';
-  }
-  output_ << '\n';
 }
 
 void Documentation::Method(const frontend::Function& method) {
@@ -344,13 +310,61 @@ std::string Documentation::Generate() {
 
 }  // namespace
 
+std::string FunctionSignature(const frontend::Function& function) {
+  std::ostringstream output;
+  TypeParameters(output, function.type_parameters);
+  Parameters(output, function.parameters, function.optional_parameters);
+  output << ": " << function.return_type.ToString();
+  return std::move(output).str();
+}
+
+std::string DocumentationComment(std::string_view source,
+                                 std::span<const frontend::SourceComment> comments,
+                                 SourceLocation location) {
+  auto line = location.line - 1;
+  auto previous = std::ranges::lower_bound(
+      comments, location.line, {}, [](const auto& comment) { return comment.location.line; });
+  std::vector<std::string_view> lines;
+  while (previous != comments.begin() && line > 0) {
+    const auto& comment = *--previous;
+    auto content = source.substr(comment.offset, comment.length);
+    if (comment.location.line != line || !content.starts_with("///")) {
+      break;
+    }
+    const auto newline =
+        comment.offset == 0 ? std::string_view::npos : source.rfind('\n', comment.offset - 1);
+    const auto start = newline == std::string_view::npos ? 0 : newline + 1;
+    if (source.substr(start, comment.offset - start).find_first_not_of(" \t") !=
+        std::string_view::npos) {
+      break;
+    }
+    content.remove_prefix(3);
+    if (content.starts_with(' ')) {
+      content.remove_prefix(1);
+    }
+    if (content.ends_with('\r')) {
+      content.remove_suffix(1);
+    }
+    lines.push_back(content);
+    --line;
+  }
+  std::string result;
+  for (auto item = lines.rbegin(); item != lines.rend(); ++item) {
+    if (item != lines.rbegin()) {
+      result += '\n';
+    }
+    result += *item;
+  }
+  return result;
+}
+
 std::expected<std::string, frontend::Diagnostics> GenerateModuleDocumentation(
     std::string_view source) {
-  const auto parsed = frontend::ParseSource(source);
+  const auto parsed = frontend::ParseSourceSnapshot(std::string(source));
   if (!parsed.diagnostics.empty()) {
     return std::unexpected(parsed.diagnostics);
   }
-  return Documentation(parsed.program, source).Generate();
+  return Documentation(parsed.program, *parsed.source).Generate();
 }
 
 DocumentationResult GenerateDocumentation(std::string_view entry,
@@ -360,7 +374,7 @@ DocumentationResult GenerateDocumentation(std::string_view entry,
     return {.markdown = {}, .diagnostics = std::move(graph.diagnostics)};
   }
   auto documentation =
-      Documentation(graph.modules.front().program, graph.sources.front().text).Generate();
+      Documentation(graph.modules.front().program, *graph.sources.front().syntax).Generate();
   auto loaded = frontend::BindModuleGraph(std::move(graph));
   if (!loaded.diagnostics.empty()) {
     return {.markdown = {}, .diagnostics = std::move(loaded.diagnostics)};

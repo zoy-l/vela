@@ -13,6 +13,7 @@
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/capture_analysis.h"
 #include "compiler/frontend/type_inference.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 
@@ -75,7 +76,7 @@ void TypeChecker::RegisterSpecializations() {
   registered_classes_ = class_end;
   for (auto index = class_begin; index < class_end; ++index) {
     const auto& source = specializer_->class_declaration(index);
-    const Type type{.kind = Type::Kind::Class, .name = source.name};
+    const Type type{.kind = Type::Kind::Class, .name = InternTypeName(source.name)};
     types_.try_emplace(source.name, type);
     ClassInfo info;
     info.type = type;
@@ -147,16 +148,16 @@ TypeName TypeChecker::DescribeType(const Type& type) const {
     TypeName result{.name = {}, .location = {}, .kind = TypeName::Kind::Generic, .arguments = {}};
     switch (type.kind) {
       case Type::Kind::Map:
-        result.name = "Map";
+        result.name = std::string(kMapTypeName);
         break;
       case Type::Kind::Set:
-        result.name = "Set";
+        result.name = std::string(kSetTypeName);
         break;
       case Type::Kind::Future:
-        result.name = "Future";
+        result.name = std::string(kFutureTypeName);
         break;
       case Type::Kind::Completer:
-        result.name = "Completer";
+        result.name = std::string(kCompleterTypeName);
         break;
       default:
         break;
@@ -166,7 +167,8 @@ TypeName TypeChecker::DescribeType(const Type& type) const {
     }
     return result;
   }
-  return specializer_->DescribeType({.name = type.name, .location = {}, .arguments = {}});
+  return specializer_->DescribeType(
+      {.name = std::string(type.name), .location = {}, .arguments = {}});
 }
 
 TypeChecker::Type TypeChecker::ResolveInferenceContext(const TypeName& pattern,
@@ -184,8 +186,7 @@ TypeChecker::Type TypeChecker::ResolveInferenceContext(const TypeName& pattern,
       return InvalidType();
     }
     const auto name = std::to_string(index);
-    context.parameter_indices.emplace(name, static_cast<std::uint32_t>(index));
-    context.parameters.push_back({.name = name, .type = parameter});
+    context.AddParameter(name, parameter);
   }
   context.return_type = ResolveInferenceContext(pattern.arguments.back(), inference);
   return FunctionType(context);
@@ -198,7 +199,7 @@ bool TypeChecker::CanInferInvocation(const Expression& expression, const Type* e
     return true;
   }
   const auto& name = callee.text;
-  if (name == "Map" || name == "Set" || name == "Completer") {
+  if (name == kMapTypeName || name == kSetTypeName || name == kCompleterTypeName) {
     return expected != nullptr;
   }
   if (specializer_->FunctionTemplate(name) == nullptr &&
@@ -366,7 +367,7 @@ std::optional<TypeInference> TypeChecker::CreateFutureInference(const Expression
   InferenceSignature source;
   source.type_parameters = {"$Value"};
   source.return_type = {
-      .name = "Future",
+      .name = std::string(kFutureTypeName),
       .location = expression.location,
       .kind = TypeName::Kind::Generic,
       .arguments = {{.name = "$Value", .location = expression.location, .arguments = {}}},
@@ -416,7 +417,7 @@ TypeChecker::Type TypeChecker::InferFutureResult(const Expression& expression,
     }
   } else if (!IsValid(context)) {
     // Future.error 没有成功值，缺少目标类型时按公开契约产生 Future<void>。
-    inference.Constrain(variable, DescribeType(types_.at("void")),
+    inference.Constrain(variable, DescribeType(types_.at(kVoidTypeName)),
                         TypeInference::Evidence::Context);
   }
   const auto payload = ResolveInferenceContext(variable, inference);
@@ -510,9 +511,7 @@ std::optional<TypeChecker::InferredCall> TypeChecker::InferInvocation(
   result.arguments.resize(expression.arguments.size());
   result.signature.optional_parameters = source.optional_parameters;
   for (const auto& parameter : source.parameters) {
-    result.signature.parameter_indices.emplace(
-        parameter.name, static_cast<std::uint32_t>(result.signature.parameters.size()));
-    result.signature.parameters.push_back({.name = parameter.name, .type = {}});
+    result.signature.AddParameter(parameter.name, {});
   }
   std::vector<const Expression*> arguments;
   std::vector<TypeName> patterns;
@@ -614,7 +613,7 @@ std::optional<TypeChecker::InferenceSignature> TypeChecker::GenericSignature(
     }
     if (owner == nullptr) {
       if (source.return_type.kind == TypeName::Kind::Generic &&
-          (source.return_type.name == "Map" || source.return_type.name == "Set")) {
+          (source.return_type.name == kMapTypeName || source.return_type.name == kSetTypeName)) {
         return source;
       }
       AddDiagnostic(callee.location, "type alias does not name a constructible type");

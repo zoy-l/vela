@@ -23,6 +23,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/parser.h"
 #include "compiler/frontend/token.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 namespace {
@@ -33,7 +34,7 @@ struct StandardDeclaration final {
 
 constexpr auto kDeclarations = std::to_array<StandardDeclaration>({
     {
-        .name = "Math",
+        .name = kMathTypeName,
         .source = R"(/// Mathematical constants and functions.
 /// Numeric parameters use double without implicit int/double conversion.
 /// All methods are static. Math cannot be constructed.
@@ -89,7 +90,7 @@ class Math {
 )",
     },
     {
-        .name = "Json",
+        .name = kJsonTypeName,
         .source =
             R"(/// Strict in-memory JSON using native values, dynamic arrays, and ordered maps.
 class Json {
@@ -102,7 +103,7 @@ class Json {
 )",
     },
     {
-        .name = "Random",
+        .name = kRandomTypeName,
         .source =
             R"(/// An isolate-local, reproducible pseudorandom generator, initially seeded with 0.
 /// The same seed and call sequence produce the same results. Not cryptographically secure.
@@ -118,7 +119,7 @@ class Random {
 )",
     },
     {
-        .name = "performance",
+        .name = kPerformanceTypeName,
         .source =
             R"(/// A monotonic clock for measuring elapsed time in milliseconds, including fractions.
 /// Subtract two now() readings to measure a duration. Its origin is not Unix time.
@@ -132,7 +133,7 @@ class performance {
 )",
     },
     {
-        .name = "Date",
+        .name = kDateTypeName,
         .source =
             R"(/// Provides Unix wall-clock time, which may jump when the system clock is adjusted.
 class Date {
@@ -153,7 +154,7 @@ class Date {
 )",
     },
     {
-        .name = "DateParts",
+        .name = kDatePartsTypeName,
         .source = R"(/// An immutable UTC calendar snapshot, created by Date.toUTC.
 class DateParts {
   private yearValue: int = 0;
@@ -175,7 +176,7 @@ class DateParts {
 )",
     },
     {
-        .name = "ByteArray",
+        .name = kByteArrayTypeName,
         .source =
             R"(/// Fixed-length, zero-initialized raw byte storage. Construct with ByteArray(length: int).
 class ByteArray {
@@ -186,7 +187,7 @@ class ByteArray {
 )",
     },
     {
-        .name = "ByteData",
+        .name = kByteDataTypeName,
         .source =
             R"(/// A typed byte view that retains its ByteArray owner. Construct with ByteData.view.
 class ByteData {
@@ -197,7 +198,7 @@ class ByteData {
 )",
     },
     {
-        .name = "RegExp",
+        .name = kRegExpTypeName,
         .source =
             R"(/// PCRE2 Unicode regular expression with code-point coordinates; no shared cursor.
 class RegExp {
@@ -208,7 +209,7 @@ class RegExp {
 )",
     },
     {
-        .name = "RegExpMatch",
+        .name = kRegExpMatchTypeName,
         .source =
             R"(/// Immutable match retaining its input and pattern. Created by RegExp searches.
 class RegExpMatch {
@@ -217,14 +218,14 @@ class RegExpMatch {
 )",
     },
     {
-        .name = "Endian",
+        .name = kEndianTypeName,
         .source =
             R"(/// Byte order; multi-byte ByteData access defaults to big. host uses execution-platform order.
 enum Endian { big, little, host }
 )",
     },
     {
-        .name = "int",
+        .name = kIntTypeName,
         .source = R"(/// Signed 64-bit integers and explicit string parsing.
 class int {
   private constructor() {}
@@ -236,7 +237,7 @@ class int {
 )",
     },
     {
-        .name = "double",
+        .name = kDoubleTypeName,
         .source = R"(/// IEEE 754 binary64 numbers and explicit string parsing.
 class double {
   private constructor() {}
@@ -248,7 +249,7 @@ class double {
 )",
     },
     {
-        .name = "Error",
+        .name = kErrorTypeName,
         .source =
             R"(/// A standard error that can be thrown and caught. Constructing an instance does not throw it.
 /// message describes the failure; code is a program-readable identifier, defaulting to 'Error'.
@@ -261,7 +262,7 @@ class Error {
 )",
     },
     {
-        .name = "TimeoutException",
+        .name = kTimeoutExceptionTypeName,
         .source = R"(/// The source Future did not complete before its timeout.
 class TimeoutException {
   message: string = 'Future timed out';
@@ -274,19 +275,19 @@ class TimeoutException {
 std::optional<Builtin> Intrinsic(std::string_view owner, const Function& declaration) {
   static const absl::flat_hash_map<std::pair<std::string_view, std::string_view>, Builtin>
       kIntrinsics = {
-          {{"Json", "parse"}, Builtin::JsonParse},
-          {{"Json", "stringify"}, Builtin::JsonStringify},
-          {{"RegExp", "escape"}, Builtin::RegExpEscape},
-          {{"ByteArray", "from"}, Builtin::ByteArrayFrom},
-          {{"ByteData", "view"}, Builtin::ByteDataView},
-          {{"int", "parse"}, Builtin::IntParse},
-          {{"int", "tryParse"}, Builtin::IntTryParse},
-          {{"double", "parse"}, Builtin::DoubleParse},
-          {{"double", "tryParse"}, Builtin::DoubleTryParse},
-          {{"Date", "parse"}, Builtin::DateParse},
-          {{"Date", "toISOString"}, Builtin::DateToISOString},
-          {{"Date", "fromUTC"}, Builtin::DateFromUTC},
-          {{"Date", "toUTC"}, Builtin::DateToUTC},
+          {{kJsonTypeName, "parse"}, Builtin::JsonParse},
+          {{kJsonTypeName, "stringify"}, Builtin::JsonStringify},
+          {{kRegExpTypeName, "escape"}, Builtin::RegExpEscape},
+          {{kByteArrayTypeName, "from"}, Builtin::ByteArrayFrom},
+          {{kByteDataTypeName, "view"}, Builtin::ByteDataView},
+          {{kIntTypeName, "parse"}, Builtin::IntParse},
+          {{kIntTypeName, "tryParse"}, Builtin::IntTryParse},
+          {{kDoubleTypeName, "parse"}, Builtin::DoubleParse},
+          {{kDoubleTypeName, "tryParse"}, Builtin::DoubleTryParse},
+          {{kDateTypeName, "parse"}, Builtin::DateParse},
+          {{kDateTypeName, "toISOString"}, Builtin::DateToISOString},
+          {{kDateTypeName, "fromUTC"}, Builtin::DateFromUTC},
+          {{kDateTypeName, "toUTC"}, Builtin::DateToUTC},
       };
   const auto found = kIntrinsics.find({owner, declaration.name});
   return found == kIntrinsics.end() ? std::nullopt : std::optional(found->second);
@@ -319,26 +320,26 @@ std::shared_ptr<const ParsedSource> StandardSyntax(std::size_t index) {
 
 std::vector<std::string> CollectStandardNames(std::span<const Token> tokens) {
   absl::flat_hash_set<std::string> used;
-  constexpr auto kAsyncNames =
-      std::to_array<std::string_view>({"Future", "Completer", "Timer", "TimeoutException"});
+  constexpr auto kAsyncNames = std::to_array<std::string_view>(
+      {kFutureTypeName, kCompleterTypeName, kTimerTypeName, kTimeoutExceptionTypeName});
   for (std::size_t index = 0; index < tokens.size(); ++index) {
     const auto& token = tokens.subspan(index).front();
     if (token.kind != TokenKind::Identifier) {
       continue;
     }
-    if ((token.lexeme == "int" || token.lexeme == "double") &&
+    if ((token.lexeme == kIntTypeName || token.lexeme == kDoubleTypeName) &&
         (index + 1 == tokens.size() || tokens.subspan(index + 1).front().kind != TokenKind::Dot)) {
       continue;
     }
     if (IsStandardName(token.lexeme)) {
       used.insert(token.lexeme);
-      if (token.lexeme == "Json") {
-        used.insert("Error");
+      if (token.lexeme == kJsonTypeName) {
+        used.insert(std::string(kErrorTypeName));
       }
     }
     if (std::ranges::find(kAsyncNames, token.lexeme) != kAsyncNames.end()) {
-      used.insert("Error");
-      used.insert("TimeoutException");
+      used.insert(std::string(kErrorTypeName));
+      used.insert(std::string(kTimeoutExceptionTypeName));
     }
   }
   return {used.begin(), used.end()};
@@ -357,8 +358,8 @@ bool IsStandardName(std::string_view name) noexcept {
 
 bool IsStandardTypeNamespace(const Program& program, const Class& declaration) {
   const auto& name = declaration.name;
-  return (name == "int" || name == "double" || name == "ByteArray" || name == "ByteData" ||
-          name == "RegExp" || name == "RegExpMatch") &&
+  return (name == kIntTypeName || name == kDoubleTypeName || name == kByteArrayTypeName ||
+          name == kByteDataTypeName || name == kRegExpTypeName || name == kRegExpMatchTypeName) &&
          declaration.location.source_id < program.sources.size() &&
          program.sources.at(declaration.location.source_id).path ==
              std::string(kStandardSourcePrefix) + name;
@@ -373,19 +374,19 @@ Diagnostics AddStandardEnvironment(Program& program) {
   absl::flat_hash_set<std::string> used(program.standard_names.begin(),
                                         program.standard_names.end());
   for (const auto& alias : program.aliases) {
-    if (alias.target.name == "int" || alias.target.name == "double") {
+    if (alias.target.name == kIntTypeName || alias.target.name == kDoubleTypeName) {
       used.insert(alias.target.name);
     }
   }
-  if (used.contains("Date")) {
-    used.insert("DateParts");
+  if (used.contains(kDateTypeName)) {
+    used.insert(std::string(kDatePartsTypeName));
   }
-  if (used.contains("RegExpMatch")) {
-    used.insert("RegExp");
+  if (used.contains(kRegExpMatchTypeName)) {
+    used.insert(std::string(kRegExpTypeName));
   }
-  if (used.contains("ByteData") || used.contains("ByteArray")) {
-    used.insert("ByteArray");
-    used.insert("Endian");
+  if (used.contains(kByteDataTypeName) || used.contains(kByteArrayTypeName)) {
+    used.insert(std::string(kByteArrayTypeName));
+    used.insert(std::string(kEndianTypeName));
   }
   for (std::size_t index = 0; index < kDeclarations.size(); ++index) {
     const auto& name = kDeclarations.at(index).name;

@@ -7,10 +7,9 @@
 
 #include "compiler/compiler.h"
 #include "compiler/frontend/source_loader.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
-#include "runtime/value.h"
 #include "vm/program.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -19,15 +18,9 @@ class LambdaInferenceTest : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(LambdaInferenceTest, ChecksAndExecutesWithPreciseTypesUnderCollectionPressure) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(GetParam(), isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  ASSERT_TRUE(result.value.IsInteger());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto result = test::RunInteger(GetParam(), isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -186,11 +179,11 @@ TEST(LambdaInferenceTest, PropagatesImportedGenericSignaturesIntoCallbacks) {
       },
   });
   runtime::Isolate isolate(1);
-  const auto compiled = CompileModules(sources, "main.vela", isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 }  // namespace

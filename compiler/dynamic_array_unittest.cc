@@ -6,9 +6,9 @@
 
 #include "compiler/compiler.h"
 #include "compiler/frontend/checker_test_support.h"
+#include "compiler/program_test_support.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
-#include "vm/bytecode_image.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"
 
@@ -19,27 +19,18 @@ class DynamicArrayExecutionTest : public testing::TestWithParam<std::string_view
 
 TEST_P(DynamicArrayExecutionTest, RunsTypedGrowthAndMutationThroughBytecodeImagesAndGc) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(GetParam(), isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ':' << diagnostic.location.column << ' '
-                  << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto image = vm::SaveBytecode(compiled.program, isolate);
-  ASSERT_TRUE(image);
-  runtime::Isolate restored(1);
-  const auto program = vm::LoadBytecode(*image, restored);
-  ASSERT_TRUE(program) << program.error().message;
-  restored.heap().FinishCollection();
-  restored.heap().Collect();
-  const auto baseline = restored.heap().object_count();
-  vm::VirtualMachine machine(restored);
-  const auto result = machine.Execute(program->FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
-  restored.heap().FinishCollection();
-  restored.heap().Collect();
-  EXPECT_EQ(restored.heap().object_count(), baseline);
+  const auto program = test::ReloadSource(GetParam(), isolate);
+  ASSERT_TRUE(program) << program.error();
+  auto& heap = isolate.heap();
+  heap.FinishCollection();
+  heap.Collect();
+  const auto baseline = heap.object_count();
+  const auto result = test::ExecuteInteger(*program, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
+  heap.FinishCollection();
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), baseline);
 }
 
 INSTANTIATE_TEST_SUITE_P(ProductionPaths,

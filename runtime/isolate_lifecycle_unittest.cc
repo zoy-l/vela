@@ -15,6 +15,7 @@
 #include "runtime/native_api.h"
 #include "runtime/native_function.h"
 #include "runtime/rooted_value.h"
+#include "runtime/thread_destruction_test_support.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -135,17 +136,9 @@ TEST(IsolateLifecycleTest, RefusedStopPreservesPendingEventsAndOpenEndpoints) {
 TEST(IsolateLifecycleTest, StopDisposesDeferredHostDestructionOnTheOwnerThread) {
   Isolate isolate;
   std::thread::id destroyed_on;
-  struct Resource final {
-    explicit Resource(std::thread::id& thread) : destroyed_on(&thread) {}
-    ~Resource() { *destroyed_on = std::this_thread::get_id(); }
-    Resource(const Resource&) = delete;
-    Resource& operator=(const Resource&) = delete;
-    Resource(Resource&&) = delete;
-    Resource& operator=(Resource&&) = delete;
-    std::thread::id* destroyed_on;
-  };
   Future future(&isolate.scheduler());
-  future.Observe([resource = std::make_shared<Resource>(destroyed_on)](FutureState, Value) {});
+  future.Observe(
+      [resource = std::make_shared<test::DestructionThread>(destroyed_on)](FutureState, Value) {});
   std::thread host([future = std::move(future)] {});
   host.join();
   EXPECT_EQ(destroyed_on, std::thread::id{});
@@ -192,20 +185,12 @@ TEST(IsolateLifecycleTest, StopDuringSchedulerCallbackWaitsForTheOuterPumpToRetu
 TEST(IsolateLifecycleTest, ConcurrentFinalHostReleaseNeverOutlivesSuccessfulStop) {
   constexpr std::uint32_t kRuns = 64;
   const auto owner = std::this_thread::get_id();
-  struct Resource final {
-    explicit Resource(std::thread::id& thread) : destroyed_on(&thread) {}
-    ~Resource() { *destroyed_on = std::this_thread::get_id(); }
-    Resource(const Resource&) = delete;
-    Resource& operator=(const Resource&) = delete;
-    Resource(Resource&&) = delete;
-    Resource& operator=(Resource&&) = delete;
-    std::thread::id* destroyed_on;
-  };
   for (std::uint32_t run = 0; run < kRuns; ++run) {
     auto isolate = std::make_unique<Isolate>();
     std::thread::id destroyed_on;
     Future future(&isolate->scheduler());
-    future.Observe([resource = std::make_shared<Resource>(destroyed_on)](FutureState, Value) {});
+    future.Observe([resource = std::make_shared<test::DestructionThread>(destroyed_on)](FutureState,
+                                                                                        Value) {});
     std::thread host([future = std::move(future)] {});
     if (isolate->TryStop()) {
       isolate.reset();

@@ -35,6 +35,8 @@ struct JitSetup final {
     compiler::DevelopmentSession& session,
     std::string_view name);
 void ReportJitSetup(benchmark::State& state, const JitSetup& setup);
+void ReportJitFirstExecution(benchmark::State& state,
+                             std::chrono::steady_clock::time_point started);
 void ReportJitMemory(benchmark::State& state, compiler::DevelopmentSession& session);
 
 }  // namespace vela::benchmarks

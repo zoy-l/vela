@@ -3,6 +3,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"
@@ -24,13 +25,10 @@ func main(): bool {
 }
 )";
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(source, isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
   const auto before = isolate.heap().allocated_bytes();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());

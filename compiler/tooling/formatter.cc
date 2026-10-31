@@ -18,6 +18,7 @@
 namespace vela::tooling {
 namespace {
 
+using frontend::IsDeclarationStart;
 using frontend::TokenKind;
 using frontend::TokenRole;
 
@@ -220,25 +221,6 @@ struct Scope final {
   bool multiline = false;
   bool case_indented = false;
 };
-
-bool IsDeclarationStart(TokenKind kind) {
-  switch (kind) {
-    case TokenKind::Import:
-    case TokenKind::Export:
-    case TokenKind::External:
-    case TokenKind::Func:
-    case TokenKind::Async:
-    case TokenKind::Class:
-    case TokenKind::Interface:
-    case TokenKind::Enum:
-    case TokenKind::Type:
-    case TokenKind::Let:
-    case TokenKind::Const:
-      return true;
-    default:
-      return false;
-  }
-}
 
 class Formatter final {
  public:

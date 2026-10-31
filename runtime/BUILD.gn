@@ -32,6 +32,7 @@ source_set("runtime") {
     ":native_build_identity",
     ":unicode_case_data",
     "//base:json",
+    "//base:regexp_diagnostic",
     "//third_party:pcre2",
     "//third_party:utf8proc",
   ]
@@ -99,6 +100,7 @@ source_set("runtime") {
     "index_buffer.h",
     "index_range.h",
     "instance_storage.h",
+    "intrusive_link_internal.h",
     "isolate.cc",
     "isolate.h",
     "isolate_metadata.cc",
@@ -135,6 +137,7 @@ source_set("runtime") {
     "native_exception.cc",
     "native_function.cc",
     "native_function.h",
+    "native_global_internal.h",
     "native_image.h",
     "native_import.cc",
     "native_instance.cc",
@@ -151,6 +154,7 @@ source_set("runtime") {
     "native_operations.cc",
     "native_operations.h",
     "native_program_state.h",
+    "native_result_internal.h",
     "native_stack.h",
     "native_version.cc",
     "native_version.h",
@@ -223,6 +227,7 @@ executable("runtime_tests") {
     "native_control_unittest.cc",
     "native_dispatch_unittest.cc",
     "native_image_lifetime_unittest.cc",
+    "native_image_test_support.h",
     "native_instance_unittest.cc",
     "native_materialization_unittest.cc",
     "numeric_conversion_unittest.cc",
@@ -234,6 +239,7 @@ executable("runtime_tests") {
     "runtime_unittest.cc",
     "string_case_unittest.cc",
     "string_unittest.cc",
+    "thread_destruction_test_support.h",
     "unicode_operations_unittest.cc",
   ]
   deps = [

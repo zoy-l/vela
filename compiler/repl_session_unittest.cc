@@ -1,15 +1,14 @@
 #include "compiler/repl_session.h"
 
-#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <system_error>
 
 #include "base/file.h"
+#include "base/testing/directory.h"
 #include "compiler/compiler.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/repl_source.h"
@@ -336,36 +335,14 @@ TEST_F(ReplSessionTest, TrailingCommentsAndBlockLambdaExpressionsKeepTheirSyntax
   EXPECT_TRUE(output().str().ends_with("42\n"));
 }
 
-class ReplModuleSessionTest : public testing::Test {
+class ReplModuleSessionTest : public test::DirectoryTest {
  protected:
-  void SetUp() override {
-    std::error_code error;
-    const auto temporary = std::filesystem::temp_directory_path(error);
-    ASSERT_FALSE(error);
-    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-    directory_ = temporary / ("vela-repl-" + std::to_string(suffix));
-    created_ = std::filesystem::create_directory(directory_, error);
-    ASSERT_TRUE(created_);
-    ASSERT_FALSE(error);
-  }
-  void TearDown() override {
-    if (created_) {
-      std::error_code error;
-      std::filesystem::remove_all(directory_, error);
-      EXPECT_FALSE(error);
-    }
-  }
   void Write(std::string_view name, std::string_view text) {
     ASSERT_TRUE(WriteFileAtomically(directory_ / name, std::as_bytes(std::span(text))));
   }
   static void Execute(ReplSession& session, std::string_view text) {
     EXPECT_EQ(session.Submit(text).status, SubmissionStatus::Executed);
   }
-  [[nodiscard]] const std::filesystem::path& directory() const { return directory_; }
-
- private:
-  std::filesystem::path directory_;
-  bool created_ = false;
 };
 
 TEST_F(ReplModuleSessionTest, PinsAcceptedModulesAndKeepsBindingsWhenNewImportsChangeLoadOrder) {

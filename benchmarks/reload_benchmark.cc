@@ -5,21 +5,23 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include <absl/cleanup/cleanup.h>
+
 #include <benchmark/benchmark.h>
 
 #include "base/native_program_mode.h"
+#include "compiler/checkpoint_publication.h"
 #include "compiler/development_session.h"
+#include "compiler/frontend/diagnostic.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_context.h"
-#include "runtime/native_debugger.h"
 #include "runtime/object.h"
 #include "runtime/value.h"
 
@@ -85,11 +87,8 @@ std::expected<compiler::DevelopmentCandidate, std::string> Prepare(DevelopmentSe
       },
       operation);
   if (!candidate) {
-    auto message = candidate.error().message;
-    for (const auto& diagnostic : candidate.error().diagnostics) {
-      message += '\n' + diagnostic.message;
-    }
-    return std::unexpected(std::move(message));
+    const auto& error = candidate.error();
+    return std::unexpected(error.message + '\n' + frontend::DiagnosticsText(error.diagnostics));
   }
   return std::move(*candidate);
 }
@@ -111,6 +110,22 @@ std::expected<DevelopmentResult, std::string> Apply(DevelopmentSession& session,
 
 void AddDuration(benchmark::State& state, const char* name, std::chrono::nanoseconds duration) {
   state.counters[name] += static_cast<double>(duration.count());
+}
+
+std::expected<std::unique_ptr<DevelopmentSession>, std::string> LoadSession(NativeCodeTier tier,
+                                                                            std::string source) {
+  compiler::DevelopmentOptions options;
+  options.compilation.tier = tier;
+  auto created = DevelopmentSession::Create(std::string(kModule), {}, std::move(options));
+  if (!created) {
+    return std::unexpected("cannot create development session\n" +
+                           frontend::DiagnosticsText(created.error()));
+  }
+  if (const auto loaded = Apply(**created, std::move(source), DevelopmentOperation::Load);
+      !loaded) {
+    return std::unexpected(loaded.error());
+  }
+  return std::move(*created);
 }
 
 void AddTimings(benchmark::State& state, const DevelopmentResult& result) {
@@ -153,7 +168,8 @@ void AverageTimings(benchmark::State& state, std::int64_t operations) {
 }
 
 void Memory(benchmark::State& state, DevelopmentSession& session, const char* prefix) {
-  auto& heap = session.isolate().heap();
+  auto& isolate = session.isolate();
+  auto& heap = isolate.heap();
   heap.FinishCollection();
   heap.Collect();
   const auto code = session.code_resources();
@@ -167,7 +183,7 @@ void Memory(benchmark::State& state, DevelopmentSession& session, const char* pr
   state.counters[name + "constant_payload_bytes"] =
       static_cast<double>(code.constant_payload_bytes);
   state.counters[name + "debug_payload_bytes"] = static_cast<double>(code.debug_payload_bytes);
-  const auto& scheduler = session.isolate().scheduler();
+  const auto& scheduler = isolate.scheduler();
   state.counters[name + "suspended_frames"] =
       static_cast<double>(scheduler.suspended_frame_count());
   state.counters[name + "saved_state_bytes"] = static_cast<double>(scheduler.saved_state_bytes());
@@ -267,19 +283,12 @@ class RetainedValues final {
 };
 
 void Reload(benchmark::State& state, NativeCodeTier tier, RetainedState retained) {
-  compiler::DevelopmentOptions options;
-  options.compilation.tier = tier;
-  auto created = DevelopmentSession::Create(std::string(kModule), {}, std::move(options));
+  auto created = LoadSession(tier, Source(retained, 0));
   if (!created) {
-    state.SkipWithError("cannot create development session");
+    state.SkipWithError(created.error());
     return;
   }
   auto& session = **created;
-  if (const auto loaded = Apply(session, Source(retained, 0), DevelopmentOperation::Load);
-      !loaded) {
-    state.SkipWithError(loaded.error());
-    return;
-  }
   const auto count = retained == RetainedState::None ? 0 : state.range(0);
   const auto edits = retained == RetainedState::None ? state.range(0) : kRetainedEdits;
   RetainedValues values(session, retained, count);
@@ -321,20 +330,12 @@ void Reload(benchmark::State& state, NativeCodeTier tier, RetainedState retained
 }
 
 void ActiveReload(benchmark::State& state, NativeCodeTier tier) {
-  compiler::DevelopmentOptions options;
-  options.compilation.tier = tier;
-  auto created = DevelopmentSession::Create(std::string(kModule), {}, std::move(options));
+  auto created = LoadSession(tier, Source(RetainedState::None, 0));
   if (!created) {
-    state.SkipWithError("cannot create development session");
+    state.SkipWithError(created.error());
     return;
   }
   auto& session = **created;
-  if (const auto loaded =
-          Apply(session, Source(RetainedState::None, 0), DevelopmentOperation::Load);
-      !loaded) {
-    state.SkipWithError(loaded.error());
-    return;
-  }
   std::int64_t version = 0;
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
@@ -367,20 +368,12 @@ void ActiveReload(benchmark::State& state, NativeCodeTier tier) {
 }
 
 void Rebuild(benchmark::State& state, NativeCodeTier tier) {
-  compiler::DevelopmentOptions options;
-  options.compilation.tier = tier;
-  auto created = DevelopmentSession::Create(std::string(kModule), {}, std::move(options));
+  auto created = LoadSession(tier, Source(RetainedState::None, 0));
   if (!created) {
-    state.SkipWithError("cannot create development session");
+    state.SkipWithError(created.error());
     return;
   }
   auto& session = **created;
-  if (const auto loaded =
-          Apply(session, Source(RetainedState::None, 0), DevelopmentOperation::Load);
-      !loaded) {
-    state.SkipWithError(loaded.error());
-    return;
-  }
   std::int64_t version = 0;
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
@@ -409,37 +402,16 @@ std::string VirtualSource(std::int64_t version) {
          "checkpoint(); return box.read(); }";
 }
 
-struct VirtualPause final : runtime::NativeDebugger {
-  explicit VirtualPause(DevelopmentSession& target) : session(target) {}
-  void AtSafepoint(const runtime::NativeDebugContext& context) noexcept override {
-    if (context.top_frame().name() != "checkpoint") {
-      return;
-    }
-    if (auto candidate = std::exchange(pending, std::nullopt)) {
-      (void)session.Submit(std::move(*candidate));
-      result = session.Pump();
-    }
-  }
-  DevelopmentSession& session;
-  std::optional<compiler::DevelopmentCandidate> pending;
-  DevelopmentResult result;
-};
-
 void VirtualReload(benchmark::State& state, NativeCodeTier tier) {
-  compiler::DevelopmentOptions options;
-  options.compilation.tier = tier;
-  auto created = DevelopmentSession::Create(std::string(kModule), {}, std::move(options));
+  auto created = LoadSession(tier, VirtualSource(0));
   if (!created) {
-    state.SkipWithError("cannot create virtual reload session");
+    state.SkipWithError(created.error());
     return;
   }
   auto& session = **created;
-  if (const auto loaded = Apply(session, VirtualSource(0), DevelopmentOperation::Load); !loaded) {
-    state.SkipWithError(loaded.error());
-    return;
-  }
-  VirtualPause pause(session);
+  compiler::test::CheckpointPublication pause(session);
   session.SetDebugger(&pause);
+  absl::Cleanup detach_debugger = [&] { session.SetDebugger(nullptr); };
   std::int64_t version = 0;
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
@@ -461,7 +433,7 @@ void VirtualReload(benchmark::State& state, NativeCodeTier tier) {
     }
     AddTimings(state, pause.result);
   }
-  session.SetDebugger(nullptr);
+  std::move(detach_debugger).Invoke();
   AverageTimings(state, state.iterations());
   Memory(state, session, "released_");
   if (session.code_resources().batches != 1) {

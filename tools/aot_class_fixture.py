@@ -240,29 +240,15 @@ HOST_TESTS = r'''
 #endif
 
 extern "C" const NativeImage* CLASS_IMAGE() noexcept;
+using NativeClassTest = CollectingImageTest<CLASS_IMAGE>;
 
-TEST(NativeClassTest, ConstructorsPreserveArgumentsDefaultsPrivateStateGenericsAndSuperUnderGc) {
-  Isolate isolate(1);
-  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
-  const auto instance = NativeInstance::Instantiate(isolate, *CLASS_IMAGE());
-  ASSERT_TRUE(instance.has_value()) << instance.error().message;
-  NativeExecution execution(**instance);
-  for (const auto operation : {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}) {
-    const std::array arguments{Integer(operation)};
-    NativeValue result;
-    ASSERT_EQ(Execute(CLASS_ENTRY, execution, arguments, result), ExecutionStatus::Returned)
-        << operation;
-    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
-    EXPECT_FALSE(execution.HasException());
-  }
+TEST_F(NativeClassTest, ConstructorsPreserveArgumentsDefaultsPrivateStateGenericsAndSuperUnderGc) {
+  NativeExecution execution(*instance);
+  ExpectIntegerOperations(CLASS_ENTRY, execution,
+                          {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19});
 }
 
-TEST(NativeClassTest, FailedGraphMaterializationDoesNotPublishPartialAliasesOrKeepRoots) {
-  Isolate isolate(1);
-  ASSERT_TRUE(isolate.RegisterNative(NativeFunction::Bind<Collect>("collect")));
-  const auto instance = NativeInstance::Instantiate(isolate, *CLASS_IMAGE());
-  ASSERT_TRUE(instance.has_value()) << instance.error().message;
+TEST_F(NativeClassTest, FailedGraphMaterializationDoesNotPublishPartialAliasesOrKeepRoots) {
   const auto functions = CLASS_IMAGE()->functions.values();
   const auto graph = std::ranges::find_if(functions, [](const auto& function) {
     return function.name.text() == "createGraph";
@@ -272,7 +258,7 @@ TEST(NativeClassTest, FailedGraphMaterializationDoesNotPublishPartialAliasesOrKe
   });
   ASSERT_NE(graph, functions.end());
   ASSERT_NE(single, functions.end());
-  NativeExecution execution(**instance);
+  NativeExecution execution(*instance);
   auto& heap = isolate.heap();
   heap.Collect();
   const auto before_sample = heap.allocated_bytes();
@@ -334,7 +320,7 @@ void* RunBorrowedRecursionOnSmallStack(void*) {
 }
 #endif
 
-TEST(NativeClassTest, BorrowedRecursionPreservesStackFailureAndReleasesAllRoots) {
+TEST(NativeBorrowedStackTest, BorrowedRecursionPreservesStackFailureAndReleasesAllRoots) {
   constexpr std::size_t kStackBytes = std::size_t{128} * 1024;
 #if defined(_WIN32)
   auto* thread = CreateThread(nullptr, kStackBytes, RunBorrowedRecursionOnSmallStack, nullptr,

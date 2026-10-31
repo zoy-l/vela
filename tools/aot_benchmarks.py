@@ -27,6 +27,12 @@ def compile_workloads(compiler: Path, source: Path, exports: list[str], output: 
     return manifest
 
 
+def native_function_fields(manifest: dict, function: int) -> str:
+    metrics = manifest["functions"][function]
+    return (f", .function = {function}, .shadow_slots = {metrics['shadow_slots']}"
+            f", .frame_bytes = {metrics['frame_bytes']}, .root_stores = {metrics['root_stores']}")
+
+
 def aot_entries(cases: list[dict], manifest: dict) -> list[str]:
     indices = {entry["name"]: entry["function"] for entry in manifest["exports"]}
     header = ["#pragma once", "#include <array>",
@@ -39,10 +45,7 @@ def aot_entries(cases: list[dict], manifest: dict) -> list[str]:
         header.append("  {.name = " + json.dumps(case["name"]) + ", .kernel = AotKernel::" +
                       case["kernel"] + ", .size = " + str(case["size"]) + ", .expected = " +
                       str(case["expected"]) + ", .completion = AotCompletion::" + case["completion"] +
-                      ", .function = " + str(indices[case["name"]]) +
-                      ", .shadow_slots = " + str(manifest["functions"][indices[case["name"]]]["shadow_slots"]) +
-                      ", .frame_bytes = " + str(manifest["functions"][indices[case["name"]]]["frame_bytes"]) +
-                      ", .root_stores = " + str(manifest["functions"][indices[case["name"]]]["root_stores"]) + "},")
+                      native_function_fields(manifest, indices[case["name"]]) + "},")
     header.extend(["});", "}  // namespace vela::benchmarks", ""])
     return header
 
@@ -60,11 +63,8 @@ def dasprofile_entries(cases: list[dict], manifest: dict) -> list[str]:
         header.append("  {.name = " + json.dumps(case["name"]) + ", .workload = Workload::" +
                       case["kernel"] + ", .size = " + str(case["size"]) +
                       ", .expected = " + str(case["expected"]) +
-                      ", .increment = " + str(case.get("increment", 0)) + ", .function = " +
-                      str(indices[case["name"]]) +
-                      ", .shadow_slots = " + str(manifest["functions"][indices[case["name"]]]["shadow_slots"]) +
-                      ", .frame_bytes = " + str(manifest["functions"][indices[case["name"]]]["frame_bytes"]) +
-                      ", .root_stores = " + str(manifest["functions"][indices[case["name"]]]["root_stores"]) + "},")
+                      ", .increment = " + str(case.get("increment", 0)) +
+                      native_function_fields(manifest, indices[case["name"]]) + "},")
     header.extend(["});", "}  // namespace vela::benchmarks::dasprofile", ""])
     return header
 

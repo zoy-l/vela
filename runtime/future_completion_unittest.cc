@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include "runtime/isolate.h"
+#include "runtime/thread_destruction_test_support.h"
 #include "runtime/value.h"
 
 namespace vela::runtime {
@@ -53,18 +54,9 @@ TEST(FutureCompletionEndpointTest, CompletesOnlyOnce) {
 TEST(FutureCompletionEndpointTest, LastHostHandleReleasesProducerAndPendingReferencesOnOwner) {
   FutureScheduler scheduler;
   std::thread::id released_on;
-  struct Resource final {
-    explicit Resource(std::thread::id& thread) : released_on(&thread) {}
-    ~Resource() { *released_on = std::this_thread::get_id(); }
-    Resource(const Resource&) = delete;
-    Resource& operator=(const Resource&) = delete;
-    Resource(Resource&&) = delete;
-    Resource& operator=(Resource&&) = delete;
-    std::thread::id* released_on;
-  };
   auto completer = scheduler.CreateHostCompleter();
   completer.future().Observe(
-      [resource = std::make_shared<Resource>(released_on)](FutureState, Value) {});
+      [resource = std::make_shared<test::DestructionThread>(released_on)](FutureState, Value) {});
   auto endpoint = std::move(completer).Detach();
   std::thread host([endpoint = std::move(endpoint)] {});
   host.join();

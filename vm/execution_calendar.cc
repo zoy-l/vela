@@ -1,11 +1,8 @@
 #include "vm/execution.h"
 
 #include <array>
-#include <cstddef>
 #include <expected>
 #include <span>
-#include <string>
-#include <utility>
 
 #include "base/builtin.h"
 #include "runtime/date.h"
@@ -27,22 +24,17 @@ StepResult Execution::ExecuteCalendar(ActiveFrame& active, Instruction instructi
   if (builtin == Builtin::DateToUTC) {
     const auto index = arguments.subspan(1).front();
     const auto classes = active.function->layouts->classes();
-    if (!index.IsInteger() || index.AsInteger() < 0 ||
-        std::cmp_greater_equal(index.AsInteger(), classes.size())) {
-      return std::unexpected(ExecutionStatus::TypeError);
+    const auto offset = ReadLayoutIndex(index, classes.size());
+    if (!offset) {
+      return std::unexpected(offset.error());
     }
-    layout = classes.subspan(static_cast<std::size_t>(index.AsInteger())).front();
+    layout = classes.subspan(*offset).front();
     if (layout != &isolate_.date_parts_layout()) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
   }
   const auto result = runtime::ExecuteDateBuiltin(builtin, arguments, isolate_.heap(), layout);
-  if (!result) {
-    error_message_ = result.error().message;
-    return std::unexpected(result.error().status);
-  }
-  registers.subspan(DecodeA(instruction)).front() = *result;
-  return {};
+  return StoreDiagnosticResult(registers.subspan(DecodeA(instruction)).front(), result);
 }
 
 }  // namespace vela::vm::internal

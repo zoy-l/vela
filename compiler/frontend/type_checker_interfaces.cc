@@ -33,7 +33,7 @@ void TypeChecker::ResolveInterfaces(const Program& program) {
   std::uint32_t index = 0;
   for (const auto& source : program.interfaces) {
     InterfaceDescriptor interface;
-    interface.type = {.kind = Type::Kind::Interface, .name = source.name};
+    interface.type = {.kind = Type::Kind::Interface, .name = InternTypeName(source.name)};
     interface.index = interface_ids_ == nullptr ? index++ : interface_ids_->Get(source.name);
     for (const auto& method : source.methods) {
       if (!interface.methods.emplace(method.name, ResolveSignature(method)).second) {

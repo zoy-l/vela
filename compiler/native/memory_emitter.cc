@@ -14,6 +14,7 @@
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "base/opcode.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native_abi.h"
@@ -192,24 +193,41 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
   }
 }
 
-void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
+llvm::Value* FunctionEmitter::ProgramData() {
+  using runtime::NativeMemoryLayout;
+  auto* pointer = builder_.getPtrTy();
+  auto* instance = builder_.CreateLoad(
+      pointer, ByteAddress(body_->getArg(0), NativeMemoryLayout::kExecutionInstance));
+  return builder_.CreateLoad(pointer, ByteAddress(instance, NativeMemoryLayout::kInstanceData));
+}
+
+void FunctionEmitter::EmitGlobal(const ir::Instruction& instruction) {
   if (program_.native_mode == NativeProgramMode::Reloadable) {
-    auto helper = module_.getOrInsertFunction("vela_native_v3_load_global", builder_.getInt8Ty(),
-                                              builder_.getPtrTy(), builder_.getInt64Ty(),
-                                              builder_.getPtrTy());
+    const auto reading = instruction.opcode == Opcode::GetGlobal;
+    auto helper = module_.getOrInsertFunction(
+        reading ? "vela_native_v3_load_global" : "vela_native_v3_store_global",
+        builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
     const auto declaration = program_.global_declarations.at(instruction.index);
+    auto* value = reading ? result_ : Pack(Encode(instruction.lhs), 0);
     CheckStatus(builder_.CreateCall(
-        helper, {body_->getArg(0), builder_.getInt64(declaration.value), result_}));
-    Unpack(instruction.dst);
+        helper, {body_->getArg(0), builder_.getInt64(declaration.value), value}));
+    if (reading) {
+      Unpack(instruction.dst);
+    }
     return;
   }
+  if (instruction.opcode == Opcode::GetGlobal) {
+    EmitGlobalLoad(instruction);
+  } else {
+    EmitGlobalStore(instruction);
+  }
+}
+
+void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
   using runtime::NativeMemoryLayout;
   auto* pointer = builder_.getPtrTy();
   auto* execution = body_->getArg(0);
-  auto* instance =
-      builder_.CreateLoad(pointer, ByteAddress(execution, NativeMemoryLayout::kExecutionInstance));
-  auto* data =
-      builder_.CreateLoad(pointer, ByteAddress(instance, NativeMemoryLayout::kInstanceData));
+  auto* data = ProgramData();
   auto* states =
       builder_.CreateLoad(pointer, ByteAddress(data, NativeMemoryLayout::kProgramGlobalStates));
   auto* state = builder_.CreateLoad(builder_.getInt8Ty(), ByteAddress(states, instruction.index));
@@ -236,17 +254,13 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
   auto helper = module_.getOrInsertFunction("vela_native_v2_initialize_global",
                                             builder_.getInt8Ty(), pointer, builder_.getInt32Ty(),
                                             builder_.getInt64Ty(), builder_.getInt8Ty(), pointer);
-  const auto position = runtime::EncodeNativeTracePosition({
-      .function = static_cast<std::uint32_t>(function_index_),
-      .instruction = static_cast<std::uint32_t>(origins_.subspan(instruction_index_).front()),
-  });
   const auto frame_kind =
       leaf_entry_ ? runtime::NativeGlobalFrame::Leaf : runtime::NativeGlobalFrame::Current;
   CheckStatus(
       builder_.CreateCall(helper, {
                                       execution,
                                       builder_.getInt32(instruction.index),
-                                      builder_.getInt64(position),
+                                      builder_.getInt64(TracePosition()),
                                       builder_.getInt8(static_cast<std::uint8_t>(frame_kind)),
                                       result_,
                                   }));
@@ -256,24 +270,9 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
 }
 
 void FunctionEmitter::EmitGlobalStore(const ir::Instruction& instruction) {
-  if (program_.native_mode == NativeProgramMode::Reloadable) {
-    auto helper = module_.getOrInsertFunction("vela_native_v3_store_global", builder_.getInt8Ty(),
-                                              builder_.getPtrTy(), builder_.getInt64Ty(),
-                                              builder_.getPtrTy());
-    const auto declaration = program_.global_declarations.at(instruction.index);
-    CheckStatus(builder_.CreateCall(helper, {
-                                                body_->getArg(0),
-                                                builder_.getInt64(declaration.value),
-                                                Pack(Encode(instruction.lhs), 0),
-                                            }));
-    return;
-  }
   using runtime::NativeMemoryLayout;
   auto* pointer = builder_.getPtrTy();
-  auto* instance = builder_.CreateLoad(
-      pointer, ByteAddress(body_->getArg(0), NativeMemoryLayout::kExecutionInstance));
-  auto* data =
-      builder_.CreateLoad(pointer, ByteAddress(instance, NativeMemoryLayout::kInstanceData));
+  auto* data = ProgramData();
   auto* globals = builder_.CreateLoad(
       pointer,
       ByteAddress(data, NativeMemoryLayout::kProgramGlobals + NativeMemoryLayout::kValuePayload));
@@ -376,7 +375,8 @@ void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Built
                                          ByteAddress(array, NativeMemoryLayout::kArrayMutation));
     Check(builder_.CreateICmpEQ(mutation, Payload(instruction.lhs + 1)),
           ExecutionStatus::ConcurrentModification);
-    Store(instruction.dst, builder_.getFalse(), {.kind = Kind::Null, .name = "null"});
+    Store(instruction.dst, builder_.getFalse(),
+          {.kind = Kind::Null, .name = frontend::kNullTypeName});
     return;
   }
   if (builtin != Builtin::ArrayPush) {
@@ -389,7 +389,7 @@ void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Built
     auto* type = builtin == Builtin::ArrayMutation ? builder_.getInt64Ty() : builder_.getInt32Ty();
     auto* value = builder_.CreateLoad(type, ByteAddress(array, offset));
     Store(instruction.dst, builder_.CreateZExtOrTrunc(value, builder_.getInt64Ty()),
-          {.kind = Kind::Int, .name = "int"});
+          {.kind = Kind::Int, .name = frontend::kIntTypeName});
     return;
   }
   auto* length_address = ByteAddress(array, NativeMemoryLayout::kObjectLength);
@@ -422,7 +422,7 @@ void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Built
   builder_.CreateStore(builder_.CreateAdd(mutation, builder_.getInt64(1)), mutation_address);
   EmitWriteBarrier(array, reg);
   Store(instruction.dst, builder_.CreateZExt(next_length, builder_.getInt64Ty()),
-        {.kind = Kind::Int, .name = "int"});
+        {.kind = Kind::Int, .name = frontend::kIntTypeName});
 }
 
 }  // namespace vela::compiler::native

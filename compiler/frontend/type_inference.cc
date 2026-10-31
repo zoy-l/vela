@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "compiler/frontend/ast.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 namespace {
@@ -29,7 +30,7 @@ bool IsSame(const TypeName& left, const TypeName& right) {
 }
 
 TypeName Nullable(TypeName type) {
-  if (type.kind == TypeName::Kind::Nullable || type.name == "dynamic") {
+  if (type.kind == TypeName::Kind::Nullable || type.name == kDynamicTypeName) {
     return type;
   }
   TypeName result{
@@ -53,8 +54,8 @@ TypeInference::TypeInference(std::span<const std::string> parameters)
 
 void TypeInference::Bind(const std::string& name, const TypeName& type, Evidence evidence) {
   auto& variable = variables_.at(name);
-  if (variable.type && variable.type->name == "null" && type.name != "null" &&
-      type.name != "void") {
+  if (variable.type && variable.type->name == kNullTypeName && type.name != kNullTypeName &&
+      type.name != kVoidTypeName) {
     variable = {.type = Nullable(type), .evidence = evidence};
     return;
   }
@@ -77,10 +78,10 @@ std::optional<TypeName> TypeInference::CommonType(const TypeName& left, const Ty
   if (IsSame(left, right)) {
     return left;
   }
-  if (left.name == "null" && right.name != "void") {
+  if (left.name == kNullTypeName && right.name != kVoidTypeName) {
     return Nullable(right);
   }
-  if (right.name == "null" && left.name != "void") {
+  if (right.name == kNullTypeName && left.name != kVoidTypeName) {
     return Nullable(left);
   }
   if (left.kind == TypeName::Kind::Nullable && IsSame(left.arguments.front(), right)) {
@@ -101,7 +102,7 @@ void TypeInference::Constrain(const TypeName& pattern, const TypeName& actual, E
     return;
   }
   if (pattern.kind == TypeName::Kind::Nullable) {
-    if (actual.name != "null") {
+    if (actual.name != kNullTypeName) {
       Constrain(pattern.arguments.front(),
                 actual.kind == TypeName::Kind::Nullable ? actual.arguments.front() : actual,
                 evidence);
@@ -144,7 +145,7 @@ std::vector<std::string> TypeInference::Unresolved() const {
   std::vector<std::string> result;
   for (const auto& parameter : parameters_) {
     const auto& variable = variables_.at(parameter);
-    if (!variable.type || variable.type->name == "null") {
+    if (!variable.type || variable.type->name == kNullTypeName) {
       result.push_back(parameter);
     }
   }
@@ -172,7 +173,7 @@ std::optional<TypeInference::Solution> TypeInference::Solve() const {
   }
   Solution result;
   for (const auto& [name, variable] : variables_) {
-    if (!variable.type || variable.type->name == "null") {
+    if (!variable.type || variable.type->name == kNullTypeName) {
       return std::nullopt;
     }
     result.variables_.emplace(name, *variable.type);
@@ -181,16 +182,7 @@ std::optional<TypeInference::Solution> TypeInference::Solve() const {
 }
 
 TypeName TypeInference::Solution::Substitute(TypeName pattern) const {
-  if (pattern.kind == TypeName::Kind::Named) {
-    const auto found = variables_.find(pattern.name);
-    if (found != variables_.end()) {
-      return found->second;
-    }
-  }
-  for (auto& argument : pattern.arguments) {
-    argument = Substitute(std::move(argument));
-  }
-  return pattern;
+  return SubstituteTypeName(std::move(pattern), variables_);
 }
 
 }  // namespace vela::frontend

@@ -50,23 +50,13 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
         .location = expression.location,
     });
   } else {
-    for (std::size_t source_index = 0; source_index < expression.arguments.size(); ++source_index) {
-      const auto& argument = expression.arguments.at(source_index);
-      const auto index = model_.argument_order.at(&expression).at(source_index);
-      const auto value = LowerExpression(*argument.value);
-      Emit({
-          .opcode = Opcode::Move,
-          .dst = static_cast<RegisterId>(base + receiver_count + index),
-          .lhs = value.reg,
-          .location = argument.location,
-      });
-    }
+    LowerArguments(expression, static_cast<RegisterId>(base + receiver_count));
   }
   if (HasRegExpArrayLayout(builtin)) {
     auto type = model_.expression_types.at(&expression);
     type.nullable = false;
     if (type.name.ends_with('?')) {
-      type.name.pop_back();
+      type.name = type.name.substr(0, type.name.size() - 1);
     }
     Emit({
         .opcode = Opcode::LoadInt,
@@ -76,22 +66,8 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
     });
   }
   const auto result = AllocateTemporary(expression.location);
-  Emit({
-      .opcode = Opcode::BuiltinCall,
-      .dst = result,
-      .lhs = base,
-      .index = static_cast<std::uint32_t>(builtin),
-      .location = expression.location,
-  });
-  if (null_jump) {
-    const auto end_jump = current_function_->instructions.size();
-    Emit({.opcode = Opcode::Jump, .location = expression.location});
-    current_function_->instructions.at(*null_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-    Emit({.opcode = Opcode::LoadNull, .dst = result, .location = expression.location});
-    current_function_->instructions.at(end_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
-  }
+  EmitBuiltinCall(builtin, result, base, expression.location);
+  FinishNullSafe(null_jump, result, expression.location);
   return {.reg = result, .type = model_.expression_types.at(&expression)};
 }
 

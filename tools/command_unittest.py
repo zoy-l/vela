@@ -2,24 +2,19 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import re
 import subprocess
-import tempfile
 import unittest
 
-from tools.config import ROOT, executable_name
+from tools.config import ROOT
+from tools.test_support import CommandTestCase
 
 
-class CommandTest(unittest.TestCase):
+class CommandTest(CommandTestCase):
     def setUp(self) -> None:
-        temporary = tempfile.TemporaryDirectory(prefix="vela-command-")
-        self.addCleanup(temporary.cleanup)
-        self.directory = Path(temporary.name)
+        super().setUp()
         self.entry = self.directory / "main.vela"
-        self.executable = Path(os.environ.get(
-            "VELA_TEST_EXECUTABLE", ROOT / "out" / "debug" / executable_name("vela")))
 
     def write(self, source: str) -> None:
         self.entry.write_text(source, encoding="utf-8", newline="\n")
@@ -30,6 +25,13 @@ class CommandTest(unittest.TestCase):
                                 cwd=self.directory, timeout=20, check=False)
         self.assertEqual(result.returncode, expected, result.stderr)
         return result
+
+    def format_and_document(self, signature: str) -> None:
+        self.write(self.command("fmt", self.entry).stdout)
+        self.command("fmt", "--check", self.entry)
+        output = self.directory / "api.md"
+        self.command("doc", self.entry, output)
+        self.assertIn(signature, output.read_text(encoding="utf-8"))
 
     def test_compiles_and_executes_an_image_after_sources_are_deleted(self) -> None:
         self.write("func main(): int { return 42; }")
@@ -112,12 +114,7 @@ class CommandTest(unittest.TestCase):
     def test_byte_api_source_tools_and_source_free_image_execution(self) -> None:
         self.write("export func make(size: int): ByteData { return ByteData.view(ByteArray(size)); }\n"
                    "func main(): int { const view = make(4); view.setInt32(0,42); return view.getInt32(0); }")
-        formatted = self.command("fmt", self.entry).stdout
-        self.write(formatted)
-        self.command("fmt", "--check", self.entry)
-        output = self.directory / "api.md"
-        self.command("doc", self.entry, output)
-        self.assertIn("func make(size: int): ByteData", output.read_text(encoding="utf-8"))
+        self.format_and_document("func make(size: int): ByteData")
         image = self.directory / "bytes.vbc"
         self.command("compile", self.entry, image)
         self.entry.unlink()
@@ -151,12 +148,7 @@ class CommandTest(unittest.TestCase):
         self.write("export func encode(value: dynamic): string { return Json.stringify(value); }\n"
                    "func main(): int { const root: dynamic = Json.parse('[40,true,null]'); "
                    "root[0] += 2; return encode(root) == '[42,true,null]' ? 42 : 0; }")
-        formatted = self.command("fmt", self.entry).stdout
-        self.write(formatted)
-        self.command("fmt", "--check", self.entry)
-        output = self.directory / "api.md"
-        self.command("doc", self.entry, output)
-        self.assertIn("func encode(value: dynamic): string", output.read_text(encoding="utf-8"))
+        self.format_and_document("func encode(value: dynamic): string")
         image = self.directory / "json.vbc"
         self.command("compile", self.entry, image)
         self.entry.unlink()

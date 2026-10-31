@@ -5,6 +5,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
 #include "vm/vm.h"
 
@@ -31,20 +32,20 @@ func folded(): int { return 2000000000 * 2000000000; }
 
 TEST(ConstantPoolTest, DeduplicatesLargeIntegersAndPreservesSmallImmediateFastPath) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileCleanSource(R"(
 func main(): int {
   let total = 0;
   for (let index = 0; index < 2; index = index + 1) { total = total + 40000; }
   return total - 40000;
 })",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto& function = compiled.program.functions().front();
+                                                 isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto& function = compiled->functions().front();
   ASSERT_EQ(function.integers.size(), 1U);
   EXPECT_EQ(function.integers.front(), 40000);
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 40000);
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 40000);
 }
 
 class InvalidIntegerLiteralTest : public testing::TestWithParam<std::string_view> {};

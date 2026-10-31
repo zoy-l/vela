@@ -1,16 +1,16 @@
 #include "compiler/frontend/type_checker.h"
 
-#include <charconv>
+#include <array>
 #include <cstdint>
-#include <limits>
-#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <type_traits>
+#include <utility>
 #include <variant>
 
+#include "base/integer_arithmetic.h"
+#include "base/opcode.h"
 #include "compiler/frontend/ast.h"
 
 namespace vela::frontend {
@@ -33,19 +33,17 @@ namespace {
 std::optional<ConstantValue> IntegerConstant(std::string_view operation,
                                              std::int64_t left,
                                              std::int64_t right) {
-  std::int64_t result = 0;
-  if (operation == "+" && !__builtin_add_overflow(left, right, &result)) {
-    return result;
-  }
-  if (operation == "-" && !__builtin_sub_overflow(left, right, &result)) {
-    return result;
-  }
-  if (operation == "*" && !__builtin_mul_overflow(left, right, &result)) {
-    return result;
-  }
-  if (operation == "/" && right != 0 &&
-      (left != std::numeric_limits<std::int64_t>::min() || right != -1)) {
-    return left / right;
+  constexpr std::array<std::pair<std::string_view, Opcode>, 4> kArithmetic = {{
+      {"+", Opcode::AddInt},
+      {"-", Opcode::SubInt},
+      {"*", Opcode::MulInt},
+      {"/", Opcode::DivInt},
+  }};
+  for (const auto& [symbol, opcode] : kArithmetic) {
+    if (operation == symbol) {
+      const auto result = EvaluateIntegerArithmetic(opcode, left, right);
+      return result ? std::optional<ConstantValue>(*result) : std::nullopt;
+    }
   }
   if (operation == "<") {
     return left < right;
@@ -74,10 +72,9 @@ std::optional<ConstantValue> TypeChecker::EvaluateUnaryConstant(
     return !std::get<bool>(*operand);
   }
   if (expression.text == "-" && std::holds_alternative<std::int64_t>(*operand)) {
-    const auto integer = std::get<std::int64_t>(*operand);
-    if (integer != std::numeric_limits<std::int64_t>::min()) {
-      return -integer;
-    }
+    const auto result =
+        EvaluateIntegerArithmetic(Opcode::SubInt, 0, std::get<std::int64_t>(*operand));
+    return result ? std::optional<ConstantValue>(*result) : std::nullopt;
   }
   return std::nullopt;
 }
@@ -117,10 +114,8 @@ std::optional<ConstantValue> TypeChecker::EvaluateConstant(const Expression& exp
   using Kind = Expression::Kind;
   switch (expression.kind) {
     case Kind::IntegerLiteral: {
-      std::int64_t value = 0;
-      const auto parsed =
-          std::from_chars(expression.text.data(), std::to_address(expression.text.end()), value);
-      return parsed.ec == std::errc() ? std::optional<ConstantValue>(value) : std::nullopt;
+      const auto value = expression.IntegerValue();
+      return value ? std::optional<ConstantValue>(*value) : std::nullopt;
     }
     case Kind::BooleanLiteral:
       return expression.boolean_value;
@@ -145,7 +140,7 @@ std::optional<ConstantValue> TypeChecker::EvaluateConstant(const Expression& exp
           LookupLocal(expression.object->text) == nullptr) {
         const auto type = types_.find(expression.object->text);
         const auto name = type == types_.end() ? expression.object->text : type->second.name;
-        const auto found = enum_values_.find(name + "." + expression.text);
+        const auto found = enum_values_.find(std::string(name) + "." + expression.text);
         if (found != enum_values_.end()) {
           return found->second;
         }

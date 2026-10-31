@@ -293,17 +293,7 @@ frontend::TypeName MockGenerator::Expand(const frontend::TypeName& type) const {
   for (std::size_t index = 0; index < declaration.type_parameters.size(); ++index) {
     substitutions.emplace(declaration.type_parameters.at(index), result.arguments.at(index));
   }
-  const auto substitute = [&substitutions](auto&& self,
-                                           frontend::TypeName input) -> frontend::TypeName {
-    if (const auto found = substitutions.find(input.name); found != substitutions.end()) {
-      return found->second;
-    }
-    for (auto& argument : input.arguments) {
-      argument = self(self, std::move(argument));
-    }
-    return input;
-  };
-  return Expand(substitute(substitute, declaration.target));
+  return Expand(frontend::SubstituteTypeName(declaration.target, substitutions));
 }
 
 std::string MockGenerator::PublicName(const std::string& name, SourceLocation location) {

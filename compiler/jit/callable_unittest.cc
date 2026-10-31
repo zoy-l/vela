@@ -4,7 +4,6 @@
 #include <memory>
 #include <span>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -13,6 +12,7 @@
 #include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
+#include "compiler/jit/test_support.h"
 #include "compiler/source_session.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
@@ -23,14 +23,7 @@
 namespace vela::compiler::jit {
 namespace {
 
-std::string DiagnosticsText(const frontend::Diagnostics& diagnostics) {
-  std::string text;
-  for (const auto& diagnostic : diagnostics) {
-    text += diagnostic.source_path + ':' + std::to_string(diagnostic.location.line) + ": " +
-            diagnostic.message + '\n';
-  }
-  return text;
-}
+using frontend::DiagnosticsText;
 
 struct JitCallableTest : public testing::TestWithParam<NativeCodeTier> {
   void SetUp() override {
@@ -40,31 +33,7 @@ struct JitCallableTest : public testing::TestWithParam<NativeCodeTier> {
   }
 
   std::expected<void, std::string> Publish(std::string text) {
-    const auto revision = source_.snapshot()->revision;
-    const auto source = source_.Prepare({
-        .base_revision = revision,
-        .changes = {{.path = "main.vela", .text = std::move(text)}},
-        .added_roots = {},
-    });
-    if (!source) {
-      return std::unexpected(DiagnosticsText(source.error().diagnostics));
-    }
-    const auto code = compiler_->Compile(source->snapshot().program, {.tier = GetParam()});
-    if (!code) {
-      return std::unexpected(DiagnosticsText(code.error()));
-    }
-    auto& dispatch = isolate_.native_dispatch();
-    auto runtime = dispatch.Prepare(revision, code->image);
-    if (!runtime) {
-      return std::unexpected(runtime.error().message);
-    }
-    if (const auto published = dispatch.Publish(std::move(*runtime)); !published) {
-      return std::unexpected("test publication failed");
-    }
-    if (const auto published = source_.Commit(*source); !published) {
-      return std::unexpected("test source publication failed");
-    }
-    return {};
+    return test::UpdateSource(*compiler_, source_, isolate_, std::move(text), GetParam());
   }
 
   std::unique_ptr<Compiler> compiler_;

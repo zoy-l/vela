@@ -20,10 +20,9 @@ std::uint32_t Lowerer::RegisterCollectionType(frontend::TypeDescriptor type) {
   collection_type_ids_.emplace(type.name, index);
   program_.collection_types.push_back(type);
   for (const auto& argument : model_.generic_arguments.at(type.name)) {
-    const auto array_name =
-        (argument.kind == frontend::TypeDescriptor::Kind::Function ? "(" + argument.name + ")"
-                                                                   : argument.name) +
-        "[]";
+    const auto array_name = argument.kind == frontend::TypeDescriptor::Kind::Function
+                                ? "(" + std::string(argument.name) + ")[]"
+                                : std::string(argument.name) + "[]";
     static_cast<void>(RegisterArrayType(model_.types.at(array_name)));
   }
   return index;

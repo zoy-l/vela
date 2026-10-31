@@ -13,38 +13,45 @@
 
 #include "compiler/frontend/builtins.h"
 #include "compiler/frontend/standard_environment.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 
 void TypeChecker::CollectTypes(const Program& program) {
-  types_.emplace("void", Type{.kind = Type::Kind::Void, .name = "void"});
-  types_.emplace("dynamic", Type{.kind = Type::Kind::Dynamic, .name = "dynamic"});
-  static_cast<void>(ArrayType(types_.at("dynamic")));
-  types_.emplace("bool", Type{.kind = Type::Kind::Bool, .name = "bool"});
-  types_.emplace("int", Type{.kind = Type::Kind::Int, .name = "int"});
-  types_.emplace("double", Type{.kind = Type::Kind::Double, .name = "double"});
-  types_.emplace("string", Type{.kind = Type::Kind::String, .name = "string"});
-  types_.emplace("String", Type{.kind = Type::Kind::MutableString, .name = "String"});
-  types_.emplace("ByteArray", Type{.kind = Type::Kind::ByteArray, .name = "ByteArray"});
-  types_.emplace("ByteData", Type{.kind = Type::Kind::ByteData, .name = "ByteData"});
-  types_.emplace("RegExp", Type{.kind = Type::Kind::RegExp, .name = "RegExp"});
-  types_.emplace("RegExpMatch", Type{.kind = Type::Kind::RegExpMatch, .name = "RegExpMatch"});
-  types_.emplace("Timer", Type{.kind = Type::Kind::Timer, .name = "Timer"});
-  types_.emplace("CancellationToken",
-                 Type{.kind = Type::Kind::CancellationToken, .name = "CancellationToken"});
-  static_cast<void>(ArrayType(types_.at("string")));
-  static_cast<void>(ArrayType(types_.at("int")));
-  static_cast<void>(ArrayType(types_.at("RegExpMatch")));
-  static_cast<void>(NullableType(types_.at("RegExpMatch")));
-  static_cast<void>(ArrayType(NullableType(types_.at("string"))));
-  const Type json_object{.kind = Type::Kind::Map, .name = "Map<string, dynamic>"};
+  const auto register_builtin = [this](Type::Kind kind, std::string_view name) {
+    types_.emplace(name, Type{.kind = kind, .name = name});
+  };
+  register_builtin(Type::Kind::Void, kVoidTypeName);
+  register_builtin(Type::Kind::Dynamic, kDynamicTypeName);
+  register_builtin(Type::Kind::Bool, kBoolTypeName);
+  register_builtin(Type::Kind::Int, kIntTypeName);
+  register_builtin(Type::Kind::Double, kDoubleTypeName);
+  register_builtin(Type::Kind::String, kStringTypeName);
+  register_builtin(Type::Kind::MutableString, kMutableStringTypeName);
+  register_builtin(Type::Kind::ByteArray, kByteArrayTypeName);
+  register_builtin(Type::Kind::ByteData, kByteDataTypeName);
+  register_builtin(Type::Kind::RegExp, kRegExpTypeName);
+  register_builtin(Type::Kind::RegExpMatch, kRegExpMatchTypeName);
+  register_builtin(Type::Kind::Timer, kTimerTypeName);
+  register_builtin(Type::Kind::CancellationToken, kCancellationTokenTypeName);
+  static_cast<void>(ArrayType(types_.at(kDynamicTypeName)));
+  static_cast<void>(ArrayType(types_.at(kStringTypeName)));
+  static_cast<void>(ArrayType(types_.at(kIntTypeName)));
+  static_cast<void>(ArrayType(types_.at(kRegExpMatchTypeName)));
+  static_cast<void>(NullableType(types_.at(kRegExpMatchTypeName)));
+  static_cast<void>(ArrayType(NullableType(types_.at(kStringTypeName))));
+  const Type json_object{
+      .kind = Type::Kind::Map,
+      .name = InternTypeName(std::string(kMapTypeName) + "<" + std::string(kStringTypeName) + ", " +
+                             std::string(kDynamicTypeName) + ">"),
+  };
   types_.emplace(json_object.name, json_object);
-  generic_arguments_.emplace(json_object.name,
-                             std::vector<Type>{types_.at("string"), types_.at("dynamic")});
+  generic_arguments_.emplace(
+      json_object.name, std::vector<Type>{types_.at(kStringTypeName), types_.at(kDynamicTypeName)});
   types_.reserve(types_.size() + program.enums.size() + program.classes.size());
   classes_.reserve(program.classes.size());
   for (const auto& interface : program.interfaces) {
-    const Type type{.kind = Type::Kind::Interface, .name = interface.name};
+    const Type type{.kind = Type::Kind::Interface, .name = InternTypeName(interface.name)};
     if (IsBuiltinName(interface.name) || !types_.emplace(interface.name, type).second) {
       AddDiagnostic(interface.location, "duplicate or reserved interface '" + interface.name + "'");
     }
@@ -55,7 +62,7 @@ void TypeChecker::CollectTypes(const Program& program) {
       AddDiagnostic(enumeration.location, "type name is reserved for a builtin");
       continue;
     }
-    const Type type{.kind = Type::Kind::Enum, .name = enumeration.name};
+    const Type type{.kind = Type::Kind::Enum, .name = InternTypeName(enumeration.name)};
     if (!types_.emplace(enumeration.name, type).second) {
       AddDiagnostic(enumeration.location, "duplicate type '" + enumeration.name + "'");
       continue;
@@ -81,7 +88,7 @@ void TypeChecker::CollectTypes(const Program& program) {
       AddDiagnostic(class_declaration.location, "type name is reserved for a builtin");
       continue;
     }
-    const Type type{.kind = Type::Kind::Class, .name = class_declaration.name};
+    const Type type{.kind = Type::Kind::Class, .name = InternTypeName(class_declaration.name)};
     if (!types_.emplace(class_declaration.name, type).second) {
       AddDiagnostic(class_declaration.location, "duplicate type '" + class_declaration.name + "'");
       continue;
@@ -140,7 +147,7 @@ void TypeChecker::ResolveClassRelations(const Class& class_declaration, ClassInf
     const auto type = ResolveType(interface, false);
     if (type.kind != Type::Kind::Interface || type.nullable) {
       AddDiagnostic(interface.location, "implements requires an interface type");
-    } else if (!info.interfaces.insert(type.name).second) {
+    } else if (!info.interfaces.insert(std::string(type.name)).second) {
       AddDiagnostic(interface.location, "duplicate implemented interface");
     }
   }
@@ -258,12 +265,9 @@ void TypeChecker::ResolveField(const Field& field,
     info.field_order.push_back(field.name);
   }
   if (class_declaration.IsConstructorField(field)) {
-    info.constructor.parameter_indices.emplace(
-        field.name, static_cast<std::uint32_t>(info.constructor.parameters.size()));
-    info.constructor.parameters.push_back({.name = field.name, .type = type});
-    if (field.initializer) {
-      info.constructor.optional_parameters.insert(field.name);
-    }
+    using Presence = FunctionDescriptor::ParameterPresence;
+    info.constructor.AddParameter(field.name, type,
+                                  field.initializer ? Presence::Optional : Presence::Required);
   }
 }
 
@@ -281,22 +285,27 @@ TypeChecker::Type TypeChecker::CheckClassConstruction(
   return CheckFunctionCall(class_info.constructor, expression, checked_arguments);
 }
 
+const TypeChecker::ClassInfo* TypeChecker::CheckSuperClass(SourceLocation location) {
+  if (owner_ == nullptr || !owner_->base_class) {
+    AddDiagnostic(location, "super requires a derived class context");
+    return nullptr;
+  }
+  const auto base = classes_.find(*owner_->base_class);
+  return base == classes_.end() ? nullptr : &base->second;
+}
+
 TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression,
                                                  const Type* expected) {
   if (const auto* owner = StaticOwner(expression)) {
     return CheckStaticMember(expression, *owner);
   }
   if (expression.object->kind == Expression::Kind::Name && expression.object->text == "super") {
-    if (owner_ == nullptr || !owner_->base_class) {
-      AddDiagnostic(expression.location, "super requires a derived class context");
+    const auto* base = CheckSuperClass(expression.location);
+    if (base == nullptr) {
       return InvalidType();
     }
-    const auto base = classes_.find(*owner_->base_class);
-    if (base == classes_.end()) {
-      return InvalidType();
-    }
-    const auto method = base->second.methods.find(expression.text);
-    if (method == base->second.methods.end()) {
+    const auto method = base->methods.find(expression.text);
+    if (method == base->methods.end()) {
       AddDiagnostic(expression.location, "unknown super member '" + expression.text + "'");
       return InvalidType();
     }
@@ -308,7 +317,7 @@ TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression,
       LookupLocal(expression.object->text) == nullptr) {
     const auto enumeration = types_.find(expression.object->text);
     if (enumeration != types_.end() && enumeration->second.kind == Type::Kind::Enum) {
-      if (enum_values_.contains(enumeration->second.name + "." + expression.text)) {
+      if (enum_values_.contains(std::string(enumeration->second.name) + "." + expression.text)) {
         return enumeration->second;
       }
       AddDiagnostic(expression.location, "unknown enum member '" + expression.text + "'");
@@ -334,14 +343,16 @@ TypeChecker::Type TypeChecker::CheckStaticMember(const Expression& expression,
   if (field != owner.static_fields.end()) {
     CheckAccess(field->second.visibility, owner.type.name, expression.location);
     static_members_.insert_or_assign(
-        &expression, MemberReference{.owner = owner.type.name, .member = expression.text});
+        &expression,
+        MemberReference{.owner = std::string(owner.type.name), .member = expression.text});
     return field->second.type;
   }
   const auto method = owner.methods.find(expression.text);
   if (method != owner.methods.end() && method->second.storage == MemberStorage::Static) {
     CheckAccess(method->second.visibility, owner.type.name, expression.location);
     static_members_.insert_or_assign(
-        &expression, MemberReference{.owner = owner.type.name, .member = expression.text});
+        &expression,
+        MemberReference{.owner = std::string(owner.type.name), .member = expression.text});
     return FunctionType(method->second);
   }
   AddDiagnostic(expression.location, "class access requires a declared static member");
@@ -365,14 +376,15 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
     if (IsRegExpBuiltin(*builtin)) {
       return BuiltinSignature(*builtin).return_type;
     }
-    return {.kind = Type::Kind::Int, .name = "int"};
+    return {.kind = Type::Kind::Int, .name = kIntTypeName};
   }
   if (object.kind == Type::Kind::Interface) {
     const auto& owner = interfaces_.at(object.name);
     const auto method = owner.methods.find(expression.text);
     if (method != owner.methods.end()) {
       interface_members_.insert_or_assign(
-          &expression, MemberReference{.owner = object.name, .member = expression.text});
+          &expression,
+          MemberReference{.owner = std::string(object.name), .member = expression.text});
       return FunctionType(method->second);
     }
   }

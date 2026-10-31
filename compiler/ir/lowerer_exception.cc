@@ -48,14 +48,8 @@ void Lowerer::LowerReturn(const frontend::Statement& statement) {
   RegisterId result = 0;
   if (statement.expression) {
     const auto value = LowerExpression(*statement.expression);
-    if (current_function_->is_async && value.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+    if (current_function_->is_async) {
       result = LowerFuturePayload(value, current_function_->return_type, statement.location);
-    } else if (current_function_->is_async &&
-               value.type.kind == frontend::TypeDescriptor::Kind::Enum) {
-      result = LowerConversion(value,
-                               {.kind = frontend::TypeDescriptor::Kind::Dynamic, .name = "dynamic"},
-                               statement.location)
-                   .reg;
     } else {
       result = value.reg;
     }

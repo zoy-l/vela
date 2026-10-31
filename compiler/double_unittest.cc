@@ -4,7 +4,7 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"
@@ -40,15 +40,9 @@ func main(): bool {
 }
 )";
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(source, isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  const auto index = entry.index();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, index);
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = vm::VirtualMachine(isolate).Execute(entry->program(), entry->index());
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -56,15 +50,13 @@ func main(): bool {
 
 TEST(DoubleTest, DeduplicatesConstantsAndReturnsDouble) {
   runtime::Isolate isolate;
-  const auto compiled =
-      CompileSource("func main(): double { return 42.5 + 42.5 + 42.5; }", isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  const auto& function = entry.program().functions().subspan(entry.index()).front();
+  const auto entry =
+      test::CompileEntry("func main(): double { return 42.5 + 42.5 + 42.5; }", isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto& function = entry->program().functions().subspan(entry->index()).front();
   ASSERT_EQ(function.doubles.size(), 1U);
   EXPECT_DOUBLE_EQ(function.doubles.front(), 42.5);
-  const auto result = vm::VirtualMachine(isolate).Execute(entry);
+  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsDouble());
   EXPECT_DOUBLE_EQ(result.value.AsDouble(), 127.5);
@@ -81,11 +73,9 @@ TEST_P(DoubleConstantTest, PreservesBinary64ConstantsAndSignedZero) {
   const auto& parameter = GetParam();
   SCOPED_TRACE(parameter.source);
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(parameter.source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  const auto result = vm::VirtualMachine(isolate).Execute(entry);
+  const auto entry = test::CompileEntry(parameter.source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsDouble());
   const double actual = result.value.AsDouble();
@@ -121,11 +111,9 @@ func main(): bool {
 }
 )";
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  const auto result = vm::VirtualMachine(isolate).Execute(entry);
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
   ASSERT_TRUE(result.Succeeded());
   ASSERT_TRUE(result.value.IsBoolean());
   EXPECT_TRUE(result.value.AsBoolean());
@@ -137,11 +125,10 @@ TEST_P(DoubleDivisionByZeroTest, ReportsDivisionByZero) {
   const auto source = GetParam();
   SCOPED_TRACE(source);
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.program.FindFunction("main");
-  ASSERT_TRUE(entry.IsValid());
-  EXPECT_EQ(vm::VirtualMachine(isolate).Execute(entry).status, vm::ExecutionStatus::DivisionByZero);
+  const auto entry = test::CompileEntry(source, isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  EXPECT_EQ(vm::VirtualMachine(isolate).Execute(*entry).status,
+            vm::ExecutionStatus::DivisionByZero);
 }
 
 INSTANTIATE_TEST_SUITE_P(SignedZero,

@@ -2,18 +2,16 @@
 
 #include <cstdint>
 #include <expected>
-#include <limits>
 #include <utility>
 
 #include "base/execution_status.h"
+#include "base/integer_arithmetic.h"
 #include "base/opcode.h"
 #include "runtime/value.h"
 
 namespace vela::runtime::internal {
 
 // VM 热分派和动态数值操作共用叶实现；内联使 VM 保留同一优化边界。
-inline constexpr std::uint64_t kIntShiftMask = std::numeric_limits<std::uint64_t>::digits - 1;
-
 struct NumericOperands final {
   Value left;
   Value right;
@@ -21,63 +19,11 @@ struct NumericOperands final {
 
 [[clang::always_inline]] inline std::expected<Value, ExecutionStatus>
 IntegerArithmetic(Opcode opcode, std::int64_t left, std::int64_t right) noexcept {
-  std::int64_t result = 0;
-  bool overflow = false;
-  switch (opcode) {
-    case Opcode::AddInt:
-      overflow = __builtin_add_overflow(left, right, &result);
-      break;
-    case Opcode::SubInt:
-      overflow = __builtin_sub_overflow(left, right, &result);
-      break;
-    case Opcode::MulInt:
-      overflow = __builtin_mul_overflow(left, right, &result);
-      break;
-    case Opcode::DivInt:
-      if (right == 0) {
-        return std::unexpected(ExecutionStatus::DivisionByZero);
-      }
-      overflow = left == std::numeric_limits<std::int64_t>::min() && right == -1;
-      if (!overflow) {
-        result = left / right;
-      }
-      break;
-    case Opcode::ModInt:
-      if (right == 0) {
-        return std::unexpected(ExecutionStatus::DivisionByZero);
-      }
-      overflow = left == std::numeric_limits<std::int64_t>::min() && right == -1;
-      if (!overflow) {
-        result = left % right;
-      }
-      break;
-    case Opcode::BitAndInt:
-      result = left & right;
-      break;
-    case Opcode::BitOrInt:
-      result = left | right;
-      break;
-    case Opcode::BitXorInt:
-      result = left ^ right;
-      break;
-    case Opcode::ShiftLeftInt:
-      result = static_cast<std::int64_t>(static_cast<std::uint64_t>(left)
-                                         << (static_cast<std::uint64_t>(right) & kIntShiftMask));
-      break;
-    case Opcode::ShiftRightInt:
-      result = left >> (static_cast<std::uint64_t>(right) & kIntShiftMask);
-      break;
-    case Opcode::ShiftUnsignedRightInt:
-      result = static_cast<std::int64_t>(static_cast<std::uint64_t>(left) >>
-                                         (static_cast<std::uint64_t>(right) & kIntShiftMask));
-      break;
-    default:
-      std::unreachable();
+  const auto result = EvaluateIntegerArithmetic(opcode, left, right);
+  if (!result) {
+    return std::unexpected(result.error());
   }
-  if (overflow) {
-    return std::unexpected(ExecutionStatus::IntegerOverflow);
-  }
-  return Value::Integer(result);
+  return Value::Integer(*result);
 }
 
 [[clang::always_inline]] inline std::expected<Value, ExecutionStatus> IntegerOperation(

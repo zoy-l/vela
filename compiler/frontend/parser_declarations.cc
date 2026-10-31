@@ -8,6 +8,7 @@
 
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/token.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
 
@@ -127,7 +128,7 @@ std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberMod
   constructor->name = "$constructor";
   constructor->location = Previous().location;
   constructor->visibility = visibility;
-  constructor->return_type.name = "void";
+  constructor->return_type.name = kVoidTypeName;
   constructor->return_type.location = constructor->location;
   if (Match(TokenKind::LeftParen)) {
     declaration.constructor_kind = ConstructorKind::Explicit;
@@ -152,6 +153,14 @@ std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberMod
 Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
   const auto modifiers = ParseMemberModifiers();
   const bool is_async = Match(TokenKind::Async);
+  const auto append_method = [&declaration, modifiers](Function method) -> void {
+    method.visibility = modifiers.visibility;
+    method.storage = modifiers.storage;
+    method.is_override = modifiers.is_override;
+    method.is_getter = modifiers.is_getter;
+    method.is_setter = modifiers.is_setter;
+    declaration.methods.push_back(std::move(method));
+  };
   if (Check(TokenKind::External)) {
     if (is_async) {
       AddDiagnostic(Peek().location, "external methods cannot be async");
@@ -164,12 +173,7 @@ Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
       AddDiagnostic(method->location, "external methods must be static");
       return MemberParseResult::Failed;
     }
-    method->visibility = modifiers.visibility;
-    method->storage = modifiers.storage;
-    method->is_override = modifiers.is_override;
-    method->is_getter = modifiers.is_getter;
-    method->is_setter = modifiers.is_setter;
-    declaration.methods.push_back(std::move(*method));
+    append_method(std::move(*method));
     return MemberParseResult::Parsed;
   }
   if (Match(TokenKind::Constructor)) {
@@ -194,12 +198,7 @@ Parser::MemberParseResult Parser::ParseClassMember(Class& declaration) {
     if (!method) {
       return MemberParseResult::Failed;
     }
-    method->visibility = modifiers.visibility;
-    method->storage = modifiers.storage;
-    method->is_override = modifiers.is_override;
-    method->is_getter = modifiers.is_getter;
-    method->is_setter = modifiers.is_setter;
-    declaration.methods.push_back(std::move(*method));
+    append_method(std::move(*method));
     return MemberParseResult::Parsed;
   }
   auto field = ParseField(*member, modifiers);
@@ -292,9 +291,7 @@ std::optional<Function> Parser::ParseFunction() {
   if (!Expect(TokenKind::Func, "expected 'func' before function declaration")) {
     return std::nullopt;
   }
-  const auto name = Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)
-                        ? std::optional<Token>(tokens_.subspan(current_++).front())
-                        : std::nullopt;
+  const auto name = TakeName();
   if (!name) {
     AddDiagnostic(Peek().location, "expected function name");
     return std::nullopt;
@@ -360,9 +357,7 @@ std::optional<Function> Parser::ParseFunctionBody(const Token& name,
 }
 
 std::optional<Parameter> Parser::ParseParameter(ParameterTyping typing) {
-  const auto name = Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)
-                        ? std::optional<Token>(tokens_.subspan(current_++).front())
-                        : std::nullopt;
+  const auto name = TakeName();
   if (!name) {
     AddDiagnostic(Peek().location, "expected parameter name");
     return std::nullopt;

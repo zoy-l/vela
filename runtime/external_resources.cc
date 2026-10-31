@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "runtime/intrusive_link_internal.h"
+
 namespace vela::runtime {
 
 std::string_view ExternalResourceKindName(ExternalResourceKind kind) noexcept {
@@ -40,23 +42,14 @@ ExternalResource::ExternalResource(ExternalResources& owner, ExternalResourceKin
 }
 
 ExternalResource::~ExternalResource() {
-  if (previous_link_ != nullptr) {
-    *previous_link_ = next_;
-    if (next_ != nullptr) {
-      next_->previous_link_ = previous_link_;
-    }
-  }
+  internal::UnlinkIntrusive(*this, &ExternalResource::next_, &ExternalResource::previous_link_);
 }
 
 void ExternalResource::Attach(ExternalResources& owner, ExternalResourceKind kind) noexcept {
   kind_ = kind;
   identity_ = owner.next_identity_++;
-  previous_link_ = &owner.first_;
-  next_ = owner.first_;
-  if (next_ != nullptr) {
-    next_->previous_link_ = &next_;
-  }
-  owner.first_ = this;
+  internal::PrependIntrusive(*this, owner.first_, &ExternalResource::next_,
+                             &ExternalResource::previous_link_);
 }
 
 void ExternalResource::Retain() noexcept {

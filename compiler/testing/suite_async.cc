@@ -19,31 +19,13 @@
 #include "runtime/heap.h"
 #include "runtime/test_bridge.h"
 #include "runtime/value.h"
+#include "vm/diagnostic.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"
 
 namespace vela::testing {
-namespace {
 
-vm::ExecutionResult FailedCompletion(const runtime::FutureResult& completion) {
-  const auto& diagnostic = completion.diagnostic;
-  vm::ExecutionResult result{
-      .value = completion.value,
-      .status = diagnostic.status,
-      .stack_trace = {},
-      .message = diagnostic.message,
-      .origin = diagnostic.origin,
-  };
-  for (const auto& frame : diagnostic.stack_trace) {
-    result.stack_trace.push_back({
-        .function = frame.function,
-        .source_path = frame.source_path,
-        .location = {.line = frame.line, .column = frame.column},
-        .instruction = frame.instruction,
-    });
-  }
-  return result;
-}
+namespace {
 
 enum class PumpResult : std::uint8_t { Boundary, Idle };
 
@@ -163,14 +145,7 @@ void Suite::WaitExpectations(Node& scope, TestPhase phase, std::vector<TestError
         break;
       }
     }
-    for (const auto& frame : *trace) {
-      failure.stack_trace.push_back({
-          .function = frame.function,
-          .source_path = frame.source_path,
-          .location = {.line = frame.line, .column = frame.column},
-          .instruction = frame.instruction,
-      });
-    }
+    failure.stack_trace = vm::CopyExecutionTrace(*trace);
     RecordError(failure, phase, errors);
     AbandonExpectations(scope);
   }
@@ -212,7 +187,7 @@ vm::ExecutionResult Suite::Await(vm::ExecutionResult result,
     return WaitFailure(status);
   }
   if (future.state() == runtime::FutureState::Failed) {
-    return FailedCompletion(future.result());
+    return vm::FutureFailure(future.result());
   }
   result.value = future.result().value;
   return result;
@@ -309,6 +284,18 @@ std::expected<runtime::Value, std::string> Suite::RegisterCallback(
 }
 
 std::expected<runtime::Value, std::string> Suite::EnterCallback(runtime::Value identity) {
+  const auto found = FindCallback(identity);
+  if (!found) {
+    return std::unexpected(found.error());
+  }
+  auto& scheduler = isolate_->scheduler();
+  callback_contexts_.push_back(scheduler.context());
+  scheduler.SetExecutionContext((*found)->context);
+  return runtime::Value::Integer(static_cast<std::int64_t>(callback_contexts_.size()));
+}
+
+std::expected<Suite::CallbackExpectation*, std::string> Suite::FindCallback(
+    runtime::Value identity) {
   if (!identity.IsInteger()) {
     return std::unexpected("invalid callback expectation identity");
   }
@@ -316,10 +303,7 @@ std::expected<runtime::Value, std::string> Suite::EnterCallback(runtime::Value i
   if (found == callbacks_.end()) {
     return std::unexpected("unknown callback expectation identity");
   }
-  auto& scheduler = isolate_->scheduler();
-  callback_contexts_.push_back(scheduler.context());
-  scheduler.SetExecutionContext(found->second.context);
-  return runtime::Value::Integer(static_cast<std::int64_t>(callback_contexts_.size()));
+  return &found->second;
 }
 
 std::expected<runtime::Value, std::string> Suite::ExitCallback(runtime::Value ticket) {
@@ -333,14 +317,11 @@ std::expected<runtime::Value, std::string> Suite::ExitCallback(runtime::Value ti
 }
 
 std::expected<runtime::Value, std::string> Suite::CheckCallback(runtime::Value identity) {
-  if (!identity.IsInteger()) {
-    return std::unexpected("invalid callback expectation identity");
+  const auto found = FindCallback(identity);
+  if (!found) {
+    return std::unexpected(found.error());
   }
-  const auto found = callbacks_.find(static_cast<std::uint64_t>(identity.AsInteger()));
-  if (found == callbacks_.end()) {
-    return std::unexpected("unknown callback expectation identity");
-  }
-  auto& expectation = found->second;
+  auto& expectation = **found;
   if (expectation.calls == expectation.maximum) {
     return std::unexpected("expectAsync callback called more than max times");
   }
@@ -386,15 +367,14 @@ std::expected<runtime::Value, std::string> Suite::Control(
 }
 
 runtime::Value Suite::CurrentTestScope() const {
-  const auto context = isolate_->scheduler().context();
-  if (!context || state_ != State::Running) {
+  if (state_ != State::Running) {
     return runtime::Value::Integer(0);
   }
-  const auto& scope = *scopes_.at(context->scope);
-  if (scope.kind != NodeKind::Test || scope.closed) {
+  const auto identity = CurrentTestId();
+  if (!identity || scopes_.at(*identity)->closed) {
     return runtime::Value::Integer(0);
   }
-  return runtime::Value::Integer(static_cast<std::int64_t>(scope.id));
+  return runtime::Value::Integer(static_cast<std::int64_t>(*identity));
 }
 
 std::expected<runtime::Value, std::string> Suite::RegisterFinalizer(
@@ -430,7 +410,7 @@ void Suite::DeliverError(const runtime::FutureResult& completion,
                          std::uint64_t identity,
                          TestPhase phase) {
   auto& scope = *scopes_.at(identity);
-  const auto failure = FailedCompletion(completion);
+  const auto failure = vm::FutureFailure(completion);
   if (scope.result) {
     auto& result = result_.tests.at(*scope.result);
     RecordError(failure, phase, result.errors);

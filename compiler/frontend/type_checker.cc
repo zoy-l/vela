@@ -2,16 +2,13 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 #include <vector>
 #include "base/builtin.h"
@@ -24,32 +21,9 @@
 #include "compiler/frontend/initialization.h"
 #include "compiler/frontend/specialization.h"
 #include "compiler/frontend/standard_environment.h"
+#include "compiler/frontend/type_names.h"
 
 namespace vela::frontend {
-
-namespace {
-
-std::optional<std::string_view> CompoundAssignmentOperation(std::string_view text) {
-  constexpr auto operations = std::to_array<std::string_view>({
-      "+=",
-      "-=",
-      "*=",
-      "/=",
-      "%=",
-      "&=",
-      "|=",
-      "^=",
-      "<<=",
-      ">>=",
-      ">>>=",
-  });
-  if (const auto found = std::ranges::find(operations, text); found != operations.end()) {
-    return found->substr(0, found->size() - 1);
-  }
-  return std::nullopt;
-}
-
-}  // namespace
 
 TypeChecker::Type TypeChecker::InvalidType() {
   return {};
@@ -312,11 +286,7 @@ void TypeChecker::CheckFunction(const Function& function, const ClassInfo* owner
                                        });
     bindings_.emplace(&function, LookupLocal("this")->id);
   }
-  for (const Parameter& parameter : function.parameters) {
-    const auto type =
-        function_info->parameters.at(function_info->parameter_indices.at(parameter.name)).type;
-    DeclareLocal(parameter.name, type, parameter.location, BindingKind::Mutable, &parameter);
-  }
+  DeclareFunctionParameters(function, *function_info, BindingKind::Mutable);
   if (function.body) {
     const auto flow = CheckSequence(*function.body, return_type);
     control_flow_.insert_or_assign(function.body.get(), flow);
@@ -366,13 +336,13 @@ TypeChecker::Type TypeChecker::CheckExpressionType(const Expression& expression,
     case Expression::Kind::Lambda:
       return CheckLambda(expression, expected);
     case Expression::Kind::NullLiteral:
-      return {.kind = Type::Kind::Null, .name = "null"};
+      return {.kind = Type::Kind::Null, .name = kNullTypeName};
     case Expression::Kind::IntegerLiteral:
       return CheckIntegerLiteral(expression);
     case Expression::Kind::DoubleLiteral:
-      return {.kind = Type::Kind::Double, .name = "double"};
+      return {.kind = Type::Kind::Double, .name = kDoubleTypeName};
     case Expression::Kind::StringLiteral:
-      return {.kind = Type::Kind::String, .name = "string"};
+      return {.kind = Type::Kind::String, .name = kStringTypeName};
     case Expression::Kind::StringInterpolation:
       for (const auto& part : expression.elements) {
         const auto type = CheckExpression(*part, nullptr);
@@ -381,13 +351,13 @@ TypeChecker::Type TypeChecker::CheckExpressionType(const Expression& expression,
                         "interpolation requires string, int, double, bool, or null");
         }
       }
-      return {.kind = Type::Kind::String, .name = "string"};
+      return {.kind = Type::Kind::String, .name = kStringTypeName};
     case Expression::Kind::ArrayLiteral:
       return CheckArrayLiteral(expression, expected);
     case Expression::Kind::Index:
       return CheckIndex(expression);
     case Expression::Kind::BooleanLiteral:
-      return {.kind = Type::Kind::Bool, .name = "bool"};
+      return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
     case Expression::Kind::Name:
       return LookupName(expression, expected);
     case Expression::Kind::Unary:
@@ -423,11 +393,11 @@ TypeChecker::Type TypeChecker::CheckAwait(const Expression& expression, const Ty
 TypeChecker::Type TypeChecker::CheckCall(const Expression& expression, const Type* expected) {
   const auto& callee = *expression.callee;
   if (callee.kind == Expression::Kind::Name && LookupLocal(callee.text) == nullptr &&
-      (callee.text == "Completer" || callee.text == "CancellationToken")) {
+      (callee.text == kCompleterTypeName || callee.text == kCancellationTokenTypeName)) {
     return CheckAsyncConstruction(expression, expected);
   }
   if (callee.kind == Expression::Kind::Member && callee.object->kind == Expression::Kind::Name &&
-      callee.object->text == "Timer" && LookupLocal(callee.object->text) == nullptr) {
+      callee.object->text == kTimerTypeName && LookupLocal(callee.object->text) == nullptr) {
     return CheckTimerFactory(expression);
   }
   if (callee.kind == Expression::Kind::Name && callee.text == "super") {
@@ -439,15 +409,15 @@ TypeChecker::Type TypeChecker::CheckCall(const Expression& expression, const Typ
     if (base == classes_.end()) {
       return InvalidType();
     }
-    explicit_super_constructors_.insert(owner_->type.name);
+    explicit_super_constructors_.insert(std::string(owner_->type.name));
     return CheckClassConstruction(base->second, expression);
   }
   if (callee.kind == Expression::Kind::Member && callee.object->kind == Expression::Kind::Name &&
-      callee.object->text == "Future" && LookupLocal(callee.object->text) == nullptr) {
+      callee.object->text == kFutureTypeName && LookupLocal(callee.object->text) == nullptr) {
     return CheckFutureCall(expression, expected);
   }
   if (callee.kind == Expression::Kind::Name && LookupLocal(callee.text) == nullptr &&
-      (callee.text == "Set" || callee.text == "Map")) {
+      (callee.text == kSetTypeName || callee.text == kMapTypeName)) {
     return CheckCollectionConstruction(expression, expected);
   }
   if (callee.kind == Expression::Kind::Member) {
@@ -459,7 +429,7 @@ TypeChecker::Type TypeChecker::CheckCall(const Expression& expression, const Typ
   if (globals_.contains(callee.text)) {
     return CheckIndirectCall(expression, CheckExpression(callee, nullptr));
   }
-  if (callee.text == "sleep") {
+  if (callee.text == kSleepFunctionName) {
     return CheckSleepCall(expression);
   }
   return CheckNamedCall(expression, expected);
@@ -486,13 +456,13 @@ TypeChecker::Type TypeChecker::CheckIndirectCall(const Expression& expression, c
 }
 
 TypeChecker::Type TypeChecker::CheckDynamicCall(const Expression& expression) {
-  const Type dynamic{.kind = Type::Kind::Dynamic, .name = "dynamic"};
+  const Type dynamic{.kind = Type::Kind::Dynamic, .name = kDynamicTypeName};
   if (!expression.callee->type_arguments.empty()) {
     AddDiagnostic(expression.callee->location,
                   "dynamic calls require generic callables to be instantiated before erasure");
   }
   static_cast<void>(ArrayType(dynamic));
-  static_cast<void>(ArrayType({.kind = Type::Kind::String, .name = "string"}));
+  static_cast<void>(ArrayType({.kind = Type::Kind::String, .name = kStringTypeName}));
   for (const auto& argument : expression.arguments) {
     const auto actual = CheckExpression(*argument.value, &dynamic);
     RecordConversion(*argument.value, dynamic, actual);
@@ -522,7 +492,7 @@ TypeChecker::Type TypeChecker::CheckNamedCall(const Expression& expression, cons
         AddDiagnostic(argument.location, "print requires a value");
       }
     }
-    return {.kind = Type::Kind::Void, .name = "void"};
+    return {.kind = Type::Kind::Void, .name = kVoidTypeName};
   }
   std::string constructor_name = callee.text;
   if (aliases_.contains(callee.text)) {
@@ -566,7 +536,7 @@ TypeChecker::Type TypeChecker::CheckMethodCall(const Expression& expression, con
   Type context;
   if (receiver.kind == Expression::Kind::ArrayLiteral && receiver.elements.empty() &&
       expression.callee->text == "join") {
-    context = ArrayType({.kind = Type::Kind::String, .name = "string"});
+    context = ArrayType({.kind = Type::Kind::String, .name = kStringTypeName});
   }
   const Type object = CheckExpression(receiver, IsValid(context) ? &context : nullptr);
   if (object.kind == Type::Kind::Dynamic) {
@@ -590,16 +560,12 @@ TypeChecker::Type TypeChecker::CheckMethodCall(const Expression& expression, con
 }
 
 TypeChecker::Type TypeChecker::CheckSuperMethodCall(const Expression& expression) {
-  if (owner_ == nullptr || !owner_->base_class) {
-    AddDiagnostic(expression.location, "super requires a derived class context");
+  const auto* base = CheckSuperClass(expression.location);
+  if (base == nullptr) {
     return InvalidType();
   }
-  const auto base = classes_.find(*owner_->base_class);
-  if (base == classes_.end()) {
-    return InvalidType();
-  }
-  const auto method = base->second.methods.find(expression.callee->text);
-  if (method == base->second.methods.end() || method->second.is_getter) {
+  const auto method = base->methods.find(expression.callee->text);
+  if (method == base->methods.end() || method->second.is_getter) {
     AddDiagnostic(expression.location, "unknown super method '" + expression.callee->text + "'");
     return InvalidType();
   }
@@ -634,7 +600,8 @@ TypeChecker::Type TypeChecker::CheckMethodReceiver(const Expression& expression,
       return InvalidType();
     }
     interface_members_.insert_or_assign(
-        &expression, MemberReference{.owner = receiver.name, .member = expression.callee->text});
+        &expression,
+        MemberReference{.owner = std::string(receiver.name), .member = expression.callee->text});
     return CheckFunctionCall(method->second, expression);
   }
   if (receiver.kind == Type::Kind::Class) {
@@ -650,7 +617,8 @@ TypeChecker::Type TypeChecker::CheckStaticCall(const Expression& expression,
   if (method != owner.methods.end() && method->second.storage == MemberStorage::Static) {
     CheckAccess(method->second.visibility, owner.type.name, expression.location);
     static_members_.insert_or_assign(
-        &expression, MemberReference{.owner = owner.type.name, .member = expression.callee->text});
+        &expression,
+        MemberReference{.owner = std::string(owner.type.name), .member = expression.callee->text});
     return CheckFunctionCall(method->second, expression);
   }
   return CheckIndirectCall(expression, CheckExpression(*expression.callee, nullptr));
@@ -922,7 +890,7 @@ void TypeChecker::CheckVoidReturn(const Statement& statement, const Type& return
   if (!statement.expression) {
     return;
   }
-  const Type expected{.kind = Type::Kind::Void, .name = "void"};
+  const Type expected{.kind = Type::Kind::Void, .name = kVoidTypeName};
   const auto value = CheckExpression(*statement.expression, &expected);
   const bool async_payload =
       in_async_function_ && (value.kind == Type::Kind::Dynamic || CanAssign(return_type, value));
@@ -932,20 +900,17 @@ void TypeChecker::CheckVoidReturn(const Statement& statement, const Type& return
 }
 
 TypeChecker::Type TypeChecker::CheckIntegerLiteral(const Expression& expression) {
-  std::int64_t value = 0;
-  const auto result =
-      std::from_chars(expression.text.data(), std::to_address(expression.text.end()), value);
-  if (result.ec != std::errc()) {
+  if (!expression.IntegerValue()) {
     AddDiagnostic(expression.location, "integer literal is out of range");
     return InvalidType();
   }
-  return {.kind = Type::Kind::Int, .name = "int"};
+  return {.kind = Type::Kind::Int, .name = kIntTypeName};
 }
 
 TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
   Type object = CheckExpression(*expression.object, nullptr);
   const Type index = CheckExpression(*expression.index, nullptr);
-  const Type integer{.kind = Type::Kind::Int, .name = "int"};
+  const Type integer{.kind = Type::Kind::Int, .name = kIntTypeName};
   RecordConversion(*expression.index, integer, index);
   if (object.kind == Type::Kind::Dynamic) {
     if (!CanAssign(integer, index)) {
@@ -974,10 +939,10 @@ TypeChecker::Type TypeChecker::CheckIndex(const Expression& expression) {
   }
   if (object.kind == Type::Kind::RegExpMatch) {
     builtin_calls_.insert_or_assign(&expression, Builtin::RegExpMatchGroup);
-    return NullableType(Type{.kind = Type::Kind::String, .name = "string"});
+    return NullableType(Type{.kind = Type::Kind::String, .name = kStringTypeName});
   }
   if (object.kind == Type::Kind::ByteArray) {
-    Type result{.kind = Type::Kind::Int, .name = "int"};
+    Type result{.kind = Type::Kind::Int, .name = kIntTypeName};
     return expression.null_safe ? NullableType(std::move(result)) : result;
   }
   if (object.kind != Type::Kind::Array) {
@@ -1040,13 +1005,13 @@ TypeChecker::Type TypeChecker::CheckUnary(const Expression& expression) {
   }
   if (expression.text == "!") {
     CheckBooleanOperand(*expression.operand, operand, "'!' requires a bool operand");
-    return {.kind = Type::Kind::Bool, .name = "bool"};
+    return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
   }
   if (operand.kind == Type::Kind::Dynamic) {
     if (expression.text == "-") {
       return operand;
     }
-    const Type integer{.kind = Type::Kind::Int, .name = "int"};
+    const Type integer{.kind = Type::Kind::Int, .name = kIntTypeName};
     RecordConversion(*expression.operand, integer, operand);
     return integer;
   }
@@ -1078,7 +1043,7 @@ TypeChecker::Type TypeChecker::CheckConditional(const Expression& expression,
   refinements_.Apply(true_facts);
   if ((when_true.kind == Type::Kind::Dynamic || when_false.kind == Type::Kind::Dynamic) &&
       when_true.kind != Type::Kind::Void && when_false.kind != Type::Kind::Void) {
-    const Type dynamic{.kind = Type::Kind::Dynamic, .name = "dynamic"};
+    const Type dynamic{.kind = Type::Kind::Dynamic, .name = kDynamicTypeName};
     RecordConversion(*expression.left, dynamic, when_true);
     RecordConversion(*expression.right, dynamic, when_false);
     return dynamic;
@@ -1098,8 +1063,7 @@ TypeChecker::Type TypeChecker::CheckCompoundAssignment(const Expression& express
   if (!operation) {
     return InvalidType();
   }
-  if (!IsAssignable(*expression.left)) {
-    AddDiagnostic(expression.left->location, "left side of assignment is not assignable");
+  if (!CheckAssignmentTarget(*expression.left)) {
     return InvalidType();
   }
   if (expression.left->kind == Expression::Kind::Name) {
@@ -1211,13 +1175,13 @@ TypeChecker::Type TypeChecker::CheckEquality(const Expression& expression,
   }
   const bool null_comparison = left.kind == Type::Kind::Null || right.kind == Type::Kind::Null;
   if (null_comparison) {
-    return {.kind = Type::Kind::Bool, .name = "bool"};
+    return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
   }
   if (left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) {
-    const Type dynamic{.kind = Type::Kind::Dynamic, .name = "dynamic"};
+    const Type dynamic{.kind = Type::Kind::Dynamic, .name = kDynamicTypeName};
     RecordConversion(*expression.left, dynamic, left);
     RecordConversion(*expression.right, dynamic, right);
-    return {.kind = Type::Kind::Bool, .name = "bool"};
+    return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
   }
   if (left.kind == Type::Kind::Array || left.kind == Type::Kind::MutableString ||
       left.kind == Type::Kind::Function || left.kind == Type::Kind::Set ||
@@ -1229,7 +1193,7 @@ TypeChecker::Type TypeChecker::CheckEquality(const Expression& expression,
     AddDiagnostic(expression.location, "comparison operands must have the same type");
     return InvalidType();
   }
-  return {.kind = Type::Kind::Bool, .name = "bool"};
+  return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
 }
 
 TypeChecker::Type TypeChecker::CheckBinaryTypes(const Expression& expression,
@@ -1246,12 +1210,12 @@ TypeChecker::Type TypeChecker::CheckBinaryTypes(const Expression& expression,
   }
   if ((left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) &&
       left.kind != Type::Kind::Void && right.kind != Type::Kind::Void) {
-    const Type dynamic{.kind = Type::Kind::Dynamic, .name = "dynamic"};
+    const Type dynamic{.kind = Type::Kind::Dynamic, .name = kDynamicTypeName};
     RecordConversion(*expression.left, dynamic, left);
     RecordConversion(*expression.right, dynamic, right);
     const bool comparison = expression.text == "<" || expression.text == "<=" ||
                             expression.text == ">" || expression.text == ">=";
-    return comparison ? Type{.kind = Type::Kind::Bool, .name = "bool"} : dynamic;
+    return comparison ? Type{.kind = Type::Kind::Bool, .name = kBoolTypeName} : dynamic;
   }
   if (expression.text == "&" || expression.text == "|" || expression.text == "^" ||
       expression.text == "<<" || expression.text == ">>" || expression.text == ">>>") {
@@ -1264,7 +1228,7 @@ TypeChecker::Type TypeChecker::CheckBinaryTypes(const Expression& expression,
   if (expression.text == "+" &&
       (left.kind == Type::Kind::String || right.kind == Type::Kind::String) &&
       CanFormatString(left) && CanFormatString(right)) {
-    return {.kind = Type::Kind::String, .name = "string"};
+    return {.kind = Type::Kind::String, .name = kStringTypeName};
   }
   if (!IsNumeric(left) || !IsSameType(left, right)) {
     AddDiagnostic(expression.location, "arithmetic operands must have the same numeric type");
@@ -1278,7 +1242,7 @@ TypeChecker::Type TypeChecker::CheckLogicalTypes(const Expression& expression,
                                                  const Type& right) {
   CheckBooleanOperand(*expression.left, left, "logical operands must be bool");
   CheckBooleanOperand(*expression.right, right, "logical operands must be bool");
-  return {.kind = Type::Kind::Bool, .name = "bool"};
+  return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
 }
 
 TypeChecker::Type TypeChecker::CheckCoalesceTypes(const Expression& expression,
@@ -1288,18 +1252,16 @@ TypeChecker::Type TypeChecker::CheckCoalesceTypes(const Expression& expression,
     AddDiagnostic(expression.left->location, "left operand of coalesce must be nullable");
   }
   if (left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) {
-    const Type dynamic{.kind = Type::Kind::Dynamic, .name = "dynamic"};
+    const Type dynamic{.kind = Type::Kind::Dynamic, .name = kDynamicTypeName};
     RecordConversion(*expression.left, dynamic, left);
     RecordConversion(*expression.right, dynamic, right);
     return dynamic;
   }
   if (CanAssign(left, right)) {
-    auto result = right;
-    return result;
+    return right;
   }
   if (CanAssign(right, left)) {
-    auto result = left;
-    return result;
+    return left;
   }
   AddDiagnostic(expression.location, "coalesce operands must have a common type");
   return InvalidType();
@@ -1324,12 +1286,11 @@ TypeChecker::Type TypeChecker::CheckRelationalTypes(const Expression& expression
     AddDiagnostic(expression.location, "relational operands must have the same numeric type");
     return InvalidType();
   }
-  return {.kind = Type::Kind::Bool, .name = "bool"};
+  return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
 }
 
 TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
-  if (!IsAssignable(*expression.left)) {
-    AddDiagnostic(expression.left->location, "left side of assignment is not assignable");
+  if (!CheckAssignmentTarget(*expression.left)) {
     return InvalidType();
   }
   if (expression.left->kind == Expression::Kind::Name) {
@@ -1372,6 +1333,14 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
     return InvalidType();
   }
   return left;
+}
+
+bool TypeChecker::CheckAssignmentTarget(const Expression& target) {
+  if (!IsAssignable(target)) {
+    AddDiagnostic(target.location, "left side of assignment is not assignable");
+    return false;
+  }
+  return true;
 }
 
 void TypeChecker::CheckMemberAssignment(const Expression& member) {

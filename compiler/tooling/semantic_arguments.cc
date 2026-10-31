@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
+
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/builtins.h"
@@ -17,6 +19,7 @@
 #include "compiler/frontend/parser.h"
 #include "compiler/frontend/token.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/tooling/semantic_syntax.h"
 
 namespace vela::tooling {
 namespace {
@@ -48,19 +51,13 @@ std::optional<frontend::FunctionDescriptor> ArrayCallParameters(
 
 std::optional<TokenKind> ArgumentClosing(const Token& token) {
   switch (token.kind) {
-    case TokenKind::LeftParen:
-      return TokenKind::RightParen;
-    case TokenKind::LeftBracket:
-      return TokenKind::RightBracket;
-    case TokenKind::LeftBrace:
-      return TokenKind::RightBrace;
     case TokenKind::Less:
       return token.role == TokenRole::TypeDelimiter ? std::optional(TokenKind::Greater)
                                                     : std::nullopt;
     case TokenKind::StringHead:
       return TokenKind::StringTail;
     default:
-      return std::nullopt;
+      return ClosingDelimiter(token.kind);
   }
 }
 
@@ -100,11 +97,7 @@ const Token& ArgumentEnd(std::span<const Token> arguments) {
          token.kind == TokenKind::Semicolon)) {
       return token;
     }
-    if (const auto close = ArgumentClosing(token)) {
-      closing.push_back(*close);
-    } else if (!closing.empty() && token.kind == closing.back()) {
-      closing.pop_back();
-    }
+    TrackDelimiter(closing, token.kind, ArgumentClosing(token));
   }
   return arguments.back();
 }
@@ -128,11 +121,7 @@ std::string ArgumentSource(std::string_view source,
   // 实参尚未输入时也构造真正的 Call AST；实参错误不应阻止展示声明契约。
   std::vector<TokenKind> closing;
   for (const auto& token : frontend::Lexer(text).Tokenize().tokens) {
-    if (const auto close = ArgumentClosing(token)) {
-      closing.push_back(*close);
-    } else if (!closing.empty() && token.kind == closing.back()) {
-      closing.pop_back();
-    }
+    TrackDelimiter(closing, token.kind, ArgumentClosing(token));
   }
   for (const auto kind : std::views::reverse(closing)) {
     if (kind == TokenKind::RightBrace) {
@@ -241,10 +230,8 @@ std::optional<ArgumentCompletionQuery> ReadArgumentSlots(std::span<const Token> 
         break;
       }
       argument_start = index + 1;
-    } else if (const auto close = ArgumentClosing(token)) {
-      closing.push_back(*close);
-    } else if (!closing.empty() && token.kind == closing.back()) {
-      closing.pop_back();
+    } else {
+      TrackDelimiter(closing, token.kind, ArgumentClosing(token));
     }
   }
   return selected ? std::optional(std::move(query)) : std::nullopt;
@@ -335,16 +322,17 @@ std::optional<frontend::FunctionDescriptor> SemanticIndex::FindMemberCallParamet
       member != model_.static_members.end()) {
     receiver.type.name = member->second.owner;
   }
-  if (const auto owner = model_.classes.find(receiver.type.name); owner != model_.classes.end()) {
-    const auto method = owner->second.methods.find(callee.text);
-    if (method != owner->second.methods.end()) {
-      return method->second;
-    }
+  const absl::flat_hash_map<std::string, frontend::FunctionDescriptor>* methods = nullptr;
+  if (const auto class_type = model_.classes.find(receiver.type.name);
+      class_type != model_.classes.end()) {
+    methods = &class_type->second.methods;
+  } else if (const auto interface_type = model_.interfaces.find(receiver.type.name);
+             interface_type != model_.interfaces.end()) {
+    methods = &interface_type->second.methods;
   }
-  if (const auto owner = model_.interfaces.find(receiver.type.name);
-      owner != model_.interfaces.end()) {
-    const auto method = owner->second.methods.find(callee.text);
-    if (method != owner->second.methods.end()) {
+  if (methods != nullptr) {
+    const auto method = methods->find(callee.text);
+    if (method != methods->end()) {
       return method->second;
     }
   }

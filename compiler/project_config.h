@@ -19,6 +19,10 @@ struct ConfigurationError final {
   std::string field;
   std::string message;
   int exit_code = 0;
+
+  [[nodiscard]] static ConfigurationError FileError(const std::filesystem::path& file,
+                                                    std::string message,
+                                                    int exit_code);
 };
 
 // 命令会话拥有快照，并以 const 发布给消费者；读取后不再观察磁盘变化。

@@ -8,6 +8,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/fingerprint.h"
 #include "base/utf8.h"
 
 namespace vela {
@@ -19,6 +20,13 @@ void BinaryWriter::Write(std::span<const std::byte> bytes) {
 void BinaryWriter::Write(std::string_view text) {
   Write(static_cast<std::uint64_t>(text.size()));
   Write(std::as_bytes(std::span(text.data(), text.size())));
+}
+
+void BinaryWriter::WriteChecksummed(std::span<const std::byte> payload) {
+  const auto checksum = ContentFingerprint(payload);
+  Write(checksum.low);
+  Write(checksum.high);
+  Write(payload);
 }
 
 std::expected<std::span<const std::byte>, BinaryError> BinaryReader::Take(std::size_t count) {
@@ -63,6 +71,19 @@ std::expected<std::size_t, BinaryError> BinaryReader::Count(std::size_t minimum_
 
 BinaryError BinaryReader::Error(std::string message) const {
   return {.offset = offset_, .message = std::move(message)};
+}
+
+std::expected<std::span<const std::byte>, BinaryError> BinaryReader::ChecksummedRemainder() {
+  const auto checksum = Record<std::uint64_t, std::uint64_t>();
+  if (!checksum) {
+    return std::unexpected(checksum.error());
+  }
+  const auto payload = *Take(remaining());
+  const auto [low, high] = *checksum;
+  if (ContentFingerprint(payload) != Fingerprint{.low = low, .high = high}) {
+    return std::unexpected(Error("binary checksum mismatch"));
+  }
+  return payload;
 }
 
 }  // namespace vela

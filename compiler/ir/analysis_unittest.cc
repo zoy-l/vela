@@ -1,6 +1,7 @@
 #include "compiler/ir/analysis.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -12,6 +13,43 @@
 
 namespace vela::ir {
 namespace {
+
+TEST(AnalysisTest, InvalidIntegerConstantsKeepTheirOperationsAndExceptionEdges) {
+  constexpr auto kMinimum = std::numeric_limits<std::int64_t>::min();
+  constexpr auto kMaximum = std::numeric_limits<std::int64_t>::max();
+  struct Case final {
+    Opcode opcode;
+    std::int64_t left;
+    std::int64_t right;
+  };
+  constexpr std::array<Case, 6> kCases = {{
+      {Opcode::AddInt, kMaximum, 1},
+      {Opcode::SubInt, kMinimum, 1},
+      {Opcode::MulInt, kMaximum, 2},
+      {Opcode::DivInt, kMinimum, -1},
+      {Opcode::DivInt, 42, 0},
+      {Opcode::NegInt, kMinimum, 0},
+  }};
+  for (const auto& scenario : kCases) {
+    SCOPED_TRACE(static_cast<int>(scenario.opcode));
+    Function function;
+    function.register_count = 4;
+    function.handlers = {{.target = 4}};
+    function.instructions = {
+        {.opcode = Opcode::LoadInt, .dst = 0, .immediate = scenario.left, .location = {}},
+        {.opcode = Opcode::LoadInt, .dst = 1, .immediate = scenario.right, .location = {}},
+        {.opcode = scenario.opcode, .dst = 2, .lhs = 0, .rhs = 1, .location = {}, .handler = 0},
+        {.opcode = Opcode::Return, .dst = 2, .location = {}},
+        {.opcode = Opcode::Catch, .dst = 3, .location = {}},
+        {.opcode = Opcode::Return, .dst = 0, .location = {}},
+    };
+    Optimize(function, {});
+    EXPECT_TRUE(std::ranges::any_of(function.instructions, [&](const auto& instruction) {
+      return instruction.opcode == scenario.opcode && instruction.handler.has_value();
+    }));
+    EXPECT_FALSE(function.handlers.empty());
+  }
+}
 
 TEST(AnalysisTest, FailureKeepsPreviousDestinationAliveForTheHandler) {
   Function function;

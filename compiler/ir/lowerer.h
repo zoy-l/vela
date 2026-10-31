@@ -247,7 +247,7 @@ class Lowerer final {
   void RecordProgramValueTypes();
   void PushScope();
   void PopScope();
-  bool DeclareLocal(std::string_view name,
+  void DeclareLocal(std::string_view name,
                     RegisterId reg,
                     frontend::TypeDescriptor type,
                     frontend::SourceLocation location,
@@ -257,6 +257,13 @@ class Lowerer final {
 
   void LowerIf(const frontend::Statement& statement);
 
+  void BeginControl(ControlTargets::Kind kind);
+  void BindContinues(std::uint32_t target);
+  void FinishControl(std::optional<std::size_t> exit_jump);
+  std::optional<std::size_t> LowerLoopCondition(const frontend::Statement& statement);
+  void FinishNullSafe(std::optional<std::size_t> null_jump,
+                      RegisterId result,
+                      frontend::SourceLocation location);
   void LowerWhile(const frontend::Statement& statement);
 
   void LowerFor(const frontend::Statement& statement);
@@ -264,9 +271,6 @@ class Lowerer final {
 
   LoweredValue LowerIntegerLiteral(const frontend::Expression& expression);
   LoweredValue LowerDoubleLiteral(const frontend::Expression& expression);
-  LoweredValue LowerDoubleBinary(const frontend::Expression& expression,
-                                 const LoweredValue& left,
-                                 const LoweredValue& right);
 
   LoweredValue LowerStringLiteral(const frontend::Expression& expression);
   LoweredValue LowerStringInterpolation(const frontend::Expression& expression);
@@ -274,6 +278,10 @@ class Lowerer final {
   void EmitBuiltinCall(Builtin builtin,
                        RegisterId result,
                        std::span<const RegisterId> values,
+                       frontend::SourceLocation location);
+  void EmitBuiltinCall(Builtin builtin,
+                       RegisterId result,
+                       RegisterId base,
                        frontend::SourceLocation location);
   void EmitIndexRead(RegisterId result,
                      const LoweredValue& receiver,
@@ -367,6 +375,35 @@ class Lowerer final {
                                        std::string_view operation);
   LoweredValue LowerBinaryValue(const frontend::Expression& expression);
   LoweredValue LowerConditional(const frontend::Expression& expression);
+  // 两条分支分别延迟生成，保持短路求值；回调不做类型擦除或堆分配。
+  template <class First, class Second>
+  LoweredValue LowerBranchValue(const frontend::Expression& expression,
+                                Opcode jump_opcode,
+                                RegisterId condition,
+                                First first,
+                                Second second) {
+    const auto location = expression.location;
+    const auto result = AllocateTemporary(location);
+    const auto alternate_jump = current_function_->instructions.size();
+    Emit({.opcode = jump_opcode, .lhs = condition, .location = location});
+    const auto initial = first();
+    Emit({.opcode = Opcode::Move, .dst = result, .lhs = initial.reg, .location = location});
+    const auto end_jump = current_function_->instructions.size();
+    Emit({.opcode = Opcode::Jump, .location = location});
+    current_function_->instructions.at(alternate_jump).index =
+        static_cast<std::uint32_t>(current_function_->instructions.size());
+    const auto alternative = second();
+    Emit({.opcode = Opcode::Move, .dst = result, .lhs = alternative.reg, .location = location});
+    current_function_->instructions.at(end_jump).index =
+        static_cast<std::uint32_t>(current_function_->instructions.size());
+    return {.reg = result, .type = model_.expression_types.at(&expression)};
+  }
+
+  static std::optional<Opcode> SelectDoubleOpcode(std::string_view operation);
+  static std::optional<Opcode> SelectBinaryOpcode(std::string_view operation,
+                                                  const frontend::TypeDescriptor& type);
+
+  void LowerArguments(const frontend::Expression& expression, RegisterId base);
 
   LoweredValue LowerInvocation(const frontend::Expression& expression,
                                const frontend::FunctionDescriptor& function,

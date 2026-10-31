@@ -2,20 +2,16 @@
 #include <cstdint>
 #include <span>
 #include <string>
-#include <string_view>
 #include <utility>
 
 #include "benchmark/benchmark.h"
 
 #include "base/builtin.h"
 #include "benchmarks/standard_value_benchmark.h"
-#include "compiler/compiler.h"
 #include "runtime/heap.h"
-#include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "runtime/regexp.h"
 #include "runtime/value.h"
-#include "vm/vm.h"
 
 namespace vela::benchmarks {
 namespace {
@@ -24,43 +20,6 @@ using runtime::Value;
 
 constexpr auto kCaptureChecksum = 8;
 constexpr auto kAnswer = 42;
-
-// 全局模式在计时前初始化并保留；临时对象核算从稳定的全局存储基线开始。
-void SteadyRegExp(benchmark::State& state, std::string_view source, std::int64_t expected) {
-  runtime::Isolate isolate;
-  const auto compiled = compiler::CompileSource(source, isolate);
-  if (!compiled.Succeeded()) {
-    state.SkipWithError("RegExp benchmark compilation failed");
-    return;
-  }
-  const auto entry = compiled.program.FindFunction("main");
-  auto& heap = isolate.heap();
-  vm::VirtualMachine machine(isolate);
-  const auto warm = machine.Execute(entry);
-  if (!warm.Succeeded() || !warm.value.IsInteger() || warm.value.AsInteger() != expected) {
-    state.SkipWithError("RegExp warm-up returned an unexpected result");
-    return;
-  }
-  heap.FinishCollection();
-  heap.Collect();
-  const auto baseline = heap.allocated_bytes();
-  state.counters["persistent_bytes"] = static_cast<double>(baseline);
-  for (auto iteration : state) {
-    benchmark::DoNotOptimize(iteration);
-    auto result = machine.Execute(entry);
-    if (!result.Succeeded() || !result.value.IsInteger() || result.value.AsInteger() != expected) {
-      state.SkipWithError("RegExp execution returned an unexpected result");
-      return;
-    }
-    benchmark::DoNotOptimize(result.value);
-  }
-  heap.FinishCollection();
-  heap.Collect();
-  state.counters["retained_bytes"] = static_cast<double>(heap.allocated_bytes() - baseline);
-  if (heap.allocated_bytes() != baseline) {
-    state.SkipWithError("RegExp execution retained temporary heap values");
-  }
-}
 
 std::array<Value, 4> CompileArguments(Value source) {
   return {source, Value::Boolean(false), Value::Boolean(true), Value::Boolean(false)};
@@ -140,20 +99,20 @@ void SearchRegExp(benchmark::State& state, Builtin builtin) {
 }
 
 void CaptureRegExp(benchmark::State& state) {
-  SteadyRegExp(state,
-               "const re = RegExp('(?<word>中+)(x)?'); func main(): int { "
-               "const found = re.firstMatch('😀中中'); if (found == null) { return 0; } "
-               "const values = found.groups([1, 2]); return found.start + found.end + "
-               "(found.namedGroup('word')?.length ?? 0) + values.length; }",
-               kCaptureChecksum);
+  SteadyValue(state,
+              "const re = RegExp('(?<word>中+)(x)?'); func main(): int { "
+              "const found = re.firstMatch('😀中中'); if (found == null) { return 0; } "
+              "const values = found.groups([1, 2]); return found.start + found.end + "
+              "(found.namedGroup('word')?.length ?? 0) + values.length; }",
+              kCaptureChecksum, HeapBaseline::AfterWarmup);
 }
 
 void LimitRegExp(benchmark::State& state) {
-  SteadyRegExp(state,
-               "const re = RegExp('(*NO_START_OPT)(*LIMIT_MATCH=100)(a+)+$'); "
-               "func main(): int { try { re.hasMatch('aaaaaaaaaaaaaaaaaaaa!'); } "
-               "catch (e: Error) { return e.code == 'RegExpLimitError' ? 42 : 0; } return 0; }",
-               kAnswer);
+  SteadyValue(state,
+              "const re = RegExp('(*NO_START_OPT)(*LIMIT_MATCH=100)(a+)+$'); "
+              "func main(): int { try { re.hasMatch('aaaaaaaaaaaaaaaaaaaa!'); } "
+              "catch (e: Error) { return e.code == 'RegExpLimitError' ? 42 : 0; } return 0; }",
+              kAnswer, HeapBaseline::AfterWarmup);
 }
 
 BENCHMARK(CompileRegExp)->Name("regexp/compile");

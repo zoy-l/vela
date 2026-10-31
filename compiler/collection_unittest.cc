@@ -3,9 +3,9 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
@@ -14,15 +14,12 @@ class CollectionLanguageTest : public testing::TestWithParam<std::string_view> {
 
 TEST_P(CollectionLanguageTest, ExecutesTypedCollectionsUnderGcPressure) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(GetParam(), isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
+  const auto program = test::CompileCleanSource(GetParam(), isolate);
+  ASSERT_TRUE(program) << program.error();
   const auto retained = isolate.heap().object_count();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << static_cast<int>(result.status);
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto result = test::ExecuteInteger(*program, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
   isolate.heap().FinishCollection();
   isolate.heap().Collect();
   EXPECT_EQ(isolate.heap().object_count(), retained);

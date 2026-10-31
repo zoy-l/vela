@@ -9,6 +9,11 @@ class State;
 
 namespace vela::benchmarks {
 
-void SteadyValue(benchmark::State& state, std::string_view source, std::int64_t expected);
+enum class HeapBaseline : std::uint8_t { BeforeWarmup, AfterWarmup };
+
+void SteadyValue(benchmark::State& state,
+                 std::string_view source,
+                 std::int64_t expected,
+                 HeapBaseline baseline = HeapBaseline::BeforeWarmup);
 
 }  // namespace vela::benchmarks

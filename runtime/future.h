@@ -299,6 +299,9 @@ class FutureScheduler final {
   };
 
   void DrainMicrotasks();
+  [[nodiscard]] Timer ScheduleTimer(std::chrono::milliseconds delay,
+                                    std::chrono::milliseconds interval,
+                                    std::function<void()> callback);
   void Fire(Event event);
   void NotifyUnhandledError(const Future& future, ::vela::runtime::Value error);
   void NotifyHandledError(const Future& future, ::vela::runtime::Value error);

@@ -21,7 +21,7 @@
 namespace vela::tooling::internal {
 namespace {
 
-constexpr std::int64_t kInvalidParams = -32602;
+using protocol::kInvalidParams;
 constexpr std::int64_t kRequestFailed = -32803;
 
 std::expected<TextRange, std::string> ChangeRange(const yyjson_val* value) {

@@ -4,6 +4,7 @@
 
 #include "compiler/compiler.h"
 #include "compiler/frontend/checker_test_support.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"
@@ -15,15 +16,9 @@ class ExceptionExecutionTest : public testing::TestWithParam<std::string_view> {
 
 TEST_P(ExceptionExecutionTest, CompletesWithPreciseUnwindingAndStrictTypes) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(GetParam(), isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.source_path << ':' << diagnostic.location.line << ':'
-                  << diagnostic.location.column << ' ' << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto result = test::RunInteger(GetParam(), isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 INSTANTIATE_TEST_SUITE_P(Unwinding,
@@ -54,6 +49,35 @@ func main(): int {
 class Failure {}
 func main(): int { try { throw Failure(); } catch { return 42; } }
 )",
+                             R"(
+func main(): int {
+  let caught = 0;
+  try { print(9223372036854775807 + 1); }
+  catch (error: Error) { if (error.code == 'IntegerOverflow') { caught++; } }
+  try { print(-9223372036854775808 - 1); }
+  catch (error: Error) { if (error.code == 'IntegerOverflow') { caught++; } }
+  try { print(9223372036854775807 * 2); }
+  catch (error: Error) { if (error.code == 'IntegerOverflow') { caught++; } }
+  try { print(-9223372036854775808 / -1); }
+  catch (error: Error) { if (error.code == 'IntegerOverflow') { caught++; } }
+  try { print(-(-9223372036854775808)); }
+  catch (error: Error) { if (error.code == 'IntegerOverflow') { caught++; } }
+  try { print(42 / 0); }
+  catch (error: Error) { if (error.code == 'DivisionByZero') { caught++; } }
+  return caught == 6 ? 42 : 0;
+})",
+                             R"(
+func main(): int {
+  const maximum = 9223372036854775807;
+  const minimum = -9223372036854775808;
+  const dynamicMinimum: dynamic = minimum;
+  let caught = 0;
+  try { print(-dynamicMinimum); }
+  catch (error: Error) { if (error.code == 'IntegerOverflow') { caught++; } }
+  return maximum - 1 + 1 == maximum && minimum + 1 - 1 == minimum &&
+         minimum * 1 == minimum && minimum / 1 == minimum &&
+         (1 << 64) == 1 && (-1 >>> 64) == -1 && caught == 1 ? 42 : 0;
+})",
                              R"(
 func main(): int { let value = 42; try { return value; } finally { value = 1; } }
 )",
@@ -210,7 +234,7 @@ TEST(ExceptionTest, FinallyPreservesOriginalTraceAcrossNestedHandledExceptions) 
 
 TEST(ExceptionTest, FailedGlobalInitializerUnwindsAndCanBeRetriedAfterCatch) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 class Failure {}
 let attempts = 0;
 let answer = initialize();
@@ -222,11 +246,9 @@ func initialize(): int {
 func main(): int {
   try { return answer; } catch (error: Failure) { return answer; }
 })",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(ExceptionTest, RepeatedCaughtFailuresReleaseTheirEnvelopesAfterExecution) {

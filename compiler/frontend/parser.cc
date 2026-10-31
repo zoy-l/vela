@@ -185,6 +185,14 @@ bool Parser::Match(TokenKind kind) {
   return true;
 }
 
+std::optional<Token> Parser::TakeName() {
+  const auto kind = Peek().kind;
+  if (kind == TokenKind::Identifier || kind == TokenKind::Get || kind == TokenKind::Set) {
+    return tokens_.subspan(current_++).front();
+  }
+  return std::nullopt;
+}
+
 std::optional<Token> Parser::Expect(TokenKind kind, std::string message) {
   if (Check(kind)) {
     return tokens_.subspan(current_++).front();
@@ -338,17 +346,11 @@ std::unique_ptr<Statement> Parser::ParseForEachStatement() {
   statement->location = Previous().location;
   statement->binding = BindingKind::Constant;
   if (Match(TokenKind::LeftBracket)) {
-    const auto first =
-        Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)
-            ? std::optional<Token>(tokens_.subspan(current_++).front())
-            : std::nullopt;
+    const auto first = TakeName();
     if (!first || !Expect(TokenKind::Comma, "expected ',' in dictionary binding")) {
       return nullptr;
     }
-    const auto second =
-        Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)
-            ? std::optional<Token>(tokens_.subspan(current_++).front())
-            : std::nullopt;
+    const auto second = TakeName();
     if (!second || !Expect(TokenKind::RightBracket, "expected ']' after dictionary binding")) {
       return nullptr;
     }
@@ -356,9 +358,7 @@ std::unique_ptr<Statement> Parser::ParseForEachStatement() {
     statement->second_name = second->lexeme;
     statement->destructuring = true;
   } else {
-    const auto name = Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)
-                          ? std::optional<Token>(tokens_.subspan(current_++).front())
-                          : std::nullopt;
+    const auto name = TakeName();
     if (!name) {
       return nullptr;
     }
@@ -485,9 +485,7 @@ std::unique_ptr<Statement> Parser::ParseWhileStatement() {
 
 std::unique_ptr<Statement> Parser::ParseVariableDeclaration() {
   const Token keyword = tokens_.subspan(current_++).front();
-  const auto name = Check(TokenKind::Identifier) || Check(TokenKind::Get) || Check(TokenKind::Set)
-                        ? std::optional<Token>(tokens_.subspan(current_++).front())
-                        : std::nullopt;
+  const auto name = TakeName();
   if (!name) {
     return nullptr;
   }

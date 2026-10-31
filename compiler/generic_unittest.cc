@@ -6,16 +6,16 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
 #include "vm/bytecode_image.h"
-#include "vm/vm.h"
 
 namespace vela::compiler {
 namespace {
 
 TEST(GenericTest, SpecializesFunctionsClassesAliasesAndCapturedPrimitives) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileCleanSource(R"(
 type Id = int;
 type Callback<T> = (T) => T;
 type Values<T> = T[];
@@ -41,23 +41,20 @@ func main(): int {
   return 0;
 }
 )",
-                                      isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  EXPECT_TRUE(compiled.program.FindFunction("identity<int>").IsValid());
-  EXPECT_FALSE(compiled.program.FindFunction("identity<Id>").IsValid());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                                 isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  EXPECT_TRUE(compiled->FindFunction("identity<int>").IsValid());
+  EXPECT_FALSE(compiled->FindFunction("identity<Id>").IsValid());
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 class GenericErrorTest : public testing::TestWithParam<std::string_view> {};
 
 TEST(GenericTest, NestedOutputVariablesWaitForOuterArgumentEvidence) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 func create<T, U>(value: T): U[] { return []; }
 func maybe<T, U>(value: T): U[]? { return null; }
 func identity<T>(value: T): T { return value; }
@@ -72,14 +69,9 @@ func main(): int {
   return choose(maybe(0) ?? [], matched);
 }
 )",
-                                      isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(GenericTest, InferredAndExplicitUsesHaveTheSameCodeAndRegisterLayout) {
@@ -102,12 +94,12 @@ func main(): int {
 }
 )";
   runtime::Isolate isolate;
-  const auto explicit_result = CompileSource(kExplicit, isolate);
-  const auto inferred_result = CompileSource(kInferred, isolate);
-  ASSERT_TRUE(explicit_result.Succeeded());
-  ASSERT_TRUE(inferred_result.Succeeded());
-  const auto expected = explicit_result.program.functions();
-  const auto actual = inferred_result.program.functions();
+  const auto explicit_result = test::CompileCleanSource(kExplicit, isolate);
+  const auto inferred_result = test::CompileCleanSource(kInferred, isolate);
+  ASSERT_TRUE(explicit_result) << explicit_result.error();
+  ASSERT_TRUE(inferred_result) << inferred_result.error();
+  const auto expected = explicit_result->functions();
+  const auto actual = inferred_result->functions();
   ASSERT_EQ(actual.size(), expected.size());
   for (std::size_t index = 0; index < expected.size(); ++index) {
     const auto& left = expected.subspan(index).front();
@@ -120,7 +112,7 @@ func main(): int {
 
 TEST(GenericTest, PreservesNestedTypeStructureAndInfersGenericCallbackValues) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 class Box<T> { value: T; }
 func identity<T>(value: T): T { return value; }
 func unbox<T>(box: Box<T[]>): T[] { return box.value; }
@@ -133,17 +125,14 @@ func main(): int {
   return apply(identity, copy[0] + copy[1]);
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded())
-      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(GenericTest, InfersVoidOnlyInPositionsThatPermitVoid) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 func apply<T, U>(operation: (T) => U, value: T): U { return operation(value); }
 func main(): int {
   let total = 0;
@@ -151,17 +140,14 @@ func main(): int {
   return total;
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded())
-      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(GenericTest, InfersCallsConstructorsFunctionValuesAndRecursiveBodies) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto compiled = test::CompileCleanSource(R"(
 type Operation<T> = (T) => T;
 func identity<T>(value: T): T { return value; }
 func forward<T>(value: T, count: int): T {
@@ -176,19 +162,18 @@ func main(): int {
   return unbox(box) + forward(identity(2), 3);
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded())
-      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
-  EXPECT_TRUE(compiled.program.FindFunction("identity<int>").IsValid());
-  EXPECT_TRUE(compiled.program.FindFunction("forward<int>").IsValid());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                                 isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  EXPECT_TRUE(compiled->FindFunction("identity<int>").IsValid());
+  EXPECT_TRUE(compiled->FindFunction("forward<int>").IsValid());
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(GenericTest, InfersCallbacksAfterIndependentArgumentsAndPropagatesNestedContexts) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 func apply<T, U>(operation: (T) => U, value: T): U { return operation(value); }
 func identity<T>(value: T): T { return value; }
 func empty<T>(): T[] { return []; }
@@ -201,17 +186,14 @@ func main(): int {
   return result + nested(1)(1) - 2 + make().value.length + arrays[0].length;
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded())
-      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(GenericTest, SharesArrayAndOrdinaryCallbackInference) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 func apply<T, U>(operation: (T) => U, value: T): U { return operation(value); }
 func main(): int {
   const items = [19, 20];
@@ -220,17 +202,14 @@ func main(): int {
   return apply(value => value, total);
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded())
-      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(GenericTest, InfersTransparentGenericConstructorsAndExplicitConstructorParameters) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 class Box<T> { value: T; constructor(input: T) { this.value = input; } }
 type Alias<Item> = Box<Item>;
 type Dictionary<Value> = Map<string, Value>;
@@ -241,17 +220,14 @@ func main(): int {
   return values.get('answer') ?? 0;
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded())
-      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(GenericTest, DeferredInferenceKeepsEarlierArgumentsBeforeLaterMutation) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 let mutate: () => void = (): void => {};
 func create<T>(): T[] { mutate(); return []; }
 func choose<T>(first: T, second: T[]): T { return first; }
@@ -262,12 +238,9 @@ func main(): int {
   return 0;
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded())
-      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(GenericTest, ExecutesIndependentSpecializationsBeyond256AndRestoresWideCodeFromImage) {
@@ -291,25 +264,24 @@ TEST(GenericTest, ExecutesIndependentSpecializationsBeyond256AndRestoresWideCode
       "const zero = round - round; total += 1 / zero; } catch (error: Error) { "
       "if (error.code != 'DivisionByZero') { return -1; } } } return total; }";
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(source, isolate);
-  ASSERT_TRUE(compiled.Succeeded())
-      << (compiled.diagnostics.empty() ? "" : compiled.diagnostics.front().message);
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), kTypes * 2);
-  const auto image = vm::SaveBytecode(compiled.program, isolate);
+  const auto compiled = test::CompileCleanSource(source, isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, kTypes * 2);
+  const auto image = vm::SaveBytecode(*compiled, isolate);
   ASSERT_TRUE(image);
   runtime::Isolate restored;
   const auto loaded = vm::LoadBytecode(*image, restored);
   ASSERT_TRUE(loaded) << loaded.error().message;
-  const auto resumed = vm::VirtualMachine(restored).Execute(loaded->FindFunction("main"));
-  ASSERT_TRUE(resumed.Succeeded()) << resumed.message;
-  EXPECT_EQ(resumed.value.AsInteger(), kTypes * 2);
+  const auto resumed = test::ExecuteInteger(*loaded, restored);
+  ASSERT_TRUE(resumed) << resumed.error();
+  EXPECT_EQ(*resumed, kTypes * 2);
 }
 
 TEST(GenericTest, PreservesLoopBindingsAndAccessorFlagsWhenCloningTemplates) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 func identity<T>(value: T): T { return value; }
 func collect<T>(values: T[]): (() => T)[] {
   const result: (() => T)[] = [];
@@ -340,14 +312,9 @@ func main(): int {
   return box.value + callbacks[0]();
 }
 )",
-                                      isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.location.line << ": " << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST_P(GenericErrorTest, RejectsInvalidInstantiationAndExpandingRecursion) {
@@ -382,7 +349,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST(GenericTest, ConstructsGenericAliasesAndKeepsTemplateBodiesInTheirDeclarationScope) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 func identity<T>(value: T): T { return value; }
 func forward<T>(value: T): T { return identity<T>(value); }
 class Box<T> { value: T; }
@@ -392,11 +359,9 @@ func main(): int {
   return Alias<int>(value: forward<int>(42)).value;
 }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(GenericTest, DiagnosesDeepTypeSyntaxBeforeRecursiveDestructionCanOverflow) {
@@ -411,7 +376,7 @@ TEST(GenericTest, DiagnosesDeepTypeSyntaxBeforeRecursiveDestructionCanOverflow) 
 
 TEST(GenericTest, FusedInstantiationPreservesMatchCatchFinallyAndLambdaScopes) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 func identity<T>(value: T): T { return value; }
 class Failure<T> { value: T; }
 func inspect<T>(value: T, flag: bool): T {
@@ -433,19 +398,14 @@ func inspect<T>(value: T, flag: bool): T {
 }
 func main(): int { return inspect<int>(20, true) + inspect<int>(22, false); }
 )",
-                                      isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(GenericTest, FusedClassInstantiationPreservesGenericBasesConstructorsAndOverrides) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 func identity<T>(value: T): T { return value; }
 class Base<T> { value: T; read(): T { return this.value; } }
 class Derived<T> extends Base<T> {
@@ -458,14 +418,9 @@ func main(): int {
   return derived.read() + derived.value;
 }
 )",
-                                      isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(GenericTest, FusedInstantiationRejectsTypeArgumentsOnShadowingBindings) {

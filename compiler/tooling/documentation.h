@@ -1,12 +1,23 @@
 #pragma once
 
 #include <expected>
+#include <span>
 #include <string>
 #include <string_view>
 
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/token.h"
+
+namespace vela::frontend {
+struct Function;
+}
 
 namespace vela::tooling {
+
+[[nodiscard]] std::string FunctionSignature(const frontend::Function& function);
+[[nodiscard]] std::string DocumentationComment(std::string_view source,
+                                               std::span<const frontend::SourceComment> comments,
+                                               SourceLocation location);
 
 struct DocumentationResult final {
   std::string markdown;

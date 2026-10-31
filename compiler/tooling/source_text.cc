@@ -14,24 +14,10 @@
 namespace vela::tooling {
 namespace {
 
-constexpr unsigned char kTwoByteFirst = 0xc2;
-constexpr unsigned char kThreeByteFirst = 0xe0;
-constexpr unsigned char kFourByteFirst = 0xf0;
-constexpr unsigned char kLastUtf8Lead = 0xf4;
-
 std::size_t Utf8Width(std::string_view text, std::size_t offset) {
-  const auto byte = static_cast<unsigned char>(text.at(offset));
-  if (byte < kTwoByteFirst || byte > kLastUtf8Lead) {
-    return 1;
-  }
-  std::size_t width = 4;
-  if (byte < kThreeByteFirst) {
-    width = 2;
-  } else if (byte < kFourByteFirst) {
-    width = 3;
-  }
+  const auto point = ReadUtf8Prefix(text.substr(offset));
   // 非法磁盘字节按一个替代字符计数，编辑器输入仍在 Create / Replace 处拒绝。
-  return width > text.size() - offset || InvalidUtf8Offset(text.substr(offset, width)) ? 1 : width;
+  return point ? point->width : 1;
 }
 
 std::size_t PositionWidth(std::size_t bytes, PositionEncoding encoding) {

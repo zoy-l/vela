@@ -1,18 +1,14 @@
-#include <algorithm>
-#include <cstddef>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "gtest/gtest.h"
 
 #include "base/execution_status.h"
 #include "compiler/compiler.h"
-#include "runtime/future.h"
+#include "compiler/program_test_support.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/value.h"
-#include "vm/bytecode_image.h"
 #include "vm/program.h"
 #include "vm/vm.h"
 
@@ -21,37 +17,26 @@ namespace {
 
 class RegExpProgramTest : public testing::TestWithParam<std::string_view> {};
 
-void ExpectFutureAnswer(runtime::Future& result, runtime::Isolate& isolate) {
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(result));
-  ASSERT_EQ(result.state(), runtime::FutureState::Succeeded);
-  const auto value = result.value().value_or(runtime::Value::Null());
-  ASSERT_TRUE(value.IsInteger());
-  EXPECT_EQ(value.AsInteger(), 42);
-}
-
 void ExpectAnswer(const vm::Program& program, runtime::Isolate& isolate) {
   const auto main = program.FindFunction("main");
   if (main.is_async()) {
-    auto result = vm::VirtualMachine(isolate).ExecuteFuture(program, main.index());
-    ExpectFutureAnswer(result, isolate);
+    const auto result = test::ExecuteFutureInteger(program, isolate);
+    ASSERT_TRUE(result) << result.error();
+    EXPECT_EQ(*result, 42);
     return;
   }
-  const auto result = vm::VirtualMachine(isolate).Execute(main);
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  ASSERT_TRUE(result.value.IsInteger());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto result = test::ExecuteInteger(program, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST_P(RegExpProgramTest, ExecutesWithGCAndReleasesProgramsAndWorkBuffers) {
   runtime::Isolate isolate(1);
   const auto baseline = isolate.heap().object_count();
   {
-    const auto compiled = CompileSource(GetParam(), isolate);
-    for (const auto& diagnostic : compiled.diagnostics) {
-      ADD_FAILURE() << diagnostic.location.line << ':' << diagnostic.message;
-    }
-    ASSERT_TRUE(compiled.Succeeded());
-    ExpectAnswer(compiled.program, isolate);
+    const auto program = test::CompileCleanSource(GetParam(), isolate);
+    ASSERT_TRUE(program) << program.error();
+    ExpectAnswer(*program, isolate);
   }
   isolate.heap().FinishCollection();
   isolate.heap().Collect();
@@ -59,20 +44,9 @@ TEST_P(RegExpProgramTest, ExecutesWithGCAndReleasesProgramsAndWorkBuffers) {
 }
 
 TEST_P(RegExpProgramTest, RestoresSourceFreeImageInFreshIsolate) {
-  std::vector<std::byte> image;
-  {
-    runtime::Isolate isolate(1);
-    const auto compiled = CompileSource(GetParam(), isolate);
-    ASSERT_TRUE(compiled.Succeeded());
-    const auto saved = vm::SaveBytecode(compiled.program, isolate);
-    ASSERT_TRUE(saved) << saved.error().message;
-    image = *saved;
-  }
   runtime::Isolate isolate(1);
-  const auto loaded = vm::LoadBytecode(image, isolate);
-  ASSERT_TRUE(loaded) << loaded.error().message;
-  std::ranges::fill(image, std::byte{0});
-  isolate.heap().Collect();
+  const auto loaded = test::ReloadSource(GetParam(), isolate);
+  ASSERT_TRUE(loaded) << loaded.error();
   ExpectAnswer(*loaded, isolate);
 }
 

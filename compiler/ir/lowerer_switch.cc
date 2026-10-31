@@ -75,12 +75,7 @@ void Lowerer::LowerSwitch(const frontend::Statement& statement) {
   }
   const auto unmatched = current_function_->instructions.size();
   Emit({.opcode = Opcode::Jump, .location = statement.location});
-  controls_.push_back({
-      .kind = ControlTargets::Kind::Switch,
-      .break_jumps = {},
-      .continue_jumps = {},
-      .finally_depth = finalizers_.size(),
-  });
+  BeginControl(ControlTargets::Kind::Switch);
   for (std::size_t index = 0; index < statement.cases.size(); ++index) {
     const auto target = static_cast<std::uint32_t>(current_function_->instructions.size());
     if (const auto entry = entries.at(index)) {
@@ -95,10 +90,7 @@ void Lowerer::LowerSwitch(const frontend::Statement& statement) {
   if (!default_branch) {
     current_function_->instructions.at(unmatched).index = end;
   }
-  for (const auto jump : controls_.back().break_jumps) {
-    current_function_->instructions.at(jump).index = end;
-  }
-  controls_.pop_back();
+  FinishControl(std::nullopt);
 }
 
 }  // namespace vela::ir

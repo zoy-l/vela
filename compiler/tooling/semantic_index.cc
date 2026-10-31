@@ -25,10 +25,42 @@
 #include "compiler/frontend/standard_environment.h"
 #include "compiler/frontend/token.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/tooling/builtin_documentation.h"
+#include "compiler/tooling/documentation.h"
+#include "compiler/tooling/semantic_syntax.h"
 #include "compiler/tooling/source_text.h"
 
 namespace vela::tooling {
+
+bool IsIdentifierByte(char value) {
+  return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
+         (value >= '0' && value <= '9') || value == '_';
+}
+
+std::optional<frontend::TokenKind> ClosingDelimiter(frontend::TokenKind kind) {
+  using frontend::TokenKind;
+  switch (kind) {
+    case TokenKind::LeftBrace:
+      return TokenKind::RightBrace;
+    case TokenKind::LeftBracket:
+      return TokenKind::RightBracket;
+    case TokenKind::LeftParen:
+      return TokenKind::RightParen;
+    default:
+      return std::nullopt;
+  }
+}
+
+void TrackDelimiter(std::vector<frontend::TokenKind>& closing,
+                    frontend::TokenKind kind,
+                    std::optional<frontend::TokenKind> expected) {
+  if (expected) {
+    closing.push_back(*expected);
+  } else if (!closing.empty() && kind == closing.back()) {
+    closing.pop_back();
+  }
+}
 
 std::string DisplaySymbolName(std::string_view name) {
   std::string text(name);
@@ -55,22 +87,7 @@ std::string TypeText(const TypeName& type) {
 }
 
 std::string Signature(const frontend::Function& function) {
-  std::string text;
-  for (const auto& parameter : function.type_parameters) {
-    text += (text.empty() ? "<" : ", ") + parameter;
-  }
-  text += text.empty() ? "(" : ">(";
-  for (const auto& parameter : function.parameters) {
-    if (text.back() != '(') {
-      text += ", ";
-    }
-    text += parameter.name + ": " + TypeText(parameter.type);
-    if (std::ranges::find(function.optional_parameters, parameter.name) !=
-        function.optional_parameters.end()) {
-      text += " = null";
-    }
-  }
-  return text + "): " + TypeText(function.return_type);
+  return DisplaySymbolName(FunctionSignature(function));
 }
 
 std::string GenericName(std::string_view source_name, std::span<const std::string> parameters) {
@@ -85,32 +102,10 @@ std::string GenericName(std::string_view source_name, std::span<const std::strin
   return name;
 }
 
-std::optional<TokenKind> Closing(TokenKind kind) {
-  switch (kind) {
-    case TokenKind::LeftBrace:
-      return TokenKind::RightBrace;
-    case TokenKind::LeftBracket:
-      return TokenKind::RightBracket;
-    case TokenKind::LeftParen:
-      return TokenKind::RightParen;
-    default:
-      return std::nullopt;
-  }
-}
-
-bool IsIdentifierByte(char value) {
-  return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
-         (value >= '0' && value <= '9') || value == '_';
-}
-
 void CloseCompletionDelimiters(std::string& text, std::span<const frontend::Token> tokens) {
   std::vector<TokenKind> closing;
   for (const auto& token : tokens) {
-    if (const auto close = Closing(token.kind)) {
-      closing.push_back(*close);
-    } else if (!closing.empty() && token.kind == closing.back()) {
-      closing.pop_back();
-    }
+    TrackDelimiter(closing, token.kind, ClosingDelimiter(token.kind));
   }
   for (const auto kind : std::views::reverse(closing)) {
     switch (kind) {
@@ -200,9 +195,10 @@ SemanticIndex::SemanticIndex(frontend::ParseResult loaded) : program_(std::move(
     for (std::size_t token_index = 0; token_index < source.tokens.size(); ++token_index) {
       source.closing.at(token_index) = token_index;
       const auto kind = source.tokens.at(token_index).kind;
-      if (Closing(kind)) {
+      if (ClosingDelimiter(kind)) {
         opening.push_back(token_index);
-      } else if (!opening.empty() && Closing(source.tokens.at(opening.back()).kind) == kind) {
+      } else if (!opening.empty() &&
+                 ClosingDelimiter(source.tokens.at(opening.back()).kind) == kind) {
         source.closing.at(opening.back()) = token_index;
         opening.pop_back();
       }
@@ -305,7 +301,9 @@ SemanticIndex::Scope SemanticIndex::Extent(const Statement& statement) const {
   };
 }
 
-std::size_t SemanticIndex::AddSymbol(SourceLocation location, Completion completion) {
+std::size_t SemanticIndex::AddSymbol(SourceLocation location,
+                                     CompletionKind kind,
+                                     std::string detail) {
   const auto& source = sources_.at(location.source_id);
   auto token = TokenAt(location);
   // match 绑定的位置指向 let，catch 指向关键字；普通声明已经指向名称。
@@ -318,10 +316,14 @@ std::size_t SemanticIndex::AddSymbol(SourceLocation location, Completion complet
   const Key key{location.source_id, name.offset};
   const auto [found, inserted] = declarations_.try_emplace(key, symbols_.size());
   if (inserted) {
-    completion.label = name.lexeme;
-    completion.documentation = DocumentationAt(location);
     symbols_.push_back({
-        .completion = std::move(completion),
+        .completion =
+            {
+                .label = name.lexeme,
+                .detail = std::move(detail),
+                .kind = kind,
+                .documentation = DocumentationAt(location),
+            },
         .owner = {},
         .key = key,
         .length = name.length,
@@ -334,18 +336,14 @@ std::size_t SemanticIndex::AddSymbol(SourceLocation location, Completion complet
 void SemanticIndex::CollectDeclarations() {
   const auto declare = [this](const auto& declaration, CompletionKind kind,
                               const std::string& detail) -> std::size_t {
-    const auto symbol_id =
-        AddSymbol(declaration.location,
-                  {.label = declaration.name, .detail = detail, .kind = kind, .documentation = {}});
+    const auto symbol_id = AddSymbol(declaration.location, kind, detail);
     symbols_.at(symbol_id).export_kind = declaration.export_kind;
     names_.insert_or_assign(declaration.name, symbol_id);
     return symbol_id;
   };
   const auto member = [this](std::string_view owner, const auto& declaration, CompletionKind kind,
                              const std::string& detail) -> std::size_t {
-    const auto symbol_id =
-        AddSymbol(declaration.location,
-                  {.label = declaration.name, .detail = detail, .kind = kind, .documentation = {}});
+    const auto symbol_id = AddSymbol(declaration.location, kind, detail);
     auto& symbol = symbols_.at(symbol_id);
     if (symbol.owner.empty()) {
       symbol.owner = DisplaySymbolName(owner);
@@ -427,13 +425,8 @@ void SemanticIndex::CollectEnumMembers(const frontend::Enum& declaration) {
   const auto owner = DisplaySymbolName(declaration.name);
   std::size_t ordinal = 0;
   for (const auto& value : declaration.members) {
-    const auto symbol_id = AddSymbol(
-        value.location, {
-                            .label = value.name,
-                            .detail = owner + '.' + value.name + " = " + std::to_string(ordinal++),
-                            .kind = CompletionKind::EnumMember,
-                            .documentation = {},
-                        });
+    const auto symbol_id = AddSymbol(value.location, CompletionKind::EnumMember,
+                                     owner + '.' + value.name + " = " + std::to_string(ordinal++));
     symbols_.at(symbol_id).storage = frontend::MemberStorage::Static;
     members.insert_or_assign(value.name, symbol_id);
   }
@@ -442,12 +435,8 @@ void SemanticIndex::CollectEnumMembers(const frontend::Enum& declaration) {
 void SemanticIndex::CollectParameters(std::size_t symbol, const frontend::Function& function) {
   auto& declared = parameters_.try_emplace(symbol).first->second;
   for (const auto& parameter : function.parameters) {
-    const auto parameter_id = AddSymbol(parameter.location, {
-                                                                .label = parameter.name,
-                                                                .detail = TypeText(parameter.type),
-                                                                .kind = CompletionKind::Variable,
-                                                                .documentation = {},
-                                                            });
+    const auto parameter_id =
+        AddSymbol(parameter.location, CompletionKind::Variable, TypeText(parameter.type));
     declared.insert_or_assign(parameter.name, parameter_id);
     symbols_.at(parameter_id).role = Symbol::Role::Parameter;
   }
@@ -488,19 +477,13 @@ void SemanticIndex::VisitType(const TypeName& type) {
 
 void SemanticIndex::DeclareLocal(const void* node,
                                  SourceLocation location,
-                                 std::string_view name,
                                  std::string detail,
                                  Scope scope,
                                  std::size_t available) {
   if (phase_ == IndexPhase::SourceTypes) {
     return;
   }
-  const auto symbol = AddSymbol(location, {
-                                              .label = std::string(name),
-                                              .detail = std::move(detail),
-                                              .kind = CompletionKind::Variable,
-                                              .documentation = {},
-                                          });
+  const auto symbol = AddSymbol(location, CompletionKind::Variable, std::move(detail));
   locals_.push_back({.symbol = symbol, .scope = scope, .available = available});
   if (const auto binding = model_.bindings.find(node); binding != model_.bindings.end()) {
     bindings_.insert_or_assign(binding->second, symbol);
@@ -525,8 +508,7 @@ void SemanticIndex::VisitFunction(const frontend::Function& function,
           detail = DisplaySymbolName(signature->parameters.at(parameter_index->second).type.name);
         }
       }
-      DeclareLocal(&parameter, parameter.location, parameter.name, std::move(detail), body,
-                   body.begin);
+      DeclareLocal(&parameter, parameter.location, std::move(detail), body, body.begin);
       if (phase_ == IndexPhase::Checked) {
         symbols_.at(declarations_.at(KeyAt(parameter.location))).role = Symbol::Role::Parameter;
       }
@@ -556,8 +538,7 @@ void SemanticIndex::VisitStatement(const Statement* statement, Scope scope) {
     const auto type = model_.local_types.find(statement);
     const auto detail = type == model_.local_types.end() ? TypeText(statement->type)
                                                          : DisplaySymbolName(type->second.name);
-    DeclareLocal(statement, statement->location, statement->name, detail, scope,
-                 Extent(*statement).end);
+    DeclareLocal(statement, statement->location, detail, scope, Extent(*statement).end);
     if (phase_ == IndexPhase::Checked && statement->binding == frontend::BindingKind::Constant) {
       symbols_.at(declarations_.at(KeyAt(statement->location))).completion.kind =
           CompletionKind::Constant;
@@ -588,8 +569,7 @@ void SemanticIndex::VisitStatement(const Statement* statement, Scope scope) {
     nested.depth = scope.depth + 1;
     VisitType(clause.type);
     if (!clause.name.empty()) {
-      DeclareLocal(&clause, clause.location, clause.name, TypeText(clause.type), nested,
-                   nested.begin);
+      DeclareLocal(&clause, clause.location, TypeText(clause.type), nested, nested.begin);
     }
     VisitStatement(clause.body.get(), nested);
   }
@@ -618,17 +598,16 @@ void SemanticIndex::VisitForEach(const Statement& statement, const Scope& scope)
   }
   const auto& tokens = sources_.at(statement.location.source_id).tokens;
   const auto first = TokenAt(statement.location) + (statement.destructuring ? 2 : 1);
-  const auto declare = [&](const void* node, std::size_t token, const std::string& name,
-                           std::string detail) {
+  const auto declare = [&](const void* node, std::size_t token, std::string detail) {
     const auto location = tokens.at(token).location;
-    DeclareLocal(node, location, name, std::move(detail), body, body.begin);
+    DeclareLocal(node, location, std::move(detail), body, body.begin);
     if (phase_ == IndexPhase::Checked) {
       symbols_.at(declarations_.at(KeyAt(location))).completion.kind = CompletionKind::Constant;
     }
   };
-  declare(&statement.name, first, statement.name, std::move(first_type));
+  declare(&statement.name, first, std::move(first_type));
   if (statement.destructuring) {
-    declare(&statement.second_name, first + 2, statement.second_name, std::move(second_type));
+    declare(&statement.second_name, first + 2, std::move(second_type));
   }
   VisitStatement(statement.then_branch.get(), body);
 }
@@ -641,7 +620,8 @@ SemanticIndex::Receiver SemanticIndex::ReceiverFor(const Expression& expression)
     receiver.type = type->second;
   } else if (expression.kind == Expression::Kind::Name && !model_.bindings.contains(&expression)) {
     if (expression.text == "Future") {
-      receiver.type = {.kind = frontend::TypeDescriptor::Kind::Future, .name = "Future"};
+      receiver.type = {.kind = frontend::TypeDescriptor::Kind::Future,
+                       .name = frontend::kFutureTypeName};
       receiver.storage = frontend::MemberStorage::Static;
       return receiver;
     }
@@ -676,7 +656,7 @@ void SemanticIndex::IndexExpression(const Expression& expression) {
     auto receiver = ReceiverFor(*expression.object);
     if (expression.null_safe && receiver.type.nullable) {
       receiver.type.nullable = false;
-      receiver.type.name.pop_back();
+      receiver.type.name = receiver.type.name.substr(0, receiver.type.name.size() - 1);
     }
     const auto key = KeyAt(expression.location);
     const auto found = members_.find(receiver.type.name);
@@ -700,14 +680,7 @@ void SemanticIndex::VisitExpression(const Expression* expression, const Scope& s
   for (const auto& argument : expression->type_arguments) {
     VisitType(argument);
   }
-  for (const auto* child : {
-           expression->left.get(),
-           expression->right.get(),
-           expression->operand.get(),
-           expression->callee.get(),
-           expression->object.get(),
-           expression->index.get(),
-       }) {
+  for (const auto* child : ExpressionOperands(*expression)) {
     VisitExpression(child, scope);
   }
   for (const auto& element : expression->elements) {
@@ -743,7 +716,7 @@ void SemanticIndex::VisitExpression(const Expression* expression, const Scope& s
                      : source.tokens.at(source.closing.at(match_body)).offset;
     ++nested.depth;
     if (arm.kind == frontend::MatchArm::Kind::Binding) {
-      DeclareLocal(&arm, arm.location, arm.binding, "match binding", nested, nested.begin);
+      DeclareLocal(&arm, arm.location, "match binding", nested, nested.begin);
     }
     VisitExpression(arm.value.get(), nested);
   }
@@ -930,42 +903,7 @@ std::optional<Definition> SemanticIndex::FindDefinition(std::size_t offset,
 
 std::string SemanticIndex::DocumentationAt(SourceLocation location) const {
   const auto& source = sources_.at(location.source_id);
-  const auto& comments = source.comments;
-  const auto text = source.text.text();
-  auto line = static_cast<std::size_t>(location.line - 1);
-  auto previous =
-      std::ranges::lower_bound(comments, location.line, {},
-                               [](const auto& comment) -> auto { return comment.location.line; });
-  std::vector<std::string_view> lines;
-  while (previous != comments.begin() && line > 0) {
-    const auto& comment = *--previous;
-    auto content = text.substr(comment.offset, comment.length);
-    if (comment.location.line != line || !content.starts_with("///")) {
-      break;
-    }
-    const auto start = source.text.OffsetAt({.line = line - 1}, PositionEncoding::Utf8).value();
-    if (text.substr(start, comment.offset - start).find_first_not_of(" \t") !=
-        std::string_view::npos) {
-      break;
-    }
-    content.remove_prefix(3);
-    if (content.starts_with(' ')) {
-      content.remove_prefix(1);
-    }
-    if (content.ends_with('\r')) {
-      content.remove_suffix(1);
-    }
-    lines.push_back(content);
-    --line;
-  }
-  std::string result;
-  for (auto item = lines.rbegin(); item != lines.rend(); ++item) {
-    if (item != lines.rbegin()) {
-      result += '\n';
-    }
-    result += *item;
-  }
-  return result;
+  return DocumentationComment(source.text.text(), source.comments, location);
 }
 
 std::string SemanticIndex::DefaultValue(const Expression& expression) const {

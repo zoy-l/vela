@@ -147,10 +147,7 @@ void FunctionEmitter::EmitResumeDispatch() {
       builder_.getInt32Ty(), ByteAddress(state, offsetof(runtime::NativeResumeState, instruction)));
   auto* saved_values = builder_.CreateLoad(
       builder_.getPtrTy(), ByteAddress(state, offsetof(runtime::NativeResumeState, saved)));
-  auto* invalid = llvm::BasicBlock::Create(module_.getContext(), "invalid.resume", body_);
-  auto* dispatch = builder_.CreateSwitch(instruction, invalid);
-  builder_.SetInsertPoint(invalid);
-  Finish(Status(builder_, ExecutionStatus::InvalidEntry));
+  auto* dispatch = ResumeDispatch(instruction);
   for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
     const auto& source = source_.instructions.at(index);
     if (source.opcode != Opcode::Await) {
@@ -210,9 +207,7 @@ std::expected<void, std::string> FunctionEmitter::EmitAsyncInstruction(
     }
     case Opcode::AsyncCall: {
       const auto operation = static_cast<AsyncOperation>(instruction.index);
-      for (std::size_t argument = 0; argument < AsyncArity(operation); ++argument) {
-        Pack(Encode(static_cast<ir::RegisterId>(instruction.lhs + argument)), argument);
-      }
+      PackArguments(instruction.lhs, AsyncArity(operation));
       auto helper = module_.getOrInsertFunction("vela_native_v1_async_call", status_type, pointer,
                                                 word, pointer, pointer);
       status = builder_.CreateCall(helper, {context, index, arguments_, result_});
@@ -227,8 +222,7 @@ std::expected<void, std::string> FunctionEmitter::EmitAsyncInstruction(
     default:
       std::unreachable();
   }
-  CheckStatus(status);
-  Unpack(instruction.dst);
+  CompleteCall(status, instruction.dst);
   return {};
 }
 

@@ -29,8 +29,8 @@ StatementFlow TypeChecker::CheckTry(const Statement& statement, const Type& retu
                       "catch type must be a non-null class, interface, or dynamic");
       }
       catches_all = type.kind == Type::Kind::Dynamic;
-      if (!caught.insert(type.name).second) {
-        AddDiagnostic(clause.location, "duplicate catch type '" + type.name + "'");
+      if (!caught.insert(std::string(type.name)).second) {
+        AddDiagnostic(clause.location, "duplicate catch type '" + std::string(type.name) + "'");
       }
       catch_types_.emplace(&clause, type);
       DeclareLocal(clause.name, type, clause.location, BindingKind::Mutable, &clause);
@@ -39,9 +39,7 @@ StatementFlow TypeChecker::CheckTry(const Statement& statement, const Type& retu
     }
     const auto next = CheckStatement(*clause.body, return_type);
     EndScope();
-    flow.can_fall_through = flow.can_fall_through || next.can_fall_through;
-    flow.can_break = flow.can_break || next.can_break;
-    flow.can_continue = flow.can_continue || next.can_continue;
+    flow = MergeBranches(flow, next);
   }
   refinements_.Clear();
   if (statement.finally_branch) {

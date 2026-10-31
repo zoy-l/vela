@@ -1,5 +1,6 @@
 #pragma once
 
+#include <initializer_list>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -10,6 +11,15 @@
 #include "compiler/frontend/type_checker.h"
 
 namespace vela::frontend {
+
+struct BuiltinParameter final {
+  std::string_view name;
+  TypeDescriptor type;
+};
+
+[[nodiscard]] FunctionDescriptor MakeBuiltinSignature(
+    TypeDescriptor result,
+    std::initializer_list<BuiltinParameter> parameters);
 
 [[nodiscard]] std::optional<Builtin> FindBuiltin(TypeDescriptor::Kind receiver,
                                                  std::string_view name);

@@ -260,13 +260,7 @@ std::expected<void, std::string> EmitExport(llvm::Module& module,
                   result,
                   function->getArg(static_cast<unsigned>(function->arg_size() - 1)),
               });
-  auto* returned = llvm::BasicBlock::Create(context, "returned", function);
-  auto* failed = llvm::BasicBlock::Create(context, "failed", function);
-  builder.CreateCondBr(builder.CreateICmpEQ(status, Status(builder, ExecutionStatus::Returned)),
-                       returned, failed);
-  builder.SetInsertPoint(failed);
-  builder.CreateRet(status);
-  builder.SetInsertPoint(returned);
+  native::ReturnOnFailure(builder, *function, status);
   if (output_shape != Shape::Void) {
     WriteResult(builder, builder.CreateLoad(record_type, result), output_shape, output);
   }

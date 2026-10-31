@@ -2,13 +2,11 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <istream>
-#include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -25,6 +23,7 @@
 #include "base/execution_limits.h"
 #include "base/json.h"
 #include "base/path.h"
+#include "compiler/tooling/console_input.h"
 #include "runtime/heap.h"
 #include "runtime/object.h"
 #include "runtime/regexp.h"
@@ -36,6 +35,7 @@
 #include "vm/vm.h"
 
 namespace vela::tooling {
+
 namespace {
 
 enum class Mode : std::uint8_t { Entry, Continue, Step, Next, Finish, Instruction };
@@ -115,20 +115,6 @@ std::pair<std::string_view, std::string_view> Words(std::string_view text) {
     return {text, {}};
   }
   return {text.substr(0, separator), Trim(text.substr(separator + 1))};
-}
-
-std::optional<std::uint32_t> Index(std::string_view text) {
-  if (text.empty()) {
-    return std::nullopt;
-  }
-  std::uint32_t index = 0;
-  const auto* begin = std::to_address(text.begin());
-  const auto* end = std::to_address(text.end());
-  const auto parsed = std::from_chars(begin, end, index);
-  if (parsed.ec != std::errc() || parsed.ptr != end) {
-    return std::nullopt;
-  }
-  return index;
 }
 
 bool IsNewLine(const Point& current, const Point& previous) {
@@ -441,7 +427,7 @@ void ConsoleDebugger::AddSourceBreakpoint(std::string_view path, std::uint32_t l
 
 void ConsoleDebugger::AddBreakpoint(std::string_view text, const vm::DebugFrame& frame) {
   text = Unquote(text);
-  if (const auto line = Index(text)) {
+  if (const auto line = ParseConsoleIndex(text)) {
     const auto source = frame.location();
     if (!source) {
       *output_ << "selected frame has no source mapping\n";
@@ -452,7 +438,7 @@ void ConsoleDebugger::AddBreakpoint(std::string_view text, const vm::DebugFrame&
   }
   const auto colon = text.find_last_of(':');
   if (colon != std::string_view::npos) {
-    const auto line = Index(text.substr(colon + 1));
+    const auto line = ParseConsoleIndex(text.substr(colon + 1));
     if (!line) {
       *output_ << "expected a positive line number after ':'\n";
       return;
@@ -486,7 +472,7 @@ void ConsoleDebugger::DeleteBreakpoint(std::string_view text) {
     *output_ << "all breakpoints deleted\n";
     return;
   }
-  const auto identity = Index(text);
+  const auto identity = ParseConsoleIndex(text);
   if (!identity) {
     *output_ << "delete requires a breakpoint ID or all\n";
     return;
@@ -534,7 +520,7 @@ void ConsoleDebugger::Stack(const vm::DebugContext& context) const {
 void ConsoleDebugger::SelectFrame(std::string_view text,
                                   const vm::DebugContext& context,
                                   vm::DebugFrame& selected) const {
-  const auto depth = Index(text);
+  const auto depth = ParseConsoleIndex(text);
   if (!depth) {
     *output_ << "frame requires a nonnegative depth\n";
     return;
@@ -565,7 +551,7 @@ void ConsoleDebugger::Inspect(Command command,
     return;
   }
   name.remove_prefix(1);
-  const auto index = Index(name);
+  const auto index = ParseConsoleIndex(name);
   if (!index) {
     *output_ << "invalid register name\n";
     return;
@@ -584,7 +570,7 @@ void ConsoleDebugger::Inspect(Command command,
     *output_ << '\n';
     return;
   }
-  const auto element = Index(rest);
+  const auto element = ParseConsoleIndex(rest);
   if (!element || !value->IsObject()) {
     *output_ << "expected an object register and a nonnegative index\n";
     return;

@@ -10,11 +10,9 @@
 #include <utility>
 #include <vector>
 
+#include <llvm/ADT/StringRef.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
-#include <llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
-#include <llvm/ExecutionEngine/Orc/Layer.h>
-#include <llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Error.h>
 #include <llvm/Support/MemoryBuffer.h>
@@ -27,8 +25,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/jit/code_cache.h"
 #include "compiler/jit/code_resources.h"
-#include "compiler/jit/platform_support.h"
-#include "compiler/jit/runtime_symbols.h"
+#include "compiler/jit/engine.h"
 #include "compiler/native/code_generator.h"
 #include "runtime/native_image.h"
 
@@ -160,26 +157,10 @@ Compiler::Compiler(std::shared_ptr<llvm::orc::LLJIT> jit)
 }
 
 std::expected<std::unique_ptr<Compiler>, frontend::Diagnostics> Compiler::Create() {
-  native::InitializeTarget();
-  llvm::orc::JITTargetMachineBuilder target{
-      llvm::Triple(std::string(runtime::NativeTargetIdentity()))};
-  target.setCPU("generic");
-  llvm::orc::LLJITBuilder builder;
-  builder.setJITTargetMachineBuilder(std::move(target));
-  builder.setObjectLinkingLayerCreator(
-      [](llvm::orc::ExecutionSession& session)
-          -> llvm::Expected<std::unique_ptr<llvm::orc::ObjectLayer>> {
-        return std::make_unique<llvm::orc::ObjectLinkingLayer>(session);
-      });
-  auto created = builder.create();
+  const auto identity = runtime::NativeTargetIdentity();
+  auto created = CreateEngine(llvm::Triple(llvm::StringRef(identity.data(), identity.size())));
   if (!created) {
     return std::unexpected(Diagnostic(llvm::toString(created.takeError())));
-  }
-  if (auto error = DefineRuntimeSymbols(**created)) {
-    return std::unexpected(Diagnostic(llvm::toString(std::move(error))));
-  }
-  if (auto error = InstallPlatformSupport(**created)) {
-    return std::unexpected(Diagnostic(llvm::toString(std::move(error))));
   }
   return std::unique_ptr<Compiler>(new Compiler(std::move(*created)));
 }

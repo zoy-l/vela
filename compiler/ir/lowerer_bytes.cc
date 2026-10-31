@@ -8,6 +8,7 @@
 
 #include "base/builtin.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -25,6 +26,13 @@ void Lowerer::EmitBuiltinCall(Builtin builtin,
         .location = location,
     });
   }
+  EmitBuiltinCall(builtin, result, base, location);
+}
+
+void Lowerer::EmitBuiltinCall(Builtin builtin,
+                              RegisterId result,
+                              RegisterId base,
+                              frontend::SourceLocation location) {
   Emit({
       .opcode = Opcode::BuiltinCall,
       .dst = result,
@@ -45,9 +53,9 @@ void Lowerer::EmitIndexRead(RegisterId result,
                           : receiver.type.name;
     RecordValueType(result, model_.array_elements.at(name));
   } else if (receiver.type.kind == Kind::ByteArray) {
-    RecordValueType(result, {.kind = Kind::Int, .name = "int"});
+    RecordValueType(result, {.kind = Kind::Int, .name = frontend::kIntTypeName});
   } else if (receiver.type.kind == Kind::Dynamic) {
-    RecordValueType(result, {.kind = Kind::Dynamic, .name = "dynamic"});
+    RecordValueType(result, {.kind = Kind::Dynamic, .name = frontend::kDynamicTypeName});
   }
   if (receiver.type.kind == frontend::TypeDescriptor::Kind::ByteArray ||
       receiver.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {

@@ -5,6 +5,7 @@
 
 #include "compiler/compiler.h"
 #include "compiler/frontend/source_loader.h"
+#include "compiler/program_test_support.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "vm/execution_status.h"
@@ -42,14 +43,11 @@ export func read(): int { return current; }
       },
   });
   runtime::Isolate isolate(1);
-  const auto compiled = CompileModules(sources, "main.vela", isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto compiled = test::CompileCleanModules(sources, "main.vela", isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST(GlobalTest, GlobalClosuresAndTheirCellsStayRootedAcrossExecutionsAndProgramCopies) {
@@ -64,43 +62,36 @@ func main(): int { return counter(); }
 )",
                                       isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto copied = compiled.program;
-  vm::VirtualMachine machine(isolate);
-  const auto first = machine.Execute(copied.FindFunction("main"));
-  ASSERT_TRUE(first.Succeeded());
-  EXPECT_EQ(first.value.AsInteger(), 41);
-  isolate.heap().Collect();
-  const auto second = machine.Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(second.Succeeded());
-  EXPECT_EQ(second.value.AsInteger(), 42);
+  const auto results = test::ExecuteProgramCopy(compiled.program, isolate);
+  ASSERT_TRUE(results) << results.error();
+  EXPECT_EQ(results->front(), 41);
+  EXPECT_EQ(results->back(), 42);
 }
 
 TEST(GlobalTest, ExplicitTypesPermitForwardReferencesAndReportInitializationCycles) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto entry = test::CompileEntry(R"(
 const first: int = second;
 const second: int = first;
 func main(): int { return first; }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
+                                        isolate);
+  ASSERT_TRUE(entry) << entry.error();
+  const auto result = vm::VirtualMachine(isolate).Execute(*entry);
   EXPECT_EQ(result.status, vm::ExecutionStatus::CyclicInitialization);
 }
 
 TEST(GlobalTest, InferredInitializersFollowDependenciesAndLocalsShadowGlobals) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 const first = second + 1;
 const second = 40;
 func add(first: int): int { return first + 1; }
 func main(): int { return add(first); }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 42);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 class GlobalErrorTest : public testing::TestWithParam<std::string_view> {};

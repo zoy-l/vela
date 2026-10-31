@@ -21,13 +21,28 @@
 #include "runtime/value.h"
 
 namespace vela::runtime {
+namespace {
 
-std::expected<Value, ExecutionStatus> AllocateFutureValue(Isolate& isolate, Value value) {
-  auto* source = value.IsObject() ? Heap::GetFuture(*value.AsObject()) : nullptr;
-  auto future = source != nullptr ? source->Rooted() : Future::Value(value, &isolate.scheduler());
-  auto* object = isolate.heap().AllocateFuture(std::move(future));
+std::expected<Value, ExecutionStatus> Allocate(Heap& heap, Future future) {
+  auto* object = heap.AllocateFuture(std::move(future));
   return object != nullptr ? std::expected<Value, ExecutionStatus>(Value::Object(object))
                            : std::unexpected(ExecutionStatus::OutOfMemory);
+}
+
+}  // namespace
+
+Future RootFutureValue(Isolate& isolate, Value value) {
+  auto* source = value.IsObject() ? Heap::GetFuture(*value.AsObject()) : nullptr;
+  if (source != nullptr) {
+    return source->Rooted();
+  }
+  auto future = Future::Value(value, &isolate.scheduler());
+  future.AttachHeap(isolate.heap());
+  return future;
+}
+
+std::expected<Value, ExecutionStatus> AllocateFutureValue(Isolate& isolate, Value value) {
+  return Allocate(isolate.heap(), RootFutureValue(isolate, value));
 }
 
 std::expected<Value, ExecutionStatus> AllocateFutureError(Isolate& isolate,
@@ -38,9 +53,7 @@ std::expected<Value, ExecutionStatus> AllocateFutureError(Isolate& isolate,
   }
   Future future(&isolate.scheduler());
   std::ignore = future.CompleteError(value, diagnostic);
-  auto* object = isolate.heap().AllocateFuture(std::move(future));
-  return object != nullptr ? std::expected<Value, ExecutionStatus>(Value::Object(object))
-                           : std::unexpected(ExecutionStatus::OutOfMemory);
+  return Allocate(isolate.heap(), std::move(future));
 }
 
 std::expected<Value, ExecutionStatus> AllocateSleepFuture(Isolate& isolate,
@@ -49,9 +62,7 @@ std::expected<Value, ExecutionStatus> AllocateSleepFuture(Isolate& isolate,
   if (!FutureScheduler::CanSchedule(delay)) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  auto* object = isolate.heap().AllocateFuture(Future::Sleep(delay, isolate.scheduler()));
-  return object != nullptr ? std::expected<Value, ExecutionStatus>(Value::Object(object))
-                           : std::unexpected(ExecutionStatus::OutOfMemory);
+  return Allocate(isolate.heap(), Future::Sleep(delay, isolate.scheduler()));
 }
 
 void CompleteFuture(Isolate& isolate, Future& future, const Future& source) {

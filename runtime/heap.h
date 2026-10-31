@@ -360,6 +360,12 @@ class Heap final {
   friend class InstanceMigration;
   friend class NativeDispatch;
   [[nodiscard]] static InstanceStorage& InstanceFields(HeapObject& object) noexcept;
+  [[nodiscard]] static std::expected<const ArrayLayout*, ArrayAccessError> ElementLayout(
+      const HeapObject& array,
+      std::uint32_t index) noexcept;
+  [[nodiscard]] static std::expected<const ArrayLayout*, ArrayAccessError> ValueLayout(
+      const HeapObject& array,
+      Value value) noexcept;
 
   static constexpr auto kSizeClasses =
       std::to_array<std::size_t>({32, 64, 128, 256, 512, 1024, 2048, 4096});
@@ -401,6 +407,7 @@ class Heap final {
   [[nodiscard]] Allocation AllocateRaw(std::size_t requested_size) noexcept;
   void Publish(HeapObject& object, const Allocation& allocation) noexcept;
   void ReleaseRaw(HeapObject& object) noexcept;
+  void ReleaseExternalStorage(void* storage, std::size_t bytes) noexcept;
   [[nodiscard]] static std::pair<std::size_t, std::size_t> SelectBlockClass(
       std::size_t requested_size) noexcept;
   [[nodiscard]] bool ShouldCollect(std::size_t next_size) const noexcept;

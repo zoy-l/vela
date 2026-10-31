@@ -36,15 +36,15 @@ ConditionTruth EvaluateCondition(const Expression& expression) {
   return left == Truth::AlwaysFalse ? right : Truth::Unknown;
 }
 
-StatementFlow MergeBranches(StatementFlow left, StatementFlow right) {
+}  // namespace
+
+StatementFlow TypeChecker::MergeBranches(StatementFlow left, StatementFlow right) {
   return {
       .can_fall_through = left.can_fall_through || right.can_fall_through,
       .can_break = left.can_break || right.can_break,
       .can_continue = left.can_continue || right.can_continue,
   };
 }
-
-}  // namespace
 
 StatementFlow TypeChecker::CheckStatement(const Statement& statement, const Type& return_type) {
   StatementFlow flow;
@@ -194,13 +194,7 @@ StatementFlow TypeChecker::CheckWhile(const Statement& statement, const Type& re
     RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);
   }
   const auto condition = EvaluateCondition(*statement.condition);
-  if (condition == ConditionTruth::AlwaysFalse) {
-    AddDiagnostic(statement.then_branch->location, "unreachable statement");
-  }
-  return {
-      .can_fall_through = condition != ConditionTruth::AlwaysTrue || body.can_break,
-      .condition = condition,
-  };
+  return CheckLoopExit(statement, condition, body);
 }
 
 StatementFlow TypeChecker::CheckFor(const Statement& statement, const Type& return_type) {
@@ -248,6 +242,12 @@ StatementFlow TypeChecker::CheckFor(const Statement& statement, const Type& retu
     RefineCondition(*statement.condition, ConditionTruth::AlwaysFalse);
   }
   EndScope();
+  return CheckLoopExit(statement, condition, body);
+}
+
+StatementFlow TypeChecker::CheckLoopExit(const Statement& statement,
+                                         ConditionTruth condition,
+                                         StatementFlow body) {
   if (condition == ConditionTruth::AlwaysFalse) {
     AddDiagnostic(statement.then_branch->location, "unreachable statement");
   }

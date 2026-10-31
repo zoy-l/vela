@@ -3,7 +3,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <expected>
 #include <span>
 
 #include "base/builtin.h"
@@ -23,6 +22,7 @@
 #include "runtime/native_dynamic.h"
 #include "runtime/native_instance.h"
 #include "runtime/native_json.h"
+#include "runtime/native_result_internal.h"
 #include "runtime/object.h"
 #include "runtime/regexp.h"
 #include "runtime/value.h"
@@ -31,18 +31,12 @@
 #include "runtime/value_operations.h"
 
 namespace vela::runtime {
+using internal::StoreNativeResult;
+
 namespace {
 
 std::uint8_t Status(ExecutionStatus status) noexcept {
   return static_cast<std::uint8_t>(status);
-}
-
-std::uint8_t Store(NativeValue* destination, std::expected<Value, ExecutionStatus> result) {
-  if (!result) {
-    return Status(result.error());
-  }
-  *destination = EncodeNativeValue(*result);
-  return Status(ExecutionStatus::Returned);
 }
 
 std::uint8_t StoreObject(NativeValue* destination, HeapObject* object) noexcept {
@@ -81,7 +75,8 @@ extern "C" std::uint8_t vela_native_v2_initialize_global(NativeExecution* execut
     execution->MaterializeFrame(frame, decoded.function);
     *execution->current_instruction() = decoded.instruction;
   }
-  const auto status = Store(result, execution->instance().InitializeGlobal(*execution, index));
+  const auto status =
+      StoreNativeResult(result, execution->instance().InitializeGlobal(*execution, index));
   if (frame_kind == NativeGlobalFrame::Leaf) {
     execution->Exit();
   }
@@ -155,16 +150,16 @@ extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
   }
   auto& heap = execution->isolate().heap();
   if (builtin >= Builtin::DynamicBinary && builtin <= Builtin::DynamicIndexWrite) {
-    return Store(result, ExecuteDynamicValue(builtin, decoded, heap));
+    return StoreNativeResult(result, ExecuteDynamicValue(builtin, decoded, heap));
   }
   if (builtin == Builtin::DynamicAsync) {
-    return Store(result, ExecuteNativeDynamicAsync(*execution, decoded));
+    return StoreNativeResult(result, ExecuteNativeDynamicAsync(*execution, decoded));
   }
   if (builtin >= Builtin::DynamicCall && builtin <= Builtin::DynamicArrayValidate) {
-    return Store(result, ExecuteNativeDynamicCall(*execution, builtin, decoded));
+    return StoreNativeResult(result, ExecuteNativeDynamicCall(*execution, builtin, decoded));
   }
   if (builtin == Builtin::JsonParse || builtin == Builtin::JsonStringify) {
-    return Store(result, ExecuteNativeJson(*execution, builtin, decoded.front()));
+    return StoreNativeResult(result, ExecuteNativeJson(*execution, builtin, decoded.front()));
   }
   if (builtin >= Builtin::DateParse && builtin <= Builtin::DateToUTC) {
     const ClassLayout* layout = nullptr;
@@ -173,7 +168,7 @@ extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
       layout = execution->instance().layouts().classes.at(index);
     }
     const auto value = ExecuteDateBuiltin(builtin, decoded, heap, layout);
-    return value ? Store(result, *value)
+    return value ? StoreNativeResult(result, *value)
                  : Status(execution->HandleFailure(value.error().status, value.error().message));
   }
   if (IsRegExpBuiltin(builtin)) {
@@ -183,26 +178,29 @@ extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
       layout = execution->instance().layouts().arrays.at(index);
     }
     const auto value = ExecuteRegExpBuiltin(builtin, decoded, heap, layout);
-    return value ? Store(result, *value)
+    return value ? StoreNativeResult(result, *value)
                  : Status(execution->HandleFailure(value.error().status, value.error().message));
   }
   if (builtin == Builtin::BindRuntimeType || builtin == Builtin::CheckFuturePayload) {
     const auto value = decoded.front();
     const auto type_index = static_cast<std::size_t>(decoded.subspan(1).front().AsInteger());
     const auto& type = execution->instance().layouts().types.at(type_index);
-    return Store(result, builtin == Builtin::BindRuntimeType ? BindValueType(value, type)
-                                                             : CheckFuturePayload(value, type));
+    return StoreNativeResult(result, builtin == Builtin::BindRuntimeType
+                                         ? BindValueType(value, type)
+                                         : CheckFuturePayload(value, type));
   }
-  return Store(result, IsByteBuiltin(builtin) ? ExecuteByteBuiltin(builtin, decoded, heap)
-                                              : ExecuteBuiltin(builtin, decoded, heap));
+  return StoreNativeResult(result, IsByteBuiltin(builtin)
+                                       ? ExecuteByteBuiltin(builtin, decoded, heap)
+                                       : ExecuteBuiltin(builtin, decoded, heap));
 }
 
 extern "C" std::uint8_t vela_native_v1_concat(NativeExecution* execution,
                                               const NativeValue* left,
                                               const NativeValue* right,
                                               NativeValue* result) {
-  return Store(result, ConcatenateValues(execution->isolate().heap(), DecodeNativeValue(*left),
-                                         DecodeNativeValue(*right)));
+  return StoreNativeResult(result,
+                           ConcatenateValues(execution->isolate().heap(), DecodeNativeValue(*left),
+                                             DecodeNativeValue(*right)));
 }
 
 extern "C" std::uint8_t vela_native_v1_interpolate(NativeExecution* execution,

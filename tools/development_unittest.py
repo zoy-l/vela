@@ -2,27 +2,22 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 import queue
 import re
 import subprocess
-import tempfile
 import threading
 import time
 import unittest
 
-from tools.config import ROOT, executable_name
+from tools.test_support import CommandTestCase
 
 
-class DevelopmentCommandTest(unittest.TestCase):
+class DevelopmentCommandTest(CommandTestCase):
+    directory_prefix = "vela-development-command-"
+
     def setUp(self) -> None:
-        temporary = tempfile.TemporaryDirectory(prefix="vela-development-command-")
-        self.addCleanup(temporary.cleanup)
-        self.directory = Path(temporary.name)
+        super().setUp()
         self.entry = self.directory / "main.vela"
-        self.executable = Path(os.environ.get(
-            "VELA_TEST_EXECUTABLE", ROOT / "out" / "debug" / executable_name("vela")))
         self.lines: queue.Queue[tuple[str, str]] = queue.Queue()
         self.history: list[tuple[str, str]] = []
         self.pending: list[tuple[str, str]] = []

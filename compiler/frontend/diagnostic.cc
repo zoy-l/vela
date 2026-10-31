@@ -1,6 +1,9 @@
 #include "compiler/frontend/diagnostic.h"
 
 #include <ostream>
+#include <span>
+#include <sstream>
+#include <string>
 #include <string_view>
 
 namespace vela::frontend {
@@ -31,6 +34,14 @@ void WriteDiagnostic(std::ostream& output,
     output << '[' << code << "] ";
   }
   output << diagnostic.message << '\n';
+}
+
+std::string DiagnosticsText(std::span<const Diagnostic> diagnostics) {
+  std::ostringstream output;
+  for (const auto& diagnostic : diagnostics) {
+    WriteDiagnostic(output, diagnostic);
+  }
+  return output.str();
 }
 
 }  // namespace vela::frontend

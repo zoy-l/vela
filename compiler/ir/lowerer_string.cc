@@ -7,6 +7,7 @@
 #include "base/builtin.h"
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/type_names.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -40,7 +41,7 @@ Lowerer::LoweredValue Lowerer::LowerStringInterpolation(const frontend::Expressi
   });
   return {
       .reg = result,
-      .type = {.kind = frontend::TypeDescriptor::Kind::String, .name = "string"},
+      .type = {.kind = frontend::TypeDescriptor::Kind::String, .name = frontend::kStringTypeName},
   };
 }
 
@@ -50,20 +51,14 @@ Lowerer::LoweredValue Lowerer::LowerSnapshotArray(const frontend::Expression& ex
   const auto base = AllocateRegister(expression.location);
   const auto array_slot = AllocateRegister(expression.location);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = receiver.reg, .location = expression.location});
-  const auto count = AllocateTemporary(expression.location);
   auto count_builtin = Builtin::CollectionSize;
   if (builtin == Builtin::StringCodePoints) {
     count_builtin = Builtin::StringLength;
   } else if (builtin == Builtin::StringGraphemes) {
     count_builtin = Builtin::StringGraphemeLength;
   }
-  Emit({
-      .opcode = Opcode::BuiltinCall,
-      .dst = count,
-      .lhs = base,
-      .index = static_cast<std::uint32_t>(count_builtin),
-      .location = expression.location,
-  });
+  const auto count = AllocateTemporary(expression.location);
+  EmitBuiltinCall(count_builtin, count, base, expression.location);
   const auto& type = model_.expression_types.at(&expression);
   Emit({
       .opcode = Opcode::NewDynamicArray,
@@ -73,13 +68,7 @@ Lowerer::LoweredValue Lowerer::LowerSnapshotArray(const frontend::Expression& ex
       .location = expression.location,
   });
   const auto result = AllocateTemporary(expression.location);
-  Emit({
-      .opcode = Opcode::BuiltinCall,
-      .dst = result,
-      .lhs = base,
-      .index = static_cast<std::uint32_t>(builtin),
-      .location = expression.location,
-  });
+  EmitBuiltinCall(builtin, result, base, expression.location);
   return {.reg = result, .type = type};
 }
 

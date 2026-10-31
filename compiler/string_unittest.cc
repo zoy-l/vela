@@ -7,6 +7,7 @@
 
 #include "compiler/compiler.h"
 #include "compiler/frontend/checker_test_support.h"
+#include "compiler/test_sources.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/string.h"
@@ -59,6 +60,17 @@ class StringLanguageTest : public testing::Test {
 class StringAllocationTest : public StringLanguageTest {
  protected:
   StringAllocationTest() : StringLanguageTest(runtime::kDefaultGcThreshold) {}
+
+  void ExpectAllocations(std::size_t expected, std::string_view expected_text) {
+    auto& isolate = this->isolate();
+    auto& heap = isolate.heap();
+    heap.Collect();
+    const auto before = heap.object_count();
+    const auto result = vm::VirtualMachine(isolate).Execute(compilation().program, 0);
+    ASSERT_TRUE(result.Succeeded()) << result.message;
+    EXPECT_EQ(heap.object_count(), before + expected);
+    EXPECT_EQ(result.value.AsString()->value(), expected_text);
+  }
 };
 
 TEST_F(StringLanguageTest, DecodesEscapesUnicodeAndEmbeddedNull) {
@@ -189,8 +201,6 @@ func main(): string {
 }
 
 TEST_F(StringAllocationTest, PrimitiveFormattingAllocatesOnlyTheFinalString) {
-  auto& isolate = this->isolate();
-  auto& compiled = compilation();
   struct Case final {
     std::string_view source;
     std::size_t allocations;
@@ -201,13 +211,8 @@ TEST_F(StringAllocationTest, PrimitiveFormattingAllocatesOnlyTheFinalString) {
       {.source = R"(func main(): string { return [42, 43].join(','); })", .allocations = 2},
   });
   for (const auto& test : cases) {
-    static_cast<void>(Text(test.source));
-    auto& heap = isolate.heap();
-    heap.Collect();
-    const auto before = heap.object_count();
-    const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, 0);
-    ASSERT_TRUE(result.Succeeded());
-    EXPECT_EQ(heap.object_count(), before + test.allocations);
+    const auto text = Text(test.source);
+    ExpectAllocations(test.allocations, text);
   }
 }
 
@@ -301,53 +306,19 @@ func main(): string {
 }
 
 TEST_F(StringLanguageTest, CountsEveryConstructionPathAndTraversesBothDirectionsWithDynamicAccess) {
-  const auto result = Run(R"(
-func main(): int {
-  const text = 'A中😀e\u0301\0';
-  const joined = [text, text].join('界');
-  const absent: string? = null;
-  const formatted = '${text}/${42}/${true}/${absent}';
-  const numbers = [12, 34].join('中');
-  const builder = String(); builder.append(text); builder.append('ß');
-  const snapshot = builder.toString();
-  const forward = String(); const backward = String();
-  const dynamicText: dynamic = text;
-  for (let i = 0; i < dynamicText.length; i++) { forward.append(dynamicText[i]); }
-  for (let i = text.length - 1; i >= 0; i--) { backward.append(text[i]); }
-  return text.length == 6 && joined.length == 13 && formatted.length == 19 &&
-         numbers.length == 5 && snapshot.length == 7 && snapshot.toUpperCase().length == 8 &&
-         'İßﬃ'.toLowerCase().length == 4 && 'ßﬃ'.toUpperCase().length == 5 &&
-         forward.toString() == text && backward.toString() == '\0\u0301e😀中A' &&
-         joined.slice(6, 9) == '界A中' ? 42 : 0;
-}
-)");
+  const auto result = Run(test::kUnicodeConstructionSource);
   ASSERT_TRUE(result.Succeeded()) << result.message;
   EXPECT_EQ(result.value.AsInteger(), 42);
 }
 
 TEST_F(StringAllocationTest, InterpolationAllocatesOnlyTheFinalString) {
-  auto& isolate = this->isolate();
-  auto& compiled = compilation();
   EXPECT_EQ(Text(R"(func main(): string { return "a${"b"}c${"d"}e${"f"}g"; })"), "abcdefg");
-  auto& heap = isolate.heap();
-  heap.Collect();
-  const auto before = heap.object_count();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, 0);
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(heap.object_count(), before + 1);
-  EXPECT_EQ(result.value.AsString()->value(), "abcdefg");
+  ExpectAllocations(1, "abcdefg");
 }
 
 TEST_F(StringAllocationTest, JoinAllocatesOnlyTheInputArrayAndFinalString) {
-  auto& isolate = this->isolate();
-  auto& compiled = compilation();
   EXPECT_EQ(Text(R"(func main(): string { return ["a", "b", "c", "d"].join("-"); })"), "a-b-c-d");
-  auto& heap = isolate.heap();
-  heap.Collect();
-  const auto before = heap.object_count();
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program, 0);
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(heap.object_count(), before + 2);
+  ExpectAllocations(2, "a-b-c-d");
 }
 
 TEST_F(StringLanguageTest, SearchHandlesLongRepeatedPrefixesInLinearTime) {

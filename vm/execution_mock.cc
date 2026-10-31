@@ -83,12 +83,18 @@ StepResult Execution::ExecuteMockInspection(ActiveFrame& active, Instruction ins
   }
   const auto operation = static_cast<MockOperation>(opcode.AsInteger());
   const auto signature_value = arguments.subspan(1).front().Read();
+  const MockInspection inspection{
+      .operation = operation,
+      .signature = signature_value,
+      .value = value,
+      .destination = destination,
+  };
   if (operation == MockOperation::ObserveMatch || operation == MockOperation::FailObservation) {
-    return ExecuteMockObservation(active, instruction);
+    return ExecuteMockObservation(inspection);
   }
   if (operation <= MockOperation::AcceptsVoidAnswer ||
       operation == MockOperation::AcceptsResponseSignature) {
-    return ExecuteMockCallable(active, instruction);
+    return ExecuteMockCallable(inspection);
   }
   if (operation == MockOperation::CaptureTrace) {
     std::array<runtime::TracePosition, kMaxCallFrames> positions;
@@ -129,13 +135,8 @@ StepResult Execution::ExecuteMockInspection(ActiveFrame& active, Instruction ins
   std::unreachable();
 }
 
-StepResult Execution::ExecuteMockObservation(ActiveFrame& active, Instruction instruction) const {
-  const auto registers = active.frame.registers();
-  const auto arguments = registers.subspan(DecodeC(instruction), 3);
-  const auto operation = static_cast<MockOperation>(arguments.front().Read().AsInteger());
-  const auto signature_value = arguments.subspan(1).front().Read();
-  const auto value = arguments.subspan(2).front().Read();
-  auto destination = registers.subspan(DecodeA(instruction)).front();
+StepResult Execution::ExecuteMockObservation(MockInspection inspection) const {
+  auto [operation, signature_value, value, destination] = inspection;
   if (operation == MockOperation::ObserveMatch) {
     auto* source = signature_value.IsObject()
                        ? runtime::Heap::GetFuture(*signature_value.AsObject())
@@ -196,37 +197,32 @@ bool Execution::IsMockResponseCompatible(const FunctionStorage& function,
          returned.IsSubtypeOf(function.View().types.subspan(*signature.result).front());
 }
 
-StepResult Execution::ExecuteMockCallable(ActiveFrame& active, Instruction instruction) {
-  const auto registers = active.frame.registers();
-  const auto arguments = registers.subspan(DecodeC(instruction), 3);
-  const auto operation = static_cast<MockOperation>(arguments.front().Read().AsInteger());
-  const auto signature_value = arguments.subspan(1).front().Read();
-  const auto value = arguments.subspan(2).front().Read();
-  auto destination = registers.subspan(DecodeA(instruction)).front();
+StepResult Execution::ExecuteMockCallable(MockInspection inspection) {
+  auto [operation, signature_value, value, destination] = inspection;
   const auto callable = ResolveCallable(signature_value);
   if (!callable) {
     destination.SetBoolean(false);
     return {};
   }
-  const auto& function = functions_.subspan(callable->function).front();
-  const auto& signature = function.signature;
-  if (!signature) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  const auto parameter_view = CallableParameters(*callable);
+  if (!parameter_view) {
+    return std::unexpected(parameter_view.error());
   }
-  const auto skipped = (callable->implicit ? 1U : 0U) - signature->hidden_parameters;
-  const auto parameters = std::span(signature->parameters).subspan(skipped);
+  const auto parameters = *parameter_view;
+  const auto& function = functions_.subspan(callable->function).front();
+  const auto& signature = *function.signature;
   const auto types = function.View().types;
   switch (operation) {
     case MockOperation::AcceptsResponseSignature:
       destination.SetBoolean(IsMockResponseCompatible(function, value));
       return {};
     case MockOperation::IsVoid:
-      destination.SetBoolean(!signature->result);
+      destination.SetBoolean(!signature.result);
       return {};
     case MockOperation::AcceptsReturn:
       destination.SetBoolean(
-          signature->result &&
-          runtime::Heap::IsValueOfType(value, types.subspan(*signature->result).front()));
+          signature.result &&
+          runtime::Heap::IsValueOfType(value, types.subspan(*signature.result).front()));
       return {};
     case MockOperation::Arity:
       destination.SetInteger(static_cast<std::int64_t>(parameters.size()));
@@ -247,8 +243,8 @@ StepResult Execution::ExecuteMockCallable(ActiveFrame& active, Instruction instr
     case MockOperation::AcceptsAnswer:
     case MockOperation::AcceptsVoidAnswer: {
       const bool valid_result = operation == MockOperation::AcceptsAnswer
-                                    ? signature->result.has_value()
-                                    : !signature->result && !function.is_async;
+                                    ? signature.result.has_value()
+                                    : !signature.result && !function.is_async;
       const bool valid_parameters =
           !parameters.empty() &&
           runtime::Heap::IsValueOfType(value, types.subspan(parameters.front().type).front()) &&

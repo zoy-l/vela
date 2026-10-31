@@ -24,18 +24,6 @@ namespace {
 
 using Error = compiler::ConfigurationError;
 
-Error Failure(const std::filesystem::path& path,
-              std::string message,
-              int exit_code = kIoErrorExitCode) {
-  return {
-      .file = path,
-      .location = {},
-      .field = {},
-      .message = std::move(message),
-      .exit_code = exit_code,
-  };
-}
-
 class Discovery final {
  public:
   explicit Discovery(Pattern filename) : filename_(std::move(filename)) {}
@@ -53,14 +41,14 @@ std::expected<void, Error> Discovery::AddFile(const std::filesystem::path& path)
   std::error_code error;
   auto canonical = std::filesystem::canonical(path, error);
   if (error) {
-    return std::unexpected(Failure(path, error.message()));
+    return std::unexpected(Error::FileError(path, error.message(), kIoErrorExitCode));
   }
   if (!identities_.insert(PathText(canonical)).second) {
     return {};
   }
   const std::ifstream input(canonical, std::ios::binary);
   if (!input.is_open()) {
-    return std::unexpected(Failure(path, "cannot read test source"));
+    return std::unexpected(Error::FileError(path, "cannot read test source", kIoErrorExitCode));
   }
   paths_.push_back(std::move(canonical));
   return {};
@@ -70,17 +58,18 @@ std::expected<void, Error> Discovery::Add(const std::filesystem::path& path) {
   std::error_code error;
   const auto status = std::filesystem::status(path, error);
   if (error) {
-    return std::unexpected(Failure(path, error.message()));
+    return std::unexpected(Error::FileError(path, error.message(), kIoErrorExitCode));
   }
   if (std::filesystem::is_regular_file(status)) {
     if (path.extension() != ".vela") {
       return std::unexpected(
-          Failure(path, "test file must have the .vela extension", kUsageExitCode));
+          Error::FileError(path, "test file must have the .vela extension", kUsageExitCode));
     }
     return AddFile(path);
   }
   if (!std::filesystem::is_directory(status)) {
-    return std::unexpected(Failure(path, "test entry must be a readable file or directory"));
+    return std::unexpected(Error::FileError(path, "test entry must be a readable file or directory",
+                                            kIoErrorExitCode));
   }
   auto iterator = std::filesystem::recursive_directory_iterator(path, error);
   const auto end = std::filesystem::recursive_directory_iterator();
@@ -89,7 +78,7 @@ std::expected<void, Error> Discovery::Add(const std::filesystem::path& path) {
     if (entry.is_regular_file(error) && entry.path().extension() == ".vela") {
       const auto matched = filename_.IsMatch(PathText(entry.path().filename()));
       if (!matched) {
-        return std::unexpected(Failure(entry.path(), matched.error(), kUsageExitCode));
+        return std::unexpected(Error::FileError(entry.path(), matched.error(), kUsageExitCode));
       }
       if (*matched) {
         const auto added = AddFile(entry.path());
@@ -103,7 +92,7 @@ std::expected<void, Error> Discovery::Add(const std::filesystem::path& path) {
     }
   }
   if (error) {
-    return std::unexpected(Failure(path, error.message()));
+    return std::unexpected(Error::FileError(path, error.message(), kIoErrorExitCode));
   }
   return {};
 }
@@ -123,17 +112,17 @@ std::expected<std::vector<std::filesystem::path>, compiler::ConfigurationError> 
   const auto& test = configuration.test;
   if (!test) {
     return std::unexpected(
-        Failure(configuration.file, "test configuration is required", kUsageExitCode));
+        Error::FileError(configuration.file, "test configuration is required", kUsageExitCode));
   }
   auto filename = Pattern::Glob(test->filename);
   if (!filename) {
-    return std::unexpected(Failure(configuration.file, filename.error(), kUsageExitCode));
+    return std::unexpected(Error::FileError(configuration.file, filename.error(), kUsageExitCode));
   }
   Discovery discovery(std::move(*filename));
   const auto paths = explicit_paths.empty() ? std::span(test->paths) : explicit_paths;
   const auto& base = explicit_paths.empty() ? configuration.root : working_directory;
   if (paths.empty()) {
-    return std::unexpected(Failure(
+    return std::unexpected(Error::FileError(
         configuration.file, "test.paths is required when no paths are supplied", kUsageExitCode));
   }
   for (const auto& path : paths) {

@@ -4,6 +4,7 @@
 #include <expected>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -57,6 +58,10 @@ class JsonDocument final {
  public:
   [[nodiscard]] static std::expected<JsonDocument, JsonError> Parse(
       std::string_view text,
+      yyjson_read_flag flags = YYJSON_READ_NOFLAG,
+      const yyjson_alc* allocator = nullptr);
+  [[nodiscard]] static std::expected<JsonDocument, JsonError> Parse(
+      std::span<const std::byte> bytes,
       yyjson_read_flag flags = YYJSON_READ_NOFLAG,
       const yyjson_alc* allocator = nullptr);
   JsonDocument(const JsonDocument&) = delete;

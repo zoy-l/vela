@@ -29,6 +29,11 @@
 namespace vela::compiler::aot {
 namespace {
 
+constexpr std::string_view kEmitOption = "--emit=";
+constexpr std::string_view kExportOption = "--export=";
+constexpr std::string_view kTargetSupportOption = "--target-support=";
+constexpr std::string_view kExecutableFormat = "exe";
+
 struct BuildArguments final {
   NativeOptions options;
   std::string_view source;
@@ -39,17 +44,17 @@ struct BuildArguments final {
 
 std::expected<BuildArguments, std::string> ParseArguments(std::span<char*> arguments) {
   BuildArguments result;
-  std::string_view emit = "exe";
+  std::string_view emit = kExecutableFormat;
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     const std::string_view argument = arguments.subspan(index).front();
     if (argument == "-o" && index + 1 < arguments.size()) {
       result.output = arguments.subspan(++index).front();
-    } else if (argument.starts_with("--emit=")) {
-      emit = argument.substr(std::string_view("--emit=").size());
-    } else if (argument.starts_with("--export=")) {
-      result.options.exports.emplace_back(argument.substr(std::string_view("--export=").size()));
-    } else if (argument.starts_with("--target-support=")) {
-      result.support_path = Utf8Path(argument.substr(std::string_view("--target-support=").size()));
+    } else if (argument.starts_with(kEmitOption)) {
+      emit = argument.substr(kEmitOption.size());
+    } else if (argument.starts_with(kExportOption)) {
+      result.options.exports.emplace_back(argument.substr(kExportOption.size()));
+    } else if (argument.starts_with(kTargetSupportOption)) {
+      result.support_path = Utf8Path(argument.substr(kTargetSupportOption.size()));
     } else if (!argument.starts_with('-') && result.source.empty()) {
       result.source = argument;
     } else {
@@ -63,7 +68,7 @@ std::expected<BuildArguments, std::string> ParseArguments(std::span<char*> argum
     result.kind = NativeOutputKind::Object;
   } else if (emit == "staticlib") {
     result.kind = NativeOutputKind::StaticLibrary;
-  } else if (emit != "exe") {
+  } else if (emit != kExecutableFormat) {
     return std::unexpected("unsupported AOT output kind: " + std::string(emit));
   }
   result.options.entry_mode = result.kind == NativeOutputKind::Executable

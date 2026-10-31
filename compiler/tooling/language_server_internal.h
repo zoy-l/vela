@@ -22,6 +22,7 @@
 namespace vela::tooling::internal {
 
 namespace protocol {
+inline constexpr std::int64_t kInvalidParams = -32602;
 inline constexpr std::string_view kJsonRpc = "jsonrpc";
 inline constexpr std::string_view kId = "id";
 inline constexpr std::string_view kMethod = "method";

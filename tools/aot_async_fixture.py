@@ -339,15 +339,9 @@ TEST(NativeHostTest, FutureCompositionExecutesNativeCallbacksUnderGcAfterInstanc
     });
     Value value;
     RootRange root(isolate.heap(), &value, 1);
-    {
-      const auto instance = NativeInstance::Instantiate(isolate, *COMPOSITION_IMAGE());
-      ASSERT_TRUE(instance.has_value()) << instance.error().message;
-      NativeExecution execution(**instance);
-      const std::array arguments{Integer(operation)};
-      NativeValue output;
-      ASSERT_EQ(Execute(COMPOSITION_ENTRY, execution, arguments, output), ExecutionStatus::Returned);
-      value = DecodeNativeValue(output);
-    }
+    const std::array arguments{Integer(operation)};
+    ASSERT_NO_FATAL_FAILURE(StartReleasedTask(isolate, *COMPOSITION_IMAGE(), COMPOSITION_ENTRY,
+                                             arguments, value));
     isolate.heap().Collect();
     auto* future = Heap::GetFuture(*value.AsObject());
     ASSERT_NE(future, nullptr);
@@ -355,12 +349,8 @@ TEST(NativeHostTest, FutureCompositionExecutesNativeCallbacksUnderGcAfterInstanc
       ASSERT_TRUE(isolate.scheduler().PumpOne());
       isolate.heap().Collect();
     }
-    ASSERT_EQ(future->state(), FutureState::Succeeded)
-        << CompositionDiagnostic(*future);
-    ASSERT_TRUE(future->value().has_value());
-    EXPECT_EQ(future->value()->AsInteger(), 42);
-    EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
-    EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
+    SCOPED_TRACE(CompositionDiagnostic(*future));
+    ExpectFutureAnswer(isolate, *future);
   }
 }
 
@@ -390,30 +380,16 @@ TEST(NativeHostTest, CompositionRetainsCallbackFutureAcrossHostCompletionAndGc) 
   ActiveProducer() = &producer;
   Value value;
   RootRange root(isolate.heap(), &value, 1);
-  {
-    const auto instance = NativeInstance::Instantiate(isolate, *COMPOSITION_IMAGE());
-    ASSERT_TRUE(instance.has_value());
-    NativeExecution execution(**instance);
-    const std::array arguments{Integer(30)};
-    NativeValue output;
-    ASSERT_EQ(Execute(COMPOSITION_ENTRY, execution, arguments, output), ExecutionStatus::Returned);
-    value = DecodeNativeValue(output);
-  }
+  const std::array arguments{Integer(30)};
+  ASSERT_NO_FATAL_FAILURE(StartReleasedTask(isolate, *COMPOSITION_IMAGE(), COMPOSITION_ENTRY,
+                                           arguments, value));
   ASSERT_TRUE(isolate.scheduler().PumpOne());
   ActiveProducer() = nullptr;
   isolate.heap().Collect();
   auto* future = Heap::GetFuture(*value.AsObject());
   ASSERT_NE(future, nullptr);
-  EXPECT_FALSE(future->IsCompleted());
-  std::atomic<bool> completed = false;
-  std::thread worker([&] { completed.store(producer.Complete(Value::Integer(0)).has_value()); });
-  const auto pumped = isolate.scheduler().PumpUntil(*future, FuturePumpMode::WaitForHost);
-  worker.join();
-  ASSERT_TRUE(pumped);
-  EXPECT_TRUE(completed.load());
-  ASSERT_EQ(future->state(), FutureState::Succeeded);
-  EXPECT_EQ(future->value()->AsInteger(), 42);
-  EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
+  ASSERT_NO_FATAL_FAILURE(CompleteOnHostThread(isolate, *future, producer, 0));
+  ExpectFutureAnswer(isolate, *future);
 }
 
 TEST(NativeHostTest, UnreachableCompositionGraphsReleaseCallbacksAndSuspensions) {
@@ -444,12 +420,10 @@ TEST(NativeHostTest, DiscardedComputationStillExecutesQueuedNativeSideEffects) {
   composition_effects = 0;
   const auto baseline = isolate.heap().object_count();
   {
-    const auto instance = NativeInstance::Instantiate(isolate, *COMPOSITION_IMAGE());
-    ASSERT_TRUE(instance.has_value());
-    NativeExecution execution(**instance);
     const std::array arguments{Integer(33)};
-    NativeValue output;
-    ASSERT_EQ(Execute(COMPOSITION_ENTRY, execution, arguments, output), ExecutionStatus::Returned);
+    Value discarded;
+    ASSERT_NO_FATAL_FAILURE(StartReleasedTask(isolate, *COMPOSITION_IMAGE(), COMPOSITION_ENTRY,
+                                             arguments, discarded));
   }
   isolate.heap().Collect();
   ASSERT_TRUE(isolate.scheduler().PumpOne());

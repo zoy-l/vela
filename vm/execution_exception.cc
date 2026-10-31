@@ -22,6 +22,7 @@
 #include "runtime/value.h"
 #include "vm/bytecode.h"
 #include "vm/debug_info.h"
+#include "vm/diagnostic.h"
 #include "vm/exception_handler.h"
 #include "vm/execution_status.h"
 #include "vm/program.h"
@@ -102,15 +103,20 @@ void Execution::ResetInitializer(ActiveFrame& active) noexcept {
   }
 }
 
-std::optional<ExecutionResult> Execution::CompleteAsyncError(ActiveFrame& active) {
+ExecutionResult Execution::ExceptionResult() const {
   const auto& exception = runtime::ExceptionData::From(*pending_exception_.AsObject());
-  ExecutionResult failure{
+  return {
       .value = runtime::Value::Object(exception.payload),
       .status = exception.status,
       .stack_trace = program_.ResolveTrace(exception.trace()).value(),
       .message = std::string(exception.message()),
       .origin = exception.origin,
   };
+}
+
+std::optional<ExecutionResult> Execution::CompleteAsyncError(ActiveFrame& active) {
+  const auto& exception = runtime::ExceptionData::From(*pending_exception_.AsObject());
+  const auto failure = ExceptionResult();
   auto diagnostic = exception.diagnostic != nullptr ? *exception.diagnostic : Diagnostic(failure);
   runtime::Future future(&isolate_.scheduler());
   const auto completion = future.CompleteError(failure.value, std::move(diagnostic));
@@ -171,24 +177,10 @@ std::optional<ExecutionResult> Execution::HandleError(ExecutionStatus status) {
     --frame_count_;
   }
   const auto& exception = runtime::ExceptionData::From(*pending_exception_.AsObject());
-  ExecutionResult failure{
-      .value = runtime::Value::Object(exception.payload),
-      .status = exception.status,
-      .stack_trace = program_.ResolveTrace(exception.trace()).value(),
-      .message = std::string(exception.message()),
-      .origin = exception.origin,
-  };
+  auto failure = ExceptionResult();
   if (const auto* diagnostic = exception.diagnostic) {
     failure.origin = diagnostic->origin;
-    failure.stack_trace.clear();
-    for (const auto& frame : diagnostic->stack_trace) {
-      failure.stack_trace.push_back({
-          .function = frame.function,
-          .source_path = frame.source_path,
-          .location = {.line = frame.line, .column = frame.column},
-          .instruction = frame.instruction,
-      });
-    }
+    failure.stack_trace = CopyExecutionTrace(diagnostic->stack_trace);
   }
   return failure;
 }

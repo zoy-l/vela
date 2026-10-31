@@ -3,28 +3,15 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import subprocess
-import tempfile
 import unittest
 
-from tools.config import ROOT, executable_name
+from tools.test_support import CommandTestCase
 
 
-class SourceTestingTest(unittest.TestCase):
-    def setUp(self) -> None:
-        temporary = tempfile.TemporaryDirectory(prefix="vela-testing-")
-        self.addCleanup(temporary.cleanup)
-        self.directory = Path(temporary.name).resolve()
-        self.executable = Path(os.environ.get(
-            "VELA_TEST_EXECUTABLE", ROOT / "out" / "debug" / executable_name("vela")))
-
-    def write(self, name: str, text: str) -> Path:
-        path = self.directory / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8", newline="\n")
-        return path
+class SourceTestingTest(CommandTestCase):
+    directory_prefix = "vela-testing-"
 
     def configure(self, **settings) -> None:
         self.write("vela.json", json.dumps({"test": settings}))
@@ -32,13 +19,6 @@ class SourceTestingTest(unittest.TestCase):
     def suite(self, name: str = "unit/math_test.vela", body: str = "expect(42, 42);") -> Path:
         return self.write(name, "import 'sdk:test';\nfunc main(): void {\n"
                           f"test('case', () => {{ {body} }});\n}}\n")
-
-    def invoke(self, *arguments: str, code: int = 0, cwd: Path | None = None):
-        result = subprocess.run([str(self.executable), *arguments], cwd=cwd or self.directory,
-                                capture_output=True, text=True, encoding="utf-8", timeout=30,
-                                check=False)
-        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
-        return result
 
     def events(self, *arguments: str, code: int = 0, cwd: Path | None = None) -> list[dict]:
         result = self.invoke("test", "--reporter=json", *arguments, code=code, cwd=cwd)

@@ -1,33 +1,43 @@
-#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <system_error>
+#include <utility>
 #include <vector>
 
 #include "benchmark/benchmark.h"
 
 #include "base/path.h"
+#include "benchmarks/temporary_directory.h"
 #include "compiler/compilation_cache.h"
 #include "compiler/compiler.h"
 #include "runtime/isolate.h"
 #include "vm/bytecode_image.h"
+#include "vm/program.h"
 
 namespace vela::benchmarks {
 namespace {
 
-std::optional<std::vector<std::byte>> Image(benchmark::State& state) {
-  runtime::Isolate isolate;
-  const auto source =
-      std::filesystem::path(VELA_BENCHMARK_SOURCE_DIR) / "string_interpolation.vela";
-  const auto compiled = compiler::CompileFile(PathText(source), isolate);
+constexpr std::string_view kSmallSource = "string_interpolation.vela";
+
+std::optional<vm::Program> CompileCacheInput(benchmark::State& state, runtime::Isolate& isolate) {
+  const auto source = std::filesystem::path(VELA_BENCHMARK_SOURCE_DIR) / kSmallSource;
+  auto compiled = compiler::CompileFile(PathText(source), isolate);
   if (!compiled.Succeeded()) {
     state.SkipWithError("cannot compile cache benchmark input");
     return std::nullopt;
   }
-  const auto image = vm::SaveBytecode(compiled.program, isolate);
+  return std::move(compiled.program);
+}
+
+std::optional<std::vector<std::byte>> Image(benchmark::State& state) {
+  runtime::Isolate isolate;
+  const auto program = CompileCacheInput(state, isolate);
+  if (!program) {
+    return std::nullopt;
+  }
+  const auto image = vm::SaveBytecode(*program, isolate);
   if (!image) {
     state.SkipWithError(image.error().message);
     return std::nullopt;
@@ -54,15 +64,12 @@ void BytecodeLoad(benchmark::State& state) {
 
 void BytecodeSave(benchmark::State& state) {
   runtime::Isolate isolate;
-  const auto source =
-      std::filesystem::path(VELA_BENCHMARK_SOURCE_DIR) / "string_interpolation.vela";
-  const auto compiled = compiler::CompileFile(PathText(source), isolate);
-  if (!compiled.Succeeded()) {
-    state.SkipWithError("cannot compile input");
+  const auto program = CompileCacheInput(state, isolate);
+  if (!program) {
     return;
   }
   for (auto iteration : state) {
-    auto image = vm::SaveBytecode(compiled.program, isolate);
+    auto image = vm::SaveBytecode(*program, isolate);
     if (!image) {
       state.SkipWithError(image.error().message);
       break;
@@ -72,14 +79,11 @@ void BytecodeSave(benchmark::State& state) {
 }
 
 void ContentCacheHit(benchmark::State& state, std::string_view filename) {
-  std::error_code error;
-  const auto temporary = std::filesystem::temp_directory_path(error);
-  if (error) {
-    state.SkipWithError(error.message());
+  const BenchmarkDirectory temporary(state);
+  if (!temporary.IsValid()) {
     return;
   }
-  const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-  const auto directory = temporary / ("vela-cache-benchmark-" + std::to_string(suffix));
+  const auto& directory = temporary.path();
   const auto source = std::filesystem::path(VELA_BENCHMARK_SOURCE_DIR) / filename;
   const auto path = PathText(source);
   {
@@ -99,10 +103,6 @@ void ContentCacheHit(benchmark::State& state, std::string_view filename) {
     }
     benchmark::DoNotOptimize(loaded);
   }
-  std::filesystem::remove_all(directory, error);
-  if (error) {
-    state.SkipWithError(error.message());
-  }
 }
 
 void FileCompile(benchmark::State& state, std::string_view filename) {
@@ -121,9 +121,8 @@ void FileCompile(benchmark::State& state, std::string_view filename) {
 
 BENCHMARK(BytecodeLoad)->Name("cache/bytecode_load");
 BENCHMARK(BytecodeSave)->Name("cache/bytecode_save");
-BENCHMARK_CAPTURE(ContentCacheHit, Small, "string_interpolation.vela")->Name("cache/content_hit");
-BENCHMARK_CAPTURE(FileCompile, Small, "string_interpolation.vela")
-    ->Name("cache/uncached_file_compile");
+BENCHMARK_CAPTURE(ContentCacheHit, Small, kSmallSource)->Name("cache/content_hit");
+BENCHMARK_CAPTURE(FileCompile, Small, kSmallSource)->Name("cache/uncached_file_compile");
 BENCHMARK_CAPTURE(ContentCacheHit, Unicode, "unicode_graphemes.vela")
     ->Name("cache/unicode_content_hit");
 BENCHMARK_CAPTURE(FileCompile, Unicode, "unicode_graphemes.vela")

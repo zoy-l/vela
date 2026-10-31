@@ -4,6 +4,7 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/isolate.h"
 #include "vm/bytecode.h"
 #include "vm/execution_status.h"
@@ -56,17 +57,9 @@ TEST_P(OptimizedExecutionTest, PreservesControlFlowAndLiveValues) {
   const auto& parameter = GetParam();
   SCOPED_TRACE(parameter.source);
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(parameter.source, isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    ADD_FAILURE() << diagnostic.message;
-  }
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto main = compiled.program.FindFunction("main");
-  ASSERT_TRUE(main.IsValid());
-  const auto result = vm::VirtualMachine(isolate).Execute(main);
-  ASSERT_TRUE(result.Succeeded());
-  ASSERT_TRUE(result.value.IsInteger());
-  EXPECT_EQ(result.value.AsInteger(), parameter.expected);
+  const auto result = test::RunInteger(parameter.source, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, parameter.expected);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -146,14 +139,12 @@ func main(): int { return fail(); }
   const auto main = compiled.program.FindFunction("main");
   ASSERT_TRUE(main.IsValid());
   vm::VirtualMachine machine(isolate);
-  EXPECT_EQ(machine.Execute(main).status, vm::ExecutionStatus::DivisionByZero);
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.heap().object_count(), 0U);
-  EXPECT_EQ(machine.Execute(main).status, vm::ExecutionStatus::DivisionByZero);
-  isolate.heap().FinishCollection();
-  isolate.heap().Collect();
-  EXPECT_EQ(isolate.heap().object_count(), 0U);
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    EXPECT_EQ(machine.Execute(main).status, vm::ExecutionStatus::DivisionByZero);
+    isolate.heap().FinishCollection();
+    isolate.heap().Collect();
+    EXPECT_EQ(isolate.heap().object_count(), 0U);
+  }
 }
 
 }  // namespace

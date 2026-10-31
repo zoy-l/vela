@@ -1,18 +1,16 @@
 #include <algorithm>
-#include <cstddef>
 #include <string_view>
-#include <vector>
 
 #include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/object.h"
 #include "runtime/rooted_value.h"
-#include "vm/bytecode_image.h"
 #include "vm/program.h"
 #include "vm/vm.h"
 
@@ -84,14 +82,9 @@ func main(): (Marker) => int { return accept; }
 )"));
 
 void ExpectJsonAnswer(const vm::Program& program, runtime::Isolate& isolate) {
-  const auto main = program.FindFunction("main");
-  auto result = vm::VirtualMachine(isolate).ExecuteFuture(program, main.index());
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(result));
-  ASSERT_EQ(result.state(), runtime::FutureState::Succeeded)
-      << result.error_diagnostic().value_or(runtime::FutureDiagnostic{}).message;
-  const auto value = result.value().value_or(runtime::Value::Null());
-  ASSERT_TRUE(value.IsInteger());
-  EXPECT_EQ(value.AsInteger(), 42);
+  const auto result = test::ExecuteFutureInteger(program, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
 }
 
 TEST_P(JsonProgramTest, ExecutesWithGcAndReleasesTraversalState) {
@@ -112,19 +105,9 @@ TEST_P(JsonProgramTest, ExecutesWithGcAndReleasesTraversalState) {
 }
 
 TEST_P(JsonProgramTest, RestoresImageInFreshIsolate) {
-  std::vector<std::byte> image;
-  {
-    runtime::Isolate isolate(1);
-    const auto compiled = CompileSource(GetParam(), isolate);
-    ASSERT_TRUE(compiled.Succeeded());
-    const auto saved = vm::SaveBytecode(compiled.program, isolate);
-    ASSERT_TRUE(saved) << saved.error().message;
-    image = *saved;
-  }
   runtime::Isolate isolate(1);
-  const auto loaded = vm::LoadBytecode(image, isolate);
-  ASSERT_TRUE(loaded) << loaded.error().message;
-  isolate.heap().Collect();
+  const auto loaded = test::ReloadSource(GetParam(), isolate);
+  ASSERT_TRUE(loaded) << loaded.error();
   ExpectJsonAnswer(*loaded, isolate);
 }
 

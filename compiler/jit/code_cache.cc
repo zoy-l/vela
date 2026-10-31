@@ -42,19 +42,17 @@ CachedObject Decode(std::span<const std::byte> bytes, std::string_view expected_
   BinaryReader reader(bytes);
   const auto magic = reader.Take(kMagic.size());
   const auto key = reader.Text();
-  const auto checksum = reader.Record<std::uint64_t, std::uint64_t>();
-  if (!magic || !key || !checksum || *key != expected_key ||
+  if (!magic || !key || *key != expected_key ||
       !std::ranges::equal(*magic, std::as_bytes(std::span(kMagic)))) {
     return invalid();
   }
-  const auto payload = *reader.Take(reader.remaining());
-  const auto [low, high] = *checksum;
-  if (ContentFingerprint(payload) != Fingerprint{.low = low, .high = high}) {
+  const auto payload = reader.ChecksummedRemainder();
+  if (!payload) {
     return invalid();
   }
-  const void* storage = payload.data();
+  const void* storage = payload->data();
   auto object = llvm::MemoryBuffer::getMemBufferCopy(
-      {static_cast<const char*>(storage), payload.size()}, "vela.cached.object");
+      {static_cast<const char*>(storage), payload->size()}, "vela.cached.object");
   auto parsed = llvm::object::ObjectFile::createObjectFile(object->getMemBufferRef());
   if (!parsed) {
     llvm::consumeError(parsed.takeError());
@@ -102,10 +100,7 @@ std::expected<void, std::string> WriteCodeCache(const std::filesystem::path& dir
   BinaryWriter writer;
   writer.Write(std::as_bytes(std::span(kMagic)));
   writer.Write(key);
-  const auto checksum = ContentFingerprint(bytes);
-  writer.Write(checksum.low);
-  writer.Write(checksum.high);
-  writer.Write(bytes);
+  writer.WriteChecksummed(bytes);
   std::error_code error;
   std::filesystem::create_directories(directory, error);
   if (error) {

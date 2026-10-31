@@ -21,26 +21,6 @@
 namespace vela::compiler {
 namespace {
 
-bool IsDeclaration(frontend::TokenKind kind) {
-  using Kind = frontend::TokenKind;
-  switch (kind) {
-    case Kind::Async:
-    case Kind::Func:
-    case Kind::Class:
-    case Kind::Enum:
-    case Kind::Interface:
-    case Kind::Type:
-    case Kind::Import:
-    case Kind::Export:
-    case Kind::External:
-    case Kind::Let:
-    case Kind::Const:
-      return true;
-    default:
-      return false;
-  }
-}
-
 bool HasOpenDelimiter(const frontend::LexResult& lexed) {
   using Kind = frontend::TokenKind;
   std::int64_t braces = 0;
@@ -109,7 +89,7 @@ InputBody NormalizeBody(std::string_view source, const frontend::LexResult& lexe
       lexed.tokens.size() > 1 ? lexed.tokens.at(lexed.tokens.size() - 2).kind : Token::EndOfFile;
   InputBody body{
       .text = std::string(source),
-      .declaration = IsDeclaration(first_kind),
+      .declaration = frontend::IsDeclarationStart(first_kind),
       .terminated = last_kind == Token::Semicolon,
   };
   const bool block_statement = first_kind == Token::LeftBrace || first_kind == Token::If ||

@@ -1,6 +1,8 @@
 #include "gtest/gtest.h"
 
 #include "compiler/compiler.h"
+#include "compiler/program_test_support.h"
+#include "compiler/test_sources.h"
 #include "runtime/isolate.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"
@@ -10,17 +12,15 @@ namespace {
 
 TEST(RecursionTest, ExecutesDirectAndMutualRecursionWithExplicitVmFrames) {
   runtime::Isolate isolate;
-  const auto compiled = CompileSource(R"(
+  const auto result = test::RunInteger(R"(
 func factorial(value: int): int { if (value == 0) return 1; return value * factorial(value - 1); }
 func even(value: int): bool { if (value == 0) return true; return odd(value - 1); }
 func odd(value: int): bool { if (value == 0) return false; return even(value - 1); }
 func main(): int { if (even(20) && odd(21)) return factorial(6); return 0; }
 )",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  const auto result = vm::VirtualMachine(isolate).Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded());
-  EXPECT_EQ(result.value.AsInteger(), 720);
+                                       isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 720);
 }
 
 TEST(RecursionTest, ReportsStackOverflowAndReusesVmAfterFailure) {
@@ -43,21 +43,11 @@ func main(): int { return 42; }
 
 TEST(RecursionTest, KeepsDeepCallFramesStableAcrossAllocationsAndCollection) {
   runtime::Isolate isolate(1);
-  const auto compiled = CompileSource(R"(
-func descend(depth: int): int {
-  const text = '${depth}';
-  if (depth == 0) { return text.length + 41; }
-  const answer = descend(depth - 1);
-  return text.length > 0 ? answer : 0;
-}
-func main(): int { return descend(512); }
-)",
-                                      isolate);
-  ASSERT_TRUE(compiled.Succeeded());
-  vm::VirtualMachine machine(isolate);
-  const auto result = machine.Execute(compiled.program.FindFunction("main"));
-  ASSERT_TRUE(result.Succeeded()) << result.message;
-  EXPECT_EQ(result.value.AsInteger(), 42);
+  const auto compiled = test::CompileCleanSource(test::kRecursiveStringGcSource, isolate);
+  ASSERT_TRUE(compiled) << compiled.error();
+  const auto result = test::ExecuteInteger(*compiled, isolate);
+  ASSERT_TRUE(result) << result.error();
+  EXPECT_EQ(*result, 42);
   isolate.heap().Collect();
   EXPECT_EQ(isolate.heap().object_count(), 0U);
 }

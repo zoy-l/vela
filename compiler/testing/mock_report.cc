@@ -16,6 +16,7 @@
 #include "runtime/object.h"
 #include "runtime/string.h"
 #include "runtime/value.h"
+#include "vm/diagnostic.h"
 #include "vm/program.h"
 
 namespace vela::testing {
@@ -106,18 +107,7 @@ std::vector<runtime::FutureTraceFrame> MockReportReader::Trace(runtime::Value va
   if (!resolved) {
     return {};
   }
-  std::vector<runtime::FutureTraceFrame> trace;
-  for (const auto& frame : *resolved) {
-    trace.push_back({
-        .function = frame.function,
-        .source_path = frame.source_path,
-        .line = frame.location.line,
-        .column = frame.location.column,
-        .instruction = frame.instruction,
-        .identity = {},
-    });
-  }
-  return trace;
+  return vm::CopyFutureTrace(*resolved);
 }
 
 TestError::MockDetails MockReportReader::Read(runtime::Value value) const {

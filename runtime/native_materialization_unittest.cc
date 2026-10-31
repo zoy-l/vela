@@ -16,6 +16,7 @@
 #include "runtime/native_control.h"
 #include "runtime/native_deoptimization.h"
 #include "runtime/native_image.h"
+#include "runtime/native_image_test_support.h"
 #include "runtime/native_program_state.h"
 #include "runtime/object.h"
 #include "runtime/string.h"
@@ -24,10 +25,7 @@
 namespace vela::runtime {
 namespace {
 
-template <class T, std::size_t Size>
-NativeTable<T> Table(const std::array<T, Size>& values) {
-  return {.data = values.data(), .size = values.size()};
-}
+using test::Table;
 
 TEST(NativeMaterializationTest, EveryAllocationFailureLeavesAliasesUntouchedAndReclaimsTheGraph) {
   Isolate isolate(1);

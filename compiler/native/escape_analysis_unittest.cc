@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <span>
+#include <expected>
 #include <string>
 #include <string_view>
 
@@ -10,23 +10,28 @@
 
 #include "base/opcode.h"
 #include "compiler/aot/native_compiler.h"
-#include "compiler/frontend/source_loader.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
+#include "compiler/ir/preparation_test_support.h"
 #include "compiler/native/borrow_analysis.h"
 #include "compiler/native/native_roots.h"
 
 namespace vela::compiler::native {
 namespace {
 
-auto Prepare(std::string_view source) {
-  const frontend::SourceInput input{.path = "main.vela", .text = source};
-  return ir::PrepareParsed(frontend::LoadSources(std::span(&input, 1), input.path));
-}
+using ir::test::Prepare;
 
 std::size_t FunctionIndex(const ir::Program& program, std::string_view name) {
   const auto found = std::ranges::find(program.functions, name, &ir::Function::name);
   return static_cast<std::size_t>(found - program.functions.begin());
+}
+
+std::expected<EscapePlan, std::string> Analyze(std::string_view source) {
+  const auto program = Prepare(source);
+  if (!program.Succeeded()) {
+    return std::unexpected(program.diagnostics.front().message);
+  }
+  return PlanEscapes(program.program, FunctionIndex(program.program, "sum"));
 }
 
 TEST(EscapeAnalysisTest, EliminatesLocalAliasesAndMergedFieldStates) {
@@ -56,7 +61,7 @@ export func sum(x: int, choose: bool): int {
 }
 
 TEST(EscapeAnalysisTest, RepeatedAllocationDoesNotConflateLiveIterationInstances) {
-  const auto program = Prepare(R"(
+  const auto plan = Analyze(R"(
 class Point { x: int; }
 export func sum(count: int): int {
   let previous = Point(x: 1);
@@ -69,14 +74,13 @@ export func sum(count: int): int {
   return result + previous.x;
 }
 )");
-  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
-  const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "sum"));
-  ASSERT_EQ(plan.allocations.size(), 2U);
-  EXPECT_NE(plan.allocations.back().decision, AllocationDecision::ScalarReplacement);
+  ASSERT_TRUE(plan) << plan.error();
+  ASSERT_EQ(plan->allocations.size(), 2U);
+  EXPECT_NE(plan->allocations.back().decision, AllocationDecision::ScalarReplacement);
 }
 
 TEST(EscapeAnalysisTest, NonOverlappingLoopInstancesCanUseTheSameFieldSlots) {
-  const auto program = Prepare(R"(
+  const auto plan = Analyze(R"(
 class Point { x: int; }
 export func sum(count: int): int {
   let result = 0;
@@ -87,14 +91,13 @@ export func sum(count: int): int {
   return result;
 }
 )");
-  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
-  const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "sum"));
-  ASSERT_EQ(plan.allocations.size(), 1U);
-  EXPECT_EQ(plan.allocations.front().decision, AllocationDecision::ScalarReplacement);
+  ASSERT_TRUE(plan) << plan.error();
+  ASSERT_EQ(plan->allocations.size(), 1U);
+  EXPECT_EQ(plan->allocations.front().decision, AllocationDecision::ScalarReplacement);
 }
 
 TEST(EscapeAnalysisTest, SeparatelyDefinedRegisterValuesDoNotKeepAnOldAlias) {
-  const auto program = Prepare(R"(
+  const auto plan = Analyze(R"(
 class Point { x: int; }
 export func sum(): int {
   let point = Point(x: 20);
@@ -103,10 +106,9 @@ export func sum(): int {
   return first + point.x;
 }
 )");
-  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
-  const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "sum"));
-  ASSERT_EQ(plan.allocations.size(), 2U);
-  for (const auto& allocation : plan.allocations) {
+  ASSERT_TRUE(plan) << plan.error();
+  ASSERT_EQ(plan->allocations.size(), 2U);
+  for (const auto& allocation : plan->allocations) {
     EXPECT_EQ(allocation.decision, AllocationDecision::ScalarReplacement);
   }
 }

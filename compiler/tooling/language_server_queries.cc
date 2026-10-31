@@ -17,12 +17,13 @@
 #include "compiler/frontend/source_loader.h"
 #include "compiler/tooling/file_uri.h"
 #include "compiler/tooling/semantic_index.h"
+#include "compiler/tooling/semantic_syntax.h"
 #include "compiler/tooling/source_text.h"
 
 namespace vela::tooling::internal {
 namespace {
 
-constexpr std::int64_t kInvalidParams = -32602;
+using protocol::kInvalidParams;
 
 std::string SourceUri(std::string_view path) {
   return path.starts_with(frontend::kSdkSourcePrefix) ? std::string(path) : FileUri(Utf8Path(path));
@@ -33,11 +34,6 @@ yyjson_mut_val* JsonRange(yyjson_mut_doc* document, TextRange range) {
   AddJsonField(document, value, protocol::kStart, JsonPosition(document, range.start));
   AddJsonField(document, value, protocol::kEnd, JsonPosition(document, range.end));
   return value;
-}
-
-bool IsIdentifierByte(char value) {
-  return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
-         (value >= '0' && value <= '9') || value == '_';
 }
 
 yyjson_mut_val* JsonCompletion(yyjson_mut_doc* document,

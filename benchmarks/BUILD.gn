@@ -6,6 +6,8 @@ executable("vela_benchmarks") {
     "compilation_cache_benchmark.cc",
     "completion_benchmark.cc",
     "gc_strategy_benchmark.cc",
+    "heap_metrics.cc",
+    "heap_metrics.h",
     "json_benchmark.cc",
     "liveness_benchmark.cc",
     "mock_benchmark.cc",
@@ -20,11 +22,15 @@ executable("vela_benchmarks") {
     "regexp_benchmark.cc",
     "repl_benchmark.cc",
     "representative_benchmark.cc",
+    "source.cc",
+    "source.h",
     "specialization_benchmark.cc",
     "standard_value_benchmark.cc",
     "standard_value_benchmark.h",
     "string_index_benchmark.cc",
     "symbol_tables_benchmark.cc",
+    "temporary_directory.cc",
+    "temporary_directory.h",
     "testing_benchmark.cc",
     "vm_benchmark.cc",
   ]
@@ -32,6 +38,7 @@ executable("vela_benchmarks") {
   defines = [ "VELA_BENCHMARK_SOURCE_DIR=\"$benchmark_source_dir\"" ]
   deps = [
     "//base:json",
+    "//base:temporary_directory",
     "//compiler",
     "//compiler:testing",
     "//compiler:tooling",
@@ -62,6 +69,7 @@ action("aot_native_inputs") {
   inputs = [
     "aot_workloads.vela",
     "aot_cases.json",
+    "spectral_norm.vela",
   ]
   outputs = [
     aot_object,
@@ -102,6 +110,8 @@ executable("vela_aot_benchmarks") {
     "dasprofile/workloads.cc",
     "dasprofile/workloads.h",
     "escape_benchmark.cc",
+    "heap_metrics.cc",
+    "heap_metrics.h",
     "jit_benchmark.cc",
     "jit_benchmark.h",
     "process_memory.h",
@@ -128,6 +138,7 @@ executable("vela_aot_benchmarks") {
     ":dasprofile_native_inputs",
     "//compiler",
     "//compiler:aot",
+    "//compiler:checkpoint_publication",
     "//compiler:development",
     "//runtime",
     "//third_party:benchmark_main",
@@ -140,6 +151,7 @@ action("dasprofile_native_inputs") {
   inputs = [
     "dasprofile/cases.json",
     "dasprofile/workloads.vela",
+    "spectral_norm.vela",
   ]
   outputs = [
     dasprofile_object,

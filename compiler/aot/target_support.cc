@@ -203,8 +203,7 @@ std::expected<TargetSupport, std::string> LoadTargetSupport(const std::filesyste
         "missing target support " + PathText(manifest) +
         "; install a matching Vela distribution or use --target-support=FILE: " + bytes.error());
   }
-  const void* storage = bytes->data();
-  const auto parsed = JsonDocument::Parse({static_cast<const char*>(storage), bytes->size()});
+  const auto parsed = JsonDocument::Parse(*bytes);
   if (!parsed) {
     return std::unexpected("invalid target support JSON: " + parsed.error().message);
   }
@@ -290,19 +289,13 @@ std::expected<std::vector<std::byte>, std::string> LinkNativeArtifact(
   }
   auto arguments =
       kind == NativeOutputKind::StaticLibrary ? support.archive_arguments : support.link_arguments;
-  const absl::flat_hash_map<std::string_view, std::string> substitutions{
+  const Roots substitutions{
       {"{object}", PathText(input)},
       {"{output}", PathText(output)},
       {"{runtime}", PathText(support.runtime)},
   };
   for (auto& argument : arguments) {
-    for (const auto& [key, value] : substitutions) {
-      std::size_t position = 0;
-      while ((position = argument.find(key, position)) != std::string::npos) {
-        argument.replace(position, key.size(), value);
-        position += value.size();
-      }
-    }
+    argument = Expand(std::move(argument), substitutions);
   }
   const auto& tool = kind == NativeOutputKind::StaticLibrary ? support.archiver : support.linker;
   if (const auto executed = InvokeTool(tool, arguments, work.path() / "tool.log"); !executed) {
