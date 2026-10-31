@@ -94,7 +94,7 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
 - Use strong types or enums for internal object types, modes, and state machines instead of string
   comparisons.
 - Preserve externally fixed native ABI and LLVM override signatures. `vl lint` excludes
-  `bugprone-easily-swappable-parameters` in `runtime/native_operations.cc` and
+  `bugprone-easily-swappable-parameters` in `runtime/native/native_operations.cc` and
   `compiler/jit/platform_support_win.cc` and `compiler/jit/code_resources.cc`: generated C entries
   and ORC resource-transfer callbacks
   retain their specified positional scalar arguments. Keep their parameter roles explicit; use
@@ -113,8 +113,8 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   `std::optional` represents only legitimate absence.
 - Define ownership, borrowing duration, destruction order, and threading constraints for every
   resource type.
-- In `runtime/native_instance.cc`, use `std::unique_ptr<T[]>` for fallible fixed-array preparation
-  before transferring ownership to the native program state. `vl lint` excludes the two
+- In `runtime/native/native_instance.cc`, use `std::unique_ptr<T[]>` for fallible fixed-array
+  preparation before transferring ownership to the native program state. `vl lint` excludes the two
   `avoid-c-arrays` checks in that file because this owner preserves the existing `nothrow` failure
   boundary and the generated code's raw-pointer ABI. Other C-style array declarations remain
   prohibited; do not substitute a throwing allocation or an ABI-dependent container layout.

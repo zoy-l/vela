@@ -7,8 +7,8 @@
 #include "benchmarks/source.h"
 #include "compiler/bytecode/compiler.h"
 #include "compiler/frontend/diagnostic.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/program.h"
 #include "vm/vm.h"
 

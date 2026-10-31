@@ -8,7 +8,7 @@
 #include "benchmark/benchmark.h"
 
 #include "benchmarks/source.h"
-#include "runtime/isolate.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/vm.h"
 
 namespace vela::benchmarks {

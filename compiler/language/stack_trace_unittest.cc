@@ -7,7 +7,7 @@
 
 #include "compiler/bytecode/compiler.h"
 #include "compiler/frontend/modules/source_loader.h"
-#include "runtime/isolate.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"
 

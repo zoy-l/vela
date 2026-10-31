@@ -6,8 +6,8 @@
 
 #include "compiler/repl/repl_session.h"
 #include "compiler/repl/repl_source.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
 
 namespace vela::benchmarks {
 namespace {

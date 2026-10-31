@@ -16,11 +16,11 @@
 #include "base/execution_status.h"
 #include "base/opcode.h"
 #include "compiler/native/native_values.h"
-#include "runtime/exception.h"
-#include "runtime/heap.h"
-#include "runtime/native_abi.h"
-#include "runtime/native_memory_layout.h"
-#include "runtime/value.h"
+#include "runtime/exceptions/exception.h"
+#include "runtime/heap/heap.h"
+#include "runtime/native/native_abi.h"
+#include "runtime/native/native_memory_layout.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler::native {
 

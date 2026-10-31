@@ -16,8 +16,8 @@
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/ir/preparation_test_support.h"
-#include "runtime/isolate.h"
-#include "runtime/program_layouts.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/isolate/program_layouts.h"
 
 namespace vela::compiler::aot {
 namespace {

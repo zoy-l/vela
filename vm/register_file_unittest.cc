@@ -5,11 +5,11 @@
 
 #include "gtest/gtest.h"
 
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/register_storage.h"
-#include "runtime/string.h"
-#include "runtime/value.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/strings/string.h"
+#include "runtime/value/register_storage.h"
+#include "runtime/value/value.h"
 #include "vm/frame.h"
 #include "vm/register_file.h"
 

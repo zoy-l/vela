@@ -12,7 +12,7 @@
 
 #include "compiler/testing/result.h"
 #include "compiler/testing/settings.h"
-#include "runtime/future.h"
+#include "runtime/async/future.h"
 
 namespace vela::testing {
 

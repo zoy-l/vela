@@ -63,7 +63,7 @@ the RegExp API's caseless matching rules.
 
 Use the existing utf8proc dependency for simple mappings and add generated
 Unicode full/contextual mapping data. The casing operation is independent of
-the regex engine. The existing [Unicode operations](../../runtime/unicode_operations.cc)
+the regex engine. The existing [Unicode operations](../../runtime/strings/unicode_operations.cc)
 continue to use utf8proc for code points and grapheme segmentation.
 
 Generate the supplement from the same Unicode version used by the pinned

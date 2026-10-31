@@ -6,8 +6,8 @@
 #include "benchmark/benchmark.h"
 
 #include "base/utf8.h"
-#include "runtime/heap.h"
-#include "runtime/string.h"
+#include "runtime/heap/heap.h"
+#include "runtime/strings/string.h"
 
 namespace vela::benchmarks {
 namespace {

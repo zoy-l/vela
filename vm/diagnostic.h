@@ -3,7 +3,7 @@
 #include <span>
 #include <vector>
 
-#include "runtime/future.h"
+#include "runtime/async/future.h"
 #include "vm/debug_info.h"
 
 namespace vela::vm {

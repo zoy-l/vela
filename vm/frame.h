@@ -1,7 +1,7 @@
 #pragma once
 
-#include "runtime/heap.h"
-#include "runtime/register_storage.h"
+#include "runtime/heap/heap.h"
+#include "runtime/value/register_storage.h"
 
 namespace vela::vm {
 

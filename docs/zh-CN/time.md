@@ -116,7 +116,7 @@ DateParts 是含七个 int 字段的固定布局标准类，不是 Map 或时刻
 
 在输入边界约束准确 ASCII 语法和毫秒精度，再使用 Abseil 验证转换。不能因其 ParseTime 接受小写分隔符、任意精度、闰秒归一化或无穷时间而放宽本 API。fromUTC 先检查数字字段范围，再构造后端日历值并比较归一化字段与原请求，拒绝无效日期。将最终时刻转为 int64 毫秒前先检查范围。格式化始终显式指定 UTC，例如内部固定格式 `%E4Y-%m-%dT%H:%M:%E3SZ` 确保规范宽度。子秒字段相对 UTC 日历秒起点计算，包括负时间戳。解析使用显式长度，不依赖 C 字符串终止或正则表达式。
 
-现有[时钟原生绑定](../../runtime/standard_library.cc)保留当前职责。四个新转换方法接入标准 intrinsic/builtin 路径，由 runtime/VM 拥有带类型 DateParts 分配与领域错误。当前[原生 codec](../../runtime/native_function.h)不返回任意类实例，不为这个结果类型引入未检查 Value 返回或通用对象绑定功能。把经过检查的标准 DateParts 类布局传给运行时消费者，并在编译/加载边界验证，不能在使用处猜布局。无需增加原始 Value 种类或新的日历对象表示。
+现有[时钟原生绑定](../../runtime/library/standard_library.cc)保留当前职责。四个新转换方法接入标准 intrinsic/builtin 路径，由 runtime/VM 拥有带类型 DateParts 分配与领域错误。当前[原生 codec](../../runtime/native/native_function.h)不返回任意类实例，不为这个结果类型引入未检查 Value 返回或通用对象绑定功能。把经过检查的标准 DateParts 类布局传给运行时消费者，并在编译/加载边界验证，不能在使用处猜布局。无需增加原始 Value 种类或新的日历对象表示。
 
 受保护的标准环境提供受检查的签名和 DateParts 依赖闭包。标准静态方法的 intrinsic 标记经特化与 lowering 生成普通 builtin 包装函数。LSP、文档和源码工具消费相同的受检查签名。方法值具有完整的固定参数列表；直接调用时，四个可选时间字段省略后补零。
 

@@ -12,9 +12,9 @@
 #include <llvm/IR/Value.h>
 
 #include "compiler/native/native_values.h"
-#include "runtime/native_abi.h"
-#include "runtime/native_deoptimization.h"
-#include "runtime/native_memory_layout.h"
+#include "runtime/native/native_abi.h"
+#include "runtime/native/native_deoptimization.h"
+#include "runtime/native/native_memory_layout.h"
 
 namespace vela::compiler::native {
 

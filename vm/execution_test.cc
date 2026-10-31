@@ -9,12 +9,12 @@
 #include <utility>
 
 #include "base/builtin.h"
-#include "runtime/exception.h"
-#include "runtime/future.h"
-#include "runtime/heap.h"
-#include "runtime/string.h"
-#include "runtime/test_bridge.h"
-#include "runtime/value.h"
+#include "runtime/async/future.h"
+#include "runtime/exceptions/exception.h"
+#include "runtime/heap/heap.h"
+#include "runtime/strings/string.h"
+#include "runtime/testing/test_bridge.h"
+#include "runtime/value/value.h"
 #include "vm/bytecode.h"
 #include "vm/execution_status.h"
 #include "vm/program.h"

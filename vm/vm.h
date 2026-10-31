@@ -7,10 +7,10 @@
 #include <string>
 #include <vector>
 
-#include "runtime/execution_context.h"
-#include "runtime/future.h"
-#include "runtime/isolate.h"
-#include "runtime/value.h"
+#include "runtime/async/execution_context.h"
+#include "runtime/async/future.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/value/value.h"
 #include "vm/debug_info.h"
 #include "vm/debugger.h"
 #include "vm/execution_status.h"

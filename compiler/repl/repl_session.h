@@ -12,9 +12,9 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/repl/repl_source.h"
-#include "runtime/external_resources.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/external_resources.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/program.h"
 #include "vm/vm.h"
 

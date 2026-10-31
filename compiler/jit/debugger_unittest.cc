@@ -21,11 +21,11 @@
 #include "compiler/jit/test_support.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/test_support/checkpoint_publication.h"
-#include "runtime/future.h"
-#include "runtime/native_debugger.h"
-#include "runtime/native_dispatch.h"
-#include "runtime/rooted_value.h"
-#include "runtime/string.h"
+#include "runtime/async/future.h"
+#include "runtime/heap/rooted_value.h"
+#include "runtime/native/native_debugger.h"
+#include "runtime/native/native_dispatch.h"
+#include "runtime/strings/string.h"
 
 namespace vela::compiler::jit {
 namespace {

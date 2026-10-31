@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "base/binary.h"
-#include "runtime/isolate.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/program.h"
 
 namespace vela::vm {

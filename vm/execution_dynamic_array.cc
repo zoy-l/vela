@@ -5,9 +5,9 @@
 #include <span>
 
 #include "base/builtin.h"
-#include "runtime/dynamic_array.h"
-#include "runtime/heap.h"
-#include "runtime/value.h"
+#include "runtime/dynamic/dynamic_array.h"
+#include "runtime/heap/heap.h"
+#include "runtime/value/value.h"
 #include "vm/bytecode.h"
 #include "vm/execution_status.h"
 #include "vm/program.h"

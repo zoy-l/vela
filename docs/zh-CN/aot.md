@@ -49,9 +49,9 @@ vela build math.vela --emit=staticlib --export=add -o libmath.a
 | --- | --- |
 | [IR](../../compiler/ir/ir.h) 使用 32 位虚拟寄存器 ID，携带类型、源码位置及异常处理器；[公共分析](../../compiler/ir/analysis.h)提供指令效果和异常/恢复边活跃性 | 按值定义的类型事实生成类型化原生值与根槽，原生能力不受字节码字段宽度限制 |
 | [编译准备](../../compiler/ir/preparation.cc)离线完成前端、布局描述与公共优化，返回不借用 AST 或 Isolate 的 IR；VM 分配和编码位于独立后端 | 从同一 IR 分流到共享 LLVM lowering 与代码生成 |
-| [布局实例化](../../runtime/program_layouts.cc)消费无指针描述表；绑定检查消费具体签名 | 原生实例复用布局实例化，拥有原生导入表、常量根池与全局状态 |
-| [NativeFunction](../../runtime/native_function.h) 由 C++ 签名生成 VM 与原生入口 | 复用声明和类型编解码规则，按签名选择直接或受检查的 AOT 入口 |
-| [Future 调度器](../../runtime/future.h)拥有共享状态和调度语义；VM 拥有字节码挂起帧与执行器 | 使用原生续延与原生回调入口，不依赖 VM 执行器 |
+| [布局实例化](../../runtime/isolate/program_layouts.cc)消费无指针描述表；绑定检查消费具体签名 | 原生实例复用布局实例化，拥有原生导入表、常量根池与全局状态 |
+| [NativeFunction](../../runtime/native/native_function.h) 由 C++ 签名生成 VM 与原生入口 | 复用声明和类型编解码规则，按签名选择直接或受检查的 AOT 入口 |
+| [Future 调度器](../../runtime/async/future.h)拥有共享状态和调度语义；VM 拥有字节码挂起帧与执行器 | 使用原生续延与原生回调入口，不依赖 VM 执行器 |
 | [GC](garbage_collection.md)提供精确根、非移动堆和引用写屏障 | 生成原生根槽和安全点，复用堆与屏障，不使用保守栈扫描 |
 
 这些生产路径已接通；目标支持包与发行验收的剩余范围见本文状态和完成条件。

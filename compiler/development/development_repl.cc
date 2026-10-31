@@ -17,7 +17,7 @@
 #include "compiler/frontend/syntax/ast_clone.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/repl/repl_source.h"
-#include "runtime/future.h"
+#include "runtime/async/future.h"
 
 namespace vela::compiler {
 

@@ -196,10 +196,10 @@ zone to formatting; a fixed internal format such as
 relative to the start of the UTC civil second, including for negative timestamps.
 Use length-aware parsing, not C-string termination or regex dependencies.
 
-Existing [clock native bindings](../../runtime/standard_library.cc) keep their
+Existing [clock native bindings](../../runtime/library/standard_library.cc) keep their
 current responsibilities. Bind the four new conversions through the standard
 intrinsic/builtin path so typed DateParts allocation and domain-specific errors
-are owned by runtime/VM. The current [native codec](../../runtime/native_function.h)
+are owned by runtime/VM. The current [native codec](../../runtime/native/native_function.h)
 does not return arbitrary class instances; do not introduce an unchecked Value
 return or a general object-binding feature for this record. Carry the checked
 DateParts class layout from its standard declaration to the runtime consumer

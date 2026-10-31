@@ -14,11 +14,11 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/execution_context.h"
-#include "runtime/future.h"
-#include "runtime/heap.h"
-#include "runtime/test_bridge.h"
-#include "runtime/value.h"
+#include "runtime/async/execution_context.h"
+#include "runtime/async/future.h"
+#include "runtime/heap/heap.h"
+#include "runtime/testing/test_bridge.h"
+#include "runtime/value/value.h"
 #include "vm/diagnostic.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"

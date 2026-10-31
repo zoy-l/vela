@@ -8,12 +8,12 @@
 #include <utility>
 
 #include "base/async_operation.h"
-#include "runtime/async_state.h"
-#include "runtime/callable.h"
-#include "runtime/future_composition.h"
-#include "runtime/future_operations.h"
-#include "runtime/object.h"
-#include "runtime/value.h"
+#include "runtime/async/async_state.h"
+#include "runtime/async/future_composition.h"
+#include "runtime/async/future_operations.h"
+#include "runtime/value/callable.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
 #include "vm/bytecode.h"
 #include "vm/execution_status.h"
 #include "vm/program.h"

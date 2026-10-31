@@ -89,7 +89,7 @@ export func calculate(operation: int): int {
 """
 
 HOST_TESTS = r'''
-#include "runtime/native_call.h"
+#include "runtime/native/native_call.h"
 extern "C" const NativeImage* CALLBACK_IMAGE() noexcept;
 using NativeCallbackTest = CollectingImageTest<CALLBACK_IMAGE>;
 

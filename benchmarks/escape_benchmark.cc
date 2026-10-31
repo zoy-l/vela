@@ -31,13 +31,13 @@
 #include "compiler/jit/engine.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/escape_analysis.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/native_abi.h"
-#include "runtime/native_api.h"
-#include "runtime/native_call.h"
-#include "runtime/native_image.h"
-#include "runtime/native_instance.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_abi.h"
+#include "runtime/native/native_api.h"
+#include "runtime/native/native_call.h"
+#include "runtime/native/native_image.h"
+#include "runtime/native/native_instance.h"
 
 namespace vela::benchmarks {
 namespace {

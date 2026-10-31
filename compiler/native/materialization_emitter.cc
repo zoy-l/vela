@@ -13,8 +13,8 @@
 
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_values.h"
-#include "runtime/instance_storage.h"
-#include "runtime/native_image.h"
+#include "runtime/heap/instance_storage.h"
+#include "runtime/native/native_image.h"
 
 namespace vela::compiler::native {
 

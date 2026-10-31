@@ -41,9 +41,9 @@
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
-#include "runtime/native_abi.h"
+#include "runtime/native/native_abi.h"
+#include "runtime/native/native_image.h"
 #include "runtime/native_build_identity.h"
-#include "runtime/native_image.h"
 
 namespace vela::compiler::native {
 namespace {

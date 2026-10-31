@@ -5,9 +5,9 @@
 #include <span>
 
 #include "base/builtin.h"
-#include "runtime/date.h"
-#include "runtime/isolate.h"
-#include "runtime/value.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/library/date.h"
+#include "runtime/value/value.h"
 #include "vm/bytecode.h"
 #include "vm/execution_status.h"
 

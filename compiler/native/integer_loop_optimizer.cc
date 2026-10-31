@@ -31,8 +31,8 @@
 #include <llvm/Transforms/Utils/LoopSimplify.h>
 #include <llvm/Transforms/Utils/Mem2Reg.h>
 
-#include "runtime/native_memory_layout.h"
-#include "runtime/value.h"
+#include "runtime/native/native_memory_layout.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler::native {
 namespace {

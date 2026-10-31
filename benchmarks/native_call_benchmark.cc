@@ -8,9 +8,9 @@
 
 #include "benchmarks/native_call_kernels.h"
 #include "benchmarks/source.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/native_function.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_function.h"
 #include "vm/vm.h"
 
 namespace vela::benchmarks {

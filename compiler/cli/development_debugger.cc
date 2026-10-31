@@ -15,8 +15,8 @@
 #include "compiler/cli/console_input.h"
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
-#include "runtime/native_control.h"
-#include "runtime/native_debugger.h"
+#include "runtime/native/native_control.h"
+#include "runtime/native/native_debugger.h"
 
 namespace vela::tooling {
 namespace {

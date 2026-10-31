@@ -18,13 +18,13 @@
 #include "base/declaration.h"
 #include "base/execution_status.h"
 #include "compiler/development/source_session.h"
-#include "runtime/external_resources.h"
-#include "runtime/future.h"
-#include "runtime/isolate.h"
-#include "runtime/native_context.h"
-#include "runtime/native_function.h"
-#include "runtime/rooted_value.h"
-#include "runtime/value.h"
+#include "runtime/async/future.h"
+#include "runtime/heap/rooted_value.h"
+#include "runtime/isolate/external_resources.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_context.h"
+#include "runtime/native/native_function.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler {
 namespace {

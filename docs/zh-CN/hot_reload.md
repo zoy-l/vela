@@ -336,10 +336,10 @@ JIT 的每个受支持目标都必须实现可执行内存权限切换、指令�
 | [`compiler/native/code_generator.cc`](../../compiler/native/code_generator.cc)、[`jit/compiler.cc`](../../compiler/jit/compiler.cc)、[`jit/code_cache.cc`](../../compiler/jit/code_cache.cc) | 共享 LLVM lowering 和目标文件生成；隔离 ORC 批次、重定位缓存及资源退休 |
 | [`compiler/native/function_emitter.cc`](../../compiler/native/function_emitter.cc)、[`deoptimization_emitter.cc`](../../compiler/native/deoptimization_emitter.cc) | 按模式限制调用假设；保存精确逻辑状态并恢复原版本基线，避免重放待完成调用 |
 | [`compiler/aot/reachability.h`](../../compiler/aot/reachability.h) | 产物内裁剪编号与会话稳定身份分离，保留稳定声明契约 |
-| [`runtime/native_dispatch.h`](../../runtime/native_dispatch.h)、[`native_version.h`](../../runtime/native_version.h)、[`native_metadata.h`](../../runtime/native_metadata.h) | 原子快照、会话全局、存留依赖、函数版本所有权及元数据回收 |
-| [`runtime/instance_storage.h`](../../runtime/instance_storage.h)、[`heap_instance.cc`](../../runtime/heap_instance.cc)、[`native_memory_layout.h`](../../runtime/native_memory_layout.h) | 稳定对象、独立字段块、弱实例登记、精确扫描、屏障与迁移 |
-| [`runtime/native_async.cc`](../../runtime/native_async.cc)、[`native_deoptimization.h`](../../runtime/native_deoptimization.h) | 挂起版本保活、活跃帧检查点、优化续延恢复和退休 |
-| [`runtime/rooted_value.h`](../../runtime/rooted_value.h)、[`isolate.h`](../../runtime/isolate.h)、[`future.h`](../../runtime/future.h) | 外部根诊断、固定 binding 快照、停止边界和可关闭完成端点 |
+| [`runtime/native/native_dispatch.h`](../../runtime/native/native_dispatch.h)、[`native_version.h`](../../runtime/native/native_version.h)、[`native_metadata.h`](../../runtime/native/native_metadata.h) | 原子快照、会话全局、存留依赖、函数版本所有权及元数据回收 |
+| [`runtime/heap/instance_storage.h`](../../runtime/heap/instance_storage.h)、[`heap_instance.cc`](../../runtime/heap/heap_instance.cc)、[`native_memory_layout.h`](../../runtime/native/native_memory_layout.h) | 稳定对象、独立字段块、弱实例登记、精确扫描、屏障与迁移 |
+| [`runtime/native/native_async.cc`](../../runtime/native/native_async.cc)、[`native_deoptimization.h`](../../runtime/native/native_deoptimization.h) | 挂起版本保活、活跃帧检查点、优化续延恢复和退休 |
+| [`runtime/heap/rooted_value.h`](../../runtime/heap/rooted_value.h)、[`isolate.h`](../../runtime/isolate/isolate.h)、[`future.h`](../../runtime/async/future.h) | 外部根诊断、固定 binding 快照、停止边界和可关闭完成端点 |
 | [`compiler/jit/platform_support_win.cc`](../../compiler/jit/platform_support_win.cc)、[`platform_support_posix.cc`](../../compiler/jit/platform_support_posix.cc)、[`tools/llvm.py`](../../tools/llvm.py) | 平台展开/调试注册、可执行资源和 ORC 依赖闭包 |
 
 现有 AOT 与 VM 的具体状态以各自实现和文档为准。本文对可重载模式的布局、调用和生命周期要求，只在对应里程碑完整接通后才可标记为已支持。

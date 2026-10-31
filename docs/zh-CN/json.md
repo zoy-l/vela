@@ -153,7 +153,7 @@ func main(): void {
 
 ## 实现范围与完成条件
 
-现有[标准声明](../../compiler/frontend/builtins/standard_environment.cc)、[builtin 签名](../../compiler/frontend/builtins/builtins.h)、[运行时值](../../runtime/value.h)与 [JSON 基础设施](../../base/json.h)界定集成边界。现有 JSON helper 拥有 yyjson arena，运行时值不能直接暴露其中的节点。复用已经固定版本的 yyjson 依赖与共享底层设施；保留原始数字词法单元和源偏移，避免底层库的数字转换破坏 int64 契约。runtime 不依赖 compiler/tooling。
+现有[标准声明](../../compiler/frontend/builtins/standard_environment.cc)、[builtin 签名](../../compiler/frontend/builtins/builtins.h)、[运行时值](../../runtime/value/value.h)与 [JSON 基础设施](../../base/json.h)界定集成边界。现有 JSON helper 拥有 yyjson arena，运行时值不能直接暴露其中的节点。复用已经固定版本的 yyjson 依赖与共享底层设施；保留原始数字词法单元和源偏移，避免底层库的数字转换破坏 int64 契约。runtime 不依赖 compiler/tooling。
 
 | 阶段 | 必须完成的工作 |
 | --- | --- |
@@ -167,7 +167,7 @@ func main(): void {
 | 工具链 | 补全、悬停、诊断、格式化、文档、调试器和持久化 REPL 共享受检查签名与动态类型信息 |
 | 交付 | 增加 `examples/json.vela`；全部生产路径与必要验证完成后才勾选功能清单 |
 
-[离线布局描述](../../compiler/ir/layout_description.cc)与[运行时实例化](../../runtime/program_layouts.cc)保留类、接口与枚举的名义身份、函数的结构签名，以及 Future/Completer 的载荷签名。数组和集合保留完整元素约束。枚举在擦除槽位中装箱以保留身份，强类型枚举数组仍使用整数存储。元数据由 Isolate 持有，不依赖编译结果的生命周期；加载字节码镜像时重新构造并验证。
+[离线布局描述](../../compiler/ir/layout_description.cc)与[运行时实例化](../../runtime/isolate/program_layouts.cc)保留类、接口与枚举的名义身份、函数的结构签名，以及 Future/Completer 的载荷签名。数组和集合保留完整元素约束。枚举在擦除槽位中装箱以保留身份，强类型枚举数组仍使用整数存储。元数据由 Isolate 持有，不依赖编译结果的生命周期；加载字节码镜像时重新构造并验证。
 
 必要验证覆盖全部 JSON 根类型、混合与对象数组、缺失和 null、重复键顺序、Unicode 转义与内嵌 NUL、int64 端点和越界、binary64 边界与负零、非法输入偏移、非字符串键、不支持类型、循环与共享分支、toJson 成功/失败/修改容器，以及捕获错误后的 VM 复用。类型测试覆盖所有 dynamic 到具体类型的边界、私有与只读成员、命名调用、函数签名、枚举身份、泛型实参、不变容器写入、字面量上下文和推断失败。GC 压力测试覆盖部分解析结果、转换调用、动态槽位、新 Isolate 中加载的镜像和 REPL 保留值。
 

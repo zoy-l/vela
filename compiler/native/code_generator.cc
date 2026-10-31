@@ -43,7 +43,7 @@
 #include "compiler/native/native_image_emitter.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
-#include "runtime/native_image.h"
+#include "runtime/native/native_image.h"
 
 namespace vela::compiler::native {
 namespace {

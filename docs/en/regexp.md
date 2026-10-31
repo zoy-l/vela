@@ -235,8 +235,8 @@ quantifiers and failed searches, not just successful literal matches.
 ## Implementation and validation
 
 The shared [signature registry](../../compiler/frontend/builtins/regexp_builtins.cc)
-provides static checking and tooling metadata. [Runtime operations](../../runtime/regexp.cc)
-own compilation, search and captures; [heap integration](../../runtime/heap_regexp.cc)
+provides static checking and tooling metadata. [Runtime operations](../../runtime/regexp/regexp.cc)
+own compilation, search and captures; [heap integration](../../runtime/heap/heap_regexp.cc)
 owns native accounting, tracing and release. Runtime does not depend on the
 compiler or tooling. Ordinary string search retains its existing semantics.
 
@@ -249,7 +249,7 @@ operands; native compiled programs are recreated during execution.
 
 [Compiler/image tests](../../compiler/language/regexp_unittest.cc) cover both types,
 options, Unicode coordinates, captures, native PCRE2 constructs, method values,
-containers, async payloads and errors. [Runtime tests](../../runtime/regexp_unittest.cc)
+containers, async payloads and errors. [Runtime tests](../../runtime/regexp/regexp_unittest.cc)
 check all three resource limits, execution failures, partial-result cleanup,
 match-only reachability, native accounting and hasMatch zero GC allocations.
 REPL and LSP tests cover persistent ownership, completion, hover and named

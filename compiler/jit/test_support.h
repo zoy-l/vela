@@ -13,10 +13,10 @@
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
-#include "runtime/isolate.h"
-#include "runtime/native_dispatch.h"
-#include "runtime/native_image.h"
-#include "runtime/value.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_dispatch.h"
+#include "runtime/native/native_image.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler::jit::test {
 

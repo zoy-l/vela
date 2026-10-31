@@ -1,4 +1,4 @@
-#include "runtime/object.h"
+#include "runtime/value/object.h"
 #include "vm/execution.h"
 
 #include <array>
@@ -7,9 +7,9 @@
 
 #include "base/builtin.h"
 #include "base/regexp.h"
-#include "runtime/isolate.h"
-#include "runtime/regexp.h"
-#include "runtime/value.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/regexp/regexp.h"
+#include "runtime/value/value.h"
 #include "vm/bytecode.h"
 #include "vm/execution_status.h"
 

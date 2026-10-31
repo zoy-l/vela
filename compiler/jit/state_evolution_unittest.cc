@@ -16,14 +16,14 @@
 #include "compiler/development/source_session.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/test_support.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/native_context.h"
-#include "runtime/native_dispatch.h"
-#include "runtime/native_function.h"
-#include "runtime/object.h"
-#include "runtime/rooted_value.h"
-#include "runtime/value.h"
+#include "runtime/heap/heap.h"
+#include "runtime/heap/rooted_value.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_context.h"
+#include "runtime/native/native_dispatch.h"
+#include "runtime/native/native_function.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler::jit {
 namespace {

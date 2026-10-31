@@ -132,11 +132,11 @@ GC 追踪输入/模式引用，发布引用使用已有屏障。编译程序和�
 
 ## 实现与验证
 
-共享[签名表](../../compiler/frontend/builtins/regexp_builtins.cc)提供静态检查与工具元数据。[运行时操作](../../runtime/regexp.cc)负责模式编译、搜索及捕获，[堆集成](../../runtime/heap_regexp.cc)负责原生内存核算、追踪与释放。runtime 不依赖 compiler/tooling，普通字符串检索沿用已有语义。
+共享[签名表](../../compiler/frontend/builtins/regexp_builtins.cc)提供静态检查与工具元数据。[运行时操作](../../runtime/regexp/regexp.cc)负责模式编译、搜索及捕获，[堆集成](../../runtime/heap/heap_regexp.cc)负责原生内存核算、追踪与释放。runtime 不依赖 compiler/tooling，普通字符串检索沿用已有语义。
 
 固定解释器的匹配限制为 1,000,000，深度限制为 1,000，堆限制为 8,192 KiB；括号嵌套上限为 250，可变后向查找最大长度为 255。Unicode 17.0.0 表独立于大小写转换的 Unicode 18.0.0 数据。[依赖记录](../../third_party/README.md)定义源码闭包、许可证及配置。版本 7 镜像保留带类型布局操作数，原生编译程序在执行时重新创建。
 
-[编译器／镜像测试](../../compiler/language/regexp_unittest.cc)覆盖两种类型、选项、Unicode 坐标、捕获、PCRE2 原生构造、方法值、容器、异步载荷与错误。[运行时测试](../../runtime/regexp_unittest.cc)验证三个资源限制、执行失败、部分结果清理、仅匹配结果可达时的所有权、原生核算及 hasMatch 不分配 GC 对象。REPL 与 LSP 测试覆盖跨提交所有权、补全、悬停和命名参数。[可运行示例](../../examples/regexp.vela)使用普通 Vela 字符串转义与带类型结果。
+[编译器／镜像测试](../../compiler/language/regexp_unittest.cc)覆盖两种类型、选项、Unicode 坐标、捕获、PCRE2 原生构造、方法值、容器、异步载荷与错误。[运行时测试](../../runtime/regexp/regexp_unittest.cc)验证三个资源限制、执行失败、部分结果清理、仅匹配结果可达时的所有权、原生核算及 hasMatch 不分配 GC 对象。REPL 与 LSP 测试覆盖跨提交所有权、补全、悬停和命名参数。[可运行示例](../../examples/regexp.vela)使用普通 Vela 字符串转义与带类型结果。
 
 Release benchmark 分别测量模式编译、重复 hasMatch/firstMatch、allMatches 物化与坐标映射、捕获提取、GC 压力及回溯限制。聚合数据、波动与未改动 VM 工作负载对照保存在[滚动摘要](../../benchmarks/results/rolling_summary.json)。
 

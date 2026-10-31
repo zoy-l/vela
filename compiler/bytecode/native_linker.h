@@ -2,7 +2,7 @@
 
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
-#include "runtime/isolate.h"
+#include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
 

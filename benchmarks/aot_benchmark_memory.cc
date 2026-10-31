@@ -4,8 +4,8 @@
 
 #include "benchmarks/heap_metrics.h"
 #include "benchmarks/process_memory.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
 
 namespace vela::benchmarks {
 

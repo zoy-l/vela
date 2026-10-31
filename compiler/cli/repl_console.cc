@@ -12,8 +12,8 @@
 #include "compiler/project/project_config.h"
 #include "compiler/repl/repl_session.h"
 #include "compiler/repl/repl_source.h"
-#include "runtime/external_resources.h"
-#include "runtime/heap.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/external_resources.h"
 #include "vm/vm.h"
 
 namespace vela::tooling {

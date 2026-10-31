@@ -14,11 +14,11 @@
 #include "compiler/repl/repl_source.h"
 #include "gtest/gtest.h"
 
-#include "runtime/external_resources.h"
-#include "runtime/heap.h"
-#include "runtime/native_function.h"
-#include "runtime/rooted_value.h"
-#include "runtime/value.h"
+#include "runtime/heap/heap.h"
+#include "runtime/heap/rooted_value.h"
+#include "runtime/isolate/external_resources.h"
+#include "runtime/native/native_function.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler {
 namespace {

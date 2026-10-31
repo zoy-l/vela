@@ -1,7 +1,39 @@
-# Vela runtime foundation
+# Vela runtime
 
-The runtime provides the object and memory contract used by the VM. Each
-`Isolate` owns one `Heap`; there is no process-global heap or locking on the
+The runtime provides the value, object, memory, and execution contracts shared by the VM and native
+backends. Build targets are defined centrally in [`BUILD.gn`](BUILD.gn); `//runtime:runtime`,
+`//runtime:vela_runtime`, and `//runtime:runtime_tests` own the runtime sources, distributable static
+library, and C++ tests. See [Architecture and Contracts](../.agents/architecture.md) for ownership
+and module boundaries.
+
+## Directory responsibilities
+
+| Directory | Responsibility |
+| --- | --- |
+| `value` | Tagged values, object layouts, callables, register storage, and value operations and output. |
+| `heap` | Heap allocation, GC, compact element and instance storage, and rooted host values. |
+| `isolate` | Isolate lifecycle, layout instantiation and transactions, member tables, and external resources. |
+| `async` | Futures, completion, composition, scheduling, cancellation, and execution contexts. |
+| `collections` | Array, byte, and collection operations and index ranges. |
+| `dynamic` | Dynamic values, arrays, calls, and asynchronous dispatch. |
+| `strings` | String storage, Unicode operations, and temporary search indexes. |
+| `json` | JSON encoding and decoding. |
+| `regexp` | Regular expressions and match storage. |
+| `library` | Builtin dispatch, standard native bindings, numeric parsing, dates, and random numbers. |
+| `exceptions` | Error values and exception payload and trace contracts. |
+| `process` | Process entry, shutdown diagnostics, and exit values. |
+| `native` | Native ABI and API, host bindings, program instances, dispatch, async execution, and debugging. |
+| `testing` | Source-test bridges, value inspection, runtime integration tests, and shared test support. |
+
+Module tests live beside their implementations. Generated native build identity and Unicode data
+headers remain in the generated `runtime/` directory. Distribution packages preserve the source
+header hierarchy beneath `include/runtime`, including dependencies used by generated C and C++
+export headers. Consumers include headers by their owning directory, such as
+`runtime/isolate/isolate.h` and `runtime/native/native_api.h`.
+
+## Heap and value contracts
+
+Each `Isolate` owns one `Heap`; there is no process-global heap or locking on the
 allocation path.
 
 Instances have a fixed `ClassLayout`. The layout records the fields that hold

@@ -6,10 +6,10 @@
 #include <span>
 #include <vector>
 
-#include "runtime/future.h"
-#include "runtime/isolate.h"
-#include "runtime/register_storage.h"
-#include "runtime/value.h"
+#include "runtime/async/future.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/value/register_storage.h"
+#include "runtime/value/value.h"
 #include "vm/execution.h"
 #include "vm/program.h"
 

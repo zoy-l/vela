@@ -5,11 +5,11 @@
 #include "benchmark/benchmark.h"
 
 #include "benchmarks/standard_value_benchmark.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/json.h"
-#include "runtime/rooted_value.h"
-#include "runtime/string.h"
+#include "runtime/heap/heap.h"
+#include "runtime/heap/rooted_value.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/json/json.h"
+#include "runtime/strings/string.h"
 
 namespace vela::benchmarks {
 namespace {

@@ -279,7 +279,7 @@ language-level fixed nesting limit; resource exhaustion is reported explicitly.
 
 Existing [standard declarations](../../compiler/frontend/builtins/standard_environment.cc),
 [builtin signatures](../../compiler/frontend/builtins/builtins.h),
-[runtime values](../../runtime/value.h), and
+[runtime values](../../runtime/value/value.h), and
 [JSON infrastructure](../../base/json.h) establish the integration boundaries.
 The existing JSON helper owns yyjson arenas; runtime values must not expose those
 nodes. Reuse the pinned yyjson dependency and shared low-level infrastructure.
@@ -299,7 +299,7 @@ cannot violate the int64 contract. Runtime does not depend on compiler/tooling.
 | Delivery | Add `examples/json.vela`, update the feature checklist only after all production paths and required checks pass |
 
 The [offline layout descriptions](../../compiler/ir/layout_description.cc) and
-[runtime instantiation](../../runtime/program_layouts.cc) retain nominal
+[runtime instantiation](../../runtime/isolate/program_layouts.cc) retain nominal
 class, interface and enum identities, structural function signatures,
 and Future/Completer payload signatures. Arrays and collections retain their full
 element constraints. Boxed enums preserve identity in erased slots while typed

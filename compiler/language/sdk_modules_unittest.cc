@@ -11,7 +11,7 @@
 #include "compiler/frontend/modules/source_file.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/checker.h"
-#include "runtime/isolate.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/bytecode_image.h"
 #include "vm/vm.h"
 

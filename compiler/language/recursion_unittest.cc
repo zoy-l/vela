@@ -3,7 +3,7 @@
 #include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "compiler/test_support/test_sources.h"
-#include "runtime/isolate.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/execution_status.h"
 #include "vm/vm.h"
 

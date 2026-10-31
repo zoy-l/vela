@@ -36,13 +36,13 @@
 #include "compiler/native/native_roots.h"
 #include "compiler/project/project_config.h"
 #include "compiler/repl/repl_source.h"
-#include "runtime/external_resources.h"
-#include "runtime/future.h"
-#include "runtime/heap.h"
-#include "runtime/native_control.h"
-#include "runtime/native_dispatch.h"
-#include "runtime/process_entry.h"
-#include "runtime/value_io.h"
+#include "runtime/async/future.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/external_resources.h"
+#include "runtime/native/native_control.h"
+#include "runtime/native/native_dispatch.h"
+#include "runtime/process/process_entry.h"
+#include "runtime/value/value_io.h"
 
 namespace vela::tooling {
 namespace {

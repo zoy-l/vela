@@ -6,11 +6,11 @@
 #include <utility>
 
 #include "base/builtin.h"
-#include "runtime/error.h"
-#include "runtime/json.h"
-#include "runtime/object.h"
-#include "runtime/string.h"
-#include "runtime/value.h"
+#include "runtime/exceptions/error.h"
+#include "runtime/json/json.h"
+#include "runtime/strings/string.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
 #include "vm/bytecode.h"
 #include "vm/execution_status.h"
 

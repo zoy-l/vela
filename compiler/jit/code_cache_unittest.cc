@@ -18,8 +18,8 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/native/code_generator.h"
-#include "runtime/isolate.h"
-#include "runtime/native_dispatch.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_dispatch.h"
 
 namespace vela::compiler::jit {
 namespace {

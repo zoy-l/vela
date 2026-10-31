@@ -6,11 +6,11 @@
 
 #include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
-#include "runtime/future.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/object.h"
-#include "runtime/rooted_value.h"
+#include "runtime/async/future.h"
+#include "runtime/heap/heap.h"
+#include "runtime/heap/rooted_value.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/value/object.h"
 #include "vm/program.h"
 #include "vm/vm.h"
 

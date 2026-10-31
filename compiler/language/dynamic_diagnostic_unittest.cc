@@ -5,7 +5,7 @@
 
 #include "compiler/bytecode/compiler.h"
 #include "compiler/frontend/diagnostic.h"
-#include "runtime/isolate.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/vm.h"
 
 namespace vela::compiler {

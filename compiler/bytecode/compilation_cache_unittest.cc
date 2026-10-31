@@ -13,9 +13,9 @@
 #include "base/path.h"
 #include "base/testing/directory.h"
 #include "compiler/bytecode/compilation_cache.h"
-#include "runtime/isolate.h"
-#include "runtime/native_context.h"
-#include "runtime/native_function.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_context.h"
+#include "runtime/native/native_function.h"
 #include "vm/vm.h"
 
 namespace vela::compiler {

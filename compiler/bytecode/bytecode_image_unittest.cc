@@ -9,8 +9,8 @@
 #include "compiler/bytecode/compiler.h"
 #include "compiler/test_support/program_test_support.h"
 #include "compiler/test_support/test_sources.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/bytecode_image.h"
 #include "vm/vm.h"
 

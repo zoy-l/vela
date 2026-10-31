@@ -24,7 +24,7 @@
 #include "base/fingerprint.h"
 #include "compiler/cache_build_identity.h"
 #include "compiler/native/code_generator.h"
-#include "runtime/native_image.h"
+#include "runtime/native/native_image.h"
 
 namespace vela::compiler::jit {
 namespace {

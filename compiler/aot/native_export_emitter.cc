@@ -26,7 +26,7 @@
 #include "compiler/aot/native_compiler.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
-#include "runtime/native_api.h"
+#include "runtime/native/native_api.h"
 
 namespace vela::compiler::aot {
 namespace {
@@ -406,14 +406,15 @@ std::expected<NativeExportInterface, std::string> EmitNativeExports(
   builder.CreateRet(
       builder.CreateCall(helper, {entry->getArg(0), image, entry->getArg(1), entry->getArg(2)}));
   std::ostringstream header;
-  header << "#pragma once\n#include \"runtime/native_api.h\"\n#ifdef __cplusplus\nextern \"C\" "
-            "{\n#endif\n"
-         << "VelaAotStatus " << instantiate
-         << "(VelaAotIsolate* isolate, VelaAotInstance** instance, VelaAotHandle** error);\n";
+  header
+      << "#pragma once\n#include \"runtime/native/native_api.h\"\n#ifdef __cplusplus\nextern \"C\" "
+         "{\n#endif\n"
+      << "VelaAotStatus " << instantiate
+      << "(VelaAotIsolate* isolate, VelaAotInstance** instance, VelaAotHandle** error);\n";
   for (const auto& description : exports) {
     CDeclaration(header, program.functions.at(description.function), description);
   }
-  header << "#ifdef __cplusplus\n}\n#include \"runtime/native_api_cpp.h\"\nnamespace "
+  header << "#ifdef __cplusplus\n}\n#include \"runtime/native/native_api_cpp.h\"\nnamespace "
          << module_name << " {\n"
          << "inline vela::runtime::aot::Result<vela::runtime::aot::Instance> "
             "Instantiate(VelaAotIsolate* isolate) {\n"

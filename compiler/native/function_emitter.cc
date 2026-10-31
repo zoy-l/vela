@@ -30,11 +30,11 @@
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
-#include "runtime/native_abi.h"
-#include "runtime/native_deoptimization.h"
-#include "runtime/native_function.h"
-#include "runtime/native_memory_layout.h"
-#include "runtime/value.h"
+#include "runtime/native/native_abi.h"
+#include "runtime/native/native_deoptimization.h"
+#include "runtime/native/native_function.h"
+#include "runtime/native/native_memory_layout.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler::native {
 llvm::Value* FunctionEmitter::Load(ir::RegisterId reg) {

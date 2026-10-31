@@ -3,7 +3,7 @@
 #include <optional>
 
 #include "compiler/development/development_session.h"
-#include "runtime/native_debugger.h"
+#include "runtime/native/native_debugger.h"
 
 namespace vela::compiler::test {
 

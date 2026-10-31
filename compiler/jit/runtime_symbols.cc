@@ -13,14 +13,14 @@
 #include <llvm/ExecutionEngine/Orc/TargetProcess/RegisterEHFrames.h>
 #include <llvm/Support/Error.h>
 
-#include "runtime/native_abi.h"
-#include "runtime/native_async.h"
-#include "runtime/native_call.h"
-#include "runtime/native_control.h"
-#include "runtime/native_deoptimization.h"
-#include "runtime/native_dispatch.h"
-#include "runtime/native_function.h"
-#include "runtime/native_operations.h"
+#include "runtime/native/native_abi.h"
+#include "runtime/native/native_async.h"
+#include "runtime/native/native_call.h"
+#include "runtime/native/native_control.h"
+#include "runtime/native/native_deoptimization.h"
+#include "runtime/native/native_dispatch.h"
+#include "runtime/native/native_function.h"
+#include "runtime/native/native_operations.h"
 
 namespace vela::compiler::jit {
 

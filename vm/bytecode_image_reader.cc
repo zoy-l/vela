@@ -15,10 +15,10 @@
 #include <vector>
 
 #include "base/binary.h"
-#include "runtime/isolate.h"
-#include "runtime/layout_transaction.h"
-#include "runtime/native_function.h"
-#include "runtime/object.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/isolate/layout_transaction.h"
+#include "runtime/native/native_function.h"
+#include "runtime/value/object.h"
 #include "vm/bytecode_image_internal.h"
 #include "vm/debug_info.h"
 #include "vm/exception_handler.h"

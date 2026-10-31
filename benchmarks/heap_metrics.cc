@@ -3,7 +3,7 @@
 
 #include "benchmark/benchmark.h"
 
-#include "runtime/heap.h"
+#include "runtime/heap/heap.h"
 
 namespace vela::benchmarks {
 

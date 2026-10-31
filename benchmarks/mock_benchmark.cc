@@ -18,8 +18,8 @@
 #include "compiler/testing/result.h"
 #include "compiler/testing/suite.h"
 #include "compiler/tooling/mock/mock_generator.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/program.h"
 #include "vm/vm.h"
 

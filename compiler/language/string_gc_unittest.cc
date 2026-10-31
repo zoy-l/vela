@@ -6,10 +6,10 @@
 #include "gtest/gtest.h"
 
 #include "compiler/bytecode/compiler.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/string.h"
-#include "runtime/value.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/strings/string.h"
+#include "runtime/value/value.h"
 #include "vm/program.h"
 #include "vm/vm.h"
 

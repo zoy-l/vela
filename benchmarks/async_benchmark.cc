@@ -5,9 +5,9 @@
 #include "benchmark/benchmark.h"
 
 #include "benchmarks/source.h"
-#include "runtime/future.h"
-#include "runtime/isolate.h"
-#include "runtime/value.h"
+#include "runtime/async/future.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/value/value.h"
 #include "vm/vm.h"
 
 namespace vela::benchmarks {

@@ -5,9 +5,9 @@
 
 #include "base/async_operation.h"
 #include "base/builtin.h"
-#include "runtime/dynamic_async.h"
-#include "runtime/future.h"
-#include "runtime/value.h"
+#include "runtime/async/future.h"
+#include "runtime/dynamic/dynamic_async.h"
+#include "runtime/value/value.h"
 #include "vm/bytecode.h"
 #include "vm/program.h"
 

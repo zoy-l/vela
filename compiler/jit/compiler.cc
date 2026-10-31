@@ -27,7 +27,7 @@
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/engine.h"
 #include "compiler/native/code_generator.h"
-#include "runtime/native_image.h"
+#include "runtime/native/native_image.h"
 
 namespace vela::compiler::jit {
 namespace {

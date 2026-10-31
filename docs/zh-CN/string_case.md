@@ -35,7 +35,7 @@ RegExp 忽略大小写匹配不能先用这些方法转换整份输入：展开�
 
 ## Unicode 数据与实现
 
-复用现有 utf8proc 依赖提供简单映射，增加生成的 Unicode 完整/上下文映射数据。大小写操作独立于正则引擎。现有 [Unicode 操作](../../runtime/unicode_operations.cc)继续通过 utf8proc 提供码点与字素簇分割。
+复用现有 utf8proc 依赖提供简单映射，增加生成的 Unicode 完整/上下文映射数据。大小写操作独立于正则引擎。现有 [Unicode 操作](../../runtime/strings/unicode_operations.cc)继续通过 utf8proc 提供码点与字素簇分割。
 
 补充数据必须与固定 utf8proc 构建采用相同 Unicode 版本：从 SpecialCasing.txt 提取无条件及与语言无关的条件条目，从 DerivedCoreProperties.txt 提取 Cased 和 Case_Ignorable 范围。存在完整/上下文条目时使用对应规则，其余码点使用 utf8proc 的公开简单映射函数。Final_Sigma 根据原始输入上下文计算。默认大小写契约排除带 locale 标签的映射，仅逐码点处理不能实现完整转换。
 

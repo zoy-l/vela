@@ -13,10 +13,10 @@
 
 #include "compiler/bytecode/compiler.h"
 #include "compiler/frontend/modules/source_loader.h"
-#include "runtime/future.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/value.h"
+#include "runtime/async/future.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/value/value.h"
 
 namespace vela::testing {
 namespace {

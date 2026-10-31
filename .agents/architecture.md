@@ -29,6 +29,13 @@ for execution and validation.
   `documentation`, and `mock`. `compiler/project` owns project configuration; `compiler/testing`
   owns source-test discovery and execution. C++ test support lives in `compiler/test_support`,
   language integration tests in `compiler/language`, and module tests beside their implementations.
+- `runtime/value` owns tagged values, object layout definitions, and callable contracts.
+  `runtime/heap` owns allocation, storage, GC, and host roots; `runtime/isolate` owns runtime metadata
+  and external-resource lifetimes. `runtime/async` owns futures, scheduling, and execution contexts.
+  `runtime/native` owns native ABI, host bindings, instances, and execution. Collection, dynamic,
+  string, JSON, regular-expression, library, exception, process, and testing responsibilities live
+  in their corresponding runtime directories. Runtime GN targets remain centralized in
+  `runtime/BUILD.gn`; distribution headers preserve these paths beneath `include/runtime`.
 - Keep dependencies unidirectional: frontend does not depend on IR or VM; IR depends on frontend;
   compiler connects frontend, IR, runtime, and VM; runtime does not depend on compiler.
 - Pass facts from the same upstream producer directly or bind them during construction.

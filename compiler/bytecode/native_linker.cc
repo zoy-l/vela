@@ -7,7 +7,7 @@
 #include "base/layout_description.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
-#include "runtime/native_function.h"
+#include "runtime/native/native_function.h"
 
 namespace vela::compiler {
 

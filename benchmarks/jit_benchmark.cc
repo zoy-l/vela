@@ -16,9 +16,9 @@
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/value.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/value/value.h"
 
 namespace vela::benchmarks {
 namespace {

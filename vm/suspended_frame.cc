@@ -8,11 +8,11 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/future.h"
-#include "runtime/future_operations.h"
-#include "runtime/heap.h"
-#include "runtime/register_storage.h"
-#include "runtime/value.h"
+#include "runtime/async/future.h"
+#include "runtime/async/future_operations.h"
+#include "runtime/heap/heap.h"
+#include "runtime/value/register_storage.h"
+#include "runtime/value/value.h"
 #include "vm/execution.h"
 #include "vm/frame_slots.h"
 #include "vm/program.h"

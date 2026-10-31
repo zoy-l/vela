@@ -46,14 +46,14 @@ HOST_TESTS = r'''
 #include <gtest/gtest.h>
 #include "base/execution_status.h"
 #include "base/execution_limits.h"
-#include "runtime/exception.h"
-#include "runtime/future.h"
-#include "runtime/isolate.h"
-#include "runtime/native_abi.h"
-#include "runtime/native_call.h"
-#include "runtime/native_image.h"
-#include "runtime/native_instance.h"
-#include "runtime/native_function.h"
+#include "runtime/exceptions/exception.h"
+#include "runtime/async/future.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_abi.h"
+#include "runtime/native/native_call.h"
+#include "runtime/native/native_image.h"
+#include "runtime/native/native_instance.h"
+#include "runtime/native/native_function.h"
 
 using vela::ExecutionStatus;
 using namespace vela::runtime;

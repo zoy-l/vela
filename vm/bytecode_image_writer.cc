@@ -14,11 +14,11 @@
 #include <absl/container/flat_hash_map.h>
 
 #include "base/binary.h"
-#include "runtime/isolate.h"
-#include "runtime/native_function.h"
-#include "runtime/object.h"
-#include "runtime/string.h"
-#include "runtime/value.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_function.h"
+#include "runtime/strings/string.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
 #include "vm/bytecode_image_internal.h"
 #include "vm/program.h"
 

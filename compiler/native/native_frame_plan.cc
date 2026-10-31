@@ -17,8 +17,8 @@
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
-#include "runtime/native_deoptimization.h"
-#include "runtime/value.h"
+#include "runtime/native/native_deoptimization.h"
+#include "runtime/value/value.h"
 namespace vela::compiler::native {
 namespace {
 std::size_t TemporaryArgumentCount(const ir::Instruction& instruction) {

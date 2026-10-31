@@ -11,11 +11,11 @@
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/typing/checker_test_support.h"
 #include "compiler/test_support/program_test_support.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/native_context.h"
-#include "runtime/native_function.h"
-#include "runtime/value.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_context.h"
+#include "runtime/native/native_function.h"
+#include "runtime/value/value.h"
 #include "vm/vm.h"
 
 namespace vela::compiler {

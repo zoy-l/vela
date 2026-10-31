@@ -61,11 +61,11 @@ func sum(x: int, y: int): int {
 | [`ir::Function`](../../compiler/ir/ir.h) 使用可重复赋值的虚拟寄存器，指令携带类型、异常处理器与声明身份 | 分析值定义、别名和字段状态；不能把寄存器编号当作 SSA 定义或对象身份 |
 | [`BuildFlowGraph`、活跃性与效果分析](../../compiler/ir/analysis.h)已包含正常、异常与恢复相关数据流 | 复用控制流事实，增加对象字段的状态传递、逃逸传播与物化需求 |
 | [`lowerer_class.cc`](../../compiler/ir/lowerer_class.cc)发出 `NewInstance`、字段赋值、构造初始化调用和构造完成事实 | 使用真实构造链识别候选，禁止仅匹配相邻的 `NewInstance` / `GetField` |
-| [`Heap::AllocateInstance`](../../runtime/heap.cc)创建实例；[可重载实例](../../runtime/heap_instance.cc)拥有外部字段块并参加弱登记 | 普通物化复用这些生产路径；虚拟实例不能绕过存活实例检查 |
+| [`Heap::AllocateInstance`](../../runtime/heap/heap.cc)创建实例；[可重载实例](../../runtime/heap/heap_instance.cc)拥有外部字段块并参加弱登记 | 普通物化复用这些生产路径；虚拟实例不能绕过存活实例检查 |
 | [`PlanNativeRoots`](../../compiler/native/native_roots.cc)规划根、检查点与挂起保存值 | 将虚拟字段的引用和恢复所需值纳入保根与活跃性 |
-| [`NativeCheckpoint`](../../runtime/native_deoptimization.h)和[恢复发射](../../compiler/native/deoptimization_emitter.cc)保存活跃值并进入原版本执行 | 保存旧版本虚拟对象图、字段来源、别名及规范引用槽地址；物化完成后进入原版本恢复入口 |
-| [`NativeControl`](../../runtime/native_control.h)限制宿主借用及初始化期间的发布 | 接通物化期间的发布限制、失败处理和可重载提交前的状态规范化 |
-| [`NativeDebugFrame`](../../runtime/native_debugger.h)暴露版本、源码位置与代码层级 | 本设计不假设已有局部对象查看接口；后续新增查看接口时必须识别虚拟状态 |
+| [`NativeCheckpoint`](../../runtime/native/native_deoptimization.h)和[恢复发射](../../compiler/native/deoptimization_emitter.cc)保存活跃值并进入原版本执行 | 保存旧版本虚拟对象图、字段来源、别名及规范引用槽地址；物化完成后进入原版本恢复入口 |
+| [`NativeControl`](../../runtime/native/native_control.h)限制宿主借用及初始化期间的发布 | 接通物化期间的发布限制、失败处理和可重载提交前的状态规范化 |
+| [`NativeDebugFrame`](../../runtime/native/native_debugger.h)暴露版本、源码位置与代码层级 | 本设计不假设已有局部对象查看接口；后续新增查看接口时必须识别虚拟状态 |
 
 优化计划在原生后端分流后生成，并在最终根槽、挂起保存和检查点规划之前完成：
 
@@ -83,7 +83,7 @@ func sum(x: int, y: int): int {
 
 分析结果由生产分析直接交给发射器、根规划及恢复规划，不在几个模块中各自推断一份逃逸或布局事实。新增内容留在编译器内部，不向 VM 指令集和 `ValueKind` 增加“虚拟对象”标签。runtime 只消费无 LLVM 指针的运行时描述。
 
-[`PlanEscapes`](../../compiler/native/escape_analysis.cc)负责分配点和数据流计划，[重写器](../../compiler/native/escape_rewriter.cc)生成独立原生 IR，[`PlanBorrows`](../../compiler/native/borrow_analysis.cc)证明私有借用入口。[`NativeMaterialization`](../../runtime/native_materialization.cc)负责检查点图的准备与提交。普通运行中的物化直接发射现有分配、字段写入和屏障；不新增通用对象表示。
+[`PlanEscapes`](../../compiler/native/escape_analysis.cc)负责分配点和数据流计划，[重写器](../../compiler/native/escape_rewriter.cc)生成独立原生 IR，[`PlanBorrows`](../../compiler/native/borrow_analysis.cc)证明私有借用入口。[`NativeMaterialization`](../../runtime/native/native_materialization.cc)负责检查点图的准备与提交。普通运行中的物化直接发射现有分配、字段写入和屏障；不新增通用对象表示。
 
 当前候选要求普通用户实例，不包括捕获单元和运行时专用对象。空生成构造按真实函数体证明，保留调用、逻辑帧和失败边；其他构造调用保留堆实例。每个函数最多追踪 64 个分配点，数据流预算为 1,048,576 个状态单元；超出预算只影响优化选择。混合别名、跨迭代重叠实例和无法规范化的对象图也在编译时排除。
 

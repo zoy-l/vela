@@ -14,7 +14,7 @@
 #include <vector>
 
 #include "base/binary.h"
-#include "runtime/object.h"
+#include "runtime/value/object.h"
 
 namespace vela::vm::internal {
 

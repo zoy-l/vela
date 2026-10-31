@@ -9,7 +9,7 @@
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/repl/repl_source.h"
-#include "runtime/future.h"
+#include "runtime/async/future.h"
 
 namespace vela::compiler {
 

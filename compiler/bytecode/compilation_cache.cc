@@ -24,7 +24,7 @@
 #include "compiler/frontend/modules/source_file.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "runtime/isolate.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/bytecode_image.h"
 
 namespace vela::compiler {

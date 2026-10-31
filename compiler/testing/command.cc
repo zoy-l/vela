@@ -32,8 +32,8 @@
 #include "compiler/testing/result.h"
 #include "compiler/testing/settings.h"
 #include "compiler/testing/suite.h"
-#include "runtime/future.h"
-#include "runtime/isolate.h"
+#include "runtime/async/future.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/program.h"
 
 namespace vela::testing {

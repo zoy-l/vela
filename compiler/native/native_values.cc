@@ -21,8 +21,8 @@
 #include "base/execution_status.h"
 #include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/ir.h"
-#include "runtime/native_abi.h"
-#include "runtime/native_function.h"
+#include "runtime/native/native_abi.h"
+#include "runtime/native/native_function.h"
 
 namespace vela::compiler::native {
 

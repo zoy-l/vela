@@ -2,7 +2,7 @@
 
 #include <iosfwd>
 
-#include "runtime/isolate.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/program.h"
 #include "vm/vm.h"
 

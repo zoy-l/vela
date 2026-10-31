@@ -7,11 +7,11 @@
 
 #include "base/layout_description.h"
 #include "compiler/ir/preparation_test_support.h"
-#include "runtime/isolate.h"
-#include "runtime/layout_transaction.h"
-#include "runtime/object.h"
-#include "runtime/program_layouts.h"
-#include "runtime/value.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/isolate/layout_transaction.h"
+#include "runtime/isolate/program_layouts.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler {
 namespace {

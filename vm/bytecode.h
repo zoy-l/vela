@@ -8,9 +8,9 @@
 #include "base/callable.h"
 #include "base/member.h"
 #include "base/opcode.h"
-#include "runtime/native_function.h"
-#include "runtime/object.h"
-#include "runtime/value.h"
+#include "runtime/native/native_function.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
 #include "vm/debug_info.h"
 #include "vm/exception_handler.h"
 

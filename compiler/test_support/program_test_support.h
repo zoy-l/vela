@@ -8,8 +8,8 @@
 #include <string_view>
 
 #include "compiler/frontend/modules/source_loader.h"
-#include "runtime/future.h"
-#include "runtime/isolate.h"
+#include "runtime/async/future.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/program.h"
 
 namespace vela::compiler::test {

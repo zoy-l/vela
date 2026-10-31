@@ -5,7 +5,7 @@
 #include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/modules/symbol_ids.h"
 #include "compiler/ir/persistent_ids.h"
-#include "runtime/program_layouts.h"
+#include "runtime/isolate/program_layouts.h"
 #include "vm/program.h"
 
 namespace vela::compiler {

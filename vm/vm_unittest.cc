@@ -7,11 +7,11 @@
 
 #include "base/builtin.h"
 #include "gtest/gtest.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/object.h"
-#include "runtime/string.h"
-#include "runtime/value.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/strings/string.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
 #include "vm/bytecode.h"
 
 #include "vm/execution_status.h"

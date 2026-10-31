@@ -7,8 +7,8 @@
 #include <span>
 #include <type_traits>
 
-#include "runtime/register_storage.h"
-#include "runtime/value.h"
+#include "runtime/value/register_storage.h"
+#include "runtime/value/value.h"
 
 namespace vela::vm {
 

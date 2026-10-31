@@ -49,9 +49,9 @@ The first release supports native compilation for the existing bootstrap host ma
 | --- | --- |
 | [IR](../../compiler/ir/ir.h) uses 32-bit virtual register IDs, types, source locations, and exception handlers; [shared analysis](../../compiler/ir/analysis.h) supplies instruction effects and liveness across exception and resume edges | Generate typed native values and root slots from value-definition types, without bytecode field-width limits |
 | [Compilation preparation](../../compiler/ir/preparation.cc) runs the frontend, layout description, and common optimization offline, returning IR that borrows neither AST nor Isolate state; VM allocation and encoding belong to a separate backend | Branch from the same IR into shared LLVM lowering and code generation |
-| [Layout instantiation](../../runtime/program_layouts.cc) consumes pointer-free descriptions; binding checks consume concrete signatures | Reuse layout instantiation for native instances, which own native imports, constant roots, and global state |
-| [NativeFunction](../../runtime/native_function.h) derives VM and native entries from C++ signatures | Reuse declarations and codecs, selecting direct or checked AOT entries by signature |
-| The [Future scheduler](../../runtime/future.h) owns shared state and scheduling semantics; VM owns bytecode suspended frames and execution | Use native continuations and callback entries without a VM executor dependency |
+| [Layout instantiation](../../runtime/isolate/program_layouts.cc) consumes pointer-free descriptions; binding checks consume concrete signatures | Reuse layout instantiation for native instances, which own native imports, constant roots, and global state |
+| [NativeFunction](../../runtime/native/native_function.h) derives VM and native entries from C++ signatures | Reuse declarations and codecs, selecting direct or checked AOT entries by signature |
+| The [Future scheduler](../../runtime/async/future.h) owns shared state and scheduling semantics; VM owns bytecode suspended frames and execution | Use native continuations and callback entries without a VM executor dependency |
 | [GC](garbage_collection.md) provides precise roots, a non-moving heap, and reference write barriers | Generate native root slots and safepoints, reusing the heap and barriers without conservative stack scanning |
 
 These production paths are implemented. Remaining target support packaging and release acceptance are recorded in this document's status and completion criteria.

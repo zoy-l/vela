@@ -10,8 +10,8 @@
 #include "base/execution_status.h"
 #include "compiler/development/development_session.h"
 #include "compiler/jit/compiler.h"
-#include "runtime/isolate.h"
-#include "runtime/value.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/value/value.h"
 
 namespace benchmark {
 class State;

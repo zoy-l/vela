@@ -16,8 +16,8 @@
 #include "base/opcode.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
-#include "runtime/native_async.h"
-#include "runtime/value.h"
+#include "runtime/native/native_async.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler::native {
 

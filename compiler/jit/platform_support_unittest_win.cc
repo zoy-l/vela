@@ -1,10 +1,10 @@
 #include "compiler/jit/compiler.h"
 
 #include "compiler/development/source_session.h"
-#include "runtime/isolate.h"
-#include "runtime/native_dispatch.h"
-#include "runtime/native_image.h"
-#include "runtime/value.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_dispatch.h"
+#include "runtime/native/native_image.h"
+#include "runtime/value/value.h"
 
 #include <basetsd.h>
 #include <windows.h>  // IWYU pragma: keep

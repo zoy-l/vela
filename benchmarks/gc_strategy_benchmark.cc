@@ -10,10 +10,10 @@
 
 #include "benchmark/benchmark.h"
 
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/object.h"
-#include "runtime/value.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
 
 namespace vela::benchmarks {
 namespace {

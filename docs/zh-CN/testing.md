@@ -66,9 +66,9 @@ T0–T5 包括本机 VM 上的单元测试与集成测试、配置、发现、�
 | [`JsonDocument` 与 `JsonOutput`](../../base/json.h) | 读取通用项目配置，写入机器报告；不引入 YAML 解析依赖或第二套 JSON 解析器 |
 | [模块加载器](../../compiler/frontend/modules/source_loader.h) | 承载测试文件与 SDK 模块的同一依赖图、源码位置及缓存身份 |
 | [标准环境](../../compiler/frontend/builtins/standard_environment.h) | 复用不可变 SDK 源码资源的构建和声明机制，区分内部 `builtin:` 来源与公开模块导入 |
-| [函数调用签名](../../base/callable.h)与[运行时 callable 解析](../../runtime/callable.h) | 校验测试回调，保留闭包、绑定方法及所属程序的身份 |
-| [`Future` 与 `FutureScheduler`](../../runtime/future.h) | 等待异步回调、推进微任务与 timer、观察未处理错误，传播测试上下文 |
-| [CLI 入口](../../compiler/cli/vela_main.cc)与[`ProcessEntry`](../../runtime/process_entry.h) | 集成新命令与异步驱动，避免两套彼此抢占的未处理错误处理器 |
+| [函数调用签名](../../base/callable.h)与[运行时 callable 解析](../../runtime/value/callable.h) | 校验测试回调，保留闭包、绑定方法及所属程序的身份 |
+| [`Future` 与 `FutureScheduler`](../../runtime/async/future.h) | 等待异步回调、推进微任务与 timer、观察未处理错误，传播测试上下文 |
+| [CLI 入口](../../compiler/cli/vela_main.cc)与[`ProcessEntry`](../../runtime/process/process_entry.h) | 集成新命令与异步驱动，避免两套彼此抢占的未处理错误处理器 |
 | [异常与源码栈](exceptions.md)、[源码工具链](source_tooling.md) | 定位注册失败、断言失败、异步失败和配置诊断 |
 
 现有 `python -m tools.vl test`、GoogleTest 和 Python 工具测试继续验证 Vela 自身。新的 `vela test` 服务于 Vela 源码项目；两者拥有不同的使用者与执行职责，不相互替换。

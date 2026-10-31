@@ -6,8 +6,8 @@
 #include "benchmark/benchmark.h"
 
 #include "benchmarks/standard_value_benchmark.h"
-#include "runtime/heap.h"
-#include "runtime/value.h"
+#include "runtime/heap/heap.h"
+#include "runtime/value/value.h"
 
 namespace vela::benchmarks {
 namespace {

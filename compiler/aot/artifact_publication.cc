@@ -23,7 +23,7 @@
 #include "compiler/aot/target_support.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
-#include "runtime/native_image.h"
+#include "runtime/native/native_image.h"
 
 namespace vela::compiler::aot {
 namespace {

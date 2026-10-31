@@ -1,6 +1,6 @@
 #include "compiler/bytecode/compiler.h"
 #include "compiler/bytecode/compilation_state.h"
-#include "runtime/layout_transaction.h"
+#include "runtime/isolate/layout_transaction.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -26,10 +26,10 @@
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/object.h"
-#include "runtime/program_layouts.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/isolate/program_layouts.h"
+#include "runtime/value/object.h"
 #include "vm/bytecode.h"
 #include "vm/program.h"
 

@@ -210,9 +210,9 @@ def create_package(executable: Path, runtime: Path, destination: Path,
             files.append(copy_file(source, package, relative, role, owner, license_name))
         # 嵌入宿主需要完整的公共头依赖；不打包 compiler/VM 执行实现。
         for directory in ("base", "runtime"):
-            for header in (ROOT / directory).glob("*.h"):
-                copy_file(header, package, "include/" + directory + "/" + header.name,
-                          "header", "Vela", "MIT")
+            for header in (ROOT / directory).rglob("*.h"):
+                relative = (Path("include") / header.relative_to(ROOT)).as_posix()
+                copy_file(header, package, relative, "header", "Vela", "MIT")
         for header in (ROOT / "third_party/abseil-cpp/absl").rglob("*"):
             if header.is_file() and header.suffix in {".h", ".inc"}:
                 relative = header.relative_to(ROOT / "third_party/abseil-cpp").as_posix()

@@ -6,7 +6,7 @@
 #include <string_view>
 
 #include "base/source_location.h"
-#include "runtime/value.h"
+#include "runtime/value/value.h"
 
 namespace vela::vm {
 template <class T>

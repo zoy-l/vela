@@ -9,8 +9,8 @@
 #include "base/testing/directory.h"
 #include "compiler/bytecode/compiler.h"
 #include "compiler/frontend/typing/checker.h"
-#include "runtime/isolate.h"
-#include "runtime/string.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/strings/string.h"
 #include "vm/vm.h"
 
 namespace vela::compiler {

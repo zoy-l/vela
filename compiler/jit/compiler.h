@@ -19,7 +19,7 @@
 #include "compiler/native/code_generator.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
-#include "runtime/native_image.h"
+#include "runtime/native/native_image.h"
 
 namespace vela::compiler::jit {
 

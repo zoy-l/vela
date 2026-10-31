@@ -32,8 +32,8 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/native_roots.h"
-#include "runtime/native_image.h"
-#include "runtime/standard_library.h"
+#include "runtime/library/standard_library.h"
+#include "runtime/native/native_image.h"
 
 namespace vela::compiler::aot {
 namespace {

@@ -16,8 +16,8 @@
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
-#include "runtime/native_memory_layout.h"
-#include "runtime/value.h"
+#include "runtime/native/native_memory_layout.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler::native {
 

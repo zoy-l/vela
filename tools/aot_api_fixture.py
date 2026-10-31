@@ -14,7 +14,7 @@ export func calculate(value: Box?): Box {
 """
 
 HOST_TESTS = r'''
-#include "runtime/native_api.h"
+#include "runtime/native/native_api.h"
 extern "C" const NativeImage* PUBLIC_IMAGE() noexcept;
 
 using PublicHandle = std::unique_ptr<VelaAotHandle, decltype(&vela_aot_v1_handle_release)>;

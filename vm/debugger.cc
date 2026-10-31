@@ -4,7 +4,7 @@
 #include <optional>
 #include <string_view>
 
-#include "runtime/value.h"
+#include "runtime/value/value.h"
 #include "vm/debug_info.h"
 #include "vm/execution.h"
 #include "vm/frame_slots.h"

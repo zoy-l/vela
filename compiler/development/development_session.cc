@@ -27,14 +27,14 @@
 #include "compiler/ir/ir.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/compiler.h"
-#include "runtime/external_resources.h"
-#include "runtime/isolate.h"
-#include "runtime/native_abi.h"
-#include "runtime/native_call.h"
-#include "runtime/native_control.h"
-#include "runtime/native_dispatch.h"
-#include "runtime/native_instance.h"
-#include "runtime/value.h"
+#include "runtime/isolate/external_resources.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_abi.h"
+#include "runtime/native/native_call.h"
+#include "runtime/native/native_control.h"
+#include "runtime/native/native_dispatch.h"
+#include "runtime/native/native_instance.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler {
 namespace {

@@ -23,8 +23,8 @@ CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"}
 SCOPED_CHECK_EXCEPTIONS = {
     "compiler/jit/platform_support_win.cc": ("bugprone-easily-swappable-parameters",),
     "compiler/jit/code_resources.cc": ("bugprone-easily-swappable-parameters",),
-    "runtime/native_operations.cc": ("bugprone-easily-swappable-parameters",),
-    "runtime/native_instance.cc": ("cppcoreguidelines-avoid-c-arrays", "modernize-avoid-c-arrays"),
+    "runtime/native/native_operations.cc": ("bugprone-easily-swappable-parameters",),
+    "runtime/native/native_instance.cc": ("cppcoreguidelines-avoid-c-arrays", "modernize-avoid-c-arrays"),
 }
 
 

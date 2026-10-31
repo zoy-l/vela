@@ -10,12 +10,12 @@
 
 #include "base/mock_operation.h"
 #include "compiler/testing/result.h"
-#include "runtime/exception.h"
-#include "runtime/future.h"
-#include "runtime/heap.h"
-#include "runtime/object.h"
-#include "runtime/string.h"
-#include "runtime/value.h"
+#include "runtime/async/future.h"
+#include "runtime/exceptions/exception.h"
+#include "runtime/heap/heap.h"
+#include "runtime/strings/string.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
 #include "vm/diagnostic.h"
 #include "vm/program.h"
 

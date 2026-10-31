@@ -20,14 +20,14 @@
 #include "compiler/jit/code_cache.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/compiler.h"
-#include "runtime/external_resources.h"
-#include "runtime/future.h"
-#include "runtime/heap.h"
-#include "runtime/isolate.h"
-#include "runtime/native_control.h"
-#include "runtime/native_debugger.h"
-#include "runtime/native_dispatch.h"
-#include "runtime/value.h"
+#include "runtime/async/future.h"
+#include "runtime/heap/heap.h"
+#include "runtime/isolate/external_resources.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/native/native_control.h"
+#include "runtime/native/native_debugger.h"
+#include "runtime/native/native_dispatch.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler {
 

@@ -9,7 +9,7 @@
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/typing/type_checker.h"
-#include "runtime/isolate.h"
+#include "runtime/isolate/isolate.h"
 #include "vm/program.h"
 
 namespace vela::compiler {

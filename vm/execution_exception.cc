@@ -15,11 +15,11 @@
 #include <vector>
 
 #include "base/execution_limits.h"
-#include "runtime/error.h"
-#include "runtime/exception.h"
-#include "runtime/heap.h"
-#include "runtime/object.h"
-#include "runtime/value.h"
+#include "runtime/exceptions/error.h"
+#include "runtime/exceptions/exception.h"
+#include "runtime/heap/heap.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
 #include "vm/bytecode.h"
 #include "vm/debug_info.h"
 #include "vm/diagnostic.h"

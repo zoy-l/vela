@@ -13,9 +13,9 @@
 
 #include "base/binary.h"
 #include "base/callable.h"
-#include "runtime/isolate.h"
-#include "runtime/object.h"
-#include "runtime/value.h"
+#include "runtime/isolate/isolate.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
 
 namespace vela::vm::internal {
 

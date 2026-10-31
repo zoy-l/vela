@@ -14,12 +14,12 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
 #include "gtest/gtest.h"
-#include "runtime/future.h"
-#include "runtime/heap.h"
-#include "runtime/native_dispatch.h"
-#include "runtime/native_image.h"
-#include "runtime/rooted_value.h"
-#include "runtime/value.h"
+#include "runtime/async/future.h"
+#include "runtime/heap/heap.h"
+#include "runtime/heap/rooted_value.h"
+#include "runtime/native/native_dispatch.h"
+#include "runtime/native/native_image.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler::jit::test {
 

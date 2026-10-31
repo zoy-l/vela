@@ -17,8 +17,8 @@
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
 #include "compiler/repl/repl_source.h"
-#include "runtime/rooted_value.h"
-#include "runtime/value.h"
+#include "runtime/heap/rooted_value.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler {
 namespace {
