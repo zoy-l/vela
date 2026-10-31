@@ -4,7 +4,7 @@
 
 
 This checklist records implemented Vela language capabilities and remaining work.
-The register VM, native AOT, and reloadable JIT share the frontend, Typed IR,
+Native AOT and JIT share the frontend, Typed IR, native generation,
 and Isolate runtime.
 
 ## Language foundation
@@ -20,7 +20,7 @@ and Isolate runtime.
 - [x] Classes, fixed fields, and generated/explicit construction
 - [x] Enums with explicitly qualified members (`Enum.member`)
 - [x] Static type checking
-- [x] Typed IR and fixed-width register bytecode
+- [x] Typed IR and shared native code generation
 - [x] Isolate-local precise incremental mark-sweep GC
 
 ## P0: close the basic language loop
@@ -52,7 +52,7 @@ P0 behavior is specified in [Basic language contracts](language_basics.md).
 - [x] Add growable `T[]`, geometric capacity growth, reserve and insertion/removal APIs
 - [x] Implement `Set<T>`
 - [x] Implement `Map<K, V>`
-- [x] Lower class methods to bytecode
+- [x] Lower class methods to native code
 - [x] Add `this` and `object.method()` calls
 - [x] Define field default values and constructor initialization
 - [x] Add static fields and static methods
@@ -103,7 +103,7 @@ P1 contracts are specified in [Core language specification](core_language.md).
 
 - [x] Add `try`, `catch`, and `finally`
 - [x] Add `throw` and typed error values
-- [x] Preserve VM stack traces
+- [x] Preserve versioned native source traces
 - [x] Define compiler and runtime error formatting
 - [x] Stabilize machine-readable runtime error codes independently of diagnostic wording
 - [x] Add typed native function bindings
@@ -111,29 +111,20 @@ P1 contracts are specified in [Core language specification](core_language.md).
 
 ## P2: performance and tooling
 
-- [x] Add typed VM register slots for primitive values
-- [x] Add a bytecode constant pool
-- [x] Add constant folding
-- [x] Add CFG liveness and physical register reuse with contiguous call arguments
-- [x] Validate immutable owned programs once at compilation/loading
-- [x] Reuse register storage sized to active functions by call depth
-- [x] Add dead-code and unreachable-block elimination
-- [x] Eliminate self-moves after register allocation
-- [x] Add jump threading and general redundant-move elimination
-- [x] Specialize direct calls and field offsets
-- [x] Evaluate direct-threaded/computed-goto dispatch and retain optimized switch dispatch
-- [x] Measure GC workloads and incremental pause budgets ([garbage collection](garbage_collection.md))
-- [x] Add bytecode and compilation caches ([contracts](compilation_cache.md))
+- [x] Typed native values and precise shadow roots for managed references
+- [x] Per-instance constant pools and shared immutable code ownership
+- [x] Constant folding, CFG liveness, dead-code and unreachable-block elimination
+- [x] Jump threading, copy propagation and redundant-move elimination
+- [x] Direct calls, field access and LLVM register allocation
+- [x] Native frame/argument budgets and physical-stack protection
+- [x] GC workloads and incremental pause-budget contracts ([GC](garbage_collection.md))
+- [x] Native object caches with source rechecking ([cache](compilation_cache.md))
+- [x] Source symbols, versioned stack traces and instruction inspection
+- [x] Formatter, LSP diagnostics, highlighting and documentation generation
+- [x] Native [debugger](debugger.md) and [JIT REPL](repl.md)
 
-- [x] Add debug symbols and source-level stack traces
-- [x] Add formatter, LSP diagnostics, and syntax highlighting ([tools](source_tooling.md))
-- [x] Add a debugger and REPL ([debugger](debugger.md), [REPL](repl.md))
-- [x] Add documentation generation
-
-Current bytecode limits and measured execution costs are documented in
-[VM execution contracts](vm_execution.md).
-Async APIs, scheduling, host ownership, and performance boundaries are specified in
-[Async Functions and Future Semantics](async_tasks.md).
+Current limits and ownership are defined in [native execution contracts](native_execution.md).
+Async APIs and scheduling use the [shared runtime contract](async_tasks.md).
 
 ## Native execution and development tools
 

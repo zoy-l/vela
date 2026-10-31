@@ -44,10 +44,10 @@ switch breaks, and preserves loop continues. Without a default, an unmatched
 selector remains a fallthrough path. Exhaustive `match` expressions are a
 separate construct; see [P1 matching contracts](core_language.md#normal-enums-and-exhaustive-match-expressions).
 
-The current lowering uses typed comparisons and jumps, with O(n) dispatch for
-n labels. Labels have no runtime evaluation or allocation. Jump tables and
-hash dispatch are not part of this milestone. Existing bytecode register,
-constant, and jump-distance limits still produce compilation diagnostics.
+Lowering retains typed comparisons and jumps for dispatch; native optimization
+selects the final machine representation, including table-based forms where
+applicable. Labels have no runtime evaluation or allocation. Native frame and
+argument budgets are defined in [execution contracts](native_execution.md).
 
 ## Nullable types
 

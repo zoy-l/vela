@@ -3,8 +3,6 @@
 #include <cstddef>
 #include <vector>
 
-#include <llvm/IR/Constants.h>
-
 #include "compiler/ir/ir.h"
 #include "runtime/native/native_abi.h"
 

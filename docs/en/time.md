@@ -166,7 +166,7 @@ backend calendar objects.
 A parse input with valid in-range civil fields and an offset that moves the
 UTC result outside the supported range produces DateRangeError. A malformed or
 out-of-range input field itself produces DateParseError. Errors are catchable
-through ordinary VM catch/finally, retain source traces, and do not become NaN,
+through ordinary catch/finally, retain source traces, and do not become NaN,
 null, zero, a normalized date, or a generic native failure. Human-readable message
 wording is not the program-readable contract; Error.code is.
 
@@ -199,7 +199,7 @@ Use length-aware parsing, not C-string termination or regex dependencies.
 Existing [clock native bindings](../../runtime/library/standard_library.cc) keep their
 current responsibilities. Bind the four new conversions through the standard
 intrinsic/builtin path so typed DateParts allocation and domain-specific errors
-are owned by runtime/VM. The current [native codec](../../runtime/native/native_function.h)
+are owned by the shared runtime. The current [native codec](../../runtime/native/native_function.h)
 does not return arbitrary class instances; do not introduce an unchecked Value
 return or a general object-binding feature for this record. Carry the checked
 DateParts class layout from its standard declaration to the runtime consumer
@@ -213,11 +213,10 @@ LSP, documentation, and source tools consume the same checked signatures.
 Method values have fixed full parameter lists; call-site omission supplies
 zero defaults for the four optional time fields.
 
-The Isolate owns the canonical DateParts layout. Compilation binds the checked
-standard declaration to it; version 7 images encode and validate the standard
-class role and shape. The VM validates the toUTC wrapper's class-pool operand
-against this layout. Programs and REPL submissions borrow layouts from their
-owning Isolate. See [bytecode images](compilation_cache.md) and the runnable
+The Isolate owns the canonical DateParts layout. Checked native metadata retains
+its standard class role and field shape, and instance creation binds it to that
+Isolate. Compiled code and REPL submissions use those runtime layouts.
+See [native cache ownership](compilation_cache.md) and
 [`examples/time.vela`](../../examples/time.vela).
 
 ## Validation
@@ -229,7 +228,7 @@ and all field/type errors. Parsing cases cover each precision, positive/negative
 offsets including day/year changes, normalized-range failures, rejected unknown
 offset, absent zone, whitespace/NUL/trailing text, excess precision, and leap
 seconds. Verify both round-trip identities, DateParts immutability, fresh object
-identity, aliased VM destinations, GC/rooting, domain-error propagation and VM
+identity, aliased native values, GC/rooting, domain-error propagation and native-instance
 reuse, tooling, fresh-Isolate images, and persistent REPL lifetimes. Results must
 be invariant under host time-zone and locale changes.
 
@@ -237,17 +236,10 @@ Release benchmarks separately measure parsing, canonical formatting, UTC
 construction/decomposition, allocations, and regressions in existing clock
 calls. See [measurement boundaries and retained results](../../benchmarks/README.md).
 
-The recorded Windows x64 Ryzen 9 7900X Release run measured median steady
-latencies of 276 ns for parsing, 438 ns for formatting, 280 ns for fromUTC,
-and 338 ns for toUTC, including VM execution. Parse/fromUTC reported zero
-first-call GC bytes, formatting 128, and toUTC 256; these are heap-accounted
-byte deltas, not allocation counts, and exclude backend/native overhead.
-All cases retained zero additional heap bytes after collection. In a separate
-matching seven-repetition regression suite, wall/monotonic clock ratios were
-0.929/0.891 and three synchronous VM ratios were 0.991..1.022 relative to the
-baseline. These are workload-specific measurements, not latency guarantees;
-exact variation and settings are retained in
-[`rolling_summary.json`](../../benchmarks/results/rolling_summary.json).
+Release benchmarks cover parsing, formatting, fromUTC/toUTC and clocks through
+native execution. Keep first-call heap bytes and post-GC retention distinct from
+allocation counts and backend storage. Compare only matching suites and
+configurations; see [benchmark boundaries](../../benchmarks/README.md).
 
 ## References
 

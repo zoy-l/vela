@@ -106,7 +106,7 @@ DateParts 是含七个 int 字段的固定布局标准类，不是 Map 或时刻
 | 静态实参类型错误、构造 DateParts 或修改属性 | 前端诊断，受检查的 builtin 调用也验证运行时操作数 |
 | 结果或错误对象分配失败 | 现有可恢复 OutOfMemory 路径 |
 
-输入日历字段合法且位于范围内，但偏移使 UTC 结果越界时，parse 产生 DateRangeError；输入字段本身非法或越界时产生 DateParseError。错误可经普通 VM catch/finally 捕获，保留源码调用栈，不能转为 NaN、null、零、被修正的日期或通用原生调用失败。可读消息的具体措辞不构成程序契约，Error.code 才是稳定标识。
+输入日历字段合法且位于范围内，但偏移使 UTC 结果越界时，parse 产生 DateRangeError；输入字段本身非法或越界时产生 DateParseError。错误可经普通 catch/finally 捕获，保留源码调用栈，不能转为 NaN、null、零、被修正的日期或通用原生调用失败。可读消息的具体措辞不构成程序契约，Error.code 才是稳定标识。
 
 解析和字段构造返回整数，不需要结果包装。格式化返回普通不可变字符串，toUTC 分配普通类实例。分配安全点期间保根源字符串、实参及新结果，成功后才发布目标。失败不暴露部分字符串或对象，也不修改输入。
 
@@ -116,19 +116,23 @@ DateParts 是含七个 int 字段的固定布局标准类，不是 Map 或时刻
 
 在输入边界约束准确 ASCII 语法和毫秒精度，再使用 Abseil 验证转换。不能因其 ParseTime 接受小写分隔符、任意精度、闰秒归一化或无穷时间而放宽本 API。fromUTC 先检查数字字段范围，再构造后端日历值并比较归一化字段与原请求，拒绝无效日期。将最终时刻转为 int64 毫秒前先检查范围。格式化始终显式指定 UTC，例如内部固定格式 `%E4Y-%m-%dT%H:%M:%E3SZ` 确保规范宽度。子秒字段相对 UTC 日历秒起点计算，包括负时间戳。解析使用显式长度，不依赖 C 字符串终止或正则表达式。
 
-现有[时钟原生绑定](../../runtime/library/standard_library.cc)保留当前职责。四个新转换方法接入标准 intrinsic/builtin 路径，由 runtime/VM 拥有带类型 DateParts 分配与领域错误。当前[原生 codec](../../runtime/native/native_function.h)不返回任意类实例，不为这个结果类型引入未检查 Value 返回或通用对象绑定功能。把经过检查的标准 DateParts 类布局传给运行时消费者，并在编译/加载边界验证，不能在使用处猜布局。无需增加原始 Value 种类或新的日历对象表示。
+现有[时钟原生绑定](../../runtime/library/standard_library.cc)保留当前职责。四个新转换方法接入标准 intrinsic/builtin 路径，由 共享 runtime 拥有带类型 DateParts 分配与领域错误。当前[原生 codec](../../runtime/native/native_function.h)不返回任意类实例，不为这个结果类型引入未检查 Value 返回或通用对象绑定功能。把经过检查的标准 DateParts 类布局传给运行时消费者，并在编译/加载边界验证，不能在使用处猜布局。无需增加原始 Value 种类或新的日历对象表示。
 
 受保护的标准环境提供受检查的签名和 DateParts 依赖闭包。标准静态方法的 intrinsic 标记经特化与 lowering 生成普通 builtin 包装函数。LSP、文档和源码工具消费相同的受检查签名。方法值具有完整的固定参数列表；直接调用时，四个可选时间字段省略后补零。
 
-Isolate 拥有规范 DateParts 布局，编译将受检查的标准声明绑定到该布局。版本 7 镜像编码并验证标准类角色和形状，VM 验证 toUTC 包装函数的类池操作数确实指向该布局。程序和 REPL 提交从所属 Isolate 借用布局。参见[字节码镜像](compilation_cache.md)与可运行的 [`examples/time.vela`](../../examples/time.vela)。
+Isolate 拥有规范 DateParts 布局。受查原生元数据保留标准类角色和字段形状，
+实例创建时绑定到所属 Isolate；编译代码和 REPL 使用这些运行时布局。
+参见[原生缓存所有权](compilation_cache.md)与[`examples/time.vela`](../../examples/time.vela)。
 
 ## 验证
 
-必要回归覆盖纪元零点、负一毫秒、最早/最晚时刻及越界一毫秒、低于 100 的年份、月份天数、公历整百闰年规则、全部默认值、命名实参求值顺序和全部字段/类型错误。解析覆盖每种精度、正负偏移及跨日/跨年、归一化后越界、拒绝未知偏移、缺失时区、空白/NUL/尾随文本、过高精度及闰秒。验证两项往返恒等式、DateParts 不可修改与新实例身份、VM 目标别名、GC/保根、领域错误传播与 VM 复用、工具、新 Isolate 镜像和持久化 REPL 生命周期。宿主时区或 locale 改变不能改变结果。
+必要回归覆盖纪元零点、负一毫秒、最早/最晚时刻及越界一毫秒、低于 100 的年份、月份天数、公历整百闰年规则、全部默认值、命名实参求值顺序和全部字段/类型错误。解析覆盖每种精度、正负偏移及跨日/跨年、归一化后越界、拒绝未知偏移、缺失时区、空白/NUL/尾随文本、过高精度及闰秒。验证两项往返恒等式、DateParts 不可修改与新实例身份、原生值别名、GC/保根、领域错误传播与 原生实例复用、工具、新 Isolate 镜像和持久化 REPL 生命周期。宿主时区或 locale 改变不能改变结果。
 
 Release benchmark 分别测量解析、规范格式化、UTC 构造/分解、分配及现有时钟调用回归。[基准指南](../../benchmarks/README.md)定义测量边界及保留结果。
 
-已记录的 Windows x64 / Ryzen 9 7900X Release 测量中，稳态中位数为：解析 276 ns、格式化 438 ns、fromUTC 280 ns、toUTC 338 ns，包含 VM 执行。parse/fromUTC 首次调用 GC 字节为零，格式化为 128，toUTC 为 256；这些是计入堆的字节增量，并非分配次数，也不包含后端/原生分配开销。所有用例完整回收后额外保留堆字节为零。另一个配置一致、重复七次的回归组中，墙钟/单调时钟耗时相对基线为 0.929/0.891，三个同步 VM 用例为 0.991..1.022。这些是特定负载的测量，不是延迟保证；确切波动和配置见[保留结果](../../benchmarks/results/rolling_summary.json)。
+Release 基准通过原生执行覆盖解析、格式化、fromUTC/toUTC 和时钟。
+首次调用堆字节与 GC 后保留量分别报告，不等同于分配次数或后端存储。
+仅比较配置和测量集合一致的结果，见[基准边界](../../benchmarks/README.md)。
 
 ## 参考
 

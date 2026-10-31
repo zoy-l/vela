@@ -1,6 +1,8 @@
 #include <cstdint>
 #include <string_view>
 
+#include "base/execution_status.h"
+#include "base/opcode.h"
 #include "gtest/gtest.h"
 
 #include "compiler/ir/preparation_test_support.h"

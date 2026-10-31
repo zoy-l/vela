@@ -268,8 +268,13 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
   auto instance = runtime::NativeInstance::Instantiate(isolate, compiled.code.image);
   if (!instance) {
     PublishFailure(reporter, result, identity, file,
-                   {.phase = TestPhase::Registration, .category = "InstantiationError",
-                    .message = instance.error().message, .trace = {}, .difference = std::nullopt},
+                   {
+                       .phase = TestPhase::Registration,
+                       .category = "InstantiationError",
+                       .message = instance.error().message,
+                       .trace = {},
+                       .difference = std::nullopt,
+                   },
                    kSourceErrorExitCode);
     return result;
   }

@@ -19,7 +19,6 @@
 #include "base/declaration.h"
 #include "base/execution_status.h"
 #include "runtime/async/future.h"
-#include "runtime/exceptions/exception.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"

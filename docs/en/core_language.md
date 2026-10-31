@@ -495,9 +495,9 @@ and slicing scan linearly; they do not promise constant-time random access.
 
 ## Execution and ownership
 
-Calls, including recursion and closure calls, use explicit VM frames rather
-than recursive C++ execution. The fixed frame-depth limit reports
-`StackOverflow`; a failed execution can be followed by another call.
+Calls, including recursion and closures, use native entries with logical trace
+frames and physical-stack protection. Call-depth or stack exhaustion reports
+`StackOverflow`; ordinary caught/returned errors allow another call.
 Mutable captures use shared GC cells, constant captures use values, and method
 values keep their receiver alive. Bound functions and closures currently
 allocate GC objects. Interface calls use precomputed selector tables;

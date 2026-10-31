@@ -42,7 +42,7 @@ There is no `namespace` declaration block.
 Files are loaded once by canonical path using a work queue. Cyclic imports can
 link function declarations without recursively evaluating module bodies. Module
 bindings and type names are resolved before generic specialization; calls and
-field offsets use normal bytecode operands without module-name lookup at runtime.
+field offsets use resolved native targets and layout metadata without module-name lookup at runtime.
 
 Module globals reuse the program's rooted lazy initializer slots. They initialize
 on demand and persist across executions and copies of the same program. A new
@@ -68,7 +68,7 @@ imports; `std:` imports are no longer supported.
 
 `import 'sdk:test';` loads the testing library from immutable source embedded in
 the distribution. SDK modules follow ordinary export, privacy and prefix rules.
-File and memory compilation, bytecode caches and language services share the
+File and memory compilation, native object caches and language services share the
 `sdk:test` identity; memory inputs cannot override it. Unknown `sdk:` modules
 are errors and are never resolved as files. `builtin:` remains an internal
 standard-environment identity. See the [testing contract](../zh-CN/testing.md).

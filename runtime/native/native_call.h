@@ -4,6 +4,7 @@
 #include <expected>
 #include <span>
 
+#include "base/callable.h"
 #include "base/execution_status.h"
 #include "runtime/async/future_composition.h"
 #include "runtime/native/native_abi.h"

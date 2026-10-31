@@ -6,9 +6,11 @@
 #include <string>
 #include <utility>
 
+#include "base/execution_status.h"
 #include "runtime/exceptions/exception.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"
+#include "runtime/value/value.h"
 
 namespace vela::runtime {
 namespace {
@@ -19,8 +21,12 @@ ExecutionResult Complete(NativeExecution& execution, std::expected<Value, Execut
   }
   const auto status = result.error();
   if (!execution.HasException()) {
-    return {.status = status, .stack_trace = {},
-            .message = std::string(ExecutionStatusName(status)), .origin = {}};
+    return {
+        .status = status,
+        .stack_trace = {},
+        .message = std::string(ExecutionStatusName(status)),
+        .origin = {},
+    };
   }
   const auto& exception = ExceptionData::From(*execution.pending_exception().AsObject());
   auto diagnostic = execution.ExceptionDiagnostic();

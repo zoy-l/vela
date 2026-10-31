@@ -5,7 +5,11 @@
 #include <string_view>
 #include <utility>
 
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/parser.h"
 #include "compiler/ir/preparation.h"
+#include "compiler/jit/compiler.h"
 
 namespace vela::compiler::jit {
 

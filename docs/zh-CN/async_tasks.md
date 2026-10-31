@@ -76,11 +76,11 @@ wait 和 race 的输入共享一个 GC 槽对象来保存聚合引用。每个�
 
 ## 执行与调度
 
-调用 async 函数会立即执行函数体，直到返回、抛错或遇到首个 await，然后返回 Future。函数体中的异常转为失败 Future，不会同步抛给调用者。`await` 是异步边界：即使等待的 Future 已完成或表达式只是普通值，续延也会在当前 VM 执行片段退出后异步恢复。
+调用 async 函数会立即执行函数体，直到返回、抛错或遇到首个 await，然后返回 Future。函数体中的异常转为失败 Future，不会同步抛给调用者。`await` 是异步边界：即使等待的 Future 已完成或表达式只是普通值，续延也会在当前原生执行片段退出后异步恢复。
 
-调度顺序为：当前 VM 执行片段结束或挂起；按 FIFO 执行已排队的 Future 续延；微任务队列排空后处理一个 timer 或宿主事件；再排空该事件产生的微任务。一次 Future 完成按 waiter 注册顺序通知。
+调度顺序为：当前原生执行片段结束或挂起；按 FIFO 执行已排队的 Future 续延；微任务队列排空后处理一个 timer 或宿主事件；再排空该事件产生的微任务。一次 Future 完成按 waiter 注册顺序通知。
 
-VM 与 AOT 的同一次 async 调用在重复 await 时复用一个结果 Future。恢复后的普通返回值或未捕获错误直接完成该结果，不插入内部 Future 转接任务；返回另一 Future 时仍采用其完成结果。每次 await 的恢复及结果监听器的通知始终通过微任务队列执行。
+JIT 与 AOT 的同一次 async 调用在重复 await 时复用一个结果 Future。恢复后的普通返回值或未捕获错误直接完成该结果，不插入内部 Future 转接任务；返回另一 Future 时仍采用其完成结果。每次 await 的恢复及结果监听器的通知始终通过微任务队列执行。
 
 Future 有未完成、成功完成、失败完成三种可观察结果，不暴露可变状态。Future 本身不可取消。需要取消的宿主操作接收独立的 `CancellationToken`；取消请求由操作决定如何处理，Future 最终仍以正常值或 Vela 异常完成。
 
@@ -92,9 +92,9 @@ async 函数中的 `throw`、运行时错误和 await 传播错误使用 Vela �
 
 CLI 的 `run` 命令会识别零参数的 `async func main(): Future<int>`，启动根 Future，并驱动当前 Isolate 的微任务、timer 和宿主完成事件，直到根 Future 完成或没有任何可推进的工作。成功结果转换为进程退出码；失败结果打印保留源码位置和 await 栈的异步诊断。没有生产者的未完成 Future 不会单独保持进程存活，CLI 会报告 async idle/deadlock。
 
-挂起的局部值、Future 结果、错误、等待者和排队回调在 GC 中保持可达。续延保留 Program 和诊断元数据，借用 Isolate；宿主必须让 Isolate 存活到其 Program、Future 句柄及原生生产者释放之后。VM 代码只在所属 Isolate 线程运行；外部线程投递完成消息，由该线程更新 Future。
+挂起的局部值、Future 结果、错误、等待者和排队回调在 GC 中保持可达。续延保留原生程序状态、代码所有权和诊断元数据，借用 Isolate；宿主必须让 Isolate 存活到其原生实例、普通 Future 句柄及活动宿主访问释放之后。原生代码只在所属 Isolate 线程运行；外部线程投递完成消息，由该线程更新 Future。
 
-Future 值、监听器、VM 帧、GC 状态和 timer 队列由 Isolate 线程独占。宿主线程通过无锁 MPSC 消息队列发布不可变的完成消息，Isolate 每次应用一个宿主事件，再排空其微任务。等待宿主事件或 timer 时通过信号量休眠。完成请求的占位和取消状态使用原子操作；可关闭的完成端点及 timer 取消操作串行化调度器指针访问与停止。Future 状态读取、监听器注册、堆操作与 Program 销毁仍在所属线程执行。原生取消回调可能在取消或注册线程运行，VM 工作必须经调度器投递。
+Future 值、监听器、原生激活记录、GC 状态和 timer 队列由 Isolate 线程独占。宿主线程通过无锁 MPSC 消息队列发布不可变的完成消息，Isolate 每次应用一个宿主事件，再排空其微任务。等待宿主事件或 timer 时通过信号量休眠。完成请求的占位和取消状态使用原子操作；可关闭的完成端点及 timer 取消操作串行化调度器指针访问与停止。Future 状态读取、监听器注册、堆操作与 原生实例销毁仍在所属线程执行。原生取消回调可能在取消或注册线程运行，脚本工作必须经调度器投递。
 
 `NativeContext::CreateCompleter()` 登记一个存活的宿主生产者；完成操作或释放全部生产者句柄会注销事件源。`NativeContext` 将返回的原生 Future 绑定到自己的调度器，拒绝已属于其他 Isolate 的 Future。原生 Future 完成时检查 external 声明中的 `Future<T>` 载荷；值类型不符或错误不可抛出时，检查后的 Future 以 `TypeError` 失败。跨线程投递的堆值必须已属于该 Isolate，并在发布前保持保根；分配和编码在所属线程完成。
 
@@ -116,13 +116,13 @@ CLI 等待根 main Future 与所有仍存活的宿主事件源。单独一个没
 
 ## 性能与实现边界
 
-语言契约不规定 VM 如何保存挂起执行状态，但要求普通同步函数保留现有快路径，async 调用不产生 await 时不进入挂起调度，挂起时只保留恢复执行所需的活动状态。恢复单个 Future 或 task 不得扫描整个 Program；GC 必须精确追踪跨挂起点存活的值。
+语言契约不规定 原生执行如何保存挂起执行状态，但要求普通同步函数保留现有快路径，async 调用不产生 await 时不进入挂起调度，挂起时只保留恢复执行所需的活动状态。恢复单个 Future 或 task 不得扫描整个程序；GC 必须精确追踪跨挂起点存活的值。
 
-async 语义贯通 AST、类型检查、Typed IR、优化、寄存器分配、字节码编码与校验、VM、调试器、宿主 API 和 CLI。await 可挂起且可抛错，是可观察操作；优化不能删除、跨越或错误重排。直接调用、闭包调用和接口分派都提供一致的 Future 结果。
+async 语义贯通 AST、类型检查、Typed IR、优化、原生代码生成、调试器、宿主 API 和 CLI。await 可挂起且可抛错，是可观察操作；优化不能删除、跨越或错误重排。直接调用、闭包调用和接口分派都提供一致的 Future 结果。
 
 必需回归覆盖：首个 await 前的同步副作用、无 await 的完成、已完成 Future 的异步续延、FIFO 通知、多 waiter、Future 采用、Future 组合的成功与失败、timeout、Completer、跨 await 的 catch/finally、所有调用形式、异步 main、未处理错误、挂起期间 GC、宿主线程完成、timer 顺序和 idle/deadlock 边界。
 
-Release 基准分别测量无 await 的 async 调用、已完成 Future 的 await、挂起/恢复、并发 Future 数量、挂起状态的 GC 压力和大量 timer。报告同步 VM 回归、每个挂起执行保留的内存和首次异步分配成本。
+Release 基准分别测量无 await 的 async 调用、已完成 Future 的 await、挂起/恢复、并发 Future 数量、挂起状态的 GC 压力和大量 timer。报告同步原生回归、每个挂起执行保留的内存和首次异步分配成本。
 
 2026-10-26，在 Ryzen 9 7900X 上使用固定 Clang 工具链构建的 Windows x64
 Release 版本通过了全部 14 个异步基准，每项重复七次。墙钟时间中位数如下：

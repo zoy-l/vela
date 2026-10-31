@@ -5,6 +5,7 @@
 #include <tuple>
 
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 #include "compiler/ir/preparation.h"
 

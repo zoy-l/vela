@@ -126,7 +126,7 @@ GC 追踪输入/模式引用，发布引用使用已有屏障。编译程序和�
 | 其它引擎执行失败 | 显式 `RegExpExecutionError`，不能当作无匹配 |
 | 静态接收者、实参或编号类型错误 | 编译诊断；dynamic 边界保留运行时检查 |
 
-无匹配是正常的 false、null 或空数组结果。引擎失败不能转为无匹配，allMatches 也不能返回部分数组。错误沿用普通 VM catch/finally 和源码调用栈，不能被替换为 JSON 或通用原生调用失败。捕获一次操作失败后，调用方仍可复用 VM 与 RegExp。
+无匹配是正常的 false、null 或空数组结果。引擎失败不能转为无匹配，allMatches 也不能返回部分数组。错误沿用普通 catch/finally 和源码调用栈，不能被替换为 JSON 或通用原生调用失败。捕获一次操作失败后，调用方仍可复用原生实例与 RegExp。
 
 采用回溯引擎，不承诺通用的最坏线性复杂度。第一版不公开 timeout 参数。分配、已配置限制和引擎失败显式处理；性能验证覆盖歧义量词与失败搜索，不能只测成功的字面量匹配。
 
@@ -138,7 +138,7 @@ GC 追踪输入/模式引用，发布引用使用已有屏障。编译程序和�
 
 [编译器／镜像测试](../../compiler/language/regexp_unittest.cc)覆盖两种类型、选项、Unicode 坐标、捕获、PCRE2 原生构造、方法值、容器、异步载荷与错误。[运行时测试](../../runtime/regexp/regexp_unittest.cc)验证三个资源限制、执行失败、部分结果清理、仅匹配结果可达时的所有权、原生核算及 hasMatch 不分配 GC 对象。REPL 与 LSP 测试覆盖跨提交所有权、补全、悬停和命名参数。[可运行示例](../../examples/regexp.vela)使用普通 Vela 字符串转义与带类型结果。
 
-Release benchmark 分别测量模式编译、重复 hasMatch/firstMatch、allMatches 物化与坐标映射、捕获提取、GC 压力及回溯限制。聚合数据、波动与未改动 VM 工作负载对照保存在[滚动摘要](../../benchmarks/results/rolling_summary.json)。
+Release benchmark 分别测量模式编译、重复 hasMatch/firstMatch、allMatches 物化与坐标映射、捕获提取、GC 压力及回溯限制。聚合数据、波动与原生工作负载对照保存在[滚动摘要](../../benchmarks/results/rolling_summary.json)。
 
 ## 参考
 

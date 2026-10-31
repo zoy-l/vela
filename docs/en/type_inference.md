@@ -185,4 +185,4 @@ and supports both parenthesized and single-parameter forms.
 
 ## Implementation contracts
 
-Equivalent explicit and inferred callbacks produce identical bytecode, register counts, and parameter counts. Inference is performed strictly at compile time; it introduces no runtime dynamic type discovery, boxing, or callback conversion overhead.
+Equivalent explicit and inferred callbacks produce equivalent Typed IR and parameter contracts. Inference is performed strictly at compile time; it introduces no runtime dynamic type discovery, boxing, or callback conversion overhead.

@@ -1,4 +1,5 @@
 #include "compiler/native/function_emitter.h"
+#include "base/builtin.h"
 #include "base/native_program_mode.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_frame_plan.h"

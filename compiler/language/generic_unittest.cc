@@ -5,8 +5,9 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/program_test_support.h"
 #include "compiler/ir/preparation_test_support.h"
+#include "compiler/test_support/program_test_support.h"
+#include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_program_state.h"
 

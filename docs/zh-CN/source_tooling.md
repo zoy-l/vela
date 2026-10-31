@@ -52,7 +52,7 @@ out/debug/vela.exe doc examples/documented_library.vela api.md
 
 [VS Code 扩展](../../editors/vscode/README.md) 包含 TextMate 语法高亮规则及零第三方依赖的 stdio 语言客户端。`vl editor package` 在 `out/editor` 下打包生成 VSIX 插件文件。`vl test debug tooling` 运行真实进程间的协议与工具端到端测试。可选的 Node 客户端测试通过 `node --test editors/vscode/extension_unittest.cjs` 运行；Node 运行时由 VS Code 在运行期间自带提供，不属于编译器本身的构建依赖。`vl editor test --code PATH` 可进一步拉起真实的 VS Code 扩展宿主执行自动化测试；该测试要求系统已安装 VS Code（在 Windows 上使用 `bin/code.cmd`），运行在完全隔离的临时配置目录中，且不依赖任何 npm 第三方包。
 
-[终端调试器](debugger.md) 通过 `vela debug FILE` 启动，基于虚拟机的显式指令观察者运行，与运行时诊断共享源码映射表。
+[终端调试器](debugger.md) 通过 `vela debug FILE` 启动，基于原生安全点观察机制运行，与运行时诊断共享源码映射表。
 
 [持久化 REPL](repl.md) 通过 `vela repl` 启动，在多轮提交之间持久保留变量声明与数值，且不重新回放先前的输出。
 

@@ -7,9 +7,10 @@
 #include "gtest/gtest.h"
 
 #include "base/testing/directory.h"
-#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/typing/checker.h"
+#include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/native_execution.h"
 #include "runtime/strings/string.h"
 
 namespace vela::compiler {

@@ -67,8 +67,12 @@ export func failure(): string {
     ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
     const auto entry = isolate.native_dispatch().FindEntry("main.vela", "root");
     ASSERT_TRUE(entry);
-    for (const auto value : {4.0, -0.0, std::numeric_limits<double>::infinity(),
-                             std::numeric_limits<double>::quiet_NaN()}) {
+    for (const auto value : {
+             4.0,
+             -0.0,
+             std::numeric_limits<double>::infinity(),
+             std::numeric_limits<double>::quiet_NaN(),
+         }) {
       const auto result = entry->Invoke(std::array{runtime::Value::Double(value)});
       ASSERT_TRUE(result);
       const auto actual = result->AsDouble();

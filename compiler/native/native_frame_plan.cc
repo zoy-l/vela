@@ -119,8 +119,10 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
   fields.push_back(NativeRecordType(context));
   auto* debug_storage = llvm::ArrayType::get(
       llvm::Type::getInt8Ty(context), escape.function.register_count * sizeof(runtime::NativeDebugValue));
-  std::vector<llvm::Type*> recovery_fields{fields.at(escape.function.register_count),
-                                          fields.at(escape.function.register_count + 1)};
+  std::vector<llvm::Type*> recovery_fields{
+      fields.at(escape.function.register_count),
+      fields.at(escape.function.register_count + 1),
+  };
   if (roots.debug_values) {
     recovery_fields.push_back(debug_storage);
   }

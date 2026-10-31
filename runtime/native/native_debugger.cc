@@ -1,5 +1,6 @@
 #include "runtime/native/native_debugger.h"
 
+#include <cstddef>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -11,6 +12,7 @@
 #include "runtime/native/native_control.h"
 #include "runtime/native/native_deoptimization.h"
 #include "runtime/native/native_image.h"
+#include "runtime/value/value.h"
 
 namespace vela::runtime {
 

@@ -219,12 +219,12 @@ extraction allocates a string only when content is requested and cannot be reuse
 | Engine/backing allocation or representable-size exhaustion | Existing recoverable `OutOfMemory` path |
 | Match-work, matching-depth, or engine-heap limit reached | `Error` with code `RegExpLimitError` |
 | Other engine execution failure | Explicit `RegExpExecutionError`, not a no-match result |
-| Wrong static receiver, argument, or index type | Compile-time diagnostic; native/bytecode boundaries retain runtime checks |
+| Wrong static receiver, argument, or index type | Compile-time diagnostic; dynamic native boundaries retain runtime checks |
 
 No match is a normal false, null, or empty-array result. Engine failure is never
 reported as no match, and allMatches never returns a partial array. Errors flow
-through ordinary VM catch/finally and source traces; JSON/native failure labels
-must not replace regex-specific diagnostics. A caller may reuse the VM and
+through ordinary catch/finally and source traces; JSON/native failure labels
+must not replace regex-specific diagnostics. A caller may reuse the native instance and
 RegExp after a caught operation failure.
 
 This is a backtracking engine and has no general linear worst-case guarantee.
@@ -258,7 +258,7 @@ string escapes and typed results.
 
 Release benchmarks separate pattern compilation, repeated hasMatch/firstMatch,
 allMatches materialization and coordinate mapping, capture extraction, GC
-pressure and backtracking limits. Aggregate results, variation and unchanged VM
+pressure and backtracking limits. Aggregate results, variation and native
 workload comparisons are retained in the [rolling summary](../../benchmarks/results/rolling_summary.json).
 
 ## References

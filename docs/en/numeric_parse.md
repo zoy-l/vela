@@ -80,12 +80,10 @@ is separate from stable error codes. tryParse converts only invalid text to null
 it does not swallow argument-evaluation errors or invalid radices. Successful
 results are native int/double values without numeric wrapper allocation.
 Parsing neither modifies nor retains source strings. Standard methods execute
-through builtin bytecode; declarations and implementation participate in cache
+through native builtin calls; declarations and implementation participate in cache
 identity. See [numeric_parse.vela](../../examples/numeric_parse.vela).
 
-The recorded Windows x64 Ryzen 9 7900X Release run measured median steady
-latencies of 270 ns for int64 decimal, 241 ns for hexadecimal, 268 ns for
-double, and 238 ns for invalid int.tryParse. Timing includes VM execution;
-these cases reported zero first-call GC allocation and zero additional retained
-heap bytes after collection. See [measurement boundaries](../../benchmarks/README.md)
-and [exact aggregate evidence](../../benchmarks/results/rolling_summary.json).
+Release benchmarks measure decimal/hexadecimal int64, double and invalid tryParse
+paths through native execution. Report first-call heap allocation and post-GC
+retention separately from latency. See [measurement boundaries](../../benchmarks/README.md)
+and [aggregate evidence](../../benchmarks/results/rolling_summary.json).

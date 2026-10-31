@@ -147,8 +147,7 @@ calls retain their existing checked boundary.
 The frontend publishes separate abstract-definition facts and concrete execution
 facts, including parameter identity, canonical applications, final signatures,
 and resolved targets. Backends consume concrete types and targets without solving
-inference variables or interpreting generated names. Bounds require no new VM
-instruction. GC, exceptions, async, interface dispatch, JIT, and AOT use existing
+inference variables or interpreting generated names. Bounds require no runtime generic solver. GC, exceptions, async, interface dispatch, JIT, and AOT use existing
 concrete runtime contracts.
 
 Host imports and AOT exports retain concrete signatures. Script generics can call

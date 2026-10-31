@@ -25,7 +25,8 @@ switch (value) {
 
 返回值完整性分析会自后向前组合包含 fallthrough 的各分支，消费 switch 的 break 语句，并保留循环的 continue。在缺少 default 时，未匹配的选择器路径构成隐式的 fallthrough 退出路径。穷尽性 `match` 模式匹配表达式是独立的语法结构；详见 [P1 模式匹配契约](core_language.md#normal-enums-and-exhaustive-match-expressions)。
 
-当前 Lowering 阶段使用强类型比较与条件跳转，具有处理 n 个标签时 O(n) 的分派开销。标签在运行时无求值或内存分配开销。跳转表与哈希分派不属于本里程碑范围。现有的字节码寄存器、常量池及跳转距离限制依然会产生严格的编译期诊断。
+Lowering 保留带类型比较与跳转，原生优化选择最终机器分派方式，包括适用时的表驱动形式。
+标签没有运行时求值或分配开销。原生帧与参数预算见[执行契约](native_execution.md)。
 
 ## 可空类型
 

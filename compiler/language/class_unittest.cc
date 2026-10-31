@@ -2,6 +2,7 @@
 #include <string>
 #include <string_view>
 
+#include "base/execution_status.h"
 #include "gtest/gtest.h"
 
 #include "compiler/test_support/program_test_support.h"

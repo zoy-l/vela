@@ -4,7 +4,7 @@
 
 
 Vela is a statically typed scripting language for native applications. Its
-register bytecode VM, native AOT, and development JIT share Typed IR. Development
+native AOT and JIT share Typed IR and native code generation. Development
 mode supports runtime script loading, stateful Hot Reload, and Reload through a
 new script Isolate. See the [JIT and hot reload contract (Chinese)](../zh-CN/hot_reload.md)
 for feature, performance, and platform acceptance scope. The shared runtime owns
@@ -79,186 +79,88 @@ inline value semantics without changing the constructor grammar.
 ## Compilation pipeline
 
 ```text
-source
-  -> lexer and parser
-  -> name resolution and static type checking
-  -> typed control-flow IR
-  -> IR optimization
-      ├─ VM register allocation -> register bytecode -> Vela VM
-      └─ shared LLVM lowering -> AOT object files / reloadable JIT
+source -> lexer/parser -> name resolution and type checking
+       -> Typed IR -> shared IR optimization -> native LLVM lowering
+       -> JIT linking and instantiation, or AOT artifact publication
 ```
 
-Typed IR is the semantic boundary shared by bytecode, native AOT, and JIT.
-Bytecode is a separate execution representation optimized for dense decoding and
-predictable register access; it is not used as the compiler's general optimization
-graph.
+The frontend solves generic arguments through shared constraints, then
+materializes and checks concrete declarations. Explicit and inferred calls share
+canonical specialization identities. Resolved types retain structural
+element/signature/argument relationships; lowering does not recover them by
+parsing type-name suffixes.
 
-The [native AOT design](aot.md) specifies the LLVM backend, native execution,
-GC/async contracts, and distribution without a separate user installation of
-Clang/LLVM. That document records the implemented scope and release acceptance
-status. AOT branches after common IR optimization, before VM register allocation
-and bytecode encoding.
+The frontend records control-flow facts for fallthrough, break and continue.
+Non-void functions cannot reach their closing brace; infinite-loop paths need no
+return. Unreachable statements are errors. Boolean literals and logical
+operators refine reachability; lowering preserves condition side effects while
+omitting unreachable jumps and returns.
 
-The VM bootstrap now consumes the runtime root contract directly: each frame
-register span is registered as a root range for the duration of execution.
-Register slots stay contiguous, and allocation instructions can trigger GC
-without copying or relocating frame values.
+Typed IR retains source locations, resolved calls, field identities, exception
+edges and runtime type descriptions. Shared optimization performs basic-block
+copy and constant propagation, jump threading, and dead-value/unreachable-block
+elimination. Observable failures and side effects remain when removal cannot be
+proven valid. LLVM optimization and [escape analysis](../zh-CN/escape_analysis.md)
+operate after this semantic boundary.
 
-The current compiler path lowers checked integer expressions, local variables,
-function calls, field access, assignments, enum ordinals, fixed-layout class
-construction, and structured branches/loops through Typed IR into the bootstrap
-bytecode. `vela run` exercises this path for a zero-argument `main` function.
-Strings and typed arrays use the same IR and bytecode path. Array element types
-and rank remain exact across literals, fields, parameters, returns, indexing,
-and assignment. Context supplies the type of empty array literals;
-there are no implicit element conversions. Arrays have reference semantics and compact
-contiguous native storage. Their length can grow or shrink through typed mutation
-APIs while aliases retain the same object identity; see [growable arrays](arrays.md).
-See [compiler details](../../compiler/README.md) for
-current bytecode limits.
+## Native execution
 
-Semantic checking solves generic arguments through shared constraints, then
-materializes and checks concrete declarations on demand. Explicit and inferred
-calls share canonical specialization identities and resolved call targets.
-Resolved types retain structural element/signature/argument relationships;
-lowering does not parse type-name suffixes to recover array elements. Interface
-selectors, field offsets, and argument bindings are resolved before execution.
-Validated layout tables are immutable and shared by all functions in a program.
+`run`, source tests and standalone debugging use closed JIT snapshots.
+`dev` and the REPL use reloadable native sessions. AOT emits objects, static
+libraries or executables through the same native generator.
+See [execution contracts](native_execution.md), [AOT](aot.md) and
+[hot reload](../zh-CN/hot_reload.md) for their boundaries.
 
-The compiler must retain source locations through parsing, type checking, IR
-instructions, and bytecode ranges. This keeps diagnostics and debugger
-mapping independent from the VM instruction encoding.
+Baseline and optimized JIT preserve the same language behavior. The optimized
+reloadable tier retains recovery information and baseline entries for active
+frames. LLVM optimization is configured separately from the JIT tier.
 
-Type checking also records whether each statement can fall through, break, or
-continue. Non-void functions cannot reach their closing brace; paths that loop
-forever need no return. Unreachable statements are compile errors. Boolean
-literals, `!`, `&&`, and `||` refine branch reachability; other conditions are
-conservative, without variable-value propagation. Lowering consumes these facts
-to place void returns and omit unreachable branch jumps, loop increments, and
-back edges. Condition side effects are preserved even when the result is known.
-
-## VM execution contract
-
-The first bytecode format follows the properties that make Luau's interpreter
-fast without requiring assembly:
-
-- one fixed-width 32-bit instruction word for the common case;
-- an 8-bit opcode and compact register operands, with explicit auxiliary words
-  for wide constants and metadata;
-- contiguous register slots in each call frame;
-- type-specific arithmetic and comparison operations after static checking;
-- direct function IDs for statically resolved calls;
-- field IDs or fixed layout offsets for class access;
-- no heap allocation for ordinary integer, double, boolean, or handle moves;
-- constants and debug metadata stored outside the hot instruction stream.
-
-The interpreter uses optimized switch dispatch. Computed-goto/direct-threaded
-dispatch was evaluated, and the current implementation retains switch dispatch;
-see [VM storage and dispatch](vm_storage.md) for measurement boundaries.
-
-Calls into the host use an explicit registered function table. Each entry
-owns a stable function ID, a static signature, and a typed adapter. The VM
-call instruction selects the adapter by ID; it does not construct a generic
-`Value*` array or perform string lookup on every call. A native backend can
-lower the same typed call directly to the host function ABI.
-
-## Shared IR optimization boundary
-
-The shared Typed IR optimizer implements:
-
-1. basic-block copy propagation and redundant move elimination;
-2. basic-block integer, boolean, and null constant propagation and folding,
-   with known-branch simplification;
-3. jump threading and unnecessary jump elimination;
-4. dead-value, unreachable-block, and unused exception-handler elimination.
-
-The frontend and lowering resolve direct call targets and field offsets. The
-native backend also uses LLVM optimization and [class escape analysis (Chinese)](../zh-CN/escape_analysis.md).
-Shared IR optimization preserves observable failures, side effects, and lifetime
-operations; instructions remain when their optimization cannot be proven valid.
+Host functions have immutable signatures established at registration and checked
+at instantiation. Generated native calls use the typed host ABI. Dynamic calls
+perform their required argument/type checks before invoking a typed target.
+Native declarations remain visible as logical frames even when C++ code triggers
+GC. The Isolate owns runtime state; a JIT image's shared owner owns linked code.
 
 ## Memory and object boundary
 
-One Isolate owns its heap and registered host references. VM and closed-AOT
-class instances use fixed layouts. Reloadable mode preserves object addresses
-with replaceable field storage; its layout and lifetime contracts are defined
-in the [hot reload contract (Chinese)](../zh-CN/hot_reload.md#6-对象布局与状态演化).
-The runtime does not expose C++ object layout directly to scripts.
+One Isolate owns its heap, metadata, scheduler and host bindings. Closed native
+instances use fixed class layouts. Reloadable objects preserve their addresses
+while field storage can evolve through validated publication. Neither mode
+exposes C++ object layout as a script object.
 
-The runtime foundation uses a precise, non-moving, incremental mark-and-sweep
-collector with an isolate-local allocation path. Each class layout records its
-reference fields, so object marking can scan those fields directly without a
-dynamic map lookup. VM frame slots, globals, and host handles must be registered
-as explicit root ranges. Field stores go through a write barrier while marking,
-and the gray work list is intrusive so collection does not allocate temporary
-work buffers.
+GC is precise, non-moving and incremental. Managed values live in explicitly
+registered shadow roots, globals, retained activations and host handles.
+Reference fields and array layouts identify what to trace. Stores preserve the
+write barrier, and roots are revisited before sweep because active code can
+change them between incremental steps. Small objects use size-class free lists.
 
-Small object allocations use size-class free lists. VM registers store 8-byte
-payloads separately from 1-byte type tags; instance fields use `Value` slots.
-Arrays store native primitives or pointers in type-specific contiguous buffers.
-Small arrays use inline storage;
-larger arrays and growth use a separately accounted backing buffer while the GC
-object stays at its original address. Array layouts identify reference elements;
-marking scans only the live prefix, and reference writes apply the write barrier.
-Immutable strings use one allocation
-for the object header and bytes, participate in the same collector, and are
-marked as leaves. Concatenation allocates the result once and copies both
-operands directly; it remains linear in the total byte length. Class string
-fields and native string-pointer arrays are traced precisely.
+The public `Value` is a 16-byte tagged value. Typed native locals can use unboxed
+machine representations; arrays store compact native primitives or references.
+Growing arrays replace backing buffers while retaining their GC object's identity.
+Strings use valid UTF-8 with code-point indexing and a separate byte length;
+immutable contents and mutable builder buffers follow the same heap accounting.
 
-Compiled functions share a fixed-size, rooted native string constant pool.
-Its owner registers the pool before allocating literals and releases its root
-when its last owner is destroyed. `vm::Program` owns immutable, validated
-function storage; copies share that storage. `vm::FunctionHandle` retains the
-program, including its code and rooted constants. Raw `vm::Function` views are
-borrowed loading inputs: `Program::Load` copies them, then validates the owned
-snapshot. Execution does not repeat program validation. Layouts remain owned
-by the Isolate, which must outlive all programs, handles, and root ranges.
-Program destruction and root operations remain on the Isolate's thread.
-REPL submissions share growing GC-owned global slots. External Program handles
-root the slot object; continuations trace it through their reachable Future graph.
-This keeps earlier submissions' writes visible and lets unreachable pending tasks
-and their globals be collected together.
-Execution results are borrowed values: hosts must root returned objects or
-strings before another allocation or collection. See
-[VM execution contracts](vm_execution.md) for register allocation and limits.
+A `NativeInstance` roots its constants and program state. Closures, async
+activations and development handles retain the versions they need; unreachable
+state and code can retire together. Returned values are borrowed and must be
+rooted before later allocation. See [embedding](native_embedding.md) and
+[garbage collection](garbage_collection.md).
 
-Roots are revisited before the collector enters sweep because VM registers
-can change between incremental steps. Root registration and reference stores
-also preserve references during sweep. The collector is single-threaded per
-isolate; a host thread must cross an isolate-owned root boundary before it can
-retain a script object. Strings use valid UTF-8, with code point lengths,
-indices, and slice boundaries, plus a separate byte length. Interpolation,
-explicit conversions, join, and GC-owned builders use the same checked compiler
-and VM path. See [string contracts](strings.md) for APIs, costs, and rooting.
-
-Async calls use ordinary VM frames until an await, then retain the live register
-values and resume in a later execution slice. Future state, timer queues, and GC
-remain owned by the Isolate thread. Host threads publish completion messages through
-an atomic MPSC mailbox; completion reservation and cancellation are atomic. A
-semaphore parks and wakes the owner. Ordinary Future, Completer, and Program
-handles must be released before their Isolate is destroyed. Native producers
-hold `FutureCompletionEndpoint` handles, which may outlive the Isolate; late
-completion returns `Closed` after scheduler shutdown. See [async contracts](async_tasks.md).
-
-Generational collection remains an optimization decision for the Release
-benchmarks. It can be added behind this object, root, and barrier contract
-without changing source-level lifetime semantics.
-Generational collection and arena specialization are later implementation
-optimizations, not alternate ownership models.
+Async calls execute until return, error or await. Suspension retains live state
+in a heap activation and resumes through the scheduler. Future state and GC are
+owned by the Isolate thread. Host producers publish immutable completion messages
+through an MPSC queue; endpoints can outlive shutdown and return `Closed`
+without accessing retired runtime storage. Ordinary instance, Future and root
+handles must be released before their Isolate is destroyed.
 
 ## Performance evidence
 
-Every VM optimization is evaluated in Release builds with repeatable workloads:
+Measure compilation, first execution and steady execution separately in Release.
+Use equivalent workloads and check every result. Report code and native frame
+plans separately from GC live/committed bytes and process resident memory;
+compiler frame plans are not measured physical stack sizes.
 
-- integer and floating-point loops;
-- function calls and returns;
-- contiguous array traversal;
-- class field reads and writes;
-- statically bound host calls;
-- batched entity-style updates.
-
-Each result records compile time, first execution, steady-state time, peak
-resident memory, bytecode size, and instruction count where available. A native
-C++ implementation provides the baseline; a Luau comparison is useful only
-when the workload and observable semantics are comparable.
+The benchmark suites compare JIT, both reloadable tiers, AOT and appropriate C++
+or LuaJIT workloads. Historical measurements are comparable only when backend,
+machine, toolchain, repetitions and boundaries match. Exact retention rules and
+commands are in the [benchmark guide](../../benchmarks/README.md).

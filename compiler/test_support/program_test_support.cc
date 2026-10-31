@@ -9,10 +9,13 @@
 #include <string_view>
 #include <utility>
 
+#include "base/execution_status.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/parser.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
+#include "compiler/native/native_roots.h"
 #include "runtime/async/future.h"
 #include "runtime/async/future_operations.h"
 #include "runtime/heap/heap.h"
@@ -121,8 +124,12 @@ std::expected<std::unique_ptr<runtime::NativeInstance>, std::string> Reinstantia
 runtime::ExecutionResult Execute(runtime::NativeInstance& instance, std::string_view entry) {
   const auto function = instance.FindFunction(entry);
   if (!function) {
-    return {.status = ExecutionStatus::InvalidEntry, .stack_trace = {},
-            .message = "test source is missing entry: " + std::string(entry), .origin = {}};
+    return {
+        .status = ExecutionStatus::InvalidEntry,
+        .stack_trace = {},
+        .message = "test source is missing entry: " + std::string(entry),
+        .origin = {},
+    };
   }
   return runtime::ExecuteNativeFunction(instance, *function);
 }
@@ -136,8 +143,12 @@ runtime::Future StartFuture(runtime::NativeInstance& instance, std::string_view 
   runtime::Future future(&isolate.scheduler());
   future.AttachHeap(isolate.heap());
   runtime::CompleteFutureError(isolate, future, result.value,
-                                {.message = result.message, .stack_trace = result.stack_trace,
-                                 .status = result.status, .origin = result.origin});
+                               {
+                                   .message = result.message,
+                                   .stack_trace = result.stack_trace,
+                                   .status = result.status,
+                                   .origin = result.origin,
+                               });
   return future;
 }
 

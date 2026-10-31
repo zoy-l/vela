@@ -179,9 +179,12 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
     auto helper = module_.getOrInsertFunction(
         "vela_native_v7_store_materialized_field", builder_.getInt8Ty(), builder_.getPtrTy(),
         builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
-    CheckStatus(
-        builder_.CreateCall(helper, {body_->getArg(0), object, builder_.getInt64(field.value),
-                                     Pack(Encode(instruction.lhs), 0)}));
+    CheckStatus(builder_.CreateCall(helper, {
+                                                body_->getArg(0),
+                                                object,
+                                                builder_.getInt64(field.value),
+                                                Pack(Encode(instruction.lhs), 0),
+                                            }));
     return;
   }
   const auto access_index = *field_accesses_.at(origin);
@@ -248,8 +251,13 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
   const auto access = runtime::EncodeNativeTracePosition(
       {.function = static_cast<std::uint32_t>(function_index_), .instruction = access_index});
   auto* value = reading ? result_ : Pack(Encode(instruction.lhs), 0);
-  CheckStatus(builder_.CreateCall(helper, {body_->getArg(0), object, builder_.getInt64(field.value),
-                                           builder_.getInt64(access), value}));
+  CheckStatus(builder_.CreateCall(helper, {
+                                              body_->getArg(0),
+                                              object,
+                                              builder_.getInt64(field.value),
+                                              builder_.getInt64(access),
+                                              value,
+                                          }));
   if (reading) {
     Unpack(instruction.dst);
   }

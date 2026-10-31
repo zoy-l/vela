@@ -11,7 +11,6 @@
 #include "base/mock_operation.h"
 #include "compiler/testing/result.h"
 #include "runtime/async/future.h"
-#include "runtime/exceptions/exception.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/member_table.h"
 #include "runtime/native/native_instance.h"

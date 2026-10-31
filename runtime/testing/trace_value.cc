@@ -9,7 +9,10 @@
 #include <vector>
 
 #include "base/binary.h"
+#include "base/execution_status.h"
+#include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
+#include "runtime/value/value.h"
 
 namespace vela::runtime {
 
@@ -41,7 +44,7 @@ std::expected<std::vector<FutureTraceFrame>, ExecutionStatus> ReadTestTrace(Valu
     return std::unexpected(ExecutionStatus::TypeError);
   }
   BinaryReader reader(std::as_bytes(Heap::ByteArrayBytes(*value.AsObject())));
-  constexpr auto kMinimumFrameBytes = 5 * sizeof(std::uint64_t) + 3 * sizeof(std::uint32_t);
+  constexpr auto kMinimumFrameBytes = (5 * sizeof(std::uint64_t)) + (3 * sizeof(std::uint32_t));
   const auto count = reader.Count(kMinimumFrameBytes);
   if (!count) {
     return std::unexpected(ExecutionStatus::TypeError);

@@ -111,10 +111,10 @@ development contracts, not user-triggerable fatal checks.
 ## Integration and validation
 
 The methods use checked string builtin signatures shared by the frontend, IR,
-VM, and tooling. Method values, member completion, hover, documentation,
+native generation, and tooling. Method values, member completion, hover, documentation,
 formatting, debugger queries, and persistent REPL use follow the existing
-string-method paths. Bytecode images validate builtin IDs and operands;
-cache identity includes the generator and pinned input manifest.
+string-method paths. Native lowering carries checked builtin contracts; cache identity includes the
+generator and pinned input manifest.
 
 `DEPS` synchronizes checksummed UCD inputs through
 [`tools/unicode_case.py`](../../tools/unicode_case.py). GN generates
@@ -131,22 +131,17 @@ diagnostics. Unicode fixtures must come from the pinned mapping data, not host
 locale expectations. Verify deterministic regeneration, version agreement, full
 mapping coverage, and contextual-property ranges. Stress allocation, output-size
 checks, GC during conversion,
-aliased VM registers, typed containers, fresh-Isolate images, and REPL reuse.
+aliased values across native calls, typed containers, fresh-Isolate images, and REPL reuse.
 
 Release benchmarks measure unchanged ASCII, changing ASCII, non-ASCII mappings,
 expanding mappings, and contextual runs at three input sizes. Measurement
 boundaries and retained results are documented in
 [the benchmark guide](../../benchmarks/README.md).
 
-On the recorded Windows x64 Ryzen 9 7900X Release run, 16,384 input bytes took
-302 µs for unchanged ASCII (zero first-call GC bytes), 582 µs for changing ASCII,
-and 311 µs for simple Unicode mappings. The 20,480-byte contextual case took
-612 µs; the 8,192-byte expanding case produced 24,576 bytes in 81 µs. Across
-256 and 4096 input units, time increased approximately with input size. These
-measurements include VM execution and GC; counters exclude native allocation
-overhead. All cases retained zero additional heap bytes after collection.
-Exact medians, variation, sizes, and machine/toolchain settings are in
-[`rolling_summary.json`](../../benchmarks/results/rolling_summary.json).
+Release benchmarks vary input size, unchanged/changing ASCII, Unicode context
+and expansion. Report input/output bytes, GC allocation and retained bytes
+separately from time. Historical interpreter measurements are not native-tier
+comparisons; see [benchmark boundaries](../../benchmarks/README.md).
 
 ## References
 

@@ -11,7 +11,6 @@
 #include "base/execution_limits.h"
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
-#include "runtime/exceptions/exception.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"

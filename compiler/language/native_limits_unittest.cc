@@ -1,15 +1,11 @@
 #include <cstddef>
-#include <span>
 #include <string>
 #include <string_view>
-#include <utility>
 
 #include "gtest/gtest.h"
 
 #include "compiler/ir/preparation_test_support.h"
 
-#include "compiler/frontend/modules/source_loader.h"
-#include "compiler/frontend/typing/type_checker.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/strings/string.h"

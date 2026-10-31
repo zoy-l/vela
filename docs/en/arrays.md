@@ -62,7 +62,7 @@ length; negative deleteCount means zero. `splice(start)` removes through the end
 while `splice()` removes nothing. `splice(start, 0, ...items)` only inserts.
 
 Invalid indexed access and negative reserves throw `Error`; allocation/capacity failures
-use the VM's recoverable out-of-memory status. The current representation limits
+use the runtime's recoverable out-of-memory status. The current representation limits
 length/capacity to `uint32_t`, and checks larger requests before allocation.
 An invalid type is diagnosed during compilation; failed operations leave the
 array's contents, length and mutation version unchanged. Existing checked indexed
@@ -116,7 +116,7 @@ and Isolate destruction release an owned external buffer exactly once.
 
 Host `IntegerElements()` / `StringElements()` spans borrow the current buffer.
 The array must stay rooted, and these spans must not cross growth or structural
-mutation. VM algorithms keep rooted array values and reacquire elements instead
+mutation. Native runtime algorithms keep rooted array values and reacquire elements instead
 of retaining raw buffer pointers across callbacks.
 
 ## Callbacks and structural mutation
@@ -128,10 +128,10 @@ Push, nonempty pop/shift/clear and nonempty splice changes increment the counter
 push/pop pair restoring the original length is detected.
 
 Structural mutation raises `Error` with status `ConcurrentModification` and uses
-ordinary VM unwinding. The mutation itself remains applied; there is no rollback.
+ordinary native unwinding. The mutation itself remains applied; there is no rollback.
 Callbacks may modify existing elements, mutate another array or reserve capacity.
 Later element changes remain visible during traversal. Exceptions do not leave
-the array locked and the VM remains reusable.
+the array locked and the native instance remains reusable.
 
 Callbacks receive `(value, index, receiver)`, or
 `(accumulator, value, index, receiver)` for reduce, and can omit unused trailing

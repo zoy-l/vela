@@ -8,8 +8,9 @@
 #include <string_view>
 #include <utility>
 
-#include "base/process_exit.h"
+#include "base/execution_status.h"
 #include "base/path.h"
+#include "base/process_exit.h"
 #include "compiler/development/development_repl.h"
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
@@ -18,7 +19,6 @@
 #include "compiler/repl/repl_source.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/external_resources.h"
-#include "runtime/async/future.h"
 #include "runtime/process/process_entry.h"
 
 namespace vela::tooling {
@@ -40,8 +40,11 @@ CommandResult Command(std::string_view line,
   } else if (line == ".source") {
     streams.output.get() << repl.source();
   } else if (line == ".reset") {
-    const auto reset = repl.Reset({.base_revision = session.snapshot()->revision,
-                                   .changes = {}, .added_roots = {}});
+    const auto reset = repl.Reset({
+        .base_revision = session.snapshot()->revision,
+        .changes = {},
+        .added_roots = {},
+    });
     if (reset.status == compiler::DevelopmentStatus::Accepted) {
       session.isolate().SetOutput(streams.output.get());
     } else {

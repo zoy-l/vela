@@ -8,11 +8,15 @@
 #include <string_view>
 #include <utility>
 
+#include "base/builtin.h"
+#include "base/callable.h"
+#include "base/execution_status.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"
 #include "runtime/strings/string.h"
 #include "runtime/testing/test_bridge.h"
+#include "runtime/value/value.h"
 
 namespace vela::runtime {
 namespace {

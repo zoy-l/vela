@@ -222,7 +222,7 @@ func main(): void {
 ```
 
 Each occurrence of an object invokes `toJson` once for that occurrence. Exceptions
-thrown by the method propagate unchanged through ordinary VM frames and retain
+thrown by the method propagate unchanged through ordinary native frames and retain
 their original trace. An unsupported result is an encoding error. Encoding is
 synchronous; a Future returned by an async conversion is unsupported.
 
@@ -257,9 +257,9 @@ preserves double kind. Floating negative zero is written as `-0.0`.
 
 An unexpected EOF uses the input byte length as its offset. Other decode offsets
 refer to the original input, not an unescaped string or modified parser buffer.
-JSON-specific error codes must survive builtin/VM propagation without being
+JSON-specific error codes must survive builtin/native propagation without being
 flattened into a generic native failure. Error-object allocation follows the
-existing VM failure contract when memory is exhausted.
+existing runtime failure contract when memory is exhausted.
 
 The parser roots partially built containers and values before allocation
 safepoints. The encoder roots its input, active containers, conversion receivers,
@@ -293,8 +293,8 @@ cannot violate the int64 contract. Runtime does not depend on compiler/tooling.
 | Runtime identity | Distinguish enums from int, full function signatures, class identities, container arguments, and Future arguments after erasure; reuse canonical type metadata |
 | Runtime storage and GC | Add genuine tagged dynamic slots to arrays/collections and trace all dynamic-bearing storage; preserve primitive fast paths |
 | IR and compiler | Represent checked conversions and dynamic dispatch explicitly; describe allocations, calls, reads, writes, and throwing effects; preserve evaluation order |
-| VM and errors | Resolve public members and exact signatures; implement parse/encode and resumable encoding state around ordinary `toJson` calls, without reentering the VM from a C++ builtin |
-| Images and caches | Serialize required type and dispatch metadata, validate indices/layouts at load, update format/build identities, and reject incompatible images |
+| Native calls and errors | Resolve public members and exact signatures; preserve parse/encode state across ordinary native `toJson` calls |
+| Native images and caches | Emit required type and dispatch metadata, bind layouts at instantiation, include metadata in cache identity and reject incompatible native ABIs |
 | Tooling | Share checked signatures and dynamic facts with completion, hover, diagnostics, formatting, documentation, debugger, and persistent REPL |
 | Delivery | Add `examples/json.vela`, update the feature checklist only after all production paths and required checks pass |
 
@@ -304,13 +304,13 @@ class, interface and enum identities, structural function signatures,
 and Future/Completer payload signatures. Arrays and collections retain their full
 element constraints. Boxed enums preserve identity in erased slots while typed
 enum arrays retain integer storage. Isolate-owned metadata survives compilation
-results and is rebuilt and validated when a bytecode image is loaded.
+results; fresh native instances bind the compiled layout descriptions to their Isolate.
 
 Required validation covers all JSON root kinds, heterogeneous and object arrays,
 missing versus null entries, duplicate-key order, escaped Unicode and embedded
 NUL, int64 endpoints and overflow, binary64 boundaries and signed zero, malformed
 input offsets, non-string keys, unsupported types, cycles versus shared branches,
-toJson success/failure/mutation, and VM reuse after caught errors. Type tests cover
+toJson success/failure/mutation, and native-instance reuse after caught errors. Type tests cover
 every dynamic-to-typed boundary, private/read-only members, named calls, callable
 signatures, enum identity, generic arguments, invariant-container writes, literal
 contexts, and invalid inference. GC stress covers partial parsing, conversion

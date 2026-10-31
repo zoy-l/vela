@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <string_view>
 
+#include "base/opcode.h"
 #include "gtest/gtest.h"
 
 #include "compiler/test_support/program_test_support.h"

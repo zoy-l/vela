@@ -1,6 +1,6 @@
 # Vela compiler
 
-The compiler loads and checks Vela source, lowers it to Typed IR, and emits bytecode or native code.
+The compiler loads and checks Vela source, lowers it to Typed IR, and emits native code for JIT and AOT.
 Source tools, interactive sessions, and the command-line executable use the same frontend contracts.
 See [Architecture and Contracts](../.agents/architecture.md) for dependency and ownership rules and
 [the language architecture](../docs/en/architecture.md) for execution contracts.
@@ -16,12 +16,11 @@ See [Architecture and Contracts](../.agents/architecture.md) for dependency and 
 | `frontend/flow` | Capture analysis, initialization, and control-flow contracts. |
 | `frontend/typing` | Type checking, structural inference, and checked semantic facts. |
 | `ir` | Typed IR, lowering, analysis, optimization, and execution preparation. |
-| `bytecode` | Bytecode compilation, register allocation, compilation cache, and native linking. |
 | `native` | Shared native code generation and escape analysis. |
 | `aot` | Ahead-of-time compilation, target support, and artifact publication. |
 | `jit` | JIT compilation, executable code resources, and code caches. |
 | `development` | Source sessions, development sessions, file tracking, and development REPL state. |
-| `repl` | REPL source composition, identities, and bytecode execution sessions. |
+| `repl` | REPL source composition and submission transactions. |
 | `project` | Project configuration loading and validation. |
 | `cli` | Executable entry point, console input, standard streams, and interactive consoles. |
 | `tooling/lsp` | Language server, JSON-RPC, and file URIs. |
@@ -42,7 +41,7 @@ remain at the compiler root.
 
 [`BUILD.gn`](BUILD.gn) defines the compiler targets centrally. Directory boundaries organize source
 ownership; GN targets define dependencies and linkage. The executable remains `//compiler:vela`.
-Frontend, IR, bytecode, native, AOT, JIT, development, and tooling consumers use the targets in this
+Frontend, IR, native, AOT, JIT, development, and tooling consumers use the targets in this
 file. Generated SDK sources and the cache build identity remain under the generated `compiler/`
 directory.
 
@@ -55,6 +54,6 @@ python -m tools.vl lint
 ```
 
 `vela check` loads imports, specializes declarations, and checks types. `vela run` lowers checked
-source through Typed IR to validated bytecode and executes it in the VM. `vela build` emits a native
+source through Typed IR to JIT native code and executes a fresh native instance. `vela build` emits a native
 artifact through the shared native backend. See [Development Workflow](../.agents/development_workflow.md)
 for build variants and validation and [the benchmark guide](../benchmarks/README.md) for measurements.

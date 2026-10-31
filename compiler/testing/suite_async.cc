@@ -1,3 +1,4 @@
+#include "base/execution_status.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/suite.h"
 
@@ -17,6 +18,7 @@
 #include "runtime/async/execution_context.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
+#include "runtime/native/native_execution.h"
 #include "runtime/testing/test_bridge.h"
 #include "runtime/value/value.h"
 

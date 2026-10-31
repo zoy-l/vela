@@ -29,8 +29,7 @@ English and Simplified Chinese editions are listed side by side below. Implement
 | **Native AOT Compilation** / 原生 AOT 编译 | [aot.md](en/aot.md) | [aot.md](zh-CN/aot.md) |
 | **JIT & Hot Reload** / JIT 与热重载 | — | [hot_reload.md](zh-CN/hot_reload.md) |
 | **Class Escape Analysis & Allocation Elimination** / Class 逃逸分析与分配消除 | — | [escape_analysis.md](zh-CN/escape_analysis.md) |
-| **VM Execution Contracts** / VM 执行契约 | [vm_execution.md](en/vm_execution.md) | [vm_execution.md](zh-CN/vm_execution.md) |
-| **VM Storage & Dispatch** / 虚拟机存储与分派 | [vm_storage.md](en/vm_storage.md) | [vm_storage.md](zh-CN/vm_storage.md) |
+| **Native Execution Contracts** / 原生执行契约 | [native_execution.md](en/native_execution.md) | [native_execution.md](zh-CN/native_execution.md) |
 | **Garbage Collection** / 垃圾回收架构 | [garbage_collection.md](en/garbage_collection.md) | [garbage_collection.md](zh-CN/garbage_collection.md) |
 | **Async Functions & Futures** / 异步函数与 Future | [async_tasks.md](en/async_tasks.md) | [async_tasks.md](zh-CN/async_tasks.md) |
 | **Compilation Cache** / 编译缓存 | [compilation_cache.md](en/compilation_cache.md) | [compilation_cache.md](zh-CN/compilation_cache.md) |

@@ -3,11 +3,13 @@
 #include <sstream>
 #include <string>
 
+#include "base/execution_status.h"
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/native_execution.h"
 #include "runtime/process/process_entry.h"
 
 namespace vela::compiler {

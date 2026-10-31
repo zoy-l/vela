@@ -10,8 +10,9 @@
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
-#include "runtime/value/value.h"
 #include "runtime/native/native_execution.h"
+#include "runtime/native/native_image.h"
+#include "runtime/value/value.h"
 
 namespace vela::compiler {
 namespace {

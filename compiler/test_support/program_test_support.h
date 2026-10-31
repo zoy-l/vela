@@ -11,7 +11,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/parser.h"
-#include "compiler/jit/source_compiler.h"
+#include "compiler/jit/compiler.h"
 #include "runtime/async/future.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_execution.h"

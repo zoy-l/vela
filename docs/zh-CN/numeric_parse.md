@@ -67,7 +67,6 @@ func main(): void {
 
 示例见 [numeric_parse.vela](../../examples/numeric_parse.vela)。
 
-已记录的 Windows x64 / Ryzen 9 7900X Release 测量中，稳态中位数为：int64 十进制 270 ns、
-十六进制 241 ns、double 268 ns、无效 int.tryParse 238 ns，包含 VM 执行。上述用例首次调用
-GC 分配和完整回收后的额外保留堆字节均为零。参见[测量边界](../../benchmarks/README.md)与
-[确切汇总结果](../../benchmarks/results/rolling_summary.json)。
+Release 基准通过原生执行测量十进制/十六进制 int64、double 和无效 tryParse 路径。
+首次调用堆分配、完整 GC 后保留量与时间分别报告。
+参见[测量边界](../../benchmarks/README.md)与[汇总证据](../../benchmarks/results/rolling_summary.json)。

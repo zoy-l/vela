@@ -42,7 +42,7 @@ instance for generic exception handling and matching. It must be the final
 catch clause. Access through the binding follows the normal dynamic checks.
 
 The default global `Error(message: string, code: string)` requires no import;
-`code` defaults to `"Error"`. This is an ordinary fixed-layout class. VM failures
+`code` defaults to `"Error"`. This is an ordinary fixed-layout class. Runtime failures
 are materialized as this type: `message` contains the diagnostic, while `code`
 contains the stable `ExecutionStatusCode`, for example `"DivisionByZero"` or
 `"NativeFailure"`. Diagnostic wording is separate and may change without changing
@@ -87,19 +87,16 @@ caller that catches the error can retry initialization.
 
 ## Representation and performance
 
-The implementation follows the JVM's
-[exception tables and explicit frame unwinding](https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-2.html#jvms-2.10).
-IR instructions record their innermost handler. CFG construction includes
-exceptional successors before liveness, dead-code elimination, and register
-allocation. Compaction remaps handler targets along with jumps. Encoding creates
-sorted, disjoint protected ranges; loading validates every range and Catch entry.
-The VM consults these tables by binary search only on an error. Ordinary dispatch
-does not push/pop handler records and registers no pending-exception root.
+IR instructions record their innermost handler, and CFG construction includes
+exceptional successors before liveness and optimization. Native lowering generates
+failure edges to the corresponding catch/finally blocks while retaining source
+positions. No C++ exception or nonlocal jump crosses the host boundary.
 
-A hidden GC allocation owns the thrown instance, compact function/PC positions,
-status, and diagnostic text. Metadata and text share one allocation and count
-toward heap pressure. Catch exposes the typed payload. Pending wrappers remain
-ordinary precise roots while finally executes; nested exceptions need no global
-exception stack, leaked host records, or longjmp. Replacing a pending completion
-simply makes the old wrapper collectible. True allocation exhaustion can prevent
-creating an error envelope; it is returned directly to the host as OutOfMemory.
+A hidden GC envelope roots the thrown instance and owns its status and message.
+Its separately owned diagnostic retains resolved source-version frames rather
+than borrowing code. Catch exposes the typed payload. Pending envelopes remain
+precise roots while finally executes; replacing a pending completion makes the old
+envelope collectible, including its diagnostic. Heap counters account for the
+envelope and inline message, not every host-side diagnostic allocation.
+Allocation exhaustion can prevent an error envelope from being created; the
+failure is then returned directly as OutOfMemory.

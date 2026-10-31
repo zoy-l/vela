@@ -3,7 +3,7 @@
 [**English**](debugger.md) | [简体中文](../zh-CN/debugger.md)
 
 
-`vela debug FILE` compiles or loads the same validated bytecode used by `run`,
+`vela debug FILE` JIT-compiles a native snapshot with instruction inspection,
 then pauses before the first instruction of zero-argument `main`. Script output
 uses stdout; debugger prompts and inspection use stderr. A completed program
 uses the ordinary script exit code. `quit` or EOF stops execution and exits `0`.
@@ -16,14 +16,14 @@ Commands:
 | `step`, `s` | Stop at the next source line, entering Vela calls |
 | `next`, `n` | Step over calls in the current frame |
 | `finish`, `f` | Run until the current frame returns |
-| `stepi`, `si` | Execute one bytecode instruction |
+| `stepi`, `si` | Advance one emitted IR instruction |
 | `break [FILE:]LINE`, `b` | Set a source breakpoint; omitted FILE uses the selected frame |
 | `break FUNCTION` | Break on entry to a named function or method |
 | `breakpoints` | List breakpoint IDs and resolved locations |
 | `delete ID`, `delete all` | Remove breakpoints |
 | `stack`, `bt` | Show frames, PCs and call-site source positions |
 | `frame DEPTH` | Select a frame for inspection; zero is the current frame |
-| `registers`, `regs` | Show the selected frame's physical registers |
+| `registers`, `regs` | Show available IR values in the selected frame |
 | `print rN` | Inspect one register without executing code |
 | `field rN INDEX` | Read an object's field by its layout index |
 | `element rN INDEX` | Read an array element |
@@ -36,42 +36,50 @@ is printed. Loop back edges can hit the same line again. Function breakpoints us
 the names displayed in the stack. Stepping always controls the currently executing
 frame, regardless of which caller is selected for inspection.
 
-This debugger executes optimized bytecode. Eliminated statements have no stopping
-location, and register inspection displays physical slots and temporaries rather
-than source-local variable names. It does not evaluate arbitrary expressions,
+The debugger uses Typed IR after shared optimization. Eliminated statements have no
+stopping location. Register inspection shows available IR values and temporaries,
+not machine registers or source-local variable names. Instruction inspection disables
+object allocation elimination so inspectable objects retain real fields. It does not evaluate arbitrary expressions,
 modify variables, pause inside native C++ functions or interrupt a running continue
 command asynchronously. Native calls are atomic from the instruction observer's
 perspective.
 
-## VM interface and lifetime
+## Native interface and lifetime
 
-Embedding applications implement `vm::Debugger::BeforeInstruction` and call
-`VirtualMachine::Debug(function, debugger)`. `DebugContext` and `DebugFrame` are
-read-only borrowed views valid only during that callback. Depth zero is the current
-frame; callers point at their call instruction, including while a nested call or
-lazy global initializer is active. Missing symbols and out-of-range frame/register
-requests are explicit optional results.
+Embedding hosts implement `runtime::NativeDebugger::AtSafepoint` and install the
+observer with `isolate.native_control().SetDebugger(&debugger)`.
+Compile with `NativeDebugging::Instructions` when per-instruction values are needed.
+Normal development safepoints and source-line debugging provide their own stopping
+granularity; installing an observer does not regenerate already compiled code.
 
-The VM's actual contiguous frames remain registered as precise GC roots while
-paused. The observer may inspect values and allocate or collect through the same
-isolate. A copied reference value retained beyond the callback needs the ordinary
-host rooting API. Do not recursively execute the same VM from its observer.
-The isolate, program and debugger must cover the call's lifetime.
+`NativeDebugContext` and `NativeDebugFrame` are borrowed views valid during the
+callback. Frames expose the source text, location, immutable function identity
+and tier of the executing version. `ReadRegister` returns an empty optional for
+unavailable values or invalid indices. The frame at depth zero is current;
+caller positions identify their calls, including lazy global initialization.
 
-`DebugAction::Stop` returns `DebuggerStopped` directly to the host. It is not a
-language exception and does not run pending `finally` blocks. In-progress lazy
-initializers return to `Uninitialized`; prior side effects are not rolled back.
-Frames and temporary exception roots detach when execution ends. Continuing
-through exceptions uses the normal typed catch/finally and unwinding machinery.
+Paused native frames retain precise GC roots. The observer may allocate or collect
+on the same Isolate; copied references that outlive the callback need
+`RootedValue`. The Isolate, execution and debugger must remain alive, and the host
+must detach the observer before destroying it. Keep it installed while pumping
+asynchronous main and background work so resumed functions remain debuggable.
 
-Ordinary execution instantiates an interpreter loop without the observer path;
-it performs no per-instruction debugger check. Debug execution uses a separate
-loop instantiation with the same instruction implementation.
+`NativeDebugContext::RequestStop()` requests `ExecutionStopped`. Stopping is not
+a script exception and does not run pending `finally` blocks or roll back prior
+side effects. Frame roots detach during unwinding. A stopped run is replaced
+through a fresh instance/Isolate or the development session's Reload lifecycle;
+the debugger does not resume a discarded native stack.
+
+Ordinary execution uses its configured safepoints without allocating an
+instruction-inspection value array. Native C++ calls cannot be single-stepped
+inside the host body. A host can post stop requests through the thread-safe native
+safepoint endpoint; the interactive console itself reads commands only while paused.
 
 ## Verification
 
-Compiler tests cover collection during every paused instruction, strings/arrays,
-caller locations, exceptions/finally, cancellation of lazy initialization, loaded
-images and invalid entries. Process tests exercise function and loop breakpoints,
-step/next/finish, frame/register/field/element inspection and invalid commands.
+Language and command tests cover function and loop breakpoints, step/next/finish,
+caller locations, value/field/array inspection, GC during observation, exception
+unwinding and stopping. Async command tests exercise a breakpoint after suspension
+and verify that quitting does not become a scheduler deadlock. Reloadable JIT tests
+cover source versions and deoptimization in both tiers.
 

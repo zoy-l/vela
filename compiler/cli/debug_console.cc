@@ -21,16 +21,12 @@
 #include <yyjson.h>
 
 #include "base/execution_limits.h"
+#include "base/execution_status.h"
 #include "base/json.h"
 #include "base/path.h"
 #include "base/process_exit.h"
 #include "compiler/cli/console_input.h"
 #include "runtime/heap/heap.h"
-#include "runtime/regexp/regexp.h"
-#include "runtime/strings/string.h"
-#include "runtime/value/object.h"
-#include "runtime/value/value.h"
-#include "runtime/value/value_io.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_control.h"
 #include "runtime/native/native_debugger.h"
@@ -38,6 +34,11 @@
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/process/process_entry.h"
+#include "runtime/regexp/regexp.h"
+#include "runtime/strings/string.h"
+#include "runtime/value/object.h"
+#include "runtime/value/value.h"
+#include "runtime/value/value_io.h"
 
 namespace vela::tooling {
 
@@ -618,10 +619,12 @@ int RunDebugConsole(runtime::NativeInstance& instance,
   if (result.Succeeded()) {
     code = process.Finish(result.value);
   } else if (result.status != ExecutionStatus::ExecutionStopped) {
-    runtime::WriteRuntimeDiagnostic(output, {.message = result.message,
-                                            .stack_trace = result.stack_trace,
-                                            .status = result.status,
-                                            .origin = result.origin});
+    runtime::WriteRuntimeDiagnostic(output, {
+                                                .message = result.message,
+                                                .stack_trace = result.stack_trace,
+                                                .status = result.status,
+                                                .origin = result.origin,
+                                            });
   }
   if (control.IsStopRequested()) {
     output << "debugger stopped\n";

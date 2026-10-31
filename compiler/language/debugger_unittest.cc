@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <span>
 #include <sstream>
@@ -12,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include "base/callable.h"
+#include "base/execution_status.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"

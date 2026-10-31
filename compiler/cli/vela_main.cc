@@ -26,6 +26,7 @@
 #include "compiler/frontend/typing/checker.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
+#include "compiler/native/native_roots.h"
 #include "compiler/project/project_config.h"
 #include "compiler/testing/command.h"
 #include "compiler/tooling/documentation/documentation.h"
@@ -37,7 +38,6 @@
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/process/process_entry.h"
-#include "runtime/process/process_exit.h"
 #include "runtime/value/value.h"
 
 namespace {

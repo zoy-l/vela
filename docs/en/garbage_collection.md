@@ -14,7 +14,7 @@ The collector design adopts an incremental mark-and-sweep model inspired by
 systems such as Luau's incremental GC:
 
 - **Precise Rooting**: The collector tracks all live references precisely.
-  Roots include VM registers in active call frames (`RootRange`), global/module
+  Roots include native shadow roots in active call frames (`RootRange`), global/module
   variable tables, string and constant pools, and host-managed root handles.
   There is no conservative stack scanning.
 - **Tri-color Marking**: Objects are conceptually white (unvisited/unreachable),
@@ -52,9 +52,9 @@ Collection work is budgeted and scheduled cooperatively:
 
 - **Budget Units**: `Step` budgets count discrete objects marked or swept rather
   than relying on CPU timestamps or elapsed wall-clock nanoseconds.
-- **Pacing**: As allocation pressure increases, the VM schedules incremental GC
-  steps proportional to allocated bytes. This ensures collection completes before
-  memory limits are exceeded without halting execution.
+- **Pacing**: As allocation pressure increases, the allocator schedules incremental GC
+  steps based on allocated bytes. Indivisible work and collection at memory pressure
+  still contribute to latency; the pacing budget is not a pause-time guarantee.
 - **Indivisible Operations**: Root rescan at the end of the mark phase and
   scanning large individual array buffers are indivisible within a single step.
   Large sequential structures must be partitioned if sub-millisecond step
@@ -69,7 +69,7 @@ Native optimization may remove unobservable local class storage while preserving
 constructor arguments, initialization, failures and side effects in their original
 order. `OutOfMemory` applies to actual storage requests; each source constructor
 need not allocate, and allocation failure need not occur at the same source point
-in the VM and native backends. Heap limits account for actual requests. Allocation
+across native optimization modes. Heap limits account for actual requests. Allocation
 and collection counts are implementation observations. See the
 [escape and materialization contract](../zh-CN/escape_analysis.md#13-分配失败与资源观测).
 
@@ -105,4 +105,4 @@ Correctness and memory invariants are enforced by validation suites:
 - Stress mode: running incremental steps on every allocation validates root
   completeness and write barrier coverage.
 - Host integration: verifying that host-held handles, exception unwinding, and
-  VM context tear-down correctly release or trace GC resources.
+  native execution tear-down correctly release or trace GC resources.

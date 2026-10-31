@@ -1,18 +1,14 @@
-# Persistent REPL
+# Persistent JIT REPL
 
 [**English**](repl.md) | [简体中文](../zh-CN/repl.md)
 
-
-Vela provides an interactive read-eval-print loop via `vela repl`. The interactive
-session maintains a live isolate and validated program state where declarations,
-global values, closures, class instances, and module imports persist across
-submissions without re-executing historical code for side effects.
+`vela repl` uses `DevelopmentSession` and `DevelopmentRepl` to compile and execute
+native submissions in one live Isolate. Declarations, globals, closures, objects
+and imports persist without replaying previously executed statements.
 
 ```text
 > let value = 40;
-> func add(value: int): int {
-...   return value + 2;
-... }
+> func add(value: int): int { return value + 2; }
 > add(value)
 42
 > value = value + 1;
@@ -20,83 +16,56 @@ submissions without re-executing historical code for side effects.
 41
 ```
 
-## Interactive Semantics
+## Interactive behavior
 
-- **Strict Types**: The REPL enforces the same static types, syntax, and duplicate
-  declaration errors as ahead-of-time compiled source files.
-- **Incremental Submission**: Each submission parses either declarations or
-  statements/expressions. Only the newly submitted statements and expressions
-  execute; previously accepted code is not replayed.
-- **Expression Echoing**: Top-level expressions without a trailing semicolon
-  evaluate and print their non-void result once. A trailing semicolon suppresses
-  printing, matching Julia's interactive convention. Void expressions never print.
-- **Multiline Input**: Unclosed braces, parentheses, and brackets prompt for
-  continuation lines (`... `). An unexpected EOF with unclosed constructs reports
-  a syntax diagnostic.
-- **Shell Commands**: `.help` lists shell commands, `.source` prints accepted
-  input history, `.reset` clears the isolate and session state, and `.quit` exits.
-  Commands are shell controls, not language keywords.
-- **Error Handling**: Compile errors discard the submission without modifying
-  the session or incrementing IDs. Runtime errors preserve admitted declarations
-  and previous side effects; in-progress lazy initializers reset to uninitialized
-  so they can be retried.
-- **Provenance**: Compiler diagnostics and stack frames identify submissions
-  using `<repl:N>` with line numbers relative to the original submission.
+Each submission contains declarations or statements/expressions and follows the
+ordinary static type and duplicate-declaration rules. Only new statements execute.
+An expression without a trailing semicolon prints its non-void result once;
+a semicolon suppresses printing. Unclosed delimiters prompt for continuation
+lines. EOF with unfinished syntax reports a source error.
 
-## Stable Identity and Runtime Continuity
+`.help` lists commands, `.source` prints accepted source, `.reset` rebuilds the
+script state, and `.quit` exits. These are console controls, not language keywords.
+Compiler errors reject the candidate. Once publication succeeds, a runtime error
+preserves admitted declarations and prior side effects; failed lazy initializers
+can be retried. Diagnostics remap interactive source to `<repl:N>`.
 
-Embedded sessions freeze their native binding registrations after the first accepted
-submission. `ReplSession::Reset()` returns a result: external host roots, Programs,
-Futures or active execution reject reset with resource diagnostics and preserve the
-current session. A successful reset closes the old scheduler and completion endpoints,
-releases old script storage, and creates a new Isolate with the same binding snapshot.
-The console reports a rejected `.reset` instead of destroying a borrowed Isolate.
+## Publication and identity
 
-Recompiling history and copying raw globals alone is insufficient: existing
-closure instances store function and selector IDs, and existing heap objects
-retain class layout pointers. The session preserves structural continuity across
-submissions:
+The frontend builds an immutable source candidate with stable declaration and
+specialization identities. Shared native generation compiles its functions, then
+the development session prepares runtime state and publishes the update at the
+existing safe boundary. A compilation or preparation failure leaves the running
+version intact.
 
-1. **Module Caching**: Successfully imported module snapshots, canonical path
-   resolutions, and module prefixes are pinned until `.reset`. Editing an imported
-   file takes effect in a fresh or reset session.
-2. **Persistent IDs**: The compiler assigns function, global slot, interface,
-   and selector IDs independently of AST traversal order. Function bodies are
-   written to their assigned slots rather than relying on sequential push order.
-3. **Lambda Identifiers**: Anonymous functions receive stable identities derived
-   from lexical owner and source coordinates after generic specialization.
-   Lambda targets use an explicit index map rather than assuming contiguous layout.
-4. **Layout Preservation**: Runtime class, array, and collection layouts are
-   reused by stable type identity within the session. Newly introduced interface
-   methods materialize selectors before layouts escape, ensuring earlier instances
-   can dispatch calls through interfaces implemented later.
-5. **Transactional Staging**: Compiler state is staged in a working copy and
-   committed only after successful bytecode verification. In the VM, new global
-   slots are allocated and rooted before previous storage is released. If
-   compilation or loading fails, newly allocated metadata is rolled back before
-   escaping to the heap.
+Existing closures and objects retain the code and metadata they need. Global
+slots and type identities remain stable across accepted submissions. Synthetic
+statement entries are retired from later source lowering; captured nested functions
+remain reachable. Repeated non-defining submissions do not grow the persistent
+function table without bound.
 
-## Synthetic Entries and Source Provenance
+Imported source is part of the accepted snapshot. The standalone console does not
+watch files; reimport after a reset uses a fresh interactive session. In an embedded
+development session, the source owner supplies file changes through explicit Load,
+Hot Reload or Reload operations. Submitting interactive code does not implicitly
+turn a disk edit into an accepted reload.
 
-- **Wrapper Functions**: Statement and expression submissions are lowered into
-  a synthetic wrapper function. Prepared AST loading binds this root alongside
-  imported modules. Generated identifiers use internal `$` prefixes to eliminate
-  name collisions with user code.
-- **Slot Reuse**: Old synthetic entry wrappers are retired from parent-body
-  lowering once executed, while their nested lambdas retain stable compiled IDs.
-  A single reserved entry function slot is reused across non-defining submissions,
-  preventing unbounded function slot growth.
-- **Echo Lowering**: Unsemicoloned expressions are lowered to evaluate once,
-  print the result using standard runtime formatting, and release temporary values.
+## Reset and ownership
 
-## Verification Contracts
+Construct `DevelopmentRepl(session, path)` after loading the host
+`DevelopmentSession`. The REPL borrows that session. Host bindings are fixed by
+the session's binding snapshot.
 
-The REPL implementation satisfies these verification requirements:
-- Values, instance mutations, and initialization side effects persist without
-  historical output replay.
-- Closures and mutable capture cells remain valid across newly added functions,
-  globals, and garbage collection cycles.
-- Existing heap instances retain class identity, type casts, interface conformance,
-  and collection memberships across submissions.
-- Compiler errors roll back staged metadata, whereas runtime errors preserve
-  prior session state and permit retrying failed operations.
+`DevelopmentRepl::Reset(SourceUpdate)` removes the interactive module and uses
+the session's Reload transaction. The source owner supplies the update; an
+embedded caller can include refreshed project files. External roots, native
+instances/entries/candidates, Futures or active host access may block replacement.
+A rejected reset reports those resources and preserves the current session.
+
+A successful reset closes old completion endpoints, retires old script state and
+starts a new Isolate with the binding snapshot. Hosts must release their own
+borrows before destroying a session. Pending work, retained callbacks and old
+native code follow the [hot reload lifetime contract](../zh-CN/hot_reload.md).
+
+Tests cover persistent globals and mutable captures, generic methods and
+interfaces, import snapshots, errors, reset blockers, GC and code retirement.

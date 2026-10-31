@@ -7,6 +7,7 @@
 #include <span>
 #include <utility>
 
+#include "base/execution_status.h"
 #include "base/mock_operation.h"
 #include "runtime/async/future.h"
 #include "runtime/exceptions/error.h"
@@ -17,6 +18,7 @@
 #include "runtime/testing/test_bridge.h"
 #include "runtime/testing/trace_value.h"
 #include "runtime/value/object.h"
+#include "runtime/value/value.h"
 
 namespace vela::runtime {
 namespace {
@@ -32,7 +34,7 @@ std::expected<Value, ExecutionStatus> ExpandTrace(Heap& heap, Value source, Valu
     return std::unexpected(ExecutionStatus::TypeError);
   }
   constexpr std::size_t kFrameWidth = 5;
-  if (!heap.ReserveArray(array, *Heap::ArrayLength(array) + frames->size() * kFrameWidth)) {
+  if (!heap.ReserveArray(array, *Heap::ArrayLength(array) + (frames->size() * kFrameWidth))) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   for (const auto& frame : *frames) {
@@ -43,9 +45,11 @@ std::expected<Value, ExecutionStatus> ExpandTrace(Heap& heap, Value source, Valu
       }
       std::ignore = heap.PushArray(array, Value::String(string));
     }
-    for (const auto number : {static_cast<std::int64_t>(frame.line),
-                              static_cast<std::int64_t>(frame.column),
-                              static_cast<std::int64_t>(frame.instruction)}) {
+    for (const auto number : {
+             static_cast<std::int64_t>(frame.line),
+             static_cast<std::int64_t>(frame.column),
+             static_cast<std::int64_t>(frame.instruction),
+         }) {
       std::ignore = heap.PushArray(array, Value::Integer(number));
     }
   }

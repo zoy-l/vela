@@ -173,8 +173,8 @@ Node is provided by VS Code at runtime and is not a compiler build dependency.
 it requires a VS Code installation (use `bin/code.cmd` on Windows), an isolated
 temporary profile, and no npm dependencies.
 
-The [terminal debugger](debugger.md) uses `vela debug FILE` and the VM's explicit
-instruction observer; it shares source mappings with runtime diagnostics.
+The [terminal debugger](debugger.md) uses `vela debug FILE` and native safepoint
+observation; it shares source mappings with runtime diagnostics.
 
 The [persistent REPL](repl.md) uses `vela repl`, retaining declarations and values
 without replaying previous submissions.

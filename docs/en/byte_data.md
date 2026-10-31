@@ -181,7 +181,7 @@ pointer API is added in this version.
 
 The status names above identify existing execution paths; Error.code continues
 to use the established status-to-string mapping. Errors remain catchable through
-the ordinary VM exception mechanism, subject to existing error-allocation
+the ordinary native exception mechanism, subject to existing error-allocation
 failure behavior. No invalid operation returns zero or silently ignores a write.
 
 ByteArray and ByteData support ordinary references, nullable annotations,
@@ -216,19 +216,19 @@ leaf; ByteData traces its owner. Storage contributes to ordinary heap accounting
 and is reclaimed once the owner becomes unreachable.
 
 The compiler lowers byte subscripts and multi-byte operations to dedicated
-checked builtins. Ordinary array indexing retains its own bytecode path. Reads, writes, failures and allocations remain observable through the
+checked builtins. Ordinary array indexing retains its own native lowering path. Reads, writes, failures and allocations remain observable through the
 existing IR effect and exception paths. Default arguments are filled before
 source-order evaluation. Null-safe access skips indices and arguments when the
 receiver is null. Builtin results are published only after success, including
-when a bytecode destination aliases an input.
+when the result replaces an aliased input.
 
-Version 7 bytecode images preserve the byte object-kind constraints in typed
-arrays, collections and runtime type tests, and validate builtin argument
-windows. Images contain metadata and executable constructors, never live bytes,
-owners or raw addresses. Build identities include the implementation; old image
-versions are rejected. REPL submissions retain checked types and layouts in
-ordinary Isolate ownership. Debugger output identifies ByteArray length and
-ByteData byteLength. The runtime has no dependency on compiler or tooling.
+Native layout metadata preserves byte object-kind constraints in typed arrays,
+collections and runtime type tests. Owners, views and backing bytes are created
+per instance during execution. JIT object-cache identity includes generated
+metadata and the runtime ABI; AOT distributes native artifacts with manifests.
+REPL submissions retain checked types and layouts through the development
+session. Debugger output identifies ByteArray length and ByteData byteLength.
+The runtime has no dependency on compiler or tooling.
 
 Regression tests cover zeroing, empty owners and views, copying and slice
 normalization, readonly properties, rejected resizing, every integer width and
@@ -246,16 +246,10 @@ copying, aligned/unaligned typed access, byte orders, view creation and GC
 pressure. See [measurement boundaries](../../benchmarks/README.md) and
 [retained aggregate evidence](../../benchmarks/results/rolling_summary.json).
 
-On the recorded Windows x64 Ryzen 9 7900X Release run, allocating and zeroing
-4 KiB took a median 303 ns through the VM; allocating a source and copying its
-4 KiB slice took 423 ns. Runtime-only view creation took 13.4–13.5 ns for owners
-from 64 bytes to 64 KiB. The typed-access cases performed 1,000 write/read pairs
-in 64.9–68.1 µs across the measured alignments and byte orders. All 19 cases
-passed correctness checks and retained zero additional heap bytes after GC.
-The five existing VM workloads had latest/baseline median ratios of
-0.992–1.012, with array allocation at 1.004. Exact variation, counters, source
-fingerprints and timing boundaries are retained in the linked aggregate summary;
-these machine-specific observations are not API latency guarantees.
+Run the native byte benchmarks for allocation, copies, typed access and views.
+Check results and post-GC retention separately from timing. Historical interpreter
+measurements do not establish JIT latency; current aggregate evidence and exact
+boundaries belong in the [rolling summary](../../benchmarks/results/rolling_summary.json).
 
 ## References
 

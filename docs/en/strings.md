@@ -87,7 +87,7 @@ UTF-8 value type. Use `toString()` to create an immutable snapshot.
 All listed parameters are required. Arguments may be positional or named and
 are evaluated in source order even when named arguments reorder parameters.
 Indices must satisfy `0 <= index < length`; slice bounds must satisfy
-`0 <= start <= end <= length`. Invalid ranges return the VM's recoverable
+`0 <= start <= end <= length`. Invalid ranges return the runtime's recoverable
 `IndexOutOfBounds` status. There is no negative indexing, clamping, or implicit
 numeric conversion. Strings' indexed values and length properties cannot be
 assigned. `String` is a reserved builtin declaration name. There is no
@@ -109,17 +109,14 @@ interpolation and joins reuse input counts where available; raw UTF-8 input is
 counted during creation. The count uses existing header padding and the
 position cache shares a metadata slot unused by strings, so neither increases
 the object header size. String bytes remain immutable, but the runtime may
-update integer position metadata on the Isolate's owning thread. VM, JIT and
-AOT consumers must preserve this distinction: the whole object is not read-only.
+update integer position metadata on the Isolate's owning thread. JIT and AOT consumers must preserve this distinction: the whole object is not read-only.
 The cache contains no managed references and needs no GC write barrier.
 
-The lexer emits decoded literal segments and expression tokens. The parser
-builds an interpolation node; the checker validates every segment/expression and
-records builtin bindings. Typed IR retains an interpolation operation and
-statically selected builtin IDs, carried directly into register bytecode. The
-program creation/loading boundary validates builtin IDs and register ranges
-once. Runtime calls
-return distinct type, bounds, and allocation errors.
+The lexer emits decoded literal segments and expression tokens. The parser builds
+an interpolation node; the checker validates its expressions and builtin bindings.
+Typed IR retains interpolation and selected builtin IDs, which native lowering
+connects to the shared runtime. Runtime calls return distinct type, bounds and
+allocation errors.
 
 Interpolation saves its parts in contiguous rooted frame slots. It discards
 empty literal segments, computes the total byte count, allocates the final
@@ -138,14 +135,13 @@ builder is swept or its Isolate is destroyed. Snapshots copy their bytes;
 neither snapshots nor future appends keep old buffers alive. Builders in class
 fields and typed/nested arrays use the existing reference barriers and tracing.
 
-Every allocation input backed by the GC heap must remain rooted until the
-allocation finishes. The VM keeps receivers, arguments, interpolation parts,
-array elements, and separators reachable from registered frames. Destinations
-are written after allocation, including when raw bytecode aliases an input.
-Hosts must root returned VM values before another allocation or collection.
+Every allocation input backed by the GC heap remains rooted until allocation
+finishes. Generated native code keeps receivers, arguments, interpolation parts,
+array elements and separators reachable through precise roots. Results are
+published after successful allocation, preserving aliases to the inputs.
+Hosts root returned managed values before another allocation or collection.
 Low-level heap string/builder interfaces accept valid UTF-8; untrusted native
-input must first use `InvalidUtf8Offset`. The source lexer is the current
-external text validation boundary.
+input first uses `InvalidUtf8Offset`. The source lexer validates external text.
 
 ## Case conversion and regular expression matching
 

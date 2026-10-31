@@ -49,15 +49,17 @@ RegExp 忽略大小写匹配不能先用这些方法转换整份输入：展开�
 
 ## 集成与验证
 
-前端、IR、VM 与工具共享受检查的 string builtin 签名。方法值、成员补全、悬停、文档、格式化、调试查询和持久化 REPL 沿用现有字符串方法路径。字节码镜像验证 builtin ID 和操作数，缓存身份包含生成器与固定输入清单。
+前端、IR、原生生成与工具共享受检查的 string builtin 签名。方法值、成员补全、悬停、文档、格式化、调试查询和持久化 REPL 沿用现有字符串方法路径。原生 lowering 携带受查 builtin 契约，缓存身份包含生成器与固定输入清单。
 
 `DEPS` 通过 [`tools/unicode_case.py`](../../tools/unicode_case.py) 同步经过内容校验的 UCD 输入。GN 为各输出目录离线生成 `gen/runtime/unicode_case_data.h`。[输入清单](../../third_party/unicode_data/manifest.json)记录输入身份和 Unicode 数据许可证。[`examples/string_case.vela`](../../examples/string_case.vela) 演示公开 API。
 
-测试覆盖 ASCII、空串/已转换文本、无大小写文字、sharp s 展开、带点 I 展开、sigma 的词尾/非词尾位置及 Case_Ignorable 上下文、补充平面映射、组合序列、NUL、不规范化、幂等性、接收者不变和错误实参诊断。Unicode 测试向量来自固定映射数据，不依赖宿主 locale。验证包含确定性重新生成、版本一致、完整映射覆盖、上下文属性范围、分配/GC、VM 寄存器别名、强类型容器、新 Isolate 镜像和 REPL 复用。
+测试覆盖 ASCII、空串/已转换文本、无大小写文字、sharp s 展开、带点 I 展开、sigma 的词尾/非词尾位置及 Case_Ignorable 上下文、补充平面映射、组合序列、NUL、不规范化、幂等性、接收者不变和错误实参诊断。Unicode 测试向量来自固定映射数据，不依赖宿主 locale。验证包含确定性重新生成、版本一致、完整映射覆盖、上下文属性范围、分配/GC、跨原生调用的值别名、强类型容器、新 Isolate 镜像和 REPL 复用。
 
 Release benchmark 在三种输入规模下测量无需修改的 ASCII、有修改的 ASCII、非 ASCII 映射、展开映射和上下文字符序列。[基准指南](../../benchmarks/README.md)定义测量边界及保留结果。
 
-已记录的 Windows x64 / Ryzen 9 7900X Release 测量中，16,384 字节无需修改的 ASCII 为 302 µs（首次调用 GC 字节为零），有修改的 ASCII 为 582 µs，简单 Unicode 映射为 311 µs。20,480 字节上下文用例为 612 µs；8,192 字节展开用例产生 24,576 字节，耗时 81 µs。从 256 到 4096 输入单元，耗时随规模近似增长。测量包含 VM 执行和 GC，计数不包含原生分配器开销；所有用例完整回收后额外保留堆字节为零。确切中位数、波动、规模和机器/工具链配置见[保留结果](../../benchmarks/results/rolling_summary.json)。
+Release 基准覆盖不同输入规模、不变/变化的 ASCII、Unicode 上下文及展开。
+输入/输出字节数、GC 分配、保留量和时间分别报告。
+历史解释执行结果不能用于原生层级对照，见[基准边界](../../benchmarks/README.md)。
 
 ## 参考
 

@@ -3,13 +3,15 @@
 #include <string>
 #include <string_view>
 
+#include "base/execution_status.h"
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/typing/checker_test_support.h"
+#include "compiler/test_support/program_test_support.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/native_execution.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 

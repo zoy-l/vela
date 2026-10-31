@@ -1,6 +1,5 @@
 #include <array>
 #include <atomic>
-#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
@@ -11,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/execution_status.h"
 #include "gtest/gtest.h"
 
 #include "compiler/frontend/modules/source_loader.h"

@@ -18,7 +18,7 @@ The initial local validation runs on Windows x64. Adding another host requires
 the matching CIPD package entries and the corresponding GN toolchain flags in
 the same change.
 
-The `vela` target provides source checking, VM execution, native AOT builds,
+The `vela` target provides source checking, JIT execution, native AOT builds,
 JIT development sessions, testing, and source tooling commands. See
 [language architecture](architecture.md) for language and runtime contracts,
 and [AOT contracts](aot.md) for native distribution and platform SDK acceptance.

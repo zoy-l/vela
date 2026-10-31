@@ -170,8 +170,8 @@ and O(n) auxiliary storage. It sorts a snapshot with original positions as
 tie-breakers, then writes back to the receiver. The comparator returns a
 negative/zero/positive int or double; NaN compares equal. Without a comparator,
 primitive elements are ordered by their string representations using UTF-16 code
-units. Object and nested-array elements require a comparator. Callbacks can throw and use normal VM
-unwinding through ordinary VM frames; no C++ reentrant VM callback is involved.
+units. Object and nested-array elements require a comparator. Callbacks execute as ordinary native script calls and can throw;
+errors preserve source frames and normal typed unwinding.
 Receiver and explicit arguments evaluate left to right once before traversal.
 Traversal captures the initial length and visits indices in order. Changes to later
 elements are visible to subsequent callbacks. Structural changes to the receiver
@@ -223,7 +223,7 @@ real VS Code extension-host tests also passed.
 `vela run` uses a successful `main` result as its process exit status: void/null
 means zero, and an int in `[0, 255]` supplies that exact code. Other value types
 and out-of-range ints are runtime command errors. The result is not printed
-automatically; scripts print intended output explicitly. Embedded VM execution
+automatically; scripts print intended output explicitly. Embedded native execution
 continues to return the typed result without process side effects.
 
 Command usage errors return 64, loading/compilation/entry errors return 65, and
