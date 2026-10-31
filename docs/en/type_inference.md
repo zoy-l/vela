@@ -11,6 +11,12 @@ explicit parameter and return annotations.
 
 ## Generic calls and shared constraints
 
+This document describes the current implementation. Planned declaration bounds,
+generic definition checking, and bound-driven inference are specified in the
+[generic system design (Chinese)](../zh-CN/generics.md). That design retains Vela
+value types, container invariance, and monomorphization rather than adopting the
+entire Dart type system.
+
 Generic functions, class construction, and transparent generic constructor aliases
 may omit all type arguments. Arguments, expected result types, and callback
 signatures contribute structural constraints before specialization. Explicit type

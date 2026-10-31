@@ -68,6 +68,10 @@ P0 behavior is specified in [Basic language contracts](language_basics.md).
 - [x] Add type aliases
 - [x] Add nullable types such as `T?`
 - [x] Add generics such as `Set<T>` and `Map<K, V>`
+- [ ] Complete Dart-style generic bounds, declaration checking, bound-driven inference,
+  and generic interfaces/methods while retaining Vela value types, container invariance,
+  and monomorphization; see the [generic system design (Chinese)](../zh-CN/generics.md)
+  for the full scope.
 - [x] Add explicit interface / implements contracts
 - [x] Add type tests and checked casts
 - [x] Add checked dynamic values, heterogeneous containers, and dynamic dispatch ([design](json.md))

@@ -12,6 +12,7 @@ English and Simplified Chinese editions are listed side by side below. Entries m
 | **Basic Language Contracts** / 基础契约 | [language_basics.md](en/language_basics.md) | [language_basics.md](zh-CN/language_basics.md) |
 | **Core Language Specification** / 核心语言规范 | [core_language.md](en/core_language.md) | [core_language.md](zh-CN/core_language.md) |
 | **Type Inference** / 类型推导 | [type_inference.md](en/type_inference.md) | [type_inference.md](zh-CN/type_inference.md) |
+| **Generic System (Design)** / 泛型系统（设计） | — | [generics.md](zh-CN/generics.md) |
 | **Modules & Namespaces** / 模块系统 | [modules.md](en/modules.md) | [modules.md](zh-CN/modules.md) |
 | **Strings** / 字符串系统 | [strings.md](en/strings.md) | [strings.md](zh-CN/strings.md) |
 | **Numeric Parsing** / 字符串数值解析 | [numeric_parse.md](en/numeric_parse.md) | [numeric_parse.md](zh-CN/numeric_parse.md) |
