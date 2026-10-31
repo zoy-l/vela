@@ -116,8 +116,8 @@ its own event loop.
 
 A script callable retains its native program state. Invocation must use the same
 Isolate and compatible code identity or reloadable dispatch domain. Keeping the
-callable rooted keeps the needed code reachable; no separate bytecode handle is
-required. Host operations are confined to the Isolate thread except APIs that
+callable rooted keeps the needed code reachable. Host operations are confined to
+the Isolate thread except APIs that
 explicitly expose cross-thread completion or safepoint endpoints.
 
 Before replacing an Isolate, release external borrows. `ReloadBlockers()` reports
