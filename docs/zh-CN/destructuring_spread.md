@@ -17,10 +17,10 @@ const data: Map<string, dynamic> = {key: 'Vela', 'age': 7};
 
 | 生产路径 | 实现契约 |
 | --- | --- |
-| [`Expression`](../../compiler/frontend/ast.h) 的 `MapLiteral` 和有序 `MapEntry` | 键和值保留独立表达式与源码位置，源范围来自同一词法快照 |
-| [`parser_collections.cc`](../../compiler/frontend/parser_collections.cc) 与 [`parser.cc`](../../compiler/frontend/parser.cc) | 表达式位置解析 Map，lambda 与语句块保持独立语法，未完成条目保留已知部分 |
+| [`Expression`](../../compiler/frontend/syntax/ast.h) 的 `MapLiteral` 和有序 `MapEntry` | 键和值保留独立表达式与源码位置，源范围来自同一词法快照 |
+| [`parser_collections.cc`](../../compiler/frontend/syntax/parser_collections.cc) 与 [`parser.cc`](../../compiler/frontend/syntax/parser.cc) | 表达式位置解析 Map，lambda 与语句块保持独立语法，未完成条目保留已知部分 |
 | Map 显式构造、键值类型和有序 `set` | 字面量复用同一类型、构造和插入契约 |
-| [`SemanticModel`](../../compiler/frontend/type_checker.h) 发布表达式类型、调用与转换事实 | 发布字面量的具体 Map 类型和各条目的受检查转换 |
+| [`SemanticModel`](../../compiler/frontend/typing/type_checker.h) 发布表达式类型、调用与转换事实 | 发布字面量的具体 Map 类型和各条目的受检查转换 |
 | IR 与后端的集合构造和 Map 写入路径 | 按源码顺序生成构造、键求值、值求值和插入，显式记录写入操作的 void 结果类型 |
 | 格式化、语义索引、文档工具和 REPL | 遍历键值表达式，保留 lambda 括号、文档键值结构及未完成输入，变量改名按模块返回编辑 |
 

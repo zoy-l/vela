@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include "compiler/frontend/ast.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {

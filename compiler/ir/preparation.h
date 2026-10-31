@@ -3,11 +3,11 @@
 #include <cstdint>
 
 #include "base/native_program_mode.h"
-#include "compiler/frontend/ast.h"
-#include "compiler/frontend/declaration_ids.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/parser.h"
-#include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/modules/declaration_ids.h"
+#include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/parser.h"
+#include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/lowerer.h"
 #include "compiler/ir/persistent_ids.h"
 

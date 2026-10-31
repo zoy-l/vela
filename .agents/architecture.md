@@ -17,9 +17,18 @@ for execution and validation.
 
 ## Module boundaries
 
-- `compiler/frontend` owns lexing, the syntax tree, and static type semantics. `compiler/ir` owns
-  lowering from AST to Typed IR. `compiler/compiler` owns bytecode encoding. `vm` owns execution.
-  `runtime` owns values, objects, the heap, and Isolate.
+- `compiler/frontend` owns lexing, the syntax tree, and static type semantics. Its `syntax`,
+  `modules`, `builtins`, `generics`, `flow`, and `typing` directories group those responsibilities.
+  `compiler/ir` owns lowering from AST to Typed IR and IR optimization. `compiler/bytecode` owns
+  bytecode encoding, register allocation, and compilation caching. `compiler/native` provides shared
+  native code generation for `compiler/aot` and `compiler/jit`. `vm` owns execution; `runtime` owns
+  values, objects, the heap, and Isolate.
+- `compiler/development` owns source-session and development-session lifetimes; `compiler/repl`
+  owns REPL source and execution state. `compiler/cli` owns executable entry points and consoles.
+  `compiler/tooling` owns editor and source tools, grouped into `lsp`, `semantic`, `format`,
+  `documentation`, and `mock`. `compiler/project` owns project configuration; `compiler/testing`
+  owns source-test discovery and execution. C++ test support lives in `compiler/test_support`,
+  language integration tests in `compiler/language`, and module tests beside their implementations.
 - Keep dependencies unidirectional: frontend does not depend on IR or VM; IR depends on frontend;
   compiler connects frontend, IR, runtime, and VM; runtime does not depend on compiler.
 - Pass facts from the same upstream producer directly or bind them during construction.

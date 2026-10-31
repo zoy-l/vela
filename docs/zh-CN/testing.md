@@ -64,11 +64,11 @@ T0–T5 包括本机 VM 上的单元测试与集成测试、配置、发现、�
 | 现有实现 | 本设计中的职责 |
 | --- | --- |
 | [`JsonDocument` 与 `JsonOutput`](../../base/json.h) | 读取通用项目配置，写入机器报告；不引入 YAML 解析依赖或第二套 JSON 解析器 |
-| [模块加载器](../../compiler/frontend/source_loader.h) | 承载测试文件与 SDK 模块的同一依赖图、源码位置及缓存身份 |
-| [标准环境](../../compiler/frontend/standard_environment.h) | 复用不可变 SDK 源码资源的构建和声明机制，区分内部 `builtin:` 来源与公开模块导入 |
+| [模块加载器](../../compiler/frontend/modules/source_loader.h) | 承载测试文件与 SDK 模块的同一依赖图、源码位置及缓存身份 |
+| [标准环境](../../compiler/frontend/builtins/standard_environment.h) | 复用不可变 SDK 源码资源的构建和声明机制，区分内部 `builtin:` 来源与公开模块导入 |
 | [函数调用签名](../../base/callable.h)与[运行时 callable 解析](../../runtime/callable.h) | 校验测试回调，保留闭包、绑定方法及所属程序的身份 |
 | [`Future` 与 `FutureScheduler`](../../runtime/future.h) | 等待异步回调、推进微任务与 timer、观察未处理错误，传播测试上下文 |
-| [CLI 入口](../../compiler/vela_main.cc)与[`ProcessEntry`](../../runtime/process_entry.h) | 集成新命令与异步驱动，避免两套彼此抢占的未处理错误处理器 |
+| [CLI 入口](../../compiler/cli/vela_main.cc)与[`ProcessEntry`](../../runtime/process_entry.h) | 集成新命令与异步驱动，避免两套彼此抢占的未处理错误处理器 |
 | [异常与源码栈](exceptions.md)、[源码工具链](source_tooling.md) | 定位注册失败、断言失败、异步失败和配置诊断 |
 
 现有 `python -m tools.vl test`、GoogleTest 和 Python 工具测试继续验证 Vela 自身。新的 `vela test` 服务于 Vela 源码项目；两者拥有不同的使用者与执行职责，不相互替换。
@@ -619,7 +619,7 @@ M0–M5 是这项扩展的完整规格。只完成同步核心、只提供手写
 
 异步和资源测试覆盖登记前／后已发生调用、多等待者、已验证历史、Future 未完成／失败／采用、响应跨 await、等待不消费调用、无关调用不延长超时、清理阶段验证、超时后的迟到调用、reset／close 期间等待，以及旧测试对象不能成为下一测试的 mock。GC 覆盖响应、实参、异常、捕获与挂起等待；suite 关闭后验证根、挂起帧、timer 和宿主端点回收。
 
-M0–M5 已通过交付验证。Debug/Release 的全部 C++ 测试 suite 和各 174 项工具链回归通过；最终补充检查覆盖 15 个强制 GC 下的 mock 场景、取消后的根回收，以及两种构建下各 15 项真实 CLI／LSP 测试。仓库级 `vl lint` 检查 598 个文件，零诊断。核心实现见 [SDK](../../compiler/sdk/mock.vela)、[生成器](../../compiler/tooling/mock_generator.cc)、[VM 桥接](../../vm/execution_mock.cc)和[结构化报告](../../compiler/testing/mock_report.cc)。
+M0–M5 已通过交付验证。Debug/Release 的全部 C++ 测试 suite 和各 174 项工具链回归通过；最终补充检查覆盖 15 个强制 GC 下的 mock 场景、取消后的根回收，以及两种构建下各 15 项真实 CLI／LSP 测试。仓库级 `vl lint` 检查 598 个文件，零诊断。核心实现见 [SDK](../../compiler/sdk/mock.vela)、[生成器](../../compiler/tooling/mock/mock_generator.cc)、[VM 桥接](../../vm/execution_mock.cc)和[结构化报告](../../compiler/testing/mock_report.cc)。
 
 Release 测量在 Windows x64、Ryzen 9 7900X 上固定到逻辑 CPU 2，使用每项至少 0.2 秒、7 次重复和随机交错。21 个场景覆盖 mock 生成、检查、编译、缓存、调用、规则规模、验证、捕获、等待、回收，以及不导入 mock 的普通方法与 Future。以下为完整工作负载的墙钟中位数：
 

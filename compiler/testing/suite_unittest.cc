@@ -11,8 +11,8 @@
 #include "compiler/testing/result.h"
 #include "gtest/gtest.h"
 
-#include "compiler/compiler.h"
-#include "compiler/frontend/source_loader.h"
+#include "compiler/bytecode/compiler.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"

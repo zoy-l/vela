@@ -12,9 +12,9 @@
 #include "base/member.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
-#include "compiler/frontend/ast.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/typing/type_checker.h"
 
 namespace vela::ir {
 

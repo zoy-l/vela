@@ -234,7 +234,7 @@ quantifiers and failed searches, not just successful literal matches.
 
 ## Implementation and validation
 
-The shared [signature registry](../../compiler/frontend/regexp_builtins.cc)
+The shared [signature registry](../../compiler/frontend/builtins/regexp_builtins.cc)
 provides static checking and tooling metadata. [Runtime operations](../../runtime/regexp.cc)
 own compilation, search and captures; [heap integration](../../runtime/heap_regexp.cc)
 owns native accounting, tracing and release. Runtime does not depend on the
@@ -247,7 +247,7 @@ lookbehind to 255. Unicode 17.0.0 tables are independent of string casing Unicod
 closure, licenses and configuration. Image version 7 retains typed layout
 operands; native compiled programs are recreated during execution.
 
-[Compiler/image tests](../../compiler/regexp_unittest.cc) cover both types,
+[Compiler/image tests](../../compiler/language/regexp_unittest.cc) cover both types,
 options, Unicode coordinates, captures, native PCRE2 constructs, method values,
 containers, async payloads and errors. [Runtime tests](../../runtime/regexp_unittest.cc)
 check all three resource limits, execution failures, partial-result cleanup,

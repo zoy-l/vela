@@ -13,8 +13,8 @@
 
 #include "base/layout_description.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/source_loader.h"
-#include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 #include "compiler/ir/preparation_test_support.h"

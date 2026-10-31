@@ -19,7 +19,7 @@
 #include <llvm/IR/Type.h>
 
 #include "base/execution_status.h"
-#include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "runtime/native_abi.h"
 #include "runtime/native_function.h"

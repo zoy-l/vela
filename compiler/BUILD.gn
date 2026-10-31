@@ -38,83 +38,83 @@ source_set("frontend") {
   include_dirs = [ root_gen_dir ]
   deps = [ ":sdk_sources" ]
   sources = [
-    "frontend/ast.cc",
-    "frontend/ast.h",
-    "frontend/ast_clone.cc",
-    "frontend/ast_clone.h",
-    "frontend/builtins.cc",
-    "frontend/builtins.h",
-    "frontend/byte_builtins.cc",
-    "frontend/byte_builtins.h",
-    "frontend/capture_analysis.cc",
-    "frontend/capture_analysis.h",
-    "frontend/checker.cc",
-    "frontend/checker.h",
-    "frontend/control_flow.h",
-    "frontend/declaration_ids.cc",
-    "frontend/declaration_ids.h",
+    "frontend/builtins/builtins.cc",
+    "frontend/builtins/builtins.h",
+    "frontend/builtins/byte_builtins.cc",
+    "frontend/builtins/byte_builtins.h",
+    "frontend/builtins/regexp_builtins.cc",
+    "frontend/builtins/regexp_builtins.h",
+    "frontend/builtins/sdk_modules.cc",
+    "frontend/builtins/sdk_modules.h",
+    "frontend/builtins/standard_environment.cc",
+    "frontend/builtins/standard_environment.h",
     "frontend/diagnostic.cc",
     "frontend/diagnostic.h",
-    "frontend/initialization.cc",
-    "frontend/initialization.h",
-    "frontend/lambda_visitor.cc",
-    "frontend/lambda_visitor.h",
-    "frontend/lexer.cc",
-    "frontend/lexer.h",
-    "frontend/module_binding.cc",
-    "frontend/module_binding.h",
-    "frontend/parser.cc",
-    "frontend/parser.h",
-    "frontend/parser_collections.cc",
-    "frontend/parser_declarations.cc",
-    "frontend/parser_exception.cc",
-    "frontend/parser_types.cc",
-    "frontend/regexp_builtins.cc",
-    "frontend/regexp_builtins.h",
-    "frontend/sdk_modules.cc",
-    "frontend/sdk_modules.h",
-    "frontend/source_file.h",
-    "frontend/source_loader.cc",
-    "frontend/source_loader.h",
-    "frontend/specialization.cc",
-    "frontend/specialization.h",
-    "frontend/specialization_contracts.cc",
-    "frontend/specialization_methods.cc",
-    "frontend/specialization_requests.cc",
-    "frontend/standard_environment.cc",
-    "frontend/standard_environment.h",
-    "frontend/symbol_ids.h",
-    "frontend/token.h",
-    "frontend/type_checker.cc",
-    "frontend/type_checker.h",
-    "frontend/type_checker_array.cc",
-    "frontend/type_checker_async.cc",
-    "frontend/type_checker_builtin_values.cc",
-    "frontend/type_checker_cast.cc",
-    "frontend/type_checker_classes.cc",
-    "frontend/type_checker_collections.cc",
-    "frontend/type_checker_constant.cc",
-    "frontend/type_checker_exception.cc",
-    "frontend/type_checker_flow.cc",
-    "frontend/type_checker_functions.cc",
-    "frontend/type_checker_generics.cc",
-    "frontend/type_checker_globals.cc",
-    "frontend/type_checker_inference.cc",
-    "frontend/type_checker_inference_types.cc",
-    "frontend/type_checker_interfaces.cc",
-    "frontend/type_checker_match.cc",
-    "frontend/type_checker_methods.cc",
-    "frontend/type_checker_null.cc",
-    "frontend/type_checker_refinements.cc",
-    "frontend/type_checker_switch.cc",
-    "frontend/type_checker_types.cc",
-    "frontend/type_inference.cc",
-    "frontend/type_inference.h",
-    "frontend/type_inference_constraints.cc",
-    "frontend/type_limits.h",
-    "frontend/type_name.cc",
-    "frontend/type_name.h",
-    "frontend/type_names.h",
+    "frontend/flow/capture_analysis.cc",
+    "frontend/flow/capture_analysis.h",
+    "frontend/flow/control_flow.h",
+    "frontend/flow/initialization.cc",
+    "frontend/flow/initialization.h",
+    "frontend/flow/lambda_visitor.cc",
+    "frontend/flow/lambda_visitor.h",
+    "frontend/generics/specialization.cc",
+    "frontend/generics/specialization.h",
+    "frontend/generics/specialization_contracts.cc",
+    "frontend/generics/specialization_methods.cc",
+    "frontend/generics/specialization_requests.cc",
+    "frontend/modules/declaration_ids.cc",
+    "frontend/modules/declaration_ids.h",
+    "frontend/modules/module_binding.cc",
+    "frontend/modules/module_binding.h",
+    "frontend/modules/source_file.h",
+    "frontend/modules/source_loader.cc",
+    "frontend/modules/source_loader.h",
+    "frontend/modules/symbol_ids.h",
+    "frontend/syntax/ast.cc",
+    "frontend/syntax/ast.h",
+    "frontend/syntax/ast_clone.cc",
+    "frontend/syntax/ast_clone.h",
+    "frontend/syntax/lexer.cc",
+    "frontend/syntax/lexer.h",
+    "frontend/syntax/parser.cc",
+    "frontend/syntax/parser.h",
+    "frontend/syntax/parser_collections.cc",
+    "frontend/syntax/parser_declarations.cc",
+    "frontend/syntax/parser_exception.cc",
+    "frontend/syntax/parser_types.cc",
+    "frontend/syntax/token.h",
+    "frontend/typing/checker.cc",
+    "frontend/typing/checker.h",
+    "frontend/typing/type_checker.cc",
+    "frontend/typing/type_checker.h",
+    "frontend/typing/type_checker_array.cc",
+    "frontend/typing/type_checker_async.cc",
+    "frontend/typing/type_checker_builtin_values.cc",
+    "frontend/typing/type_checker_cast.cc",
+    "frontend/typing/type_checker_classes.cc",
+    "frontend/typing/type_checker_collections.cc",
+    "frontend/typing/type_checker_constant.cc",
+    "frontend/typing/type_checker_exception.cc",
+    "frontend/typing/type_checker_flow.cc",
+    "frontend/typing/type_checker_functions.cc",
+    "frontend/typing/type_checker_generics.cc",
+    "frontend/typing/type_checker_globals.cc",
+    "frontend/typing/type_checker_inference.cc",
+    "frontend/typing/type_checker_inference_types.cc",
+    "frontend/typing/type_checker_interfaces.cc",
+    "frontend/typing/type_checker_match.cc",
+    "frontend/typing/type_checker_methods.cc",
+    "frontend/typing/type_checker_null.cc",
+    "frontend/typing/type_checker_refinements.cc",
+    "frontend/typing/type_checker_switch.cc",
+    "frontend/typing/type_checker_types.cc",
+    "frontend/typing/type_inference.cc",
+    "frontend/typing/type_inference.h",
+    "frontend/typing/type_inference_constraints.cc",
+    "frontend/typing/type_limits.h",
+    "frontend/typing/type_name.cc",
+    "frontend/typing/type_name.h",
+    "frontend/typing/type_names.h",
   ]
   public_deps = [
     "//base",
@@ -179,8 +179,8 @@ executable("vela_ir_tests") {
 
 source_set("project_configuration") {
   sources = [
-    "project_config.cc",
-    "project_config.h",
+    "project/project_config.cc",
+    "project/project_config.h",
     "testing/pattern.cc",
     "testing/pattern.h",
     "testing/settings.cc",
@@ -196,38 +196,38 @@ source_set("project_configuration") {
 
 source_set("tooling") {
   sources = [
-    "tooling/builtin_documentation.cc",
-    "tooling/builtin_documentation.h",
-    "tooling/documentation.cc",
-    "tooling/documentation.h",
-    "tooling/file_uri.cc",
-    "tooling/file_uri.h",
-    "tooling/formatter.cc",
-    "tooling/formatter.h",
-    "tooling/json_rpc.cc",
-    "tooling/json_rpc.h",
-    "tooling/language_server.cc",
-    "tooling/language_server.h",
-    "tooling/language_server_diagnostics.cc",
-    "tooling/language_server_documents.cc",
-    "tooling/language_server_internal.h",
-    "tooling/language_server_queries.cc",
-    "tooling/mock_command.cc",
-    "tooling/mock_generator.cc",
-    "tooling/mock_generator.h",
-    "tooling/semantic_arguments.cc",
-    "tooling/semantic_completion.cc",
-    "tooling/semantic_declarations.cc",
-    "tooling/semantic_generics.cc",
-    "tooling/semantic_hover.cc",
-    "tooling/semantic_index.cc",
-    "tooling/semantic_index.h",
-    "tooling/semantic_rename.cc",
-    "tooling/semantic_syntax.h",
-    "tooling/semantic_tokens.cc",
+    "cli/standard_streams.h",
+    "tooling/documentation/builtin_documentation.cc",
+    "tooling/documentation/builtin_documentation.h",
+    "tooling/documentation/documentation.cc",
+    "tooling/documentation/documentation.h",
+    "tooling/format/formatter.cc",
+    "tooling/format/formatter.h",
+    "tooling/lsp/file_uri.cc",
+    "tooling/lsp/file_uri.h",
+    "tooling/lsp/json_rpc.cc",
+    "tooling/lsp/json_rpc.h",
+    "tooling/lsp/language_server.cc",
+    "tooling/lsp/language_server.h",
+    "tooling/lsp/language_server_diagnostics.cc",
+    "tooling/lsp/language_server_documents.cc",
+    "tooling/lsp/language_server_internal.h",
+    "tooling/lsp/language_server_queries.cc",
+    "tooling/mock/mock_command.cc",
+    "tooling/mock/mock_generator.cc",
+    "tooling/mock/mock_generator.h",
+    "tooling/semantic/semantic_arguments.cc",
+    "tooling/semantic/semantic_completion.cc",
+    "tooling/semantic/semantic_declarations.cc",
+    "tooling/semantic/semantic_generics.cc",
+    "tooling/semantic/semantic_hover.cc",
+    "tooling/semantic/semantic_index.cc",
+    "tooling/semantic/semantic_index.h",
+    "tooling/semantic/semantic_rename.cc",
+    "tooling/semantic/semantic_syntax.h",
+    "tooling/semantic/semantic_tokens.cc",
     "tooling/source_text.cc",
     "tooling/source_text.h",
-    "tooling/standard_streams.h",
   ]
   public_deps = [
     ":frontend",
@@ -237,25 +237,25 @@ source_set("tooling") {
   ]
   deps = [ ":build_info" ]
   if (target_os == "win") {
-    sources += [ "tooling/standard_streams_win.cc" ]
+    sources += [ "cli/standard_streams_win.cc" ]
   } else {
-    sources += [ "tooling/standard_streams_posix.cc" ]
+    sources += [ "cli/standard_streams_posix.cc" ]
   }
 }
 
 source_set("console_input") {
   sources = [
-    "tooling/console_input.cc",
-    "tooling/console_input.h",
+    "cli/console_input.cc",
+    "cli/console_input.h",
   ]
 }
 
 source_set("interactive") {
   sources = [
-    "tooling/debug_console.cc",
-    "tooling/debug_console.h",
-    "tooling/repl_console.cc",
-    "tooling/repl_console.h",
+    "cli/debug_console.cc",
+    "cli/debug_console.h",
+    "cli/repl_console.cc",
+    "cli/repl_console.h",
   ]
   public_deps = [ ":compiler" ]
   deps = [
@@ -290,8 +290,8 @@ source_set("testing") {
 
 source_set("source_session") {
   sources = [
-    "source_session.cc",
-    "source_session.h",
+    "development/source_session.cc",
+    "development/source_session.h",
   ]
   public_deps = [
     ":frontend",
@@ -301,8 +301,8 @@ source_set("source_session") {
 
 source_set("repl_source") {
   sources = [
-    "repl_source.cc",
-    "repl_source.h",
+    "repl/repl_source.cc",
+    "repl/repl_source.h",
   ]
   public_deps = [ ":frontend" ]
 }
@@ -310,19 +310,19 @@ source_set("repl_source") {
 source_set("compiler") {
   include_dirs = [ "$root_gen_dir" ]
   sources = [
-    "compilation_cache.cc",
-    "compilation_cache.h",
-    "compilation_state.h",
-    "compiler.cc",
-    "compiler.h",
-    "native_linker.cc",
-    "native_linker.h",
-    "register_allocator.cc",
-    "register_allocator.h",
-    "repl_identity.cc",
-    "repl_identity.h",
-    "repl_session.cc",
-    "repl_session.h",
+    "bytecode/compilation_cache.cc",
+    "bytecode/compilation_cache.h",
+    "bytecode/compilation_state.h",
+    "bytecode/compiler.cc",
+    "bytecode/compiler.h",
+    "bytecode/native_linker.cc",
+    "bytecode/native_linker.h",
+    "bytecode/register_allocator.cc",
+    "bytecode/register_allocator.h",
+    "repl/repl_identity.cc",
+    "repl/repl_identity.h",
+    "repl/repl_session.cc",
+    "repl/repl_session.h",
   ]
   public_deps = [
     ":frontend",
@@ -409,12 +409,12 @@ source_set("jit") {
 
 source_set("development") {
   sources = [
-    "development_files.cc",
-    "development_files.h",
-    "development_repl.cc",
-    "development_repl.h",
-    "development_session.cc",
-    "development_session.h",
+    "development/development_files.cc",
+    "development/development_files.h",
+    "development/development_repl.cc",
+    "development/development_repl.h",
+    "development/development_session.cc",
+    "development/development_session.h",
   ]
   public_deps = [
     ":jit",
@@ -425,10 +425,10 @@ source_set("development") {
 
 source_set("development_tools") {
   sources = [
-    "tooling/development_console.cc",
-    "tooling/development_console.h",
-    "tooling/development_debugger.cc",
-    "tooling/development_debugger.h",
+    "cli/development_console.cc",
+    "cli/development_console.h",
+    "cli/development_debugger.cc",
+    "cli/development_debugger.h",
   ]
   public_deps = [ ":development" ]
   deps = [
@@ -440,8 +440,8 @@ source_set("development_tools") {
 source_set("checkpoint_publication") {
   testonly = true
   sources = [
-    "checkpoint_publication.cc",
-    "checkpoint_publication.h",
+    "test_support/checkpoint_publication.cc",
+    "test_support/checkpoint_publication.h",
   ]
   public_deps = [ ":development" ]
 }
@@ -449,9 +449,9 @@ source_set("checkpoint_publication") {
 executable("vela_jit_tests") {
   testonly = true
   sources = [
-    "development_files_unittest.cc",
-    "development_repl_unittest.cc",
-    "development_session_unittest.cc",
+    "development/development_files_unittest.cc",
+    "development/development_repl_unittest.cc",
+    "development/development_session_unittest.cc",
     "jit/callable_unittest.cc",
     "jit/code_cache_unittest.cc",
     "jit/compiler_unittest.cc",
@@ -530,7 +530,7 @@ executable("vela_aot_tests") {
 }
 
 executable("vela") {
-  sources = [ "vela_main.cc" ]
+  sources = [ "cli/vela_main.cc" ]
   deps = [
     ":aot_driver",
     ":build_info",
@@ -554,24 +554,24 @@ executable("vela_environment_tests") {
 executable("vela_frontend_tests") {
   testonly = true
   sources = [
-    "frontend/checker_test_support.h",
-    "frontend/control_flow_unittest.cc",
-    "frontend/declarations_unittest.cc",
     "frontend/diagnostic_unittest.cc",
-    "frontend/generic_contract_unittest.cc",
-    "frontend/generic_inference_unittest.cc",
-    "frontend/map_literal_unittest.cc",
-    "frontend/parser_unittest.cc",
-    "frontend/refinement_unittest.cc",
-    "frontend_unittest.cc",
-    "project_config_unittest.cc",
+    "frontend/flow/control_flow_unittest.cc",
+    "frontend/frontend_unittest.cc",
+    "frontend/syntax/parser_unittest.cc",
+    "frontend/typing/checker_test_support.h",
+    "frontend/typing/declarations_unittest.cc",
+    "frontend/typing/generic_contract_unittest.cc",
+    "frontend/typing/generic_inference_unittest.cc",
+    "frontend/typing/map_literal_unittest.cc",
+    "frontend/typing/refinement_unittest.cc",
+    "project/project_config_unittest.cc",
     "testing/settings_unittest.cc",
-    "tooling/documentation_unittest.cc",
-    "tooling/file_uri_unittest.cc",
-    "tooling/formatter_unittest.cc",
-    "tooling/json_rpc_unittest.cc",
-    "tooling/map_literal_unittest.cc",
-    "tooling/semantic_generics_unittest.cc",
+    "tooling/documentation/documentation_unittest.cc",
+    "tooling/format/formatter_unittest.cc",
+    "tooling/lsp/file_uri_unittest.cc",
+    "tooling/lsp/json_rpc_unittest.cc",
+    "tooling/semantic/map_literal_unittest.cc",
+    "tooling/semantic/semantic_generics_unittest.cc",
     "tooling/source_text_unittest.cc",
   ]
   deps = [
@@ -585,68 +585,68 @@ executable("vela_frontend_tests") {
 source_set("program_test_support") {
   testonly = true
   sources = [
-    "program_test_support.cc",
-    "program_test_support.h",
+    "test_support/program_test_support.cc",
+    "test_support/program_test_support.h",
   ]
   public_deps = [ ":compiler" ]
 }
 
 source_set("test_sources") {
   testonly = true
-  sources = [ "test_sources.h" ]
+  sources = [ "test_support/test_sources.h" ]
 }
 
 executable("vela_compiler_tests") {
   testonly = true
   sources = [
-    "async_contract_unittest.cc",
-    "builtin_function_value_unittest.cc",
-    "byte_data_unittest.cc",
-    "bytecode_image_unittest.cc",
-    "cast_unittest.cc",
-    "class_unittest.cc",
-    "collection_unittest.cc",
-    "compilation_cache_unittest.cc",
-    "compiler_unittest.cc",
-    "constant_pool_unittest.cc",
-    "control_flow_unittest.cc",
-    "debugger_unittest.cc",
-    "double_unittest.cc",
-    "dynamic_array_unittest.cc",
-    "dynamic_diagnostic_unittest.cc",
-    "encoding_unittest.cc",
-    "exception_unittest.cc",
-    "frontend/checker_test_support.h",
-    "function_value_unittest.cc",
-    "generic_method_unittest.cc",
-    "generic_unittest.cc",
-    "global_unittest.cc",
-    "import_unittest.cc",
-    "interface_unittest.cc",
+    "bytecode/bytecode_image_unittest.cc",
+    "bytecode/compilation_cache_unittest.cc",
+    "bytecode/compiler_unittest.cc",
+    "bytecode/constant_pool_unittest.cc",
+    "bytecode/encoding_unittest.cc",
+    "bytecode/layout_instantiation_unittest.cc",
+    "bytecode/optimization_unittest.cc",
+    "bytecode/register_allocator_unittest.cc",
+    "development/source_session_unittest.cc",
+    "frontend/typing/checker_test_support.h",
     "ir/preparation_test_support.h",
-    "json_unittest.cc",
-    "lambda_inference_unittest.cc",
-    "language_basics_unittest.cc",
-    "layout_instantiation_unittest.cc",
-    "match_unittest.cc",
-    "module_unittest.cc",
-    "native_binding_unittest.cc",
-    "numeric_conversion_unittest.cc",
-    "optimization_unittest.cc",
-    "recursion_unittest.cc",
-    "regexp_unittest.cc",
-    "register_allocator_unittest.cc",
-    "repl_session_unittest.cc",
-    "sdk_modules_unittest.cc",
-    "source_session_unittest.cc",
-    "stack_trace_unittest.cc",
-    "standard_library_unittest.cc",
-    "string_gc_unittest.cc",
-    "string_unittest.cc",
+    "language/async_contract_unittest.cc",
+    "language/builtin_function_value_unittest.cc",
+    "language/byte_data_unittest.cc",
+    "language/cast_unittest.cc",
+    "language/class_unittest.cc",
+    "language/collection_unittest.cc",
+    "language/control_flow_unittest.cc",
+    "language/debugger_unittest.cc",
+    "language/double_unittest.cc",
+    "language/dynamic_array_unittest.cc",
+    "language/dynamic_diagnostic_unittest.cc",
+    "language/exception_unittest.cc",
+    "language/function_value_unittest.cc",
+    "language/generic_method_unittest.cc",
+    "language/generic_unittest.cc",
+    "language/global_unittest.cc",
+    "language/import_unittest.cc",
+    "language/interface_unittest.cc",
+    "language/json_unittest.cc",
+    "language/lambda_inference_unittest.cc",
+    "language/language_basics_unittest.cc",
+    "language/match_unittest.cc",
+    "language/module_unittest.cc",
+    "language/native_binding_unittest.cc",
+    "language/numeric_conversion_unittest.cc",
+    "language/recursion_unittest.cc",
+    "language/regexp_unittest.cc",
+    "language/sdk_modules_unittest.cc",
+    "language/stack_trace_unittest.cc",
+    "language/standard_library_unittest.cc",
+    "language/string_gc_unittest.cc",
+    "language/string_unittest.cc",
+    "language/unicode_unittest.cc",
+    "repl/repl_session_unittest.cc",
     "testing/matchers_unittest.cc",
     "testing/mock_unittest.cc",
     "testing/suite_unittest.cc",
-    "unicode_unittest.cc",
   ]
   deps = [
     ":compiler",

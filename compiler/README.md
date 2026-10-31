@@ -1,116 +1,60 @@
-# Vela compiler workspace
+# Vela compiler
 
-This directory contains the executable, typed IR lowering, and build identity
-for the bootstrap compiler. The language and runtime contracts are recorded in
-[`docs/architecture.md`](../docs/en/architecture.md); the
-bootstrap executable remains intentionally smaller than that target.
-`check` and `run` share UTF-8 path handling, import loading, and parsing; every
-dependency is parsed once, then module scopes and export visibility are bound
-before specialization and checking. Function import cycles can link; lazy
-initialization cycles report a runtime failure. See [module contracts](../docs/en/modules.md).
+The compiler loads and checks Vela source, lowers it to Typed IR, and emits bytecode or native code.
+Source tools, interactive sessions, and the command-line executable use the same frontend contracts.
+See [Architecture and Contracts](../.agents/architecture.md) for dependency and ownership rules and
+[the language architecture](../docs/en/architecture.md) for execution contracts.
 
-The frontend, compiler, and VM stay under the same GN/Ninja target boundary so
-later optimizer and native backend work does not change the developer entry
-points:
+## Directory responsibilities
 
-- `//compiler:vela` is the user-facing executable.
-- `//compiler:build_info` is the small shared build identity target.
-- `//compiler:frontend` contains the lexer, parser, and static checker.
-- `//runtime:runtime` contains the isolate-owned object heap and collector
-  contract used by the VM.
-- `//vm:vm` contains the fixed-width register VM bootstrap and frame root
-  integration.
-- `//compiler:vela_environment_tests` validates that the target links and its
-  build identity is available to consumers.
-- `//compiler:vela_frontend_tests` covers the first source-level contracts.
-- `//runtime:runtime_tests` covers object reachability, cycles, write barriers,
-  and size-class reuse.
-- `//vm:vm_tests` covers typed arithmetic, bytecode validation, and register
-  roots surviving collection.
+| Directory | Responsibility |
+| --- | --- |
+| `frontend/syntax` | Tokens, lexing, parsing, AST, and AST cloning. |
+| `frontend/modules` | Source loading, import binding, and declaration and symbol identities. |
+| `frontend/builtins` | Builtin declarations, SDK modules, and the standard environment. |
+| `frontend/generics` | Generic specialization and concrete declaration production. |
+| `frontend/flow` | Capture analysis, initialization, and control-flow contracts. |
+| `frontend/typing` | Type checking, structural inference, and checked semantic facts. |
+| `ir` | Typed IR, lowering, analysis, optimization, and execution preparation. |
+| `bytecode` | Bytecode compilation, register allocation, compilation cache, and native linking. |
+| `native` | Shared native code generation and escape analysis. |
+| `aot` | Ahead-of-time compilation, target support, and artifact publication. |
+| `jit` | JIT compilation, executable code resources, and code caches. |
+| `development` | Source sessions, development sessions, file tracking, and development REPL state. |
+| `repl` | REPL source composition, identities, and bytecode execution sessions. |
+| `project` | Project configuration loading and validation. |
+| `cli` | Executable entry point, console input, standard streams, and interactive consoles. |
+| `tooling/lsp` | Language server, JSON-RPC, and file URIs. |
+| `tooling/semantic` | Shared semantic index, completion, hover, rename, and semantic tokens. |
+| `tooling/format` | Source formatting. |
+| `tooling/documentation` | Source and builtin documentation. |
+| `tooling/mock` | Mock generation and its command. |
+| `testing` | Source-test discovery, settings, execution, and reporting. |
+| `sdk` | Embedded Vela SDK source. |
+| `test_support` | Shared C++ test sources, compilation helpers, and checkpoint publication. |
+| `language` | Language integration tests through compilation and execution. |
 
-The first frontend slice is now available through:
+Shared frontend diagnostics remain in `frontend`; shared source text handling remains in `tooling`.
+Module tests live beside the corresponding implementation. Build identity and its environment tests
+remain at the compiler root.
 
-```powershell
-.\out\debug\vela.exe check path\to\source.vela
-```
+## Build and validation
 
-The compiler executes integer, double, boolean, string, typed-array, and fixed-layout
-class programs:
+[`BUILD.gn`](BUILD.gn) defines the compiler targets centrally. Directory boundaries organize source
+ownership; GN targets define dependencies and linkage. The executable remains `//compiler:vela`.
+Frontend, IR, bytecode, native, AOT, JIT, development, and tooling consumers use the targets in this
+file. Generated SDK sources and the cache build identity remain under the generated `compiler/`
+directory.
 
-```powershell
-.\out\debug\vela.exe run path\to\source.vela
-```
-
-`run` selects a zero-argument `main` function, lowers the checked AST through
-Typed IR, optimizes it, allocates physical registers, emits validated register
-bytecode, and executes it in the VM. Function calls,
-control-flow branches, loops, strings, and typed arrays are supported.
-String APIs, interpolation, conversions, and builder contracts are documented in
-[string contracts](../docs/en/strings.md).
-Switches with shared empty labels and explicit non-empty branch exits, nullable types,
-lexical scope, and source locations are
-specified in [basic language contracts](../docs/en/language_basics.md).
-
-The optimizer propagates integer, boolean, and null constants within basic
-blocks, folds known branches, and removes unreachable blocks and dead pure
-definitions using CFG liveness. It preserves potentially failing operations.
-The bytecode backend uses linear-scan allocation over conservative live
-intervals, preserving contiguous argument windows and parameter positions.
-Registers are reused after their last use; pressure exceeding 256 physical
-slots produces a source diagnostic. IR virtual register IDs are 32-bit.
-Encoding checks register operands, signed 16-bit immediates, and relative jump
-offsets before narrowing, and extends pool and field indexes to uint32 with an
-index prefix. Jump targets, handlers, and source mappings use final word offsets.
-`vm::Program::Create` validates the owned output once;
-the compiler no longer exposes mutable bytecode views. See
-[execution contracts and measurements](../docs/en/vm_execution.md).
-
-Type syntax is structural, including array elements, nullable types, function
-signatures, and generic arguments. The checker interns resolved types and records
-each expression's checked type against the AST. Lowering consumes those facts and assigns compact array-layout
-IDs. Enum members always use `Enum.member`. Nested element layouts precede their
-parent layouts. Bytecode `NewArray` encodes the
-destination register, compact layout ID, and length in three 8-bit operands;
-larger layout IDs use an index prefix. Lengths above 255 produce a diagnostic.
-The existing per-function register
-limit can constrain large literals earlier.
-
-Arrays are invariant references: assignments alias their storage, and element
-types must match exactly. An empty literal requires an expected array type;
-nonempty literals can infer a homogeneous element type. Indices must be `int`.
-There are no implicit conversions or array equality operators. The VM reports
-`IndexOutOfBounds` for negative and out-of-range accesses.
-
-`double` uses IEEE 754 binary64. Decimal and exponent literals (`1.5`, `1e2`,
-`1.25e-1`) are parsed once, checked for representable range, and stored in a
-per-function constant pool deduplicated by bit pattern. `LoadDouble` selects
-the pool entry by an unsigned 16-bit index; a function can contain at most 65536 distinct
-double constants within its existing register limits. Dedicated double
-instructions implement arithmetic, negation, and comparisons. Integer
-instructions retain their existing overflow checks and truncating division.
-
-Numeric arithmetic and comparisons require the same numeric type; nullable
-operands require a non-null check before arithmetic or ordered comparison.
-`let x: double = 1`, `1 + 1.0`, and `1 == 1.0` are compilation errors. Write `1.0`
-or `1e0` for double literals; `num` and `float` are not built-in types. Double
-division by positive or negative zero returns `DivisionByZero`; other operations
-preserve IEEE infinity, NaN comparisons, subnormals, and signed zero. `print`
-and CLI results share the shortest round-trip double formatting. `double[]`
-elements occupy eight bytes and require no GC element scan.
-
-Generic specialization precedes checking; aliases are transparent and concrete
-specializations preserve primitive storage. Classes use public instance fields or an
-explicit constructor. Function values, shared mutable captures, interfaces,
-match, and ordered collections pass through the same typed IR and
-validated bytecode paths. See [core language specification](../docs/en/core_language.md).
-The checker does not interpret source directly.
-
-Benchmarks use a separate Google Benchmark executable:
+Use the repository tools from the project root:
 
 ```powershell
-python -m tools.vl bench -- --benchmark_filter=integer_loop
+python -m tools.vl build debug default
+python -m tools.vl test debug all
+python -m tools.vl lint
 ```
 
-For the complete set, use `python -m tools.vl bench`. Compilation, first execution,
-and steady-state VM execution have separate benchmark cases. See
-[`benchmarks/README.md`](../benchmarks/README.md) for measurement boundaries.
+`vela check` loads imports, specializes declarations, and checks types. `vela run` lowers checked
+source through Typed IR to validated bytecode and executes it in the VM. `vela build` emits a native
+artifact through the shared native backend. See [Development Workflow](../.agents/development_workflow.md)
+for build variants and validation and [the benchmark guide](../benchmarks/README.md) for measurements.

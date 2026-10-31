@@ -8,8 +8,8 @@
 
 #include <benchmark/benchmark.h>
 
-#include "compiler/frontend/source_loader.h"
-#include "compiler/tooling/semantic_index.h"
+#include "compiler/frontend/modules/source_loader.h"
+#include "compiler/tooling/semantic/semantic_index.h"
 
 namespace vela::benchmarks {
 namespace {

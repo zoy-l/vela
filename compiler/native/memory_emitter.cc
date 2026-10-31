@@ -14,7 +14,7 @@
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "base/opcode.h"
-#include "compiler/frontend/type_names.h"
+#include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native_abi.h"

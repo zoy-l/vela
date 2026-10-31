@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "compiler/project_config.h"
+#include "compiler/project/project_config.h"
 
 namespace vela::testing {
 

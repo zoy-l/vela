@@ -153,7 +153,7 @@ func main(): void {
 
 ## 实现范围与完成条件
 
-现有[标准声明](../../compiler/frontend/standard_environment.cc)、[builtin 签名](../../compiler/frontend/builtins.h)、[运行时值](../../runtime/value.h)与 [JSON 基础设施](../../base/json.h)界定集成边界。现有 JSON helper 拥有 yyjson arena，运行时值不能直接暴露其中的节点。复用已经固定版本的 yyjson 依赖与共享底层设施；保留原始数字词法单元和源偏移，避免底层库的数字转换破坏 int64 契约。runtime 不依赖 compiler/tooling。
+现有[标准声明](../../compiler/frontend/builtins/standard_environment.cc)、[builtin 签名](../../compiler/frontend/builtins/builtins.h)、[运行时值](../../runtime/value.h)与 [JSON 基础设施](../../base/json.h)界定集成边界。现有 JSON helper 拥有 yyjson arena，运行时值不能直接暴露其中的节点。复用已经固定版本的 yyjson 依赖与共享底层设施；保留原始数字词法单元和源偏移，避免底层库的数字转换破坏 int64 契约。runtime 不依赖 compiler/tooling。
 
 | 阶段 | 必须完成的工作 |
 | --- | --- |

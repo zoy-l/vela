@@ -15,7 +15,7 @@
 
 #include "base/path.h"
 #include "base/process_exit.h"
-#include "compiler/project_config.h"
+#include "compiler/project/project_config.h"
 #include "compiler/testing/pattern.h"
 #include "compiler/testing/settings.h"
 

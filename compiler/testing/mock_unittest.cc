@@ -5,9 +5,9 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/compiler.h"
+#include "compiler/bytecode/compiler.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/source_loader.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/suite.h"
 #include "runtime/future.h"

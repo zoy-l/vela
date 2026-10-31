@@ -37,7 +37,7 @@
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "base/source_location.h"
-#include "compiler/frontend/ast.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"

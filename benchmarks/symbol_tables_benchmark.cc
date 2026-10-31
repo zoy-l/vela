@@ -4,11 +4,11 @@
 
 #include "benchmark/benchmark.h"
 
-#include "compiler/compiler.h"
-#include "compiler/frontend/parser.h"
-#include "compiler/frontend/source_loader.h"
-#include "compiler/frontend/token.h"
-#include "compiler/frontend/type_checker.h"
+#include "compiler/bytecode/compiler.h"
+#include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/parser.h"
+#include "compiler/frontend/syntax/token.h"
+#include "compiler/frontend/typing/type_checker.h"
 #include "runtime/isolate.h"
 #include "vm/vm.h"
 

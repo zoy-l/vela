@@ -48,8 +48,13 @@ class NativeDistributionTest(unittest.TestCase):
             compiler = package / "bin" / executable_name("vela")
             compared = 0
             for category in categories:
-                filename = "test_sources.h" if category == "test_sources" else category + "_unittest.cc"
-                contents = (ROOT / "compiler" / filename).read_text(encoding="utf-8")
+                if category == "test_sources":
+                    corpus = ROOT / "compiler/test_support/test_sources.h"
+                elif category == "optimization":
+                    corpus = ROOT / "compiler/bytecode/optimization_unittest.cc"
+                else:
+                    corpus = ROOT / "compiler/language" / (category + "_unittest.cc")
+                contents = corpus.read_text(encoding="utf-8")
                 cases = re.finditer(r'R"(\w*)\((.*?)\)\1"', contents, re.DOTALL)
                 count = 0
                 for index, match in enumerate(cases):

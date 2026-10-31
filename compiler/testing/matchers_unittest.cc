@@ -3,8 +3,8 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/frontend/source_loader.h"
-#include "compiler/program_test_support.h"
+#include "compiler/frontend/modules/source_loader.h"
+#include "compiler/test_support/program_test_support.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 

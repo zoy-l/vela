@@ -20,7 +20,7 @@
 #include "benchmarks/dasprofile/workloads.h"
 #include "benchmarks/heap_metrics.h"
 #include "benchmarks/jit_benchmark.h"
-#include "compiler/compiler.h"
+#include "compiler/bytecode/compiler.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"

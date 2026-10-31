@@ -22,9 +22,9 @@
 #include "compiler/aot/native_compiler.h"
 #include "compiler/aot/target_support.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/source_loader.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/ir/preparation.h"
-#include "compiler/project_config.h"
+#include "compiler/project/project_config.h"
 
 namespace vela::compiler::aot {
 namespace {

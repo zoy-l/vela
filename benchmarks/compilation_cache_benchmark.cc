@@ -10,8 +10,8 @@
 
 #include "base/path.h"
 #include "benchmarks/temporary_directory.h"
-#include "compiler/compilation_cache.h"
-#include "compiler/compiler.h"
+#include "compiler/bytecode/compilation_cache.h"
+#include "compiler/bytecode/compiler.h"
 #include "runtime/isolate.h"
 #include "vm/bytecode_image.h"
 #include "vm/program.h"

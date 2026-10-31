@@ -7,7 +7,7 @@
 
 #include "base/builtin.h"
 #include "base/regexp.h"
-#include "compiler/frontend/ast.h"
+#include "compiler/frontend/syntax/ast.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {

@@ -15,9 +15,9 @@
 #include <benchmark/benchmark.h>
 
 #include "base/native_program_mode.h"
-#include "compiler/checkpoint_publication.h"
-#include "compiler/development_session.h"
+#include "compiler/development/development_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/test_support/checkpoint_publication.h"
 #include "runtime/future.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"

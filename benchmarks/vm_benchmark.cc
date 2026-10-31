@@ -5,7 +5,7 @@
 
 #include "benchmarks/heap_metrics.h"
 #include "benchmarks/source.h"
-#include "compiler/compiler.h"
+#include "compiler/bytecode/compiler.h"
 #include "compiler/frontend/diagnostic.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"

@@ -13,9 +13,9 @@
 
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
+#include "compiler/development/source_session.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/test_support.h"
-#include "compiler/source_session.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 #include "runtime/native_context.h"

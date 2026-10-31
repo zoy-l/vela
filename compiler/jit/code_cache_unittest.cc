@@ -13,11 +13,11 @@
 #include "base/file.h"
 #include "base/native_program_mode.h"
 #include "base/testing/directory.h"
-#include "compiler/development_session.h"
+#include "compiler/development/development_session.h"
+#include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/native/code_generator.h"
-#include "compiler/source_session.h"
 #include "runtime/isolate.h"
 #include "runtime/native_dispatch.h"
 

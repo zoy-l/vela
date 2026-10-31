@@ -132,7 +132,7 @@ Release benchmark 分别测量解析、规范格式化、UTC 构造/分解、分
 
 ## 参考
 
-- [现有标准声明](../../compiler/frontend/standard_environment.cc)与[标准库时间契约](standard_library.md#时间-api)。
+- [现有标准声明](../../compiler/frontend/builtins/standard_environment.cc)与[标准库时间契约](standard_library.md#时间-api)。
 - [Abseil 日历类型与归一化](../../third_party/abseil-cpp/absl/time/civil_time.h)。
 - [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339)，包括未知本地偏移约定；本 API 仅支持明确列出的子集。
 - Vela [异常](exceptions.md)、[源码工具](source_tooling.md)与[编译缓存](compilation_cache.md)。

@@ -4,10 +4,10 @@
 
 #include <benchmark/benchmark.h>
 
-#include "compiler/frontend/ast_clone.h"
-#include "compiler/frontend/checker.h"
-#include "compiler/frontend/source_loader.h"
-#include "compiler/frontend/specialization.h"
+#include "compiler/frontend/generics/specialization.h"
+#include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/syntax/ast_clone.h"
+#include "compiler/frontend/typing/checker.h"
 
 namespace vela::benchmarks {
 namespace {

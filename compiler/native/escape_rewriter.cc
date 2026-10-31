@@ -8,8 +8,8 @@
 #include <vector>
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
-#include "compiler/frontend/type_checker.h"
-#include "compiler/frontend/type_names.h"
+#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/escape_analysis.h"

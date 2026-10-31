@@ -25,7 +25,7 @@
 #include <llvm/TargetParser/Triple.h>
 
 #include "compiler/aot/native_compiler.h"
-#include "compiler/frontend/source_loader.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/engine.h"

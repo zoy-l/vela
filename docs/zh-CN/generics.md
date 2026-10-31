@@ -58,13 +58,13 @@ func main(): int {
 
 | 生产路径 | 契约来源 |
 | --- | --- |
-| [`AST`](../../compiler/frontend/ast.h)、parser 和模块绑定 | 统一参数节点保存身份、源范围、上界及真实类型引用 |
-| [`TypeChecker`](../../compiler/frontend/type_checker.h) | 抽象定义检查、静态名义关系、dynamic 转换与已解析方法目标 |
-| [`TypeInference`](../../compiler/frontend/type_inference.h) | 统一保存证据、传播依赖和名义投影，确定唯一有效实参 |
-| [`Specializer`](../../compiler/frontend/specialization.h) | 规范化并唯一化函数、class、interface 和方法的已确定应用 |
-| [`SemanticModel`](../../compiler/frontend/type_checker.h) | 分开发布定义事实与执行事实，提供参数身份、规范应用和具体签名 |
-| [声明身份](../../compiler/frontend/declaration_ids.h)、IR、缓存及原生镜像 | 保留规范化约束及稳定声明/应用身份，执行类型只使用具体实参 |
-| [语义索引](../../compiler/tooling/semantic_index.h) | 直接消费前端事实，提供未实例化定义的查询及类型参数重命名 |
+| [`AST`](../../compiler/frontend/syntax/ast.h)、parser 和模块绑定 | 统一参数节点保存身份、源范围、上界及真实类型引用 |
+| [`TypeChecker`](../../compiler/frontend/typing/type_checker.h) | 抽象定义检查、静态名义关系、dynamic 转换与已解析方法目标 |
+| [`TypeInference`](../../compiler/frontend/typing/type_inference.h) | 统一保存证据、传播依赖和名义投影，确定唯一有效实参 |
+| [`Specializer`](../../compiler/frontend/generics/specialization.h) | 规范化并唯一化函数、class、interface 和方法的已确定应用 |
+| [`SemanticModel`](../../compiler/frontend/typing/type_checker.h) | 分开发布定义事实与执行事实，提供参数身份、规范应用和具体签名 |
+| [声明身份](../../compiler/frontend/modules/declaration_ids.h)、IR、缓存及原生镜像 | 保留规范化约束及稳定声明/应用身份，执行类型只使用具体实参 |
+| [语义索引](../../compiler/tooling/semantic/semantic_index.h) | 直接消费前端事实，提供未实例化定义的查询及类型参数重命名 |
 
 ## 3. 声明与类型应用
 

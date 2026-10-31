@@ -4,10 +4,10 @@
 #include "base/builtin.h"
 #include "base/byte_access.h"
 #include "base/regexp.h"
-#include "compiler/frontend/builtins.h"
-#include "compiler/frontend/type_checker.h"
-#include "compiler/frontend/type_name.h"
-#include "compiler/frontend/type_names.h"
+#include "compiler/frontend/builtins/builtins.h"
+#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/type_name.h"
+#include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {

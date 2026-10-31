@@ -10,9 +10,9 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/frontend/declaration_ids.h"
-#include "compiler/frontend/source_loader.h"
-#include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/modules/declaration_ids.h"
+#include "compiler/frontend/modules/source_loader.h"
+#include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/ir/preparation_test_support.h"

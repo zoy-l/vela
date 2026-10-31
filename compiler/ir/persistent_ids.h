@@ -1,6 +1,6 @@
 #pragma once
 
-#include "compiler/frontend/symbol_ids.h"
+#include "compiler/frontend/modules/symbol_ids.h"
 
 namespace vela::ir {
 

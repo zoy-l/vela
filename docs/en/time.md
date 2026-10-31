@@ -251,7 +251,7 @@ exact variation and settings are retained in
 
 ## References
 
-- [Existing standard declarations](../../compiler/frontend/standard_environment.cc) and [standard-library time contract](standard_library.md#time).
+- [Existing standard declarations](../../compiler/frontend/builtins/standard_environment.cc) and [standard-library time contract](standard_library.md#time).
 - [Abseil civil-time types and normalization](../../third_party/abseil-cpp/absl/time/civil_time.h).
 - [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339), including the unknown-local-offset convention; this API deliberately supports only the stated subset.
 - Vela [exceptions](exceptions.md), [source tooling](source_tooling.md), and [compilation cache](compilation_cache.md).

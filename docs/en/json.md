@@ -277,8 +277,8 @@ language-level fixed nesting limit; resource exhaustion is reported explicitly.
 
 ## Implementation and completion
 
-Existing [standard declarations](../../compiler/frontend/standard_environment.cc),
-[builtin signatures](../../compiler/frontend/builtins.h),
+Existing [standard declarations](../../compiler/frontend/builtins/standard_environment.cc),
+[builtin signatures](../../compiler/frontend/builtins/builtins.h),
 [runtime values](../../runtime/value.h), and
 [JSON infrastructure](../../base/json.h) establish the integration boundaries.
 The existing JSON helper owns yyjson arenas; runtime values must not expose those

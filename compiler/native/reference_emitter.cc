@@ -13,7 +13,7 @@
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
-#include "compiler/frontend/type_names.h"
+#include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native_memory_layout.h"

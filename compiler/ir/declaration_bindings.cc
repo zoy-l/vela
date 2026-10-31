@@ -9,10 +9,10 @@
 #include <absl/container/flat_hash_map.h>
 
 #include "base/declaration.h"
-#include "compiler/frontend/ast.h"
-#include "compiler/frontend/declaration_ids.h"
-#include "compiler/frontend/lambda_visitor.h"
-#include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/flow/lambda_visitor.h"
+#include "compiler/frontend/modules/declaration_ids.h"
+#include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/typing/type_checker.h"
 
 namespace vela::ir {
 namespace {

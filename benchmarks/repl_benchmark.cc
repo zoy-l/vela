@@ -4,8 +4,8 @@
 
 #include "benchmark/benchmark.h"
 
-#include "compiler/repl_session.h"
-#include "compiler/repl_source.h"
+#include "compiler/repl/repl_session.h"
+#include "compiler/repl/repl_source.h"
 #include "runtime/heap.h"
 #include "runtime/isolate.h"
 

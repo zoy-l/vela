@@ -25,12 +25,12 @@
 
 #include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/source_loader.h"
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/ir/preparation_test_support.h"
 #include "compiler/native/code_generator.h"
-#include "compiler/test_sources.h"
+#include "compiler/test_support/test_sources.h"
 #include "runtime/native_image.h"
 
 namespace vela::compiler::aot {

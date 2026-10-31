@@ -8,7 +8,7 @@
 #include <string_view>
 
 #include "base/execution_status.h"
-#include "compiler/development_session.h"
+#include "compiler/development/development_session.h"
 #include "compiler/jit/compiler.h"
 #include "runtime/isolate.h"
 #include "runtime/value.h"

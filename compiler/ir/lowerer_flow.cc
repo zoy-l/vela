@@ -5,9 +5,9 @@
 #include <optional>
 
 #include "base/builtin.h"
-#include "compiler/frontend/ast.h"
-#include "compiler/frontend/control_flow.h"
-#include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/flow/control_flow.h"
+#include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {

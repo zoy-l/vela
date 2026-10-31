@@ -3,8 +3,8 @@
 #include <limits>
 #include <vector>
 #include "base/builtin.h"
-#include "compiler/frontend/ast.h"
-#include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 

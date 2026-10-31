@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <string>
 #include "base/execution_status.h"
-#include "compiler/frontend/type_checker.h"
+#include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/ir.h"
 
 namespace llvm {

@@ -7,7 +7,7 @@
 
 #include "base/file.h"
 #include "base/path.h"
-#include "compiler/compiler.h"
+#include "compiler/bytecode/compiler.h"
 #include "compiler/frontend/diagnostic.h"
 #include "vm/program.h"
 

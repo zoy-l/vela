@@ -10,7 +10,7 @@ JIT 与可重载能力由宿主选择，不由 C++ 的 Debug/Release 构建配�
 
 开发控制台使用 `vela dev app.vela`；`--optimized` 选择具有去优化恢复能力的优化层，`--code-cache=DIR` 启用可重定位目标文件缓存。控制台默认监视导入图；`.hot`、`.reload` 和 `.load FILE` 分别发起三种事务，`.status` 显示版本、阶段耗时和代码资源，`.cancel` 取消未提交请求。文件 Hot Reload 不回放交互语句；`.reset` 读取当前文件快照、移除交互历史并重建运行。`.break`、`.stack`、`.source` 和 `.continue` 使用具体版本的源码与帧。
 
-嵌入宿主通过 [`DevelopmentSession`](../../compiler/development_session.h) 调用 `Prepare`、`Submit` 和 `Pump`，以 `Invoke` 进入当前导出声明；后台准备后的候选可以通过 `Post` 投递到 Isolate 线程。会话固定 binding 快照；刷新回调和外部根释放仍由宿主接入。`DevelopmentResult` 区分源码错误、需要 Reload、安全点等待、外部句柄等待、过期、取消和提交后刷新失败，并携带声明及冲突依赖。
+嵌入宿主通过 [`DevelopmentSession`](../../compiler/development/development_session.h) 调用 `Prepare`、`Submit` 和 `Pump`，以 `Invoke` 进入当前导出声明；后台准备后的候选可以通过 `Post` 投递到 Isolate 线程。会话固定 binding 快照；刷新回调和外部根释放仍由宿主接入。`DevelopmentResult` 区分源码错误、需要 Reload、安全点等待、外部句柄等待、过期、取消和提交后刷新失败，并携带声明及冲突依赖。
 
 ## 1. 使用方式与操作边界
 
@@ -331,8 +331,8 @@ JIT 的每个受支持目标都必须实现可执行内存权限切换、指令�
 
 | 路径 | 责任 |
 | --- | --- |
-| [`compiler/source_session.h`](../../compiler/source_session.h)、[`ir/preparation.h`](../../compiler/ir/preparation.h) | 不可变源码工作副本、持久声明身份、存留特化和共享语义准备 |
-| [`compiler/development_session.h`](../../compiler/development_session.h)、[`development_files.h`](../../compiler/development_files.h)、[`development_repl.h`](../../compiler/development_repl.h) | 操作串行化、文件快照与监视、交互提交、刷新及 Isolate 切换 |
+| [`compiler/development/source_session.h`](../../compiler/development/source_session.h)、[`ir/preparation.h`](../../compiler/ir/preparation.h) | 不可变源码工作副本、持久声明身份、存留特化和共享语义准备 |
+| [`compiler/development/development_session.h`](../../compiler/development/development_session.h)、[`development_files.h`](../../compiler/development/development_files.h)、[`development_repl.h`](../../compiler/development/development_repl.h) | 操作串行化、文件快照与监视、交互提交、刷新及 Isolate 切换 |
 | [`compiler/native/code_generator.cc`](../../compiler/native/code_generator.cc)、[`jit/compiler.cc`](../../compiler/jit/compiler.cc)、[`jit/code_cache.cc`](../../compiler/jit/code_cache.cc) | 共享 LLVM lowering 和目标文件生成；隔离 ORC 批次、重定位缓存及资源退休 |
 | [`compiler/native/function_emitter.cc`](../../compiler/native/function_emitter.cc)、[`deoptimization_emitter.cc`](../../compiler/native/deoptimization_emitter.cc) | 按模式限制调用假设；保存精确逻辑状态并恢复原版本基线，避免重放待完成调用 |
 | [`compiler/aot/reachability.h`](../../compiler/aot/reachability.h) | 产物内裁剪编号与会话稳定身份分离，保留稳定声明契约 |
