@@ -19,21 +19,21 @@ Vela is a statically typed embedded scripting language designed specifically for
 
 ## Example
 
-```typescript
+```vela
 interface Entity {
   render(): string;
 }
 
 class Player implements Entity {
-  public param name: string;
-  public param health: int = 100;
-  public param shield: int? = null;
+  name: string;
+  health: int = 100;
+  shield: int? = null;
 
-  public get isAlive(): bool {
+  get isAlive(): bool {
     return this.health > 0;
   }
 
-  public render(): string {
+  render(): string {
     const effectiveShield = this.shield ?? 0;
     return '${this.name} (HP: ${this.health}, Shield: ${effectiveShield})';
   }

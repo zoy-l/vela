@@ -1,9 +1,50 @@
 #include "compiler/frontend/type_checker.h"
 
+#include <string>
+#include <string_view>
+
 #include "compiler/frontend/ast.h"
 #include "compiler/frontend/control_flow.h"
 
 namespace vela::frontend {
+
+void TypeChecker::RefineAssignedLocal(const LocalBinding& binding, const Type& value) {
+  refinements_.Erase(binding.id);
+  if (binding.type.kind != Type::Kind::Dynamic && IsPotentiallyNullable(binding.type) &&
+      IsValid(value) && !IsPotentiallyNullable(value)) {
+    refinements_.Set(binding.id, NonNullable(binding.type));
+  }
+}
+
+void TypeChecker::DiagnoseOperandMismatch(const Expression& operand,
+                                          const Type& type,
+                                          std::string_view message) {
+  if (type.nullable || type.kind == Type::Kind::Null) {
+    const auto subject = operand.kind == Expression::Kind::Name
+                             ? "'" + operand.text + "'"
+                             : "operand of type '" + TypeNameFor(type) + "'";
+    AddDiagnostic(operand.location, subject + " may be null; check for null before this operation");
+    return;
+  }
+  AddDiagnostic(operand.location, std::string(message));
+}
+
+void TypeChecker::DiagnoseBinaryOperandMismatch(const Expression& expression,
+                                                const Type& left,
+                                                const Type& right,
+                                                std::string_view message) {
+  const bool nullable_left = left.nullable || left.kind == Type::Kind::Null;
+  const bool nullable_right = right.nullable || right.kind == Type::Kind::Null;
+  if (nullable_left) {
+    DiagnoseOperandMismatch(*expression.left, left, message);
+  }
+  if (nullable_right) {
+    DiagnoseOperandMismatch(*expression.right, right, message);
+  }
+  if (!nullable_left && !nullable_right) {
+    AddDiagnostic(expression.location, std::string(message));
+  }
+}
 
 void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth outcome) {
   using Kind = Expression::Kind;

@@ -623,6 +623,14 @@ class TypeChecker final : private InferenceTypeRelations {
   [[nodiscard]] static Type NonNullable(Type type);
   void RefineCondition(const Expression& condition, ConditionTruth outcome);
   void RefineTypeTest(const Expression& condition);
+  void RefineAssignedLocal(const LocalBinding& binding, const Type& value);
+  void DiagnoseOperandMismatch(const Expression& operand,
+                               const Type& type,
+                               std::string_view message);
+  void DiagnoseBinaryOperandMismatch(const Expression& expression,
+                                     const Type& left,
+                                     const Type& right,
+                                     std::string_view message);
   void InvalidateAssignments(const Statement& statement);
   void InvalidateAssignments(const Expression& expression);
   struct AssignmentEffects final {

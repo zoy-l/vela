@@ -920,7 +920,8 @@ void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
   if (type.kind == Type::Kind::Void) {
     AddDiagnostic(statement.location, "void is not a value type");
   }
-  if (IsValid(type) && IsValid(initializer) && !CanAssign(type, initializer)) {
+  const bool assignable = IsValid(type) && IsValid(initializer) && CanAssign(type, initializer);
+  if (IsValid(type) && IsValid(initializer) && !assignable) {
     AddDiagnostic(statement.location, "cannot initialize '" + TypeNameFor(type) + "' with '" +
                                           TypeNameFor(initializer) + "'");
   }
@@ -930,11 +931,15 @@ void TypeChecker::CheckVariableDeclaration(const Statement& statement) {
   local_types_.insert_or_assign(&statement, type);
   const auto declared =
       DeclareLocal(statement.name, type, statement.location, statement.binding, &statement);
-  if (statement.binding == BindingKind::Constant) {
-    const auto* local = LookupLocal(statement.name);
-    if (declared && constant && local != nullptr) {
-      constant_bindings_.insert_or_assign(local->id, *constant);
-    }
+  if (!declared) {
+    return;
+  }
+  const auto& local = *LookupLocal(statement.name);
+  if (assignable) {
+    RefineAssignedLocal(local, initializer);
+  }
+  if (constant) {
+    constant_bindings_.insert_or_assign(local.id, *constant);
   }
 }
 
@@ -1110,11 +1115,11 @@ TypeChecker::Type TypeChecker::CheckUnary(const Expression& expression) {
   }
   if ((expression.text == "~" || expression.text == "++" || expression.text == "--") &&
       (operand.kind != Type::Kind::Int || operand.nullable)) {
-    AddDiagnostic(expression.location, "integer unary operator requires int");
+    DiagnoseOperandMismatch(*expression.operand, operand, "integer unary operator requires int");
     return InvalidType();
   }
   if (expression.text == "-" && !IsNumeric(operand)) {
-    AddDiagnostic(expression.location, "unary '-' requires a numeric operand");
+    DiagnoseOperandMismatch(*expression.operand, operand, "unary '-' requires a numeric operand");
     return InvalidType();
   }
   return operand;
@@ -1198,17 +1203,20 @@ TypeChecker::Type TypeChecker::CheckCompoundAssignmentTypes(const Expression& ex
                                                             const Type& left,
                                                             const Type& right) {
   if (!IsSameType(left, right)) {
-    AddDiagnostic(expression.location, "compound assignment operands must have the same type");
+    DiagnoseBinaryOperandMismatch(expression, left, right,
+                                  "compound assignment operands must have the same type");
     return InvalidType();
   }
   const bool bitwise = operation == "&" || operation == "|" || operation == "^" ||
                        operation == "<<" || operation == ">>" || operation == ">>>";
   if (bitwise && (left.kind != Type::Kind::Int || left.nullable)) {
-    AddDiagnostic(expression.location, "bitwise assignment requires int operands");
+    DiagnoseBinaryOperandMismatch(expression, left, right,
+                                  "bitwise assignment requires int operands");
     return InvalidType();
   }
   if (operation == "%" && (left.kind != Type::Kind::Int || left.nullable)) {
-    AddDiagnostic(expression.location, "remainder assignment requires int operands");
+    DiagnoseBinaryOperandMismatch(expression, left, right,
+                                  "remainder assignment requires int operands");
     return InvalidType();
   }
   const bool arithmetic = operation == "+" || operation == "-" || operation == "*" ||
@@ -1222,7 +1230,8 @@ TypeChecker::Type TypeChecker::CheckCompoundAssignmentTypes(const Expression& ex
     return result;
   }
   if (!IsNumeric(left) && !bitwise) {
-    AddDiagnostic(expression.location, "compound assignment requires numeric operands");
+    DiagnoseBinaryOperandMismatch(expression, left, right,
+                                  "compound assignment requires numeric operands");
     return InvalidType();
   }
   auto result = left;
@@ -1330,7 +1339,8 @@ TypeChecker::Type TypeChecker::CheckBinaryTypes(const Expression& expression,
     return {.kind = Type::Kind::String, .name = kStringTypeName};
   }
   if (!IsNumeric(left) || !IsSameType(left, right)) {
-    AddDiagnostic(expression.location, "arithmetic operands must have the same numeric type");
+    DiagnoseBinaryOperandMismatch(expression, left, right,
+                                  "arithmetic operands must have the same numeric type");
     return InvalidType();
   }
   return left;
@@ -1358,7 +1368,12 @@ TypeChecker::Type TypeChecker::CheckLogicalTypes(const Expression& expression,
 TypeChecker::Type TypeChecker::CheckCoalesceTypes(const Expression& expression,
                                                   const Type& left,
                                                   const Type& right) {
-  if (!left.nullable && left.kind != Type::Kind::Null && left.kind != Type::Kind::Dynamic) {
+  const auto* local = expression.left->kind == Expression::Kind::Name
+                          ? LookupLocal(expression.left->text)
+                          : nullptr;
+  // 非空事实只描述当前读取；?? 的可空契约仍由局部变量的声明类型决定。
+  const auto source = local != nullptr && local->type.nullable ? local->type : left;
+  if (!source.nullable && source.kind != Type::Kind::Null && source.kind != Type::Kind::Dynamic) {
     AddDiagnostic(expression.left->location, "left operand of coalesce must be nullable");
   }
   if (left.kind == Type::Kind::Dynamic || right.kind == Type::Kind::Dynamic) {
@@ -1367,11 +1382,11 @@ TypeChecker::Type TypeChecker::CheckCoalesceTypes(const Expression& expression,
     RecordConversion(*expression.right, dynamic, right);
     return dynamic;
   }
-  if (CanAssign(left, right)) {
+  if (CanAssign(source, right)) {
     return right;
   }
-  if (CanAssign(right, left)) {
-    return left;
+  if (CanAssign(right, source)) {
+    return source;
   }
   AddDiagnostic(expression.location, "coalesce operands must have a common type");
   return InvalidType();
@@ -1382,7 +1397,7 @@ TypeChecker::Type TypeChecker::CheckBitwiseTypes(const Expression& expression,
                                                  const Type& right) {
   if (left.kind != Type::Kind::Int || right.kind != Type::Kind::Int || left.nullable ||
       right.nullable) {
-    AddDiagnostic(expression.location, "bitwise operands must be int");
+    DiagnoseBinaryOperandMismatch(expression, left, right, "bitwise operands must be int");
     return InvalidType();
   }
   auto result = left;
@@ -1393,7 +1408,8 @@ TypeChecker::Type TypeChecker::CheckRelationalTypes(const Expression& expression
                                                     const Type& left,
                                                     const Type& right) {
   if (!IsNumeric(left) || !IsSameType(left, right)) {
-    AddDiagnostic(expression.location, "relational operands must have the same numeric type");
+    DiagnoseBinaryOperandMismatch(expression, left, right,
+                                  "relational operands must have the same numeric type");
     return InvalidType();
   }
   return {.kind = Type::Kind::Bool, .name = kBoolTypeName};
@@ -1403,8 +1419,13 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
   if (!CheckAssignmentTarget(*expression.left)) {
     return InvalidType();
   }
+  std::optional<LocalBinding> binding;
   if (expression.left->kind == Expression::Kind::Name) {
     const auto* local = LookupLocal(expression.left->text);
+    if (local != nullptr) {
+      // 表达式检查可扩展 lambda 作用域表，跨检查持有绑定值。
+      binding = *local;
+    }
     if (local != nullptr && local->kind == BindingKind::Constant) {
       AddDiagnostic(expression.left->location,
                     "cannot assign to const binding '" + expression.left->text + "'");
@@ -1421,10 +1442,7 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
   if (expression.left->kind == Expression::Kind::Member) {
     CheckMemberAssignment(*expression.left);
   }
-  const LocalBinding* binding = expression.left->kind == Expression::Kind::Name
-                                    ? LookupLocal(expression.left->text)
-                                    : nullptr;
-  if (binding != nullptr) {
+  if (binding) {
     left = binding->type;
   }
   if (builtin_calls_.contains(expression.left.get())) {
@@ -1432,13 +1450,11 @@ TypeChecker::Type TypeChecker::CheckAssignment(const Expression& expression) {
   }
   const Type right = CheckExpression(*expression.right, &left);
   RecordConversion(*expression.right, left, right);
-  if (binding != nullptr) {
-    refinements_.Erase(binding->id);
-    if (IsValid(right) && right.kind != Type::Kind::Null && !right.nullable) {
-      refinements_.Set(binding->id, NonNullable(left));
-    }
+  const bool assignable = IsValid(left) && IsValid(right) && CanAssign(left, right);
+  if (binding) {
+    RefineAssignedLocal(*binding, assignable ? right : InvalidType());
   }
-  if (IsValid(left) && IsValid(right) && !CanAssign(left, right)) {
+  if (IsValid(left) && IsValid(right) && !assignable) {
     AddDiagnostic(expression.location, "assignment types do not match");
     return InvalidType();
   }

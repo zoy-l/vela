@@ -263,7 +263,7 @@ void TypeChecker::CheckBooleanOperand(const Expression& expression,
   const Type boolean{.kind = Type::Kind::Bool, .name = kBoolTypeName};
   RecordConversion(expression, boolean, type);
   if (!CanAssign(boolean, type)) {
-    AddDiagnostic(expression.location, std::string(message));
+    DiagnoseOperandMismatch(expression, type, message);
   }
 }
 

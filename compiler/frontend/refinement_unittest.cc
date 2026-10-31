@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <string>
 #include <string_view>
 
 #include <gtest/gtest.h>
@@ -8,6 +9,86 @@
 
 namespace vela::frontend {
 namespace {
+
+TEST(RefinementTest, NonNullInitializersEstablishFactsWithoutChangingDeclaredTypes) {
+  const auto checked = CheckTestSource(R"(
+func make(): int { return 3; }
+func bounded<T extends int>(input: T): int { let value: int? = input; return value + 1; }
+func main(): int {
+  let value: int? = make();
+  const text: string? = 'ready';
+  const operation: (() => int)? = (): int => 1;
+  const values: int[]? = [2];
+  const retained: int = value ?? 0;
+  { let value: int? = null; }
+  const result = value + text.length + operation() + values[0] + retained;
+  value = null;
+  value = 4;
+  return result + value;
+}
+)");
+  for (const auto& diagnostic : checked.diagnostics) {
+    ADD_FAILURE() << diagnostic.message;
+  }
+  EXPECT_TRUE(checked.Succeeded());
+}
+
+class NullableOperandDiagnosticTest : public testing::TestWithParam<std::string_view> {};
+
+TEST_P(NullableOperandDiagnosticTest, ReportsTheNullableOperandBeforeNumericTypeMismatches) {
+  const auto source = "func inspect(x: int?): void { " + std::string(GetParam()) + "; }";
+  const auto checked = CheckTestSource(source);
+  EXPECT_FALSE(checked.Succeeded());
+  ASSERT_EQ(checked.diagnostics.size(), 1U);
+  const auto& diagnostic = checked.diagnostics.front();
+  EXPECT_TRUE(diagnostic.message.contains("'x' may be null")) << diagnostic.message;
+  EXPECT_EQ(diagnostic.location.line, 1U);
+  EXPECT_EQ(diagnostic.location.column, source.rfind('x') + 1);
+}
+
+INSTANTIATE_TEST_SUITE_P(Operators,
+                         NullableOperandDiagnosticTest,
+                         testing::Values("x + 1",
+                                         "1 + x",
+                                         "x - 1",
+                                         "x * 1",
+                                         "x / 1",
+                                         "x < 1",
+                                         "x & 1",
+                                         "x << 1",
+                                         "-x",
+                                         "~x",
+                                         "x++",
+                                         "x += 1",
+                                         "x &= 1",
+                                         "x %= 1"));
+
+TEST(RefinementTest, NullableInitializersAndLaterEffectsCannotEstablishNonNullFacts) {
+  for (const auto* const source : {
+           "func inspect(value:int?):int{let x:int?=value;return x+1;}",
+           "func inspect(value:dynamic):int{let x:int?=value;return x+1;}",
+           "func inspect(value:dynamic):int{let x:int?=3;x=value;return x+1;}",
+           "func inspect():int{let x:int?=3;x=null;return x+1;}",
+           "func inspect(flag:bool):int{let x:int?=3;while(flag){x=null;}return x+1;}",
+           "func inspect():int{let x:int?=3;const clear=():void=>{x=null;};clear();return x+1;}",
+           "func inspect<T extends int?>(value:T):int{let x:int?=value;return x+1;}",
+       }) {
+    SCOPED_TRACE(source);
+    const auto checked = CheckTestSource(source);
+    EXPECT_FALSE(checked.Succeeded());
+    EXPECT_TRUE(std::ranges::any_of(checked.diagnostics, [](const Diagnostic& diagnostic) {
+      return diagnostic.message.contains("'x' may be null");
+    }));
+  }
+}
+
+TEST(RefinementTest, NullFormattingAndNumericMismatchDiagnosticsKeepTheirContracts) {
+  EXPECT_TRUE(CheckTestSource("func format(x:int?):string{return 'value='+x;}").Succeeded());
+  const auto checked = CheckTestSource("func invalid():double{return 1+2.0;}");
+  EXPECT_TRUE(std::ranges::any_of(checked.diagnostics, [](const Diagnostic& diagnostic) {
+    return diagnostic.message.contains("arithmetic operands must have the same numeric type");
+  }));
+}
 
 TEST(RefinementTest, ForIncrementRejectsFactsInvalidatedByBodyAndContinue) {
   const auto checked = CheckTestSource(R"(

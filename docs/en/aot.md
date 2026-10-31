@@ -41,20 +41,20 @@ Executable and archive builds load `share/vela/target.json` relative to the inst
 
 Developers can create a Windows development package with `python -m tools.vl package release OUTPUT`. Its manifest supplies the exact MSVC and Windows SDK/UCRT versions and installation instructions. Set `VELA_MSVC_TOOLS` to the versioned MSVC tools directory and `VELA_WINDOWS_SDK` to the Windows Kits root specified by that manifest. The Visual Studio IDE is not required. SDK link inputs remain external to the package. Other host packages currently require an audited `--support-spec` describing their SDK/sysroot inputs and any bundled files; platform acceptance is still required.
 
-The first release supports native compilation for the existing bootstrap host matrix: Windows x64, Linux x64, and macOS arm64. Each platform must pass its own distribution acceptance before support is advertised. JIT, hot replacement, native dynamic-library loading, ABI compatibility across releases, independently distributed binary modules, and VM/AOT calls into each other are outside this release. REPL and the existing VM debugger continue to serve bytecode. Unsupported AOT operations must produce explicit diagnostics, never execute embedded bytecode as a fallback.
+The first release supports native compilation for the existing bootstrap host matrix: Windows x64, Linux x64, and macOS arm64. Each platform must pass its own distribution acceptance before support is advertised. Native dynamic-library loading, ABI compatibility across releases, independently distributed binary modules, and VM/AOT calls into each other are outside this AOT delivery scope. JIT and hot reload are provided by [development mode (Chinese)](../zh-CN/hot_reload.md). REPL and the existing VM debugger continue to serve bytecode. Unsupported AOT operations must produce explicit diagnostics, never execute embedded bytecode as a fallback.
 
-## Existing foundation and boundaries to separate
+## Shared implementation and AOT responsibilities
 
-| Verified implementation | Required AOT change |
+| Shared implementation | AOT responsibility |
 | --- | --- |
-| [IR](../../compiler/ir/ir.h) uses 32-bit virtual register IDs, source locations, and exception handlers; [shared analysis](../../compiler/ir/analysis.h) supplies instruction effects and liveness across exception and resume edges | Supply type facts for every value definition to generate typed native values and root slots; keep bytecode field widths out of native capability limits |
-| [Compilation preparation](../../compiler/ir/preparation.cc) runs the frontend, layout description, and common optimization offline, returning IR that borrows neither AST nor Isolate state; VM allocation and encoding belong to a separate backend | Branch from the same IR into LLVM lowering and code generation |
-| [Layout instantiation](../../runtime/program_layouts.cc) consumes pointer-free descriptions; VM native-binding checks consume IR signatures | Reuse layout instantiation for native instances and connect native imports, constant roots, and global state |
-| [NativeFunction](../../runtime/native_function.h) generates adapters from C++ signatures and invokes them with `RegisterView` | Reuse declarations and codecs to generate typed AOT entries; never cast the existing callback into a machine-code function pointer |
-| The [Future scheduler](../../runtime/future.h) already belongs to runtime, while suspended frames and callback execution remain in `vm` | Share Future state and scheduling semantics, and supply native continuations and callback execution without a VM executor dependency |
-| [GC](garbage_collection.md) already provides precise roots, a non-moving heap, and reference write barriers | Generate native root slots and safepoints, reusing the heap and barriers without conservative stack scanning |
+| [IR](../../compiler/ir/ir.h) uses 32-bit virtual register IDs, types, source locations, and exception handlers; [shared analysis](../../compiler/ir/analysis.h) supplies instruction effects and liveness across exception and resume edges | Generate typed native values and root slots from value-definition types, without bytecode field-width limits |
+| [Compilation preparation](../../compiler/ir/preparation.cc) runs the frontend, layout description, and common optimization offline, returning IR that borrows neither AST nor Isolate state; VM allocation and encoding belong to a separate backend | Branch from the same IR into shared LLVM lowering and code generation |
+| [Layout instantiation](../../runtime/program_layouts.cc) consumes pointer-free descriptions; binding checks consume concrete signatures | Reuse layout instantiation for native instances, which own native imports, constant roots, and global state |
+| [NativeFunction](../../runtime/native_function.h) derives VM and native entries from C++ signatures | Reuse declarations and codecs, selecting direct or checked AOT entries by signature |
+| The [Future scheduler](../../runtime/future.h) owns shared state and scheduling semantics; VM owns bytecode suspended frames and execution | Use native continuations and callback entries without a VM executor dependency |
+| [GC](garbage_collection.md) provides precise roots, a non-moving heap, and reference write barriers | Generate native root slots and safepoints, reusing the heap and barriers without conservative stack scanning |
 
-These changes are prerequisites, not claims that current interfaces already emit machine code.
+These production paths are implemented. Remaining target support packaging and release acceptance are recorded in this document's status and completion criteria.
 
 ## Pipeline and module responsibilities
 
@@ -67,7 +67,7 @@ source and import graph
                                → object files → archiving or linking
 ```
 
-`compiler/frontend` retains language semantics; `compiler/ir` owns shared lowering, control flow, and semantic optimization. A proposed `compiler/aot` owns LLVM conversion, root-slot planning, native ABI calls, and object emission. The build driver selects platforms, links, archives, and publishes artifacts. LLVM headers and types remain private to the AOT implementation.
+`compiler/frontend` owns language semantics; `compiler/ir` owns shared lowering, control flow, and semantic optimization. `compiler/native` supplies shared LLVM conversion, root-slot planning, and native ABI calls for AOT and JIT. `compiler/aot` owns closed-program optimization, exports, and object emission. The build driver selects platforms, links, archives, and publishes artifacts. LLVM headers and types stay inside the compiler's native backends; runtime does not depend on LLVM.
 
 `runtime` supplies objects, GC, Futures, errors, and common execution services. Native execution support owns program instances, native calls, and source traces. Neither may depend on frontend, IR, LLVM, or VM. The CLI may link both compilation backends and the VM; a pure AOT application links only the runtime components required for its execution. Existing `Compile*` interfaces returning VM programs continue to serve the VM. AOT must not create an unused temporary VM program through that path.
 

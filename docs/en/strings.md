@@ -147,7 +147,7 @@ Low-level heap string/builder interfaces accept valid UTF-8; untrusted native
 input must first use `InvalidUtf8Offset`. The source lexer is the current
 external text validation boundary.
 
-## Case conversion and planned matching APIs
+## Case conversion and regular expression matching
 
 `text.toLowerCase(): string` and `text.toUpperCase(): string` implement Unicode
 18.0.0 default full case conversion, including expansions and Final_Sigma.

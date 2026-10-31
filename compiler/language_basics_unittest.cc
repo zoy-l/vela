@@ -180,6 +180,14 @@ INSTANTIATE_TEST_SUITE_P(
                              42},
         BasicLanguageProgram{R"(func main(): int { let x: int? = null; x = 40; return x + 2; })",
                              42},
+        BasicLanguageProgram{R"(func main(): int {
+          let value: int? = 3;
+          const text: string? = 'ab';
+          const values: int[]? = [30];
+          const operation: (() => int)? = (): int => 7;
+          return value + text.length + values[0] + operation();
+        })",
+                             42},
         BasicLanguageProgram{R"(func main(): int { const value = 40;
           { const value = value + 1; switch (41) { case value: break; } }
           return value + 2;
@@ -259,8 +267,8 @@ INSTANTIATE_TEST_SUITE_P(
         BasicLanguageError{"func f(): void { let x = null; }", "explicit nullable type"},
         BasicLanguageError{"func f(): void { let x: int?? = null; }", "already nullable"},
         BasicLanguageError{"func f(): void { let x: void? = null; }", "void is not"},
-        BasicLanguageError{"func f(x: int?): int { return x + 1; }", "arithmetic operands"},
-        BasicLanguageError{"func f(x: bool?): void { if (x) {} }", "condition must be bool"},
+        BasicLanguageError{"func f(x: int?): int { return x + 1; }", "'x' may be null"},
+        BasicLanguageError{"func f(x: bool?): void { if (x) {} }", "'x' may be null"},
         BasicLanguageError{"func f(x: string?): int { return x.length; }", "non-null check"},
         BasicLanguageError{"func f(x: string?): string { return x.toString(); }", "non-null check"},
         BasicLanguageError{"func f(x: int[]?): int { return x[0]; }", "non-null check"},
@@ -268,16 +276,16 @@ INSTANTIATE_TEST_SUITE_P(
         BasicLanguageError{"func f(x: int[]): void { const a: int?[] = x; }", "cannot initialize"},
         BasicLanguageError{"func f(x: int?, flag: bool): int { if (x != null) { if (flag) x = "
                            "null; return x+1; } return 0; }",
-                           "arithmetic operands"},
+                           "'x' may be null"},
         BasicLanguageError{"func f(x: int?, flag: bool): void { if (x != null) while (flag) { "
                            "print(x+1); x=null; } }",
-                           "arithmetic operands"},
+                           "'x' may be null"},
         BasicLanguageError{
             "func f(x: int?): int { if (x != null && (x = null) == null) return x+1; return 0; }",
-            "arithmetic operands"},
+            "'x' may be null"},
         BasicLanguageError{"func f(x: int?): int { if (x != null) { switch (1) { default: x=null; "
                            "} return x+1; } return 0; }",
-                           "arithmetic operands"},
+                           "'x' may be null"},
         BasicLanguageError{"func f(x: int): int { let x = 1; return x; }", "duplicate local"},
         BasicLanguageError{"func f(): int { return later; let later = 1; }", "unknown name"},
         BasicLanguageError{"func f(flag: bool): int { if (flag) let x=1; return x; }",

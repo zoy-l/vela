@@ -68,7 +68,7 @@ INSTANTIATE_TEST_SUITE_P(
                      "other"},
         LocatedError{"func f(): int {\n  return 1 + true;\n}", "arithmetic operands", "+"},
         LocatedError{"func f(): int {\n  return [1][true];\n}", "index must be int", "true"},
-        LocatedError{"func f(flag: bool?): void {\n  if (flag) {}\n}", "condition must be bool",
+        LocatedError{"func f(flag: bool?): void {\n  if (flag) {}\n}", "'flag' may be null",
                      "flag"},
         LocatedError{"func f(value: string?): int {\n  return value.length;\n}", "non-null check",
                      "value"},

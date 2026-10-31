@@ -41,20 +41,20 @@ vela build math.vela --emit=staticlib --export=add -o libmath.a
 
 开发者可以运行 `python -m tools.vl package release OUTPUT` 创建 Windows 开发包。清单提供精确的 MSVC、Windows SDK/UCRT 版本及安装说明；按清单将 `VELA_MSVC_TOOLS` 设为带版本的 MSVC 工具目录，将 `VELA_WINDOWS_SDK` 设为 Windows Kits 根目录，无需 Visual Studio IDE。SDK 链接输入保留在外部。其他主机目前需要通过经过审计的 `--support-spec` 描述 SDK/sysroot 输入及随包文件，仍须完成各平台验收。
 
-首期支持本机编译本机，目标发行矩阵与现有引导主机一致：Windows x64、Linux x64、macOS arm64；每个平台必须独立通过发行验收后才能宣称支持。首期不包含 JIT、热替换、原生动态库装载、跨发行版本 ABI 兼容、独立模块二进制分发或 VM/AOT 相互调用。REPL 和现有 VM 调试器继续服务字节码路径。未支持的 AOT 操作必须明确报错，不能执行内嵌字节码兜底。
+首期支持本机编译本机，目标发行矩阵与现有引导主机一致：Windows x64、Linux x64、macOS arm64；每个平台必须独立通过发行验收后才能宣称支持。本 AOT 交付范围不包含原生动态库装载、跨发行版本 ABI 兼容、独立模块二进制分发或 VM/AOT 相互调用；JIT 与热重载由[开发模式](hot_reload.md)提供。REPL 和现有 VM 调试器继续服务字节码路径。未支持的 AOT 操作必须明确报错，不能执行内嵌字节码兜底。
 
-## 当前基础与需要拆开的边界
+## 共享实现与 AOT 职责
 
-| 已核实的实现 | AOT 所需变化 |
+| 共享实现 | AOT 职责 |
 | --- | --- |
-| [IR](../../compiler/ir/ir.h) 使用 32 位虚拟寄存器 ID，携带源码位置及异常处理器；[公共分析](../../compiler/ir/analysis.h)提供指令效果和异常/恢复边活跃性 | 补齐每个值定义的类型事实，并据此生成类型化原生值与根槽；不能按字节码字段宽度定义原生能力 |
-| [编译准备](../../compiler/ir/preparation.cc)离线完成前端、布局描述与公共优化，返回不借用 AST 或 Isolate 的 IR；VM 分配和编码位于独立后端 | AOT 从同一 IR 分流，接入 LLVM lowering 与代码生成 |
-| [布局实例化](../../runtime/program_layouts.cc)消费无指针描述表；VM 的原生绑定检查消费 IR 签名 | 原生实例复用布局实例化，接入原生导入表、常量根池与全局状态 |
-| [NativeFunction](../../runtime/native_function.h) 由 C++ 签名生成适配器，调用入口消费 `RegisterView` | 复用声明和类型编解码规则，生成类型化 AOT 入口，不能把现有回调强转为机器码函数指针 |
-| [Future 调度器](../../runtime/future.h) 已属于 runtime，VM 挂起帧与回调执行仍在 `vm` 内 | 复用 Future 状态和调度语义，提供原生续延与原生回调执行，消除对 VM 执行器的依赖 |
-| [GC](garbage_collection.md) 已有精确根、非移动堆和引用写屏障 | 生成原生根槽和安全点，复用堆与屏障，不引入保守栈扫描 |
+| [IR](../../compiler/ir/ir.h) 使用 32 位虚拟寄存器 ID，携带类型、源码位置及异常处理器；[公共分析](../../compiler/ir/analysis.h)提供指令效果和异常/恢复边活跃性 | 按值定义的类型事实生成类型化原生值与根槽，原生能力不受字节码字段宽度限制 |
+| [编译准备](../../compiler/ir/preparation.cc)离线完成前端、布局描述与公共优化，返回不借用 AST 或 Isolate 的 IR；VM 分配和编码位于独立后端 | 从同一 IR 分流到共享 LLVM lowering 与代码生成 |
+| [布局实例化](../../runtime/program_layouts.cc)消费无指针描述表；绑定检查消费具体签名 | 原生实例复用布局实例化，拥有原生导入表、常量根池与全局状态 |
+| [NativeFunction](../../runtime/native_function.h) 由 C++ 签名生成 VM 与原生入口 | 复用声明和类型编解码规则，按签名选择直接或受检查的 AOT 入口 |
+| [Future 调度器](../../runtime/future.h)拥有共享状态和调度语义；VM 拥有字节码挂起帧与执行器 | 使用原生续延与原生回调入口，不依赖 VM 执行器 |
+| [GC](garbage_collection.md)提供精确根、非移动堆和引用写屏障 | 生成原生根槽和安全点，复用堆与屏障，不使用保守栈扫描 |
 
-上述变化是本设计的实施前提，不代表现有接口已经可直接生成机器码。
+这些生产路径已接通；目标支持包与发行验收的剩余范围见本文状态和完成条件。
 
 ## 编译管线与模块职责
 
@@ -67,7 +67,7 @@ vela build math.vela --emit=staticlib --export=add -o libmath.a
                               → 目标文件 → 归档或链接
 ```
 
-`compiler/frontend` 继续负责语言语义，`compiler/ir` 负责共享 lowering、控制流及语义优化。拟新增 `compiler/aot` 负责 LLVM 转换、根槽规划、原生 ABI 调用和目标文件生成；构建驱动负责平台选择、链接、归档及产物发布。LLVM 头文件和类型只出现在 AOT 实现内部。
+`compiler/frontend` 负责语言语义，`compiler/ir` 负责共享 lowering、控制流及语义优化。`compiler/native` 为 AOT 与 JIT 提供共享 LLVM 转换、根槽规划及原生 ABI 调用；`compiler/aot` 负责封闭程序优化、导出和目标文件生成，构建驱动负责平台选择、链接、归档及产物发布。LLVM 头文件和类型留在编译器的原生后端内，runtime 不依赖 LLVM。
 
 `runtime` 提供对象、GC、Future、错误与执行所需的公共服务；原生执行支持负责程序实例、原生调用及源码追踪。它们不得依赖 frontend、IR、LLVM 或 VM。CLI 可以同时链接 VM 与 AOT 编译后端，纯 AOT 应用只能链接其实际执行所需的运行时组件。现有 `Compile*` 返回 VM 程序的接口继续服务 VM；AOT 不复用这一路径创建一个无用途的临时 VM 程序。
 

@@ -51,8 +51,9 @@ instructions remaps jump targets; allocation also removes self-moves.
 This allocator has no spills or interval splitting. Conservative intervals and
 argument-window fragmentation can exceed the slot limit even when an optimal
 allocation could fit. Diagnostics report that limit at a source location.
-Full SSA propagation, jump threading, general move coalescing, and optimal
-coloring are not implemented.
+The shared IR optimizer implements jump threading, basic-block copy propagation,
+and redundant move elimination. Full SSA propagation and optimal coloring are
+not part of the current bytecode implementation.
 
 The IR and VM use one opcode definition in `base/opcode.h`. The old conversion
 switch and its `LoadNull` fallback have been removed. IR and runtime operands
@@ -111,10 +112,11 @@ The twenty scripts in that measurement retained 48–224 bytes of native registe
 Capacity persists until VM destruction; peak recursive workloads can still
 reach the configured maximum.
 
-Explicit frames avoid recursive C++ interpreter calls, but do not by themselves
-implement async. Suspension, scheduler ownership, completion, cancellation,
-timer ordering, and GC roots across suspension remain separate work. Likewise,
-incremental GC work budgets do not establish a hard real-time latency bound;
+Explicit frames avoid recursive C++ interpreter calls. Async suspension,
+scheduler ownership, Future completion, cancellation notifications, timer
+ordering, and GC roots across suspension are implemented; see
+[async contracts](async_tasks.md). Incremental GC work budgets do not establish
+a hard real-time latency bound;
 root visits, object tracing, and allocation costs still need measurement.
 
 ## Encoding limits

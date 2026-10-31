@@ -19,21 +19,21 @@ Vela 是一个专为原生 C++ 应用设计的静态类型嵌入式脚本语言�
 
 ## 示例代码
 
-```typescript
+```vela
 interface Entity {
   render(): string;
 }
 
 class Player implements Entity {
-  public param name: string;
-  public param health: int = 100;
-  public param shield: int? = null;
+  name: string;
+  health: int = 100;
+  shield: int? = null;
 
-  public get isAlive(): bool {
+  get isAlive(): bool {
     return this.health > 0;
   }
 
-  public render(): string {
+  render(): string {
     const effectiveShield = this.shield ?? 0;
     return '${this.name} (HP: ${this.health}, Shield: ${effectiveShield})';
   }

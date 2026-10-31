@@ -3,11 +3,11 @@
 [**English**](roadmap.md) | [简体中文](../zh-CN/roadmap.md)
 
 
-This is the implementation checklist for the basic Vela programming language.
-The checklist describes production work remaining after the current bootstrap
-compiler, typed IR, register VM, and isolate-local GC foundation.
+This checklist records implemented Vela language capabilities and remaining work.
+The register VM, native AOT, and reloadable JIT share the frontend, Typed IR,
+and Isolate runtime.
 
-## Current bootstrap
+## Language foundation
 
 - [x] C/C++-style blocks and semicolons
 - [x] `int` and `bool` values
@@ -68,9 +68,9 @@ P0 behavior is specified in [Basic language contracts](language_basics.md).
 - [x] Add type aliases
 - [x] Add nullable types such as `T?`
 - [x] Add generics such as `Set<T>` and `Map<K, V>`
-- [ ] Complete Dart-style generic bounds, declaration checking, bound-driven inference,
+- [x] Complete Dart-style generic bounds, declaration checking, bound-driven inference,
   and generic interfaces/methods while retaining Vela value types, container invariance,
-  and monomorphization; see the [generic system design (Chinese)](../zh-CN/generics.md)
+  and monomorphization; see the [generic system contract](generics.md)
   for the full scope.
 - [x] Add explicit interface / implements contracts
 - [x] Add type tests and checked casts
@@ -88,7 +88,6 @@ P1 contracts are specified in [Core language specification](core_language.md).
 - [x] Add import aliases for qualified access and name conflict resolution
 - [x] Compile multiple source files as one program
 - [x] Add console output
-- [ ] Console input is outside the current standard API; see [standard library scope](standard_library.md).
 - [x] Add time, random, and math libraries
 - [x] Add lightweight UTC calendar conversion and strict ISO date-time input/output ([contract](time.md))
 - [x] Add basic string standard library APIs ([contracts](strings.md))
@@ -136,29 +135,31 @@ Current bytecode limits and measured execution costs are documented in
 Async APIs, scheduling, host ownership, and performance boundaries are specified in
 [Async Functions and Future Semantics](async_tasks.md).
 
-## Recommended implementation order
+## Native execution and development tools
 
-1. Complete comparisons, logical operators, `for`, `break`, and `continue`.
-2. Implement strings and arrays with typed contiguous storage.
-3. Finish class methods, `this`, and method calls.
-4. Add console output and the first standard library surface.
-5. Add imports and multi-file compilation.
-6. Add constant folding and basic bytecode cleanup.
-7. Add errors, stack traces, and native bindings.
-8. Re-run Release benchmarks before changing VM dispatch or GC strategy.
+- [x] Native AOT synchronous, async, and dynamic execution, with `exe`, `obj`, and
+  `staticlib` build interfaces ([contracts and distribution status](aot.md)).
+- [x] Development JIT, Load, stateful Hot Reload, Reload through a new script
+  Isolate, and optimized-frame recovery ([contract, Chinese](../zh-CN/hot_reload.md)).
+- [x] Native class allocation elimination, path materialization, reloadable
+  optimized-frame recovery, and private closed-AOT stack records
+  ([contract, Chinese](../zh-CN/escape_analysis.md)).
+- [x] Project configuration, source test runner, async assertions, mock generation,
+  and interaction verification ([contract, Chinese](../zh-CN/testing.md)).
 
-Class inheritance, method overriding, and async tasks now run through the source,
-type checker, Typed IR, bytecode, VM, and CLI paths. JIT and stateful hot reload
-are separate follow-on capabilities. Their H1–H5 implementation order, Reload,
-and acceptance contracts are specified in the
-[JIT and hot reload design (Chinese)](../zh-CN/hot_reload.md#12-实施顺序与完成条件).
+## Remaining implementation and acceptance
 
-## Later: native AOT
+- [ ] Destructuring declarations, assignments, loop bindings, and array/Map
+  collection spread: all D0–D5 stages in the
+  [design (Chinese)](../zh-CN/destructuring_spread.md#9-实施阶段与验收).
+- [ ] Linux x64 and macOS arm64 AOT target support packages and clean-host release
+  acceptance. A4/A5 remain incomplete; see [AOT completion criteria](aot.md#implementation-stages-and-completion-criteria).
+- [ ] Linux x64 and macOS arm64 execution validation for JIT/hot reload and class
+  escape optimization; see [hot reload validation (Chinese)](../zh-CN/hot_reload.md#13-验证与性能标准)
+  and [escape analysis validation (Chinese)](../zh-CN/escape_analysis.md#9-验证与性能证据).
+- [ ] JIT performance approaching closed AOT; current measurements do not meet
+  that goal. See [performance evidence (Chinese)](../zh-CN/hot_reload.md#13-验证与性能标准).
+- [ ] Dedicated VS Code test-panel UI integration; see
+  [testing tool contracts (Chinese)](../zh-CN/testing.md#9-报告与工具链).
 
-The [AOT design](aot.md#implementation-stages-and-completion-criteria) records the
-current implementation status and defines the complete A1–A5 sequence and
-acceptance criteria: shared compilation boundaries, synchronous native execution,
-async and dynamic paths, user builds
-and distribution, and release acceptance. Emitting the first object file is not
-completion. Every language path and the distribution workflow without a separate
-user installation of Clang/LLVM must be connected.
+Console input is outside the current standard API; see [standard library scope](standard_library.md).

@@ -80,11 +80,29 @@ An array literal may use its expected element type, including null elements.
 
 Non-null checks promote local variables and parameters on applicable paths.
 The analysis understands `== null`, `!= null`, operand reversal, logical
-negation, short-circuit `&&`/`||`, and guard returns. Assignment invalidates
-the previous fact; assigning a non-nullable value establishes a new one.
+negation, short-circuit `&&`/`||`, and guard returns. Local `let` and `const`
+initializers follow the same rule as later assignments: a statically non-null
+value establishes a non-null fact; a nullable or dynamic value cannot prove it.
+An assignment replaces the previous fact. Calls that may modify a captured mutable
+local invalidate its fact. Promotion does not change the declared type, so an
+`int?` local can still be assigned null and can still use `??`.
 Branches intersect facts at joins. Loops and switches conservatively discard
 facts for locals they may write. Loop backedges and continue paths cannot
 reuse a fact that a previous iteration could invalidate.
+
+```typescript
+func main(): void {
+  let value: int? = 3;
+  print(value + 1); // 4: the initializer proves value is non-null.
+  value = null;
+  // print(value + 1); // Error: value may be null.
+}
+```
+
+Using an operand that may be null in numeric arithmetic, ordering, bitwise
+operations, or boolean conditions reports the operand and requests a null check.
+String concatenation and interpolation still format nullable primitive values
+under the [string-context rules](strings.md).
 
 Conditional expressions check each arm with its condition's facts and merge
 only facts shared by both arms. A write in one arm does not affect checking
