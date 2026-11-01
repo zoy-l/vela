@@ -220,7 +220,11 @@ TEST_P(JitStateTest, RequiredNewFieldsRejectAtomicallyWhenAnInstanceIsReachable)
   EXPECT_EQ(isolate_.native_dispatch().revision(), 1U);
   EXPECT_EQ(source_.snapshot()->revision, 1U);
   EXPECT_EQ(runtime::Heap::ClassOf(*object.value().AsObject()), layout);
-  EXPECT_EQ(runtime::Heap::GetField(*object.value().AsObject(), 0)->AsInteger(), 40);
+  const auto object_field_0 = runtime::Heap::GetField(*object.value().AsObject(), 0);
+  if (!object_field_0.has_value()) {
+    FAIL() << "Expected object_field_0 to have a value";
+  }
+  EXPECT_EQ(object_field_0->AsInteger(), 40);
 }
 
 TEST_P(JitStateTest, OldFactoriesUseStableExplicitArgumentsAndTheCurrentConstructorDefaults) {
@@ -266,7 +270,11 @@ TEST_P(JitStateTest, DeletedFieldsAreRejectedOnlyWhileAReachableOldClosureDepend
   update = Update(changed);
   ASSERT_TRUE(update) << update.error();
   EXPECT_FALSE(runtime::Heap::ClassOf(*object.value().AsObject())->FieldIndex(removed_field));
-  EXPECT_TRUE(runtime::Heap::GetField(*object.value().AsObject(), 0)->IsNull());
+  const auto object_field_0 = runtime::Heap::GetField(*object.value().AsObject(), 0);
+  if (!object_field_0.has_value()) {
+    FAIL() << "Expected object_field_0 to have a value";
+  }
+  EXPECT_TRUE(object_field_0->IsNull());
 }
 
 TEST_P(JitStateTest, NestedOldLambdasAreCheckedBeforeTheOldFactoryCreatesThem) {
@@ -429,17 +437,18 @@ export func count(): int { return calls; }
     EXPECT_EQ(Entry("read").Invoke({})->AsInteger(), value);
     EXPECT_EQ(Entry("count").Invoke({})->AsInteger(), 0);
   };
-  write(40);
-  write(41);
+  constexpr std::int64_t kInitialValue = 40;
+  write(kInitialValue);
+  write(kInitialValue + 1);
   update = Update("let padding = 99; let stored = initialize(); let calls = 0; " + accessors);
   ASSERT_TRUE(update) << update.error();
   isolate_.heap().Collect();
-  write(42);
-  write(43);
+  write(kInitialValue + 2);
+  write(kInitialValue + 3);
   update = Update("export func read(): int { return 0; }");
   ASSERT_FALSE(update);
   EXPECT_NE(update.error().find("deleted global"), std::string::npos);
-  write(44);
+  write(kInitialValue + 4);
   writer.reset();
   update = Update("export func read(): int { return 0; }");
   ASSERT_TRUE(update) << update.error();
@@ -566,8 +575,16 @@ TEST_P(JitStateTest, FieldBlockPreparationFailureLeavesEveryObjectAndTheCandidat
   EXPECT_EQ(dispatch.revision(), 1U);
   EXPECT_EQ(runtime::Heap::ClassOf(*first.value().AsObject()), original);
   EXPECT_EQ(runtime::Heap::ClassOf(*second.value().AsObject()), original);
-  EXPECT_EQ(runtime::Heap::GetField(*first.value().AsObject(), 0)->AsInteger(), 40);
-  EXPECT_EQ(runtime::Heap::GetField(*second.value().AsObject(), 0)->AsInteger(), 40);
+  const auto first_field_0 = runtime::Heap::GetField(*first.value().AsObject(), 0);
+  if (!first_field_0.has_value()) {
+    FAIL() << "Expected first_field_0 to have a value";
+  }
+  EXPECT_EQ(first_field_0->AsInteger(), 40);
+  const auto second_field_0 = runtime::Heap::GetField(*second.value().AsObject(), 0);
+  if (!second_field_0.has_value()) {
+    FAIL() << "Expected second_field_0 to have a value";
+  }
+  EXPECT_EQ(second_field_0->AsInteger(), 40);
   EXPECT_EQ(heap.allocated_bytes(), bytes);
   heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
   ASSERT_TRUE(dispatch.Publish(std::move(*candidate)));

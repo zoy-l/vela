@@ -169,7 +169,7 @@ export func overflow(value: int): int {
   }
 }
 
-TEST(JitCompilerTest, BoundedLeafCallsRetainFailureFramesAndCallerRoots) {
+TEST(JitCompilerTest, TypedSlotCallsRetainFailureFramesAndCallerRoots) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
   const auto compiled = CompileText(**compiler, R"(
@@ -185,7 +185,7 @@ export func answer(): int { return divide(2); }
 )",
                                     NativeCodeTier::Optimized);
   ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-  EXPECT_NE(compiled->llvm_ir.find("@vela_native_v2_leaf_failure"), std::string::npos);
+  EXPECT_NE(compiled->llvm_ir.find("call.typed.entry"), std::string::npos);
   runtime::Isolate isolate(1);
   ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   auto instance = runtime::NativeInstance::Borrow(isolate.native_dispatch().current_state());
@@ -364,7 +364,7 @@ TEST(JitCompilerTest, MaterializesTheCompleteImageBeforePublishingNamedEntries) 
   ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
 }
 
-TEST(JitCompilerTest, ReusesUnchangedCodeAndInvalidatesTheCompleteDirectCallClosure) {
+TEST(JitCompilerTest, ReusesUnchangedCodeAcrossNamedCalleeEdits) {
   constexpr std::int64_t kEditVersions = 8;
   for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
     auto compiler = Compiler::Create();
@@ -390,7 +390,7 @@ TEST(JitCompilerTest, ReusesUnchangedCodeAndInvalidatesTheCompleteDirectCallClos
         independent = cold->entry;
       } else {
         EXPECT_EQ(cold->entry, independent);
-        EXPECT_EQ(compiled->compiled_functions, tier == NativeCodeTier::Baseline ? 1U : 2U);
+        EXPECT_EQ(compiled->compiled_functions, 1U);
         const auto index = static_cast<std::size_t>(cold - functions.begin());
         EXPECT_EQ(compiled->llvm_ir.find("@vela_jit_entry_" + std::to_string(index) + '_'),
                   std::string::npos);
@@ -1429,36 +1429,56 @@ export func subtractDescending(start: int, bound: int, initial: int): int {
       SCOPED_TRACE(name);
       const auto entry = isolate.native_dispatch().FindEntry("main.vela", name);
       ASSERT_TRUE(entry);
-      const std::array safe{runtime::Value::Integer(start), runtime::Value::Integer(bound),
-                            runtime::Value::Integer(42)};
+      const std::array safe{
+          runtime::Value::Integer(start),
+          runtime::Value::Integer(bound),
+          runtime::Value::Integer(42),
+      };
       ASSERT_TRUE(test::ReturnsInteger(*entry, 42, safe));
-      const std::array arguments{runtime::Value::Integer(start), runtime::Value::Integer(bound),
-                                 runtime::Value::Integer(initial)};
+      const std::array arguments{
+          runtime::Value::Integer(start),
+          runtime::Value::Integer(bound),
+          runtime::Value::Integer(initial),
+      };
       const auto failed = entry->Invoke(arguments);
       ASSERT_FALSE(failed);
       EXPECT_EQ(failed.error(), ExecutionStatus::IntegerOverflow);
-      const std::array empty{runtime::Value::Integer(bound), runtime::Value::Integer(start),
-                             runtime::Value::Integer(initial)};
+      const std::array empty{
+          runtime::Value::Integer(bound),
+          runtime::Value::Integer(start),
+          runtime::Value::Integer(initial),
+      };
       ASSERT_TRUE(test::ReturnsInteger(*entry, initial, empty));
     }
     const auto ascending = isolate.native_dispatch().FindEntry("main.vela", "ascending");
     const auto descending = isolate.native_dispatch().FindEntry("main.vela", "descending");
     ASSERT_TRUE(ascending);
     ASSERT_TRUE(descending);
-    const std::array upper{runtime::Value::Integer(kMaximum - 1), runtime::Value::Integer(kMaximum),
-                           runtime::Value::Integer(-(kMaximum - 1))};
+    const std::array upper{
+        runtime::Value::Integer(kMaximum - 1),
+        runtime::Value::Integer(kMaximum),
+        runtime::Value::Integer(-(kMaximum - 1)),
+    };
     ASSERT_TRUE(test::ReturnsInteger(*ascending, 0, upper));
-    const std::array lower{runtime::Value::Integer(kMinimum + 1), runtime::Value::Integer(kMinimum),
-                           runtime::Value::Integer(kMaximum)};
+    const std::array lower{
+        runtime::Value::Integer(kMinimum + 1),
+        runtime::Value::Integer(kMinimum),
+        runtime::Value::Integer(kMaximum),
+    };
     ASSERT_TRUE(test::ReturnsInteger(*descending, 0, lower));
-    const std::array wide_ascending{runtime::Value::Integer(-kMaximum),
-                                    runtime::Value::Integer(kMaximum), runtime::Value::Integer(0)};
+    const std::array wide_ascending{
+        runtime::Value::Integer(-kMaximum),
+        runtime::Value::Integer(kMaximum),
+        runtime::Value::Integer(0),
+    };
     const auto ascending_overflow = ascending->Invoke(wide_ascending);
     ASSERT_FALSE(ascending_overflow);
     EXPECT_EQ(ascending_overflow.error(), ExecutionStatus::IntegerOverflow);
-    const std::array wide_descending{runtime::Value::Integer(kMaximum),
-                                     runtime::Value::Integer(-kMaximum),
-                                     runtime::Value::Integer(0)};
+    const std::array wide_descending{
+        runtime::Value::Integer(kMaximum),
+        runtime::Value::Integer(-kMaximum),
+        runtime::Value::Integer(0),
+    };
     const auto descending_overflow = descending->Invoke(wide_descending);
     ASSERT_FALSE(descending_overflow);
     EXPECT_EQ(descending_overflow.error(), ExecutionStatus::IntegerOverflow);

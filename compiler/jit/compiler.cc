@@ -37,6 +37,7 @@
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/code_reuse.h"
 #include "compiler/jit/engine.h"
+#include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/native_image_data.h"
 #include "runtime/native/native_image.h"
@@ -215,19 +216,28 @@ void ApplyCodeReuse(native::NativeModule& generated,
   BindReusableCode(*generated.module, reuse, generated.function_symbols, batch, reuse_plan);
   for (std::size_t index = 0; index < reuse_plan.reused.size(); ++index) {
     if (reuse_plan.reused.at(index) != 0) {
-      generated.function_metrics.at(index) = reuse.sources.at(index).metrics;
+      const auto& source = reuse.sources.at(index);
+      generated.function_metrics.at(index) = source.metrics;
+      generated.body_dependencies.at(index) = source.body_dependencies;
     }
   }
 }
 
-std::vector<std::string> EntrySymbols(const native::NativeModule& generated,
-                                      const CodeReusePlan& reuse_plan) {
-  std::vector<std::string> entry_symbols;
+struct FunctionEntrySymbols final {
+  std::string boxed;
+  std::string typed;
+};
+
+std::vector<FunctionEntrySymbols> EntrySymbols(const native::NativeModule& generated,
+                                               const CodeReusePlan& reuse_plan) {
+  std::vector<FunctionEntrySymbols> entry_symbols;
   for (std::size_t index = 0; index < generated.entry_functions.size(); ++index) {
     const auto* entry = generated.entry_functions.at(index);
-    entry_symbols.push_back(!reuse_plan.reused.empty() && reuse_plan.reused.at(index) != 0
-                                ? std::string()
-                                : entry->getName().str());
+    const auto reused = !reuse_plan.reused.empty() && reuse_plan.reused.at(index) != 0;
+    entry_symbols.push_back({
+        .boxed = reused ? std::string() : entry->getName().str(),
+        .typed = reused ? std::string() : generated.typed_functions.at(index)->getName().str(),
+    });
   }
   return entry_symbols;
 }
@@ -254,13 +264,14 @@ llvm::Expected<llvm::orc::SymbolMap> LookupImageSymbols(
     llvm::orc::LLJIT& jit,
     llvm::orc::JITDylib& library,
     const native::NativeModule& generated,
-    const std::vector<std::string>& entry_symbols,
+    const std::vector<FunctionEntrySymbols>& entry_symbols,
     const CodeReusePlan& reuse_plan,
     const native::NativeImageData* image_data) {
   llvm::orc::SymbolNameSet requested;
   for (const auto& symbol : entry_symbols) {
-    if (!symbol.empty()) {
-      requested.insert(jit.mangleAndIntern(symbol));
+    if (!symbol.boxed.empty()) {
+      requested.insert(jit.mangleAndIntern(symbol.boxed));
+      requested.insert(jit.mangleAndIntern(symbol.typed));
     }
   }
   if (image_data == nullptr) {
@@ -281,18 +292,24 @@ llvm::Expected<llvm::orc::SymbolMap> LookupImageSymbols(
 
 const runtime::NativeImage* BindImageEntries(llvm::orc::LLJIT& jit,
                                              native::NativeImageData& image_data,
-                                             const std::vector<std::string>& entry_symbols,
+                                             const std::vector<FunctionEntrySymbols>& entry_symbols,
                                              const llvm::orc::SymbolMap& resolved,
                                              const CodeReuseCache* reuse) {
   std::vector<runtime::NativeEntry> addresses;
+  std::vector<runtime::NativeTypedEntry> typed_addresses;
   for (std::size_t index = 0; index < entry_symbols.size(); ++index) {
     const auto& symbol = entry_symbols.at(index);
-    addresses.push_back(symbol.empty() ? reuse->sources.at(index).entry
-                                       : resolved.find(jit.mangleAndIntern(symbol))
-                                             ->second.getAddress()
-                                             .toPtr<runtime::NativeEntry>());
+    addresses.push_back(symbol.boxed.empty() ? reuse->sources.at(index).entry
+                                             : resolved.find(jit.mangleAndIntern(symbol.boxed))
+                                                   ->second.getAddress()
+                                                   .toPtr<runtime::NativeEntry>());
+    typed_addresses.push_back(symbol.typed.empty()
+                                  ? reuse->sources.at(index).typed_entry
+                                  : resolved.find(jit.mangleAndIntern(symbol.typed))
+                                        ->second.getAddress()
+                                        .toPtr<runtime::NativeTypedEntry>());
   }
-  image_data.BindEntries(addresses);
+  image_data.BindEntries(addresses, typed_addresses);
   return image_data.image();
 }
 
@@ -327,12 +344,16 @@ void UpdateSourceCache(CodeReuseCache& reuse,
                        native::NativeModule& generated,
                        const runtime::NativeImage& image) {
   reuse.sources.clear();
+  const auto functions = image.functions.values();
   for (std::size_t index = 0; index < reuse_plan.inputs.size(); ++index) {
+    const auto& function = functions.subspan(index).front();
     reuse.sources.push_back({
         .fingerprint = std::move(reuse_plan.inputs.at(index).fingerprint),
         .symbols = std::move(generated.function_symbols.at(index)),
         .metrics = generated.function_metrics.at(index),
-        .entry = image.functions.values().subspan(index).front().entry,
+        .entry = function.entry,
+        .typed_entry = function.typed_entry,
+        .body_dependencies = std::move(generated.body_dependencies.at(index)),
     });
   }
 }
@@ -381,21 +402,22 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
   const auto batch = next_module_.fetch_add(1);
   std::unique_lock<std::mutex> reuse_lock;
   CodeReusePlan reuse_plan;
+  const auto calls = native::PlanNativeCalls(program, options.tier);
   auto compiled_functions = program.functions.size();
   if (reuse != nullptr) {
     if (!reloadable) {
       return std::unexpected(Diagnostic("function code reuse requires a reloadable program"));
     }
     reuse_lock = std::unique_lock(reuse->mutex);
-    reuse_plan = PlanCodeReuse(
-        DescribeCodeInputs(program, options.tier, static_cast<std::uint8_t>(options.optimization),
-                           static_cast<std::uint8_t>(options.debugging),
-                           static_cast<std::uint8_t>(options.escape)),
-        *reuse);
+    reuse_plan = PlanCodeReuse(DescribeCodeInputs(program, calls, options.tier,
+                                                  static_cast<std::uint8_t>(options.optimization),
+                                                  static_cast<std::uint8_t>(options.debugging),
+                                                  static_cast<std::uint8_t>(options.escape)),
+                               *reuse);
   }
   const std::string module_name = "vela_jit";
   auto generated =
-      native::Generate(program, module_name, *exports, options.debugging, options.tier,
+      native::Generate(program, calls, module_name, *exports, options.debugging, options.tier,
                        options.escape, NativeCodePlacement::Dynamic, reuse_plan.reused);
   timings.generation = Clock::now() - generation_started;
   if (!generated) {

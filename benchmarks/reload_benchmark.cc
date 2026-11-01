@@ -450,9 +450,9 @@ int RegisterReloadBenchmarks() {
   benchmark::AddCustomContext("jit_cpu_features", cpu.features);
   benchmark::AddCustomContext("jit_baseline",
                               "LLVM O2; host CPU; current dispatch; precise roots; safepoints");
-  benchmark::AddCustomContext(
-      "jit_optimized",
-      "LLVM O2; host CPU; version dependencies; direct calls/inlining; selective recovery");
+  benchmark::AddCustomContext("jit_optimized",
+                              "LLVM O2; host CPU; typed slots; SCC direct calls/inlining; body "
+                              "dependencies; selective recovery");
   for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
     const auto prefix =
         std::string("hot/") + (tier == NativeCodeTier::Baseline ? "baseline/" : "optimized/");

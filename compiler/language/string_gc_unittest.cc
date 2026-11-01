@@ -114,10 +114,14 @@ func main(): Store {
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 5U);
   const auto label = runtime::Heap::GetField(*value.AsObject(), 0);
-  ASSERT_TRUE(label);
+  if (!label.has_value()) {
+    FAIL() << "Expected label to have a value";
+  }
   EXPECT_EQ(label->AsString()->value(), "ab");
   const auto rows = runtime::Heap::GetField(*value.AsObject(), 1);
-  ASSERT_TRUE(rows);
+  if (!rows.has_value()) {
+    FAIL() << "Expected rows to have a value";
+  }
   const auto row = runtime::Heap::GetElement(*rows->AsObject(), 0);
   ASSERT_TRUE(row.has_value());
   const auto element = runtime::Heap::GetElement(*row->AsObject(), 0);

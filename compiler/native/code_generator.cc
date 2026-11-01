@@ -20,6 +20,7 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/LegacyPassManager.h>
@@ -40,6 +41,7 @@
 #include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/PromoteMemToReg.h>
+#include <llvm/Transforms/Utils/ValueMapper.h>
 
 #include "base/builtin.h"
 #include "base/native_program_mode.h"
@@ -464,12 +466,10 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
       }
     }
     if (function.native_symbol.empty() && debugging == NativeDebugging::Safepoints &&
-        (tier == NativeCodeTier::Optimized || program.native_mode == NativeProgramMode::Closed)) {
+        program.native_mode == NativeProgramMode::Closed) {
       AddLeafEntry(module, module_name + '_' + std::to_string(index), function, current);
-      if (program.native_mode == NativeProgramMode::Closed) {
-        baseline.leaf = current.leaf;
-        baseline.leaf_guard = current.leaf_guard;
-      }
+      baseline.leaf = current.leaf;
+      baseline.leaf_guard = current.leaf_guard;
     }
     if (CanInlineSmallFunction(function) || CanUseGuardedLeaf(function)) {
       body->addFnAttr(llvm::Attribute::AlwaysInline);
@@ -514,9 +514,11 @@ std::vector<std::string> FunctionSymbols(const GeneratedFunction& baseline,
 std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
     llvm::Module& module,
     const ir::Program& program,
+    const NativeCallPlan& calls,
     llvm::Constant* image,
     std::size_t index,
     const FunctionDeclarations& declarations,
+    std::vector<std::size_t>& body_dependencies,
     NativeDebugging debugging,
     NativeCodeTier tier,
     EscapeOptimization escape,
@@ -529,14 +531,15 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
                                     ? std::span<const GeneratedFunction>(optimized)
                                     : std::span<const GeneratedFunction>(generated);
   const auto emission_tier = target.baseline_body == nullptr ? tier : NativeCodeTier::Baseline;
-  auto emitted = EmitFunction(module, program, image, index, emission_entries, debugging,
-                              emission_tier, escape, declarations.borrowable);
+  auto emitted =
+      EmitFunction(module, program, calls, image, index, emission_entries, body_dependencies,
+                   debugging, emission_tier, escape, declarations.borrowable);
   if (!emitted) {
     return emitted;
   }
   if (const auto& borrow = borrows.subspan(index).front()) {
-    const auto borrowed =
-        EmitBorrowedFunction(module, program, image, index, borrow->plan, generated, debugging);
+    const auto borrowed = EmitBorrowedFunction(module, program, calls, image, index, borrow->plan,
+                                               generated, debugging);
     if (!borrowed) {
       return std::unexpected(borrowed.error());
     }
@@ -545,8 +548,9 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
     emitted->borrowed_root_stores = borrowed->root_stores;
   }
   if (target.baseline_body != nullptr) {
-    auto optimized_metrics = EmitFunction(module, program, image, index, optimized, debugging,
-                                          NativeCodeTier::Optimized, escape);
+    auto optimized_metrics =
+        EmitFunction(module, program, calls, image, index, optimized, body_dependencies, debugging,
+                     NativeCodeTier::Optimized, escape);
     if (!optimized_metrics) {
       return optimized_metrics;
     }
@@ -554,6 +558,24 @@ std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
   }
   EmitWrapper(module, function, static_cast<std::uint32_t>(index), target, image);
   return emitted;
+}
+
+void BindDynamicEntries(NativeModule& output,
+                        std::span<llvm::Function* const> entries,
+                        std::span<const GeneratedFunction> functions) {
+  output.entry_functions.assign(entries.begin(), entries.end());
+  for (const auto& function : functions) {
+    auto* typed = function.body;
+    output.typed_functions.push_back(typed);
+    if (typed != nullptr) {
+      typed->setLinkage(llvm::GlobalValue::ExternalLinkage);
+    }
+  }
+  for (auto* entry : entries) {
+    if (entry != nullptr) {
+      entry->setLinkage(llvm::GlobalValue::ExternalLinkage);
+    }
+  }
 }
 
 }  // namespace
@@ -591,6 +613,7 @@ NativeModule::~NativeModule() = default;
 NativeModule::NativeModule(NativeModule&&) noexcept = default;
 
 std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& program,
+                                                            const NativeCallPlan& calls,
                                                             const std::string& module_name,
                                                             std::span<const std::uint8_t> exports,
                                                             NativeDebugging debugging,
@@ -612,6 +635,7 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   NativeModule output;
   output.context = std::make_unique<llvm::LLVMContext>();
   output.machine = std::move(*target);
+  output.body_dependencies = calls.dependencies;
   output.module = std::make_unique<llvm::Module>(module_name, *output.context);
   auto& module = *output.module;
   module.setTargetTriple(output.machine->getTargetTriple());
@@ -638,12 +662,7 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   if (placement == NativeCodePlacement::Dynamic &&
       program.native_mode == NativeProgramMode::Reloadable) {
     output.image_data = std::move(description);
-    output.entry_functions = entries;
-    for (auto* entry : entries) {
-      if (entry != nullptr) {
-        entry->setLinkage(llvm::GlobalValue::ExternalLinkage);
-      }
-    }
+    BindDynamicEntries(output, entries, optimized);
   } else {
     const auto emitted = EmitNativeImage(module, *description->image(), entries, module_name);
     if (!emitted) {
@@ -660,12 +679,16 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
       continue;
     }
     const auto& function = program.functions.at(index);
-    auto emitted = EmitDeclaredFunction(module, program, image, index, *declarations, debugging,
-                                        tier, escape, borrows);
+    auto& dependencies = output.body_dependencies.at(index);
+    auto emitted = EmitDeclaredFunction(module, program, calls, image, index, *declarations,
+                                        dependencies, debugging, tier, escape, borrows);
     if (!emitted) {
       return diagnostic(emitted.error(), &function);
     }
     metrics.push_back(*emitted);
+    std::ranges::sort(dependencies);
+    const auto duplicates = std::ranges::unique(dependencies);
+    dependencies.erase(duplicates.begin(), duplicates.end());
     // 恢复布局由只读描述共享；优化 JIT 与封闭代码采用相同的有界展开预算，
     // 各逻辑帧仍保留独立的恢复位置和活跃值，不展开基线动态分派。
     if ((program.native_mode == NativeProgramMode::Closed || tier == NativeCodeTier::Optimized) &&

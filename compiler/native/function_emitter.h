@@ -20,6 +20,7 @@
 #include "base/layout_description.h"
 #include "base/native_program_mode.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/call_targets.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
@@ -60,6 +61,7 @@ class FunctionEmitter final {
  public:
   FunctionEmitter(llvm::Module& module,
                   const ir::Program& program,
+                  const NativeCallPlan& calls,
                   llvm::Constant* image,
                   std::size_t function_index,
                   const EscapePlan& escape,
@@ -69,6 +71,7 @@ class FunctionEmitter final {
                   NativeCodeTier tier)
       : module_(module),
         program_(program),
+        calls_(calls),
         image_(image),
         escape_(escape),
         source_(escape.function),
@@ -113,6 +116,7 @@ class FunctionEmitter final {
   void PrepareTraceFrame();
   void SetPosition();
   void PrepareRuntimeCall();
+  bool UsesEntrySlot(std::size_t callee) const;
   void PrepareObservableCall();
   void PrepareCallCheckpoint();
   llvm::Value* ControlState();
@@ -163,7 +167,7 @@ class FunctionEmitter final {
   };
   StoredValueAddress RecordAddress(llvm::Value* address, MemoryRegion region);
   StoredValueAddress FieldAddress(llvm::Value* storage,
-                                  llvm::Value* index,
+                                  llvm::Value& index,
                                   llvm::Value* kind_offset);
   llvm::Value* ReadStoredValue(StoredValueAddress address, const SourceType& type);
   void WriteStoredValue(StoredValueAddress address, ir::RegisterId reg);
@@ -226,6 +230,7 @@ class FunctionEmitter final {
 
   llvm::Module& module_;
   const ir::Program& program_;
+  const NativeCallPlan& calls_;
   llvm::Value* image_;
   const EscapePlan& escape_;
   const ir::Function& source_;
@@ -281,9 +286,11 @@ class FunctionEmitter final {
 std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     llvm::Module& module,
     const ir::Program& program,
+    const NativeCallPlan& calls,
     llvm::Constant* image,
     std::size_t function_index,
     std::span<const GeneratedFunction> generated,
+    std::vector<std::size_t>& body_dependencies,
     NativeDebugging debugging,
     NativeCodeTier tier = NativeCodeTier::Baseline,
     EscapeOptimization optimization = EscapeOptimization::Enabled,
@@ -292,6 +299,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
 std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
     llvm::Module& module,
     const ir::Program& program,
+    const NativeCallPlan& calls,
     llvm::Constant* image,
     std::size_t function_index,
     const EscapePlan& plan,

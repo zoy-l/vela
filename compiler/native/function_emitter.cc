@@ -897,9 +897,11 @@ void AccumulateMetrics(NativeFunctionMetrics& metrics,
 std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     llvm::Module& module,
     const ir::Program& program,
+    const NativeCallPlan& calls,
     llvm::Constant* image,
     std::size_t function_index,
     std::span<const GeneratedFunction> generated,
+    std::vector<std::size_t>& body_dependencies,
     NativeDebugging debugging,
     NativeCodeTier tier,
     EscapeOptimization optimization,
@@ -921,11 +923,14 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     }
     if (frame->bytes > kMaximumNativeStackBytes) {
       // 在 LLVM body 发射前完成表示选择；超预算记录使用普通调用所需的堆物化。
-      return EmitFunction(module, program, image, function_index, generated, debugging, tier,
+      return EmitFunction(module, program, calls, image, function_index, generated,
+                          body_dependencies, debugging, tier,
                           EscapeOptimization::ScalarReplacement);
     }
   }
-  FunctionEmitter initial(module, program, image, function_index, escape, generated, roots,
+  body_dependencies.insert(body_dependencies.end(), escape.body_dependencies.begin(),
+                           escape.body_dependencies.end());
+  FunctionEmitter initial(module, program, calls, image, function_index, escape, generated, roots,
                           NativeEntryKind::Initial, tier);
   if (const auto emitted = initial.Emit(); !emitted) {
     return std::unexpected(emitted.error());
@@ -933,7 +938,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   NativeFunctionMetrics metrics{.shadow_slots = roots.count, .frame_bytes = initial.frame_bytes()};
   AccumulateMetrics(metrics, escape, roots);
   if (function.leaf != nullptr) {
-    FunctionEmitter leaf(module, program, image, function_index, escape, generated, roots,
+    FunctionEmitter leaf(module, program, calls, image, function_index, escape, generated, roots,
                          NativeEntryKind::Leaf, NativeCodeTier::Baseline);
     if (const auto emitted = leaf.Emit(); !emitted) {
       return std::unexpected(emitted.error());
@@ -943,7 +948,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     }
   }
   if (function.resume != nullptr) {
-    FunctionEmitter resume(module, program, image, function_index, escape, generated, roots,
+    FunctionEmitter resume(module, program, calls, image, function_index, escape, generated, roots,
                            NativeEntryKind::Resume, tier);
     if (const auto emitted = resume.Emit(); !emitted) {
       return std::unexpected(emitted.error());
@@ -951,14 +956,14 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
     metrics.frame_bytes = std::max(metrics.frame_bytes, resume.frame_bytes());
   }
   if (tier == NativeCodeTier::Baseline && function.recovery != nullptr) {
-    FunctionEmitter recovery(module, program, image, function_index, escape, generated, roots,
-                             NativeEntryKind::RecoverInitial, tier);
+    FunctionEmitter recovery(module, program, calls, image, function_index, escape, generated,
+                             roots, NativeEntryKind::RecoverInitial, tier);
     if (const auto emitted = recovery.Emit(); !emitted) {
       return std::unexpected(emitted.error());
     }
     if (function.resume_recovery != nullptr) {
-      FunctionEmitter resume(module, program, image, function_index, escape, generated, roots,
-                             NativeEntryKind::RecoverResume, tier);
+      FunctionEmitter resume(module, program, calls, image, function_index, escape, generated,
+                             roots, NativeEntryKind::RecoverResume, tier);
       if (const auto emitted = resume.Emit(); !emitted) {
         return std::unexpected(emitted.error());
       }
@@ -970,6 +975,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
 std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
     llvm::Module& module,
     const ir::Program& program,
+    const NativeCallPlan& calls,
     llvm::Constant* image,
     std::size_t function_index,
     const EscapePlan& plan,
@@ -979,7 +985,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
                                                           plan.borrowed_fields);
   const auto roots = PlanNativeRoots(plan.function, program.functions, program.native_mode,
                                      debugging, {.values = required, .safepoints = {}});
-  FunctionEmitter borrowed(module, program, image, function_index, plan, generated, roots,
+  FunctionEmitter borrowed(module, program, calls, image, function_index, plan, generated, roots,
                            NativeEntryKind::Borrowed, NativeCodeTier::Baseline);
   if (const auto emitted = borrowed.Emit(); !emitted) {
     return std::unexpected(emitted.error());

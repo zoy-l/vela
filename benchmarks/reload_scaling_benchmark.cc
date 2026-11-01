@@ -70,10 +70,7 @@ void ReloadModules(benchmark::State& state, NativeCodeTier tier, ModuleGraph gra
   const auto independent = graph == ModuleGraph::Independent;
   auto initial = InitialSources(files, graph);
   const auto probe_module = initial.changes.back().path;
-  std::int64_t expected_compiled = 1;
-  if (tier == NativeCodeTier::Optimized && !independent) {
-    expected_compiled = graph == ModuleGraph::Fanout ? files : 2;
-  }
+  constexpr std::int64_t kExpectedCompiled = 1;
   auto loaded = session.Prepare(std::move(initial), DevelopmentOperation::Load);
   if (!loaded) {
     state.SkipWithError(frontend::DiagnosticsText(loaded.error().diagnostics));
@@ -119,8 +116,8 @@ void ReloadModules(benchmark::State& state, NativeCodeTier tier, ModuleGraph gra
       state.SkipWithError("incremental entry checksum mismatch");
       return;
     }
-    if (std::cmp_not_equal(result.changes.compiled_functions, expected_compiled)) {
-      state.SkipWithError("incremental compilation exceeded the affected direct-call graph");
+    if (std::cmp_not_equal(result.changes.compiled_functions, kExpectedCompiled)) {
+      state.SkipWithError("incremental compilation invalidated an unchanged caller");
       return;
     }
     const auto entering = Clock::now();
@@ -157,7 +154,7 @@ void ReloadModules(benchmark::State& state, NativeCodeTier tier, ModuleGraph gra
     counter /= static_cast<double>(state.iterations());
   }
   state.counters["files"] = static_cast<double>(files);
-  state.counters["affected_functions"] = static_cast<double>(expected_compiled);
+  state.counters["affected_functions"] = static_cast<double>(kExpectedCompiled);
   state.counters["released_code_images"] = static_cast<double>(session.code_resources().images);
 }
 

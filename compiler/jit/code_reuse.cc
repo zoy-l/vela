@@ -19,7 +19,7 @@ namespace {
 void InvalidateCallers(const std::vector<std::vector<std::size_t>>& callers,
                        std::vector<std::size_t>& changed,
                        CodeReusePlan& plan) {
-  // 直接调用与内联的版本依赖沿反向边传播，递归调用分量作为整体失效。
+  // 只有实际直接引用或函数体特化依赖沿反向边传播；入口槽不会产生版本依赖。
   while (!changed.empty()) {
     const auto index = changed.back();
     changed.pop_back();
@@ -83,7 +83,8 @@ CodeReusePlan PlanCodeReuse(std::vector<FunctionCodeInputs> inputs, const CodeRe
     if (!reusable) {
       changed.push_back(index);
     }
-    for (const auto dependency : input.dependencies) {
+    const auto& dependencies = reusable ? source->body_dependencies : input.dependencies;
+    for (const auto dependency : dependencies) {
       callers.at(dependency).push_back(index);
     }
   }

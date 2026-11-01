@@ -24,6 +24,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
 #include "runtime/heap/field_storage.h"
+#include "runtime/heap/heap.h"
 #include "runtime/heap/instance_storage.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_memory_layout.h"
@@ -100,23 +101,27 @@ llvm::StoreInst* FunctionEmitter::StoreMemory(llvm::Value* value,
 FunctionEmitter::StoredValueAddress FunctionEmitter::RecordAddress(llvm::Value* address,
                                                                    MemoryRegion region) {
   using runtime::NativeMemoryLayout;
-  return {.payload = ByteAddress(address, NativeMemoryLayout::kValuePayload),
-          .kind = ByteAddress(address, NativeMemoryLayout::kValueKind),
-          .payload_region = region,
-          .kind_region = region};
+  return {
+      .payload = ByteAddress(address, NativeMemoryLayout::kValuePayload),
+      .kind = ByteAddress(address, NativeMemoryLayout::kValueKind),
+      .payload_region = region,
+      .kind_region = region,
+  };
 }
 
 FunctionEmitter::StoredValueAddress FunctionEmitter::FieldAddress(llvm::Value* storage,
-                                                                  llvm::Value* index,
+                                                                  llvm::Value& index,
                                                                   llvm::Value* kind_offset) {
   using runtime::FieldStorage;
-  auto* wide_index = builder_.CreateZExtOrTrunc(index, builder_.getInt64Ty());
+  auto* wide_index = builder_.CreateZExtOrTrunc(&index, builder_.getInt64Ty());
   auto* payload_offset =
       builder_.CreateMul(wide_index, builder_.getInt64(FieldStorage::kPayloadBytes));
-  return {.payload = builder_.CreateGEP(builder_.getInt8Ty(), storage, payload_offset),
-          .kind = builder_.CreateGEP(builder_.getInt8Ty(), storage, kind_offset),
-          .payload_region = MemoryRegion::FieldPayloads,
-          .kind_region = MemoryRegion::FieldKinds};
+  return {
+      .payload = builder_.CreateGEP(builder_.getInt8Ty(), storage, payload_offset),
+      .kind = builder_.CreateGEP(builder_.getInt8Ty(), storage, kind_offset),
+      .payload_region = MemoryRegion::FieldPayloads,
+      .kind_region = MemoryRegion::FieldKinds,
+  };
 }
 
 llvm::Value* FunctionEmitter::ReadHeapValue(llvm::Value* address, const SourceType& type) {
@@ -255,7 +260,7 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
                          builder_.getInt64(runtime::FieldStorage::kPayloadBytes)),
       builder_.getInt64(runtime::FieldStorage::KindOffset(0, instruction.index)));
   const auto address = FieldAddress(ByteAddress(object, sizeof(runtime::HeapObject)),
-                                    builder_.getInt32(instruction.index), kind_offset);
+                                    *builder_.getInt32(instruction.index), kind_offset);
   if (reading) {
     const auto& type = source_.value_types.at(instruction.dst);
     Store(instruction.dst, ReadStoredValue(address, type), type);
@@ -369,7 +374,7 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
   }
   builder_.SetInsertPoint(ready);
   // 全部字段就绪后不再读取或写入逐字段状态，直到发布替换整个字段块。
-  const auto address = FieldAddress(values, slot, kind_offset);
+  const auto address = FieldAddress(values, *slot, kind_offset);
   if (reading) {
     const auto& type = source_.value_types.at(instruction.dst);
     Store(instruction.dst, ReadStoredValue(address, type), type);
@@ -462,7 +467,7 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
   Recover();
   builder_.SetInsertPoint(ready);
   const auto address =
-      FieldAddress(ByteAddress(storage, sizeof(InstanceStorage)), builder_.getInt32(direct.slot),
+      FieldAddress(ByteAddress(storage, sizeof(InstanceStorage)), *builder_.getInt32(direct.slot),
                    builder_.getInt64(runtime::FieldStorage::KindOffset(direct.count, direct.slot)));
   if (reading) {
     const auto& type = source_.value_types.at(instruction.dst);
@@ -564,8 +569,11 @@ void FunctionEmitter::EmitReloadableGlobal(const ir::Instruction& instruction) {
     auto helper = module_.getOrInsertFunction("vela_native_v10_store_global", builder_.getInt8Ty(),
                                               builder_.getPtrTy(), builder_.getInt32Ty(),
                                               builder_.getPtrTy());
-    CheckStatus(builder_.CreateCall(helper, {body_->getArg(0), builder_.getInt32(instruction.index),
-                                             Pack(Encode(instruction.lhs), 0)}));
+    CheckStatus(builder_.CreateCall(helper, {
+                                                body_->getArg(0),
+                                                builder_.getInt32(instruction.index),
+                                                Pack(Encode(instruction.lhs), 0),
+                                            }));
   }
   builder_.CreateBr(done);
   builder_.SetInsertPoint(done);

@@ -31,6 +31,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
 #include "compiler/ir/preparation_test_support.h"
+#include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
@@ -106,8 +107,9 @@ export func main(): int { let total = 0; try {
     const auto prepared = Prepare(source);
     ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
     const std::vector<std::uint8_t> exports(prepared.program.functions.size(), 0);
+    const auto calls = native::PlanNativeCalls(prepared.program, NativeCodeTier::Baseline);
     const auto generated = native::Generate(
-        prepared.program, "root_cleanup", exports, native::NativeDebugging::Safepoints,
+        prepared.program, calls, "root_cleanup", exports, native::NativeDebugging::Safepoints,
         NativeCodeTier::Baseline, native::EscapeOptimization::Disabled);
     ASSERT_TRUE(generated) << frontend::DiagnosticsText(generated.error());
     for (const auto& function : *generated->module) {

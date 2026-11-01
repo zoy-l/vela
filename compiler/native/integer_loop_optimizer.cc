@@ -133,6 +133,23 @@ struct CountedLoop {
   int direction;
 };
 
+std::optional<int> MatchStepDirection(llvm::PHINode& index, llvm::Instruction& increment) {
+  auto* left = increment.getOperand(0);
+  auto* right = increment.getOperand(1);
+  const auto* checked = llvm::dyn_cast<llvm::IntrinsicInst>(&increment);
+  const bool adding = checked != nullptr
+                          ? checked->getIntrinsicID() == llvm::Intrinsic::sadd_with_overflow
+                          : increment.getOpcode() == llvm::Instruction::Add;
+  if (right == &index && adding) {
+    std::swap(left, right);
+  }
+  const auto* constant = llvm::dyn_cast<llvm::ConstantInt>(right);
+  if (left != &index || constant == nullptr || (!constant->isOne() && !constant->isMinusOne())) {
+    return std::nullopt;
+  }
+  return (adding ? 1 : -1) * (constant->isOne() ? 1 : -1);
+}
+
 std::optional<CountedLoop> MatchLoopExit(llvm::Loop& loop,
                                          llvm::BasicBlock* block,
                                          llvm::DominatorTree& dominators) {
@@ -178,20 +195,12 @@ std::optional<CountedLoop> MatchLoopExit(llvm::Loop& loop,
   if (!loop.contains(increment) || !dominators.dominates(block, increment->getParent())) {
     return std::nullopt;
   }
-  auto* left = increment->getOperand(0);
-  auto* right = increment->getOperand(1);
-  const bool adding = step ? step->call->getIntrinsicID() == llvm::Intrinsic::sadd_with_overflow
-                           : plain->getOpcode() == llvm::Instruction::Add;
-  if (right == index && adding) {
-    std::swap(left, right);
-  }
-  auto* constant = llvm::dyn_cast<llvm::ConstantInt>(right);
-  if (left != index || constant == nullptr || (!constant->isOne() && !constant->isMinusOne())) {
+  const auto direction = MatchStepDirection(*index, *increment);
+  if (!direction) {
     return std::nullopt;
   }
-  const int direction = (adding ? 1 : -1) * (constant->isOne() ? 1 : -1);
-  if ((direction == 1 && predicate == llvm::CmpInst::ICMP_SLT) ||
-      (direction == -1 && predicate == llvm::CmpInst::ICMP_SGT)) {
+  if ((*direction == 1 && predicate == llvm::CmpInst::ICMP_SLT) ||
+      (*direction == -1 && predicate == llvm::CmpInst::ICMP_SGT)) {
     return CountedLoop{
         .loop = &loop,
         .index = index,
@@ -201,7 +210,7 @@ std::optional<CountedLoop> MatchLoopExit(llvm::Loop& loop,
         .exit_edge = exit_edge,
         .increment = increment,
         .step = step,
-        .direction = direction,
+        .direction = *direction,
     };
   }
   return std::nullopt;
@@ -647,10 +656,12 @@ std::optional<Reduction> MatchReduction(const CountedLoop& counted,
   if (left != accumulator || (term != counted.index && !loop.isLoopInvariant(term))) {
     return std::nullopt;
   }
-  const Reduction reduction{.accumulator = accumulator,
-                            .term = term,
-                            .update = *update,
-                            .check_prefix = !IsMonotoneTerm(counted, term, evolution)};
+  const Reduction reduction{
+      .accumulator = accumulator,
+      .term = term,
+      .update = *update,
+      .check_prefix = !IsMonotoneTerm(counted, term, evolution),
+  };
   return IsReductionBody(counted, reduction) ? std::optional(reduction) : std::nullopt;
 }
 

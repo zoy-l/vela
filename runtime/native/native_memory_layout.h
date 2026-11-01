@@ -6,6 +6,7 @@
 #include <type_traits>
 
 #include "runtime/heap/array_storage.h"
+#include "runtime/heap/heap.h"
 #include "runtime/heap/instance_storage.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_control.h"

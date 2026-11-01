@@ -11,6 +11,7 @@
 #include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/call_targets.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
 
@@ -54,13 +55,16 @@ struct NativeModule final {
   std::string image_symbol;
   std::shared_ptr<NativeImageData> image_data;
   std::vector<llvm::Function*> entry_functions;
+  std::vector<llvm::Function*> typed_functions;
   std::vector<llvm::Function*> recursive_functions;
   std::vector<NativeFunctionMetrics> function_metrics;
   std::vector<std::vector<std::string>> function_symbols;
+  std::vector<std::vector<std::size_t>> body_dependencies;
 };
 
 [[nodiscard]] std::expected<NativeModule, frontend::Diagnostics> Generate(
     const ir::Program& program,
+    const NativeCallPlan& calls,
     const std::string& module_name,
     std::span<const std::uint8_t> exports,
     NativeDebugging debugging = NativeDebugging::Safepoints,

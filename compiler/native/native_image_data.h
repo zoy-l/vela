@@ -24,7 +24,8 @@ class NativeImageData final {
     return sizeof(image_) + storage_.getBytesAllocated() +
            (functions_.size() * sizeof(runtime::NativeFunctionDescription));
   }
-  void BindEntries(std::span<const runtime::NativeEntry> entries);
+  void BindEntries(std::span<const runtime::NativeEntry> entries,
+                   std::span<const runtime::NativeTypedEntry> typed_entries);
 
  private:
   friend class NativeImageBuilder;

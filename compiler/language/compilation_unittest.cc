@@ -48,7 +48,11 @@ func main(): Shade {
   const auto* layout = runtime::Heap::ClassOf(*result.value.AsObject());
   ASSERT_NE(layout, nullptr);
   EXPECT_TRUE(layout->IsEnum());
-  EXPECT_EQ(runtime::Heap::GetField(*result.value.AsObject(), 0)->AsInteger(), 1);
+  const auto result_field_0 = runtime::Heap::GetField(*result.value.AsObject(), 0);
+  if (!result_field_0.has_value()) {
+    FAIL() << "Expected result_field_0 to have a value";
+  }
+  EXPECT_EQ(result_field_0->AsInteger(), 1);
 }
 
 TEST(CompilerTest, CompilesIntegerFunction) {
@@ -305,11 +309,15 @@ func main(): App {
   Value result_root = result.value;
   RootRange root(isolate.heap(), &result_root, 1);
   const auto theme = vela::runtime::Heap::GetField(*result_root.AsObject(), 0);
-  ASSERT_TRUE(theme);
+  if (!theme.has_value()) {
+    FAIL() << "Expected theme to have a value";
+  }
   ASSERT_TRUE(theme->IsObject());
   ASSERT_NE(theme->AsObject(), nullptr);
   const auto brightness = vela::runtime::Heap::GetField(*theme->AsObject(), 0);
-  ASSERT_TRUE(brightness);
+  if (!brightness.has_value()) {
+    FAIL() << "Expected brightness to have a value";
+  }
   ASSERT_TRUE(brightness->IsInteger());
   EXPECT_EQ(brightness->AsInteger(), 1);
 
@@ -517,12 +525,18 @@ func main(): Store {
   // Store、Item、两层 items 数组、flags 和 labels 共六个返回对象。
   EXPECT_EQ(heap.object_count(), baseline + 6U);
   const auto items = runtime::Heap::GetField(*root.AsObject(), 0);
-  ASSERT_TRUE(items);
+  if (!items.has_value()) {
+    FAIL() << "Expected items to have a value";
+  }
   const auto row = runtime::Heap::GetElement(*items->AsObject(), 0);
   ASSERT_TRUE(row.has_value());
   const auto item = runtime::Heap::GetElement(*row->AsObject(), 0);
   ASSERT_TRUE(item.has_value());
-  EXPECT_EQ(runtime::Heap::GetField(*item->AsObject(), 0)->AsInteger(), kExpectedSum);
+  const auto item_field_0 = runtime::Heap::GetField(*item->AsObject(), 0);
+  if (!item_field_0.has_value()) {
+    FAIL() << "Expected item_field_0 to have a value";
+  }
+  EXPECT_EQ(item_field_0->AsInteger(), kExpectedSum);
   root = Value::Null();
   heap.Collect();
   // 原生实例与 "alive" 常量仍存活，返回对象图已全部回收。

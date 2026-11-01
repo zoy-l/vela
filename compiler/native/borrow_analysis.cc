@@ -112,6 +112,7 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
       .borrowable = {},
       .borrowed_calls = {},
       .borrowed_fields = {},
+      .body_dependencies = {},
   };
   const auto& fields = program.classes.at(type).field_types;
   const auto state_size = source.register_count + fields.size() + 2;

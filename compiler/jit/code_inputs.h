@@ -7,6 +7,7 @@
 
 #include "base/native_program_mode.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/call_targets.h"
 
 namespace vela::compiler::jit {
 
@@ -16,6 +17,7 @@ struct FunctionCodeInputs final {
 };
 
 std::vector<FunctionCodeInputs> DescribeCodeInputs(const ir::Program& program,
+                                                   const native::NativeCallPlan& calls,
                                                    NativeCodeTier tier,
                                                    std::uint8_t optimization,
                                                    std::uint8_t debugging,

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <tuple>
 
 #include <gtest/gtest.h>
 
@@ -11,6 +12,7 @@
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/Intrinsics.h>
@@ -26,14 +28,13 @@
 namespace vela::compiler::native {
 namespace {
 
-TEST(IntegerLoopOptimizerTest, RecognizesProvenStepsWithoutAssumingWrappingStepsAreBounded) {
-  for (const bool proven : {false, true}) {
-    for (const bool descending : {false, true}) {
-      SCOPED_TRACE(proven);
-      SCOPED_TRACE(descending);
-      llvm::LLVMContext context;
-      llvm::SMDiagnostic diagnostic;
-      auto module = llvm::parseAssemblyString(R"(
+class IntegerLoopOptimizerTest : public testing::TestWithParam<std::tuple<bool, bool>> {};
+
+TEST_P(IntegerLoopOptimizerTest, RecognizesProvenStepsWithoutAssumingWrappingStepsAreBounded) {
+  const auto [proven, descending] = GetParam();
+  llvm::LLVMContext context;
+  llvm::SMDiagnostic diagnostic;
+  auto module = llvm::parseAssemblyString(R"(
 declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
 declare void @raise(i64)
 define i64 @sum(i64 %bound, i64 %initial, i64 %term) {
@@ -60,52 +61,54 @@ failed:
   ret i64 -1
 }
 )",
-                                              diagnostic, context);
-      ASSERT_NE(module, nullptr) << diagnostic.getMessage().str();
-      auto& function = *module->getFunction("sum");
-      for (auto& block : function) {
-        for (auto& instruction : block) {
-          if (instruction.getName() == "next.index") {
-            auto& step = llvm::cast<llvm::BinaryOperator>(instruction);
-            step.setHasNoSignedWrap(proven);
-            if (descending) {
-              step.setOperand(1, llvm::ConstantInt::getSigned(step.getType(), -1));
-            }
-          } else if (descending && instruction.getName() == "more") {
-            llvm::cast<llvm::ICmpInst>(instruction).setPredicate(llvm::CmpInst::ICMP_SGT);
-          }
+                                          diagnostic, context);
+  ASSERT_NE(module, nullptr) << diagnostic.getMessage().str();
+  auto& function = *module->getFunction("sum");
+  for (auto& block : function) {
+    for (auto& instruction : block) {
+      if (instruction.getName() == "next.index") {
+        auto& step = llvm::cast<llvm::BinaryOperator>(instruction);
+        step.setHasNoSignedWrap(proven);
+        if (descending) {
+          step.setOperand(1, llvm::ConstantInt::getSigned(step.getType(), -1));
         }
+      } else if (descending && instruction.getName() == "more") {
+        llvm::cast<llvm::ICmpInst>(instruction).setPredicate(llvm::CmpInst::ICMP_SGT);
       }
-      llvm::LoopAnalysisManager loops;
-      llvm::FunctionAnalysisManager functions;
-      llvm::CGSCCAnalysisManager calls;
-      llvm::ModuleAnalysisManager modules;
-      llvm::PassBuilder builder;
-      builder.registerModuleAnalyses(modules);
-      builder.registerCGSCCAnalyses(calls);
-      builder.registerFunctionAnalyses(functions);
-      builder.registerLoopAnalyses(loops);
-      builder.crossRegisterProxies(loops, functions, calls, modules);
-      llvm::FunctionPassManager passes;
-      AddIntegerLoopPasses(passes);
-      passes.run(function, functions);
-      EXPECT_FALSE(llvm::verifyModule(*module));
-      std::size_t checked_updates = 0;
-      for (const auto& block : function) {
-        for (const auto& instruction : block) {
-          const auto* call = llvm::dyn_cast<llvm::IntrinsicInst>(&instruction);
-          if (call != nullptr && call->getIntrinsicID() == llvm::Intrinsic::sadd_with_overflow) {
-            ++checked_updates;
-          }
-        }
-      }
-      std::string generated;
-      llvm::raw_string_ostream output(generated);
-      module->print(output, nullptr);
-      EXPECT_EQ(checked_updates, proven ? 0U : 1U) << generated;
     }
   }
+  llvm::LoopAnalysisManager loops;
+  llvm::FunctionAnalysisManager functions;
+  llvm::CGSCCAnalysisManager calls;
+  llvm::ModuleAnalysisManager modules;
+  llvm::PassBuilder builder;
+  builder.registerModuleAnalyses(modules);
+  builder.registerCGSCCAnalyses(calls);
+  builder.registerFunctionAnalyses(functions);
+  builder.registerLoopAnalyses(loops);
+  builder.crossRegisterProxies(loops, functions, calls, modules);
+  llvm::FunctionPassManager passes;
+  AddIntegerLoopPasses(passes);
+  passes.run(function, functions);
+  EXPECT_FALSE(llvm::verifyModule(*module));
+  std::size_t checked_updates = 0;
+  for (const auto& block : function) {
+    for (const auto& instruction : block) {
+      const auto* call = llvm::dyn_cast<llvm::IntrinsicInst>(&instruction);
+      if (call != nullptr && call->getIntrinsicID() == llvm::Intrinsic::sadd_with_overflow) {
+        ++checked_updates;
+      }
+    }
+  }
+  std::string generated;
+  llvm::raw_string_ostream output(generated);
+  module->print(output, nullptr);
+  EXPECT_EQ(checked_updates, proven ? 0U : 1U) << generated;
 }
+
+INSTANTIATE_TEST_SUITE_P(StepProofs,
+                         IntegerLoopOptimizerTest,
+                         testing::Combine(testing::Bool(), testing::Bool()));
 
 }  // namespace
 }  // namespace vela::compiler::native

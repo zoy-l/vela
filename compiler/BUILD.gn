@@ -440,6 +440,7 @@ executable("vela_jit_tests") {
     "jit/array_storage_unittest.cc",
     "jit/callable_unittest.cc",
     "jit/code_cache_unittest.cc",
+    "jit/code_reuse_unittest.cc",
     "jit/compiler_unittest.cc",
     "jit/debugger_unittest.cc",
     "jit/gc_barrier_unittest.cc",

@@ -37,7 +37,11 @@ TEST(InstanceStorageTest, ExternalBlocksAreAccountedAndWeakRegistrationDoesNotKe
             sizeof(HeapObject) + FieldStorage::Size(layout->field_count()));
   EXPECT_GT(heap.instance_field_bytes(), FieldStorage::Size(layout->field_count()));
   EXPECT_EQ(heap.instance_type_count(), 1U);
-  EXPECT_EQ(Heap::GetField(*object, 0)->AsInteger(), 40);
+  const auto object_field_0 = Heap::GetField(*object, 0);
+  if (!object_field_0.has_value()) {
+    FAIL() << "Expected object_field_0 to have a value";
+  }
+  EXPECT_EQ(object_field_0->AsInteger(), 40);
   std::vector<Value> instances;
   heap.AppendInstances(layout->nominal_type(), instances);
   ASSERT_EQ(instances.size(), 1U);
@@ -97,9 +101,21 @@ TEST(InstanceStorageTest,
   EXPECT_EQ(root.AsObject(), object);
   EXPECT_EQ(Heap::ClassOf(*object), replacement);
   EXPECT_NE(ObjectFieldStorage(*object).data(), old_fields);
-  EXPECT_EQ(Heap::GetField(*object, 0)->AsInteger(), 42);
-  EXPECT_TRUE(Heap::GetField(*object, 1)->IsNull());
-  EXPECT_TRUE(Heap::GetField(*object, 2)->IsNull());
+  const auto object_field_0 = Heap::GetField(*object, 0);
+  if (!object_field_0.has_value()) {
+    FAIL() << "Expected object_field_0 to have a value";
+  }
+  EXPECT_EQ(object_field_0->AsInteger(), 42);
+  const auto object_field_1 = Heap::GetField(*object, 1);
+  if (!object_field_1.has_value()) {
+    FAIL() << "Expected object_field_1 to have a value";
+  }
+  EXPECT_TRUE(object_field_1->IsNull());
+  const auto object_field_2 = Heap::GetField(*object, 2);
+  if (!object_field_2.has_value()) {
+    FAIL() << "Expected object_field_2 to have a value";
+  }
+  EXPECT_TRUE(object_field_2->IsNull());
   ASSERT_TRUE(heap.SetField(*object, 2, Value::Object(heap.AllocateInstance(*leaf))));
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 2U);
@@ -196,7 +212,7 @@ TEST(InstanceStorageTest, PreparedFieldStorageRootsRetainSeparatePayloadsAndKind
   constexpr std::uint32_t kFields = 2;
   alignas(InstanceStorage)
       std::array<std::byte, sizeof(InstanceStorage) + FieldStorage::Size(kFields)>
-          bytes;
+          bytes{};
   void* memory = bytes.data();
   auto* storage = std::construct_at(static_cast<InstanceStorage*>(memory));
   storage->count = kFields;

@@ -34,7 +34,9 @@ TEST(ExceptionHeapTest, RootsPayloadAndOwnsMessageInOneAllocation) {
     const auto& data = ExceptionData::From(*exception);
     EXPECT_EQ(data.message(), "original message");
     const auto field = Heap::GetField(*data.payload, 0);
-    ASSERT_TRUE(field);
+    if (!field.has_value()) {
+      FAIL() << "Expected field to have a value";
+    }
     EXPECT_EQ(field->AsString()->value(), "payload");
   }
   heap.Collect();

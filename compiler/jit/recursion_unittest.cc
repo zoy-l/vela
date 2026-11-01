@@ -42,22 +42,28 @@ class RecursiveCallTest
       ASSERT_TRUE(compiled.Succeeded()) << frontend::DiagnosticsText(compiled.diagnostics);
       auto instance = runtime::NativeInstance::Instantiate(isolate_, compiled.code.image);
       ASSERT_TRUE(instance);
-      instance_ = std::move(*instance);
+      closed_instance_ = std::move(*instance);
     } else {
       const auto compiled = test::CompileText(**compiler, source, tier);
       ASSERT_TRUE(compiled) << frontend::DiagnosticsText(compiled.error());
       ASSERT_TRUE(test::PublishImage(isolate_, compiled->image));
-      instance_.reset(new runtime::NativeInstance(
-          runtime::NativeInstance::Borrow(isolate_.native_dispatch().current_state())));
     }
   }
 
+  runtime::NativeInstance BorrowInstance() {
+    return runtime::NativeInstance::Borrow(closed_instance_ != nullptr
+                                               ? *closed_instance_->state().front().AsObject()
+                                               : isolate_.native_dispatch().current_state());
+  }
+  runtime::Isolate& isolate() { return isolate_; }
+
+ private:
   runtime::Isolate isolate_{1};
-  std::unique_ptr<runtime::NativeInstance> instance_;
+  std::unique_ptr<runtime::NativeInstance> closed_instance_;
 };
 
 TEST_P(RecursiveCallTest, EarlyReturnsPreserveRecursiveFailuresAndInstanceReuse) {
-  Load(R"(
+  ASSERT_NO_FATAL_FAILURE(Load(R"(
 export func fibonacci(value: int): int {
   if (value < 2) { return value; }
   return fibonacci(value - 1) + fibonacci(value - 2);
@@ -75,32 +81,32 @@ export func overflow(depth: int): int {
   if (depth == 0) { return 9223372036854775807; }
   return overflow(depth - 1) + 1;
 }
-)");
-  ASSERT_NE(instance_, nullptr);
-  const auto fail = instance_->FindFunction("fail");
-  const auto caught = instance_->FindFunction("caught");
-  const auto fibonacci = instance_->FindFunction("fibonacci");
-  const auto overflow = instance_->FindFunction("overflow");
+)"));
+  auto instance = BorrowInstance();
+  const auto fail = instance.FindFunction("fail");
+  const auto caught = instance.FindFunction("caught");
+  const auto fibonacci = instance.FindFunction("fibonacci");
+  const auto overflow = instance.FindFunction("overflow");
   ASSERT_TRUE(fail);
   ASSERT_TRUE(caught);
   ASSERT_TRUE(fibonacci);
   ASSERT_TRUE(overflow);
-  const auto failed = runtime::ExecuteNativeFunction(*instance_, *fail);
+  const auto failed = runtime::ExecuteNativeFunction(instance, *fail);
   EXPECT_EQ(failed.status, ExecutionStatus::DivisionByZero);
   ASSERT_EQ(failed.stack_trace.size(), 5U);
   for (std::size_t index = 0; index < 4; ++index) {
     EXPECT_EQ(failed.stack_trace.at(index).function, "divide");
   }
   EXPECT_EQ(failed.stack_trace.back().function, "fail");
-  const auto handled = runtime::ExecuteNativeFunction(*instance_, *caught);
+  const auto handled = runtime::ExecuteNativeFunction(instance, *caught);
   ASSERT_TRUE(handled.Succeeded());
   EXPECT_EQ(handled.value.AsInteger(), 55);
-  runtime::NativeExecution execution(*instance_);
+  runtime::NativeExecution execution(instance);
   const std::array depth{runtime::Value::Integer(3)};
   const auto exceeded = runtime::InvokeNativeFunction(execution, *overflow, depth);
   ASSERT_FALSE(exceeded);
   EXPECT_EQ(exceeded.error(), ExecutionStatus::IntegerOverflow);
-  const auto overflow_trace = runtime::ExecuteNativeFunction(*instance_, *overflow, depth);
+  const auto overflow_trace = runtime::ExecuteNativeFunction(instance, *overflow, depth);
   EXPECT_EQ(overflow_trace.status, ExecutionStatus::IntegerOverflow);
   ASSERT_EQ(overflow_trace.stack_trace.size(), 3U);
   for (const auto& frame : overflow_trace.stack_trace) {
@@ -117,20 +123,20 @@ export func overflow(depth: int): int {
 }
 
 TEST_P(RecursiveCallTest, EarlyReturnsAndInlinedCallsKeepTheExactDepthLimit) {
-  Load(R"(
+  ASSERT_NO_FATAL_FAILURE(Load(R"(
 func leaf(value: int): int { return value + 1; }
 export func descend(depth: int): int {
   if (depth == 0) { return 42; }
   return descend(depth - 1);
 }
 export func throughLeaf(): int { return leaf(41); }
-)");
-  ASSERT_NE(instance_, nullptr);
-  const auto descend = instance_->FindFunction("descend");
-  const auto through_leaf = instance_->FindFunction("throughLeaf");
+)"));
+  auto instance = BorrowInstance();
+  const auto descend = instance.FindFunction("descend");
+  const auto through_leaf = instance.FindFunction("throughLeaf");
   ASSERT_TRUE(descend);
   ASSERT_TRUE(through_leaf);
-  runtime::NativeExecution execution(*instance_);
+  runtime::NativeExecution execution(instance);
   std::vector<runtime::NativeTraceFrame> outer(kMaxCallFrames - 1);
   for (auto& frame : outer) {
     ASSERT_EQ(execution.Enter(frame, *descend), ExecutionStatus::Returned);
@@ -162,16 +168,16 @@ export func throughLeaf(): int { return leaf(41); }
 }
 
 TEST_P(RecursiveCallTest, RawEntryValidatesExecutionAndPreservesNestedExceptions) {
-  Load("export func identity(value: int): int { return value; }");
-  ASSERT_NE(instance_, nullptr);
-  const auto identity = instance_->FindFunction("identity");
+  ASSERT_NO_FATAL_FAILURE(Load("export func identity(value: int): int { return value; }"));
+  auto instance = BorrowInstance();
+  const auto identity = instance.FindFunction("identity");
   ASSERT_TRUE(identity);
-  const auto entry = instance_->image().functions.values()[*identity].entry;
+  const auto entry = instance.image().functions.values().subspan(*identity).front().entry;
   const std::array arguments{runtime::EncodeNativeValue(runtime::Value::Integer(42))};
   runtime::NativeValue result;
   EXPECT_EQ(entry(nullptr, arguments.data(), arguments.size(), &result),
             static_cast<std::uint8_t>(ExecutionStatus::InvalidIsolate));
-  runtime::NativeExecution execution(*instance_);
+  runtime::NativeExecution execution(instance);
   EXPECT_EQ(entry(&execution, arguments.data(), 0, &result),
             static_cast<std::uint8_t>(ExecutionStatus::InvalidEntry));
   EXPECT_EQ(entry(&execution, arguments.data(), arguments.size(), nullptr),
@@ -195,7 +201,7 @@ TEST_P(RecursiveCallTest, RawEntryValidatesExecutionAndPreservesNestedExceptions
 }
 
 TEST_P(RecursiveCallTest, ReferenceEarlyReturnsAndAllocatingCallersKeepRootsUntilCleanup) {
-  Load(R"(
+  ASSERT_NO_FATAL_FAILURE(Load(R"(
 class Link { text: string; next: Link? = null; }
 func retain(value: Link, depth: int): Link {
   if (depth == 0) { return value; }
@@ -211,17 +217,17 @@ export func walk(depth: int): int {
   }
 }
 export func fail(depth: int): int { return 8 / (walk(depth) - 2); }
-)");
-  ASSERT_NE(instance_, nullptr);
-  const auto walk = instance_->FindFunction("walk");
-  const auto fail = instance_->FindFunction("fail");
+)"));
+  auto instance = BorrowInstance();
+  const auto walk = instance.FindFunction("walk");
+  const auto fail = instance.FindFunction("fail");
   ASSERT_TRUE(walk);
   ASSERT_TRUE(fail);
-  auto& heap = isolate_.heap();
+  auto& heap = isolate().heap();
   heap.FinishCollection();
   heap.Collect();
   const auto baseline = heap.object_count();
-  runtime::NativeExecution execution(*instance_);
+  runtime::NativeExecution execution(instance);
   for (const std::int64_t depth : {0, 1, 32, 0}) {
     const std::array arguments{runtime::Value::Integer(depth)};
     const auto value = runtime::InvokeNativeFunction(execution, *walk, arguments);

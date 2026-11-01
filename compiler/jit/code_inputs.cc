@@ -191,14 +191,12 @@ void Instruction(BinaryWriter& writer, const ir::Instruction& instruction) {
   Put(writer, instruction.completes_construction);
 }
 
-std::vector<std::size_t> InstructionInputs(
-    BinaryWriter& writer,
-    const ir::Function& function,
-    const ir::Program& program,
-    NativeCodeTier tier,
-    const std::vector<std::string>& classes,
-    const absl::flat_hash_map<DeclarationId, native::FieldTarget>& fields) {
-  std::vector<std::size_t> dependencies;
+void InstructionInputs(BinaryWriter& writer,
+                       const ir::Function& function,
+                       const ir::Program& program,
+                       NativeCodeTier tier,
+                       const std::vector<std::string>& classes,
+                       const absl::flat_hash_map<DeclarationId, native::FieldTarget>& fields) {
   Put(writer, function.instructions.size());
   for (const auto& instruction : function.instructions) {
     Instruction(writer, instruction);
@@ -213,25 +211,14 @@ std::vector<std::size_t> InstructionInputs(
     if (instruction.opcode == Opcode::Call) {
       const auto& callee = program.functions.at(instruction.index);
       Signature(writer, callee, program);
-      if (tier == NativeCodeTier::Optimized || !callee.native_symbol.empty() ||
-          callee.identity.local != 0 || callee.is_generated_constructor) {
-        dependencies.push_back(instruction.index);
-      }
     }
   }
-  if (tier == NativeCodeTier::Optimized) {
-    for (const auto& target : native::FindDirectCalls(function, program)) {
-      if (target) {
-        dependencies.push_back(target->function);
-      }
-    }
-  }
-  return dependencies;
 }
 
 }  // namespace
 
 std::vector<FunctionCodeInputs> DescribeCodeInputs(const ir::Program& program,
+                                                   const native::NativeCallPlan& calls,
                                                    NativeCodeTier tier,
                                                    std::uint8_t optimization,
                                                    std::uint8_t debugging,
@@ -269,7 +256,8 @@ std::vector<FunctionCodeInputs> DescribeCodeInputs(const ir::Program& program,
     Sequence(writer, function.handlers,
              [](BinaryWriter& output, const auto& handler) { Put(output, handler.target); });
     FunctionCodeInputs input;
-    input.dependencies = InstructionInputs(writer, function, program, tier, classes, fields);
+    InstructionInputs(writer, function, program, tier, classes, fields);
+    input.dependencies = calls.dependencies.at(inputs.size());
     input.fingerprint = ContentFingerprint(writer.bytes()).Hex();
     inputs.push_back(std::move(input));
   }

@@ -102,6 +102,9 @@ using NativeEntry = std::uint8_t (*)(NativeExecution*,
                                      std::uint64_t,
                                      NativeValue*) noexcept;
 
+// 仅保存 typed ABI 地址，生成代码按静态签名调用；C++ 不通过擦除后的类型调用。
+using NativeTypedEntry = void (*)() noexcept;
+
 struct NativeConstructionDescription final {
   DeclarationId type;
   NativeTable<DeclarationId> supplied;
@@ -137,6 +140,8 @@ struct NativeFunctionDescription final {
   NativeTable<NativeCallParameter> parameters;
   NativeTable<SourceLocation> locations;
   NativeEntry entry = nullptr;
+  // 可重载 JIT 在发布前绑定；仅优化层的当前版本跨分量调用读取此槽。
+  NativeTypedEntry typed_entry = nullptr;
   std::uint32_t parameter_count = 0;
   std::uint32_t result_type = kNoNativeIndex;
   std::uint32_t hidden_parameters = 0;

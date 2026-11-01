@@ -145,7 +145,11 @@ TEST(StringGcTest, CollectsCycleContainingStringsAndArrays) {
   ASSERT_TRUE(heap.SetElement(*array, 0, root));
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 3U);
-  EXPECT_EQ(Heap::GetField(*root.AsObject(), 0)->AsString()->value(), "inside cycle");
+  const auto root_field_0 = Heap::GetField(*root.AsObject(), 0);
+  if (!root_field_0.has_value()) {
+    FAIL() << "Expected root_field_0 to have a value";
+  }
+  EXPECT_EQ(root_field_0->AsString()->value(), "inside cycle");
   root = Value::Null();
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 0U);
@@ -184,7 +188,11 @@ TEST_P(StringBarrierTest, FieldStoreMarksWhiteStringDuringMarkAndSweep) {
   ASSERT_TRUE(heap.SetField(*root.AsObject(), 0, Value::String(string)));
   heap.FinishCollection();
   EXPECT_EQ(heap.object_count(), 2U);
-  EXPECT_EQ(Heap::GetField(*root.AsObject(), 0)->AsString()->value(), "retained");
+  const auto root_field_0 = Heap::GetField(*root.AsObject(), 0);
+  if (!root_field_0.has_value()) {
+    FAIL() << "Expected root_field_0 to have a value";
+  }
+  EXPECT_EQ(root_field_0->AsString()->value(), "retained");
 }
 
 INSTANTIATE_TEST_SUITE_P(IncrementalPhases, StringBarrierTest, testing::Values(1U, 2U));

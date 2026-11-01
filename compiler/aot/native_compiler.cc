@@ -30,6 +30,7 @@
 #include "compiler/aot/reachability.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/native_roots.h"
 #include "runtime/library/standard_library.h"
@@ -175,7 +176,8 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
     }
   }
   const auto generating = Clock::now();
-  auto generated = native::Generate(program, options.module_name, export_flags,
+  const auto calls = native::PlanNativeCalls(program, NativeCodeTier::Baseline);
+  auto generated = native::Generate(program, calls, options.module_name, export_flags,
                                     native::NativeDebugging::Safepoints, NativeCodeTier::Baseline,
                                     options.escape, options.placement);
   if (!generated) {

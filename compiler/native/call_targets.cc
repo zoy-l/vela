@@ -1,11 +1,16 @@
 #include "compiler/native/call_targets.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <ranges>
+#include <utility>
 #include <vector>
 
 #include "base/callable.h"
+#include "base/declaration.h"
+#include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/analysis.h"
@@ -102,7 +107,125 @@ bool CanCallDirectly(const ir::Instruction& instruction,
   return IsSameType(caller.value_types.at(instruction.dst), callee.return_type);
 }
 
+std::vector<std::size_t> CallFinishOrder(const std::vector<std::vector<std::size_t>>& edges) {
+  const auto count = edges.size();
+  struct Visit final {
+    std::size_t function = 0;
+    std::size_t next = 0;
+  };
+  std::vector<std::uint8_t> visited(count);
+  std::vector<std::size_t> order;
+  std::vector<Visit> pending;
+  // 显式 DFS 栈使大型或深层调用图不依赖宿主 C++ 栈深度。
+  for (std::size_t root = 0; root < count; ++root) {
+    if (visited.at(root) != 0) {
+      continue;
+    }
+    visited.at(root) = 1;
+    pending.push_back({.function = root});
+    while (!pending.empty()) {
+      auto& visit = pending.back();
+      const auto& callees = edges.at(visit.function);
+      if (visit.next == callees.size()) {
+        order.push_back(visit.function);
+        pending.pop_back();
+      } else {
+        const auto callee = callees.at(visit.next++);
+        if (visited.at(callee) == 0) {
+          visited.at(callee) = 1;
+          pending.push_back({.function = callee});
+        }
+      }
+    }
+  }
+  return order;
+}
+
+std::vector<std::size_t> CallComponents(const std::vector<std::vector<std::size_t>>& edges) {
+  const auto count = edges.size();
+  std::vector<std::vector<std::size_t>> callers(count);
+  for (std::size_t caller = 0; caller < count; ++caller) {
+    for (const auto callee : edges.at(caller)) {
+      callers.at(callee).push_back(caller);
+    }
+  }
+  const auto order = CallFinishOrder(edges);
+  std::vector<std::size_t> components(count, count);
+  std::vector<std::size_t> members;
+  for (const auto root : std::views::reverse(order)) {
+    if (components.at(root) != count) {
+      continue;
+    }
+    components.at(root) = root;
+    members.push_back(root);
+    while (!members.empty()) {
+      const auto function = members.back();
+      members.pop_back();
+      for (const auto caller : callers.at(function)) {
+        if (components.at(caller) == count) {
+          components.at(caller) = root;
+          members.push_back(caller);
+        }
+      }
+    }
+  }
+  return components;
+}
+
+bool IsNamedBaselineCall(const ir::Function& callee, NativeProgramMode mode) {
+  return mode == NativeProgramMode::Reloadable && callee.native_symbol.empty() &&
+         callee.identity.local == 0 && callee.identity.declaration != DeclarationId{};
+}
+
 }  // namespace
+
+bool NativeCallPlan::UsesEntrySlot(CallEdge edge) const {
+  return slot_targets.at(edge.callee) != 0 &&
+         components.at(edge.caller) != components.at(edge.callee);
+}
+
+NativeCallPlan PlanNativeCalls(const ir::Program& program, NativeCodeTier tier) {
+  const auto& functions = program.functions;
+  const auto count = functions.size();
+  std::vector<std::vector<std::size_t>> edges(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    auto& callees = edges.at(index);
+    const auto& function = functions.at(index);
+    for (const auto& instruction : function.instructions) {
+      if (instruction.opcode == Opcode::Call) {
+        callees.push_back(instruction.index);
+      }
+    }
+    if (tier == NativeCodeTier::Optimized) {
+      for (const auto& target : FindDirectCalls(function, program)) {
+        if (target) {
+          callees.push_back(target->function);
+        }
+      }
+    }
+    std::ranges::sort(callees);
+    const auto duplicates = std::ranges::unique(callees);
+    callees.erase(duplicates.begin(), duplicates.end());
+  }
+  NativeCallPlan plan{.components = CallComponents(edges), .slot_targets = {}, .dependencies = {}};
+  const auto reloadable = program.native_mode == NativeProgramMode::Reloadable;
+  for (const auto& function : functions) {
+    plan.slot_targets.push_back(
+        reloadable && tier == NativeCodeTier::Optimized && function.native_symbol.empty() ? 1 : 0);
+  }
+  plan.dependencies = std::move(edges);
+  for (std::size_t index = 0; index < count; ++index) {
+    std::erase_if(plan.dependencies.at(index), [&](std::size_t callee) {
+      // 恢复入口仍可能直接引用版本内闭包；这些边也必须保活并参与失效。
+      if (!IsNamedBaselineCall(functions.at(callee), program.native_mode)) {
+        return false;
+      }
+      return tier == NativeCodeTier::Baseline ||
+             plan.UsesEntrySlot({.caller = index, .callee = callee});
+    });
+  }
+  return plan;
+}
 
 std::vector<std::optional<CallableTarget>> FindDirectCalls(const ir::Function& function,
                                                            const ir::Program& program) {

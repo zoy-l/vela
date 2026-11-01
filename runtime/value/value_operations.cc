@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/execution_status.h"
+#include "runtime/heap/field_storage.h"
 #include "runtime/heap/heap.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
@@ -48,15 +49,19 @@ bool IsEqualValue(Value left, Value right) noexcept {
     case ValueKind::String:
       return left.AsString()->value() == right.AsString()->value();
     case ValueKind::Object: {
-      const auto* layout = Heap::ClassOf(*left.AsObject());
+      const auto* left_object = left.AsObject();
+      const auto* right_object = right.AsObject();
+      const auto* layout = Heap::ClassOf(*left_object);
       if (layout != nullptr && layout->IsEnum()) {
-        const auto* right_layout = Heap::ClassOf(*right.AsObject());
+        const auto* right_layout = Heap::ClassOf(*right_object);
         return right_layout != nullptr &&
                &layout->nominal_type() == &right_layout->nominal_type() &&
-               Heap::GetField(*left.AsObject(), 0)->AsInteger() ==
-                   Heap::GetField(*right.AsObject(), 0)->AsInteger();
+               FieldStorage::Load(ObjectFieldStorage(*left_object), layout->field_count(), 0)
+                       .AsInteger() == FieldStorage::Load(ObjectFieldStorage(*right_object),
+                                                          right_layout->field_count(), 0)
+                                           .AsInteger();
       }
-      return left.AsObject() == right.AsObject();
+      return left_object == right_object;
     }
   }
   std::unreachable();
@@ -156,9 +161,13 @@ std::expected<Value, ExecutionStatus> BoxDynamicValue(Heap& heap,
 }
 
 Value UnboxDynamicValue(Value value, const TypeConstraint& type) noexcept {
-  return !value.IsNull() && type.nominal != nullptr && type.nominal->IsEnum()
-             ? *Heap::GetField(*value.AsObject(), 0)
-             : value;
+  const auto* nominal = type.nominal;
+  if (value.IsNull() || nominal == nullptr || !nominal->IsEnum()) {
+    return value;
+  }
+  const auto& object = *value.AsObject();
+  const auto* layout = Heap::ClassOf(object);
+  return FieldStorage::Load(ObjectFieldStorage(object), layout->field_count(), 0);
 }
 
 }  // namespace vela::runtime

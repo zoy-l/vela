@@ -25,7 +25,7 @@ struct FutureResult;
 struct NativeCheckpoint;
 struct NativeControlState;
 
-inline constexpr std::uint32_t kNativeAbiVersion = 10;
+inline constexpr std::uint32_t kNativeAbiVersion = 11;
 inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
 
 // 函数与指令编号属于当前执行持有的 NativeImage；异常保存前解析成独立的源码诊断。

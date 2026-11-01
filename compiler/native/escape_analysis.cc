@@ -564,6 +564,7 @@ EscapePlan PlanEscapes(const ir::Program& program,
       .borrowable = {},
       .borrowed_calls = {},
       .borrowed_fields = {},
+      .body_dependencies = {},
   };
   if (optimization == EscapeOptimization::Enabled &&
       program.native_mode == NativeProgramMode::Closed) {

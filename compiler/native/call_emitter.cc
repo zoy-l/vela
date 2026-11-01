@@ -13,9 +13,16 @@
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/ir/ir.h"
+#include "compiler/native/call_targets.h"
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/native_values.h"
+#include "runtime/native/native_image.h"
 namespace vela::compiler::native {
+bool FunctionEmitter::UsesEntrySlot(std::size_t callee) const {
+  return tier_ == NativeCodeTier::Optimized &&
+         calls_.UsesEntrySlot({.caller = function_index_, .callee = callee});
+}
+
 std::optional<CallableTarget> FunctionEmitter::CallTarget(std::size_t index) const {
   const auto& instruction = source_.instructions.at(index);
   if (instruction.opcode == Opcode::Call) {
@@ -113,7 +120,19 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
   auto arguments = CallArguments(instruction, selected, borrowed);
   const auto& target = generated_.subspan(selected.function).front();
   llvm::Value* status = nullptr;
-  if (target.leaf != nullptr) {
+  if (UsesEntrySlot(selected.function)) {
+    // 槽属于本次发布的不可变映像；复用的机器码从执行实例读取新目标。
+    // 旧帧在安全点恢复到基线后按声明调用，因此不借此进入旧快照的命名目标。
+    using runtime::NativeFunctionDescription;
+    using runtime::NativeImage;
+    auto* functions = builder_.CreateLoad(builder_.getPtrTy(),
+                                          ByteAddress(image_, offsetof(NativeImage, functions)));
+    const auto offset = (sizeof(NativeFunctionDescription) * selected.function) +
+                        offsetof(NativeFunctionDescription, typed_entry);
+    auto* entry = builder_.CreateLoad(builder_.getPtrTy(), ByteAddress(functions, offset),
+                                      "call.typed.entry");
+    status = builder_.CreateCall(target.body->getFunctionType(), entry, arguments);
+  } else if (target.leaf != nullptr) {
     auto& context = module_.getContext();
     auto* leaf = llvm::BasicBlock::Create(context, "call.leaf", body_);
     auto* observable = llvm::BasicBlock::Create(context, "call.observable", body_);

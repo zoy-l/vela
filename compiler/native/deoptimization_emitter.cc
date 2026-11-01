@@ -84,12 +84,16 @@ void FunctionEmitter::InitializeCheckpoint() {
   auto* entry = IsResuming() ? function.resume_recovery : function.recovery;
   auto* word = builder_.getInt64Ty();
   auto* type = llvm::StructType::get(module_.getContext(), {builder_.getPtrTy(), word, word, word});
-  auto* description = llvm::ConstantStruct::get(
-      type, {entry, builder_.getInt64(roots_.count), builder_.getInt64(source_.register_count),
-             builder_.getInt64(escape_.reference_count)});
-  checkpoint_layout_ =
-      new llvm::GlobalVariable(module_, type, true, llvm::GlobalValue::PrivateLinkage, description,
-                               body_->getName() + "_checkpoint_layout");
+  auto* description =
+      llvm::ConstantStruct::get(type, {
+                                          entry,
+                                          builder_.getInt64(roots_.count),
+                                          builder_.getInt64(source_.register_count),
+                                          builder_.getInt64(escape_.reference_count),
+                                      });
+  auto* layout = new llvm::GlobalVariable(module_, type, true, llvm::GlobalValue::PrivateLinkage,
+                                          description, body_->getName() + "_checkpoint_layout");
+  checkpoint_layout_ = layout;
   Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
   checkpoint_initialized_ = allocation.CreateAlloca(builder_.getInt1Ty());
   builder_.CreateStore(builder_.getFalse(), checkpoint_initialized_);
@@ -178,7 +182,8 @@ void FunctionEmitter::StoreCheckpoint() {
     if (virtual_state_ == nullptr && IsScalar(type) && !HasValidity(type)) {
       value = builder_.CreateExtractValue(value, 0);
     }
-    builder_.CreateStore(value, ByteAddress(checkpoint_values_, reg * sizeof(runtime::NativeValue)));
+    builder_.CreateStore(value,
+                         ByteAddress(checkpoint_values_, reg * sizeof(runtime::NativeValue)));
   }
   if (!escape_.checkpoints.empty()) {
     for (const auto& alias : escape_.checkpoints.at(origin).aliases) {

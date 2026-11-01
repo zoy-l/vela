@@ -665,9 +665,11 @@ std::expected<DeclarationId, ExecutionStatus> DevelopmentSession::ResolveEntry(
   if (!declaration) {
     return std::unexpected(ExecutionStatus::InvalidEntry);
   }
-  entry_lookup_ = EntryLookup{.module = std::string(requested.module),
-                              .name = std::string(requested.name),
-                              .declaration = *declaration};
+  entry_lookup_ = EntryLookup{
+      .module = std::string(requested.module),
+      .name = std::string(requested.name),
+      .declaration = *declaration,
+  };
   return *declaration;
 }
 

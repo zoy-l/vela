@@ -72,6 +72,8 @@ struct EscapePlan final {
   std::span<const std::optional<ir::ClassId>> borrowable;
   std::vector<std::optional<std::size_t>> borrowed_calls;
   std::vector<ir::RegisterId> borrowed_fields;
+  // 按构造函数体事实改写的调用仍依赖具体版本，供 JIT 下一轮复用规划使用。
+  std::vector<std::size_t> body_dependencies;
   std::size_t reference_count = 0;
 };
 

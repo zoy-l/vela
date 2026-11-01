@@ -410,9 +410,12 @@ std::shared_ptr<NativeImageData> NativeImageBuilder::Build(std::span<const std::
   return std::move(data_);
 }
 
-void NativeImageData::BindEntries(std::span<const runtime::NativeEntry> entries) {
+void NativeImageData::BindEntries(std::span<const runtime::NativeEntry> entries,
+                                  std::span<const runtime::NativeTypedEntry> typed_entries) {
   for (std::size_t index = 0; index < functions_.size(); ++index) {
-    functions_.at(index).entry = entries.subspan(index).front();
+    auto& function = functions_.at(index);
+    function.entry = entries.subspan(index).front();
+    function.typed_entry = typed_entries.subspan(index).front();
   }
 }
 

@@ -17,6 +17,7 @@
 
 #include "base/execution_status.h"
 #include "runtime/heap/element_storage.h"
+#include "runtime/heap/field_storage.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -129,10 +130,12 @@ std::size_t HashKey(Value value) noexcept {
     case ValueKind::String:
       return absl::HashOf(value.kind(), value.AsString()->value());
     case ValueKind::Object: {
-      const auto* layout = Heap::ClassOf(*value.AsObject());
+      const auto& object = *value.AsObject();
+      const auto* layout = Heap::ClassOf(object);
       if (layout != nullptr && layout->IsEnum()) {
-        return absl::HashOf(&layout->nominal_type(),
-                            Heap::GetField(*value.AsObject(), 0)->AsInteger());
+        return absl::HashOf(
+            &layout->nominal_type(),
+            FieldStorage::Load(ObjectFieldStorage(object), layout->field_count(), 0).AsInteger());
       }
       return absl::HashOf(value.kind(), value.AsObject());
     }
