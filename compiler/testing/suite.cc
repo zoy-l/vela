@@ -59,7 +59,8 @@ bool IsSuiteMain(const runtime::NativeInstance& instance, std::uint32_t index) {
          !type.signature->result;
 }
 
-std::optional<Difference> CopyDifference(const runtime::MemberTable& layouts, runtime::Value value) {
+std::optional<Difference> CopyDifference(const runtime::MemberTable& layouts,
+                                         runtime::Value value) {
   if (value.IsNull()) {
     return std::nullopt;
   }
@@ -149,9 +150,7 @@ constexpr std::size_t kTearDownAll = 3;
 
 }  // namespace
 
-Suite::Suite(runtime::NativeInstance& instance,
-             SuiteOptions options,
-             std::ostream& diagnostics)
+Suite::Suite(runtime::NativeInstance& instance, SuiteOptions options, std::ostream& diagnostics)
     : isolate_(&instance.isolate()),
       instance_(&instance),
       options_(std::move(options)),
@@ -428,8 +427,8 @@ TestError Suite::Describe(const runtime::ExecutionResult& result, TestPhase phas
   }
   const auto* message = layouts.Find(result.value, "message");
   if (message != nullptr && message->kind == MemberKind::Field) {
-    const auto* value = runtime::Heap::GetField(*result.value.AsObject(), message->target);
-    if (value != nullptr && value->IsString()) {
+    const auto value = runtime::Heap::GetField(*result.value.AsObject(), message->target);
+    if (value && value->IsString()) {
       error.message = value->AsString()->value();
     }
   }
@@ -459,8 +458,8 @@ void Suite::Invoke(const Callback& callback,
     scope.cancelled = true;
     return;
   }
-  auto result = Await(runtime::ExecuteNativeCallable(*instance_, callback.value.value()), scope.effective_timeout,
-                      scope, phase);
+  auto result = Await(runtime::ExecuteNativeCallable(*instance_, callback.value.value()),
+                      scope.effective_timeout, scope, phase);
   if (result.stack_trace.empty() && !result.Succeeded()) {
     result.stack_trace = callback.trace;
   }
@@ -624,8 +623,8 @@ SuiteResult Suite::Run() {
                             std::chrono::duration_cast<std::chrono::milliseconds>(
                                 *options_.load_deadline - root_.heartbeat));
   }
-  const auto registered =
-      Await(runtime::ExecuteNativeFunction(*instance_, *main), *load_timeout, root_, TestPhase::Registration);
+  const auto registered = Await(runtime::ExecuteNativeFunction(*instance_, *main), *load_timeout,
+                                root_, TestPhase::Registration);
   const runtime::RootRange registration_root(isolate_->heap(), &registered.value, 1,
                                              runtime::RootOwner::Runtime);
   if (!registered.Succeeded()) {

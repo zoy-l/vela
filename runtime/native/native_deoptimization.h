@@ -15,24 +15,35 @@ using NativeRecoveryEntry = std::uint8_t (*)(NativeExecution*, NativeCheckpoint*
 
 enum class NativeCheckpointPhase : std::uint8_t { Instruction, AwaitingResult };
 
+// 随代码版本保活的只读描述；调用帧不重复写入恢复入口和各类槽数量。
+struct NativeCheckpointLayout final {
+  NativeRecoveryEntry recovery = nullptr;
+  std::uint64_t root_count = 0;
+  std::uint64_t value_count = 0;
+  std::uint64_t reference_count = 0;
+};
+
+// 仅含虚拟对象的优化帧需要此状态；graph 随规范指令改变，其余数据随调用固定。
+struct NativeVirtualState final {
+  const NativeVirtualGraph* graph = nullptr;
+  HeapObject*** references = nullptr;
+  HeapObject* program = nullptr;
+};
+
 // 生成代码持有此存储直到物理帧返回，只物化 instruction 处的活跃值。
 // 恢复直接将这些槽用作基线局部存储；精确托管根仍位于该帧的影子槽。
 // AwaitingResult 表示基线续延正在等待已进入的调用完成。
+// 无物化状态的非空标量槽只初始化 payload；类型化恢复不读取其标签。
 struct NativeCheckpoint final {
   NativeValue* values = nullptr;
   Value* roots = nullptr;
   void* storage = nullptr;
   NativeResumeState* resume = nullptr;
-  NativeRecoveryEntry recovery = nullptr;
+  const NativeCheckpointLayout* layout = nullptr;
   std::uint32_t instruction = 0;
   NativeCodeTier tier = NativeCodeTier::Optimized;
   NativeCheckpointPhase phase = NativeCheckpointPhase::Instruction;
-  const NativeVirtualGraph* virtual_graph = nullptr;
-  HeapObject*** virtual_references = nullptr;
-  HeapObject* program = nullptr;
-  std::uint64_t root_count = 0;
-  std::uint64_t value_count = 0;
-  std::uint64_t reference_count = 0;
+  NativeVirtualState* materialization = nullptr;
 };
 
 [[nodiscard]] bool CanUseNativeOptimization(const NativeExecution& execution,

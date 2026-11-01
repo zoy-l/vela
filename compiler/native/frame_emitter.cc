@@ -46,24 +46,9 @@ void FunctionEmitter::EmitFrameEntry() {
         body_->getArg(static_cast<unsigned>(body_->arg_size() - 1)));
   }
   failure.CreateRet(error);
-  auto* valid = llvm::BasicBlock::Create(context, "execution.valid", body_);
-  error->addIncoming(Status(builder_, ExecutionStatus::InvalidIsolate), builder_.GetInsertBlock());
-  builder_.CreateCondBr(builder_.CreateIsNotNull(execution), valid, failed,
-                        llvm::MDBuilder(context).createLikelyBranchWeights());
-  builder_.SetInsertPoint(valid);
-  auto* stack_status = builder_.CreateLoad(
-      builder_.getInt8Ty(), ByteAddress(execution, NativeMemoryLayout::kExecutionStackStatus));
-  // 这两个字段仅由 NativeExecution 构造函数写入；宿主调用不会改变线程栈边界。
+  // execution 及固定栈状态由真实入口验证；每次内部调用仍检查动态栈预算。
   auto* invariant = llvm::MDNode::get(context, {});
-  stack_status->setMetadata(llvm::LLVMContext::MD_invariant_load, invariant);
-  auto* stack_valid = llvm::BasicBlock::Create(context, "stack.valid", body_);
-  error->addIncoming(stack_status, builder_.GetInsertBlock());
-  builder_.CreateCondBr(
-      builder_.CreateICmpEQ(stack_status, Status(builder_, ExecutionStatus::Returned)), stack_valid,
-      failed, llvm::MDBuilder(context).createLikelyBranchWeights());
-  builder_.SetInsertPoint(stack_valid);
   auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
-  auto* frame_address = ByteAddress(execution, NativeMemoryLayout::kExecutionFrame);
   auto* depth = builder_.CreateLoad(word, depth_address);
   auto* stack_limit =
       builder_.CreateLoad(word, ByteAddress(execution, NativeMemoryLayout::kExecutionStackLimit));
@@ -79,18 +64,6 @@ void FunctionEmitter::EmitFrameEntry() {
                          stack_available),
       available, failed, llvm::MDBuilder(context).createLikelyBranchWeights());
   builder_.SetInsertPoint(available);
-  if (!IsRecovering()) {
-    auto* first = llvm::BasicBlock::Create(context, "execution.first", body_);
-    builder_.CreateCondBr(builder_.CreateICmpEQ(depth, builder_.getInt64(0)), first, initialize);
-    builder_.SetInsertPoint(first);
-    // 与 NativeExecution::PrepareEntry 共用布局事实；成功入口不跨 helper 调用边界。
-    // 仅最外层清理上次异常，嵌套调用必须保留 catch 作用域中的异常状态。
-    builder_.CreateStore(llvm::Constant::getNullValue(NativeRecordType(context)),
-                         ByteAddress(execution, NativeMemoryLayout::kExecutionException));
-    builder_.CreateStore(
-        builder_.getInt8(0),
-        ByteAddress(execution, NativeMemoryLayout::kExecutionExceptionAllocationFailed));
-  }
   builder_.CreateBr(initialize);
   builder_.SetInsertPoint(initialize);
 
@@ -152,25 +125,25 @@ void FunctionEmitter::EmitFrameEntry() {
   if (!leaf_entry_) {
     auto* frame = allocate(sizeof(NativeTraceFrame), alignof(NativeTraceFrame));
     trace_frame_ = frame;
-    auto* previous = builder_.CreateLoad(pointer, frame_address);
-    builder_.CreateStore(previous, ByteAddress(frame, offsetof(NativeTraceFrame, previous)));
-    builder_.CreateStore(image_, ByteAddress(frame, offsetof(NativeTraceFrame, image)));
-    builder_.CreateStore(llvm::ConstantPointerNull::get(builder_.getPtrTy()),
-                         ByteAddress(frame, offsetof(NativeTraceFrame, checkpoint)));
-    builder_.CreateStore(llvm::ConstantPointerNull::get(pointer),
-                         ByteAddress(frame, offsetof(NativeTraceFrame, debug_values)));
-    builder_.CreateStore(builder_.getInt64(0),
-                         ByteAddress(frame, offsetof(NativeTraceFrame, debug_count)));
-    const auto position = offsetof(NativeTraceFrame, position);
-    builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
-                         ByteAddress(frame, position + offsetof(runtime::TracePosition, function)));
-    instruction_slot_ =
-        ByteAddress(frame, position + offsetof(runtime::TracePosition, instruction));
-    builder_.CreateStore(builder_.getInt32(0), instruction_slot_);
-    builder_.CreateStore(frame, frame_address);
-    builder_.CreateStore(builder_.CreateAdd(depth, builder_.getInt64(1)), depth_address);
+    Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+    trace_initialized_ = allocation.CreateAlloca(builder_.getInt1Ty());
+    builder_.CreateStore(builder_.getFalse(), trace_initialized_);
+    instruction_slot_ = ByteAddress(frame, offsetof(NativeTraceFrame, position) +
+                                               offsetof(runtime::TracePosition, instruction));
+    auto* restore = llvm::BasicBlock::Create(context, "frame.restore", body_);
+    auto* restored = llvm::BasicBlock::Create(context, "frame.restored", body_);
+    cleanup.CreateCondBr(cleanup.CreateLoad(cleanup.getInt1Ty(), trace_initialized_), restore,
+                         restored);
+    cleanup.SetInsertPoint(restore);
+    auto* previous = cleanup.CreateLoad(
+        pointer, cleanup.CreateConstGEP1_64(cleanup.getInt8Ty(), frame,
+                                            offsetof(NativeTraceFrame, previous)));
+    auto* frame_address = cleanup.CreateConstGEP1_64(cleanup.getInt8Ty(), execution,
+                                                     NativeMemoryLayout::kExecutionFrame);
     cleanup.CreateStore(previous, frame_address);
     cleanup.CreateStore(depth, depth_address);
+    cleanup.CreateBr(restored);
+    cleanup.SetInsertPoint(restored);
   }
   if (root_range != nullptr) {
     auto exit =
@@ -182,6 +155,42 @@ void FunctionEmitter::EmitFrameEntry() {
     cleanup.CreateCall(release, {resources});
   }
   cleanup.CreateRet(status_);
+}
+
+void FunctionEmitter::PrepareTraceFrame() {
+  using runtime::NativeMemoryLayout;
+  using runtime::NativeTraceFrame;
+  auto& context = module_.getContext();
+  auto* initialize = llvm::BasicBlock::Create(context, "frame.initialize", body_);
+  auto* ready = llvm::BasicBlock::Create(context, "frame.ready", body_);
+  builder_.CreateCondBr(builder_.CreateLoad(builder_.getInt1Ty(), trace_initialized_), ready,
+                        initialize);
+  builder_.SetInsertPoint(initialize);
+  // 入口始终检查栈预算；只有可观察边界才链接逻辑帧。纯返回分支不写执行栈，
+  // 嵌套调用、异常、调试和恢复仍看到完整调用链，且一次调用最多登记一次。
+  auto* execution = body_->getArg(0);
+  auto* frame_address = ByteAddress(execution, NativeMemoryLayout::kExecutionFrame);
+  auto* pointer = builder_.getPtrTy();
+  auto* previous = builder_.CreateLoad(pointer, frame_address);
+  auto* frame = trace_frame_;
+  builder_.CreateStore(previous, ByteAddress(frame, offsetof(NativeTraceFrame, previous)));
+  builder_.CreateStore(image_, ByteAddress(frame, offsetof(NativeTraceFrame, image)));
+  auto* null_pointer = llvm::ConstantPointerNull::get(pointer);
+  builder_.CreateStore(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, checkpoint)));
+  builder_.CreateStore(null_pointer, ByteAddress(frame, offsetof(NativeTraceFrame, debug_values)));
+  builder_.CreateStore(builder_.getInt64(0),
+                       ByteAddress(frame, offsetof(NativeTraceFrame, debug_count)));
+  builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(function_index_)),
+                       ByteAddress(frame, offsetof(NativeTraceFrame, position) +
+                                              offsetof(runtime::TracePosition, function)));
+  builder_.CreateStore(frame, frame_address);
+  auto* depth_address = ByteAddress(execution, NativeMemoryLayout::kExecutionDepth);
+  auto* depth = builder_.CreateLoad(builder_.getInt64Ty(), depth_address);
+  builder_.CreateStore(builder_.CreateAdd(depth, builder_.getInt64(1)), depth_address);
+  InitializeDebugValues();
+  builder_.CreateStore(builder_.getTrue(), trace_initialized_);
+  builder_.CreateBr(ready);
+  builder_.SetInsertPoint(ready);
 }
 
 void FunctionEmitter::CacheImports() {

@@ -66,6 +66,7 @@ class Value final {
   }
 
  private:
+  friend class FieldStorage;
   friend struct NativeMemoryLayout;
 
   template <class T>

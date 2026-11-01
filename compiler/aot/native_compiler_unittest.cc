@@ -363,7 +363,7 @@ export func read(): int { return count; }
   EXPECT_EQ(initializer_calls, 1U);
 }
 
-TEST(NativeCompilerTest, EliminatesMonotoneIntegerReductionsWithDynamicBounds) {
+TEST(NativeCompilerTest, EliminatesIntegerReductionsWithDynamicBounds) {
   const auto sources = std::to_array<std::string_view>({
       "let sum = initial; for (let index = 0; index < bound; index++) { sum += index; }",
       "let sum = initial; for (let index = 0; index > bound; index--) { sum += index; }",
@@ -374,6 +374,10 @@ TEST(NativeCompilerTest, EliminatesMonotoneIntegerReductionsWithDynamicBounds) {
       "let sum = initial; for (let index = start; index < 0; index++) { sum += index; }",
       "let sum = initial; for (let index = start; index > 0; index--) { sum += index; }",
       "let sum = initial; for (let index = 0; bound > index; index++) { sum += index; }",
+      "let sum = initial; for (let index = start; index < bound; index++) { sum += index; }",
+      "let sum = initial; for (let index = start; index > bound; index--) { sum += index; }",
+      "let sum = initial; for (let index = start; index < bound; index++) { sum -= index; }",
+      "let sum = initial; for (let index = start; index > bound; index--) { sum -= index; }",
   });
   for (const auto source : sources) {
     SCOPED_TRACE(source);

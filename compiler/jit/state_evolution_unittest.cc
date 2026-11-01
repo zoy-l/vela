@@ -413,6 +413,40 @@ TEST_P(JitStateTest, DeletedGlobalsAreCheckedAgainstExplicitVersionHandles) {
   EXPECT_EQ(Entry("read").Invoke({})->AsInteger(), 0);
 }
 
+TEST_P(JitStateTest, CachedGlobalWritesSkipInitializersAndRefreshAcrossPublication) {
+  const std::string accessors = R"(
+func initialize(): int { calls++; return 7; }
+export func write(value: int): void { stored = value; }
+export func read(): int { return stored; }
+export func count(): int { return calls; }
+)";
+  auto update = Update("let calls = 0; let stored = initialize(); " + accessors);
+  ASSERT_TRUE(update) << update.error();
+  std::optional<runtime::NativeVersionEntry> writer = *Entry("write").Capture();
+  const auto write = [&](std::int64_t value) {
+    const std::array arguments{runtime::Value::Integer(value)};
+    ASSERT_TRUE(writer->Invoke(arguments));
+    EXPECT_EQ(Entry("read").Invoke({})->AsInteger(), value);
+    EXPECT_EQ(Entry("count").Invoke({})->AsInteger(), 0);
+  };
+  write(40);
+  write(41);
+  update = Update("let padding = 99; let stored = initialize(); let calls = 0; " + accessors);
+  ASSERT_TRUE(update) << update.error();
+  isolate_.heap().Collect();
+  write(42);
+  write(43);
+  update = Update("export func read(): int { return 0; }");
+  ASSERT_FALSE(update);
+  EXPECT_NE(update.error().find("deleted global"), std::string::npos);
+  write(44);
+  writer.reset();
+  update = Update("export func read(): int { return 0; }");
+  ASSERT_TRUE(update) << update.error();
+  isolate_.heap().Collect();
+  EXPECT_EQ(Entry("read").Invoke({})->AsInteger(), 0);
+}
+
 TEST_P(JitStateTest, AQueuedPublicationMigratesAtAPreciseSafepointAndOldFramesCallNewCode) {
   const std::string common =
       "class Box { stored: int = 40; } "

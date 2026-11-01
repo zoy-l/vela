@@ -226,6 +226,15 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
             module_.getContext(), sizeof(runtime::HeapObject)));
         auto* object = builder_.CreateCall(helper, {context, index});
         Check(builder_.CreateIsNotNull(object), ExecutionStatus::OutOfMemory);
+        if (program_.native_mode == NativeProgramMode::Closed) {
+          using runtime::NativeMemoryLayout;
+          auto* count = LoadMemory(word, ByteAddress(object, NativeMemoryLayout::kObjectFieldCount),
+                                   MemoryRegion::HeapHeader);
+          // 新实例的实际类已由分配操作确定；封闭镜像没有后续字段迁移。
+          builder_.CreateAssumption(builder_.CreateICmpEQ(
+              count,
+              builder_.getInt32(program_.layouts.classes.at(instruction.index).field_count)));
+        }
         const auto& type = source_.value_types.at(instruction.dst);
         auto* record = EncodeValue(builder_, object, {.kind = Kind::Class, .name = {}});
         Store(instruction.dst, DecodeValue(builder_, record, type), type);

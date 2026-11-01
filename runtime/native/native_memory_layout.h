@@ -19,14 +19,16 @@ namespace vela::runtime {
 // 编译器和运行时使用同一组 C++ 布局事实；生成代码不得复制对象头或猜标准库布局。
 // NativeRuntimeAbiIdentity 已包含这些构建输入，旧产物不能与改变布局的运行时混用。
 struct NativeMemoryLayout final {
-  static_assert(offsetof(HeapObject, string_length) + sizeof(std::uint32_t) ==
+  static_assert(offsetof(HeapObject, auxiliary_length) + sizeof(std::uint32_t) ==
                 offsetof(HeapObject, native_payload));
   static constexpr auto kValuePayload = offsetof(Value, payload_);
   static constexpr auto kValueKind = offsetof(Value, kind_);
   static constexpr auto kObjectLength = offsetof(HeapObject, length);
-  static constexpr auto kStringLength = offsetof(HeapObject, string_length);
+  static constexpr auto kStringLength = offsetof(HeapObject, auxiliary_length);
+  static constexpr auto kObjectFieldCount = offsetof(HeapObject, auxiliary_length);
   static constexpr auto kObjectNativePayload = offsetof(HeapObject, native_payload);
   static constexpr auto kObjectLayout = offsetof(HeapObject, layout);
+  static constexpr auto kObjectMarkBit = offsetof(HeapObject, mark_bit);
   static constexpr auto kClassId = offsetof(ClassLayout, id_);
   static constexpr auto kArrayData = sizeof(HeapObject) + offsetof(internal::ArrayStorage, data);
   static constexpr auto kArrayCapacity =
@@ -40,6 +42,7 @@ struct NativeMemoryLayout final {
   static constexpr auto kExecutionInstance = offsetof(NativeExecution, instance_);
   static constexpr auto kExecutionContext = offsetof(NativeExecution, context_);
   static constexpr auto kExecutionControlState = offsetof(NativeExecution, control_state_);
+  static constexpr auto kExecutionBarrierState = offsetof(NativeExecution, barrier_state_);
   static constexpr auto kExecutionException = offsetof(NativeExecution, pending_exception_);
   static constexpr auto kExecutionExceptionAllocationFailed =
       offsetof(NativeExecution, exception_allocation_failed_);
@@ -60,6 +63,7 @@ static_assert(std::is_standard_layout_v<InstanceStorage>);
 static_assert(std::is_standard_layout_v<NativeFieldCache>);
 static_assert(std::is_standard_layout_v<NativeGlobalCache>);
 static_assert(std::is_standard_layout_v<NativeControlState>);
+static_assert(std::is_standard_layout_v<GcBarrierState>);
 static_assert(std::atomic<std::uint8_t>::is_always_lock_free);
 static_assert(sizeof(std::atomic<std::uint8_t>) == sizeof(std::uint8_t));
 static_assert(std::is_standard_layout_v<internal::ArrayStorage>);

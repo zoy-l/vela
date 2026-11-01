@@ -175,6 +175,11 @@ class DevelopmentSession final {
 
  private:
   enum class Invocation : std::uint8_t { Exported, Entry };
+  struct EntryLookup final {
+    std::string module;
+    std::string name;
+    DeclarationId declaration;
+  };
   struct CompilationBase final {
     std::shared_ptr<SourceSession> sources;
     std::uint64_t generation = 0;
@@ -201,6 +206,7 @@ class DevelopmentSession final {
       const runtime::NativeResolvedDeclaration& target,
       std::span<const runtime::Value> arguments,
       Invocation invocation);
+  std::expected<DeclarationId, ExecutionStatus> ResolveEntry(DevelopmentEntry requested);
   [[nodiscard]] std::vector<runtime::ExternalResourceInfo> HostBlockers() const;
   [[nodiscard]] CompilationBase BeginCompilation();
   std::expected<DevelopmentCandidate, DevelopmentResult> Prepare(
@@ -221,6 +227,7 @@ class DevelopmentSession final {
   DevelopmentResult result_;
   runtime::Value entry_value_;
   std::optional<runtime::FutureDiagnostic> last_diagnostic_;
+  std::optional<EntryLookup> entry_lookup_;
   runtime::RootRange entry_root_{runtime::RootOwner::Runtime};
   mutable std::mutex source_mutex_;
   std::uint64_t generation_ = 1;

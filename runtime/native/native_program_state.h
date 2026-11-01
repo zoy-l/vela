@@ -27,6 +27,7 @@ struct NativeGlobalCache;
 struct NativeFieldCache final {
   std::uint64_t layout_id = 0;
   std::uint32_t slot = 0;
+  std::uint64_t kind_offset = 0;
   [[nodiscard]] std::optional<std::uint32_t> Resolve(const ClassLayout& layout,
                                                      DeclarationId field) noexcept;
 };
@@ -72,13 +73,14 @@ struct NativeProgramState final {
   NativeProgramState* retired_next = nullptr;
 };
 
-// 槽由当前分派快照保活；读取者先验证 epoch，才能解引用 state/value。
+// 槽由当前分派快照保活；读写者先验证 epoch，才能解引用 state/value/owner。
 // 发布或关闭分派先使代数失效，因此弱缓存不会保活已删除全局值或读取退休槽。
 struct NativeGlobalCache final {
   const std::uint64_t* epoch = nullptr;
   std::uint64_t observed = 0;
-  const NativeProgramState::GlobalState* state = nullptr;
-  const Value* value = nullptr;
+  NativeProgramState::GlobalState* state = nullptr;
+  Value* value = nullptr;
+  HeapObject* owner = nullptr;
 };
 
 }  // namespace vela::runtime

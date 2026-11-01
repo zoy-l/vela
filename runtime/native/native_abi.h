@@ -178,6 +178,7 @@ class NativeExecution final {
   NativeInstance* instance_;
   NativeContext context_;
   NativeControlState* control_state_;
+  const GcBarrierState* barrier_state_;
   NativeTraceFrame* current_frame_ = nullptr;
   std::size_t frame_count_ = 0;
   std::uintptr_t stack_limit_ = 0;

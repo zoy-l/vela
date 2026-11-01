@@ -63,6 +63,22 @@ for execution and validation.
   repeating defensive checks at every layer. When removing redundant checks, also remove their
   result enums, branches, and tests.
 
+### Object fields
+
+Object fields store eight-byte payloads in one contiguous region and `ValueKind` tags in a separate
+region. Inline instances own this storage after their object header. Reloadable instances own an
+`InstanceStorage` block whose initialization states follow the tags. Inline object headers and
+reloadable field blocks record their physical field counts. Native code addresses payloads
+directly and reads tags when the value representation requires them. Boxed `Value` and `NativeValue`
+records retain their sixteen-byte ABI; array storage follows its element layout.
+
+`Heap::GetField` returns a copied value, or no value for an object without a class layout or an
+out-of-range field. Managed references in that copy borrow the heap and require a root before the
+next allocation. `ObjectFieldStorage` borrows the owner's storage; callers keep the owner rooted and
+do not retain the view across migration or a safepoint that can publish a migration. Prepared
+migrations register their field blocks as roots until commit or discard. Commit replaces the layout
+and complete field block before releasing the previous storage.
+
 ### Native host bindings
 
 `NativeFunction::Bind<Function>` derives the host signature and AOT calling convention from the

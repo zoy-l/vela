@@ -1,12 +1,16 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+#include "runtime/heap/field_storage.h"
 #include "runtime/heap/heap.h"
+#include "runtime/heap/instance_storage.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
@@ -28,9 +32,10 @@ TEST(InstanceStorageTest, ExternalBlocksAreAccountedAndWeakRegistrationDoesNotKe
   const std::array fields{Value::Integer(40), Value::Integer(2)};
   auto* object = heap.AllocateInstance(*layout, fields);
   ASSERT_NE(object, nullptr);
-  EXPECT_NE(ObjectFields(object), StorageAfter<Value>(*object));
-  EXPECT_GT(heap.allocated_bytes() - bytes, sizeof(HeapObject) + (fields.size() * sizeof(Value)));
-  EXPECT_GT(heap.instance_field_bytes(), fields.size() * sizeof(Value));
+  EXPECT_NE(ObjectFieldStorage(*object).data(), StorageAfter<std::byte>(*object));
+  EXPECT_GT(heap.allocated_bytes() - bytes,
+            sizeof(HeapObject) + FieldStorage::Size(layout->field_count()));
+  EXPECT_GT(heap.instance_field_bytes(), FieldStorage::Size(layout->field_count()));
   EXPECT_EQ(heap.instance_type_count(), 1U);
   EXPECT_EQ(Heap::GetField(*object, 0)->AsInteger(), 40);
   std::vector<Value> instances;
@@ -77,13 +82,13 @@ TEST(InstanceStorageTest,
                                                     .storage = ClassStorage::Reloadable,
                                                     .field_declarations = {{1}, {}, {3}},
                                                 });
-  const auto* old_fields = ObjectFields(object);
+  const auto* old_fields = ObjectFieldStorage(*object).data();
   {
     const auto candidate = heap.PrepareInstanceMigration(*object, *replacement);
     ASSERT_NE(candidate, nullptr);
     heap.Collect();
     EXPECT_EQ(Heap::ClassOf(*object), original);
-    EXPECT_EQ(ObjectFields(object), old_fields);
+    EXPECT_EQ(ObjectFieldStorage(*object).data(), old_fields);
     EXPECT_EQ(heap.object_count(), 2U);
   }
   auto candidate = heap.PrepareInstanceMigration(*object, *replacement);
@@ -91,7 +96,7 @@ TEST(InstanceStorageTest,
   candidate->Commit();
   EXPECT_EQ(root.AsObject(), object);
   EXPECT_EQ(Heap::ClassOf(*object), replacement);
-  EXPECT_NE(ObjectFields(object), old_fields);
+  EXPECT_NE(ObjectFieldStorage(*object).data(), old_fields);
   EXPECT_EQ(Heap::GetField(*object, 0)->AsInteger(), 42);
   EXPECT_TRUE(Heap::GetField(*object, 1)->IsNull());
   EXPECT_TRUE(Heap::GetField(*object, 2)->IsNull());
@@ -182,6 +187,32 @@ TEST(InstanceStorageTest, InstanceListsRemainValidAcrossTypeIndexRehashAndMiddle
   instances.clear();
   heap.AppendInstances(layout->nominal_type(), instances);
   EXPECT_TRUE(instances.empty());
+}
+
+TEST(InstanceStorageTest, PreparedFieldStorageRootsRetainSeparatePayloadsAndKinds) {
+  Isolate isolate;
+  auto& heap = isolate.heap();
+  const auto* layout = isolate.CreateClassLayout(0, {});
+  constexpr std::uint32_t kFields = 2;
+  alignas(InstanceStorage)
+      std::array<std::byte, sizeof(InstanceStorage) + FieldStorage::Size(kFields)>
+          bytes;
+  void* memory = bytes.data();
+  auto* storage = std::construct_at(static_cast<InstanceStorage*>(memory));
+  storage->count = kFields;
+  const auto fields = storage->fields();
+  FieldStorage::Store(fields, kFields, 0, Value::Object(heap.AllocateInstance(*layout)));
+  FieldStorage::Store(fields, kFields, 1, Value::String(heap.AllocateString("retained")));
+  RootRange roots;
+  roots.Attach(heap, *storage);
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 2U);
+  EXPECT_TRUE(FieldStorage::Load(fields, kFields, 0).IsObject());
+  EXPECT_EQ(FieldStorage::Load(fields, kFields, 1).AsString()->value(), "retained");
+  roots.Detach();
+  heap.Collect();
+  EXPECT_EQ(heap.object_count(), 0U);
+  std::destroy_at(storage);
 }
 
 }  // namespace

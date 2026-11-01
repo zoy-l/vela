@@ -14,6 +14,7 @@ class StructType;
 }
 namespace vela::compiler::native {
 inline constexpr unsigned kVirtualReferenceFieldIndex = 5;
+inline constexpr unsigned kVirtualStateFieldIndex = 6;
 enum class NativeEntryKind : std::uint8_t;
 enum class NativeFrameRecovery : std::uint8_t { None, Required };
 struct NativeFrameLayout final {

@@ -47,8 +47,8 @@ std::expected<ResolvedCallable, ExecutionStatus> ResolveCallable(Value value,
       break;
     case CallableMode::BoundMethod:
     case CallableMode::InterfaceMethod: {
-      const auto* receiver = Heap::GetField(*object, 0);
-      if (receiver == nullptr) {
+      const auto receiver = Heap::GetField(*object, 0);
+      if (!receiver) {
         return std::unexpected(ExecutionStatus::TypeError);
       }
       result.implicit = *receiver;

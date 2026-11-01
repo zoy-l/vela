@@ -145,7 +145,7 @@ StringObject* Heap::AllocateStringStorage(StringSize size) noexcept {
   auto& header = string->header_;
   header.kind = ObjectKind::String;
   header.length = static_cast<std::uint32_t>(length);
-  header.string_length = static_cast<std::uint32_t>(size.code_points);
+  header.auxiliary_length = static_cast<std::uint32_t>(size.code_points);
   Publish(header, allocation);
   return string;
 }

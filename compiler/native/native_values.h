@@ -51,6 +51,8 @@ llvm::Value* DecodeValue(Builder& builder, llvm::Value* record, const SourceType
 llvm::ConstantInt* Status(Builder& builder, ExecutionStatus status);
 // 失败块直接返回原状态；成功块成为后续结果写入的插入点。
 void ReturnOnFailure(Builder& builder, llvm::Function& function, llvm::Value* status);
+// 装箱入口和异步恢复边界验证 execution，并清理最外层调用遗留的异常。
+void EmitExecutionBoundary(Builder& builder);
 std::uint8_t NativeKind(Kind kind);
 llvm::Value* Convert(Builder& builder,
                      llvm::Value* value,

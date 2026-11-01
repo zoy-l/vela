@@ -41,12 +41,13 @@ NativeMaterialization::~NativeMaterialization() {
 }
 
 bool NativeMaterialization::HasVirtualObjects(const NativeCheckpoint& checkpoint) noexcept {
-  const auto* graph = checkpoint.virtual_graph;
-  if (graph == nullptr) {
+  const auto* materialization = checkpoint.materialization;
+  if (materialization == nullptr || materialization->graph == nullptr) {
     return false;
   }
+  const auto* graph = materialization->graph;
   const auto objects = graph->objects.values();
-  const std::span references(checkpoint.virtual_references, checkpoint.reference_count);
+  const std::span references(materialization->references, checkpoint.layout->reference_count);
   return std::ranges::any_of(graph->aliases.values(), [&](const auto& alias) {
     const auto& object = objects.subspan(alias.object).front();
     return *references.subspan(object.storage).front() == nullptr;
@@ -70,7 +71,8 @@ NativeMaterialization::Prepare(Heap& heap, NativeCheckpoint& checkpoint) noexcep
 }
 
 ExecutionStatus NativeMaterialization::PrepareStorage() noexcept {
-  const auto count = checkpoint_->virtual_graph->objects.values().size();
+  const auto& materialization = *checkpoint_->materialization;
+  const auto count = materialization.graph->objects.values().size();
   // 最后一个槽保活解释旧字段身份所需的程序状态及其代码批次。
   auto* values = static_cast<Value*>(heap_->AllocateNative((count + 1) * sizeof(Value)));
   if (values == nullptr) {
@@ -78,7 +80,7 @@ ExecutionStatus NativeMaterialization::PrepareStorage() noexcept {
   }
   objects_ = {values, count + 1};
   std::uninitialized_value_construct_n(values, count + 1);
-  objects_.back() = Value::Object(checkpoint_->program);
+  objects_.back() = Value::Object(materialization.program);
   roots_.Attach(*heap_, objects_.data(), objects_.size());
   auto* work = static_cast<Work*>(heap_->AllocateNative(count * sizeof(Work)));
   if (work == nullptr) {
@@ -98,8 +100,9 @@ void NativeMaterialization::Enqueue(std::uint32_t node) noexcept {
 }
 
 ExecutionStatus NativeMaterialization::AllocateGraph() noexcept {
-  const auto descriptions = checkpoint_->virtual_graph->objects.values();
-  const auto& layouts = Heap::NativeProgram(*checkpoint_->program).layouts;
+  const auto& materialization = *checkpoint_->materialization;
+  const auto descriptions = materialization.graph->objects.values();
+  const auto& layouts = Heap::NativeProgram(*materialization.program).layouts;
   for (std::size_t position = 0; position < queued_; ++position) {
     const auto node = work_.subspan(position).front().node;
     auto& value = objects_.subspan(node).front();
@@ -118,10 +121,13 @@ ExecutionStatus NativeMaterialization::AllocateGraph() noexcept {
 }
 
 ExecutionStatus NativeMaterialization::BuildGraph() noexcept {
-  const auto& graph = *checkpoint_->virtual_graph;
+  const auto& checkpoint = *checkpoint_;
+  const auto& checkpoint_layout = *checkpoint.layout;
+  const auto& materialization = *checkpoint.materialization;
+  const auto& graph = *materialization.graph;
   const auto descriptions = graph.objects.values();
-  const std::span references(checkpoint_->virtual_references, checkpoint_->reference_count);
-  const std::span values(checkpoint_->values, checkpoint_->value_count);
+  const std::span references(materialization.references, checkpoint_layout.reference_count);
+  const std::span values(checkpoint.values, checkpoint_layout.value_count);
   for (const auto& alias : graph.aliases.values()) {
     Enqueue(alias.object);
   }
@@ -166,11 +172,14 @@ ExecutionStatus NativeMaterialization::BuildGraph() noexcept {
 }
 
 void NativeMaterialization::Commit() noexcept {
-  const auto& graph = *checkpoint_->virtual_graph;
+  const auto& checkpoint = *checkpoint_;
+  const auto& layout = *checkpoint.layout;
+  const auto& materialization = *checkpoint.materialization;
+  const auto& graph = *materialization.graph;
   const auto descriptions = graph.objects.values();
-  const std::span references(checkpoint_->virtual_references, checkpoint_->reference_count);
-  const std::span values(checkpoint_->values, checkpoint_->value_count);
-  const std::span roots(checkpoint_->roots, checkpoint_->root_count);
+  const std::span references(materialization.references, layout.reference_count);
+  const std::span values(checkpoint.values, layout.value_count);
+  const std::span roots(checkpoint.roots, layout.root_count);
   for (std::size_t position = 0; position < queued_; ++position) {
     const auto node = work_.subspan(position).front().node;
     const auto& description = descriptions.subspan(node).front();

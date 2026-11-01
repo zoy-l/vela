@@ -19,6 +19,7 @@
 #include "base/declaration.h"
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
+#include "runtime/heap/field_storage.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/instance_storage.h"
 #include "runtime/heap/intrusive_link_internal.h"
@@ -75,6 +76,7 @@ NativeGlobalCache CacheGlobalSlot(GlobalSlot& slot,
       .observed = observed,
       .state = &slot.state,
       .value = Heap::ValueSlots(*slot.storage.AsObject()).data(),
+      .owner = slot.storage.AsObject(),
   };
 }
 
@@ -672,8 +674,10 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadGlobal(NativeExecution
   return value;
 }
 
-std::expected<void, ExecutionStatus> NativeDispatch::StoreGlobal(DeclarationId declaration,
-                                                                 Value value) noexcept {
+std::expected<void, ExecutionStatus> NativeDispatch::StoreGlobal(
+    DeclarationId declaration,
+    Value value,
+    NativeGlobalCache* cache) noexcept {
   if (closed_) {
     return std::unexpected(ExecutionStatus::ExecutionStopped);
   }
@@ -682,6 +686,9 @@ std::expected<void, ExecutionStatus> NativeDispatch::StoreGlobal(DeclarationId d
     return std::unexpected(found.error());
   }
   auto& slot = *(**found).slot;
+  if (cache != nullptr) {
+    *cache = CacheGlobalSlot(slot, &global_epoch_, global_epoch_);
+  }
   internal::StoreNativeGlobal(isolate_->heap(), *slot.storage.AsObject(), 0, slot.state, value);
   return {};
 }
@@ -700,11 +707,15 @@ extern "C" std::uint8_t vela_native_v10_load_global(NativeExecution* execution,
           *execution, program.image->global_declarations.values().subspan(index).front(), &cache));
 }
 
-extern "C" std::uint8_t vela_native_v3_store_global(NativeExecution* execution,
-                                                    std::uint64_t declaration,
-                                                    const NativeValue* value) noexcept {
-  auto& dispatch = *Heap::NativeProgram(*execution->instance().state().front().AsObject()).dispatch;
-  const auto stored = dispatch.StoreGlobal(DeclarationId{declaration}, DecodeNativeValue(*value));
+extern "C" std::uint8_t vela_native_v10_store_global(NativeExecution* execution,
+                                                     std::uint32_t index,
+                                                     const NativeValue* value) noexcept {
+  auto& program = Heap::NativeProgram(*execution->instance().state().front().AsObject());
+  auto& cache = std::span(program.global_caches, program.image->global_initializers.size)
+                    .subspan(index)
+                    .front();
+  const auto declaration = program.image->global_declarations.values().subspan(index).front();
+  const auto stored = program.dispatch->StoreGlobal(declaration, DecodeNativeValue(*value), &cache);
   return static_cast<std::uint8_t>(stored ? ExecutionStatus::Returned : stored.error());
 }
 
@@ -778,7 +789,7 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadFieldAt(NativeExecutio
   auto& storage = Heap::InstanceFields(object);
   auto& state = storage.states().subspan(slot).front();
   if (state == FieldState::Ready) {
-    return storage.values().subspan(slot).front();
+    return *Heap::GetField(object, slot);
   }
   if (state == FieldState::Initializing) {
     return std::unexpected(ExecutionStatus::CyclicInitialization);
@@ -856,6 +867,7 @@ std::optional<std::uint32_t> NativeFieldCache::Resolve(const ClassLayout& layout
   if (resolved) {
     layout_id = layout.id();
     slot = *resolved;
+    kind_offset = FieldStorage::KindOffset(layout.field_count(), slot);
   }
   return resolved;
 }

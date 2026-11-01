@@ -67,7 +67,7 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind("vela_native_v3_call_interface", &runtime::vela_native_v3_call_interface);
   bind("vela_native_v3_capture_receiver", &runtime::vela_native_v3_capture_receiver);
   bind("vela_native_v10_load_global", &runtime::vela_native_v10_load_global);
-  bind("vela_native_v3_store_global", &runtime::vela_native_v3_store_global);
+  bind("vela_native_v10_store_global", &runtime::vela_native_v10_store_global);
   bind("vela_native_v3_load_field", &runtime::vela_native_v3_load_field);
   bind("vela_native_v10_field_caches", &runtime::vela_native_v10_field_caches);
   bind("vela_native_v10_direct_field_layouts", &runtime::vela_native_v10_direct_field_layouts);

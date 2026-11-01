@@ -96,6 +96,7 @@ llvm::SwitchInst* FunctionEmitter::ResumeDispatch(llvm::Value* instruction) {
 }
 
 void FunctionEmitter::SetPosition() {
+  PrepareTraceFrame();
   const auto position = origins_.empty() ? 0 : origins_.subspan(instruction_index_).front();
   builder_.CreateStore(builder_.getInt32(static_cast<std::uint32_t>(position)), instruction_slot_);
 }
@@ -502,6 +503,10 @@ std::expected<void, std::string> FunctionEmitter::PrepareFrame() {
       if (!escape_.checkpoints.empty()) {
         virtual_references_ =
             allocation.CreateAlloca(fields.at(temporary_field_ + kVirtualReferenceFieldIndex));
+        auto* state =
+            allocation.CreateAlloca(fields.at(temporary_field_ + kVirtualStateFieldIndex));
+        state->setAlignment(llvm::Align(alignof(runtime::NativeVirtualState)));
+        virtual_state_ = state;
       }
     }
   }
@@ -572,6 +577,8 @@ void FunctionEmitter::BindFrameStorage() {
     if (!escape_.checkpoints.empty()) {
       virtual_references_ = builder_.CreateStructGEP(frame_type_, frame_storage_,
                                                      scratch + kVirtualReferenceFieldIndex);
+      virtual_state_ =
+          builder_.CreateStructGEP(frame_type_, frame_storage_, scratch + kVirtualStateFieldIndex);
     }
   }
 }
@@ -588,6 +595,7 @@ void FunctionEmitter::EmitHostBoundary(HostBorrow change) {
 }
 
 void FunctionEmitter::EmitImport() {
+  SetPosition();
   using AotCallKind = runtime::NativeFunction::AotCallKind;
   using runtime::NativeMemoryLayout;
   auto* context = body_->getArg(0);
@@ -766,13 +774,10 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   }
   auto* entry = llvm::BasicBlock::Create(context, "entry", body_);
   builder_.SetInsertPoint(entry);
+  if (kind_ == NativeEntryKind::Resume) {
+    EmitExecutionBoundary(builder_);
+  }
   if (program_.native_mode == NativeProgramMode::Reloadable) {
-    auto* valid = llvm::BasicBlock::Create(context, "image.execution", body_);
-    auto* invalid = llvm::BasicBlock::Create(context, "image.invalid", body_);
-    builder_.CreateCondBr(builder_.CreateIsNotNull(body_->getArg(0)), valid, invalid);
-    builder_.SetInsertPoint(invalid);
-    builder_.CreateRet(Status(builder_, ExecutionStatus::InvalidIsolate));
-    builder_.SetInsertPoint(valid);
     image_ =
         builder_.CreateLoad(builder_.getPtrTy(),
                             ByteAddress(ProgramData(), runtime::NativeMemoryLayout::kProgramImage));
@@ -786,7 +791,6 @@ std::expected<void, std::string> FunctionEmitter::Emit() {
   EmitFrameEntry();
   BindFrameStorage();
   InitializeCheckpoint();
-  InitializeDebugValues();
   CacheImports();
   CacheFields();
   BindArguments();

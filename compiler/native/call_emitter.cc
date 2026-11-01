@@ -15,7 +15,6 @@
 #include "compiler/ir/ir.h"
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/native_values.h"
-#include "runtime/native/native_memory_layout.h"
 namespace vela::compiler::native {
 std::optional<CallableTarget> FunctionEmitter::CallTarget(std::size_t index) const {
   const auto& instruction = source_.instructions.at(index);
@@ -81,6 +80,8 @@ std::vector<llvm::Value*> FunctionEmitter::CallArguments(const ir::Instruction& 
 }
 
 void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarget selected) {
+  // 即使被调用方使用延迟叶入口，调用者也必须占用深度预算并保留失败时的调用链。
+  PrepareTraceFrame();
   const auto& callee = program_.functions.at(selected.function);
   auto* intrinsic_done = EmitSquareRootCall(instruction, selected.function);
   const auto borrowed = escape_.borrowed_calls.empty()
@@ -110,12 +111,6 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     return;
   }
   auto arguments = CallArguments(instruction, selected, borrowed);
-  // Call 的效果要求调用者先登记逻辑帧；内联后仍保留该事实，避免为嵌套宿主调用
-  // 复制一条不可能发生的最外层入口清理路径。
-  auto* depth = builder_.CreateLoad(
-      builder_.getInt64Ty(),
-      ByteAddress(body_->getArg(0), runtime::NativeMemoryLayout::kExecutionDepth));
-  builder_.CreateAssumption(builder_.CreateICmpNE(depth, builder_.getInt64(0)));
   const auto& target = generated_.subspan(selected.function).front();
   llvm::Value* status = nullptr;
   if (target.leaf != nullptr) {

@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 #include "runtime/exceptions/exception.h"
+#include "runtime/heap/field_storage.h"
 #include "runtime/heap/instance_storage.h"
 #include "runtime/heap/intrusive_link_internal.h"
 #include "runtime/isolate/external_resources.h"
@@ -43,6 +44,15 @@ void RootRange::Attach(Heap& heap, const Value* values, std::size_t count) noexc
   data_ = values;
   count_ = count;
   kind_ = Kind::Values;
+  heap_->RegisterRoot(*this);
+}
+
+void RootRange::Attach(Heap& heap, const InstanceStorage& fields) noexcept {
+  Detach();
+  heap_ = &heap;
+  data_ = &fields;
+  count_ = fields.count;
+  kind_ = Kind::InstanceFields;
   heap_->RegisterRoot(*this);
 }
 
@@ -128,35 +138,43 @@ HeapObject* Heap::AllocateInstance(const ClassLayout& layout,
     auto* object = std::construct_at(static_cast<HeapObject*>(allocation.memory));
     object->layout = &layout;
     object->native_payload = storage;
-    std::ranges::copy(initial_fields, ObjectFields(object));
+    const auto fields = storage->fields();
+    for (std::uint32_t index = 0; index < initial_fields.size(); ++index) {
+      FieldStorage::Store(fields, storage->count, index, initial_fields.subspan(index).front());
+    }
     std::ranges::fill(storage->states().first(initial_fields.size()), FieldState::Ready);
     storage->unready -= static_cast<std::uint32_t>(initial_fields.size());
     RegisterInstance(*object, *storage);
     Publish(*object, allocation);
     return object;
   }
-  const std::size_t requested_size = sizeof(HeapObject) + (sizeof(Value) * layout.field_count());
+  const std::size_t requested_size = sizeof(HeapObject) + FieldStorage::Size(layout.field_count());
   if (requested_size > std::numeric_limits<std::uint32_t>::max()) {
     return nullptr;
   }
   return AllocateObject(ObjectKind::Instance, requested_size,
                         [&layout, initial_fields](HeapObject& object) {
                           object.layout = &layout;
-                          auto* fields = ObjectFields(&object);
-                          std::uninitialized_fill_n(fields, layout.field_count(), Value::Null());
-                          std::ranges::copy(initial_fields, fields);
+                          object.auxiliary_length = layout.field_count();
+                          const auto fields = ObjectFieldStorage(object);
+                          static_assert(static_cast<std::uint8_t>(ValueKind::Null) == 0);
+                          std::uninitialized_fill_n(fields.data(), fields.size(), std::byte{0});
+                          for (std::uint32_t index = 0; index < initial_fields.size(); ++index) {
+                            FieldStorage::Store(fields, layout.field_count(), index,
+                                                initial_fields.subspan(index).front());
+                          }
                         });
 }
 
 void Heap::Publish(HeapObject& object, const Allocation& allocation) noexcept {
-  object.mark_bit = current_mark_bit_;
+  object.mark_bit = barrier_state_.mark_bit;
   object.allocation_size = allocation.size;
   object.size_class = allocation.size_class;
   object.next = objects_;
-  if (phase_ == GcPhase::Mark && !IsLeafObject(object.kind)) {
+  if (phase() == GcPhase::Mark && !IsLeafObject(object.kind)) {
     object.gray_next = gray_;
     gray_ = &object;
-  } else if (phase_ == GcPhase::Sweep) {
+  } else if (phase() == GcPhase::Sweep) {
     ProcessGrayObject(object);
     DrainGray();
   }
@@ -165,14 +183,14 @@ void Heap::Publish(HeapObject& object, const Allocation& allocation) noexcept {
 }
 
 void Heap::StartCollection() noexcept {
-  if (phase_ != GcPhase::Idle) {
+  if (IsCollecting()) {
     return;
   }
 
-  current_mark_bit_ ^= 1;
+  barrier_state_.mark_bit ^= 1;
   gray_ = nullptr;
   sweep_link_ = nullptr;
-  phase_ = GcPhase::Mark;
+  barrier_state_.phase = GcPhase::Mark;
   MarkRoots();
 }
 
@@ -181,8 +199,8 @@ void Heap::Step(std::size_t work_budget) noexcept {
     return;
   }
 
-  while (work_budget != 0 && phase_ != GcPhase::Idle) {
-    if (phase_ == GcPhase::Mark) {
+  while (work_budget != 0 && IsCollecting()) {
+    if (phase() == GcPhase::Mark) {
       if (gray_ != nullptr) {
         HeapObject* object = gray_;
         gray_ = object->gray_next;
@@ -196,7 +214,7 @@ void Heap::Step(std::size_t work_budget) noexcept {
       if (gray_ != nullptr) {
         continue;
       }
-      phase_ = GcPhase::Sweep;
+      barrier_state_.phase = GcPhase::Sweep;
       sweep_link_ = &objects_;
       continue;
     }
@@ -207,7 +225,7 @@ void Heap::Step(std::size_t work_budget) noexcept {
       continue;
     }
 
-    if (object->mark_bit != current_mark_bit_) {
+    if (object->mark_bit != barrier_state_.mark_bit) {
       *sweep_link_ = object->next;
       ReleaseRaw(*object);
       --object_count_;
@@ -219,16 +237,16 @@ void Heap::Step(std::size_t work_budget) noexcept {
 }
 
 void Heap::FinishCollection() noexcept {
-  if (phase_ == GcPhase::Idle) {
+  if (!IsCollecting()) {
     return;
   }
-  while (phase_ != GcPhase::Idle) {
+  while (IsCollecting()) {
     Step(std::numeric_limits<std::size_t>::max());
   }
 }
 
 void Heap::Collect() noexcept {
-  if (phase_ == GcPhase::Idle) {
+  if (!IsCollecting()) {
     StartCollection();
   }
   FinishCollection();
@@ -239,9 +257,9 @@ void Heap::RegisterRoot(RootRange& root) noexcept {
     root.identity_ = next_root_identity_++;
   }
   internal::PrependIntrusive(root, roots_, &RootRange::next_, &RootRange::previous_link_);
-  if (phase_ != GcPhase::Idle) {
+  if (IsCollecting()) {
     MarkRoot(root);
-    if (phase_ == GcPhase::Sweep) {
+    if (phase() == GcPhase::Sweep) {
       DrainGray();
     }
   }
@@ -291,9 +309,15 @@ void Heap::MarkRoot(const RootRange& root) noexcept {
     for (const Value value : std::span(static_cast<const Value*>(root.data_), root.count_)) {
       MarkValue(value);
     }
-  } else {
+  } else if (root.kind_ == RootRange::Kind::Strings) {
     for (auto* string : std::span(static_cast<StringObject* const*>(root.data_), root.count_)) {
       MarkReference(string);
+    }
+  } else {
+    const auto& storage = *static_cast<const InstanceStorage*>(root.data_);
+    const auto fields = storage.fields();
+    for (std::uint32_t index = 0; index < storage.count; ++index) {
+      MarkValue(FieldStorage::Load(fields, storage.count, index));
     }
   }
 }
@@ -319,10 +343,10 @@ void Heap::MarkValue(Value value) noexcept {
 }
 
 void Heap::MarkObject(HeapObject& object) noexcept {
-  if (object.mark_bit == current_mark_bit_) {
+  if (object.mark_bit == barrier_state_.mark_bit) {
     return;
   }
-  object.mark_bit = current_mark_bit_;
+  object.mark_bit = barrier_state_.mark_bit;
   if (IsLeafObject(object.kind)) {
     return;
   }
@@ -376,9 +400,10 @@ void Heap::ProcessGrayObject(HeapObject& object) noexcept {
   if (auto* environment = NativeEnvironment(object)) {
     MarkObject(*environment);
   }
-  const Value* fields = ObjectFields(&object);
+  const auto fields = ObjectFieldStorage(object);
+  const auto count = object.layout->field_count();
   for (std::uint32_t index : object.layout->reference_fields()) {
-    MarkValue(std::span(fields, object.layout->field_count()).subspan(index).front());
+    MarkValue(FieldStorage::Load(fields, count, index));
   }
 }
 
@@ -392,9 +417,9 @@ void Heap::DrainGray() noexcept {
 }
 
 void Heap::WriteBarrier(HeapObject& source, Value value) noexcept {
-  if (phase_ != GcPhase::Idle && source.mark_bit == current_mark_bit_) {
+  if (IsCollecting() && source.mark_bit == barrier_state_.mark_bit) {
     MarkValue(value);
-    if (phase_ == GcPhase::Sweep) {
+    if (phase() == GcPhase::Sweep) {
       DrainGray();
     }
   }
@@ -499,10 +524,10 @@ bool Heap::CanAllocate(std::size_t bytes) const noexcept {
 }
 
 void Heap::MaybeCollect(std::size_t next_size) noexcept {
-  if (phase_ == GcPhase::Idle && ShouldCollect(next_size)) {
+  if (!IsCollecting() && ShouldCollect(next_size)) {
     StartCollection();
   }
-  if (phase_ != GcPhase::Idle) {
+  if (IsCollecting()) {
     Step(kAutomaticWork);
   }
 }
@@ -512,7 +537,7 @@ void Heap::FinishSweep() noexcept {
   if (isolate_ != nullptr) {
     isolate_->CollectNativeMetadata();
   }
-  phase_ = GcPhase::Idle;
+  barrier_state_.phase = GcPhase::Idle;
   sweep_link_ = nullptr;
   const std::size_t doubled_live_size =
       allocated_bytes_ > std::numeric_limits<std::size_t>::max() / 2

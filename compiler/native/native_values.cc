@@ -15,6 +15,8 @@
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/MDBuilder.h>
+#include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
 
@@ -245,6 +247,41 @@ llvm::Value* Convert(Builder& builder,
   return builder.CreateInsertValue(result, payload, 1);
 }
 
+void EmitExecutionBoundary(Builder& builder) {
+  using runtime::NativeMemoryLayout;
+  auto& context = builder.getContext();
+  auto* function = builder.GetInsertBlock()->getParent();
+  auto* execution = function->getArg(0);
+  auto* valid = llvm::BasicBlock::Create(context, "execution.valid", function);
+  auto* invalid = llvm::BasicBlock::Create(context, "execution.invalid", function);
+  builder.CreateCondBr(builder.CreateIsNotNull(execution), valid, invalid,
+                       llvm::MDBuilder(context).createLikelyBranchWeights());
+  builder.SetInsertPoint(invalid);
+  builder.CreateRet(Status(builder, ExecutionStatus::InvalidIsolate));
+  builder.SetInsertPoint(valid);
+  auto address = [&](std::size_t offset) {
+    return builder.CreateConstGEP1_64(builder.getInt8Ty(), execution, offset);
+  };
+  // 构造时确定的线程栈状态只在真实入口验证，内部 typed 调用复用此契约。
+  auto* stack_status =
+      builder.CreateLoad(builder.getInt8Ty(), address(NativeMemoryLayout::kExecutionStackStatus));
+  stack_status->setMetadata(llvm::LLVMContext::MD_invariant_load, llvm::MDNode::get(context, {}));
+  ReturnOnFailure(builder, *function, stack_status);
+  auto* first = llvm::BasicBlock::Create(context, "execution.first", function);
+  auto* ready = llvm::BasicBlock::Create(context, "execution.ready", function);
+  auto* depth =
+      builder.CreateLoad(builder.getInt64Ty(), address(NativeMemoryLayout::kExecutionDepth));
+  builder.CreateCondBr(builder.CreateICmpEQ(depth, builder.getInt64(0)), first, ready);
+  builder.SetInsertPoint(first);
+  // 宿主重入借用当前执行时必须保留外层 catch 的异常状态。
+  builder.CreateStore(llvm::Constant::getNullValue(NativeRecordType(context)),
+                      address(NativeMemoryLayout::kExecutionException));
+  builder.CreateStore(builder.getInt8(0),
+                      address(NativeMemoryLayout::kExecutionExceptionAllocationFailed));
+  builder.CreateBr(ready);
+  builder.SetInsertPoint(ready);
+}
+
 void EmitWrapper(llvm::Module& module,
                  const ir::Function& source,
                  std::uint32_t function_index,
@@ -266,16 +303,11 @@ void EmitWrapper(llvm::Module& module,
   Builder invalid_builder(invalid);
   invalid_builder.CreateRet(Status(invalid_builder, ExecutionStatus::InvalidEntry));
   builder.SetInsertPoint(unpack);
+  EmitExecutionBoundary(builder);
   llvm::Value* current_image = image;
   if (function.baseline_body != nullptr) {
     using runtime::NativeMemoryLayout;
     auto* execution = entry->getArg(0);
-    auto* valid_execution = llvm::BasicBlock::Create(context, "image.execution", entry);
-    auto* invalid_execution = llvm::BasicBlock::Create(context, "image.invalid", entry);
-    builder.CreateCondBr(builder.CreateIsNotNull(execution), valid_execution, invalid_execution);
-    builder.SetInsertPoint(invalid_execution);
-    builder.CreateRet(Status(builder, ExecutionStatus::InvalidIsolate));
-    builder.SetInsertPoint(valid_execution);
     auto* instance_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), execution,
                                                         NativeMemoryLayout::kExecutionInstance);
     auto* instance = builder.CreateLoad(builder.getPtrTy(), instance_address);
@@ -326,12 +358,6 @@ void EmitWrapper(llvm::Module& module,
   auto* result_type = ValueType(context, source.return_type);
   auto* result = builder.CreateAlloca(result_type);
   if (!source.native_symbol.empty()) {
-    auto* bound = llvm::BasicBlock::Create(context, "import.bound", entry);
-    auto* no_execution = llvm::BasicBlock::Create(context, "invalid.isolate", entry);
-    builder.CreateCondBr(builder.CreateIsNotNull(entry->getArg(0)), bound, no_execution);
-    Builder missing(no_execution);
-    missing.CreateRet(Status(missing, ExecutionStatus::InvalidIsolate));
-    builder.SetInsertPoint(bound);
     arguments.push_back(LoadImport(builder, module, entry->getArg(0), function_index));
   }
   arguments.push_back(result);

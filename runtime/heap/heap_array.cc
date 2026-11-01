@@ -365,11 +365,11 @@ void Heap::MarkElements(const ArrayLayout& layout, std::span<const std::byte> st
 void Heap::WriteBarrier(HeapObject& source,
                         const ArrayLayout& layout,
                         std::span<const std::byte> storage) noexcept {
-  if (phase_ == GcPhase::Idle || source.mark_bit != current_mark_bit_) {
+  if (!IsCollecting() || source.mark_bit != barrier_state_.mark_bit) {
     return;
   }
   MarkElements(layout, storage);
-  if (phase_ == GcPhase::Sweep) {
+  if (phase() == GcPhase::Sweep) {
     DrainGray();
   }
 }

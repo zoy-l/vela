@@ -85,7 +85,7 @@ class FunctionEmitter final {
   [[nodiscard]] std::uint64_t frame_bytes() const noexcept { return frame_bytes_; }
 
  private:
-  // 这些存储区由不同运行时所有者分配，不能互相覆盖；托管 Value 保持同一别名域。
+  // 这些存储区域互不覆盖；装箱 Value 共用别名域，拆分字段的载荷与标签各自独立。
   enum class MemoryRegion : std::uint8_t {
     HeapHeader,
     ClassLayout,
@@ -96,6 +96,9 @@ class FunctionEmitter final {
     Elements,
     GlobalCache,
     Roots,
+    GcState,
+    FieldPayloads,
+    FieldKinds,
   };
   llvm::MDNode* MemoryTag(MemoryRegion region);
   llvm::LoadInst* LoadMemory(llvm::Type* type, llvm::Value* address, MemoryRegion region);
@@ -107,6 +110,7 @@ class FunctionEmitter final {
   void Check(llvm::Value* condition, ExecutionStatus failure);
   void CheckStatus(llvm::Value* status);
   void Fail(llvm::Value* status);
+  void PrepareTraceFrame();
   void SetPosition();
   void PrepareRuntimeCall();
   void PrepareObservableCall();
@@ -150,6 +154,18 @@ class FunctionEmitter final {
   void EmitValueEquality(const ir::Instruction& instruction);
   llvm::Value* ByteAddress(llvm::Value* object, std::uint64_t offset);
   llvm::Value* ProgramData();
+  struct StoredValueAddress final {
+    llvm::Value* payload;
+    llvm::Value* kind;
+    MemoryRegion payload_region;
+    MemoryRegion kind_region;
+  };
+  StoredValueAddress RecordAddress(llvm::Value* address, MemoryRegion region);
+  StoredValueAddress FieldAddress(llvm::Value* storage,
+                                  llvm::Value* index,
+                                  llvm::Value* kind_offset);
+  llvm::Value* ReadStoredValue(StoredValueAddress address, const SourceType& type);
+  void WriteStoredValue(StoredValueAddress address, ir::RegisterId reg);
   llvm::Value* ReadHeapValue(llvm::Value* address, const SourceType& type);
   void WriteHeapValue(llvm::Value* address,
                       ir::RegisterId reg,
@@ -160,7 +176,7 @@ class FunctionEmitter final {
   void EmitOptimizedField(const ir::Instruction& instruction, llvm::Value* object);
   void EmitGlobal(const ir::Instruction& instruction);
   void EmitGlobalLoad(const ir::Instruction& instruction);
-  void EmitReloadableGlobalLoad(const ir::Instruction& instruction);
+  void EmitReloadableGlobal(const ir::Instruction& instruction);
   void EmitGlobalStore(const ir::Instruction& instruction);
   const layout::Type& ArrayElement(const ir::Instruction& instruction) const;
   llvm::Type* ElementStorage(const layout::Type& element);
@@ -234,11 +250,14 @@ class FunctionEmitter final {
   llvm::Value* frame_storage_ = nullptr;
   llvm::Value* construction_depth_ = nullptr;
   llvm::Value* checkpoint_ = nullptr;
+  llvm::Constant* checkpoint_layout_ = nullptr;
   llvm::Value* checkpoint_initialized_ = nullptr;
   llvm::Value* checkpoint_values_ = nullptr;
   llvm::Value* recovery_storage_ = nullptr;
   llvm::Value* virtual_references_ = nullptr;
+  llvm::Value* virtual_state_ = nullptr;
   llvm::Value* trace_frame_ = nullptr;
+  llvm::Value* trace_initialized_ = nullptr;
   llvm::Value* debug_values_ = nullptr;
   llvm::Value* field_caches_ = nullptr;
   struct DirectField final {

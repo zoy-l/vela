@@ -167,8 +167,8 @@ class NativeDispatch final {
       NativeExecution& execution,
       DeclarationId declaration,
       NativeGlobalCache* cache = nullptr);
-  [[nodiscard]] std::expected<void, ExecutionStatus> StoreGlobal(DeclarationId declaration,
-                                                                 Value value) noexcept;
+  [[nodiscard]] std::expected<void, ExecutionStatus>
+  StoreGlobal(DeclarationId declaration, Value value, NativeGlobalCache* cache = nullptr) noexcept;
   [[nodiscard]] const ClassLayout& CurrentLayout(const NominalType& type) const noexcept;
   // 只在拥有精确根的 Isolate 线程边界调用。返回稳定身份供隔离的前端编译使用。
   [[nodiscard]] std::vector<DeclarationId> RetainedDeclarations();
@@ -225,9 +225,9 @@ extern "C" NativeFieldCache* vela_native_v10_field_caches(NativeExecution* execu
                                                           std::uint32_t function) noexcept;
 extern "C" const ClassLayout* const* vela_native_v10_direct_field_layouts(
     NativeExecution* execution) noexcept;
-extern "C" std::uint8_t vela_native_v3_store_global(NativeExecution* execution,
-                                                    std::uint64_t declaration,
-                                                    const NativeValue* value) noexcept;
+extern "C" std::uint8_t vela_native_v10_store_global(NativeExecution* execution,
+                                                     std::uint32_t index,
+                                                     const NativeValue* value) noexcept;
 extern "C" std::uint8_t vela_native_v3_load_field(NativeExecution* execution,
                                                   HeapObject* object,
                                                   std::uint64_t field,

@@ -56,12 +56,14 @@ class RootRange final {
   RootRange& operator=(RootRange&&) = delete;
 
   void Attach(Heap& heap, const Value* values, std::size_t count) noexcept;
+  // 借用准备中的字段块；必须先 Detach 再释放或替换该块。
+  void Attach(Heap& heap, const InstanceStorage& fields) noexcept;
   void Detach() noexcept;
 
  private:
   friend class Heap;
 
-  enum class Kind : std::uint8_t { Values, Strings };
+  enum class Kind : std::uint8_t { Values, Strings, InstanceFields };
 
   Heap* heap_ = nullptr;
   const void* data_ = nullptr;
@@ -77,6 +79,12 @@ enum class GcPhase : std::uint8_t {
   Idle,
   Mark,
   Sweep,
+};
+
+// Heap 独占更新；原生写屏障借用同一状态，不维护单独的 GC 阶段镜像。
+struct GcBarrierState final {
+  GcPhase phase = GcPhase::Idle;
+  std::uint8_t mark_bit = 1;
 };
 
 inline constexpr std::size_t kDefaultGcThreshold = 65536;
@@ -171,6 +179,7 @@ class Heap final {
                                                                       std::size_t count) noexcept;
   [[nodiscard]] static std::span<Value> ValueSlots(HeapObject& object) noexcept;
   void SetValueSlot(HeapObject& object, std::size_t index, Value value) noexcept;
+  // 非空引用数组的初始空槽只供构建使用；交给脚本或宿主前必须完成所有元素初始化。
   [[nodiscard]] HeapObject* AllocateArray(const ArrayLayout& layout, std::size_t length) noexcept;
   [[nodiscard]] HeapObject* AllocateByteArray(std::size_t length) noexcept;
   // 原生块参与堆压力核算；调用者负责配对释放，分配期间须保根所有借用对象。
@@ -288,17 +297,8 @@ class Heap final {
   [[nodiscard]] StringObject* BuildString(const HeapObject& builder) noexcept;
   [[nodiscard]] static bool IsMutableString(const HeapObject& object) noexcept;
 
-  template <class Object>
-    requires std::is_same_v<std::remove_const_t<Object>, HeapObject>
-  [[nodiscard]] static std::conditional_t<std::is_const_v<Object>, const Value*, Value*> GetField(
-      Object& object,
-      std::uint32_t index) noexcept {
-    const auto* layout = object.layout;
-    if (layout == nullptr || index >= layout->field_count()) {
-      return nullptr;
-    }
-    return std::span(ObjectFields(&object), layout->field_count()).subspan(index).data();
-  }
+  [[nodiscard]] static std::optional<Value> GetField(const HeapObject& object,
+                                                     std::uint32_t index) noexcept;
   [[nodiscard]] static const ClassLayout* ClassOf(const HeapObject& object) noexcept;
   [[nodiscard]] static ObjectKind KindOf(const HeapObject& object) noexcept { return object.kind; }
   [[nodiscard]] static TypeConstraint TypeOf(Value value) noexcept;
@@ -329,8 +329,9 @@ class Heap final {
   void FinishCollection() noexcept;
   void Collect() noexcept;
 
-  [[nodiscard]] GcPhase phase() const noexcept { return phase_; }
-  [[nodiscard]] bool IsCollecting() const noexcept { return phase_ != GcPhase::Idle; }
+  [[nodiscard]] GcPhase phase() const noexcept { return barrier_state_.phase; }
+  [[nodiscard]] bool IsCollecting() const noexcept { return phase() != GcPhase::Idle; }
+  [[nodiscard]] const GcBarrierState& barrier_state() const noexcept { return barrier_state_; }
   [[nodiscard]] std::size_t object_count() const noexcept { return object_count_; }
   [[nodiscard]] std::size_t allocated_bytes() const noexcept { return allocated_bytes_; }
   [[nodiscard]] std::size_t committed_bytes() const noexcept { return committed_bytes_; }
@@ -461,8 +462,7 @@ class Heap final {
   std::size_t allocation_limit_ = std::numeric_limits<std::size_t>::max();
   std::size_t gc_threshold_ = 0;
   std::size_t minimum_gc_threshold_ = 0;
-  std::uint8_t current_mark_bit_ = 1;
-  GcPhase phase_ = GcPhase::Idle;
+  GcBarrierState barrier_state_;
 };
 
 // 准备中的块和被迁移对象分别保根；销毁候选只释放新块，Commit 不分配也不执行用户代码。

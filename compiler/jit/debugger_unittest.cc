@@ -185,6 +185,36 @@ TEST_P(JitDebuggerTest, PublishingWhilePausedPreservesOldFrameSourcesAndCallsThe
   EXPECT_EQ(session_->code_resources().images, 1U);
 }
 
+TEST_P(JitDebuggerTest, RecursiveFramesRecoverWithoutReplayingCompletedCalls) {
+  Load(
+      "func descend(depth: int): int { "
+      "if (depth == 0) { return 1; } return descend(depth - 1) + 1; } "
+      "export func run(): int { return descend(3); }");
+  auto candidate = Prepare(
+      "func descend(depth: int): int { return 100; } "
+      "export func run(): int { return descend(3); }");
+  ASSERT_TRUE(candidate);
+  compiler::test::CheckpointPublication publication(*session_);
+  publication.Stage(std::move(*candidate));
+  paused_ = [&](const runtime::NativeDebugContext& context) {
+    if (context.frames().size() == 3 && context.top_frame().name() == "descend") {
+      publication.PublishPending();
+    }
+  };
+  const auto result = session_->Invoke("main.vela", "run");
+  ASSERT_TRUE(result) << ExecutionStatusName(result.error());
+  EXPECT_EQ(result->AsInteger(), 102);
+  EXPECT_FALSE(publication.HasPending());
+  EXPECT_EQ(publication.result().status, DevelopmentStatus::Accepted);
+  const auto* updated = Find("descend", 2);
+  ASSERT_NE(updated, nullptr);
+  ASSERT_EQ(updated->frames.size(), 4U);
+  EXPECT_EQ(updated->frames.at(1).identity.revision, 1U);
+  EXPECT_EQ(updated->frames.at(2).identity.revision, 1U);
+  session_->isolate().heap().Collect();
+  EXPECT_EQ(session_->code_resources().images, 1U);
+}
+
 TEST_P(JitDebuggerTest, InitializationCanPauseButPublicationWaitsUntilItsStateIsComplete) {
   Load(
       "let value = initial(); func initial(): int { return 42; } "

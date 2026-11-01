@@ -25,7 +25,7 @@ class StringObject final {
   [[nodiscard]] std::string_view value() const noexcept {
     return {StorageAfter<char>(*this), header_.length};
   }
-  [[nodiscard]] std::uint32_t length() const noexcept { return header_.string_length; }
+  [[nodiscard]] std::uint32_t length() const noexcept { return header_.auxiliary_length; }
   // 调用方已验证 index <= length()；允许末尾边界，用于切片。
   [[nodiscard]] std::size_t ByteOffset(std::uint32_t index) const noexcept;
 

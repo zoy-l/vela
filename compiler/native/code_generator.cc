@@ -38,6 +38,7 @@
 #include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/Scalar/LoopPassManager.h>
 #include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
+#include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/PromoteMemToReg.h>
 
 #include "base/builtin.h"
@@ -60,9 +61,10 @@
 namespace vela::compiler::native {
 namespace {
 
+constexpr std::size_t kMaximumInlineInstructions = 64;
+
 bool CanInlineSmallFunction(const ir::Function& function) {
   // 以源操作限制展开规模；安全点、溢出失败和恢复分支不应让几个标量操作失去内联。
-  constexpr std::size_t kMaximumInlineInstructions = 64;
   if (function.is_async || !function.handlers.empty() ||
       function.parameter_count > kMaximumInlineInstructions ||
       function.instructions.size() > kMaximumInlineInstructions) {
@@ -72,6 +74,61 @@ bool CanInlineSmallFunction(const ir::Function& function) {
     return instruction.opcode == Opcode::Return ||
            !ir::AnalyzeEffects(instruction).MayCollectOnSuccess();
   });
+}
+
+bool CanUnrollRecursion(const ir::Function& function, std::size_t function_index) {
+  constexpr std::size_t kMaximumRecursiveCalls = 2;
+  if (function.is_async || !function.handlers.empty() ||
+      function.parameter_count > kMaximumInlineInstructions ||
+      function.instructions.size() > kMaximumInlineInstructions ||
+      !IsScalar(function.return_type) || !std::ranges::all_of(function.value_types, IsScalar)) {
+    return false;
+  }
+  std::size_t calls = 0;
+  for (const auto& instruction : function.instructions) {
+    if (instruction.opcode == Opcode::Call && instruction.index == function_index) {
+      ++calls;
+    } else if (instruction.opcode != Opcode::Return &&
+               ir::AnalyzeEffects(instruction).MayCollectOnSuccess()) {
+      return false;
+    }
+  }
+  return calls != 0 && calls <= kMaximumRecursiveCalls;
+}
+
+void UnrollRecursion(llvm::Function& function) {
+  constexpr std::size_t kMaximumRecursiveInlineDepth = 2;
+  // 每层都使用原始快照，二叉递归最多复制六份小函数体；逻辑帧、受查算术和
+  // 恢复点一并内联。不能复制已展开的正式函数，否则单层内就会指数膨胀。
+  llvm::ValueToValueMapTy values;
+  auto* snapshot = llvm::CloneFunction(&function, values);
+  for (auto& block : *snapshot) {
+    for (auto& instruction : block) {
+      auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+      if (call != nullptr && call->getCalledFunction() == snapshot) {
+        call->setCalledFunction(&function);
+      }
+    }
+  }
+  for (std::size_t depth = 0; depth < kMaximumRecursiveInlineDepth; ++depth) {
+    llvm::SmallVector<llvm::CallBase*, 4> calls;
+    for (auto& block : function) {
+      for (auto& instruction : block) {
+        auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+        if (call != nullptr && call->getCalledFunction() == &function) {
+          calls.push_back(call);
+        }
+      }
+    }
+    for (auto* call : calls) {
+      call->setCalledFunction(snapshot);
+      llvm::InlineFunctionInfo information;
+      if (!llvm::InlineFunction(*call, information).isSuccess()) {
+        call->setCalledFunction(&function);
+      }
+    }
+  }
+  snapshot->eraseFromParent();
 }
 
 bool CanUseBoundedLeaf(const ir::Function& function) {
@@ -609,6 +666,12 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
       return diagnostic(emitted.error(), &function);
     }
     metrics.push_back(*emitted);
+    // 恢复布局由只读描述共享；优化 JIT 与封闭代码采用相同的有界展开预算，
+    // 各逻辑帧仍保留独立的恢复位置和活跃值，不展开基线动态分派。
+    if ((program.native_mode == NativeProgramMode::Closed || tier == NativeCodeTier::Optimized) &&
+        CanUnrollRecursion(function, index)) {
+      output.recursive_functions.push_back(optimized.at(index).body);
+    }
   }
   output.function_metrics = std::move(metrics);
   for (auto& function : module) {
@@ -630,6 +693,10 @@ std::expected<void, std::string> Finalize(NativeModule& generated,
     return std::unexpected(verification);
   }
   if (optimization == NativeOptimization::Release) {
+    for (auto* function : generated.recursive_functions) {
+      UnrollRecursion(*function);
+    }
+    generated.recursive_functions.clear();
     Optimize(module, *generated.machine);
   } else {
     // 局部 SSA 是帧存储契约的一部分。即使关闭优化，也不能把大量从不借用地址的

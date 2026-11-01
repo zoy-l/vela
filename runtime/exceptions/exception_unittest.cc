@@ -33,8 +33,8 @@ TEST(ExceptionHeapTest, RootsPayloadAndOwnsMessageInOneAllocation) {
     EXPECT_EQ(heap.object_count(), 3U);
     const auto& data = ExceptionData::From(*exception);
     EXPECT_EQ(data.message(), "original message");
-    const auto* field = Heap::GetField(*data.payload, 0);
-    ASSERT_NE(field, nullptr);
+    const auto field = Heap::GetField(*data.payload, 0);
+    ASSERT_TRUE(field);
     EXPECT_EQ(field->AsString()->value(), "payload");
   }
   heap.Collect();

@@ -15,8 +15,8 @@ std::string_view ErrorMessage(Value value, const ClassLayout& layout) noexcept {
   if (!Heap::IsValueOfType(value, {.kind = ValueKind::Object, .nominal = &layout.nominal_type()})) {
     return {};
   }
-  const auto* field = Heap::GetField(*value.AsObject(), kErrorMessageField);
-  return field != nullptr && field->IsString() ? field->AsString()->value() : std::string_view();
+  const auto field = Heap::GetField(*value.AsObject(), kErrorMessageField);
+  return field && field->IsString() ? field->AsString()->value() : std::string_view();
 }
 
 std::expected<Value, ExecutionStatus> CreateError(Heap& heap,

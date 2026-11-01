@@ -433,6 +433,7 @@ void DevelopmentSession::Publish() {
   [[maybe_unused]] const auto committed = sources_->Commit(pending_->candidate.source_);
   // 源码提交只由本会话执行；发布临界区没有用户回调，不可能改变其基线。
   assert(committed.has_value());
+  entry_lookup_.reset();
   result_.revision = snapshot()->revision;
   result_.status = DevelopmentStatus::Accepted;
   if (result_.operation == DevelopmentOperation::HotReload) {
@@ -502,6 +503,7 @@ void DevelopmentSession::FinishReload() {
     sources_ = std::move(candidate.replacement_);
     result_.generation = ++generation_;
   }
+  entry_lookup_.reset();
   result_.revision = snapshot()->revision;
   result_.blockers.clear();
   result_.message.clear();
@@ -576,7 +578,8 @@ std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::InvokeTarget(
     std::span<const runtime::Value> arguments,
     Invocation invocation) {
   std::expected<runtime::Value, ExecutionStatus> result;
-  const auto entered_generation = generation();
+  // Invoke 与代际切换都由所属线程执行；后台编译只读取代际，不需要为本线程读值加锁。
+  const auto entered_generation = generation_;
   const auto function_index = target.function;
   const auto is_entry = invocation == Invocation::Entry;
   {
@@ -599,7 +602,7 @@ std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::InvokeTarget(
   if (result_.status == DevelopmentStatus::Stopping) {
     FinishReload();
   }
-  if (entered_generation != generation()) {
+  if (entered_generation != generation_) {
     return std::unexpected(ExecutionStatus::ExecutionStopped);
   }
   return result;
@@ -634,8 +637,14 @@ std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::RunEntry() {
   return value;
 }
 
-std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::InvokeEntry(
+std::expected<DeclarationId, ExecutionStatus> DevelopmentSession::ResolveEntry(
     DevelopmentEntry requested) {
+  // 仅缓存一个成功的名称解析，避免重复路径规范化与源码锁；不保留快照、代码或外部根。
+  // 发布及完整 Reload 在通知宿主前清除此项，运行时目标仍在每次进入时重新解析。
+  if (entry_lookup_ && entry_lookup_->module == requested.module &&
+      entry_lookup_->name == requested.name) {
+    return entry_lookup_->declaration;
+  }
   const auto source = snapshot();
   const auto& identities = source->identities;
   const auto module = identities.Find({
@@ -655,6 +664,18 @@ std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::InvokeEntry(
   });
   if (!declaration) {
     return std::unexpected(ExecutionStatus::InvalidEntry);
+  }
+  entry_lookup_ = EntryLookup{.module = std::string(requested.module),
+                              .name = std::string(requested.name),
+                              .declaration = *declaration};
+  return *declaration;
+}
+
+std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::InvokeEntry(
+    DevelopmentEntry requested) {
+  const auto declaration = ResolveEntry(requested);
+  if (!declaration) {
+    return std::unexpected(declaration.error());
   }
   const auto target = isolate_->native_dispatch().Resolve(*declaration);
   if (!target) {

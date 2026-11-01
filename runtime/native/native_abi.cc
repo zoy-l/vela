@@ -42,6 +42,7 @@ NativeExecution::NativeExecution(NativeInstance& instance) noexcept
     : instance_(&instance),
       context_(instance.isolate()),
       control_state_(&isolate().native_control().state()),
+      barrier_state_(&isolate().heap().barrier_state()),
       exception_root_(isolate().heap(), &pending_exception_, 1, RootOwner::Runtime),
       execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {
   const auto bounds = CurrentNativeStackBounds();
@@ -127,11 +128,12 @@ std::uint8_t NativeExecution::Recover(NativeCheckpoint& checkpoint, void* result
   }
   // 从此只运行基线恢复；进入其第一个安全点前不会分配，那里将登记规范活跃值。
   // 清除优化专用的字段根，避免旧物理帧在恢复执行期间额外保活死亡子图。
-  std::ranges::fill(std::span(checkpoint.roots, static_cast<std::size_t>(checkpoint.root_count)),
+  const auto& layout = *checkpoint.layout;
+  std::ranges::fill(std::span(checkpoint.roots, static_cast<std::size_t>(layout.root_count)),
                     Value::Null());
   auto* physical = current_frame_;
   Exit();
-  const auto status = checkpoint.recovery(this, &checkpoint, result);
+  const auto status = layout.recovery(this, &checkpoint, result);
   current_frame_ = physical;
   ++frame_count_;
   return status;

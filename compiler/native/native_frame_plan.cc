@@ -111,7 +111,7 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
     return std::unexpected(scratch_count.error());
   }
   std::vector<llvm::Type*> fields;
-  constexpr std::size_t kAuxiliaryFields = 6;
+  constexpr std::size_t kAuxiliaryFields = 7;
   fields.reserve(escape.function.register_count + kAuxiliaryFields);
   std::vector<std::uint8_t> addressed(escape.function.register_count);
   for (const auto& allocation : escape.allocations) {
@@ -156,6 +156,9 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
     fields.push_back(recovery_storage);
     fields.push_back(llvm::ArrayType::get(llvm::PointerType::getUnqual(context),
                                           escape.checkpoints.empty() ? 0 : escape.reference_count));
+    fields.push_back(
+        llvm::ArrayType::get(llvm::Type::getInt8Ty(context),
+                             escape.checkpoints.empty() ? 0 : sizeof(runtime::NativeVirtualState)));
   }
   if (kind == NativeEntryKind::RecoverInitial || kind == NativeEntryKind::RecoverResume) {
     auto* type = llvm::StructType::get(context, recovery_fields);

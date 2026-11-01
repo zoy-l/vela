@@ -1388,6 +1388,83 @@ export func prefix(initial: int, bound: int): int {
   }
 }
 
+TEST(JitCompilerTest, IntegerReductionsCheckExtremaBeforeOppositeSignsCancel) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler);
+    const auto compiled = CompileText(**compiler, R"(
+export func ascending(start: int, bound: int, initial: int): int {
+  let result = initial;
+  for (let index = start; index < bound; index++) { result += index; }
+  return result;
+}
+export func descending(start: int, bound: int, initial: int): int {
+  let result = initial;
+  for (let index = start; index > bound; index--) { result += index; }
+  return result;
+}
+export func subtractAscending(start: int, bound: int, initial: int): int {
+  let result = initial;
+  for (let index = start; index < bound; index++) { result -= index; }
+  return result;
+}
+export func subtractDescending(start: int, bound: int, initial: int): int {
+  let result = initial;
+  for (let index = start; index > bound; index--) { result -= index; }
+  return result;
+}
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate;
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    constexpr auto kMinimum = std::numeric_limits<std::int64_t>::min();
+    constexpr auto kMaximum = std::numeric_limits<std::int64_t>::max();
+    for (const auto& [name, start, bound, initial] : {
+             std::tuple{"ascending", -3, 4, kMinimum + 2},
+             std::tuple{"descending", 3, -4, kMaximum - 2},
+             std::tuple{"subtractAscending", -3, 4, kMaximum - 2},
+             std::tuple{"subtractDescending", 3, -4, kMinimum + 2},
+         }) {
+      SCOPED_TRACE(name);
+      const auto entry = isolate.native_dispatch().FindEntry("main.vela", name);
+      ASSERT_TRUE(entry);
+      const std::array safe{runtime::Value::Integer(start), runtime::Value::Integer(bound),
+                            runtime::Value::Integer(42)};
+      ASSERT_TRUE(test::ReturnsInteger(*entry, 42, safe));
+      const std::array arguments{runtime::Value::Integer(start), runtime::Value::Integer(bound),
+                                 runtime::Value::Integer(initial)};
+      const auto failed = entry->Invoke(arguments);
+      ASSERT_FALSE(failed);
+      EXPECT_EQ(failed.error(), ExecutionStatus::IntegerOverflow);
+      const std::array empty{runtime::Value::Integer(bound), runtime::Value::Integer(start),
+                             runtime::Value::Integer(initial)};
+      ASSERT_TRUE(test::ReturnsInteger(*entry, initial, empty));
+    }
+    const auto ascending = isolate.native_dispatch().FindEntry("main.vela", "ascending");
+    const auto descending = isolate.native_dispatch().FindEntry("main.vela", "descending");
+    ASSERT_TRUE(ascending);
+    ASSERT_TRUE(descending);
+    const std::array upper{runtime::Value::Integer(kMaximum - 1), runtime::Value::Integer(kMaximum),
+                           runtime::Value::Integer(-(kMaximum - 1))};
+    ASSERT_TRUE(test::ReturnsInteger(*ascending, 0, upper));
+    const std::array lower{runtime::Value::Integer(kMinimum + 1), runtime::Value::Integer(kMinimum),
+                           runtime::Value::Integer(kMaximum)};
+    ASSERT_TRUE(test::ReturnsInteger(*descending, 0, lower));
+    const std::array wide_ascending{runtime::Value::Integer(-kMaximum),
+                                    runtime::Value::Integer(kMaximum), runtime::Value::Integer(0)};
+    const auto ascending_overflow = ascending->Invoke(wide_ascending);
+    ASSERT_FALSE(ascending_overflow);
+    EXPECT_EQ(ascending_overflow.error(), ExecutionStatus::IntegerOverflow);
+    const std::array wide_descending{runtime::Value::Integer(kMaximum),
+                                     runtime::Value::Integer(-kMaximum),
+                                     runtime::Value::Integer(0)};
+    const auto descending_overflow = descending->Invoke(wide_descending);
+    ASSERT_FALSE(descending_overflow);
+    EXPECT_EQ(descending_overflow.error(), ExecutionStatus::IntegerOverflow);
+  }
+}
+
 TEST(JitCompilerTest, BoundedLoopsThroughInlinedCallsPreserveResultsAndOverflowPrefixes) {
   auto compiler = Compiler::Create();
   ASSERT_TRUE(compiler);

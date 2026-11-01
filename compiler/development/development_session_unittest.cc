@@ -143,6 +143,37 @@ TEST(DevelopmentSessionTest, EntryLookupPreservesModuleScopeArityAndCurrentRevis
   ExpectInteger(session.InvokeEntry({.module = "other.vela", .name = "main"}), kAnswer);
 }
 
+TEST(DevelopmentSessionTest, RepeatedEntryLookupFollowsDeletionReintroductionAndReload) {
+  auto created = DevelopmentSession::Create("main.vela");
+  ASSERT_TRUE(created);
+  auto& session = **created;
+  const DevelopmentEntry entry{.module = "./main.vela", .name = "value"};
+  ASSERT_EQ(Apply(session, "func main(): void {} func value(): int { return 40; }",
+                  DevelopmentOperation::Load)
+                .status,
+            DevelopmentStatus::Accepted);
+  ExpectInteger(session.InvokeEntry(entry), kOldAnswer);
+  ExpectInteger(session.InvokeEntry(entry), kOldAnswer);
+  const auto rejected =
+      session.Prepare(Edit(session, "func value(:"), DevelopmentOperation::HotReload);
+  ASSERT_FALSE(rejected);
+  ExpectInteger(session.InvokeEntry(entry), kOldAnswer);
+  ASSERT_EQ(Apply(session, "func main(): void {}").status, DevelopmentStatus::Accepted);
+  EXPECT_EQ(session.InvokeEntry(entry).error(), ExecutionStatus::InvalidEntry);
+  ASSERT_EQ(Apply(session, "func main(): void {} func value(): int { return 42; }").status,
+            DevelopmentStatus::Accepted);
+  ExpectInteger(session.InvokeEntry(entry), kAnswer);
+  ExpectInteger(session.InvokeEntry(entry), kAnswer);
+  ASSERT_EQ(Apply(session,
+                  "func different(): int { return 99; } func main(): void {} "
+                  "func value(): int { return 40; }",
+                  DevelopmentOperation::Reload)
+                .status,
+            DevelopmentStatus::Accepted);
+  ExpectInteger(session.InvokeEntry(entry), kOldAnswer);
+  ExpectInteger(session.InvokeEntry(entry), kOldAnswer);
+}
+
 TEST(DevelopmentSessionTest, GenericParameterChangesRequireReloadWithoutDamagingTheOldRun) {
   auto created = DevelopmentSession::Create("main.vela");
   ASSERT_TRUE(created);

@@ -89,15 +89,16 @@ TEST(NativeMaterializationTest, EveryAllocationFailureLeavesAliasesUntouchedAndR
       NativeVirtualAlias{.reg = 5, .object = 1},
   };
   const NativeVirtualGraph graph{.objects = Table(objects), .aliases = Table(aliases)};
+  const NativeCheckpointLayout checkpoint_layout{.root_count = shadow.size(),
+                                                 .value_count = values.size(),
+                                                 .reference_count = addresses.size()};
+  NativeVirtualState materialization{
+      .graph = &graph, .references = addresses.data(), .program = program.AsObject()};
   NativeCheckpoint checkpoint;
+  checkpoint.layout = &checkpoint_layout;
   checkpoint.values = values.data();
-  checkpoint.value_count = values.size();
   checkpoint.roots = shadow.data();
-  checkpoint.root_count = shadow.size();
-  checkpoint.virtual_graph = &graph;
-  checkpoint.virtual_references = addresses.data();
-  checkpoint.reference_count = addresses.size();
-  checkpoint.program = program.AsObject();
+  checkpoint.materialization = &materialization;
   heap.Collect();
   const auto baseline_bytes = heap.allocated_bytes();
   const auto baseline_objects = heap.object_count();

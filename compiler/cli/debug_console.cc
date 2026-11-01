@@ -147,8 +147,7 @@ Point CurrentPoint(const runtime::NativeDebugFrame& frame, std::size_t depth) {
 void WriteFrame(std::ostream& output, const runtime::NativeDebugFrame& frame) {
   output << frame.name() << " pc=" << frame.instruction();
   if (const auto source = frame.location()) {
-    output << " at " << frame.source_path() << ':' << source->line << ':'
-           << source->column;
+    output << " at " << frame.source_path() << ':' << source->line << ':' << source->column;
   }
   output << '\n';
 }
@@ -229,7 +228,9 @@ class ConsoleDebugger final : public runtime::NativeDebugger {
                    const runtime::NativeDebugContext& context,
                    runtime::NativeDebugFrame& selected) const;
   void Registers(const runtime::NativeDebugFrame& frame) const;
-  void Inspect(Command command, std::string_view text, const runtime::NativeDebugFrame& frame) const;
+  void Inspect(Command command,
+               std::string_view text,
+               const runtime::NativeDebugFrame& frame) const;
   void Help() const;
 
   std::istream* input_;
@@ -587,8 +588,8 @@ void ConsoleDebugger::Inspect(Command command,
   }
   const auto& object = *value->AsObject();
   if (command == Command::Field) {
-    const auto* field = runtime::Heap::GetField(object, *element);
-    if (field == nullptr) {
+    const auto field = runtime::Heap::GetField(object, *element);
+    if (!field) {
       *output_ << "object field is out of range or unavailable\n";
       return;
     }
@@ -607,9 +608,9 @@ void ConsoleDebugger::Inspect(Command command,
 }  // namespace
 
 int RunDebugConsole(runtime::NativeInstance& instance,
-                                          std::uint32_t function,
-                                          std::istream& input,
-                                          std::ostream& output) {
+                    std::uint32_t function,
+                    std::istream& input,
+                    std::ostream& output) {
   ConsoleDebugger debugger(instance.image(), input, output);
   auto& control = instance.isolate().native_control();
   control.SetDebugger(&debugger);

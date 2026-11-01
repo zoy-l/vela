@@ -267,8 +267,8 @@ struct HeapObject final {
   friend class StringObject;
   friend struct NativeMemoryLayout;
   friend class InstanceMigration;
-  friend Value* ObjectFields(HeapObject* object) noexcept;
-  friend const Value* ObjectFields(const HeapObject* object) noexcept;
+  friend std::span<std::byte> ObjectFieldStorage(HeapObject& object) noexcept;
+  friend std::span<const std::byte> ObjectFieldStorage(const HeapObject& object) noexcept;
 
   ObjectKind kind = ObjectKind::Instance;
   std::uint8_t mark_bit = 0;
@@ -297,8 +297,8 @@ struct HeapObject final {
     return static_cast<const TypeSignature*>(std::bit_cast<const void*>(type_metadata));
   }
   std::uint32_t length = 0;
-  // 复用 length 后的对齐空间，不增加对象头大小。
-  std::uint32_t string_length = 0;
+  // 字符串逻辑长度或内联实例的物理字段数；两种对象不共享此槽的含义。
+  std::uint32_t auxiliary_length = 0;
   // kind 与实例的 storage/callable 契约确定载荷类型；可重载用户实例持有字段块，
   // 固定 callable 持有版本环境，两者不会同时占用此槽。Heap 负责底层存储的销毁。
   void* native_payload = nullptr;
@@ -308,7 +308,7 @@ static_assert(alignof(HeapObject) >= alignof(Value));
 
 // 固定布局字段紧接对象头；可重载实例借用独立字段块，地址不得跨安全点保存。
 static_assert(sizeof(HeapObject) % alignof(Value) == 0);
-[[nodiscard]] Value* ObjectFields(HeapObject* object) noexcept;
-[[nodiscard]] const Value* ObjectFields(const HeapObject* object) noexcept;
+[[nodiscard]] std::span<std::byte> ObjectFieldStorage(HeapObject& object) noexcept;
+[[nodiscard]] std::span<const std::byte> ObjectFieldStorage(const HeapObject& object) noexcept;
 
 }  // namespace vela::runtime

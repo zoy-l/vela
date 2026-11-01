@@ -139,7 +139,9 @@ async func main(): Future<int> {
   ASSERT_TRUE(entry) << entry.error();
   const auto main = (*entry)->FindFunction("main");
   ASSERT_TRUE(main);
-  EXPECT_NE((*entry)->image().functions.values().subspan(*main).front().flags & runtime::kNativeAsyncFunction, 0U);
+  EXPECT_NE((*entry)->image().functions.values().subspan(*main).front().flags &
+                runtime::kNativeAsyncFunction,
+            0U);
   auto root = test::StartFuture(**entry);
   EXPECT_EQ(root.state(), runtime::FutureState::Succeeded);
   EXPECT_FALSE(isolate.scheduler().PumpOne());
@@ -302,12 +304,12 @@ func main(): App {
 
   Value result_root = result.value;
   RootRange root(isolate.heap(), &result_root, 1);
-  const Value* theme = vela::runtime::Heap::GetField(*result_root.AsObject(), 0);
-  ASSERT_NE(theme, nullptr);
+  const auto theme = vela::runtime::Heap::GetField(*result_root.AsObject(), 0);
+  ASSERT_TRUE(theme);
   ASSERT_TRUE(theme->IsObject());
   ASSERT_NE(theme->AsObject(), nullptr);
-  const Value* brightness = vela::runtime::Heap::GetField(*theme->AsObject(), 0);
-  ASSERT_NE(brightness, nullptr);
+  const auto brightness = vela::runtime::Heap::GetField(*theme->AsObject(), 0);
+  ASSERT_TRUE(brightness);
   ASSERT_TRUE(brightness->IsInteger());
   EXPECT_EQ(brightness->AsInteger(), 1);
 
@@ -514,8 +516,8 @@ func main(): Store {
   heap.Collect();
   // Store、Item、两层 items 数组、flags 和 labels 共六个返回对象。
   EXPECT_EQ(heap.object_count(), baseline + 6U);
-  const auto* items = runtime::Heap::GetField(*root.AsObject(), 0);
-  ASSERT_NE(items, nullptr);
+  const auto items = runtime::Heap::GetField(*root.AsObject(), 0);
+  ASSERT_TRUE(items);
   const auto row = runtime::Heap::GetElement(*items->AsObject(), 0);
   ASSERT_TRUE(row.has_value());
   const auto item = runtime::Heap::GetElement(*row->AsObject(), 0);

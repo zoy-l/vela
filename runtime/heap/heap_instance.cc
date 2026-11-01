@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/declaration.h"
+#include "runtime/heap/field_storage.h"
 #include "runtime/heap/instance_storage.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -17,7 +18,7 @@ namespace vela::runtime {
 namespace {
 
 std::size_t InstanceFieldBytes(std::uint32_t count) noexcept {
-  return sizeof(InstanceStorage) + (count * (sizeof(Value) + sizeof(FieldState)));
+  return sizeof(InstanceStorage) + FieldStorage::Size(count) + (count * sizeof(FieldState));
 }
 
 }  // namespace
@@ -27,18 +28,18 @@ std::optional<std::uint32_t> ClassLayout::FieldIndex(DeclarationId field) const 
   return found == field_indices_.end() ? std::nullopt : std::optional(found->second);
 }
 
-Value* ObjectFields(HeapObject* object) noexcept {
-  if (object->layout->storage() == ClassStorage::Reloadable) {
-    return static_cast<InstanceStorage*>(object->native_payload)->values().data();
+std::span<std::byte> ObjectFieldStorage(HeapObject& object) noexcept {
+  if (object.layout->storage() == ClassStorage::Reloadable) {
+    return static_cast<InstanceStorage*>(object.native_payload)->fields();
   }
-  return StorageAfter<Value>(*object);
+  return {StorageAfter<std::byte>(object), FieldStorage::Size(object.auxiliary_length)};
 }
 
-const Value* ObjectFields(const HeapObject* object) noexcept {
-  if (object->layout->storage() == ClassStorage::Reloadable) {
-    return static_cast<const InstanceStorage*>(object->native_payload)->values().data();
+std::span<const std::byte> ObjectFieldStorage(const HeapObject& object) noexcept {
+  if (object.layout->storage() == ClassStorage::Reloadable) {
+    return static_cast<const InstanceStorage*>(object.native_payload)->fields();
   }
-  return StorageAfter<Value>(*object);
+  return {StorageAfter<std::byte>(object), FieldStorage::Size(object.auxiliary_length)};
 }
 
 InstanceStorage* Heap::AllocateInstanceStorage(std::uint32_t count) noexcept {
@@ -52,7 +53,9 @@ InstanceStorage* Heap::AllocateInstanceStorage(std::uint32_t count) noexcept {
   auto* storage = std::construct_at(static_cast<InstanceStorage*>(memory));
   storage->count = count;
   storage->unready = count;
-  std::uninitialized_value_construct_n(storage->values().data(), count);
+  const auto fields = storage->fields();
+  static_assert(static_cast<std::uint8_t>(ValueKind::Null) == 0);
+  std::uninitialized_fill_n(fields.data(), fields.size(), std::byte{0});
   std::uninitialized_fill_n(storage->states().data(), count, FieldState::Uninitialized);
   return storage;
 }
@@ -60,7 +63,6 @@ InstanceStorage* Heap::AllocateInstanceStorage(std::uint32_t count) noexcept {
 void Heap::ReleaseInstanceStorage(InstanceStorage& storage) noexcept {
   const auto count = storage.count;
   instance_field_bytes_ -= InstanceFieldBytes(count);
-  std::destroy_n(storage.values().data(), count);
   std::destroy_n(storage.states().data(), count);
   std::destroy_at(&storage);
   FreeNative(&storage);
@@ -78,7 +80,6 @@ void Heap::RegisterInstance(HeapObject& object, InstanceStorage& storage) {
 
 void Heap::ReleaseInstance(HeapObject& object) noexcept {
   if (object.layout->storage() == ClassStorage::Inline) {
-    std::destroy_n(ObjectFields(&object), object.layout->field_count());
     return;
   }
   auto& storage = *static_cast<InstanceStorage*>(object.native_payload);
@@ -112,13 +113,21 @@ InstanceStorage& Heap::InstanceFields(HeapObject& object) noexcept {
   return *static_cast<InstanceStorage*>(object.native_payload);
 }
 
+std::optional<Value> Heap::GetField(const HeapObject& object, std::uint32_t index) noexcept {
+  const auto* layout = object.layout;
+  if (layout == nullptr || index >= layout->field_count()) {
+    return std::nullopt;
+  }
+  return FieldStorage::Load(ObjectFieldStorage(object), layout->field_count(), index);
+}
+
 bool Heap::SetField(HeapObject& object, std::uint32_t index, Value value) noexcept {
-  auto* field = GetField(object, index);
-  if (field == nullptr) {
+  const auto* layout = object.layout;
+  if (layout == nullptr || index >= layout->field_count()) {
     return false;
   }
-  *field = value;
-  if (object.layout->storage() == ClassStorage::Reloadable) {
+  FieldStorage::Store(ObjectFieldStorage(object), layout->field_count(), index, value);
+  if (layout->storage() == ClassStorage::Reloadable) {
     InstanceFields(object).SetFieldState(index, FieldState::Ready);
   }
   if (value.IsReference()) {
@@ -157,19 +166,20 @@ std::unique_ptr<InstanceMigration> Heap::PrepareInstanceMigration(
   }
   migration->storage_ = storage;
   auto& previous = InstanceFields(object);
-  const auto old_fields = previous.values();
+  const auto old_fields = previous.fields();
   const auto old_states = previous.states();
-  const auto fields = storage->values();
+  const auto fields = storage->fields();
   const auto declarations = layout.field_declarations();
   const auto old_declarations = object.layout->field_declarations();
-  for (std::size_t index = 0; index < old_fields.size(); ++index) {
+  for (std::uint32_t index = 0; index < previous.count; ++index) {
     const auto field = declarations.subspan(index).front();
     if (field != DeclarationId{} && field == old_declarations.subspan(index).front()) {
-      fields.subspan(index).front() = old_fields.subspan(index).front();
-      storage->SetFieldState(static_cast<std::uint32_t>(index), old_states.subspan(index).front());
+      FieldStorage::Store(fields, storage->count, index,
+                          FieldStorage::Load(old_fields, previous.count, index));
+      storage->SetFieldState(index, old_states.subspan(index).front());
     }
   }
-  migration->field_roots_.Attach(*this, fields.data(), fields.size());
+  migration->field_roots_.Attach(*this, *storage);
   return migration;
 }
 
@@ -190,8 +200,9 @@ void InstanceMigration::Commit() noexcept {
   }
   object.native_payload = &storage;
   object.layout = layout_;
-  for (const auto value : storage.values()) {
-    heap_->WriteBarrier(object, value);
+  const auto fields = storage.fields();
+  for (std::uint32_t index = 0; index < storage.count; ++index) {
+    heap_->WriteBarrier(object, FieldStorage::Load(fields, storage.count, index));
   }
   heap_->ReleaseInstanceStorage(previous);
   field_roots_.Detach();

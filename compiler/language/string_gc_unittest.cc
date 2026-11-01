@@ -9,12 +9,12 @@
 
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
+#include "runtime/heap/rooted_value.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/native/native_execution.h"
+#include "runtime/native/native_instance.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
-#include "runtime/heap/rooted_value.h"
-#include "runtime/native/native_instance.h"
-#include "runtime/native/native_execution.h"
 
 namespace vela::compiler {
 namespace {
@@ -44,7 +44,8 @@ TEST(CompilerStringGcTest, RootsConstantsDuringCompilationAndBetweenExecutions) 
     const auto constants = compiled.instance->image().strings.values();
     ASSERT_EQ(constants.size(), kConstants);
     for (std::size_t index = 0; index < constants.size(); ++index) {
-      EXPECT_EQ(compiled.instance->constant(index).AsString()->value(), constants.subspan(index).front().text());
+      EXPECT_EQ(compiled.instance->constant(index).AsString()->value(),
+                constants.subspan(index).front().text());
     }
     const auto result = test::Execute(*compiled.instance);
     ExpectStringResult(result, "literal0literal39");
@@ -65,7 +66,8 @@ func identity(value: string): string { return value; }
 func main(): string { return identity("vela"); }
 func single(): string { return "single"; }
 func capture(): () => string { return single; }
-)", isolate);
+)",
+                                        isolate);
     ASSERT_TRUE(compiled.Succeeded());
     const auto captured = test::Execute(*compiled.instance, "capture");
     ASSERT_TRUE(captured.Succeeded());
@@ -81,7 +83,8 @@ func capture(): () => string { return single; }
   isolate.heap().Collect();
   {
     const auto callable = standalone->value();
-    auto origin = runtime::NativeInstance::Borrow(*runtime::Heap::NativeEnvironment(*callable.AsObject()));
+    auto origin =
+        runtime::NativeInstance::Borrow(*runtime::Heap::NativeEnvironment(*callable.AsObject()));
     ExpectStringResult(runtime::ExecuteNativeCallable(origin, callable), "single");
   }
   standalone.reset();
@@ -110,11 +113,11 @@ func main(): Store {
   }
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 5U);
-  const auto* label = runtime::Heap::GetField(*value.AsObject(), 0);
-  ASSERT_NE(label, nullptr);
+  const auto label = runtime::Heap::GetField(*value.AsObject(), 0);
+  ASSERT_TRUE(label);
   EXPECT_EQ(label->AsString()->value(), "ab");
-  const auto* rows = runtime::Heap::GetField(*value.AsObject(), 1);
-  ASSERT_NE(rows, nullptr);
+  const auto rows = runtime::Heap::GetField(*value.AsObject(), 1);
+  ASSERT_TRUE(rows);
   const auto row = runtime::Heap::GetElement(*rows->AsObject(), 0);
   ASSERT_TRUE(row.has_value());
   const auto element = runtime::Heap::GetElement(*row->AsObject(), 0);
@@ -136,7 +139,7 @@ func main(): string {
   return text;
 }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   heap.Collect();
   const auto constant_bytes = heap.allocated_bytes();

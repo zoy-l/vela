@@ -11,8 +11,10 @@
 
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AssumptionCache.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/Analysis.h>
@@ -45,7 +47,6 @@
 #include <llvm/Transforms/Utils/ValueMapper.h>
 
 #include "compiler/native/function_emitter.h"
-#include "runtime/native/native_memory_layout.h"
 #include "runtime/value/value.h"
 
 namespace vela::compiler::native {
@@ -127,7 +128,8 @@ struct CountedLoop {
   llvm::ICmpInst* comparison;
   llvm::BranchInst* condition;
   unsigned exit_edge;
-  CheckedUpdate step;
+  llvm::Instruction* increment;
+  std::optional<CheckedUpdate> step;
   int direction;
 };
 
@@ -162,21 +164,32 @@ std::optional<CountedLoop> MatchLoopExit(llvm::Loop& loop,
       !index->getType()->isIntegerTy(kIntegerBits) || !loop.isLoopInvariant(bound)) {
     return std::nullopt;
   }
-  const auto step = MatchUpdate(index->getIncomingValueForBlock(loop.getLoopLatch()), loop);
-  if (!step || !dominators.dominates(block, step->call->getParent())) {
+  auto* incoming = index->getIncomingValueForBlock(loop.getLoopLatch());
+  const auto step = MatchUpdate(incoming, loop);
+  auto* plain = llvm::dyn_cast<llvm::BinaryOperator>(incoming);
+  // 前一轮范围分析或 LLVM 已将受查步进化简为 NSW。保留这一证明，使内联后
+  // 才出现的归约和有界安全点仍可被后续 pass 识别；普通回绕加减不能作此推导。
+  if (!step && (plain == nullptr || !plain->hasNoSignedWrap() ||
+                (plain->getOpcode() != llvm::Instruction::Add &&
+                 plain->getOpcode() != llvm::Instruction::Sub))) {
     return std::nullopt;
   }
-  auto* left = step->call->getArgOperand(0);
-  auto* right = step->call->getArgOperand(1);
-  const auto intrinsic = step->call->getIntrinsicID();
-  if (right == index && intrinsic == llvm::Intrinsic::sadd_with_overflow) {
+  llvm::Instruction* increment = step ? step->call : static_cast<llvm::Instruction*>(plain);
+  if (!loop.contains(increment) || !dominators.dominates(block, increment->getParent())) {
+    return std::nullopt;
+  }
+  auto* left = increment->getOperand(0);
+  auto* right = increment->getOperand(1);
+  const bool adding = step ? step->call->getIntrinsicID() == llvm::Intrinsic::sadd_with_overflow
+                           : plain->getOpcode() == llvm::Instruction::Add;
+  if (right == index && adding) {
     std::swap(left, right);
   }
   auto* constant = llvm::dyn_cast<llvm::ConstantInt>(right);
-  if (left != index || constant == nullptr || !constant->isOne()) {
+  if (left != index || constant == nullptr || (!constant->isOne() && !constant->isMinusOne())) {
     return std::nullopt;
   }
-  const int direction = intrinsic == llvm::Intrinsic::sadd_with_overflow ? 1 : -1;
+  const int direction = (adding ? 1 : -1) * (constant->isOne() ? 1 : -1);
   if ((direction == 1 && predicate == llvm::CmpInst::ICMP_SLT) ||
       (direction == -1 && predicate == llvm::CmpInst::ICMP_SGT)) {
     return CountedLoop{
@@ -186,7 +199,8 @@ std::optional<CountedLoop> MatchLoopExit(llvm::Loop& loop,
         .comparison = comparison,
         .condition = branch,
         .exit_edge = exit_edge,
-        .step = *step,
+        .increment = increment,
+        .step = step,
         .direction = direction,
     };
   }
@@ -504,6 +518,7 @@ struct Reduction {
   llvm::PHINode* accumulator;
   llvm::Value* term;
   CheckedUpdate update;
+  bool check_prefix;
 };
 
 void AddUpdateInstructions(llvm::SmallPtrSetImpl<llvm::Value*>& allowed,
@@ -512,6 +527,14 @@ void AddUpdateInstructions(llvm::SmallPtrSetImpl<llvm::Value*>& allowed,
   allowed.insert(update.value);
   allowed.insert(update.overflow);
   allowed.insert(update.branch->getCondition());
+}
+
+void AddStepInstructions(AllowedInstructions& allowed, const CountedLoop& counted) {
+  if (counted.step) {
+    AddUpdateInstructions(allowed, *counted.step);
+  } else {
+    allowed.insert(counted.increment);
+  }
 }
 
 llvm::PHINode* FindAccumulator(const CountedLoop& counted) {
@@ -552,8 +575,8 @@ bool IsReductionInstruction(const llvm::Instruction& instruction,
                             const Reduction& reduction,
                             const AllowedInstructions& allowed) {
   if (const auto* branch = llvm::dyn_cast<llvm::BranchInst>(&instruction)) {
-    if (branch->isConditional() && branch != counted.condition && branch != counted.step.branch &&
-        branch != reduction.update.branch) {
+    if (branch->isConditional() && branch != counted.condition &&
+        (!counted.step || branch != counted.step->branch) && branch != reduction.update.branch) {
       return false;
     }
   } else if (!allowed.contains(&instruction)) {
@@ -580,7 +603,7 @@ bool IsReductionBody(const CountedLoop& counted, const Reduction& reduction) {
   allowed.insert(accumulator);
   allowed.insert(counted.comparison);
   allowed.insert(counted.condition->getCondition());
-  AddUpdateInstructions(allowed, counted.step);
+  AddStepInstructions(allowed, counted);
   AddUpdateInstructions(allowed, update);
   for (auto* block : loop.blocks()) {
     for (auto& instruction : *block) {
@@ -607,8 +630,12 @@ std::optional<Reduction> MatchReduction(const CountedLoop& counted,
     return std::nullopt;
   }
   const auto update = MatchUpdate(accumulator->getIncomingValueForBlock(loop.getLoopLatch()), loop);
-  if (!update || !dominators.dominates(counted.condition->getParent(), update->call->getParent()) ||
-      !update->failed->phis().empty()) {
+  if (!update || !dominators.dominates(counted.condition->getParent(), update->call->getParent())) {
+    return std::nullopt;
+  }
+  if (std::ranges::any_of(update->failed->phis(), [&](const auto& phi) {
+        return !loop.isLoopInvariant(phi.getIncomingValueForBlock(update->branch->getParent()));
+      })) {
     return std::nullopt;
   }
   auto* left = update->call->getArgOperand(0);
@@ -617,10 +644,13 @@ std::optional<Reduction> MatchReduction(const CountedLoop& counted,
       update->call->getIntrinsicID() == llvm::Intrinsic::sadd_with_overflow) {
     std::swap(left, term);
   }
-  if (left != accumulator || !IsMonotoneTerm(counted, term, evolution)) {
+  if (left != accumulator || (term != counted.index && !loop.isLoopInvariant(term))) {
     return std::nullopt;
   }
-  const Reduction reduction{.accumulator = accumulator, .term = term, .update = *update};
+  const Reduction reduction{.accumulator = accumulator,
+                            .term = term,
+                            .update = *update,
+                            .check_prefix = !IsMonotoneTerm(counted, term, evolution)};
   return IsReductionBody(counted, reduction) ? std::optional(reduction) : std::nullopt;
 }
 
@@ -632,6 +662,33 @@ void ReplaceUpdate(const CheckedUpdate& update, llvm::Value* result) {
   update.call->eraseFromParent();
 }
 
+llvm::Value* ReductionPrefixFits(llvm::IRBuilder<>& builder,
+                                 const CountedLoop& counted,
+                                 llvm::Value* initial,
+                                 llvm::Intrinsic::ID operation) {
+  auto* wide = builder.getInt128Ty();
+  auto* zero = llvm::ConstantInt::get(wide, 0);
+  auto* start = builder.CreateSExt(
+      counted.index->getIncomingValueForBlock(counted.loop->getLoopPreheader()), wide);
+  auto* bound = builder.CreateSExt(counted.bound, wide);
+  // 等差项跨零时，最小/最大前缀位于符号切换处。只查最终和会漏掉先溢出、
+  // 后抵消的情况。将这个极值与最终和一起检查，不依赖分块索引的 SCEV 符号推断。
+  auto* end = builder.CreateBinaryIntrinsic(
+      counted.direction == 1 ? llvm::Intrinsic::smin : llvm::Intrinsic::smax, bound, zero);
+  auto* distance =
+      counted.direction == 1 ? builder.CreateNSWSub(end, start) : builder.CreateNSWSub(start, end);
+  auto* count = builder.CreateBinaryIntrinsic(llvm::Intrinsic::smax, distance, zero);
+  auto* last = counted.direction == 1 ? builder.CreateNSWSub(end, llvm::ConstantInt::get(wide, 1))
+                                      : builder.CreateNSWAdd(end, llvm::ConstantInt::get(wide, 1));
+  auto* paired = builder.CreateNSWAdd(start, last);
+  auto* sum = builder.CreateAShr(builder.CreateNSWMul(count, paired), 1);
+  auto* extreme = operation == llvm::Intrinsic::sadd_with_overflow
+                      ? builder.CreateNSWAdd(initial, sum)
+                      : builder.CreateNSWSub(initial, sum);
+  auto* narrowed = builder.CreateTrunc(extreme, builder.getInt64Ty());
+  return builder.CreateICmpEQ(extreme, builder.CreateSExt(narrowed, wide));
+}
+
 void WidenReduction(const CountedLoop& counted, const Reduction& reduction) {
   auto& loop = *counted.loop;
   auto* accumulator = reduction.accumulator;
@@ -640,13 +697,17 @@ void WidenReduction(const CountedLoop& counted, const Reduction& reduction) {
   llvm::IRBuilder<> entry(preheader->getTerminator());
   auto* wide_type = entry.getInt128Ty();
   auto* initial = entry.CreateSExt(accumulator->getIncomingValueForBlock(preheader), wide_type);
+  const auto operation = reduction.update.call->getIntrinsicID();
+  auto* prefix_fits = reduction.check_prefix
+                          ? ReductionPrefixFits(entry, counted, initial, operation)
+                          : entry.getTrue();
   auto* wide = llvm::PHINode::Create(wide_type, 2, "sum.wide", accumulator->getIterator());
   wide->addIncoming(initial, preheader);
   llvm::IRBuilder<> body(reduction.update.call);
   auto* term = body.CreateSExt(reduction.term, wide_type);
-  // 严格比较、单位步长最多执行 2^64-1 次。任意 int64 初值和同号 int64
+  // 严格比较、单位步长最多执行 2^64-1 次。任意 int64 初值和 int64
   // 加/减项的所有前缀都能以有符号 i128 精确表示，NSW 不依赖最终 i64 检查。
-  auto* next = reduction.update.call->getIntrinsicID() == llvm::Intrinsic::sadd_with_overflow
+  auto* next = operation == llvm::Intrinsic::sadd_with_overflow
                    ? body.CreateNSWAdd(wide, term, "sum.next")
                    : body.CreateNSWSub(wide, term, "sum.next");
   wide->addIncoming(next, loop.getLoopLatch());
@@ -663,7 +724,13 @@ void WidenReduction(const CountedLoop& counted, const Reduction& reduction) {
   condition->setSuccessor(counted.exit_edge, check);
   normal_exit->replacePhiUsesWith(condition->getParent(), check);
   llvm::IRBuilder<> exit(check);
-  auto* fits = exit.CreateICmpEQ(wide, exit.CreateSExt(narrow, wide_type));
+  auto* fits =
+      exit.CreateAnd(prefix_fits, exit.CreateICmpEQ(wide, exit.CreateSExt(narrow, wide_type)));
+  // LCSSA 可能为外层逻辑帧标志等不变量保留出口 PHI。新增范围失败边使用相同输入；
+  // 依赖当前迭代值的失败输入已在 MatchReduction 排除，不能延后其可观察前缀。
+  for (auto& phi : reduction.update.failed->phis()) {
+    phi.addIncoming(phi.getIncomingValueForBlock(reduction.update.branch->getParent()), check);
+  }
   // 重用原失败块，保留错误类型、源位置、保根与 catch/finally 路径。
   // MatchReduction 已排除所有能在失败路径观察中间迭代状态的 SSA uses。
   exit.CreateCondBr(fits, normal_exit, reduction.update.failed);
@@ -738,8 +805,9 @@ bool IsFieldInstruction(const llvm::Instruction& instruction,
     return true;
   }
   if (const auto* branch = llvm::dyn_cast<llvm::BranchInst>(&instruction)) {
-    if (!branch->isConditional() || branch == counted.condition || branch == counted.step.branch ||
-        branch == update.branch || llvm::isa<llvm::ConstantInt>(branch->getCondition())) {
+    if (!branch->isConditional() || branch == counted.condition ||
+        (counted.step && branch == counted.step->branch) || branch == update.branch ||
+        llvm::isa<llvm::ConstantInt>(branch->getCondition())) {
       return true;
     }
     const auto* check = llvm::dyn_cast<llvm::ICmpInst>(branch->getCondition());
@@ -770,7 +838,7 @@ bool IsFieldReductionBody(const CountedLoop& counted,
   allowed.insert(counted.index);
   allowed.insert(counted.comparison);
   allowed.insert(counted.condition->getCondition());
-  AddUpdateInstructions(allowed, counted.step);
+  AddStepInstructions(allowed, counted);
   AddUpdateInstructions(allowed, update);
   for (auto* block : counted.loop->blocks()) {
     for (auto& instruction : *block) {
@@ -783,7 +851,8 @@ bool IsFieldReductionBody(const CountedLoop& counted,
 }
 
 std::optional<FieldReduction> MatchFieldReduction(const CountedLoop& counted,
-                                                  llvm::DominatorTree& dominators) {
+                                                  llvm::DominatorTree& dominators,
+                                                  llvm::AAResults& aliases) {
   const auto& loop = *counted.loop;
   if (!loop.getSubLoops().empty()) {
     return std::nullopt;
@@ -796,7 +865,7 @@ std::optional<FieldReduction> MatchFieldReduction(const CountedLoop& counted,
   auto* store = accesses->store;
   const auto update = MatchUpdate(store->getValueOperand(), loop);
   if (!update || !update->failed->phis().empty() ||
-      !dominators.dominates(store, counted.step.call) ||
+      !dominators.dominates(store, counted.increment) ||
       !dominators.dominates(counted.condition->getParent(), load->getParent())) {
     return std::nullopt;
   }
@@ -806,18 +875,13 @@ std::optional<FieldReduction> MatchFieldReduction(const CountedLoop& counted,
   }
   const auto& layout = load->getModule()->getDataLayout();
   std::int64_t value_offset = 0;
-  std::int64_t tag_offset = 0;
   auto* base =
       llvm::GetPointerBaseWithConstantOffset(load->getPointerOperand(), value_offset, layout);
-  // 私有借用字段使用类型化槽，只有普通 Value 字段才带种类字节。
-  if (accesses->tag != nullptr) {
-    auto* tag_base = llvm::GetPointerBaseWithConstantOffset(accesses->tag->getPointerOperand(),
-                                                            tag_offset, layout);
-    if (tag_base != base ||
-        tag_offset - value_offset !=
-            static_cast<std::int64_t>(runtime::NativeMemoryLayout::kValueKind)) {
-      return std::nullopt;
-    }
+  // 标签可以位于独立区域；只要求常量标签写入不会覆盖归约载荷。
+  // 私有借用字段使用类型化槽，没有标签写入。
+  if (accesses->tag != nullptr && !aliases.isNoAlias(llvm::MemoryLocation::get(load),
+                                                     llvm::MemoryLocation::get(accesses->tag))) {
+    return std::nullopt;
   }
   if (!loop.isLoopInvariant(base) || !IsFieldReductionBody(counted, *accesses, *update, base)) {
     return std::nullopt;
@@ -856,7 +920,12 @@ void FoldFieldReduction(const CountedLoop& counted, const FieldReduction& field)
                       field.store->getPointerOperand());
   failure.CreateBr(failed);
   field.update.branch->replaceSuccessorWith(failed, prefix);
-  ReplaceUpdate(counted.step, counted.bound);
+  if (counted.step) {
+    ReplaceUpdate(*counted.step, counted.bound);
+  } else {
+    counted.increment->replaceAllUsesWith(counted.bound);
+    counted.increment->eraseFromParent();
+  }
 }
 
 class FieldLoopPass : public llvm::PassInfoMixin<FieldLoopPass> {
@@ -865,13 +934,14 @@ class FieldLoopPass : public llvm::PassInfoMixin<FieldLoopPass> {
                                      llvm::FunctionAnalysisManager& analyses) {
     auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
     auto& dominators = analyses.getResult<llvm::DominatorTreeAnalysis>(function);
+    auto& aliases = analyses.getResult<llvm::AAManager>(function);
     bool changed = false;
     for (auto* loop : loops.getLoopsInPreorder()) {
       const auto counted = MatchCountedLoop(*loop, dominators);
       if (!counted) {
         continue;
       }
-      const auto field = MatchFieldReduction(*counted, dominators);
+      const auto field = MatchFieldReduction(*counted, dominators, aliases);
       if (field) {
         FoldFieldReduction(*counted, *field);
         changed = true;
@@ -896,8 +966,10 @@ class IntegerLoopPass : public llvm::PassInfoMixin<IntegerLoopPass> {
     for (auto* loop : loops.getLoopsInPreorder()) {
       const auto counted = MatchCountedLoop(*loop, dominators);
       if (counted) {
-        plans.push_back(
-            {.counted = *counted, .reduction = MatchReduction(*counted, evolution, dominators)});
+        const auto reduction = MatchReduction(*counted, evolution, dominators);
+        if (counted->step || reduction) {
+          plans.push_back({.counted = *counted, .reduction = reduction});
+        }
       }
     }
     for (const auto& plan : plans) {
@@ -905,7 +977,10 @@ class IntegerLoopPass : public llvm::PassInfoMixin<IntegerLoopPass> {
       if (plan.reduction) {
         WidenReduction(counted, *plan.reduction);
       }
-      const auto& step = counted.step;
+      if (!counted.step) {
+        continue;
+      }
+      const auto& step = *counted.step;
       llvm::IRBuilder<> builder(step.call);
       // index < bound 保证 index + 1 <= INT64_MAX；递减的严格比较同理。
       auto* next = counted.direction == 1
@@ -985,6 +1060,9 @@ void AddIntegerLoopPasses(llvm::FunctionPassManager& passes) {
   passes.addPass(llvm::LoopSimplifyPass());
   passes.addPass(llvm::EarlyCSEPass());
   passes.addPass(llvm::DCEPass());
+  // 分块复制和 CFG 化简会让循环值直接流入外层 PHI；归约检查与改写依赖
+  // 专属出口上的 LCSSA，必须在这些变换后重新建立该契约。
+  passes.addPass(llvm::LCSSAPass());
   passes.addPass(FieldLoopPass());
   passes.addPass(IntegerLoopPass());
 }
