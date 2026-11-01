@@ -95,24 +95,11 @@ std::expected<runtime::NativePublicationTimings, runtime::NativePublicationError
   return dispatch.Publish(std::move(*candidate));
 }
 
-DevelopmentChanges Changes(const CompiledSourceSnapshot& previous,
-                           const CompiledSourceSnapshot& candidate,
-                           const SourceUpdate& update) {
+DevelopmentChanges Changes(const SourceUpdate& update) {
   DevelopmentChanges changes;
   for (const auto& module : update.changes) {
     changes.modules.push_back(module.path);
   }
-  absl::flat_hash_set<DeclarationId> before;
-  for (const auto& declaration : previous.program.declarations) {
-    before.insert(declaration.identity);
-  }
-  for (const auto& declaration : candidate.program.declarations) {
-    if (before.erase(declaration.identity) == 0) {
-      ++changes.added_declarations;
-    }
-  }
-  changes.removed_declarations = before.size();
-  changes.compiled_functions = candidate.program.functions.size();
   return changes;
 }
 
@@ -273,9 +260,6 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
       case SourceCandidateStatus::SourceError:
         result.status = DevelopmentStatus::SourceError;
         break;
-      case SourceCandidateStatus::DifferentSession:
-        result.status = DevelopmentStatus::InvalidCandidate;
-        break;
     }
     result.diagnostics = std::move(source.error().diagnostics);
     result.declaration = source.error().declaration;
@@ -293,7 +277,7 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
   result.diagnostics = source->snapshot().diagnostics;
   result.timings.frontend = source->snapshot().timings;
   result.cache = code->cache;
-  result.changes = Changes(*previous, source->snapshot(), update);
+  result.changes = Changes(update);
   result.changes.compiled_functions = code->compiled_functions;
   return DevelopmentCandidate(identity_, std::move(update), std::move(*source), std::move(*code),
                               std::move(replacement), std::move(result));

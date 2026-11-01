@@ -16,38 +16,15 @@ namespace vela::frontend {
 namespace {
 
 std::string_view CanonicalTypeName(std::string_view name) noexcept {
-  static constexpr auto names = std::to_array<std::string_view>({
-      kNullTypeName,
-      kVoidTypeName,
-      kDynamicTypeName,
-      kBoolTypeName,
-      kIntTypeName,
-      kDoubleTypeName,
-      kStringTypeName,
-      kMutableStringTypeName,
-      kByteArrayTypeName,
-      kByteDataTypeName,
-      kRegExpTypeName,
-      kRegExpMatchTypeName,
-      kEndianTypeName,
-      kFutureTypeName,
-      kCompleterTypeName,
-      kTimerTypeName,
-      kCancellationTokenTypeName,
-      kSetTypeName,
-      kMapTypeName,
-      kErrorTypeName,
-      kTimeoutExceptionTypeName,
-      kDateTypeName,
-      kDatePartsTypeName,
-      kJsonTypeName,
-      kMathTypeName,
-      kRandomTypeName,
-      kPerformanceTypeName,
-      kSleepFunctionName,
-  });
-  const auto found = std::ranges::find(names, name);
-  return found == names.end() ? std::string_view() : *found;
+  if (name == kNullTypeName) {
+    return kNullTypeName;
+  }
+  if (name == kSleepFunctionName) {
+    return kSleepFunctionName;
+  }
+
+  const auto found = std::ranges::find(kBuiltinTypeNames, name);
+  return found == kBuiltinTypeNames.end() ? std::string_view() : *found;
 }
 
 struct TypeNameHash final {

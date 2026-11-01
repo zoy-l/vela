@@ -1,3 +1,4 @@
+#include "compiler/frontend/syntax/names.h"
 #include "compiler/ir/lowerer.h"
 
 #include <algorithm>
@@ -21,7 +22,7 @@
 #include "base/regexp.h"
 #include "compiler/frontend/builtins/builtins.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -128,8 +129,6 @@ Function Lowerer::CreateMemberFunction(const frontend::TypeDescriptor& receiver,
   Function function;
   function.name = std::string("$dynamic.") + std::string(receiver.name) + "." + std::string(name);
   static_cast<void>(AddFunctionId(function.name));
-  program_.functions.resize(persistent_ == nullptr ? function_ids_.size()
-                                                   : persistent_->functions.size());
   function.return_type = signature.return_type;
   function.parameter_count = static_cast<std::uint32_t>(signature.parameters.size() + 1);
   function.value_types.push_back(receiver);
@@ -148,6 +147,7 @@ Function Lowerer::CreateMemberFunction(const frontend::TypeDescriptor& receiver,
   if (function.return_type.kind != Kind::Void) {
     call.result = RegisterRuntimeType(function.return_type);
   }
+  RecordParameterValueTypes(function);
   return function;
 }
 
@@ -245,7 +245,12 @@ void Lowerer::PublishMemberFunction(const frontend::TypeDescriptor& receiver,
   auto member_target = target;
   if (kind == MemberKind::Method) {
     const std::vector<frontend::Capture> captures{
-        {.name = "this", .type = receiver, .binding = 0, .kind = frontend::BindingKind::Constant},
+        {
+            .name = std::string(frontend::kReceiverName),
+            .type = receiver,
+            .binding = 0,
+            .kind = frontend::BindingKind::Constant,
+        },
     };
     member_target = CallableClass(target, CallableMode::BoundMethod, captures,
                                   frontend::MakeFunctionType(signature));

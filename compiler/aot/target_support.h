@@ -13,7 +13,6 @@ namespace vela::compiler::aot {
 enum class NativeOutputKind : std::uint8_t { Executable, Object, StaticLibrary };
 
 struct TargetSupport final {
-  std::filesystem::path package;
   std::filesystem::path archiver;
   std::filesystem::path linker;
   std::filesystem::path runtime;

@@ -5,8 +5,8 @@
 #include "base/execution_status.h"
 #include "gtest/gtest.h"
 
+#include "compiler/test_support/preparation_test_support.h"
 #include "compiler/test_support/program_test_support.h"
-#include "compiler/ir/preparation_test_support.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
@@ -129,8 +129,7 @@ TEST_P(DoubleDivisionByZeroTest, ReportsDivisionByZero) {
   runtime::Isolate isolate;
   const auto entry = test::CompileCleanSource(source, isolate);
   ASSERT_TRUE(entry) << entry.error();
-  EXPECT_EQ(test::Execute(**entry).status,
-            ExecutionStatus::DivisionByZero);
+  EXPECT_EQ(test::Execute(**entry).status, ExecutionStatus::DivisionByZero);
 }
 
 INSTANTIATE_TEST_SUITE_P(SignedZero,

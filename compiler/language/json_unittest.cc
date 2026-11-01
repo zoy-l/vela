@@ -4,6 +4,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
@@ -78,23 +79,15 @@ func accept(value: Marker): int { return 42; }
 func main(): (Marker) => int { return accept; }
 )"));
 
-void ExpectJsonAnswer(runtime::NativeInstance& instance) {
-  const auto result = test::ExecuteFutureInteger(instance);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
-}
-
 TEST_P(JsonProgramTest, ExecutesWithGcAndReleasesTraversalState) {
   runtime::Isolate isolate(1);
   const auto baseline = isolate.heap().allocated_bytes();
   {
     const auto compiled = test::CompileSource(GetParam(), isolate);
-    for (const auto& diagnostic : compiled.diagnostics) {
-      EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error)
-          << diagnostic.location.line << ':' << diagnostic.message;
-    }
+    EXPECT_FALSE(frontend::HasErrors(compiled.diagnostics))
+        << frontend::DiagnosticsText(compiled.diagnostics);
     ASSERT_TRUE(compiled.Succeeded());
-    ExpectJsonAnswer(*compiled.instance);
+    test::ExpectAnswer(*compiled.instance);
   }
   isolate.heap().FinishCollection();
   isolate.heap().Collect();
@@ -105,7 +98,7 @@ TEST_P(JsonProgramTest, RestoresImageInFreshIsolate) {
   runtime::Isolate isolate(1);
   const auto loaded = test::ReinstantiateSource(GetParam(), isolate);
   ASSERT_TRUE(loaded) << loaded.error();
-  ExpectJsonAnswer(**loaded);
+  test::ExpectAnswer(**loaded);
 }
 
 INSTANTIATE_TEST_SUITE_P(ProductionContracts,

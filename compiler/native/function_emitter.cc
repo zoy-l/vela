@@ -8,6 +8,7 @@
 #include "compiler/native/native_frame_plan.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
+#include "runtime/native/native_symbols.h"
 
 #include <algorithm>
 #include <bit>
@@ -35,7 +36,7 @@
 #include "base/declaration.h"
 #include "base/execution_status.h"
 #include "base/opcode.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
@@ -192,7 +193,7 @@ void FunctionEmitter::Poll() {
     StoreCheckpoint();
   }
   StoreDebugValues();
-  auto poll = module_.getOrInsertFunction("vela_native_v3_safepoint", builder_.getInt8Ty(),
+  auto poll = module_.getOrInsertFunction(runtime::kNativeSafepointSymbol, builder_.getInt8Ty(),
                                           builder_.getPtrTy());
   CheckStatus(builder_.CreateCall(poll, {body_->getArg(0)}));
   if (checkpoint_ != nullptr) {
@@ -202,7 +203,7 @@ void FunctionEmitter::Poll() {
   builder_.SetInsertPoint(ready);
 }
 
-bool FunctionEmitter::NeedsBoundaryPoll(std::size_t index) const {
+bool FunctionEmitter::IsBoundaryPollRequired(std::size_t index) const {
   const auto flags = roots_.safepoints.at(index);
   return (flags & kNativeSafepointBoundary) != 0 ||
          ((flags & kNativeSafepointBeforeRuntime) != 0 &&
@@ -216,7 +217,7 @@ bool FunctionEmitter::NeedsBoundaryPoll(std::size_t index) const {
 void FunctionEmitter::PollAfterRuntimeCall() {
   const auto next = instruction_index_ + 1;
   if (program_.native_mode != NativeProgramMode::Reloadable || roots_.safepoints.at(next) == 0 ||
-      NeedsBoundaryPoll(next)) {
+      IsBoundaryPollRequired(next)) {
     return;
   }
   // 结果已经写回；使用下一条指令的活动值和恢复位置，避免发布后重放本次操作。
@@ -240,7 +241,7 @@ void FunctionEmitter::Fail(llvm::Value* status) {
       WriteHeapValue(RootAddress(index), live.at(index), MemoryRegion::Roots);
     }
     auto failure = module_.getOrInsertFunction(
-        "vela_native_v2_leaf_failure", builder_.getInt8Ty(), builder_.getPtrTy(),
+        runtime::kNativeLeafFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
         builder_.getInt64Ty(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
     auto* roots = live.empty() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : root_slots_;
     Finish(builder_.CreateCall(failure, {
@@ -257,15 +258,15 @@ void FunctionEmitter::Fail(llvm::Value* status) {
     // 失败封套可以分配；条件式运行时调用的成功分支可能尚未登记当前活动值。
     StoreRoots(instruction_index_);
   }
-  auto failure = module_.getOrInsertFunction("vela_native_v1_failure", builder_.getInt8Ty(),
+  auto failure = module_.getOrInsertFunction(runtime::kNativeFailureSymbol, builder_.getInt8Ty(),
                                              builder_.getPtrTy(), builder_.getInt8Ty());
   auto* propagated = builder_.CreateCall(failure, {body_->getArg(0), status});
   const auto handler = source_.instructions.empty()
                            ? std::optional<std::uint32_t>()
                            : source_.instructions.at(instruction_index_).handler;
   if (handler) {
-    auto pending = module_.getOrInsertFunction("vela_native_v1_has_exception", builder_.getInt8Ty(),
-                                               builder_.getPtrTy());
+    auto pending = module_.getOrInsertFunction(runtime::kNativeHasExceptionSymbol,
+                                               builder_.getInt8Ty(), builder_.getPtrTy());
     auto* has_exception = builder_.CreateCall(pending, {body_->getArg(0)});
     auto* unhandled = llvm::BasicBlock::Create(module_.getContext(), "unhandled", body_);
     // handler 的下一安全点会登记其活动值；此处到 handler 之间不再分配。
@@ -696,7 +697,7 @@ std::expected<void, std::string> FunctionEmitter::EmitInstructionBlock(std::size
   instruction_index_ = index;
   builder_.SetInsertPoint(blocks_.at(index));
   const auto effects = ir::AnalyzeEffects(instruction);
-  const auto safepoint = NeedsBoundaryPoll(index);
+  const auto safepoint = IsBoundaryPollRequired(index);
   if (safepoint && kind_ != NativeEntryKind::Leaf) {
     Poll();
   }
@@ -759,34 +760,15 @@ void FunctionEmitter::InitializeRecords() {
 
 std::expected<void, std::string> FunctionEmitter::Emit() {
   auto& context = module_.getContext();
-  if (roots_.bounded_polls) {
-    // 规范 IR 保留经对象字段、闭包和借用调用逃逸的真实用途；标量替换可能将它们改写为 Move。
-    array_element_bits_ =
-        FindPrivateArrayElementBits(program_.functions.at(function_index_), program_);
-  }
-  if (tier_ == NativeCodeTier::Optimized) {
-    direct_calls_ = FindDirectCalls(source_, program_);
-  }
-  const auto& canonical = program_.functions.at(function_index_).instructions;
-  field_accesses_.resize(canonical.size());
-  absl::flat_hash_map<DeclarationId, std::uint32_t> field_slots;
-  for (std::size_t index = 0; index < canonical.size(); ++index) {
-    if (const auto declaration = canonical.at(index).field_declaration) {
-      const auto [slot, inserted] =
-          field_slots.try_emplace(*declaration, static_cast<std::uint32_t>(field_slots.size()));
-      static_cast<void>(inserted);
-      field_accesses_.at(index) = slot->second;
-    }
-  }
   auto* entry = llvm::BasicBlock::Create(context, "entry", body_);
   builder_.SetInsertPoint(entry);
   if (kind_ == NativeEntryKind::Resume) {
     EmitExecutionBoundary(builder_);
   }
   if (program_.native_mode == NativeProgramMode::Reloadable) {
-    image_ =
-        builder_.CreateLoad(builder_.getPtrTy(),
-                            ByteAddress(ProgramData(), runtime::NativeMemoryLayout::kProgramImage));
+    image_ = builder_.CreateLoad(builder_.getPtrTy(),
+                                 ByteAddress(LoadProgramData(builder_, body_->getArg(0)),
+                                             runtime::NativeMemoryLayout::kProgramImage));
   }
   GuardResume();
   const auto prepared = PrepareFrame();
@@ -831,6 +813,7 @@ std::expected<NativeRootPlan, std::string> EscapeRoots(const ir::Program& progra
                                                        std::size_t function_index,
                                                        const EscapePlan& escape,
                                                        NativeDebugging debugging) {
+  const auto& function = escape.function.get();
   std::vector<std::vector<ir::RegisterId>> required;
   std::vector<std::uint8_t> safepoints;
   NativeRecoveryRequirements requirements;
@@ -842,8 +825,8 @@ std::expected<NativeRootPlan, std::string> EscapeRoots(const ir::Program& progra
     if (!temporary) {
       return std::unexpected(temporary.error());
     }
-    required.resize(escape.function.instructions.size());
-    safepoints.resize(escape.function.instructions.size());
+    required.resize(function.instructions.size());
+    safepoints.resize(function.instructions.size());
     for (std::size_t index = 0; index < escape.origins.size(); ++index) {
       const auto origin = escape.origins.at(index);
       required.at(index) = escape.checkpoints.at(origin).required;
@@ -860,7 +843,7 @@ std::expected<NativeRootPlan, std::string> EscapeRoots(const ir::Program& progra
   }
   if (std::ranges::any_of(escape.borrowed_calls,
                           [](const auto& call) { return call.has_value(); })) {
-    required.resize(escape.function.instructions.size());
+    required.resize(function.instructions.size());
     for (std::size_t index = 0; index < escape.borrowed_calls.size(); ++index) {
       if (const auto object = escape.borrowed_calls.at(index)) {
         required.at(index) = escape.allocations.at(*object).fields;
@@ -868,8 +851,35 @@ std::expected<NativeRootPlan, std::string> EscapeRoots(const ir::Program& progra
     }
     requirements.values = required;
   }
-  return PlanNativeRoots(escape.function, program.functions, program.native_mode, debugging,
-                         requirements);
+  return PlanNativeRoots(function, program.functions, program.native_mode, debugging, requirements);
+}
+
+FunctionEmissionFacts PlanEmissionFacts(const ir::Program& program,
+                                        std::size_t function_index,
+                                        const EscapePlan& escape,
+                                        const NativeRootPlan& roots,
+                                        NativeCodeTier tier) {
+  FunctionEmissionFacts facts;
+  const auto& canonical = program.functions.at(function_index);
+  if (roots.bounded_polls) {
+    // 规范 IR 保留经对象字段、闭包和借用调用逃逸的真实用途。
+    facts.array_element_bits = FindPrivateArrayElementBits(canonical, program);
+  }
+  if (tier == NativeCodeTier::Optimized) {
+    facts.direct_calls = FindDirectCalls(escape.function.get(), program);
+  }
+  const auto& instructions = canonical.instructions;
+  facts.field_accesses.resize(instructions.size());
+  absl::flat_hash_map<DeclarationId, std::uint32_t> field_slots;
+  for (std::size_t index = 0; index < instructions.size(); ++index) {
+    if (const auto declaration = instructions.at(index).field_declaration) {
+      const auto slot =
+          field_slots.try_emplace(*declaration, static_cast<std::uint32_t>(field_slots.size()))
+              .first;
+      facts.field_accesses.at(index) = slot->second;
+    }
+  }
+  return facts;
 }
 
 void AccumulateMetrics(NativeFunctionMetrics& metrics,
@@ -877,7 +887,7 @@ void AccumulateMetrics(NativeFunctionMetrics& metrics,
                        const NativeRootPlan& roots) {
   for (const auto& allocation : escape.allocations) {
     metrics.stack_records += allocation.stack_record ? 1 : 0;
-    if (allocation.decision == AllocationDecision::ScalarReplacement) {
+    if (allocation.can_scalar_replace) {
       if (allocation.materialized) {
         ++metrics.sunk_allocations;
       } else {
@@ -930,8 +940,9 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   }
   body_dependencies.insert(body_dependencies.end(), escape.body_dependencies.begin(),
                            escape.body_dependencies.end());
+  const auto facts = PlanEmissionFacts(program, function_index, escape, roots, tier);
   FunctionEmitter initial(module, program, calls, image, function_index, escape, generated, roots,
-                          NativeEntryKind::Initial, tier);
+                          facts, NativeEntryKind::Initial, tier);
   if (const auto emitted = initial.Emit(); !emitted) {
     return std::unexpected(emitted.error());
   }
@@ -939,7 +950,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   AccumulateMetrics(metrics, escape, roots);
   if (function.leaf != nullptr) {
     FunctionEmitter leaf(module, program, calls, image, function_index, escape, generated, roots,
-                         NativeEntryKind::Leaf, NativeCodeTier::Baseline);
+                         facts, NativeEntryKind::Leaf, NativeCodeTier::Baseline);
     if (const auto emitted = leaf.Emit(); !emitted) {
       return std::unexpected(emitted.error());
     }
@@ -949,7 +960,7 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   }
   if (function.resume != nullptr) {
     FunctionEmitter resume(module, program, calls, image, function_index, escape, generated, roots,
-                           NativeEntryKind::Resume, tier);
+                           facts, NativeEntryKind::Resume, tier);
     if (const auto emitted = resume.Emit(); !emitted) {
       return std::unexpected(emitted.error());
     }
@@ -957,13 +968,13 @@ std::expected<NativeFunctionMetrics, std::string> EmitFunction(
   }
   if (tier == NativeCodeTier::Baseline && function.recovery != nullptr) {
     FunctionEmitter recovery(module, program, calls, image, function_index, escape, generated,
-                             roots, NativeEntryKind::RecoverInitial, tier);
+                             roots, facts, NativeEntryKind::RecoverInitial, tier);
     if (const auto emitted = recovery.Emit(); !emitted) {
       return std::unexpected(emitted.error());
     }
     if (function.resume_recovery != nullptr) {
       FunctionEmitter resume(module, program, calls, image, function_index, escape, generated,
-                             roots, NativeEntryKind::RecoverResume, tier);
+                             roots, facts, NativeEntryKind::RecoverResume, tier);
       if (const auto emitted = resume.Emit(); !emitted) {
         return std::unexpected(emitted.error());
       }
@@ -981,12 +992,15 @@ std::expected<NativeFunctionMetrics, std::string> EmitBorrowedFunction(
     const EscapePlan& plan,
     std::span<const GeneratedFunction> generated,
     NativeDebugging debugging) {
-  const std::vector<std::vector<ir::RegisterId>> required(plan.function.instructions.size(),
+  const auto& function = plan.function.get();
+  const std::vector<std::vector<ir::RegisterId>> required(function.instructions.size(),
                                                           plan.borrowed_fields);
-  const auto roots = PlanNativeRoots(plan.function, program.functions, program.native_mode,
-                                     debugging, {.values = required, .safepoints = {}});
+  const auto roots = PlanNativeRoots(function, program.functions, program.native_mode, debugging,
+                                     {.values = required, .safepoints = {}});
+  const auto facts =
+      PlanEmissionFacts(program, function_index, plan, roots, NativeCodeTier::Baseline);
   FunctionEmitter borrowed(module, program, calls, image, function_index, plan, generated, roots,
-                           NativeEntryKind::Borrowed, NativeCodeTier::Baseline);
+                           facts, NativeEntryKind::Borrowed, NativeCodeTier::Baseline);
   if (const auto emitted = borrowed.Emit(); !emitted) {
     return std::unexpected(emitted.error());
   }

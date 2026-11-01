@@ -1,8 +1,5 @@
 source_set("build_info") {
-  sources = [
-    "build_info.cc",
-    "build_info.h",
-  ]
+  sources = [ "build_info.h" ]
 }
 
 generated_file("cache_build_identity") {
@@ -38,6 +35,8 @@ source_set("frontend") {
   include_dirs = [ root_gen_dir ]
   deps = [ ":sdk_sources" ]
   sources = [
+    "frontend/builtins/async_builtins.cc",
+    "frontend/builtins/async_builtins.h",
     "frontend/builtins/builtins.cc",
     "frontend/builtins/builtins.h",
     "frontend/builtins/byte_builtins.cc",
@@ -76,6 +75,7 @@ source_set("frontend") {
     "frontend/syntax/ast_clone.h",
     "frontend/syntax/lexer.cc",
     "frontend/syntax/lexer.h",
+    "frontend/syntax/names.h",
     "frontend/syntax/parser.cc",
     "frontend/syntax/parser.h",
     "frontend/syntax/parser_collections.cc",
@@ -85,6 +85,8 @@ source_set("frontend") {
     "frontend/syntax/token.h",
     "frontend/typing/checker.cc",
     "frontend/typing/checker.h",
+    "frontend/typing/semantic_model.cc",
+    "frontend/typing/semantic_model.h",
     "frontend/typing/type_checker.cc",
     "frontend/typing/type_checker.h",
     "frontend/typing/type_checker_array.cc",
@@ -168,35 +170,40 @@ executable("vela_ir_tests") {
   testonly = true
   sources = [
     "ir/analysis_unittest.cc",
-    "ir/preparation_test_support.h",
     "ir/preparation_unittest.cc",
   ]
   deps = [
     ":ir",
+    ":preparation_test_support",
     "//third_party:gtest_main",
   ]
+}
+
+source_set("test_configuration") {
+  sources = [
+    "testing/pattern.cc",
+    "testing/pattern.h",
+    "testing/settings.cc",
+    "testing/settings.h",
+  ]
+  public_deps = [ "//third_party:pcre2" ]
+  deps = [ "//base:regexp_diagnostic" ]
 }
 
 source_set("project_configuration") {
   sources = [
     "project/project_config.cc",
     "project/project_config.h",
-    "testing/pattern.cc",
-    "testing/pattern.h",
-    "testing/settings.cc",
-    "testing/settings.h",
   ]
   public_deps = [
     ":frontend",
+    ":test_configuration",
     "//base:json",
-    "//base:regexp_diagnostic",
-    "//third_party:pcre2",
   ]
 }
 
 source_set("tooling") {
   sources = [
-    "cli/standard_streams.h",
     "tooling/documentation/builtin_documentation.cc",
     "tooling/documentation/builtin_documentation.h",
     "tooling/documentation/documentation.cc",
@@ -232,10 +239,12 @@ source_set("tooling") {
   public_deps = [
     ":frontend",
     ":project_configuration",
-    "//base:json",
-    "//third_party:pcre2",
   ]
   deps = [ ":build_info" ]
+}
+
+source_set("standard_streams") {
+  sources = [ "cli/standard_streams.h" ]
   if (target_os == "win") {
     sources += [ "cli/standard_streams_win.cc" ]
   } else {
@@ -286,6 +295,7 @@ source_set("testing") {
     ":jit",
     ":tooling",
   ]
+  deps = [ ":standard_streams" ]
 }
 
 source_set("source_session") {
@@ -347,13 +357,13 @@ source_set("native") {
     "native/reference_emitter.cc",
     "native/scalar_emitter.cc",
   ]
-  public_deps = [ ":ir" ]
-  include_dirs = [ root_gen_dir ]
-  deps = [
+  public_deps = [
+    ":ir",
     "//runtime",
-    "//runtime:native_build_identity",
     "//third_party:llvm",
   ]
+  include_dirs = [ root_gen_dir ]
+  deps = [ "//runtime:native_build_identity" ]
 }
 
 source_set("jit") {
@@ -386,7 +396,7 @@ source_set("jit") {
   if (target_os == "win") {
     sources += [ "jit/platform_support_win.cc" ]
   } else {
-    sources += [ "jit/platform_support_posix.cc" ]
+    sources += [ "jit/platform_support_eh_frame.cc" ]
   }
 }
 
@@ -399,6 +409,11 @@ source_set("development") {
     "development/development_session.cc",
     "development/development_session.h",
   ]
+  if (target_os == "win") {
+    sources += [ "development/development_watch_win.cc" ]
+  } else {
+    sources += [ "development/development_watch.cc" ]
+  }
   public_deps = [
     ":jit",
     ":repl_source",
@@ -508,13 +523,13 @@ executable("vela_aot_tests") {
   sources = [
     "aot/native_compiler_unittest.cc",
     "aot/reachability_unittest.cc",
-    "ir/preparation_test_support.h",
     "native/array_analysis_unittest.cc",
     "native/escape_analysis_unittest.cc",
     "native/integer_loop_optimizer_unittest.cc",
   ]
   deps = [
     ":aot",
+    ":preparation_test_support",
     ":test_sources",
     "//runtime",
     "//third_party:gtest_main",
@@ -529,28 +544,20 @@ executable("vela") {
     ":build_info",
     ":development_tools",
     ":interactive",
+    ":standard_streams",
     ":testing",
     ":tooling",
-  ]
-}
-
-executable("vela_environment_tests") {
-  testonly = true
-  sources = [ "environment_unittest.cc" ]
-  deps = [
-    ":build_info",
-    "//third_party:gtest_main",
   ]
 }
 
 executable("vela_frontend_tests") {
   testonly = true
   sources = [
+    "environment_unittest.cc",
     "frontend/diagnostic_unittest.cc",
     "frontend/flow/control_flow_unittest.cc",
     "frontend/frontend_unittest.cc",
     "frontend/syntax/parser_unittest.cc",
-    "frontend/typing/checker_test_support.h",
     "frontend/typing/declarations_unittest.cc",
     "frontend/typing/generic_contract_unittest.cc",
     "frontend/typing/generic_inference_unittest.cc",
@@ -567,6 +574,8 @@ executable("vela_frontend_tests") {
     "tooling/source_text_unittest.cc",
   ]
   deps = [
+    ":build_info",
+    ":checker_test_support",
     ":frontend",
     ":tooling",
     "//base:test_directory",
@@ -574,13 +583,30 @@ executable("vela_frontend_tests") {
   ]
 }
 
+source_set("checker_test_support") {
+  testonly = true
+  sources = [ "test_support/checker_test_support.h" ]
+  public_deps = [ ":frontend" ]
+}
+
+source_set("preparation_test_support") {
+  testonly = true
+  sources = [ "test_support/preparation_test_support.h" ]
+  public_deps = [ ":ir" ]
+}
+
 source_set("program_test_support") {
   testonly = true
   sources = [
+    "test_support/execution_expectations.cc",
+    "test_support/execution_expectations.h",
     "test_support/program_test_support.cc",
     "test_support/program_test_support.h",
   ]
-  public_deps = [ ":jit" ]
+  public_deps = [
+    ":jit",
+    "//third_party:gtest",
+  ]
 }
 
 source_set("test_sources") {
@@ -592,9 +618,7 @@ executable("vela_compiler_tests") {
   testonly = true
   sources = [
     "development/source_session_unittest.cc",
-    "frontend/typing/checker_test_support.h",
     "ir/layout_instantiation_unittest.cc",
-    "ir/preparation_test_support.h",
     "language/async_contract_unittest.cc",
     "language/builtin_function_value_unittest.cc",
     "language/byte_data_unittest.cc",
@@ -622,7 +646,7 @@ executable("vela_compiler_tests") {
     "language/module_unittest.cc",
     "language/native_binding_unittest.cc",
     "language/native_image_unittest.cc",
-    "language/native_limits_unittest.cc",
+    "language/native_scale_unittest.cc",
     "language/numeric_conversion_unittest.cc",
     "language/optimized_execution_unittest.cc",
     "language/recursion_unittest.cc",
@@ -638,6 +662,8 @@ executable("vela_compiler_tests") {
     "testing/suite_unittest.cc",
   ]
   deps = [
+    ":checker_test_support",
+    ":preparation_test_support",
     ":program_test_support",
     ":source_session",
     ":test_sources",

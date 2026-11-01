@@ -1,3 +1,4 @@
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <cstddef>

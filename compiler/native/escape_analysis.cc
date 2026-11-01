@@ -7,10 +7,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <span>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/native_program_mode.h"
@@ -35,7 +37,7 @@ std::uint64_t MustHeap(const State& state) {
 }
 
 bool IsVirtual(const EscapePlan& plan, std::size_t object) {
-  return plan.allocations.at(object).decision == AllocationDecision::ScalarReplacement;
+  return plan.allocations.at(object).can_scalar_replace;
 }
 
 std::uint64_t Reachable(const EscapePlan& plan, const State& state, std::uint64_t roots) {
@@ -314,20 +316,17 @@ std::vector<BlockState> Solve(const ir::Function& function,
   return states;
 }
 
-void Exclude(EscapePlan& plan, std::uint64_t objects, AllocationDecision reason) {
+void Exclude(EscapePlan& plan, std::uint64_t objects) {
   while (objects != 0) {
     const auto index = static_cast<std::size_t>(std::countr_zero(objects));
-    auto& decision = plan.allocations.at(index).decision;
-    if (decision == AllocationDecision::ScalarReplacement) {
-      decision = reason;
-    }
+    plan.allocations.at(index).can_scalar_replace = false;
     objects &= objects - 1;
   }
 }
 
 void InspectProvenance(EscapePlan& plan, const Provenance& value) {
   if (value.objects != 0 && !Object(value)) {
-    Exclude(plan, value.objects, AllocationDecision::AmbiguousAlias);
+    Exclude(plan, value.objects);
   }
 }
 
@@ -363,12 +362,12 @@ void CheckMaterialization(EscapePlan& plan, std::size_t root, const State& value
     }
     const auto& allocation = plan.allocations.at(node);
     if (node != root && (MayHeap(values) & (std::uint64_t{1} << node)) != 0) {
-      Exclude(plan, root_bit, AllocationDecision::UnsupportedUse);
+      Exclude(plan, root_bit);
     }
     for (std::size_t field = 0; field < allocation.fields.size(); ++field) {
       const auto& value = values.at(allocation.state_offset + field);
       if (value.objects != 0 && !Object(value)) {
-        Exclude(plan, value.objects, AllocationDecision::AmbiguousAlias);
+        Exclude(plan, value.objects);
       }
     }
   }
@@ -382,7 +381,7 @@ void InspectRecovery(EscapePlan& plan,
     const auto receiver = VirtualReceiver(plan, instruction, values);
     if (receiver &&
         !values.at(plan.allocations.at(*receiver).state_offset + instruction.index).initialized) {
-      Exclude(plan, std::uint64_t{1} << *receiver, AllocationDecision::UnsupportedUse);
+      Exclude(plan, std::uint64_t{1} << *receiver);
     }
   }
   for (const auto reg : live) {
@@ -399,16 +398,14 @@ void InspectBoundary(EscapePlan& plan,
   const auto access = ir::AnalyzeRegisters(instruction, program.functions);
   if (instruction.handler && !ir::AnalyzeEffects(instruction).may_fail &&
       NeedsHeap(plan, program, instruction, values)) {
-    ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) {
-      Exclude(plan, values.at(reg).objects, AllocationDecision::UnsupportedUse);
-    });
+    ir::ForEachUse(instruction, access,
+                   [&](ir::RegisterId reg) { Exclude(plan, values.at(reg).objects); });
   }
   if (instruction.opcode == Opcode::Call) {
     const auto& callee = program.functions.at(instruction.index);
     if (callee.name.ends_with(".$constructor") && !IsTrivialConstructor(callee)) {
-      ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) {
-        Exclude(plan, values.at(reg).objects, AllocationDecision::CallBoundary);
-      });
+      ir::ForEachUse(instruction, access,
+                     [&](ir::RegisterId reg) { Exclude(plan, values.at(reg).objects); });
     }
   }
 }
@@ -423,12 +420,12 @@ void InspectLifetime(EscapePlan& plan,
     live_objects |= values.at(reg).objects;
   }
   if (instruction.opcode == Opcode::Await) {
-    Exclude(plan, live_objects, AllocationDecision::Publication);
+    Exclude(plan, live_objects);
   }
   if (allocation && *allocation < kMaximumObjects) {
     const auto object = std::uint64_t{1} << *allocation;
     if ((Reachable(plan, values, live_objects) & object) != 0) {
-      Exclude(plan, object, AllocationDecision::LoopLifetime);
+      Exclude(plan, object);
     }
   }
 }
@@ -462,7 +459,7 @@ void Inspect(EscapePlan& plan,
              std::span<const BlockState> blocks,
              std::span<const std::optional<std::size_t>> allocations,
              std::span<const std::vector<ir::RegisterId>> live) {
-  const auto& function = plan.function;
+  const auto& function = plan.function.get();
   for (std::size_t index = 0; index < graph.blocks.size(); ++index) {
     const auto& state = blocks.subspan(index).front();
     if (!state.reached) {
@@ -481,24 +478,22 @@ void Inspect(EscapePlan& plan,
   }
 }
 
-AllocationDecision InitialDecision(const ir::Program& program,
-                                   const ir::Instruction& instruction,
-                                   std::size_t count,
-                                   EscapeOptimization optimization,
-                                   NativeCodeTier tier) {
+bool CanScalarReplace(const ir::Program& program,
+                      const ir::Instruction& instruction,
+                      std::size_t count,
+                      EscapeOptimization optimization,
+                      NativeCodeTier tier) {
   if (optimization == EscapeOptimization::Disabled) {
-    return AllocationDecision::OptimizationDisabled;
+    return false;
   }
   if (program.native_mode == NativeProgramMode::Reloadable && tier != NativeCodeTier::Optimized) {
-    return AllocationDecision::RecoveryRequired;
+    return false;
   }
   if (count >= kMaximumObjects) {
-    return AllocationDecision::AnalysisBudget;
+    return false;
   }
   const auto& type = program.classes.at(instruction.index);
-  return type.kind != ir::Class::Kind::Instance || type.callable
-             ? AllocationDecision::NonInstance
-             : AllocationDecision::ScalarReplacement;
+  return type.kind == ir::Class::Kind::Instance && !type.callable;
 }
 
 std::size_t IndexAllocations(EscapePlan& plan,
@@ -506,7 +501,7 @@ std::size_t IndexAllocations(EscapePlan& plan,
                              EscapeOptimization optimization,
                              NativeCodeTier tier,
                              std::vector<std::optional<std::size_t>>& allocations) {
-  const auto& function = plan.function;
+  const auto& function = plan.function.get();
   std::size_t state_size = function.register_count;
   for (std::size_t index = 0; index < function.instructions.size(); ++index) {
     const auto& instruction = function.instructions.at(index);
@@ -516,16 +511,15 @@ std::size_t IndexAllocations(EscapePlan& plan,
     const auto count = plan.allocations.size();
     allocations.at(index) = count;
     const auto field_count = program.classes.at(instruction.index).field_types.size();
-    auto decision = InitialDecision(program, instruction, count, optimization, tier);
-    if (decision == AllocationDecision::ScalarReplacement &&
-        state_size + field_count + 2 > kMaximumStateCells) {
-      decision = AllocationDecision::AnalysisBudget;
+    auto can_replace = CanScalarReplace(program, instruction, count, optimization, tier);
+    if (can_replace && state_size + field_count + 2 > kMaximumStateCells) {
+      can_replace = false;
     }
-    const auto field_slots = decision == AllocationDecision::ScalarReplacement ? field_count : 0;
+    const auto field_slots = can_replace ? field_count : 0;
     plan.allocations.push_back({
         .instruction = index,
         .type = instruction.index,
-        .decision = decision,
+        .can_scalar_replace = can_replace,
         .fields = std::vector<ir::RegisterId>(field_slots),
         .state_offset = state_size,
     });
@@ -535,42 +529,37 @@ std::size_t IndexAllocations(EscapePlan& plan,
 }
 
 std::size_t EligibleCount(const EscapePlan& plan) {
-  return static_cast<std::size_t>(std::ranges::count_if(plan.allocations, [](const auto& site) {
-    return site.decision == AllocationDecision::ScalarReplacement;
-  }));
+  return static_cast<std::size_t>(std::ranges::count_if(
+      plan.allocations, [](const auto& site) { return site.can_scalar_replace; }));
 }
 
 std::optional<std::size_t> ScalarObject(const EscapePlan& plan, const Provenance& value) {
   const auto object = Object(value);
-  return object && plan.allocations.at(*object).decision == AllocationDecision::ScalarReplacement
-             ? object
-             : std::nullopt;
+  return object && plan.allocations.at(*object).can_scalar_replace ? object : std::nullopt;
 }
 
 }  // namespace internal
 
 using namespace internal;
 
+ir::Function& EscapeFunction::Rewrite() {
+  if (const auto* borrowed = std::get_if<std::reference_wrapper<const ir::Function>>(&function_)) {
+    function_.emplace<ir::Function>(borrowed->get());
+  }
+  return std::get<ir::Function>(function_);
+}
+
 EscapePlan PlanEscapes(const ir::Program& program,
                        std::size_t function_index,
                        EscapeOptimization optimization,
                        NativeCodeTier tier,
                        std::span<const std::optional<ir::ClassId>> borrowable) {
-  EscapePlan plan{
-      .function = program.functions.at(function_index),
-      .origins = {},
-      .allocations = {},
-      .checkpoints = {},
-      .borrowable = {},
-      .borrowed_calls = {},
-      .borrowed_fields = {},
-      .body_dependencies = {},
-  };
+  EscapePlan plan(program.functions.at(function_index));
   if (optimization == EscapeOptimization::Enabled &&
       program.native_mode == NativeProgramMode::Closed) {
     plan.borrowable = borrowable;
   }
-  const auto& function = plan.function;
+  const auto& function = plan.function.get();
   std::vector<std::optional<std::size_t>> allocations(function.instructions.size());
   const auto state_size = IndexAllocations(plan, program, optimization, tier, allocations);
   const auto preserve = [&] {
@@ -587,7 +576,7 @@ EscapePlan PlanEscapes(const ir::Program& program,
   const auto state_cells = static_cast<std::uint64_t>(state_size) * graph.blocks.size();
   if (state_cells > kMaximumStateCells) {
     for (auto& allocation : plan.allocations) {
-      allocation.decision = AllocationDecision::AnalysisBudget;
+      allocation.can_scalar_replace = false;
     }
     preserve();
     return plan;
@@ -605,7 +594,7 @@ EscapePlan PlanEscapes(const ir::Program& program,
       if (program.native_mode == NativeProgramMode::Closed &&
           std::ranges::none_of(plan.allocations, &AllocationSite::stack_record)) {
         // 标量替换暴露了原来经过字段的长度消费；没有借用记录或恢复快照时可消除文本。
-        ir::Optimize(plan.function, program.functions, &plan.origins);
+        ir::Optimize(plan.function.Rewrite(), program.functions, &plan.origins);
       }
       plan.borrowable = {};
       return plan;

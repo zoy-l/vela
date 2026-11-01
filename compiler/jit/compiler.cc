@@ -1,6 +1,7 @@
 #include "compiler/jit/compiler.h"
 
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -8,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -21,6 +23,7 @@
 #include <llvm/ExecutionEngine/Orc/CoreContainers.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
+#include <llvm/ExecutionEngine/Orc/SymbolStringPool.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Error.h>
@@ -173,32 +176,21 @@ std::expected<CompiledObject, std::string> PrepareObject(native::NativeModule& g
   }
   if (cached.object == nullptr) {
     const auto started = Clock::now();
-    const auto object = native::EmitObject(generated);
+    auto object = native::EmitObject(generated);
     if (!object) {
       return std::unexpected(object.error());
     }
-    const void* storage = object->data();
-    cached.object = llvm::MemoryBuffer::getMemBufferCopy(
-        {static_cast<const char*>(storage), object->size()}, generated.module->getName());
+    cached.object = std::move(*object);
     timings.compilation = Clock::now() - started;
   }
   return result;
 }
 
-std::expected<std::vector<std::uint8_t>, frontend::Diagnostics> ExportedFunctions(
-    const ir::Program& program) {
-  const auto reloadable = program.native_mode == NativeProgramMode::Reloadable;
-  if (reloadable && program.revision == 0) {
-    return std::unexpected(Diagnostic("reloadable JIT requires a versioned source candidate"));
-  }
+std::vector<std::uint8_t> ExportedFunctions(const ir::Program& program) {
+  assert(program.native_mode != NativeProgramMode::Reloadable || program.revision != 0);
   std::vector<std::uint8_t> exports;
   exports.reserve(program.functions.size());
   for (const auto& function : program.functions) {
-    const auto identity = function.identity;
-    if (reloadable && (identity.revision != program.revision ||
-                       (identity.local == 0 && identity.declaration == DeclarationId{}))) {
-      return std::unexpected(Diagnostic("JIT function is missing its immutable version identity"));
-    }
     exports.push_back(function.is_exported ? 1 : 0);
   }
   return exports;
@@ -223,6 +215,23 @@ void ApplyCodeReuse(native::NativeModule& generated,
   }
 }
 
+// 一批代码的所有查询、复用与入口绑定共用已驻留的符号，避免反复锁住 LLVM 符号池。
+class BatchSymbols final {
+ public:
+  explicit BatchSymbols(llvm::orc::LLJIT& jit) : jit_(&jit) {}
+  llvm::orc::SymbolStringPtr Get(std::string_view name) {
+    const auto [found, inserted] = symbols_.try_emplace(name);
+    if (inserted) {
+      found->second = jit_->mangleAndIntern(llvm::StringRef(name.data(), name.size()));
+    }
+    return found->second;
+  }
+
+ private:
+  llvm::orc::LLJIT* jit_;
+  absl::flat_hash_map<std::string, llvm::orc::SymbolStringPtr> symbols_;
+};
+
 struct FunctionEntrySymbols final {
   std::string boxed;
   std::string typed;
@@ -242,15 +251,14 @@ std::vector<FunctionEntrySymbols> EntrySymbols(const native::NativeModule& gener
   return entry_symbols;
 }
 
-llvm::Error DefineReusedSymbols(llvm::orc::LLJIT& jit,
+llvm::Error DefineReusedSymbols(BatchSymbols& interned,
                                 llvm::orc::JITDylib& library,
                                 const native::NativeModule& generated,
                                 const CodeReusePlan& reuse_plan) {
   llvm::orc::SymbolMap symbols;
   for (const auto& function : reuse_plan.functions) {
     if (function.resource && generated.module->getFunction(function.symbol) != nullptr) {
-      symbols.try_emplace(jit.mangleAndIntern(function.symbol),
-                          llvm::orc::ExecutorAddr(function.address),
+      symbols.try_emplace(interned.Get(function.symbol), llvm::orc::ExecutorAddr(function.address),
                           llvm::JITSymbolFlags::Exported);
     }
   }
@@ -262,6 +270,7 @@ llvm::Error DefineReusedSymbols(llvm::orc::LLJIT& jit,
 
 llvm::Expected<llvm::orc::SymbolMap> LookupImageSymbols(
     llvm::orc::LLJIT& jit,
+    BatchSymbols& interned,
     llvm::orc::JITDylib& library,
     const native::NativeModule& generated,
     const std::vector<FunctionEntrySymbols>& entry_symbols,
@@ -270,16 +279,16 @@ llvm::Expected<llvm::orc::SymbolMap> LookupImageSymbols(
   llvm::orc::SymbolNameSet requested;
   for (const auto& symbol : entry_symbols) {
     if (!symbol.boxed.empty()) {
-      requested.insert(jit.mangleAndIntern(symbol.boxed));
-      requested.insert(jit.mangleAndIntern(symbol.typed));
+      requested.insert(interned.Get(symbol.boxed));
+      requested.insert(interned.Get(symbol.typed));
     }
   }
   if (image_data == nullptr) {
-    requested.insert(jit.mangleAndIntern(generated.image_symbol));
+    requested.insert(interned.Get(generated.image_symbol));
   }
   for (const auto& function : reuse_plan.functions) {
     if (!function.resource) {
-      requested.insert(jit.mangleAndIntern(function.symbol));
+      requested.insert(interned.Get(function.symbol));
     }
   }
   // 一个批次只发起一次链接查询；逐入口等待会重复准备平台与符号依赖。
@@ -290,7 +299,7 @@ llvm::Expected<llvm::orc::SymbolMap> LookupImageSymbols(
                    llvm::orc::SymbolLookupSet(requested));
 }
 
-const runtime::NativeImage* BindImageEntries(llvm::orc::LLJIT& jit,
+const runtime::NativeImage* BindImageEntries(BatchSymbols& interned,
                                              native::NativeImageData& image_data,
                                              const std::vector<FunctionEntrySymbols>& entry_symbols,
                                              const llvm::orc::SymbolMap& resolved,
@@ -300,21 +309,20 @@ const runtime::NativeImage* BindImageEntries(llvm::orc::LLJIT& jit,
   for (std::size_t index = 0; index < entry_symbols.size(); ++index) {
     const auto& symbol = entry_symbols.at(index);
     addresses.push_back(symbol.boxed.empty() ? reuse->sources.at(index).entry
-                                             : resolved.find(jit.mangleAndIntern(symbol.boxed))
+                                             : resolved.find(interned.Get(symbol.boxed))
                                                    ->second.getAddress()
                                                    .toPtr<runtime::NativeEntry>());
-    typed_addresses.push_back(symbol.typed.empty()
-                                  ? reuse->sources.at(index).typed_entry
-                                  : resolved.find(jit.mangleAndIntern(symbol.typed))
-                                        ->second.getAddress()
-                                        .toPtr<runtime::NativeTypedEntry>());
+    typed_addresses.push_back(symbol.typed.empty() ? reuse->sources.at(index).typed_entry
+                                                   : resolved.find(interned.Get(symbol.typed))
+                                                         ->second.getAddress()
+                                                         .toPtr<runtime::NativeTypedEntry>());
   }
   image_data.BindEntries(addresses, typed_addresses);
   return image_data.image();
 }
 
 absl::flat_hash_map<std::string, ReusableCode> RetainImageCode(
-    llvm::orc::LLJIT& jit,
+    BatchSymbols& interned,
     const llvm::orc::SymbolMap& resolved,
     const std::shared_ptr<CodeBatch>& resource,
     CodeReusePlan& reuse_plan,
@@ -324,7 +332,7 @@ absl::flat_hash_map<std::string, ReusableCode> RetainImageCode(
   for (auto& function : reuse_plan.functions) {
     if (!function.resource) {
       function.address =
-          resolved.find(jit.mangleAndIntern(function.symbol))->second.getAddress().getValue();
+          resolved.find(interned.Get(function.symbol))->second.getAddress().getValue();
       function.resource = resource;
     }
     if (owners.insert(function.resource.get()).second) {
@@ -391,11 +399,7 @@ CodeResourceCounts Compiler::resource_counts() const noexcept {
 std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::Program& program,
                                                                       const CompileOptions& options,
                                                                       CodeReuseCache* reuse) {
-  auto exports = ExportedFunctions(program);
-  if (!exports) {
-    return std::unexpected(std::move(exports.error()));
-  }
-  const auto reloadable = program.native_mode == NativeProgramMode::Reloadable;
+  const auto exports = ExportedFunctions(program);
   using Clock = std::chrono::steady_clock;
   CompileTimings timings;
   const auto generation_started = Clock::now();
@@ -405,9 +409,7 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
   const auto calls = native::PlanNativeCalls(program, options.tier);
   auto compiled_functions = program.functions.size();
   if (reuse != nullptr) {
-    if (!reloadable) {
-      return std::unexpected(Diagnostic("function code reuse requires a reloadable program"));
-    }
+    assert(program.native_mode == NativeProgramMode::Reloadable);
     reuse_lock = std::unique_lock(reuse->mutex);
     reuse_plan = PlanCodeReuse(DescribeCodeInputs(program, calls, options.tier,
                                                   static_cast<std::uint8_t>(options.optimization),
@@ -417,16 +419,14 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
   }
   const std::string module_name = "vela_jit";
   auto generated =
-      native::Generate(program, calls, module_name, *exports, options.debugging, options.tier,
+      native::Generate(program, calls, module_name, exports, options.debugging, options.tier,
                        options.escape, NativeCodePlacement::Dynamic, reuse_plan.reused);
   timings.generation = Clock::now() - generation_started;
   if (!generated) {
     return std::unexpected(std::move(generated.error()));
   }
-  if (generated->module->getTargetTriple() != jit_->getTargetTriple() ||
-      generated->module->getDataLayout() != jit_->getDataLayout()) {
-    return std::unexpected(Diagnostic("JIT target does not match the native runtime ABI"));
-  }
+  assert(generated->module->getTargetTriple() == jit_->getTargetTriple());
+  assert(generated->module->getDataLayout() == jit_->getDataLayout());
   if (reuse != nullptr) {
     const auto planning = Clock::now();
     ApplyCodeReuse(*generated, *reuse, batch, reuse_plan);
@@ -440,42 +440,8 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
     return std::unexpected(Diagnostic(prepared.error()));
   }
   auto& cached = prepared->cached;
-  const auto linking_started = Clock::now();
-  auto library = jit_->createJITDylib("vela_batch_" + std::to_string(batch));
-  if (!library) {
-    return std::unexpected(Diagnostic(llvm::toString(library.takeError())));
-  }
-  library->addToLinkOrder(jit_->getMainJITDylib());
-  auto resource = std::make_shared<CodeBatch>(jit_, *library, counters_, compiled_functions);
-  resource->dependencies = std::move(reuse_plan.dependencies);
-  if (auto error = DefineReusedSymbols(*jit_, *library, *generated, reuse_plan)) {
-    return std::unexpected(Diagnostic(llvm::toString(std::move(error))));
-  }
-  const auto save_cache = options.code_cache && cached.status != CodeCacheStatus::Hit;
-  auto object = save_cache ? llvm::MemoryBuffer::getMemBufferCopy(cached.object->getBuffer())
-                           : std::move(cached.object);
-  if (auto error = jit_->addObjectFile(resource->tracker, std::move(object))) {
-    return std::unexpected(Diagnostic(llvm::toString(std::move(error))));
-  }
-  auto resolved =
-      LookupImageSymbols(*jit_, *library, *generated, entry_symbols, reuse_plan, image_data.get());
-  if (!resolved) {
-    return std::unexpected(Diagnostic(llvm::toString(resolved.takeError())));
-  }
-  const runtime::NativeImage* image = nullptr;
-  if (image_data) {
-    image = BindImageEntries(*jit_, *image_data, entry_symbols, *resolved, reuse);
-  } else {
-    const auto entry =
-        resolved->find(jit_->mangleAndIntern(generated->image_symbol))->second.getAddress();
-    using ImageEntry = const runtime::NativeImage* (*)();
-    image = entry.toPtr<ImageEntry>()();
-  }
-  auto owner = std::make_shared<ImageOwnership>(counters_, *image, std::move(image_data));
-  owner->batch = resource;
-  auto updated = RetainImageCode(*jit_, *resolved, resource, reuse_plan, *owner);
-  timings.linking = Clock::now() - linking_started;
-  if (save_cache) {
+  if (options.code_cache && cached.status != CodeCacheStatus::Hit) {
+    // 已验证的目标文件先写缓存，再把唯一缓冲交给 ORC；I/O 失败时不建立代码批次。
     const auto started = Clock::now();
     if (const auto saved =
             WriteCodeCache(*options.code_cache, prepared->key, cached.object->getMemBufferRef());
@@ -484,6 +450,38 @@ std::expected<CompiledImage, frontend::Diagnostics> Compiler::Compile(const ir::
     }
     timings.cache += Clock::now() - started;
   }
+  const auto linking_started = Clock::now();
+  auto library = jit_->createJITDylib("vela_batch_" + std::to_string(batch));
+  if (!library) {
+    return std::unexpected(Diagnostic(llvm::toString(library.takeError())));
+  }
+  library->addToLinkOrder(jit_->getMainJITDylib());
+  auto resource = std::make_shared<CodeBatch>(jit_, *library, counters_, compiled_functions);
+  resource->dependencies = std::move(reuse_plan.dependencies);
+  BatchSymbols interned(*jit_);
+  if (auto error = DefineReusedSymbols(interned, *library, *generated, reuse_plan)) {
+    return std::unexpected(Diagnostic(llvm::toString(std::move(error))));
+  }
+  if (auto error = jit_->addObjectFile(resource->tracker, std::move(cached.object))) {
+    return std::unexpected(Diagnostic(llvm::toString(std::move(error))));
+  }
+  auto resolved = LookupImageSymbols(*jit_, interned, *library, *generated, entry_symbols,
+                                     reuse_plan, image_data.get());
+  if (!resolved) {
+    return std::unexpected(Diagnostic(llvm::toString(resolved.takeError())));
+  }
+  const runtime::NativeImage* image = nullptr;
+  if (image_data) {
+    image = BindImageEntries(interned, *image_data, entry_symbols, *resolved, reuse);
+  } else {
+    const auto entry = resolved->find(interned.Get(generated->image_symbol))->second.getAddress();
+    using ImageEntry = const runtime::NativeImage* (*)();
+    image = entry.toPtr<ImageEntry>()();
+  }
+  auto owner = std::make_shared<ImageOwnership>(counters_, *image, std::move(image_data));
+  owner->batch = resource;
+  auto updated = RetainImageCode(interned, *resolved, resource, reuse_plan, *owner);
+  timings.linking = Clock::now() - linking_started;
   if (reuse != nullptr) {
     reuse->functions = std::move(updated);
     UpdateSourceCache(*reuse, reuse_plan, *generated, *image);

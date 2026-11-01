@@ -1,3 +1,5 @@
+#include "compiler/frontend/builtins/sdk_modules.h"
+#include "compiler/frontend/builtins/standard_environment.h"
 #include "compiler/tooling/mock/mock_generator.h"
 
 #include <expected>
@@ -171,7 +173,8 @@ int MockCommand(std::span<char*> arguments, std::ostream& output, std::ostream& 
     return kIoErrorExitCode;
   }
   for (const auto& source : program.sources) {
-    if (source.path.starts_with("sdk:") || source.path.starts_with("builtin:")) {
+    if (source.path.starts_with(frontend::kSdkSourcePrefix) ||
+        source.path.starts_with(frontend::kStandardSourcePrefix)) {
       continue;
     }
     const bool same =

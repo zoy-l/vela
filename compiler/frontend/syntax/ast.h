@@ -6,7 +6,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -17,6 +16,7 @@
 
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_file.h"
+#include "compiler/frontend/syntax/token.h"
 
 namespace vela::frontend {
 
@@ -33,10 +33,11 @@ struct TypeParameterId final {
 };
 
 struct TypeName final {
-  enum class Kind : std::uint8_t { Named, Array, Nullable, Function, Generic, Parameter };
+  enum class Kind : std::uint8_t { Inferred, Named, Array, Nullable, Function, Generic, Parameter };
+  // 仅命名类型、泛型构造器和参数保留名字；结构类型从 arguments 渲染。
   std::string name;
   SourceLocation location;
-  Kind kind = Kind::Named;
+  Kind kind = Kind::Inferred;
   // 数组和可空类型有一个子类型，函数按参数顺序保存子类型，最后一项为返回类型。
   std::vector<TypeName> arguments;
   // 仅 Parameter 使用：模块绑定按词法作用域确定身份，name 只用于显示。
@@ -57,13 +58,14 @@ using TypeSubstitutions = absl::flat_hash_map<TypeParameterId, TypeName>;
 
 // 参数具体化为已有可空类型或 dynamic 时，T? 不形成第二层可空包装。
 [[nodiscard]] TypeName SubstituteTypeName(TypeName type, const TypeSubstitutions& substitutions);
+[[nodiscard]] bool SubstitutesNullableElement(const TypeName& type,
+                                              const TypeSubstitutions& substitutions);
 [[nodiscard]] bool IsNullableTypeName(const TypeName& type);
 [[nodiscard]] TypeName ParameterTypeName(const TypeParameter& parameter, SourceLocation location);
 [[nodiscard]] bool HasTypeParameters(const TypeName& type);
 [[nodiscard]] bool IsSameTypeConstructor(const TypeName& left, const TypeName& right);
 // 与 ToString 相同的结构文本，但类型参数附带身份，作为特化与类型表的唯一键。
 [[nodiscard]] std::string CanonicalTypeText(const TypeName& type);
-[[nodiscard]] std::optional<std::string_view> CompoundAssignmentOperation(std::string_view text);
 
 // 名称绑定前的声明来源；键使用绑定后的符号名，值不受导入别名或模块排序影响。
 // 泛型具体化保留模板来源及规范化实参，不从生成名称反向解析身份。
@@ -131,6 +133,7 @@ struct Expression final {
     Name,
     Unary,
     Binary,
+    CompoundAssignment,
     Call,
     Member,
     ArrayLiteral,
@@ -145,6 +148,8 @@ struct Expression final {
   };
 
   Kind kind = Kind::IntegerLiteral;
+  // Unary/Binary 保留运算符；CompoundAssignment 保存基础运算符，kind 保留赋值语义。
+  TokenKind operation = TokenKind::EndOfFile;
   SourceLocation location;
   std::string text;
   bool null_safe = false;
@@ -253,7 +258,7 @@ struct Statement final {
 };
 
 struct Function final {
-  enum class Role : std::uint8_t { Ordinary, InteractiveEntry, RetiredEntry };
+  enum class Role : std::uint8_t { Ordinary, InteractiveEntry };
   struct Application final {
     std::string name;
     std::vector<TypeName> arguments;

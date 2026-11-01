@@ -118,34 +118,28 @@ std::expected<void, frontend::Diagnostics> DevelopmentFiles::Track(const std::st
   native_paths_.insert_or_assign(file, path);
   // 祖先事件通过反向索引定位实际受影响文件，同时覆盖已存在目录改名和缺失目录重建。
   // 先登记入口树的父目录，避免在建立子目录监听期间漏掉目录身份变化。
-#ifdef _WIN32
-  const auto& tree = directories.at(directories.size() > 1 ? 1 : 0);
-#endif
-  for (const auto& directory : directories) {
-#ifdef _WIN32
-    if (directory != directories.front() && directory != tree) {
-      continue;
-    }
-#endif
-    std::error_code error;
-    const auto exists = std::filesystem::exists(directory, error);
-    if (error) {
-      return std::unexpected(FileError(path, error.message()));
-    }
-    if (!exists) {
-      watcher_->Unwatch(directory);
-      continue;
-    }
-#ifdef _WIN32
-    const auto watched =
-        watcher_->Watch(directory, directory == tree ? DirectoryWatchScope::Descendants
-                                                     : DirectoryWatchScope::Direct);
-#else
-    const auto watched = watcher_->Watch(directory);
-#endif
-    if (!watched) {
-      return std::unexpected(FileError(path, watched.error()));
-    }
+  return WatchDirectories(path, directories);
+}
+
+std::expected<void, frontend::Diagnostics> DevelopmentFiles::WatchDirectory(
+    const std::string& path,
+    const std::filesystem::path& directory,
+    DirectoryWatchScope scope) {
+  if (watcher_->IsWatching(directory, scope)) {
+    return {};
+  }
+  std::error_code error;
+  const auto exists = std::filesystem::exists(directory, error);
+  if (error) {
+    return std::unexpected(FileError(path, error.message()));
+  }
+  if (!exists) {
+    watcher_->Unwatch(directory);
+    return {};
+  }
+  const auto watched = watcher_->Watch(directory, scope);
+  if (!watched) {
+    return std::unexpected(FileError(path, watched.error()));
   }
   return {};
 }
@@ -614,7 +608,9 @@ std::expected<std::optional<SourceUpdate>, frontend::Diagnostics> DevelopmentFil
     }
     auto& graph = *loaded;
     for (const auto& source : graph.sources) {
-      SetPending(source.path, std::string(source.text));
+      if (CapturedText(previous, source.path) != source.text) {
+        SetPending(source.path, std::string(source.text));
+      }
     }
     if (!graph.diagnostics.empty()) {
       return std::unexpected(std::move(graph.diagnostics));

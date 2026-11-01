@@ -49,13 +49,6 @@ bool IsTypeWithinLimit(const TypeName& type, std::size_t depth = 1) {
   });
 }
 
-// 替换参数后合并由参数带入的可空；源码直接书写的双重可空保留给类型检查诊断。
-bool SubstitutesNullableElement(const TypeName& source, const TypeSubstitutions& substitutions) {
-  return source.kind == TypeName::Kind::Nullable &&
-         source.arguments.front().kind == TypeName::Kind::Parameter &&
-         substitutions.contains(source.arguments.front().parameter);
-}
-
 std::vector<Function> ExtractMethodTemplates(std::vector<Function>& methods) {
   std::vector<Function> concrete;
   std::vector<Function> templates;
@@ -311,9 +304,6 @@ void Specializer::NormalizeTypeHead(TypeName& type) {
     type.name = Instantiate(type.name, type.arguments, type.location);
     type.kind = TypeName::Kind::Named;
     type.arguments.clear();
-  } else if (type.kind == TypeName::Kind::Array || type.kind == TypeName::Kind::Nullable ||
-             type.kind == TypeName::Kind::Function) {
-    type.name = type.ToString();
   }
 }
 
@@ -422,7 +412,7 @@ void Specializer::Normalize(Expression* expression, const TypeSubstitutions& sub
   if (expression == nullptr) {
     return;
   }
-  if (!expression->type.name.empty()) {
+  if (expression->type.kind != TypeName::Kind::Inferred) {
     Normalize(expression->type, substitutions);
   }
   for (auto& argument : expression->type_arguments) {
@@ -464,7 +454,7 @@ void Specializer::Normalize(Statement* statement, const TypeSubstitutions& subst
   if (has_scope) {
     scopes_.emplace_back();
   }
-  if (!statement->type.name.empty()) {
+  if (statement->type.kind != TypeName::Kind::Inferred) {
     Normalize(statement->type, substitutions);
   }
   Normalize(statement->initializer.get(), substitutions);
@@ -688,7 +678,7 @@ Diagnostics Specializer::Initialize() {
   CollectInterfaceTemplates();
   NormalizeAliases();
   for (auto& global : program_.globals) {
-    if (!global.type.name.empty()) {
+    if (global.type.kind != TypeName::Kind::Inferred) {
       Normalize(global.type, {});
     }
     Normalize(global.initializer.get(), {});

@@ -8,7 +8,7 @@
 #include <absl/container/flat_hash_set.h>
 
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 
 namespace vela::tooling {
 

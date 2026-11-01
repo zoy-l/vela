@@ -5,7 +5,7 @@
 #include "base/opcode.h"
 #include "gtest/gtest.h"
 
-#include "compiler/ir/preparation_test_support.h"
+#include "compiler/test_support/preparation_test_support.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
@@ -32,7 +32,7 @@ func compute(value: int): int {
 }
 func main(): int { return compute(42); }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto result = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(result.Succeeded());
@@ -103,8 +103,6 @@ TEST_P(OptimizerTrapTest, RetainsFailuresEvenWhenTheResultIsUnused) {
   runtime::Isolate isolate;
   const auto compiled = test::CompileSource(parameter.source, isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto main = compiled.instance->FindFunction("main");
-  ASSERT_TRUE(main.has_value());
   EXPECT_EQ(test::Execute(*compiled.instance).status, parameter.status);
 }
 
@@ -127,10 +125,8 @@ class Box { value: int; }
 func fail(): int { const box=Box(value: 1); return box.value/0; }
 func main(): int { return fail(); }
 )",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto main = compiled.instance->FindFunction("main");
-  ASSERT_TRUE(main.has_value());
   const auto baseline = isolate.heap().object_count();
   for (int attempt = 0; attempt < 2; ++attempt) {
     EXPECT_EQ(test::Execute(*compiled.instance).status, ExecutionStatus::DivisionByZero);

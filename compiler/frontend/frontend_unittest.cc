@@ -6,7 +6,7 @@
 #include "compiler/frontend/typing/checker.h"
 #include "gtest/gtest.h"
 
-#include "compiler/frontend/typing/checker_test_support.h"
+#include "compiler/test_support/checker_test_support.h"
 
 namespace vela::frontend {
 namespace {

@@ -12,7 +12,6 @@ namespace {
 TEST(SourceTextTest, ConvertsUtf8AndUtf16PositionsWithCrLfAndSupplementaryCharacters) {
   const auto source = SourceText::Create("a中😀z\r\nnext\n");
   ASSERT_TRUE(source);
-  EXPECT_EQ(source->line_count(), 3U);
   EXPECT_EQ(source->OffsetAt({.line = 0, .character = 4}, PositionEncoding::Utf16), 8U);
   EXPECT_EQ(source->OffsetAt({.line = 0, .character = 8}, PositionEncoding::Utf8), 8U);
   EXPECT_EQ(source->PositionAt(8, PositionEncoding::Utf16),
@@ -42,7 +41,8 @@ TEST(SourceTextTest, AppliesSequentialEditsAndRebuildsTheLineIndex) {
   ASSERT_TRUE(source->Replace({.start = {.line = 0}, .end = {.line = 1, .character = 4}}, "changed",
                               PositionEncoding::Utf16));
   EXPECT_EQ(source->text(), "changed\n");
-  EXPECT_EQ(source->line_count(), 2U);
+  EXPECT_EQ(source->PositionAt(source->text().size(), PositionEncoding::Utf16),
+            (TextPosition{.line = 1, .character = 0}));
 }
 
 TEST(SourceTextTest, InvalidReplacementsPreserveTheDocument) {
@@ -58,7 +58,6 @@ TEST(SourceTextTest, InvalidReplacementsPreserveTheDocument) {
 
 TEST(SourceTextTest, EmptyDocumentHasOneLineAndClampsEndPositions) {
   const SourceText source;
-  EXPECT_EQ(source.line_count(), 1U);
   EXPECT_EQ(source.OffsetAt({}, PositionEncoding::Utf8), 0U);
   EXPECT_EQ(source.PositionAt(1000, PositionEncoding::Utf16), TextPosition());
 }

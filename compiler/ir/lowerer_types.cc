@@ -5,26 +5,17 @@
 #include "base/byte_access.h"
 #include "base/regexp.h"
 #include "compiler/frontend/builtins/builtins.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_name.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
 
-void Lowerer::RecordProgramValueTypes() {
-  for (auto& function : program_.functions) {
-    current_function_ = &function;
-    function.value_types.resize(function.register_count);
-    for (const auto& instruction : function.instructions) {
-      RecordInstructionValueType(instruction);
-      if (instruction.opcode == Opcode::Call) {
-        RecordValueType(instruction.dst, program_.functions.at(instruction.index).return_type);
-      }
-      if (instruction.opcode == Opcode::Return && !function.is_async) {
-        RecordValueType(instruction.dst, function.return_type);
-      }
-    }
+void Lowerer::ResolveCallValueTypes() {
+  for (const auto& call : call_value_types_) {
+    current_function_ = &program_.functions.at(call.function);
+    RecordValueType(call.result, program_.functions.at(call.target).return_type);
   }
   current_function_ = nullptr;
 }
@@ -32,6 +23,19 @@ void Lowerer::RecordProgramValueTypes() {
 void Lowerer::RecordInstructionValueType(const Instruction& instruction) {
   using Kind = frontend::TypeDescriptor::Kind;
   switch (instruction.opcode) {
+    case Opcode::Call:
+      // 前向调用的 IR 函数体尚未生成，按目标身份延迟补充返回值类型。
+      call_value_types_.push_back({
+          .function = function_ids_.at(current_function_->name),
+          .result = instruction.dst,
+          .target = instruction.index,
+      });
+      break;
+    case Opcode::Return:
+      if (!current_function_->is_async) {
+        RecordValueType(instruction.dst, current_function_->return_type);
+      }
+      break;
     case Opcode::LoadInt:
     case Opcode::AddInt:
     case Opcode::SubInt:

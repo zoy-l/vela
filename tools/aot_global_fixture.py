@@ -75,7 +75,7 @@ TEST(NativeGlobalTest, ReadyLoadsObserveMutationsNullsAndManagedValuesAcrossColl
     const std::array arguments{Integer(operation)};
     ASSERT_EQ(Execute(GLOBAL_STORAGE_ENTRY, execution, arguments, output), ExecutionStatus::Returned);
     EXPECT_EQ(std::bit_cast<std::int64_t>(output.payload), 42) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
     EXPECT_FALSE(execution.HasException());
   }
   const std::array original{Integer(0)};
@@ -100,7 +100,7 @@ TEST(NativeGlobalTest, ScalarLazyInitializationKeepsFailureTracesRetryAndDepthLi
   NativeValue output;
   const std::array answer{Integer(0)};
   ASSERT_EQ(Execute(GLOBAL_LEAF_ENTRY, execution, answer, output), ExecutionStatus::DivisionByZero);
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
   const auto diagnostic = execution.ExceptionDiagnostic();
   ASSERT_EQ(diagnostic.stack_trace.size(), 2U);
   EXPECT_EQ(diagnostic.stack_trace.back().function, "calculate");
@@ -122,7 +122,7 @@ TEST(NativeGlobalTest, ScalarLazyInitializationKeepsFailureTracesRetryAndDepthLi
     } else {
       EXPECT_EQ(execution.ExceptionDiagnostic().stack_trace.back().function, "calculate");
     }
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
   }
   const auto second = NativeInstance::Instantiate(isolate, *image);
   ASSERT_TRUE(second.has_value());
@@ -134,12 +134,12 @@ TEST(NativeGlobalTest, ScalarLazyInitializationKeepsFailureTracesRetryAndDepthLi
   ASSERT_NE(calculate, functions.end());
   const auto function_index = static_cast<std::uint32_t>(calculate - functions.begin());
   for (auto& frame : frames) {
-    ASSERT_EQ(nested.Enter(frame, function_index), ExecutionStatus::Returned);
+    nested.MaterializeFrame(frame, function_index);
   }
   const std::array divisor{Integer(1)};
   EXPECT_EQ(Execute(GLOBAL_LEAF_ENTRY, nested, divisor, output), ExecutionStatus::StackOverflow);
-  EXPECT_EQ(nested.frame_count(), frames.size());
-  while (nested.frame_count() != 0) { nested.Exit(); }
+  EXPECT_EQ(nested.current_frame(), &frames.back());
+  while (nested.current_frame() != nullptr) { nested.Exit(); }
   ASSERT_EQ(Execute(GLOBAL_LEAF_ENTRY, nested, divisor, output), ExecutionStatus::Returned);
   EXPECT_EQ(std::bit_cast<std::int64_t>(output.payload), 0);
   EXPECT_FALSE(nested.HasException());

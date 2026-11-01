@@ -20,6 +20,7 @@
 #include "base/execution_status.h"
 #include "base/member.h"
 #include "base/process_exit.h"
+#include "base/test_protocol.h"
 #include "compiler/testing/report.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/settings.h"
@@ -71,9 +72,9 @@ std::optional<Difference> CopyDifference(const runtime::MemberTable& layouts,
   while (!pending.empty()) {
     const auto [source, target] = pending.back();
     pending.pop_back();
-    const auto path = layouts.ReadPublicField(source, "path");
-    const auto actual = layouts.ReadPublicField(source, "actual");
-    const auto children = layouts.ReadPublicField(source, "children");
+    const auto path = layouts.ReadPublicField(source, test_fields::kPath);
+    const auto actual = layouts.ReadPublicField(source, test_fields::kActual);
+    const auto children = layouts.ReadPublicField(source, test_fields::kChildren);
     if (!path.IsString() || !actual.IsString() || !children.IsObject()) {
       target->actual = "<invalid difference>";
       continue;
@@ -421,11 +422,12 @@ TestError Suite::Describe(const runtime::ExecutionResult& result, TestPhase phas
     error.message = output.str();
   }
   const auto& layouts = instance_->members();
-  error.difference = CopyDifference(layouts, layouts.ReadPublicField(result.value, "difference"));
+  error.difference =
+      CopyDifference(layouts, layouts.ReadPublicField(result.value, test_fields::kDifference));
   if (error.difference) {
-    error.category = "TestFailure";
+    error.category = test_fields::kFailureType;
   }
-  const auto* message = layouts.Find(result.value, "message");
+  const auto* message = layouts.Find(result.value, test_fields::kMessage);
   if (message != nullptr && message->kind == MemberKind::Field) {
     const auto value = runtime::Heap::GetField(*result.value.AsObject(), message->target);
     if (value && value->IsString()) {
@@ -445,13 +447,12 @@ void Suite::Invoke(const Callback& callback,
   if (phase != TestPhase::Body) {
     hook_invocations_.emplace(invocation, callback.id);
   }
-  const runtime::ExecutionContextScope context(isolate_->scheduler(),
-                                               runtime::ExecutionContext{
-                                                   .session = options_.session,
-                                                   .suite = options_.suite,
-                                                   .scope = scope.id,
-                                                   .invocation = invocation,
-                                               });
+  const runtime::ExecutionContextScope context(isolate_->scheduler(), runtime::ExecutionContext{
+                                                                          .session = kSession,
+                                                                          .suite = options_.suite,
+                                                                          .scope = scope.id,
+                                                                          .invocation = invocation,
+                                                                      });
   scope.heartbeat = runtime::FutureScheduler::Clock::now();
   const bool cleanup = IsCleanupPhase(phase);
   if (!cleanup && options_.is_cancelled && options_.is_cancelled()) {
@@ -600,13 +601,12 @@ void Suite::RunGroup(Node& group,
 }
 
 SuiteResult Suite::Run() {
-  const runtime::ExecutionContextScope context(isolate_->scheduler(),
-                                               runtime::ExecutionContext{
-                                                   .session = options_.session,
-                                                   .suite = options_.suite,
-                                                   .scope = 0,
-                                                   .invocation = 0,
-                                               });
+  const runtime::ExecutionContextScope context(isolate_->scheduler(), runtime::ExecutionContext{
+                                                                          .session = kSession,
+                                                                          .suite = options_.suite,
+                                                                          .scope = 0,
+                                                                          .invocation = 0,
+                                                                      });
   root_.heartbeat = runtime::FutureScheduler::Clock::now();
   if (options_.is_cancelled && options_.is_cancelled()) {
     RecordError(WaitFailure(WaitStatus::Cancelled), TestPhase::Registration, result_.errors);
@@ -660,7 +660,7 @@ void Suite::Unhandled(const runtime::Future& future, runtime::Value value) {
   (void)value;
   const auto& completion = future.result();
   const auto& origin = completion.diagnostic.origin.context;
-  if (!origin || origin->session != options_.session || origin->suite != options_.suite) {
+  if (!origin || origin->session != kSession || origin->suite != options_.suite) {
     DeliverError(completion, 0, TestPhase::Registration);
     return;
   }

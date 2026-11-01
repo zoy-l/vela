@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "base/layout_description.h"
-#include "compiler/ir/preparation_test_support.h"
+#include "compiler/test_support/preparation_test_support.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/isolate/layout_transaction.h"
 #include "runtime/isolate/program_layouts.h"

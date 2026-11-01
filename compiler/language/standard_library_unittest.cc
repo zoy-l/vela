@@ -7,9 +7,9 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/modules/source_loader.h"
-#include "compiler/frontend/typing/checker_test_support.h"
+#include "compiler/test_support/checker_test_support.h"
+#include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_context.h"
@@ -177,7 +177,8 @@ TEST(StandardClockTest, DateNowReturnsIntegerUnixMilliseconds) {
 
 TEST(StandardClockTest, PerformanceNowReturnsFractionalMonotonicMilliseconds) {
   runtime::Isolate isolate;
-  const auto compiled = test::CompileSource("func main(): double { return performance.now(); }", isolate);
+  const auto compiled =
+      test::CompileSource("func main(): double { return performance.now(); }", isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto before =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch())
@@ -197,7 +198,7 @@ TEST(StandardLibraryTest, MapAllocatesOnlyOneResultArray) {
     const values = [1, 2, 3]; const mapped = values.map(value => value + 1);
     return mapped[0];
   })",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   auto& heap = isolate.heap();
   const auto before = heap.object_count();
@@ -397,19 +398,22 @@ double HostClock(runtime::NativeContext& /*unused*/) noexcept {
 TEST(StandardLibraryTest, ValidatesStaticExternalBindingsAndUsesExplicitHostRegistration) {
   runtime::Isolate isolate;
   ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<HostClock>("performance.now")));
-  const auto compiled = test::CompileSource("func main(): double { return performance.now(); }", isolate);
+  const auto compiled =
+      test::CompileSource("func main(): double { return performance.now(); }", isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto result = test::Execute(*compiled.instance, "main");
   ASSERT_TRUE(result.Succeeded());
   EXPECT_DOUBLE_EQ(result.value.AsDouble(), 42.0);
-  EXPECT_FALSE(test::CompileSource("class Host { static external func missing(): int = 'missing'; } func "
-                             "main(): int { return Host.missing(); }",
-                             isolate)
-                   .Succeeded());
-  EXPECT_FALSE(test::CompileSource("class Host { static external func clock(value: int): int = "
-                             "'performance.now'; } func main(): int { return Host.clock(1); }",
-                             isolate)
-                   .Succeeded());
+  EXPECT_FALSE(
+      test::CompileSource("class Host { static external func missing(): int = 'missing'; } func "
+                          "main(): int { return Host.missing(); }",
+                          isolate)
+          .Succeeded());
+  EXPECT_FALSE(
+      test::CompileSource("class Host { static external func clock(value: int): int = "
+                          "'performance.now'; } func main(): int { return Host.clock(1); }",
+                          isolate)
+          .Succeeded());
 }
 
 }  // namespace

@@ -8,7 +8,6 @@ enum class Opcode : std::uint8_t {
   LoadNull,
   LoadBool,
   LoadInt,
-  LoadIntConstant,
   LoadDouble,
   Move,
   AddInt,

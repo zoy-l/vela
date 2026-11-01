@@ -153,7 +153,7 @@ void StartReleasedTask(Isolate& isolate, const NativeImage& image, Entry entry,
 
 void ExpectPendingException(Isolate& isolate, NativeExecution& execution,
                             ExecutionStatus status, std::string_view message) {
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
   ASSERT_TRUE(execution.HasException());
   isolate.heap().Collect();
   const auto& exception = ExceptionData::From(*execution.pending_exception().AsObject());
@@ -170,7 +170,7 @@ void ExpectIntegerOperations(Entry entry, NativeExecution& execution,
     ASSERT_EQ(Execute(entry, execution, arguments, result), ExecutionStatus::Returned);
     EXPECT_EQ(result.kind, NativeValueKind::Integer);
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42);
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
     EXPECT_FALSE(execution.HasException());
   }
 }
@@ -190,7 +190,7 @@ void CompleteOnHostThread(Isolate& isolate, Future& future,
   std::thread worker([&] { completed.store(producer.Complete(Value::Integer(value)).has_value()); });
   const auto pumped = isolate.scheduler().PumpUntil(future, FuturePumpMode::WaitForHost);
   worker.join();
-  ASSERT_TRUE(pumped);
+  ASSERT_EQ(pumped, FuturePumpResult::Completed);
   EXPECT_TRUE(completed.load());
 }
 
@@ -229,7 +229,7 @@ TEST(NativeHostTest, OptimizedIntegerCallsLoopsAndShiftSemantics) {
     ASSERT_EQ(Execute(INTEGER_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
     EXPECT_EQ(result.kind, NativeValueKind::Integer);
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), values[3]);
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
   }
 }
 
@@ -252,7 +252,7 @@ TEST(NativeHostTest, ErrorsAndDepthLimitsCleanUpAllNativeFrames) {
     const std::array arguments{Integer(item.operation), Integer(item.left), Integer(item.right)};
     NativeValue result;
     EXPECT_EQ(Execute(INTEGER_ENTRY, execution, arguments, result), item.status);
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
   }
 }
 
@@ -266,21 +266,21 @@ TEST(NativeHostTest, ScalarEntryPreservesNestedExceptionsAndChecksDepthBeforeExe
   EXPECT_EQ(static_cast<ExecutionStatus>(BOOL_ENTRY(nullptr, arguments.data(), 1, &result)),
             ExecutionStatus::InvalidIsolate);
   std::array<NativeTraceFrame, vela::kMaxCallFrames> frames;
-  ASSERT_EQ(execution.Enter(frames.front(), 0), ExecutionStatus::Returned);
+  execution.MaterializeFrame(frames.front(), 0);
   ASSERT_EQ(execution.HandleFailure(ExecutionStatus::DivisionByZero),
             ExecutionStatus::DivisionByZero);
   const auto pending = execution.pending_exception().AsObject();
   ASSERT_EQ(Execute(BOOL_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
   EXPECT_EQ(execution.pending_exception().AsObject(), pending);
   for (std::size_t index = 1; index < frames.size(); ++index) {
-    ASSERT_EQ(execution.Enter(frames[index], 0), ExecutionStatus::Returned);
+    execution.MaterializeFrame(frames[index], 0);
   }
   EXPECT_EQ(Execute(BOOL_ENTRY, execution, arguments, result), ExecutionStatus::StackOverflow);
-  EXPECT_EQ(execution.frame_count(), frames.size());
-  while (execution.frame_count() != 0) { execution.Exit(); }
+  EXPECT_EQ(execution.current_frame(), &frames.back());
+  while (execution.current_frame() != nullptr) { execution.Exit(); }
   ASSERT_EQ(Execute(BOOL_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
   EXPECT_FALSE(execution.HasException());
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
 TEST(NativeHostTest, FloatingValuesPreserveNanInfinityAndSignedZero) {
@@ -343,7 +343,7 @@ TEST(NativeHostTest, ExportBoundariesRejectWrongCountsAndKinds) {
   EXPECT_EQ(Execute(BOOL_ENTRY, execution, wrong, result), ExecutionStatus::TypeError);
   const std::array malformed{NativeValue{.payload = 2, .kind = NativeValueKind::Boolean}};
   EXPECT_EQ(Execute(BOOL_ENTRY, execution, malformed, result), ExecutionStatus::TypeError);
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
 TEST(NativeHostTest, ReferencesSurviveEveryAllocationAcrossCallsFieldsAndArrayGrowth) {
@@ -356,7 +356,7 @@ TEST(NativeHostTest, ReferencesSurviveEveryAllocationAcrossCallsFieldsAndArrayGr
   ASSERT_EQ(Execute(REFERENCE_ENTRY, execution, {}, result), ExecutionStatus::Returned);
   EXPECT_EQ(result.kind, NativeValueKind::Integer);
   EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 18);
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
   const auto layouts = isolate.layout_counts();
   EXPECT_LT(isolate.heap().object_count(), 100U);
   const auto second = NativeInstance::Instantiate(isolate, *image);
@@ -422,7 +422,7 @@ TEST(NativeHostTest, LazyGlobalsRetryFailuresAndKeepEachInstancesStateIndependen
     const std::array arguments{Integer(operation)};
     ASSERT_EQ(Execute(GLOBAL_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
   }
   ASSERT_EQ(Execute(GLOBAL_ENTRY, execution, count, result), ExecutionStatus::Returned);
   EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 2);
@@ -464,7 +464,7 @@ TEST(NativeHostTest, ImportedFuturePayloadAndErrorAreCheckedWithoutVmExecution) 
     RootRange root(isolate.heap(), &value, 1);
     auto* future = Heap::GetFuture(*value.AsObject());
     ASSERT_NE(future, nullptr);
-    ASSERT_TRUE(isolate.scheduler().PumpUntil(*future));
+    ASSERT_EQ(isolate.scheduler().PumpUntil(*future), FuturePumpResult::Completed);
     if (operation == 0) {
       ASSERT_TRUE(future->value().has_value());
       EXPECT_EQ(future->value()->AsInteger(), 42);
@@ -475,7 +475,7 @@ TEST(NativeHostTest, ImportedFuturePayloadAndErrorAreCheckedWithoutVmExecution) 
       EXPECT_EQ(diagnostic->status, ExecutionStatus::TypeError);
       ASSERT_FALSE(diagnostic->stack_trace.empty());
     }
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
   }
 }
 
@@ -488,10 +488,10 @@ TEST(NativeHostTest, LargeTypedFramesUseRecoverableStorageAndReleaseItOnEveryExi
   NativeValue result;
   ASSERT_EQ(Execute(LARGE_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
   EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 205120);
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
   const std::array overflow{Integer(std::numeric_limits<std::int64_t>::max())};
   EXPECT_EQ(Execute(LARGE_ENTRY, execution, overflow, result), ExecutionStatus::IntegerOverflow);
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
 TEST(NativeHostTest, DatesAndRegularExpressionsUseSharedRuntimeSemanticsUnderGcPressure) {
@@ -521,7 +521,7 @@ TEST(NativeHostTest, ClosuresSharedMutationAndBoundInterfaceMethodsCallNativeTar
     ASSERT_EQ(Execute(CALLABLE_ENTRY, execution, arguments, result), ExecutionStatus::Returned)
         << operation;
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
   }
 }
 
@@ -604,10 +604,10 @@ TEST_F(NativeAsyncTest, NativeAwaitResumesTypedLocalsExceptionsFinallyAndEnumPay
       EXPECT_EQ(std::bit_cast<std::int64_t>(trace.payload), 1);
     }
     if (operation == 2 || operation == 3) { EXPECT_TRUE(future->IsCompleted()); }
-    ASSERT_TRUE(isolate.scheduler().PumpUntil(*future));
+    ASSERT_EQ(isolate.scheduler().PumpUntil(*future), FuturePumpResult::Completed);
     SCOPED_TRACE(operation);
     ExpectFutureAnswer(isolate, *future);
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
   }
 }
 
@@ -622,7 +622,7 @@ TEST(NativeHostTest, SuspendedNativeTasksRetainStateAfterExternalInstanceRelease
     EXPECT_GT(isolate.scheduler().suspended_frame_count(), 0U);
     isolate.heap().Collect();
     auto* future = Heap::GetFuture(*value.AsObject());
-    ASSERT_TRUE(isolate.scheduler().PumpUntil(*future));
+    ASSERT_EQ(isolate.scheduler().PumpUntil(*future), FuturePumpResult::Completed);
     ExpectFutureAnswer(isolate, *future);
   }
   isolate.heap().Collect();
@@ -637,7 +637,7 @@ TEST_F(NativeAsyncTest, NativeAsyncErrorsKeepOriginalSourceAndAwaitBoundaries) {
   auto value = DecodeNativeValue(result);
   RootRange root(isolate.heap(), &value, 1);
   auto* future = Heap::GetFuture(*value.AsObject());
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(*future));
+  ASSERT_EQ(isolate.scheduler().PumpUntil(*future), FuturePumpResult::Completed);
   ASSERT_EQ(future->state(), FutureState::Failed);
   const auto diagnostic = future->error_diagnostic();
   ASSERT_TRUE(diagnostic.has_value());
@@ -678,7 +678,7 @@ TEST_F(NativeAsyncTest, NativeAwaitSnapshotsRetainOnlyLiveDefinitions) {
   EXPECT_LT(isolate.scheduler().saved_state_bytes(), 1024U);
   isolate.heap().Collect();
   auto* future = Heap::GetFuture(*value.AsObject());
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(*future));
+  ASSERT_EQ(isolate.scheduler().PumpUntil(*future), FuturePumpResult::Completed);
   ExpectFutureAnswer(isolate, *future);
 }
 

@@ -1,8 +1,11 @@
 #include "compiler/frontend/syntax/lexer.h"
+#include "compiler/frontend/syntax/names.h"
 
+#include <array>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <utility>
 #include "base/utf8.h"
@@ -17,13 +20,13 @@ namespace {
 constexpr std::uint32_t kHexLetterOffset = 10;
 constexpr std::size_t kBracedUnicodeDigits = 6;
 
-const absl::flat_hash_map<std::string_view, TokenKind> kKeywords = {
+constexpr auto kKeywords = std::to_array<std::pair<std::string_view, TokenKind>>({
     {"type", TokenKind::Type},
     {"private", TokenKind::Private},
     {"static", TokenKind::Static},
     {"constructor", TokenKind::Constructor},
     {"extends", TokenKind::Extends},
-    {"super", TokenKind::Super},
+    {kSuperName, TokenKind::Super},
     {"override", TokenKind::Override},
     {"get", TokenKind::Get},
     {"set", TokenKind::Set},
@@ -62,7 +65,10 @@ const absl::flat_hash_map<std::string_view, TokenKind> kKeywords = {
     {"case", TokenKind::Case},
     {"default", TokenKind::Default},
     {kNullTypeName, TokenKind::Null},
-};
+});
+
+const absl::flat_hash_map<std::string_view, TokenKind> kKeywordKinds(kKeywords.begin(),
+                                                                     kKeywords.end());
 
 bool IsIdentifierStart(char character) {
   const auto value = static_cast<unsigned char>(character);
@@ -80,6 +86,10 @@ bool IsDigit(char character) {
 }
 
 }  // namespace
+
+std::span<const std::pair<std::string_view, TokenKind>> Keywords() noexcept {
+  return kKeywords;
+}
 
 LexResult Lexer::Tokenize() {
   while (!IsAtEnd()) {
@@ -374,8 +384,8 @@ void Lexer::ScanIdentifier() {
     Advance();
   }
   const std::string_view text = source_.substr(start, current_ - start);
-  const auto keyword = kKeywords.find(text);
-  AddToken(keyword == kKeywords.end() ? TokenKind::Identifier : keyword->second, start);
+  const auto keyword = kKeywordKinds.find(text);
+  AddToken(keyword == kKeywordKinds.end() ? TokenKind::Identifier : keyword->second, start);
 }
 
 void Lexer::ScanNumber() {

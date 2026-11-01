@@ -18,7 +18,7 @@
 #include "base/layout_description.h"
 #include "base/member.h"
 #include "base/opcode.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::compiler::aot {

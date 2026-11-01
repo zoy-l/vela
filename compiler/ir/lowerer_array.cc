@@ -4,13 +4,14 @@
 #include <vector>
 #include "base/builtin.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 
 namespace vela::ir {
 
 Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& expression) {
+  const auto& result_type = model_.expression_types.at(&expression);
   auto builtin = model_.builtin_calls.at(&expression);
   const auto location = expression.location;
   const bool splice = builtin == Builtin::ArraySplice;
@@ -20,7 +21,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& ex
   if (!splice && expression.arguments.empty()) {
     const auto result = AllocateTemporary(location);
     EmitBuiltinCall(Builtin::ArrayLength, result, base, location);
-    return {.reg = result, .type = model_.expression_types.at(&expression)};
+    return {.reg = result, .type = result_type};
   }
   if (splice) {
     Emit({.opcode = Opcode::LoadInt, .dst = base + 1, .location = location});
@@ -74,7 +75,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayMutation(const frontend::Expression& ex
   }
   const auto result = AllocateTemporary(location);
   EmitBuiltinCall(builtin, result, base, location);
-  return {.reg = result, .type = model_.expression_types.at(&expression)};
+  return {.reg = result, .type = result_type};
 }
 
 std::uint32_t Lowerer::RegisterArrayType(const frontend::TypeDescriptor& type) {
@@ -133,6 +134,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayLiteral(const frontend::Expression& exp
 }
 
 Lowerer::LoweredValue Lowerer::LowerIndex(const frontend::Expression& expression) {
+  const auto& result_type = model_.expression_types.at(&expression);
   const LoweredValue array = LowerExpression(*expression.object);
   const RegisterId result = AllocateTemporary(expression.location);
   if (expression.null_safe) {
@@ -141,14 +143,14 @@ Lowerer::LoweredValue Lowerer::LowerIndex(const frontend::Expression& expression
     const LoweredValue index = LowerExpression(*expression.index);
     EmitIndexRead(result, array, index.reg, expression.location);
     FinishNullSafe(null_jump, result, expression.location);
-    return {.reg = result, .type = model_.expression_types.at(&expression)};
+    return {.reg = result, .type = result_type};
   }
   const LoweredValue stable_array = SnapshotBefore(array, *expression.index);
   const LoweredValue index = LowerExpression(*expression.index);
   EmitIndexRead(result, stable_array, index.reg, expression.location);
   return {
       .reg = result,
-      .type = model_.expression_types.at(&expression),
+      .type = result_type,
   };
 }
 

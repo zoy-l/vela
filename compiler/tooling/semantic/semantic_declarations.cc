@@ -7,7 +7,7 @@
 
 #include "compiler/frontend/builtins/standard_environment.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/tooling/documentation/builtin_documentation.h"
 #include "compiler/tooling/documentation/documentation.h"
 
@@ -202,7 +202,7 @@ std::string SemanticIndex::DefaultValue(const Expression& expression) const {
     case Expression::Kind::BooleanLiteral:
     case Expression::Kind::StringLiteral:
     case Expression::Kind::NullLiteral:
-      return std::string(source.text.text().substr(token.offset, token.length));
+      return std::string(source.text.substr(token.offset, token.length));
     case Expression::Kind::Unary:
       return token.lexeme + DefaultValue(*expression.operand);
     default:

@@ -1,8 +1,10 @@
 #include "base/builtin.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -10,6 +12,7 @@
 #include <string_view>
 #include <utility>
 
+#include "compiler/frontend/builtins/async_builtins.h"
 #include "compiler/frontend/builtins/builtins.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/type_names.h"
@@ -26,7 +29,13 @@ std::unique_ptr<Expression> Name(std::string text, SourceLocation location) {
 }
 
 TypeName NamedType(const TypeDescriptor& type, SourceLocation location) {
-  return {.name = std::string(type.name), .location = location, .arguments = {}, .parameter = {}};
+  return {
+      .name = std::string(type.name),
+      .location = location,
+      .kind = TypeName::Kind::Named,
+      .arguments = {},
+      .parameter = {},
+  };
 }
 
 }  // namespace
@@ -60,13 +69,15 @@ std::optional<TypeChecker::FunctionInfo> TypeChecker::InferAsyncMethod(const Typ
   signature.return_type = {.kind = Type::Kind::Void, .name = kVoidTypeName};
   if ((receiver.kind == Type::Kind::Timer || receiver.kind == Type::Kind::CancellationToken) &&
       name == "cancel") {
-    return signature;
+    return MakeAsyncSignature(*FindAsyncMember(receiver.kind, MemberStorage::Instance, name),
+                              signature.return_type, {});
   }
   if (receiver.kind == Type::Kind::Completer && (name == "complete" || name == "completeError")) {
     const auto element = name == "completeError" ? types_.at(kErrorTypeName)
                                                  : generic_arguments_.at(receiver.name).front();
     if (element.kind != Type::Kind::Void) {
-      signature.AddParameter(name == "complete" ? "value" : "error", element);
+      return MakeAsyncSignature(*FindAsyncMember(receiver.kind, MemberStorage::Instance, name),
+                                signature.return_type, std::array{element});
     }
     return signature;
   }
@@ -108,15 +119,16 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
   const auto key = std::string("$builtin.") + std::string(receiver.name) + "." + expression.text +
                    "." + std::string(type.name);
   if (const auto found = builtin_function_ids_.find(key); found != builtin_function_ids_.end()) {
-    builtin_method_values_.insert_or_assign(&expression, found->second);
-    const auto& generated = generated_functions_.at(found->second);
+    facts_.builtin_method_values.insert_or_assign(&expression, found->second);
+    const auto& generated = facts_.generated_functions.at(found->second);
     const auto* returned = generated.declaration->body->statements.front()->expression.get();
-    DiagnoseDynamicConversion(expression, signature.return_type, expression_types_.at(returned));
+    DiagnoseDynamicConversion(expression, signature.return_type,
+                              facts_.expression_types.at(returned));
     for (const auto& argument : returned->arguments) {
-      const auto conversion = checked_conversions_.find(argument.value.get());
-      if (conversion != checked_conversions_.end()) {
+      const auto conversion = facts_.checked_conversions.find(argument.value.get());
+      if (conversion != facts_.checked_conversions.end()) {
         DiagnoseDynamicConversion(expression, conversion->second,
-                                  expression_types_.at(argument.value.get()));
+                                  facts_.expression_types.at(argument.value.get()));
       }
     }
     return type;
@@ -172,15 +184,15 @@ TypeChecker::Type TypeChecker::GenerateBuiltinMethod(const Expression& expressio
     function->body->statements.push_back(std::move(end));
   }
 
-  const auto index = generated_functions_.size();
+  const auto index = facts_.generated_functions.size();
   builtin_function_ids_.emplace(key, index);
-  builtin_method_values_.insert_or_assign(&expression, index);
-  generated_functions_.push_back(
+  facts_.builtin_method_values.insert_or_assign(&expression, index);
+  facts_.generated_functions.push_back(
       {.declaration = std::move(function), .signature = std::move(implementation)});
   const auto diagnostics = diagnostics_.size();
   CheckGeneratedFunction(index);
-  const auto actual = expression_types_.find(invocation);
-  if (signature.return_type.kind == Type::Kind::Void && actual != expression_types_.end() &&
+  const auto actual = facts_.expression_types.find(invocation);
+  if (signature.return_type.kind == Type::Kind::Void && actual != facts_.expression_types.end() &&
       IsValid(actual->second) && actual->second.kind != Type::Kind::Void) {
     AddDiagnostic(expression.location, "builtin method result does not match the function type");
   }

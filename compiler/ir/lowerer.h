@@ -21,7 +21,8 @@
 #include "base/native_program_mode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/syntax/token.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/persistent_ids.h"
@@ -55,7 +56,7 @@ class Lowerer final {
   Lowerer(Lowerer&&) = delete;
   Lowerer& operator=(Lowerer&&) = delete;
 
-  [[nodiscard]] LoweringResult Lower();
+  [[nodiscard]] LoweringResult Lower() &&;
 
  private:
   struct Local final {
@@ -105,6 +106,8 @@ class Lowerer final {
   enum class GlobalKind : std::uint8_t { Module, StaticField };
   void AddGlobalId(const std::string& name, GlobalKind kind);
   void StoreFunction(Function function);
+  void RecordParameterValueTypes(Function& function);
+  void BeginFunctionBody(Function& function, const frontend::Class* owner = nullptr);
   void LowerInitializer(std::string name,
                         const frontend::Expression& initializer,
                         const frontend::TypeDescriptor& type,
@@ -239,9 +242,10 @@ class Lowerer final {
   [[nodiscard]] static std::optional<FieldId> FindField(const frontend::ClassDescriptor& class_info,
                                                         std::string_view name);
   void Emit(Instruction instruction);
+  void BindJump(std::size_t jump);
   void RecordValueType(RegisterId reg, const frontend::TypeDescriptor& type);
   void RecordInstructionValueType(const Instruction& instruction);
-  void RecordProgramValueTypes();
+  void ResolveCallValueTypes();
   void PushScope();
   void PopScope();
   void DeclareLocal(std::string_view name,
@@ -369,10 +373,10 @@ class Lowerer final {
                            RegisterId value,
                            frontend::SourceLocation location);
 
+  [[nodiscard]] bool HasAssignments(const frontend::Expression& expression);
   LoweredValue LowerBinary(const frontend::Expression& expression);
   LoweredValue LowerIntegerAdditionChain(const frontend::Expression& expression);
-  LoweredValue LowerCompoundAssignment(const frontend::Expression& expression,
-                                       std::string_view operation);
+  LoweredValue LowerCompoundAssignment(const frontend::Expression& expression);
   LoweredValue LowerBinaryValue(const frontend::Expression& expression);
   LoweredValue LowerConditional(const frontend::Expression& expression);
   // 两条分支分别延迟生成，保持短路求值；回调不做类型擦除或堆分配。
@@ -390,18 +394,16 @@ class Lowerer final {
     Emit({.opcode = Opcode::Move, .dst = result, .lhs = initial.reg, .location = location});
     const auto end_jump = current_function_->instructions.size();
     Emit({.opcode = Opcode::Jump, .location = location});
-    current_function_->instructions.at(alternate_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
+    BindJump(alternate_jump);
     const auto alternative = second();
     Emit({.opcode = Opcode::Move, .dst = result, .lhs = alternative.reg, .location = location});
-    current_function_->instructions.at(end_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
+    BindJump(end_jump);
     return {.reg = result, .type = model_.expression_types.at(&expression)};
   }
 
-  static std::optional<Opcode> SelectDoubleOpcode(std::string_view operation);
-  static std::optional<Opcode> SelectBinaryOpcode(std::string_view operation,
-                                                  const frontend::TypeDescriptor& type);
+  static Opcode SelectDoubleOpcode(frontend::TokenKind operation);
+  static Opcode SelectBinaryOpcode(frontend::TokenKind operation,
+                                   const frontend::TypeDescriptor& type);
 
   void LowerArguments(const frontend::Expression& expression, RegisterId base);
 
@@ -430,7 +432,15 @@ class Lowerer final {
   absl::flat_hash_map<std::string, std::uint32_t> array_type_ids_;
   absl::flat_hash_map<std::uint64_t, std::uint32_t> double_constant_ids_;
   absl::flat_hash_map<std::string, std::uint32_t> string_constant_ids_;
+  absl::flat_hash_map<const frontend::Expression*, bool> assignment_effects_;
+  struct CallValueType final {
+    std::uint32_t function;
+    RegisterId result;
+    std::uint32_t target;
+  };
+  std::vector<CallValueType> call_value_types_;
   Function* current_function_ = nullptr;
+  const frontend::Class* current_owner_ = nullptr;
   std::vector<LocalMap> scopes_;
   std::vector<ControlTargets> controls_;
   std::vector<Finally> finalizers_;

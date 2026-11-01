@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 
@@ -105,8 +105,7 @@ void Lowerer::LowerConstructorInitializers(const frontend::ClassDescriptor& owne
         .location = field.location,
     });
     if (provided) {
-      current_function_->instructions.at(*provided).index =
-          static_cast<std::uint32_t>(current_function_->instructions.size());
+      BindJump(*provided);
     }
   }
   if (source.base_class && !model_.explicit_super_constructors.contains(owner.type.name)) {
@@ -127,7 +126,6 @@ ClassId Lowerer::RegisterEnumType(const frontend::TypeDescriptor& type) {
   if (declarations_ != nullptr) {
     layout.declaration = declarations_->nominals.at(name);
   }
-  layout.field_order = {"$value"};
   layout.field_types = {
       {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName},
   };
@@ -193,14 +191,7 @@ void Lowerer::LowerInitializer(std::string name,
   function.return_type = type;
   function.signature.emplace();
   function.signature->result = RegisterRuntimeType(type);
-  current_function_ = &function;
-  binding_registers_.clear();
-  next_register_ = 0;
-  scopes_.clear();
-  controls_.clear();
-  finalizers_.clear();
-  current_handler_.reset();
-  double_constant_ids_.clear();
+  BeginFunctionBody(function);
   const auto value = LowerExpression(initializer);
   Emit({.opcode = Opcode::Return, .dst = value.reg, .location = location});
   function.register_count = next_register_;
@@ -309,8 +300,6 @@ void Lowerer::EmitConstructorInitialization(const frontend::ClassDescriptor& inf
   } else {
     // 封闭模式按实际调用生成；可重载类已登记入口，供存留代码继续构造。
     target = AddFunctionId(name);
-    program_.functions.resize(persistent_ == nullptr ? function_ids_.size()
-                                                     : persistent_->functions.size());
     pending_constructors_.push_back(&source);
   }
   const auto count = generated ? provided.size() : arguments.size();

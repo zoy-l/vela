@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <ranges>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
@@ -15,9 +16,9 @@ namespace {
 
 class CaptureAnalysis final {
  public:
-  absl::flat_hash_set<const void*> Run(const Program& program);
-  absl::flat_hash_set<const void*> Run(const Function& function);
-  absl::flat_hash_set<const void*> Run(const Class& owner);
+  absl::flat_hash_set<const void*> Run(const Program& program) &&;
+  absl::flat_hash_set<const void*> Run(const Function& function) &&;
+  absl::flat_hash_set<const void*> Run(const Class& owner) &&;
 
  private:
   struct Declaration final {
@@ -26,6 +27,7 @@ class CaptureAnalysis final {
     std::size_t lambda_depth = 0;
   };
   void Walk(const Function& function);
+  void Walk(const Class& owner);
   void Walk(const Statement* statement);
   void Walk(const Expression* expression);
   void WalkScoped(const Statement* statement);
@@ -148,7 +150,7 @@ void CaptureAnalysis::Walk(const Statement* statement) {
   }
 }
 
-absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Program& program) {
+absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Program& program) && {
   for (const auto& global : program.globals) {
     Walk(global.initializer.get());
   }
@@ -156,17 +158,17 @@ absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Program& program) {
     Walk(function);
   }
   for (const auto& owner : program.classes) {
-    (void)Run(owner);
+    Walk(owner);
   }
-  return captured_;
+  return std::move(captured_);
 }
 
-absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Function& function) {
+absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Function& function) && {
   Walk(function);
-  return captured_;
+  return std::move(captured_);
 }
 
-absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Class& owner) {
+void CaptureAnalysis::Walk(const Class& owner) {
   for (const auto& field : owner.fields) {
     Walk(field.initializer.get());
   }
@@ -176,7 +178,11 @@ absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Class& owner) {
   if (owner.constructor) {
     Walk(*owner.constructor);
   }
-  return captured_;
+}
+
+absl::flat_hash_set<const void*> CaptureAnalysis::Run(const Class& owner) && {
+  Walk(owner);
+  return std::move(captured_);
 }
 
 }  // namespace

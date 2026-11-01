@@ -14,7 +14,6 @@
 #include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
-#include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/ast_clone.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/repl/repl_source.h"
@@ -72,10 +71,6 @@ DevelopmentSubmission DevelopmentRepl::Submit(std::string_view input) {
   }
   const auto entry = prepared->entry;
   auto& parsed = prepared->parsed;
-  // 旧交互入口的机器码由闭包和续延保活；新图不再绑定或检查历史语句。
-  std::erase_if(parsed.program.functions, [](const auto& function) {
-    return function.role == frontend::Function::Role::RetiredEntry;
-  });
   auto syntax = std::make_shared<const frontend::ParsedSource>(frontend::ParsedSource{
       .source = parsed.source,
       .program = std::move(parsed.program),

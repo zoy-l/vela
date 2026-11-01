@@ -6,6 +6,7 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -57,6 +58,13 @@ enum class NativeEntryKind : std::uint8_t {
   Leaf,
 };
 
+// 同一分流的 initial、resume、leaf 和恢复入口共享不可变分析结果。
+struct FunctionEmissionFacts final {
+  std::vector<std::optional<std::uint32_t>> field_accesses;
+  std::vector<std::optional<CallableTarget>> direct_calls;
+  std::vector<std::uint64_t> array_element_bits;
+};
+
 class FunctionEmitter final {
  public:
   FunctionEmitter(llvm::Module& module,
@@ -67,6 +75,7 @@ class FunctionEmitter final {
                   const EscapePlan& escape,
                   std::span<const GeneratedFunction> generated,
                   const NativeRootPlan& roots,
+                  const FunctionEmissionFacts& facts,
                   NativeEntryKind kind,
                   NativeCodeTier tier)
       : module_(module),
@@ -74,14 +83,17 @@ class FunctionEmitter final {
         calls_(calls),
         image_(image),
         escape_(escape),
-        source_(escape.function),
+        source_(escape.function.get()),
         origins_(escape.origins),
         function_index_(function_index),
+        field_accesses_(facts.field_accesses),
+        direct_calls_(facts.direct_calls),
         generated_(generated),
         body_(SelectBody(generated.subspan(function_index).front(), kind)),
         kind_(kind),
         tier_(tier),
         builder_(module.getContext()),
+        array_element_bits_(facts.array_element_bits),
         roots_(roots) {}
 
   std::expected<void, std::string> Emit();
@@ -102,7 +114,9 @@ class FunctionEmitter final {
     GcState,
     FieldPayloads,
     FieldKinds,
+    Count,
   };
+  std::array<llvm::MDNode*, static_cast<std::size_t>(MemoryRegion::Count)> memory_tags_{};
   llvm::MDNode* MemoryTag(MemoryRegion region);
   llvm::LoadInst* LoadMemory(llvm::Type* type, llvm::Value* address, MemoryRegion region);
   llvm::StoreInst* StoreMemory(llvm::Value* value, llvm::Value* address, MemoryRegion region);
@@ -116,7 +130,7 @@ class FunctionEmitter final {
   void PrepareTraceFrame();
   void SetPosition();
   void PrepareRuntimeCall();
-  bool UsesEntrySlot(std::size_t callee) const;
+  bool IsEntrySlotRequired(std::size_t callee) const;
   void PrepareObservableCall();
   void PrepareCallCheckpoint();
   llvm::Value* ControlState();
@@ -125,7 +139,7 @@ class FunctionEmitter final {
   void EmitHostBoundary(HostBorrow change);
   std::uint64_t TracePosition() const;
   void Poll();
-  bool NeedsBoundaryPoll(std::size_t index) const;
+  bool IsBoundaryPollRequired(std::size_t index) const;
   bool HasInlineRuntimePath(std::size_t index) const;
   void PollAfterRuntimeCall();
   static llvm::Function* SelectBody(const GeneratedFunction& function, NativeEntryKind kind);
@@ -158,7 +172,6 @@ class FunctionEmitter final {
   void EmitComparison(const ir::Instruction& instruction);
   void EmitValueEquality(const ir::Instruction& instruction);
   llvm::Value* ByteAddress(llvm::Value* object, std::uint64_t offset);
-  llvm::Value* ProgramData();
   struct StoredValueAddress final {
     llvm::Value* payload;
     llvm::Value* kind;
@@ -176,6 +189,11 @@ class FunctionEmitter final {
                       ir::RegisterId reg,
                       MemoryRegion region = MemoryRegion::Values);
   void EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg);
+  llvm::BasicBlock* EmitFieldReadiness(llvm::Value* storage,
+                                       const ir::Instruction& instruction,
+                                       llvm::Value* slot,
+                                       std::optional<std::uint32_t> count,
+                                       llvm::BasicBlock* unavailable);
   void EmitField(const ir::Instruction& instruction);
   void EmitReloadableField(const ir::Instruction& instruction, llvm::Value* object);
   void EmitOptimizedField(const ir::Instruction& instruction, llvm::Value* object);
@@ -237,8 +255,8 @@ class FunctionEmitter final {
   std::span<const std::size_t> origins_;
   std::size_t function_index_;
   std::size_t instruction_index_ = 0;
-  std::vector<std::optional<std::uint32_t>> field_accesses_;
-  std::vector<std::optional<CallableTarget>> direct_calls_;
+  const std::vector<std::optional<std::uint32_t>>& field_accesses_;
+  const std::vector<std::optional<CallableTarget>>& direct_calls_;
   std::span<const GeneratedFunction> generated_;
   llvm::Function* body_;
   NativeEntryKind kind_;
@@ -279,7 +297,7 @@ class FunctionEmitter final {
   std::uint64_t frame_bytes_ = 0;
   std::uint64_t storage_bytes_ = 0;
   absl::flat_hash_map<std::uint32_t, llvm::Value*> imports_;
-  std::vector<std::uint64_t> array_element_bits_;
+  const std::vector<std::uint64_t>& array_element_bits_;
   const NativeRootPlan& roots_;
 };
 

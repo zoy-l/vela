@@ -950,6 +950,21 @@ class LanguageServerTest(CommandTestCase):
         self.assertTrue(diagnostics[-1]["diagnostics"])
         self.assertEqual(self.diagnostics(messages, library.as_uri())[-1]["diagnostics"], [])
 
+    def test_edit_publishes_only_changed_diagnostics_and_document_version(self) -> None:
+        other = self.directory / "other.vela"
+        source = "func main(): int { return 42; }"
+        messages = self.session([
+            self.open(source), self.open("func other(): int { return 1; }", other.as_uri()),
+            self.change([{"text": "func main(): int { return true; }"}]),
+            request("textDocument/didSave", {"textDocument": {"uri": self.uri}}),
+        ])
+        diagnostics = self.diagnostics(messages)
+        self.assertEqual(len(diagnostics), 2)
+        self.assertEqual(diagnostics[0]["diagnostics"], [])
+        self.assertTrue(diagnostics[1]["diagnostics"])
+        self.assertEqual(diagnostics[1]["version"], 2)
+        self.assertEqual(len(self.diagnostics(messages, other.as_uri())), 1)
+
     def test_formats_without_rewriting_or_executing_the_document(self) -> None:
         source = 'func main():int{print("must not run");return 42;}'
         messages = self.session([

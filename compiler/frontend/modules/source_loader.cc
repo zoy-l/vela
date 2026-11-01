@@ -39,6 +39,69 @@ struct ResolvedPath final {
   std::string requested_key;
 };
 
+using Overlays = absl::flat_hash_map<std::string, std::string_view>;
+using Resolutions = absl::flat_hash_map<std::string, std::string>;
+
+std::vector<FileResolution> FlattenResolutions(Resolutions resolutions) {
+  std::vector<FileResolution> result;
+  result.reserve(resolutions.size());
+  for (auto& [requested, canonical] : resolutions) {
+    result.push_back({.requested_path = requested, .canonical_path = std::move(canonical)});
+  }
+  return result;
+}
+
+template <class Normalize>
+Diagnostics RegisterOverlays(std::span<const SourceInput> inputs,
+                             Overlays& overlays,
+                             Normalize normalize) {
+  Diagnostics diagnostics;
+  for (const auto& input : inputs) {
+    std::string message;
+    auto kind = DiagnosticKind::Source;
+    if (input.path.starts_with(kStandardSourcePrefix) || input.path.starts_with(kSdkSourcePrefix)) {
+      message = "embedded sources cannot be overridden";
+    } else if (const auto path = normalize(Utf8Path(input.path)); !path) {
+      message = path.error();
+      kind = DiagnosticKind::Io;
+    } else if (!overlays.emplace(PathText(path->canonical), input.text).second) {
+      message = "duplicate module source path";
+    }
+    if (!message.empty()) {
+      diagnostics.push_back({
+          .location = {},
+          .message = std::move(message),
+          .source_path = std::string(input.path),
+          .kind = kind,
+      });
+    }
+  }
+  return diagnostics;
+}
+
+std::expected<std::string, std::string> ReadSourceText(const std::filesystem::path& path,
+                                                       std::optional<std::string_view> overlay) {
+  if (overlay) {
+    return std::string(*overlay);
+  }
+  const auto bytes = ReadBinaryFile(path);
+  if (!bytes) {
+    return std::unexpected(bytes.error());
+  }
+  const void* storage = bytes->data();
+  return std::string(static_cast<const char*>(storage), bytes->size());
+}
+
+std::expected<std::filesystem::path, std::string> DiskImportPath(
+    const std::filesystem::path& importer,
+    std::string_view imported) {
+  const auto path = Utf8Path(imported);
+  if (imported.contains(':') && !path.is_absolute()) {
+    return std::unexpected("unsupported module import scheme");
+  }
+  return ResolveImportPath(importer, path);
+}
+
 std::expected<ResolvedPath, std::string> ResolveFilePath(const std::filesystem::path& path,
                                                          ModuleCache& cache) {
   std::error_code error;
@@ -70,18 +133,11 @@ std::expected<std::shared_ptr<const ParsedSource>, std::string> ReadCachedSource
   if (cached != cache.sources.end() && (!overlay || cached->second->source->text == *overlay)) {
     return cached->second;
   }
-  std::string text;
-  if (overlay) {
-    text = *overlay;
-  } else {
-    const auto bytes = ReadBinaryFile(path);
-    if (!bytes) {
-      return std::unexpected(bytes.error());
-    }
-    const void* storage = bytes->data();
-    text.assign(static_cast<const char*>(storage), bytes->size());
+  auto text = ReadSourceText(path, overlay);
+  if (!text) {
+    return std::unexpected(text.error());
   }
-  auto parsed = std::make_shared<const ParsedSource>(ParseSourceSnapshot(std::move(text)));
+  auto parsed = std::make_shared<const ParsedSource>(ParseSourceSnapshot(std::move(*text)));
   cache.sources.insert_or_assign(key, parsed);
   return parsed;
 }
@@ -174,12 +230,12 @@ void SourceCapture::LoadImports(std::size_t index) {
       }
       continue;
     }
-    const auto dependency = Utf8Path(imported.path);
-    if (imported.path.contains(':') && !dependency.is_absolute()) {
-      Error(location, path, "unsupported module import scheme");
+    const auto dependency = DiskImportPath(importer, imported.path);
+    if (!dependency) {
+      Error(location, path, dependency.error());
       return;
     }
-    Load(ResolveImportPath(importer, dependency), location, path, Role::Dependency);
+    Load(*dependency, location, path, Role::Dependency);
     if (!captured_.diagnostics.empty()) {
       return;
     }
@@ -188,28 +244,15 @@ void SourceCapture::LoadImports(std::size_t index) {
 
 CapturedSources SourceCapture::Run(std::span<const std::string> roots,
                                    std::span<const SourceInput> overlays) {
-  for (const auto& input : overlays) {
-    if (input.path.starts_with(kStandardSourcePrefix) || input.path.starts_with(kSdkSourcePrefix)) {
-      Error({}, std::string(input.path), "embedded sources cannot be overridden");
-      continue;
-    }
-    auto path = ResolveFilePath(Utf8Path(input.path), *cache_);
-    if (!path) {
-      Error({}, std::string(input.path), path.error(), DiagnosticKind::Io);
-    } else if (!overlays_.emplace(PathText(path->canonical), input.text).second) {
-      Error({}, std::string(input.path), "duplicate module source path");
-    }
-  }
+  captured_.diagnostics = RegisterOverlays(
+      overlays, overlays_, [this](const auto& path) { return ResolveFilePath(path, *cache_); });
   for (const auto& root : roots) {
     Load(Utf8Path(root), {}, root, Role::Root);
   }
   for (std::size_t index = 0; index < parsed_.size() && captured_.diagnostics.empty(); ++index) {
     LoadImports(index);
   }
-  for (auto& [requested, canonical] : resolutions_) {
-    captured_.file_resolutions.push_back(
-        {.requested_path = requested, .canonical_path = std::move(canonical)});
-  }
+  captured_.file_resolutions = FlattenResolutions(std::move(resolutions_));
   return std::move(captured_);
 }
 
@@ -221,19 +264,8 @@ class ModuleLoader final {
                SyntaxRetention retention,
                SourceLoadMode mode = SourceLoadMode::Compilation)
       : origin_(origin), mode_(mode), retention_(retention), cache_(&cache) {
-    for (const auto& input : inputs) {
-      if (input.path.starts_with(kStandardSourcePrefix) ||
-          input.path.starts_with(kSdkSourcePrefix)) {
-        Error(SourceLocation(), std::string(input.path), "embedded sources cannot be overridden");
-        continue;
-      }
-      const auto path = Normalize(Utf8Path(input.path));
-      if (!path) {
-        Error(SourceLocation(), std::string(input.path), path.error(), DiagnosticKind::Io);
-      } else if (!overlays_.emplace(PathText(path->canonical), input.text).second) {
-        Error(SourceLocation(), std::string(input.path), "duplicate module source path");
-      }
-    }
+    diagnostics_ =
+        RegisterOverlays(inputs, overlays_, [this](const auto& path) { return Normalize(path); });
   }
 
   ModuleGraph Run(std::string_view entry);
@@ -312,18 +344,13 @@ std::expected<ParsedSource, std::string> ModuleLoader::Read(const std::filesyste
     }
     return instantiate(**parsed);
   }
-  std::string text;
-  if (overlay != overlays_.end()) {
-    text = overlay->second;
-  } else {
-    const auto bytes = ReadBinaryFile(path);
-    if (!bytes) {
-      return std::unexpected(bytes.error());
-    }
-    const void* storage = bytes->data();
-    text.assign(static_cast<const char*>(storage), bytes->size());
+  const auto supplied =
+      overlay == overlays_.end() ? std::nullopt : std::optional<std::string_view>(overlay->second);
+  auto text = ReadSourceText(path, supplied);
+  if (!text) {
+    return std::unexpected(text.error());
   }
-  return ParseSourceSnapshot(std::move(text), source_id);
+  return ParseSourceSnapshot(std::move(*text), source_id);
 }
 
 std::optional<std::uint32_t> ModuleLoader::Load(const std::filesystem::path& file,
@@ -395,13 +422,12 @@ void ModuleLoader::LoadDependencies(std::size_t index) {
       dependencies.push_back(*dependency);
       continue;
     }
-    const auto imported_path = Utf8Path(imported.path);
-    if (imported.path.contains(':') && !imported_path.is_absolute()) {
-      Error(imported.location, path, "unsupported module import scheme");
+    const auto imported_path = DiskImportPath(importer, imported.path);
+    if (!imported_path) {
+      Error(imported.location, path, imported_path.error());
       break;
     }
-    const auto dependency =
-        Load(ResolveImportPath(importer, imported_path), imported.location, path);
+    const auto dependency = Load(*imported_path, imported.location, path);
     if (!dependency) {
       break;
     }
@@ -487,15 +513,10 @@ ModuleGraph ModuleLoader::Finish() {
   for (std::size_t index = 0; index < modules_.size() && diagnostics_.empty(); ++index) {
     LoadDependencies(index);
   }
-  std::vector<FileResolution> resolutions;
-  resolutions.reserve(resolutions_.size());
-  for (auto& [requested, canonical] : resolutions_) {
-    resolutions.push_back({.requested_path = requested, .canonical_path = std::move(canonical)});
-  }
   return {
       .modules = std::move(modules_),
       .sources = std::move(sources_),
-      .file_resolutions = std::move(resolutions),
+      .file_resolutions = FlattenResolutions(std::move(resolutions_)),
       .diagnostics = std::move(diagnostics_),
       .syntax_diagnostics = std::move(syntax_diagnostics_),
   };
@@ -515,12 +536,6 @@ ModuleGraph LoadModuleGraph(std::string_view path) {
   return ModuleLoader(SourceOrigin::Files, {}, cache, SyntaxRetention::Transfer).Run(path);
 }
 
-ModuleGraph LoadModuleGraph(std::span<const std::string> roots,
-                            ModuleCache& cache,
-                            std::span<const SourceInput> overlays) {
-  return ModuleLoader(SourceOrigin::Files, overlays, cache, SyntaxRetention::Cache).Run(roots);
-}
-
 ParseResult BindModuleGraph(ModuleGraph graph,
                             std::span<const std::string> retained_standard_names) {
   if (!graph.diagnostics.empty()) {
@@ -531,6 +546,13 @@ ParseResult BindModuleGraph(ModuleGraph graph,
   auto result = BindModules(std::move(graph.modules), std::move(graph.sources));
   auto& standard_names = result.program.standard_names;
   absl::flat_hash_set<std::string> included(standard_names.begin(), standard_names.end());
+  for (const auto& source : result.program.sources) {
+    for (const auto& name : CollectStandardNames(source.syntax->tokens)) {
+      if (included.insert(name).second) {
+        standard_names.push_back(name);
+      }
+    }
+  }
   for (const auto& name : retained_standard_names) {
     if (included.insert(name).second) {
       standard_names.push_back(name);
@@ -575,15 +597,6 @@ ParseResult LoadSources(std::span<const SourceInput> sources, std::string_view e
   ModuleCache cache;
   return BindModuleGraph(
       ModuleLoader(SourceOrigin::Memory, sources, cache, SyntaxRetention::Transfer).Run(entry));
-}
-
-ParseResult LoadSources(std::span<const SourceInput> sources,
-                        std::span<const std::string> roots,
-                        std::span<const std::string> retained_standard_names) {
-  ModuleCache cache;
-  return BindModuleGraph(
-      ModuleLoader(SourceOrigin::Memory, sources, cache, SyntaxRetention::Transfer).Run(roots),
-      retained_standard_names);
 }
 
 ParseResult LoadSources(std::span<const SourceInput> sources,

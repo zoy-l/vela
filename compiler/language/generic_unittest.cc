@@ -5,7 +5,7 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/ir/preparation_test_support.h"
+#include "compiler/test_support/preparation_test_support.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -340,7 +340,8 @@ TEST(GenericTest, ExecutesIndependentSpecializationsBeyond256AndRestoresWideCode
   const auto result = test::ExecuteInteger(**compiled);
   ASSERT_TRUE(result) << result.error();
   EXPECT_EQ(*result, kTypes * 2);
-  const auto image = runtime::Heap::NativeProgram(*(*compiled)->state().front().AsObject()).image_owner;
+  const auto image =
+      runtime::Heap::NativeProgram(*(*compiled)->state().front().AsObject()).image_owner;
   runtime::Isolate restored;
   const auto loaded = runtime::NativeInstance::Instantiate(restored, image);
   ASSERT_TRUE(loaded) << loaded.error().message;

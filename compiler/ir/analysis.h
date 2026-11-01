@@ -77,20 +77,16 @@ struct BlockLiveness final {
   RegisterSet live_out;
 };
 
-struct NecessaryLiveness final {
-  std::vector<BlockLiveness> blocks;
-  std::vector<std::uint8_t> keep;
-};
-
 [[nodiscard]] FlowGraph BuildFlowGraph(const Function& function);
 [[nodiscard]] std::vector<BlockLiveness> AnalyzeLiveness(
     const Function& function,
     const FlowGraph& graph,
     std::span<const Function> functions,
     std::span<const std::vector<RegisterId>> required = {});
-[[nodiscard]] NecessaryLiveness AnalyzeNecessaryLiveness(const Function& function,
-                                                         const FlowGraph& graph,
-                                                         std::span<const Function> functions);
+[[nodiscard]] std::vector<std::uint8_t> AnalyzeNecessaryLiveness(
+    const Function& function,
+    const FlowGraph& graph,
+    std::span<const Function> functions);
 // 成功边上的定义覆盖旧值，异常边上的定义不生效；两个后端共用此传递规则。
 void TransferLiveness(const Function& function,
                       const FlowGraph& graph,

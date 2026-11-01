@@ -108,7 +108,7 @@ TEST_F(NativeCallbackTest, ColdReferenceLeafFailuresKeepTheirOriginalSourceAndCa
   const std::array arguments{Integer(4)};
   NativeValue result;
   ASSERT_EQ(Execute(CALLBACK_ENTRY, execution, arguments, result), ExecutionStatus::IndexOutOfBounds);
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
   ASSERT_TRUE(execution.HasException());
   isolate.heap().Collect();
   const auto diagnostic = execution.ExceptionDiagnostic();
@@ -142,6 +142,6 @@ TEST_F(NativeCallbackTest, EnumResultMetadataBoxesScalarPayloadsAndPreservesNull
   ASSERT_NE(Heap::ClassOf(*object), nullptr);
   EXPECT_TRUE(Heap::ClassOf(*object)->IsEnum());
   EXPECT_EQ(Heap::GetField(*object, 0)->AsInteger(), 1);
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 '''

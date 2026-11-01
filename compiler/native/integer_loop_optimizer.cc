@@ -1,4 +1,5 @@
 #include "compiler/native/integer_loop_optimizer.h"
+#include "runtime/native/native_symbols.h"
 
 #include <algorithm>
 #include <bit>
@@ -252,7 +253,8 @@ std::vector<llvm::BranchInst*> BoundedPolls(const llvm::Loop& loop) {
         continue;
       }
       const auto* callee = call->getCalledFunction();
-      if (callee == nullptr || callee->getName() != "vela_native_v3_safepoint") {
+      if (callee == nullptr ||
+          callee->getName() != llvm::StringRef(runtime::kNativeSafepointSymbol)) {
         return {};
       }
     }

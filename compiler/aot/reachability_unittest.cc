@@ -15,7 +15,7 @@
 #include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
-#include "compiler/ir/preparation_test_support.h"
+#include "compiler/test_support/preparation_test_support.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/isolate/program_layouts.h"
 

@@ -1,3 +1,4 @@
+#include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include "compiler/frontend/flow/control_flow.h"
@@ -11,7 +12,7 @@ ConditionTruth EvaluateCondition(const Expression& expression) {
   if (expression.kind == Expression::Kind::BooleanLiteral) {
     return expression.boolean_value ? Truth::AlwaysTrue : Truth::AlwaysFalse;
   }
-  if (expression.kind == Expression::Kind::Unary && expression.text == "!") {
+  if (expression.kind == Expression::Kind::Unary && expression.operation == TokenKind::Bang) {
     const auto operand = EvaluateCondition(*expression.operand);
     if (operand == Truth::Unknown) {
       return operand;
@@ -19,12 +20,12 @@ ConditionTruth EvaluateCondition(const Expression& expression) {
     return operand == Truth::AlwaysTrue ? Truth::AlwaysFalse : Truth::AlwaysTrue;
   }
   if (expression.kind != Expression::Kind::Binary ||
-      (expression.text != "&&" && expression.text != "||")) {
+      (expression.operation != TokenKind::AndAnd && expression.operation != TokenKind::OrOr)) {
     return Truth::Unknown;
   }
   const auto left = EvaluateCondition(*expression.left);
   const auto right = EvaluateCondition(*expression.right);
-  if (expression.text == "&&") {
+  if (expression.operation == TokenKind::AndAnd) {
     if (left == Truth::AlwaysFalse || right == Truth::AlwaysFalse) {
       return Truth::AlwaysFalse;
     }
@@ -58,9 +59,7 @@ StatementFlow TypeChecker::CheckStatement(const Statement& statement, const Type
       break;
     case Statement::Kind::Throw: {
       auto type = CheckExpression(*statement.expression, nullptr);
-      if (type.kind == Type::Kind::Parameter) {
-        type = ParameterCapability(type, statement.expression->location);
-      }
+      type = ParameterCapability(type, statement.expression->location);
       if (type.kind != Type::Kind::Dynamic &&
           ((type.kind != Type::Kind::Class && type.kind != Type::Kind::Interface) ||
            type.nullable)) {
@@ -103,7 +102,7 @@ StatementFlow TypeChecker::CheckStatement(const Statement& statement, const Type
       flow.can_continue = statement.kind == Statement::Kind::Continue;
       break;
   }
-  control_flow_.insert_or_assign(&statement, flow);
+  facts_.control_flow.insert_or_assign(&statement, flow);
   return flow;
 }
 
@@ -263,9 +262,7 @@ StatementFlow TypeChecker::CheckLoopExit(const Statement& statement,
 StatementFlow TypeChecker::CheckForEach(const Statement& statement, const Type& return_type) {
   BeginScope();
   auto iterable = CheckExpression(*statement.iterable, nullptr);
-  if (iterable.kind == Type::Kind::Parameter) {
-    iterable = ParameterCapability(iterable, statement.iterable->location);
-  }
+  iterable = ParameterCapability(iterable, statement.iterable->location);
   LoopAssignments assignments(statement);
   if (!refinements_.IsEmpty()) {
     InvalidateAssignments(assignments.Body());

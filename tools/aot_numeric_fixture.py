@@ -63,7 +63,7 @@ TEST(NativeNumericTest, IntegerConversionsRoundToBinary64AndPreserveIntegerIdent
         EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), value);
       }
       EXPECT_FALSE(execution.HasException());
-      EXPECT_EQ(execution.frame_count(), 0U);
+      EXPECT_EQ(execution.current_frame(), nullptr);
     }
   }
 }
@@ -93,7 +93,7 @@ TEST(NativeNumericTest, DoubleConversionsTruncateAndRejectNonFiniteOrOutOfRangeV
     NativeValue result;
     ASSERT_EQ(Execute(NUMERIC_ENTRY, execution, arguments, result),
               ExecutionStatus::InvalidNumericConversion);
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
     ASSERT_TRUE(execution.HasException());
     isolate.heap().Collect();
     const auto& error = ExceptionData::From(*execution.pending_exception().AsObject());
@@ -137,7 +137,7 @@ TEST(NativeNumericTest, FailureRetainsCatchRootsAndLoopConversionsKeepZeroTripBe
     const std::array arguments{Integer(5), Integer(item[0]), Double(0.0)};
     ASSERT_EQ(Execute(NUMERIC_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), item[1]);
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
     EXPECT_FALSE(execution.HasException());
   }
 }
@@ -156,7 +156,7 @@ TEST(NativeNumericTest, ConditionalPromotionPreservesNullablePayloadsAndBothBran
     ASSERT_EQ(Execute(NUMERIC_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
     EXPECT_EQ(result.kind, NativeValueKind::Integer);
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), item[2]);
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
     EXPECT_FALSE(execution.HasException());
   }
 }

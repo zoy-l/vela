@@ -46,7 +46,6 @@ llvm::Constant* FunctionEmitter::VirtualGraph(std::size_t instruction) {
     const auto& allocation = escape_.allocations.at(object.allocation);
     std::vector<llvm::Constant*> fields;
     fields.reserve(object.fields.size());
-    fields.reserve(object.fields.size());
     for (const auto& field : object.fields) {
       fields.push_back(llvm::ConstantStruct::get(
           field_type,
@@ -70,7 +69,6 @@ llvm::Constant* FunctionEmitter::VirtualGraph(std::size_t instruction) {
         }));
   }
   std::vector<llvm::Constant*> aliases;
-  aliases.reserve(checkpoint.aliases.size());
   aliases.reserve(checkpoint.aliases.size());
   for (const auto& alias : checkpoint.aliases) {
     aliases.push_back(llvm::ConstantStruct::get(

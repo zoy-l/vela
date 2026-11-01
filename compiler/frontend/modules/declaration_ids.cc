@@ -22,6 +22,8 @@ std::string ContractText(const TypeName& type,
                          const absl::flat_hash_map<std::string, DeclarationOrigin>& origins) {
   using Kind = TypeName::Kind;
   switch (type.kind) {
+    case Kind::Inferred:
+      return {};
     case Kind::Parameter:
       // 方法上界可引用所属 class 的参数；两层作用域分别以前缀区分，不依赖参数名。
       return (type.parameter.owner == owner ? "#" : "^#") + std::to_string(type.parameter.index);

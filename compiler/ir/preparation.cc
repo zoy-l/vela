@@ -18,6 +18,7 @@
 #include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 #include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/ir.h"
@@ -316,7 +317,7 @@ LoweringResult PrepareParsed(frontend::ParseResult parsed, frontend::DiagnosticO
   if (!parsed.diagnostics.empty()) {
     return {.program = {}, .diagnostics = std::move(parsed.diagnostics)};
   }
-  auto checked = frontend::TypeChecker(nullptr, options).Check(parsed.program);
+  auto checked = frontend::TypeChecker(options).Check(parsed.program);
   if (!checked.Succeeded()) {
     return {.program = {}, .diagnostics = std::move(checked.diagnostics)};
   }

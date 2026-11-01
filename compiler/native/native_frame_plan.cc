@@ -105,23 +105,23 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
                                                               const NativeRootPlan& roots,
                                                               NativeFrameRecovery recovery,
                                                               NativeEntryKind kind) {
+  const auto& function = escape.function.get();
   auto& context = module.getContext();
-  const auto scratch_count = PlanTemporaryCount(escape.function, program, roots);
+  const auto scratch_count = PlanTemporaryCount(function, program, roots);
   if (!scratch_count) {
     return std::unexpected(scratch_count.error());
   }
   std::vector<llvm::Type*> fields;
   constexpr std::size_t kAuxiliaryFields = 7;
-  fields.reserve(escape.function.register_count + kAuxiliaryFields);
-  std::vector<std::uint8_t> addressed(escape.function.register_count);
+  fields.reserve(function.register_count + kAuxiliaryFields);
+  std::vector<std::uint8_t> addressed(function.register_count);
   for (const auto& allocation : escape.allocations) {
     if (allocation.stack_record) {
       for (const auto reg : allocation.fields) {
         addressed.at(reg) = 1;
       }
     }
-    if (!escape.checkpoints.empty() &&
-        allocation.decision == AllocationDecision::ScalarReplacement) {
+    if (!escape.checkpoints.empty() && allocation.can_scalar_replace) {
       addressed.at(allocation.reference) = 1;
     }
   }
@@ -129,7 +129,7 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
   for (std::size_t index = 0; index < addressed.size(); ++index) {
     if (addressed.at(index) != 0) {
       local_fields.at(index) = static_cast<unsigned>(fields.size());
-      fields.push_back(ValueType(context, escape.function.value_types.at(index)));
+      fields.push_back(ValueType(context, function.value_types.at(index)));
     }
   }
   // 仅借用记录和物化需要稳定局部地址。其余局部值由独立 alloca 提升为 SSA，
@@ -137,9 +137,8 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
   const auto temporary_field = static_cast<unsigned>(fields.size());
   fields.push_back(llvm::ArrayType::get(NativeRecordType(context), *scratch_count));
   fields.push_back(NativeRecordType(context));
-  auto* debug_storage =
-      llvm::ArrayType::get(llvm::Type::getInt8Ty(context),
-                           escape.function.register_count * sizeof(runtime::NativeDebugValue));
+  auto* debug_storage = llvm::ArrayType::get(
+      llvm::Type::getInt8Ty(context), function.register_count * sizeof(runtime::NativeDebugValue));
   std::vector<llvm::Type*> recovery_fields{
       fields.at(temporary_field),
       fields.at(temporary_field + 1),
@@ -151,8 +150,7 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
     auto* recovery_storage = llvm::StructType::get(context, recovery_fields);
     fields.push_back(
         llvm::ArrayType::get(llvm::Type::getInt8Ty(context), sizeof(runtime::NativeCheckpoint)));
-    fields.push_back(
-        llvm::ArrayType::get(NativeRecordType(context), escape.function.register_count));
+    fields.push_back(llvm::ArrayType::get(NativeRecordType(context), function.register_count));
     fields.push_back(recovery_storage);
     fields.push_back(llvm::ArrayType::get(llvm::PointerType::getUnqual(context),
                                           escape.checkpoints.empty() ? 0 : escape.reference_count));

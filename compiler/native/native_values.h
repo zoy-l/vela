@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <string>
 #include "base/execution_status.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 
 namespace llvm {
@@ -45,6 +45,7 @@ llvm::Value* LoadImport(Builder& builder,
                         llvm::Module& module,
                         llvm::Value* execution,
                         std::uint32_t function);
+llvm::Value* LoadProgramData(Builder& builder, llvm::Value* execution);
 llvm::Value* IsPresent(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* EncodeValue(Builder& builder, llvm::Value* value, const SourceType& type);
 llvm::Value* DecodeValue(Builder& builder, llvm::Value* record, const SourceType& type);

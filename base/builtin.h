@@ -119,6 +119,7 @@ enum class Builtin : std::uint8_t {
   RegExpMatchNamedGroup,
   JsonParse,
   JsonStringify,
+  // 参数为 [整数族 Opcode 选择子, left, right]；选择子只表示运算，实际类型由 Value 决定。
   DynamicBinary,
   DynamicNegate,
   DynamicIndexRead,

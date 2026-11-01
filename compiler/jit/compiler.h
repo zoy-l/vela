@@ -57,6 +57,7 @@ struct CompiledImage final {
 class Compiler final {
  public:
   [[nodiscard]] static std::expected<std::unique_ptr<Compiler>, frontend::Diagnostics> Create();
+  // program 来自 IR preparation；reuse 仅用于拥有版本身份的 Reloadable 程序。
   [[nodiscard]] std::expected<CompiledImage, frontend::Diagnostics> Compile(
       const ir::Program& program,
       const CompileOptions& options = {},

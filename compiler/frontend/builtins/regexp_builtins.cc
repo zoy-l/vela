@@ -7,7 +7,7 @@
 #include <utility>
 #include "base/builtin.h"
 #include "compiler/frontend/builtins/builtins.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {

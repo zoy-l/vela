@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -13,6 +14,8 @@
 namespace vela::frontend {
 
 enum class CommentRetention : std::uint8_t { Discard, Preserve };
+
+[[nodiscard]] std::span<const std::pair<std::string_view, TokenKind>> Keywords() noexcept;
 
 struct LexResult final {
   std::vector<Token> tokens;

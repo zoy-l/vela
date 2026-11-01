@@ -256,7 +256,6 @@ std::expected<TargetSupport, std::string> LoadTargetSupport(const std::filesyste
     }
   }
   return TargetSupport{
-      .package = package,
       .archiver = *archiver,
       .linker = *linker,
       .runtime = *runtime,

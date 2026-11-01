@@ -56,6 +56,7 @@ void TypeInference::Bind(const TypeParameter& parameter,
       const TypeName null{
           .name = std::string(kNullTypeName),
           .location = {},
+          .kind = TypeName::Kind::Named,
           .arguments = {},
           .parameter = {},
       };
@@ -148,7 +149,7 @@ bool TypeInference::CanBindType(const TypeName& destination, const TypeName& sou
 bool TypeInference::IsValidConstraint(const TypeName& pattern,
                                       const TypeName& actual,
                                       Relation relation) const {
-  if (actual.kind == TypeName::Kind::Named && actual.name.empty()) {
+  if (actual.kind == TypeName::Kind::Inferred) {
     return true;
   }
   if (relation != Relation::Callback && !HasUnspecifiedType(actual)) {

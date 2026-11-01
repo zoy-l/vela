@@ -15,7 +15,6 @@ from tools.config import BUILD_VARIANTS, executable_name, output_directory
 
 TEST_EXECUTABLES = {
     "base": "base_tests",
-    "environment": "vela_environment_tests",
     "frontend": "vela_frontend_tests",
     "ir": "vela_ir_tests",
     "aot": "vela_aot_tests",

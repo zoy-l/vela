@@ -10,7 +10,9 @@
 #include <string_view>
 #include <utility>
 
+#include "base/source_lines.h"
 #include "base/source_location.h"
+#include "compiler/frontend/builtins/standard_environment.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/ast_clone.h"
@@ -181,7 +183,8 @@ std::expected<ReplSourceCandidate, ReplSourceError> ReplSource::Prepare(
     return std::unexpected(
         SubmissionFailure(SubmissionStatus::Rejected, std::move(parsed.diagnostics)));
   }
-  auto accepted = std::make_shared<const frontend::Program>(
+  parsed.program.standard_names = frontend::CollectStandardNames(lexed.tokens);
+  auto accepted = std::make_shared<frontend::Program>(
       frontend::CloneProgram(parsed.program, {.line = next_line_}));
   frontend::Program candidate;
   for (const auto& fragment : syntax_) {
@@ -189,8 +192,13 @@ std::expected<ReplSourceCandidate, ReplSourceError> ReplSource::Prepare(
   }
   frontend::AppendProgram(candidate, frontend::CloneProgram(*accepted, {}));
   BindEntries(candidate, current, body.terminated ? Echo::Suppress : Echo::Display);
+  // 已执行入口由机器码所有者保活；历史语法只保存仍需绑定和检查的声明。
+  std::erase_if(accepted->functions, [&](const auto& function) {
+    return function.location.line == current.header_line;
+  });
   auto text = history_ ? history_->text : std::string();
   text += addition;
+  auto lines = IndexSourceLines(text);
   return ReplSourceCandidate{
       .entry = current,
       .input = std::string(source),
@@ -199,6 +207,7 @@ std::expected<ReplSourceCandidate, ReplSourceError> ReplSource::Prepare(
           {
               .source = std::make_shared<const frontend::SourceSnapshot>(frontend::SourceSnapshot{
                   .text = std::move(text),
+                  .lines = std::move(lines),
                   .tokens = {},
                   .comments = {},
                   .imports = candidate.imports,
@@ -215,17 +224,10 @@ void ReplSource::BindEntries(frontend::Program& program,
   frontend::Function* active = nullptr;
   for (auto& function : program.functions) {
     const auto line = function.location.line;
-    const auto retired = std::ranges::lower_bound(entries_, line, {}, &ReplEntry::header_line);
-    const bool historical = retired != entries_.end() && retired->header_line == line;
-    if (line == current.header_line || historical) {
-      const auto submission =
-          line == current.header_line ? current.submission : retired->submission;
-      function.name = "$repl" + std::to_string(submission);
-      function.role = line == current.header_line ? frontend::Function::Role::InteractiveEntry
-                                                  : frontend::Function::Role::RetiredEntry;
-      if (line == current.header_line) {
-        active = &function;
-      }
+    if (line == current.header_line) {
+      function.name = current.name();
+      function.role = frontend::Function::Role::InteractiveEntry;
+      active = &function;
     }
   }
   if (!current.wrapper) {
@@ -249,7 +251,9 @@ void ReplSource::BindEntries(frontend::Program& program,
 }
 
 void ReplSource::Commit(ReplSourceCandidate& candidate) {
-  syntax_.push_back(std::move(candidate.addition));
+  if (!candidate.entry.wrapper) {
+    syntax_.push_back(std::move(candidate.addition));
+  }
   history_ = std::move(candidate.parsed.source);
   user_source_ += candidate.input;
   user_source_ += '\n';

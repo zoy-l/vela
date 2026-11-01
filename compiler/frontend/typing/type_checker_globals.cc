@@ -1,3 +1,4 @@
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <string>
@@ -41,12 +42,12 @@ TypeChecker::Type TypeChecker::ResolveGlobal(const std::string& name) {
     return global.type;
   }
   checking_globals_.insert(name);
-  if (!declaration.type.name.empty()) {
-    global.type = ResolveType(declaration.type, false);
+  if (declaration.type.kind != TypeName::Kind::Inferred) {
+    global.type = ResolveType(declaration.type, VoidTypePolicy::Forbidden);
   }
   const auto actual =
       CheckGlobalInitializer(declaration, IsValid(global.type) ? &global.type : nullptr);
-  if (declaration.type.name.empty()) {
+  if (declaration.type.kind == TypeName::Kind::Inferred) {
     if (actual.kind == Type::Kind::Null || actual.kind == Type::Kind::Void) {
       AddDiagnostic(declaration.location, "global initializer requires an explicit value type");
     } else {

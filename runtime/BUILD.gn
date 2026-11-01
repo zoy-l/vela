@@ -171,6 +171,7 @@ source_set("runtime") {
     "native/native_operations.h",
     "native/native_program_state.h",
     "native/native_stack.h",
+    "native/native_symbols.h",
     "native/native_test.cc",
     "native/native_test.h",
     "native/native_version.cc",

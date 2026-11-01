@@ -1,3 +1,4 @@
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <algorithm>
@@ -8,7 +9,6 @@
 
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/type_inference.h"
-#include "compiler/frontend/typing/type_name.h"
 #include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {
@@ -23,9 +23,9 @@ void TypeChecker::DeclareFunctionParameters(const Function& function,
 }
 
 void TypeChecker::CheckGeneratedFunction(std::size_t index) {
-  const auto* function = generated_functions_.at(index).declaration.get();
+  const auto* function = facts_.generated_functions.at(index).declaration.get();
   // 检查函数体可能生成其它函数，不能跨 vector 扩容借用签名。
-  const auto signature = generated_functions_.at(index).signature;
+  const auto signature = facts_.generated_functions.at(index).signature;
   auto scopes = std::move(scopes_);
   auto refinements = std::move(refinements_);
   auto lambdas = std::move(lambda_scopes_);
@@ -37,7 +37,7 @@ void TypeChecker::CheckGeneratedFunction(std::size_t index) {
   BeginScope();
   DeclareFunctionParameters(*function, signature, BindingKind::Constant);
   const auto flow = CheckBlock(*function->body, signature.return_type);
-  control_flow_.insert_or_assign(function->body.get(), flow);
+  facts_.control_flow.insert_or_assign(function->body.get(), flow);
   EndScope();
   scopes_ = std::move(scopes);
   refinements_ = std::move(refinements);
@@ -49,26 +49,11 @@ void TypeChecker::CheckGeneratedFunction(std::size_t index) {
   switch_depth_ = switching;
 }
 
-TypeDescriptor MakeFunctionType(const FunctionDescriptor& signature) {
-  std::string name = "(";
-  for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
-    name += index == 0 ? "" : ", ";
-    name += signature.parameters.at(index).type.name;
-  }
-  name += ") => ";
-  name += signature.return_type.name;
-  return {
-      .kind = TypeDescriptor::Kind::Function,
-      .name = InternTypeName(std::move(name)),
-      .is_abstract =
-          signature.return_type.is_abstract ||
-          std::ranges::any_of(signature.parameters,
-                              [](const auto& parameter) { return parameter.type.is_abstract; }),
-  };
-}
-
 TypeChecker::Type TypeChecker::FunctionType(const FunctionInfo& signature) {
   auto result = MakeFunctionType(signature);
+  if (function_types_.contains(result.name)) {
+    return result;
+  }
   FunctionInfo positional;
   positional.return_type = signature.return_type;
   for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
@@ -82,12 +67,12 @@ TypeChecker::Type TypeChecker::FunctionType(const FunctionInfo& signature) {
 }
 
 void TypeChecker::CaptureLocal(const Expression& expression, const LocalBinding& binding) {
-  bindings_.insert_or_assign(&expression, binding.id);
+  facts_.bindings.insert_or_assign(&expression, binding.id);
   for (const auto& context : lambda_scopes_) {
     if (binding.scope >= context.scope) {
       continue;
     }
-    auto& captures = lambdas_.at(context.index).captures;
+    auto& captures = facts_.lambdas.at(context.index).captures;
     if (std::ranges::none_of(captures, [&](const Capture& capture) -> bool {
           return capture.binding == binding.id;
         })) {
@@ -102,28 +87,28 @@ void TypeChecker::CaptureLocal(const Expression& expression, const LocalBinding&
 }
 
 TypeChecker::Type TypeChecker::CheckLambda(const Expression& expression, const Type* expected) {
-  if (const auto found = lambda_indices_.find(&expression); found != lambda_indices_.end()) {
-    return FunctionType(lambdas_.at(found->second).signature);
+  if (const auto found = facts_.lambda_indices.find(&expression);
+      found != facts_.lambda_indices.end()) {
+    return FunctionType(facts_.lambdas.at(found->second).signature);
   }
   const auto& function = *expression.function;
   const bool previous_async = in_async_function_;
   in_async_function_ = function.is_async;
-  std::optional<FunctionInfo> context;
+  const FunctionInfo* context = nullptr;
   if (expected != nullptr && expected->kind == Type::Kind::Function) {
-    // 函数体检查会扩展 function_types_；持有签名副本，避免 flat_hash_map 重排使引用失效。
-    context = function_types_.at(NonNullable(*expected).name);
+    context = &function_types_.at(NonNullable(*expected).name);
     if (context->parameters.size() != function.parameters.size()) {
       AddDiagnostic(function.location,
                     "lambda parameter count does not match its function type context");
     }
   }
-  auto signature = ResolveSignature(function, context ? &*context : nullptr);
+  auto signature = ResolveSignature(function, context);
   if (function.is_async && signature.return_type.kind != Type::Kind::Future) {
     AddDiagnostic(function.location, "async lambda return type must be Future<T>");
   }
-  const auto index = lambdas_.size();
-  lambda_indices_.emplace(&expression, index);
-  lambdas_.push_back({.expression = &expression, .signature = signature, .captures = {}});
+  const auto index = facts_.lambdas.size();
+  facts_.lambda_indices.emplace(&expression, index);
+  facts_.lambdas.push_back({.expression = &expression, .signature = signature, .captures = {}});
   lambda_scopes_.push_back({.index = index, .scope = scopes_.size()});
   auto previous_facts = std::move(refinements_);
   refinements_.Clear();
@@ -132,7 +117,7 @@ TypeChecker::Type TypeChecker::CheckLambda(const Expression& expression, const T
   BeginScope();
   DeclareFunctionParameters(function, signature, BindingKind::Mutable);
   const auto flow = CheckSequence(*function.body, signature.return_type);
-  control_flow_.insert_or_assign(function.body.get(), flow);
+  facts_.control_flow.insert_or_assign(function.body.get(), flow);
   if (!IsValid(signature.return_type)) {
     signature.return_type = lambda_scopes_.back().inferred_return.value_or(
         Type{.kind = Type::Kind::Void, .name = kVoidTypeName});
@@ -149,7 +134,7 @@ TypeChecker::Type TypeChecker::CheckLambda(const Expression& expression, const T
   switch_depth_ = previous_switch;
   refinements_ = std::move(previous_facts);
   lambda_scopes_.pop_back();
-  lambdas_.at(index).signature = signature;
+  facts_.lambdas.at(index).signature = signature;
   in_async_function_ = previous_async;
   return FunctionType(signature);
 }
@@ -165,7 +150,7 @@ void TypeChecker::InferLambdaReturn(const Statement& statement) {
     inferred = value;
   } else if (const auto common =
                  TypeInference::CommonType(DescribeType(*inferred), DescribeType(value))) {
-    inferred = ResolveType(*common, true);
+    inferred = ResolveType(*common, VoidTypePolicy::Allowed);
   } else {
     AddDiagnostic(statement.location,
                   "lambda return types do not match; add an explicit return type");

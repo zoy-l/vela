@@ -1,4 +1,5 @@
 #include "compiler/native/function_emitter.h"
+#include "runtime/native/native_symbols.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -37,8 +38,8 @@ void FunctionEmitter::EmitAsyncFailure(llvm::Value* status) {
     Finish(status);
     return;
   }
-  auto pending = module_.getOrInsertFunction("vela_native_v1_has_exception", builder_.getInt8Ty(),
-                                             builder_.getPtrTy());
+  auto pending = module_.getOrInsertFunction(runtime::kNativeHasExceptionSymbol,
+                                             builder_.getInt8Ty(), builder_.getPtrTy());
   auto* has_exception = builder_.CreateCall(pending, {body_->getArg(0)});
   auto* complete = llvm::BasicBlock::Create(module_.getContext(), "async.error", body_);
   auto* abort = llvm::BasicBlock::Create(module_.getContext(), "async.abort", body_);
@@ -47,7 +48,7 @@ void FunctionEmitter::EmitAsyncFailure(llvm::Value* status) {
   Finish(status);
   builder_.SetInsertPoint(complete);
   auto helper =
-      module_.getOrInsertFunction("vela_native_v1_async_error", builder_.getInt8Ty(),
+      module_.getOrInsertFunction(runtime::kNativeAsyncErrorSymbol, builder_.getInt8Ty(),
                                   builder_.getPtrTy(), builder_.getInt32Ty(), builder_.getPtrTy());
   auto* completed = builder_.CreateCall(
       helper,
@@ -66,9 +67,9 @@ void FunctionEmitter::EmitAsyncFailure(llvm::Value* status) {
 
 void FunctionEmitter::EmitAsyncReturn(const ir::Instruction& instruction) {
   if (IsResuming()) {
-    auto helper = module_.getOrInsertFunction("vela_native_v1_resume_return", builder_.getInt8Ty(),
-                                              builder_.getPtrTy(), builder_.getPtrTy(),
-                                              builder_.getInt32Ty(), builder_.getPtrTy());
+    auto helper = module_.getOrInsertFunction(
+        runtime::kNativeResumeReturnSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
+        builder_.getPtrTy(), builder_.getInt32Ty(), builder_.getPtrTy());
     auto* status = builder_.CreateCall(
         helper, {
                     body_->getArg(0),
@@ -80,7 +81,7 @@ void FunctionEmitter::EmitAsyncReturn(const ir::Instruction& instruction) {
     Finish(Status(builder_, ExecutionStatus::Returned));
     return;
   }
-  auto helper = module_.getOrInsertFunction("vela_native_v1_async_return", builder_.getInt8Ty(),
+  auto helper = module_.getOrInsertFunction(runtime::kNativeAsyncReturnSymbol, builder_.getInt8Ty(),
                                             builder_.getPtrTy(), builder_.getInt32Ty(),
                                             builder_.getPtrTy(), builder_.getPtrTy());
   auto* payload = Pack(Encode(instruction.dst), 0);
@@ -103,7 +104,7 @@ void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
   auto* source = Pack(Encode(instruction.lhs), saved.size());
   if (IsResuming()) {
     auto helper = module_.getOrInsertFunction(
-        "vela_native_v1_resuspend", builder_.getVoidTy(), builder_.getPtrTy(),
+        runtime::kNativeResuspendSymbol, builder_.getVoidTy(), builder_.getPtrTy(),
         builder_.getInt32Ty(), builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt64Ty());
     builder_.CreateCall(helper, {
                                     ResumeState(),
@@ -121,9 +122,9 @@ void FunctionEmitter::EmitAwait(const ir::Instruction& instruction) {
     capacity = std::max(capacity, values.size());
   }
   auto helper = module_.getOrInsertFunction(
-      "vela_native_v1_suspend", builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt32Ty(),
-      builder_.getPtrTy(), builder_.getInt32Ty(), builder_.getPtrTy(), builder_.getPtrTy(),
-      builder_.getInt64Ty(), builder_.getInt64Ty(), builder_.getPtrTy());
+      runtime::kNativeSuspendSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
+      builder_.getInt32Ty(), builder_.getPtrTy(), builder_.getInt32Ty(), builder_.getPtrTy(),
+      builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getInt64Ty(), builder_.getPtrTy());
   auto* status = builder_.CreateCall(
       helper, {
                   body_->getArg(0),
@@ -176,7 +177,7 @@ void FunctionEmitter::EmitResumeDispatch() {
     }
     // 活动引用先进入当前帧根，再清空挂起快照；错误恢复也可能触发 GC。
     auto outcome =
-        module_.getOrInsertFunction("vela_native_v1_resume_outcome", builder_.getInt8Ty(),
+        module_.getOrInsertFunction(runtime::kNativeResumeOutcomeSymbol, builder_.getInt8Ty(),
                                     builder_.getPtrTy(), builder_.getPtrTy(), builder_.getPtrTy());
     CheckStatus(builder_.CreateCall(outcome, {body_->getArg(0), state, result_}));
     Unpack(source.dst);
@@ -194,8 +195,8 @@ std::expected<void, std::string> FunctionEmitter::EmitAsyncInstruction(
   llvm::Value* status = nullptr;
   switch (instruction.opcode) {
     case Opcode::NewFuture: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_new_future", status_type, pointer,
-                                                pointer, status_type, pointer);
+      auto helper = module_.getOrInsertFunction(runtime::kNativeNewFutureSymbol, status_type,
+                                                pointer, pointer, status_type, pointer);
       status = builder_.CreateCall(helper,
                                    {
                                        context,
@@ -208,13 +209,13 @@ std::expected<void, std::string> FunctionEmitter::EmitAsyncInstruction(
     case Opcode::AsyncCall: {
       const auto operation = static_cast<AsyncOperation>(instruction.index);
       PackArguments(instruction.lhs, AsyncArity(operation));
-      auto helper = module_.getOrInsertFunction("vela_native_v1_async_call", status_type, pointer,
-                                                word, pointer, pointer);
+      auto helper = module_.getOrInsertFunction(runtime::kNativeAsyncCallSymbol, status_type,
+                                                pointer, word, pointer, pointer);
       status = builder_.CreateCall(helper, {context, index, arguments_, result_});
       break;
     }
     case Opcode::SleepFuture: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_sleep", status_type, pointer,
+      auto helper = module_.getOrInsertFunction(runtime::kNativeSleepSymbol, status_type, pointer,
                                                 builder_.getInt64Ty(), pointer);
       status = builder_.CreateCall(helper, {context, Payload(instruction.lhs), result_});
       break;

@@ -1,4 +1,5 @@
 #include "compiler/native/function_emitter.h"
+#include "runtime/native/native_symbols.h"
 
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
@@ -235,7 +236,7 @@ void FunctionEmitter::EmitValueEquality(const ir::Instruction& instruction) {
     return;
   }
   if (!IsScalar(left_type) || !IsScalar(right_type)) {
-    auto equal = module_.getOrInsertFunction("vela_native_v1_equal", builder_.getInt8Ty(),
+    auto equal = module_.getOrInsertFunction(runtime::kNativeEqualSymbol, builder_.getInt8Ty(),
                                              builder_.getPtrTy(), builder_.getPtrTy());
     auto* left = Pack(Encode(instruction.lhs), 0);
     auto* right = Pack(Encode(instruction.rhs), 1);

@@ -6,7 +6,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 
 namespace vela::frontend {
 

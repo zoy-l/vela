@@ -32,6 +32,8 @@
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/CodeGen.h>
+#include <llvm/Support/MemoryBuffer.h>
+#include <llvm/Support/SmallVectorMemoryBuffer.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
@@ -745,7 +747,8 @@ std::expected<void, std::string> Finalize(NativeModule& generated,
   return {};
 }
 
-std::expected<std::vector<std::byte>, std::string> EmitObject(NativeModule& generated) {
+std::expected<std::unique_ptr<llvm::MemoryBuffer>, std::string> EmitObject(
+    NativeModule& generated) {
   llvm::SmallVector<char, 0> bytes;
   llvm::raw_svector_ostream stream(bytes);
   llvm::legacy::PassManager codegen;
@@ -754,11 +757,8 @@ std::expected<std::vector<std::byte>, std::string> EmitObject(NativeModule& gene
     return std::unexpected("native target cannot emit object files");
   }
   codegen.run(*generated.module);
-  std::vector<std::byte> object(bytes.size());
-  std::ranges::transform(bytes, object.begin(), [](char value) {
-    return static_cast<std::byte>(static_cast<unsigned char>(value));
-  });
-  return object;
+  return std::make_unique<llvm::SmallVectorMemoryBuffer>(std::move(bytes),
+                                                         generated.module->getName(), false);
 }
 
 }  // namespace vela::compiler::native

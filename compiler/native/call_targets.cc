@@ -12,7 +12,7 @@
 #include "base/declaration.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 
@@ -179,7 +179,7 @@ bool IsNamedBaselineCall(const ir::Function& callee, NativeProgramMode mode) {
 
 }  // namespace
 
-bool NativeCallPlan::UsesEntrySlot(CallEdge edge) const {
+bool NativeCallPlan::IsEntrySlotRequired(CallEdge edge) const {
   return slot_targets.at(edge.callee) != 0 &&
          components.at(edge.caller) != components.at(edge.callee);
 }
@@ -221,7 +221,7 @@ NativeCallPlan PlanNativeCalls(const ir::Program& program, NativeCodeTier tier) 
         return false;
       }
       return tier == NativeCodeTier::Baseline ||
-             plan.UsesEntrySlot({.caller = index, .callee = callee});
+             plan.IsEntrySlotRequired({.caller = index, .callee = callee});
     });
   }
   return plan;

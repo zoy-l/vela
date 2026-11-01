@@ -365,11 +365,6 @@ bool IsStandardTypeNamespace(const Program& program, const Class& declaration) {
              std::string(kStandardSourcePrefix) + name;
 }
 
-std::optional<std::string_view> StandardDeclarationSource(std::string_view name) noexcept {
-  const auto declaration = std::ranges::find(kDeclarations, name, &StandardDeclaration::name);
-  return declaration == kDeclarations.end() ? std::nullopt : std::optional(declaration->source);
-}
-
 Diagnostics AddStandardEnvironment(Program& program) {
   absl::flat_hash_set<std::string> used(program.standard_names.begin(),
                                         program.standard_names.end());

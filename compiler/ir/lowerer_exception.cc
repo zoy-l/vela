@@ -159,8 +159,7 @@ void Lowerer::LowerTry(const frontend::Statement& statement) {
     }
     current_handler_ = outer_handler;
     if (mismatch) {
-      current_function_->instructions.at(*mismatch).index =
-          static_cast<std::uint32_t>(current_function_->instructions.size());
+      BindJump(*mismatch);
     }
   }
   if ((statement.catches.empty() || !statement.catches.back().name.empty()) &&

@@ -1,3 +1,5 @@
+#include "compiler/frontend/syntax/names.h"
+#include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/lowerer.h"
 
 #include <algorithm>
@@ -13,7 +15,7 @@
 #include "base/callable.h"
 #include "base/member.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 
@@ -42,7 +44,8 @@ void Lowerer::RegisterClassMembers(const frontend::ClassDescriptor& descriptor) 
   std::ranges::sort(names);
   for (const auto& name : names) {
     const auto& signature = descriptor.methods.at(name);
-    if (name == "$constructor" || signature.storage != frontend::MemberStorage::Instance ||
+    if (name == frontend::kConstructorName ||
+        signature.storage != frontend::MemberStorage::Instance ||
         signature.is_generic_application) {
       continue;
     }
@@ -60,7 +63,7 @@ void Lowerer::RegisterClassMembers(const frontend::ClassDescriptor& descriptor) 
     }
     const std::vector<frontend::Capture> captures{
         {
-            .name = "this",
+            .name = std::string(frontend::kReceiverName),
             .type = descriptor.type,
             .binding = 0,
             .kind = frontend::BindingKind::Constant,
@@ -86,9 +89,7 @@ void Lowerer::RegisterClassProperty(std::uint32_t receiver,
     if (method.name != name || method.visibility != frontend::Visibility::Public) {
       continue;
     }
-    auto key = std::string(owner.type.name);
-    key += method.is_getter ? ".$get." : ".$set.";
-    key += name;
+    const auto key = MethodKey(owner.type.name, method);
     if (method.is_getter) {
       property.target = function_ids_.at(key);
     } else if (method.is_setter) {

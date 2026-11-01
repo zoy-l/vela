@@ -17,10 +17,11 @@
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/native_values.h"
 #include "runtime/native/native_image.h"
+#include "runtime/native/native_symbols.h"
 namespace vela::compiler::native {
-bool FunctionEmitter::UsesEntrySlot(std::size_t callee) const {
+bool FunctionEmitter::IsEntrySlotRequired(std::size_t callee) const {
   return tier_ == NativeCodeTier::Optimized &&
-         calls_.UsesEntrySlot({.caller = function_index_, .callee = callee});
+         calls_.IsEntrySlotRequired({.caller = function_index_, .callee = callee});
 }
 
 std::optional<CallableTarget> FunctionEmitter::CallTarget(std::size_t index) const {
@@ -53,7 +54,7 @@ llvm::BasicBlock* FunctionEmitter::EmitSquareRootCall(const ir::Instruction& ins
     builder_.CreateBr(intrinsic_done);
     builder_.SetInsertPoint(bound);
     if (program_.native_mode == NativeProgramMode::Reloadable &&
-        !NeedsBoundaryPoll(instruction_index_)) {
+        !IsBoundaryPollRequired(instruction_index_)) {
       Poll();
     }
     PrepareRuntimeCall();
@@ -104,7 +105,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
       Pack(EncodeValue(builder_, value, type), index);
     }
     auto helper = module_.getOrInsertFunction(
-        "vela_native_v3_call_declaration", builder_.getInt8Ty(), builder_.getPtrTy(),
+        runtime::kNativeCallDeclarationSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
         builder_.getInt64Ty(), builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
     CompleteCall(builder_.CreateCall(helper,
                                      {
@@ -120,7 +121,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
   auto arguments = CallArguments(instruction, selected, borrowed);
   const auto& target = generated_.subspan(selected.function).front();
   llvm::Value* status = nullptr;
-  if (UsesEntrySlot(selected.function)) {
+  if (IsEntrySlotRequired(selected.function)) {
     // 槽属于本次发布的不可变映像；复用的机器码从执行实例读取新目标。
     // 旧帧在安全点恢复到基线后按声明调用，因此不借此进入旧快照的命名目标。
     using runtime::NativeFunctionDescription;
@@ -155,7 +156,7 @@ void FunctionEmitter::EmitCall(const ir::Instruction& instruction, CallableTarge
     PrepareObservableCall();
     auto* position = builder_.CreateLoad(builder_.getInt64Ty(), result_);
     auto failure = module_.getOrInsertFunction(
-        "vela_native_v2_leaf_failure", builder_.getInt8Ty(), builder_.getPtrTy(),
+        runtime::kNativeLeafFailureSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
         builder_.getInt64Ty(), builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getInt64Ty());
     auto* materialized =
         builder_.CreateCall(failure, {

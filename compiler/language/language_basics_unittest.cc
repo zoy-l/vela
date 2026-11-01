@@ -6,10 +6,10 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
-#include "compiler/frontend/typing/checker_test_support.h"
+#include "compiler/test_support/checker_test_support.h"
+#include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {

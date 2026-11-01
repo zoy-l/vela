@@ -1,4 +1,6 @@
 #include "compiler/testing/report.h"
+#include "compiler/frontend/builtins/sdk_modules.h"
+#include "compiler/frontend/builtins/standard_environment.h"
 
 #include <chrono>
 #include <cstddef>
@@ -127,7 +129,8 @@ yyjson_mut_val* JsonDifference(yyjson_mut_doc* document, const Difference& diffe
 
 const runtime::FutureTraceFrame* UserLocation(std::span<const runtime::FutureTraceFrame> trace) {
   for (const auto& frame : trace) {
-    if (!frame.source_path.starts_with("sdk:") && !frame.source_path.starts_with("builtin:")) {
+    if (!frame.source_path.starts_with(frontend::kSdkSourcePrefix) &&
+        !frame.source_path.starts_with(frontend::kStandardSourcePrefix)) {
       return &frame;
     }
   }

@@ -28,7 +28,7 @@ void TypeChecker::CheckCaseLabel(const Expression& label,
   if (!labels.insert(key).second) {
     AddDiagnostic(label.location, "duplicate case label");
   }
-  case_values_.insert_or_assign(&label, *constant);
+  facts_.case_values.insert_or_assign(&label, *constant);
 }
 
 StatementFlow TypeChecker::CheckSwitch(const Statement& statement, const Type& return_type) {

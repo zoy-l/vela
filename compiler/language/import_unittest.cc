@@ -32,13 +32,7 @@ class ImportTest : public ::vela::test::DirectoryTest {
       ADD_FAILURE() << "module compilation failed";
       return {};
     }
-    const auto main = compiled.instance->FindFunction("main");
-    if (!main.has_value()) {
-      ADD_FAILURE() << "missing main";
-      return {};
-    }
-    const auto index = *main;
-    const auto result = runtime::ExecuteNativeFunction(*compiled.instance, index);
+    const auto result = test::Execute(*compiled.instance);
     if (!result.Succeeded() || !result.value.IsString()) {
       ADD_FAILURE() << "module execution failed";
       return {};

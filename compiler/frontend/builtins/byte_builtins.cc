@@ -9,7 +9,7 @@
 #include "base/builtin.h"
 #include "base/byte_access.h"
 #include "compiler/frontend/builtins/builtins.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {

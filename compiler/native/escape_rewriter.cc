@@ -8,7 +8,7 @@
 #include <vector>
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
@@ -37,16 +37,17 @@ class ScalarRewriter final {
                  const ir::Program& program,
                  std::span<const std::vector<ir::RegisterId>> live)
       : plan_(&plan),
+        function_(&plan.function.Rewrite()),
         program_(&program),
         live_(live),
-        original_(std::move(plan.function.instructions)),
+        original_(std::move(function_->instructions)),
         targets_(original_.size() + 1) {
     if (program_->native_mode == NativeProgramMode::Reloadable) {
       plan_->checkpoints.resize(original_.size());
     }
     for (std::size_t node = 0; node < plan_->allocations.size(); ++node) {
       auto& allocation = plan_->allocations.at(node);
-      if (allocation.decision != AllocationDecision::ScalarReplacement) {
+      if (!allocation.can_scalar_replace) {
         continue;
       }
       const auto& type = program_->classes.at(allocation.type);
@@ -75,23 +76,23 @@ class ScalarRewriter final {
       const auto& block = graph.blocks.at(index);
       for (auto position = block.begin; position < block.end; ++position) {
         position_ = position;
-        targets_.at(position) = plan_->function.instructions.size();
+        targets_.at(position) = function_->instructions.size();
         const auto& instruction = original_.at(position);
         RecordCheckpoint(values);
         RewriteInstruction(instruction, allocations.subspan(position).front(), values);
         if (!plan_->checkpoints.empty() &&
-            plan_->function.instructions.size() == targets_.at(position)) {
+            function_->instructions.size() == targets_.at(position)) {
           Emit({.opcode = Opcode::LoadNull, .dst = marker_, .location = {}});
         }
         Transfer(instruction, ir::AnalyzeRegisters(instruction, program_->functions),
                  allocations.subspan(position).front(), *plan_, *program_, values);
       }
     }
-    targets_.back() = plan_->function.instructions.size();
+    targets_.back() = function_->instructions.size();
     for (const auto& [position, target] : branches_) {
       Patch(position, targets_.at(target));
     }
-    for (auto& handler : plan_->function.handlers) {
+    for (auto& handler : function_->handlers) {
       handler.target = static_cast<std::uint32_t>(targets_.at(handler.target));
     }
   }
@@ -149,7 +150,7 @@ class ScalarRewriter final {
   }
 
   ir::RegisterId AddValue(const frontend::TypeDescriptor& type) {
-    auto& function = plan_->function;
+    auto& function = *function_;
     function.value_types.push_back(type);
     return function.register_count++;
   }
@@ -158,7 +159,7 @@ class ScalarRewriter final {
     const auto& source = original_.at(position_);
     instruction.location = source.location;
     instruction.handler = source.handler;
-    auto& code = plan_->function.instructions;
+    auto& code = function_->instructions;
     const auto position = code.size();
     code.push_back(std::move(instruction));
     plan_->origins.push_back(position_);
@@ -167,7 +168,7 @@ class ScalarRewriter final {
   }
 
   void Patch(std::size_t position, std::size_t target) {
-    plan_->function.instructions.at(position).index = static_cast<std::uint32_t>(target);
+    function_->instructions.at(position).index = static_cast<std::uint32_t>(target);
   }
 
   void Materialize(std::size_t object, const State& values) {
@@ -178,14 +179,14 @@ class ScalarRewriter final {
     const auto reference = plan_->allocations.at(object).reference;
     const auto missing = Emit({.opcode = Opcode::JumpIfNull, .lhs = reference, .location = {}});
     const auto ready = Emit({.opcode = Opcode::Jump, .location = {}});
-    Patch(missing, plan_->function.instructions.size());
+    Patch(missing, function_->instructions.size());
     // 临时引用只在完整填充后提交；OOM 的异常后继仍保有原来的字段状态。
     const auto graph = Reachable(*plan_, values, bit);
-    const auto group_start = plan_->function.instructions.size();
+    const auto group_start = function_->instructions.size();
     std::vector<ir::RegisterId> temporaries(plan_->allocations.size());
     ForEachVirtualObject(graph, [&](std::size_t node, AllocationSite& allocation) {
       allocation.materialized = true;
-      const auto temporary = AddValue(plan_->function.value_types.at(allocation.reference));
+      const auto temporary = AddValue(function_->value_types.at(allocation.reference));
       temporaries.at(node) = temporary;
       Emit({
           .opcode = Opcode::NewInstance,
@@ -223,15 +224,15 @@ class ScalarRewriter final {
       }
     });
     if (program_->native_mode == NativeProgramMode::Reloadable) {
-      auto& first = plan_->function.instructions.at(group_start);
+      auto& first = function_->instructions.at(group_start);
       first.construction = ir::Construction{
           .type = program_->classes.at(first.index).declaration,
           .supplied = {},
           .generated = false,
       };
-      plan_->function.instructions.back().completes_construction = true;
+      function_->instructions.back().completes_construction = true;
     }
-    Patch(ready, plan_->function.instructions.size());
+    Patch(ready, function_->instructions.size());
   }
 
   void Spill(ir::RegisterId reg, const State& values) {
@@ -260,10 +261,10 @@ class ScalarRewriter final {
     }
     Emit(instruction);
     const auto ready = Emit({.opcode = Opcode::Jump, .location = {}});
-    Patch(missing, plan_->function.instructions.size());
+    Patch(missing, function_->instructions.size());
     scalar.opcode = Opcode::Move;
     Emit(scalar);
-    Patch(ready, plan_->function.instructions.size());
+    Patch(ready, function_->instructions.size());
   }
 
   void RewriteField(ir::Instruction instruction, std::size_t receiver, const State& values) {
@@ -303,8 +304,7 @@ class ScalarRewriter final {
         return;
       }
     }
-    if (allocation &&
-        plan_->allocations.at(*allocation).decision == AllocationDecision::ScalarReplacement) {
+    if (allocation && plan_->allocations.at(*allocation).can_scalar_replace) {
       const auto& object = plan_->allocations.at(*allocation);
       Emit({
           .opcode = Opcode::LoadNull,
@@ -350,12 +350,13 @@ class ScalarRewriter final {
     ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) { Spill(reg, values); });
     if (instruction.opcode == Opcode::Jump || instruction.opcode == Opcode::JumpIfFalse ||
         instruction.opcode == Opcode::JumpIfNull) {
-      branches_.emplace_back(plan_->function.instructions.size(), instruction.index);
+      branches_.emplace_back(function_->instructions.size(), instruction.index);
     }
     Emit(instruction);
   }
 
   EscapePlan* plan_;
+  ir::Function* function_;
   const ir::Program* program_;
   std::span<const std::vector<ir::RegisterId>> live_;
   std::vector<ir::Instruction> original_;

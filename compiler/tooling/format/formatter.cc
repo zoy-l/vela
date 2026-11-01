@@ -61,8 +61,7 @@ std::string StringSpelling(std::string_view source, std::span<const frontend::To
   auto copied = start;
   for (const auto& token : tokens) {
     const auto kind = token.kind;
-    if (kind != TokenKind::StringLiteral && kind != TokenKind::StringHead &&
-        kind != TokenKind::StringMiddle && kind != TokenKind::StringTail) {
+    if (!frontend::IsStringToken(kind)) {
       continue;
     }
     output.append(source.substr(copied, token.offset - copied));

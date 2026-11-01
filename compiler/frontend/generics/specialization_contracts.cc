@@ -1,4 +1,5 @@
 #include "compiler/frontend/generics/specialization.h"
+#include "compiler/frontend/syntax/names.h"
 
 #include <span>
 #include <string>
@@ -61,7 +62,7 @@ void Specializer::DescribeClassTemplate(const Class& owner) {
   members.clear();
   members.push_back({
       .kind = DeclarationKind::Constructor,
-      .name = "$constructor",
+      .name = std::string(kConstructorName),
       .type_parameters = {},
       .generic_signature = {},
   });

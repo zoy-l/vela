@@ -1,4 +1,5 @@
 #include "compiler/frontend/flow/initialization.h"
+#include "compiler/frontend/syntax/names.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -17,7 +18,8 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/syntax/token.h"
+#include "compiler/frontend/typing/semantic_model.h"
 
 namespace vela::frontend {
 namespace {
@@ -57,7 +59,7 @@ Path Merge(Path left, const Path& right) {
 }
 
 bool IsThis(const Expression& expression) {
-  return expression.kind == Expression::Kind::Name && expression.text == "this";
+  return expression.kind == Expression::Kind::Name && expression.text == kReceiverName;
 }
 
 class Initialization final {
@@ -138,14 +140,14 @@ void Initialization::WalkSuper(const Expression& expression, Initialized& initia
 
 bool Initialization::WalkSpecial(const Expression& expression, Initialized& initialized) {
   if (expression.kind == Expression::Kind::Call &&
-      expression.callee->kind == Expression::Kind::Name && expression.callee->text == "super") {
+      expression.callee->kind == Expression::Kind::Name && expression.callee->text == kSuperName) {
     WalkSuper(expression, initialized);
     return true;
   }
   if (expression.kind == Expression::Kind::Lambda) {
     const auto& lambda = facts_.lambdas.subspan(facts_.lambda_indices->at(&expression)).front();
     if (std::ranges::any_of(lambda.captures, [](const Capture& capture) -> bool {
-          return capture.name == "this";
+          return capture.name == kReceiverName;
         })) {
       RequireComplete(initialized, expression.location);
     }
@@ -164,7 +166,7 @@ bool Initialization::WalkSpecial(const Expression& expression, Initialized& init
     }
     return true;
   }
-  if (expression.kind == Expression::Kind::Binary && expression.text == "=" &&
+  if (expression.kind == Expression::Kind::Binary && expression.operation == TokenKind::Equal &&
       expression.left->kind == Expression::Kind::Member && IsThis(*expression.left->object)) {
     Walk(expression.right.get(), initialized);
     const auto field = field_indices_.find(expression.left->text);
@@ -184,7 +186,7 @@ bool Initialization::WalkSpecial(const Expression& expression, Initialized& init
     return true;
   }
   if (expression.kind == Expression::Kind::Binary &&
-      (expression.text == "&&" || expression.text == "||")) {
+      (expression.operation == TokenKind::AndAnd || expression.operation == TokenKind::OrOr)) {
     Walk(expression.left.get(), initialized);
     auto right = initialized;
     Walk(expression.right.get(), right);

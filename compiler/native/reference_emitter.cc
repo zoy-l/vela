@@ -1,5 +1,6 @@
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/integer_loop_optimizer.h"
+#include "runtime/native/native_symbols.h"
 
 #include <llvm/IR/Attributes.h>
 #include <llvm/IR/Function.h>
@@ -98,7 +99,7 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
       return std::unexpected("native scalar formatting requires a non-null scalar operand");
     }
     auto format =
-        module_.getOrInsertFunction("vela_native_v10_scalar_to_string", builder_.getPtrTy(),
+        module_.getOrInsertFunction(runtime::kNativeScalarToStringSymbol, builder_.getPtrTy(),
                                     builder_.getPtrTy(), builder_.getPtrTy());
     auto* string =
         builder_.CreateCall(format, {body_->getArg(0), Pack(Encode(instruction.lhs), 0)});
@@ -107,7 +108,7 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
     return {};
   }
   if (builtin == Builtin::ScalarTextLength) {
-    auto length = module_.getOrInsertFunction("vela_native_v9_scalar_text_length",
+    auto length = module_.getOrInsertFunction(runtime::kNativeScalarTextLengthSymbol,
                                               builder_.getInt64Ty(), builder_.getPtrTy());
     Store(instruction.dst, builder_.CreateCall(length, {Pack(Encode(instruction.lhs), 0)}),
           {.kind = Kind::Int, .name = frontend::kIntTypeName});
@@ -144,9 +145,9 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
     auto* key = Pack(Encode(instruction.lhs + 1), 0);
     auto* pointer = builder_.getPtrTy();
     if (builtin == Builtin::MapGet) {
-      auto get = module_.getOrInsertFunction("vela_native_v11_map_get", builder_.getVoidTy(),
+      auto get = module_.getOrInsertFunction(runtime::kNativeMapGetSymbol, builder_.getVoidTy(),
                                              pointer, pointer, pointer);
-      auto& function = *module_.getFunction("vela_native_v11_map_get");
+      auto& function = *module_.getFunction(runtime::kNativeMapGetSymbol);
       function.setMemoryEffects(llvm::MemoryEffects::readOnly().getWithModRef(
           llvm::MemoryEffects::Location::ArgMem, llvm::ModRefInfo::ModRef));
       function.addParamAttr(1, llvm::Attribute::ReadOnly);
@@ -155,7 +156,7 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
       builder_.CreateCall(get, {map, key, result_});
       Unpack(instruction.dst);
     } else {
-      auto set = module_.getOrInsertFunction("vela_native_v11_map_set", builder_.getInt8Ty(),
+      auto set = module_.getOrInsertFunction(runtime::kNativeMapSetSymbol, builder_.getInt8Ty(),
                                              pointer, pointer, pointer, pointer);
       auto* value = Pack(Encode(instruction.lhs + 2), 1);
       CheckStatus(builder_.CreateCall(set, {body_->getArg(0), map, key, value}));
@@ -172,7 +173,7 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
     auto* length = LoadMemory(builder_.getInt32Ty(), length_address, MemoryRegion::HeapHeader);
     auto* requested = Payload(instruction.lhs + 1);
     PackArguments(instruction.lhs, BuiltinArity(builtin));
-    auto reserve = module_.getOrInsertFunction("vela_native_v1_builtin", builder_.getInt8Ty(),
+    auto reserve = module_.getOrInsertFunction(runtime::kNativeBuiltinSymbol, builder_.getInt8Ty(),
                                                builder_.getPtrTy(), builder_.getInt32Ty(),
                                                builder_.getPtrTy(), builder_.getPtrTy());
     CompleteCall(
@@ -190,7 +191,7 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
     return {};
   }
   PackArguments(instruction.lhs, BuiltinArity(builtin));
-  auto helper = module_.getOrInsertFunction("vela_native_v1_builtin", builder_.getInt8Ty(),
+  auto helper = module_.getOrInsertFunction(runtime::kNativeBuiltinSymbol, builder_.getInt8Ty(),
                                             builder_.getPtrTy(), builder_.getInt32Ty(),
                                             builder_.getPtrTy(), builder_.getPtrTy());
   auto* status = builder_.CreateCall(
@@ -209,8 +210,8 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
   llvm::Value* status = nullptr;
   switch (instruction.opcode) {
     case Opcode::LoadString: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_constant", builder_.getVoidTy(),
-                                                pointer, word, pointer);
+      auto helper = module_.getOrInsertFunction(runtime::kNativeConstantSymbol,
+                                                builder_.getVoidTy(), pointer, word, pointer);
       builder_.CreateCall(helper, {context, index, result_});
       Unpack(instruction.dst);
       return {};
@@ -218,8 +219,8 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
     case Opcode::NewInstance: {
       if (!program_.classes.at(instruction.index).callable) {
         auto helper =
-            module_.getOrInsertFunction("vela_native_v10_new_object", pointer, pointer, word);
-        auto& allocation = *module_.getFunction("vela_native_v10_new_object");
+            module_.getOrInsertFunction(runtime::kNativeNewObjectSymbol, pointer, pointer, word);
+        auto& allocation = *module_.getFunction(runtime::kNativeNewObjectSymbol);
         // 普通实例一定是新分配的对象；可调用值的版本绑定和潜在身份复用单独处理。
         allocation.addRetAttr(llvm::Attribute::NoAlias);
         allocation.addRetAttr(llvm::Attribute::getWithDereferenceableOrNullBytes(
@@ -240,7 +241,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
         Store(instruction.dst, DecodeValue(builder_, record, type), type);
         return {};
       }
-      auto helper = module_.getOrInsertFunction("vela_native_v10_new_callable", status_type,
+      auto helper = module_.getOrInsertFunction(runtime::kNativeNewCallableSymbol, status_type,
                                                 pointer, word, pointer);
       status = builder_.CreateCall(helper, {context, index, result_});
       break;
@@ -252,9 +253,9 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
                          : Payload(instruction.lhs);
       Check(builder_.CreateICmpSGE(length, builder_.getInt64(0)),
             ExecutionStatus::IndexOutOfBounds);
-      auto helper = module_.getOrInsertFunction("vela_native_v10_new_array", pointer, pointer, word,
-                                                builder_.getInt64Ty());
-      auto& allocation = *module_.getFunction("vela_native_v10_new_array");
+      auto helper = module_.getOrInsertFunction(runtime::kNativeNewArraySymbol, pointer, pointer,
+                                                word, builder_.getInt64Ty());
+      auto& allocation = *module_.getFunction(runtime::kNativeNewArraySymbol);
       allocation.addRetAttr(llvm::Attribute::NoAlias);
       allocation.addRetAttr(llvm::Attribute::getWithDereferenceableOrNullBytes(
           module_.getContext(), sizeof(runtime::HeapObject)));
@@ -271,7 +272,7 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       return {};
     }
     case Opcode::NewCollection: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_new_collection", status_type,
+      auto helper = module_.getOrInsertFunction(runtime::kNativeNewCollectionSymbol, status_type,
                                                 pointer, word, pointer);
       status = builder_.CreateCall(helper, {context, index, result_});
       break;
@@ -285,8 +286,8 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       PackArguments(instruction.lhs, count, ArgumentPrefix::Implicit);
       auto* callable = Pack(Encode(instruction.rhs), static_cast<std::size_t>(count) + 1);
       auto helper =
-          module_.getOrInsertFunction("vela_native_v1_call_indirect", status_type, pointer, pointer,
-                                      pointer, builder_.getInt64Ty(), pointer);
+          module_.getOrInsertFunction(runtime::kNativeCallIndirectSymbol, status_type, pointer,
+                                      pointer, pointer, builder_.getInt64Ty(), pointer);
       status = builder_.CreateCall(
           helper, {context, callable, arguments_, builder_.getInt64(count), result_});
       break;
@@ -296,9 +297,9 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       PackArguments(instruction.lhs, count);
       if (program_.native_mode == NativeProgramMode::Reloadable) {
         const auto selector = program_.selector_declarations.at(instruction.index);
-        auto helper = module_.getOrInsertFunction("vela_native_v3_call_interface", status_type,
-                                                  pointer, builder_.getInt64Ty(), pointer,
-                                                  builder_.getInt64Ty(), pointer);
+        auto helper = module_.getOrInsertFunction(runtime::kNativeCallInterfaceV3Symbol,
+                                                  status_type, pointer, builder_.getInt64Ty(),
+                                                  pointer, builder_.getInt64Ty(), pointer);
         status = builder_.CreateCall(helper, {
                                                  context,
                                                  builder_.getInt64(selector.value),
@@ -309,8 +310,8 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
         break;
       }
       auto helper =
-          module_.getOrInsertFunction("vela_native_v1_call_interface", status_type, pointer, word,
-                                      pointer, builder_.getInt64Ty(), pointer);
+          module_.getOrInsertFunction(runtime::kNativeCallInterfaceV1Symbol, status_type, pointer,
+                                      word, pointer, builder_.getInt64Ty(), pointer);
       status = builder_.CreateCall(helper,
                                    {context, index, arguments_, builder_.getInt64(count), result_});
       break;
@@ -323,8 +324,8 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
     case Opcode::IsType:
     case Opcode::CheckedCast: {
       auto* value = Pack(Encode(instruction.lhs), 0);
-      auto helper = module_.getOrInsertFunction("vela_native_v1_type_test", status_type, pointer,
-                                                word, pointer);
+      auto helper = module_.getOrInsertFunction(runtime::kNativeTypeTestSymbol, status_type,
+                                                pointer, word, pointer);
       auto* matches = builder_.CreateCall(helper, {context, index, value});
       auto* condition = builder_.CreateICmpNE(matches, builder_.getInt8(0));
       if (instruction.opcode == Opcode::IsType) {
@@ -336,14 +337,14 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       return {};
     }
     case Opcode::Catch: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_catch", builder_.getVoidTy(),
+      auto helper = module_.getOrInsertFunction(runtime::kNativeCatchSymbol, builder_.getVoidTy(),
                                                 pointer, pointer);
       builder_.CreateCall(helper, {context, result_});
       Unpack(instruction.dst);
       return {};
     }
     case Opcode::ExceptionValue: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_exception_value",
+      auto helper = module_.getOrInsertFunction(runtime::kNativeExceptionValueSymbol,
                                                 builder_.getVoidTy(), pointer, pointer);
       builder_.CreateCall(helper, {Pack(Encode(instruction.lhs), 0), result_});
       Unpack(instruction.dst);
@@ -351,8 +352,8 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
     }
     case Opcode::Throw:
     case Opcode::Rethrow: {
-      const auto* symbol =
-          instruction.opcode == Opcode::Throw ? "vela_native_v1_throw" : "vela_native_v1_rethrow";
+      const auto symbol = instruction.opcode == Opcode::Throw ? runtime::kNativeThrowSymbol
+                                                              : runtime::kNativeRethrowSymbol;
       auto helper = module_.getOrInsertFunction(symbol, status_type, pointer, pointer);
       Fail(builder_.CreateCall(helper, {context, Pack(Encode(instruction.lhs), 0)}));
       return {};
@@ -373,11 +374,11 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       auto* left = Pack(Encode(instruction.lhs), 0);
       auto* right = Pack(Encode(instruction.rhs), 1);
       if (instruction.opcode == Opcode::StringConcat) {
-        auto helper = module_.getOrInsertFunction("vela_native_v1_concat", status_type, pointer,
-                                                  pointer, pointer, pointer);
+        auto helper = module_.getOrInsertFunction(runtime::kNativeConcatSymbol, status_type,
+                                                  pointer, pointer, pointer, pointer);
         status = builder_.CreateCall(helper, {context, left, right, result_});
       } else {
-        auto helper = module_.getOrInsertFunction("vela_native_v1_compare_strings", status_type,
+        auto helper = module_.getOrInsertFunction(runtime::kNativeCompareStringsSymbol, status_type,
                                                   pointer, pointer, pointer);
         status = builder_.CreateCall(helper, {left, right, result_});
       }
@@ -385,15 +386,15 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
     }
     case Opcode::StringInterpolate: {
       PackArguments(instruction.lhs, instruction.rhs);
-      auto helper = module_.getOrInsertFunction("vela_native_v1_interpolate", status_type, pointer,
-                                                pointer, builder_.getInt64Ty(), pointer);
+      auto helper = module_.getOrInsertFunction(runtime::kNativeInterpolateSymbol, status_type,
+                                                pointer, pointer, builder_.getInt64Ty(), pointer);
       status = builder_.CreateCall(
           helper, {context, arguments_, builder_.getInt64(instruction.rhs), result_});
       break;
     }
     case Opcode::Print: {
       auto* value = Pack(Encode(instruction.lhs), 0);
-      auto helper = module_.getOrInsertFunction("vela_native_v1_print", builder_.getVoidTy(),
+      auto helper = module_.getOrInsertFunction(runtime::kNativePrintSymbol, builder_.getVoidTy(),
                                                 pointer, pointer);
       builder_.CreateCall(helper, {context, value});
       return {};

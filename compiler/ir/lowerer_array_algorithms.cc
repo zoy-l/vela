@@ -13,7 +13,7 @@
 #include "base/builtin.h"
 #include "base/source_location.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 
@@ -61,6 +61,7 @@ RegisterId Lowerer::EmitArrayCallback(RegisterId callback,
 }
 
 Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& expression) {
+  const auto& result_type = model_.expression_types.at(&expression);
   const auto algorithm = model_.array_algorithms.at(&expression);
   const auto location = expression.location;
   // 所有输入先保存到帧槽；实参中的赋值不能改变已求值的 receiver 或其他实参。
@@ -85,7 +86,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
   if (algorithm == ArrayAlgorithm::Sort && signature == nullptr) {
     const auto result = AllocateTemporary(location);
     EmitBuiltinCall(Builtin::ArraySortDefault, result, base, location);
-    return {.reg = result, .type = model_.expression_types.at(&expression)};
+    return {.reg = result, .type = result_type};
   }
   using Comparison = ArrayAlgorithmRegisters::Comparison;
   auto comparison = Comparison::Integer;
@@ -113,7 +114,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
           .element_type = model_.array_elements.at(receiver.type.name),
           .signature = signature,
       },
-      algorithm, receiver.type, model_.expression_types.at(&expression), location);
+      algorithm, receiver.type, result_type, location);
 }
 
 Lowerer::LoweredValue Lowerer::LowerArraySortTraversal(const ArrayAlgorithmRegisters& inputs,
@@ -160,8 +161,7 @@ Lowerer::LoweredValue Lowerer::LowerArraySortTraversal(const ArrayAlgorithmRegis
   });
   Emit({.opcode = Opcode::AddInt, .dst = index, .lhs = index, .rhs = one, .location = location});
   Emit({.opcode = Opcode::Jump, .index = write, .location = location});
-  current_function_->instructions.at(done).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
+  BindJump(done);
   return {
       .reg = base,
       .type = result_type,
@@ -291,8 +291,7 @@ Lowerer::LoweredValue Lowerer::LowerArrayTraversal(const ArrayAlgorithmRegisters
     });
     short_exit = current_function_->instructions.size();
     Emit({.opcode = Opcode::Jump, .location = location});
-    current_function_->instructions.at(skip_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
+    BindJump(skip_jump);
   }
   Emit({.opcode = Opcode::AddInt, .dst = index, .lhs = index, .rhs = one, .location = location});
   Emit({.opcode = Opcode::Jump, .index = loop, .location = location});
@@ -364,8 +363,7 @@ void Lowerer::LowerArrayMergePass(RegisterId output,
     const auto bounded = current_function_->instructions.size();
     Emit({.opcode = Opcode::JumpIfFalse, .lhs = exceeds, .location = location});
     Emit({.opcode = Opcode::Move, .dst = end, .lhs = length, .location = location});
-    current_function_->instructions.at(bounded).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
+    BindJump(bounded);
     return end;
   };
   const auto middle = boundary(begin);
@@ -391,8 +389,7 @@ void Lowerer::LowerArrayMergePass(RegisterId output,
   const auto right_first = EmitArrayLess(inputs, {right, left}, location);
   const auto ordered_left = current_function_->instructions.size();
   Emit({.opcode = Opcode::JumpIfFalse, .lhs = right_first, .location = location});
-  current_function_->instructions.at(exhausted_left).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
+  BindJump(exhausted_left);
   const auto value = EmitTemporary(
       {.opcode = Opcode::GetIndex, .lhs = inputs.array, .rhs = right, .location = location});
   RecordValueType(value, inputs.element_type);
@@ -410,8 +407,7 @@ void Lowerer::LowerArrayMergePass(RegisterId output,
       .location = location,
   });
   Emit({.opcode = Opcode::AddInt, .dst = left, .lhs = left, .rhs = one, .location = location});
-  current_function_->instructions.at(selected_right).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
+  BindJump(selected_right);
   Emit({
       .opcode = Opcode::SetIndex,
       .dst = output,
@@ -427,12 +423,10 @@ void Lowerer::LowerArrayMergePass(RegisterId output,
       .location = location,
   });
   Emit({.opcode = Opcode::Jump, .index = merge, .location = location});
-  current_function_->instructions.at(merged).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
+  BindJump(merged);
   Emit({.opcode = Opcode::Move, .dst = begin, .lhs = end, .location = location});
   Emit({.opcode = Opcode::Jump, .index = pair, .location = location});
-  current_function_->instructions.at(done).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
+  BindJump(done);
 }
 
 void Lowerer::LowerArraySort(const ArrayAlgorithmRegisters& inputs,
@@ -453,8 +447,7 @@ void Lowerer::LowerArraySort(const ArrayAlgorithmRegisters& inputs,
   // 数组长度最多 uint32；最后一轮的加倍仍在 int64 范围内。
   Emit({.opcode = Opcode::AddInt, .dst = width, .lhs = width, .rhs = width, .location = location});
   Emit({.opcode = Opcode::Jump, .index = loop, .location = location});
-  current_function_->instructions.at(done).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
+  BindJump(done);
 }
 
 }  // namespace vela::ir

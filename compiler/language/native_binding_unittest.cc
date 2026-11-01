@@ -14,9 +14,9 @@
 #include "gtest/gtest.h"
 
 #include "compiler/frontend/modules/source_loader.h"
-#include "compiler/frontend/typing/checker_test_support.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
+#include "compiler/test_support/checker_test_support.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
@@ -622,8 +622,6 @@ async func main(): Future<int> { return await echo(Future.value(9)); }
 )",
                                             isolate);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto entry = compiled.instance->FindFunction("main");
-  ASSERT_TRUE(entry.has_value());
   auto root = test::StartFuture(*compiled.instance);
   ASSERT_EQ(isolate.scheduler().PumpUntil(root), runtime::FuturePumpResult::Completed);
   ASSERT_EQ(root.state(), runtime::FutureState::Succeeded);

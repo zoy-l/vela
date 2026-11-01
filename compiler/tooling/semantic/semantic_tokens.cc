@@ -56,8 +56,8 @@ std::vector<SemanticToken> SemanticIndex::SemanticTokens(PositionEncoding encodi
       modifiers |= kSemanticDefaultLibrary;
     }
     if (kind) {
-      const auto position = source.text.PositionAt(token.offset, encoding);
-      const auto end = source.text.PositionAt(token.offset + token.length, encoding);
+      const auto position = source.lines.PositionAt(source.text, token.offset, encoding);
+      const auto end = source.lines.PositionAt(source.text, token.offset + token.length, encoding);
       result.push_back({
           .position = position,
           .length = end.character - position.character,

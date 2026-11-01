@@ -1,3 +1,5 @@
+#include "compiler/frontend/syntax/token.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <array>
@@ -30,15 +32,15 @@ std::string TypeChecker::ConstantKey(const ConstantValue& value) {
 
 namespace {
 
-std::optional<ConstantValue> IntegerConstant(std::string_view operation,
+std::optional<ConstantValue> IntegerConstant(TokenKind operation,
                                              std::int64_t left,
                                              std::int64_t right) {
-  constexpr std::array<std::pair<std::string_view, Opcode>, 4> kArithmetic = {
+  constexpr std::array<std::pair<TokenKind, Opcode>, 4> kArithmetic = {
       {
-          {"+", Opcode::AddInt},
-          {"-", Opcode::SubInt},
-          {"*", Opcode::MulInt},
-          {"/", Opcode::DivInt},
+          {TokenKind::Plus, Opcode::AddInt},
+          {TokenKind::Minus, Opcode::SubInt},
+          {TokenKind::Star, Opcode::MulInt},
+          {TokenKind::Slash, Opcode::DivInt},
       },
   };
   for (const auto& [symbol, opcode] : kArithmetic) {
@@ -47,16 +49,16 @@ std::optional<ConstantValue> IntegerConstant(std::string_view operation,
       return result ? std::optional<ConstantValue>(*result) : std::nullopt;
     }
   }
-  if (operation == "<") {
+  if (operation == TokenKind::Less) {
     return left < right;
   }
-  if (operation == "<=") {
+  if (operation == TokenKind::LessEqual) {
     return left <= right;
   }
-  if (operation == ">") {
+  if (operation == TokenKind::Greater) {
     return left > right;
   }
-  if (operation == ">=") {
+  if (operation == TokenKind::GreaterEqual) {
     return left >= right;
   }
   return std::nullopt;
@@ -70,10 +72,10 @@ std::optional<ConstantValue> TypeChecker::EvaluateUnaryConstant(
   if (!operand) {
     return std::nullopt;
   }
-  if (expression.text == "!" && std::holds_alternative<bool>(*operand)) {
+  if (expression.operation == TokenKind::Bang && std::holds_alternative<bool>(*operand)) {
     return !std::get<bool>(*operand);
   }
-  if (expression.text == "-" && std::holds_alternative<std::int64_t>(*operand)) {
+  if (expression.operation == TokenKind::Minus && std::holds_alternative<std::int64_t>(*operand)) {
     const auto result =
         EvaluateIntegerArithmetic(Opcode::SubInt, 0, std::get<std::int64_t>(*operand));
     return result ? std::optional<ConstantValue>(*result) : std::nullopt;
@@ -88,25 +90,25 @@ std::optional<ConstantValue> TypeChecker::EvaluateBinaryConstant(
   if (!left || !right || left->index() != right->index()) {
     return std::nullopt;
   }
-  if (expression.text == "==") {
+  if (expression.operation == TokenKind::EqualEqual) {
     return *left == *right;
   }
-  if (expression.text == "!=") {
+  if (expression.operation == TokenKind::BangEqual) {
     return *left != *right;
   }
   if (std::holds_alternative<bool>(*left)) {
-    if (expression.text == "&&") {
+    if (expression.operation == TokenKind::AndAnd) {
       return std::get<bool>(*left) && std::get<bool>(*right);
     }
-    if (expression.text == "||") {
+    if (expression.operation == TokenKind::OrOr) {
       return std::get<bool>(*left) || std::get<bool>(*right);
     }
   }
-  if (std::holds_alternative<std::string>(*left) && expression.text == "+") {
+  if (std::holds_alternative<std::string>(*left) && expression.operation == TokenKind::Plus) {
     return std::get<std::string>(*left) + std::get<std::string>(*right);
   }
   if (std::holds_alternative<std::int64_t>(*left)) {
-    return IntegerConstant(expression.text, std::get<std::int64_t>(*left),
+    return IntegerConstant(expression.operation, std::get<std::int64_t>(*left),
                            std::get<std::int64_t>(*right));
   }
   return std::nullopt;

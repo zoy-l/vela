@@ -1,5 +1,6 @@
 #include "compiler/native/native_values.h"
 #include "compiler/native/function_emitter.h"
+#include "runtime/native/native_symbols.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -21,13 +22,23 @@
 #include <llvm/IR/Type.h>
 
 #include "base/execution_status.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_memory_layout.h"
 
 namespace vela::compiler::native {
+
+llvm::Value* LoadProgramData(Builder& builder, llvm::Value* execution) {
+  using runtime::NativeMemoryLayout;
+  auto* instance_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), execution,
+                                                      NativeMemoryLayout::kExecutionInstance);
+  auto* instance = builder.CreateLoad(builder.getPtrTy(), instance_address);
+  auto* data_address =
+      builder.CreateConstGEP1_64(builder.getInt8Ty(), instance, NativeMemoryLayout::kInstanceData);
+  return builder.CreateLoad(builder.getPtrTy(), data_address);
+}
 
 llvm::Constant* EmitConstantTable(llvm::Module& module,
                                   llvm::StructType* table,
@@ -76,7 +87,7 @@ llvm::Value* LoadImport(Builder& builder,
                         llvm::Value* execution,
                         std::uint32_t function) {
   using runtime::NativeFunction;
-  auto lookup = module.getOrInsertFunction("vela_native_v1_import", builder.getPtrTy(),
+  auto lookup = module.getOrInsertFunction(runtime::kNativeImportSymbol, builder.getPtrTy(),
                                            builder.getPtrTy(), builder.getInt32Ty());
   auto* entry = builder.CreateCall(lookup, {execution, builder.getInt32(function)});
   auto address = [&](std::size_t offset) {
@@ -307,13 +318,7 @@ void EmitWrapper(llvm::Module& module,
   llvm::Value* current_image = image;
   if (function.baseline_body != nullptr) {
     using runtime::NativeMemoryLayout;
-    auto* execution = entry->getArg(0);
-    auto* instance_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), execution,
-                                                        NativeMemoryLayout::kExecutionInstance);
-    auto* instance = builder.CreateLoad(builder.getPtrTy(), instance_address);
-    auto* data_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), instance,
-                                                    NativeMemoryLayout::kInstanceData);
-    auto* data = builder.CreateLoad(builder.getPtrTy(), data_address);
+    auto* data = LoadProgramData(builder, entry->getArg(0));
     auto* image_address =
         builder.CreateConstGEP1_64(builder.getInt8Ty(), data, NativeMemoryLayout::kProgramImage);
     current_image = builder.CreateLoad(builder.getPtrTy(), image_address);
@@ -363,7 +368,7 @@ void EmitWrapper(llvm::Module& module,
   arguments.push_back(result);
   llvm::Value* status = nullptr;
   if (function.baseline_body != nullptr) {
-    auto helper = module.getOrInsertFunction("vela_native_v4_can_optimize", builder.getInt8Ty(),
+    auto helper = module.getOrInsertFunction(runtime::kNativeCanOptimizeSymbol, builder.getInt8Ty(),
                                              builder.getPtrTy(), builder.getPtrTy());
     auto* optimized = llvm::BasicBlock::Create(context, "optimized", entry);
     auto* baseline = llvm::BasicBlock::Create(context, "baseline", entry);

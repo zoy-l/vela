@@ -9,8 +9,8 @@ namespace vela::frontend {
 
 TypeChecker::Type TypeChecker::CheckTypeOperation(const Expression& expression) {
   const auto source = CheckExpression(*expression.operand, nullptr);
-  const auto target = ResolveType(expression.type, false);
-  type_operands_.insert_or_assign(&expression, target);
+  const auto target = ResolveType(expression.type, VoidTypePolicy::Forbidden);
+  facts_.type_operands.insert_or_assign(&expression, target);
   if (!IsValid(source) || !IsValid(target)) {
     return InvalidType();
   }

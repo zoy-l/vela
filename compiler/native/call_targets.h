@@ -21,7 +21,7 @@ struct NativeCallPlan final {
   std::vector<std::size_t> components;
   std::vector<std::uint8_t> slot_targets;
   std::vector<std::vector<std::size_t>> dependencies;
-  [[nodiscard]] bool UsesEntrySlot(CallEdge edge) const;
+  [[nodiscard]] bool IsEntrySlotRequired(CallEdge edge) const;
 };
 
 NativeCallPlan PlanNativeCalls(const ir::Program& program, NativeCodeTier tier);

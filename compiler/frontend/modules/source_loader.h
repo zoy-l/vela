@@ -54,9 +54,6 @@ struct CapturedSources final {
                                                  const ModuleCache* accepted = nullptr);
 
 [[nodiscard]] ModuleGraph LoadModuleGraph(std::string_view path);
-[[nodiscard]] ModuleGraph LoadModuleGraph(std::span<const std::string> roots,
-                                          ModuleCache& cache,
-                                          std::span<const SourceInput> overlays);
 [[nodiscard]] ParseResult BindModuleGraph(
     ModuleGraph graph,
     std::span<const std::string> retained_standard_names = {});
@@ -80,9 +77,6 @@ struct CapturedSources final {
                                       SourceLoadMode mode = SourceLoadMode::Compilation);
 // 内存模块只从给定输入解析依赖，不隐式读取磁盘；entry 的模块编号为零。
 [[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources, std::string_view entry);
-[[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources,
-                                      std::span<const std::string> roots,
-                                      std::span<const std::string> retained_standard_names = {});
 [[nodiscard]] ParseResult LoadSources(std::span<const SourceInput> sources,
                                       std::span<const std::string> roots,
                                       ModuleCache& cache,

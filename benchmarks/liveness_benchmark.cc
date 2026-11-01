@@ -41,14 +41,21 @@ void LoopLiveness(benchmark::State& state, LivenessMode mode) {
       {.opcode = Opcode::Return, .dst = kDataRegisters, .location = {}});
   const auto graph = ir::BuildFlowGraph(function);
   for (auto iteration : state) {
-    auto live = mode == LivenessMode::All
-                    ? ir::AnalyzeLiveness(function, graph, {})
-                    : ir::AnalyzeNecessaryLiveness(function, graph, {}).blocks;
-    if (live.empty() || !live.front().live_in.Has(0)) {
-      state.SkipWithError("Loop condition must remain live at entry");
-      break;
+    if (mode == LivenessMode::All) {
+      auto live = ir::AnalyzeLiveness(function, graph, {});
+      if (live.empty() || !live.front().live_in.Has(0)) {
+        state.SkipWithError("Loop condition must remain live at entry");
+        break;
+      }
+      benchmark::DoNotOptimize(live);
+    } else {
+      auto keep = ir::AnalyzeNecessaryLiveness(function, graph, {});
+      if (keep.size() != function.instructions.size() || keep.back() == 0) {
+        state.SkipWithError("Necessary liveness must preserve the return");
+        break;
+      }
+      benchmark::DoNotOptimize(keep);
     }
-    benchmark::DoNotOptimize(live);
   }
   state.counters["instructions"] = static_cast<double>(function.instructions.size());
   state.counters["blocks"] = static_cast<double>(graph.blocks.size());

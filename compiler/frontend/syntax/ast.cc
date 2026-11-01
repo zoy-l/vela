@@ -1,10 +1,8 @@
 #include "compiler/frontend/syntax/ast.h"
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -22,9 +20,7 @@ TypeName SubstituteTypeName(TypeName type, const TypeSubstitutions& substitution
     return found == substitutions.end() ? type : found->second;
   }
   // 只有由参数替换产生的内层可空才合并；源码直接写出的双重可空仍由类型检查报告。
-  const bool substitutes_element = type.kind == TypeName::Kind::Nullable &&
-                                   type.arguments.front().kind == TypeName::Kind::Parameter &&
-                                   substitutions.contains(type.arguments.front().parameter);
+  const bool substitutes_element = SubstitutesNullableElement(type, substitutions);
   for (auto& argument : type.arguments) {
     argument = SubstituteTypeName(std::move(argument), substitutions);
   }
@@ -32,6 +28,12 @@ TypeName SubstituteTypeName(TypeName type, const TypeSubstitutions& substitution
     return std::move(type.arguments.front());
   }
   return type;
+}
+
+bool SubstitutesNullableElement(const TypeName& type, const TypeSubstitutions& substitutions) {
+  return type.kind == TypeName::Kind::Nullable &&
+         type.arguments.front().kind == TypeName::Kind::Parameter &&
+         substitutions.contains(type.arguments.front().parameter);
 }
 
 bool IsNullableTypeName(const TypeName& type) {
@@ -64,25 +66,6 @@ bool IsSameTypeConstructor(const TypeName& left, const TypeName& right) {
   return left.kind != TypeName::Kind::Parameter || left.parameter == right.parameter;
 }
 
-std::optional<std::string_view> CompoundAssignmentOperation(std::string_view text) {
-  constexpr auto operations = std::to_array<std::string_view>({
-      "+=",
-      "-=",
-      "*=",
-      "/=",
-      "%=",
-      "&=",
-      "|=",
-      "^=",
-      "<<=",
-      ">>=",
-      ">>>=",
-  });
-  const auto found = std::ranges::find(operations, text);
-  return found == operations.end() ? std::nullopt
-                                   : std::optional(found->substr(0, found->size() - 1));
-}
-
 namespace {
 
 enum class TypeText : std::uint8_t { Display, Canonical };
@@ -90,6 +73,8 @@ enum class TypeText : std::uint8_t { Display, Canonical };
 std::string RenderType(const TypeName& type, TypeText mode) {
   using Kind = TypeName::Kind;
   switch (type.kind) {
+    case Kind::Inferred:
+      return {};
     case Kind::Named:
       return type.name;
     case Kind::Parameter:

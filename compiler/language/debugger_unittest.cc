@@ -13,6 +13,7 @@
 #include "base/callable.h"
 #include "base/execution_status.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -46,12 +47,6 @@ class CallbackDebugger final : public runtime::NativeDebugger {
   runtime::Isolate* isolate_;
   std::function<void(const runtime::NativeDebugContext&)> callback_;
 };
-
-void ExpectAnswer(runtime::NativeInstance& instance) {
-  const auto result = test::ExecuteFutureInteger(instance);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
-}
 
 void CollectAndCheckFrame(const runtime::NativeDebugContext& context,
                           runtime::Isolate& isolate,
@@ -93,7 +88,7 @@ async func main(): Future<int> {
     isolate.heap().Collect();
     saw_transform = saw_transform || context.top_frame().name() == "transform";
   });
-  ExpectAnswer(*compiled.instance);
+  test::ExpectAnswer(*compiled.instance);
   EXPECT_TRUE(saw_transform);
 }
 
@@ -115,7 +110,7 @@ func main(): int {
   CallbackDebugger debugger(isolate, [&](const runtime::NativeDebugContext& context) {
     CollectAndCheckFrame(context, isolate, frames);
   });
-  ExpectAnswer(*compiled.instance);
+  test::ExpectAnswer(*compiled.instance);
   EXPECT_NE(std::ranges::find(frames, "work"), frames.end());
 }
 
@@ -141,7 +136,7 @@ func main(): int {
   CallbackDebugger debugger(isolate, [&](const runtime::NativeDebugContext& context) {
     CollectAndCheckFrame(context, isolate, frames);
   });
-  ExpectAnswer(*compiled.instance);
+  test::ExpectAnswer(*compiled.instance);
   EXPECT_NE(std::ranges::find(frames, "Payload.toJson"), frames.end());
   EXPECT_NE(std::ranges::find(frames, "Payload.read"), frames.end());
 }
@@ -211,7 +206,7 @@ func main(): int { return value; }
   restarted.SetOutput(output);
   auto instance = runtime::NativeInstance::Instantiate(restarted, state.image_owner);
   ASSERT_TRUE(instance);
-  ExpectAnswer(**instance);
+  test::ExpectAnswer(**instance);
   EXPECT_EQ(output.str(), "once\n");
 }
 
@@ -230,7 +225,7 @@ func main(): int {
   ASSERT_TRUE(compiled.Succeeded());
   CallbackDebugger debugger(isolate,
                             [&](const runtime::NativeDebugContext&) { isolate.heap().Collect(); });
-  ExpectAnswer(*compiled.instance);
+  test::ExpectAnswer(*compiled.instance);
 }
 
 TEST(DebuggerTest, DebugsAnImageAfterItsCompilerAndOriginalInstanceAreDestroyed) {
@@ -246,7 +241,7 @@ TEST(DebuggerTest, DebugsAnImageAfterItsCompilerAndOriginalInstanceAreDestroyed)
   producer.heap().Collect();
   std::size_t instructions = 0;
   CallbackDebugger debugger(isolate, [&](const runtime::NativeDebugContext&) { ++instructions; });
-  ExpectAnswer(**instance);
+  test::ExpectAnswer(**instance);
   EXPECT_GT(instructions, 0U);
 }
 

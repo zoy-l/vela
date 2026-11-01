@@ -1,8 +1,10 @@
 #include "compiler/ir/declaration_bindings.h"
+#include "compiler/frontend/syntax/names.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -12,9 +14,34 @@
 #include "compiler/frontend/flow/lambda_visitor.h"
 #include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 
 namespace vela::ir {
+
+std::string MethodKey(std::string_view owner, DeclarationKind kind, std::string_view name) {
+  constexpr std::string_view kGetterPrefix = "$get.";
+  constexpr std::string_view kSetterPrefix = "$set.";
+  std::string key(owner);
+  key += '.';
+  if (kind == DeclarationKind::Getter) {
+    key += kGetterPrefix;
+  } else if (kind == DeclarationKind::Setter) {
+    key += kSetterPrefix;
+  }
+  key += name;
+  return key;
+}
+
+std::string MethodKey(std::string_view owner, const frontend::Function& method) {
+  auto kind = DeclarationKind::Method;
+  if (method.is_getter) {
+    kind = DeclarationKind::Getter;
+  } else if (method.is_setter) {
+    kind = DeclarationKind::Setter;
+  }
+  return MethodKey(owner, kind, method.name);
+}
+
 namespace {
 
 class DeclarationBinder final {
@@ -100,6 +127,7 @@ frontend::TypeIdentity DeclarationBinder::Type(const frontend::TypeName& source)
     case frontend::TypeName::Kind::Function:
       result.kind = Kind::Function;
       break;
+    case frontend::TypeName::Kind::Inferred:
     case frontend::TypeName::Kind::Parameter:
       // 持久执行类型只来自已验证的具体应用；抽象定义事实不进入此绑定阶段。
       std::unreachable();
@@ -201,25 +229,23 @@ void DeclarationBinder::BindClass(const frontend::Class& owner) {
   };
   auto& fields = result_.classes.try_emplace(owner.name).first->second;
   fields.declaration = declaration;
-  const auto constructor = member(DeclarationKind::Constructor, "$constructor");
-  result_.named_functions.emplace(owner.name + ".$constructor", constructor);
+  const auto constructor =
+      member(DeclarationKind::Constructor, std::string(frontend::kConstructorName));
+  result_.named_functions.emplace(
+      MethodKey(owner.name, DeclarationKind::Method, frontend::kConstructorName), constructor);
   if (owner.constructor != nullptr) {
     BindFunction(*owner.constructor, constructor);
   }
   for (const auto& method : owner.methods) {
     auto kind = method.storage == frontend::MemberStorage::Static ? DeclarationKind::StaticMethod
                                                                   : DeclarationKind::Method;
-    std::string key = owner.name + '.';
     if (method.is_getter) {
       kind = DeclarationKind::Getter;
-      key += "$get.";
     } else if (method.is_setter) {
       kind = DeclarationKind::Setter;
-      key += "$set.";
     }
-    key += method.name;
     const auto identity = Method(declaration, kind, method, definition);
-    result_.named_functions.emplace(std::move(key), identity);
+    result_.named_functions.emplace(MethodKey(owner.name, kind, method.name), identity);
     BindFunction(method, identity);
   }
   for (const auto& method : owner.method_templates) {

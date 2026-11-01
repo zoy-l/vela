@@ -29,7 +29,10 @@ source_set("base") {
     "path.h",
     "process_exit.h",
     "regexp.h",
+    "source_lines.cc",
+    "source_lines.h",
     "source_location.h",
+    "test_protocol.h",
     "utf8.cc",
     "utf8.h",
   ]

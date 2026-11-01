@@ -1,3 +1,4 @@
+#include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <string>
@@ -49,7 +50,7 @@ void TypeChecker::DiagnoseBinaryOperandMismatch(const Expression& expression,
 void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth outcome) {
   using Kind = Expression::Kind;
   using Truth = ConditionTruth;
-  if (condition.kind == Kind::Unary && condition.text == "!") {
+  if (condition.kind == Kind::Unary && condition.operation == TokenKind::Bang) {
     RefineCondition(*condition.operand,
                     outcome == Truth::AlwaysTrue ? Truth::AlwaysFalse : Truth::AlwaysTrue);
     return;
@@ -62,15 +63,15 @@ void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth ou
   if (condition.kind != Kind::Binary) {
     return;
   }
-  if ((condition.text == "&&" && outcome == Truth::AlwaysTrue) ||
-      (condition.text == "||" && outcome == Truth::AlwaysFalse)) {
+  if ((condition.operation == TokenKind::AndAnd && outcome == Truth::AlwaysTrue) ||
+      (condition.operation == TokenKind::OrOr && outcome == Truth::AlwaysFalse)) {
     RefineCondition(*condition.left, outcome);
     // 右侧可能重写左侧刚刚检查的局部变量，不能恢复已失效的事实。
     InvalidateAssignments(*condition.right);
     RefineCondition(*condition.right, outcome);
     return;
   }
-  if (condition.text != "==" && condition.text != "!=") {
+  if (condition.operation != TokenKind::EqualEqual && condition.operation != TokenKind::BangEqual) {
     return;
   }
   const Expression* name = nullptr;
@@ -86,7 +87,7 @@ void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth ou
   if (binding == nullptr || !IsPotentiallyNullable(binding->type)) {
     return;
   }
-  if ((condition.text == "!=") == (outcome == Truth::AlwaysTrue)) {
+  if ((condition.operation == TokenKind::BangEqual) == (outcome == Truth::AlwaysTrue)) {
     refinements_.Set(binding->id, NonNullable(binding->type));
   } else {
     refinements_.Erase(binding->id);
@@ -95,8 +96,8 @@ void TypeChecker::RefineCondition(const Expression& condition, ConditionTruth ou
 
 void TypeChecker::RefineTypeTest(const Expression& condition) {
   const auto* binding = LookupLocal(condition.operand->text);
-  const auto target = type_operands_.find(&condition);
-  if (binding == nullptr || target == type_operands_.end()) {
+  const auto target = facts_.type_operands.find(&condition);
+  if (binding == nullptr || target == facts_.type_operands.end()) {
     return;
   }
   const auto type =
@@ -110,7 +111,7 @@ void TypeChecker::CollectAssignments(const Expression& expression, AssignmentEff
   if (expression.kind == Expression::Kind::Call) {
     effects.may_call = true;
   }
-  if (expression.kind == Expression::Kind::Binary && expression.text == "=" &&
+  if (expression.kind == Expression::Kind::Binary && expression.operation == TokenKind::Equal &&
       expression.left->kind == Expression::Kind::Name) {
     effects.names.insert(expression.left->text);
   }

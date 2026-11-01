@@ -19,6 +19,7 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
 
@@ -210,8 +211,10 @@ std::expected<NativeArtifact, frontend::Diagnostics> Compile(ir::Program program
   if (!object) {
     return diagnostic(object.error());
   }
+  const auto buffer = (*object)->getBuffer();
+  const auto bytes = std::as_bytes(std::span(buffer.data(), buffer.size()));
   return NativeArtifact{
-      .object = std::move(*object),
+      .object = std::vector<std::byte>(bytes.begin(), bytes.end()),
       .llvm_ir = std::move(llvm_ir),
       .target = machine.getTargetTriple().str(),
       .exports = std::move(exports),

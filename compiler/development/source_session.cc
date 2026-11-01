@@ -324,8 +324,8 @@ std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
   if (!requests) {
     return std::unexpected(SourceError(std::move(requests.error())));
   }
-  auto checked = frontend::TypeChecker(nullptr, options_)
-                     .CheckPrepared(parsed.program, specializer, *requests);
+  auto checked =
+      frontend::TypeChecker(options_).CheckPrepared(parsed.program, specializer, *requests);
   if (!checked.Succeeded()) {
     return std::unexpected(SourceError(std::move(checked.diagnostics)));
   }
@@ -346,13 +346,13 @@ std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
   return SourceCandidate(std::move(base), std::move(candidate));
 }
 
-std::expected<void, SourceCandidateStatus> SourceSession::Commit(const SourceCandidate& candidate) {
+std::expected<void, SourceCommitStatus> SourceSession::Commit(const SourceCandidate& candidate) {
   if (candidate.prepared_->session != identity_) {
-    return std::unexpected(SourceCandidateStatus::DifferentSession);
+    return std::unexpected(SourceCommitStatus::DifferentSession);
   }
   const std::scoped_lock lock(mutex_);
   if (current_ != candidate.base_) {
-    return std::unexpected(SourceCandidateStatus::Stale);
+    return std::unexpected(SourceCommitStatus::Stale);
   }
   current_ = candidate.prepared_;
   return {};

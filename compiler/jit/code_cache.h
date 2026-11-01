@@ -25,7 +25,7 @@ struct CachedObject final {
   std::unique_ptr<llvm::MemoryBuffer> object;
 };
 
-// 生成模块包含完整源码、声明、依赖和执行模式事实。缓存键还绑定编译器、LLVM、目标和
+// 模块 bitcode 包含完整源码、声明、依赖和执行模式事实。缓存键还绑定编译器、LLVM、目标和
 // runtime ABI；目标文件只保存重定位，不携带其他已装载代码批次或 Isolate 的地址。
 [[nodiscard]] std::string CodeCacheKey(const llvm::Module& module, NativeOptimization optimization);
 [[nodiscard]] std::expected<CachedObject, std::string> ReadCodeCache(

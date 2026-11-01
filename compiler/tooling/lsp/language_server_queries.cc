@@ -131,9 +131,13 @@ void LanguageServer::DocumentLinks(RpcCall call) {
 std::vector<Completion> LanguageServer::CompletionsFor(std::string_view uri,
                                                        const ServerDocument& opened,
                                                        std::size_t offset) {
-  const auto text = opened.source.text();
-  const auto arguments = PrepareArgumentCompletion(text, offset);
-  const auto completion_text = arguments ? arguments->source : CompletionSource(text, offset);
+  const auto files = IndexFor(uri, opened).source_files();
+  if (files.empty()) {
+    return {};
+  }
+  const auto& syntax = *files.front().syntax;
+  const auto arguments = PrepareArgumentCompletion(syntax, offset);
+  const auto completion_text = arguments ? arguments->source : CompletionSource(syntax, offset);
   std::vector<frontend::SourceInput> overlays;
   overlays.reserve(documents_.size());
   for (const auto& [open_uri, opened_document] : documents_) {
@@ -147,11 +151,13 @@ std::vector<Completion> LanguageServer::CompletionsFor(std::string_view uri,
     if (cached != completion_indices_.end()) {
       completion_indices_.erase(cached);
     }
+    // 占位符只更新本次查询的模块快照；真实文档缓存仍供诊断与其它语义请求复用。
+    auto query_modules = modules_;
     cached = completion_indices_
                  .emplace(std::string(uri),
                           CompletionIndex{
                               .text = completion_text,
-                              .index = SemanticIndex(opened.path, modules_, overlays),
+                              .index = SemanticIndex(opened.path, query_modules, overlays),
                           })
                  .first;
   }

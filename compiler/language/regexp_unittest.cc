@@ -4,6 +4,7 @@
 #include "gtest/gtest.h"
 
 #include "base/execution_status.h"
+#include "compiler/test_support/execution_expectations.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -13,19 +14,13 @@ namespace {
 
 class RegExpProgramTest : public testing::TestWithParam<std::string_view> {};
 
-void ExpectAnswer(runtime::NativeInstance& instance) {
-  const auto result = test::ExecuteFutureInteger(instance);
-  ASSERT_TRUE(result) << result.error();
-  EXPECT_EQ(*result, 42);
-}
-
 TEST_P(RegExpProgramTest, ExecutesWithGCAndReleasesProgramsAndWorkBuffers) {
   runtime::Isolate isolate(1);
   const auto baseline = isolate.heap().object_count();
   {
     const auto program = test::CompileCleanSource(GetParam(), isolate);
     ASSERT_TRUE(program) << program.error();
-    ExpectAnswer(**program);
+    test::ExpectAnswer(**program);
   }
   isolate.heap().FinishCollection();
   isolate.heap().Collect();
@@ -36,7 +31,7 @@ TEST_P(RegExpProgramTest, RestoresSourceFreeImageInFreshIsolate) {
   runtime::Isolate isolate(1);
   const auto loaded = test::ReinstantiateSource(GetParam(), isolate);
   ASSERT_TRUE(loaded) << loaded.error();
-  ExpectAnswer(**loaded);
+  test::ExpectAnswer(**loaded);
 }
 
 INSTANTIATE_TEST_SUITE_P(ProductionContracts,

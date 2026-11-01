@@ -1,15 +1,17 @@
 #include "compiler/native/borrow_analysis.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string_view>
+
+#include <absl/container/flat_hash_map.h>
 #include <utility>
 #include <vector>
 
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
@@ -22,7 +24,10 @@ namespace {
 using namespace internal;
 using Kind = frontend::TypeDescriptor::Kind;
 
-std::optional<ir::ClassId> BorrowedType(const ir::Program& program, const ir::Function& function) {
+std::optional<ir::ClassId> BorrowedType(
+    const ir::Program& program,
+    const ir::Function& function,
+    const absl::flat_hash_map<std::string_view, ir::ClassId>& classes) {
   if (function.parameter_count == 0 || function.is_async || !function.native_symbol.empty() ||
       function.is_generated_constructor || function.instructions.empty()) {
     return std::nullopt;
@@ -38,12 +43,15 @@ std::optional<ir::ClassId> BorrowedType(const ir::Program& program, const ir::Fu
       return std::nullopt;
     }
   }
-  const auto found = std::ranges::find(program.classes, parameter.name, &ir::Class::name);
-  if (found == program.classes.end() || found->kind != ir::Class::Kind::Instance ||
-      found->callable || found->field_types.empty()) {
+  const auto found = classes.find(parameter.name);
+  if (found == classes.end()) {
     return std::nullopt;
   }
-  return static_cast<ir::ClassId>(found - program.classes.begin());
+  const auto& type = program.classes.at(found->second);
+  if (type.kind != ir::Class::Kind::Instance || type.callable || type.field_types.empty()) {
+    return std::nullopt;
+  }
+  return found->second;
 }
 
 // 此入口不传播栈记录。字段本身可以保存真实托管引用，但不能写入参数的虚拟身份。
@@ -104,16 +112,8 @@ ir::Instruction BorrowedInstruction(const EscapePlan& plan,
 std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
                                            const ir::Function& source,
                                            ir::ClassId type) {
-  EscapePlan plan{
-      .function = source,
-      .origins = {},
-      .allocations = {},
-      .checkpoints = {},
-      .borrowable = {},
-      .borrowed_calls = {},
-      .borrowed_fields = {},
-      .body_dependencies = {},
-  };
+  EscapePlan plan(source);
+  auto& rewritten = plan.function.Rewrite();
   const auto& fields = program.classes.at(type).field_types;
   const auto state_size = source.register_count + fields.size() + 2;
   const auto graph = ir::BuildFlowGraph(source);
@@ -130,11 +130,11 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
   entry.front() = {.objects = 1, .other = false, .initialized = true};
   for (std::size_t field = 0; field < fields.size(); ++field) {
     entry.at(source.register_count + field).initialized = true;
-    plan.borrowed_fields.push_back(plan.function.register_count++);
-    plan.function.value_types.push_back(fields.at(field));
+    plan.borrowed_fields.push_back(rewritten.register_count++);
+    rewritten.value_types.push_back(fields.at(field));
   }
-  const auto marker = plan.function.register_count++;
-  plan.function.value_types.push_back({.kind = Kind::Null, .name = frontend::kNullTypeName});
+  const auto marker = rewritten.register_count++;
+  rewritten.value_types.push_back({.kind = Kind::Null, .name = frontend::kNullTypeName});
   const std::vector<std::optional<std::size_t>> allocations(source.instructions.size());
   const auto states =
       Solve(source, program, graph, allocations, plan, state_size, std::move(entry));
@@ -146,7 +146,7 @@ std::optional<BorrowedFunction> PlanBorrow(const ir::Program& program,
       if (!IsBorrowedUse(plan, program, original, values)) {
         return std::nullopt;
       }
-      plan.function.instructions.at(position) =
+      rewritten.instructions.at(position) =
           BorrowedInstruction(plan, program, original, values, marker);
       Transfer(original, ir::AnalyzeRegisters(original, program.functions), std::nullopt, plan,
                program, values);
@@ -166,9 +166,14 @@ std::vector<std::optional<BorrowedFunction>> PlanBorrows(const ir::Program& prog
   if (program.native_mode != NativeProgramMode::Closed) {
     return result;
   }
+  absl::flat_hash_map<std::string_view, ir::ClassId> classes;
+  classes.reserve(program.classes.size());
+  for (std::size_t index = 0; index < program.classes.size(); ++index) {
+    classes.emplace(program.classes.at(index).name, static_cast<ir::ClassId>(index));
+  }
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
     const auto& function = program.functions.at(index);
-    if (const auto type = BorrowedType(program, function)) {
+    if (const auto type = BorrowedType(program, function, classes)) {
       result.at(index) = PlanBorrow(program, function, *type);
     }
   }

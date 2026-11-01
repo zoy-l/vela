@@ -1,5 +1,11 @@
+#include "base/member.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/flow/initialization.h"
+#include "compiler/frontend/syntax/names.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -11,6 +17,7 @@
 #include "base/regexp.h"
 #include "compiler/frontend/syntax/ast.h"
 
+#include "compiler/frontend/builtins/async_builtins.h"
 #include "compiler/frontend/builtins/builtins.h"
 #include "compiler/frontend/builtins/standard_environment.h"
 #include "compiler/frontend/typing/type_name.h"
@@ -137,7 +144,7 @@ void TypeChecker::ResolveClass(const Class& class_declaration, ClassInfo& info) 
 
 void TypeChecker::ResolveClassRelations(const Class& class_declaration, ClassInfo& info) {
   if (class_declaration.base_class) {
-    const auto base = ResolveType(*class_declaration.base_class, false);
+    const auto base = ResolveType(*class_declaration.base_class, VoidTypePolicy::Forbidden);
     if (base.kind != Type::Kind::Class || base.nullable) {
       AddDiagnostic(class_declaration.base_class->location, "extends requires a class type");
     } else {
@@ -145,7 +152,7 @@ void TypeChecker::ResolveClassRelations(const Class& class_declaration, ClassInf
     }
   }
   for (const auto& interface : class_declaration.interfaces) {
-    const auto type = ResolveType(interface, false);
+    const auto type = ResolveType(interface, VoidTypePolicy::Forbidden);
     if (type.kind != Type::Kind::Interface || type.nullable) {
       AddDiagnostic(interface.location, "implements requires an interface type");
     } else if (!info.interfaces.insert(std::string(type.name)).second) {
@@ -233,8 +240,9 @@ void TypeChecker::CheckAccessor(const Function& method) {
   if (method.is_getter && !method.parameters.empty()) {
     AddDiagnostic(method.location, "getter must not declare parameters");
   }
-  if (method.is_setter && (method.parameters.size() != 1 ||
-                           ResolveType(method.return_type, true).kind != Type::Kind::Void)) {
+  if (method.is_setter &&
+      (method.parameters.size() != 1 ||
+       ResolveType(method.return_type, VoidTypePolicy::Allowed).kind != Type::Kind::Void)) {
     AddDiagnostic(method.location, "setter must declare one parameter and return void");
   }
 }
@@ -244,7 +252,7 @@ void TypeChecker::ResolveClassConstructor(const Class& class_declaration, ClassI
     return;
   }
   const auto signature = ResolveSignature(*class_declaration.constructor);
-  info.methods.emplace("$constructor", signature);
+  info.methods.emplace(kConstructorName, signature);
   info.constructor.visibility = class_declaration.constructor->visibility;
   if (class_declaration.constructor_kind == ConstructorKind::Explicit) {
     info.constructor = signature;
@@ -255,7 +263,7 @@ void TypeChecker::ResolveClassConstructor(const Class& class_declaration, ClassI
 void TypeChecker::ResolveField(const Field& field,
                                const Class& class_declaration,
                                ClassInfo& info) {
-  const Type type = ResolveType(field.type, false);
+  const Type type = ResolveType(field.type, VoidTypePolicy::Forbidden);
   const ClassDescriptor::Field descriptor{
       .type = type,
       .index = static_cast<std::uint32_t>(info.field_order.size()),
@@ -311,7 +319,7 @@ TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression,
   if (const auto* owner = StaticOwner(expression)) {
     return CheckStaticMember(expression, *owner, expected);
   }
-  if (expression.object->kind == Expression::Kind::Name && expression.object->text == "super") {
+  if (expression.object->kind == Expression::Kind::Name && expression.object->text == kSuperName) {
     return CheckSuperMember(expression, expected);
   }
   if (expression.object->kind == Expression::Kind::Name &&
@@ -327,9 +335,7 @@ TypeChecker::Type TypeChecker::CheckMemberAccess(const Expression& expression,
   }
 
   auto object = CheckExpression(*expression.object, nullptr);
-  if (object.kind == Type::Kind::Parameter) {
-    object = ParameterCapability(object, expression.object->location);
-  }
+  object = ParameterCapability(object, expression.object->location);
   if (object.nullable) {
     if (!expression.null_safe) {
       AddDiagnostic(expression.object->location, "nullable receiver requires a non-null check");
@@ -347,41 +353,33 @@ TypeChecker::Type TypeChecker::CheckSuperMember(const Expression& expression,
   if (base == nullptr) {
     return InvalidType();
   }
-  if (const auto method = base->method_templates.find(expression.text);
-      method != base->method_templates.end()) {
-    return CheckGenericMethod(method->second, expression, nullptr, expected, MethodAccess::Super);
-  }
-  if (!expression.type_arguments.empty()) {
-    AddDiagnostic(expression.location, "type arguments require a generic method");
-    return InvalidType();
+  if (const auto applied = CheckMethodApplication(base->method_templates, expression, nullptr,
+                                                  expected, MethodAccess::Super)) {
+    return *applied;
   }
   const auto method = base->methods.find(expression.text);
   if (method == base->methods.end()) {
     AddDiagnostic(expression.location, "unknown super member '" + expression.text + "'");
     return InvalidType();
   }
-  super_members_.insert_or_assign(&expression, MemberReference{
-                                                   .owner = method->second.member_owner,
-                                                   .member = expression.text,
-                                               });
+  facts_.super_members.insert_or_assign(&expression, MemberReference{
+                                                         .owner = method->second.member_owner,
+                                                         .member = expression.text,
+                                                     });
   return method->second.is_getter ? method->second.return_type : FunctionType(method->second);
 }
 
 TypeChecker::Type TypeChecker::CheckStaticMember(const Expression& expression,
                                                  const ClassInfo& owner,
                                                  const Type* expected) {
-  if (const auto method = owner.method_templates.find(expression.text);
-      method != owner.method_templates.end()) {
-    return CheckGenericMethod(method->second, expression, nullptr, expected, MethodAccess::Static);
-  }
-  if (!expression.type_arguments.empty()) {
-    AddDiagnostic(expression.location, "type arguments require a generic method");
-    return InvalidType();
+  if (const auto applied = CheckMethodApplication(owner.method_templates, expression, nullptr,
+                                                  expected, MethodAccess::Static)) {
+    return *applied;
   }
   const auto field = owner.static_fields.find(expression.text);
   if (field != owner.static_fields.end()) {
     CheckAccess(field->second.visibility, owner.type.name, expression.location);
-    static_members_.insert_or_assign(
+    facts_.static_members.insert_or_assign(
         &expression,
         MemberReference{.owner = std::string(owner.type.name), .member = expression.text});
     return field->second.type;
@@ -389,7 +387,7 @@ TypeChecker::Type TypeChecker::CheckStaticMember(const Expression& expression,
   const auto method = owner.methods.find(expression.text);
   if (method != owner.methods.end() && method->second.storage == MemberStorage::Static) {
     CheckAccess(method->second.visibility, method->second.member_owner, expression.location);
-    static_members_.insert_or_assign(
+    facts_.static_members.insert_or_assign(
         &expression,
         MemberReference{.owner = method->second.member_owner, .member = expression.text});
     return FunctionType(method->second);
@@ -410,13 +408,12 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
     InvalidateCapturedRefinements();
     return object;
   }
-  if ((object.kind == Type::Kind::Completer &&
-       (expression.text == "future" || expression.text == "isCompleted")) ||
-      (object.kind == Type::Kind::CancellationToken && expression.text == "isCancelled")) {
+  if (const auto* member = FindAsyncMember(object.kind, MemberStorage::Instance, expression.text);
+      member != nullptr && member->kind == MemberKind::Property) {
     return CheckAsyncProperty(expression, object);
   }
   if (const auto builtin = FindBuiltinProperty(object.kind, expression.text)) {
-    builtin_calls_.insert_or_assign(&expression, *builtin);
+    facts_.builtin_calls.insert_or_assign(&expression, *builtin);
     if (IsRegExpBuiltin(*builtin)) {
       return BuiltinSignature(*builtin).return_type;
     }
@@ -424,18 +421,13 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
   }
   if (object.kind == Type::Kind::Interface) {
     const auto& owner = interfaces_.at(object.name);
-    if (const auto method = owner.method_templates.find(expression.text);
-        method != owner.method_templates.end()) {
-      return CheckGenericMethod(method->second, expression, nullptr, expected,
-                                MethodAccess::Instance);
-    }
-    if (!expression.type_arguments.empty()) {
-      AddDiagnostic(expression.location, "type arguments require a generic method");
-      return InvalidType();
+    if (const auto applied = CheckMethodApplication(owner.method_templates, expression, nullptr,
+                                                    expected, MethodAccess::Instance)) {
+      return *applied;
     }
     const auto method = owner.methods.find(expression.text);
     if (method != owner.methods.end()) {
-      interface_members_.insert_or_assign(
+      facts_.interface_members.insert_or_assign(
           &expression,
           MemberReference{.owner = std::string(object.name), .member = expression.text});
       return FunctionType(method->second);
@@ -452,14 +444,9 @@ TypeChecker::Type TypeChecker::CheckObjectMember(const Expression& expression,
 TypeChecker::Type TypeChecker::CheckClassMember(const Expression& expression,
                                                 const ClassInfo& owner,
                                                 const Type* expected) {
-  if (const auto method = owner.method_templates.find(expression.text);
-      method != owner.method_templates.end()) {
-    return CheckGenericMethod(method->second, expression, nullptr, expected,
-                              MethodAccess::Instance);
-  }
-  if (!expression.type_arguments.empty()) {
-    AddDiagnostic(expression.location, "type arguments require a generic method");
-    return InvalidType();
+  if (const auto applied = CheckMethodApplication(owner.method_templates, expression, nullptr,
+                                                  expected, MethodAccess::Instance)) {
+    return *applied;
   }
   const auto field = owner.fields.find(expression.text);
   if (field == owner.fields.end()) {
@@ -474,7 +461,7 @@ TypeChecker::Type TypeChecker::CheckClassMember(const Expression& expression,
       if (method->second.storage == MemberStorage::Static) {
         AddDiagnostic(expression.location, "static method must be accessed through its class");
       }
-      instance_members_.insert_or_assign(
+      facts_.instance_members.insert_or_assign(
           &expression,
           MemberReference{.owner = method->second.member_owner, .member = expression.text});
       return FunctionType(method->second);
@@ -528,6 +515,43 @@ void TypeChecker::CheckFieldInitializers(const Class& owner, const ClassInfo& in
     }
   }
   owner_ = nullptr;
+}
+
+void TypeChecker::CheckClassBody(const Class& source, const ClassInfo& info) {
+  const auto errors = ErrorCount(diagnostics_);
+  CheckFieldInitializers(source, info);
+  for (const auto& method : source.methods) {
+    CheckFunction(method, &info);
+  }
+  if (source.constructor) {
+    CheckFunction(*source.constructor, &info);
+  }
+  if (ErrorCount(diagnostics_) != errors) {
+    return;
+  }
+  const auto* base = info.base_class ? &classes_.at(*info.base_class) : nullptr;
+  const bool explicit_super = explicit_super_constructors_.contains(info.type.name);
+  if (base != nullptr && !explicit_super &&
+      std::ranges::any_of(base->constructor.parameters, [&](const auto& parameter) {
+        return !base->constructor.optional_parameters.contains(parameter.name);
+      })) {
+    AddDiagnostic(source.constructor ? source.constructor->location : source.location,
+                  "derived constructor must call super(...) because the base constructor has "
+                  "required parameters");
+    return;
+  }
+  const auto initialization =
+      CheckConstructorInitialization(source, {
+                                                 .owner = &info,
+                                                 .base = base,
+                                                 .lambdas = facts_.lambdas,
+                                                 .lambda_indices = &facts_.lambda_indices,
+                                                 .control_flow = &facts_.control_flow,
+                                                 .has_explicit_super_call = explicit_super,
+                                             });
+  for (const auto& diagnostic : initialization) {
+    AddDiagnostic(diagnostic.location, diagnostic.message);
+  }
 }
 
 }  // namespace vela::frontend

@@ -8,6 +8,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/source_lines.h"
 #include "base/source_location.h"
 #include "base/utf8.h"
 
@@ -44,20 +45,15 @@ SourceLineIndex::SourceLineIndex(std::string_view text) {
 }
 
 void SourceLineIndex::Reset(std::string_view text) {
-  lines_.assign(1, 0);
-  for (std::size_t offset = 0; offset < text.size(); ++offset) {
-    if (text.at(offset) == '\n') {
-      lines_.push_back(offset + 1);
-    }
-  }
+  lines_ = IndexSourceLines(text);
 }
 
 std::size_t SourceLineIndex::LineEnd(std::string_view text, std::size_t line) const {
-  if (line + 1 == lines_.size()) {
+  if (line + 1 == lines_->size()) {
     return text.size();
   }
-  auto end = lines_.at(line + 1) - 1;
-  if (end > lines_.at(line) && text.at(end - 1) == '\r') {
+  auto end = lines_->at(line + 1) - 1;
+  if (end > lines_->at(line) && text.at(end - 1) == '\r') {
     --end;
   }
   return end;
@@ -66,10 +62,10 @@ std::size_t SourceLineIndex::LineEnd(std::string_view text, std::size_t line) co
 std::expected<std::size_t, std::string> SourceLineIndex::OffsetAt(std::string_view text,
                                                                   TextPosition position,
                                                                   PositionEncoding encoding) const {
-  if (position.line >= lines_.size()) {
+  if (position.line >= lines_->size()) {
     return std::unexpected("document line is out of range");
   }
-  auto offset = lines_.at(position.line);
+  auto offset = lines_->at(position.line);
   const auto end = LineEnd(text, position.line);
   std::size_t character = 0;
   while (offset < end && character < position.character) {
@@ -89,11 +85,12 @@ TextPosition SourceLineIndex::PositionAt(std::string_view text,
                                          std::size_t offset,
                                          PositionEncoding encoding) const {
   offset = std::min(offset, text.size());
-  const auto next = std::ranges::upper_bound(lines_, offset);
-  const auto line = static_cast<std::size_t>(std::distance(lines_.begin(), next) - 1);
+  const auto& lines = *lines_;
+  const auto next = std::ranges::upper_bound(lines, offset);
+  const auto line = static_cast<std::size_t>(std::distance(lines.begin(), next) - 1);
   const auto end = std::min(offset, LineEnd(text, line));
   std::size_t character = 0;
-  for (auto cursor = lines_.at(line); cursor < end;) {
+  for (auto cursor = lines.at(line); cursor < end;) {
     const auto bytes = Utf8Width(text, cursor);
     if (bytes > end - cursor) {
       break;
@@ -107,8 +104,9 @@ TextPosition SourceLineIndex::PositionAt(std::string_view text,
 TextPosition SourceLineIndex::PositionAt(std::string_view text,
                                          SourceLocation location,
                                          PositionEncoding encoding) const {
-  const auto line = std::min(static_cast<std::size_t>(location.line - 1), lines_.size() - 1);
-  const auto begin = lines_.at(line);
+  const auto& lines = *lines_;
+  const auto line = std::min(static_cast<std::size_t>(location.line - 1), lines.size() - 1);
+  const auto begin = lines.at(line);
   const auto bytes =
       std::min(static_cast<std::size_t>(location.column - 1), LineEnd(text, line) - begin);
   return PositionAt(text, begin + bytes, encoding);

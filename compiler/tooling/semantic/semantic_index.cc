@@ -19,11 +19,12 @@
 #include "base/source_location.h"
 #include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/builtins/standard_environment.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/syntax/lexer.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/syntax/token.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/tooling/documentation/documentation.h"
@@ -105,18 +106,17 @@ void CloseCompletionDelimiters(std::string& text, std::span<const frontend::Toke
 
 }  // namespace
 
-std::string CompletionSource(std::string_view source, std::size_t offset) {
-  auto lexed = frontend::Lexer(source, 0, frontend::CommentRetention::Preserve).Tokenize();
+std::string CompletionSource(const frontend::SourceSnapshot& snapshot, std::size_t offset) {
+  const auto source = std::string_view(snapshot.text);
   // 注释与字面量中不制造表达式；插值内部的表达式仍由生产 lexer 分别标记。
-  for (const auto& comment : lexed.comments) {
+  for (const auto& comment : snapshot.comments) {
     if (offset >= comment.offset && offset <= comment.offset + comment.length) {
       return std::string(source);
     }
   }
-  for (const auto& token : lexed.tokens) {
+  for (const auto& token : snapshot.tokens) {
     if (offset > token.offset && offset < token.offset + token.length &&
-        (token.kind == TokenKind::StringLiteral || token.kind == TokenKind::StringHead ||
-         token.kind == TokenKind::StringMiddle || token.kind == TokenKind::StringTail)) {
+        frontend::IsStringToken(token.kind)) {
       return std::string(source);
     }
   }
@@ -127,8 +127,7 @@ std::string CompletionSource(std::string_view source, std::size_t offset) {
   std::string text(source);
   // 保留已经输入的前缀，光标位置仍落在同一个 token 内。
   text.insert(end, "__vela_completion__");
-  lexed = frontend::Lexer(text).Tokenize();
-  CloseCompletionDelimiters(text, lexed.tokens);
+  CloseCompletionDelimiters(text, snapshot.tokens);
   return text;
 }
 
@@ -141,23 +140,21 @@ SemanticIndex::SemanticIndex(std::string_view path,
     : SemanticIndex(
           frontend::LoadProgram(path, modules, overlays, frontend::SourceLoadMode::Editor)) {}
 
-SemanticIndex::SemanticIndex(frontend::ParseResult loaded) : program_(std::move(loaded.program)) {
+SemanticIndex::SemanticIndex(frontend::ParseResult loaded, frontend::DiagnosticOptions options)
+    : program_(std::move(loaded.program)),
+      diagnostics_(std::move(loaded.diagnostics)),
+      has_load_errors_(frontend::HasErrors(diagnostics_)) {
   for (const auto& resolution : program_.file_resolutions) {
     resolutions_.emplace(resolution.requested_path, resolution.canonical_path);
   }
   sources_.reserve(program_.sources.size());
   for (std::uint32_t index = 0; index < program_.sources.size(); ++index) {
     const auto& file = program_.sources.at(index);
-    auto text = SourceText::Create(std::string(file.text));
-    if (!text) {
-      // 无效 UTF-8 已由 loader/lexer 报错，不能构建协议位置索引。
-      sources_.clear();
-      return;
-    }
     const auto& syntax = *file.syntax;
     Source source{
         .path = file.path,
-        .text = std::move(*text),
+        .text = file.text,
+        .lines = SourceLineIndex(syntax.lines),
         .tokens = syntax.tokens,
         .comments = syntax.comments,
         .closing = {},
@@ -196,7 +193,10 @@ SemanticIndex::SemanticIndex(frontend::ParseResult loaded) : program_(std::move(
   CollectDeclarations();
   // 特化会展开别名并移除模板，先记录源码类型引用，保留其声明身份。
   VisitProgram();
-  auto checked = frontend::TypeChecker().Check(program_);
+  auto checked = frontend::TypeChecker(options).Check(program_);
+  if (diagnostics_.empty()) {
+    diagnostics_ = std::move(checked.diagnostics);
+  }
   // 未完成的表达式也需要已注册签名与局部类型；诊断不使部分语义事实失效。
   // 特化初始化失败时尚未创建类型环境，不能进入受检索引阶段。
   if (!checked.model.types.empty()) {
@@ -208,12 +208,20 @@ SemanticIndex::SemanticIndex(frontend::ParseResult loaded) : program_(std::move(
   CollectImports();
 }
 
+bool SemanticIndex::DependsOn(std::string_view path) const {
+  // 加载失败的图可能缺少尚未解析到的依赖，下一次输入变化必须重新尝试。
+  return has_load_errors_ || source_ids_.contains(path) || resolutions_.contains(path) ||
+         std::ranges::any_of(resolutions_,
+                             [path](const auto& entry) { return entry.second == path; });
+}
+
 std::size_t SemanticIndex::TokenAt(SourceLocation location) const {
   const auto& source = sources_.at(location.source_id);
-  const auto offset = source.text
-                          .OffsetAt({.line = location.line - 1, .character = location.column - 1},
-                                    PositionEncoding::Utf8)
-                          .value();
+  const auto offset =
+      source.lines
+          .OffsetAt(source.text, {.line = location.line - 1, .character = location.column - 1},
+                    PositionEncoding::Utf8)
+          .value();
   const auto& tokens = source.tokens;
   const auto found = std::ranges::lower_bound(tokens, offset, {}, &frontend::Token::offset);
   return static_cast<std::size_t>(found - tokens.begin());
@@ -331,8 +339,7 @@ void SemanticIndex::VisitType(const TypeName& type) {
       references_.insert_or_assign(KeyAt(type.location), Reference{.symbol = parameter->second});
     }
   }
-  if (!type.name.empty() &&
-      (type.kind == TypeName::Kind::Named || type.kind == TypeName::Kind::Generic)) {
+  if (type.kind == TypeName::Kind::Named || type.kind == TypeName::Kind::Generic) {
     auto token = TokenAt(type.location);
     const auto& tokens = sources_.at(type.location.source_id).tokens;
     // qualified type 的 location 指向导入前缀，定义属于最后一个标识符。
@@ -498,7 +505,7 @@ SemanticIndex::Receiver SemanticIndex::ReceiverFor(const Expression& expression)
   if (type != facts.expression_types.end()) {
     receiver.type = Capability(type->second);
   } else if (expression.kind == Expression::Kind::Name && !facts.bindings.contains(&expression)) {
-    if (expression.text == "Future") {
+    if (expression.text == frontend::kFutureTypeName) {
       receiver.type = {
           .kind = frontend::TypeDescriptor::Kind::Future,
           .name = frontend::kFutureTypeName,
@@ -620,7 +627,7 @@ void SemanticIndex::VisitExpression(const Expression* expression, const Scope& s
 }
 
 void SemanticIndex::VisitProgram() {
-  const Scope root{.end = sources_.front().text.text().size()};
+  const Scope root{.end = sources_.front().text.size()};
   for (const auto& function : program_.functions) {
     VisitFunction(function, root);
   }
@@ -745,8 +752,9 @@ std::vector<ImportLink> SemanticIndex::ImportLinks(PositionEncoding encoding) co
         .path = sources_.at(target->second).path,
         .range =
             {
-                .start = source.text.PositionAt(token.offset + 1, encoding),
-                .end = source.text.PositionAt(token.offset + token.length - 1, encoding),
+                .start = source.lines.PositionAt(source.text, token.offset + 1, encoding),
+                .end =
+                    source.lines.PositionAt(source.text, token.offset + token.length - 1, encoding),
             },
     });
   }
@@ -806,15 +814,16 @@ std::optional<Definition> SemanticIndex::FindDefinition(std::size_t offset,
       .path = source.path,
       .range =
           {
-              .start = source.text.PositionAt(symbol.key.second, encoding),
-              .end = source.text.PositionAt(symbol.key.second + symbol.length, encoding),
+              .start = source.lines.PositionAt(source.text, symbol.key.second, encoding),
+              .end =
+                  source.lines.PositionAt(source.text, symbol.key.second + symbol.length, encoding),
           },
   };
 }
 
 std::string SemanticIndex::DocumentationAt(SourceLocation location) const {
   const auto& source = sources_.at(location.source_id);
-  return DocumentationComment(source.text.text(), source.comments, location);
+  return DocumentationComment(source.text, source.comments, location);
 }
 
 std::vector<Completion> SemanticIndex::CompleteArguments(

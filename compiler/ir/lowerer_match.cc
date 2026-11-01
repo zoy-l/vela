@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -66,8 +66,7 @@ Lowerer::LoweredValue Lowerer::LowerMatch(const frontend::Expression& expression
     exits.push_back(current_function_->instructions.size());
     Emit({.opcode = Opcode::Jump, .location = arm.location});
     if (mismatch) {
-      current_function_->instructions.at(*mismatch).index =
-          static_cast<std::uint32_t>(current_function_->instructions.size());
+      BindJump(*mismatch);
     }
   }
   const auto end = static_cast<std::uint32_t>(current_function_->instructions.size());

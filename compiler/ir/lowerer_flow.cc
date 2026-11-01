@@ -7,7 +7,7 @@
 #include "base/builtin.h"
 #include "compiler/frontend/flow/control_flow.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -39,14 +39,12 @@ void Lowerer::LowerIf(const frontend::Statement& statement) {
     end_jump = current_function_->instructions.size();
     Emit({.opcode = Opcode::Jump, .location = statement.location});
   }
-  current_function_->instructions.at(false_jump).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
+  BindJump(false_jump);
   if (statement.else_branch) {
     LowerScopedStatement(*statement.else_branch);
   }
   if (end_jump) {
-    current_function_->instructions.at(*end_jump).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
+    BindJump(*end_jump);
   }
 }
 

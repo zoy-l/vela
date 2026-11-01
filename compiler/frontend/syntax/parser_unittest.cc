@@ -4,36 +4,48 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <gtest/gtest.h>
 
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/token.h"
 
 namespace vela::frontend {
 namespace {
 
 TEST(ParserTest, PreservesBinaryPrecedenceAndLeftAssociativity) {
-  constexpr auto kOperators =
-      std::to_array<std::string_view>({"||", "&&", "|", "^", "&", "==", "<", "<<", "+", "*"});
+  constexpr auto kOperators = std::to_array<std::pair<std::string_view, TokenKind>>({
+      {"||", TokenKind::OrOr},
+      {"&&", TokenKind::AndAnd},
+      {"|", TokenKind::Pipe},
+      {"^", TokenKind::Caret},
+      {"&", TokenKind::Ampersand},
+      {"==", TokenKind::EqualEqual},
+      {"<", TokenKind::Less},
+      {"<<", TokenKind::ShiftLeft},
+      {"+", TokenKind::Plus},
+      {"*", TokenKind::Star},
+  });
   for (std::size_t lower = 0; lower < kOperators.size(); ++lower) {
     for (std::size_t higher = lower; higher < kOperators.size(); ++higher) {
-      const auto left_op = kOperators.at(lower);
-      const auto right_op = kOperators.at(higher);
-      const std::string source = "func f(): int { return a " + std::string(left_op) + " b " +
-                                 std::string(right_op) + " c; }";
+      const auto& [left_text, left_op] = kOperators.at(lower);
+      const auto& [right_text, right_op] = kOperators.at(higher);
+      const std::string source = "func f(): int { return a " + std::string(left_text) + " b " +
+                                 std::string(right_text) + " c; }";
       SCOPED_TRACE(source);
       const auto parsed = ParseSource(source);
       ASSERT_TRUE(parsed.diagnostics.empty());
       const auto& expression =
           *parsed.program.functions.front().body->statements.front()->expression;
       EXPECT_EQ(expression.kind, Expression::Kind::Binary);
-      EXPECT_EQ(expression.text, left_op);
+      EXPECT_EQ(expression.operation, left_op);
       if (lower == higher) {
         ASSERT_NE(expression.left, nullptr);
-        EXPECT_EQ(expression.left->text, left_op);
+        EXPECT_EQ(expression.left->operation, left_op);
       } else {
         ASSERT_NE(expression.right, nullptr);
-        EXPECT_EQ(expression.right->text, right_op);
+        EXPECT_EQ(expression.right->operation, right_op);
       }
     }
   }
@@ -70,28 +82,28 @@ TEST(ParserTest, PreservesTypeOperatorGrammarAndAssignmentAssociativity) {
   const auto typed = ParseSource("func f(): bool { return (a + b as int) < c << d; }");
   ASSERT_TRUE(typed.diagnostics.empty());
   const auto& comparison = *typed.program.functions.front().body->statements.front()->expression;
-  EXPECT_EQ(comparison.text, "<");
+  EXPECT_EQ(comparison.operation, TokenKind::Less);
   ASSERT_NE(comparison.left, nullptr);
   EXPECT_EQ(comparison.left->kind, Expression::Kind::TypeCast);
   ASSERT_NE(comparison.left->operand, nullptr);
-  EXPECT_EQ(comparison.left->operand->text, "+");
+  EXPECT_EQ(comparison.left->operand->operation, TokenKind::Plus);
   ASSERT_NE(comparison.right, nullptr);
-  EXPECT_EQ(comparison.right->text, "<<");
+  EXPECT_EQ(comparison.right->operation, TokenKind::ShiftLeft);
   EXPECT_TRUE(ParseSource("func f(): bool { return a == b is int; }").diagnostics.empty());
 
   const auto assigned = ParseSource("func f(): void { a = b = c; }");
   ASSERT_TRUE(assigned.diagnostics.empty());
   const auto& assignment = *assigned.program.functions.front().body->statements.front()->expression;
-  EXPECT_EQ(assignment.text, "=");
+  EXPECT_EQ(assignment.operation, TokenKind::Equal);
   ASSERT_NE(assignment.right, nullptr);
-  EXPECT_EQ(assignment.right->text, "=");
+  EXPECT_EQ(assignment.right->operation, TokenKind::Equal);
 
   const auto coalesced = ParseSource("func f(): bool { return a ?? b || c; }");
   ASSERT_TRUE(coalesced.diagnostics.empty());
   const auto& logical = *coalesced.program.functions.front().body->statements.front()->expression;
-  EXPECT_EQ(logical.text, "||");
+  EXPECT_EQ(logical.operation, TokenKind::OrOr);
   ASSERT_NE(logical.left, nullptr);
-  EXPECT_EQ(logical.left->text, "??");
+  EXPECT_EQ(logical.left->operation, TokenKind::QuestionQuestion);
 
   for (const auto* const expression : {"a < b is int", "a is int + b", "a +", "a <", "a *"}) {
     SCOPED_TRACE(expression);

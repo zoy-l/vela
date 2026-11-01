@@ -1,4 +1,5 @@
 #include "compiler/native/function_emitter.h"
+#include "runtime/native/native_symbols.h"
 
 #include <absl/container/flat_hash_map.h>
 #include <algorithm>
@@ -85,7 +86,7 @@ void FunctionEmitter::EmitFrameEntry() {
     // 栈上根只借用 RootRange，不构造拥有堆存储的 NativeFrame。
     root_slots_ = allocate(roots_.count * sizeof(runtime::Value), alignof(runtime::Value));
     root_range = allocate(sizeof(runtime::RootRange), alignof(runtime::RootRange));
-    auto enter = module_.getOrInsertFunction("vela_native_v1_roots_enter", builder_.getVoidTy(),
+    auto enter = module_.getOrInsertFunction(runtime::kNativeRootsEnterSymbol, builder_.getVoidTy(),
                                              pointer, pointer, word, pointer);
     builder_.CreateCall(enter,
                         {execution, root_slots_, builder_.getInt64(roots_.count), root_range});
@@ -93,8 +94,9 @@ void FunctionEmitter::EmitFrameEntry() {
     resources = allocate(sizeof(runtime::NativeFrame), alignof(runtime::NativeFrame));
     auto* access =
         allocate(sizeof(runtime::NativeFrameAccess), alignof(runtime::NativeFrameAccess));
-    auto storage = module_.getOrInsertFunction("vela_native_v1_frame_storage", builder_.getInt8Ty(),
-                                               pointer, word, word, pointer, pointer);
+    auto storage =
+        module_.getOrInsertFunction(runtime::kNativeFrameStorageSymbol, builder_.getInt8Ty(),
+                                    pointer, word, word, pointer, pointer);
     auto* entered = builder_.CreateCall(storage, {
                                                      execution,
                                                      builder_.getInt64(roots_.count),
@@ -117,7 +119,7 @@ void FunctionEmitter::EmitFrameEntry() {
   Builder cleanup(cleanup_);
   status_ = cleanup.CreatePHI(builder_.getInt8Ty(), 0, "status");
   if (construction_depth_ != nullptr) {
-    auto exit = module_.getOrInsertFunction("vela_native_v3_initialization_exit",
+    auto exit = module_.getOrInsertFunction(runtime::kNativeInitializationExitSymbol,
                                             cleanup.getVoidTy(), pointer, cleanup.getInt32Ty());
     cleanup.CreateCall(exit,
                        {execution, cleanup.CreateLoad(cleanup.getInt32Ty(), construction_depth_)});
@@ -147,11 +149,11 @@ void FunctionEmitter::EmitFrameEntry() {
   }
   if (root_range != nullptr) {
     auto exit =
-        module_.getOrInsertFunction("vela_native_v1_roots_exit", cleanup.getVoidTy(), pointer);
+        module_.getOrInsertFunction(runtime::kNativeRootsExitSymbol, cleanup.getVoidTy(), pointer);
     cleanup.CreateCall(exit, {root_range});
   } else if (resources != nullptr) {
-    auto release =
-        module_.getOrInsertFunction("vela_native_v1_frame_release", cleanup.getVoidTy(), pointer);
+    auto release = module_.getOrInsertFunction(runtime::kNativeFrameReleaseSymbol,
+                                               cleanup.getVoidTy(), pointer);
     cleanup.CreateCall(release, {resources});
   }
   cleanup.CreateRet(status_);
@@ -214,15 +216,16 @@ void FunctionEmitter::CacheFields() {
     return;
   }
   if (tier_ != NativeCodeTier::Optimized) {
-    auto caches = module_.getOrInsertFunction("vela_native_v10_field_caches", builder_.getPtrTy(),
-                                              builder_.getPtrTy(), builder_.getInt32Ty());
+    auto caches =
+        module_.getOrInsertFunction(runtime::kNativeFieldCachesSymbol, builder_.getPtrTy(),
+                                    builder_.getPtrTy(), builder_.getInt32Ty());
     field_caches_ = builder_.CreateCall(
         caches, {body_->getArg(0), builder_.getInt32(static_cast<std::uint32_t>(function_index_))});
     return;
   }
   const auto fields = FindFieldTargets(program_);
   absl::flat_hash_map<ir::ClassId, llvm::Value*> classes;
-  auto layouts = module_.getOrInsertFunction("vela_native_v10_direct_field_layouts",
+  auto layouts = module_.getOrInsertFunction(runtime::kNativeDirectFieldLayoutsSymbol,
                                              builder_.getPtrTy(), builder_.getPtrTy());
   auto* table = builder_.CreateCall(layouts, {body_->getArg(0)});
   for (const auto& instruction : source_.instructions) {
@@ -254,7 +257,7 @@ void FunctionEmitter::CacheFields() {
 }
 
 void FunctionEmitter::BeginConstruction() {
-  auto enter = module_.getOrInsertFunction("vela_native_v3_initialization_enter",
+  auto enter = module_.getOrInsertFunction(runtime::kNativeInitializationEnterSymbol,
                                            builder_.getVoidTy(), builder_.getPtrTy());
   builder_.CreateCall(enter, {body_->getArg(0)});
   auto* depth = builder_.CreateLoad(builder_.getInt32Ty(), construction_depth_);
@@ -263,7 +266,7 @@ void FunctionEmitter::BeginConstruction() {
 
 void FunctionEmitter::EndConstruction() {
   auto exit =
-      module_.getOrInsertFunction("vela_native_v3_initialization_exit", builder_.getVoidTy(),
+      module_.getOrInsertFunction(runtime::kNativeInitializationExitSymbol, builder_.getVoidTy(),
                                   builder_.getPtrTy(), builder_.getInt32Ty());
   builder_.CreateCall(exit, {body_->getArg(0), builder_.getInt32(1)});
   auto* depth = builder_.CreateLoad(builder_.getInt32Ty(), construction_depth_);
@@ -275,7 +278,7 @@ void FunctionEmitter::AbortConstructions() {
     return;
   }
   auto exit =
-      module_.getOrInsertFunction("vela_native_v3_initialization_exit", builder_.getVoidTy(),
+      module_.getOrInsertFunction(runtime::kNativeInitializationExitSymbol, builder_.getVoidTy(),
                                   builder_.getPtrTy(), builder_.getInt32Ty());
   builder_.CreateCall(
       exit, {body_->getArg(0), builder_.CreateLoad(builder_.getInt32Ty(), construction_depth_)});

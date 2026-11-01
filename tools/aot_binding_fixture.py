@@ -83,7 +83,7 @@ void CheckBindings(std::int64_t failure_result) {
     NativeValue result;
     ASSERT_EQ(Execute(BINDING_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), expected.at(operation)) << operation;
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
     EXPECT_FALSE(execution.HasException());
   }
 }

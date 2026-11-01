@@ -21,7 +21,7 @@
 #include "base/opcode.h"
 #include "base/source_location.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "runtime/native/native_image.h"

@@ -1,3 +1,4 @@
+#include "compiler/frontend/syntax/names.h"
 #include "compiler/frontend/syntax/parser.h"
 
 #include <memory>
@@ -129,23 +130,19 @@ std::unique_ptr<Function> Parser::ParseConstructor(Class& declaration, MemberMod
     return nullptr;
   }
   auto constructor = std::make_unique<Function>();
-  constructor->name = "$constructor";
+  constructor->name = kConstructorName;
   constructor->location = Previous().location;
   constructor->visibility = visibility;
   constructor->return_type.name = kVoidTypeName;
+  constructor->return_type.kind = TypeName::Kind::Named;
   constructor->return_type.location = constructor->location;
   if (Match(TokenKind::LeftParen)) {
     declaration.constructor_kind = ConstructorKind::Explicit;
-    while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
-      auto parameter = ParseParameter();
-      if (!parameter) {
-        return nullptr;
-      }
-      constructor->parameters.push_back(std::move(*parameter));
-      if (!Match(TokenKind::Comma)) {
-        break;
-      }
+    auto parameters = ParseParameters();
+    if (!parameters) {
+      return nullptr;
     }
+    constructor->parameters = std::move(*parameters);
     if (!Expect(TokenKind::RightParen, "expected ')' after constructor parameters")) {
       return nullptr;
     }
@@ -287,16 +284,11 @@ std::optional<Function> Parser::ParseInterfaceMethod() {
     return std::nullopt;
   }
   method.type_parameters = std::move(*type_parameters);
-  while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
-    auto parameter = ParseParameter();
-    if (!parameter) {
-      return std::nullopt;
-    }
-    method.parameters.push_back(std::move(*parameter));
-    if (!Match(TokenKind::Comma)) {
-      break;
-    }
+  auto parameters = ParseParameters();
+  if (!parameters) {
+    return std::nullopt;
   }
+  method.parameters = std::move(*parameters);
   if (!Expect(TokenKind::RightParen, "expected ')' after interface parameters") ||
       !Expect(TokenKind::Colon, "expected ':' before interface return type")) {
     return std::nullopt;
@@ -344,16 +336,11 @@ std::optional<Function> Parser::ParseFunctionBody(const Token& name,
     AddDiagnostic(name.location, "external functions cannot declare generic parameters");
     return std::nullopt;
   }
-  while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
-    const auto parameter = ParseParameter();
-    if (!parameter) {
-      return std::nullopt;
-    }
-    function.parameters.push_back(*parameter);
-    if (!Match(TokenKind::Comma)) {
-      break;
-    }
+  auto parameters = ParseParameters();
+  if (!parameters) {
+    return std::nullopt;
   }
+  function.parameters = std::move(*parameters);
   if (!Expect(TokenKind::RightParen, "expected ')' after parameters") ||
       !Expect(TokenKind::Colon, "expected ':' before return type")) {
     return std::nullopt;
@@ -378,6 +365,21 @@ std::optional<Function> Parser::ParseFunctionBody(const Token& name,
   }
   function.body = ParseBlock();
   return function.body ? std::optional<Function>(std::move(function)) : std::nullopt;
+}
+
+std::optional<std::vector<Parameter>> Parser::ParseParameters(ParameterTyping typing) {
+  std::vector<Parameter> parameters;
+  while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
+    auto parameter = ParseParameter(typing);
+    if (!parameter) {
+      return std::nullopt;
+    }
+    parameters.push_back(std::move(*parameter));
+    if (!Match(TokenKind::Comma)) {
+      break;
+    }
+  }
+  return parameters;
 }
 
 std::optional<Parameter> Parser::ParseParameter(ParameterTyping typing) {

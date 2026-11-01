@@ -3,8 +3,8 @@
 #include "base/execution_status.h"
 #include "gtest/gtest.h"
 
+#include "compiler/test_support/checker_test_support.h"
 #include "compiler/test_support/program_test_support.h"
-#include "compiler/frontend/typing/checker_test_support.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
@@ -260,7 +260,7 @@ func main(): int {
   }
   return 42;
 })",
-                                      isolate);
+                                            isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto baseline = isolate.heap().allocated_bytes();
   const auto result = test::Execute(*compiled.instance, "main");

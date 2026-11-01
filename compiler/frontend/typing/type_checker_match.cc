@@ -33,7 +33,7 @@ void TypeChecker::CheckMatchConstant(const MatchArm& arm,
   if (!coverage.labels.insert(ConstantKey(*constant)).second) {
     AddDiagnostic(arm.location, "duplicate match pattern");
   }
-  case_values_.insert_or_assign(arm.pattern.get(), *constant);
+  facts_.case_values.insert_or_assign(arm.pattern.get(), *constant);
   if (base.kind == Type::Kind::Bool) {
     coverage.values = coverage.labels.size() == 2;
   } else if (base.kind == Type::Kind::Enum) {
@@ -66,8 +66,9 @@ TypeChecker::Type TypeChecker::CheckMatchPattern(const MatchArm& arm,
     narrowed = {.kind = Type::Kind::Null, .name = kNullTypeName};
   }
   if (arm.kind == MatchArm::Kind::Binding &&
-      DeclareLocal(arm.binding, narrowed, arm.location, BindingKind::Mutable, &arm)) {
-    match_bindings_.emplace(&arm, narrowed);
+      DeclareLocal(arm.binding, narrowed, arm.location, BindingKind::Mutable, &arm) ==
+          CheckStatus::Succeeded) {
+    facts_.match_bindings.emplace(&arm, narrowed);
   }
   coverage.null = true;
   coverage.values = true;

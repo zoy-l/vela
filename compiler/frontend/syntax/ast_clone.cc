@@ -32,7 +32,7 @@ class AstCloner final {
     return location;
   }
   [[nodiscard]] TypeName CloneType(const TypeName& source) const {
-    if (transform_ != nullptr && !source.name.empty()) {
+    if (transform_ != nullptr && source.kind != TypeName::Kind::Inferred) {
       return transform_->TransformType(source);
     }
     TypeName result{
@@ -77,6 +77,7 @@ std::unique_ptr<Expression> AstCloner::CloneExpression(const Expression* source)
   }
   auto result = std::make_unique<Expression>();
   result->kind = source->kind;
+  result->operation = source->operation;
   result->location = Relocate(source->location);
   result->text = source->text;
   result->null_safe = source->null_safe;

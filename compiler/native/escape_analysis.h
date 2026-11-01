@@ -2,8 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
+#include <variant>
 #include <vector>
 
 #include "base/declaration.h"
@@ -14,23 +16,10 @@ namespace vela::compiler::native {
 
 enum class EscapeOptimization : std::uint8_t { Disabled, ScalarReplacement, Enabled };
 
-enum class AllocationDecision : std::uint8_t {
-  ScalarReplacement,
-  NonInstance,
-  CallBoundary,
-  Publication,
-  AmbiguousAlias,
-  LoopLifetime,
-  UnsupportedUse,
-  AnalysisBudget,
-  RecoveryRequired,
-  OptimizationDisabled,
-};
-
 struct AllocationSite final {
   std::size_t instruction = 0;
   ir::ClassId type = 0;
-  AllocationDecision decision = AllocationDecision::ScalarReplacement;
+  bool can_scalar_replace = true;
   std::vector<ir::RegisterId> fields;
   ir::RegisterId reference = 0;
   bool materialized = false;
@@ -61,9 +50,26 @@ struct EscapeCheckpoint final {
   std::vector<EscapeAlias> aliases;
 };
 
-// 仅原生分流持有此副本；源码表、映像和恢复目标继续使用规范 IR。
+// 未改写时借用规范 IR；只有实际改写时才拥有分流副本。
+// 生产计划的生命周期由输入 Program 覆盖，源码表、映像和恢复目标继续使用规范 IR。
+class EscapeFunction final {
+ public:
+  explicit EscapeFunction(const ir::Function& source) : function_(std::cref(source)) {}
+  [[nodiscard]] const ir::Function& get() const {
+    if (const auto* rewritten = std::get_if<ir::Function>(&function_)) {
+      return *rewritten;
+    }
+    return std::get<std::reference_wrapper<const ir::Function>>(function_).get();
+  }
+  ir::Function& Rewrite();
+
+ private:
+  std::variant<std::reference_wrapper<const ir::Function>, ir::Function> function_;
+};
+
 struct EscapePlan final {
-  ir::Function function;
+  explicit EscapePlan(const ir::Function& source) : function(source) {}
+  EscapeFunction function;
   std::vector<std::size_t> origins;
   std::vector<AllocationSite> allocations;
   // 下标始终是规范 IR 的指令位置；字段来源使用原生分流新增的局部槽。

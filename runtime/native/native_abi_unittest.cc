@@ -89,7 +89,8 @@ TEST(NativeAbiTest, RootsSurviveCollectionAndFramesReleaseThem) {
   auto* string = heap.AllocateString("rooted");
   ASSERT_NE(string, nullptr);
   frame.roots().front() = Value::String(string);
-  std::memset(frame.storage(), 0xff, sizeof(std::max_align_t));
+  constexpr unsigned char kStoragePattern = 0xff;
+  std::memset(frame.storage(), kStoragePattern, sizeof(std::max_align_t));
   heap.Collect();
   EXPECT_EQ(string->value(), "rooted");
   execution.Exit();
@@ -104,8 +105,10 @@ TEST(NativeAbiTest, AllocationFailuresPreserveExistingFrames) {
   NativeExecution execution(**instance);
   NativeFrame roots(isolate, {.root_count = std::numeric_limits<std::size_t>::max()});
   NativeFrame storage(isolate, {.storage_bytes = std::numeric_limits<std::size_t>::max()});
-  NativeFrame combined(isolate, {.root_count = 1,
-                                 .storage_bytes = std::numeric_limits<std::size_t>::max()});
+  NativeFrame combined(isolate, {
+                                    .root_count = 1,
+                                    .storage_bytes = std::numeric_limits<std::size_t>::max(),
+                                });
   EXPECT_FALSE(roots.IsAllocated());
   EXPECT_FALSE(storage.IsAllocated());
   EXPECT_FALSE(combined.IsAllocated());

@@ -1,3 +1,4 @@
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <algorithm>
@@ -49,7 +50,9 @@ TypeChecker::Type TypeChecker::ResolveGenericType(const TypeName& source) {
   std::string name = source.name + '<';
   for (std::size_t index = 0; index < count; ++index) {
     auto argument = ResolveType(source.arguments.at(index),
-                                kind == Type::Kind::Future || kind == Type::Kind::Completer);
+                                kind == Type::Kind::Future || kind == Type::Kind::Completer
+                                    ? VoidTypePolicy::Allowed
+                                    : VoidTypePolicy::Forbidden);
     if (!IsValid(argument)) {
       return InvalidType();
     }
@@ -86,7 +89,7 @@ TypeChecker::Type TypeChecker::CheckCollectionConstruction(const Expression& exp
   const std::array parameters{IntrinsicTypeParameter("$Key"), IntrinsicTypeParameter("$Value")};
   const auto type = InferConstruction(expression, expected, set ? kSetTypeName : kMapTypeName,
                                       std::span(parameters).first(set ? 1 : 2));
-  collection_constructions_.insert(&expression);
+  facts_.collection_constructions.insert(&expression);
   return type;
 }
 
@@ -212,7 +215,7 @@ TypeChecker::Type TypeChecker::CheckCollectionMethod(const Expression& expressio
                   "unknown collection method '" + expression.callee->text + "'");
     return InvalidType();
   }
-  builtin_calls_.insert_or_assign(&expression, method->operation);
+  facts_.builtin_calls.insert_or_assign(&expression, method->operation);
   return CheckFunctionCall(method->signature, expression);
 }
 

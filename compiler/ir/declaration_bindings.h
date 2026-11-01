@@ -2,15 +2,21 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 #include <absl/container/flat_hash_map.h>
 
 #include "base/declaration.h"
 #include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 
 namespace vela::ir {
+
+[[nodiscard]] std::string MethodKey(std::string_view owner,
+                                    DeclarationKind kind,
+                                    std::string_view name);
+[[nodiscard]] std::string MethodKey(std::string_view owner, const frontend::Function& method);
 
 struct ClassDeclarations final {
   DeclarationId declaration;

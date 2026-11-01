@@ -19,7 +19,7 @@ CheckResult CheckParsed(ParseResult parsed, DiagnosticOptions options) {
 }
 
 CheckResult CheckProgram(Program& program, DiagnosticOptions options) {
-  auto checked = TypeChecker(nullptr, options).Check(program);
+  auto checked = TypeChecker(options).Check(program);
   return {.diagnostics = std::move(checked.diagnostics), .function_count = checked.function_count};
 }
 

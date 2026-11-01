@@ -13,6 +13,7 @@
 namespace vela::ir {
 
 Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expression) {
+  const auto& result_type = model_.expression_types.at(&expression);
   const auto builtin = model_.builtin_calls.at(&expression);
   if (builtin == Builtin::ArrayUnshift || builtin == Builtin::ArraySplice ||
       (builtin == Builtin::ArrayPush && expression.arguments.size() != 1)) {
@@ -53,7 +54,7 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
     LowerArguments(expression, static_cast<RegisterId>(base + receiver_count));
   }
   if (HasRegExpArrayLayout(builtin)) {
-    auto type = model_.expression_types.at(&expression);
+    auto type = result_type;
     type.nullable = false;
     if (type.name.ends_with('?')) {
       type.name = type.name.substr(0, type.name.size() - 1);
@@ -68,7 +69,7 @@ Lowerer::LoweredValue Lowerer::LowerBuiltin(const frontend::Expression& expressi
   const auto result = AllocateTemporary(expression.location);
   EmitBuiltinCall(builtin, result, base, expression.location);
   FinishNullSafe(null_jump, result, expression.location);
-  return {.reg = result, .type = model_.expression_types.at(&expression)};
+  return {.reg = result, .type = result_type};
 }
 
 void Lowerer::LowerBuiltinDefaults(Builtin builtin,

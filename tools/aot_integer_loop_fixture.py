@@ -95,7 +95,7 @@ void ExpectIntegerLoopCases(NativeExecution& execution,
     NativeValue result;
     ASSERT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), item[5]);
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
     EXPECT_FALSE(execution.HasException());
   }
 }
@@ -163,7 +163,7 @@ TEST_F(NativeIntegerLoopGcTest, ObservedPrefixesAndOtherFailureExitsRemainOrdere
   EXPECT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, crossing, result), ExecutionStatus::IntegerOverflow);
   const std::array inclusive{Integer(8), Integer(maximum - 1), Integer(maximum), Integer(0), Integer(0)};
   EXPECT_EQ(Execute(INTEGER_LOOP_ENTRY, execution, inclusive, result), ExecutionStatus::IntegerOverflow);
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
 TEST_F(NativeIntegerLoopTest, MatchesCheckedArithmeticAcrossSmallRangesAndIntegerEndpoints) {

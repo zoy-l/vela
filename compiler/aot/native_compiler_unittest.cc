@@ -30,11 +30,11 @@
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/preparation.h"
-#include "compiler/ir/preparation_test_support.h"
 #include "compiler/native/call_targets.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
+#include "compiler/test_support/preparation_test_support.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/native/native_image.h"
 

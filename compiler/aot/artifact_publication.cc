@@ -197,7 +197,6 @@ class Manifest final {
 
   [[nodiscard]] std::expected<std::string, std::string> Serialize(
       const std::filesystem::path& output,
-      const ir::Program& program,
       const NativeArtifact& artifact,
       std::span<const std::byte> binary,
       LibraryArtifactKind kind,
@@ -231,6 +230,7 @@ class Manifest final {
       Append(files, file);
     }
     Add(root, "files", files);
+    const auto& program = artifact.program;
     DescribeFunctions(program, artifact);
     DescribeTypes(program);
     auto* libraries = Array();
@@ -269,8 +269,7 @@ std::expected<void, std::string> PublishNativeLibrary(const std::filesystem::pat
                                                       std::span<const std::byte> binary,
                                                       LibraryArtifactKind kind,
                                                       const TargetSupport* support) {
-  const auto manifest =
-      Manifest().Serialize(output, artifact.program, artifact, binary, kind, support);
+  const auto manifest = Manifest().Serialize(output, artifact, binary, kind, support);
   if (!manifest) {
     return std::unexpected(manifest.error());
   }

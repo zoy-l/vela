@@ -15,7 +15,7 @@
 #include "base/member.h"
 #include "compiler/frontend/builtins/builtins.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_name.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
@@ -113,8 +113,7 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
       algorithm, receiver, signature.return_type, {}, output);
   Emit({.opcode = Opcode::Return, .dst = result.reg, .location = {}});
   if (default_sort) {
-    current_function_->instructions.at(*default_sort).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
+    BindJump(*default_sort);
     const auto sorted = AllocateTemporary({});
     EmitBuiltinCall(Builtin::ArraySortDefault, sorted, 0, {});
     Emit({.opcode = Opcode::Return, .dst = sorted, .location = {}});

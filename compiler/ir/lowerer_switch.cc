@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -70,8 +70,7 @@ void Lowerer::LowerSwitch(const frontend::Statement& statement) {
     Emit({.opcode = Opcode::JumpIfFalse, .lhs = equal, .location = branch.location});
     entries.at(index) = current_function_->instructions.size();
     Emit({.opcode = Opcode::Jump, .location = branch.location});
-    current_function_->instructions.at(mismatch).index =
-        static_cast<std::uint32_t>(current_function_->instructions.size());
+    BindJump(mismatch);
   }
   const auto unmatched = current_function_->instructions.size();
   Emit({.opcode = Opcode::Jump, .location = statement.location});

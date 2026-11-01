@@ -273,7 +273,7 @@ TEST_F(NativeClassTest, FailedGraphMaterializationDoesNotPublishPartialAliasesOr
     EXPECT_EQ(Execute(graph->entry, execution, {}, result), ExecutionStatus::OutOfMemory);
     EXPECT_EQ(result.kind, NativeValueKind::Integer);
     EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 123);
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
     static_cast<void>(execution.TakeException());
     heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
     heap.Collect();
@@ -301,7 +301,7 @@ void VerifyBorrowedRecursionOnSmallStack() {
   EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), 42);
   const std::array deep{Integer(100000)};
   EXPECT_EQ(Execute(found->entry, execution, deep, result), ExecutionStatus::StackOverflow);
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
   static_cast<void>(execution.TakeException());
   isolate.heap().Collect();
   ASSERT_EQ(Execute(found->entry, execution, shallow, result), ExecutionStatus::Returned);

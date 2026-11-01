@@ -118,10 +118,10 @@ std::expected<void, std::string> LanguageServer::Open(const yyjson_val* params) 
   if (!source) {
     return std::unexpected(source.error());
   }
-  documents_.emplace(
+  const auto added = documents_.emplace(
       std::string(*uri),
       ServerDocument{.path = std::move(path), .source = std::move(*source), .version = *version});
-  PublishDiagnostics();
+  PublishDiagnostics(added.first->second.path);
   return {};
 }
 
@@ -142,13 +142,14 @@ std::expected<void, std::string> LanguageServer::Change(const yyjson_val* params
   }
   // 通知包含多个顺序编辑时，只有全部合法才提交版本与文本，避免半次更新。
   auto next = opened.source;
-  const auto changed = ApplyChanges(next, GetJsonField(params, "contentChanges"), encoding_);
+  const auto changed =
+      ApplyChanges(next, GetJsonField(params, protocol::kContentChanges), encoding_);
   if (!changed) {
     return changed;
   }
   opened.source = std::move(next);
   opened.version = *version;
-  PublishDiagnostics();
+  PublishDiagnostics(opened.path);
   return {};
 }
 
@@ -164,10 +165,11 @@ std::expected<void, std::string> LanguageServer::Close(const yyjson_val* params)
   }
   ClearDiagnostics(*uri);
   // 关闭后重新从磁盘读取；不能把未保存的 overlay 固定成后续依赖快照。
-  modules_.sources.erase(found->second.path);
+  const auto path = found->second.path;
+  modules_.sources.erase(path);
   documents_.erase(found);
   published_.erase(std::string(*uri));
-  PublishDiagnostics();
+  PublishDiagnostics(path);
   return {};
 }
 
@@ -201,7 +203,7 @@ void LanguageServer::Format(RpcCall call) {
     AddJsonField(document, range, protocol::kEnd,
                  JsonPosition(document, source.PositionAt(source.text().size(), encoding_)));
     AddJsonField(document, edit, protocol::kRange, range);
-    AddJsonField(document, edit, "newText",
+    AddJsonField(document, edit, protocol::kNewText,
                  yyjson_mut_strncpy(document, formatted->data(), formatted->size()));
     yyjson_mut_arr_add_val(edits, edit);
   }

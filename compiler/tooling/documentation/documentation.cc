@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <expected>
 #include <ostream>
 #include <span>
 #include <sstream>
@@ -306,7 +305,7 @@ void Documentation::Emit(Declaration declaration) {
       const auto& global = program.globals.at(declaration.index);
       output_ << (global.binding == frontend::BindingKind::Constant ? "const " : "let ")
               << global.name;
-      if (!global.type.name.empty()) {
+      if (global.type.kind != frontend::TypeName::Kind::Inferred) {
         output_ << ": " << global.type.ToString();
       }
       Initializer(*global.initializer);
@@ -388,15 +387,6 @@ std::string DocumentationComment(std::string_view source,
     result += *item;
   }
   return result;
-}
-
-std::expected<std::string, frontend::Diagnostics> GenerateModuleDocumentation(
-    std::string_view source) {
-  const auto parsed = frontend::ParseSourceSnapshot(std::string(source));
-  if (!parsed.diagnostics.empty()) {
-    return std::unexpected(parsed.diagnostics);
-  }
-  return Documentation(parsed.program, *parsed.source).Generate();
 }
 
 DocumentationResult GenerateDocumentation(std::string_view entry,

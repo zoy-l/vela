@@ -5,12 +5,16 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
+#include <llvm/ADT/StringRef.h>
+#include <llvm/Bitcode/BitcodeWriter.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Object/ObjectFile.h>
@@ -31,11 +35,29 @@ namespace {
 
 constexpr std::string_view kMagic = "VELAJIT1";
 
+// ORC 拥有 payload 视图，同时持有完整缓存输入；校验后不再复制目标文件字节。
+class CachedObjectBuffer final : public llvm::MemoryBuffer {
+ public:
+  CachedObjectBuffer(std::vector<std::byte> bytes, std::size_t offset) : bytes_(std::move(bytes)) {
+    const auto payload = std::span(bytes_).subspan(offset);
+    const void* storage = payload.data();
+    const llvm::StringRef text(static_cast<const char*>(storage), payload.size());
+    init(text.begin(), text.end(), false);
+  }
+  [[nodiscard]] llvm::StringRef getBufferIdentifier() const override {
+    return "vela.cached.object";
+  }
+  [[nodiscard]] BufferKind getBufferKind() const override { return MemoryBuffer_Malloc; }
+
+ private:
+  std::vector<std::byte> bytes_;
+};
+
 std::filesystem::path CachePath(const std::filesystem::path& directory, std::string_view key) {
   return directory / (std::string(key) + ".vlobj");
 }
 
-CachedObject Decode(std::span<const std::byte> bytes, std::string_view expected_key) {
+CachedObject Decode(std::vector<std::byte> bytes, std::string_view expected_key) {
   const auto invalid = [] {
     return CachedObject{.status = CodeCacheStatus::Invalid, .object = {}};
   };
@@ -50,9 +72,8 @@ CachedObject Decode(std::span<const std::byte> bytes, std::string_view expected_
   if (!payload) {
     return invalid();
   }
-  const void* storage = payload->data();
-  auto object = llvm::MemoryBuffer::getMemBufferCopy(
-      {static_cast<const char*>(storage), payload->size()}, "vela.cached.object");
+  const auto offset = bytes.size() - payload->size();
+  auto object = std::make_unique<CachedObjectBuffer>(std::move(bytes), offset);
   auto parsed = llvm::object::ObjectFile::createObjectFile(object->getMemBufferRef());
   if (!parsed) {
     llvm::consumeError(parsed.takeError());
@@ -70,7 +91,7 @@ std::string CodeCacheKey(const llvm::Module& module, NativeOptimization optimiza
          << LLVM_VERSION_STRING << '\n'
          << runtime::NativeRuntimeAbiIdentity() << '\n'
          << static_cast<std::uint8_t>(optimization) << '\n';
-  module.print(output, nullptr);
+  llvm::WriteBitcodeToFile(module, output);
   return ContentFingerprint(identity).Hex();
 }
 
@@ -85,11 +106,11 @@ std::expected<CachedObject, std::string> ReadCodeCache(const std::filesystem::pa
   if (!exists) {
     return CachedObject{.status = CodeCacheStatus::Miss, .object = {}};
   }
-  const auto bytes = ReadBinaryFile(path);
+  auto bytes = ReadBinaryFile(path);
   if (!bytes) {
     return std::unexpected(bytes.error());
   }
-  return Decode(*bytes, key);
+  return Decode(std::move(*bytes), key);
 }
 
 std::expected<void, std::string> WriteCodeCache(const std::filesystem::path& directory,

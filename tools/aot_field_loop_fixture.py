@@ -69,7 +69,7 @@ TEST(NativeFieldLoopTest, ExactResultsAndFailurePrefixesSurviveAliasingAndFinall
     NativeValue output;
     ASSERT_EQ(Execute(FIELD_LOOP_ENTRY, execution, arguments, output), ExecutionStatus::Returned);
     EXPECT_EQ(std::bit_cast<std::int64_t>(output.payload), item[3]);
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
     EXPECT_FALSE(execution.HasException());
   }
 }

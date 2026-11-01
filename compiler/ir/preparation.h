@@ -7,7 +7,7 @@
 #include "compiler/frontend/modules/declaration_ids.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/lowerer.h"
 #include "compiler/ir/persistent_ids.h"
 

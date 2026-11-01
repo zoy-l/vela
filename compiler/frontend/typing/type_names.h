@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <string_view>
 
 namespace vela::frontend {
@@ -36,5 +37,15 @@ inline constexpr std::string_view kMathTypeName = "Math";
 inline constexpr std::string_view kRandomTypeName = "Random";
 inline constexpr std::string_view kPerformanceTypeName = "performance";
 inline constexpr std::string_view kSleepFunctionName = "sleep";
+
+inline constexpr auto kBuiltinTypeNames = std::to_array<std::string_view>({
+    kVoidTypeName,     kDynamicTypeName,     kBoolTypeName,          kIntTypeName,
+    kDoubleTypeName,   kStringTypeName,      kMutableStringTypeName, kByteArrayTypeName,
+    kByteDataTypeName, kRegExpTypeName,      kRegExpMatchTypeName,   kEndianTypeName,
+    kFutureTypeName,   kCompleterTypeName,   kTimerTypeName,         kCancellationTokenTypeName,
+    kSetTypeName,      kMapTypeName,         kErrorTypeName,         kTimeoutExceptionTypeName,
+    kDateTypeName,     kDatePartsTypeName,   kJsonTypeName,          kMathTypeName,
+    kRandomTypeName,   kPerformanceTypeName,
+});
 
 }  // namespace vela::frontend

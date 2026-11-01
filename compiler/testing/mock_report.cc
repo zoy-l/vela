@@ -25,24 +25,6 @@ namespace {
 constexpr std::size_t kMockReportBudget = 16;
 constexpr std::size_t kMockTextBudget = 4096;
 
-std::string_view FailureName(MockFailureKind kind) {
-  switch (kind) {
-    case MockFailureKind::Usage:
-      return "MockUsageError";
-    case MockFailureKind::MissingStub:
-      return "MockMissingStub";
-    case MockFailureKind::StubExhausted:
-      return "MockStubExhausted";
-    case MockFailureKind::Verification:
-      return "MockVerificationFailure";
-    case MockFailureKind::Reset:
-      return "MockReset";
-    case MockFailureKind::SessionClosed:
-      return "MockSessionClosed";
-  }
-  std::unreachable();
-}
-
 class MockReportReader final {
  public:
   explicit MockReportReader(const runtime::MemberTable& members) : layouts_(&members) {}
@@ -146,7 +128,7 @@ void Suite::DescribeMockFailure(runtime::Value value, TestError& error) const {
   if (found == mock_failures_.end()) {
     return;
   }
-  error.category = FailureName(found->second);
+  error.category = MockFailureName(found->second);
   const auto& layouts = instance_->members();
   const MockReportReader reader(layouts);
   const auto details = layouts.ReadPublicField(value, mock_fields::kDetails);

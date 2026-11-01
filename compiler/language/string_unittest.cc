@@ -4,9 +4,10 @@
 #include <string_view>
 
 #include "base/execution_status.h"
+#include "compiler/frontend/diagnostic.h"
 #include "gtest/gtest.h"
 
-#include "compiler/frontend/typing/checker_test_support.h"
+#include "compiler/test_support/checker_test_support.h"
 #include "compiler/test_support/program_test_support.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/heap/heap.h"
@@ -25,19 +26,10 @@ class StringLanguageTest : public testing::Test {
   runtime::ExecutionResult Run(std::string_view source) {
     compiled_ = test::CompileSource(source, isolate_);
     if (!compiled_.Succeeded()) {
-      for (const auto& diagnostic : compiled_.diagnostics) {
-        ADD_FAILURE() << diagnostic.location.line << ':' << diagnostic.location.column << ": "
-                      << diagnostic.message;
-      }
+      ADD_FAILURE() << frontend::DiagnosticsText(compiled_.diagnostics);
       return {};
     }
-    const auto main = compiled_.instance->FindFunction("main");
-    if (!main.has_value()) {
-      ADD_FAILURE() << "missing main";
-      return {};
-    }
-    const auto index = *main;
-    return runtime::ExecuteNativeFunction(*compiled_.instance, index);
+    return test::Execute(*compiled_.instance);
   }
 
   std::string Text(std::string_view source) {

@@ -4,10 +4,10 @@
 #include "base/opcode.h"
 #include "gtest/gtest.h"
 
+#include "compiler/ir/ir.h"
+#include "compiler/test_support/preparation_test_support.h"
 #include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
-#include "compiler/ir/preparation_test_support.h"
-#include "compiler/ir/ir.h"
 
 namespace vela::compiler {
 namespace {
@@ -49,6 +49,29 @@ INSTANTIATE_TEST_SUITE_P(
            } return state.value == 2; })",
         R"(func main(): bool { const value = 1; { let value = 2; value = 3; }
            return value == 1; })",
+        R"(let calls = 0;
+           func index(): int { calls += 1; return 0; }
+           func main(): bool {
+             const values = [40]; values[index()] += 2;
+             return values[0] == 42 && calls == 1;
+           })",
+        R"(let calls = 0;
+           func index(): int { calls += 1; return 0; }
+           func main(): bool {
+             const values: dynamic = [40]; values[index()] += 2;
+             return (values[0] as int) == 42 && calls == 1;
+           })",
+        R"(let receivers = 0; let reads = 0; let writes = 0;
+           class Box {
+             value: int = 40;
+             get item(): int { reads += 1; return this.value; }
+             set item(next: int): void { writes += 1; this.value = next; }
+           }
+           func receiver(box: Box): Box { receivers += 1; return box; }
+           func main(): bool {
+             const box = Box(); receiver(box).item += 2;
+             return box.value == 42 && receivers == 1 && reads == 1 && writes == 1;
+           })",
         R"(class State { value: int; bump(): bool { this.value = this.value + 1; return false; } }
            func main(): bool { const state = State(value: 0); while (state.bump() || true) {
              break;
@@ -60,9 +83,10 @@ TEST(ControlFlowCompilerTest, OmitsUnreachableLoopIncrementAndBackEdge) {
   ASSERT_TRUE(compiled.Succeeded());
   const auto entry = std::ranges::find(compiled.program.functions, "main", &ir::Function::name);
   ASSERT_NE(entry, compiled.program.functions.end());
-  EXPECT_FALSE(std::ranges::any_of(entry->instructions, [](const ir::Instruction& instruction) -> bool {
-    return instruction.opcode == Opcode::AddInt || instruction.opcode == Opcode::Jump;
-  }));
+  EXPECT_FALSE(
+      std::ranges::any_of(entry->instructions, [](const ir::Instruction& instruction) -> bool {
+        return instruction.opcode == Opcode::AddInt || instruction.opcode == Opcode::Jump;
+      }));
 }
 
 TEST(ControlFlowCompilerTest, CompilesAnInfiniteLoopWithoutRegisterOperands) {

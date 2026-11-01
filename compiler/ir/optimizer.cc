@@ -13,7 +13,7 @@
 
 #include "base/builtin.h"
 #include "base/integer_arithmetic.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
@@ -319,8 +319,8 @@ void RemoveUnusedValues(Function& function,
                         std::span<const Function> functions,
                         const FlowGraph& graph,
                         std::vector<std::size_t>* origins) {
-  const auto liveness = AnalyzeNecessaryLiveness(function, graph, functions);
-  CompactInstructions(function, liveness.keep, origins);
+  const auto keep = AnalyzeNecessaryLiveness(function, graph, functions);
+  CompactInstructions(function, keep, origins);
 }
 
 void RemoveUnusedHandlers(Function& function) {

@@ -67,8 +67,6 @@ struct DevelopmentTimings final {
 
 struct DevelopmentChanges final {
   std::vector<std::string> modules;
-  std::size_t added_declarations = 0;
-  std::size_t removed_declarations = 0;
   std::size_t compiled_functions = 0;
 };
 

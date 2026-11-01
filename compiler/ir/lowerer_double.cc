@@ -1,48 +1,50 @@
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/syntax/token.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
 
 #include <bit>
 #include <cstdint>
-#include <optional>
-#include <string_view>
+#include <utility>
 
 namespace vela::ir {
 
-std::optional<Opcode> Lowerer::SelectDoubleOpcode(std::string_view operation) {
-  if (operation == "+") {
+using frontend::TokenKind;
+
+Opcode Lowerer::SelectDoubleOpcode(TokenKind operation) {
+  if (operation == TokenKind::Plus) {
     return Opcode::AddDouble;
   }
-  if (operation == "-") {
+  if (operation == TokenKind::Minus) {
     return Opcode::SubDouble;
   }
-  if (operation == "*") {
+  if (operation == TokenKind::Star) {
     return Opcode::MulDouble;
   }
-  if (operation == "/") {
+  if (operation == TokenKind::Slash) {
     return Opcode::DivDouble;
   }
-  if (operation == "==") {
+  if (operation == TokenKind::EqualEqual) {
     return Opcode::EqualDouble;
   }
-  if (operation == "!=") {
+  if (operation == TokenKind::BangEqual) {
     return Opcode::NotEqualDouble;
   }
-  if (operation == "<") {
+  if (operation == TokenKind::Less) {
     return Opcode::LessDouble;
   }
-  if (operation == "<=") {
+  if (operation == TokenKind::LessEqual) {
     return Opcode::LessEqualDouble;
   }
-  if (operation == ">") {
+  if (operation == TokenKind::Greater) {
     return Opcode::GreaterDouble;
   }
-  if (operation == ">=") {
+  if (operation == TokenKind::GreaterEqual) {
     return Opcode::GreaterEqualDouble;
   }
-  return std::nullopt;
+  std::unreachable();
 }
 
 Lowerer::LoweredValue Lowerer::LowerDoubleLiteral(const frontend::Expression& expression) {

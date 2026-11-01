@@ -1,5 +1,7 @@
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -7,7 +9,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "base/declaration.h"
 #include "runtime/native/native_debugger.h"
@@ -41,10 +42,6 @@ class DevelopmentDebugger final : public runtime::NativeDebugger {
     std::size_t depth = 0;
     bool operator==(const Position&) const = default;
   };
-  struct Breakpoint final {
-    std::string path;
-    std::uint32_t line = 0;
-  };
   struct BreakLocation final {
     FunctionIdentity identity;
     std::uint32_t line = 0;
@@ -61,7 +58,7 @@ class DevelopmentDebugger final : public runtime::NativeDebugger {
   std::ostream* errors_;
   std::function<void()> poll_;
   const runtime::NativeDebugContext* paused_ = nullptr;
-  std::vector<Breakpoint> breakpoints_;
+  absl::flat_hash_map<std::string, absl::flat_hash_set<std::uint32_t>> breakpoints_;
   std::optional<Position> step_from_;
   std::optional<BreakLocation> last_break_;
   bool pause_requested_ = false;

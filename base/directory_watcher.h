@@ -48,6 +48,8 @@ class DirectoryWatcher final : private efsw::FileWatchListener {
   [[nodiscard]] std::expected<void, std::string> Watch(
       const std::filesystem::path& directory,
       DirectoryWatchScope scope = DirectoryWatchScope::Direct);
+  [[nodiscard]] bool IsWatching(const std::filesystem::path& directory,
+                                DirectoryWatchScope scope = DirectoryWatchScope::Direct) const;
   void Unwatch(const std::filesystem::path& directory);
   [[nodiscard]] std::expected<void, DirectoryWatchError> Rebind();
   [[nodiscard]] FileChanges Drain(std::chrono::milliseconds timeout = {});

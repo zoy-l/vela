@@ -62,9 +62,10 @@ struct CompiledSourceSnapshot final {
 enum class SourceCandidateStatus : std::uint8_t {
   SourceError,
   Stale,
-  DifferentSession,
   RequiresReload,
 };
+
+enum class SourceCommitStatus : std::uint8_t { Stale, DifferentSession };
 
 struct SourceCandidateError final {
   SourceCandidateStatus status = SourceCandidateStatus::SourceError;
@@ -93,7 +94,7 @@ class SourceSession final {
   [[nodiscard]] std::expected<SourceCandidate, SourceCandidateError> Prepare(
       SourceUpdate update,
       std::span<const DeclarationId> retained = {}) const;
-  [[nodiscard]] std::expected<void, SourceCandidateStatus> Commit(const SourceCandidate& candidate);
+  [[nodiscard]] std::expected<void, SourceCommitStatus> Commit(const SourceCandidate& candidate);
 
  private:
   const std::shared_ptr<const SourceSessionIdentity> identity_;

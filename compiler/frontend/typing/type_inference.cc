@@ -29,7 +29,7 @@ bool TypeInference::IsSame(const TypeName& left, const TypeName& right) {
 }
 
 bool TypeInference::HasUnspecifiedType(const TypeName& type) {
-  return (type.kind == TypeName::Kind::Named && type.name.empty()) ||
+  return type.kind == TypeName::Kind::Inferred ||
          std::ranges::any_of(type.arguments, HasUnspecifiedType);
 }
 
@@ -135,7 +135,7 @@ void TypeInference::Match(const TypeName& pattern,
                           const TypeName& actual,
                           Evidence evidence,
                           Relation relation) {
-  if (actual.kind == TypeName::Kind::Named && actual.name.empty()) {
+  if (actual.kind == TypeName::Kind::Inferred) {
     return;
   }
   if (const auto* parameter = FindParameter(pattern)) {

@@ -161,7 +161,7 @@ TEST_F(JitCodeCacheTest, CorruptObjectsAreReplacedAndIoErrorsRemainExplicit) {
   EXPECT_EQ((*compiler)->resource_counts().batches, 1U);
 }
 
-TEST_F(JitCodeCacheTest, CacheWriteFailureRetiresPreparedCodeAndLeavesTheRunningSessionUntouched) {
+TEST_F(JitCodeCacheTest, CacheWriteFailureLeavesTheRunningSessionUntouched) {
   const auto cache = directory() / "objects";
   DevelopmentOptions options;
   options.compilation.tier = NativeCodeTier::Optimized;

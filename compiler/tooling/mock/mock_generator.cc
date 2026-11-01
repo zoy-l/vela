@@ -1,4 +1,5 @@
 #include "compiler/tooling/mock/mock_generator.h"
+#include "compiler/frontend/builtins/standard_environment.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -96,7 +97,8 @@ std::string Quote(std::string_view value) {
 }
 
 std::string RelativeModule(std::string_view module, const std::filesystem::path& directory) {
-  if (module.starts_with(frontend::kSdkSourcePrefix) || module.starts_with("builtin:")) {
+  if (module.starts_with(frontend::kSdkSourcePrefix) ||
+      module.starts_with(frontend::kStandardSourcePrefix)) {
     return std::string(module);
   }
   return PathText(Utf8Path(module).lexically_relative(directory));
@@ -196,8 +198,13 @@ void MockGenerator::RegisterPublicAlias(const frontend::Program::TypeAlias& alia
   for (std::size_t index = 0; index < alias.type_parameters.size(); ++index) {
     const auto name = "$mockParameter" + std::to_string(index);
     parameters.push_back(name);
-    application.arguments.push_back(
-        {.name = name, .location = alias.location, .arguments = {}, .parameter = {}});
+    application.arguments.push_back({
+        .name = name,
+        .location = alias.location,
+        .kind = frontend::TypeName::Kind::Named,
+        .arguments = {},
+        .parameter = {},
+    });
   }
   auto target = Expand(application);
   // Identity<T> 一类别名仍需公开命名 T，不能为私有类型提供新名字。
@@ -302,7 +309,8 @@ frontend::TypeName MockGenerator::Expand(const frontend::TypeName& type) const {
 
 std::string MockGenerator::PublicName(const std::string& name, SourceLocation location) {
   const auto origin = program_->origins.find(name);
-  if (origin == program_->origins.end() || origin->second.module_uri.starts_with("builtin:")) {
+  if (origin == program_->origins.end() ||
+      origin->second.module_uri.starts_with(frontend::kStandardSourcePrefix)) {
     return name;
   }
   if (!exported_.contains(name)) {
@@ -355,6 +363,7 @@ std::optional<frontend::TypeName> MockGenerator::FindTypeName(const frontend::Ty
     return frontend::TypeName{
         .name = alias->second,
         .location = type.location,
+        .kind = frontend::TypeName::Kind::Named,
         .arguments = {},
         .parameter = {},
     };
@@ -367,7 +376,7 @@ std::optional<frontend::TypeName> MockGenerator::FindTypeName(const frontend::Ty
       result.kind == frontend::TypeName::Kind::Generic) {
     const auto declaration = program_->origins.find(result.name);
     if (declaration != program_->origins.end() &&
-        !declaration->second.module_uri.starts_with("builtin:") &&
+        !declaration->second.module_uri.starts_with(frontend::kStandardSourcePrefix) &&
         !exported_.contains(result.name)) {
       return std::nullopt;
     }
@@ -512,7 +521,7 @@ std::string MockGenerator::Fingerprint(std::span<const frontend::Interface* cons
   for (const auto* declaration : selected) {
     content << declaration->name << '\n';
   }
-  content << *frontend::SdkModuleSource("sdk:mock");
+  content << *frontend::SdkModuleSource(frontend::kMockModuleName);
   return ContentFingerprint(content.str()).Hex();
 }
 
@@ -540,7 +549,7 @@ std::expected<std::string, frontend::Diagnostics> MockGenerator::Generate(
   std::ranges::sort(selected, {}, [](const auto* declaration) {
     return std::pair(declaration->location.line, declaration->location.column);
   });
-  sdk_ = Import("sdk:mock");
+  sdk_ = Import(frontend::kMockModuleName);
   for (const auto* declaration : selected) {
     EmitInterface(*declaration);
   }
@@ -552,7 +561,7 @@ std::expected<std::string, frontend::Diagnostics> MockGenerator::Generate(
          << kDescriptorVersion << "; input " << Fingerprint(selected) << ".\n";
   for (const auto& [module, name] : imports_) {
     auto path = RelativeModule(module, directory_);
-    if (!path.starts_with("sdk:") && !path.starts_with('.')) {
+    if (!path.starts_with(frontend::kSdkSourcePrefix) && !path.starts_with('.')) {
       path.insert(0, "./");
     }
     source << "import " << Quote(path) << " as " << name << ";\n";

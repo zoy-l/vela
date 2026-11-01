@@ -1,6 +1,5 @@
 #include "compiler/cli/development_debugger.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -77,8 +76,10 @@ void DevelopmentDebugger::Break(std::string_view arguments) {
     return;
   }
   if (arguments.empty()) {
-    for (const auto& breakpoint : breakpoints_) {
-      *errors_ << "breakpoint " << breakpoint.path << ':' << breakpoint.line << '\n';
+    for (const auto& [path, lines] : breakpoints_) {
+      for (const auto line : lines) {
+        *errors_ << "breakpoint " << path << ':' << line << '\n';
+      }
     }
     return;
   }
@@ -97,11 +98,7 @@ void DevelopmentDebugger::Break(std::string_view arguments) {
     *errors_ << "breakpoint module is not loaded: " << path << '\n';
     return;
   }
-  if (!std::ranges::any_of(breakpoints_, [&](const auto& breakpoint) {
-        return breakpoint.path == path && breakpoint.line == *line;
-      })) {
-    breakpoints_.push_back({.path = path, .line = *line});
-  }
+  breakpoints_.try_emplace(path).first->second.insert(*line);
   *errors_ << "breakpoint " << path << ':' << *line << " (current and future revisions)\n";
 }
 
@@ -154,13 +151,13 @@ void DevelopmentDebugger::Source(std::string_view argument) const {
 
 bool DevelopmentDebugger::IsBreakpoint(const runtime::NativeDebugFrame& frame) const {
   const auto location = frame.location();
-  if (!location || frame.identity().revision != session_->snapshot()->revision) {
+  if (!location) {
     return false;
   }
   const auto path = frame.source_path();
-  return std::ranges::any_of(breakpoints_, [&](const auto& breakpoint) {
-    return breakpoint.path == path && breakpoint.line == location->line;
-  });
+  const auto source = breakpoints_.find(path);
+  return source != breakpoints_.end() && source->second.contains(location->line) &&
+         frame.identity().revision == session_->snapshot()->revision;
 }
 
 void DevelopmentDebugger::AtSafepoint(const runtime::NativeDebugContext& context) noexcept {
@@ -178,7 +175,7 @@ void DevelopmentDebugger::AtSafepoint(const runtime::NativeDebugContext& context
   const BreakLocation location{
       .identity = frame.identity(),
       .line = source_location ? source_location->line : 0,
-      .generation = session_->generation(),
+      .generation = breakpoint ? session_->generation() : 0,
   };
   const auto hit = breakpoint && last_break_ != location;
   if (!breakpoint) {

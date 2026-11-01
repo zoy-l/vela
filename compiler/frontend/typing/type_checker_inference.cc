@@ -1,3 +1,4 @@
+#include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <algorithm>
@@ -9,174 +10,17 @@
 #include <utility>
 #include <vector>
 
-#include "base/declaration.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/flow/capture_analysis.h"
-#include "compiler/frontend/flow/initialization.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/typing/type_inference.h"
-#include "compiler/frontend/typing/type_name.h"
 #include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {
 
-void TypeChecker::CheckPendingSpecializations() {
-  // 新特化只排入工作队列，函数体按声明作用域检查，不递归借用调用方局部变量。
-  while (checked_functions_ < specializer_->function_count() ||
-         checked_classes_ < specializer_->class_count() ||
-         checked_methods_ < specializer_->method_count()) {
-    while (checked_functions_ < specializer_->function_count()) {
-      const auto index = checked_functions_++;
-      const auto& function = specializer_->function(index);
-      if (failed_templates_.contains(specializer_->FunctionSource(index))) {
-        continue;
-      }
-      specializer_->SetExpansionOwner(function.name);
-      CheckFunction(function, nullptr);
-    }
-    while (checked_classes_ < specializer_->class_count()) {
-      const auto index = checked_classes_++;
-      if (specializer_->IsAbstractClass(index) ||
-          failed_templates_.contains(specializer_->ClassSource(index))) {
-        continue;
-      }
-      const auto& source = specializer_->class_declaration(index);
-      specializer_->SetExpansionOwner(source.name);
-      CheckClassBody(source, classes_.at(source.name));
-    }
-    while (checked_methods_ < specializer_->method_count()) {
-      const auto index = checked_methods_++;
-      if (specializer_->method_owner_kind(index) == DeclarationKind::Interface ||
-          failed_templates_.contains(specializer_->method_source(index))) {
-        continue;
-      }
-      const auto& method = specializer_->method(index);
-      const auto owner = std::string(specializer_->method_owner(index));
-      specializer_->SetExpansionOwner(owner + '.' + method.name);
-      CheckFunction(method, &classes_.at(owner));
-    }
-  }
-}
-
-TypeChecker::Type TypeChecker::ResolveClassInstantiation(const TypeName& type_name) {
-  std::vector<TypeName> arguments;
-  for (const auto& argument : type_name.arguments) {
-    const auto type = ResolveType(argument, true);
-    if (!IsValid(type)) {
-      return InvalidType();
-    }
-    arguments.push_back(DescribeType(type));
-  }
-  const auto name = specializer_->Specialize(type_name.name, arguments, type_name.location);
-  RegisterSpecializations();
-  const auto found = types_.find(name);
-  return found == types_.end() ? InvalidType() : found->second;
-}
-
-void TypeChecker::SetConstructorParameters(const Class& owner, InferenceSignature& source) {
-  if (owner.constructor_kind == ConstructorKind::Explicit) {
-    source.parameters = owner.constructor->parameters;
-  } else {
-    for (const auto& field : owner.fields) {
-      if (owner.IsConstructorField(field)) {
-        source.parameters.push_back(
-            {.type = field.type, .name = field.name, .location = field.location});
-        if (field.initializer) {
-          source.optional_parameters.insert(field.name);
-        }
-      }
-    }
-  }
-}
-
-void TypeChecker::RegisterSpecializations() {
-  for (auto& diagnostic : specializer_->TakeDiagnostics()) {
-    diagnostics_.push_back(std::move(diagnostic));
-  }
-  const auto class_begin = registered_classes_;
-  const auto class_end = specializer_->class_count();
-  registered_classes_ = class_end;
-  const auto interface_begin = registered_interfaces_;
-  const auto interface_end = specializer_->interface_count();
-  registered_interfaces_ = interface_end;
-  for (auto index = interface_begin; index < interface_end; ++index) {
-    const auto& source = specializer_->interface_declaration(index);
-    RegisterMethodTemplates(source.method_templates);
-    RegisterInterface(source, specializer_->IsAbstractInterface(index));
-  }
-  for (auto index = class_begin; index < class_end; ++index) {
-    const auto& source = specializer_->class_declaration(index);
-    RegisterMethodTemplates(source.method_templates);
-    const Type type{
-        .kind = Type::Kind::Class,
-        .name = InternTypeName(source.name),
-        .is_abstract = specializer_->IsAbstractClass(index),
-    };
-    types_.try_emplace(source.name, type);
-    ClassInfo info;
-    info.type = type;
-    classes_.try_emplace(source.name, std::move(info));
-  }
-  for (auto index = class_begin; index < class_end; ++index) {
-    const auto& source = specializer_->class_declaration(index);
-    ResolveClass(source, classes_.at(source.name));
-    const auto captured = FindCapturedMutableDeclarations(source);
-    captured_declarations_.insert(captured.begin(), captured.end());
-  }
-  for (auto index = class_begin; index < class_end; ++index) {
-    const auto& source = specializer_->class_declaration(index);
-    if (source.base_class) {
-      MergeBaseClass(source.name, merged_classes_, visiting_classes_);
-    }
-    CheckClassImplementation(source);
-  }
-  while (registered_functions_ < specializer_->function_count()) {
-    const auto& function = specializer_->function(registered_functions_++);
-    functions_.try_emplace(function.name, ResolveSignature(function));
-    const auto captured = FindCapturedMutableDeclarations(function);
-    captured_declarations_.insert(captured.begin(), captured.end());
-  }
-  RegisterMethodApplications();
-}
-
-void TypeChecker::CheckClassBody(const Class& source, const ClassInfo& info) {
-  const auto errors = ErrorCount(diagnostics_);
-  CheckFieldInitializers(source, info);
-  for (const auto& method : source.methods) {
-    CheckFunction(method, &info);
-  }
-  if (source.constructor) {
-    CheckFunction(*source.constructor, &info);
-  }
-  if (ErrorCount(diagnostics_) != errors) {
-    return;
-  }
-  const auto* base = info.base_class ? &classes_.at(*info.base_class) : nullptr;
-  const bool explicit_super = explicit_super_constructors_.contains(info.type.name);
-  if (base != nullptr && !explicit_super &&
-      std::ranges::any_of(base->constructor.parameters, [&](const auto& parameter) {
-        return !base->constructor.optional_parameters.contains(parameter.name);
-      })) {
-    AddDiagnostic(source.constructor ? source.constructor->location : source.location,
-                  "derived constructor must call super(...) because the base constructor has "
-                  "required parameters");
-    return;
-  }
-  const auto initialization =
-      CheckConstructorInitialization(source, {
-                                                 .owner = &info,
-                                                 .base = base,
-                                                 .lambdas = lambdas_,
-                                                 .lambda_indices = &lambda_indices_,
-                                                 .control_flow = &control_flow_,
-                                                 .has_explicit_super_call = explicit_super,
-                                             });
-  for (const auto& diagnostic : initialization) {
-    AddDiagnostic(diagnostic.location, diagnostic.message);
-  }
-}
-
 TypeName TypeChecker::DescribeType(const Type& type) const {
+  if (type.kind == Type::Kind::Invalid) {
+    return {};
+  }
   if (type.nullable) {
     return {
         .name = {},
@@ -242,14 +86,19 @@ TypeName TypeChecker::DescribeType(const Type& type) const {
     }
     return result;
   }
-  return specializer_->DescribeType(
-      {.name = std::string(type.name), .location = {}, .arguments = {}, .parameter = {}});
+  return specializer_->DescribeType({
+      .name = std::string(type.name),
+      .location = {},
+      .kind = TypeName::Kind::Named,
+      .arguments = {},
+      .parameter = {},
+  });
 }
 
 TypeChecker::Type TypeChecker::ResolveInferenceContext(const TypeName& pattern,
                                                        const TypeInference& inference) {
   if (const auto resolved = inference.Substitute(pattern)) {
-    return ResolveType(*resolved, true);
+    return ResolveType(*resolved, VoidTypePolicy::Allowed);
   }
   if (pattern.kind != TypeName::Kind::Function) {
     return InvalidType();
@@ -310,8 +159,9 @@ bool TypeChecker::CanCheckExpression(const Expression& expression, const Type* e
       return CanCheckExpression(*expression.left, expected) &&
              CanCheckExpression(*expression.right, expected);
     case Expression::Kind::Binary:
-      return expression.text != "??" || (CanCheckExpression(*expression.left, expected) &&
-                                         CanCheckExpression(*expression.right, expected));
+      return expression.operation != TokenKind::QuestionQuestion ||
+             (CanCheckExpression(*expression.left, expected) &&
+              CanCheckExpression(*expression.right, expected));
     case Expression::Kind::Match:
       return std::ranges::all_of(expression.arms, [&](const auto& arm) {
         return CanCheckExpression(*arm.value, expected);
@@ -324,7 +174,7 @@ bool TypeChecker::CanCheckExpression(const Expression& expression, const Type* e
     case Expression::Kind::Lambda:
       return (expected != nullptr && expected->kind == Type::Kind::Function) ||
              std::ranges::all_of(expression.function->parameters, [](const Parameter& parameter) {
-               return !parameter.type.name.empty();
+               return parameter.type.kind != TypeName::Kind::Inferred;
              });
     case Expression::Kind::ArrayLiteral:
       return expected != nullptr ||
@@ -424,7 +274,8 @@ std::optional<TypeInference> TypeChecker::CreateInference(
     return std::nullopt;
   }
   for (std::size_t index = 0; index < explicit_arguments.size(); ++index) {
-    const auto type = ResolveType(explicit_arguments.subspan(index).front(), true);
+    const auto type =
+        ResolveType(explicit_arguments.subspan(index).front(), VoidTypePolicy::Allowed);
     if (!IsValid(type)) {
       return std::nullopt;
     }
@@ -502,7 +353,7 @@ TypeChecker::Type TypeChecker::InferFutureResult(const Expression& expression,
     DiagnoseInferenceFailure(solution.error(), expression.location);
     return InvalidType();
   }
-  const auto payload = ResolveType(solution->Substitute(variable), true);
+  const auto payload = ResolveType(solution->Substitute(variable), VoidTypePolicy::Allowed);
   const auto result = MakeFutureType(expression, payload);
   if (IsValid(produced) && IsValid(result) && !dynamic_value && !CanAssign(result, produced)) {
     AddDiagnostic(expression.location, "Future result does not match its type argument");
@@ -547,9 +398,15 @@ std::vector<std::optional<TypeChecker::Type>> TypeChecker::CheckInferenceArgumen
   for (std::size_t index = 0; index < expressions.size(); ++index) {
     const auto& expression = *expressions.subspan(index).front();
     const auto& pattern = patterns.subspan(index).front();
-    snapshots.at(index) = refinements_.Snapshot();
+    const auto preparation = refinements_.BeginBranch();
     PrepareInferenceReceiver(expression);
-    if (CanCheckExpression(expression, nullptr)) {
+    const bool ready = CanCheckExpression(expression, nullptr);
+    const auto effects = refinements_.Capture(preparation);
+    if (!ready) {
+      snapshots.at(index) = refinements_.Snapshot();
+    }
+    refinements_.Apply(effects);
+    if (ready) {
       const auto context = ResolveInferenceContext(pattern, inference);
       result.at(index) = CheckInferenceArgument(expression, pattern, context, inference, arity);
     } else {
@@ -627,10 +484,11 @@ std::optional<TypeChecker::InferredCall> TypeChecker::InferInvocation(
     result.type_arguments.push_back(
         solution->Substitute(ParameterTypeName(parameter, expression.location)));
   }
-  result.signature.return_type = ResolveType(solution->Substitute(source.return_type), true);
+  result.signature.return_type =
+      ResolveType(solution->Substitute(source.return_type), VoidTypePolicy::Allowed);
   for (std::size_t index = 0; index < source.parameters.size(); ++index) {
-    result.signature.parameters.at(index).type =
-        ResolveType(solution->Substitute(source.parameters.at(index).type), false);
+    result.signature.parameters.at(index).type = ResolveType(
+        solution->Substitute(source.parameters.at(index).type), VoidTypePolicy::Forbidden);
   }
   return result;
 }
@@ -769,14 +627,16 @@ TypeChecker::FunctionInfo TypeChecker::ResolveAppliedSignature(const InferenceSi
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     const auto& argument = arguments.subspan(index).front();
     substitutions.emplace(source.type_parameters.at(index).identity, argument);
-    types.push_back(ResolveType(argument, true));
+    types.push_back(ResolveType(argument, VoidTypePolicy::Allowed));
   }
   QueueBoundCheck(callee.text, source.type_parameters, std::move(types), callee.location);
   FunctionInfo signature;
-  signature.return_type = ResolveType(SubstituteTypeName(source.return_type, substitutions), true);
+  signature.return_type =
+      ResolveType(SubstituteTypeName(source.return_type, substitutions), VoidTypePolicy::Allowed);
   for (const auto& parameter : source.parameters) {
-    signature.AddParameter(parameter.name,
-                           ResolveType(SubstituteTypeName(parameter.type, substitutions), false));
+    signature.AddParameter(
+        parameter.name,
+        ResolveType(SubstituteTypeName(parameter.type, substitutions), VoidTypePolicy::Forbidden));
   }
   signature.optional_parameters = source.optional_parameters;
   return signature;
@@ -800,9 +660,9 @@ TypeChecker::Type TypeChecker::InstantiateGeneric(const Expression& callee,
     arguments = inferred->type_arguments;
     const auto result = inferred->signature.return_type;
     if (specializer_->FunctionTemplate(callee.text) == nullptr) {
-      generic_applications_.insert_or_assign(&callee, result.name);
+      facts_.generic_applications.insert_or_assign(&callee, result.name);
       if (result.kind == Type::Kind::Map || result.kind == Type::Kind::Set) {
-        collection_constructions_.insert(call);
+        facts_.collection_constructions.insert(call);
         return CheckFunctionCall(inferred->signature, *call, inferred->arguments);
       }
       return result.kind == Type::Kind::Class
@@ -818,7 +678,7 @@ TypeChecker::Type TypeChecker::InstantiateGeneric(const Expression& callee,
     arguments = std::move(*inferred);
   }
   for (auto& argument : arguments) {
-    const auto type = ResolveType(argument, true);
+    const auto type = ResolveType(argument, VoidTypePolicy::Allowed);
     if (!IsValid(type)) {
       return InvalidType();
     }
@@ -832,7 +692,7 @@ TypeChecker::Type TypeChecker::InstantiateGeneric(const Expression& callee,
   }
   const auto name = specializer_->Specialize(callee.text, arguments, callee.location);
   RegisterSpecializations();
-  generic_applications_.insert_or_assign(&callee, name);
+  facts_.generic_applications.insert_or_assign(&callee, name);
   const auto found = functions_.find(name);
   if (found == functions_.end()) {
     return InvalidType();

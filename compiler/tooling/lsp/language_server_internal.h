@@ -10,10 +10,10 @@
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
 #include <yyjson.h>
 
 #include "base/json.h"
+#include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/tooling/lsp/language_server.h"
 #include "compiler/tooling/semantic/semantic_index.h"
@@ -41,6 +41,10 @@ inline constexpr std::string_view kDiagnostics = "diagnostics";
 inline constexpr std::string_view kPosition = "position";
 inline constexpr std::string_view kNewName = "newName";
 inline constexpr std::string_view kNewText = "newText";
+inline constexpr std::string_view kContentChanges = "contentChanges";
+inline constexpr std::string_view kSeverity = "severity";
+inline constexpr std::string_view kCode = "code";
+inline constexpr std::string_view kSource = "source";
 inline constexpr std::string_view kMessage = "message";
 inline constexpr std::string_view kSdkSource = "vela/sdkSource";
 }  // namespace protocol
@@ -59,6 +63,20 @@ struct ServerDocument final {
 struct RpcCall final {
   const yyjson_val* identity = nullptr;
   const yyjson_val* params = nullptr;
+};
+
+struct EditorDiagnostic final {
+  TextPosition position;
+  std::string message;
+  frontend::DiagnosticSeverity severity;
+  frontend::DiagnosticCode code;
+  bool operator==(const EditorDiagnostic&) const = default;
+};
+
+struct PublishedDiagnostics final {
+  std::optional<std::int64_t> version;
+  std::vector<EditorDiagnostic> diagnostics;
+  bool operator==(const PublishedDiagnostics&) const = default;
 };
 
 class LanguageServer final {
@@ -93,7 +111,7 @@ class LanguageServer final {
   void SdkSource(RpcCall call);
   void SemanticTokens(RpcCall call);
   SemanticIndex& IndexFor(std::string_view uri, const ServerDocument& opened);
-  void PublishDiagnostics();
+  void PublishDiagnostics(std::optional<std::string_view> changed_path = std::nullopt);
   void ClearDiagnostics(std::string_view uri);
 
   std::istream* input_;
@@ -102,7 +120,7 @@ class LanguageServer final {
   State state_ = State::New;
   PositionEncoding encoding_ = PositionEncoding::Utf16;
   absl::flat_hash_map<std::string, ServerDocument> documents_;
-  absl::flat_hash_set<std::string> published_;
+  absl::flat_hash_map<std::string, PublishedDiagnostics> published_;
   absl::flat_hash_map<std::string, SemanticIndex> semantic_indices_;
   struct CompletionIndex final {
     std::string text;

@@ -94,14 +94,14 @@ std::optional<Hover> SemanticIndex::FindHover(std::size_t offset, PositionEncodi
   if (const auto receiver = receivers_.find(Key{0, token->offset}); receiver != receivers_.end()) {
     owner = DisplayType(receiver->second.type);
   }
-  const auto& source = sources_.front().text;
+  const auto& source = sources_.front();
   return Hover{
       .signature = HoverSignature(completion, owner, role),
       .documentation = std::move(completion.documentation),
       .range =
           {
-              .start = source.PositionAt(token->offset, encoding),
-              .end = source.PositionAt(token->offset + token->length, encoding),
+              .start = source.lines.PositionAt(source.text, token->offset, encoding),
+              .end = source.lines.PositionAt(source.text, token->offset + token->length, encoding),
           },
   };
 }

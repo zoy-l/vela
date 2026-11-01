@@ -26,10 +26,14 @@ const ir::Class* Class(const ir::Program& program, std::string_view name) {
   return found == program.classes.end() ? nullptr : &*found;
 }
 
-DeclarationId Field(const ir::Class& owner, std::string_view name) {
-  const auto found = std::ranges::find(owner.field_order, name);
-  const auto index = static_cast<std::size_t>(found - owner.field_order.begin());
-  return owner.fields.at(index).declaration;
+DeclarationId Field(const CompiledSourceSnapshot& snapshot,
+                    const ir::Class& owner,
+                    std::string_view name) {
+  const auto records = snapshot.identities.records();
+  const auto found = std::ranges::find_if(owner.fields, [&](const ir::Class::Field& field) {
+    return records[field.declaration.value].key.name == name;
+  });
+  return found->declaration;
 }
 
 TEST(SourceSessionTest, PreparingAndDroppingCandidateLeavesTheCommittedSnapshotUntouched) {
@@ -231,11 +235,11 @@ TEST(SourceSessionTest, StaleAndForeignCandidatesCannotPublishIntoAnotherBaselin
   ASSERT_TRUE(competing);
   const auto foreign = other.Commit(*first);
   ASSERT_FALSE(foreign);
-  EXPECT_EQ(foreign.error(), SourceCandidateStatus::DifferentSession);
+  EXPECT_EQ(foreign.error(), SourceCommitStatus::DifferentSession);
   ASSERT_TRUE(session.Commit(*first));
   const auto stale = session.Commit(*competing);
   ASSERT_FALSE(stale);
-  EXPECT_EQ(stale.error(), SourceCandidateStatus::Stale);
+  EXPECT_EQ(stale.error(), SourceCommitStatus::Stale);
   const auto stale_input = session.Prepare(update);
   ASSERT_FALSE(stale_input);
   EXPECT_EQ(stale_input.error().status, SourceCandidateStatus::Stale);
@@ -275,11 +279,11 @@ TEST(SourceSessionTest, ReorderedAndInheritedFieldsKeepTheirDeclarationIdentitie
   ASSERT_NE(before, nullptr);
   ASSERT_NE(after, nullptr);
   EXPECT_EQ(before->declaration, after->declaration);
-  EXPECT_EQ(Field(*before, "first"), Field(*after, "first"));
-  EXPECT_EQ(Field(*before, "second"), Field(*after, "second"));
+  EXPECT_EQ(Field(*old_snapshot, *before, "first"), Field(next->snapshot(), *after, "first"));
+  EXPECT_EQ(Field(*old_snapshot, *before, "second"), Field(next->snapshot(), *after, "second"));
   const auto* base = Class(next->snapshot().program, "Base");
   ASSERT_NE(base, nullptr);
-  EXPECT_EQ(Field(*base, "added"), Field(*after, "added"));
+  EXPECT_EQ(Field(next->snapshot(), *base, "added"), Field(next->snapshot(), *after, "added"));
 }
 
 TEST(SourceSessionTest, DeletedAndReintroducedDeclarationsNeverReuseTheirOldIdentity) {
@@ -673,7 +677,7 @@ TEST(SourceSessionTest, DeletingUninstantiatedTemplateMembersRetiresTheirConcret
   const auto* old_method = Function(first->snapshot().program, "Box<int>.read");
   ASSERT_NE(old_class, nullptr);
   ASSERT_NE(old_method, nullptr);
-  const auto removed_field = Field(*old_class, "count");
+  const auto removed_field = Field(first->snapshot(), *old_class, "count");
   const auto removed_method = old_method->identity.declaration;
   const auto removed = session.Prepare({
       .base_revision = 1,
@@ -699,8 +703,9 @@ TEST(SourceSessionTest, DeletingUninstantiatedTemplateMembersRetiresTheirConcret
   ASSERT_NE(new_class, nullptr);
   ASSERT_NE(new_method, nullptr);
   EXPECT_EQ(new_class->declaration, old_class->declaration);
-  EXPECT_EQ(Field(*new_class, "value"), Field(*old_class, "value"));
-  EXPECT_NE(Field(*new_class, "count"), removed_field);
+  EXPECT_EQ(Field(restored->snapshot(), *new_class, "value"),
+            Field(first->snapshot(), *old_class, "value"));
+  EXPECT_NE(Field(restored->snapshot(), *new_class, "count"), removed_field);
   EXPECT_NE(new_method->identity.declaration, removed_method);
 }
 

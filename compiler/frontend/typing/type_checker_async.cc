@@ -1,5 +1,8 @@
 #include "base/async_operation.h"
+#include "base/member.h"
+#include "compiler/frontend/builtins/async_builtins.h"
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 #include "compiler/frontend/typing/type_inference.h"
 #include "compiler/frontend/typing/type_names.h"
@@ -22,8 +25,6 @@ using Kind = Type::Kind;
 const Type kVoid{.kind = Kind::Void, .name = kVoidTypeName};
 const Type kInt{.kind = Kind::Int, .name = kIntTypeName};
 const Type kBool{.kind = Kind::Bool, .name = kBoolTypeName};
-
-using ParameterPresence = FunctionDescriptor::ParameterPresence;
 
 std::optional<std::size_t> Argument(const Expression& expression,
                                     std::string_view name,
@@ -48,7 +49,7 @@ TypeChecker::Type TypeChecker::RegisterAsyncCall(const Expression& expression,
                                                  AsyncCallDescriptor descriptor,
                                                  std::span<const std::optional<Type>> checked) {
   const auto result = CheckFunctionCall(descriptor.signature, expression, checked);
-  async_calls_.insert_or_assign(&expression, std::move(descriptor));
+  facts_.async_calls.insert_or_assign(&expression, std::move(descriptor));
   return result;
 }
 
@@ -75,6 +76,7 @@ TypeChecker::Type TypeChecker::MakeFutureType(const Expression& expression, cons
               {
                   .name = std::string(element.name),
                   .location = expression.location,
+                  .kind = TypeName::Kind::Named,
                   .arguments = {},
                   .parameter = {},
               },
@@ -125,8 +127,8 @@ TypeChecker::Type TypeChecker::CheckFutureValueFactory(const Expression& express
   const auto argument =
       CheckExpression(*expression.arguments.front().value,
                       callee.text == "value" && IsValid(element) ? &element : nullptr);
-  FunctionInfo signature;
-  signature.AddParameter(callee.text == "value" ? "value" : "error", argument);
+  const auto signature = MakeAsyncSignature(
+      *FindAsyncMember(Kind::Future, MemberStorage::Static, callee.text), {}, std::array{argument});
   const std::array<std::optional<Type>, 1> checked{argument};
   static_cast<void>(CheckFunctionCall(signature, expression, checked));
   if (callee.text == "error") {
@@ -158,12 +160,13 @@ TypeChecker::Type TypeChecker::CheckFutureComputation(const Expression& expressi
   }
   const auto produced = function_types_.at(type.name).return_type;
   const auto result = InferFutureResult(expression, *inference, &produced);
-  FunctionInfo signature;
-  signature.return_type = result;
+  std::vector<Type> parameters;
   if (delayed) {
-    signature.AddParameter("milliseconds", kInt);
+    parameters.push_back(kInt);
   }
-  signature.AddParameter("computation", type);
+  parameters.push_back(type);
+  auto signature = MakeAsyncSignature(*FindAsyncMember(Kind::Future, MemberStorage::Static, method),
+                                      result, parameters);
   std::vector<std::optional<Type>> checked(expression.arguments.size());
   checked.at(*callback) = type;
   if (method == "sync") {
@@ -196,7 +199,7 @@ void TypeChecker::AddFutureCleanup(const Expression& expression,
         std::span<const Type>(parameters).first(element.kind == Kind::Void ? 0 : 1),
         CallbackPresence::Optional);
     if (IsValid(type)) {
-      const auto callback = function_types_.at(NonNullable(type).name);
+      const auto& callback = function_types_.at(NonNullable(type).name);
       if (callback.parameters.size() == 1 &&
           !CanAssign(callback.parameters.front().type, element)) {
         AddDiagnostic(expression.location, "cleanUp parameter must accept the input element type");
@@ -209,7 +212,9 @@ void TypeChecker::AddFutureCleanup(const Expression& expression,
       checked.at(*input) = type;
     }
   }
-  signature.AddParameter("cleanUp", callback_type, ParameterPresence::Optional);
+  signature = MakeAsyncSignature(
+      *FindAsyncMember(Kind::Future, MemberStorage::Static, "wait"), signature.return_type,
+      std::array{signature.parameters.front().type, kBool, callback_type});
 }
 
 TypeChecker::Type TypeChecker::ProjectFutureAggregationContext(const Expression& expression,
@@ -271,14 +276,14 @@ TypeChecker::Type TypeChecker::CheckFutureAggregation(const Expression& expressi
     AddDiagnostic(expression.location, "cannot infer Future aggregation element type");
     return InvalidType();
   }
-  FunctionInfo signature;
   const auto collected = wait && element.kind != Kind::Void ? ArrayType(element) : element;
-  signature.return_type = MakeFutureType(expression, collected);
-  signature.AddParameter("values", ArrayType(MakeFutureType(expression, element)));
+  auto signature = MakeAsyncSignature(
+      *FindAsyncMember(Kind::Future, MemberStorage::Static, expression.callee->text),
+      MakeFutureType(expression, collected),
+      std::array{ArrayType(MakeFutureType(expression, element))});
   std::vector<std::optional<Type>> checked(expression.arguments.size());
   checked.at(*input) = values;
   if (wait) {
-    signature.AddParameter("eagerError", kBool, ParameterPresence::Optional);
     AddFutureCleanup(expression, signature, element, checked);
   }
   return RegisterAsyncCall(
@@ -311,7 +316,8 @@ TypeChecker::Type TypeChecker::CheckAsyncConstruction(const Expression& expressi
 
 TypeChecker::Type TypeChecker::CheckTimerFactory(const Expression& expression) {
   const auto& method = expression.callee->text;
-  if (method != "after" && method != "periodic") {
+  const auto* contract = FindAsyncMember(Kind::Timer, MemberStorage::Static, method);
+  if (contract == nullptr) {
     AddDiagnostic(expression.location, "unknown Timer factory");
     return InvalidType();
   }
@@ -328,16 +334,12 @@ TypeChecker::Type TypeChecker::CheckTimerFactory(const Expression& expression) {
   if (returned.kind != Kind::Void && !IsSameType(returned, MakeFutureType(expression, kVoid))) {
     AddDiagnostic(expression.location, "Timer callback must return void or Future<void>");
   }
-  FunctionInfo signature;
-  signature.return_type = types_.at(kTimerTypeName);
-  signature.AddParameter("milliseconds", kInt);
-  signature.AddParameter("callback", type);
+  auto signature = MakeAsyncSignature(*contract, types_.at(kTimerTypeName), std::array{kInt, type});
   std::vector<std::optional<Type>> checked(expression.arguments.size());
   checked.at(*callback) = type;
   return RegisterAsyncCall(expression,
                            {
-                               .operation = method == "after" ? AsyncOperation::TimerAfter
-                                                              : AsyncOperation::TimerPeriodic,
+                               .operation = contract->operation,
                                .signature = std::move(signature),
                            },
                            checked);
@@ -357,11 +359,13 @@ TypeChecker::Type TypeChecker::CheckAsyncProperty(const Expression& expression,
                                                  : AsyncOperation::CancellationIsCancelled;
   }
   const auto result = signature.return_type;
-  async_calls_.insert_or_assign(&expression, AsyncCallDescriptor{
-                                                 .operation = operation,
-                                                 .signature = std::move(signature),
-                                                 .receiver = true,
-                                             });
+  signature = MakeAsyncSignature(
+      *FindAsyncMember(receiver.kind, MemberStorage::Instance, expression.text), result, {});
+  facts_.async_calls.insert_or_assign(&expression, AsyncCallDescriptor{
+                                                       .operation = operation,
+                                                       .signature = std::move(signature),
+                                                       .receiver = true,
+                                                   });
   return result;
 }
 
@@ -391,7 +395,9 @@ TypeChecker::Type TypeChecker::CheckCompleterMethod(const Expression& expression
         AddDiagnostic(expression.location, "Completer payload does not match its contract");
       }
     }
-    signature.AddParameter(error ? "error" : "value", type);
+    signature = MakeAsyncSignature(
+        *FindAsyncMember(receiver.kind, MemberStorage::Instance, expression.callee->text), kVoid,
+        std::array{type});
   }
   return RegisterAsyncCall(expression, std::move(descriptor), checked);
 }
@@ -410,7 +416,7 @@ TypeChecker::Type TypeChecker::AddThenError(const Expression& expression,
     auto type = CheckAsyncCallback(*expression.arguments.at(*input).value, parameters,
                                    CallbackPresence::Optional, CallbackParameters::ExceptionFilter);
     if (IsValid(type)) {
-      const auto actual = function_types_.at(NonNullable(type).name);
+      const auto& actual = function_types_.at(NonNullable(type).name);
       if (actual.parameters.size() == 1) {
         error_type = actual.parameters.front().type;
       }
@@ -421,7 +427,9 @@ TypeChecker::Type TypeChecker::AddThenError(const Expression& expression,
       checked.at(*input) = type;
     }
   }
-  signature.AddParameter("onError", callback, ParameterPresence::Optional);
+  signature = MakeAsyncSignature(*FindAsyncMember(Kind::Future, MemberStorage::Instance, "then"),
+                                 signature.return_type,
+                                 std::array{signature.parameters.front().type, callback});
   return error_type;
 }
 
@@ -459,7 +467,7 @@ TypeChecker::Type TypeChecker::CheckFutureCallback(const Expression& expression,
   if (!IsValid(callback)) {
     return callback;
   }
-  const auto callback_signature = function_types_.at(callback.name);
+  const auto& callback_signature = function_types_.at(callback.name);
   const auto output = MakeFutureType(expression, callback_signature.return_type);
   if (!IsValid(output)) {
     return InvalidType();
@@ -477,7 +485,8 @@ TypeChecker::Type TypeChecker::CheckFutureCallback(const Expression& expression,
   if (cleanup && !IsSameType(output, MakeFutureType(expression, kVoid))) {
     AddDiagnostic(expression.location, "whenComplete action must return void or Future<void>");
   }
-  signature.AddParameter(std::string(name), callback);
+  signature = MakeAsyncSignature(*FindAsyncMember(receiver.kind, MemberStorage::Instance, method),
+                                 signature.return_type, std::array{callback});
   std::vector<std::optional<Type>> checked(expression.arguments.size());
   checked.at(*input) = callback;
   if (!cleanup) {
@@ -506,7 +515,6 @@ TypeChecker::Type TypeChecker::CheckFutureTimeout(const Expression& expression,
   };
   auto& signature = descriptor.signature;
   signature.return_type = receiver;
-  signature.AddParameter("milliseconds", kInt);
   FunctionInfo context;
   context.return_type = element;
   auto callback = NullableType(FunctionType(context));
@@ -525,43 +533,47 @@ TypeChecker::Type TypeChecker::CheckFutureTimeout(const Expression& expression,
       checked.at(*input) = type;
     }
   }
-  signature.AddParameter("onTimeout", callback, ParameterPresence::Optional);
+  signature =
+      MakeAsyncSignature(*FindAsyncMember(receiver.kind, MemberStorage::Instance, "timeout"),
+                         receiver, std::array{kInt, callback});
   return RegisterAsyncCall(expression, std::move(descriptor), checked);
 }
 
 TypeChecker::Type TypeChecker::CheckAsyncMethod(const Expression& expression,
                                                 const Type& receiver) {
   const auto& method = expression.callee->text;
-  auto result = InvalidType();
-  if (receiver.kind == Kind::Completer && (method == "complete" || method == "completeError")) {
-    result = CheckCompleterMethod(expression, receiver);
-  } else if (receiver.kind == Kind::Future && method == "timeout") {
-    result = CheckFutureTimeout(expression, receiver);
-  } else if (receiver.kind == Kind::Future &&
-             (method == "then" || method == "catchError" || method == "whenComplete")) {
-    result = CheckFutureCallback(expression, receiver);
-  } else if ((receiver.kind == Kind::Timer || receiver.kind == Kind::CancellationToken) &&
-             method == "cancel") {
-    FunctionInfo signature;
-    signature.return_type = kVoid;
-    result =
-        RegisterAsyncCall(expression, {
-                                          .operation = receiver.kind == Kind::Timer
-                                                           ? AsyncOperation::TimerCancel
-                                                           : AsyncOperation::CancellationCancel,
-                                          .signature = std::move(signature),
-                                          .receiver = true,
-                                      });
-  } else {
+  const auto* contract = FindAsyncMember(receiver.kind, MemberStorage::Instance, method);
+  if (contract == nullptr || contract->kind != MemberKind::Method) {
     AddDiagnostic(expression.location, "unknown async method '" + method + "'");
+    return InvalidType();
   }
-  return result;
+  switch (contract->operation) {
+    case AsyncOperation::CompleterComplete:
+    case AsyncOperation::CompleterError:
+      return CheckCompleterMethod(expression, receiver);
+    case AsyncOperation::Timeout:
+      return CheckFutureTimeout(expression, receiver);
+    case AsyncOperation::Then:
+    case AsyncOperation::CatchError:
+    case AsyncOperation::WhenComplete:
+      return CheckFutureCallback(expression, receiver);
+    case AsyncOperation::TimerCancel:
+    case AsyncOperation::CancellationCancel:
+      return RegisterAsyncCall(expression,
+                               {
+                                   .operation = contract->operation,
+                                   .signature = MakeAsyncSignature(*contract, kVoid, {}),
+                                   .receiver = true,
+                               });
+    default:
+      std::unreachable();
+  }
 }
 
 TypeChecker::Type TypeChecker::CheckSleepCall(const Expression& expression) {
-  FunctionInfo signature;
-  signature.return_type = MakeFutureType(expression, kVoid);
-  signature.AddParameter("milliseconds", kInt);
+  const auto signature =
+      MakeAsyncSignature(*FindAsyncMember(Kind::Invalid, MemberStorage::Static, kSleepFunctionName),
+                         MakeFutureType(expression, kVoid), std::array{kInt});
   return CheckFunctionCall(signature, expression);
 }
 

@@ -1,3 +1,7 @@
+#include <absl/container/flat_hash_map.h>
+#include "compiler/frontend/syntax/names.h"
+#include "compiler/frontend/syntax/token.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <algorithm>
@@ -19,10 +23,26 @@
 
 namespace vela::frontend {
 
+std::optional<TypeChecker::Type> TypeChecker::CheckMethodApplication(
+    const absl::flat_hash_map<std::string, MethodTemplate>& methods,
+    const Expression& member,
+    const Expression* call,
+    const Type* expected,
+    MethodAccess access) {
+  if (const auto method = methods.find(member.text); method != methods.end()) {
+    return CheckGenericMethod(method->second, member, call, expected, access);
+  }
+  if (!member.type_arguments.empty()) {
+    AddDiagnostic(member.location, "type arguments require a generic method");
+    return InvalidType();
+  }
+  return std::nullopt;
+}
+
 const MethodTemplate* TypeChecker::InferenceMethod(const Expression& member) {
   const ClassInfo* owner = StaticOwner(member);
   if (owner == nullptr && member.object->kind == Expression::Kind::Name &&
-      member.object->text == "super") {
+      member.object->text == kSuperName) {
     owner = owner_ != nullptr && owner_->base_class ? &classes_.at(*owner_->base_class) : nullptr;
   }
   if (owner != nullptr) {
@@ -30,8 +50,8 @@ const MethodTemplate* TypeChecker::InferenceMethod(const Expression& member) {
     return method == owner->method_templates.end() ? nullptr : &method->second;
   }
   Type receiver;
-  if (const auto found = expression_types_.find(member.object.get());
-      found != expression_types_.end()) {
+  if (const auto found = facts_.expression_types.find(member.object.get());
+      found != facts_.expression_types.end()) {
     receiver = found->second;
   } else if (member.object->kind == Expression::Kind::Name) {
     if (const auto* binding = LookupLocal(member.object->text)) {
@@ -39,9 +59,7 @@ const MethodTemplate* TypeChecker::InferenceMethod(const Expression& member) {
       receiver = refined == nullptr ? binding->type : *refined;
     }
   }
-  if (receiver.kind == Type::Kind::Parameter) {
-    receiver = ParameterCapability(receiver, member.object->location);
-  }
+  receiver = ParameterCapability(receiver, member.object->location);
   receiver = NonNullable(receiver);
   if (receiver.kind == Type::Kind::Class) {
     const auto& methods = classes_.at(receiver.name).method_templates;
@@ -63,7 +81,8 @@ void TypeChecker::PrepareInferenceReceiver(const Expression& expression) {
     }
     return;
   }
-  if (expression.kind == Expression::Kind::Binary && expression.text == "??") {
+  if (expression.kind == Expression::Kind::Binary &&
+      expression.operation == TokenKind::QuestionQuestion) {
     PrepareInferenceReceiver(*expression.left);
     InvalidateAssignments(*expression.left);
     PrepareInferenceReceiver(*expression.right);
@@ -105,7 +124,7 @@ void TypeChecker::PrepareInferenceReceiver(const Expression& expression) {
   }
   const auto& member = expression.kind == Expression::Kind::Call ? *expression.callee : expression;
   if (member.kind != Expression::Kind::Member || StaticOwner(member) != nullptr ||
-      (member.object->kind == Expression::Kind::Name && member.object->text == "super") ||
+      (member.object->kind == Expression::Kind::Name && member.object->text == kSuperName) ||
       prepared_expressions_.contains(member.object.get()) ||
       !CanCheckExpression(*member.object, nullptr)) {
     return;
@@ -137,7 +156,8 @@ std::optional<std::size_t> TypeChecker::CallbackParameterCount(const Expression&
     return signature->parameters.size();
   }
   if (expression.kind == Expression::Kind::Conditional ||
-      (expression.kind == Expression::Kind::Binary && expression.text == "??")) {
+      (expression.kind == Expression::Kind::Binary &&
+       expression.operation == TokenKind::QuestionQuestion)) {
     const auto left = CallbackParameterCount(*expression.left);
     const auto right = CallbackParameterCount(*expression.right);
     if (!left) {
@@ -246,17 +266,17 @@ TypeChecker::Type TypeChecker::CheckGenericMethod(const MethodTemplate& method,
     }
     const auto* node = call == nullptr ? &member : call;
     if (types_.at(method.owner).kind == Type::Kind::Interface) {
-      interface_members_.insert_or_assign(node, *target);
+      facts_.interface_members.insert_or_assign(node, *target);
     } else if (access == MethodAccess::Static) {
-      static_members_.insert_or_assign(node, *target);
+      facts_.static_members.insert_or_assign(node, *target);
     } else if (access == MethodAccess::Super) {
-      super_members_.insert_or_assign(&member, *target);
+      facts_.super_members.insert_or_assign(&member, *target);
     } else {
-      instance_members_.insert_or_assign(node, *target);
+      facts_.instance_members.insert_or_assign(node, *target);
     }
   }
   const auto function_type = FunctionType(signature);
-  expression_types_.insert_or_assign(&member, function_type);
+  facts_.expression_types.insert_or_assign(&member, function_type);
   return call != nullptr ? CheckFunctionCall(signature, *call, checked) : function_type;
 }
 
@@ -333,7 +353,7 @@ void TypeChecker::RestoreMethodSpecializations(std::span<const GenericSpecializa
             .arguments = request.arguments,
             .parameter = {},
         },
-        false);
+        VoidTypePolicy::Forbidden);
     if (!IsValid(type)) {
       continue;
     }
@@ -353,7 +373,7 @@ void TypeChecker::RestoreMethodSpecializations(std::span<const GenericSpecializa
     std::vector<Type> arguments;
     arguments.reserve(application.arguments.size());
     for (const auto& argument : application.arguments) {
-      arguments.push_back(ResolveType(argument, true));
+      arguments.push_back(ResolveType(argument, VoidTypePolicy::Allowed));
     }
     if (!CheckTypeArguments({
             .owner = method->second.owner + '.' + name,

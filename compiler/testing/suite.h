@@ -24,10 +24,10 @@
 #include "runtime/async/future.h"
 #include "runtime/heap/rooted_value.h"
 #include "runtime/isolate/isolate.h"
-#include "runtime/process/process_entry.h"
-#include "runtime/testing/test_bridge.h"
 #include "runtime/native/native_execution.h"
 #include "runtime/native/native_instance.h"
+#include "runtime/process/process_entry.h"
+#include "runtime/testing/test_bridge.h"
 
 namespace vela::testing {
 
@@ -37,7 +37,6 @@ struct SuiteOptions final {
   std::function<std::expected<bool, std::string>(const TestResult&)> select;
   std::optional<runtime::FutureScheduler::Clock::time_point> load_deadline;
   bool list = false;
-  std::uint64_t session = 1;
   std::uint64_t suite = 1;
   std::string file;
   ReportSink emit;
@@ -47,9 +46,7 @@ struct SuiteOptions final {
 // 原生实例由执行线程拥有，生命周期覆盖 Suite；报告只保留已复制的数据。
 class Suite final : public runtime::TestBridge {
  public:
-  Suite(runtime::NativeInstance& instance,
-        SuiteOptions options,
-        std::ostream& diagnostics);
+  Suite(runtime::NativeInstance& instance, SuiteOptions options, std::ostream& diagnostics);
   ~Suite() override;
   Suite(const Suite&) = delete;
   Suite& operator=(const Suite&) = delete;
@@ -65,6 +62,7 @@ class Suite final : public runtime::TestBridge {
       std::vector<runtime::FutureTraceFrame> trace) override;
 
  private:
+  static constexpr std::uint64_t kSession = 1;
   enum class NodeKind : std::uint8_t { Group, Test };
   enum class State : std::uint8_t { Registering, Running, Finished };
   enum class WaitStatus : std::uint8_t { Completed, TimedOut, Idle, Cancelled };
@@ -142,9 +140,9 @@ class Suite final : public runtime::TestBridge {
               Node& scope,
               std::vector<TestError>& errors);
   [[nodiscard]] runtime::ExecutionResult Await(runtime::ExecutionResult result,
-                                          std::optional<std::chrono::milliseconds> timeout,
-                                          Node& scope,
-                                          TestPhase phase);
+                                               std::optional<std::chrono::milliseconds> timeout,
+                                               Node& scope,
+                                               TestPhase phase);
   [[nodiscard]] WaitStatus WaitUntil(Node& scope,
                                      std::optional<std::chrono::milliseconds> timeout,
                                      TestPhase phase,

@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "base/source_lines.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/token.h"
@@ -22,6 +23,7 @@ struct ParseResult final {
 
 struct SourceSnapshot final {
   std::string text;
+  SourceLines lines;
   std::vector<Token> tokens;
   std::vector<SourceComment> comments;
   std::vector<Program::Import> imports;
@@ -85,6 +87,8 @@ class Parser final {
                                             bool is_async = false);
   enum class ParameterTyping : std::uint8_t { Required, Inferred };
   std::optional<Parameter> ParseParameter(ParameterTyping typing = ParameterTyping::Required);
+  std::optional<std::vector<Parameter>> ParseParameters(
+      ParameterTyping typing = ParameterTyping::Required);
   std::optional<TypeName> ParseType();
   std::optional<TypeName> ParseTypeBody();
   std::optional<TypeName> ParseTypeSuffixes(TypeName result, std::size_t depth);
@@ -118,17 +122,18 @@ class Parser final {
   std::unique_ptr<Expression> ParseRelational();
   std::unique_ptr<Expression> ParseUnary();
   std::unique_ptr<Expression> ParsePostfix();
-  bool ParsePostfixTypeApplication(std::unique_ptr<Expression>& expression);
-  bool ParsePostfixCall(std::unique_ptr<Expression>& expression);
-  bool ParsePostfixMember(std::unique_ptr<Expression>& expression);
-  bool ParsePostfixIndex(std::unique_ptr<Expression>& expression);
-  bool ParsePostfixIncrement(std::unique_ptr<Expression>& expression);
+  enum class PostfixStatus : std::uint8_t { Unmatched, Parsed, Failed };
+  PostfixStatus ParsePostfixTypeApplication(std::unique_ptr<Expression>& expression);
+  PostfixStatus ParsePostfixCall(std::unique_ptr<Expression>& expression);
+  PostfixStatus ParsePostfixMember(std::unique_ptr<Expression>& expression);
+  PostfixStatus ParsePostfixIndex(std::unique_ptr<Expression>& expression);
+  PostfixStatus ParsePostfixIncrement(std::unique_ptr<Expression>& expression);
   std::unique_ptr<Expression> ParsePrimary();
   [[nodiscard]] bool IsLambda() const;
   std::unique_ptr<Expression> ParseArrayLiteral();
   std::unique_ptr<Expression> ParseMapLiteral();
   enum class LambdaParameters : std::uint8_t { Parenthesized, Single };
-  std::unique_ptr<Expression> ParseLambda(LambdaParameters parameters, bool is_async = false);
+  std::unique_ptr<Expression> ParseLambda(LambdaParameters parameters);
   std::unique_ptr<Expression> ParseMatch();
   std::unique_ptr<Expression> ParseDoubleLiteral();
   std::unique_ptr<Expression> ParseString();

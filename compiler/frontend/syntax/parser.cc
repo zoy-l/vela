@@ -11,12 +11,44 @@
 #include <system_error>
 #include <utility>
 #include <vector>
-#include "compiler/frontend/builtins/standard_environment.h"
+#include "base/source_lines.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/lexer.h"
 #include "compiler/frontend/syntax/token.h"
 
 namespace vela::frontend {
+namespace {
+
+std::optional<TokenKind> CompoundOperator(TokenKind operation) {
+  switch (operation) {
+    case TokenKind::PlusEqual:
+      return TokenKind::Plus;
+    case TokenKind::MinusEqual:
+      return TokenKind::Minus;
+    case TokenKind::StarEqual:
+      return TokenKind::Star;
+    case TokenKind::SlashEqual:
+      return TokenKind::Slash;
+    case TokenKind::PercentEqual:
+      return TokenKind::Percent;
+    case TokenKind::AmpersandEqual:
+      return TokenKind::Ampersand;
+    case TokenKind::PipeEqual:
+      return TokenKind::Pipe;
+    case TokenKind::CaretEqual:
+      return TokenKind::Caret;
+    case TokenKind::ShiftLeftEqual:
+      return TokenKind::ShiftLeft;
+    case TokenKind::ShiftRightEqual:
+      return TokenKind::ShiftRight;
+    case TokenKind::ShiftUnsignedRightEqual:
+      return TokenKind::ShiftUnsignedRight;
+    default:
+      return std::nullopt;
+  }
+}
+
+}  // namespace
 
 ParseResult ParseSource(std::string_view source, std::uint32_t source_id) {
   auto lexed = Lexer(source, source_id).Tokenize();
@@ -31,8 +63,10 @@ ParsedSource ParseSourceSnapshot(std::string source, std::uint32_t source_id) {
   auto parsed = lexed.diagnostics.empty()
                     ? Parser(lexed.tokens).Parse()
                     : ParseResult{.program = {}, .diagnostics = std::move(lexed.diagnostics)};
+  auto lines = IndexSourceLines(source);
   auto snapshot = std::make_shared<const SourceSnapshot>(SourceSnapshot{
       .text = std::move(source),
+      .lines = std::move(lines),
       .tokens = std::move(lexed.tokens),
       .comments = std::move(lexed.comments),
       .imports = parsed.program.imports,
@@ -61,7 +95,6 @@ ParseResult Parser::Parse() {
   while (!IsAtEnd()) {
     ParseDeclaration(program);
   }
-  program.standard_names = CollectStandardNames(tokens_);
   return {.program = std::move(program), .diagnostics = std::move(diagnostics_)};
 }
 
@@ -495,7 +528,8 @@ std::unique_ptr<Statement> Parser::ParseWhileStatement() {
 }
 
 std::unique_ptr<Statement> Parser::ParseVariableDeclaration() {
-  const Token keyword = Advance();
+  const auto binding =
+      Advance().kind == TokenKind::Const ? BindingKind::Constant : BindingKind::Mutable;
   const auto name = TakeName();
   if (!name) {
     return nullptr;
@@ -504,8 +538,7 @@ std::unique_ptr<Statement> Parser::ParseVariableDeclaration() {
   statement->kind = Statement::Kind::VariableDeclaration;
   statement->location = name->location;
   statement->name = name->lexeme;
-  statement->binding =
-      keyword.kind == TokenKind::Const ? BindingKind::Constant : BindingKind::Mutable;
+  statement->binding = binding;
   if (Match(TokenKind::Colon)) {
     const auto type = ParseType();
     if (!type) {
@@ -558,23 +591,17 @@ std::unique_ptr<Expression> Parser::ParseExpression() {
 
 std::unique_ptr<Expression> Parser::ParseAssignment() {
   std::unique_ptr<Expression> expression = ParseConditional();
-  const auto is_assignment = [this]() {
-    return Check(TokenKind::Equal) || Check(TokenKind::PlusEqual) || Check(TokenKind::MinusEqual) ||
-           Check(TokenKind::StarEqual) || Check(TokenKind::SlashEqual) ||
-           Check(TokenKind::PercentEqual) || Check(TokenKind::AmpersandEqual) ||
-           Check(TokenKind::PipeEqual) || Check(TokenKind::CaretEqual) ||
-           Check(TokenKind::ShiftLeftEqual) || Check(TokenKind::ShiftRightEqual) ||
-           Check(TokenKind::ShiftUnsignedRightEqual);
-  };
-  if (is_assignment()) {
-    const Token operator_token = Advance();
-    const SourceLocation location = operator_token.location;
+  const auto compound = CompoundOperator(Peek().kind);
+  if (Check(TokenKind::Equal) || compound) {
+    const auto operation = Advance().kind;
+    const SourceLocation location = Previous().location;
     std::unique_ptr<Expression> right = ParseAssignment();
     if (!right) {
       return nullptr;
     }
-    auto assignment = MakeExpression(Expression::Kind::Binary, location);
-    assignment->text = operator_token.lexeme;
+    auto assignment = MakeExpression(
+        compound ? Expression::Kind::CompoundAssignment : Expression::Kind::Binary, location);
+    assignment->operation = compound ? *compound : operation;
     assignment->left = std::move(expression);
     assignment->right = std::move(right);
     return assignment;
@@ -659,13 +686,14 @@ std::unique_ptr<Expression> Parser::ParseBinary(std::uint8_t minimum_precedence)
     if (precedence < minimum_precedence || (below_relational && precedence > kEqualityPrecedence)) {
       return expression;
     }
-    const auto operation = Advance();
+    const auto operation = Advance().kind;
+    const auto location = Previous().location;
     auto right = ParseBinary(precedence + 1);
     if (!right) {
       return nullptr;
     }
-    auto binary = MakeExpression(Expression::Kind::Binary, operation.location);
-    binary->text = operation.lexeme;
+    auto binary = MakeExpression(Expression::Kind::Binary, location);
+    binary->operation = operation;
     binary->left = std::move(expression);
     binary->right = std::move(right);
     expression = std::move(binary);
@@ -675,27 +703,29 @@ std::unique_ptr<Expression> Parser::ParseBinary(std::uint8_t minimum_precedence)
 std::unique_ptr<Expression> Parser::ParseRelational() {
   std::unique_ptr<Expression> expression = ParseBinary(kShiftPrecedence);
   while (Check(TokenKind::Is) || Check(TokenKind::As)) {
-    const auto operation = Advance();
+    const auto operation = Advance().kind;
+    const auto location = Previous().location;
     auto type = ParseType();
     if (!type || !expression) {
       return nullptr;
     }
     auto typed = MakeExpression(
-        operation.kind == TokenKind::Is ? Expression::Kind::TypeTest : Expression::Kind::TypeCast,
-        operation.location);
+        operation == TokenKind::Is ? Expression::Kind::TypeTest : Expression::Kind::TypeCast,
+        location);
     typed->operand = std::move(expression);
     typed->type = std::move(*type);
     expression = std::move(typed);
   }
   while (Match(TokenKind::Less) || Match(TokenKind::LessEqual) || Match(TokenKind::Greater) ||
          Match(TokenKind::GreaterEqual)) {
-    const Token operator_token = Previous();
+    const auto operation = Previous().kind;
+    const auto location = Previous().location;
     auto right = ParseBinary(kShiftPrecedence);
     if (!right) {
       return nullptr;
     }
-    auto binary = MakeExpression(Expression::Kind::Binary, operator_token.location);
-    binary->text = operator_token.lexeme;
+    auto binary = MakeExpression(Expression::Kind::Binary, location);
+    binary->operation = operation;
     binary->left = std::move(expression);
     binary->right = std::move(right);
     expression = std::move(binary);
@@ -705,23 +735,21 @@ std::unique_ptr<Expression> Parser::ParseRelational() {
 
 std::unique_ptr<Expression> Parser::ParseUnary() {
   if (Match(TokenKind::Await)) {
-    const Token token = Previous();
-    auto await = MakeExpression(Expression::Kind::Await, token.location);
+    auto await = MakeExpression(Expression::Kind::Await, Previous().location);
     await->operand = ParseUnary();
     return await->operand ? std::move(await) : nullptr;
   }
   if (Match(TokenKind::Bang) || Match(TokenKind::Minus) || Match(TokenKind::Tilde) ||
       Match(TokenKind::PlusPlus) || Match(TokenKind::MinusMinus)) {
     AnnotatePrevious(TokenRole::PrefixOperator);
-    const Token operator_token = Previous();
-    auto unary = MakeExpression(Expression::Kind::Unary, operator_token.location);
-    unary->text = operator_token.lexeme;
+    auto unary = MakeExpression(Expression::Kind::Unary, Previous().location);
+    unary->operation = Previous().kind;
     unary->operand = ParseUnary();
-    if (operator_token.kind == TokenKind::Minus && unary->operand &&
+    if (unary->operation == TokenKind::Minus && unary->operand &&
         unary->operand->kind == Expression::Kind::IntegerLiteral &&
         !unary->operand->text.starts_with('-')) {
       unary->operand->text.insert(unary->operand->text.begin(), '-');
-      unary->operand->location = operator_token.location;
+      unary->operand->location = unary->location;
       return std::move(unary->operand);
     }
     return unary->operand ? std::move(unary) : nullptr;
@@ -730,61 +758,70 @@ std::unique_ptr<Expression> Parser::ParseUnary() {
 }
 
 std::unique_ptr<Expression> Parser::ParsePostfix() {
-  std::unique_ptr<Expression> expression = ParsePrimary();
+  auto expression = ParsePrimary();
   if (!expression) {
     return nullptr;
   }
   while (true) {
-    if (ParsePostfixTypeApplication(expression) || ParsePostfixCall(expression) ||
-        ParsePostfixMember(expression) || ParsePostfixIndex(expression) ||
-        ParsePostfixIncrement(expression)) {
-      if (!expression) {
-        return nullptr;
-      }
-      continue;
+    auto status = ParsePostfixTypeApplication(expression);
+    if (status == PostfixStatus::Unmatched) {
+      status = ParsePostfixCall(expression);
     }
-    {
-      break;
+    if (status == PostfixStatus::Unmatched) {
+      status = ParsePostfixMember(expression);
+    }
+    if (status == PostfixStatus::Unmatched) {
+      status = ParsePostfixIndex(expression);
+    }
+    if (status == PostfixStatus::Unmatched) {
+      status = ParsePostfixIncrement(expression);
+    }
+    switch (status) {
+      case PostfixStatus::Unmatched:
+        return expression;
+      case PostfixStatus::Failed:
+        return nullptr;
+      case PostfixStatus::Parsed:
+        break;
     }
   }
-  return expression;
 }
 
-bool Parser::ParsePostfixTypeApplication(std::unique_ptr<Expression>& expression) {
+Parser::PostfixStatus Parser::ParsePostfixTypeApplication(std::unique_ptr<Expression>& expression) {
   if ((expression->kind != Expression::Kind::Name &&
        expression->kind != Expression::Kind::Member) ||
       !IsTypeApplication()) {
-    return false;
+    return PostfixStatus::Unmatched;
   }
   if (!expression->type_arguments.empty()) {
     AddDiagnostic(Peek().location, "type arguments are already supplied");
     expression.reset();
-    return true;
+    return PostfixStatus::Failed;
   }
   expression->type_arguments = ParseTypeArguments();
-  return true;
+  return PostfixStatus::Parsed;
 }
 
-bool Parser::ParsePostfixCall(std::unique_ptr<Expression>& expression) {
+Parser::PostfixStatus Parser::ParsePostfixCall(std::unique_ptr<Expression>& expression) {
   if (!Match(TokenKind::LeftParen)) {
-    return false;
+    return PostfixStatus::Unmatched;
   }
   auto call = MakeExpression(Expression::Kind::Call, expression->location);
   call->callee = std::move(expression);
   call->arguments = ParseArguments();
   if (!Expect(TokenKind::RightParen, "expected ')' after arguments").has_value()) {
     expression.reset();
-    return true;
+    return PostfixStatus::Failed;
   }
   expression = std::move(call);
-  return true;
+  return PostfixStatus::Parsed;
 }
 
-bool Parser::ParsePostfixMember(std::unique_ptr<Expression>& expression) {
+Parser::PostfixStatus Parser::ParsePostfixMember(std::unique_ptr<Expression>& expression) {
   const bool null_safe = Match(TokenKind::QuestionDot);
   const bool ordinary = !null_safe && Match(TokenKind::Dot);
   if (!null_safe && !ordinary) {
-    return false;
+    return PostfixStatus::Unmatched;
   }
   if (null_safe && Match(TokenKind::LeftBracket)) {
     auto index = MakeExpression(Expression::Kind::Index, Previous().location);
@@ -792,11 +829,11 @@ bool Parser::ParsePostfixMember(std::unique_ptr<Expression>& expression) {
     index->index = ParseExpression();
     if (!index->index || !Expect(TokenKind::RightBracket, "expected ']' after '?.['")) {
       expression.reset();
-      return true;
+      return PostfixStatus::Failed;
     }
     index->null_safe = true;
     expression = std::move(index);
-    return true;
+    return PostfixStatus::Parsed;
   }
   std::optional<Token> member;
   if (IsMemberName(Peek().kind)) {
@@ -807,45 +844,42 @@ bool Parser::ParsePostfixMember(std::unique_ptr<Expression>& expression) {
   }
   if (!member) {
     expression.reset();
-    return true;
+    return PostfixStatus::Failed;
   }
   auto access = MakeExpression(Expression::Kind::Member, member->location);
   access->object = std::move(expression);
   access->text = member->lexeme;
   access->null_safe = null_safe;
   expression = std::move(access);
-  return true;
+  return PostfixStatus::Parsed;
 }
 
-bool Parser::ParsePostfixIndex(std::unique_ptr<Expression>& expression) {
-  const bool null_safe = Match(TokenKind::QuestionLeftBracket);
-  const bool ordinary = !null_safe && Match(TokenKind::LeftBracket);
-  if (!null_safe && !ordinary) {
-    return false;
+Parser::PostfixStatus Parser::ParsePostfixIndex(std::unique_ptr<Expression>& expression) {
+  if (!Match(TokenKind::LeftBracket)) {
+    return PostfixStatus::Unmatched;
   }
   auto index = MakeExpression(Expression::Kind::Index, Previous().location);
   index->object = std::move(expression);
   index->index = ParseExpression();
   if (!index->index || !Expect(TokenKind::RightBracket, "expected ']' after index").has_value()) {
     expression.reset();
-    return true;
+    return PostfixStatus::Failed;
   }
-  index->null_safe = null_safe;
   expression = std::move(index);
-  return true;
+  return PostfixStatus::Parsed;
 }
 
-bool Parser::ParsePostfixIncrement(std::unique_ptr<Expression>& expression) {
+Parser::PostfixStatus Parser::ParsePostfixIncrement(std::unique_ptr<Expression>& expression) {
   if (!Match(TokenKind::PlusPlus) && !Match(TokenKind::MinusMinus)) {
-    return false;
+    return PostfixStatus::Unmatched;
   }
-  const auto token = Previous();
+  const auto& token = Previous();
   auto update = MakeExpression(Expression::Kind::Unary, token.location);
-  update->text = token.lexeme;
+  update->operation = token.kind;
   update->postfix = true;
   update->operand = std::move(expression);
   expression = std::move(update);
-  return true;
+  return PostfixStatus::Parsed;
 }
 
 std::unique_ptr<Expression> Parser::ParseDoubleLiteral() {
@@ -987,11 +1021,10 @@ std::unique_ptr<Expression> Parser::ParseMatch() {
   return expression;
 }
 
-std::unique_ptr<Expression> Parser::ParseLambda(LambdaParameters parameters, bool is_async) {
+std::unique_ptr<Expression> Parser::ParseLambda(LambdaParameters parameters) {
   auto expression = MakeExpression(Expression::Kind::Lambda, Previous().location);
   auto function = std::make_unique<Function>();
   function->location = expression->location;
-  function->is_async = is_async;
   if (parameters == LambdaParameters::Single) {
     const auto& name = Previous();
     function->parameters.push_back({
@@ -1000,16 +1033,11 @@ std::unique_ptr<Expression> Parser::ParseLambda(LambdaParameters parameters, boo
         .location = name.location,
     });
   } else {
-    while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
-      auto parameter = ParseParameter(ParameterTyping::Inferred);
-      if (!parameter) {
-        return nullptr;
-      }
-      function->parameters.push_back(std::move(*parameter));
-      if (!Match(TokenKind::Comma)) {
-        break;
-      }
+    auto parsed_parameters = ParseParameters(ParameterTyping::Inferred);
+    if (!parsed_parameters) {
+      return nullptr;
     }
+    function->parameters = std::move(*parsed_parameters);
     if (!Expect(TokenKind::RightParen, "expected ')' after lambda parameters")) {
       return nullptr;
     }

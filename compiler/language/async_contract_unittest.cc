@@ -40,12 +40,9 @@ TEST_P(AsyncContractTest, ExecutesThroughNativeCode) {
                   << future.error_diagnostic().value_or(runtime::FutureDiagnostic{}).message;
   });
   const auto compiled = test::CompileSource(test.source, isolate);
-  for (const auto& diagnostic : compiled.diagnostics) {
-    EXPECT_NE(diagnostic.severity, frontend::DiagnosticSeverity::Error) << diagnostic.message;
-  }
+  EXPECT_FALSE(frontend::HasErrors(compiled.diagnostics))
+      << frontend::DiagnosticsText(compiled.diagnostics);
   ASSERT_TRUE(compiled.Succeeded());
-  const auto main = compiled.instance->FindFunction("main");
-  ASSERT_TRUE(main.has_value());
   auto result = test::StartFuture(*compiled.instance);
   isolate.heap().Collect();
   const auto value = test::AwaitInteger(result, isolate);

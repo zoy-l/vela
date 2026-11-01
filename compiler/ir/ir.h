@@ -14,7 +14,7 @@
 #include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 
 namespace vela::ir {
 
@@ -57,7 +57,6 @@ struct Class final {
   };
   enum class Kind : std::uint8_t { Instance, RuntimeError, DateParts, Enum, CaptureCell };
   std::string name;
-  std::vector<std::string> field_order;
   std::vector<frontend::TypeDescriptor> field_types;
   std::optional<CallableTarget> callable;
   std::vector<std::uint32_t> interfaces;
@@ -75,7 +74,6 @@ struct Function final {
   };
   std::string name;
   frontend::SourceLocation location;
-  std::string owner_class;
   frontend::TypeDescriptor return_type;
   std::uint32_t parameter_count = 0;
   std::uint32_t register_count = 0;

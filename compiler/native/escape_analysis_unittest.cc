@@ -11,9 +11,9 @@
 #include "base/opcode.h"
 #include "compiler/aot/native_compiler.h"
 #include "compiler/ir/ir.h"
-#include "compiler/ir/preparation_test_support.h"
 #include "compiler/native/borrow_analysis.h"
 #include "compiler/native/native_roots.h"
+#include "compiler/test_support/preparation_test_support.h"
 
 namespace vela::compiler::native {
 namespace {
@@ -30,7 +30,10 @@ std::expected<EscapePlan, std::string> Analyze(std::string_view source) {
   if (!program.Succeeded()) {
     return std::unexpected(program.diagnostics.front().message);
   }
-  return PlanEscapes(program.program, FunctionIndex(program.program, "sum"));
+  auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "sum"));
+  // 测试辅助结果离开局部 Program，显式转移为拥有函数的计划。
+  static_cast<void>(plan.function.Rewrite());
+  return plan;
 }
 
 TEST(EscapeAnalysisTest, EliminatesLocalAliasesAndMergedFieldStates) {
@@ -47,8 +50,8 @@ export func sum(x: int, choose: bool): int {
   ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
   const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "sum"));
   ASSERT_EQ(plan.allocations.size(), 1U);
-  EXPECT_EQ(plan.allocations.front().decision, AllocationDecision::ScalarReplacement);
-  for (const auto& instruction : plan.function.instructions) {
+  EXPECT_TRUE(plan.allocations.front().can_scalar_replace);
+  for (const auto& instruction : plan.function.get().instructions) {
     EXPECT_NE(instruction.opcode, Opcode::NewInstance);
     EXPECT_NE(instruction.opcode, Opcode::GetField);
     EXPECT_NE(instruction.opcode, Opcode::SetField);
@@ -91,7 +94,7 @@ export func sum(count: int): int {
 )");
   ASSERT_TRUE(plan) << plan.error();
   ASSERT_EQ(plan->allocations.size(), 2U);
-  EXPECT_NE(plan->allocations.back().decision, AllocationDecision::ScalarReplacement);
+  EXPECT_FALSE(plan->allocations.back().can_scalar_replace);
 }
 
 TEST(EscapeAnalysisTest, NonOverlappingLoopInstancesCanUseTheSameFieldSlots) {
@@ -108,7 +111,7 @@ export func sum(count: int): int {
 )");
   ASSERT_TRUE(plan) << plan.error();
   ASSERT_EQ(plan->allocations.size(), 1U);
-  EXPECT_EQ(plan->allocations.front().decision, AllocationDecision::ScalarReplacement);
+  EXPECT_TRUE(plan->allocations.front().can_scalar_replace);
 }
 
 TEST(EscapeAnalysisTest, SeparatelyDefinedRegisterValuesDoNotKeepAnOldAlias) {
@@ -124,7 +127,7 @@ export func sum(): int {
   ASSERT_TRUE(plan) << plan.error();
   ASSERT_EQ(plan->allocations.size(), 2U);
   for (const auto& allocation : plan->allocations) {
-    EXPECT_EQ(allocation.decision, AllocationDecision::ScalarReplacement);
+    EXPECT_TRUE(allocation.can_scalar_replace);
   }
 }
 
@@ -142,18 +145,18 @@ export func size(text: string): int {
   const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "size"));
   ASSERT_EQ(plan.allocations.size(), 1U);
   const auto& allocation = plan.allocations.front();
-  ASSERT_EQ(allocation.decision, AllocationDecision::ScalarReplacement);
-  const auto roots = PlanNativeRoots(plan.function, program.program.functions,
+  ASSERT_TRUE(allocation.can_scalar_replace);
+  const auto roots = PlanNativeRoots(plan.function.get(), program.program.functions,
                                      program.program.native_mode, NativeDebugging::Safepoints);
   ASSERT_EQ(allocation.fields.size(), 1U);
-  const auto text =
-      std::ranges::find(plan.function.instructions, Opcode::StringConcat, &ir::Instruction::opcode);
-  ASSERT_NE(text, plan.function.instructions.end());
+  const auto text = std::ranges::find(plan.function.get().instructions, Opcode::StringConcat,
+                                      &ir::Instruction::opcode);
+  ASSERT_NE(text, plan.function.get().instructions.end());
   const auto field = text->dst;
   EXPECT_TRUE(roots.slots.at(field));
   bool rooted = false;
-  for (std::size_t index = 0; index < plan.function.instructions.size(); ++index) {
-    if (plan.function.instructions.at(index).opcode == Opcode::Call) {
+  for (std::size_t index = 0; index < plan.function.get().instructions.size(); ++index) {
+    if (plan.function.get().instructions.at(index).opcode == Opcode::Call) {
       rooted = std::ranges::find(roots.stores.at(index), field) != roots.stores.at(index).end();
     }
   }
@@ -172,9 +175,9 @@ export func read(): int { return Custom(value: 42).x; }
   const auto constructed = PlanEscapes(program.program, FunctionIndex(program.program, "read"));
   ASSERT_EQ(published.allocations.size(), 1U);
   ASSERT_EQ(constructed.allocations.size(), 1U);
-  EXPECT_EQ(published.allocations.front().decision, AllocationDecision::ScalarReplacement);
+  EXPECT_TRUE(published.allocations.front().can_scalar_replace);
   EXPECT_TRUE(published.allocations.front().materialized);
-  EXPECT_EQ(constructed.allocations.front().decision, AllocationDecision::CallBoundary);
+  EXPECT_FALSE(constructed.allocations.front().can_scalar_replace);
 }
 
 TEST(EscapeAnalysisTest, PreservesIdentityWithoutAllocatingEqualFieldValues) {
@@ -231,7 +234,7 @@ export func create(): Link {
   const auto plan = PlanEscapes(program.program, FunctionIndex(program.program, "create"));
   ASSERT_EQ(plan.allocations.size(), 2U);
   for (const auto& allocation : plan.allocations) {
-    EXPECT_EQ(allocation.decision, AllocationDecision::ScalarReplacement);
+    EXPECT_TRUE(allocation.can_scalar_replace);
     EXPECT_TRUE(allocation.materialized);
   }
   const auto compiled = aot::Compile(program.program, {.exports = {"create"}, .preserve_ir = true});

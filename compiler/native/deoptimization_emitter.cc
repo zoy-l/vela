@@ -1,6 +1,7 @@
 #include "base/native_program_mode.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/function_emitter.h"
+#include "runtime/native/native_symbols.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -64,7 +65,7 @@ void FunctionEmitter::GuardResume() {
   if (!HasRecovery() || kind_ != NativeEntryKind::Resume) {
     return;
   }
-  auto helper = module_.getOrInsertFunction("vela_native_v4_can_optimize", builder_.getInt8Ty(),
+  auto helper = module_.getOrInsertFunction(runtime::kNativeCanOptimizeSymbol, builder_.getInt8Ty(),
                                             builder_.getPtrTy(), builder_.getPtrTy());
   auto* current = builder_.CreateCall(helper, {body_->getArg(0), image_});
   auto* optimized = llvm::BasicBlock::Create(module_.getContext(), "optimized", body_);
@@ -148,7 +149,7 @@ void FunctionEmitter::PrepareCheckpoint() {
                          ByteAddress(virtual_state_, offsetof(NativeVirtualState, program)));
     for (std::size_t storage = 0; storage < escape_.allocations.size(); ++storage) {
       const auto& allocation = escape_.allocations.at(storage);
-      if (allocation.decision == AllocationDecision::ScalarReplacement) {
+      if (allocation.can_scalar_replace) {
         builder_.CreateStore(
             slots_.at(allocation.reference),
             builder_.CreateConstGEP1_64(builder_.getPtrTy(), virtual_references_, storage));
@@ -217,7 +218,7 @@ void FunctionEmitter::RecoverIfInvalidated() {
 
 void FunctionEmitter::Recover() {
   auto helper =
-      module_.getOrInsertFunction("vela_native_v4_recover", builder_.getInt8Ty(),
+      module_.getOrInsertFunction(runtime::kNativeRecoverSymbol, builder_.getInt8Ty(),
                                   builder_.getPtrTy(), builder_.getPtrTy(), builder_.getPtrTy());
   auto* output = IsResuming() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : Output();
   Finish(builder_.CreateCall(helper, {body_->getArg(0), checkpoint_, output}));

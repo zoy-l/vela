@@ -1,8 +1,8 @@
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <cstddef>
-#include <cstdint>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -11,22 +11,11 @@
 #include <absl/container/flat_hash_set.h>
 
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_name.h"
 #include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {
 
-void FunctionDescriptor::AddParameter(std::string name,
-                                      TypeDescriptor type,
-                                      ParameterPresence presence) {
-  if (presence == ParameterPresence::Optional) {
-    optional_parameters.insert(name);
-  }
-  parameter_indices.emplace(name, static_cast<std::uint32_t>(parameters.size()));
-  parameters.push_back({.name = std::move(name), .type = type});
-}
-
-TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, bool allow_void) {
+TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, VoidTypePolicy void_type) {
   if (type_name.kind == TypeName::Kind::Parameter) {
     return type_parameters_.at(type_name.parameter).type;
   }
@@ -36,7 +25,7 @@ TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, bool allow
       diagnostics_.push_back(std::move(diagnostic));
     }
     if (expanded.kind != type_name.kind || expanded.name != type_name.name) {
-      return ResolveType(expanded, allow_void);
+      return ResolveType(expanded, void_type);
     }
     return InvalidType();
   }
@@ -49,7 +38,7 @@ TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, bool allow
     return ResolveGenericType(type_name);
   }
   if (type_name.kind == TypeName::Kind::Array || type_name.kind == TypeName::Kind::Nullable) {
-    auto element = ResolveType(type_name.arguments.front(), false);
+    auto element = ResolveType(type_name.arguments.front(), VoidTypePolicy::Forbidden);
     if (!IsValid(element)) {
       return InvalidType();
     }
@@ -66,7 +55,7 @@ TypeChecker::Type TypeChecker::ResolveType(const TypeName& type_name, bool allow
     return ResolveFunctionType(type_name);
   }
   const auto result = ResolveNamedType(type_name);
-  if (!allow_void && result.kind == Type::Kind::Void) {
+  if (void_type == VoidTypePolicy::Forbidden && result.kind == Type::Kind::Void) {
     AddDiagnostic(type_name.location, "void is not a value type");
     return InvalidType();
   }
@@ -83,7 +72,7 @@ TypeChecker::Type TypeChecker::ResolveNamedType(const TypeName& type_name) {
       AddDiagnostic(type_name.location, "cyclic type alias '" + type_name.name + "'");
       return InvalidType();
     }
-    const auto result = ResolveType(alias->second->target, true);
+    const auto result = ResolveType(alias->second->target, VoidTypePolicy::Allowed);
     resolving_aliases_.erase(type_name.name);
     types_.try_emplace(type_name.name, result);
     return result;
@@ -96,32 +85,10 @@ TypeChecker::Type TypeChecker::ResolveFunctionType(const TypeName& type_name) {
   FunctionInfo signature;
   for (std::size_t index = 0; index + 1 < type_name.arguments.size(); ++index) {
     signature.AddParameter(std::to_string(index),
-                           ResolveType(type_name.arguments.at(index), false));
+                           ResolveType(type_name.arguments.at(index), VoidTypePolicy::Forbidden));
   }
-  signature.return_type = ResolveType(type_name.arguments.back(), true);
+  signature.return_type = ResolveType(type_name.arguments.back(), VoidTypePolicy::Allowed);
   return FunctionType(signature);
-}
-
-TypeDescriptor MakeArrayType(const TypeDescriptor& element) {
-  const std::string name = element.kind == TypeDescriptor::Kind::Function
-                               ? "(" + std::string(element.name) + ")[]"
-                               : std::string(element.name) + "[]";
-  return {
-      .kind = TypeDescriptor::Kind::Array,
-      .name = InternTypeName(name),
-      .is_abstract = element.is_abstract,
-  };
-}
-
-TypeDescriptor MakeNullableType(TypeDescriptor type) {
-  if (!type.nullable && type.kind != TypeDescriptor::Kind::Dynamic) {
-    type.nullable = true;
-    const std::string name = type.kind == TypeDescriptor::Kind::Function
-                                 ? "(" + std::string(type.name) + ")?"
-                                 : std::string(type.name) + '?';
-    type.name = InternTypeName(name);
-  }
-  return type;
 }
 
 TypeChecker::Type TypeChecker::ArrayType(const Type& element) {
@@ -161,6 +128,9 @@ bool TypeChecker::CanAssign(const Type& target, const Type& value) const {
 bool TypeChecker::IsSubtype(const Type& subtype, const Type& supertype) const {
   if (!IsValid(subtype) || !IsValid(supertype)) {
     return false;
+  }
+  if (IsSameType(subtype, supertype)) {
+    return true;
   }
   std::vector<Type> pending{subtype};
   absl::flat_hash_set<std::string_view> visited;
@@ -230,7 +200,7 @@ void TypeChecker::RecordConversion(const Expression& expression,
   if ((actual.kind == Type::Kind::Dynamic && target.kind != Type::Kind::Dynamic &&
        IsValid(target) && target.kind != Type::Kind::Void) ||
       (target.kind == Type::Kind::Dynamic && actual.kind == Type::Kind::Enum)) {
-    const auto inserted = checked_conversions_.insert_or_assign(&expression, target).second;
+    const auto inserted = facts_.checked_conversions.insert_or_assign(&expression, target).second;
     if (inserted && actual.kind == Type::Kind::Dynamic) {
       DiagnoseDynamicConversion(expression, target, actual);
     }

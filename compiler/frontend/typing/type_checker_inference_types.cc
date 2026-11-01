@@ -26,14 +26,14 @@ TypeInference TypeChecker::MakeInference(std::span<const TypeParameter> paramete
 }
 
 bool TypeChecker::IsStaticSubtype(const TypeName& subtype, const TypeName& supertype) {
-  const auto source = ResolveType(subtype, true);
-  const auto target = ResolveType(supertype, true);
+  const auto source = ResolveType(subtype, VoidTypePolicy::Allowed);
+  const auto target = ResolveType(supertype, VoidTypePolicy::Allowed);
   return IsSubtype(source, target);
 }
 
 bool TypeChecker::CanBindType(const TypeName& destination, const TypeName& source) {
-  const auto expected = ResolveType(destination, true);
-  const auto actual = ResolveType(source, true);
+  const auto expected = ResolveType(destination, VoidTypePolicy::Allowed);
+  const auto actual = ResolveType(source, VoidTypePolicy::Allowed);
   return CanAssign(expected, actual);
 }
 
@@ -60,7 +60,7 @@ std::vector<TypeName> TypeChecker::ProjectSupertypes(const Projection& projectio
     return {};
   }
   std::vector<TypeName> result;
-  std::vector<Type> pending{ResolveType(subtype, true)};
+  std::vector<Type> pending{ResolveType(subtype, VoidTypePolicy::Allowed)};
   absl::flat_hash_set<std::string_view> visited;
   while (!pending.empty()) {
     const auto current = NonNullable(pending.back());

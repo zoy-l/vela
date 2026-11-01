@@ -22,7 +22,6 @@ RegisterAccess AnalyzeRegisters(const Instruction& instruction,
     case Opcode::LoadNull:
     case Opcode::LoadBool:
     case Opcode::LoadInt:
-    case Opcode::LoadIntConstant:
     case Opcode::LoadDouble:
     case Opcode::LoadString:
     case Opcode::NewArray:
@@ -385,27 +384,41 @@ std::vector<BlockLiveness> AnalyzeLiveness(const Function& function,
   });
 }
 
-NecessaryLiveness AnalyzeNecessaryLiveness(const Function& function,
-                                           const FlowGraph& graph,
-                                           std::span<const Function> functions) {
+std::vector<std::uint8_t> AnalyzeNecessaryLiveness(const Function& function,
+                                                   const FlowGraph& graph,
+                                                   std::span<const Function> functions) {
+  struct Transfer final {
+    RegisterAccess access;
+    std::optional<std::size_t> exceptional;
+    bool is_removable;
+  };
+  std::vector<Transfer> transfers;
+  transfers.reserve(function.instructions.size());
+  for (const auto& instruction : function.instructions) {
+    const auto effects = AnalyzeEffects(instruction);
+    transfers.push_back({
+        .access = AnalyzeRegisters(instruction, functions),
+        .exceptional = ExceptionalBlock(function, graph, instruction, effects),
+        .is_removable = effects.IsRemovable(),
+    });
+  }
   std::vector<std::uint8_t> keep(function.instructions.size(), 0);
-  auto blocks =
+  static_cast<void>(
       SolveLiveness(function, graph, [&](std::size_t index, const auto& live, auto& live_in) {
         // 死指令是否产生 uses 依赖当前活性；随每轮传递覆盖标记，收敛后直接用于压缩。
         const auto& block = graph.blocks.at(index);
         for (auto position = block.end; position > block.begin;) {
           const auto& instruction = function.instructions.at(--position);
-          const auto access = AnalyzeRegisters(instruction, functions);
-          const auto necessary = !access.defines_value ||
-                                 !AnalyzeEffects(instruction).IsRemovable() ||
+          const auto& transfer = transfers.at(position);
+          const auto necessary = !transfer.access.defines_value || !transfer.is_removable ||
                                  live_in.Has(instruction.dst);
           keep.at(position) = necessary ? 1 : 0;
           if (necessary) {
-            TransferLiveness(function, graph, live, instruction, access, live_in);
+            TransferInstruction(instruction, transfer.access, transfer.exceptional, live, live_in);
           }
         }
-      });
-  return {.blocks = std::move(blocks), .keep = std::move(keep)};
+      }));
+  return keep;
 }
 
 void TransferLiveness(const Function& function,
@@ -443,7 +456,7 @@ void CompactInstructions(Function& function,
     if (keep.subspan(index).front() == 0) {
       continue;
     }
-    auto instruction = code.at(index);
+    auto& instruction = code.at(index);
     if (instruction.opcode == Opcode::Jump || instruction.opcode == Opcode::JumpIfFalse ||
         instruction.opcode == Opcode::JumpIfNull) {
       instruction.index = remap.at(instruction.index);
@@ -451,7 +464,10 @@ void CompactInstructions(Function& function,
     if (origins != nullptr) {
       origins->at(destination) = origins->at(index);
     }
-    code.at(destination++) = instruction;
+    if (destination != index) {
+      code.at(destination) = std::move(instruction);
+    }
+    ++destination;
   }
   code.resize(destination);
   if (origins != nullptr) {
@@ -467,7 +483,6 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
     case Opcode::LoadNull:
     case Opcode::LoadBool:
     case Opcode::LoadInt:
-    case Opcode::LoadIntConstant:
     case Opcode::LoadDouble:
     case Opcode::LoadString:
     case Opcode::Move:

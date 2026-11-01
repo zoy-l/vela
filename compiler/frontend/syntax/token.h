@@ -65,7 +65,6 @@ enum class TokenKind : std::uint8_t {
   Null,
   Question,
   QuestionDot,
-  QuestionLeftBracket,
   QuestionQuestion,
   LeftBrace,
   RightBrace,
@@ -121,6 +120,11 @@ enum class TokenRole : std::uint8_t {
   ConditionalOperator,
   MapDelimiter,
 };
+
+[[nodiscard]] constexpr bool IsStringToken(TokenKind kind) noexcept {
+  return kind == TokenKind::StringLiteral || kind == TokenKind::StringHead ||
+         kind == TokenKind::StringMiddle || kind == TokenKind::StringTail;
+}
 
 // 这些关键字在成员名位置没有语法歧义，声明和成员访问使用同一规则。
 [[nodiscard]] inline bool IsMemberName(TokenKind kind) noexcept {

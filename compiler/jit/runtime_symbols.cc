@@ -1,4 +1,5 @@
 #include "compiler/jit/runtime_symbols.h"
+#include "runtime/native/native_symbols.h"
 
 #include <utility>
 
@@ -9,8 +10,6 @@
 #include <llvm/ExecutionEngine/Orc/CoreContainers.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
-#include <llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderGDB.h>
-#include <llvm/ExecutionEngine/Orc/TargetProcess/RegisterEHFrames.h>
 #include <llvm/Support/Error.h>
 
 #include "runtime/native/native_abi.h"
@@ -30,69 +29,63 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
     symbols.try_emplace(jit.mangleAndIntern(name), llvm::orc::ExecutorAddr::fromPtr(entry),
                         llvm::JITSymbolFlags::Exported);
   };
-  // 静态 SDK 的注册入口不依赖宿主导出其全部符号；同一张表负责强制链接与 ORC 解析。
-  bind("llvm_orc_registerJITLoaderGDBAllocAction", &llvm_orc_registerJITLoaderGDBAllocAction);
-  bind("llvm_orc_registerJITLoaderGDBWrapper", &llvm_orc_registerJITLoaderGDBWrapper);
-  bind("llvm_orc_registerEHFrameSectionAllocAction", &llvm_orc_registerEHFrameSectionAllocAction);
-  bind("llvm_orc_deregisterEHFrameSectionAllocAction",
-       &llvm_orc_deregisterEHFrameSectionAllocAction);
-  bind("vela_native_v3_safepoint", &runtime::vela_native_v3_safepoint);
-  bind("vela_native_v4_can_optimize", &runtime::vela_native_v4_can_optimize);
-  bind("vela_native_v4_recover", &runtime::vela_native_v4_recover);
-  bind("vela_native_v3_initialization_enter", &runtime::vela_native_v3_initialization_enter);
-  bind("vela_native_v3_initialization_exit", &runtime::vela_native_v3_initialization_exit);
-  bind("vela_native_v1_frame_storage", &runtime::vela_native_v1_frame_storage);
-  bind("vela_native_v1_frame_release", &runtime::vela_native_v1_frame_release);
-  bind("vela_native_v1_roots_enter", &runtime::vela_native_v1_roots_enter);
-  bind("vela_native_v1_roots_exit", &runtime::vela_native_v1_roots_exit);
-  bind("vela_native_v2_leaf_failure", &runtime::vela_native_v2_leaf_failure);
-  bind("vela_native_v1_failure", &runtime::vela_native_v1_failure);
-  bind("vela_native_v1_has_exception", &runtime::vela_native_v1_has_exception);
-  bind("vela_native_v1_catch", &runtime::vela_native_v1_catch);
-  bind("vela_native_v1_exception_value", &runtime::vela_native_v1_exception_value);
-  bind("vela_native_v1_throw", &runtime::vela_native_v1_throw);
-  bind("vela_native_v1_rethrow", &runtime::vela_native_v1_rethrow);
-  bind("vela_native_v1_new_future", &runtime::vela_native_v1_new_future);
-  bind("vela_native_v1_sleep", &runtime::vela_native_v1_sleep);
-  bind("vela_native_v1_async_call", &runtime::vela_native_v1_async_call);
-  bind("vela_native_v1_async_return", &runtime::vela_native_v1_async_return);
-  bind("vela_native_v1_async_error", &runtime::vela_native_v1_async_error);
-  bind("vela_native_v1_suspend", &runtime::vela_native_v1_suspend);
-  bind("vela_native_v1_resuspend", &runtime::vela_native_v1_resuspend);
-  bind("vela_native_v1_resume_return", &runtime::vela_native_v1_resume_return);
-  bind("vela_native_v1_resume_outcome", &runtime::vela_native_v1_resume_outcome);
-  bind("vela_native_v1_call_indirect", &runtime::vela_native_v1_call_indirect);
-  bind("vela_native_v1_call_interface", &runtime::vela_native_v1_call_interface);
-  bind("vela_native_v3_call_declaration", &runtime::vela_native_v3_call_declaration);
-  bind("vela_native_v3_call_interface", &runtime::vela_native_v3_call_interface);
-  bind("vela_native_v3_capture_receiver", &runtime::vela_native_v3_capture_receiver);
-  bind("vela_native_v10_load_global", &runtime::vela_native_v10_load_global);
-  bind("vela_native_v10_store_global", &runtime::vela_native_v10_store_global);
-  bind("vela_native_v3_load_field", &runtime::vela_native_v3_load_field);
-  bind("vela_native_v10_field_caches", &runtime::vela_native_v10_field_caches);
-  bind("vela_native_v10_direct_field_layouts", &runtime::vela_native_v10_direct_field_layouts);
-  bind("vela_native_v9_scalar_text_length", &runtime::vela_native_v9_scalar_text_length);
-  bind("vela_native_v10_scalar_to_string", &runtime::vela_native_v10_scalar_to_string);
-  bind("vela_native_v11_map_get", &runtime::vela_native_v11_map_get);
-  bind("vela_native_v11_map_set", &runtime::vela_native_v11_map_set);
-  bind("vela_native_v3_store_field", &runtime::vela_native_v3_store_field);
-  bind("vela_native_v7_store_materialized_field",
+  bind(runtime::kNativeSafepointSymbol, &runtime::vela_native_v3_safepoint);
+  bind(runtime::kNativeCanOptimizeSymbol, &runtime::vela_native_v4_can_optimize);
+  bind(runtime::kNativeRecoverSymbol, &runtime::vela_native_v4_recover);
+  bind(runtime::kNativeInitializationEnterSymbol, &runtime::vela_native_v3_initialization_enter);
+  bind(runtime::kNativeInitializationExitSymbol, &runtime::vela_native_v3_initialization_exit);
+  bind(runtime::kNativeFrameStorageSymbol, &runtime::vela_native_v1_frame_storage);
+  bind(runtime::kNativeFrameReleaseSymbol, &runtime::vela_native_v1_frame_release);
+  bind(runtime::kNativeRootsEnterSymbol, &runtime::vela_native_v1_roots_enter);
+  bind(runtime::kNativeRootsExitSymbol, &runtime::vela_native_v1_roots_exit);
+  bind(runtime::kNativeLeafFailureSymbol, &runtime::vela_native_v2_leaf_failure);
+  bind(runtime::kNativeFailureSymbol, &runtime::vela_native_v1_failure);
+  bind(runtime::kNativeHasExceptionSymbol, &runtime::vela_native_v1_has_exception);
+  bind(runtime::kNativeCatchSymbol, &runtime::vela_native_v1_catch);
+  bind(runtime::kNativeExceptionValueSymbol, &runtime::vela_native_v1_exception_value);
+  bind(runtime::kNativeThrowSymbol, &runtime::vela_native_v1_throw);
+  bind(runtime::kNativeRethrowSymbol, &runtime::vela_native_v1_rethrow);
+  bind(runtime::kNativeNewFutureSymbol, &runtime::vela_native_v1_new_future);
+  bind(runtime::kNativeSleepSymbol, &runtime::vela_native_v1_sleep);
+  bind(runtime::kNativeAsyncCallSymbol, &runtime::vela_native_v1_async_call);
+  bind(runtime::kNativeAsyncReturnSymbol, &runtime::vela_native_v1_async_return);
+  bind(runtime::kNativeAsyncErrorSymbol, &runtime::vela_native_v1_async_error);
+  bind(runtime::kNativeSuspendSymbol, &runtime::vela_native_v1_suspend);
+  bind(runtime::kNativeResuspendSymbol, &runtime::vela_native_v1_resuspend);
+  bind(runtime::kNativeResumeReturnSymbol, &runtime::vela_native_v1_resume_return);
+  bind(runtime::kNativeResumeOutcomeSymbol, &runtime::vela_native_v1_resume_outcome);
+  bind(runtime::kNativeCallIndirectSymbol, &runtime::vela_native_v1_call_indirect);
+  bind(runtime::kNativeCallInterfaceV1Symbol, &runtime::vela_native_v1_call_interface);
+  bind(runtime::kNativeCallDeclarationSymbol, &runtime::vela_native_v3_call_declaration);
+  bind(runtime::kNativeCallInterfaceV3Symbol, &runtime::vela_native_v3_call_interface);
+  bind(runtime::kNativeCaptureReceiverSymbol, &runtime::vela_native_v3_capture_receiver);
+  bind(runtime::kNativeLoadGlobalSymbol, &runtime::vela_native_v10_load_global);
+  bind(runtime::kNativeStoreGlobalSymbol, &runtime::vela_native_v10_store_global);
+  bind(runtime::kNativeLoadFieldSymbol, &runtime::vela_native_v3_load_field);
+  bind(runtime::kNativeFieldCachesSymbol, &runtime::vela_native_v10_field_caches);
+  bind(runtime::kNativeDirectFieldLayoutsSymbol, &runtime::vela_native_v10_direct_field_layouts);
+  bind(runtime::kNativeScalarTextLengthSymbol, &runtime::vela_native_v9_scalar_text_length);
+  bind(runtime::kNativeScalarToStringSymbol, &runtime::vela_native_v10_scalar_to_string);
+  bind(runtime::kNativeMapGetSymbol, &runtime::vela_native_v11_map_get);
+  bind(runtime::kNativeMapSetSymbol, &runtime::vela_native_v11_map_set);
+  bind(runtime::kNativeStoreFieldSymbol, &runtime::vela_native_v3_store_field);
+  bind(runtime::kNativeStoreMaterializedFieldSymbol,
        &runtime::vela_native_v7_store_materialized_field);
-  bind("vela_native_v1_import", &runtime::vela_native_v1_import);
-  bind("vela_native_v1_constant", &runtime::vela_native_v1_constant);
-  bind("vela_native_v1_type_test", &runtime::vela_native_v1_type_test);
-  bind("vela_native_v2_initialize_global", &runtime::vela_native_v2_initialize_global);
-  bind("vela_native_v10_new_object", &runtime::vela_native_v10_new_object);
-  bind("vela_native_v10_new_callable", &runtime::vela_native_v10_new_callable);
-  bind("vela_native_v10_new_array", &runtime::vela_native_v10_new_array);
-  bind("vela_native_v1_new_collection", &runtime::vela_native_v1_new_collection);
-  bind("vela_native_v1_write_barrier", &runtime::vela_native_v1_write_barrier);
-  bind("vela_native_v1_builtin", &runtime::vela_native_v1_builtin);
-  bind("vela_native_v1_concat", &runtime::vela_native_v1_concat);
-  bind("vela_native_v1_interpolate", &runtime::vela_native_v1_interpolate);
-  bind("vela_native_v1_compare_strings", &runtime::vela_native_v1_compare_strings);
-  bind("vela_native_v1_equal", &runtime::vela_native_v1_equal);
-  bind("vela_native_v1_print", &runtime::vela_native_v1_print);
+  bind(runtime::kNativeImportSymbol, &runtime::vela_native_v1_import);
+  bind(runtime::kNativeConstantSymbol, &runtime::vela_native_v1_constant);
+  bind(runtime::kNativeTypeTestSymbol, &runtime::vela_native_v1_type_test);
+  bind(runtime::kNativeInitializeGlobalSymbol, &runtime::vela_native_v2_initialize_global);
+  bind(runtime::kNativeNewObjectSymbol, &runtime::vela_native_v10_new_object);
+  bind(runtime::kNativeNewCallableSymbol, &runtime::vela_native_v10_new_callable);
+  bind(runtime::kNativeNewArraySymbol, &runtime::vela_native_v10_new_array);
+  bind(runtime::kNativeNewCollectionSymbol, &runtime::vela_native_v1_new_collection);
+  bind(runtime::kNativeWriteBarrierSymbol, &runtime::vela_native_v1_write_barrier);
+  bind(runtime::kNativeBuiltinSymbol, &runtime::vela_native_v1_builtin);
+  bind(runtime::kNativeConcatSymbol, &runtime::vela_native_v1_concat);
+  bind(runtime::kNativeInterpolateSymbol, &runtime::vela_native_v1_interpolate);
+  bind(runtime::kNativeCompareStringsSymbol, &runtime::vela_native_v1_compare_strings);
+  bind(runtime::kNativeEqualSymbol, &runtime::vela_native_v1_equal);
+  bind(runtime::kNativePrintSymbol, &runtime::vela_native_v1_print);
   return jit.getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(symbols)));
 }
 

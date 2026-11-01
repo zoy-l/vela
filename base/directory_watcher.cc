@@ -19,13 +19,20 @@ DirectoryWatcher::DirectoryWatcher() {
   watcher_.watch();
 }
 
+bool DirectoryWatcher::IsWatching(const std::filesystem::path& directory,
+                                  DirectoryWatchScope scope) const {
+  const auto found = subscriptions_.find(directory);
+  return found != subscriptions_.end() &&
+         (scope == DirectoryWatchScope::Direct || found->second.scope == scope);
+}
+
 std::expected<void, std::string> DirectoryWatcher::Watch(const std::filesystem::path& directory,
                                                          DirectoryWatchScope scope) {
+  if (IsWatching(directory, scope)) {
+    return {};
+  }
   const auto found = subscriptions_.find(directory);
   if (found != subscriptions_.end()) {
-    if (scope == DirectoryWatchScope::Direct || found->second.scope == scope) {
-      return {};
-    }
     // efsw 不接受同路径的重复注册；升级期间的事件由下一次完整捕获补齐。
     Unwatch(directory);
     Invalidate();

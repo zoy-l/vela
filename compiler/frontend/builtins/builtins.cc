@@ -1,7 +1,6 @@
 #include "compiler/frontend/builtins/builtins.h"
 
 #include <array>
-#include <cstddef>
 #include <initializer_list>
 #include <optional>
 #include <span>
@@ -9,13 +8,15 @@
 #include <string_view>
 #include <utility>
 
+#include <absl/container/flat_hash_map.h>
+
 #include "base/array_algorithm.h"
 #include "base/builtin.h"
 #include "base/byte_access.h"
 #include "base/regexp.h"
 #include "compiler/frontend/builtins/byte_builtins.h"
 #include "compiler/frontend/builtins/regexp_builtins.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_name.h"
 #include "compiler/frontend/typing/type_names.h"
 
@@ -38,33 +39,56 @@ const auto kSignatures = [] {
   const TypeDescriptor text{.kind = Kind::String, .name = kStringTypeName};
   const TypeDescriptor integer{.kind = Kind::Int, .name = kIntTypeName};
   const TypeDescriptor boolean{.kind = Kind::Bool, .name = kBoolTypeName};
-  auto signatures = std::to_array<FunctionDescriptor>({
-      MakeBuiltinSignature(text, {}),
-      MakeBuiltinSignature(text, {{.name = "separator", .type = text}}),
-      MakeBuiltinSignature({.kind = Kind::MutableString, .name = kMutableStringTypeName}, {}),
-      MakeBuiltinSignature({.kind = Kind::Void, .name = kVoidTypeName},
-                           {{.name = "text", .type = text}}),
-      MakeBuiltinSignature(text, {}),
-      MakeBuiltinSignature(integer, {}),
-      MakeBuiltinSignature(integer, {}),
-      MakeBuiltinSignature(text,
-                           {{.name = "start", .type = integer}, {.name = "end", .type = integer}}),
-      MakeBuiltinSignature(integer, {{.name = "text", .type = text}}),
-      MakeBuiltinSignature(boolean, {{.name = "text", .type = text}}),
-      MakeBuiltinSignature(boolean, {{.name = "prefix", .type = text}}),
-      MakeBuiltinSignature(boolean, {{.name = "suffix", .type = text}}),
-      MakeBuiltinSignature(text, {{.name = "index", .type = integer}}),
-      MakeBuiltinSignature(integer, {}),
-      MakeBuiltinSignature({.kind = Kind::Double, .name = kDoubleTypeName}, {}),
-      MakeBuiltinSignature(integer, {}),
-      MakeBuiltinSignature({.kind = Kind::Array, .name = kIntArrayTypeName}, {}),
-      MakeBuiltinSignature({.kind = Kind::Array, .name = kStringArrayTypeName}, {}),
-      MakeBuiltinSignature(integer, {}),
-  });
-  signatures.at(static_cast<std::size_t>(Builtin::ArrayJoin)).optional_parameters = {"separator"};
+  absl::flat_hash_map<Builtin, FunctionDescriptor> signatures = {
+      {Builtin::ScalarToString, MakeBuiltinSignature(text, {})},
+      {Builtin::ArrayJoin, MakeBuiltinSignature(text, {{.name = "separator", .type = text}})},
+      {
+          Builtin::NewMutableString,
+          MakeBuiltinSignature({.kind = Kind::MutableString, .name = kMutableStringTypeName}, {}),
+      },
+      {
+          Builtin::MutableStringAppend,
+          MakeBuiltinSignature({.kind = Kind::Void, .name = kVoidTypeName},
+                               {{.name = "text", .type = text}}),
+      },
+      {Builtin::MutableStringToString, MakeBuiltinSignature(text, {})},
+      {Builtin::StringLength, MakeBuiltinSignature(integer, {})},
+      {Builtin::StringByteLength, MakeBuiltinSignature(integer, {})},
+      {
+          Builtin::StringSlice,
+          MakeBuiltinSignature(text,
+                               {
+                                   {.name = "start", .type = integer},
+                                   {.name = "end", .type = integer},
+                               }),
+      },
+      {Builtin::StringIndexOf, MakeBuiltinSignature(integer, {{.name = "text", .type = text}})},
+      {Builtin::StringIncludes, MakeBuiltinSignature(boolean, {{.name = "text", .type = text}})},
+      {
+          Builtin::StringStartsWith,
+          MakeBuiltinSignature(boolean, {{.name = "prefix", .type = text}}),
+      },
+      {Builtin::StringEndsWith, MakeBuiltinSignature(boolean, {{.name = "suffix", .type = text}})},
+      {Builtin::StringIndex, MakeBuiltinSignature(text, {{.name = "index", .type = integer}})},
+      {Builtin::NumericToInt, MakeBuiltinSignature(integer, {})},
+      {
+          Builtin::NumericToDouble,
+          MakeBuiltinSignature({.kind = Kind::Double, .name = kDoubleTypeName}, {}),
+      },
+      {Builtin::ArrayLength, MakeBuiltinSignature(integer, {})},
+      {
+          Builtin::StringCodePoints,
+          MakeBuiltinSignature({.kind = Kind::Array, .name = kIntArrayTypeName}, {}),
+      },
+      {
+          Builtin::StringGraphemes,
+          MakeBuiltinSignature({.kind = Kind::Array, .name = kStringArrayTypeName}, {}),
+      },
+      {Builtin::StringGraphemeLength, MakeBuiltinSignature(integer, {})},
+  };
+  signatures.at(Builtin::ArrayJoin).optional_parameters = {"separator"};
   return signatures;
 }();
-static_assert(kSignatures.size() == static_cast<std::size_t>(Builtin::StringGraphemeSlice));
 
 }  // namespace
 
@@ -253,10 +277,10 @@ FunctionDescriptor ArrayAlgorithmSignature(ArrayAlgorithm algorithm,
 
 const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
   if (builtin == Builtin::StringGraphemeSlice) {
-    return kSignatures.at(static_cast<std::size_t>(Builtin::StringSlice));
+    return kSignatures.at(Builtin::StringSlice);
   }
   if (builtin == Builtin::ArrayCapacity || builtin == Builtin::CollectionSize) {
-    return kSignatures.at(static_cast<std::size_t>(Builtin::ArrayLength));
+    return kSignatures.at(Builtin::ArrayLength);
   }
   if (IsRegExpBuiltin(builtin)) {
     return RegExpBuiltinSignature(builtin);
@@ -269,7 +293,7 @@ const FunctionDescriptor& BuiltinSignature(Builtin builtin) {
         MakeBuiltinSignature({.kind = Kind::String, .name = kStringTypeName}, {});
     return signature;
   }
-  return kSignatures.at(static_cast<std::size_t>(builtin));
+  return kSignatures.at(builtin);
 }
 
 std::optional<Builtin> FindBuiltinProperty(Kind receiver, std::string_view name) {

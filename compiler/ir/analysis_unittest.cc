@@ -266,10 +266,7 @@ TEST(AnalysisTest, ExceptionalTransferKillsOnlyDefinitionsCompletedBeforeFailure
   EXPECT_TRUE(all.front().live_in.Has(2));
   EXPECT_TRUE(all.front().live_in.Has(3));
   const auto necessary = AnalyzeNecessaryLiveness(function, graph, {});
-  EXPECT_FALSE(necessary.blocks.front().live_in.Has(0));
-  EXPECT_FALSE(necessary.blocks.front().live_in.Has(2));
-  EXPECT_TRUE(necessary.blocks.front().live_in.Has(3));
-  EXPECT_EQ(necessary.keep, (std::vector<std::uint8_t>{1, 0, 1, 1, 1, 1}));
+  EXPECT_EQ(necessary, (std::vector<std::uint8_t>{1, 0, 1, 1, 1, 1}));
 }
 
 TEST(AnalysisTest, NecessaryInstructionsBecomeLiveThroughLoopSuccessors) {
@@ -283,11 +280,7 @@ TEST(AnalysisTest, NecessaryInstructionsBecomeLiveThroughLoopSuccessors) {
   };
   const auto graph = BuildFlowGraph(function);
   const auto necessary = AnalyzeNecessaryLiveness(function, graph, {});
-  EXPECT_TRUE(necessary.blocks.front().live_in.Has(0));
-  EXPECT_TRUE(necessary.blocks.front().live_in.Has(2));
-  EXPECT_FALSE(necessary.blocks.front().live_in.Has(1));
-  EXPECT_FALSE(necessary.blocks.front().live_in.Has(3));
-  EXPECT_EQ(necessary.keep, (std::vector<std::uint8_t>{1, 0, 1, 1}));
+  EXPECT_EQ(necessary, (std::vector<std::uint8_t>{1, 0, 1, 1}));
 }
 
 TEST(AnalysisTest, RecoveryUsesKeepThePreviousDefinitionAliveAtAnOverwrite) {

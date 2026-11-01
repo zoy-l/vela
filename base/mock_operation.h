@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string_view>
+#include <utility>
 
 namespace vela {
 
@@ -30,6 +31,24 @@ enum class MockFailureKind : std::uint8_t {
   Reset,
   SessionClosed,
 };
+
+[[nodiscard]] constexpr std::string_view MockFailureName(MockFailureKind kind) noexcept {
+  switch (kind) {
+    case MockFailureKind::Usage:
+      return "MockUsageError";
+    case MockFailureKind::MissingStub:
+      return "MockMissingStub";
+    case MockFailureKind::StubExhausted:
+      return "MockStubExhausted";
+    case MockFailureKind::Verification:
+      return "MockVerificationFailure";
+    case MockFailureKind::Reset:
+      return "MockReset";
+    case MockFailureKind::SessionClosed:
+      return "MockSessionClosed";
+  }
+  std::unreachable();
+}
 
 namespace mock_fields {
 inline constexpr std::string_view kDetails = "mock";

@@ -1,3 +1,5 @@
+#include "base/declaration.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <algorithm>
@@ -105,7 +107,7 @@ const TypeChecker::Type* TypeChecker::ResolveParameterBound(const TypeParameterI
     auto& info = type_parameters_.at(parameter.declaration->identity);
     info.resolved = true;
     if (const auto& bound = info.declaration->bound) {
-      const auto type = ResolveType(*bound, true);
+      const auto type = ResolveType(*bound, VoidTypePolicy::Allowed);
       if (type.kind == Type::Kind::Void || type.kind == Type::Kind::Null) {
         AddDiagnostic(bound->location, "generic bound must be a value type");
       } else if (type.kind == Type::Kind::Dynamic) {
@@ -221,7 +223,8 @@ bool TypeChecker::CheckTypeArguments(const BoundCheck& check) {
     if (!parameter.bound) {
       continue;
     }
-    const auto bound = ResolveType(SubstituteTypeName(*parameter.bound, substitutions), true);
+    const auto bound =
+        ResolveType(SubstituteTypeName(*parameter.bound, substitutions), VoidTypePolicy::Allowed);
     const auto& argument = check.arguments.at(index);
     if (!IsValid(bound) || !IsValid(argument)) {
       satisfied = false;
@@ -279,7 +282,7 @@ bool TypeChecker::DrainBoundChecks() {
       std::vector<Type> arguments;
       arguments.reserve(application.arguments.size());
       for (const auto& argument : application.arguments) {
-        arguments.push_back(ResolveType(argument, true));
+        arguments.push_back(ResolveType(argument, VoidTypePolicy::Allowed));
       }
       QueueBoundCheck(std::move(application.owner), application.parameters, std::move(arguments),
                       application.location);
@@ -294,60 +297,6 @@ bool TypeChecker::DrainBoundChecks() {
   return progressed;
 }
 
-NodeFacts TypeChecker::TakeNodeFacts() {
-  return {
-      .lambdas = std::exchange(lambdas_, {}),
-      .lambda_indices = std::exchange(lambda_indices_, {}),
-      .bindings = std::exchange(bindings_, {}),
-      .expression_types = std::exchange(expression_types_, {}),
-      .generic_applications = std::exchange(generic_applications_, {}),
-      .checked_conversions = std::exchange(checked_conversions_, {}),
-      .case_values = std::exchange(case_values_, {}),
-      .builtin_calls = std::exchange(builtin_calls_, {}),
-      .async_calls = std::exchange(async_calls_, {}),
-      .generated_functions = std::exchange(generated_functions_, {}),
-      .builtin_method_values = std::exchange(builtin_method_values_, {}),
-      .array_algorithms = std::exchange(array_algorithms_, {}),
-      .local_types = std::exchange(local_types_, {}),
-      .control_flow = std::exchange(control_flow_, {}),
-      .static_members = std::exchange(static_members_, {}),
-      .instance_members = std::exchange(instance_members_, {}),
-      .interface_members = std::exchange(interface_members_, {}),
-      .super_members = std::exchange(super_members_, {}),
-      .type_operands = std::exchange(type_operands_, {}),
-      .match_bindings = std::exchange(match_bindings_, {}),
-      .catch_types = std::exchange(catch_types_, {}),
-      .argument_order = std::exchange(argument_order_, {}),
-      .collection_constructions = std::exchange(collection_constructions_, {}),
-  };
-}
-
-void TypeChecker::RestoreNodeFacts(NodeFacts facts) {
-  lambdas_ = std::move(facts.lambdas);
-  lambda_indices_ = std::move(facts.lambda_indices);
-  bindings_ = std::move(facts.bindings);
-  expression_types_ = std::move(facts.expression_types);
-  generic_applications_ = std::move(facts.generic_applications);
-  checked_conversions_ = std::move(facts.checked_conversions);
-  case_values_ = std::move(facts.case_values);
-  builtin_calls_ = std::move(facts.builtin_calls);
-  async_calls_ = std::move(facts.async_calls);
-  generated_functions_ = std::move(facts.generated_functions);
-  builtin_method_values_ = std::move(facts.builtin_method_values);
-  array_algorithms_ = std::move(facts.array_algorithms);
-  local_types_ = std::move(facts.local_types);
-  control_flow_ = std::move(facts.control_flow);
-  static_members_ = std::move(facts.static_members);
-  instance_members_ = std::move(facts.instance_members);
-  interface_members_ = std::move(facts.interface_members);
-  super_members_ = std::move(facts.super_members);
-  type_operands_ = std::move(facts.type_operands);
-  match_bindings_ = std::move(facts.match_bindings);
-  catch_types_ = std::move(facts.catch_types);
-  argument_order_ = std::move(facts.argument_order);
-  collection_constructions_ = std::move(facts.collection_constructions);
-}
-
 void TypeChecker::RegisterInterface(const Interface& source, bool abstract) {
   InterfaceDescriptor interface;
   interface.type = {
@@ -358,8 +307,7 @@ void TypeChecker::RegisterInterface(const Interface& source, bool abstract) {
   types_.try_emplace(source.name, interface.type);
   // 抽象应用只供定义检查读取签名，不占用运行时接口编号。
   if (!abstract) {
-    interface.index =
-        interface_ids_ == nullptr ? next_interface_index_++ : interface_ids_->Get(source.name);
+    interface.index = next_interface_index_++;
   }
   for (const auto& method : source.methods) {
     if (!interface.methods.emplace(method.name, ResolveSignature(method)).second) {
@@ -395,7 +343,8 @@ void TypeChecker::CheckTemplateClass(const Class& source) {
     ValidateTypeParameters(method.type_parameters);
   }
   const auto self =
-      ResolveType(SelfApplication(source.name, source.type_parameters, source.location), false);
+      ResolveType(SelfApplication(source.name, source.type_parameters, source.location),
+                  VoidTypePolicy::Forbidden);
   const auto found = classes_.find(self.name);
   if (IsValid(self) && found != classes_.end()) {
     const auto& info = found->second;
@@ -413,13 +362,13 @@ void TypeChecker::CheckTemplateClass(const Class& source) {
 
 void TypeChecker::CheckDefinitions(Program& program) {
   // 模板事实与具体声明事实分开记录；具体特化仍由各自的函数体检查产生执行事实。
-  auto concrete = TakeNodeFacts();
+  auto concrete = std::exchange(facts_, {});
   auto concrete_builtins = std::exchange(builtin_function_ids_, {});
   checking_definitions_ = true;
   auto& templates = program.templates;
   for (const auto& alias : templates.aliases) {
     ValidateTypeParameters(alias.type_parameters);
-    static_cast<void>(ResolveType(alias.target, true));
+    static_cast<void>(ResolveType(alias.target, VoidTypePolicy::Allowed));
   }
   for (const auto& interface : templates.interfaces) {
     ValidateTypeParameters(interface.type_parameters);
@@ -427,8 +376,9 @@ void TypeChecker::CheckDefinitions(Program& program) {
       ValidateTypeParameters(method.type_parameters);
       static_cast<void>(ResolveSignature(method));
     }
-    static_cast<void>(ResolveType(
-        SelfApplication(interface.name, interface.type_parameters, interface.location), false));
+    static_cast<void>(
+        ResolveType(SelfApplication(interface.name, interface.type_parameters, interface.location),
+                    VoidTypePolicy::Forbidden));
   }
   for (const auto& function : templates.functions) {
     ValidateTypeParameters(function.type_parameters);
@@ -463,10 +413,129 @@ void TypeChecker::CheckDefinitions(Program& program) {
       static_cast<void>(ResolveSignature(method));
     }
   }
-  definitions_ = TakeNodeFacts();
-  RestoreNodeFacts(std::move(concrete));
+  definitions_ = std::exchange(facts_, {});
+  facts_ = std::move(concrete);
   builtin_function_ids_ = std::move(concrete_builtins);
   checking_definitions_ = false;
+}
+
+void TypeChecker::CheckPendingSpecializations() {
+  // 新特化只排入工作队列，函数体按声明作用域检查，不递归借用调用方局部变量。
+  while (checked_functions_ < specializer_->function_count() ||
+         checked_classes_ < specializer_->class_count() ||
+         checked_methods_ < specializer_->method_count()) {
+    while (checked_functions_ < specializer_->function_count()) {
+      const auto index = checked_functions_++;
+      const auto& function = specializer_->function(index);
+      if (failed_templates_.contains(specializer_->FunctionSource(index))) {
+        continue;
+      }
+      specializer_->SetExpansionOwner(function.name);
+      CheckFunction(function, nullptr);
+    }
+    while (checked_classes_ < specializer_->class_count()) {
+      const auto index = checked_classes_++;
+      if (specializer_->IsAbstractClass(index) ||
+          failed_templates_.contains(specializer_->ClassSource(index))) {
+        continue;
+      }
+      const auto& source = specializer_->class_declaration(index);
+      specializer_->SetExpansionOwner(source.name);
+      CheckClassBody(source, classes_.at(source.name));
+    }
+    while (checked_methods_ < specializer_->method_count()) {
+      const auto index = checked_methods_++;
+      if (specializer_->method_owner_kind(index) == DeclarationKind::Interface ||
+          failed_templates_.contains(specializer_->method_source(index))) {
+        continue;
+      }
+      const auto& method = specializer_->method(index);
+      const auto owner = std::string(specializer_->method_owner(index));
+      specializer_->SetExpansionOwner(owner + '.' + method.name);
+      CheckFunction(method, &classes_.at(owner));
+    }
+  }
+}
+
+TypeChecker::Type TypeChecker::ResolveClassInstantiation(const TypeName& type_name) {
+  std::vector<TypeName> arguments;
+  for (const auto& argument : type_name.arguments) {
+    const auto type = ResolveType(argument, VoidTypePolicy::Allowed);
+    if (!IsValid(type)) {
+      return InvalidType();
+    }
+    arguments.push_back(DescribeType(type));
+  }
+  const auto name = specializer_->Specialize(type_name.name, arguments, type_name.location);
+  RegisterSpecializations();
+  const auto found = types_.find(name);
+  return found == types_.end() ? InvalidType() : found->second;
+}
+
+void TypeChecker::SetConstructorParameters(const Class& owner, InferenceSignature& source) {
+  if (owner.constructor_kind == ConstructorKind::Explicit) {
+    source.parameters = owner.constructor->parameters;
+  } else {
+    for (const auto& field : owner.fields) {
+      if (owner.IsConstructorField(field)) {
+        source.parameters.push_back(
+            {.type = field.type, .name = field.name, .location = field.location});
+        if (field.initializer) {
+          source.optional_parameters.insert(field.name);
+        }
+      }
+    }
+  }
+}
+
+void TypeChecker::RegisterSpecializations() {
+  for (auto& diagnostic : specializer_->TakeDiagnostics()) {
+    diagnostics_.push_back(std::move(diagnostic));
+  }
+  const auto class_begin = registered_classes_;
+  const auto class_end = specializer_->class_count();
+  registered_classes_ = class_end;
+  const auto interface_begin = registered_interfaces_;
+  const auto interface_end = specializer_->interface_count();
+  registered_interfaces_ = interface_end;
+  for (auto index = interface_begin; index < interface_end; ++index) {
+    const auto& source = specializer_->interface_declaration(index);
+    RegisterMethodTemplates(source.method_templates);
+    RegisterInterface(source, specializer_->IsAbstractInterface(index));
+  }
+  for (auto index = class_begin; index < class_end; ++index) {
+    const auto& source = specializer_->class_declaration(index);
+    RegisterMethodTemplates(source.method_templates);
+    const Type type{
+        .kind = Type::Kind::Class,
+        .name = InternTypeName(source.name),
+        .is_abstract = specializer_->IsAbstractClass(index),
+    };
+    types_.try_emplace(source.name, type);
+    ClassInfo info;
+    info.type = type;
+    classes_.try_emplace(source.name, std::move(info));
+  }
+  for (auto index = class_begin; index < class_end; ++index) {
+    const auto& source = specializer_->class_declaration(index);
+    ResolveClass(source, classes_.at(source.name));
+    const auto captured = FindCapturedMutableDeclarations(source);
+    captured_declarations_.insert(captured.begin(), captured.end());
+  }
+  for (auto index = class_begin; index < class_end; ++index) {
+    const auto& source = specializer_->class_declaration(index);
+    if (source.base_class) {
+      MergeBaseClass(source.name, merged_classes_, visiting_classes_);
+    }
+    CheckClassImplementation(source);
+  }
+  while (registered_functions_ < specializer_->function_count()) {
+    const auto& function = specializer_->function(registered_functions_++);
+    functions_.try_emplace(function.name, ResolveSignature(function));
+    const auto captured = FindCapturedMutableDeclarations(function);
+    captured_declarations_.insert(captured.begin(), captured.end());
+  }
+  RegisterMethodApplications();
 }
 
 }  // namespace vela::frontend

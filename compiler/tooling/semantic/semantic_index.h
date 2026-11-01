@@ -15,11 +15,13 @@
 #include <absl/container/flat_hash_set.h>
 
 #include "base/source_location.h"
+#include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/modules/source_file.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/syntax/token.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/tooling/source_text.h"
 
 namespace vela::tooling {
@@ -91,11 +93,12 @@ struct ArgumentCompletionQuery final {
 
 // 使用生产 lexer 定位当前调用，并仅修复查询快照中的实参和末尾分隔符。
 [[nodiscard]] std::optional<ArgumentCompletionQuery> PrepareArgumentCompletion(
-    std::string_view source,
+    const frontend::SourceSnapshot& snapshot,
     std::size_t offset);
 
 // 只补齐光标处的标识符和缺失的末尾分隔符，生成查询用快照；不修改文档或编译语法。
-[[nodiscard]] std::string CompletionSource(std::string_view source, std::size_t offset);
+[[nodiscard]] std::string CompletionSource(const frontend::SourceSnapshot& snapshot,
+                                           std::size_t offset);
 [[nodiscard]] std::string DisplaySymbolName(std::string_view name);
 
 // 索引拥有 AST 与 checker 模型；模型中的节点借用始终由同一个索引覆盖。
@@ -118,12 +121,22 @@ class SemanticIndex final {
   [[nodiscard]] std::vector<Completion> CompleteArguments(
       const ArgumentCompletionQuery& query) const;
 
+  // 同一加载/检查结果同时提供编辑器事实与诊断，避免诊断入口丢弃模型后再次检查。
+  explicit SemanticIndex(frontend::ParseResult loaded, frontend::DiagnosticOptions options = {});
+  [[nodiscard]] std::span<const frontend::Diagnostic> diagnostics() const noexcept {
+    return diagnostics_;
+  }
+  [[nodiscard]] std::span<const frontend::SourceFile> source_files() const noexcept {
+    return program_.sources;
+  }
+  [[nodiscard]] bool DependsOn(std::string_view path) const;
+
  private:
-  explicit SemanticIndex(frontend::ParseResult loaded);
   using Key = std::pair<std::uint32_t, std::size_t>;
   struct Source final {
     std::string path;
-    SourceText text;
+    std::string_view text;
+    SourceLineIndex lines;
     std::vector<frontend::Token> tokens;
     std::vector<frontend::SourceComment> comments;
     std::vector<std::size_t> closing;
@@ -230,7 +243,8 @@ class SemanticIndex final {
   [[nodiscard]] Receiver ReceiverFor(const frontend::Expression& expression) const;
   [[nodiscard]] std::vector<Completion> MemberCompletions(const Receiver& receiver) const;
   void AddAsyncCompletions(std::vector<Completion>& result,
-                           const frontend::TypeDescriptor& type) const;
+                           const frontend::TypeDescriptor& type,
+                           frontend::MemberStorage storage) const;
   void AddContainerCompletions(std::vector<Completion>& result,
                                const frontend::TypeDescriptor& type) const;
   [[nodiscard]] absl::flat_hash_map<std::string, Completion> VisibleLocals(
@@ -248,6 +262,8 @@ class SemanticIndex final {
 
   frontend::Program program_;
   frontend::SemanticModel model_;
+  frontend::Diagnostics diagnostics_;
+  bool has_load_errors_ = false;
   std::vector<Source> sources_;
   absl::flat_hash_map<std::string, std::uint32_t> source_ids_;
   absl::flat_hash_map<std::string, std::string> resolutions_;

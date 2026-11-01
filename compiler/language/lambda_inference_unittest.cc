@@ -5,9 +5,9 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/program_test_support.h"
-#include "compiler/ir/preparation_test_support.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/test_support/preparation_test_support.h"
+#include "compiler/test_support/program_test_support.h"
 #include "runtime/isolate/isolate.h"
 
 namespace vela::compiler {
@@ -161,7 +161,8 @@ func main(): int {
     ASSERT_EQ(left.instructions.size(), right.instructions.size());
     for (std::size_t position = 0; position < left.instructions.size(); ++position) {
       EXPECT_EQ(ir::test::InstructionOperands(left.instructions.at(position)),
-                ir::test::InstructionOperands(right.instructions.at(position))) << left.name;
+                ir::test::InstructionOperands(right.instructions.at(position)))
+          << left.name;
     }
   }
 }

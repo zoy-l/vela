@@ -1,7 +1,10 @@
 #include "compiler/ir/lowerer.h"
+#include "base/declaration.h"
+#include "compiler/frontend/syntax/names.h"
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -18,136 +21,91 @@
 #include "compiler/frontend/builtins/standard_environment.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/syntax/token.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
+#include "compiler/ir/declaration_bindings.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
+
+using frontend::TokenKind;
 namespace {
 
-frontend::TypeDescriptor InvalidType() {
-  return {};
-}
-
-std::string MethodKey(std::string_view owner, const frontend::Function& method) {
-  std::string key(owner);
-  key += '.';
-  if (method.is_getter) {
-    key += "$get.";
-  } else if (method.is_setter) {
-    key += "$set.";
+Opcode SelectIntegerOpcode(TokenKind operation) {
+  switch (operation) {
+    case TokenKind::Plus:
+      return Opcode::AddInt;
+    case TokenKind::Minus:
+      return Opcode::SubInt;
+    case TokenKind::Star:
+      return Opcode::MulInt;
+    case TokenKind::Slash:
+      return Opcode::DivInt;
+    case TokenKind::Percent:
+      return Opcode::ModInt;
+    case TokenKind::Ampersand:
+      return Opcode::BitAndInt;
+    case TokenKind::Pipe:
+      return Opcode::BitOrInt;
+    case TokenKind::Caret:
+      return Opcode::BitXorInt;
+    case TokenKind::ShiftLeft:
+      return Opcode::ShiftLeftInt;
+    case TokenKind::ShiftRight:
+      return Opcode::ShiftRightInt;
+    case TokenKind::ShiftUnsignedRight:
+      return Opcode::ShiftUnsignedRightInt;
+    case TokenKind::EqualEqual:
+      return Opcode::EqualInt;
+    case TokenKind::BangEqual:
+      return Opcode::NotEqualInt;
+    case TokenKind::Less:
+      return Opcode::LessInt;
+    case TokenKind::LessEqual:
+      return Opcode::LessEqualInt;
+    case TokenKind::Greater:
+      return Opcode::GreaterInt;
+    case TokenKind::GreaterEqual:
+      return Opcode::GreaterEqualInt;
+    default:
+      std::unreachable();
   }
-  key += method.name;
-  return key;
-}
-
-bool HasAssignments(const frontend::Expression& expression) {
-  if (expression.kind == frontend::Expression::Kind::Call) {
-    return true;
-  }
-  if (expression.kind == frontend::Expression::Kind::Binary &&
-      (expression.text == "=" || frontend::CompoundAssignmentOperation(expression.text))) {
-    return true;
-  }
-  if (expression.kind == frontend::Expression::Kind::Unary &&
-      (expression.text == "++" || expression.text == "--")) {
-    return true;
-  }
-  for (const auto* child : ExpressionOperands(expression)) {
-    if (child != nullptr && HasAssignments(*child)) {
-      return true;
-    }
-  }
-  return std::ranges::any_of(expression.elements,
-                             [](const auto& child) -> bool { return HasAssignments(*child); }) ||
-         std::ranges::any_of(expression.entries,
-                             [](const auto& entry) -> bool {
-                               return HasAssignments(*entry.key) || HasAssignments(*entry.value);
-                             }) ||
-         std::ranges::any_of(expression.arms,
-                             [](const auto& arm) -> bool { return HasAssignments(*arm.value); }) ||
-         std::ranges::any_of(expression.arguments, [](const auto& argument) -> bool {
-           return HasAssignments(*argument.value);
-         });
-}
-
-std::optional<Opcode> SelectIntegerOpcode(std::string_view operation) {
-  constexpr std::array<std::pair<std::string_view, Opcode>, 17> integer_operations = {
-      {
-          {"+", Opcode::AddInt},
-          {"-", Opcode::SubInt},
-          {"*", Opcode::MulInt},
-          {"/", Opcode::DivInt},
-          {"%", Opcode::ModInt},
-          {"&", Opcode::BitAndInt},
-          {"|", Opcode::BitOrInt},
-          {"^", Opcode::BitXorInt},
-          {"<<", Opcode::ShiftLeftInt},
-          {">>", Opcode::ShiftRightInt},
-          {">>>", Opcode::ShiftUnsignedRightInt},
-          {"==", Opcode::EqualInt},
-          {"!=", Opcode::NotEqualInt},
-          {"<", Opcode::LessInt},
-          {"<=", Opcode::LessEqualInt},
-          {">", Opcode::GreaterInt},
-          {">=", Opcode::GreaterEqualInt},
-      },
-  };
-  const auto found = std::ranges::find_if(
-      integer_operations, [&](const auto& entry) { return entry.first == operation; });
-  if (found != integer_operations.end()) {
-    return found->second;
-  }
-  return std::nullopt;
 }
 
 }  // namespace
 
-std::optional<Opcode> Lowerer::SelectBinaryOpcode(std::string_view operation,
-                                                  const frontend::TypeDescriptor& type) {
+Opcode Lowerer::SelectBinaryOpcode(TokenKind operation, const frontend::TypeDescriptor& type) {
   using Kind = frontend::TypeDescriptor::Kind;
   if (type.kind == Kind::Double) {
     return SelectDoubleOpcode(operation);
   }
   if (type.kind == Kind::String) {
-    if (operation == "+") {
+    if (operation == TokenKind::Plus) {
       return Opcode::StringConcat;
     }
-    if (operation == "==") {
+    if (operation == TokenKind::EqualEqual) {
       return Opcode::EqualString;
     }
-    if (operation == "!=") {
+    if (operation == TokenKind::BangEqual) {
       return Opcode::NotEqualString;
     }
-    return std::nullopt;
+    std::unreachable();
   }
   if (type.kind == Kind::Bool) {
-    if (operation == "==") {
+    if (operation == TokenKind::EqualEqual) {
       return Opcode::EqualBool;
     }
-    if (operation == "!=") {
+    if (operation == TokenKind::BangEqual) {
       return Opcode::NotEqualBool;
     }
-    return std::nullopt;
+    std::unreachable();
   }
   return SelectIntegerOpcode(operation);
 }
 
-LoweringResult Lowerer::Lower() {
-  program_ = {};
+LoweringResult Lowerer::Lower() && {
   program_.native_mode = native_mode_;
-  diagnostics_.clear();
-  class_ids_.clear();
-  function_ids_.clear();
-  array_type_ids_.clear();
-  callable_classes_.clear();
-  global_ids_.clear();
-  interface_method_ids_.clear();
-  runtime_type_ids_.clear();
-  collection_type_ids_.clear();
-  string_constant_ids_.clear();
-  pending_constructors_.clear();
-  field_initializers_.clear();
   BuildFunctionTable();
   BuildClassTable();
   if (declarations_ != nullptr) {
@@ -162,7 +120,6 @@ LoweringResult Lowerer::Lower() {
     class_ids_.emplace("$Cell", static_cast<ClassId>(program_.classes.size()));
     program_.classes.push_back({
         .name = "$Cell",
-        .field_order = {"value"},
         .field_types = {{.kind = frontend::TypeDescriptor::Kind::Class, .name = "$Cell"}},
         .callable = std::nullopt,
         .interfaces = {},
@@ -175,9 +132,7 @@ LoweringResult Lowerer::Lower() {
     });
   }
   for (const frontend::Function& function : source_.functions) {
-    if (function.role != frontend::Function::Role::RetiredEntry) {
-      LowerFunction(function, model_.functions.at(function.name));
-    }
+    LowerFunction(function, model_.functions.at(function.name));
   }
   for (const frontend::Class& owner : source_.classes) {
     for (const frontend::Function& method : owner.methods) {
@@ -207,13 +162,13 @@ LoweringResult Lowerer::Lower() {
       LowerFunction(*owner.constructor, descriptor.constructor, &owner);
     } else {
       frontend::Function constructor;
-      constructor.name = "$constructor";
+      constructor.name = frontend::kConstructorName;
       constructor.location = owner.location;
       LowerFunction(constructor, descriptor.constructor, &owner);
     }
   }
   RegisterBuiltinMembers();
-  RecordProgramValueTypes();
+  ResolveCallValueTypes();
   return {.program = std::move(program_), .diagnostics = std::move(diagnostics_)};
 }
 
@@ -305,14 +260,13 @@ Class Lowerer::BuildClass(const frontend::Class& source_class,
           function_ids_.at(target.owner + '.' + target.member);
     }
   }
-  output_class.field_order = class_info.field_order;
   if (declarations_ != nullptr) {
     const auto& declarations = declarations_->classes.at(source_class.name);
     output_class.declaration = declarations.declaration;
     if (class_info.base_class) {
       output_class.base_class = declarations_->nominals.at(*class_info.base_class);
     }
-    for (const auto& name : output_class.field_order) {
+    for (const auto& name : class_info.field_order) {
       const auto identity = declarations.fields.at(name);
       const auto& field = class_info.fields.at(name);
       const auto initializer = field_initializers_.find(identity);
@@ -325,11 +279,9 @@ Class Lowerer::BuildClass(const frontend::Class& source_class,
       });
     }
   }
-  output_class.field_types.reserve(output_class.field_order.size());
-  for (const std::string& field_name : output_class.field_order) {
-    const auto field = class_info.fields.find(field_name);
-    output_class.field_types.push_back(field == class_info.fields.end() ? InvalidType()
-                                                                        : field->second.type);
+  output_class.field_types.reserve(class_info.field_order.size());
+  for (const std::string& field_name : class_info.field_order) {
+    output_class.field_types.push_back(class_info.fields.at(field_name).type);
   }
   return output_class;
 }
@@ -339,6 +291,8 @@ std::uint32_t Lowerer::AddFunctionId(const std::string& name, frontend::Function
   const auto target = persistent_ == nullptr ? static_cast<std::uint32_t>(function_ids_.size())
                                              : persistent_->functions.Get(identity);
   function_ids_.emplace(name, target);
+  program_.functions.resize(persistent_ == nullptr ? function_ids_.size()
+                                                   : persistent_->functions.size());
   return target;
 }
 
@@ -357,9 +311,7 @@ void Lowerer::AddGlobalId(const std::string& name, GlobalKind kind) {
 
 void Lowerer::BuildFunctionTable() {
   for (const auto& function : source_.functions) {
-    if (function.role != frontend::Function::Role::RetiredEntry) {
-      static_cast<void>(AddFunctionId(function.name, function.role));
-    }
+    static_cast<void>(AddFunctionId(function.name, function.role));
   }
   for (const frontend::Class& owner : source_.classes) {
     for (const frontend::Function& method : owner.methods) {
@@ -403,8 +355,20 @@ void Lowerer::BuildFunctionTable() {
                                                    : persistent_->functions.size());
 }
 
-void Lowerer::StoreFunction(Function function) {
-  function.value_types.resize(function.register_count);
+void Lowerer::BeginFunctionBody(Function& function, const frontend::Class* owner) {
+  current_function_ = &function;
+  current_owner_ = owner;
+  binding_registers_.clear();
+  next_register_ = 0;
+  double_constant_ids_.clear();
+  scopes_.clear();
+  controls_.clear();
+  finalizers_.clear();
+  current_handler_.reset();
+}
+
+void Lowerer::RecordParameterValueTypes(Function& function) {
+  function.value_types.resize(function.parameter_count);
   if (function.signature) {
     const auto& signature = *function.signature;
     for (std::size_t index = 0; index < signature.parameters.size(); ++index) {
@@ -416,6 +380,10 @@ void Lowerer::StoreFunction(Function function) {
       function.value_types.at(index + signature.hidden_parameters) = type;
     }
   }
+}
+
+void Lowerer::StoreFunction(Function function) {
+  function.value_types.resize(function.register_count);
   const auto target = function_ids_.at(function.name);
   if (declarations_ != nullptr && function.identity.revision == 0) {
     const auto named = declarations_->named_functions.find(function.name);
@@ -460,8 +428,9 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
                                       const frontend::Class* owner,
                                       const frontend::LambdaDescriptor* lambda) {
   const bool has_receiver = owner != nullptr && source.storage == frontend::MemberStorage::Instance;
-  const auto* constructor =
-      owner != nullptr && source.name == "$constructor" ? &model_.classes.at(owner->name) : nullptr;
+  const auto* constructor = owner != nullptr && source.name == frontend::kConstructorName
+                                ? &model_.classes.at(owner->name)
+                                : nullptr;
   const auto masks = constructor == nullptr ? 0 : ConstructorMaskCount(*constructor);
   if (lambda != nullptr) {
     static_cast<void>(AllocateRegister(source.location));
@@ -489,7 +458,7 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
     LowerConstructorInitializers(*constructor);
   }
   if (has_receiver) {
-    DeclareLocal("this", 0, model_.classes.at(owner->name).type, source.location,
+    DeclareLocal(frontend::kReceiverName, 0, model_.classes.at(owner->name).type, source.location,
                  source.body.get());
   }
   // 完整参数窗口建立后，再为可捕获的参数分配共享槽位。
@@ -535,7 +504,7 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
                                   const frontend::LambdaDescriptor* lambda) {
   Function function;
   function.is_generated_constructor =
-      owner != nullptr && source.name == "$constructor" &&
+      owner != nullptr && source.name == frontend::kConstructorName &&
       owner->constructor_kind == frontend::ConstructorKind::Generated;
   function.location = source.location;
   if (declarations_ != nullptr) {
@@ -550,7 +519,6 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
       owner == nullptr && lambda == nullptr &&
       (native_mode_ == NativeProgramMode::Reloadable || source.location.source_id == 0) &&
       source.export_kind == frontend::ExportKind::Exported;
-  function.owner_class = owner == nullptr ? std::string() : owner->name;
   if (lambda != nullptr) {
     function.name =
         "$lambda" + std::to_string(lambda_ids_.at(model_.lambda_indices.at(lambda->expression)));
@@ -561,14 +529,14 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
   if (source.is_setter && function_info.setter_return_type) {
     function.return_type = *function_info.setter_return_type;
   }
-  if (owner != nullptr && source.name == "$constructor") {
+  if (owner != nullptr && source.name == frontend::kConstructorName) {
     function.return_type = {
         .kind = frontend::TypeDescriptor::Kind::Void,
         .name = frontend::kVoidTypeName,
     };
   }
   const bool has_receiver = owner != nullptr && source.storage == frontend::MemberStorage::Instance;
-  const auto masks = owner != nullptr && source.name == "$constructor"
+  const auto masks = owner != nullptr && source.name == frontend::kConstructorName
                          ? ConstructorMaskCount(model_.classes.at(owner->name))
                          : 0;
   function.parameter_count = static_cast<std::uint32_t>(
@@ -584,6 +552,7 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
           {.name = "$provided" + std::to_string(index), .type = integer});
     }
   }
+  RecordParameterValueTypes(function);
   return function;
 }
 
@@ -593,10 +562,11 @@ void Lowerer::LowerFunction(const frontend::Function& source,
                             const frontend::LambdaDescriptor* lambda) {
   auto function = PrepareFunction(source, function_info, owner, lambda);
   if (source.intrinsic) {
+    BeginFunctionBody(function, owner);
     const auto builtin = *source.intrinsic;
     auto result = function.parameter_count;
     if (builtin == Builtin::DateToUTC) {
-      function.instructions.push_back({
+      Emit({
           .opcode = Opcode::LoadInt,
           .dst = result,
           .immediate = class_ids_.at("DateParts"),
@@ -604,17 +574,17 @@ void Lowerer::LowerFunction(const frontend::Function& source,
       });
       ++result;
     }
-    function.instructions.push_back({
+    Emit({
         .opcode = Opcode::BuiltinCall,
         .dst = result,
         .lhs = 0,
         .index = static_cast<std::uint32_t>(builtin),
         .location = source.location,
     });
-    function.instructions.push_back(
-        {.opcode = Opcode::Return, .dst = result, .location = source.location});
+    Emit({.opcode = Opcode::Return, .dst = result, .location = source.location});
     function.register_count = result + 1;
     StoreFunction(std::move(function));
+    current_function_ = nullptr;
     return;
   }
   if (!source.native_symbol.empty()) {
@@ -623,14 +593,7 @@ void Lowerer::LowerFunction(const frontend::Function& source,
     StoreFunction(std::move(function));
     return;
   }
-  current_function_ = &function;
-  binding_registers_.clear();
-  next_register_ = 0;
-  double_constant_ids_.clear();
-  scopes_.clear();
-  controls_.clear();
-  finalizers_.clear();
-  current_handler_.reset();
+  BeginFunctionBody(function, owner);
   PushScope();
 
   LowerFunctionParameters(source, function_info, owner, lambda);
@@ -766,8 +729,7 @@ Lowerer::LoweredValue Lowerer::LowerConversion(LoweredValue value,
     Emit({.opcode = Opcode::NewInstance, .dst = boxed, .index = layout, .location = location});
     Emit({.opcode = Opcode::SetField, .dst = boxed, .lhs = value.reg, .location = location});
     if (null_jump) {
-      current_function_->instructions.at(*null_jump).index =
-          static_cast<std::uint32_t>(current_function_->instructions.size());
+      BindJump(*null_jump);
     }
     return {.reg = boxed, .type = target};
   }
@@ -798,8 +760,7 @@ Lowerer::LoweredValue Lowerer::LowerConversion(LoweredValue value,
     }
     Emit({.opcode = Opcode::GetField, .dst = result, .lhs = boxed, .location = location});
     if (null_jump) {
-      current_function_->instructions.at(*null_jump).index =
-          static_cast<std::uint32_t>(current_function_->instructions.size());
+      BindJump(*null_jump);
     }
   }
   return {.reg = result, .type = target};
@@ -876,12 +837,14 @@ Lowerer::LoweredValue Lowerer::LowerExpressionValue(const frontend::Expression& 
       return LowerUnary(expression);
     case frontend::Expression::Kind::Binary:
       return LowerBinary(expression);
+    case frontend::Expression::Kind::CompoundAssignment:
+      return LowerCompoundAssignment(expression);
     case frontend::Expression::Kind::Call:
       return LowerCall(expression);
     case frontend::Expression::Kind::Member:
       return LowerMember(expression);
   }
-  return {.reg = 0, .type = InvalidType()};
+  std::unreachable();
 }
 
 Lowerer::LoweredValue Lowerer::LowerAssignment(const frontend::Expression& expression) {
@@ -902,8 +865,7 @@ Lowerer::LoweredValue Lowerer::LowerAssignment(const frontend::Expression& expre
   if (left.kind == frontend::Expression::Kind::Index) {
     return LowerIndexAssignment(expression);
   }
-  AddDiagnostic(left.location, "left side of assignment is not lowerable");
-  return {.reg = 0, .type = InvalidType()};
+  std::unreachable();
 }
 
 Lowerer::LoweredValue Lowerer::LowerName(const frontend::Expression& expression) {
@@ -979,10 +941,6 @@ Lowerer::LoweredValue Lowerer::LowerNameAssignment(const frontend::Expression& e
     });
     return {.reg = value.reg, .type = model_.globals.at(left.text).type};
   }
-  if (local == nullptr) {
-    AddDiagnostic(left.location, "unknown local during assignment lowering");
-    return {.reg = 0, .type = InvalidType()};
-  }
   const LoweredValue value = LowerExpression(right);
   Emit({
       .opcode = local->cell ? Opcode::SetField : Opcode::Move,
@@ -1008,45 +966,35 @@ Lowerer::LoweredValue Lowerer::LowerMemberAssignment(const frontend::Expression&
     return value;
   }
   const LoweredValue object = SnapshotBefore(LowerExpression(*left.object), right);
-  if (object.type.kind != frontend::TypeDescriptor::Kind::Class) {
-    AddDiagnostic(left.location, "field assignment requires a class value");
-    return {.reg = 0, .type = InvalidType()};
+  const auto& class_info = model_.classes.at(object.type.name);
+  const auto method = class_info.methods.find(left.text);
+  if (method != class_info.methods.end() && method->second.is_setter) {
+    const auto base = AllocateRegister(left.location);
+    const auto argument = AllocateRegister(left.location);
+    Emit({.opcode = Opcode::Move, .dst = base, .lhs = object.reg, .location = left.location});
+    const auto value = LowerExpression(right);
+    Emit({.opcode = Opcode::Move, .dst = argument, .lhs = value.reg, .location = right.location});
+    const auto ignored = AllocateTemporary(left.location);
+    const auto& method_owner = method->second.member_owner;
+    Emit({
+        .opcode = Opcode::Call,
+        .dst = ignored,
+        .lhs = base,
+        .index = function_ids_.at(MethodKey(method_owner, DeclarationKind::Setter, left.text)),
+        .location = left.location,
+    });
+    return {.reg = value.reg, .type = method->second.setter_parameter_type.value_or(value.type)};
   }
-  const frontend::ClassDescriptor* class_info = FindClass(object.type.name);
-  if (class_info != nullptr) {
-    const auto method = class_info->methods.find(left.text);
-    if (method != class_info->methods.end() && method->second.is_setter) {
-      const auto base = AllocateRegister(left.location);
-      const auto argument = AllocateRegister(left.location);
-      Emit({.opcode = Opcode::Move, .dst = base, .lhs = object.reg, .location = left.location});
-      const auto value = LowerExpression(right);
-      Emit({.opcode = Opcode::Move, .dst = argument, .lhs = value.reg, .location = right.location});
-      const auto ignored = AllocateTemporary(left.location);
-      const auto& method_owner = method->second.member_owner;
-      Emit({
-          .opcode = Opcode::Call,
-          .dst = ignored,
-          .lhs = base,
-          .index = function_ids_.at(method_owner + "." + "$set." + left.text),
-          .location = left.location,
-      });
-      return {.reg = value.reg, .type = method->second.setter_parameter_type.value_or(value.type)};
-    }
-  }
-  const auto field = class_info == nullptr ? std::nullopt : FindField(*class_info, left.text);
-  if (!field || class_info == nullptr) {
-    AddDiagnostic(left.location, "unknown field during assignment lowering");
-    return {.reg = 0, .type = InvalidType()};
-  }
+  const auto& field = class_info.fields.at(left.text);
   const auto value = LowerExpression(right);
   Emit({
       .opcode = Opcode::SetField,
       .dst = object.reg,
       .lhs = value.reg,
-      .index = *field,
+      .index = field.index,
       .location = left.location,
   });
-  return {.reg = value.reg, .type = class_info->fields.at(left.text).type};
+  return {.reg = value.reg, .type = field.type};
 }
 
 Lowerer::LoweredValue Lowerer::LowerIndexAssignment(const frontend::Expression& expression) {
@@ -1064,16 +1012,17 @@ Lowerer::LoweredValue Lowerer::LowerIndexAssignment(const frontend::Expression& 
 std::optional<Lowerer::LoweredValue> Lowerer::LowerSuperGetter(
     const frontend::Expression& expression) {
   if (expression.object->kind == frontend::Expression::Kind::Name &&
-      expression.object->text == "super") {
+      expression.object->text == frontend::kSuperName) {
     const auto member = model_.super_members.find(&expression);
     if (member != model_.super_members.end()) {
       const auto& signature =
           model_.classes.at(member->second.owner).methods.at(member->second.member);
       if (signature.is_getter) {
-        const auto* receiver = FindLocal("this");
+        const auto* receiver = FindLocal(frontend::kReceiverName);
         if (receiver != nullptr) {
           const LoweredValue receiver_value{.reg = receiver->reg, .type = receiver->type};
-          const std::string key = member->second.owner + ".$get." + member->second.member;
+          const std::string key =
+              MethodKey(member->second.owner, DeclarationKind::Getter, member->second.member);
           return LowerInvocation(expression, signature, function_ids_.at(key), &receiver_value);
         }
       }
@@ -1083,6 +1032,7 @@ std::optional<Lowerer::LoweredValue> Lowerer::LowerSuperGetter(
 }
 
 Lowerer::LoweredValue Lowerer::LowerMember(const frontend::Expression& expression) {
+  const auto& result_type = model_.expression_types.at(&expression);
   const auto receiver_type = model_.expression_types.find(expression.object.get());
   if (receiver_type != model_.expression_types.end() &&
       receiver_type->second.kind == frontend::TypeDescriptor::Kind::Dynamic) {
@@ -1115,9 +1065,9 @@ Lowerer::LoweredValue Lowerer::LowerMember(const frontend::Expression& expressio
         .index = global_ids_.at(member.owner + "." + member.member),
         .location = expression.location,
     });
-    return {.reg = result, .type = model_.expression_types.at(&expression)};
+    return {.reg = result, .type = result_type};
   }
-  if (model_.expression_types.at(&expression).kind == frontend::TypeDescriptor::Kind::Function) {
+  if (result_type.kind == frontend::TypeDescriptor::Kind::Function) {
     const auto& object_type = model_.expression_types.at(expression.object.get());
     const auto name = object_type.nullable ? object_type.name.substr(0, object_type.name.size() - 1)
                                            : object_type.name;
@@ -1139,26 +1089,14 @@ Lowerer::LoweredValue Lowerer::LowerMember(const frontend::Expression& expressio
 
 Lowerer::LoweredValue Lowerer::LowerObjectMember(const frontend::Expression& expression) {
   const LoweredValue object = LowerExpression(*expression.object);
-  if (object.type.kind != frontend::TypeDescriptor::Kind::Class) {
-    AddDiagnostic(expression.location, "member access requires a class value");
-    return {.reg = 0, .type = InvalidType()};
-  }
   const auto object_type =
       object.type.nullable
           ? model_.types.at(object.type.name.substr(0, object.type.name.size() - 1))
           : object.type;
-  const frontend::ClassDescriptor* class_info = FindClass(object_type.name);
-  const std::optional<FieldId> field =
-      class_info == nullptr ? std::nullopt : FindField(*class_info, expression.text);
-  if (!field.has_value() || class_info == nullptr) {
-    if (class_info != nullptr) {
-      const auto method = class_info->methods.find(expression.text);
-      if (method != class_info->methods.end() && method->second.is_getter) {
-        return LowerGetter(expression, object);
-      }
-    }
-    AddDiagnostic(expression.location, "unknown field during lowering");
-    return {.reg = 0, .type = InvalidType()};
+  const auto& class_info = model_.classes.at(object_type.name);
+  const auto field = class_info.fields.find(expression.text);
+  if (field == class_info.fields.end()) {
+    return LowerGetter(expression, object);
   }
   const RegisterId result = AllocateTemporary(expression.location);
   std::optional<std::size_t> null_jump;
@@ -1170,12 +1108,12 @@ Lowerer::LoweredValue Lowerer::LowerObjectMember(const frontend::Expression& exp
       .opcode = Opcode::GetField,
       .dst = result,
       .lhs = object.reg,
-      .index = *field,
+      .index = field->second.index,
       .location = expression.location,
   });
   FinishNullSafe(null_jump, result, expression.location);
-  const auto type = expression.null_safe ? model_.expression_types.at(&expression)
-                                         : class_info->fields.at(expression.text).type;
+  const auto type =
+      expression.null_safe ? model_.expression_types.at(&expression) : field->second.type;
   return {.reg = result, .type = type};
 }
 
@@ -1184,10 +1122,12 @@ Lowerer::LoweredValue Lowerer::LowerGetter(const frontend::Expression& expressio
   const auto type = model_.types.at(object.type.name);
   const auto owner = type.nullable ? type.name.substr(0, type.name.size() - 1) : type.name;
   const auto& method_owner = model_.classes.at(owner).methods.at(expression.text).member_owner;
-  const std::string method_key = method_owner + "." + "$get." + expression.text;
+  const std::string method_key = MethodKey(method_owner, DeclarationKind::Getter, expression.text);
   const auto base = AllocateRegister(expression.location);
   Emit({.opcode = Opcode::Move, .dst = base, .lhs = object.reg, .location = expression.location});
   const auto result = AllocateTemporary(expression.location);
+  const auto& result_type = model_.expression_types.at(&expression);
+  RecordValueType(result, result_type);
   Emit({
       .opcode = Opcode::Call,
       .dst = result,
@@ -1195,7 +1135,7 @@ Lowerer::LoweredValue Lowerer::LowerGetter(const frontend::Expression& expressio
       .index = function_ids_.at(method_key),
       .location = expression.location,
   });
-  return {.reg = result, .type = model_.expression_types.at(&expression)};
+  return {.reg = result, .type = result_type};
 }
 
 Lowerer::LoweredValue Lowerer::LowerCall(const frontend::Expression& expression) {
@@ -1242,10 +1182,10 @@ Lowerer::LoweredValue Lowerer::LowerCall(const frontend::Expression& expression)
     return {.reg = result, .type = model_.expression_types.at(&expression)};
   }
   if (expression.callee->kind == frontend::Expression::Kind::Name &&
-      expression.callee->text == "super") {
-    const auto& owner = model_.classes.at(current_function_->owner_class);
+      expression.callee->text == frontend::kSuperName) {
+    const auto& owner = model_.classes.at(current_owner_->name);
     const auto& base = model_.classes.at(*owner.base_class);
-    const auto* receiver = FindLocal("this");
+    const auto* receiver = FindLocal(frontend::kReceiverName);
     return LowerConstructorCall(expression.arguments, model_.argument_order.at(&expression),
                                 expression.location, base, receiver->reg);
   }
@@ -1295,15 +1235,15 @@ Lowerer::LoweredValue Lowerer::LowerMethodCall(const frontend::Expression& expre
       super == model_.super_members.end() ? model_.instance_members.at(&expression) : super->second;
   const auto receiver = super == model_.super_members.end()
                             ? LowerExpression(*callee.object)
-                            : ReadLocal(*FindLocal("this"), callee.location);
+                            : ReadLocal(*FindLocal(frontend::kReceiverName), callee.location);
   const auto& method = model_.classes.at(target.owner).methods.at(target.member);
-  std::string method_key = target.owner + ".";
+  auto kind = DeclarationKind::Method;
   if (method.is_getter) {
-    method_key += "$get.";
+    kind = DeclarationKind::Getter;
   } else if (method.is_setter) {
-    method_key += "$set.";
+    kind = DeclarationKind::Setter;
   }
-  method_key += target.member;
+  const auto method_key = MethodKey(target.owner, kind, target.member);
   const auto method_id = function_ids_.at(method_key);
   if (!callee.null_safe) {
     return LowerInvocation(expression, method, method_id, &receiver);
@@ -1317,11 +1257,11 @@ Lowerer::LoweredValue Lowerer::LowerMethodCall(const frontend::Expression& expre
 }
 
 Lowerer::LoweredValue Lowerer::LowerFutureCall(const frontend::Expression& expression) {
+  const auto& result_type = model_.expression_types.at(&expression);
   const auto& method = expression.callee->text;
   auto payload = LowerExpression(*expression.arguments.front().value);
   if (method == "value") {
-    payload.reg =
-        LowerFuturePayload(payload, model_.expression_types.at(&expression), expression.location);
+    payload.reg = LowerFuturePayload(payload, result_type, expression.location);
   }
   const auto result = AllocateTemporary(expression.location);
   if (method == "sync") {
@@ -1338,7 +1278,7 @@ Lowerer::LoweredValue Lowerer::LowerFutureCall(const frontend::Expression& expre
         .dst = result,
         .lhs = base,
         .immediate = 1,
-        .index = AddSyncFutureFunction(model_.expression_types.at(&expression), payload.type),
+        .index = AddSyncFutureFunction(result_type, payload.type),
         .location = expression.location,
     });
   } else {
@@ -1350,7 +1290,7 @@ Lowerer::LoweredValue Lowerer::LowerFutureCall(const frontend::Expression& expre
         .location = expression.location,
     });
   }
-  return {.reg = result, .type = model_.expression_types.at(&expression)};
+  return {.reg = result, .type = result_type};
 }
 
 std::uint32_t Lowerer::AddSyncFutureFunction(const frontend::TypeDescriptor& return_type,
@@ -1358,8 +1298,6 @@ std::uint32_t Lowerer::AddSyncFutureFunction(const frontend::TypeDescriptor& ret
   Function function;
   function.name = "$future.sync." + std::to_string(program_.functions.size());
   const auto index = AddFunctionId(function.name);
-  program_.functions.resize(persistent_ == nullptr ? function_ids_.size()
-                                                   : persistent_->functions.size());
   function.return_type = return_type;
   function.parameter_count = 1;
   function.register_count = 2;
@@ -1438,12 +1376,13 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
         expression.kind == frontend::Expression::Kind::Call ? expression.callee.get() : &expression;
     const auto super = model_.super_members.find(member);
     if (super != model_.super_members.end()) {
-      const auto& self = FindLocal("this")->type;
+      const auto& self = FindLocal(frontend::kReceiverName)->type;
       const auto& parent = *model_.classes.at(self.name).base_class;
       binding_receiver = declarations_->classes.at(parent).declaration;
     }
   }
   const RegisterId result = AllocateTemporary(expression.location);
+  RecordValueType(result, function.return_type);
   Emit({
       .opcode = opcode,
       .dst = result,
@@ -1527,19 +1466,22 @@ std::optional<FieldId> Lowerer::FindField(const frontend::ClassDescriptor& class
   return field->second.index;
 }
 
+void Lowerer::BindJump(std::size_t jump) {
+  current_function_->instructions.at(jump).index =
+      static_cast<std::uint32_t>(current_function_->instructions.size());
+}
+
 void Lowerer::Emit(Instruction instruction) {
-  if (current_function_ != nullptr) {
-    if (instruction.opcode == Opcode::GetIndex || instruction.opcode == Opcode::SetIndex ||
-        (instruction.opcode == Opcode::BuiltinCall &&
-         instruction.index == static_cast<std::uint32_t>(Builtin::ArrayPush))) {
-      const auto array = instruction.opcode == Opcode::SetIndex ? instruction.dst : instruction.lhs;
-      const auto type = current_function_->value_types.at(array);
-      instruction.array_type = RegisterArrayType(type);
-    }
-    RecordInstructionValueType(instruction);
-    instruction.handler = current_handler_;
-    current_function_->instructions.push_back(instruction);
+  if (instruction.opcode == Opcode::GetIndex || instruction.opcode == Opcode::SetIndex ||
+      (instruction.opcode == Opcode::BuiltinCall &&
+       instruction.index == static_cast<std::uint32_t>(Builtin::ArrayPush))) {
+    const auto array = instruction.opcode == Opcode::SetIndex ? instruction.dst : instruction.lhs;
+    const auto type = current_function_->value_types.at(array);
+    instruction.array_type = RegisterArrayType(type);
   }
+  RecordInstructionValueType(instruction);
+  instruction.handler = current_handler_;
+  current_function_->instructions.push_back(std::move(instruction));
 }
 
 void Lowerer::FinishNullSafe(std::optional<std::size_t> null_jump,
@@ -1550,11 +1492,9 @@ void Lowerer::FinishNullSafe(std::optional<std::size_t> null_jump,
   }
   const auto end_jump = current_function_->instructions.size();
   Emit({.opcode = Opcode::Jump, .location = location});
-  current_function_->instructions.at(*null_jump).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
+  BindJump(*null_jump);
   Emit({.opcode = Opcode::LoadNull, .dst = result, .location = location});
-  current_function_->instructions.at(end_jump).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
+  BindJump(end_jump);
 }
 
 void Lowerer::PushScope() {
@@ -1609,10 +1549,7 @@ void Lowerer::LowerVariableDeclaration(const frontend::Statement& statement) {
 
 Lowerer::LoweredValue Lowerer::LowerIntegerLiteral(const frontend::Expression& expression) {
   const auto value = expression.IntegerValue();
-  if (!value) {
-    AddDiagnostic(expression.location, "integer literal is out of range");
-    return {.reg = 0, .type = InvalidType()};
-  }
+  assert(value);
   const RegisterId reg = AllocateTemporary(expression.location);
   Emit({
       .opcode = Opcode::LoadInt,
@@ -1671,7 +1608,7 @@ Lowerer::LoweredValue Lowerer::LowerIncrement(const frontend::Expression& expres
   });
   const auto result = AllocateTemporary(expression.location);
   Emit({
-      .opcode = expression.text == "++" ? Opcode::AddInt : Opcode::SubInt,
+      .opcode = expression.operation == TokenKind::PlusPlus ? Opcode::AddInt : Opcode::SubInt,
       .dst = result,
       .lhs = operand.reg,
       .rhs = one,
@@ -1717,22 +1654,14 @@ Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression&
       destination.value = {.reg = value, .type = model_.expression_types.at(&target)};
       return destination;
     }
-    const auto* owner = FindClass(receiver.type.name);
-    if (owner == nullptr) {
-      AddDiagnostic(target.location, "increment target is not a class field");
-      return destination;
-    }
-    destination.field = FindField(*owner, target.text);
+    const auto& owner = model_.classes.at(receiver.type.name);
+    destination.field = FindField(owner, target.text);
     if (!destination.field) {
-      const auto method = owner->methods.find(target.text);
-      if (method != owner->methods.end() && method->second.is_getter && method->second.is_setter) {
-        const auto& method_owner = method->second.member_owner;
-        destination.object = receiver.reg;
-        destination.setter = function_ids_.at(method_owner + ".$set." + target.text);
-        destination.value = LowerGetter(target, receiver);
-        return destination;
-      }
-      AddDiagnostic(target.location, "increment target field is unknown");
+      const auto& method = owner.methods.at(target.text);
+      destination.object = receiver.reg;
+      destination.setter =
+          function_ids_.at(MethodKey(method.member_owner, DeclarationKind::Setter, target.text));
+      destination.value = LowerGetter(target, receiver);
       return destination;
     }
     destination.object = receiver.reg;
@@ -1760,6 +1689,7 @@ Lowerer::MutationTarget Lowerer::LowerMutationTarget(const frontend::Expression&
     const auto value = AllocateTemporary(target.location);
     EmitIndexRead(value, receiver, position.reg, target.location);
     destination.value = {.reg = value, .type = model_.expression_types.at(&target)};
+    RecordValueType(value, destination.value.type);
     return destination;
   }
   destination.value = LowerExpression(target);
@@ -1847,17 +1777,20 @@ void Lowerer::StoreMutationTarget(const frontend::Expression& target,
 }
 
 Lowerer::LoweredValue Lowerer::LowerUnary(const frontend::Expression& expression) {
-  if (expression.text == "++" || expression.text == "--") {
+  if (expression.operation == TokenKind::PlusPlus ||
+      expression.operation == TokenKind::MinusMinus) {
     return LowerIncrement(expression);
   }
   const LoweredValue operand = LowerExpression(*expression.operand);
   const RegisterId result = AllocateTemporary(expression.location);
-  if (expression.text == "-" && operand.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
+  if (expression.operation == TokenKind::Minus &&
+      operand.type.kind == frontend::TypeDescriptor::Kind::Dynamic) {
     const std::array values{operand.reg};
     EmitBuiltinCall(Builtin::DynamicNegate, result, values, expression.location);
     return {.reg = result, .type = operand.type};
   }
-  if (expression.text == "-" && operand.type.kind == frontend::TypeDescriptor::Kind::Double) {
+  if (expression.operation == TokenKind::Minus &&
+      operand.type.kind == frontend::TypeDescriptor::Kind::Double) {
     Emit({
         .opcode = Opcode::NegDouble,
         .dst = result,
@@ -1866,7 +1799,7 @@ Lowerer::LoweredValue Lowerer::LowerUnary(const frontend::Expression& expression
     });
     return {.reg = result, .type = operand.type};
   }
-  if (expression.text == "-" && IsInteger(operand.type)) {
+  if (expression.operation == TokenKind::Minus && IsInteger(operand.type)) {
     Emit({
         .opcode = Opcode::NegInt,
         .dst = result,
@@ -1875,7 +1808,7 @@ Lowerer::LoweredValue Lowerer::LowerUnary(const frontend::Expression& expression
     });
     return {.reg = result, .type = operand.type};
   }
-  if (expression.text == "!" && IsBoolean(operand.type)) {
+  if (expression.operation == TokenKind::Bang && IsBoolean(operand.type)) {
     Emit({
         .opcode = Opcode::NotBool,
         .dst = result,
@@ -1884,7 +1817,7 @@ Lowerer::LoweredValue Lowerer::LowerUnary(const frontend::Expression& expression
     });
     return {.reg = result, .type = operand.type};
   }
-  if (expression.text == "~" && IsInteger(operand.type)) {
+  if (expression.operation == TokenKind::Tilde && IsInteger(operand.type)) {
     Emit({
         .opcode = Opcode::BitNotInt,
         .dst = result,
@@ -1893,8 +1826,49 @@ Lowerer::LoweredValue Lowerer::LowerUnary(const frontend::Expression& expression
     });
     return {.reg = result, .type = operand.type};
   }
-  AddDiagnostic(expression.location, "unsupported unary operation");
-  return {.reg = result, .type = InvalidType()};
+  std::unreachable();
+}
+
+bool Lowerer::HasAssignments(const frontend::Expression& expression) {
+  if (const auto found = assignment_effects_.find(&expression);
+      found != assignment_effects_.end()) {
+    return found->second;
+  }
+  const auto result = [this, &expression] {
+    if (expression.kind == frontend::Expression::Kind::Call) {
+      return true;
+    }
+    if (expression.kind == frontend::Expression::Kind::CompoundAssignment ||
+        (expression.kind == frontend::Expression::Kind::Binary &&
+         expression.operation == TokenKind::Equal)) {
+      return true;
+    }
+    if (expression.kind == frontend::Expression::Kind::Unary &&
+        (expression.operation == TokenKind::PlusPlus ||
+         expression.operation == TokenKind::MinusMinus)) {
+      return true;
+    }
+    for (const auto* child : ExpressionOperands(expression)) {
+      if (child != nullptr && HasAssignments(*child)) {
+        return true;
+      }
+    }
+    return std::ranges::any_of(
+               expression.elements,
+               [this](const auto& child) -> bool { return HasAssignments(*child); }) ||
+           std::ranges::any_of(expression.entries,
+                               [this](const auto& entry) -> bool {
+                                 return HasAssignments(*entry.key) || HasAssignments(*entry.value);
+                               }) ||
+           std::ranges::any_of(
+               expression.arms,
+               [this](const auto& arm) -> bool { return HasAssignments(*arm.value); }) ||
+           std::ranges::any_of(expression.arguments, [this](const auto& argument) -> bool {
+             return HasAssignments(*argument.value);
+           });
+  }();
+  assignment_effects_.emplace(&expression, result);
+  return result;
 }
 
 Lowerer::LoweredValue Lowerer::SnapshotBefore(LoweredValue value,
@@ -1908,25 +1882,22 @@ Lowerer::LoweredValue Lowerer::SnapshotBefore(LoweredValue value,
 }
 
 Lowerer::LoweredValue Lowerer::LowerBinary(const frontend::Expression& expression) {
-  if (expression.text == "=") {
+  if (expression.operation == TokenKind::Equal) {
     return LowerAssignment(expression);
   }
-  if (const auto operation = frontend::CompoundAssignmentOperation(expression.text)) {
-    return LowerCompoundAssignment(expression, *operation);
-  }
-  if (expression.text == "??") {
+  if (expression.operation == TokenKind::QuestionQuestion) {
     const auto left = LowerExpression(*expression.left);
     return LowerBranchValue(
         expression, Opcode::JumpIfNull, left.reg, [&] { return left; },
         [&] { return LowerExpression(*expression.right); });
   }
-  if (expression.text == "&&" || expression.text == "||") {
+  if (expression.operation == TokenKind::AndAnd || expression.operation == TokenKind::OrOr) {
     return LowerLogical(expression);
   }
-  if (expression.text == "+" &&
+  if (expression.operation == TokenKind::Plus &&
       model_.expression_types.at(&expression).kind == frontend::TypeDescriptor::Kind::Int &&
       expression.left != nullptr && expression.left->kind == frontend::Expression::Kind::Binary &&
-      expression.left->text == "+") {
+      expression.left->operation == TokenKind::Plus) {
     return LowerIntegerAdditionChain(expression);
   }
   return LowerBinaryValue(expression);
@@ -1936,7 +1907,7 @@ Lowerer::LoweredValue Lowerer::LowerIntegerAdditionChain(const frontend::Express
   std::vector<const frontend::Expression*> rights;
   const frontend::Expression* leftmost = &expression;
   while (leftmost->left != nullptr && leftmost->left->kind == frontend::Expression::Kind::Binary &&
-         leftmost->left->text == "+") {
+         leftmost->left->operation == TokenKind::Plus) {
     rights.push_back(leftmost->right.get());
     leftmost = leftmost->left.get();
   }
@@ -1957,28 +1928,19 @@ Lowerer::LoweredValue Lowerer::LowerIntegerAdditionChain(const frontend::Express
   return value;
 }
 
-Lowerer::LoweredValue Lowerer::LowerCompoundAssignment(const frontend::Expression& expression,
-                                                       std::string_view operation) {
+Lowerer::LoweredValue Lowerer::LowerCompoundAssignment(const frontend::Expression& expression) {
+  const auto operation = expression.operation;
   const auto& left = *expression.left;
   if (model_.expression_types.at(&left).kind == frontend::TypeDescriptor::Kind::Dynamic) {
-    const auto opcode = SelectBinaryOpcode(
-        operation, {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
-    if (!opcode) {
-      AddDiagnostic(expression.location, "unsupported compound assignment operation");
-      return {.reg = 0, .type = InvalidType()};
-    }
-    return LowerDynamicCompoundAssignment(expression, *opcode);
+    const auto opcode = SelectIntegerOpcode(operation);
+    return LowerDynamicCompoundAssignment(expression, opcode);
   }
   auto target = LowerMutationTarget(left);
   target.value = SnapshotBefore(target.value, *expression.right);
   const auto right = LowerExpression(*expression.right);
   const auto opcode = SelectBinaryOpcode(operation, target.value.type);
-  if (!opcode) {
-    AddDiagnostic(expression.location, "unsupported compound assignment operation");
-    return {.reg = 0, .type = InvalidType()};
-  }
   const auto result = EmitTemporary({
-      .opcode = *opcode,
+      .opcode = opcode,
       .lhs = target.value.reg,
       .rhs = right.reg,
       .location = expression.location,
@@ -1988,27 +1950,23 @@ Lowerer::LoweredValue Lowerer::LowerCompoundAssignment(const frontend::Expressio
 }
 
 Lowerer::LoweredValue Lowerer::LowerBinaryValue(const frontend::Expression& expression) {
+  const auto& result_type = model_.expression_types.at(&expression);
   const auto left = SnapshotBefore(LowerExpression(*expression.left), *expression.right);
   const LoweredValue right = LowerExpression(*expression.right);
   using Kind = frontend::TypeDescriptor::Kind;
   if (left.type.kind == Kind::Dynamic || right.type.kind == Kind::Dynamic) {
-    const auto operation =
-        SelectBinaryOpcode(expression.text, {.kind = Kind::Int, .name = frontend::kIntTypeName});
-    if (!operation) {
-      AddDiagnostic(expression.location, "unsupported binary operation");
-      return {.reg = 0, .type = InvalidType()};
-    }
+    const auto operation = SelectIntegerOpcode(expression.operation);
     const auto selector = EmitTemporary({
         .opcode = Opcode::LoadInt,
-        .immediate = static_cast<std::int64_t>(*operation),
+        .immediate = static_cast<std::int64_t>(operation),
         .location = expression.location,
     });
     const auto result = AllocateTemporary(expression.location);
     const std::array values{selector, left.reg, right.reg};
     EmitBuiltinCall(Builtin::DynamicBinary, result, values, expression.location);
-    return {.reg = result, .type = model_.expression_types.at(&expression)};
+    return {.reg = result, .type = result_type};
   }
-  if (expression.text == "+" && model_.expression_types.at(&expression).kind == Kind::String) {
+  if (expression.operation == TokenKind::Plus && result_type.kind == Kind::String) {
     const auto result = AllocateTemporary(expression.location);
     Emit({
         .opcode = Opcode::StringConcat,
@@ -2019,7 +1977,8 @@ Lowerer::LoweredValue Lowerer::LowerBinaryValue(const frontend::Expression& expr
     });
     return {.reg = result, .type = {.kind = Kind::String, .name = frontend::kStringTypeName}};
   }
-  if ((expression.text == "==" || expression.text == "!=") &&
+  if ((expression.operation == TokenKind::EqualEqual ||
+       expression.operation == TokenKind::BangEqual) &&
       (left.type.nullable || right.type.nullable || left.type.kind == Kind::Null ||
        right.type.kind == Kind::Null || left.type.kind == Kind::Class ||
        left.type.kind == Kind::Interface || left.type.kind == Kind::Function ||
@@ -2027,7 +1986,8 @@ Lowerer::LoweredValue Lowerer::LowerBinaryValue(const frontend::Expression& expr
        left.type.kind == Kind::RegExp || left.type.kind == Kind::RegExpMatch)) {
     const auto result = AllocateTemporary(expression.location);
     Emit({
-        .opcode = expression.text == "==" ? Opcode::EqualValue : Opcode::NotEqualValue,
+        .opcode = expression.operation == TokenKind::EqualEqual ? Opcode::EqualValue
+                                                                : Opcode::NotEqualValue,
         .dst = result,
         .lhs = left.reg,
         .rhs = right.reg,
@@ -2035,18 +1995,14 @@ Lowerer::LoweredValue Lowerer::LowerBinaryValue(const frontend::Expression& expr
     });
     return {.reg = result, .type = {.kind = Kind::Bool, .name = frontend::kBoolTypeName}};
   }
-  const auto opcode = SelectBinaryOpcode(expression.text, left.type);
-  if (!opcode) {
-    AddDiagnostic(expression.location, "unsupported binary operation");
-    return {.reg = 0, .type = InvalidType()};
-  }
+  const auto opcode = SelectBinaryOpcode(expression.operation, left.type);
   const auto result = EmitTemporary({
-      .opcode = *opcode,
+      .opcode = opcode,
       .lhs = left.reg,
       .rhs = right.reg,
       .location = expression.location,
   });
-  return {.reg = result, .type = model_.expression_types.at(&expression)};
+  return {.reg = result, .type = result_type};
 }
 
 Lowerer::LoweredValue Lowerer::LowerConditional(const frontend::Expression& expression) {
@@ -2065,7 +2021,7 @@ Lowerer::LoweredValue Lowerer::LowerLogical(const frontend::Expression& expressi
     Emit({
         .opcode = Opcode::LoadBool,
         .dst = reg,
-        .immediate = expression.text == "||" ? 1 : 0,
+        .immediate = expression.operation == TokenKind::OrOr ? 1 : 0,
         .location = expression.location,
     });
     return {
@@ -2073,7 +2029,7 @@ Lowerer::LoweredValue Lowerer::LowerLogical(const frontend::Expression& expressi
         .type = {.kind = frontend::TypeDescriptor::Kind::Bool, .name = frontend::kBoolTypeName},
     };
   };
-  if (expression.text == "&&") {
+  if (expression.operation == TokenKind::AndAnd) {
     return LowerBranchValue(expression, Opcode::JumpIfFalse, left.reg, right, constant);
   }
   return LowerBranchValue(expression, Opcode::JumpIfFalse, left.reg, constant, right);

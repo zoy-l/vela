@@ -21,7 +21,7 @@ StatementFlow TypeChecker::CheckTry(const Statement& statement, const Type& retu
     refinements_.Clear();
     BeginScope();
     if (!clause.name.empty()) {
-      const auto type = ResolveType(clause.type, false);
+      const auto type = ResolveType(clause.type, VoidTypePolicy::Forbidden);
       if ((type.kind != Type::Kind::Class && type.kind != Type::Kind::Interface &&
            type.kind != Type::Kind::Dynamic) ||
           type.nullable) {
@@ -32,7 +32,7 @@ StatementFlow TypeChecker::CheckTry(const Statement& statement, const Type& retu
       if (!caught.insert(std::string(type.name)).second) {
         AddDiagnostic(clause.location, "duplicate catch type '" + std::string(type.name) + "'");
       }
-      catch_types_.emplace(&clause, type);
+      facts_.catch_types.emplace(&clause, type);
       DeclareLocal(clause.name, type, clause.location, BindingKind::Mutable, &clause);
     } else {
       catches_all = true;

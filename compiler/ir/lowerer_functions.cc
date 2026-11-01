@@ -1,4 +1,5 @@
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/syntax/names.h"
 #include "compiler/ir/lowerer.h"
 
 #include <cstddef>
@@ -10,7 +11,7 @@
 
 #include "base/callable.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/ir/ir.h"
 
 namespace vela::ir {
@@ -41,7 +42,6 @@ ClassId Lowerer::CallableClass(std::uint32_t function_id,
   layout.callable_type = type.nullable ? std::string(type.name.substr(1, type.name.size() - 3))
                                        : std::string(type.name);
   for (const auto& capture : captures) {
-    layout.field_order.push_back(capture.name);
     layout.field_types.push_back(
         capture.kind == frontend::BindingKind::Mutable
             ? frontend::TypeDescriptor{.kind = frontend::TypeDescriptor::Kind::Class,
@@ -72,7 +72,7 @@ Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Express
     captures = model_.lambdas.at(index).captures;
   } else if (method) {
     if (super != model_.super_members.end()) {
-      const auto* self = FindLocal("this");
+      const auto* self = FindLocal(frontend::kReceiverName);
       receiver = ReadLocal(*self, expression.location);
       target = function_ids_.at(super->second.owner + "." + super->second.member);
     } else {
@@ -86,7 +86,7 @@ Lowerer::FunctionValuePlan Lowerer::ResolveFunctionValue(const frontend::Express
       }
     }
     captures.push_back({
-        .name = "this",
+        .name = std::string(frontend::kReceiverName),
         .type = receiver->type,
         .binding = 0,
         .kind = frontend::BindingKind::Constant,

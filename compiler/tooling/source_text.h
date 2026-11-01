@@ -5,8 +5,9 @@
 #include <expected>
 #include <string>
 #include <string_view>
-#include <vector>
+#include <utility>
 
+#include "base/source_lines.h"
 #include "base/source_location.h"
 
 namespace vela::tooling {
@@ -29,8 +30,8 @@ class SourceLineIndex final {
  public:
   SourceLineIndex() = default;
   explicit SourceLineIndex(std::string_view text);
+  explicit SourceLineIndex(SourceLines lines) : lines_(std::move(lines)) {}
   void Reset(std::string_view text);
-  [[nodiscard]] std::size_t line_count() const noexcept { return lines_.size(); }
   [[nodiscard]] std::expected<std::size_t, std::string> OffsetAt(std::string_view text,
                                                                  TextPosition position,
                                                                  PositionEncoding encoding) const;
@@ -43,7 +44,7 @@ class SourceLineIndex final {
 
  private:
   [[nodiscard]] std::size_t LineEnd(std::string_view text, std::size_t line) const;
-  std::vector<std::size_t> lines_{0};
+  SourceLines lines_ = IndexSourceLines({});
 };
 
 // 编辑器文档拥有 UTF-8 文本及行索引；UTF-16 只用于协议位置转换，不改变语言字符串语义。
@@ -52,7 +53,6 @@ class SourceText final {
   SourceText() = default;
   [[nodiscard]] static std::expected<SourceText, std::string> Create(std::string text);
   [[nodiscard]] std::string_view text() const noexcept { return text_; }
-  [[nodiscard]] std::size_t line_count() const noexcept { return index_.line_count(); }
   [[nodiscard]] std::expected<std::size_t, std::string> OffsetAt(TextPosition position,
                                                                  PositionEncoding encoding) const;
   [[nodiscard]] TextPosition PositionAt(std::size_t offset, PositionEncoding encoding) const;

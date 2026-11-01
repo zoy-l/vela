@@ -10,17 +10,17 @@
 namespace vela::frontend {
 
 std::optional<std::string_view> SdkModuleSource(std::string_view identity) noexcept {
-  if (identity == "sdk:test") {
+  if (identity == kTestModuleName) {
     return internal::kTestSource;
   }
-  if (identity == "sdk:mock") {
+  if (identity == kMockModuleName) {
     return internal::kMockSource;
   }
   return std::nullopt;
 }
 
 void BindSdkDeclarations(std::string_view identity, Program& program) {
-  if (identity != "sdk:test" && identity != "sdk:mock") {
+  if (identity != kTestModuleName && identity != kMockModuleName) {
     return;
   }
   for (auto& function : program.functions) {
@@ -36,7 +36,7 @@ void BindSdkDeclarations(std::string_view identity, Program& program) {
     } else if (function.name == "_control") {
       function.intrinsic = Builtin::TestControl;
       function.native_symbol.clear();
-    } else if (identity == "sdk:mock" && function.name == "_contract") {
+    } else if (identity == kMockModuleName && function.name == "_contract") {
       function.intrinsic = Builtin::MockInspect;
       function.native_symbol.clear();
     } else if (function.name == "test" || function.name == "group") {

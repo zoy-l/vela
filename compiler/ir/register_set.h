@@ -36,9 +36,6 @@ class RegisterSet final {
       words_.at(index) &= ~other.words_.at(index);
     }
   }
-  [[nodiscard]] bool IsEmpty() const {
-    return std::ranges::all_of(words_, [](std::uint64_t word) { return word == 0; });
-  }
   void Swap(RegisterSet& other) noexcept { words_.swap(other.words_); }
   bool operator==(const RegisterSet&) const = default;
 

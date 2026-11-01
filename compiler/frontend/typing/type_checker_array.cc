@@ -125,7 +125,7 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
     AddDiagnostic(expression.location, "sort requires a comparator for this element type");
   }
   inferred->signature.return_type = method.return_type;
-  array_algorithms_.insert_or_assign(&expression, algorithm);
+  facts_.array_algorithms.insert_or_assign(&expression, algorithm);
   return CheckFunctionCall(inferred->signature, expression, inferred->arguments);
 }
 
@@ -152,7 +152,7 @@ TypeChecker::Type TypeChecker::CheckArrayMethod(const Expression& expression,
       if (builtin == Builtin::ArrayPop || builtin == Builtin::ArrayShift) {
         signature.return_type = NullableType(element);
       }
-      builtin_calls_.emplace(&expression, builtin);
+      facts_.builtin_calls.emplace(&expression, builtin);
       return CheckFunctionCall(signature, expression);
     }
   }

@@ -346,7 +346,7 @@ TEST(NativeHostTest, FutureCompositionExecutesNativeCallbacksUnderGcAfterInstanc
     auto* future = Heap::GetFuture(*value.AsObject());
     ASSERT_NE(future, nullptr);
     while (future->is_pending()) {
-      ASSERT_TRUE(isolate.scheduler().PumpOne());
+      ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);
       isolate.heap().Collect();
     }
     SCOPED_TRACE(CompositionDiagnostic(*future));
@@ -365,7 +365,7 @@ TEST(NativeHostTest, RepeatedAwaitAllocatesOneResultFuturePerActivation) {
   NativeValue output;
   ASSERT_EQ(Execute(COMPOSITION_ENTRY, execution, arguments, output), ExecutionStatus::Returned);
   auto future = Heap::GetFuture(*DecodeNativeValue(output).AsObject())->Rooted();
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(future));
+  ASSERT_EQ(isolate.scheduler().PumpUntil(future), FuturePumpResult::Completed);
   EXPECT_EQ(future.value()->AsInteger(), 42);
   // 64 个 awaited Future + 整次函数调用的一个结果 Future；没有恢复转接 Future。
   EXPECT_EQ(isolate.heap().object_count() - baseline, 65U);
@@ -383,7 +383,7 @@ TEST(NativeHostTest, CompositionRetainsCallbackFutureAcrossHostCompletionAndGc) 
   const std::array arguments{Integer(30)};
   ASSERT_NO_FATAL_FAILURE(StartReleasedTask(isolate, *COMPOSITION_IMAGE(), COMPOSITION_ENTRY,
                                            arguments, value));
-  ASSERT_TRUE(isolate.scheduler().PumpOne());
+  ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);
   ActiveProducer() = nullptr;
   isolate.heap().Collect();
   auto* future = Heap::GetFuture(*value.AsObject());
@@ -404,7 +404,7 @@ TEST(NativeHostTest, UnreachableCompositionGraphsReleaseCallbacksAndSuspensions)
       const std::array arguments{Integer(operation)};
       NativeValue output;
       ASSERT_EQ(Execute(COMPOSITION_ENTRY, execution, arguments, output), ExecutionStatus::Returned);
-      if (operation == 32 || operation == 47) { ASSERT_TRUE(isolate.scheduler().PumpOne()); }
+      if (operation == 32 || operation == 47) { ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed); }
       EXPECT_GT(isolate.scheduler().suspended_frame_count(), 0U);
     }
     isolate.heap().Collect();
@@ -426,7 +426,7 @@ TEST(NativeHostTest, DiscardedComputationStillExecutesQueuedNativeSideEffects) {
                                              arguments, discarded));
   }
   isolate.heap().Collect();
-  ASSERT_TRUE(isolate.scheduler().PumpOne());
+  ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);
   EXPECT_EQ(composition_effects, 42);
   isolate.heap().Collect();
   EXPECT_EQ(isolate.heap().object_count(), baseline);

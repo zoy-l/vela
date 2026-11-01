@@ -125,6 +125,7 @@ std::optional<TypeName> Parser::ParseTypeBody() {
       return std::nullopt;
     }
     result.name = std::move(*name);
+    result.kind = TypeName::Kind::Named;
     if (Check(TokenKind::Less)) {
       result.kind = TypeName::Kind::Generic;
       result.arguments = ParseTypeArguments();
@@ -149,7 +150,7 @@ std::optional<TypeName> Parser::ParseTypeSuffixes(TypeName result, std::size_t d
       for (int repeat = 0; repeat < 2; ++repeat) {
         ++depth;
         TypeName wrapper{
-            .name = result.name + "?",
+            .name = {},
             .location = result.location,
             .kind = TypeName::Kind::Nullable,
             .arguments = {},
@@ -167,7 +168,7 @@ std::optional<TypeName> Parser::ParseTypeSuffixes(TypeName result, std::size_t d
       return std::nullopt;
     }
     TypeName wrapper{
-        .name = result.name + (kind == TypeName::Kind::Array ? "[]" : "?"),
+        .name = {},
         .location = result.location,
         .kind = kind,
         .arguments = {},
@@ -201,16 +202,11 @@ std::optional<TypeName> Parser::ParseParenthesizedType() {
   result.location = Previous().location;
   std::size_t depth = 1;
   result.kind = TypeName::Kind::Function;
-  result.name = "(";
   while (!Check(TokenKind::RightParen) && !IsAtEnd()) {
     auto parameter = ParseType();
     if (!parameter) {
       return std::nullopt;
     }
-    if (!result.arguments.empty()) {
-      result.name += ", ";
-    }
-    result.name += parameter->name;
     result.arguments.push_back(std::move(*parameter));
     depth = std::max(depth, last_type_depth_ + 1);
     if (!Match(TokenKind::Comma)) {
@@ -225,7 +221,6 @@ std::optional<TypeName> Parser::ParseParenthesizedType() {
     if (!returned) {
       return std::nullopt;
     }
-    result.name += ") => " + returned->name;
     result.arguments.push_back(std::move(*returned));
     depth = std::max(depth, last_type_depth_ + 1);
   } else if (result.arguments.size() == 1) {

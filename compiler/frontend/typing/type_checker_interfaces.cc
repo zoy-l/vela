@@ -1,5 +1,6 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_checker.h"
 
 #include <cstddef>
@@ -48,19 +49,21 @@ bool TypeChecker::IsMatchingGenericSignature(const Function& implementation,
     if (bound.has_value() != target.has_value()) {
       return false;
     }
-    if (bound && !IsSameType(ResolveType(SubstituteTypeName(*bound, substitutions), true),
-                             ResolveType(*target, true))) {
+    if (bound &&
+        !IsSameType(ResolveType(SubstituteTypeName(*bound, substitutions), VoidTypePolicy::Allowed),
+                    ResolveType(*target, VoidTypePolicy::Allowed))) {
       return false;
     }
   }
   FunctionInfo actual;
   actual.visibility = implementation.visibility;
   actual.storage = implementation.storage;
-  actual.return_type =
-      ResolveType(SubstituteTypeName(implementation.return_type, substitutions), true);
+  actual.return_type = ResolveType(SubstituteTypeName(implementation.return_type, substitutions),
+                                   VoidTypePolicy::Allowed);
   for (const auto& parameter : implementation.parameters) {
-    actual.AddParameter(parameter.name,
-                        ResolveType(SubstituteTypeName(parameter.type, substitutions), false));
+    actual.AddParameter(
+        parameter.name,
+        ResolveType(SubstituteTypeName(parameter.type, substitutions), VoidTypePolicy::Forbidden));
   }
   return MatchesImplementationSignature(actual, ResolveSignature(signature));
 }

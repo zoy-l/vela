@@ -16,10 +16,9 @@
 #include "base/builtin.h"
 #include "compiler/frontend/builtins/builtins.h"
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/syntax/lexer.h"
 #include "compiler/frontend/syntax/parser.h"
 #include "compiler/frontend/syntax/token.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/tooling/semantic/semantic_syntax.h"
 
 namespace vela::tooling {
@@ -103,10 +102,12 @@ const Token& ArgumentEnd(std::span<const Token> arguments) {
   return arguments.back();
 }
 
-std::string ArgumentSource(std::string_view source,
+std::string ArgumentSource(const frontend::SourceSnapshot& snapshot,
                            std::span<const Token> arguments,
                            const Token& opening,
                            std::size_t offset) {
+  const auto source = std::string_view(snapshot.text);
+  const auto& tokens = snapshot.tokens;
   const auto& end = ArgumentEnd(arguments);
   const auto suffix = end.offset + (end.kind == TokenKind::RightParen ? end.length : 0);
   const auto begin = opening.offset + opening.length;
@@ -121,8 +122,16 @@ std::string ArgumentSource(std::string_view source,
   text += source.substr(suffix);
   // 实参尚未输入时也构造真正的 Call AST；实参错误不应阻止展示声明契约。
   std::vector<TokenKind> closing;
-  for (const auto& token : frontend::Lexer(text).Tokenize().tokens) {
-    TrackDelimiter(closing, token.kind, ArgumentClosing(token));
+  for (const auto& token : tokens) {
+    if (token.offset < begin) {
+      TrackDelimiter(closing, token.kind, ArgumentClosing(token));
+    }
+  }
+  TrackDelimiter(closing, TokenKind::RightParen, std::nullopt);
+  for (const auto& token : tokens) {
+    if (token.offset >= suffix) {
+      TrackDelimiter(closing, token.kind, ArgumentClosing(token));
+    }
   }
   for (const auto kind : std::views::reverse(closing)) {
     if (kind == TokenKind::RightBrace) {
@@ -137,18 +146,7 @@ std::string ArgumentSource(std::string_view source,
 }
 
 bool IsStringText(const Token& token, std::size_t offset) {
-  if (offset >= token.offset + token.length) {
-    return false;
-  }
-  switch (token.kind) {
-    case TokenKind::StringLiteral:
-    case TokenKind::StringHead:
-    case TokenKind::StringMiddle:
-    case TokenKind::StringTail:
-      return true;
-    default:
-      return false;
-  }
+  return offset < token.offset + token.length && frontend::IsStringToken(token.kind);
 }
 
 std::optional<std::vector<std::size_t>> ArgumentOpenings(const std::vector<Token>& tokens,
@@ -240,17 +238,16 @@ std::optional<ArgumentCompletionQuery> ReadArgumentSlots(std::span<const Token> 
 
 }  // namespace
 
-std::optional<ArgumentCompletionQuery> PrepareArgumentCompletion(std::string_view source,
-                                                                 std::size_t offset) {
-  auto lexed = frontend::Lexer(source, 0, frontend::CommentRetention::Preserve).Tokenize();
-  for (const auto& comment : lexed.comments) {
+std::optional<ArgumentCompletionQuery> PrepareArgumentCompletion(
+    const frontend::SourceSnapshot& snapshot,
+    std::size_t offset) {
+  for (const auto& comment : snapshot.comments) {
     if (offset >= comment.offset && offset <= comment.offset + comment.length) {
       return std::nullopt;
     }
   }
-  // 复用 parser 的泛型标记，比较运算中的逗号不能误作类型实参。
-  static_cast<void>(frontend::Parser(lexed.tokens).Parse());
-  const auto& tokens = lexed.tokens;
+  // 快照已保留 parser 的泛型标记，比较运算中的逗号不能误作类型实参。
+  const auto& tokens = snapshot.tokens;
   const auto opening = ArgumentOpenings(tokens, offset);
   if (!opening || opening->empty()) {
     return std::nullopt;
@@ -266,7 +263,7 @@ std::optional<ArgumentCompletionQuery> PrepareArgumentCompletion(std::string_vie
   }
   auto query = ReadArgumentSlots(std::span(tokens).subspan(start + 1), offset);
   if (query) {
-    query->source = ArgumentSource(source, std::span(tokens).subspan(start + 1), open, offset);
+    query->source = ArgumentSource(snapshot, std::span(tokens).subspan(start + 1), open, offset);
     query->callee_offset = tokens.at(*callee).offset;
   }
   return query;

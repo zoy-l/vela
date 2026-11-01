@@ -1,5 +1,5 @@
 #include "compiler/frontend/syntax/ast.h"
-#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/semantic_model.h"
 #include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/lowerer.h"
@@ -9,135 +9,34 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 
 #include "base/async_operation.h"
 #include "base/builtin.h"
-#include "base/member.h"
+#include "compiler/frontend/builtins/async_builtins.h"
 
 namespace vela::ir {
 
 void Lowerer::RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std::string_view name) {
   using Kind = frontend::TypeDescriptor::Kind;
-  struct Member final {
-    Kind receiver = Kind::Invalid;
-    std::string_view name;
-    AsyncOperation operation = AsyncOperation::Count;
-    MemberKind kind = MemberKind::Method;
-    std::string_view first;
-    std::string_view second;
-  };
-  static constexpr auto kMembers = std::to_array<Member>({
-      {
-          .receiver = Kind::Future,
-          .name = "then",
-          .operation = AsyncOperation::Then,
-          .kind = MemberKind::Method,
-          .first = "onValue",
-          .second = "onError",
-      },
-      {
-          .receiver = Kind::Future,
-          .name = "catchError",
-          .operation = AsyncOperation::CatchError,
-          .kind = MemberKind::Method,
-          .first = "onError",
-          .second = {},
-      },
-      {
-          .receiver = Kind::Future,
-          .name = "whenComplete",
-          .operation = AsyncOperation::WhenComplete,
-          .kind = MemberKind::Method,
-          .first = "action",
-          .second = {},
-      },
-      {
-          .receiver = Kind::Future,
-          .name = "timeout",
-          .operation = AsyncOperation::Timeout,
-          .kind = MemberKind::Method,
-          .first = "milliseconds",
-          .second = "onTimeout",
-      },
-      {
-          .receiver = Kind::Completer,
-          .name = "future",
-          .operation = AsyncOperation::CompleterFuture,
-          .kind = MemberKind::Property,
-          .first = {},
-          .second = {},
-      },
-      {
-          .receiver = Kind::Completer,
-          .name = "isCompleted",
-          .operation = AsyncOperation::CompleterIsCompleted,
-          .kind = MemberKind::Property,
-          .first = {},
-          .second = {},
-      },
-      {
-          .receiver = Kind::Completer,
-          .name = "complete",
-          .operation = AsyncOperation::CompleterComplete,
-          .kind = MemberKind::Method,
-          .first = "value",
-          .second = {},
-      },
-      {
-          .receiver = Kind::Completer,
-          .name = "completeError",
-          .operation = AsyncOperation::CompleterError,
-          .kind = MemberKind::Method,
-          .first = "error",
-          .second = {},
-      },
-      {
-          .receiver = Kind::Timer,
-          .name = "cancel",
-          .operation = AsyncOperation::TimerCancel,
-          .kind = MemberKind::Method,
-          .first = {},
-          .second = {},
-      },
-      {
-          .receiver = Kind::CancellationToken,
-          .name = "cancel",
-          .operation = AsyncOperation::CancellationCancel,
-          .kind = MemberKind::Method,
-          .first = {},
-          .second = {},
-      },
-      {
-          .receiver = Kind::CancellationToken,
-          .name = "isCancelled",
-          .operation = AsyncOperation::CancellationIsCancelled,
-          .kind = MemberKind::Property,
-          .first = {},
-          .second = {},
-      },
-  });
-  const auto member = std::ranges::find_if(kMembers, [&receiver, name](const auto& entry) {
-    return entry.receiver == receiver.kind && entry.name == name;
-  });
-  if (member == kMembers.end()) {
+  const auto* member =
+      frontend::FindAsyncMember(receiver.kind, frontend::MemberStorage::Instance, name);
+  if (member == nullptr) {
     return;
   }
   const auto operation = member->operation;
-  frontend::FunctionDescriptor signature;
   const frontend::TypeDescriptor dynamic{.kind = Kind::Dynamic, .name = frontend::kDynamicTypeName};
-  signature.return_type = dynamic;
-  using ParameterPresence = frontend::FunctionDescriptor::ParameterPresence;
-  if (!member->first.empty()) {
-    const bool optional = operation == AsyncOperation::CompleterComplete &&
-                          model_.generic_arguments.at(receiver.name).front().kind == Kind::Void;
-    signature.AddParameter(std::string(member->first), dynamic,
-                           optional ? ParameterPresence::Optional : ParameterPresence::Required);
-  }
-  if (!member->second.empty()) {
-    signature.AddParameter(std::string(member->second), dynamic, ParameterPresence::Optional);
+  const std::array parameters{dynamic, dynamic};
+  const auto count = std::ranges::count_if(
+      member->parameters, [](std::string_view parameter) { return !parameter.empty(); });
+  auto signature =
+      frontend::MakeAsyncSignature(*member, dynamic, std::span(parameters).first(count));
+  if (operation == AsyncOperation::CompleterComplete &&
+      model_.generic_arguments.at(receiver.name).front().kind == Kind::Void) {
+    signature.optional_parameters.insert(std::string(member->parameters.at(0)));
   }
   auto function = CreateMemberFunction(receiver, name, signature);
   current_function_ = &function;

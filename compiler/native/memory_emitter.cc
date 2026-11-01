@@ -1,10 +1,12 @@
 #include "base/native_program_mode.h"
 #include "compiler/native/function_emitter.h"
+#include "runtime/native/native_symbols.h"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 
 #include <llvm/ADT/APInt.h>
 #include <llvm/IR/BasicBlock.h>
@@ -71,15 +73,21 @@ llvm::Value* FunctionEmitter::ByteAddress(llvm::Value* object, std::uint64_t off
 }
 
 llvm::MDNode* FunctionEmitter::MemoryTag(MemoryRegion region) {
+  auto*& tag = memory_tags_.at(static_cast<std::size_t>(region));
+  if (tag != nullptr) {
+    return tag;
+  }
   constexpr std::array kNames{
       "heap header",  "class layout",   "field cache",    "instance header",
       "field states", "managed values", "array elements", "global cache",
       "shadow roots", "GC state",       "field payloads", "field kinds",
   };
+  static_assert(kNames.size() == static_cast<std::size_t>(MemoryRegion::Count));
   llvm::MDBuilder metadata(module_.getContext());
   auto* root = metadata.createTBAARoot("Vela native storage");
   auto* type = metadata.createTBAAScalarTypeNode(kNames.at(static_cast<std::size_t>(region)), root);
-  return metadata.createTBAAStructTagNode(type, type, 0);
+  tag = metadata.createTBAAStructTagNode(type, type, 0);
+  return tag;
 }
 
 llvm::LoadInst* FunctionEmitter::LoadMemory(llvm::Type* type,
@@ -208,22 +216,25 @@ void FunctionEmitter::EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg) 
   auto* phase =
       LoadMemory(builder_.getInt8Ty(), ByteAddress(state, offsetof(runtime::GcBarrierState, phase)),
                  MemoryRegion::GcState);
+  auto* active = builder_.CreateICmpNE(
+      phase, builder_.getInt8(static_cast<std::uint8_t>(runtime::GcPhase::Idle)));
+  auto* inspect = llvm::BasicBlock::Create(module_.getContext(), "write.inspect", body_);
+  auto* target = llvm::BasicBlock::Create(module_.getContext(), "write.target", body_);
+  auto* barrier = llvm::BasicBlock::Create(module_.getContext(), "write.barrier", body_);
+  auto* written = llvm::BasicBlock::Create(module_.getContext(), "write.done", body_);
+  builder_.CreateCondBr(builder_.CreateAnd(reference, active), inspect, written,
+                        llvm::MDBuilder(module_.getContext()).createUnlikelyBranchWeights());
+  builder_.SetInsertPoint(inspect);
+  // Idle 和非引用存储不访问对象标记位。
   auto* mark = LoadMemory(builder_.getInt8Ty(),
                           ByteAddress(state, offsetof(runtime::GcBarrierState, mark_bit)),
                           MemoryRegion::GcState);
   auto* source_mark =
       LoadMemory(builder_.getInt8Ty(), ByteAddress(object, NativeMemoryLayout::kObjectMarkBit),
                  MemoryRegion::HeapHeader);
-  auto* active = builder_.CreateICmpNE(
-      phase, builder_.getInt8(static_cast<std::uint8_t>(runtime::GcPhase::Idle)));
-  auto* required = builder_.CreateAnd(
-      reference, builder_.CreateAnd(active, builder_.CreateICmpEQ(source_mark, mark)));
-  auto* inspect = llvm::BasicBlock::Create(module_.getContext(), "write.inspect", body_);
-  auto* barrier = llvm::BasicBlock::Create(module_.getContext(), "write.barrier", body_);
-  auto* written = llvm::BasicBlock::Create(module_.getContext(), "write.done", body_);
-  builder_.CreateCondBr(required, inspect, written,
+  builder_.CreateCondBr(builder_.CreateICmpEQ(source_mark, mark), target, written,
                         llvm::MDBuilder(module_.getContext()).createUnlikelyBranchWeights());
-  builder_.SetInsertPoint(inspect);
+  builder_.SetInsertPoint(target);
   // 非空引用守卫支配 header 读取；dynamic 可以携带 Object(nullptr) 或 String(nullptr)。
   // Mark 阶段的灰对象会继续扫描；Sweep 在返回脚本前已排空灰队列。
   auto* target_mark =
@@ -233,7 +244,7 @@ void FunctionEmitter::EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg) 
                         llvm::MDBuilder(module_.getContext()).createUnlikelyBranchWeights());
   builder_.SetInsertPoint(barrier);
   auto helper =
-      module_.getOrInsertFunction("vela_native_v1_write_barrier", builder_.getVoidTy(),
+      module_.getOrInsertFunction(runtime::kNativeWriteBarrierSymbol, builder_.getVoidTy(),
                                   builder_.getPtrTy(), builder_.getPtrTy(), builder_.getPtrTy());
   builder_.CreateCall(helper, {body_->getArg(0), object, Pack(encoded, 0)});
   builder_.CreateBr(written);
@@ -270,15 +281,68 @@ void FunctionEmitter::EmitField(const ir::Instruction& instruction) {
     if (program_.native_mode == NativeProgramMode::Reloadable && instruction.index == 0 &&
         source_.value_types.at(instruction.dst).kind == Kind::Function) {
       auto helper =
-          module_.getOrInsertFunction("vela_native_v3_capture_receiver", builder_.getInt8Ty(),
+          module_.getOrInsertFunction(runtime::kNativeCaptureReceiverSymbol, builder_.getInt8Ty(),
                                       builder_.getPtrTy(), builder_.getPtrTy());
       CheckStatus(builder_.CreateCall(helper, {body_->getArg(0), object}));
     }
   }
 }
 
-void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, llvm::Value* object) {
+llvm::BasicBlock* FunctionEmitter::EmitFieldReadiness(llvm::Value* storage,
+                                                      const ir::Instruction& instruction,
+                                                      llvm::Value* slot,
+                                                      std::optional<std::uint32_t> count,
+                                                      llvm::BasicBlock* unavailable) {
   using runtime::FieldState;
+  using runtime::InstanceStorage;
+  auto& context = module_.getContext();
+  auto* ready = llvm::BasicBlock::Create(context, "field.ready", body_);
+  auto* inspect = llvm::BasicBlock::Create(context, "field.inspect", body_);
+  auto* unready_address = ByteAddress(storage, offsetof(InstanceStorage, unready));
+  auto* unready = LoadMemory(builder_.getInt32Ty(), unready_address, MemoryRegion::InstanceHeader);
+  builder_.CreateCondBr(builder_.CreateICmpEQ(unready, builder_.getInt32(0)), ready, inspect,
+                        llvm::MDBuilder(context).createLikelyBranchWeights());
+  builder_.SetInsertPoint(inspect);
+  llvm::Value* physical_count = nullptr;
+  if (count) {
+    physical_count = builder_.getInt32(*count);
+  } else {
+    physical_count =
+        LoadMemory(builder_.getInt32Ty(), ByteAddress(storage, offsetof(InstanceStorage, count)),
+                   MemoryRegion::InstanceHeader);
+  }
+  auto* state_offset = builder_.CreateMul(
+      builder_.CreateZExt(physical_count, builder_.getInt64Ty()),
+      builder_.getInt64(runtime::FieldStorage::kPayloadBytes + runtime::FieldStorage::kKindBytes));
+  auto* states = builder_.CreateGEP(builder_.getInt8Ty(),
+                                    ByteAddress(storage, sizeof(InstanceStorage)), state_offset);
+  auto* state_address = builder_.CreateGEP(builder_.getInt8Ty(), states,
+                                           builder_.CreateZExt(slot, builder_.getInt64Ty()));
+  auto* state = LoadMemory(builder_.getInt8Ty(), state_address, MemoryRegion::FieldStates);
+  const auto reading = instruction.opcode == Opcode::GetField;
+  auto* initialize =
+      reading ? unavailable : llvm::BasicBlock::Create(context, "field.initialize", body_);
+  builder_.CreateCondBr(
+      builder_.CreateICmpEQ(state, builder_.getInt8(static_cast<std::uint8_t>(FieldState::Ready))),
+      ready, initialize, llvm::MDBuilder(context).createLikelyBranchWeights());
+  if (!reading) {
+    builder_.SetInsertPoint(initialize);
+    auto* available = llvm::BasicBlock::Create(context, "field.available", body_);
+    builder_.CreateCondBr(
+        builder_.CreateICmpEQ(
+            state, builder_.getInt8(static_cast<std::uint8_t>(FieldState::Uninitialized))),
+        available, unavailable, llvm::MDBuilder(context).createLikelyBranchWeights());
+    builder_.SetInsertPoint(available);
+    StoreMemory(builder_.CreateNUWSub(unready, builder_.getInt32(1)), unready_address,
+                MemoryRegion::InstanceHeader);
+    StoreMemory(builder_.getInt8(static_cast<std::uint8_t>(FieldState::Ready)), state_address,
+                MemoryRegion::FieldStates);
+    builder_.CreateBr(ready);
+  }
+  return ready;
+}
+
+void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, llvm::Value* object) {
   using runtime::InstanceStorage;
   using runtime::NativeFieldCache;
   using runtime::NativeMemoryLayout;
@@ -289,7 +353,7 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
   if (!reading &&
       (canonical.opcode != instruction.opcode || canonical.field_declaration != field)) {
     auto helper = module_.getOrInsertFunction(
-        "vela_native_v7_store_materialized_field", builder_.getInt8Ty(), builder_.getPtrTy(),
+        runtime::kNativeStoreMaterializedFieldSymbol, builder_.getInt8Ty(), builder_.getPtrTy(),
         builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getPtrTy());
     CheckStatus(builder_.CreateCall(helper, {
                                                 body_->getArg(0),
@@ -319,7 +383,6 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
   auto* matches = builder_.CreateICmpEQ(layout_id, cached_id);
   auto& context = module_.getContext();
   auto* cached = llvm::BasicBlock::Create(context, "field.cached", body_);
-  auto* ready = llvm::BasicBlock::Create(context, "field.ready", body_);
   auto* resolve = llvm::BasicBlock::Create(context, "field.resolve", body_);
   auto* done = llvm::BasicBlock::Create(context, "field.done", body_);
   builder_.CreateCondBr(matches, cached, resolve,
@@ -336,43 +399,7 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
       LoadMemory(builder_.getPtrTy(), ByteAddress(object, NativeMemoryLayout::kObjectNativePayload),
                  MemoryRegion::HeapHeader);
   auto* values = ByteAddress(storage, sizeof(InstanceStorage));
-  auto* unready_address = ByteAddress(storage, offsetof(InstanceStorage, unready));
-  auto* unready = LoadMemory(builder_.getInt32Ty(), unready_address, MemoryRegion::InstanceHeader);
-  auto* inspect = llvm::BasicBlock::Create(context, "field.inspect", body_);
-  builder_.CreateCondBr(builder_.CreateICmpEQ(unready, builder_.getInt32(0)), ready, inspect,
-                        llvm::MDBuilder(context).createLikelyBranchWeights());
-  builder_.SetInsertPoint(inspect);
-  auto* count =
-      LoadMemory(builder_.getInt32Ty(), ByteAddress(storage, offsetof(InstanceStorage, count)),
-                 MemoryRegion::InstanceHeader);
-  auto* state_offset = builder_.CreateMul(
-      builder_.CreateZExt(count, builder_.getInt64Ty()),
-      builder_.getInt64(runtime::FieldStorage::kPayloadBytes + runtime::FieldStorage::kKindBytes));
-  auto* states = builder_.CreateGEP(builder_.getInt8Ty(), values, state_offset);
-  auto* wide_slot = builder_.CreateZExt(slot, builder_.getInt64Ty());
-  auto* state_address = builder_.CreateGEP(builder_.getInt8Ty(), states, wide_slot);
-  auto* state = LoadMemory(builder_.getInt8Ty(), state_address, MemoryRegion::FieldStates);
-  auto* initialized =
-      builder_.CreateICmpEQ(state, builder_.getInt8(static_cast<std::uint8_t>(FieldState::Ready)));
-  auto* initialize =
-      reading ? resolve : llvm::BasicBlock::Create(context, "field.initialize", body_);
-  builder_.CreateCondBr(initialized, ready, initialize,
-                        llvm::MDBuilder(context).createLikelyBranchWeights());
-  if (!reading) {
-    builder_.SetInsertPoint(initialize);
-    auto* available = llvm::BasicBlock::Create(context, "field.available", body_);
-    builder_.CreateCondBr(
-        builder_.CreateICmpEQ(
-            state, builder_.getInt8(static_cast<std::uint8_t>(FieldState::Uninitialized))),
-        available, resolve, llvm::MDBuilder(context).createLikelyBranchWeights());
-    builder_.SetInsertPoint(available);
-    StoreMemory(builder_.CreateNUWSub(unready, builder_.getInt32(1)), unready_address,
-                MemoryRegion::InstanceHeader);
-    StoreMemory(builder_.getInt8(static_cast<std::uint8_t>(FieldState::Ready)), state_address,
-                MemoryRegion::FieldStates);
-    builder_.CreateBr(ready);
-  }
-  builder_.SetInsertPoint(ready);
+  builder_.SetInsertPoint(EmitFieldReadiness(storage, instruction, slot, std::nullopt, resolve));
   // 全部字段就绪后不再读取或写入逐字段状态，直到发布替换整个字段块。
   const auto address = FieldAddress(values, *slot, kind_offset);
   if (reading) {
@@ -389,9 +416,9 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
     PrepareRuntimeCall();
   }
   auto helper = module_.getOrInsertFunction(
-      reading ? "vela_native_v3_load_field" : "vela_native_v3_store_field", builder_.getInt8Ty(),
-      builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt64Ty(), builder_.getInt64Ty(),
-      builder_.getPtrTy());
+      reading ? runtime::kNativeLoadFieldSymbol : runtime::kNativeStoreFieldSymbol,
+      builder_.getInt8Ty(), builder_.getPtrTy(), builder_.getPtrTy(), builder_.getInt64Ty(),
+      builder_.getInt64Ty(), builder_.getPtrTy());
   const auto access = runtime::EncodeNativeTracePosition(
       {.function = static_cast<std::uint32_t>(function_index_), .instruction = access_index});
   auto* value = reading ? result_ : Pack(Encode(instruction.lhs), 0);
@@ -411,7 +438,6 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
 }
 
 void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llvm::Value* object) {
-  using runtime::FieldState;
   using runtime::InstanceStorage;
   using runtime::NativeMemoryLayout;
   const auto& direct = field_layouts_.at(*instruction.field_declaration);
@@ -420,7 +446,6 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
       LoadMemory(builder_.getPtrTy(), ByteAddress(object, NativeMemoryLayout::kObjectLayout),
                  MemoryRegion::HeapHeader);
   auto* matched = llvm::BasicBlock::Create(context, "field.matched", body_);
-  auto* ready = llvm::BasicBlock::Create(context, "field.ready", body_);
   auto* recover = llvm::BasicBlock::Create(context, "field.recover", body_);
   builder_.CreateCondBr(builder_.CreateICmpEQ(layout, direct.layout), matched, recover,
                         llvm::MDBuilder(context).createLikelyBranchWeights());
@@ -428,36 +453,8 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
   auto* storage =
       LoadMemory(builder_.getPtrTy(), ByteAddress(object, NativeMemoryLayout::kObjectNativePayload),
                  MemoryRegion::HeapHeader);
-  auto* unready_address = ByteAddress(storage, offsetof(InstanceStorage, unready));
-  auto* unready = LoadMemory(builder_.getInt32Ty(), unready_address, MemoryRegion::InstanceHeader);
-  auto* inspect = llvm::BasicBlock::Create(context, "field.inspect", body_);
-  builder_.CreateCondBr(builder_.CreateICmpEQ(unready, builder_.getInt32(0)), ready, inspect,
-                        llvm::MDBuilder(context).createLikelyBranchWeights());
-  builder_.SetInsertPoint(inspect);
-  auto* state_address =
-      ByteAddress(storage, sizeof(InstanceStorage) + runtime::FieldStorage::Size(direct.count) +
-                               (direct.slot * sizeof(FieldState)));
-  auto* state = LoadMemory(builder_.getInt8Ty(), state_address, MemoryRegion::FieldStates);
-  const auto reading = instruction.opcode == Opcode::GetField;
-  auto* initialize =
-      reading ? recover : llvm::BasicBlock::Create(context, "field.initialize", body_);
-  builder_.CreateCondBr(
-      builder_.CreateICmpEQ(state, builder_.getInt8(static_cast<std::uint8_t>(FieldState::Ready))),
-      ready, initialize, llvm::MDBuilder(context).createLikelyBranchWeights());
-  if (!reading) {
-    builder_.SetInsertPoint(initialize);
-    auto* available = llvm::BasicBlock::Create(context, "field.available", body_);
-    builder_.CreateCondBr(
-        builder_.CreateICmpEQ(
-            state, builder_.getInt8(static_cast<std::uint8_t>(FieldState::Uninitialized))),
-        available, recover, llvm::MDBuilder(context).createLikelyBranchWeights());
-    builder_.SetInsertPoint(available);
-    StoreMemory(builder_.CreateNUWSub(unready, builder_.getInt32(1)), unready_address,
-                MemoryRegion::InstanceHeader);
-    StoreMemory(builder_.getInt8(static_cast<std::uint8_t>(FieldState::Ready)), state_address,
-                MemoryRegion::FieldStates);
-    builder_.CreateBr(ready);
-  }
+  auto* ready = EmitFieldReadiness(storage, instruction, builder_.getInt32(direct.slot),
+                                   direct.count, recover);
   builder_.SetInsertPoint(recover);
   // 不执行当前读写；保存规范输入后由基线处理布局变化、惰性初始化和精确异常。
   // 冷路径直接退出当前机器帧，成功路径间不再汇合可能修改堆存储的运行时调用。
@@ -466,6 +463,7 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
   StoreCheckpoint();
   Recover();
   builder_.SetInsertPoint(ready);
+  const auto reading = instruction.opcode == Opcode::GetField;
   const auto address =
       FieldAddress(ByteAddress(storage, sizeof(InstanceStorage)), *builder_.getInt32(direct.slot),
                    builder_.getInt64(runtime::FieldStorage::KindOffset(direct.count, direct.slot)));
@@ -476,14 +474,6 @@ void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llv
     WriteStoredValue(address, instruction.lhs);
     EmitWriteBarrier(object, instruction.lhs);
   }
-}
-
-llvm::Value* FunctionEmitter::ProgramData() {
-  using runtime::NativeMemoryLayout;
-  auto* pointer = builder_.getPtrTy();
-  auto* instance = builder_.CreateLoad(
-      pointer, ByteAddress(body_->getArg(0), NativeMemoryLayout::kExecutionInstance));
-  return builder_.CreateLoad(pointer, ByteAddress(instance, NativeMemoryLayout::kInstanceData));
 }
 
 void FunctionEmitter::EmitGlobal(const ir::Instruction& instruction) {
@@ -502,8 +492,9 @@ void FunctionEmitter::EmitReloadableGlobal(const ir::Instruction& instruction) {
   using runtime::NativeGlobalCache;
   using runtime::NativeMemoryLayout;
   const bool reading = instruction.opcode == Opcode::GetGlobal;
-  auto* caches = builder_.CreateLoad(
-      builder_.getPtrTy(), ByteAddress(ProgramData(), NativeMemoryLayout::kProgramGlobalCaches));
+  auto* caches = builder_.CreateLoad(builder_.getPtrTy(),
+                                     ByteAddress(LoadProgramData(builder_, body_->getArg(0)),
+                                                 NativeMemoryLayout::kProgramGlobalCaches));
   auto* cache = ByteAddress(caches, instruction.index * sizeof(NativeGlobalCache));
   auto* epoch_address =
       LoadMemory(builder_.getPtrTy(), ByteAddress(cache, offsetof(NativeGlobalCache, epoch)),
@@ -553,22 +544,22 @@ void FunctionEmitter::EmitReloadableGlobal(const ir::Instruction& instruction) {
   builder_.CreateBr(done);
   builder_.SetInsertPoint(resolve);
   if (reading) {
-    if (!NeedsBoundaryPoll(instruction_index_)) {
+    if (!IsBoundaryPollRequired(instruction_index_)) {
       Poll();
     }
     PrepareRuntimeCall();
-    auto helper = module_.getOrInsertFunction("vela_native_v10_load_global", builder_.getInt8Ty(),
-                                              builder_.getPtrTy(), builder_.getInt32Ty(),
-                                              builder_.getPtrTy());
+    auto helper = module_.getOrInsertFunction(runtime::kNativeLoadGlobalSymbol,
+                                              builder_.getInt8Ty(), builder_.getPtrTy(),
+                                              builder_.getInt32Ty(), builder_.getPtrTy());
     CompleteCall(builder_.CreateCall(
                      helper, {body_->getArg(0), builder_.getInt32(instruction.index), result_}),
                  instruction.dst);
     PollAfterRuntimeCall();
   } else {
     // 赋值不执行初始化器，也不增加安全点；缓存失效时只解析当前版本槽并完成写入。
-    auto helper = module_.getOrInsertFunction("vela_native_v10_store_global", builder_.getInt8Ty(),
-                                              builder_.getPtrTy(), builder_.getInt32Ty(),
-                                              builder_.getPtrTy());
+    auto helper = module_.getOrInsertFunction(runtime::kNativeStoreGlobalSymbol,
+                                              builder_.getInt8Ty(), builder_.getPtrTy(),
+                                              builder_.getInt32Ty(), builder_.getPtrTy());
     CheckStatus(builder_.CreateCall(helper, {
                                                 body_->getArg(0),
                                                 builder_.getInt32(instruction.index),
@@ -583,7 +574,7 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
   using runtime::NativeMemoryLayout;
   auto* pointer = builder_.getPtrTy();
   auto* execution = body_->getArg(0);
-  auto* data = ProgramData();
+  auto* data = LoadProgramData(builder_, body_->getArg(0));
   auto* states =
       builder_.CreateLoad(pointer, ByteAddress(data, NativeMemoryLayout::kProgramGlobalStates));
   auto* state = builder_.CreateLoad(builder_.getInt8Ty(), ByteAddress(states, instruction.index));
@@ -608,7 +599,7 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
   builder_.SetInsertPoint(initialize);
   // 惰性初始化、循环初始化与失败重试仍由状态所有者处理。
   PrepareRuntimeCall();
-  auto helper = module_.getOrInsertFunction("vela_native_v2_initialize_global",
+  auto helper = module_.getOrInsertFunction(runtime::kNativeInitializeGlobalSymbol,
                                             builder_.getInt8Ty(), pointer, builder_.getInt32Ty(),
                                             builder_.getInt64Ty(), builder_.getInt8Ty(), pointer);
   const auto frame_kind =
@@ -629,7 +620,7 @@ void FunctionEmitter::EmitGlobalLoad(const ir::Instruction& instruction) {
 void FunctionEmitter::EmitGlobalStore(const ir::Instruction& instruction) {
   using runtime::NativeMemoryLayout;
   auto* pointer = builder_.getPtrTy();
-  auto* data = ProgramData();
+  auto* data = LoadProgramData(builder_, body_->getArg(0));
   auto* globals = builder_.CreateLoad(
       pointer,
       ByteAddress(data, NativeMemoryLayout::kProgramGlobals + NativeMemoryLayout::kValuePayload));
@@ -785,7 +776,7 @@ void FunctionEmitter::EmitArrayBuiltin(const ir::Instruction& instruction, Built
   PrepareRuntimeCall();
   const auto reg = instruction.lhs + 1;
   PackArguments(instruction.lhs, BuiltinArity(builtin));
-  auto helper = module_.getOrInsertFunction("vela_native_v1_builtin", builder_.getInt8Ty(),
+  auto helper = module_.getOrInsertFunction(runtime::kNativeBuiltinSymbol, builder_.getInt8Ty(),
                                             builder_.getPtrTy(), builder_.getInt32Ty(),
                                             builder_.getPtrTy(), builder_.getPtrTy());
   CompleteCall(builder_.CreateCall(helper,

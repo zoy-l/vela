@@ -237,7 +237,7 @@ std::string ModuleBinding::Resolve(const std::string& name, SourceLocation locat
 }
 
 void ModuleBinding::BindType(TypeName& type) {
-  if (type.name.empty()) {
+  if (type.kind == TypeName::Kind::Inferred) {
     return;
   }
   for (auto& argument : type.arguments) {

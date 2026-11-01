@@ -47,8 +47,8 @@ std::optional<Definition> SemanticIndex::PrepareRename(std::size_t offset,
       .path = source.path,
       .range =
           {
-              .start = source.text.PositionAt(token.offset, encoding),
-              .end = source.text.PositionAt(token.offset + token.length, encoding),
+              .start = source.lines.PositionAt(source.text, token.offset, encoding),
+              .end = source.lines.PositionAt(source.text, token.offset + token.length, encoding),
           },
   };
 }
@@ -114,7 +114,7 @@ std::expected<std::vector<Definition>, std::string> SemanticIndex::RenameSymbol(
   std::vector<std::string> texts;
   texts.reserve(sources_.size());
   for (const auto& input : sources_) {
-    texts.emplace_back(input.text.text());
+    texts.emplace_back(input.text);
   }
   for (const auto& [source, position] : std::views::reverse(request.offsets)) {
     texts.at(source).replace(position, symbol.length, name);
@@ -137,8 +137,8 @@ std::expected<std::vector<Definition>, std::string> SemanticIndex::RenameSymbol(
         .path = source.path,
         .range =
             {
-                .start = source.text.PositionAt(position, encoding),
-                .end = source.text.PositionAt(position + symbol.length, encoding),
+                .start = source.lines.PositionAt(source.text, position, encoding),
+                .end = source.lines.PositionAt(source.text, position + symbol.length, encoding),
             },
     });
   }

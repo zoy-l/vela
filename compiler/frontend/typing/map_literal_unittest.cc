@@ -9,7 +9,7 @@
 #include "compiler/frontend/syntax/ast.h"
 #include "compiler/frontend/syntax/ast_clone.h"
 #include "compiler/frontend/syntax/parser.h"
-#include "compiler/frontend/typing/checker_test_support.h"
+#include "compiler/test_support/checker_test_support.h"
 
 namespace vela::frontend {
 namespace {

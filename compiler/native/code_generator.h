@@ -17,6 +17,7 @@
 
 namespace llvm {
 class LLVMContext;
+class MemoryBuffer;
 class Module;
 class TargetMachine;
 class Function;
@@ -76,7 +77,7 @@ struct NativeModule final {
 // 调用者可在优化前添加 AOT 的公开包装和 main；JIT 直接交付映像入口。
 [[nodiscard]] std::expected<void, std::string> Finalize(NativeModule& generated,
                                                         NativeOptimization optimization);
-[[nodiscard]] std::expected<std::vector<std::byte>, std::string> EmitObject(
+[[nodiscard]] std::expected<std::unique_ptr<llvm::MemoryBuffer>, std::string> EmitObject(
     NativeModule& generated);
 
 }  // namespace native

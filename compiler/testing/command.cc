@@ -1,4 +1,5 @@
 #include "compiler/testing/command.h"
+#include "compiler/frontend/builtins/sdk_modules.h"
 
 #include <algorithm>
 #include <atomic>
@@ -22,10 +23,10 @@
 #include "base/diagnostic.h"
 #include "base/path.h"
 #include "base/process_exit.h"
-#include "compiler/jit/compiler.h"
-#include "compiler/jit/source_compiler.h"
 #include "compiler/cli/standard_streams.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "compiler/project/project_config.h"
 #include "compiler/testing/command_options.h"
 #include "compiler/testing/discovery.h"
@@ -330,7 +331,7 @@ void PrintConfigurationError(std::ostream& errors, const compiler::Configuration
 
 bool HasTestModule(const runtime::NativeInstance& instance) {
   return std::ranges::any_of(instance.image().source_paths.values(), [](const auto& path) {
-    return path.text() == "sdk:test";
+    return path.text() == frontend::kTestModuleName;
   });
 }
 

@@ -49,6 +49,12 @@ class DevelopmentFiles final {
  private:
   enum class GraphTracking : std::uint8_t { Existing, Expanded };
   std::expected<void, frontend::Diagnostics> Track(const std::string& path);
+  std::expected<void, frontend::Diagnostics> WatchDirectories(
+      const std::string& path,
+      std::span<const std::filesystem::path> directories);
+  std::expected<void, frontend::Diagnostics> WatchDirectory(const std::string& path,
+                                                            const std::filesystem::path& directory,
+                                                            DirectoryWatchScope scope);
   std::expected<void, frontend::Diagnostics> Reference(const std::string& path);
   void Release(const std::string& path);
   void Detach(const std::string& path);
