@@ -33,8 +33,7 @@ std::size_t StringObject::ByteOffset(std::uint32_t index) const noexcept {
   }
   while (position.index > index) {
     --position.offset;
-    while ((static_cast<unsigned char>(bytes.substr(position.offset).front()) &
-            kContinuationMask) == kContinuationTag) {
+    while (IsContinuationByte(bytes[position.offset])) {
       --position.offset;
     }
     --position.index;

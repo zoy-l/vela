@@ -7,13 +7,22 @@
 #include <utility>
 
 #include "base/execution_status.h"
-#include "runtime/exceptions/exception.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
 namespace {
+
+ExecutionResult Failure(Value value, ExecutionStatus status, FutureDiagnostic diagnostic) {
+  return {
+      .value = value,
+      .status = status,
+      .stack_trace = std::move(diagnostic.stack_trace),
+      .message = std::move(diagnostic.message),
+      .origin = diagnostic.origin,
+  };
+}
 
 ExecutionResult Complete(NativeExecution& execution, std::expected<Value, ExecutionStatus> result) {
   if (result) {
@@ -28,42 +37,28 @@ ExecutionResult Complete(NativeExecution& execution, std::expected<Value, Execut
         .origin = {},
     };
   }
-  const auto& exception = ExceptionData::From(*execution.pending_exception().AsObject());
-  auto diagnostic = execution.ExceptionDiagnostic();
-  return {
-      .value = Value::Object(exception.payload),
-      .status = status,
-      .stack_trace = std::move(diagnostic.stack_trace),
-      .message = std::move(diagnostic.message),
-      .origin = diagnostic.origin,
-  };
+  return Failure(execution.ExceptionPayload(), status, execution.ExceptionDiagnostic());
 }
 
 }  // namespace
 
 ExecutionResult ExecuteNativeFunction(NativeInstance& instance,
-                                       std::uint32_t function,
-                                       std::span<const Value> arguments) {
+                                      std::uint32_t function,
+                                      std::span<const Value> arguments) {
   NativeExecution execution(instance);
   return Complete(execution, InvokeNativeFunction(execution, function, arguments));
 }
 
 ExecutionResult ExecuteNativeCallable(NativeInstance& instance,
-                                       Value callable,
-                                       std::span<const Value> arguments) {
+                                      Value callable,
+                                      std::span<const Value> arguments) {
   NativeExecution execution(instance);
   return Complete(execution, InvokeNativeCallable(execution, callable, arguments));
 }
 
 ExecutionResult FutureFailure(const FutureResult& completion) {
   const auto& diagnostic = completion.diagnostic;
-  return {
-      .value = completion.value,
-      .status = diagnostic.status,
-      .stack_trace = diagnostic.stack_trace,
-      .message = diagnostic.message,
-      .origin = diagnostic.origin,
-  };
+  return Failure(completion.value, diagnostic.status, diagnostic);
 }
 
 }  // namespace vela::runtime

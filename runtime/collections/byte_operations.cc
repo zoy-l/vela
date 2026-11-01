@@ -4,6 +4,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <expected>
 #include <limits>
 #include <span>
@@ -16,6 +17,7 @@
 #include "runtime/heap/heap.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 namespace {
@@ -26,19 +28,19 @@ using Bytes = std::span<std::uint8_t>;
 static_assert(sizeof(float) == sizeof(std::uint32_t) && std::numeric_limits<float>::is_iec559);
 static_assert(std::endian::native == std::endian::little ||
               std::endian::native == std::endian::big);
+constexpr auto kHostByteOrder =
+    std::endian::native == std::endian::little ? ByteOrder::Little : ByteOrder::Big;
 
-Result Allocated(HeapObject* object) {
-  if (object == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  return Value::Object(object);
+bool IsByte(std::int64_t number) {
+  return number >= 0 && number <= kMaximumByte;
 }
 
 std::expected<HeapObject*, ExecutionStatus> Owner(Value value) {
-  if (!value.IsObject() || value.AsObject() == nullptr || !Heap::IsByteArray(*value.AsObject())) {
+  auto* object = value.AsObjectOrNull();
+  if (object == nullptr || !Heap::IsByteArray(*object)) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  return value.AsObject();
+  return object;
 }
 
 std::expected<Bytes, ExecutionStatus> Access(Bytes bytes, Value offset, std::size_t width) {
@@ -63,28 +65,29 @@ Result NewBytes(Value length, Heap& heap) {
   if (std::cmp_greater(size, kMaximumByteArrayLength)) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  return Allocated(heap.AllocateByteArray(static_cast<std::size_t>(size)));
+  return AllocatedValue(heap.AllocateByteArray(static_cast<std::size_t>(size)));
 }
 
 Result FromArray(Value input, Heap& heap) {
-  if (!input.IsObject() || input.AsObject() == nullptr) {
+  auto* input_object = input.AsObjectOrNull();
+  if (input_object == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  auto& array = *input.AsObject();
+  auto& array = *input_object;
   const auto numbers = Heap::IntegerElements(array);
   if (!numbers) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
+  if (!std::ranges::all_of(*numbers, IsByte)) {
+    return std::unexpected(ExecutionStatus::InvalidNumericConversion);
+  }
   RootRange root(heap, &input, 1, RootOwner::Runtime);
-  const auto result = Allocated(heap.AllocateByteArray(numbers->size()));
+  const auto result = AllocatedValue(heap.AllocateByteArray(numbers->size()));
   if (!result) {
     return result;
   }
   auto bytes = Heap::ByteArrayBytes(*result->AsObject());
   for (const auto number : *numbers) {
-    if (number < 0 || number > kMaximumByte) {
-      return std::unexpected(ExecutionStatus::InvalidNumericConversion);
-    }
     bytes.front() = static_cast<std::uint8_t>(number);
     bytes = bytes.subspan(1);
   }
@@ -92,8 +95,8 @@ Result FromArray(Value input, Heap& heap) {
 }
 
 Result Slice(HeapObject& owner, std::span<const Value> arguments, Heap& heap) {
-  const auto first = arguments.subspan(1).front();
-  const auto last = arguments.subspan(2).front();
+  const auto first = arguments[1];
+  const auto last = arguments[2];
   if (!first.IsInteger() || !last.IsInteger()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -101,7 +104,7 @@ Result Slice(HeapObject& owner, std::span<const Value> arguments, Heap& heap) {
   RootRange root(heap, &input, 1, RootOwner::Runtime);
   const auto bytes = Heap::ByteArrayBytes(owner);
   const auto [start, end] = ClampIndexRange(first.AsInteger(), last.AsInteger(), bytes.size());
-  const auto result = Allocated(heap.AllocateByteArray(end - start));
+  const auto result = AllocatedValue(heap.AllocateByteArray(end - start));
   if (result) {
     std::ranges::copy(bytes.subspan(start, end - start),
                       Heap::ByteArrayBytes(*result->AsObject()).begin());
@@ -110,8 +113,8 @@ Result Slice(HeapObject& owner, std::span<const Value> arguments, Heap& heap) {
 }
 
 Result View(HeapObject& owner, std::span<const Value> arguments, Heap& heap) {
-  const auto offset = arguments.subspan(1).front();
-  const auto length = arguments.subspan(2).front();
+  const auto offset = arguments[1];
+  const auto length = arguments[2];
   if (!offset.IsInteger() || (!length.IsInteger() && !length.IsNull())) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -126,10 +129,11 @@ Result View(HeapObject& owner, std::span<const Value> arguments, Heap& heap) {
   if (count < 0 || std::cmp_greater(count, remaining)) {
     return std::unexpected(ExecutionStatus::IndexOutOfBounds);
   }
-  return Allocated(heap.AllocateByteData(owner, {
-                                                    .offset = static_cast<std::uint32_t>(index),
-                                                    .length = static_cast<std::uint32_t>(count),
-                                                }));
+  return AllocatedValue(
+      heap.AllocateByteData(owner, {
+                                       .offset = static_cast<std::uint32_t>(index),
+                                       .length = static_cast<std::uint32_t>(count),
+                                   }));
 }
 
 std::expected<ByteOrder, ExecutionStatus> Order(Value value) {
@@ -141,28 +145,33 @@ std::expected<ByteOrder, ExecutionStatus> Order(Value value) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   if (order == static_cast<std::int64_t>(ByteOrder::Host)) {
-    return std::endian::native == std::endian::little ? ByteOrder::Little : ByteOrder::Big;
+    return kHostByteOrder;
   }
   return static_cast<ByteOrder>(order);
 }
 
 std::uint64_t ReadBits(Bytes bytes, ByteOrder order) {
   std::uint64_t result = 0;
-  const auto length = bytes.size();
-  for (std::size_t index = 0; index < length; ++index) {
-    const auto position = order == ByteOrder::Little ? length - index - 1 : index;
-    result = (result << kBitsPerByte) | bytes.subspan(position).front();
+  std::memcpy(&result, bytes.data(), bytes.size());
+  const auto shift = (sizeof(result) - bytes.size()) * kBitsPerByte;
+  if constexpr (std::endian::native == std::endian::big) {
+    result >>= shift;
+  }
+  if (order != kHostByteOrder) {
+    result = std::byteswap(result) >> shift;
   }
   return result;
 }
 
 void WriteBits(Bytes bytes, ByteOrder order, std::uint64_t bits) {
-  const auto length = bytes.size();
-  for (std::size_t index = 0; index < length; ++index) {
-    const auto position = order == ByteOrder::Little ? index : length - index - 1;
-    bytes.subspan(position).front() = static_cast<std::uint8_t>(bits & kMaximumByte);
-    bits >>= kBitsPerByte;
+  const auto shift = (sizeof(bits) - bytes.size()) * kBitsPerByte;
+  if (order != kHostByteOrder) {
+    bits = std::byteswap(bits) >> shift;
   }
+  if constexpr (std::endian::native == std::endian::big) {
+    bits <<= shift;
+  }
+  std::memcpy(bytes.data(), &bits, bytes.size());
 }
 
 std::uint64_t RoundRight(std::uint64_t bits, std::uint32_t shift) {
@@ -256,7 +265,7 @@ Result TypedAccess(const ByteAccess& access,
                    Builtin builtin,
                    std::span<const Value> arguments,
                    Bytes storage) {
-  const auto bytes = Access(storage, arguments.subspan(1).front(), access.width);
+  const auto bytes = Access(storage, arguments[1], access.width);
   if (!bytes) {
     return std::unexpected(bytes.error());
   }
@@ -268,7 +277,7 @@ Result TypedAccess(const ByteAccess& access,
   if (builtin == access.get) {
     return Decode(access, ReadBits(*bytes, *order));
   }
-  const auto bits = Encode(access, arguments.subspan(2).front());
+  const auto bits = Encode(access, arguments[2]);
   if (!bits) {
     return std::unexpected(bits.error());
   }
@@ -290,7 +299,7 @@ std::expected<Value, ExecutionStatus> ExecuteByteBuiltin(Builtin builtin,
   const auto* access = FindByteAccess(builtin);
   if (builtin == Builtin::ByteDataLength || access != nullptr) {
     const auto input = arguments.front();
-    auto* object = input.IsObject() ? input.AsObject() : nullptr;
+    auto* object = input.AsObjectOrNull();
     if (object == nullptr || !Heap::IsByteData(*object)) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
@@ -313,19 +322,19 @@ std::expected<Value, ExecutionStatus> ExecuteByteBuiltin(Builtin builtin,
   if (builtin == Builtin::ByteArrayLength) {
     return Value::Integer(static_cast<std::int64_t>(bytes.size()));
   }
-  const auto element = Access(bytes, arguments.subspan(1).front(), 1);
+  const auto element = Access(bytes, arguments[1], 1);
   if (!element) {
     return std::unexpected(element.error());
   }
   if (builtin == Builtin::ByteArrayGetIndex) {
     return Value::Integer(element->front());
   }
-  const auto value = arguments.subspan(2).front();
+  const auto value = arguments[2];
   if (!value.IsInteger()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto number = value.AsInteger();
-  if (number < 0 || number > kMaximumByte) {
+  if (!IsByte(number)) {
     return std::unexpected(ExecutionStatus::InvalidNumericConversion);
   }
   element->front() = static_cast<std::uint8_t>(number);

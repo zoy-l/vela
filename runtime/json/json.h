@@ -10,6 +10,7 @@
 
 #include "base/execution_status.h"
 #include "runtime/heap/heap.h"
+#include "runtime/json/frame_pool.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
@@ -48,6 +49,8 @@ class JsonEncoder final {
   [[nodiscard]] JsonRuntimeError ConversionError(std::string_view message) const;
 
  private:
+  enum class Allocation : std::uint8_t { Output, Traversal };
+  [[nodiscard]] JsonRuntimeError OomError(Allocation kind) const;
   [[nodiscard]] std::expected<void, JsonRuntimeError> Append(std::string_view text);
   [[nodiscard]] std::expected<void, JsonRuntimeError> Quote(std::string_view text);
   [[nodiscard]] std::expected<void, JsonRuntimeError> Push(Value value,
@@ -72,8 +75,8 @@ class JsonEncoder final {
   // pending、输出 builder、当前路径的身份集合均跨越 GC 和脚本调用保根。
   std::array<Value, kRootCount> values_;
   RootRange roots_;
+  internal::FramePool<JsonEncodeFrame> frames_;
   JsonEncodeFrame* frame_ = nullptr;
-  JsonEncodeFrame* spare_ = nullptr;
   bool pending_ = true;
 };
 

@@ -43,7 +43,7 @@ std::expected<Value, ExecutionStatus> Convert(NativeExecution& execution,
   if (callable == nullptr) {
     return invalid();
   }
-  const auto& function = instance.image().functions.values().subspan(callable->function).front();
+  const auto& function = instance.image().function(callable->function);
   if ((function.flags & kNativeTypedFunction) == 0 || function.parameters.size != 0 ||
       function.result_type == kNoNativeIndex) {
     return invalid();

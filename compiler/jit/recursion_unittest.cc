@@ -117,7 +117,6 @@ export func overflow(depth: int): int {
     const auto result = runtime::InvokeNativeFunction(execution, *fibonacci, arguments);
     ASSERT_TRUE(result);
     EXPECT_EQ(result->AsInteger(), expected);
-    EXPECT_EQ(execution.frame_count(), 0U);
     EXPECT_EQ(execution.current_frame(), nullptr);
   }
 }
@@ -139,7 +138,7 @@ export func throughLeaf(): int { return leaf(41); }
   runtime::NativeExecution execution(instance);
   std::vector<runtime::NativeTraceFrame> outer(kMaxCallFrames - 1);
   for (auto& frame : outer) {
-    ASSERT_EQ(execution.Enter(frame, *descend), ExecutionStatus::Returned);
+    execution.MaterializeFrame(frame, *descend);
   }
   const std::array zero{runtime::Value::Integer(0)};
   const auto returned = runtime::InvokeNativeFunction(execution, *descend, zero);
@@ -150,15 +149,13 @@ export func throughLeaf(): int { return leaf(41); }
     const auto exceeded = runtime::InvokeNativeFunction(execution, *descend, arguments);
     ASSERT_FALSE(exceeded);
     EXPECT_EQ(exceeded.error(), ExecutionStatus::StackOverflow);
-    EXPECT_EQ(execution.frame_count(), outer.size());
     EXPECT_EQ(execution.current_frame(), &outer.back());
   }
   const auto leaf_exceeded = runtime::InvokeNativeFunction(execution, *through_leaf);
   ASSERT_FALSE(leaf_exceeded);
   EXPECT_EQ(leaf_exceeded.error(), ExecutionStatus::StackOverflow);
-  EXPECT_EQ(execution.frame_count(), outer.size());
   EXPECT_EQ(execution.current_frame(), &outer.back());
-  while (execution.frame_count() != 0) {
+  while (execution.current_frame() != nullptr) {
     execution.Exit();
   }
   const auto reused = runtime::InvokeNativeFunction(execution, *descend, zero);
@@ -183,7 +180,7 @@ TEST_P(RecursiveCallTest, RawEntryValidatesExecutionAndPreservesNestedExceptions
   EXPECT_EQ(entry(&execution, arguments.data(), arguments.size(), nullptr),
             static_cast<std::uint8_t>(ExecutionStatus::InvalidEntry));
   runtime::NativeTraceFrame outer;
-  ASSERT_EQ(execution.Enter(outer, *identity), ExecutionStatus::Returned);
+  execution.MaterializeFrame(outer, *identity);
   ASSERT_EQ(execution.HandleFailure(ExecutionStatus::DivisionByZero),
             ExecutionStatus::DivisionByZero);
   const auto exception = execution.pending_exception();
@@ -233,7 +230,7 @@ export func fail(depth: int): int { return 8 / (walk(depth) - 2); }
     const auto value = runtime::InvokeNativeFunction(execution, *walk, arguments);
     ASSERT_TRUE(value);
     EXPECT_EQ(value->AsInteger(), 2);
-    EXPECT_EQ(execution.frame_count(), 0U);
+    EXPECT_EQ(execution.current_frame(), nullptr);
     EXPECT_EQ(execution.current_frame(), nullptr);
     // 先完成调用期间已标记旧根的增量周期，再检查下一周期确实回收已退出帧的对象。
     heap.FinishCollection();

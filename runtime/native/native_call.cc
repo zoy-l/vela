@@ -12,7 +12,6 @@
 #include "runtime/async/future.h"
 #include "runtime/async/future_composition.h"
 #include "runtime/async/future_operations.h"
-#include "runtime/exceptions/exception.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_abi.h"
@@ -45,7 +44,7 @@ NativeCallDomain Domain(const NativeInstance& instance) {
   return {
       .isolate = &instance.isolate(),
       .identity = &instance.code_identity(),
-      .dispatch = Heap::NativeProgram(*instance.state().front().AsObject()).dispatch,
+      .dispatch = instance.dispatch(),
   };
 }
 
@@ -56,11 +55,7 @@ std::uint8_t InvokeResolvedDeclaration(NativeExecution* execution,
                                        NativeValue* result) {
   auto origin = NativeInstance::Borrow(*target.state);
   const NativeInstanceScope scope(*execution, origin);
-  return origin.image()
-      .functions.values()
-      .subspan(target.function)
-      .front()
-      .entry(execution, arguments, count, result);
+  return origin.image().function(target.function).entry(execution, arguments, count, result);
 }
 
 std::expected<NativeCallback, ExecutionStatus> ResolveNativeCallback(const NativeCallDomain& domain,
@@ -92,7 +87,7 @@ std::expected<NativeCallback, ExecutionStatus> ResolveNativeCallback(const Nativ
         break;
       case CallableMode::BoundMethod:
       case CallableMode::InterfaceMethod:
-        selected.implicit = *Heap::GetField(*object, 0);
+        selected.implicit = Heap::LoadField(*object, 0);
         break;
     }
     target = selected;
@@ -107,11 +102,14 @@ std::expected<NativeCallback, ExecutionStatus> ResolveNativeCallback(const Nativ
   };
 }
 
-Future FailedCallback(Isolate& isolate, ExecutionStatus status) {
+Future FailedCallback(Isolate& isolate,
+                      ExecutionStatus status,
+                      Value payload = Value::Null(),
+                      FutureDiagnostic diagnostic = {}) {
   Future result(&isolate.scheduler());
   result.AttachHeap(isolate.heap());
-  CompleteFutureError(isolate, result, Value::Null(),
-                      {.message = {}, .stack_trace = {}, .status = status, .origin = {}});
+  diagnostic.status = status;
+  CompleteFutureError(isolate, result, payload, diagnostic);
   return result;
 }
 
@@ -132,6 +130,8 @@ std::expected<Value, ExecutionStatus> ConvertCallbackArgument(const NativeInstan
 std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
                                                      const NativeCallback& callback,
                                                      std::span<const Value> arguments) {
+  auto& heap = execution.isolate().heap();
+  const RootRange arguments_root(heap, arguments.data(), arguments.size(), RootOwner::Runtime);
   const auto& function = *callback.function;
   const auto& target = callback.target;
   const auto hidden = target.implicit ? 1U : 0U;
@@ -150,7 +150,6 @@ std::expected<Value, ExecutionStatus> InvokeCallback(NativeExecution& execution,
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto values = storage.values();
-  auto& heap = execution.isolate().heap();
   const RootRange roots(heap, values.data(), values.size(), RootOwner::Runtime);
   if (target.implicit) {
     values.front() = *target.implicit;
@@ -193,8 +192,6 @@ Future InvokeFutureCallback(const NativeCallDomain& domain,
                             std::span<const Value> arguments) {
   auto& isolate = *domain.isolate;
   const RootRange callable_root(isolate.heap(), &callable, 1, RootOwner::Runtime);
-  const RootRange arguments_root(isolate.heap(), arguments.data(), arguments.size(),
-                                 RootOwner::Runtime);
   const auto callback = ResolveNativeCallback(domain, callable);
   if (!callback) {
     return FailedCallback(isolate, callback.error());
@@ -209,12 +206,8 @@ Future InvokeFutureCallback(const NativeCallDomain& domain,
   if (!execution.HasException()) {
     return FailedCallback(isolate, status);
   }
-  Future result(&isolate.scheduler());
-  result.AttachHeap(isolate.heap());
-  const auto& exception = ExceptionData::From(*execution.pending_exception().AsObject());
-  CompleteFutureError(isolate, result, Value::Object(exception.payload),
-                      execution.ExceptionDiagnostic());
-  return result;
+  return FailedCallback(isolate, status, execution.ExceptionPayload(),
+                        execution.ExceptionDiagnostic());
 }
 
 }  // namespace
@@ -231,7 +224,7 @@ std::expected<HeapObject*, ExecutionStatus> AllocateNativeCallable(
   const auto& state = Heap::NativeProgram(*selected.state);
   if (state.dispatch != nullptr && target.mode != CallableMode::Closure &&
       target.mode != CallableMode::InterfaceMethod) {
-    const auto identity = state.image->functions.values().subspan(target.function).front().identity;
+    const auto identity = state.image->function(target.function).identity;
     if (identity.local == 0) {
       const auto current = state.dispatch->Resolve(identity.declaration);
       if (!current) {
@@ -262,7 +255,7 @@ std::expected<void, ExecutionStatus> CaptureNativeReceiver(NativeExecution& exec
   if (source.dispatch == nullptr || target.mode != CallableMode::InterfaceMethod) {
     return {};
   }
-  const auto receiver = *Heap::GetField(callable, 0);
+  const auto receiver = Heap::LoadField(callable, 0);
   const auto* layout = receiver.IsObject() ? Heap::ClassOf(*receiver.AsObject()) : nullptr;
   if (layout == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
@@ -302,7 +295,7 @@ std::expected<NativeCallableContract, ExecutionStatus> InspectNativeCallable(
   }
   const auto& state = Heap::NativeProgram(*resolved->state);
   const auto index = resolved->target.function;
-  const auto& function = state.image->functions.values().subspan(index).front();
+  const auto& function = state.image->function(index);
   if ((function.flags & kNativeTypedFunction) == 0) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -330,7 +323,7 @@ std::expected<Value, ExecutionStatus> InvokeNativeEntry(NativeExecution& executi
       parameters.size() != input.size()) {
     return std::unexpected(ExecutionStatus::InvalidEntry);
   }
-  return InvokeNativeFunction(execution, function, input);
+  return InvokeCallback(execution, {.target = {.function = function}, .function = &target}, input);
 }
 
 std::expected<Value, ExecutionStatus> InvokeNativeFunction(NativeExecution& execution,
@@ -344,8 +337,6 @@ std::expected<Value, ExecutionStatus> InvokeNativeFunction(NativeExecution& exec
   if (description.hidden_parameters != 0) {
     return std::unexpected(ExecutionStatus::InvalidEntry);
   }
-  const RootRange roots(execution.isolate().heap(), arguments.data(), arguments.size(),
-                        RootOwner::Runtime);
   return InvokeCallback(execution, {.target = {.function = function}, .function = &description},
                         arguments);
 }
@@ -355,7 +346,6 @@ std::expected<Value, ExecutionStatus> InvokeNativeCallable(NativeExecution& exec
                                                            std::span<const Value> arguments) {
   auto& heap = execution.isolate().heap();
   const RootRange callable_root(heap, &callable, 1, RootOwner::Runtime);
-  const RootRange arguments_root(heap, arguments.data(), arguments.size(), RootOwner::Runtime);
   const auto callback = ResolveNativeCallback(Domain(execution.instance()), callable);
   if (!callback) {
     return std::unexpected(callback.error());
@@ -409,9 +399,7 @@ extern "C" std::uint8_t vela_native_v1_call_indirect(NativeExecution* execution,
     input.front() = EncodeNativeValue(*target.implicit);
   }
   return origin.image()
-      .functions.values()
-      .subspan(target.function)
-      .front()
+      .function(target.function)
       .entry(execution, input.subspan(1 - hidden).data(), count + hidden, result);
 }
 
@@ -435,7 +423,7 @@ extern "C" std::uint8_t vela_native_v3_call_declaration(NativeExecution* executi
                                                         std::uint64_t count,
                                                         NativeValue* result) {
   const auto& instance = execution->instance();
-  auto& dispatch = *Heap::NativeProgram(*instance.state().front().AsObject()).dispatch;
+  auto& dispatch = *instance.dispatch();
   const auto target = dispatch.Resolve(DeclarationId{declaration});
   if (!target) {
     const auto status = target.error();
@@ -459,7 +447,7 @@ extern "C" std::uint8_t vela_native_v3_call_interface(NativeExecution* execution
   if (layout == nullptr) {
     return static_cast<std::uint8_t>(ExecutionStatus::TypeError);
   }
-  auto& dispatch = *Heap::NativeProgram(*execution->instance().state().front().AsObject()).dispatch;
+  auto& dispatch = *execution->instance().dispatch();
   const auto target = dispatch.ResolveInterface(layout->nominal_type(), DeclarationId{selector});
   if (!target) {
     const auto status = target.error();

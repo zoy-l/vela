@@ -11,9 +11,9 @@
 #include "compiler/testing/result.h"
 #include "gtest/gtest.h"
 
+#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/jit/compiler.h"
 #include "compiler/jit/source_compiler.h"
-#include "compiler/frontend/modules/source_loader.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -424,7 +424,8 @@ func main(): void {
       const auto completed = endpoint.Complete(runtime::Value::Null());
       ASSERT_FALSE(completed);
       EXPECT_EQ(completed.error(), runtime::FutureCompletionError::Closed);
-      EXPECT_FALSE(isolate.scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork));
+      EXPECT_EQ(isolate.scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork),
+                runtime::FuturePumpStep::Idle);
     }
   }
   isolate.heap().FinishCollection();

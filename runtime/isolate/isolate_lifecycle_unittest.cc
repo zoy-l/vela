@@ -127,7 +127,7 @@ TEST(IsolateLifecycleTest, RefusedStopPreservesPendingEventsAndOpenEndpoints) {
     const RootedValue host_root(isolate, Value::Null());
     ASSERT_FALSE(isolate.TryStop());
     ASSERT_TRUE(endpoint.Complete(Value::Null()));
-    ASSERT_TRUE(isolate.scheduler().PumpOne());
+    ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);
     EXPECT_TRUE(called);
   }
   EXPECT_TRUE(isolate.TryStop());
@@ -177,7 +177,7 @@ TEST(IsolateLifecycleTest, StopDuringSchedulerCallbackWaitsForTheOuterPumpToRetu
   Isolate isolate;
   bool refused = false;
   isolate.scheduler().PostMicrotask([&] { refused = !isolate.TryStop(); });
-  ASSERT_TRUE(isolate.scheduler().PumpOne());
+  ASSERT_EQ(isolate.scheduler().PumpOne(), FuturePumpStep::Executed);
   EXPECT_TRUE(refused);
   EXPECT_TRUE(isolate.TryStop());
 }

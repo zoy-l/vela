@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
-#include <new>
 #include <span>
 #include <string_view>
 
@@ -16,7 +15,9 @@
 #include "base/utf8.h"
 #include "runtime/heap/array_storage.h"
 #include "runtime/heap/element_storage.h"
+#include "runtime/heap/native_buffer.h"
 #include "runtime/strings/string.h"
+#include "runtime/strings/unicode_operations.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
@@ -33,14 +34,6 @@ struct MutableStringBuffer final {
 };
 
 constexpr std::size_t kInlineFormattedParts = 8;
-
-MutableStringBuffer& Buffer(HeapObject& object) noexcept {
-  return *StorageAfter<MutableStringBuffer>(object);
-}
-
-const MutableStringBuffer& Buffer(const HeapObject& object) noexcept {
-  return *StorageAfter<MutableStringBuffer>(object);
-}
 
 std::span<char> StringStorage(StringObject& string, std::size_t length) noexcept {
   return {StorageAfter<char>(string), length};
@@ -229,6 +222,35 @@ std::expected<std::span<StringObject* const>, ArrayAccessError> Heap::StringElem
   return std::span(static_cast<StringObject* const*>(storage), array.length);
 }
 
+std::expected<void, ExecutionStatus> Heap::FillGraphemes(HeapObject& array, std::string_view text) {
+  const auto strings = StringElements(array);
+  if (!strings) {
+    return std::unexpected(ExecutionStatus::TypeError);
+  }
+  constexpr std::size_t kInlineBoundaries = 64;
+  NativeBuffer<std::size_t, kInlineBoundaries> storage(*this, strings->size());
+  if (!storage.IsAllocated()) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  const auto boundaries = storage.values();
+  if (const auto filled = FillGraphemeBoundaries(text, boundaries); !filled) {
+    return filled;
+  }
+  auto slots = ElementSlots<StringObject*>(internal::ArrayBytes(array, *array.array_layout()));
+  std::size_t begin = 0;
+  for (const auto end : boundaries) {
+    auto* segment = AllocateString(text.substr(begin, end - begin));
+    if (segment == nullptr) {
+      return std::unexpected(ExecutionStatus::OutOfMemory);
+    }
+    slots.front() = segment;
+    WriteBarrier(array, Value::String(segment));
+    slots = slots.subspan(1);
+    begin = end;
+  }
+  return {};
+}
+
 std::expected<StringObject*, StringJoinError> Heap::JoinValues(
     std::span<const Value> parts) noexcept {
   return JoinFormatted(
@@ -298,7 +320,7 @@ std::expected<std::span<char>, ExecutionStatus> Heap::AppendStringStorage(
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   const auto new_length = length + count;
-  auto& buffer = Buffer(builder);
+  auto& buffer = *StorageAfter<MutableStringBuffer>(builder);
   if (new_length > buffer.capacity) {
     const auto capacity = std::max({
         new_length,
@@ -306,17 +328,12 @@ std::expected<std::span<char>, ExecutionStatus> Heap::AppendStringStorage(
         std::min(kMaximumStringLength, buffer.capacity * 2),
     });
     MaybeCollect(capacity);
-    if (!CanAllocate(capacity - buffer.capacity)) {
-      return std::unexpected(ExecutionStatus::OutOfMemory);
-    }
-    auto* memory = static_cast<char*>(::operator new(capacity, std::nothrow));
+    auto* memory = static_cast<char*>(AllocateExternal(capacity, buffer.capacity));
     if (memory == nullptr) {
       return std::unexpected(ExecutionStatus::OutOfMemory);
     }
     std::ranges::copy(std::span(buffer.data, length), memory);
     ReleaseExternalStorage(buffer.data, buffer.capacity);
-    allocated_bytes_ += capacity;
-    committed_bytes_ += capacity;
     buffer = {.data = memory, .capacity = capacity};
   }
   builder.length = static_cast<std::uint32_t>(new_length);
@@ -324,12 +341,12 @@ std::expected<std::span<char>, ExecutionStatus> Heap::AppendStringStorage(
 }
 
 StringObject* Heap::BuildString(const HeapObject& builder) noexcept {
-  const auto& buffer = Buffer(builder);
+  const auto& buffer = *StorageAfter<MutableStringBuffer>(builder);
   return AllocateString(std::string_view(buffer.data, builder.length));
 }
 
 void Heap::ReleaseMutableString(HeapObject& object) noexcept {
-  auto& buffer = Buffer(object);
+  auto& buffer = *StorageAfter<MutableStringBuffer>(object);
   ReleaseExternalStorage(buffer.data, buffer.capacity);
   std::destroy_at(&buffer);
 }

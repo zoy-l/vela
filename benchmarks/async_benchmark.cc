@@ -78,7 +78,8 @@ void SteadyExecution(benchmark::State& state,
     state.counters["saved_bytes_per_frame"] =
         frames == 0 ? 0.0 : static_cast<double>(saved) / static_cast<double>(frames);
     state.counters["first_async_bytes"] = static_cast<double>(heap.allocated_bytes() - before);
-    if (!scheduler.PumpUntil(*result) || !IsAnswer(*result, expected)) {
+    if (scheduler.PumpUntil(*result) == runtime::FuturePumpResult::Idle ||
+        !IsAnswer(*result, expected)) {
       state.SkipWithError("Async warm-up failed or returned an unexpected value");
       return;
     }
@@ -96,7 +97,8 @@ void SteadyExecution(benchmark::State& state,
       heap.FinishCollection();
       heap.Collect();
     }
-    if (!scheduler.PumpUntil(*result) || !IsAnswer(*result, expected)) {
+    if (scheduler.PumpUntil(*result) == runtime::FuturePumpResult::Idle ||
+        !IsAnswer(*result, expected)) {
       state.SkipWithError("Async execution failed or returned an unexpected value");
       return;
     }

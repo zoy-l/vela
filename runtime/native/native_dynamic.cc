@@ -115,12 +115,12 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
       }
       auto& object = *receiver.AsObject();
       const auto* layout = Heap::ClassOf(object);
-      auto* dispatch = Heap::NativeProgram(*instance.state().front().AsObject()).dispatch;
+      auto* dispatch = instance.dispatch();
       const auto loaded =
           layout->storage() == ClassStorage::Reloadable
               ? dispatch->LoadField(execution, object,
                                     layout->field_declarations().subspan(member.target).front())
-              : std::expected<Value, ExecutionStatus>(*Heap::GetField(object, member.target));
+              : std::expected<Value, ExecutionStatus>(Heap::LoadField(object, member.target));
       if (!loaded) {
         return std::unexpected(loaded.error());
       }
@@ -133,8 +133,7 @@ std::expected<Value, ExecutionStatus> ReadMember(NativeExecution& execution,
       if (target == nullptr) {
         std::unreachable();
       }
-      if (resolving &&
-          Heap::NativeProgram(*instance.state().front().AsObject()).dispatch == nullptr) {
+      if (resolving && instance.dispatch() == nullptr) {
         return CreatePlan(execution, receiver, target->function);
       }
       const auto callable = AllocateNativeCallable(execution, wrapper, std::span(&receiver, 1));
@@ -187,15 +186,14 @@ std::expected<Value, ExecutionStatus> WriteMember(NativeExecution& execution,
     auto& object = *receiver.AsObject();
     const auto* layout = Heap::ClassOf(object);
     if (layout->storage() == ClassStorage::Reloadable) {
-      auto* dispatch = Heap::NativeProgram(*instance.state().front().AsObject()).dispatch;
+      auto* dispatch = instance.dispatch();
       const auto stored = dispatch->StoreField(
           object, layout->field_declarations().subspan(member.target).front(), value);
       return stored ? std::expected<Value, ExecutionStatus>(original)
                     : std::unexpected(stored.error());
     }
-    static_cast<void>(
-        execution.isolate().heap().SetField(*receiver.AsObject(), member.target, value));
-    return original;
+    return execution.isolate().heap().SetField(object, member.target, value)
+        .transform([original] { return original; });
   }
   const std::array input{EncodeNativeValue(receiver), EncodeNativeValue(value)};
   if (!setter) {
@@ -292,7 +290,7 @@ std::expected<Value, ExecutionStatus> ExecuteNativeDynamicCall(NativeExecution& 
                ? InvokeFunction(execution, first, *second.AsObject(), *names.AsObject())
                : MethodCall(execution, first, *second.AsObject(), *names.AsObject());
   }
-  auto* dispatch = Heap::NativeProgram(*execution.instance().state().front().AsObject()).dispatch;
+  auto* dispatch = execution.instance().dispatch();
   if (dispatch != nullptr) {
     auto current = NativeInstance::Borrow(dispatch->current_state());
     const NativeInstanceScope scope(execution, current);

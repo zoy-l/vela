@@ -21,8 +21,10 @@
 #include "gtest/gtest.h"
 
 #include "runtime/heap/heap.h"
+#include "runtime/async/future.h"
 #include "runtime/heap/rooted_value.h"
 #include "runtime/isolate/external_resources.h"
+#include "runtime/isolate/isolate.h"
 #include "runtime/native/native_function.h"
 #include "runtime/value/value.h"
 
@@ -393,7 +395,7 @@ TEST_F(ReplLanguageTest, SuspendedFunctionsShareGlobalsAcrossLaterSubmissions) {
   Execute("task();");
   Execute("let added = 1;");
   Execute("completer.complete(42);");
-  while (session().isolate().scheduler().PumpOne()) {
+  while (session().isolate().scheduler().PumpOne() == runtime::FuturePumpStep::Executed) {
   }
   Execute("result");
   EXPECT_EQ(output().str(), "42\n");

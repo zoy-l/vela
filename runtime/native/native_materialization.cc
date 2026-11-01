@@ -30,14 +30,7 @@ NativeMaterialization::NativeMaterialization(Heap& heap, NativeCheckpoint& check
 
 NativeMaterialization::~NativeMaterialization() {
   roots_.Detach();
-  if (!objects_.empty()) {
-    std::destroy_n(objects_.data(), objects_.size());
-    heap_->FreeNative(objects_.data());
-  }
-  if (!work_.empty()) {
-    std::destroy_n(work_.data(), work_.size());
-    heap_->FreeNative(work_.data());
-  }
+  heap_->FreeNative(storage_);
 }
 
 bool NativeMaterialization::HasVirtualObjects(const NativeCheckpoint& checkpoint) noexcept {
@@ -74,18 +67,20 @@ ExecutionStatus NativeMaterialization::PrepareStorage() noexcept {
   const auto& materialization = *checkpoint_->materialization;
   const auto count = materialization.graph->objects.values().size();
   // 最后一个槽保活解释旧字段身份所需的程序状态及其代码批次。
-  auto* values = static_cast<Value*>(heap_->AllocateNative((count + 1) * sizeof(Value)));
-  if (values == nullptr) {
+  static_assert(sizeof(Value) % alignof(Work) == 0);
+  const auto value_count = count + 1;
+  const auto value_bytes = value_count * sizeof(Value);
+  storage_ = heap_->AllocateNative(value_bytes + (count * sizeof(Work)));
+  if (storage_ == nullptr) {
     return ExecutionStatus::OutOfMemory;
   }
-  objects_ = {values, count + 1};
-  std::uninitialized_value_construct_n(values, count + 1);
+  auto* values = static_cast<Value*>(storage_);
+  objects_ = {values, value_count};
+  std::uninitialized_value_construct_n(values, value_count);
   objects_.back() = Value::Object(materialization.program);
   roots_.Attach(*heap_, objects_.data(), objects_.size());
-  auto* work = static_cast<Work*>(heap_->AllocateNative(count * sizeof(Work)));
-  if (work == nullptr) {
-    return ExecutionStatus::OutOfMemory;
-  }
+  void* work_storage = std::as_writable_bytes(objects_).last(0).data();
+  auto* work = static_cast<Work*>(work_storage);
   work_ = {work, count};
   std::uninitialized_value_construct_n(work, count);
   return ExecutionStatus::Returned;
@@ -164,7 +159,9 @@ ExecutionStatus NativeMaterialization::BuildGraph() noexcept {
                     ? DecodeNativeValue(values.subspan(field.value).front())
                     : objects_.subspan(field.object).front();
       }
-      static_cast<void>(heap_->SetField(object, slot, value));
+      if (const auto stored = heap_->SetField(object, slot, value); !stored) {
+        return stored.error();
+      }
       Heap::InstanceFields(object).SetFieldState(slot, field.state);
     }
   }

@@ -32,7 +32,7 @@ struct FutureCall final {
   FutureDiagnostic type_error;
   FutureDiagnostic timeout_error;
 
-  [[nodiscard]] Value At(std::size_t index) const { return values.subspan(index).front(); }
+  [[nodiscard]] Value At(std::size_t index) const { return values[index]; }
 };
 
 [[nodiscard]] std::expected<Value, ExecutionStatus>

@@ -1,11 +1,14 @@
 #include "runtime/library/numeric_parse.h"
 
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <expected>
 #include <limits>
+#include <memory>
 #include <span>
 #include <string_view>
+#include <system_error>
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/numbers.h>
@@ -22,16 +25,6 @@ constexpr std::int64_t kMinimumRadix = 2;
 constexpr std::int64_t kMaximumRadix = 36;
 constexpr std::int64_t kDecimalRadix = 10;
 constexpr std::int64_t kHexadecimalRadix = 16;
-
-int Digit(char byte) {
-  if (absl::ascii_isdigit(static_cast<std::uint8_t>(byte))) {
-    return byte - '0';
-  }
-  if (byte >= 'a' && byte <= 'z') {
-    return byte - 'a' + static_cast<int>(kDecimalRadix);
-  }
-  return byte >= 'A' && byte <= 'Z' ? byte - 'A' + static_cast<int>(kDecimalRadix) : -1;
-}
 
 std::expected<std::int64_t, ExecutionStatus> ParseInt(std::string_view source, Value radix_value) {
   if (!radix_value.IsNull() && !radix_value.IsInteger()) {
@@ -57,18 +50,12 @@ std::expected<std::int64_t, ExecutionStatus> ParseInt(std::string_view source, V
   }
   const auto limit =
       static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) + (negative ? 1U : 0U);
-  const auto base = static_cast<std::uint64_t>(radix);
   std::uint64_t magnitude = 0;
-  for (const auto byte : text) {
-    const auto digit = Digit(byte);
-    if (digit < 0 || digit >= radix) {
-      return std::unexpected(ExecutionStatus::IntParseError);
-    }
-    const auto value = static_cast<std::uint64_t>(digit);
-    if (magnitude > (limit - value) / base) {
-      return std::unexpected(ExecutionStatus::IntParseError);
-    }
-    magnitude = (magnitude * base) + value;
+  const auto* end = std::to_address(text.end());
+  const auto parsed = std::from_chars(std::to_address(text.begin()), end, magnitude,
+                                    static_cast<int>(radix));
+  if (parsed.ec != std::errc{} || parsed.ptr != end || magnitude > limit) {
+    return std::unexpected(ExecutionStatus::IntParseError);
   }
   if (negative && magnitude == limit) {
     return std::numeric_limits<std::int64_t>::min();

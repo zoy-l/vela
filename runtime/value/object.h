@@ -24,6 +24,7 @@ class Timer;
 class CancellationToken;
 struct TypeSignature;
 struct HeapObject;
+struct InstanceStorage;
 // Isolate 持有的名义接口身份；不占用可分配类的布局索引。
 struct InterfaceType final {};
 // 同一增量会话共享代码身份；函数编号只在该身份内有意义。
@@ -57,11 +58,15 @@ class NominalType final {
 
  private:
   friend class Isolate;
+  friend class Heap;
+  friend class LayoutTransaction;
   explicit NominalType(NominalTypeOptions options);
   NominalKind kind_;
   std::vector<const InterfaceType*> interfaces_;
   ClassLayout* fixed_layout_ = nullptr;
   DeclarationId declaration_;
+  // Heap 管理的弱实例链；稳定身份覆盖实例寿命，登记无需分配哈希节点。
+  InstanceStorage* instances_ = nullptr;
 };
 
 enum class ClassStorage : std::uint8_t { Inline, Reloadable };
@@ -75,7 +80,6 @@ struct ClassLayoutOptions final {
   NominalType* nominal = nullptr;
   ClassStorage storage = ClassStorage::Inline;
   std::vector<DeclarationId> field_declarations;
-  std::uint64_t revision = 0;
 };
 
 class ClassLayout final {
@@ -93,7 +97,6 @@ class ClassLayout final {
   }
   [[nodiscard]] const NominalType& nominal_type() const noexcept { return *nominal_; }
   [[nodiscard]] ClassStorage storage() const noexcept { return storage_; }
-  [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
   [[nodiscard]] std::optional<std::uint32_t> FieldIndex(DeclarationId field) const noexcept;
   [[nodiscard]] std::span<const DeclarationId> field_declarations() const noexcept {
     return field_declarations_;
@@ -128,7 +131,6 @@ class ClassLayout final {
   std::optional<CallableTarget> callable_;
   NominalType* nominal_ = nullptr;
   ClassStorage storage_ = ClassStorage::Inline;
-  std::uint64_t revision_ = 0;
   std::vector<DeclarationId> field_declarations_;
   absl::flat_hash_map<DeclarationId, std::uint32_t> field_indices_;
   std::vector<std::uint32_t> dispatch_targets_;
@@ -162,7 +164,12 @@ struct ArrayLayout;
 
 [[nodiscard]] constexpr bool IsLeafObject(ObjectKind kind) noexcept {
   return kind == ObjectKind::String || kind == ObjectKind::MutableString ||
-         kind == ObjectKind::ByteArray;
+         kind == ObjectKind::ByteArray || kind == ObjectKind::Timer ||
+         kind == ObjectKind::CancellationToken;
+}
+
+[[nodiscard]] constexpr bool HasFuturePayload(ObjectKind kind) noexcept {
+  return kind == ObjectKind::Future || kind == ObjectKind::Completer;
 }
 
 // 尾部存储与头部在同一次分配中；调用者负责容量、对象生命周期及动态长度。
@@ -296,11 +303,17 @@ struct HeapObject final {
   [[nodiscard]] const TypeSignature* future_signature() const noexcept {
     return static_cast<const TypeSignature*>(std::bit_cast<const void*>(type_metadata));
   }
+  // length：String 为 UTF-8 字节数，MutableString 为已用字节数，Array/ValueSlots
+  // 为元素数，ByteArray/ByteData 为可见字节数；native callable 的 Instance 为函数编号。
+  // Collection 的大小存于尾部 CollectionStorage，其他 kind 不使用本槽。
   std::uint32_t length = 0;
   // 字符串逻辑长度或内联实例的物理字段数；两种对象不共享此槽的含义。
   std::uint32_t auxiliary_length = 0;
-  // kind 与实例的 storage/callable 契约确定载荷类型；可重载用户实例持有字段块，
-  // 固定 callable 持有版本环境，两者不会同时占用此槽。Heap 负责底层存储的销毁。
+  // native_payload：reloadable Instance 持有 InstanceStorage；native callable 借用
+  // NativeProgram 对象；Timer、CancellationToken 分别拥有对应句柄；
+  // ValueSlots 拥有 Value 数组；NativeProgram 拥有 NativeProgramState。其他 kind 不使用。
+  // Future/Completer 的内部句柄位于对象头之后；实例字段块与 callable 环境互斥。
+  // Heap 按 kind 追踪引用并销毁其拥有的存储。
   void* native_payload = nullptr;
 };
 

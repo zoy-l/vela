@@ -27,8 +27,7 @@ std::expected<Value, ExecutionStatus> internal::CompleteNativeResult(NativeExecu
     return std::unexpected(execution.HandleFailure(status, error.message));
   }
   const auto& instance = execution.instance();
-  const auto result_type =
-      instance.image().functions.values().subspan(function).front().result_type;
+  const auto result_type = instance.image().function(function).result_type;
   if (result_type == kNoNativeIndex) {
     return *result;
   }

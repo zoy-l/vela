@@ -30,8 +30,8 @@ TEST(ExecutionContextTest, MicrotasksAndTimersRestoreTheirCreationContext) {
     scheduler.PostMicrotask([&] { observed.push_back(scheduler.context()); });
   });
   scheduler.SetExecutionContext(kLater);
-  ASSERT_TRUE(scheduler.PumpOne());
-  ASSERT_TRUE(scheduler.PumpOne());
+  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
+  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
   EXPECT_EQ(observed,
             (std::vector<std::optional<ExecutionContext>>{kProducer, kProducer, kProducer}));
   EXPECT_EQ(scheduler.context(), kLater);
@@ -51,7 +51,7 @@ TEST(ExecutionContextTest, ListenersKeepRegistrationContextAndForwardOriginalErr
   scheduler.SetExecutionContext(kLater);
   source.Observe([&](FutureState, Value) { observed.push_back(scheduler.context()); });
   ASSERT_TRUE(source.CompleteError(Value::Integer(42)));
-  ASSERT_TRUE(scheduler.PumpOne());
+  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
   EXPECT_EQ(observed, (std::vector<std::optional<ExecutionContext>>{kListener, kLater}));
   EXPECT_EQ(scheduler.context(), kLater);
   const auto original = source.error_diagnostic();
@@ -75,7 +75,7 @@ TEST(ExecutionContextTest, HostCompletionUsesEndpointCreationContext) {
   future.Observe([](FutureState, Value) {});
   std::thread producer([endpoint] { EXPECT_TRUE(endpoint.CompleteError(Value::Integer(42))); });
   producer.join();
-  ASSERT_TRUE(scheduler.PumpUntil(future, FuturePumpMode::WaitForHost));
+  ASSERT_EQ(scheduler.PumpUntil(future, FuturePumpMode::WaitForHost), FuturePumpResult::Completed);
   const auto diagnostic = future.error_diagnostic();
   if (!diagnostic) {
     FAIL() << "host failure requires a diagnostic";
@@ -93,7 +93,7 @@ TEST(ExecutionContextTest, OrdinaryErrorsStayOutsideTestsWhenForwardedInsideATes
     EXPECT_TRUE(forwarded.CompleteError(completion.value, completion.diagnostic));
   });
   forwarded.Observe([](FutureState, Value) {});
-  ASSERT_TRUE(scheduler.PumpOne());
+  ASSERT_EQ(scheduler.PumpOne(), FuturePumpStep::Executed);
   const auto diagnostic = forwarded.error_diagnostic();
   if (!diagnostic) {
     FAIL() << "forwarded failure requires a diagnostic";

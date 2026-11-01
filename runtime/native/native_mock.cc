@@ -10,6 +10,7 @@
 #include "base/execution_status.h"
 #include "base/mock_operation.h"
 #include "runtime/async/future.h"
+#include "runtime/async/future_operations.h"
 #include "runtime/exceptions/error.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
@@ -19,6 +20,7 @@
 #include "runtime/testing/trace_value.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 namespace {
@@ -58,14 +60,14 @@ std::expected<Value, ExecutionStatus> Observe(NativeExecution& execution,
                                               Value source_value,
                                               Value value) {
   if (operation == MockOperation::ObserveMatch) {
-    auto* source = source_value.IsObject() ? Heap::GetFuture(*source_value.AsObject()) : nullptr;
+    auto* source = AsFuture(source_value);
     auto* target = value.IsObject() ? Heap::GetCompleter(*value.AsObject()) : nullptr;
     if (source == nullptr || target == nullptr || source->is_pending()) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
     const auto& completed = source->result();
     if (completed.state == FutureState::Failed) {
-      source->ObserveResult([](const FutureResult&) {});
+      source->MarkObserved();
       auto diagnostic = completed.diagnostic;
       diagnostic.origin.context = target->creation_context();
       diagnostic.origin.captured = true;
@@ -157,12 +159,11 @@ std::expected<Value, ExecutionStatus> Inspect(NativeExecution& execution,
 
 std::expected<Value, ExecutionStatus> ExecuteNativeMock(NativeExecution& execution,
                                                         std::span<const Value> arguments) {
-  const auto opcode = arguments.front();
-  if (!opcode.IsInteger() || opcode.AsInteger() < 0 ||
-      opcode.AsInteger() > static_cast<std::int64_t>(MockOperation::AcceptsResponseSignature)) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  const auto decoded = DecodeOperation<MockOperation::AcceptsResponseSignature>(arguments.front());
+  if (!decoded) {
+    return std::unexpected(decoded.error());
   }
-  const auto operation = static_cast<MockOperation>(opcode.AsInteger());
+  const auto operation = *decoded;
   const auto signature_value = arguments.subspan(1).front();
   const auto value = arguments.subspan(2).front();
   if (operation == MockOperation::ObserveMatch || operation == MockOperation::FailObservation) {
@@ -175,8 +176,7 @@ std::expected<Value, ExecutionStatus> ExecuteNativeMock(NativeExecution& executi
   }
   auto& isolate = execution.isolate();
   if (operation == MockOperation::CaptureTrace) {
-    return CaptureTestTrace(isolate.heap(),
-                            execution.Diagnostic(ExecutionStatus::Returned, {}).stack_trace);
+    return CaptureTestTrace(isolate.heap(), execution.CaptureTrace());
   }
   if (operation == MockOperation::ResolveTrace) {
     const auto frames = ReadTestTrace(signature_value);
@@ -186,14 +186,12 @@ std::expected<Value, ExecutionStatus> ExecuteNativeMock(NativeExecution& executi
     return ExpandTrace(isolate.heap(), *frames, *value.AsObject());
   }
   if (operation == MockOperation::RegisterFailure) {
-    if (!signature_value.IsInteger() || signature_value.AsInteger() < 0 ||
-        signature_value.AsInteger() > static_cast<std::int64_t>(MockFailureKind::SessionClosed) ||
-        !Heap::IsThrowable(value)) {
+    const auto kind = DecodeOperation<MockFailureKind::SessionClosed>(signature_value);
+    if (!kind || !Heap::IsThrowable(value)) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
     if (auto* bridge = isolate.test_bridge()) {
-      bridge->RegisterMockFailure(Heap::ClassOf(*value.AsObject())->nominal_type(),
-                                  static_cast<MockFailureKind>(signature_value.AsInteger()));
+      bridge->RegisterMockFailure(Heap::ClassOf(*value.AsObject())->nominal_type(), *kind);
     }
     return Value::Null();
   }

@@ -9,13 +9,9 @@
 
 namespace vela::runtime {
 
-bool CanUseNativeOptimization(const NativeExecution& execution, const NativeImage& image) noexcept {
-  return execution.isolate().native_dispatch().revision() == image.revision;
-}
-
 extern "C" std::uint8_t vela_native_v4_can_optimize(const NativeExecution* execution,
                                                     const NativeImage* image) noexcept {
-  return execution != nullptr && CanUseNativeOptimization(*execution, *image) ? 1 : 0;
+  return execution->isolate().native_dispatch().revision() == image->revision ? 1 : 0;
 }
 
 extern "C" std::uint8_t vela_native_v4_recover(NativeExecution* execution,

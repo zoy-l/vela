@@ -43,12 +43,12 @@ TEST(InstanceStorageTest, ExternalBlocksAreAccountedAndWeakRegistrationDoesNotKe
   }
   EXPECT_EQ(object_field_0->AsInteger(), 40);
   std::vector<Value> instances;
-  heap.AppendInstances(layout->nominal_type(), instances);
+  Heap::AppendInstances(layout->nominal_type(), instances);
   ASSERT_EQ(instances.size(), 1U);
   EXPECT_EQ(instances.front().AsObject(), object);
   heap.Collect();
   instances.clear();
-  heap.AppendInstances(layout->nominal_type(), instances);
+  Heap::AppendInstances(layout->nominal_type(), instances);
   EXPECT_TRUE(instances.empty());
   EXPECT_EQ(heap.object_count(), 0U);
   EXPECT_EQ(heap.allocated_bytes(), bytes);
@@ -89,15 +89,15 @@ TEST(InstanceStorageTest,
   const auto* old_fields = ObjectFieldStorage(*object).data();
   {
     const auto candidate = heap.PrepareInstanceMigration(*object, *replacement);
-    ASSERT_NE(candidate, nullptr);
+    ASSERT_TRUE(candidate);
     heap.Collect();
     EXPECT_EQ(Heap::ClassOf(*object), original);
     EXPECT_EQ(ObjectFieldStorage(*object).data(), old_fields);
     EXPECT_EQ(heap.object_count(), 2U);
   }
   auto candidate = heap.PrepareInstanceMigration(*object, *replacement);
-  ASSERT_NE(candidate, nullptr);
-  candidate->Commit();
+  ASSERT_TRUE(candidate);
+  (*candidate)->Commit();
   EXPECT_EQ(root.AsObject(), object);
   EXPECT_EQ(Heap::ClassOf(*object), replacement);
   EXPECT_NE(ObjectFieldStorage(*object).data(), old_fields);
@@ -120,7 +120,7 @@ TEST(InstanceStorageTest,
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 2U);
   root = Value::Null();
-  candidate.reset();
+  candidate->reset();
   heap.Collect();
   EXPECT_EQ(heap.object_count(), 0U);
 }
@@ -156,8 +156,8 @@ TEST(InstanceStorageTest, ReplacingABlackObjectsBlockPreservesNewReferencesDurin
   heap.Step(1);
   ASSERT_EQ(heap.phase(), GcPhase::Mark);
   const auto migration = heap.PrepareInstanceMigration(*object, *replacement);
-  ASSERT_NE(migration, nullptr);
-  migration->Commit();
+  ASSERT_TRUE(migration);
+  (*migration)->Commit();
   ASSERT_TRUE(heap.SetField(*object, 1, Value::Object(heap.AllocateInstance(*leaf))));
   heap.FinishCollection();
   EXPECT_EQ(heap.object_count(), 2U);
@@ -165,7 +165,7 @@ TEST(InstanceStorageTest, ReplacingABlackObjectsBlockPreservesNewReferencesDurin
   EXPECT_EQ(heap.object_count(), 2U);
 }
 
-TEST(InstanceStorageTest, InstanceListsRemainValidAcrossTypeIndexRehashAndMiddleRemoval) {
+TEST(InstanceStorageTest, InstanceListsRemainValidAcrossTypeCreationAndMiddleRemoval) {
   Isolate isolate;
   auto& heap = isolate.heap();
   auto* layout = isolate.CreateClassLayout(0, {},
@@ -195,13 +195,13 @@ TEST(InstanceStorageTest, InstanceListsRemainValidAcrossTypeIndexRehashAndMiddle
   roots.at(1) = Value::Null();
   heap.Collect();
   std::vector<Value> instances;
-  heap.AppendInstances(layout->nominal_type(), instances);
+  Heap::AppendInstances(layout->nominal_type(), instances);
   EXPECT_EQ(instances.size(), 2U);
   EXPECT_EQ(heap.object_count(), 2U);
   roots.fill(Value::Null());
   heap.Collect();
   instances.clear();
-  heap.AppendInstances(layout->nominal_type(), instances);
+  Heap::AppendInstances(layout->nominal_type(), instances);
   EXPECT_TRUE(instances.empty());
 }
 

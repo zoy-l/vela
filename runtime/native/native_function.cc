@@ -1,5 +1,4 @@
 #include "runtime/native/native_function.h"
-#include "runtime/async/future.h"
 
 #include <cstddef>
 #include <expected>
@@ -10,6 +9,7 @@
 #include "base/callable.h"
 #include "base/layout_description.h"
 #include "base/utf8.h"
+#include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_context.h"
@@ -21,14 +21,12 @@ namespace {
 
 bool IsNativeTypeCompatible(const layout::Type& type, NativeType native) {
   using Kind = layout::Type::Kind;
-  if (native == NativeType::NullableString) {
-    return type.kind == Kind::String && type.nullable;
-  }
   if (type.nullable) {
-    return false;
+    return native == NativeType::NullableString && type.kind == Kind::String;
   }
   switch (native) {
     case NativeType::Void:
+    case NativeType::NullableString:
       return false;
     case NativeType::Boolean:
       return type.kind == Kind::Boolean;
@@ -38,8 +36,6 @@ bool IsNativeTypeCompatible(const layout::Type& type, NativeType native) {
       return type.kind == Kind::Double;
     case NativeType::String:
       return type.kind == Kind::String;
-    case NativeType::NullableString:
-      std::unreachable();
     case NativeType::Future:
       return type.kind == Kind::Future;
     case NativeType::CancellationToken:

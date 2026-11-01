@@ -148,7 +148,7 @@ async func main(): Future<int> {
             0U);
   auto root = test::StartFuture(**entry);
   EXPECT_EQ(root.state(), runtime::FutureState::Succeeded);
-  EXPECT_FALSE(isolate.scheduler().PumpOne());
+  EXPECT_EQ(isolate.scheduler().PumpOne(), runtime::FuturePumpStep::Idle);
   const auto value = test::AwaitInteger(root, isolate);
   ASSERT_TRUE(value) << value.error();
   EXPECT_EQ(*value, kAsyncResult);
@@ -182,7 +182,7 @@ async func main(): Future<void> {
   const auto entry = test::CompileCleanSource(source, isolate);
   ASSERT_TRUE(entry) << entry.error();
   auto root = test::StartFuture(**entry);
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(root));
+  ASSERT_EQ(isolate.scheduler().PumpUntil(root), runtime::FuturePumpResult::Completed);
   ASSERT_EQ(root.state(), runtime::FutureState::Failed);
   const auto diagnostic = root.error_diagnostic();
   ASSERT_TRUE(diagnostic.has_value());

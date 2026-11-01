@@ -19,20 +19,17 @@
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
-namespace {
 
-std::expected<Value, ExecutionStatus> Allocate(Heap& heap, Future future) {
-  auto* object = heap.AllocateFuture(std::move(future));
-  return object != nullptr ? std::expected<Value, ExecutionStatus>(Value::Object(object))
-                           : std::unexpected(ExecutionStatus::OutOfMemory);
+Future* AsFuture(Value value) noexcept {
+  auto* object = value.AsObjectOrNull();
+  return object == nullptr ? nullptr : Heap::GetFuture(*object);
 }
 
-}  // namespace
-
 Future RootFutureValue(Isolate& isolate, Value value) {
-  auto* source = value.IsObject() ? Heap::GetFuture(*value.AsObject()) : nullptr;
+  auto* source = AsFuture(value);
   if (source != nullptr) {
     return source->Rooted();
   }
@@ -42,7 +39,7 @@ Future RootFutureValue(Isolate& isolate, Value value) {
 }
 
 std::expected<Value, ExecutionStatus> AllocateFutureValue(Isolate& isolate, Value value) {
-  return Allocate(isolate.heap(), RootFutureValue(isolate, value));
+  return AllocatedValue(isolate.heap().AllocateFuture(RootFutureValue(isolate, value)));
 }
 
 std::expected<Value, ExecutionStatus> AllocateFutureError(Isolate& isolate,
@@ -53,7 +50,7 @@ std::expected<Value, ExecutionStatus> AllocateFutureError(Isolate& isolate,
   }
   Future future(&isolate.scheduler());
   std::ignore = future.CompleteError(value, diagnostic);
-  return Allocate(isolate.heap(), std::move(future));
+  return AllocatedValue(isolate.heap().AllocateFuture(std::move(future)));
 }
 
 std::expected<Value, ExecutionStatus> AllocateSleepFuture(Isolate& isolate,
@@ -62,7 +59,7 @@ std::expected<Value, ExecutionStatus> AllocateSleepFuture(Isolate& isolate,
   if (!FutureScheduler::CanSchedule(delay)) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  return Allocate(isolate.heap(), Future::Sleep(delay, isolate.scheduler()));
+  return AllocatedValue(isolate.heap().AllocateFuture(Future::Sleep(delay, isolate.scheduler())));
 }
 
 void CompleteFuture(Isolate& isolate, Future& future, const Future& source) {
@@ -97,6 +94,11 @@ void CompleteFutureError(Isolate& isolate,
   std::ignore = future.CompleteError(payload, diagnostic);
 }
 
+void CompleteFutureStatus(Isolate& isolate, Future& future, ExecutionStatus status) {
+  CompleteFutureError(isolate, future, Value::Null(),
+                      {.message = {}, .stack_trace = {}, .status = status, .origin = {}});
+}
+
 void ObserveCheckedCompletion(Isolate& isolate,
                               Future target,
                               Future& source,
@@ -112,8 +114,7 @@ void ObserveCheckedCompletion(Isolate& isolate,
           matches = type ? Heap::IsValueOfType(value, *type) : value.IsNull();
         }
         if (matches) {
-          std::ignore =
-              succeeded ? target.Complete(value) : target.CompleteError(value, input.diagnostic);
+          std::ignore = target.Settle(input);
           return;
         }
         const auto error = CreateError(isolate.heap(), isolate.error_layout(),

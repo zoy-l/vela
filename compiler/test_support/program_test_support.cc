@@ -35,22 +35,24 @@ std::expected<std::unique_ptr<runtime::NativeInstance>, std::string> Clean(Insta
 }  // namespace
 
 InstanceResult CompileParsed(frontend::ParseResult parsed,
-                               runtime::Isolate& isolate,
-                               frontend::DiagnosticOptions options,
-                               jit::CompileOptions compilation) {
+                             runtime::Isolate& isolate,
+                             frontend::DiagnosticOptions options,
+                             jit::CompileOptions compilation) {
   auto compiler = jit::Compiler::Create();
   if (!compiler) {
     return {.instance = {}, .diagnostics = std::move(compiler.error())};
   }
-  auto compiled = jit::CompileParsed(**compiler, std::move(parsed),
-                                     {.diagnostics = options, .compilation = std::move(compilation)});
+  auto compiled =
+      jit::CompileParsed(**compiler, std::move(parsed),
+                         {.diagnostics = options, .compilation = std::move(compilation)});
   InstanceResult result{.instance = {}, .diagnostics = std::move(compiled.diagnostics)};
   if (!compiled.Succeeded()) {
     return result;
   }
   auto instance = runtime::NativeInstance::Instantiate(isolate, std::move(compiled.code.image));
   if (!instance) {
-    result.diagnostics.push_back({.location = {}, .message = instance.error().message, .source_path = {}});
+    result.diagnostics.push_back(
+        {.location = {}, .message = instance.error().message, .source_path = {}});
   } else {
     result.instance = std::move(*instance);
   }
@@ -58,8 +60,8 @@ InstanceResult CompileParsed(frontend::ParseResult parsed,
 }
 
 InstanceResult CompileSource(std::string_view source,
-                               runtime::Isolate& isolate,
-                               frontend::DiagnosticOptions options) {
+                             runtime::Isolate& isolate,
+                             frontend::DiagnosticOptions options) {
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   return CompileModules(std::span(&input, 1), input.path, isolate, options);
 }
@@ -67,34 +69,38 @@ InstanceResult CompileSource(std::string_view source,
 InstanceResult CompileDebugSource(std::string_view source, runtime::Isolate& isolate) {
   const frontend::SourceInput input{.path = "main.vela", .text = source};
   return CompileParsed(frontend::LoadSources(std::span(&input, 1), input.path), isolate, {},
-                        {.debugging = native::NativeDebugging::Instructions});
+                       {.debugging = native::NativeDebugging::Instructions});
 }
 
 InstanceResult CompileModules(std::span<const frontend::SourceInput> sources,
-                                std::string_view entry,
-                                runtime::Isolate& isolate,
-                                frontend::DiagnosticOptions options) {
+                              std::string_view entry,
+                              runtime::Isolate& isolate,
+                              frontend::DiagnosticOptions options) {
   return CompileParsed(frontend::LoadSources(sources, entry), isolate, options);
 }
 
 InstanceResult CompileFile(std::string_view path,
-                             runtime::Isolate& isolate,
-                             frontend::DiagnosticOptions options) {
+                           runtime::Isolate& isolate,
+                           frontend::DiagnosticOptions options) {
   return CompileParsed(frontend::LoadProgram(path), isolate, options);
 }
 
 std::expected<std::unique_ptr<runtime::NativeInstance>, std::string> CompileCleanSource(
-    std::string_view source, runtime::Isolate& isolate) {
+    std::string_view source,
+    runtime::Isolate& isolate) {
   return Clean(CompileSource(source, isolate));
 }
 
 std::expected<std::unique_ptr<runtime::NativeInstance>, std::string> CompileCleanModules(
-    std::span<const frontend::SourceInput> sources, std::string_view entry, runtime::Isolate& isolate) {
+    std::span<const frontend::SourceInput> sources,
+    std::string_view entry,
+    runtime::Isolate& isolate) {
   return Clean(CompileModules(sources, entry, isolate));
 }
 
 std::expected<std::unique_ptr<runtime::NativeInstance>, std::string> ReinstantiateSource(
-    std::string_view source, runtime::Isolate& isolate) {
+    std::string_view source,
+    runtime::Isolate& isolate) {
   jit::SourceResult compiled;
   {
     auto compiler = jit::Compiler::Create();
@@ -165,7 +171,7 @@ std::expected<std::int64_t, std::string> ExecuteInteger(runtime::NativeInstance&
 
 std::expected<std::int64_t, std::string> AwaitInteger(runtime::Future& future,
                                                       runtime::Isolate& isolate) {
-  if (!isolate.scheduler().PumpUntil(future)) {
+  if (isolate.scheduler().PumpUntil(future) == runtime::FuturePumpResult::Idle) {
     return std::unexpected("test Future has no producer");
   }
   if (future.state() != runtime::FutureState::Succeeded) {

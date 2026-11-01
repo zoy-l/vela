@@ -104,12 +104,24 @@ inline constexpr auto kByteAccesses = std::to_array<ByteAccess>({
 }
 
 [[nodiscard]] constexpr const ByteAccess* FindByteAccess(Builtin builtin) noexcept {
-  for (const auto& access : kByteAccesses) {
-    if (access.get == builtin || access.set == builtin) {
-      return &access;
-    }
+  if (builtin < Builtin::ByteDataGetInt8 || builtin > Builtin::ByteDataSetFloat64) {
+    return nullptr;
   }
-  return nullptr;
+  const auto offset =
+      static_cast<std::size_t>(builtin) - static_cast<std::size_t>(Builtin::ByteDataGetInt8);
+  return &kByteAccesses[offset / 2];
 }
+
+static_assert([] {
+  auto expected = static_cast<std::size_t>(Builtin::ByteDataGetInt8);
+  for (const auto& access : kByteAccesses) {
+    if (static_cast<std::size_t>(access.get) != expected ||
+        static_cast<std::size_t>(access.set) != expected + 1) {
+      return false;
+    }
+    expected += 2;
+  }
+  return true;
+}());
 
 }  // namespace vela

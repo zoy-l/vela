@@ -20,9 +20,9 @@ std::string_view ExternalResourceKindName(ExternalResourceKind kind) noexcept {
       return "NativeInstance";
     case ExternalResourceKind::NativeHandle:
       return "NativeHandle";
-    case ExternalResourceKind::NativeEntry:
+    case ExternalResourceKind::NativeNamedEntry:
       return "NativeNamedEntry";
-    case ExternalResourceKind::NativeCandidate:
+    case ExternalResourceKind::NativePreparedPublication:
       return "NativePreparedPublication";
     case ExternalResourceKind::Future:
       return "Future";

@@ -245,7 +245,7 @@ class RetainedValues final {
       }
       for (const auto value : values_) {
         auto& future = *runtime::Heap::GetFuture(*value.AsObject());
-        if (!session.isolate().scheduler().PumpUntil(future)) {
+        if (session.isolate().scheduler().PumpUntil(future) == runtime::FuturePumpResult::Idle) {
           return std::unexpected("suspended task did not complete");
         }
         const auto result = future.value();

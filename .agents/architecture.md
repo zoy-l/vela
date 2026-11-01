@@ -59,6 +59,9 @@ for execution and validation.
   boundary or final owner; do not repeatedly rename and propagate the same failure across layers.
 - Define ownership, borrowing duration, and destruction order for `Value`, heap objects, `Isolate`,
   native images, instances, and compilation results.
+- Temporary contiguous native storage uses `NativeBuffer`; external blocks participate in heap
+  accounting and may trigger GC during construction. Callers root borrowed managed inputs first
+  and check allocation once before borrowing the buffer. The owner and its Heap cover that borrow.
 - Consumers should rely on guarantees established by types, construction, and lifetimes instead of
   repeating defensive checks at every layer. When removing redundant checks, also remove their
   result enums, branches, and tests.
@@ -72,8 +75,10 @@ reloadable field blocks record their physical field counts. Native code addresse
 directly and reads tags when the value representation requires them. Boxed `Value` and `NativeValue`
 records retain their sixteen-byte ABI; array storage follows its element layout.
 
-`Heap::GetField` returns a copied value, or no value for an object without a class layout or an
-out-of-range field. Managed references in that copy borrow the heap and require a root before the
+`Heap::GetField` probes for a field and returns a copied value, or no value for an object without a
+class layout or an out-of-range field. `Heap::LoadField` reads a field whose existence is guaranteed
+by the caller's layout contract. `Heap::SetField` reports `InvalidField` when that field is absent.
+Managed references in a copied field borrow the heap and require a root before the
 next allocation. `ObjectFieldStorage` borrows the owner's storage; callers keep the owner rooted and
 do not retain the view across migration or a safepoint that can publish a migration. Prepared
 migrations register their field blocks as roots until commit or discard. Commit replaces the layout

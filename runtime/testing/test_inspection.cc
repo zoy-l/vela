@@ -16,6 +16,7 @@
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 namespace {
@@ -44,8 +45,7 @@ std::string Display(Value value) {
   if (value.IsString()) {
     const auto text = value.AsString()->value();
     auto length = std::min(text.size(), kDisplayBudget);
-    while (length < text.size() &&
-           (static_cast<unsigned char>(text.at(length)) & kContinuationMask) == kContinuationTag) {
+    while (length < text.size() && IsContinuationByte(text[length])) {
       --length;
     }
     return "'" + std::string(text.substr(0, length)) + (text.size() > kDisplayBudget ? "…'" : "'");
@@ -69,16 +69,13 @@ std::string Display(Value value) {
 
 std::expected<Value, ExecutionStatus> InspectTestValue(std::span<const Value> arguments,
                                                        Heap& heap) {
-  const auto operation = arguments.front();
-  if (!operation.IsInteger()) {
-    return std::unexpected(ExecutionStatus::TypeError);
+  const auto operation = DecodeOperation<TestInspection::Display>(arguments.front());
+  if (!operation) {
+    return std::unexpected(operation.error());
   }
-  const auto value = arguments.subspan(1).front();
-  if (operation.AsInteger() == 0) {
+  const auto value = arguments[1];
+  if (*operation == TestInspection::Kind) {
     return Value::Integer(static_cast<std::int64_t>(KindOf(value)));
-  }
-  if (operation.AsInteger() != 1) {
-    return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto text = Display(value);
   auto* string = heap.AllocateString(text);

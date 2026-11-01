@@ -29,6 +29,8 @@ struct NativeImage;
 class NativeInstance;
 class TestBridge;
 
+enum class NativeRegistrationError : std::uint8_t { InvalidName, DuplicateName, BindingsFrozen };
+
 // 会话内固定的宿主实现与签名；复制快照只共享不可变 NativeFunction 包装。
 class NativeBindings final {
  public:
@@ -104,6 +106,7 @@ class Isolate final {
   friend class Heap;
   friend class LayoutTransaction;
   friend class NativeInstance;
+  [[nodiscard]] LayoutCounts PersistentLayoutCounts() const noexcept;
   void CollectNativeMetadata();
   NativeMetadataSet native_metadata_;
   std::size_t layout_transactions_ = 0;

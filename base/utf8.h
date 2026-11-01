@@ -20,6 +20,10 @@ inline constexpr unsigned kSurrogatePayloadBits = 10;
 inline constexpr std::uint32_t kContinuationTag = 0x80;
 inline constexpr std::uint32_t kContinuationMask = 0xC0;
 
+[[nodiscard]] constexpr bool IsContinuationByte(char byte) noexcept {
+  return (static_cast<std::uint8_t>(byte) & kContinuationMask) == kContinuationTag;
+}
+
 struct Utf8Point final {
   std::uint32_t value;
   std::size_t width;

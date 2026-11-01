@@ -17,7 +17,7 @@ enum class FieldState : std::uint8_t { Uninitialized, Initializing, Ready };
 struct InstanceStorage final {
   HeapObject* object = nullptr;
   InstanceStorage* next = nullptr;
-  InstanceStorage* previous = nullptr;
+  InstanceStorage** previous_link = nullptr;
   std::uint32_t count = 0;
   // Initializing 仍计入未就绪数；零值允许整个字段块跳过逐字段初始化检查。
   std::uint32_t unready = 0;

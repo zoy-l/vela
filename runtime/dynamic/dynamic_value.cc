@@ -9,9 +9,9 @@
 #include "base/execution_status.h"
 #include "base/opcode.h"
 #include "runtime/collections/byte_operations.h"
+#include "runtime/dynamic/numeric_operations_internal.h"
 #include "runtime/heap/heap.h"
 #include "runtime/library/builtins.h"
-#include "runtime/library/numeric_operations_internal.h"
 #include "runtime/regexp/regexp.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -116,7 +116,7 @@ Result ArrayIndex(Builtin builtin, std::span<const Value> arguments, Heap& heap)
     auto value = original;
     const auto* element = layout.element.nominal;
     if (!value.IsNull() && element != nullptr && element->IsEnum()) {
-      value = *Heap::GetField(*value.AsObject(), 0);
+      value = Heap::LoadField(*value.AsObject(), 0);
     }
     const auto written = WriteIndex(heap, &object, index.AsInteger(), value);
     return written ? Result(original) : std::unexpected(written.error());

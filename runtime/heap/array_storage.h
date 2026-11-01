@@ -20,11 +20,8 @@ struct ArrayStorage final {
 
 static_assert(sizeof(ArrayStorage) % alignof(Value) == 0);
 
-inline ArrayStorage& ArrayBuffer(HeapObject& array) noexcept {
-  return *StorageAfter<ArrayStorage>(array);
-}
-
-inline const ArrayStorage& ArrayBuffer(const HeapObject& array) noexcept {
+template <class Array>
+inline auto& ArrayBuffer(Array& array) noexcept {
   return *StorageAfter<ArrayStorage>(array);
 }
 

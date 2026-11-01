@@ -10,14 +10,10 @@
 #include "runtime/isolate/isolate.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 namespace {
-
-std::expected<Value, ExecutionStatus> Object(HeapObject* object) {
-  return object != nullptr ? std::expected<Value, ExecutionStatus>(Value::Object(object))
-                           : std::unexpected(ExecutionStatus::OutOfMemory);
-}
 
 std::expected<Value, ExecutionStatus> ExecuteCompleter(AsyncOperation operation,
                                                        std::span<const Value> arguments,
@@ -29,21 +25,20 @@ std::expected<Value, ExecutionStatus> ExecuteCompleter(AsyncOperation operation,
     return std::unexpected(ExecutionStatus::TypeError);
   }
   if (operation == AsyncOperation::CompleterFuture) {
-    return Object(isolate.heap().AllocateFuture(*completer));
+    return AllocatedValue(isolate.heap().AllocateFuture(*completer));
   }
   if (operation == AsyncOperation::CompleterIsCompleted) {
     return Value::Boolean(completer->IsCompleted());
   }
-  const auto value = arguments.subspan(1).front();
+  const auto value = arguments[1];
   if (operation == AsyncOperation::CompleterError && !Heap::IsThrowable(value)) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto* adopted = value.IsObject() ? Heap::GetFuture(*value.AsObject()) : nullptr;
   const auto completion = [&] {
     if (operation == AsyncOperation::CompleterError) {
       return completer->CompleteError(value, error);
     }
-    return adopted != nullptr ? completer->Adopt(*adopted) : completer->Complete(value);
+    return completer->Complete(value);
   }();
   if (!completion) {
     return std::unexpected(FutureCompletionStatus(completion.error()));
@@ -59,10 +54,10 @@ std::expected<Value, ExecutionStatus> ExecuteAsyncState(AsyncOperation operation
                                                         const FutureDiagnostic& error) {
   auto& heap = isolate.heap();
   if (operation == AsyncOperation::NewCompleter) {
-    return Object(heap.AllocateCompleter(Future(&isolate.scheduler())));
+    return AllocatedValue(heap.AllocateCompleter(Future(&isolate.scheduler())));
   }
   if (operation == AsyncOperation::NewCancellationToken) {
-    return Object(heap.AllocateCancellationToken(CancellationToken()));
+    return AllocatedValue(heap.AllocateCancellationToken(CancellationToken()));
   }
   const auto first = arguments.front();
   if (operation == AsyncOperation::CancellationCancel ||

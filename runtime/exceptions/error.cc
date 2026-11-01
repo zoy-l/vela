@@ -8,6 +8,7 @@
 #include "runtime/heap/heap.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 
@@ -28,15 +29,13 @@ std::expected<Value, ExecutionStatus> CreateError(Heap& heap,
   if (text == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  values.at(kErrorMessageField) = Value::String(text);
+  values[kErrorMessageField] = Value::String(text);
   auto* identifier = heap.AllocateString(fields.code);
   if (identifier == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  values.at(kErrorCodeField) = Value::String(identifier);
-  auto* object = heap.AllocateInstance(layout, values);
-  return object != nullptr ? std::expected<Value, ExecutionStatus>(Value::Object(object))
-                           : std::unexpected(ExecutionStatus::OutOfMemory);
+  values[kErrorCodeField] = Value::String(identifier);
+  return AllocatedValue(heap.AllocateInstance(layout, values));
 }
 
 }  // namespace vela::runtime

@@ -73,6 +73,11 @@ failure boundaries, and [Development Workflow](development_workflow.md) for exec
   clang-tidy diagnostics about raw pointers or indexing.
 - Do not repeat defensive checks on every element access when an outer contract already guarantees
   array length, index bounds, and lifetime.
+- For project containers, `vl lint` disables `pro-bounds-avoid-unchecked-container-access` and
+  `pro-bounds-constant-array-index`: these checks require checked access even after an input
+  boundary or a bounded loop has established the valid range. Use direct indexing within that
+  established contract; external indices still require validation at their actual input boundary.
+  Other pointer and bounds diagnostics remain enabled.
 - In `benchmarks/dasprofile` reference ports, preserve upstream numerical coefficients and
   conventional mathematical symbols. Its local `.clang-tidy` permits those literals and names,
   contiguous buffer indexing, and pointer arithmetic. Bound traversals by prepared container sizes

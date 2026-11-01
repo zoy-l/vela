@@ -59,8 +59,7 @@ TEST_P(AsyncContractTest, LoadsWithoutCompilerStateInFreshIsolate) {
   runtime::Isolate isolate(1);
   const auto program = test::ReinstantiateSource(scenario.source, isolate);
   ASSERT_TRUE(program) << program.error();
-  auto result =
-      test::StartFuture(**program);
+  auto result = test::StartFuture(**program);
   isolate.heap().Collect();
   const auto value = test::AwaitInteger(result, isolate);
   ASSERT_TRUE(value) << value.error();
@@ -95,8 +94,7 @@ async func main(): Future<int> {
                                                  isolate);
   ASSERT_TRUE(compiled) << compiled.error();
   const auto baseline = isolate.heap().object_count();
-  auto result =
-      test::StartFuture(**compiled);
+  auto result = test::StartFuture(**compiled);
   const auto value = test::AwaitInteger(result, isolate);
   ASSERT_TRUE(value) << value.error();
   constexpr std::int64_t kExpectedResult = 42;
@@ -118,7 +116,7 @@ func main(): int { orphan(); return 0; }
     const auto result = test::ExecuteInteger(**program);
     ASSERT_TRUE(result) << result.error();
     EXPECT_EQ(*result, 0);
-    ASSERT_TRUE(isolate.scheduler().PumpOne());
+    ASSERT_EQ(isolate.scheduler().PumpOne(), runtime::FuturePumpStep::Executed);
     EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 1U);
   }
   CollectAndExpectNoAsyncState(isolate);
@@ -147,7 +145,7 @@ TEST(AsyncLifetimeTest, EmptyRaceReportsIdleWithoutKeepingProcessAlive) {
       test::CompileSource("func main(): Future<int> { return Future.race<int>([]); }", isolate);
   ASSERT_TRUE(compiled.Succeeded());
   auto root = test::StartFuture(*compiled.instance);
-  EXPECT_FALSE(isolate.scheduler().PumpUntil(root));
+  EXPECT_EQ(isolate.scheduler().PumpUntil(root), runtime::FuturePumpResult::Idle);
   EXPECT_EQ(root.state(), runtime::FutureState::Pending);
 }
 

@@ -165,6 +165,25 @@ TEST_F(OrderedCollectionTest, ClearsEntriesAndAllowsReuse) {
   EXPECT_EQ(Heap::CollectionLength(map()), 1U);
 }
 
+TEST_F(OrderedCollectionTest, ReusesDeletedBucketsAcrossRepeatedEmptyTransitions) {
+  InsertEntries(EntryPass::Initial);
+  ASSERT_FALSE(HasFatalFailure());
+  for (std::uint32_t index = 0; index < kEntryCount; ++index) {
+    ASSERT_EQ(Heap::RemoveCollection(map(), Value::Integer(index)), CollectionRemove::Removed);
+  }
+  for (std::uint32_t index = 0; index < kEntryCount * 4; ++index) {
+    const auto key = Value::Integer(index);
+    ASSERT_TRUE(heap().StoreMapValue(map(), key, Value::Integer(42)));
+    EXPECT_EQ(Heap::LoadMapValue(map(), key).AsInteger(), 42);
+    ASSERT_EQ(Heap::RemoveCollection(map(), key), CollectionRemove::Removed);
+    EXPECT_EQ(Heap::CollectionLength(map()), 0U);
+    EXPECT_TRUE(Heap::LoadMapValue(map(), key).IsNull());
+  }
+  heap().Collect();
+  ASSERT_TRUE(heap().StoreMapValue(map(), Value::Integer(1), Value::Integer(42)));
+  EXPECT_EQ(Heap::GetCollectionValue(map(), Value::Integer(1))->AsInteger(), 42);
+}
+
 TEST_F(OrderedCollectionTest, RejectsWrongKeyTypesBeforeEmptyAndPopulatedLookups) {
   const auto wrong = Value::Boolean(true);
   EXPECT_EQ(Heap::HasCollectionKey(map(), wrong).error(), ExecutionStatus::TypeError);

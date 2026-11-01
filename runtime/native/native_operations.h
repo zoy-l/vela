@@ -46,7 +46,7 @@ extern "C" std::uint64_t vela_native_v9_scalar_text_length(const NativeValue* va
 extern "C" StringObject* vela_native_v10_scalar_to_string(NativeExecution* execution,
                                                           const NativeValue* value) noexcept;
 // 类型检查与绑定保证 Map 及键/值的固定布局；动态调用继续在通用 builtin 边界校验。
-extern "C" void vela_native_v11_map_get(const HeapObject* map,
+extern "C" void vela_native_v11_map_get(HeapObject* map,
                                         const NativeValue* key,
                                         NativeValue* result) noexcept;
 extern "C" std::uint8_t vela_native_v11_map_set(NativeExecution* execution,

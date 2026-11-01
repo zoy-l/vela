@@ -167,18 +167,13 @@ OperationResult InitializeArguments(Isolate& isolate, HeapObject& plan, std::uin
 
 OperationResult InitializeOutput(Isolate& isolate,
                                  HeapObject& plan,
-                                 const TypeSignature* signature,
+                                 const TypeSignature& signature,
+                                 ArrayAlgorithm algorithm,
                                  std::uint32_t length,
                                  const TypeConstraint& accumulator) {
-  const auto slots = Heap::ValueSlots(plan);
-  const auto algorithm = static_cast<ArrayAlgorithm>(slots.subspan(kAlgorithm).front().AsInteger());
   auto& heap = isolate.heap();
   if (algorithm == ArrayAlgorithm::Map) {
-    const auto& type = signature->result;
-    if (!type) {
-      std::unreachable();
-    }
-    const auto output = AllocateOutput(isolate, *type, length);
+    const auto output = AllocateOutput(isolate, *signature.result, length);
     if (!output) {
       return std::unexpected(output.error());
     }
@@ -220,12 +215,11 @@ std::expected<Value, ExecutionStatus> PrepareDynamicArray(Isolate& isolate,
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto algorithm = static_cast<ArrayAlgorithm>(selector.AsInteger());
-  auto accumulator = Heap::TypeOf(initial);
   const auto type = AccumulatorType(initial, algorithm, callback_type);
   if (!type) {
     return std::unexpected(type.error());
   }
-  accumulator = *type;
+  const auto accumulator = *type;
   if (auto checked = CheckCallback(callback_type, algorithm, receiver, accumulator); !checked) {
     return std::unexpected(checked.error());
   }
@@ -243,7 +237,8 @@ std::expected<Value, ExecutionStatus> PrepareDynamicArray(Isolate& isolate,
   if (auto initialized = InitializeArguments(isolate, *plan, count); !initialized) {
     return std::unexpected(initialized.error());
   }
-  if (auto initialized = InitializeOutput(isolate, *plan, &callback_type, *length, accumulator);
+  if (auto initialized =
+          InitializeOutput(isolate, *plan, callback_type, algorithm, *length, accumulator);
       !initialized) {
     return std::unexpected(initialized.error());
   }

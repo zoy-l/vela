@@ -11,7 +11,7 @@
 
 namespace vela::runtime::internal {
 
-// 原生分派和动态数值操作共用叶实现。
+// 动态数值操作复用静态整数算术的检查与错误类别。
 struct NumericOperands final {
   Value left;
   Value right;

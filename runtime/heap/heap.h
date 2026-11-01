@@ -10,11 +10,8 @@
 #include <optional>
 #include <span>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 #include <vector>
-
-#include <absl/container/flat_hash_map.h>
 
 #include "base/declaration.h"
 #include "base/execution_status.h"
@@ -134,8 +131,6 @@ struct ByteViewRange final {
 
 class Heap final {
  public:
-  [[nodiscard]] StringObject* ConvertStringCase(StringObject& source,
-                                                StringCase conversion) noexcept;
   explicit Heap(std::size_t gc_threshold = kDefaultGcThreshold) noexcept;
   Heap(Isolate& isolate, std::size_t gc_threshold) noexcept;
   ~Heap();
@@ -148,14 +143,13 @@ class Heap final {
   [[nodiscard]] HeapObject* AllocateInstance(const ClassLayout& layout,
                                              std::span<const Value> initial_fields = {}) noexcept;
   // 返回弱登记中的对象；调用者在可能分配前统一保根，并按需完成一次新根追踪。
-  void AppendInstances(const NominalType& type, std::vector<Value>& instances) const;
+  static void AppendInstances(const NominalType& type, std::vector<Value>& instances);
   // 调用者先完成当前根的一致追踪；仅返回实际可达闭包及 C++ 版本根的函数集合。
   void AppendRetainedNativeFunctions(std::vector<NativeRetainedFunction>& functions) const;
   void AppendRetainedNativeTypes(std::vector<DeclarationId>& declarations) const;
   void AccumulateNativeLayouts(LayoutCounts& counts) const noexcept;
-  [[nodiscard]] std::unique_ptr<InstanceMigration> PrepareInstanceMigration(
-      HeapObject& object,
-      const ClassLayout& layout) noexcept;
+  [[nodiscard]] std::expected<std::unique_ptr<InstanceMigration>, ExecutionStatus>
+  PrepareInstanceMigration(HeapObject& object, const ClassLayout& layout) noexcept;
   [[nodiscard]] HeapObject* AllocateNativeProgram(
       std::unique_ptr<NativeProgramState> state) noexcept;
   [[nodiscard]] static NativeProgramState& NativeProgram(HeapObject& object) noexcept;
@@ -166,17 +160,15 @@ class Heap final {
   [[nodiscard]] static HeapObject* NativeEnvironment(const HeapObject& callable) noexcept;
   [[nodiscard]] static std::uint32_t NativeFunctionIndex(const HeapObject& callable) noexcept;
   [[nodiscard]] HeapObject* AllocateFuture(Future future) noexcept;
-  [[nodiscard]] static Future* GetFuture(const HeapObject& object) noexcept;
+  [[nodiscard]] static Future* GetFuture(HeapObject& object) noexcept;
   [[nodiscard]] HeapObject* AllocateCompleter(Future future) noexcept;
-  [[nodiscard]] static Future* GetCompleter(const HeapObject& object) noexcept;
+  [[nodiscard]] static Future* GetCompleter(HeapObject& object) noexcept;
   [[nodiscard]] HeapObject* AllocateTimer(Timer timer) noexcept;
   [[nodiscard]] static Timer* GetTimer(const HeapObject& object) noexcept;
   [[nodiscard]] HeapObject* AllocateCancellationToken(CancellationToken token) noexcept;
   [[nodiscard]] static CancellationToken* GetCancellationToken(const HeapObject& object) noexcept;
   // 异构全局槽属于 GC 对象，不作为脚本数组或 dynamic 类型暴露。
   [[nodiscard]] HeapObject* AllocateValueSlots(std::size_t count) noexcept;
-  [[nodiscard]] std::expected<void, ExecutionStatus> ExtendValueSlots(HeapObject& object,
-                                                                      std::size_t count) noexcept;
   [[nodiscard]] static std::span<Value> ValueSlots(HeapObject& object) noexcept;
   void SetValueSlot(HeapObject& object, std::size_t index, Value value) noexcept;
   // 非空引用数组的初始空槽只供构建使用；交给脚本或宿主前必须完成所有元素初始化。
@@ -211,7 +203,7 @@ class Heap final {
   [[nodiscard]] std::expected<void, ExecutionStatus> StoreMapValue(HeapObject& object,
                                                                    Value key,
                                                                    Value value) noexcept;
-  [[nodiscard]] static Value LoadMapValue(const HeapObject& object, Value key) noexcept;
+  [[nodiscard]] static Value LoadMapValue(HeapObject& object, Value key) noexcept;
   [[nodiscard]] static std::expected<bool, ExecutionStatus> HasCollectionKey(
       const HeapObject& object,
       Value key) noexcept;
@@ -236,6 +228,8 @@ class Heap final {
                                              std::string_view second = {}) noexcept;
   // 输入为 int/double/bool；格式化器产生 ASCII，直接使用其字节数作为字符数。
   [[nodiscard]] StringObject* AllocateScalarString(Value value) noexcept;
+  [[nodiscard]] StringObject* ConvertStringCase(StringObject& source,
+                                                StringCase conversion) noexcept;
   // text 须为合法 UTF-8；输入及目标须保根，string 数组长度须等于 grapheme 数量。
   [[nodiscard]] std::expected<void, ExecutionStatus> FillGraphemes(HeapObject& array,
                                                                    std::string_view text);
@@ -299,6 +293,8 @@ class Heap final {
 
   [[nodiscard]] static std::optional<Value> GetField(const HeapObject& object,
                                                      std::uint32_t index) noexcept;
+  // 调用者的布局契约保证字段存在；返回值借用对象所属的堆。
+  [[nodiscard]] static Value LoadField(const HeapObject& object, std::uint32_t index) noexcept;
   [[nodiscard]] static const ClassLayout* ClassOf(const HeapObject& object) noexcept;
   [[nodiscard]] static ObjectKind KindOf(const HeapObject& object) noexcept { return object.kind; }
   [[nodiscard]] static TypeConstraint TypeOf(Value value) noexcept;
@@ -314,9 +310,18 @@ class Heap final {
   [[nodiscard]] static std::expected<void, ExecutionStatus> BindRuntimeType(
       HeapObject& object,
       const TypeConstraint& type) noexcept;
-  [[nodiscard]] bool SetField(HeapObject& object, std::uint32_t index, Value value) noexcept;
+  [[nodiscard]] std::expected<void, ExecutionStatus> SetField(HeapObject& object,
+                                                              std::uint32_t index,
+                                                              Value value) noexcept;
   // 原生代码已完成类型化存储；引用写入仍须经过同一个增量 GC 屏障。
-  void WriteBarrier(HeapObject& source, Value value) noexcept;
+  void WriteBarrier(HeapObject& source, Value value) noexcept {
+    if (IsCollecting() && source.mark_bit == barrier_state_.mark_bit) {
+      WriteBarrierSlow(value);
+    }
+  }
+  // 所属线程发布的根没有 source 颜色；在 sweep 阶段必须同步完成新引用的扫描。
+  void WriteRootBarrier(std::span<const Value> values) noexcept;
+  void WriteRootBarrier(const Future& future) noexcept;
   [[nodiscard]] static std::expected<Value, ArrayAccessError> GetElement(
       const HeapObject& array,
       std::uint32_t index) noexcept;
@@ -337,10 +342,9 @@ class Heap final {
   [[nodiscard]] std::size_t committed_bytes() const noexcept { return committed_bytes_; }
   // 外部字段块载荷，包含已准备的迁移块，不含分配器头部。
   [[nodiscard]] std::size_t instance_field_bytes() const noexcept { return instance_field_bytes_; }
-  [[nodiscard]] std::size_t instance_type_count() const noexcept { return instances_.size(); }
+  [[nodiscard]] std::size_t instance_type_count() const noexcept { return instance_type_count_; }
   // 限制 Heap 核算的托管及外部块活跃字节；降低限额不改变已分配状态，后续申请显式失败。
   void SetAllocationLimit(std::size_t bytes) noexcept { allocation_limit_ = bytes; }
-  [[nodiscard]] std::size_t allocation_limit() const noexcept { return allocation_limit_; }
   void AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const;
 
  private:
@@ -367,7 +371,8 @@ class Heap final {
       Value value) noexcept;
 
   static constexpr auto kSizeClasses =
-      std::to_array<std::size_t>({32, 64, 128, 256, 512, 1024, 2048, 4096});
+      std::to_array<std::size_t>({64, 128, 256, 512, 1024, 2048, 4096});
+  static_assert(sizeof(HeapObject) <= kSizeClasses.front());
   static constexpr std::size_t kAutomaticWork = 16;
 
   void RegisterRoot(RootRange& root) noexcept;
@@ -381,6 +386,7 @@ class Heap final {
   void MarkObject(HeapObject& object) noexcept;
   void ProcessGrayObject(HeapObject& object) noexcept;
   void DrainGray() noexcept;
+  void WriteBarrierSlow(Value value) noexcept;
   void WriteBarrier(HeapObject& source,
                     const ArrayLayout& layout,
                     std::span<const std::byte> storage) noexcept;
@@ -398,6 +404,7 @@ class Heap final {
                                            const Initialize& initialize) noexcept;
   template <class T>
   [[nodiscard]] HeapObject* AllocateNativeObject(ObjectKind kind, T payload) noexcept;
+  [[nodiscard]] HeapObject* AllocateFutureObject(ObjectKind kind, Future future) noexcept;
   template <ObjectKind kind, class T>
   [[nodiscard]] static T* NativeOf(const HeapObject& object) noexcept {
     return object.kind == kind ? static_cast<T*>(object.native_payload) : nullptr;
@@ -406,6 +413,8 @@ class Heap final {
   [[nodiscard]] Allocation AllocateRaw(std::size_t requested_size) noexcept;
   void Publish(HeapObject& object, const Allocation& allocation) noexcept;
   void ReleaseRaw(HeapObject& object) noexcept;
+  // 调用者在分配边界推进 GC；replaced_bytes 只抵扣本次即将替换的已计费存储。
+  [[nodiscard]] void* AllocateExternal(std::size_t bytes, std::size_t replaced_bytes = 0) noexcept;
   void ReleaseExternalStorage(void* storage, std::size_t bytes) noexcept;
   [[nodiscard]] static std::pair<std::size_t, std::size_t> SelectBlockClass(
       std::size_t requested_size) noexcept;
@@ -416,7 +425,8 @@ class Heap final {
   void DestroyAll() noexcept;
   [[nodiscard]] InstanceStorage* AllocateInstanceStorage(std::uint32_t count) noexcept;
   void ReleaseInstanceStorage(InstanceStorage& storage) noexcept;
-  void RegisterInstance(HeapObject& object, InstanceStorage& storage);
+  void RegisterInstance(HeapObject& object, InstanceStorage& storage) noexcept;
+  void UnregisterInstance(HeapObject& object, InstanceStorage& storage) noexcept;
   void ReleaseInstance(HeapObject& object) noexcept;
   struct StringSize final {
     std::size_t bytes;
@@ -450,8 +460,8 @@ class Heap final {
   HeapObject** sweep_link_ = nullptr;
   RootRange* roots_ = nullptr;
   std::uint64_t next_root_identity_ = 0;
-  std::vector<Future::Root> future_roots_;
-  absl::flat_hash_map<const NominalType*, InstanceStorage*> instances_;
+  Future::Root* future_roots_ = nullptr;
+  std::size_t instance_type_count_ = 0;
   NativeProgramState* retired_programs_ = nullptr;
   std::array<HeapObject*, kSizeClasses.size()> free_blocks_{};
 
@@ -509,12 +519,8 @@ HeapObject* Heap::AllocateNativeObject(ObjectKind kind, T payload) noexcept {
   if (owned == nullptr) {
     return nullptr;
   }
-  return AllocateObject(kind, sizeof(HeapObject), [&owned](HeapObject& object) {
-    if constexpr (std::is_same_v<T, Future>) {
-      owned->MakeHeapOwned();
-    }
-    object.native_payload = owned.release();
-  });
+  return AllocateObject(kind, sizeof(HeapObject),
+                        [&owned](HeapObject& object) { object.native_payload = owned.release(); });
 }
 
 }  // namespace vela::runtime

@@ -566,8 +566,9 @@ TEST_P(JitDebuggerTest, SuspendedContinuationAndCapturedEntrySelectTheirOriginal
     const runtime::RootedValue restarted_root(session_->isolate(), *restarted);
     auto* old_future = runtime::Heap::GetFuture(*restarted_root.value().AsObject());
     ASSERT_NE(old_future, nullptr);
-    ASSERT_TRUE(session_->isolate().scheduler().PumpUntil(*old_future,
-                                                          runtime::FuturePumpMode::WaitForHost));
+    ASSERT_EQ(session_->isolate().scheduler().PumpUntil(*old_future,
+                                                        runtime::FuturePumpMode::WaitForHost),
+              runtime::FuturePumpResult::Completed);
     const auto old_value = old_future->value();
     if (!old_value) {
       FAIL() << "Original continuation did not complete with a value";

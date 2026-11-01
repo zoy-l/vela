@@ -5,8 +5,8 @@
 #include "base/execution_status.h"
 #include "gtest/gtest.h"
 
-#include "compiler/test_support/program_test_support.h"
 #include "compiler/frontend/typing/checker_test_support.h"
+#include "compiler/test_support/program_test_support.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 
@@ -223,6 +223,9 @@ func main(): int {
   sorted[0] = 42; if (numbers[0] != 42) { return 0; }
   const text = ['\uE000', '😀', 'a']; text.sort();
   if (text[0] != 'a' || text[1] != '😀') { return 0; }
+  const boundaries = ['x\uFFFF', 'x\u{10000}', 'x\uD7FF', 'x\uE000', 'x\u{10FFFF}', 'x', 'x\u0000'];
+  boundaries.sort();
+  if (boundaries.join('|') != 'x|x\u0000|x\uD7FF|x\u{10000}|x\u{10FFFF}|x\uE000|x\uFFFF') { return 0; }
   const doubles = [2.5, 1.5, 3.5];
   if (doubles.sort((a, b) => a - b).join() != '1.5,2.5,3.5') { return 0; }
   if (doubles.sort(() => Math.pow(-1.0, 0.5)).join() != '1.5,2.5,3.5') { return 0; }

@@ -40,7 +40,7 @@ void CancellationToken::Cancel() noexcept {
   if (callback == State::Cancelled()) {
     return;
   }
-  // CAS 链按逆序发布；取消时恢复注册顺序，回调在锁外且只执行一次。
+  // CAS 链按逆序发布；取消时恢复注册顺序，每个回调只执行一次。
   State::Callback* ordered = nullptr;
   while (callback != nullptr) {
     auto* next = callback->next;

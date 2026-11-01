@@ -23,6 +23,9 @@
 namespace vela::runtime {
 
 void Timer::Cancel() noexcept {
+  if (state_ == nullptr) {
+    return;
+  }
   {
     const std::scoped_lock lock(state_->mutex);
     if (state_->cancelled.exchange(true)) {
@@ -39,11 +42,15 @@ void Timer::Cancel() noexcept {
 
 void Timer::Close(State& state) noexcept {
   std::function<void()> retired;
+  FutureScheduler* scheduler = nullptr;
   {
     const std::scoped_lock lock(state.mutex);
     state.cancelled = true;
-    state.scheduler = nullptr;
+    scheduler = std::exchange(state.scheduler, nullptr);
     retired.swap(state.callback);
+  }
+  if (scheduler != nullptr && state.event_index != State::kNotQueued) {
+    static_cast<void>(scheduler->RemoveEvent(state.event_index));
   }
 }
 
@@ -62,8 +69,8 @@ void FutureScheduler::Shutdown() {
   microtasks_.clear();
   checkpoints_.clear();
   while (!events_.empty()) {
-    Timer::Close(*events_.top().state);
-    events_.pop();
+    const auto event = RemoveEvent(0);
+    Timer::Close(*event.state);
   }
 }
 
@@ -132,25 +139,10 @@ void FutureScheduler::SetUnhandledErrorHandler(ErrorCallback callback) {
   unhandled_error_handler_ = std::move(callback);
 }
 
-void FutureScheduler::SetHandledErrorHandler(ErrorCallback callback) {
-  assert(IsOwnerThread());
-  handled_error_handler_ = std::move(callback);
-}
-
 void FutureScheduler::NotifyUnhandledError(const Future& future, ::vela::runtime::Value error) {
   if (unhandled_error_handler_) {
     unhandled_error_handler_(future, error);
   }
-}
-
-void FutureScheduler::NotifyHandledError(const Future& future, ::vela::runtime::Value error) {
-  if (handled_error_handler_) {
-    handled_error_handler_(future, error);
-  }
-}
-
-Completer FutureScheduler::CreateCompleter() {
-  return Completer(Future(this));
 }
 
 HostEventSource::HostEventSource(FutureScheduler& scheduler) : scheduler_(&scheduler) {
@@ -189,7 +181,7 @@ Timer FutureScheduler::ScheduleTimer(std::chrono::milliseconds delay,
   state->callback = std::move(callback);
   state->scheduler = this;
   state->context = context_;
-  events_.push(Event{
+  PushEvent(Event{
       .deadline = Clock::now() + delay,
       .sequence = next_sequence_++,
       .interval = interval,
@@ -213,13 +205,13 @@ void FutureScheduler::DrainMicrotasks() {
   }
 }
 
-bool FutureScheduler::PumpOne(FuturePumpMode mode) {
+FuturePumpStep FutureScheduler::PumpOne(FuturePumpMode mode) {
   assert(IsOwnerThread());
   const ExternalResource execution(external_resources_, ExternalResourceKind::Execution);
   while (true) {
     if (!microtasks_.empty() || !checkpoints_.empty()) {
       DrainMicrotasks();
-      return true;
+      return FuturePumpStep::Executed;
     }
     ReceiveMessages();
     if (!host_events_.empty()) {
@@ -228,48 +220,101 @@ bool FutureScheduler::PumpOne(FuturePumpMode mode) {
       const ExecutionContextScope scope(*this, std::nullopt);
       event();
       DrainMicrotasks();
-      return true;
+      return FuturePumpStep::Executed;
     }
-    while (!events_.empty() && events_.top().state->cancelled.load()) {
-      Timer::Close(*events_.top().state);
-      events_.pop();
+    while (!events_.empty() && events_.front().state->cancelled.load()) {
+      const auto event = RemoveEvent(0);
+      Timer::Close(*event.state);
     }
     if (events_.empty()) {
       if (mode != FuturePumpMode::WaitForHost || host_sources_.load() == 0) {
-        return false;
+        return FuturePumpStep::Idle;
       }
       wakeup_.acquire();
       continue;
     }
-    const auto deadline = events_.top().deadline;
+    const auto deadline = events_.front().deadline;
     if (deadline > Clock::now()) {
       if (mode == FuturePumpMode::ReadyWork) {
-        return false;
+        return FuturePumpStep::Idle;
       }
       std::ignore = wakeup_.try_acquire_until(deadline);
       continue;
     }
-    auto event = events_.top();
-    events_.pop();
-    Fire(std::move(event));
-    return true;
+    Fire(RemoveEvent(0));
+    return FuturePumpStep::Executed;
   }
 }
 
 void FutureScheduler::Fire(Event event) {
   auto& state = *event.state;
-  auto callback = event.interval.count() == 0 ? std::move(state.callback) : state.callback;
+  auto callback = std::move(state.callback);
   if (callback && !state.cancelled.load()) {
     const ExecutionContextScope scope(*this, state.context);
     callback();
     DrainMicrotasks();
   }
   if (event.interval.count() > 0 && !state.cancelled.load()) {
+    state.callback = std::move(callback);
     event.deadline = Clock::now() + event.interval;
     event.sequence = next_sequence_++;
-    events_.push(std::move(event));
+    PushEvent(std::move(event));
   } else {
     Timer::Close(state);
+  }
+}
+
+void FutureScheduler::PushEvent(Event event) {
+  const auto index = events_.size();
+  event.state->event_index = index;
+  events_.push_back(std::move(event));
+  ReorderEvent(index);
+}
+
+FutureScheduler::Event FutureScheduler::RemoveEvent(std::size_t index) {
+  auto event = std::move(events_[index]);
+  const auto last = events_.size() - 1;
+  if (index != last) {
+    events_[index] = std::move(events_.back());
+    events_[index].state->event_index = index;
+  }
+  events_.pop_back();
+  event.state->event_index = Timer::State::kNotQueued;
+  if (index < events_.size()) {
+    ReorderEvent(index);
+  }
+  return event;
+}
+
+void FutureScheduler::SwapEvents(std::size_t first, std::size_t second) noexcept {
+  auto& first_event = events_[first];
+  auto& second_event = events_[second];
+  std::swap(first_event, second_event);
+  first_event.state->event_index = first;
+  second_event.state->event_index = second;
+}
+
+void FutureScheduler::ReorderEvent(std::size_t index) noexcept {
+  const EventOrder order;
+  while (index != 0) {
+    const auto parent = (index - 1) / 2;
+    if (!order(events_[parent], events_[index])) {
+      break;
+    }
+    SwapEvents(parent, index);
+    index = parent;
+  }
+  const auto size = events_.size();
+  while (index < size / 2) {
+    auto child = (index * 2) + 1;
+    if (child + 1 < size && order(events_[child], events_[child + 1])) {
+      ++child;
+    }
+    if (!order(events_[index], events_[child])) {
+      break;
+    }
+    SwapEvents(index, child);
+    index = child;
   }
 }
 
@@ -282,13 +327,13 @@ bool FutureScheduler::CanSchedule(std::chrono::milliseconds duration) noexcept {
                                                   Clock::time_point::max() - Clock::now());
 }
 
-bool FutureScheduler::PumpUntil(Future& root, FuturePumpMode mode) {
+FuturePumpResult FutureScheduler::PumpUntil(Future& root, FuturePumpMode mode) {
   while (root.is_pending()) {
-    if (!PumpOne(mode)) {
-      return false;
+    if (PumpOne(mode) == FuturePumpStep::Idle) {
+      return FuturePumpResult::Idle;
     }
   }
-  return true;
+  return FuturePumpResult::Completed;
 }
 
 }  // namespace vela::runtime

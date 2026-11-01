@@ -33,7 +33,7 @@ struct NativeDispatchSnapshot;
 enum class NativePublicationStatus : std::uint8_t {
   Stale,
   Stopped,
-  InvalidIdentity,
+  InvalidImage,
   InstantiationFailed,
   Busy,
   RequiresReload,
@@ -41,7 +41,7 @@ enum class NativePublicationStatus : std::uint8_t {
 };
 
 struct NativePublicationError final {
-  NativePublicationStatus status = NativePublicationStatus::InvalidIdentity;
+  NativePublicationStatus status;
   std::string message;
   DeclarationId declaration;
   std::optional<FunctionIdentity> dependency = std::nullopt;

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include <absl/container/flat_hash_set.h>
@@ -23,6 +24,14 @@ NativeProgramState::~NativeProgramState() {
   delete[] global_caches;
 }
 
+NativeProgramState::GlobalState& NativeProgramState::global_state(std::size_t index) const noexcept {
+  return std::span(global_states, image->global_initializers.size)[index];
+}
+
+NativeGlobalCache& NativeProgramState::global_cache(std::size_t index) const noexcept {
+  return std::span(global_caches, image->global_initializers.size)[index];
+}
+
 HeapObject* Heap::AllocateNativeProgram(std::unique_ptr<NativeProgramState> state) noexcept {
   return AllocateObject(ObjectKind::NativeProgram, sizeof(HeapObject),
                         [&state](HeapObject& object) { object.native_payload = state.release(); });
@@ -34,7 +43,7 @@ NativeProgramState& Heap::NativeProgram(HeapObject& object) noexcept {
 }
 
 void Heap::SetNativeProgramSlot(HeapObject& object, std::size_t index, Value value) noexcept {
-  NativeProgram(object).values.at(index) = value;
+  NativeProgram(object).values[index] = value;
   WriteBarrier(object, value);
 }
 
@@ -91,11 +100,25 @@ void Heap::AccumulateNativeLayouts(LayoutCounts& counts) const noexcept {
 
 void Heap::TraceNativeMetadata(NativeMetadataTracer& tracer) const {
   for (auto* object = objects_; object != nullptr; object = object->next) {
-    tracer.Mark(object->layout);
-    if (object->kind == ObjectKind::NativeProgram) {
-      tracer.Mark(NativeProgram(*object).layouts);
-    } else {
-      tracer.Mark(TypeOf(Value::Object(object)));
+    switch (object->kind) {
+      case ObjectKind::Instance:
+        tracer.Mark(object->layout);
+        break;
+      case ObjectKind::Array:
+        tracer.Mark(object->array_layout());
+        break;
+      case ObjectKind::Collection:
+        tracer.Mark(object->collection_layout());
+        break;
+      case ObjectKind::Future:
+      case ObjectKind::Completer:
+        tracer.Mark(object->future_signature());
+        break;
+      case ObjectKind::NativeProgram:
+        tracer.Mark(NativeProgram(*object).layouts);
+        break;
+      default:
+        break;
     }
   }
 }
@@ -123,34 +146,36 @@ void Heap::AppendRetainedNativeFunctions(std::vector<NativeRetainedFunction>& fu
 void Heap::AppendRetainedNativeTypes(std::vector<DeclarationId>& declarations) const {
   absl::flat_hash_set<TypeConstraint> visited;
   std::vector<TypeConstraint> pending;
+  const auto append = [&](TypeConstraint type) {
+    if (visited.insert(type).second) {
+      pending.push_back(type);
+    }
+  };
   for (auto* object = objects_; object != nullptr; object = object->next) {
-    pending.push_back(TypeOf(Value::Object(object)));
+    append(TypeOf(Value::Object(object)));
   }
   while (!pending.empty()) {
     const auto type = pending.back();
     pending.pop_back();
-    if (!visited.insert(type).second) {
-      continue;
-    }
     if (type.nominal != nullptr && type.nominal->declaration() != DeclarationId{}) {
       declarations.push_back(type.nominal->declaration());
     }
     if (type.array != nullptr) {
-      pending.push_back(type.array->element);
+      append(type.array->element);
     }
     if (type.collection != nullptr) {
-      pending.push_back(type.collection->keys.element);
+      append(type.collection->keys.element);
       const auto& values = type.collection->values;
       if (values) {
-        pending.push_back(values->element);
+        append(values->element);
       }
     }
     if (const auto* signature = type.signature) {
       if (signature->result) {
-        pending.push_back(*signature->result);
+        append(*signature->result);
       }
       for (const auto& parameter : signature->parameters) {
-        pending.push_back(parameter.type);
+        append(parameter.type);
       }
     }
   }

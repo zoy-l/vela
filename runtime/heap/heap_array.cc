@@ -9,7 +9,6 @@
 #include <expected>
 #include <limits>
 #include <memory>
-#include <new>
 #include <span>
 
 #include "runtime/heap/array_storage.h"
@@ -20,7 +19,9 @@
 namespace vela::runtime {
 namespace {
 
-std::span<std::byte> Storage(HeapObject& array, const ArrayLayout& layout, std::size_t length) {
+std::span<std::byte> ElementBytes(HeapObject& array,
+                                  const ArrayLayout& layout,
+                                  std::size_t length) {
   return internal::ArrayBytes(array, layout).first(layout.element_size() * length);
 }
 
@@ -71,17 +72,11 @@ HeapObject* Heap::AllocateArrayStorage(const ArrayLayout& layout,
     return nullptr;
   }
   MaybeCollect(header_bytes + external_bytes);
-  if (!CanAllocate(external_bytes)) {
-    return nullptr;
-  }
-  auto* memory = external_bytes == 0
-                     ? nullptr
-                     : static_cast<std::byte*>(::operator new(external_bytes, std::nothrow));
+  auto* memory =
+      external_bytes == 0 ? nullptr : static_cast<std::byte*>(AllocateExternal(external_bytes));
   if (external_bytes != 0 && memory == nullptr) {
     return nullptr;
   }
-  allocated_bytes_ += external_bytes;
-  committed_bytes_ += external_bytes;
   const auto allocation = AllocateRaw(header_bytes);
   if (allocation.memory == nullptr) {
     ReleaseExternalStorage(memory, external_bytes);
@@ -94,7 +89,7 @@ HeapObject* Heap::AllocateArrayStorage(const ArrayLayout& layout,
   auto& buffer = *std::construct_at(&internal::ArrayBuffer(*object));
   buffer.capacity = inline_capacity == 0 ? object->length : inline_capacity;
   buffer.data = inline_capacity == 0 ? memory : internal::InlineArrayData(buffer);
-  const auto storage = Storage(*object, layout, length);
+  const auto storage = ElementBytes(*object, layout, length);
   if (contents.empty()) {
     VisitElementStorage(layout, storage, [](auto elements) {
       std::uninitialized_value_construct_n(elements.data(), elements.size());
@@ -135,7 +130,7 @@ std::expected<std::span<std::int64_t>, ArrayAccessError> Heap::IntegerElements(
       array.array_layout()->HasTaggedElements()) {
     return std::unexpected(ArrayAccessError::ElementTypeMismatch);
   }
-  return ElementSlots<std::int64_t>(Storage(array, *array.array_layout(), array.length));
+  return ElementSlots<std::int64_t>(ElementBytes(array, *array.array_layout(), array.length));
 }
 
 std::expected<Value, ArrayAccessError> Heap::GetElement(const HeapObject& array,
@@ -191,10 +186,7 @@ std::expected<void, ArrayAccessError> Heap::ReserveArrayStorage(HeapObject& arra
   MaybeCollect(bytes);
   const auto previous_bytes =
       buffer.data == internal::InlineArrayData(buffer) ? 0 : buffer.capacity * element_size;
-  if (!CanAllocate(bytes - previous_bytes)) {
-    return std::unexpected(ArrayAccessError::OutOfMemory);
-  }
-  auto* memory = static_cast<std::byte*>(::operator new(bytes, std::nothrow));
+  auto* memory = static_cast<std::byte*>(AllocateExternal(bytes, previous_bytes));
   if (memory == nullptr) {
     return std::unexpected(ArrayAccessError::OutOfMemory);
   }
@@ -206,8 +198,6 @@ std::expected<void, ArrayAccessError> Heap::ReserveArrayStorage(HeapObject& arra
   }
   buffer.data = memory;
   buffer.capacity = static_cast<std::uint32_t>(capacity);
-  allocated_bytes_ += bytes;
-  committed_bytes_ += bytes;
   return {};
 }
 
@@ -302,7 +292,7 @@ std::expected<void, ArrayAccessError> Heap::ReplaceArrayRange(HeapObject& array,
                  tail);
   }
   if (inserted != 0) {
-    const auto input = Storage(items, layout, inserted);
+    const auto input = ElementBytes(items, layout, inserted);
     std::memcpy(storage.subspan(static_cast<std::size_t>(start) * element_size).data(),
                 input.data(), input.size());
   }
@@ -351,7 +341,7 @@ std::expected<void, ArrayAccessError> Heap::ClearArray(HeapObject& array) noexce
 
 void Heap::MarkArray(HeapObject& array) noexcept {
   const auto& layout = *array.array_layout();
-  MarkElements(layout, Storage(array, layout, array.length));
+  MarkElements(layout, ElementBytes(array, layout, array.length));
 }
 
 void Heap::MarkElements(const ArrayLayout& layout, std::span<const std::byte> storage) noexcept {
@@ -396,7 +386,7 @@ std::expected<HeapObject*, ArrayAccessError> Heap::SliceArray(HeapObject& array,
   RootRange roots(*this, &source, 1, RootOwner::Runtime);
   const auto& layout = *array.array_layout();
   const auto element_size = layout.element_size();
-  const auto input = Storage(array, layout, array.length)
+  const auto input = ElementBytes(array, layout, array.length)
                          .subspan(static_cast<std::size_t>(start) * element_size,
                                   static_cast<std::size_t>(end - start) * element_size);
   auto* copy = AllocateArrayStorage(layout, end - start, input);
@@ -419,7 +409,7 @@ std::expected<void, ArrayAccessError> Heap::FillArray(HeapObject& array,
     return std::unexpected(ArrayAccessError::OutOfBounds);
   }
   const auto size = layout.element_size();
-  const auto storage = Storage(array, layout, array.length)
+  const auto storage = ElementBytes(array, layout, array.length)
                            .subspan(static_cast<std::size_t>(start) * size,
                                     static_cast<std::size_t>(end - start) * size);
   VisitElementStorage(layout, storage, [value]<class T>(std::span<T> elements) -> void {
@@ -434,7 +424,7 @@ std::expected<void, ArrayAccessError> Heap::ReverseArray(HeapObject& array) noex
     return std::unexpected(ArrayAccessError::NotArray);
   }
   const auto& layout = *array.array_layout();
-  const auto storage = Storage(array, layout, array.length);
+  const auto storage = ElementBytes(array, layout, array.length);
   VisitElementStorage(layout, storage,
                       [](auto elements) -> void { std::ranges::reverse(elements); });
   return {};

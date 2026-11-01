@@ -1,7 +1,6 @@
 #include "runtime/dynamic/dynamic_async.h"
 
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
@@ -147,13 +146,7 @@ std::expected<Value, ExecutionStatus> ExecuteDynamicAsyncOperation(
     const FutureCallbacks& callbacks,
     const FutureDiagnostic& completion_error) {
   const auto input = call.values;
-  const auto selector = input.subspan(3).front();
-  if (!selector.IsInteger() || selector.AsInteger() < 0 ||
-      selector.AsInteger() >= static_cast<std::int64_t>(AsyncOperation::Count)) {
-    return std::unexpected(ExecutionStatus::TypeError);
-  }
-  const auto operation = static_cast<AsyncOperation>(selector.AsInteger());
-  call.operation = operation;
+  const auto operation = call.operation;
   call.values = input.first(4);
   const auto type = Heap::TypeOf(call.At(0));
   if (type.object_kind == ObjectKind::Future) {

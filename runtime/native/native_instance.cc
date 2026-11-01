@@ -22,7 +22,6 @@
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "base/member.h"
-#include "base/native_program_mode.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/isolate/layout_transaction.h"
@@ -38,6 +37,13 @@
 
 namespace vela::runtime {
 namespace {
+
+std::unexpected<NativeInstantiationError> OutOfMemory(std::string message) {
+  return std::unexpected(NativeInstantiationError{
+      .status = NativeInstantiationStatus::OutOfMemory,
+      .message = std::move(message),
+  });
+}
 
 template <class Target, class Source, class Convert>
 std::vector<Target> ConvertTable(NativeTable<Source> table, const Convert& convert) {
@@ -124,8 +130,7 @@ std::expected<void, NativeInstantiationError> ValidateImage(
         .message = "native image and runtime targets do not match",
     });
   }
-  if (image.native_mode == static_cast<std::uint32_t>(NativeProgramMode::Reloadable) &&
-      identities == nullptr) {
+  if (image.IsReloadable() && identities == nullptr) {
     return std::unexpected(NativeInstantiationError{
         .status = NativeInstantiationStatus::MissingSession,
         .message = "reloadable images must be instantiated by their session dispatch",
@@ -150,8 +155,8 @@ void PrepareDirectFieldLayouts(NativeProgramState& state) {
   const auto classes = state.image->classes.values();
   state.direct_field_layouts.reserve(classes.size());
   for (std::size_t index = 0; index < classes.size(); ++index) {
-    const auto& description = classes.subspan(index).front();
-    const auto* layout = state.layouts.classes.at(index);
+    const auto& description = classes[index];
+    const auto* layout = state.layouts.classes[index];
     const auto canonical =
         std::ranges::equal(description.fields.values(), layout->field_declarations(), {},
                            &NativeFieldDescription::declaration);
@@ -198,7 +203,7 @@ void BindReloadableFields(layout::Class& description,
   }
   absl::flat_hash_map<DeclarationId, std::uint32_t> slots;
   for (std::size_t slot = 0; slot < fields.size(); ++slot) {
-    auto& field = fields.at(slot);
+    auto& field = fields[slot];
     if (!present.contains(field)) {
       field = {};
     } else {
@@ -212,7 +217,7 @@ void BindReloadableFields(layout::Class& description,
     }
   }
   for (auto& reference : description.reference_fields) {
-    reference = slots.at(declared.subspan(reference).front().declaration);
+    reference = slots.at(declared[reference].declaration);
   }
   description.field_count = static_cast<std::uint32_t>(fields.size());
   options.field_declarations = fields;
@@ -225,7 +230,7 @@ void RegisterInterfaces(const NativeImage& image,
                         LayoutCache& cache) {
   const auto interface_ids = image.interface_declarations.values();
   for (std::size_t index = 0; index < description.interfaces.size(); ++index) {
-    const auto identity = interface_ids.subspan(index).front();
+    const auto identity = interface_ids[index];
     if (identity == DeclarationId{}) {
       continue;
     }
@@ -233,7 +238,7 @@ void RegisterInterfaces(const NativeImage& image,
     if (inserted) {
       entry->second = isolate.CreateInterfaceType();
     }
-    cache.interfaces.emplace(description.interfaces.at(index), entry->second);
+    cache.interfaces.emplace(description.interfaces[index], entry->second);
   }
 }
 
@@ -246,7 +251,7 @@ std::vector<ClassLayoutOptions> ReloadableClassOptions(const NativeImage& image,
   const auto classes = image.classes.values();
   std::vector<ClassLayoutOptions> result(classes.size());
   for (std::size_t index = 0; index < classes.size(); ++index) {
-    const auto& type = classes.subspan(index).front();
+    const auto& type = classes[index];
     const auto kind = static_cast<layout::Class::Kind>(type.kind);
     if (type.declaration == DeclarationId{} || kind == layout::Class::Kind::RuntimeError ||
         kind == layout::Class::Kind::DateParts) {
@@ -256,7 +261,7 @@ std::vector<ClassLayoutOptions> ReloadableClassOptions(const NativeImage& image,
     if (inserted) {
       std::vector<const InterfaceType*> interfaces;
       for (const auto interface : type.interfaces.values()) {
-        interfaces.push_back(cache.interfaces.at(description.interfaces.at(interface)));
+        interfaces.push_back(cache.interfaces.at(description.interfaces[interface]));
       }
       entry->second = isolate.CreateNominalType({
           .kind = kind == layout::Class::Kind::Enum ? NominalKind::Enum : NominalKind::Class,
@@ -264,12 +269,11 @@ std::vector<ClassLayoutOptions> ReloadableClassOptions(const NativeImage& image,
           .declaration = type.declaration,
       });
     }
-    auto& options = result.at(index);
+    auto& options = result[index];
     options.nominal = entry->second;
-    options.revision = image.revision;
     if (kind == layout::Class::Kind::Instance && type.callable_function == kNoNativeIndex) {
       auto& fields = identities.fields.try_emplace(type.declaration).first->second;
-      BindReloadableFields(description.classes.at(index), type, fields, options);
+      BindReloadableFields(description.classes[index], type, fields, options);
     }
   }
   return result;
@@ -282,11 +286,11 @@ std::vector<MemberDefinition> DescribeMembers(const NativeImage& image,
   for (const auto& member : image.members.values()) {
     auto target = member.target;
     if (member.kind == static_cast<std::uint32_t>(MemberKind::Field)) {
-      const auto& receiver = image.types.values().subspan(member.receiver_type).front();
-      const auto* layout = layouts.classes.at(receiver.index);
+      const auto& receiver = image.types.values()[member.receiver_type];
+      const auto* layout = layouts.classes[receiver.index];
       if (layout->storage() == ClassStorage::Reloadable) {
-        const auto fields = image.classes.values().subspan(receiver.index).front().fields.values();
-        target = *layout->FieldIndex(fields.subspan(target).front().declaration);
+        const auto fields = image.classes.values()[receiver.index].fields.values();
+        target = *layout->FieldIndex(fields[target].declaration);
       }
     }
     members.push_back({
@@ -339,18 +343,14 @@ NativeInstance NativeInstance::Borrow(HeapObject& state) {
 }
 
 Value NativeInstance::constant(std::size_t index) const noexcept {
-  return Heap::ValueSlots(*data_->values.at(NativeProgramState::kConstants).AsObject())
-      .subspan(index)
-      .front();
+  return Heap::ValueSlots(*data_->values[NativeProgramState::kConstants].AsObject())[index];
 }
 
 std::expected<Value, ExecutionStatus> NativeInstance::InitializeGlobal(NativeExecution& execution,
                                                                        std::size_t index) {
-  auto& state = std::span(data_->global_states, data_->image->global_initializers.size)
-                    .subspan(index)
-                    .front();
-  const auto function = data_->image->global_initializers.values().subspan(index).front();
-  const auto entry = data_->image->functions.values().subspan(function).front().entry;
+  auto& state = data_->global_state(index);
+  const auto function = data_->image->global_initializers.values()[index];
+  const auto entry = data_->image->function(function).entry;
   const auto value = internal::InitializeNativeGlobal(execution, entry, state);
   if (!value) {
     return value;
@@ -360,12 +360,10 @@ std::expected<Value, ExecutionStatus> NativeInstance::InitializeGlobal(NativeExe
 }
 
 void NativeInstance::StoreGlobal(std::size_t index, Value value) noexcept {
-  auto& state = std::span(data_->global_states, data_->image->global_initializers.size)
-                    .subspan(index)
-                    .front();
+  auto& state = data_->global_state(index);
   internal::StoreNativeGlobal(data_->isolate->heap(),
-                              *data_->values.at(NativeProgramState::kGlobals).AsObject(), index,
-                              state, value);
+                              *data_->values[NativeProgramState::kGlobals].AsObject(), index, state,
+                              value);
 }
 
 std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
@@ -374,7 +372,7 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
   data_->signatures.reserve(functions.size());
   data_->imports.resize(functions.size());
   for (std::size_t index = 0; index < functions.size(); ++index) {
-    const auto& function = functions.subspan(index).front();
+    const auto& function = functions[index];
     data_->signatures.push_back(DescribeCall(function));
     const auto symbol = function.native_symbol.text();
     if (symbol.empty()) {
@@ -394,7 +392,7 @@ std::expected<void, NativeInstantiationError> NativeInstance::BindImports(
                      std::string(symbol) + "'",
       });
     }
-    data_->imports.at(index) = std::move(binding);
+    data_->imports[index] = std::move(binding);
   }
   return {};
 }
@@ -404,54 +402,37 @@ std::expected<void, NativeInstantiationError> NativeInstance::InitializeConstant
   auto& heap = data_->isolate->heap();
   auto* constants = heap.AllocateValueSlots(image.strings.size);
   if (constants == nullptr) {
-    return std::unexpected(NativeInstantiationError{
-        .status = NativeInstantiationStatus::OutOfMemory,
-        .message = "out of memory creating native string constant slots",
-    });
+    return OutOfMemory("out of memory creating native string constant slots");
   }
   heap.SetNativeProgramSlot(*anchor_.AsObject(), NativeProgramState::kConstants,
                             Value::Object(constants));
-  if (image.native_mode == static_cast<std::uint32_t>(NativeProgramMode::Closed)) {
+  if (!image.IsReloadable()) {
     const auto global_count = image.global_initializers.size;
     std::unique_ptr<NativeProgramState::GlobalState[]> global_states(
         new (std::nothrow) NativeProgramState::GlobalState[global_count]{});
     data_->global_states = global_states.release();
     if (data_->global_states == nullptr) {
-      return std::unexpected(NativeInstantiationError{
-          .status = NativeInstantiationStatus::OutOfMemory,
-          .message = "out of memory creating native global states",
-      });
+      return OutOfMemory("out of memory creating native global states");
     }
     auto* globals = heap.AllocateValueSlots(global_count);
-    if (globals != nullptr) {
-      heap.SetNativeProgramSlot(*anchor_.AsObject(), NativeProgramState::kGlobals,
-                                Value::Object(globals));
+    if (globals == nullptr) {
+      return OutOfMemory("out of memory creating native program state");
     }
-    if (data_->values.at(NativeProgramState::kGlobals).IsNull()) {
-      return std::unexpected(NativeInstantiationError{
-          .status = NativeInstantiationStatus::OutOfMemory,
-          .message = "out of memory creating native program state",
-      });
-    }
+    heap.SetNativeProgramSlot(*anchor_.AsObject(), NativeProgramState::kGlobals,
+                              Value::Object(globals));
   } else {
     std::unique_ptr<NativeGlobalCache[]> caches(
         new (std::nothrow) NativeGlobalCache[image.global_initializers.size]{});
     data_->global_caches = caches.release();
     if (data_->global_caches == nullptr) {
-      return std::unexpected(NativeInstantiationError{
-          .status = NativeInstantiationStatus::OutOfMemory,
-          .message = "out of memory creating reloadable global bindings",
-      });
+      return OutOfMemory("out of memory creating reloadable global bindings");
     }
   }
   const auto strings = image.strings.values();
   for (std::size_t index = 0; index < strings.size(); ++index) {
-    auto* string = heap.AllocateString(strings.subspan(index).front().text());
+    auto* string = heap.AllocateString(strings[index].text());
     if (string == nullptr) {
-      return std::unexpected(NativeInstantiationError{
-          .status = NativeInstantiationStatus::OutOfMemory,
-          .message = "out of memory creating native string constants",
-      });
+      return OutOfMemory("out of memory creating native string constants");
     }
     heap.SetValueSlot(*constants, index, Value::String(string));
   }
@@ -461,7 +442,7 @@ std::expected<void, NativeInstantiationError> NativeInstance::InitializeConstant
 std::optional<std::uint32_t> NativeInstance::FindFunction(std::string_view name) const noexcept {
   const auto functions = image().functions.values();
   for (std::size_t index = 0; index < functions.size(); ++index) {
-    if (functions.subspan(index).front().name.text() == name) {
+    if (functions[index].name.text() == name) {
       return static_cast<std::uint32_t>(index);
     }
   }
@@ -489,24 +470,19 @@ NativeInstance::Instantiate(Isolate& isolate,
   }
   std::unique_ptr<NativeProgramState> data(new (std::nothrow) NativeProgramState);
   if (data == nullptr) {
-    return std::unexpected(NativeInstantiationError{
-        .status = NativeInstantiationStatus::OutOfMemory,
-        .message = "out of memory creating native program state",
-    });
+    return OutOfMemory("out of memory creating native program state");
   }
   data->isolate = &isolate;
   data->image = &image;
   data->image_owner = std::move(owner);
-  if (identities != nullptr) {
+  const auto closed = !image.IsReloadable();
+  if (!closed) {
     PrepareFieldCaches(*data);
   }
   std::unique_ptr<NativeInstance> instance(
       new (std::nothrow) NativeInstance(*data, Value::Null(), RootOwner::NativeInstance));
   if (instance == nullptr) {
-    return std::unexpected(NativeInstantiationError{
-        .status = NativeInstantiationStatus::OutOfMemory,
-        .message = "out of memory creating native program instance",
-    });
+    return OutOfMemory("out of memory creating native program instance");
   }
   auto& state = *instance->data_;
   auto description = DescribeLayouts(image);
@@ -514,7 +490,6 @@ NativeInstance::Instantiate(Isolate& isolate,
   if (!bound) {
     return std::unexpected(bound.error());
   }
-  const auto closed = image.native_mode == static_cast<std::uint32_t>(NativeProgramMode::Closed);
   LayoutTransaction transaction(isolate,
                                 closed ? LayoutLifetime::Isolate : LayoutLifetime::Reloadable);
   const auto existing = isolate.native_images_.find(&image);
@@ -527,7 +502,7 @@ NativeInstance::Instantiate(Isolate& isolate,
     cache.code_identity = isolate.CreateCodeIdentity();
   }
   std::vector<ClassLayoutOptions> class_options;
-  if (identities != nullptr) {
+  if (!closed) {
     class_options = ReloadableClassOptions(image, description, isolate, *identities, cache);
   }
   state.layouts = InstantiateLayouts(description, isolate, cache, class_options);
@@ -544,10 +519,7 @@ NativeInstance::Instantiate(Isolate& isolate,
   }
   auto* anchor = isolate.heap().AllocateNativeProgram(std::move(data));
   if (anchor == nullptr) {
-    return std::unexpected(NativeInstantiationError{
-        .status = NativeInstantiationStatus::OutOfMemory,
-        .message = "out of memory publishing native program state",
-    });
+    return OutOfMemory("out of memory publishing native program state");
   }
   instance->anchor_ = Value::Object(anchor);
   const auto initialized = instance->InitializeConstants();
@@ -558,20 +530,18 @@ NativeInstance::Instantiate(Isolate& isolate,
     isolate.heap().Collect();
     return std::unexpected(initialized.error());
   }
-  if (closed && has_owner) {
-    absl::erase_if(isolate.native_images_, [](const auto& entry) {
-      const auto& cached = entry.second;
-      return !cached.static_lifetime && cached.owner.expired();
-    });
-  }
   if (closed) {
+    if (has_owner) {
+      absl::erase_if(isolate.native_images_, [](const auto& entry) {
+        const auto& cached = entry.second;
+        return !cached.static_lifetime && cached.owner.expired();
+      });
+    }
     isolate.native_images_.insert_or_assign(&image, Isolate::NativeImageCache{
                                                         .layouts = std::move(cache),
                                                         .owner = state.image_owner,
                                                         .static_lifetime = !has_owner,
                                                     });
-  }
-  if (closed) {
     transaction.Commit();
   } else {
     transaction.CommitNative(*anchor);

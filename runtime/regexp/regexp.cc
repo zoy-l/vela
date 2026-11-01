@@ -1,11 +1,13 @@
 #include "runtime/regexp/regexp.h"
 
 #include <algorithm>
+#include <bit>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <span>
 #include <string>
@@ -19,6 +21,7 @@
 #include "base/regexp_diagnostic.h"
 #include "base/utf8.h"
 #include "runtime/heap/heap.h"
+#include "runtime/heap/native_buffer.h"
 #include "runtime/regexp/regexp_storage.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
@@ -56,58 +59,46 @@ void FreePcre(void* pointer, void* data) {
 template <typename T, auto Free>
 using PcreOwner = std::unique_ptr<T, decltype(Free)>;
 
-class NativeBlock final {
- public:
-  NativeBlock(Heap& heap, std::size_t size) : heap_(heap), memory_(heap.AllocateNative(size)) {}
-  ~NativeBlock() { heap_.FreeNative(memory_); }
-  NativeBlock(const NativeBlock&) = delete;
-  NativeBlock& operator=(const NativeBlock&) = delete;
-  NativeBlock(NativeBlock&&) = delete;
-  NativeBlock& operator=(NativeBlock&&) = delete;
-  [[nodiscard]] void* data() const noexcept { return memory_; }
-
- private:
-  Heap& heap_;
-  void* memory_;
-};
-
 class Boundaries final {
  public:
-  Boundaries(Heap& heap, std::string_view text) : heap_(heap), text_(text) {}
-  ~Boundaries() { heap_.FreeNative(points_.data()); }
+  Boundaries(Heap& heap, const StringObject& text)
+      : heap_(heap), text_(text.value()), count_(text.length()) {}
+  ~Boundaries() = default;
   Boundaries(const Boundaries&) = delete;
   Boundaries& operator=(const Boundaries&) = delete;
   Boundaries(Boundaries&&) = delete;
   Boundaries& operator=(Boundaries&&) = delete;
   [[nodiscard]] std::expected<void, ExecutionStatus> Initialize() {
-    if (!points_.empty()) {
+    if (count_ == text_.size() || !points_.empty()) {
       return {};
     }
-    const auto count = Utf8Length(text_);
-    auto* storage =
-        static_cast<std::size_t*>(heap_.AllocateNative((count + 1) * sizeof(std::size_t)));
-    if (storage == nullptr) {
+    auto& storage = storage_.emplace(heap_, count_ + 1);
+    if (!storage.IsAllocated()) {
       return std::unexpected(ExecutionStatus::OutOfMemory);
     }
-    points_ = {storage, count + 1};
+    points_ = storage.values();
     std::size_t index = 0;
     // 输入已验证 UTF-8，每个非续字节就是一个码点边界；无需再次解码标量。
     for (std::size_t byte = 0; byte < text_.size(); ++byte) {
-      if ((static_cast<unsigned char>(text_.substr(byte).front()) & kContinuationMask) !=
-          kContinuationTag) {
-        points_.subspan(index++).front() = byte;
+      if (!IsContinuationByte(text_[byte])) {
+        points_[index++] = byte;
       }
     }
-    points_.subspan(index).front() = text_.size();
+    points_[index] = text_.size();
     return {};
   }
   [[nodiscard]] std::size_t Point(std::size_t byte) const noexcept {
+    if (count_ == text_.size()) {
+      return byte;
+    }
     return static_cast<std::size_t>(std::ranges::lower_bound(points_, byte) - points_.begin());
   }
 
  private:
   Heap& heap_;
   std::string_view text_;
+  std::size_t count_;
+  std::optional<NativeBuffer<std::size_t>> storage_;
   std::span<std::size_t> points_;
 };
 
@@ -165,23 +156,47 @@ Result Compile(std::span<const Value> arguments, Heap& heap) {
   return result;
 }
 
+bool IsLiteralAscii(std::uint32_t point) {
+  return (point >= 'a' && point <= 'z') || (point >= 'A' && point <= 'Z') ||
+         (point >= '0' && point <= '9') || point == '_';
+}
+
 Result Escape(Value input, Heap& heap) {
   if (!input.IsString()) {
     return Failure(ExecutionStatus::TypeError);
   }
   auto text = input.AsString()->value();
-  constexpr std::size_t kMaximumEscapedScalar = 10;
-  if (text.size() > kMaximumStringLength / kMaximumEscapedScalar) {
+  std::size_t capacity = 0;
+  bool escaped = false;
+  for (auto remaining = text; !remaining.empty();) {
+    const auto decoded = DecodeUtf8Prefix(remaining);
+    const auto literal = IsLiteralAscii(decoded.value);
+    const auto width =
+        literal ? 1U
+                : 4U + static_cast<unsigned>(std::max(1, (std::bit_width(decoded.value) + 3) / 4));
+    if (width > kMaximumStringLength - capacity) {
+      return Failure(ExecutionStatus::OutOfMemory);
+    }
+    capacity += width;
+    escaped = escaped || !literal;
+    remaining.remove_prefix(decoded.width);
+  }
+  if (!escaped) {
+    return input;
+  }
+  NativeBuffer<char> storage(heap, capacity);
+  if (!storage.IsAllocated()) {
     return Failure(ExecutionStatus::OutOfMemory);
   }
-  NativeBlock storage(heap, text.size() * kMaximumEscapedScalar);
-  if (storage.data() == nullptr) {
-    return Failure(ExecutionStatus::OutOfMemory);
-  }
-  auto buffer = std::span(static_cast<char*>(storage.data()), text.size() * kMaximumEscapedScalar);
+  auto buffer = storage.values();
   std::size_t size = 0;
   while (!text.empty()) {
     const auto decoded = DecodeUtf8Prefix(text);
+    if (IsLiteralAscii(decoded.value)) {
+      buffer.subspan(size++).front() = static_cast<char>(decoded.value);
+      text.remove_prefix(decoded.width);
+      continue;
+    }
     buffer.subspan(size++).front() = '\\';
     buffer.subspan(size++).front() = 'x';
     buffer.subspan(size++).front() = '{';
@@ -339,7 +354,7 @@ Result Search(Builtin builtin,
   }
   auto& pattern = *arguments.front().AsObject();
   auto& input = *subject.AsString();
-  Boundaries boundaries(heap, input.value());
+  Boundaries boundaries(heap, input);
   const auto start = SearchStart(builtin, arguments, input.value());
   if (!start) {
     return std::unexpected(start.error());
@@ -435,6 +450,23 @@ Result NamedGroup(RegExpMatchStorage& match, Value input, Heap& heap) {
   return Value::Null();
 }
 
+std::expected<std::span<std::int64_t>, RegExpFailure> ReadCaptureIndices(Value input,
+                                                                         std::uint32_t count) {
+  if (!input.IsObject()) {
+    return Failure(ExecutionStatus::TypeError);
+  }
+  const auto values = Heap::IntegerElements(*input.AsObject());
+  if (!values) {
+    return Failure(ExecutionStatus::TypeError);
+  }
+  for (const auto index : *values) {
+    if (index < 0 || std::cmp_greater_equal(index, count)) {
+      return Failure(ExecutionStatus::IndexOutOfBounds);
+    }
+  }
+  return *values;
+}
+
 Result Snapshot(Builtin builtin,
                 RegExpMatchStorage& match,
                 std::span<const Value> arguments,
@@ -442,19 +474,11 @@ Result Snapshot(Builtin builtin,
                 const ArrayLayout& layout) {
   std::span<std::int64_t> indices;
   if (builtin == Builtin::RegExpMatchGroups) {
-    if (!arguments.subspan(1).front().IsObject()) {
-      return Failure(ExecutionStatus::TypeError);
-    }
-    const auto values = Heap::IntegerElements(*arguments.subspan(1).front().AsObject());
+    const auto values = ReadCaptureIndices(arguments[1], match.capture_count);
     if (!values) {
-      return Failure(ExecutionStatus::TypeError);
+      return std::unexpected(values.error());
     }
     indices = *values;
-    for (const auto index : indices) {
-      if (index < 0 || std::cmp_greater_equal(index, match.capture_count)) {
-        return Failure(ExecutionStatus::IndexOutOfBounds);
-      }
-    }
   }
   auto output = Allocated(heap.AllocateArray(layout, 0));
   if (!output) {
@@ -463,6 +487,9 @@ Result Snapshot(Builtin builtin,
   RootRange root(heap, &*output, 1, RootOwner::Runtime);
   const auto names = NameTable(match);
   const auto count = builtin == Builtin::RegExpMatchGroups ? indices.size() : names.count();
+  if (!heap.ReserveArray(*output->AsObject(), count)) {
+    return Failure(ExecutionStatus::OutOfMemory);
+  }
   std::string_view previous;
   for (std::size_t index = 0; index < count; ++index) {
     Result value = Value::Null();
@@ -560,19 +587,20 @@ Result ExecuteRegExpBuiltin(Builtin builtin,
     return Escape(arguments.subspan(0).front(), heap);
   }
   const auto receiver = arguments.subspan(0).front();
-  if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
+  auto* object = receiver.AsObjectOrNull();
+  if (object == nullptr) {
     return Failure(ExecutionStatus::TypeError);
   }
   if (builtin >= Builtin::RegExpMatchStart) {
-    return Heap::IsRegExpMatch(*receiver.AsObject())
+    return Heap::IsRegExpMatch(*object)
                ? MatchOperation(builtin, arguments, heap, output_layout)
                : Failure(ExecutionStatus::TypeError);
   }
-  if (!Heap::IsRegExp(*receiver.AsObject())) {
+  if (!Heap::IsRegExp(*object)) {
     return Failure(ExecutionStatus::TypeError);
   }
   if (builtin <= Builtin::RegExpIsUnicode) {
-    return PatternProperty(builtin, Heap::RegExpOf(*receiver.AsObject()));
+    return PatternProperty(builtin, Heap::RegExpOf(*object));
   }
   return Search(builtin, arguments, heap, output_layout);
 }

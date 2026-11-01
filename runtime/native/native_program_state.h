@@ -47,6 +47,9 @@ struct NativeProgramState final {
   NativeProgramState(NativeProgramState&&) = delete;
   NativeProgramState& operator=(NativeProgramState&&) = delete;
   [[nodiscard]] NativeFieldCache& field_cache(std::uint64_t access);
+  // 映像模式已在实例化边界验证：closed 使用状态数组，reloadable 使用 epoch 缓存。
+  [[nodiscard]] GlobalState& global_state(std::size_t index) const noexcept;
+  [[nodiscard]] NativeGlobalCache& global_cache(std::size_t index) const noexcept;
 
   Isolate* isolate = nullptr;
   NativeDispatch* dispatch = nullptr;

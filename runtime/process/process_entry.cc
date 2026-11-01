@@ -77,18 +77,17 @@ int ProcessEntry::Finish(Value value) {
   const auto* future = value.IsObject() ? Heap::GetFuture(*value.AsObject()) : nullptr;
   auto root = future != nullptr ? future->Rooted() : Future::Value(value, &scheduler);
   root.AttachHeap(isolate_->heap());
-  root.Observe([](FutureState, Value) {});
+  root.MarkObserved();
   const auto& control = isolate_->native_control();
-  while (root.is_pending() && !control.IsStopRequested()) {
-    if (!scheduler.PumpOne(FuturePumpMode::WaitForHost)) {
-      *errors_ << "vela: async idle/deadlock: main has no pending work\n";
-      return kRuntimeErrorExitCode;
-    }
-  }
-  while (!control.IsStopRequested() && scheduler.PumpOne(FuturePumpMode::WaitForHost)) {
+  while (!control.IsStopRequested() &&
+         scheduler.PumpOne(FuturePumpMode::WaitForHost) == FuturePumpStep::Executed) {
   }
   if (control.IsStopRequested()) {
     return 0;
+  }
+  if (root.is_pending()) {
+    *errors_ << "vela: async idle/deadlock: main has no pending work\n";
+    return kRuntimeErrorExitCode;
   }
   if (root.state() == FutureState::Failed) {
     WriteAsyncFailure(*errors_, root, "async main failed");
@@ -97,7 +96,7 @@ int ProcessEntry::Finish(Value value) {
   if (background_failed_) {
     return kRuntimeErrorExitCode;
   }
-  const auto exit_code = ProcessExitCode(root.value().value_or(Value::Null()));
+  const auto exit_code = ProcessExitCode(root.result().value);
   if (!exit_code) {
     *errors_ << "vela: error: " << exit_code.error() << '\n';
     return kRuntimeErrorExitCode;

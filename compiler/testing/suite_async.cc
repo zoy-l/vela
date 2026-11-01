@@ -38,7 +38,7 @@ PumpResult PumpToBoundary(runtime::FutureScheduler& scheduler,
   }
   auto result = PumpResult::Boundary;
   while (pending() && !alarm) {
-    if (!scheduler.PumpOne(runtime::FuturePumpMode::WaitForHost)) {
+    if (scheduler.PumpOne(runtime::FuturePumpMode::WaitForHost) == runtime::FuturePumpStep::Idle) {
       result = PumpResult::Idle;
       break;
     }
@@ -151,9 +151,9 @@ void Suite::WaitExpectations(Node& scope, TestPhase phase, std::vector<TestError
 }
 
 runtime::ExecutionResult Suite::Await(runtime::ExecutionResult result,
-                                 std::optional<std::chrono::milliseconds> timeout,
-                                 Node& scope,
-                                 TestPhase phase) {
+                                      std::optional<std::chrono::milliseconds> timeout,
+                                      Node& scope,
+                                      TestPhase phase) {
   if (!result.Succeeded() || !result.value.IsObject()) {
     return result;
   }

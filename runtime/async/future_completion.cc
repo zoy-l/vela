@@ -97,9 +97,7 @@ std::expected<void, FutureCompletionError> FutureCompletionEndpoint::Settle(
     return std::unexpected(FutureCompletionError::Closed);
   }
   auto& completer = *state.completer;
-  const auto completion = result.state == FutureState::Succeeded
-                              ? completer.Complete(result.value)
-                              : completer.CompleteError(result.value, std::move(result.diagnostic));
+  const auto completion = completer.Settle(std::move(result));
   if (completion) {
     state.completed = true;
     state.Retire();

@@ -95,7 +95,7 @@ TEST(NativeImageLifetimeTest, SuspendedVersionRetainsItsImageUntilResumptionAndC
   ASSERT_NE(future, nullptr);
   constexpr std::int64_t kInput = 39;
   ASSERT_TRUE(completer.Complete(Value::Integer(kInput)));
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(*future));
+  ASSERT_EQ(isolate.scheduler().PumpUntil(*future), FuturePumpResult::Completed);
   EXPECT_EQ(future->value().value_or(Value::Integer(0)).AsInteger(), 42);
   heap.Collect();
   EXPECT_TRUE(lifetime.expired());

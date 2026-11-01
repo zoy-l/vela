@@ -18,10 +18,6 @@ struct ByteView final {
   std::uint32_t offset;
 };
 
-ByteView& ViewStorage(HeapObject& object) {
-  return *StorageAfter<ByteView>(object);
-}
-
 }  // namespace
 
 bool Heap::IsByteArray(const HeapObject& object) noexcept {
@@ -39,7 +35,7 @@ std::span<std::uint8_t> Heap::ByteArrayBytes(HeapObject& object) noexcept {
 
 std::span<std::uint8_t> Heap::ByteDataBytes(HeapObject& object) noexcept {
   assert(IsByteData(object));
-  const auto& view = ViewStorage(object);
+  const auto& view = *StorageAfter<ByteView>(object);
   return ByteArrayBytes(*view.owner).subspan(view.offset, object.length);
 }
 
@@ -65,7 +61,7 @@ HeapObject* Heap::AllocateByteData(HeapObject& owner, ByteViewRange range) noexc
 }
 
 void Heap::MarkByteData(HeapObject& object) noexcept {
-  MarkObject(*ViewStorage(object).owner);
+  MarkObject(*StorageAfter<ByteView>(object)->owner);
 }
 
 }  // namespace vela::runtime

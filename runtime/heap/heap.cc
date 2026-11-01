@@ -1,11 +1,15 @@
 #include "runtime/heap/heap.h"
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -20,6 +24,23 @@
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
+namespace {
+
+// PCRE2 和 yyjson 的释放回调不携带长度，大小必须随分配块保存。
+struct alignas(std::max_align_t) NativeHeader final {
+  std::size_t size;
+};
+
+constexpr auto kRootResourceKinds = std::to_array<std::optional<ExternalResourceKind>>({
+    std::nullopt,
+    ExternalResourceKind::RootRange,
+    ExternalResourceKind::RootedValue,
+    ExternalResourceKind::NativeInstance,
+    ExternalResourceKind::NativeHandle,
+});
+
+}  // namespace
+
 RootRange::RootRange(Heap& heap, const Value* values, std::size_t count, RootOwner owner) noexcept
     : owner_(owner) {
   Attach(heap, values, count);
@@ -75,6 +96,42 @@ Heap::Heap(Isolate& isolate, std::size_t gc_threshold) noexcept : Heap(gc_thresh
   isolate_ = &isolate;
 }
 
+void* Heap::AllocateExternal(std::size_t bytes, std::size_t replaced_bytes) noexcept {
+  if (!CanAllocate(bytes - replaced_bytes)) {
+    return nullptr;
+  }
+  auto* memory = ::operator new(bytes, std::nothrow);
+  if (memory != nullptr) {
+    allocated_bytes_ += bytes;
+    committed_bytes_ += bytes;
+  }
+  return memory;
+}
+
+void* Heap::AllocateNative(std::size_t size) noexcept {
+  if (size > std::numeric_limits<std::size_t>::max() - sizeof(NativeHeader)) {
+    return nullptr;
+  }
+  const auto total = size + sizeof(NativeHeader);
+  MaybeCollect(total);
+  auto* memory = AllocateExternal(total);
+  if (memory == nullptr) {
+    return nullptr;
+  }
+  auto* header = std::construct_at(static_cast<NativeHeader*>(memory), total);
+  return StorageAfter<std::byte>(*header);
+}
+
+void Heap::FreeNative(void* pointer) noexcept {
+  if (pointer == nullptr) {
+    return;
+  }
+  auto* header = std::prev(static_cast<NativeHeader*>(pointer));
+  const auto bytes = header->size;
+  std::destroy_at(header);
+  ReleaseExternalStorage(header, bytes);
+}
+
 void Heap::ReleaseExternalStorage(void* storage, std::size_t bytes) noexcept {
   allocated_bytes_ -= bytes;
   committed_bytes_ -= bytes;
@@ -82,24 +139,26 @@ void Heap::ReleaseExternalStorage(void* storage, std::size_t bytes) noexcept {
 }
 
 HeapObject* Heap::AllocateFuture(Future future) noexcept {
-  future.AttachHeap(*this);
-  return AllocateNativeObject(ObjectKind::Future, std::move(future));
+  return AllocateFutureObject(ObjectKind::Future, std::move(future));
 }
 
-Future* Heap::GetFuture(const HeapObject& object) noexcept {
-  return NativeOf<ObjectKind::Future, Future>(object);
+HeapObject* Heap::AllocateFutureObject(ObjectKind kind, Future future) noexcept {
+  future.AttachHeap(*this);
+  return AllocateObject(kind, sizeof(HeapObject) + sizeof(Future), [&future](HeapObject& object) {
+    std::construct_at(StorageAfter<Future>(object), future.Internal());
+  });
+}
+
+Future* Heap::GetFuture(HeapObject& object) noexcept {
+  return object.kind == ObjectKind::Future ? StorageAfter<Future>(object) : nullptr;
 }
 
 HeapObject* Heap::AllocateCompleter(Future future) noexcept {
-  auto* object = AllocateFuture(std::move(future));
-  if (object != nullptr) {
-    object->kind = ObjectKind::Completer;
-  }
-  return object;
+  return AllocateFutureObject(ObjectKind::Completer, std::move(future));
 }
 
-Future* Heap::GetCompleter(const HeapObject& object) noexcept {
-  return NativeOf<ObjectKind::Completer, Future>(object);
+Future* Heap::GetCompleter(HeapObject& object) noexcept {
+  return object.kind == ObjectKind::Completer ? StorageAfter<Future>(object) : nullptr;
 }
 
 HeapObject* Heap::AllocateTimer(Timer timer) noexcept {
@@ -237,9 +296,6 @@ void Heap::Step(std::size_t work_budget) noexcept {
 }
 
 void Heap::FinishCollection() noexcept {
-  if (!IsCollecting()) {
-    return;
-  }
   while (IsCollecting()) {
     Step(std::numeric_limits<std::size_t>::max());
   }
@@ -267,26 +323,11 @@ void Heap::RegisterRoot(RootRange& root) noexcept {
 
 void Heap::AppendExternalRoots(std::vector<ExternalResourceInfo>& result) const {
   for (auto* root = roots_; root != nullptr; root = root->next_) {
-    if (root->owner_ == RootOwner::Runtime) {
+    const auto kind = kRootResourceKinds[static_cast<std::size_t>(root->owner_)];
+    if (!kind) {
       continue;
     }
-    ExternalResourceKind kind = ExternalResourceKind::RootRange;
-    switch (root->owner_) {
-      case RootOwner::Runtime:
-        std::unreachable();
-      case RootOwner::Host:
-        break;
-      case RootOwner::RootedValue:
-        kind = ExternalResourceKind::RootedValue;
-        break;
-      case RootOwner::NativeInstance:
-        kind = ExternalResourceKind::NativeInstance;
-        break;
-      case RootOwner::NativeHandle:
-        kind = ExternalResourceKind::NativeHandle;
-        break;
-    }
-    result.push_back({.kind = kind, .identity = root->identity_, .references = 1});
+    result.push_back({.kind = *kind, .identity = root->identity_, .references = 1});
   }
 }
 
@@ -295,9 +336,8 @@ void Heap::UnregisterRoot(RootRange& root) noexcept {
 }
 
 void Heap::MarkRoots() noexcept {
-  std::erase_if(future_roots_, [](const auto& root) { return root.IsExpired(); });
-  for (const auto& root : future_roots_) {
-    root.Trace(*this);
+  for (auto* root = future_roots_; root != nullptr; root = root->next_) {
+    root->Trace(*this);
   }
   for (RootRange* root = roots_; root != nullptr; root = root->next_) {
     MarkRoot(*root);
@@ -358,44 +398,39 @@ void Heap::ProcessGrayObject(HeapObject& object) noexcept {
   if (object.layout != nullptr) {
     MarkReference(object.layout->program_owner_);
   }
-  if (object.kind == ObjectKind::RegExp || object.kind == ObjectKind::RegExpMatch) {
-    MarkRegExp(object);
-    return;
-  }
-  if (object.kind == ObjectKind::ByteData) {
-    MarkByteData(object);
-    return;
-  }
-  if (object.kind == ObjectKind::ValueSlots) {
-    for (const auto value : ValueSlots(object)) {
-      MarkValue(value);
-    }
-    return;
-  }
-  if (object.kind == ObjectKind::NativeProgram) {
-    MarkNativeProgram(object);
-    return;
-  }
-  if (object.kind == ObjectKind::Future || object.kind == ObjectKind::Completer) {
-    if (static_cast<Future*>(object.native_payload) != nullptr) {
-      static_cast<Future*>(object.native_payload)->Trace(*this);
-    }
-    return;
-  }
-  if (object.kind == ObjectKind::Exception) {
-    MarkObject(*ExceptionData::From(object).payload);
-    return;
-  }
-  if (object.kind == ObjectKind::Collection) {
-    MarkCollection(object);
-    return;
-  }
-  if (object.kind == ObjectKind::Array) {
-    MarkArray(object);
-    return;
-  }
-  if (object.layout == nullptr) {
-    return;
+  switch (object.kind) {
+    case ObjectKind::Instance:
+      break;
+    case ObjectKind::RegExp:
+    case ObjectKind::RegExpMatch:
+      MarkRegExp(object);
+      return;
+    case ObjectKind::ByteData:
+      MarkByteData(object);
+      return;
+    case ObjectKind::ValueSlots:
+      for (const auto value : ValueSlots(object)) {
+        MarkValue(value);
+      }
+      return;
+    case ObjectKind::NativeProgram:
+      MarkNativeProgram(object);
+      return;
+    case ObjectKind::Future:
+    case ObjectKind::Completer:
+      StorageAfter<Future>(object)->Trace(*this);
+      return;
+    case ObjectKind::Exception:
+      MarkObject(*ExceptionData::From(object).payload);
+      return;
+    case ObjectKind::Collection:
+      MarkCollection(object);
+      return;
+    case ObjectKind::Array:
+      MarkArray(object);
+      return;
+    default:
+      return;
   }
   if (auto* environment = NativeEnvironment(object)) {
     MarkObject(*environment);
@@ -416,12 +451,32 @@ void Heap::DrainGray() noexcept {
   }
 }
 
-void Heap::WriteBarrier(HeapObject& source, Value value) noexcept {
-  if (IsCollecting() && source.mark_bit == barrier_state_.mark_bit) {
+void Heap::WriteBarrierSlow(Value value) noexcept {
+  MarkValue(value);
+  if (phase() == GcPhase::Sweep) {
+    DrainGray();
+  }
+}
+
+void Heap::WriteRootBarrier(std::span<const Value> values) noexcept {
+  if (!IsCollecting()) {
+    return;
+  }
+  for (const auto value : values) {
     MarkValue(value);
-    if (phase() == GcPhase::Sweep) {
-      DrainGray();
-    }
+  }
+  if (phase() == GcPhase::Sweep) {
+    DrainGray();
+  }
+}
+
+void Heap::WriteRootBarrier(const Future& future) noexcept {
+  if (!IsCollecting()) {
+    return;
+  }
+  future.Trace(*this);
+  if (phase() == GcPhase::Sweep) {
+    DrainGray();
   }
 }
 
@@ -462,33 +517,48 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
   const auto class_index = object.size_class;
   allocated_bytes_ -= block_size;
 
-  if (object.kind == ObjectKind::RegExp) {
-    ReleaseRegExp(object);
-  } else if (object.kind == ObjectKind::NativeProgram) {
-    ReleaseNativeProgram(object);
-  } else if (object.layout != nullptr) {
-    ReleaseInstance(object);
-  } else if (object.kind == ObjectKind::MutableString) {
-    ReleaseMutableString(object);
-  } else if (object.kind == ObjectKind::Collection) {
-    ReleaseCollection(object);
-  } else if (object.kind == ObjectKind::Array) {
-    ReleaseArray(object);
-  } else if (object.kind == ObjectKind::Future || object.kind == ObjectKind::Completer) {
-    const std::unique_ptr<Future> owned(static_cast<Future*>(object.native_payload));
-  } else if (object.kind == ObjectKind::Exception) {
-    const std::unique_ptr<FutureDiagnostic> diagnostic(ExceptionData::From(object).diagnostic);
-  } else if (object.kind == ObjectKind::Timer) {
-    const std::unique_ptr<Timer> owned(static_cast<Timer*>(object.native_payload));
-  } else if (object.kind == ObjectKind::CancellationToken) {
-    const std::unique_ptr<CancellationToken> owned(
-        static_cast<CancellationToken*>(object.native_payload));
-  } else if (object.kind == ObjectKind::ValueSlots) {
-    const auto bytes = object.length * sizeof(Value);
-    allocated_bytes_ -= bytes;
-    committed_bytes_ -= bytes;
-    std::destroy_n(static_cast<Value*>(object.native_payload), object.length);
-    ::operator delete(object.native_payload);
+  switch (object.kind) {
+    case ObjectKind::Instance:
+      ReleaseInstance(object);
+      break;
+    case ObjectKind::RegExp:
+      ReleaseRegExp(object);
+      break;
+    case ObjectKind::NativeProgram:
+      ReleaseNativeProgram(object);
+      break;
+    case ObjectKind::MutableString:
+      ReleaseMutableString(object);
+      break;
+    case ObjectKind::Collection:
+      ReleaseCollection(object);
+      break;
+    case ObjectKind::Array:
+      ReleaseArray(object);
+      break;
+    case ObjectKind::Future:
+    case ObjectKind::Completer: {
+      std::destroy_at(StorageAfter<Future>(object));
+      break;
+    }
+    case ObjectKind::Exception: {
+      std::destroy_at(&ExceptionData::From(object));
+      break;
+    }
+    case ObjectKind::Timer: {
+      const std::unique_ptr<Timer> owned(static_cast<Timer*>(object.native_payload));
+      break;
+    }
+    case ObjectKind::CancellationToken: {
+      const std::unique_ptr<CancellationToken> owned(
+          static_cast<CancellationToken*>(object.native_payload));
+      break;
+    }
+    case ObjectKind::ValueSlots:
+      ReleaseExternalStorage(object.native_payload, object.length * sizeof(Value));
+      break;
+    default:
+      break;
   }
   void* memory = &object;
   // StringObject 仅含可平凡析构的对象头；复用或释放存储即结束其生命周期。
@@ -506,13 +576,11 @@ void Heap::ReleaseRaw(HeapObject& object) noexcept {
 }
 
 std::pair<std::size_t, std::size_t> Heap::SelectBlockClass(std::size_t requested_size) noexcept {
-  for (std::size_t index = 0; index < kSizeClasses.size(); ++index) {
-    const auto block_size = std::span(kSizeClasses).subspan(index).front();
-    if (requested_size <= block_size) {
-      return {block_size, index};
-    }
+  if (requested_size > kSizeClasses.back()) {
+    return {requested_size, kSizeClasses.size()};
   }
-  return {requested_size, kSizeClasses.size()};
+  const auto block_size = std::bit_ceil(std::max(requested_size, kSizeClasses.front()));
+  return {block_size, std::bit_width(block_size) - std::bit_width(kSizeClasses.front())};
 }
 
 bool Heap::ShouldCollect(std::size_t next_size) const noexcept {
@@ -543,7 +611,7 @@ void Heap::FinishSweep() noexcept {
       allocated_bytes_ > std::numeric_limits<std::size_t>::max() / 2
           ? std::numeric_limits<std::size_t>::max()
           : allocated_bytes_ * 2;
-  gc_threshold_ = std::max({minimum_gc_threshold_, doubled_live_size, std::size_t{1}});
+  gc_threshold_ = std::max(minimum_gc_threshold_, doubled_live_size);
 }
 
 void Heap::DestroyAll() noexcept {

@@ -35,7 +35,6 @@
 #include "runtime/native/native_materialization.h"
 #include "runtime/native/native_metadata.h"
 #include "runtime/native/native_program_state.h"
-#include "runtime/native/native_result_internal.h"
 #include "runtime/native/native_version.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -86,7 +85,8 @@ struct NativeDispatchSnapshot final {
   NativeDispatchSnapshot(Isolate& isolate, Value source)
       : state(source),
         root(isolate.heap(), &state, 1, RootOwner::Runtime),
-        preparation(isolate.external_resources(), ExternalResourceKind::NativeCandidate) {}
+        preparation(isolate.external_resources(), ExternalResourceKind::NativePreparedPublication) {
+  }
   std::expected<void, NativePublicationError> IndexFunctions(
       const NativeImage& description,
       const NativeDispatchSnapshot* previous_snapshot);
@@ -96,6 +96,9 @@ struct NativeDispatchSnapshot final {
       const NativeImage& description,
       const NativeDispatchSnapshot* previous_snapshot);
   void IndexLayouts(const NativeImage& description, const NativeInstance& instance);
+  [[nodiscard]] const NativeImage& image() const noexcept {
+    return *Heap::NativeProgram(*state.AsObject()).image;
+  }
   std::expected<GlobalEntry*, ExecutionStatus> FindGlobal(DeclarationId declaration) {
     const auto found = globals.find(declaration);
     if (found == globals.end()) {
@@ -119,16 +122,14 @@ struct NativeDispatchSnapshot final {
 std::expected<void, NativePublicationError> NativeDispatchSnapshot::IndexFunctions(
     const NativeImage& description,
     const NativeDispatchSnapshot* previous_snapshot) {
-  const auto* previous_image =
-      previous_snapshot == nullptr
-          ? nullptr
-          : Heap::NativeProgram(*previous_snapshot->state.AsObject()).image;
+  const auto* previous_image = previous_snapshot == nullptr ? nullptr : &previous_snapshot->image();
   const auto function_descriptions = description.functions.values();
   for (std::size_t index = 0; index < function_descriptions.size(); ++index) {
-    const auto& function = function_descriptions.subspan(index).front();
+    const auto& function = function_descriptions[index];
     const auto identity = function.identity;
     if (identity.revision != description.revision) {
       return std::unexpected(NativePublicationError{
+          .status = NativePublicationStatus::InvalidImage,
           .message = "function version does not belong to the candidate image",
           .declaration = identity.declaration,
       });
@@ -139,6 +140,7 @@ std::expected<void, NativePublicationError> NativeDispatchSnapshot::IndexFunctio
     if (identity.declaration == DeclarationId{} ||
         !functions.emplace(identity.declaration, static_cast<std::uint32_t>(index)).second) {
       return std::unexpected(NativePublicationError{
+          .status = NativePublicationStatus::InvalidImage,
           .message = "named function requires a unique declaration identity",
           .declaration = identity.declaration,
       });
@@ -146,7 +148,7 @@ std::expected<void, NativePublicationError> NativeDispatchSnapshot::IndexFunctio
     if (previous_image != nullptr) {
       const auto existing = previous_snapshot->functions.find(identity.declaration);
       if (existing != previous_snapshot->functions.end()) {
-        const auto& previous = previous_image->functions.values().subspan(existing->second).front();
+        const auto& previous = previous_image->function(existing->second);
         const auto contract =
             CheckNativeCallContract(*previous_image, previous, description, function);
         if (!contract) {
@@ -175,7 +177,7 @@ void NativeDispatchSnapshot::IndexExports(const NativeImage& description) {
     if (module == modules.end() || target == functions.end()) {
       continue;
     }
-    const auto& function = description.functions.values().subspan(target->second).front();
+    const auto& function = description.function(target->second);
     if ((function.flags & kNativeExportedFunction) != 0 && function.hidden_parameters == 0) {
       exports.emplace(ExportName{.module = module->second, .name = declaration.name.text()},
                       declaration.identity);
@@ -187,38 +189,31 @@ std::expected<void, NativePublicationError> NativeDispatchSnapshot::PrepareGloba
     Isolate& isolate,
     const NativeImage& description,
     const NativeDispatchSnapshot* previous_snapshot) {
-  const auto* previous_image =
-      previous_snapshot == nullptr
-          ? nullptr
-          : Heap::NativeProgram(*previous_snapshot->state.AsObject()).image;
+  const auto* previous_image = previous_snapshot == nullptr ? nullptr : &previous_snapshot->image();
   const auto declarations = description.global_declarations.values();
   const auto initializers = description.global_initializers.values();
   const auto global_flags = description.global_flags.values();
   if (declarations.size() != initializers.size() || global_flags.size() != initializers.size()) {
     return std::unexpected(NativePublicationError{
+        .status = NativePublicationStatus::InvalidImage,
         .message = "reloadable globals require stable declaration identities",
         .declaration = {},
     });
   }
   for (std::size_t index = 0; index < declarations.size(); ++index) {
-    const auto identity = declarations.subspan(index).front();
+    const auto identity = declarations[index];
     std::shared_ptr<GlobalSlot> slot;
     if (previous_image != nullptr) {
       const auto existing = previous_snapshot->globals.find(identity);
       if (existing != previous_snapshot->globals.end()) {
         const auto old_index = existing->second.initializer;
-        const auto previous_flags =
-            previous_image->global_flags.values().subspan(existing->second.index).front();
-        const auto& previous = previous_image->functions.values().subspan(old_index).front();
-        const auto& candidate =
-            description.functions.values().subspan(initializers.subspan(index).front()).front();
+        const auto previous_flags = previous_image->global_flags.values()[existing->second.index];
+        const auto& previous = previous_image->function(old_index);
+        const auto& candidate = description.function(initializers[index]);
         constexpr auto kBindingFlags = static_cast<std::uint32_t>(GlobalFlag::Constant);
-        if ((previous_flags & kBindingFlags) !=
-                (global_flags.subspan(index).front() & kBindingFlags) ||
-            !IsSameNativeType(*previous_image,
-                              previous_image->types.values().subspan(previous.result_type).front(),
-                              description,
-                              description.types.values().subspan(candidate.result_type).front())) {
+        if ((previous_flags & kBindingFlags) != (global_flags[index] & kBindingFlags) ||
+            !IsSameNativeType(*previous_image, previous_image->types.values()[previous.result_type],
+                              description, description.types.values()[candidate.result_type])) {
           return std::unexpected(NativePublicationError{
               .status = NativePublicationStatus::RequiresReload,
               .message = "global slot type or mutability changed; Reload is required",
@@ -239,16 +234,16 @@ std::expected<void, NativePublicationError> NativeDispatchSnapshot::PrepareGloba
       }
       slot = std::make_shared<GlobalSlot>(isolate, *storage);
     }
-    if (identity == DeclarationId{} ||
-        !globals
-             .emplace(identity,
-                      GlobalEntry{
-                          .slot = std::move(slot),
-                          .initializer = initializers.subspan(index).front(),
-                          .index = static_cast<std::uint32_t>(index),
-                      })
-             .second) {
+    if (identity == DeclarationId{} || !globals
+                                            .emplace(identity,
+                                                     GlobalEntry{
+                                                         .slot = std::move(slot),
+                                                         .initializer = initializers[index],
+                                                         .index = static_cast<std::uint32_t>(index),
+                                                     })
+                                            .second) {
       return std::unexpected(NativePublicationError{
+          .status = NativePublicationStatus::InvalidImage,
           .message = "global slot requires a unique declaration identity",
           .declaration = identity,
       });
@@ -263,9 +258,9 @@ void NativeDispatchSnapshot::IndexLayouts(const NativeImage& description,
   const auto selectors = description.selector_declarations.values();
   const auto& layouts = instance.layouts().classes;
   for (std::size_t index = 0; index < class_descriptions.size(); ++index) {
-    const auto& class_description = class_descriptions.subspan(index).front();
+    const auto& class_description = class_descriptions[index];
     const auto targets = class_description.dispatch_targets.values();
-    const auto* layout = layouts.at(index);
+    const auto* layout = layouts[index];
     const auto* nominal = &layout->nominal_type();
     if (layout->storage() == ClassStorage::Reloadable) {
       classes.emplace(nominal, layout);
@@ -274,9 +269,9 @@ void NativeDispatchSnapshot::IndexLayouts(const NativeImage& description,
       }
     }
     for (std::size_t selector = 0; selector < targets.size(); ++selector) {
-      const auto target = targets.subspan(selector).front();
+      const auto target = targets[selector];
       if (target != kInvalidFunctionTarget) {
-        interface_targets.emplace(std::pair(nominal, selectors.subspan(selector).front()), target);
+        interface_targets.emplace(std::pair(nominal, selectors[selector]), target);
       }
     }
   }
@@ -305,7 +300,7 @@ NativeVersionEntry::NativeVersionEntry(std::shared_ptr<const Storage> storage)
 FunctionIdentity NativeVersionEntry::identity() const noexcept {
   const auto& version = storage_->version;
   const auto& state = Heap::NativeProgram(*version.state().AsObject());
-  return state.image->functions.values().subspan(version.function()).front().identity;
+  return state.image->function(version.function()).identity;
 }
 
 std::expected<Value, ExecutionStatus> NativeVersionEntry::Invoke(
@@ -319,7 +314,7 @@ std::expected<Value, ExecutionStatus> NativeVersionEntry::Invoke(
 NativeNamedEntry::Storage::Storage(NativeDispatch& source, DeclarationId target)
     : dispatch(&source),
       declaration(target),
-      resource(source.isolate().external_resources(), ExternalResourceKind::NativeEntry) {}
+      resource(source.isolate().external_resources(), ExternalResourceKind::NativeNamedEntry) {}
 NativeNamedEntry::NativeNamedEntry(std::shared_ptr<const Storage> storage)
     : storage_(std::move(storage)) {}
 
@@ -366,7 +361,7 @@ HeapObject& NativeDispatch::current_state() const noexcept {
 }
 
 std::uint64_t NativeDispatch::revision() const noexcept {
-  return current_ == nullptr ? 0 : Heap::NativeProgram(*current_->state.AsObject()).image->revision;
+  return current_ == nullptr ? 0 : current_->image().revision;
 }
 
 std::expected<void, NativePublicationError> NativeDispatch::CheckPublication(
@@ -396,17 +391,16 @@ std::expected<NativePreparedPublication, NativePublicationError> NativeDispatch:
   if (const auto checked = CheckPublication(this, base_revision); !checked) {
     return std::unexpected(checked.error());
   }
-  if (image->native_mode != static_cast<std::uint32_t>(NativeProgramMode::Reloadable) ||
-      image->revision != base_revision + 1) {
+  if (!image->IsReloadable() || image->revision != base_revision + 1) {
     return std::unexpected(NativePublicationError{
+        .status = NativePublicationStatus::InvalidImage,
         .message = "reloadable native image must advance the publication revision by one",
         .declaration = {},
     });
   }
   auto snapshot = std::make_unique<NativeDispatchSnapshot>(*isolate_, Value::Null());
   const auto& description = *image;
-  const auto* previous_image =
-      current_ == nullptr ? nullptr : Heap::NativeProgram(*current_->state.AsObject()).image;
+  const auto* previous_image = current_ == nullptr ? nullptr : &current_->image();
   if (previous_image != nullptr) {
     const auto compatible = CheckNativeNominalContracts(*previous_image, description);
     if (!compatible) {
@@ -445,10 +439,9 @@ std::expected<NativePreparedPublication, NativePublicationError> NativeDispatch:
   snapshot->root.Attach(isolate_->heap(), &snapshot->state, 1);
   auto& program = Heap::NativeProgram(*state.AsObject());
   program.dispatch = this;
-  const auto caches = std::span(program.global_caches, description.global_initializers.size);
-  for (const auto& [declaration, entry] : snapshot->globals) {
-    static_cast<void>(declaration);
-    caches.subspan(entry.index).front() =
+  for (const auto& item : snapshot->globals) {
+    const auto& entry = item.second;
+    program.global_cache(entry.index) =
         CacheGlobalSlot(*entry.slot, &global_epoch_, global_epoch_ + 1);
   }
   return NativePreparedPublication(*this, base_revision, std::move(snapshot),
@@ -488,7 +481,7 @@ std::expected<NativePublicationTimings, NativePublicationError> NativeDispatch::
   std::vector<NativeRetainedFunction> retained;
   heap.AppendRetainedNativeFunctions(retained);
   AppendExecutionFunctions(retained);
-  const auto& image = *Heap::NativeProgram(*candidate.snapshot_->state.AsObject()).image;
+  const auto& image = candidate.snapshot_->image();
   auto required = RetainedNativeDeclarations(retained);
   heap.AppendRetainedNativeTypes(required);
   if (const auto checked = CheckRetainedNativeTypes(required, image); !checked) {
@@ -500,8 +493,7 @@ std::expected<NativePublicationTimings, NativePublicationError> NativeDispatch::
         .dependency = error.dependency,
     });
   }
-  const auto* previous_image =
-      current_ == nullptr ? nullptr : Heap::NativeProgram(*current_->state.AsObject()).image;
+  const auto* previous_image = current_ == nullptr ? nullptr : &current_->image();
   if (const auto checked = CheckRetainedNativeContracts(retained, previous_image, image);
       !checked) {
     const auto& error = checked.error();
@@ -547,7 +539,7 @@ NativeDispatch::PrepareMigrations(const NativeDispatchSnapshot& candidate) {
   auto& heap = isolate_->heap();
   std::vector<Value> objects;
   for (const auto& [type, layout] : candidate.classes) {
-    heap.AppendInstances(*type, objects);
+    Heap::AppendInstances(*type, objects);
   }
   const RootRange roots(heap, objects.data(), objects.size(), RootOwner::Runtime);
   std::vector<std::unique_ptr<InstanceMigration>> migrations;
@@ -561,10 +553,10 @@ NativeDispatch::PrepareMigrations(const NativeDispatchSnapshot& candidate) {
     const auto old_states = old_fields.states();
     const auto old_declarations = previous->field_declarations();
     for (std::size_t index = 0; index < declarations.size(); ++index) {
-      const auto field = declarations.subspan(index).front();
+      const auto field = declarations[index];
       if (field != DeclarationId{} && candidate.field_initializers.at(field) == kNoNativeIndex &&
-          (index >= old_states.size() || old_declarations.subspan(index).front() != field ||
-           old_states.subspan(index).front() != FieldState::Ready)) {
+          (index >= old_states.size() || old_declarations[index] != field ||
+           old_states[index] != FieldState::Ready)) {
         return std::unexpected(NativePublicationError{
             .status = NativePublicationStatus::RequiresReload,
             .message = "a live instance has no initialized value or default for field " +
@@ -574,14 +566,14 @@ NativeDispatch::PrepareMigrations(const NativeDispatchSnapshot& candidate) {
       }
     }
     auto migration = heap.PrepareInstanceMigration(object, *layout);
-    if (migration == nullptr) {
+    if (!migration) {
       return std::unexpected(NativePublicationError{
           .status = NativePublicationStatus::InstantiationFailed,
           .message = "out of memory preparing instance field blocks",
           .declaration = {},
       });
     }
-    migrations.push_back(std::move(migration));
+    migrations.push_back(std::move(*migration));
   }
   return migrations;
 }
@@ -664,8 +656,7 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadGlobal(NativeExecution
   const NativeInitializationScope initialization(isolate_->native_control());
   auto instance = NativeInstance::Borrow(*current_->state.AsObject());
   const NativeInstanceScope scope(execution, instance);
-  const auto initializer =
-      instance.image().functions.values().subspan(entry.initializer).front().entry;
+  const auto initializer = instance.image().function(entry.initializer).entry;
   const auto value = internal::InitializeNativeGlobal(execution, initializer, slot.state);
   if (!value) {
     return value;
@@ -696,27 +687,22 @@ std::expected<void, ExecutionStatus> NativeDispatch::StoreGlobal(
 extern "C" std::uint8_t vela_native_v10_load_global(NativeExecution* execution,
                                                     std::uint32_t index,
                                                     NativeValue* result) {
-  auto& program = Heap::NativeProgram(*execution->instance().state().front().AsObject());
+  auto& program = execution->instance().program();
   auto& dispatch = *program.dispatch;
-  auto& cache = std::span(program.global_caches, program.image->global_initializers.size)
-                    .subspan(index)
-                    .front();
+  auto& cache = program.global_cache(index);
   return internal::StoreNativeResult(
       result,
-      dispatch.LoadGlobal(
-          *execution, program.image->global_declarations.values().subspan(index).front(), &cache));
+      dispatch.LoadGlobal(*execution, program.image->global_declarations.values()[index], &cache));
 }
 
 extern "C" std::uint8_t vela_native_v10_store_global(NativeExecution* execution,
                                                      std::uint32_t index,
                                                      const NativeValue* value) noexcept {
-  auto& program = Heap::NativeProgram(*execution->instance().state().front().AsObject());
-  auto& cache = std::span(program.global_caches, program.image->global_initializers.size)
-                    .subspan(index)
-                    .front();
-  const auto declaration = program.image->global_declarations.values().subspan(index).front();
+  auto& program = execution->instance().program();
+  auto& cache = program.global_cache(index);
+  const auto declaration = program.image->global_declarations.values()[index];
   const auto stored = program.dispatch->StoreGlobal(declaration, DecodeNativeValue(*value), &cache);
-  return static_cast<std::uint8_t>(stored ? ExecutionStatus::Returned : stored.error());
+  return ToNativeStatus(stored ? ExecutionStatus::Returned : stored.error());
 }
 
 void NativeDispatch::Close() noexcept {
@@ -787,9 +773,9 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadFieldAt(NativeExecutio
                                                                   DeclarationId field,
                                                                   std::uint32_t slot) {
   auto& storage = Heap::InstanceFields(object);
-  auto& state = storage.states().subspan(slot).front();
+  auto& state = storage.states()[slot];
   if (state == FieldState::Ready) {
-    return *Heap::GetField(object, slot);
+    return Heap::LoadField(object, slot);
   }
   if (state == FieldState::Initializing) {
     return std::unexpected(ExecutionStatus::CyclicInitialization);
@@ -805,18 +791,14 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadFieldAt(NativeExecutio
   const NativeInstanceScope scope(execution, instance);
   storage.SetFieldState(slot, FieldState::Initializing);
   NativeValue result;
-  const auto status = static_cast<ExecutionStatus>(instance.image()
-                                                       .functions.values()
-                                                       .subspan(initializer)
-                                                       .front()
-                                                       .entry(&execution, nullptr, 0, &result));
+  const auto status = static_cast<ExecutionStatus>(
+      instance.image().function(initializer).entry(&execution, nullptr, 0, &result));
   if (status != ExecutionStatus::Returned) {
     storage.SetFieldState(slot, FieldState::Uninitialized);
     return std::unexpected(status);
   }
   const auto value = DecodeNativeValue(result);
-  static_cast<void>(isolate_->heap().SetField(object, slot, value));
-  return value;
+  return isolate_->heap().SetField(object, slot, value).transform([value] { return value; });
 }
 
 std::expected<void, ExecutionStatus> NativeDispatch::StoreField(HeapObject& object,
@@ -833,28 +815,27 @@ std::expected<void, ExecutionStatus> NativeDispatch::StoreFieldAt(HeapObject& ob
                                                                   std::uint32_t slot,
                                                                   Value value) noexcept {
   auto& storage = Heap::InstanceFields(object);
-  auto& state = storage.states().subspan(slot).front();
+  auto& state = storage.states()[slot];
   if (state == FieldState::Initializing) {
     return std::unexpected(ExecutionStatus::CyclicInitialization);
   }
-  static_cast<void>(isolate_->heap().SetField(object, slot, value));
-  return {};
+  return isolate_->heap().SetField(object, slot, value);
 }
 
 NativeFieldCache& NativeProgramState::field_cache(std::uint64_t access) {
   const auto position = DecodeNativeTracePosition(access);
-  return field_caches.at(position.function).at(position.instruction);
+  return field_caches[position.function][position.instruction];
 }
 
 extern "C" NativeFieldCache* vela_native_v10_field_caches(NativeExecution* execution,
                                                           std::uint32_t function) noexcept {
-  auto& state = Heap::NativeProgram(*execution->instance().state().front().AsObject());
-  return state.field_caches.at(function).data();
+  auto& state = execution->instance().program();
+  return state.field_caches[function].data();
 }
 
 extern "C" const ClassLayout* const* vela_native_v10_direct_field_layouts(
     NativeExecution* execution) noexcept {
-  auto& state = Heap::NativeProgram(*execution->instance().state().front().AsObject());
+  auto& state = execution->instance().program();
   return state.direct_field_layouts.data();
 }
 
@@ -899,7 +880,7 @@ extern "C" std::uint8_t vela_native_v3_load_field(NativeExecution* execution,
                                                   std::uint64_t field,
                                                   std::uint64_t access,
                                                   NativeValue* result) {
-  auto& state = Heap::NativeProgram(*execution->instance().state().front().AsObject());
+  auto& state = execution->instance().program();
   return internal::StoreNativeResult(
       result, state.dispatch->LoadField(*execution, *object, DeclarationId{field},
                                         state.field_cache(access)));
@@ -910,20 +891,20 @@ extern "C" std::uint8_t vela_native_v3_store_field(NativeExecution* execution,
                                                    std::uint64_t field,
                                                    std::uint64_t access,
                                                    const NativeValue* value) noexcept {
-  auto& state = Heap::NativeProgram(*execution->instance().state().front().AsObject());
+  auto& state = execution->instance().program();
   const auto stored = state.dispatch->StoreField(
       *object, DeclarationId{field}, DecodeNativeValue(*value), state.field_cache(access));
-  return static_cast<std::uint8_t>(stored ? ExecutionStatus::Returned : stored.error());
+  return ToNativeStatus(stored ? ExecutionStatus::Returned : stored.error());
 }
 
 extern "C" std::uint8_t vela_native_v7_store_materialized_field(NativeExecution* execution,
                                                                 HeapObject* object,
                                                                 std::uint64_t field,
                                                                 const NativeValue* value) noexcept {
-  auto& state = Heap::NativeProgram(*execution->instance().state().front().AsObject());
+  auto& state = execution->instance().program();
   const auto stored =
       state.dispatch->StoreField(*object, DeclarationId{field}, DecodeNativeValue(*value));
-  return static_cast<std::uint8_t>(stored ? ExecutionStatus::Returned : stored.error());
+  return ToNativeStatus(stored ? ExecutionStatus::Returned : stored.error());
 }
 
 }  // namespace vela::runtime

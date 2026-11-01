@@ -7,10 +7,10 @@
 #include <deque>
 #include <expected>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <queue>
 #include <semaphore>
 #include <string>
 #include <thread>
@@ -40,7 +40,6 @@ enum class FutureCompletionError : std::uint8_t {
   DifferentIsolate,
   Closed,
 };
-enum class FutureBindingError : std::uint8_t { DifferentIsolate };
 [[nodiscard]] ExecutionStatus FutureCompletionStatus(FutureCompletionError error) noexcept;
 enum class FuturePumpMode : std::uint8_t { AvailableWork, WaitForHost, ReadyWork };
 
@@ -100,17 +99,24 @@ class Future final {
   [[nodiscard]] Future Rooted() const;
   // 运行时队列和完成端点的临时强根；参与 GC，但不要求宿主在 Reload 前手动释放。
   [[nodiscard]] Future Retained() const;
-  void MakeHeapOwned() noexcept;
   void KeepAlive(std::shared_ptr<std::vector<::vela::runtime::Value>> references);
   class Root final {
    public:
+    ~Root();
+    Root(const Root&) = delete;
+    Root& operator=(const Root&) = delete;
+    Root(Root&&) = delete;
+    Root& operator=(Root&&) = delete;
     void Trace(Heap& heap) const noexcept;
-    [[nodiscard]] bool IsExpired() const noexcept { return state_.expired(); }
 
    private:
     friend class Future;
-    explicit Root(const std::shared_ptr<SharedState>& state) : state_(state) {}
-    std::weak_ptr<SharedState> state_;
+    friend class Heap;
+    explicit Root(SharedState& state) noexcept : state_(&state) {}
+    void Attach(Heap& heap) noexcept;
+    SharedState* state_;
+    Root* next_ = nullptr;
+    Root** previous_link_ = nullptr;
   };
   [[nodiscard]] static Future Sleep(std::chrono::milliseconds delay, FutureScheduler& scheduler);
   [[nodiscard]] FutureState state() const noexcept;
@@ -122,6 +128,8 @@ class Future final {
   [[nodiscard]] std::optional<::vela::runtime::Value> value() const;
   [[nodiscard]] std::optional<::vela::runtime::Value> error() const;
   [[nodiscard]] std::optional<FutureDiagnostic> error_diagnostic() const;
+  // 消费者自行读取最终结果，不需要排队执行监听器。
+  void MarkObserved() const noexcept;
   void Observe(Callback callback) const;
   void ObserveResult(std::function<void(const FutureResult&)> callback,
                      std::shared_ptr<std::vector<::vela::runtime::Value>> references = {}) const;
@@ -132,6 +140,8 @@ class Future final {
   std::expected<void, FutureCompletionError> CompleteError(::vela::runtime::Value error);
   std::expected<void, FutureCompletionError> CompleteError(::vela::runtime::Value error,
                                                            FutureDiagnostic diagnostic);
+  // 输入为成功或失败的最终结果；Pending 不属于完成请求。
+  std::expected<void, FutureCompletionError> Settle(FutureResult result);
   [[nodiscard]] static Future Value(::vela::runtime::Value value,
                                     FutureScheduler* scheduler = nullptr);
   [[nodiscard]] static Future Error(::vela::runtime::Value error,
@@ -139,17 +149,16 @@ class Future final {
   // GC 在扫描 Future 堆对象时追踪结果、监听器与活动任务引用。
   void Trace(Heap& heap) const noexcept;
   void AttachHeap(Heap& heap);
-  [[nodiscard]] std::expected<void, FutureBindingError> Bind(FutureScheduler& scheduler,
-                                                             Heap& heap);
+  [[nodiscard]] std::expected<void, ExecutionStatus> Bind(FutureScheduler& scheduler, Heap& heap);
 
  private:
+  static void TraceState(const SharedState& initial, Heap& heap) noexcept;
   enum class Rooting : std::uint8_t { External, Traced, Retained };
   void Retain() noexcept;
   void Unroot() noexcept;
   void ReportUnhandledError() const;
-  void ReportHandledError() const;
   explicit Future(std::shared_ptr<SharedState> state, Rooting rooting);
-  std::expected<void, FutureCompletionError> Settle(FutureResult result);
+  std::expected<void, FutureCompletionError> RequestCompletion(FutureResult result);
   void Publish(FutureResult result);
   void NotifyObserver(std::function<void(const FutureResult&)> callback,
                       std::shared_ptr<std::vector<::vela::runtime::Value>> references,
@@ -167,7 +176,6 @@ class Future final {
 class Completer final {
  public:
   Completer() = default;
-  explicit Completer(Future future) : future_(std::move(future)) {}
   Completer(Future future, std::shared_ptr<HostEventSource> producer)
       : future_(std::move(future)), producer_(std::move(producer)) {}
   [[nodiscard]] const Future& future() const noexcept { return future_; }
@@ -175,6 +183,7 @@ class Completer final {
   std::expected<void, FutureCompletionError> CompleteError(::vela::runtime::Value error);
   std::expected<void, FutureCompletionError> CompleteError(::vela::runtime::Value error,
                                                            FutureDiagnostic diagnostic);
+  std::expected<void, FutureCompletionError> Settle(FutureResult result);
   // 先取出供脚本返回的 Future，再把完成能力转交给可跨运行停止边界存活的端点。
   [[nodiscard]] FutureCompletionEndpoint Detach() &&;
 
@@ -227,16 +236,22 @@ class Timer final {
  private:
   friend class FutureScheduler;
   struct State final {
+    static constexpr auto kNotQueued = std::numeric_limits<std::size_t>::max();
     std::mutex mutex;
     std::atomic_bool cancelled{false};
     std::function<void()> callback;
     FutureScheduler* scheduler = nullptr;
     std::optional<ExecutionContext> context;
+    // 仅所属线程读写；取消在该线程按索引直接移除尚未触发的事件。
+    std::size_t event_index = kNotQueued;
   };
   static void Close(State& state) noexcept;
   explicit Timer(std::shared_ptr<State> state) : state_(std::move(state)) {}
-  std::shared_ptr<State> state_ = std::make_shared<State>();
+  std::shared_ptr<State> state_;
 };
+
+enum class FuturePumpStep : std::uint8_t { Idle, Executed };
+enum class FuturePumpResult : std::uint8_t { Idle, Completed };
 
 class FutureScheduler final {
  public:
@@ -258,14 +273,13 @@ class FutureScheduler final {
     return next_error_identity_.fetch_add(1, std::memory_order_relaxed);
   }
   void SetUnhandledErrorHandler(ErrorCallback callback);
-  void SetHandledErrorHandler(ErrorCallback callback);
-  [[nodiscard]] Completer CreateCompleter();
   [[nodiscard]] Completer CreateHostCompleter();
   [[nodiscard]] Timer After(std::chrono::milliseconds delay, std::function<void()> callback);
   [[nodiscard]] Timer Periodic(std::chrono::milliseconds interval, std::function<void()> callback);
-  // 执行一个宿主事件及其产生的全部微任务；返回 false 表示当前没有可推进的工作。
-  [[nodiscard]] bool PumpOne(FuturePumpMode mode = FuturePumpMode::AvailableWork);
-  [[nodiscard]] bool PumpUntil(Future& root, FuturePumpMode mode = FuturePumpMode::AvailableWork);
+  // 执行一个宿主事件及其产生的全部微任务；Idle 表示当前没有可推进的工作。
+  [[nodiscard]] FuturePumpStep PumpOne(FuturePumpMode mode = FuturePumpMode::AvailableWork);
+  [[nodiscard]] FuturePumpResult PumpUntil(Future& root,
+                                           FuturePumpMode mode = FuturePumpMode::AvailableWork);
   [[nodiscard]] bool IsOwnerThread() const noexcept;
   [[nodiscard]] static bool CanSchedule(std::chrono::milliseconds duration) noexcept;
   void AddSuspendedFrame(std::size_t saved_bytes) noexcept;
@@ -277,6 +291,7 @@ class FutureScheduler final {
 
  private:
   friend class Future;
+  friend class Timer;
   friend class HostEventSource;
   friend class FutureCompletionEndpoint;
   ExternalResources external_resources_;
@@ -303,8 +318,11 @@ class FutureScheduler final {
                                     std::chrono::milliseconds interval,
                                     std::function<void()> callback);
   void Fire(Event event);
+  void PushEvent(Event event);
+  [[nodiscard]] Event RemoveEvent(std::size_t index);
+  void ReorderEvent(std::size_t index) noexcept;
+  void SwapEvents(std::size_t first, std::size_t second) noexcept;
   void NotifyUnhandledError(const Future& future, ::vela::runtime::Value error);
-  void NotifyHandledError(const Future& future, ::vela::runtime::Value error);
   // 生产者只发布不可变消息；消费者独占本地队列与 Future/GC 状态。
   struct Message final {
     Message* next = nullptr;
@@ -324,10 +342,9 @@ class FutureScheduler final {
   };
   std::deque<Microtask> microtasks_;
   std::deque<absl::AnyInvocable<void()>> checkpoints_;
-  std::priority_queue<Event, std::vector<Event>, EventOrder> events_;
+  std::vector<Event> events_;
   std::uint64_t next_sequence_ = 0;
   ErrorCallback unhandled_error_handler_;
-  ErrorCallback handled_error_handler_;
   const std::thread::id owner_ = std::this_thread::get_id();
   std::optional<ExecutionContext> context_;
   std::atomic_uint64_t next_error_identity_{1};

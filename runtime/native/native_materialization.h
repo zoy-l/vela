@@ -70,6 +70,7 @@ class NativeMaterialization final {
   void Enqueue(std::uint32_t node) noexcept;
   Heap* heap_;
   NativeCheckpoint* checkpoint_;
+  void* storage_ = nullptr;
   std::span<Value> objects_;
   std::span<Work> work_;
   RootRange roots_{RootOwner::Runtime};

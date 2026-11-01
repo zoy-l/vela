@@ -34,14 +34,6 @@ MemberTable::ReceiverKey MemberTable::Key(const TypeConstraint& type) {
   return {type.kind, type.object_kind, type.nominal, type.array, type.collection, type.signature};
 }
 
-bool MemberTable::IsCanonicalReceiverType(std::uint32_t index) const {
-  if (index >= types_.size()) {
-    return false;
-  }
-  const auto found = receiver_indices_.find(Key(types_.subspan(index).front()));
-  return found != receiver_indices_.end() && found->second == index;
-}
-
 const MemberDefinition* MemberTable::Find(Value receiver, std::string_view name) const {
   const auto key = Key(Heap::TypeOf(receiver));
   const auto type = receiver_indices_.find(key);
@@ -57,7 +49,7 @@ Value MemberTable::ReadPublicField(Value receiver, std::string_view name) const 
   if (member == nullptr || member->kind != MemberKind::Field) {
     return Value::Null();
   }
-  return *Heap::GetField(*receiver.AsObject(), member->target);
+  return Heap::LoadField(*receiver.AsObject(), member->target);
 }
 
 }  // namespace vela::runtime

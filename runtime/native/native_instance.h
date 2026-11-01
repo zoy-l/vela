@@ -40,7 +40,7 @@ enum class NativeInstantiationStatus : std::uint8_t {
 };
 
 struct NativeInstantiationError final {
-  NativeInstantiationStatus status = NativeInstantiationStatus::AbiMismatch;
+  NativeInstantiationStatus status;
   std::string message;
 };
 
@@ -70,6 +70,8 @@ class NativeInstance final {
 
   [[nodiscard]] Isolate& isolate() const noexcept { return *data_->isolate; }
   [[nodiscard]] const NativeImage& image() const noexcept { return *data_->image; }
+  [[nodiscard]] NativeProgramState& program() const noexcept { return *data_; }
+  [[nodiscard]] NativeDispatch* dispatch() const noexcept { return data_->dispatch; }
   [[nodiscard]] std::optional<std::uint32_t> FindFunction(std::string_view name) const noexcept;
   [[nodiscard]] const ProgramLayouts& layouts() const noexcept { return data_->layouts; }
   [[nodiscard]] const MemberTable& members() const noexcept { return data_->members; }
@@ -84,11 +86,11 @@ class NativeInstance final {
   [[nodiscard]] Value constant(std::size_t index) const noexcept;
   [[nodiscard]] std::expected<Value, ExecutionStatus> InitializeGlobal(NativeExecution& execution,
                                                                        std::size_t index);
-  void StoreGlobal(std::size_t index, Value value) noexcept;
 
  private:
   friend struct NativeMemoryLayout;
   friend class NativeDispatch;
+  void StoreGlobal(std::size_t index, Value value) noexcept;
   NativeInstance(NativeProgramState& data, Value anchor, RootOwner root_owner);
   [[nodiscard]] static std::expected<std::unique_ptr<NativeInstance>, NativeInstantiationError>
   Instantiate(Isolate& isolate,

@@ -429,7 +429,7 @@ std::expected<void, NativeContractViolation> CheckRetainedNativeContracts(
         entry->second.emplace(declaration.identity, &declaration);
       }
     }
-    const auto& function = image.functions.values().subspan(reference.function).front();
+    const auto& function = image.function(reference.function);
     if (const auto* dependencies = function.dependencies) {
       const DependencySelection selection(*dependencies, reference.instruction.value_or(0),
                                           reference.phase);
@@ -458,7 +458,7 @@ std::vector<DeclarationId> RetainedNativeDeclarations(
              .second) {
       continue;
     }
-    const auto& function = reference.image->functions.values().subspan(reference.function).front();
+    const auto& function = reference.image->function(reference.function);
     declarations.insert(function.identity.declaration);
     if (const auto* dependencies = function.dependencies) {
       const DependencySelection selection(*dependencies, reference.instruction.value_or(0),

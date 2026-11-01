@@ -2,11 +2,9 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <span>
 #include <string_view>
-#include <utility>
 
 #include "base/builtin.h"
 #include "base/callable.h"
@@ -17,6 +15,7 @@
 #include "runtime/strings/string.h"
 #include "runtime/testing/test_bridge.h"
 #include "runtime/value/value.h"
+#include "runtime/value/value_operations.h"
 
 namespace vela::runtime {
 namespace {
@@ -26,19 +25,17 @@ std::unexpected<ExecutionStatus> Failure(NativeExecution& execution, std::string
 }
 
 bool HasRequiredParameters(std::span<const CallSignature::Parameter> parameters) {
-  return std::ranges::any_of(parameters, [](const auto& parameter) {
-    return !parameter.optional && !parameter.rest;
-  });
+  return std::ranges::any_of(
+      parameters, [](const auto& parameter) { return !parameter.optional && !parameter.rest; });
 }
 
 std::expected<Value, ExecutionStatus> Register(NativeExecution& execution,
-                                              std::span<const Value> values) {
-  const auto opcode = values.front();
-  if (!opcode.IsInteger() || opcode.AsInteger() < 0 ||
-      opcode.AsInteger() > static_cast<std::int64_t>(TestOperation::AddTearDown)) {
-    return std::unexpected(ExecutionStatus::TypeError);
+                                               std::span<const Value> values) {
+  const auto decoded = DecodeOperation<TestOperation::AddTearDown>(values.front());
+  if (!decoded) {
+    return std::unexpected(decoded.error());
   }
-  const auto operation = static_cast<TestOperation>(opcode.AsInteger());
+  const auto operation = *decoded;
   const auto description = values.subspan(1).front();
   const auto timeout_mode = values.subspan(5).front();
   const auto milliseconds = values.subspan(6).front();
@@ -65,7 +62,6 @@ std::expected<Value, ExecutionStatus> Register(NativeExecution& execution,
   if (bridge == nullptr) {
     return Failure(execution, "sdk:test registration requires a test execution session");
   }
-  auto diagnostic = execution.Diagnostic(ExecutionStatus::Returned, {});
   const auto registered = bridge->Register({
       .operation = operation,
       .description = description.AsString()->value(),
@@ -75,7 +71,7 @@ std::expected<Value, ExecutionStatus> Register(NativeExecution& execution,
       .timeout_mode = timeout_mode.AsInteger(),
       .milliseconds = milliseconds.AsInteger(),
       .multiplier = multiplier.AsDouble(),
-      .trace = std::move(diagnostic.stack_trace),
+      .trace = execution.CaptureTrace(),
   });
   if (!registered) {
     return Failure(execution, registered.error());
@@ -84,14 +80,15 @@ std::expected<Value, ExecutionStatus> Register(NativeExecution& execution,
 }
 
 std::expected<void, ExecutionStatus> ValidateCallback(NativeExecution& execution,
-                                                       TestControl operation,
-                                                       std::span<const Value> values) {
+                                                      TestControl operation,
+                                                      std::span<const Value> values) {
   const auto contract = InspectNativeCallable(execution.instance(), values.subspan(1).front());
   if (operation == TestControl::RegisterFinalizer) {
     if (!contract || contract->is_async || contract->signature->result ||
         !contract->parameters.empty()) {
-      return Failure(execution,
-                     "test scope finalizer must be synchronous, accept no arguments and return void");
+      return Failure(
+          execution,
+          "test scope finalizer must be synchronous, accept no arguments and return void");
     }
     return {};
   }
@@ -108,13 +105,12 @@ std::expected<void, ExecutionStatus> ValidateCallback(NativeExecution& execution
 }
 
 std::expected<Value, ExecutionStatus> Control(NativeExecution& execution,
-                                             std::span<const Value> values) {
-  const auto opcode = values.front();
-  if (!opcode.IsInteger() || opcode.AsInteger() < 0 ||
-      opcode.AsInteger() > static_cast<std::int64_t>(TestControl::TrackCallWait)) {
-    return std::unexpected(ExecutionStatus::TypeError);
+                                              std::span<const Value> values) {
+  const auto decoded = DecodeOperation<TestControl::TrackCallWait>(values.front());
+  if (!decoded) {
+    return std::unexpected(decoded.error());
   }
-  const auto operation = static_cast<TestControl>(opcode.AsInteger());
+  const auto operation = *decoded;
   if (operation == TestControl::RegisterFinalizer || operation == TestControl::RegisterCallback) {
     if (const auto valid = ValidateCallback(execution, operation, values); !valid) {
       return std::unexpected(valid.error());
@@ -127,9 +123,7 @@ std::expected<Value, ExecutionStatus> Control(NativeExecution& execution,
     }
     return Failure(execution, "asynchronous expectations require a test execution session");
   }
-  auto diagnostic = execution.Diagnostic(ExecutionStatus::Returned, {});
-  const auto controlled =
-      bridge->Control(operation, values.subspan(1), std::move(diagnostic.stack_trace));
+  const auto controlled = bridge->Control(operation, values.subspan(1), execution.CaptureTrace());
   if (!controlled) {
     return Failure(execution, controlled.error());
   }
@@ -142,7 +136,7 @@ std::expected<Value, ExecutionStatus> ExecuteNativeTest(NativeExecution& executi
                                                         Builtin builtin,
                                                         std::span<const Value> arguments) {
   return builtin == Builtin::TestRegister ? Register(execution, arguments)
-                                           : Control(execution, arguments);
+                                          : Control(execution, arguments);
 }
 
 }  // namespace vela::runtime

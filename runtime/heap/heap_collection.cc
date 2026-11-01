@@ -8,7 +8,6 @@
 #include <expected>
 #include <limits>
 #include <memory>
-#include <new>
 #include <optional>
 #include <span>
 #include <utility>
@@ -17,7 +16,6 @@
 
 #include "base/execution_status.h"
 #include "runtime/heap/element_storage.h"
-#include "runtime/heap/field_storage.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
@@ -81,16 +79,8 @@ struct CollectionStorage final {
   std::uint32_t tail = kEmpty;
   // 只保留命中桶号，不借用查询 key。setter 消费一次并验证当前桶中的真实 key；
   // 删除、clear 和重新插入不会让旧提示更新其他条目，扩容随整个存储一起清空提示。
-  mutable std::uint32_t read_bucket = kEmpty;
+  std::uint32_t read_bucket = kEmpty;
 };
-
-CollectionStorage& Storage(HeapObject& object) noexcept {
-  return *StorageAfter<CollectionStorage>(object);
-}
-
-const CollectionStorage& Storage(const HeapObject& object) noexcept {
-  return *StorageAfter<CollectionStorage>(object);
-}
 
 template <typename T>
 std::span<T> Section(std::span<std::byte> bytes, std::size_t offset, std::size_t count) noexcept {
@@ -133,9 +123,7 @@ std::size_t HashKey(Value value) noexcept {
       const auto& object = *value.AsObject();
       const auto* layout = Heap::ClassOf(object);
       if (layout != nullptr && layout->IsEnum()) {
-        return absl::HashOf(
-            &layout->nominal_type(),
-            FieldStorage::Load(ObjectFieldStorage(object), layout->field_count(), 0).AsInteger());
+        return absl::HashOf(&layout->nominal_type(), EnumOrdinal(object));
       }
       return absl::HashOf(value.kind(), value.AsObject());
     }
@@ -166,7 +154,7 @@ Slot FindSlot(const Table& table,
   auto deleted = kEmpty;
   // 已使用项不超过 entry capacity，桶数为其两倍，因此探测必然遇到空桶。
   while (true) {
-    const auto entry = table.buckets.subspan(bucket).front();
+    const auto entry = table.buckets[bucket];
     if (entry == kEmpty) {
       return {.bucket = deleted == kEmpty ? bucket : deleted, .entry = kEmpty, .found = false};
     }
@@ -174,7 +162,7 @@ Slot FindSlot(const Table& table,
       if (deleted == kEmpty) {
         deleted = bucket;
       }
-    } else if (table.hashes.subspan(entry).front() == hash &&
+    } else if (table.hashes[entry] == hash &&
                IsSameKey(LoadElementStorage(layout.keys, table.keys, entry), key)) {
       return {.bucket = bucket, .entry = entry, .found = true};
     }
@@ -191,7 +179,7 @@ struct CollectionLookup final {
 CollectionLookup FindTypedEntry(const HeapObject& object,
                                 const CollectionLayout& layout,
                                 Value key) noexcept {
-  const auto& storage = Storage(object);
+  const auto& storage = *StorageAfter<CollectionStorage>(object);
   if (storage.size == 0) {
     return {};
   }
@@ -218,10 +206,10 @@ Value ReadMapEntry(const CollectionLayout& layout, const CollectionLookup& entry
 }
 
 void LinkTail(CollectionStorage& storage, const Table& table, std::uint32_t entry) noexcept {
-  table.previous.subspan(entry).front() = storage.tail;
-  table.next.subspan(entry).front() = kEmpty;
+  table.previous[entry] = storage.tail;
+  table.next[entry] = kEmpty;
   if (storage.tail != kEmpty) {
-    table.next.subspan(storage.tail).front() = entry;
+    table.next[storage.tail] = entry;
   } else {
     storage.head = entry;
   }
@@ -239,7 +227,7 @@ HeapObject* Heap::AllocateCollection(const CollectionLayout& layout) noexcept {
 }
 
 std::expected<void, ExecutionStatus> Heap::GrowCollection(HeapObject& object) noexcept {
-  auto& current = Storage(object);
+  auto& current = *StorageAfter<CollectionStorage>(object);
   const auto& layout = *object.collection_layout();
   auto capacity = current.capacity;
   if (capacity == 0) {
@@ -253,10 +241,7 @@ std::expected<void, ExecutionStatus> Heap::GrowCollection(HeapObject& object) no
   const auto buffer = LayoutFor(layout, capacity);
   const auto bytes = buffer.bytes;
   MaybeCollect(bytes);
-  if (!CanAllocate(bytes - current.bytes)) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  auto* memory = static_cast<std::byte*>(::operator new(bytes, std::nothrow));
+  auto* memory = static_cast<std::byte*>(AllocateExternal(bytes, current.bytes));
   if (memory == nullptr) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
@@ -271,7 +256,7 @@ std::expected<void, ExecutionStatus> Heap::GrowCollection(HeapObject& object) no
   std::ranges::fill(target.buckets, kEmpty);
   if (current.size != 0) {
     const auto& source = current.table;
-    for (auto entry = current.head; entry != kEmpty; entry = source.next.subspan(entry).front()) {
+    for (auto entry = current.head; entry != kEmpty; entry = source.next[entry]) {
       const auto next = replacement.used++;
       StoreElementStorage(layout.keys, target.keys, next,
                           LoadElementStorage(layout.keys, source.keys, entry));
@@ -279,21 +264,19 @@ std::expected<void, ExecutionStatus> Heap::GrowCollection(HeapObject& object) no
         StoreElementStorage(*layout.values, target.values, next,
                             LoadElementStorage(*layout.values, source.values, entry));
       }
-      const auto hash = source.hashes.subspan(entry).front();
-      target.hashes.subspan(next).front() = hash;
+      const auto hash = source.hashes[entry];
+      target.hashes[next] = hash;
       const auto mask = static_cast<std::uint32_t>(target.buckets.size() - 1);
       auto bucket = static_cast<std::uint32_t>(hash) & mask;
-      while (target.buckets.subspan(bucket).front() != kEmpty) {
+      while (target.buckets[bucket] != kEmpty) {
         bucket = (bucket + 1) & mask;
       }
-      target.buckets.subspan(bucket).front() = next;
+      target.buckets[bucket] = next;
       LinkTail(replacement, target, next);
       ++replacement.size;
     }
   }
   ReleaseExternalStorage(current.data, current.bytes);
-  allocated_bytes_ += bytes;
-  committed_bytes_ += bytes;
   current = replacement;
   return {};
 }
@@ -315,11 +298,11 @@ std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollection(HeapObje
 std::expected<void, ExecutionStatus> Heap::StoreMapValue(HeapObject& object,
                                                          Value key,
                                                          Value value) noexcept {
-  auto& storage = Storage(object);
+  auto& storage = *StorageAfter<CollectionStorage>(object);
   const auto bucket = std::exchange(storage.read_bucket, kEmpty);
   const auto& table = storage.table;
   if (bucket != kEmpty) {
-    const auto entry = table.buckets.subspan(bucket).front();
+    const auto entry = table.buckets[bucket];
     const auto& layout = *object.collection_layout();
     if (entry < storage.used &&
         IsSameKey(LoadElementStorage(layout.keys, table.keys, entry), key)) {
@@ -330,16 +313,18 @@ std::expected<void, ExecutionStatus> Heap::StoreMapValue(HeapObject& object,
   return InsertCollectionHashed(object, key, HashKey(key), value).transform([](auto) {});
 }
 
-Value Heap::LoadMapValue(const HeapObject& object, Value key) noexcept {
+Value Heap::LoadMapValue(HeapObject& object, Value key) noexcept {
   const auto& layout = *object.collection_layout();
   const auto entry = FindTypedEntry(object, layout, key);
-  Storage(object).read_bucket = entry.slot.found ? entry.slot.bucket : kEmpty;
+  StorageAfter<CollectionStorage>(object)->read_bucket =
+      entry.slot.found ? entry.slot.bucket : kEmpty;
   return ReadMapEntry(layout, entry);
 }
 
 void Heap::StoreCollectionEntry(HeapObject& object, std::uint32_t entry, Value value) noexcept {
   const auto& layout = *object.collection_layout();
-  StoreElementStorage(*layout.values, Storage(object).table.values, entry, value);
+  StoreElementStorage(*layout.values, StorageAfter<CollectionStorage>(object)->table.values, entry,
+                      value);
   if (value.IsReference()) {
     WriteBarrier(object, value);
   }
@@ -351,7 +336,7 @@ std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollectionHashed(
     std::size_t hash,
     Value value) noexcept {
   const auto& layout = *object.collection_layout();
-  auto& storage = Storage(object);
+  auto& storage = *StorageAfter<CollectionStorage>(object);
   const auto& table = storage.table;
   Slot slot;
   if (storage.capacity != 0) {
@@ -375,8 +360,8 @@ std::expected<CollectionInsert, ExecutionStatus> Heap::InsertCollectionHashed(
   if (layout.values) {
     StoreElementStorage(*layout.values, table.values, entry, value);
   }
-  table.hashes.subspan(entry).front() = hash;
-  table.buckets.subspan(slot.bucket).front() = entry;
+  table.hashes[entry] = hash;
+  table.buckets[slot.bucket] = entry;
   LinkTail(storage, table, entry);
   ++storage.size;
   ++storage.mutation;
@@ -417,27 +402,23 @@ std::expected<CollectionRemove, ExecutionStatus> Heap::RemoveCollection(HeapObje
   if (!slot.found) {
     return CollectionRemove::Missing;
   }
-  auto& storage = Storage(object);
+  auto& storage = *StorageAfter<CollectionStorage>(object);
   const auto& table = *entry->table;
-  const auto previous = table.previous.subspan(slot.entry).front();
-  const auto next = table.next.subspan(slot.entry).front();
+  const auto previous = table.previous[slot.entry];
+  const auto next = table.next[slot.entry];
   if (previous == kEmpty) {
     storage.head = next;
   } else {
-    table.next.subspan(previous).front() = next;
+    table.next[previous] = next;
   }
   if (next == kEmpty) {
     storage.tail = previous;
   } else {
-    table.previous.subspan(next).front() = previous;
+    table.previous[next] = previous;
   }
-  table.buckets.subspan(slot.bucket).front() = kDeleted;
+  table.buckets[slot.bucket] = kDeleted;
   --storage.size;
   ++storage.mutation;
-  if (storage.size == 0) {
-    storage.used = 0;
-    std::ranges::fill(table.buckets, kEmpty);
-  }
   return CollectionRemove::Removed;
 }
 
@@ -445,7 +426,7 @@ std::expected<void, ExecutionStatus> Heap::ClearCollection(HeapObject& object) n
   if (object.kind != ObjectKind::Collection) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  auto& storage = Storage(object);
+  auto& storage = *StorageAfter<CollectionStorage>(object);
   if (storage.size != 0) {
     ++storage.mutation;
   }
@@ -475,17 +456,17 @@ std::expected<HeapObject*, ExecutionStatus> Heap::CombineSets(const HeapObject& 
   }
   const auto rooted = Value::Object(result);
   RootRange root(*this, &rooted, 1, RootOwner::Runtime);
-  const auto& right_storage = Storage(right);
+  const auto& right_storage = *StorageAfter<CollectionStorage>(right);
   const auto& right_table = right_storage.table;
   const auto append = [&](const HeapObject& input) -> std::expected<void, ExecutionStatus> {
-    const auto& storage = Storage(input);
+    const auto& storage = *StorageAfter<CollectionStorage>(input);
     if (storage.size == 0) {
       return {};
     }
     const auto& table = storage.table;
-    for (auto entry = storage.head; entry != kEmpty; entry = table.next.subspan(entry).front()) {
+    for (auto entry = storage.head; entry != kEmpty; entry = table.next[entry]) {
       const auto key = LoadElementStorage(layout.keys, table.keys, entry);
-      const auto hash = table.hashes.subspan(entry).front();
+      const auto hash = table.hashes[entry];
       if (operation != SetOperation::Union) {
         const auto found =
             right_storage.size != 0 && FindSlot(right_table, layout, key, hash).found;
@@ -518,7 +499,7 @@ std::expected<std::uint32_t, ExecutionStatus> Heap::CollectionLength(
   if (object.kind != ObjectKind::Collection) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  return Storage(object).size;
+  return StorageAfter<CollectionStorage>(object)->size;
 }
 
 std::expected<CollectionIterator, ExecutionStatus> Heap::IterateCollection(
@@ -526,7 +507,7 @@ std::expected<CollectionIterator, ExecutionStatus> Heap::IterateCollection(
   if (object.kind != ObjectKind::Collection) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto& storage = Storage(object);
+  const auto& storage = *StorageAfter<CollectionStorage>(object);
   const auto& table = storage.table;
   CollectionIterator iterator;
   iterator.object_ = &object;
@@ -542,7 +523,7 @@ std::expected<std::optional<CollectionEntry>, ExecutionStatus> CollectionIterato
   if (object_ == nullptr) {
     return std::nullopt;
   }
-  if (Storage(*object_).mutation != mutation_) {
+  if (StorageAfter<CollectionStorage>(*object_)->mutation != mutation_) {
     return std::unexpected(ExecutionStatus::ConcurrentModification);
   }
   if (next_ == kEmpty) {
@@ -550,7 +531,7 @@ std::expected<std::optional<CollectionEntry>, ExecutionStatus> CollectionIterato
   }
   const auto& layout = *Heap::CollectionTypeOf(*object_);
   const auto index = next_;
-  next_ = links_.subspan(index).front();
+  next_ = links_[index];
   return CollectionEntry{
       .key = LoadElementStorage(layout.keys, keys_, index),
       .value = layout.values ? LoadElementStorage(*layout.values, values_, index) : Value::Null(),
@@ -565,7 +546,7 @@ std::expected<void, ExecutionStatus> Heap::CopyCollection(
     return std::unexpected(ExecutionStatus::TypeError);
   }
   const auto& layout = *object.collection_layout();
-  const auto& storage = Storage(object);
+  const auto& storage = *StorageAfter<CollectionStorage>(object);
   const auto length = ArrayLength(array);
   if (!length || *length != storage.size) {
     return std::unexpected(ExecutionStatus::TypeError);
@@ -583,7 +564,7 @@ std::expected<void, ExecutionStatus> Heap::CopyCollection(
   const auto& table = storage.table;
   const auto elements = projection == CollectionProjection::Keys ? table.keys : table.values;
   std::uint32_t index = 0;
-  for (auto entry = storage.head; entry != kEmpty; entry = table.next.subspan(entry).front()) {
+  for (auto entry = storage.head; entry != kEmpty; entry = table.next[entry]) {
     const auto value = LoadElementStorage(*element_layout, elements, entry);
     if (!SetElement(array, index++, value)) {
       return std::unexpected(ExecutionStatus::TypeError);
@@ -594,14 +575,14 @@ std::expected<void, ExecutionStatus> Heap::CopyCollection(
 
 void Heap::MarkCollection(HeapObject& object) noexcept {
   const auto& layout = *object.collection_layout();
-  const auto& storage = Storage(object);
+  const auto& storage = *StorageAfter<CollectionStorage>(object);
   if (storage.size == 0) {
     return;
   }
   const auto& table = storage.table;
   const auto mark = [this, &storage, &table](auto elements) {
-    for (auto entry = storage.head; entry != kEmpty; entry = table.next.subspan(entry).front()) {
-      MarkReference(elements.subspan(entry).front());
+    for (auto entry = storage.head; entry != kEmpty; entry = table.next[entry]) {
+      MarkReference(elements[entry]);
     }
   };
   VisitReferenceStorage(layout.keys, table.keys, mark);
@@ -611,7 +592,7 @@ void Heap::MarkCollection(HeapObject& object) noexcept {
 }
 
 void Heap::ReleaseCollection(HeapObject& object) noexcept {
-  auto& storage = Storage(object);
+  auto& storage = *StorageAfter<CollectionStorage>(object);
   ReleaseExternalStorage(storage.data, storage.bytes);
   std::destroy_at(&storage);
 }

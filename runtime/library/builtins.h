@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <expected>
 #include <span>
 
@@ -10,11 +9,6 @@
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
-
-enum class NumericConversion : std::uint8_t { ToInt, ToDouble };
-
-[[nodiscard]] std::expected<Value, ExecutionStatus> ConvertNumber(NumericConversion conversion,
-                                                                  Value value);
 
 // 参数数量由编译器保证；引用参数借用已保根槽位，结果立即存入目标槽位。
 [[nodiscard]] std::expected<Value, ExecutionStatus> ExecuteBuiltin(Builtin builtin,

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <span>
@@ -196,6 +197,13 @@ struct NativeImage final {
   NativeTable<DeclarationId> selector_declarations;
   std::uint32_t native_mode = static_cast<std::uint32_t>(NativeProgramMode::Closed);
   NativeTable<std::uint32_t> global_flags;
+
+  [[nodiscard]] bool IsReloadable() const noexcept {
+    return native_mode == static_cast<std::uint32_t>(NativeProgramMode::Reloadable);
+  }
+  [[nodiscard]] const NativeFunctionDescription& function(std::size_t index) const noexcept {
+    return functions.values()[index];
+  }
 };
 
 [[nodiscard]] std::string_view NativeRuntimeAbiIdentity() noexcept;

@@ -16,7 +16,8 @@ std::expected<Value, ExecutionStatus> ExecuteSetOperation(Builtin builtin,
                                                           HeapObject& receiver,
                                                           Value other,
                                                           Heap& heap) {
-  if (!other.IsObject() || other.AsObject() == nullptr) {
+  auto* other_object = other.AsObjectOrNull();
+  if (other_object == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   auto operation = SetOperation::Difference;
@@ -25,7 +26,7 @@ std::expected<Value, ExecutionStatus> ExecuteSetOperation(Builtin builtin,
   } else if (builtin == Builtin::SetIntersection) {
     operation = SetOperation::Intersection;
   }
-  return heap.CombineSets(receiver, *other.AsObject(), operation)
+  return heap.CombineSets(receiver, *other_object, operation)
       .transform([](HeapObject* result) -> Value { return Value::Object(result); });
 }
 
@@ -35,10 +36,11 @@ std::expected<Value, ExecutionStatus> ExecuteCollectionBuiltin(Builtin builtin,
                                                                std::span<const Value> arguments,
                                                                Heap& heap) {
   const auto receiver = arguments.front();
-  if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
+  auto* receiver_object = receiver.AsObjectOrNull();
+  if (receiver_object == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  auto& object = *receiver.AsObject();
+  auto& object = *receiver_object;
   switch (builtin) {
     case Builtin::SetUnion:
     case Builtin::SetIntersection:
@@ -89,11 +91,12 @@ std::expected<Value, ExecutionStatus> ExecuteCollectionBuiltin(Builtin builtin,
     case Builtin::CollectionKeys:
     case Builtin::CollectionValues: {
       const auto target = arguments.subspan(1).front();
-      if (!target.IsObject() || target.AsObject() == nullptr) {
+      auto* target_object = target.AsObjectOrNull();
+      if (target_object == nullptr) {
         return std::unexpected(ExecutionStatus::TypeError);
       }
       const auto copied =
-          heap.CopyCollection(object, *target.AsObject(),
+          heap.CopyCollection(object, *target_object,
                               builtin == Builtin::CollectionKeys ? CollectionProjection::Keys
                                                                  : CollectionProjection::Values);
       if (!copied) {

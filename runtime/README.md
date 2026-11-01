@@ -83,7 +83,7 @@ counts live allocations, while `committed_bytes` also includes cached blocks.
 
 `Heap::GetElement` returns a tagged value; `Heap::SetElement` stores its
 native payload. Both report distinct non-array, bounds, and type errors through
-`std::expected`. Raw pointers to element `Value` slots no longer exist.
+`std::expected`.
 
 Double values retain their own `ValueKind::Double` tag; numeric operations and
 array stores never convert integer payloads implicitly. Double arithmetic does

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -17,9 +17,7 @@ namespace vela::runtime {
 class NativeControl;
 class NativeExecution;
 struct NativeTraceFrame;
-struct NativeImage;
 struct NativeFunctionDescription;
-struct NativeCheckpoint;
 
 // 只在调试安全点回调中借用；源码来自真实帧的不可变版本，不重新读取磁盘或当前快照。
 class NativeDebugFrame final {
@@ -29,7 +27,7 @@ class NativeDebugFrame final {
   [[nodiscard]] std::string_view source_path() const noexcept;
   [[nodiscard]] std::string_view source_text() const noexcept;
   [[nodiscard]] std::optional<SourceLocation> location() const noexcept { return location_; }
-  [[nodiscard]] std::uint32_t instruction() const noexcept { return instruction_; }
+  [[nodiscard]] std::uint32_t instruction() const noexcept;
   [[nodiscard]] NativeCodeTier tier() const noexcept;
   [[nodiscard]] std::size_t register_count() const noexcept;
   [[nodiscard]] std::optional<Value> ReadRegister(std::size_t index) const noexcept;
@@ -37,11 +35,8 @@ class NativeDebugFrame final {
  private:
   friend class NativeDebugContext;
   explicit NativeDebugFrame(const NativeTraceFrame& frame) noexcept;
-  const NativeImage* image_;
   const NativeFunctionDescription* function_;
   std::optional<SourceLocation> location_;
-  std::uint32_t instruction_;
-  const NativeCheckpoint* checkpoint_;
   const NativeTraceFrame* frame_;
 };
 
@@ -56,7 +51,6 @@ class NativeDebugContext final {
   friend class NativeControl;
   explicit NativeDebugContext(NativeExecution& execution);
   NativeExecution* execution_;
-  const NativeTraceFrame* first_frame_;
   NativeDebugFrame top_frame_;
   mutable std::vector<NativeDebugFrame> frames_;
 };

@@ -58,7 +58,7 @@ void StringIndex(benchmark::State& state) {
   const auto text = MakeText(static_cast<std::size_t>(state.range(0)), Encoding);
   std::size_t expected = 0;
   for (std::size_t offset = 0; offset < text.size(); ++offset) {
-    if ((static_cast<unsigned char>(text.at(offset)) & kContinuationMask) != kContinuationTag) {
+    if (!IsContinuationByte(text[offset])) {
       expected += offset;
     }
   }

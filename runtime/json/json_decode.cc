@@ -19,6 +19,7 @@
 #include "runtime/exceptions/error.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
+#include "runtime/json/frame_pool.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
@@ -66,9 +67,19 @@ std::expected<Value, JsonRuntimeError> Number(std::string_view token) {
 }
 
 struct DecodeFrame final {
-  DecodeFrame(Heap& heap, DecodeFrame* parent, yyjson_val* node, Value value)
-      : roots(heap, &this->value, 1), key_roots(heap, &key, 1) {
+  DecodeFrame(Heap& heap, DecodeFrame* parent, yyjson_val* node, Value value) {
     Reset(parent, node, value);
+    Attach(heap);
+  }
+  void Attach(Heap& heap) noexcept {
+    roots.Attach(heap, &value, 1);
+    key_roots.Attach(heap, &key, 1);
+  }
+  void Detach() noexcept {
+    roots.Detach();
+    key_roots.Detach();
+    value = Value::Null();
+    key = Value::Null();
   }
   void Reset(DecodeFrame* next_parent, yyjson_val* node, Value next_value) {
     parent = next_parent;
@@ -102,16 +113,11 @@ class Decoder final {
         map_(isolate.CreateCollectionLayout({
             .keys = {.element = {.kind = ValueKind::String}},
             .values = ArrayLayout{.element = {.dynamic = true}},
-        })) {}
+        })),
+        frames_(*heap_) {}
   ~Decoder() {
     while (frame_ != nullptr) {
       Pop();
-    }
-    while (spare_ != nullptr) {
-      auto* frame = spare_;
-      spare_ = frame->parent;
-      std::destroy_at(frame);
-      heap_->FreeNative(frame);
     }
   }
   Decoder(const Decoder&) = delete;
@@ -172,32 +178,17 @@ class Decoder final {
     if (!yyjson_is_ctn(node)) {
       return {};
     }
-    if (spare_ != nullptr) {
-      auto* frame = spare_;
-      spare_ = frame->parent;
-      frame->Reset(frame_, node, value);
-      frame->roots.Attach(*heap_, &frame->value, 1);
-      frame->key_roots.Attach(*heap_, &frame->key, 1);
-      frame_ = frame;
-      return {};
-    }
-    auto* storage = static_cast<DecodeFrame*>(heap_->AllocateNative(sizeof(DecodeFrame)));
-    if (storage == nullptr) {
+    const auto frame = frames_.Acquire(frame_, node, value);
+    if (!frame) {
       return std::unexpected(OutOfMemory());
     }
-    frame_ = std::construct_at(storage, *heap_, frame_, node, value);
+    frame_ = *frame;
     return {};
   }
   void Pop() {
     auto* frame = frame_;
     frame_ = frame->parent;
-    // 保留稳定地址供同层后续容器复用；空闲帧不保根已完成的值。
-    frame->roots.Detach();
-    frame->key_roots.Detach();
-    frame->value = Value::Null();
-    frame->key = Value::Null();
-    frame->parent = spare_;
-    spare_ = frame;
+    frames_.Release(*frame);
   }
   std::expected<Value, JsonRuntimeError> Convert(yyjson_val* node) {
     if (yyjson_is_null(node)) {
@@ -228,8 +219,8 @@ class Decoder final {
   const JsonDocument& document_;
   const ArrayLayout* array_;
   const CollectionLayout* map_;
+  internal::FramePool<DecodeFrame> frames_;
   DecodeFrame* frame_ = nullptr;
-  DecodeFrame* spare_ = nullptr;
 };
 
 }  // namespace

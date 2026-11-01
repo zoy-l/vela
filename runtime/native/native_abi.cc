@@ -1,16 +1,14 @@
 #include "runtime/native/native_abi.h"
 
 #include <algorithm>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <new>
 #include <span>
 
-#include "base/execution_limits.h"
 #include "base/execution_status.h"
-#include "base/native_program_mode.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/isolate/isolate.h"
@@ -24,18 +22,33 @@
 
 namespace vela::runtime {
 
-NativeFrame::NativeFrame(Isolate& isolate, NativeFrameSize size) noexcept
-    : allocated_roots_(size.root_count),
-      storage_bytes_(size.storage_bytes),
-      storage_(storage_bytes_ == 0 ? nullptr : ::operator new(storage_bytes_, std::nothrow)) {
-  if (IsAllocated() && size.root_count != 0) {
-    const auto roots = allocated_roots_.values();
-    root_range_.Attach(isolate.heap(), roots.data(), roots.size());
+NativeFrame::NativeFrame(Isolate& isolate, NativeFrameSize size) noexcept {
+  constexpr auto kMaximum = std::numeric_limits<std::size_t>::max();
+  if (size.root_count > (kMaximum - size.storage_bytes) / sizeof(Value)) {
+    allocation_bytes_ = kMaximum;
+    return;
+  }
+  const auto root_bytes = size.root_count * sizeof(Value);
+  allocation_bytes_ = root_bytes + size.storage_bytes;
+  if (allocation_bytes_ == 0) {
+    return;
+  }
+  allocation_ = ::operator new(allocation_bytes_, std::nothrow);
+  if (allocation_ == nullptr) {
+    return;
+  }
+  static_assert(sizeof(Value) % alignof(std::max_align_t) == 0);
+  roots_ = {static_cast<Value*>(allocation_), size.root_count};
+  std::uninitialized_value_construct_n(roots_.data(), roots_.size());
+  storage_ = size.storage_bytes == 0 ? nullptr : std::as_writable_bytes(roots_).last(0).data();
+  if (!roots_.empty()) {
+    root_range_.Attach(isolate.heap(), roots_.data(), roots_.size());
   }
 }
 
 NativeFrame::~NativeFrame() {
-  ::operator delete(storage_);
+  root_range_.Detach();
+  ::operator delete(allocation_);
 }
 
 NativeExecution::NativeExecution(NativeInstance& instance) noexcept
@@ -54,7 +67,7 @@ NativeExecution::NativeExecution(NativeInstance& instance) noexcept
     stack_limit_ = bounds->lower + kNativeStackReserveBytes;
     stack_status_ = ExecutionStatus::Returned;
   }
-  if (instance.image().native_mode == static_cast<std::uint32_t>(NativeProgramMode::Reloadable)) {
+  if (instance.image().IsReloadable()) {
     isolate().native_dispatch().RegisterExecution(*this);
   }
 }
@@ -73,31 +86,6 @@ NativeInstanceScope::NativeInstanceScope(NativeExecution& execution,
 
 NativeInstanceScope::~NativeInstanceScope() {
   execution_->instance_ = previous_;
-}
-
-ExecutionStatus NativeExecution::PrepareEntry() noexcept {
-  if (frame_count_ == 0) {
-    pending_exception_ = Value::Null();
-    exception_allocation_failed_ = false;
-  }
-  if (stack_status_ != ExecutionStatus::Returned) {
-    return stack_status_;
-  }
-  const std::byte stack_position{};
-  if (frame_count_ == kMaxCallFrames ||
-      std::bit_cast<std::uintptr_t>(&stack_position) <= stack_limit_) {
-    return ExecutionStatus::StackOverflow;
-  }
-  return ExecutionStatus::Returned;
-}
-
-ExecutionStatus NativeExecution::Enter(NativeTraceFrame& frame, std::uint32_t function) noexcept {
-  const auto prepared = PrepareEntry();
-  if (prepared != ExecutionStatus::Returned) {
-    return prepared;
-  }
-  MaterializeFrame(frame, function);
-  return ExecutionStatus::Returned;
 }
 
 void NativeExecution::MaterializeFrame(NativeTraceFrame& frame, std::uint32_t function) noexcept {
@@ -122,7 +110,7 @@ std::uint8_t NativeExecution::Recover(NativeCheckpoint& checkpoint, void* result
     if (!prepared) {
       // 保留原异常的根；OOM 中止恢复，不能让外层 catch 把旧异常当作新恢复结果。
       exception_allocation_failed_ = true;
-      return static_cast<std::uint8_t>(ExecutionStatus::OutOfMemory);
+      return ToNativeStatus(ExecutionStatus::OutOfMemory);
     }
     (*prepared)->Commit();
   }
@@ -151,10 +139,10 @@ extern "C" std::uint8_t vela_native_v1_frame_storage(NativeExecution* execution,
                     });
   if (!frame->IsAllocated()) {
     std::destroy_at(frame);
-    return static_cast<std::uint8_t>(ExecutionStatus::OutOfMemory);
+    return ToNativeStatus(ExecutionStatus::OutOfMemory);
   }
   *access = {.roots = frame->roots().data(), .storage = frame->storage()};
-  return static_cast<std::uint8_t>(ExecutionStatus::Returned);
+  return ToNativeStatus(ExecutionStatus::Returned);
 }
 
 extern "C" void vela_native_v1_frame_release(NativeFrame* frame) noexcept {
@@ -191,7 +179,7 @@ extern "C" std::uint8_t vela_native_v2_leaf_failure(NativeExecution* execution,
                                                     std::uint8_t status,
                                                     const Value* roots,
                                                     std::uint64_t root_count) {
-  return static_cast<std::uint8_t>(execution->HandleLeafFailure(
+  return ToNativeStatus(execution->HandleLeafFailure(
       DecodeNativeTracePosition(position), static_cast<ExecutionStatus>(status),
       std::span(roots, static_cast<std::size_t>(root_count))));
 }

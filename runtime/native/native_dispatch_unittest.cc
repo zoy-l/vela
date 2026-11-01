@@ -61,10 +61,7 @@ std::uint8_t CallLatest(NativeExecution* execution,
                         std::uint64_t /*unused*/,
                         NativeValue* output) noexcept {
   NativeTraceFrame frame;
-  const auto status = execution->Enter(frame, 1);
-  if (status != ExecutionStatus::Returned) {
-    return static_cast<std::uint8_t>(status);
-  }
+  execution->MaterializeFrame(frame, 1);
   const auto result = vela_native_v3_call_declaration(execution, kAnswer.value, nullptr, 0, output);
   execution->Exit();
   return result;
@@ -75,10 +72,7 @@ std::uint8_t Fail(NativeExecution* execution,
                   std::uint64_t /*unused*/,
                   NativeValue* /*unused*/) noexcept {
   NativeTraceFrame frame;
-  const auto status = execution->Enter(frame, 0);
-  if (status != ExecutionStatus::Returned) {
-    return static_cast<std::uint8_t>(status);
-  }
+  execution->MaterializeFrame(frame, 0);
   const auto result = execution->HandleFailure(ExecutionStatus::DivisionByZero);
   execution->Exit();
   return static_cast<std::uint8_t>(result);
@@ -261,7 +255,7 @@ TEST(NativeDispatchTest, NamedEntryDoesNotKeepHistoricalCodeAlive) {
   EXPECT_EQ(named->Invoke({})->AsInteger(), 42);
   const auto blockers = isolate.ReloadBlockers();
   ASSERT_EQ(blockers.size(), 1U);
-  EXPECT_EQ(blockers.front().kind, ExternalResourceKind::NativeEntry);
+  EXPECT_EQ(blockers.front().kind, ExternalResourceKind::NativeNamedEntry);
   EXPECT_EQ(blockers.front().references, 1U);
   EXPECT_FALSE(isolate.TryStop());
 }
@@ -287,7 +281,7 @@ TEST(NativeDispatchTest, DroppedAndStaleCandidatesLeaveThePublishedProgramUntouc
     EXPECT_EQ(dispatch.revision(), 1U);
     const auto blockers = isolate.ReloadBlockers();
     ASSERT_EQ(blockers.size(), 1U);
-    EXPECT_EQ(blockers.front().kind, ExternalResourceKind::NativeCandidate);
+    EXPECT_EQ(blockers.front().kind, ExternalResourceKind::NativePreparedPublication);
     EXPECT_FALSE(isolate.TryStop());
   }
   EXPECT_TRUE(isolate.TryStop());

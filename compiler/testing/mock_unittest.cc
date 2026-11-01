@@ -5,10 +5,10 @@
 
 #include "gtest/gtest.h"
 
-#include "compiler/jit/compiler.h"
-#include "compiler/jit/source_compiler.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
+#include "compiler/jit/compiler.h"
+#include "compiler/jit/source_compiler.h"
 #include "compiler/testing/result.h"
 #include "compiler/testing/suite.h"
 #include "runtime/async/future.h"
@@ -28,7 +28,8 @@ void ExpectReleasedSuite(runtime::Isolate& isolate) {
   EXPECT_EQ(isolate.scheduler().suspended_frame_count(), 0U);
   EXPECT_EQ(isolate.scheduler().saved_state_bytes(), 0U);
   EXPECT_TRUE(isolate.ReloadBlockers().empty());
-  EXPECT_FALSE(isolate.scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork));
+  EXPECT_EQ(isolate.scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork),
+            runtime::FuturePumpStep::Idle);
 }
 
 TEST(ScriptMockLifetimeTest, CancellationClosesPendingObservationsAndReleasesAllRoots) {

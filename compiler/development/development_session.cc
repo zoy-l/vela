@@ -70,7 +70,7 @@ DevelopmentStatus PublicationStatus(runtime::NativePublicationStatus status) {
     case Status::RequiresReload:
       return DevelopmentStatus::RequiresReload;
     case Status::Stopped:
-    case Status::InvalidIdentity:
+    case Status::InvalidImage:
     case Status::InstantiationFailed:
       return DevelopmentStatus::InstantiationFailed;
   }

@@ -61,6 +61,9 @@ class Value final {
   [[nodiscard]] HeapObject* AsObject() const noexcept {
     return std::bit_cast<HeapObject*>(payload_);
   }
+  [[nodiscard]] HeapObject* AsObjectOrNull() const noexcept {
+    return IsObject() ? AsObject() : nullptr;
+  }
   [[nodiscard]] StringObject* AsString() const noexcept {
     return std::bit_cast<StringObject*>(payload_);
   }

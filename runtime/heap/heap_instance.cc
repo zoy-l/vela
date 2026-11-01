@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <new>
 #include <optional>
@@ -9,8 +10,10 @@
 #include <vector>
 
 #include "base/declaration.h"
+#include "base/execution_status.h"
 #include "runtime/heap/field_storage.h"
 #include "runtime/heap/instance_storage.h"
+#include "runtime/heap/intrusive_link_internal.h"
 #include "runtime/value/object.h"
 #include "runtime/value/value.h"
 
@@ -68,14 +71,22 @@ void Heap::ReleaseInstanceStorage(InstanceStorage& storage) noexcept {
   FreeNative(&storage);
 }
 
-void Heap::RegisterInstance(HeapObject& object, InstanceStorage& storage) {
-  auto& first = instances_.try_emplace(&object.layout->nominal_type(), nullptr).first->second;
-  storage.object = &object;
-  storage.next = first;
-  if (first != nullptr) {
-    first->previous = &storage;
+void Heap::RegisterInstance(HeapObject& object, InstanceStorage& storage) noexcept {
+  auto& first = object.layout->nominal_->instances_;
+  if (first == nullptr) {
+    ++instance_type_count_;
   }
-  first = &storage;
+  storage.object = &object;
+  internal::PrependIntrusive(storage, first, &InstanceStorage::next,
+                             &InstanceStorage::previous_link);
+}
+
+void Heap::UnregisterInstance(HeapObject& object, InstanceStorage& storage) noexcept {
+  auto& first = object.layout->nominal_->instances_;
+  internal::UnlinkIntrusive(storage, &InstanceStorage::next, &InstanceStorage::previous_link);
+  if (first == nullptr) {
+    --instance_type_count_;
+  }
 }
 
 void Heap::ReleaseInstance(HeapObject& object) noexcept {
@@ -83,28 +94,12 @@ void Heap::ReleaseInstance(HeapObject& object) noexcept {
     return;
   }
   auto& storage = *static_cast<InstanceStorage*>(object.native_payload);
-  if (storage.previous == nullptr) {
-    const auto found = instances_.find(&object.layout->nominal_type());
-    if (storage.next == nullptr) {
-      instances_.erase(found);
-    } else {
-      found->second = storage.next;
-    }
-  } else {
-    storage.previous->next = storage.next;
-  }
-  if (storage.next != nullptr) {
-    storage.next->previous = storage.previous;
-  }
+  UnregisterInstance(object, storage);
   ReleaseInstanceStorage(storage);
 }
 
-void Heap::AppendInstances(const NominalType& type, std::vector<Value>& instances) const {
-  const auto found = instances_.find(&type);
-  if (found == instances_.end()) {
-    return;
-  }
-  for (auto* storage = found->second; storage != nullptr; storage = storage->next) {
+void Heap::AppendInstances(const NominalType& type, std::vector<Value>& instances) {
+  for (auto* storage = type.instances_; storage != nullptr; storage = storage->next) {
     instances.push_back(Value::Object(storage->object));
   }
 }
@@ -118,13 +113,19 @@ std::optional<Value> Heap::GetField(const HeapObject& object, std::uint32_t inde
   if (layout == nullptr || index >= layout->field_count()) {
     return std::nullopt;
   }
-  return FieldStorage::Load(ObjectFieldStorage(object), layout->field_count(), index);
+  return LoadField(object, index);
 }
 
-bool Heap::SetField(HeapObject& object, std::uint32_t index, Value value) noexcept {
+Value Heap::LoadField(const HeapObject& object, std::uint32_t index) noexcept {
+  return FieldStorage::Load(ObjectFieldStorage(object), object.layout->field_count(), index);
+}
+
+std::expected<void, ExecutionStatus> Heap::SetField(HeapObject& object,
+                                                    std::uint32_t index,
+                                                    Value value) noexcept {
   const auto* layout = object.layout;
   if (layout == nullptr || index >= layout->field_count()) {
-    return false;
+    return std::unexpected(ExecutionStatus::InvalidField);
   }
   FieldStorage::Store(ObjectFieldStorage(object), layout->field_count(), index, value);
   if (layout->storage() == ClassStorage::Reloadable) {
@@ -133,7 +134,7 @@ bool Heap::SetField(HeapObject& object, std::uint32_t index, Value value) noexce
   if (value.IsReference()) {
     WriteBarrier(object, value);
   }
-  return true;
+  return {};
 }
 
 InstanceMigration::InstanceMigration(Heap& heap,
@@ -152,17 +153,17 @@ InstanceMigration::~InstanceMigration() {
   }
 }
 
-std::unique_ptr<InstanceMigration> Heap::PrepareInstanceMigration(
+std::expected<std::unique_ptr<InstanceMigration>, ExecutionStatus> Heap::PrepareInstanceMigration(
     HeapObject& object,
     const ClassLayout& layout) noexcept {
   std::unique_ptr<InstanceMigration> migration(new (std::nothrow)
                                                    InstanceMigration(*this, object, layout));
   if (migration == nullptr) {
-    return nullptr;
+    return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   auto* storage = AllocateInstanceStorage(layout.field_count());
   if (storage == nullptr) {
-    return nullptr;
+    return std::unexpected(ExecutionStatus::OutOfMemory);
   }
   migration->storage_ = storage;
   auto& previous = InstanceFields(object);
@@ -187,19 +188,10 @@ void InstanceMigration::Commit() noexcept {
   auto& object = *object_.AsObject();
   auto& previous = Heap::InstanceFields(object);
   auto& storage = *storage_;
-  storage.object = &object;
-  storage.previous = previous.previous;
-  storage.next = previous.next;
-  if (storage.previous == nullptr) {
-    heap_->instances_.find(&object.layout->nominal_type())->second = &storage;
-  } else {
-    storage.previous->next = &storage;
-  }
-  if (storage.next != nullptr) {
-    storage.next->previous = &storage;
-  }
+  heap_->UnregisterInstance(object, previous);
   object.native_payload = &storage;
   object.layout = layout_;
+  heap_->RegisterInstance(object, storage);
   const auto fields = storage.fields();
   for (std::uint32_t index = 0; index < storage.count; ++index) {
     heap_->WriteBarrier(object, FieldStorage::Load(fields, storage.count, index));

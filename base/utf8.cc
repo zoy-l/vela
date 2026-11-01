@@ -134,8 +134,7 @@ void AppendUtf8(std::uint32_t point, std::string& text) {
 std::size_t Utf8Length(std::string_view text) noexcept {
   std::size_t length = 0;
   for (const auto byte : text) {
-    length += static_cast<std::size_t>((static_cast<unsigned char>(byte) & kContinuationMask) !=
-                                       kContinuationTag);
+    length += static_cast<std::size_t>(!IsContinuationByte(byte));
   }
   return length;
 }

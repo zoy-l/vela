@@ -4,14 +4,13 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 
 #include <gtest/gtest.h>
 
-#include "base/execution_limits.h"
 #include "base/execution_status.h"
 #include "base/source_location.h"
-#include "runtime/exceptions/exception.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/isolate.h"
 #include "runtime/native/native_api.h"
@@ -82,15 +81,19 @@ TEST(NativeAbiTest, RootsSurviveCollectionAndFramesReleaseThem) {
   ASSERT_TRUE(instance.has_value());
   NativeExecution execution(**instance);
   NativeTraceFrame trace;
-  ASSERT_EQ(execution.Enter(trace, 0), ExecutionStatus::Returned);
-  NativeFrame frame(isolate, {.root_count = 1});
+  execution.MaterializeFrame(trace, 0);
+  NativeFrame frame(isolate, {.root_count = 1, .storage_bytes = sizeof(std::max_align_t)});
+  ASSERT_TRUE(frame.IsAllocated());
+  ASSERT_NE(frame.storage(), nullptr);
+  EXPECT_EQ(std::bit_cast<std::uintptr_t>(frame.storage()) % alignof(std::max_align_t), 0);
   auto* string = heap.AllocateString("rooted");
   ASSERT_NE(string, nullptr);
   frame.roots().front() = Value::String(string);
+  std::memset(frame.storage(), 0xff, sizeof(std::max_align_t));
   heap.Collect();
   EXPECT_EQ(string->value(), "rooted");
   execution.Exit();
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
 TEST(NativeAbiTest, AllocationFailuresPreserveExistingFrames) {
@@ -101,28 +104,12 @@ TEST(NativeAbiTest, AllocationFailuresPreserveExistingFrames) {
   NativeExecution execution(**instance);
   NativeFrame roots(isolate, {.root_count = std::numeric_limits<std::size_t>::max()});
   NativeFrame storage(isolate, {.storage_bytes = std::numeric_limits<std::size_t>::max()});
+  NativeFrame combined(isolate, {.root_count = 1,
+                                 .storage_bytes = std::numeric_limits<std::size_t>::max()});
   EXPECT_FALSE(roots.IsAllocated());
   EXPECT_FALSE(storage.IsAllocated());
-  EXPECT_EQ(execution.frame_count(), 0U);
-}
-
-TEST(NativeAbiTest, CallDepthLimitPreservesExistingFrames) {
-  Isolate isolate;
-  const auto image = EmptyImage();
-  const auto instance = NativeInstance::Instantiate(isolate, image);
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
-  std::array<NativeTraceFrame, kMaxCallFrames> frames;
-  for (auto& frame : frames) {
-    ASSERT_EQ(execution.Enter(frame, 0), ExecutionStatus::Returned);
-  }
-  NativeTraceFrame overflow;
-  EXPECT_EQ(execution.Enter(overflow, 0), ExecutionStatus::StackOverflow);
-  EXPECT_EQ(execution.PrepareEntry(), ExecutionStatus::StackOverflow);
-  EXPECT_EQ(execution.frame_count(), kMaxCallFrames);
-  while (execution.frame_count() != 0) {
-    execution.Exit();
-  }
+  EXPECT_FALSE(combined.IsAllocated());
+  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
 TEST(NativeAbiTest, ReusedFramesKeepOuterPositionsAndReleasePreviousRoots) {
@@ -135,12 +122,12 @@ TEST(NativeAbiTest, ReusedFramesKeepOuterPositionsAndReleasePreviousRoots) {
   NativeExecution execution(**instance);
   NativeTraceFrame outer;
   NativeTraceFrame inner;
-  ASSERT_EQ(execution.Enter(outer, 0), ExecutionStatus::Returned);
+  execution.MaterializeFrame(outer, 0);
   auto* outer_position = execution.current_instruction();
   *outer_position = kOuterInstruction;
   auto& heap = isolate.heap();
   const auto baseline = heap.object_count();
-  ASSERT_EQ(execution.Enter(inner, 1), ExecutionStatus::Returned);
+  execution.MaterializeFrame(inner, 1);
   {
     NativeFrame resources(isolate, {.root_count = 1});
     auto* text = heap.AllocateString("temporary");
@@ -154,7 +141,7 @@ TEST(NativeAbiTest, ReusedFramesKeepOuterPositionsAndReleasePreviousRoots) {
   }
   heap.Collect();
   EXPECT_EQ(heap.object_count(), baseline);
-  ASSERT_EQ(execution.Enter(inner, 2), ExecutionStatus::Returned);
+  execution.MaterializeFrame(inner, 2);
   EXPECT_EQ(*execution.current_instruction(), 0U);
   execution.Exit();
   EXPECT_EQ(execution.current_instruction(), outer_position);
@@ -180,7 +167,7 @@ TEST(NativeAbiTest, ResourceEntryOwnsRootsAndReleasesStorage) {
   ASSERT_NE(outer.storage, nullptr);
   EXPECT_EQ(outer.storage, frame->storage());
   vela_native_v1_frame_release(frame);
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
 TEST(NativeAbiTest, BorrowedStackRootsUseOnlyRootRangeAndReleaseTheirReferences) {
@@ -205,17 +192,7 @@ TEST(NativeAbiTest, BorrowedStackRootsUseOnlyRootRangeAndReleaseTheirReferences)
   vela_native_v1_roots_exit(range);
   heap.Collect();
   EXPECT_EQ(heap.object_count(), baseline);
-  EXPECT_EQ(execution.frame_count(), 0U);
-}
-
-TEST(NativeAbiTest, ScalarLeafEntryDoesNotMaterializeAFrame) {
-  Isolate isolate;
-  const auto image = EmptyImage();
-  const auto instance = NativeInstance::Instantiate(isolate, image);
-  ASSERT_TRUE(instance.has_value());
-  NativeExecution execution(**instance);
-  EXPECT_EQ(execution.PrepareEntry(), ExecutionStatus::Returned);
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
 }
 
 TEST(NativeAbiTest, StoppedExecutionHasPublicNativeDiagnostic) {
@@ -249,7 +226,7 @@ TEST(NativeAbiTest, LeafFailureRetainsBorrowedRootsDuringExceptionAllocationAndR
                 roots.size())),
             ExecutionStatus::IndexOutOfBounds);
   EXPECT_EQ(string->value(), "retained only by the cold leaf root range");
-  EXPECT_EQ(execution.frame_count(), 0U);
+  EXPECT_EQ(execution.current_frame(), nullptr);
   ASSERT_TRUE(execution.HasException());
   const auto diagnostic = execution.ExceptionDiagnostic();
   ASSERT_EQ(diagnostic.stack_trace.size(), 1U);

@@ -6,8 +6,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <expected>
-#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,9 +26,15 @@ namespace vela::runtime {
 enum class JsonFrameKind : std::uint8_t { Array, Map, Conversion };
 
 struct JsonEncodeFrame final {
-  JsonEncodeFrame(Heap& heap, JsonEncodeFrame* parent, Value value, JsonFrameKind kind)
-      : roots(heap, values.data(), values.size()) {
+  JsonEncodeFrame(Heap& heap, JsonEncodeFrame* parent, Value value, JsonFrameKind kind) {
     Reset(parent, value, kind);
+    Attach(heap);
+  }
+  void Attach(Heap& heap) noexcept { roots.Attach(heap, values.data(), values.size()); }
+  void Detach() noexcept {
+    roots.Detach();
+    values.fill(Value::Null());
+    iterator = {};
   }
   void Reset(JsonEncodeFrame* next_parent, Value value, JsonFrameKind next_kind) {
     parent = next_parent;
@@ -50,17 +56,12 @@ JsonEncoder::JsonEncoder(Isolate& isolate, Value input)
     : heap_(&isolate.heap()),
       active_type_(isolate.CreateCollectionLayout({.keys = {.element = {.dynamic = true}}})),
       values_{input, Value::Null(), Value::Null()},
-      roots_(*heap_, values_.data(), values_.size(), RootOwner::Runtime) {}
+      roots_(*heap_, values_.data(), values_.size(), RootOwner::Runtime),
+      frames_(*heap_) {}
 
 JsonEncoder::~JsonEncoder() {
   while (frame_ != nullptr) {
     Pop();
-  }
-  while (spare_ != nullptr) {
-    auto* frame = spare_;
-    spare_ = frame->parent;
-    std::destroy_at(frame);
-    heap_->FreeNative(frame);
   }
 }
 
@@ -90,9 +91,15 @@ JsonRuntimeError JsonEncoder::ConversionError(std::string_view message) const {
   return Error(ExecutionStatus::JsonEncodeError, message);
 }
 
+JsonRuntimeError JsonEncoder::OomError(Allocation kind) const {
+  return Error(ExecutionStatus::OutOfMemory, kind == Allocation::Output
+                                               ? "JSON output allocation failed"
+                                               : "JSON traversal allocation failed");
+}
+
 std::expected<void, JsonRuntimeError> JsonEncoder::Append(std::string_view text) {
   if (!heap_->AppendString(*values_.at(kOutput).AsObject(), text)) {
-    return std::unexpected(Error(ExecutionStatus::OutOfMemory, "JSON output allocation failed"));
+    return std::unexpected(OomError(Allocation::Output));
   }
   return {};
 }
@@ -100,7 +107,7 @@ std::expected<void, JsonRuntimeError> JsonEncoder::Append(std::string_view text)
 std::expected<void, JsonRuntimeError> JsonEncoder::Quote(std::string_view text) {
   constexpr std::size_t kUnicodeEscapeLength = 6;
   if (text.size() > kMaximumStringLength - 2) {
-    return std::unexpected(Error(ExecutionStatus::OutOfMemory, "JSON output allocation failed"));
+    return std::unexpected(OomError(Allocation::Output));
   }
   auto length = text.size() + 2;
   for (const auto character : text) {
@@ -112,26 +119,32 @@ std::expected<void, JsonRuntimeError> JsonEncoder::Quote(std::string_view text) 
       extra = 1;
     }
     if (extra > kMaximumStringLength - length) {
-      return std::unexpected(Error(ExecutionStatus::OutOfMemory, "JSON output allocation failed"));
+      return std::unexpected(OomError(Allocation::Output));
     }
     length += extra;
   }
   const auto storage = heap_->AppendStringStorage(*values_.at(kOutput).AsObject(), length);
   if (!storage) {
-    return std::unexpected(Error(storage.error(), "JSON output allocation failed"));
+    return std::unexpected(OomError(Allocation::Output));
   }
   auto output = *storage;
   output.front() = '"';
   output = output.subspan(1);
   constexpr std::string_view kHex = "0123456789abcdef";
   constexpr unsigned kHexDigitMask = 15;
-  for (const auto character : text) {
-    const auto byte = static_cast<unsigned char>(character);
+  const auto copy = [&output](std::string_view part) {
+    if (!part.empty()) {
+      std::memcpy(output.data(), part.data(), part.size());
+      output = output.subspan(part.size());
+    }
+  };
+  std::size_t begin = 0;
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    const auto byte = static_cast<unsigned char>(text[index]);
     if (byte >= ' ' && byte != '"' && byte != '\\') {
-      output.front() = character;
-      output = output.subspan(1);
       continue;
     }
+    copy(text.substr(begin, index - begin));
     std::array<char, kUnicodeEscapeLength> escape{
         '\\',
         'u',
@@ -145,9 +158,10 @@ std::expected<void, JsonRuntimeError> JsonEncoder::Quote(std::string_view text) 
       escape.at(1) = static_cast<char>(byte);
       encoded = encoded.substr(0, 2);
     }
-    std::ranges::copy(encoded, output.begin());
-    output = output.subspan(encoded.size());
+    copy(encoded);
+    begin = index + 1;
   }
+  copy(text.substr(begin));
   output.front() = '"';
   return {};
 }
@@ -158,25 +172,16 @@ std::expected<void, JsonRuntimeError> JsonEncoder::Push(Value value,
   auto& active = *values_.at(kActive).AsObject();
   const auto inserted = heap_->InsertCollection(active, value);
   if (!inserted) {
-    return std::unexpected(Error(inserted.error(), "JSON traversal allocation failed"));
+    return std::unexpected(OomError(Allocation::Traversal));
   }
   if (*inserted == CollectionInsert::Updated) {
     return std::unexpected(Error(ExecutionStatus::JsonEncodeError, "cyclic JSON value"));
   }
-  if (spare_ != nullptr) {
-    auto* frame = spare_;
-    spare_ = frame->parent;
-    frame->Reset(frame_, value, kind);
-    frame->roots.Attach(*heap_, frame->values.data(), frame->values.size());
-    frame_ = frame;
-  } else {
-    auto* storage = static_cast<JsonEncodeFrame*>(heap_->AllocateNative(sizeof(JsonEncodeFrame)));
-    if (storage == nullptr) {
-      return std::unexpected(
-          Error(ExecutionStatus::OutOfMemory, "JSON traversal allocation failed"));
-    }
-    frame_ = std::construct_at(storage, *heap_, frame_, value, kind);
+  const auto frame = frames_.Acquire(frame_, value, kind);
+  if (!frame) {
+    return std::unexpected(OomError(Allocation::Traversal));
   }
+  frame_ = *frame;
   frame_->elements = elements;
   auto& object = *value.AsObject();
   if (kind == JsonFrameKind::Array) {
@@ -191,11 +196,7 @@ void JsonEncoder::Pop() {
   auto* frame = frame_;
   frame_ = frame->parent;
   std::ignore = Heap::RemoveCollection(*values_.at(kActive).AsObject(), frame->values.at(0));
-  frame->roots.Detach();
-  frame->values.fill(Value::Null());
-  frame->iterator = {};
-  frame->parent = spare_;
-  spare_ = frame;
+  frames_.Release(*frame);
 }
 
 void JsonEncoder::ResumeConversion(Value result) {
@@ -207,12 +208,12 @@ void JsonEncoder::ResumeConversion(Value result) {
 std::expected<void, JsonRuntimeError> JsonEncoder::Initialize() {
   auto* builder = heap_->AllocateMutableString();
   if (builder == nullptr) {
-    return std::unexpected(Error(ExecutionStatus::OutOfMemory, "JSON output allocation failed"));
+    return std::unexpected(OomError(Allocation::Output));
   }
   values_.at(kOutput) = Value::Object(builder);
   auto* active = heap_->AllocateCollection(*active_type_);
   if (active == nullptr) {
-    return std::unexpected(Error(ExecutionStatus::OutOfMemory, "JSON traversal allocation failed"));
+    return std::unexpected(OomError(Allocation::Traversal));
   }
   values_.at(kActive) = Value::Object(active);
   return {};
@@ -372,7 +373,7 @@ std::expected<Value, JsonRuntimeError> JsonEncoder::Advance() {
       auto* output = heap_->BuildString(*values_.at(kOutput).AsObject());
       if (output == nullptr) {
         return std::unexpected(
-            Error(ExecutionStatus::OutOfMemory, "JSON output allocation failed"));
+            OomError(Allocation::Output));
       }
       return Value::String(output);
     }

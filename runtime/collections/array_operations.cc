@@ -6,7 +6,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <limits>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -15,17 +14,15 @@
 
 #include "base/builtin.h"
 #include "base/execution_status.h"
-#include "base/utf8.h"
 #include "runtime/collections/index_range.h"
 #include "runtime/heap/heap.h"
+#include "runtime/heap/native_buffer.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 #include "runtime/value/value_io.h"
 
 namespace vela::runtime {
 namespace {
-
-constexpr std::uint32_t kSurrogatePayloadMask = (1U << kSurrogatePayloadBits) - 1;
 
 ExecutionStatus Error(ArrayAccessError error) {
   switch (error) {
@@ -63,8 +60,8 @@ std::expected<Value, ExecutionStatus> CopyArray(HeapObject& array,
   if (!length) {
     return std::unexpected(Error(length.error()));
   }
-  const auto first = arguments.subspan(1).front();
-  const auto last = arguments.subspan(2).front();
+  const auto first = arguments[1];
+  const auto last = arguments[2];
   if (!first.IsInteger() || !last.IsInteger()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -82,15 +79,16 @@ std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
     return std::unexpected(Error(length.error()));
   }
   const bool splice = builtin == Builtin::ArraySplice;
-  const auto input = arguments.subspan(splice ? 3 : 1).front();
-  if (!input.IsObject() || input.AsObject() == nullptr) {
+  const auto input = arguments[splice ? 3 : 1];
+  auto* items = input.AsObjectOrNull();
+  if (items == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   std::uint32_t start = builtin == Builtin::ArrayPushMany ? *length : 0;
   std::uint32_t count = 0;
   if (splice) {
-    const auto position = arguments.subspan(1).front();
-    const auto deleted = arguments.subspan(2).front();
+    const auto position = arguments[1];
+    const auto deleted = arguments[2];
     if (!position.IsInteger() || !deleted.IsInteger()) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
@@ -98,7 +96,6 @@ std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
     count = static_cast<std::uint32_t>(
         std::clamp<std::int64_t>(deleted.AsInteger(), 0, *length - start));
   }
-  auto* items = input.AsObject();
   auto roots = std::to_array({Value::Null(), Value::Null()});
   RootRange root_range(heap, roots.data(), roots.size(), RootOwner::Runtime);
   // 输入可能复用 receiver；先快照，避免后缀移动覆盖待插入值。
@@ -124,38 +121,22 @@ std::expected<Value, ExecutionStatus> ReplaceRange(Builtin builtin,
   return splice ? roots.back() : Value::Integer(*Heap::ArrayLength(array));
 }
 
-// 默认排序按 UTF-16 code unit 比较；Vela 字符串内部仍保持 UTF-8。
-std::uint32_t NextUnit(std::string_view& text, std::uint32_t& pending) {
-  if (pending != 0) {
-    return std::exchange(pending, 0);
+int CompareText(std::string_view first, std::string_view second) {
+  const auto [first_difference, second_difference] = std::ranges::mismatch(first, second);
+  if (first_difference == first.end() || second_difference == second.end()) {
+    return static_cast<int>(first.size() > second.size()) -
+           static_cast<int>(first.size() < second.size());
   }
-  const auto decoded = DecodeUtf8Prefix(text);
-  text.remove_prefix(decoded.width);
-  const auto scalar = decoded.value;
-  if (scalar < kSupplementaryFirst) {
-    return scalar;
-  }
-  const auto payload = scalar - kSupplementaryFirst;
-  pending = kLowSurrogateFirst + (payload & kSurrogatePayloadMask);
-  return kHighSurrogateFirst + (payload >> kSurrogatePayloadBits);
-}
-
-Value CompareText(std::string_view first, std::string_view second) {
-  std::uint32_t first_pending = 0;
-  std::uint32_t second_pending = 0;
-  while ((!first.empty() || first_pending != 0) && (!second.empty() || second_pending != 0)) {
-    const auto left_unit = NextUnit(first, first_pending);
-    const auto right_unit = NextUnit(second, second_pending);
-    if (left_unit != right_unit) {
-      return Value::Integer(left_unit < right_unit ? -1 : 1);
-    }
-  }
-  const bool first_done = first.empty() && first_pending == 0;
-  const bool second_done = second.empty() && second_pending == 0;
-  if (first_done == second_done) {
-    return Value::Integer(0);
-  }
-  return Value::Integer(first_done ? -1 : 1);
+  const auto left = static_cast<std::uint8_t>(*first_difference);
+  const auto right = static_cast<std::uint8_t>(*second_difference);
+  const auto order = left < right ? -1 : 1;
+  // 合法 UTF-8 与 UTF-16 只在增补字符和 U+E000..U+FFFF 的相对次序上不同。
+  constexpr std::uint8_t kSupplementaryLead = 0xF0;
+  constexpr std::uint8_t kBmpTailLead = 0xEE;
+  const auto reversed =
+      (left >= kSupplementaryLead && right >= kBmpTailLead && right < kSupplementaryLead) ||
+      (right >= kSupplementaryLead && left >= kBmpTailLead && left < kSupplementaryLead);
+  return reversed ? -order : order;
 }
 
 std::expected<Value, ExecutionStatus> SortByDefault(HeapObject& array, Heap& heap) {
@@ -183,23 +164,18 @@ std::expected<Value, ExecutionStatus> SortByDefault(HeapObject& array, Heap& hea
       return value.IsString() ? value.AsString()->value() : std::string_view(buffer.data(), length);
     }
   };
-  if (count > std::numeric_limits<std::size_t>::max() / sizeof(Entry)) {
+  NativeBuffer<Entry> storage(heap, count);
+  if (!storage.IsAllocated()) {
     return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  const auto release = [&heap](Entry* entries) { heap.FreeNative(entries); };
-  const std::unique_ptr<Entry, decltype(release)> storage(
-      static_cast<Entry*>(heap.AllocateNative(count * sizeof(Entry))), release);
-  if (storage == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  const auto entries = std::span(storage.get(), count);
+  const auto entries = storage.values();
   // 格式化仅执行一次；排序只移动值及其文本，不分配 GC 对象，原数组保根所有引用。
   for (std::uint32_t index = 0; index < count; ++index) {
     const auto value = *Heap::GetElement(array, index);
     if (value.IsObject()) {
       return std::unexpected(ExecutionStatus::TypeError);
     }
-    auto& entry = *std::construct_at(&entries.subspan(index).front());
+    auto& entry = *std::construct_at(&entries[index]);
     entry.value = value;
     entry.position = index;
     if (!value.IsString()) {
@@ -211,11 +187,11 @@ std::expected<Value, ExecutionStatus> SortByDefault(HeapObject& array, Heap& hea
     }
   }
   std::ranges::sort(entries, [](const Entry& left, const Entry& right) {
-    const auto comparison = CompareText(left.text(), right.text()).AsInteger();
+    const auto comparison = CompareText(left.text(), right.text());
     return comparison == 0 ? left.position < right.position : comparison < 0;
   });
   for (std::uint32_t index = 0; index < count; ++index) {
-    std::ignore = heap.SetElement(array, index, entries.subspan(index).front().value);
+    std::ignore = heap.SetElement(array, index, entries[index].value);
   }
   return Value::Object(&array);
 }
@@ -226,10 +202,11 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
                                                           std::span<const Value> arguments,
                                                           Heap& heap) {
   const auto receiver = arguments.front();
-  if (!receiver.IsObject() || receiver.AsObject() == nullptr) {
+  auto* receiver_object = receiver.AsObjectOrNull();
+  if (receiver_object == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  auto& array = *receiver.AsObject();
+  auto& array = *receiver_object;
   const auto integer = [](auto value) -> Value {
     return Value::Integer(static_cast<std::int64_t>(value));
   };
@@ -243,13 +220,13 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
       return CopyArray(array, arguments, heap);
     case Builtin::ArrayFill: {
       const auto length = Heap::ArrayLength(array);
-      const auto first = arguments.subspan(2).front();
-      const auto last = arguments.subspan(3).front();
+      const auto first = arguments[2];
+      const auto last = arguments[3];
       if (!length || !first.IsInteger() || !last.IsInteger()) {
         return std::unexpected(ExecutionStatus::TypeError);
       }
       const auto [start, end] = ClampIndexRange(first.AsInteger(), last.AsInteger(), *length);
-      const auto filled = heap.FillArray(array, arguments.subspan(1).front(), start, end);
+      const auto filled = heap.FillArray(array, arguments[1], start, end);
       if (!filled) {
         return std::unexpected(Error(filled.error()));
       }
@@ -265,7 +242,7 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
     case Builtin::ArrayCapacity:
       return Result(Heap::ArrayCapacity(array), integer);
     case Builtin::ArrayPush:
-      return Result(heap.PushArray(array, arguments.subspan(1).front()), integer);
+      return Result(heap.PushArray(array, arguments[1]), integer);
     case Builtin::ArrayPop:
       return Result(Heap::PopArray(array), identity);
     case Builtin::ArrayShift: {
@@ -281,7 +258,7 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
     case Builtin::ArrayClear:
       return MutationResult(Heap::ClearArray(array));
     case Builtin::ArrayReserve: {
-      const auto capacity = arguments.subspan(1).front();
+      const auto capacity = arguments[1];
       if (!capacity.IsInteger()) {
         return std::unexpected(ExecutionStatus::TypeError);
       }
@@ -301,7 +278,7 @@ std::expected<Value, ExecutionStatus> ExecuteArrayBuiltin(Builtin builtin,
       });
     case Builtin::ArrayCheckMutation: {
       const auto mutation = Heap::ArrayMutation(array);
-      const auto expected = arguments.subspan(1).front();
+      const auto expected = arguments[1];
       if (!mutation || !expected.IsInteger()) {
         return std::unexpected(ExecutionStatus::TypeError);
       }

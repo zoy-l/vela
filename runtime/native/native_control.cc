@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -104,7 +103,7 @@ bool NativeControl::IsInitializing() const noexcept {
 }
 
 std::expected<void, NativeSafepointError> NativeControl::ScheduleSafepoint(
-    std::function<void()> action) {
+    absl::AnyInvocable<void()> action) {
   if (IsStopRequested()) {
     return std::unexpected(NativeSafepointError::Stopped);
   }
@@ -129,14 +128,12 @@ ExecutionStatus NativeControl::ProcessSafepoint(NativeExecution* execution) {
   processing_ = true;
   absl::AnyInvocable<void()> queued;
   if ((queue_->requests.load(std::memory_order_acquire) & kQueuedAction) != 0) {
-    {
-      const std::scoped_lock lock(queue_->mutex);
-      queued = std::move(queue_->actions.front());
-      queue_->actions.pop_front();
-      if (queue_->actions.empty()) {
-        queue_->requests.fetch_and(static_cast<std::uint8_t>(~kQueuedAction),
-                                   std::memory_order_release);
-      }
+    const std::scoped_lock lock(queue_->mutex);
+    queued = std::move(queue_->actions.front());
+    queue_->actions.pop_front();
+    if (queue_->actions.empty()) {
+      queue_->requests.fetch_and(static_cast<std::uint8_t>(~kQueuedAction),
+                                 std::memory_order_release);
     }
   }
   if (queued) {

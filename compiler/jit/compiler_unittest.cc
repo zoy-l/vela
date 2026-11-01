@@ -1123,7 +1123,8 @@ TEST_P(JitLanguageTest, ExecutesNativeProductionPathsWithPreciseRoots) {
   if (value.IsObject()) {
     auto* future = runtime::Heap::GetFuture(*value.AsObject());
     ASSERT_NE(future, nullptr);
-    ASSERT_TRUE(isolate.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost));
+    ASSERT_EQ(isolate.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost),
+              runtime::FuturePumpResult::Completed);
     ASSERT_EQ(future->state(), runtime::FutureState::Succeeded);
     value = *future->value();
   }

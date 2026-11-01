@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/execution_status.h"
-#include "runtime/heap/field_storage.h"
 #include "runtime/heap/heap.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/object.h"
@@ -33,6 +32,24 @@ ExecutionStatus IndexError(ArrayAccessError error) {
 
 }  // namespace
 
+std::expected<Value, ExecutionStatus> AllocatedValue(HeapObject* object) noexcept {
+  if (object == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  return Value::Object(object);
+}
+
+std::expected<Value, ExecutionStatus> AllocatedValue(StringObject* string) noexcept {
+  if (string == nullptr) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
+  }
+  return Value::String(string);
+}
+
+std::int64_t EnumOrdinal(const HeapObject& object) noexcept {
+  return Heap::LoadField(object, 0).AsInteger();
+}
+
 bool IsEqualValue(Value left, Value right) noexcept {
   if (left.kind() != right.kind()) {
     return false;
@@ -56,10 +73,7 @@ bool IsEqualValue(Value left, Value right) noexcept {
         const auto* right_layout = Heap::ClassOf(*right_object);
         return right_layout != nullptr &&
                &layout->nominal_type() == &right_layout->nominal_type() &&
-               FieldStorage::Load(ObjectFieldStorage(*left_object), layout->field_count(), 0)
-                       .AsInteger() == FieldStorage::Load(ObjectFieldStorage(*right_object),
-                                                          right_layout->field_count(), 0)
-                                           .AsInteger();
+               EnumOrdinal(*left_object) == EnumOrdinal(*right_object);
       }
       return left_object == right_object;
     }
@@ -155,9 +169,7 @@ std::expected<Value, ExecutionStatus> BoxDynamicValue(Heap& heap,
   if (value.IsNull() || instance == nullptr || !instance->IsEnum()) {
     return value;
   }
-  auto* object = heap.AllocateInstance(*instance->fixed_layout(), std::span(&value, 1));
-  return object != nullptr ? std::expected<Value, ExecutionStatus>(Value::Object(object))
-                           : std::unexpected(ExecutionStatus::OutOfMemory);
+  return AllocatedValue(heap.AllocateInstance(*instance->fixed_layout(), std::span(&value, 1)));
 }
 
 Value UnboxDynamicValue(Value value, const TypeConstraint& type) noexcept {
@@ -165,9 +177,7 @@ Value UnboxDynamicValue(Value value, const TypeConstraint& type) noexcept {
   if (value.IsNull() || nominal == nullptr || !nominal->IsEnum()) {
     return value;
   }
-  const auto& object = *value.AsObject();
-  const auto* layout = Heap::ClassOf(object);
-  return FieldStorage::Load(ObjectFieldStorage(object), layout->field_count(), 0);
+  return Value::Integer(EnumOrdinal(*value.AsObject()));
 }
 
 }  // namespace vela::runtime

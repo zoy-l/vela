@@ -152,7 +152,6 @@ ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
   }
   result->nominal_ = nominal;
   result->storage_ = options.storage;
-  result->revision_ = options.revision;
   result->field_declarations_ = std::move(options.field_declarations);
   const auto declarations = result->field_declarations();
   for (std::size_t index = 0; index < declarations.size(); ++index) {
@@ -219,8 +218,8 @@ const CodeIdentity* Isolate::CreateCodeIdentity() {
   return result;
 }
 
-LayoutCounts Isolate::layout_counts() const noexcept {
-  LayoutCounts counts{
+LayoutCounts Isolate::PersistentLayoutCounts() const noexcept {
+  return {
       .classes = class_layouts_.size(),
       .arrays = array_layouts_.size(),
       .collections = collection_layouts_.size(),
@@ -229,6 +228,10 @@ LayoutCounts Isolate::layout_counts() const noexcept {
       .code_identities = code_identities_.size(),
       .nominal_types = nominal_types_.size(),
   };
+}
+
+LayoutCounts Isolate::layout_counts() const noexcept {
+  auto counts = PersistentLayoutCounts();
   heap_.AccumulateNativeLayouts(counts);
   return counts;
 }

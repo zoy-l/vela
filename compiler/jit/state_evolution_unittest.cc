@@ -565,7 +565,7 @@ TEST_P(JitStateTest, FieldBlockPreparationFailureLeavesEveryObjectAndTheCandidat
   std::size_t block_bytes = 0;
   {
     const auto migration = heap.PrepareInstanceMigration(*first.value().AsObject(), *probe);
-    ASSERT_NE(migration, nullptr);
+    ASSERT_TRUE(migration);
     block_bytes = heap.allocated_bytes() - bytes;
   }
   heap.SetAllocationLimit(bytes + block_bytes);

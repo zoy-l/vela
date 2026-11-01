@@ -448,7 +448,7 @@ V1/V2 覆盖其余全部套件；不把这两个排除项计为通过。常规 R
 | D0387 | exact | `runtime/native_materialization.cc:120-125` | `runtime/native_materialization.cc:168-173` | 保留：BuildGraph 可失败且只准备；Commit 不分配并发布别名。合并会破坏原子提交边界。（P4 语法与旧实现残留检查通过；最终功能验证见 V1/V2。） |
 | D0388 | exact | `runtime/native_materialization.cc:126-131` | `runtime/native_materialization.cc:143-148` | 保留：先发现依赖、统一分配，再填充字段，以支持共享节点和环。融合遍历会在目标对象尚未就绪时写入引用。（P4 语法与旧实现残留检查通过；最终功能验证见 V1/V2。） |
 | D0389 | exact | `runtime/native_stack_linux.cc:1-14` | `runtime/native_stack_mac.cc:1-14` | 保留平台声明：Linux 读取/销毁 pthread_attr，macOS 读取栈顶和大小；共同 NativeStackBounds 接口已共享。考虑合并为平台宏会混合两种系统契约，仅能减少 include 和签名。 |
-| D0390 | exact | `runtime/numeric_operations_internal.h:36-42` | `runtime/numeric_operations_internal.h:45-51` | 已消除，功能验证通过：沿用 EvaluateIntegerArithmetic；除法、取模共用零除及溢出处理，runtime 只转换 Value。（P4 语法与旧实现残留检查通过；最终功能验证见 V1/V2。） |
+| D0390 | exact | `runtime/dynamic/numeric_operations_internal.h` | `base/integer_arithmetic.h` | 动态整数运算复用 EvaluateIntegerArithmetic 的零除与溢出检查，只在 runtime 边界转换 Value。 |
 | D0391 | exact | `tools/aot_async_fixture.py:359-364` | `tools/aot_unittest.py:588-593` | 已消除，功能验证通过：ExpectFutureAnswer 统一成功状态、整数结果和续延释放检查；各场景仍自行控制 Pump 与 GC。（P6：宿主检查通过；最终功能验证见 V1/V2。） |
 | D0392 | exact | `tools/aot_async_fixture.py:403-409` | `tools/aot_unittest.py:674-680` | 已消除，功能验证通过：CompleteOnHostThread 统一线程完成、等待与 join。（P6：宿主检查通过；最终功能验证见 V1/V2。） |
 | D0393 | exact | `tools/aot_async_fixture.py:409-414` | `tools/aot_unittest.py:680-685` | 已消除，功能验证通过：CompleteOnHostThread 统一线程完成、等待与 join。（P6：宿主检查通过；最终功能验证见 V1/V2。） |
@@ -1072,7 +1072,7 @@ V1/V2 覆盖其余全部套件；不把这两个排除项计为通过。常规 R
 | D1011 | semantic | `runtime/collection_unittest.cc:253-278` | `runtime/string_unittest.cc:260-274` | 保留：集合插入托管边与字符串 builder 外部缓冲区增长不同。统一驱动不能共享引用标记与原生存储核算。（P4 语法与旧实现残留检查通过；最终功能验证见 V1/V2。） |
 | D1012 | semantic | `runtime/dynamic_call.cc:23-35` | `vm/execution_dynamic.cc:129-138` | 保留：runtime::CreateDynamicCallPlan 负责分配、保根和槽内容，Execution::CreateDynamicCallPlan 仅绑定当前 Isolate 后调用共享实现；考虑跨层共享 Execution 会反向依赖 VM，当前无重复分配路径。 |
 | D1013 | semantic | `runtime/dynamic_call.cc:164-185` | `vm/execution_dynamic.cc:98-112` | 保留：CheckDynamicArguments 检查 payload 类型，VM 动态调用已直接调用它；CopyDynamicArguments 逐项调用 ReadDynamicArgument 写入寄存器。考虑合并会把检查与存储类型耦合，Native 和 VM 的所有权边界不同。 |
-| D1014 | semantic | `runtime/dynamic_value.cc:25-43` | `runtime/numeric_operations_internal.h:83-116` | 保留：动态相等处理 null、枚举及禁止比较的对象；整数操作要求严格数值类型。已有 IsEqualValue 叶实现；套用整数操作会改变动态语义。（P4 语法与旧实现残留检查通过；最终功能验证见 V1/V2。） |
+| D1014 | semantic | `runtime/dynamic/dynamic_value.cc` | `runtime/dynamic/numeric_operations_internal.h` | 动态相等通过 IsEqualValue 处理 null、枚举和对象；数值操作保持严格的数值类型边界，两者语义不同。 |
 | D1015 | semantic | `runtime/execution_context_unittest.cc:23-38` | `runtime/future_unittest.cc:206-217` | 保留：上下文恢复与宿主消息中断 timer 等待分别验证不同调度顺序。PumpOne 包装会隐藏预期执行边界。（P4 语法与旧实现残留检查通过；最终功能验证见 V1/V2。） |
 | D1016 | semantic | `runtime/execution_context_unittest.cc:68-85` | `runtime/future_completion_unittest.cc:101-118` | 保留：宿主错误继承创建上下文；Shutdown 丢弃排队完成。共同自动 pump 的夹具会改变后者行为。（P4 语法与旧实现残留检查通过；最终功能验证见 V1/V2。） |
 | D1017 | semantic | `runtime/external_resources.cc:74-85` | `runtime/heap.cc:258-281` | 保留：ExternalResources 汇总引用计数；外部根按 RootOwner 转换资源类别并记录单根。统一登记会改变计数及生命周期。（P4 语法与旧实现残留检查通过；最终功能验证见 V1/V2。） |
@@ -1155,7 +1155,7 @@ V1/V2 覆盖其余全部套件；不把这两个排除项计为通过。常规 R
 | D1094 | semantic | `runtime/native_stack_linux.cc:14-28` | `runtime/native_stack_mac.cc:14-22` | 保留：Linux 获取并销毁 pthread_attr；macOS 查询栈顶及大小。已有 NativeStackBounds，合并平台宏不能共享系统调用契约。（P4 语法与旧实现残留检查通过；最终功能验证见 V1/V2。） |
 | D1095 | semantic | `runtime/native_stack_linux.cc:14-28` | `runtime/native_stack_win.cc:15-23` | 保留：Linux 需要 pthread 属性错误处理和清理；Windows 使用 SDK 上下界接口。统一实现会混合资源和平台类型。（P4 语法与旧实现残留检查通过；最终功能验证见 V1/V2。） |
 | D1096 | semantic | `runtime/native_stack_mac.cc:14-22` | `runtime/native_stack_win.cc:15-23` | 保留：macOS 从栈顶、大小计算下界；Windows 直接提供上下界。共享结果类型已足够，平台宏只会合并文件。（P4 语法与旧实现残留检查通过；最终功能验证见 V1/V2。） |
-| D1097 | semantic | `runtime/numeric_operations_internal.h:118-154` | `vm/vm.cc:110-120` | 已消除，功能验证通过：VM DoubleOperation 直接调用 runtime::internal::DoubleOperation，共用数值检查、除零和比较实现；VM 仅将返回 Value 写入寄存器，旧独立 double switch 已删除。 验证：V1、V2。 |
+| D1097 | semantic | `runtime/dynamic/numeric_operations_internal.h` | `runtime/dynamic/dynamic_value.cc` | 动态 double 运算调用 DoubleOperation，集中类型检查、除零和比较；当前没有 VM 消费者。 |
 | D1098 | semantic | `runtime/numeric_parse_unittest.cc:18-59` | `tools/bench_unittest.py:313-319` | 保留：NumericParseTest 枚举 int64 边界和 radix，benchmark 报告测试检查批量归一化、差值和堆计数；考虑共享数值测试器会掩盖两个不相关算法的期望。 |
 | D1099 | semantic | `runtime/random.cc:56-67` | `runtime/standard_library.cc:47-54` | 保留：Random::NextInt 实现拒绝采样；标准库桥调用它并转换 NativeError。采样已共享，删除桥会丢失宿主签名及错误映射。（P4 语法与旧实现残留检查通过；最终功能验证见 V1/V2。） |
 | D1100 | semantic | `runtime/regexp_unittest.cc:37-47` | `tools/toolchain_unittest.py:38-44` | 保留：RegExpTest::Compile 在堆内创建并保根正则值，toolchain 测试调用 C++ 编译器做语法验收；考虑共用 compile runner 只因命名相似，无法共享输入、结果或失败类别。 |

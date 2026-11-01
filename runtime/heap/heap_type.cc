@@ -68,7 +68,7 @@ TypeConstraint Heap::TypeOf(Value value) noexcept {
   } else if (value.IsObject()) {
     const auto& object = *value.AsObject();
     type.object_kind = KindOf(object);
-    if (object.kind == ObjectKind::Future || object.kind == ObjectKind::Completer) {
+    if (HasFuturePayload(object.kind)) {
       type.signature = object.future_signature();
       return type;
     }
@@ -159,9 +159,8 @@ bool Heap::IsValueOfType(Value value, const TypeConstraint& type) noexcept {
 
 std::expected<void, ExecutionStatus> Heap::BindRuntimeType(HeapObject& object,
                                                            const TypeConstraint& type) noexcept {
-  if ((object.kind != ObjectKind::Future && object.kind != ObjectKind::Completer) ||
-      type.kind != ValueKind::Object || object.kind != type.object_kind ||
-      type.signature == nullptr) {
+  if (!HasFuturePayload(object.kind) || type.kind != ValueKind::Object ||
+      object.kind != type.object_kind || type.signature == nullptr) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
   if (object.future_signature() != nullptr) {

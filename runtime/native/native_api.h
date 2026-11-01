@@ -60,19 +60,19 @@ typedef struct VelaAotTraceFrame VelaAotTraceFrame;
 // Isolate 覆盖全部实例、句柄和 producer 的生命周期；操作与释放均在所属线程执行。
 VelaAotIsolate* vela_aot_v1_isolate_create(void);
 void vela_aot_v1_isolate_release(VelaAotIsolate* isolate);
-VelaAotStatus vela_aot_v1_instantiate(VelaAotIsolate* isolate,
+VelaAotStatus vela_aot_v1_instantiate(VelaAotIsolate* owner,
                                       const void* image,
                                       VelaAotInstance** instance,
                                       VelaAotHandle** error);
 void vela_aot_v1_instance_release(VelaAotInstance* instance);
-VelaAotStatus vela_aot_v1_invoke(VelaAotInstance* instance,
+VelaAotStatus vela_aot_v1_invoke(VelaAotInstance* native,
                                  const void* image,
                                  uint32_t function,
                                  const VelaAotValue* arguments,
                                  uint64_t count,
                                  VelaAotValue* result,
                                  VelaAotHandle** error);
-VelaAotStatus vela_aot_v1_string_create(VelaAotIsolate* isolate,
+VelaAotStatus vela_aot_v1_string_create(VelaAotIsolate* owner,
                                         const char* text,
                                         uint64_t size,
                                         VelaAotHandle** result);

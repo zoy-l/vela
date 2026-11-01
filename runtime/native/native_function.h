@@ -317,8 +317,6 @@ class NativeFunction final {
   AotEntry aot_entry_;
 };
 
-enum class NativeRegistrationError : std::uint8_t { InvalidName, DuplicateName, BindingsFrozen };
-
 extern "C" const NativeFunction::AotEntry* vela_native_v1_import(NativeExecution* execution,
                                                                  std::uint32_t function) noexcept;
 

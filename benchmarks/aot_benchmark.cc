@@ -74,7 +74,8 @@ std::expected<Sample, std::string> ResolveResult(runtime::Isolate& isolate,
     }
     sample.suspended_frames = scheduler.suspended_frame_count();
     sample.saved_bytes = scheduler.saved_state_bytes();
-    if (!scheduler.PumpUntil(*future) || future->state() != runtime::FutureState::Succeeded) {
+    if (scheduler.PumpUntil(*future) == runtime::FuturePumpResult::Idle ||
+        future->state() != runtime::FutureState::Succeeded) {
       return std::unexpected("async benchmark failed or became idle");
     }
     value = future->value().value_or(runtime::Value::Null());
@@ -205,7 +206,7 @@ std::expected<Sample, std::string> CppAsync(runtime::Isolate& isolate, std::int6
     });
   };
   advance(0);
-  if (!scheduler.PumpUntil(result) || completion_error) {
+  if (scheduler.PumpUntil(result) == runtime::FuturePumpResult::Idle || completion_error) {
     return std::unexpected("C++ async benchmark became idle");
   }
   const auto value = result.value().value_or(runtime::Value::Null());

@@ -468,7 +468,8 @@ void Suite::Invoke(const Callback& callback,
   if (!result.Succeeded()) {
     RecordError(result, phase, errors);
   }
-  while (isolate_->scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork)) {
+  while (isolate_->scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork) ==
+         runtime::FuturePumpStep::Executed) {
   }
   if (phase != TestPhase::SetUp) {
     WaitExpectations(scope, phase, errors);
@@ -631,7 +632,8 @@ SuiteResult Suite::Run() {
     RecordError(registered, TestPhase::Registration, result_.errors);
     return Finish();
   }
-  while (isolate_->scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork)) {
+  while (isolate_->scheduler().PumpOne(runtime::FuturePumpMode::ReadyWork) ==
+         runtime::FuturePumpStep::Executed) {
   }
   if (options_.load_deadline && runtime::FutureScheduler::Clock::now() >= *options_.load_deadline) {
     RecordError(WaitFailure(WaitStatus::TimedOut), TestPhase::Registration, result_.errors);

@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
-#include <functional>
 #include <memory>
 #include <mutex>
 
@@ -71,7 +70,7 @@ class NativeControl final {
   [[nodiscard]] bool IsProcessingSafepoint() const noexcept { return processing_; }
   // 所属线程提交的一次性动作；宿主重入与初始化结束后在精确保根的安全点执行。
   [[nodiscard]] std::expected<void, NativeSafepointError> ScheduleSafepoint(
-      std::function<void()> action);
+      absl::AnyInvocable<void()> action);
   void CancelSafepoint() noexcept;
   [[nodiscard]] ExecutionStatus ProcessSafepoint(NativeExecution* execution = nullptr);
 
@@ -79,7 +78,7 @@ class NativeControl final {
   std::shared_ptr<NativeSafepointQueue> queue_;
   NativeControlState state_;
   std::size_t initializations_ = 0;
-  std::function<void()> pending_;
+  absl::AnyInvocable<void()> pending_;
   bool processing_ = false;
   NativeDebugger* debugger_ = nullptr;
   bool debugging_ = false;

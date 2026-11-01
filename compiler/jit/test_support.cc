@@ -134,7 +134,8 @@ testing::AssertionResult CompletesWithInteger(runtime::Isolate& isolate,
   if (future == nullptr) {
     return testing::AssertionFailure() << "result is not a Future";
   }
-  if (!isolate.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost)) {
+  if (isolate.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost) ==
+      runtime::FuturePumpResult::Idle) {
     return testing::AssertionFailure() << "Future did not complete";
   }
   const auto completed = future->value();

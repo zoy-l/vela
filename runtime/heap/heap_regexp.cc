@@ -1,12 +1,9 @@
 #include "runtime/heap/heap.h"
 
 #include <cassert>
-#include <cstddef>
 #include <cstdint>
-#include <iterator>
 #include <limits>
 #include <memory>
-#include <new>
 
 #include <pcre2.h>
 
@@ -15,44 +12,6 @@
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
-namespace {
-
-struct alignas(std::max_align_t) NativeHeader final {
-  std::size_t size;
-};
-
-}  // namespace
-
-void* Heap::AllocateNative(std::size_t size) noexcept {
-  if (size > std::numeric_limits<std::size_t>::max() - sizeof(NativeHeader)) {
-    return nullptr;
-  }
-  const auto total = size + sizeof(NativeHeader);
-  MaybeCollect(total);
-  if (!CanAllocate(total)) {
-    return nullptr;
-  }
-  auto* header = static_cast<NativeHeader*>(::operator new(total, std::nothrow));
-  if (header == nullptr) {
-    return nullptr;
-  }
-  std::construct_at(header, total);
-  allocated_bytes_ += total;
-  committed_bytes_ += total;
-  return StorageAfter<std::byte>(*header);
-}
-
-void Heap::FreeNative(void* pointer) noexcept {
-  if (pointer == nullptr) {
-    return;
-  }
-  auto* header = std::prev(static_cast<NativeHeader*>(pointer));
-  allocated_bytes_ -= header->size;
-  committed_bytes_ -= header->size;
-  std::destroy_at(header);
-  ::operator delete(header);
-}
-
 bool Heap::IsRegExp(const HeapObject& object) noexcept {
   return object.kind == ObjectKind::RegExp;
 }

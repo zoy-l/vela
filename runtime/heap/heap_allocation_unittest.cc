@@ -61,9 +61,6 @@ TEST(HeapAllocationTest, FailedGrowthPreservesArraySlotsStringAndCollectionState
   const auto reserved = heap.ReserveArray(elements, 32);
   ASSERT_FALSE(reserved);
   EXPECT_EQ(reserved.error(), ArrayAccessError::OutOfMemory);
-  const auto extended = heap.ExtendValueSlots(slots, 32);
-  ASSERT_FALSE(extended);
-  EXPECT_EQ(extended.error(), ExecutionStatus::OutOfMemory);
   const auto appended = heap.AppendString(text, "value");
   ASSERT_FALSE(appended);
   EXPECT_EQ(appended.error(), ExecutionStatus::OutOfMemory);
@@ -77,7 +74,6 @@ TEST(HeapAllocationTest, FailedGrowthPreservesArraySlotsStringAndCollectionState
   EXPECT_EQ(Heap::CollectionLength(entries), 0U);
   heap.SetAllocationLimit(std::numeric_limits<std::size_t>::max());
   ASSERT_TRUE(heap.ReserveArray(elements, 32));
-  ASSERT_TRUE(heap.ExtendValueSlots(slots, 32));
   ASSERT_TRUE(heap.AppendString(text, "value"));
   ASSERT_TRUE(heap.InsertCollection(entries, Value::Integer(1)));
   EXPECT_EQ(Heap::GetElement(elements, 0)->AsInteger(), 42);

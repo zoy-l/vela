@@ -16,8 +16,8 @@ enum class ExternalResourceKind : std::uint8_t {
   Future,
   Execution,
   HostAccess,
-  NativeEntry,
-  NativeCandidate,
+  NativeNamedEntry,
+  NativePreparedPublication,
 };
 
 struct ExternalResourceInfo final {

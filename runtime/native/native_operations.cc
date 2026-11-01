@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <expected>
 #include <span>
+#include <utility>
 
 #include "base/builtin.h"
 #include "base/byte_access.h"
@@ -24,7 +25,6 @@
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_json.h"
 #include "runtime/native/native_mock.h"
-#include "runtime/native/native_result_internal.h"
 #include "runtime/native/native_test.h"
 #include "runtime/regexp/regexp.h"
 #include "runtime/value/object.h"
@@ -38,16 +38,20 @@ using internal::StoreNativeResult;
 
 namespace {
 
-std::uint8_t Status(ExecutionStatus status) noexcept {
-  return static_cast<std::uint8_t>(status);
-}
-
 std::uint8_t StoreObject(NativeValue* destination, HeapObject* object) noexcept {
   if (object == nullptr) {
-    return Status(ExecutionStatus::OutOfMemory);
+    return ToNativeStatus(ExecutionStatus::OutOfMemory);
   }
   *destination = EncodeNativeValue(Value::Object(object));
-  return Status(ExecutionStatus::Returned);
+  return ToNativeStatus(ExecutionStatus::Returned);
+}
+
+template <class Failure>
+std::expected<Value, ExecutionStatus> NativeLibraryResult(NativeExecution& execution,
+                                                          std::expected<Value, Failure> result) {
+  return std::move(result).transform_error([&execution](const Failure& error) {
+    return execution.HandleFailure(error.status, error.message);
+  });
 }
 
 std::expected<Value, ExecutionStatus> ExecuteNativeDate(NativeExecution& execution,
@@ -58,12 +62,8 @@ std::expected<Value, ExecutionStatus> ExecuteNativeDate(NativeExecution& executi
     const auto index = static_cast<std::size_t>(arguments.subspan(1).front().AsInteger());
     layout = execution.instance().layouts().classes.at(index);
   }
-  const auto result = ExecuteDateBuiltin(builtin, arguments, execution.isolate().heap(), layout);
-  if (!result) {
-    const auto& error = result.error();
-    return std::unexpected(execution.HandleFailure(error.status, error.message));
-  }
-  return *result;
+  return NativeLibraryResult(
+      execution, ExecuteDateBuiltin(builtin, arguments, execution.isolate().heap(), layout));
 }
 
 std::expected<Value, ExecutionStatus> ExecuteNativeRegExp(NativeExecution& execution,
@@ -74,12 +74,8 @@ std::expected<Value, ExecutionStatus> ExecuteNativeRegExp(NativeExecution& execu
     const auto index = static_cast<std::size_t>(arguments.back().AsInteger());
     layout = execution.instance().layouts().arrays.at(index);
   }
-  const auto result = ExecuteRegExpBuiltin(builtin, arguments, execution.isolate().heap(), layout);
-  if (!result) {
-    const auto& error = result.error();
-    return std::unexpected(execution.HandleFailure(error.status, error.message));
-  }
-  return *result;
+  return NativeLibraryResult(
+      execution, ExecuteRegExpBuiltin(builtin, arguments, execution.isolate().heap(), layout));
 }
 
 }  // namespace
@@ -123,7 +119,7 @@ namespace {
 const ClassLayout& AllocationLayout(NativeExecution& execution, std::uint32_t index) noexcept {
   const auto* type = execution.instance().layouts().classes.at(index);
   if (type->storage() == ClassStorage::Reloadable) {
-    auto* dispatch = Heap::NativeProgram(*execution.instance().state().front().AsObject()).dispatch;
+    auto* dispatch = execution.instance().dispatch();
     type = &dispatch->CurrentLayout(type->nominal_type());
   }
   return *type;
@@ -140,7 +136,7 @@ extern "C" std::uint8_t vela_native_v10_new_callable(NativeExecution* execution,
                                                      std::uint32_t index,
                                                      NativeValue* result) noexcept {
   const auto object = AllocateNativeCallable(*execution, AllocationLayout(*execution, index));
-  return object ? StoreObject(result, *object) : Status(object.error());
+  return object ? StoreObject(result, *object) : ToNativeStatus(object.error());
 }
 
 extern "C" HeapObject* vela_native_v10_new_array(NativeExecution* execution,
@@ -175,7 +171,7 @@ extern "C" StringObject* vela_native_v10_scalar_to_string(NativeExecution* execu
   return execution->isolate().heap().AllocateScalarString(DecodeNativeValue(*value));
 }
 
-extern "C" void vela_native_v11_map_get(const HeapObject* map,
+extern "C" void vela_native_v11_map_get(HeapObject* map,
                                         const NativeValue* key,
                                         NativeValue* result) noexcept {
   *result = EncodeNativeValue(Heap::LoadMapValue(*map, DecodeNativeValue(*key)));
@@ -187,7 +183,7 @@ extern "C" std::uint8_t vela_native_v11_map_set(NativeExecution* execution,
                                                 const NativeValue* value) noexcept {
   const auto inserted = execution->isolate().heap().StoreMapValue(*map, DecodeNativeValue(*key),
                                                                   DecodeNativeValue(*value));
-  return Status(inserted ? ExecutionStatus::Returned : inserted.error());
+  return ToNativeStatus(inserted ? ExecutionStatus::Returned : inserted.error());
 }
 
 extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
@@ -255,7 +251,7 @@ extern "C" std::uint8_t vela_native_v1_interpolate(NativeExecution* execution,
                                                    NativeValue* result) {
   ValueBuffer storage(count);
   if (!storage.IsAllocated()) {
-    return Status(ExecutionStatus::OutOfMemory);
+    return ToNativeStatus(ExecutionStatus::OutOfMemory);
   }
   const auto values = storage.values();
   const auto input = std::span(arguments, count);
@@ -264,11 +260,12 @@ extern "C" std::uint8_t vela_native_v1_interpolate(NativeExecution* execution,
   }
   const auto string = execution->isolate().heap().JoinValues(values);
   if (!string) {
-    return Status(string.error() == StringJoinError::TypeMismatch ? ExecutionStatus::TypeError
-                                                                  : ExecutionStatus::OutOfMemory);
+    return ToNativeStatus(string.error() == StringJoinError::TypeMismatch
+                              ? ExecutionStatus::TypeError
+                              : ExecutionStatus::OutOfMemory);
   }
   *result = EncodeNativeValue(Value::String(*string));
-  return Status(ExecutionStatus::Returned);
+  return ToNativeStatus(ExecutionStatus::Returned);
 }
 
 extern "C" std::uint8_t vela_native_v1_compare_strings(const NativeValue* left,
@@ -276,10 +273,10 @@ extern "C" std::uint8_t vela_native_v1_compare_strings(const NativeValue* left,
                                                        NativeValue* result) {
   const auto compared = CompareStrings(DecodeNativeValue(*left), DecodeNativeValue(*right));
   if (!compared) {
-    return Status(compared.error());
+    return ToNativeStatus(compared.error());
   }
   *result = EncodeNativeValue(Value::Boolean(*compared));
-  return Status(ExecutionStatus::Returned);
+  return ToNativeStatus(ExecutionStatus::Returned);
 }
 
 extern "C" std::uint8_t vela_native_v1_equal(const NativeValue* left,

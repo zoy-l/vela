@@ -48,9 +48,6 @@ struct NativeCheckpoint final {
   NativeVirtualState* materialization = nullptr;
 };
 
-[[nodiscard]] bool CanUseNativeOptimization(const NativeExecution& execution,
-                                            const NativeImage& image) noexcept;
-
 extern "C" std::uint8_t vela_native_v4_can_optimize(const NativeExecution* execution,
                                                     const NativeImage* image) noexcept;
 extern "C" std::uint8_t vela_native_v4_recover(NativeExecution* execution,

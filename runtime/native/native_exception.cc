@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/execution_status.h"
 #include "runtime/async/future.h"
@@ -18,23 +19,14 @@
 #include "runtime/value/value.h"
 
 namespace vela::runtime {
-namespace {
-
-FutureDiagnostic ResolveTrace(const NativeTraceFrame* frame,
-                              ExecutionStatus status,
-                              std::string_view message) {
-  FutureDiagnostic diagnostic{
-      .message = std::string(message),
-      .stack_trace = {},
-      .status = status,
-      .origin = {},
-  };
-  for (; frame != nullptr; frame = frame->previous) {
+std::vector<FutureTraceFrame> NativeExecution::CaptureTrace() const {
+  std::vector<FutureTraceFrame> trace;
+  for (auto* frame = current_frame_; frame != nullptr; frame = frame->previous) {
     const auto& image = *frame->image;
     const auto position = frame->position;
-    const auto& function = image.functions.values().subspan(position.function).front();
+    const auto& function = image.function(position.function);
     const auto location = function.locations.values().subspan(position.instruction).front();
-    diagnostic.stack_trace.push_back({
+    trace.push_back({
         .function = std::string(function.name.text()),
         .source_path =
             std::string(image.source_paths.values().subspan(location.source_id).front().text()),
@@ -44,21 +36,33 @@ FutureDiagnostic ResolveTrace(const NativeTraceFrame* frame,
         .identity = function.identity,
     });
   }
-  return diagnostic;
+  return trace;
 }
-
-}  // namespace
 
 FutureDiagnostic NativeExecution::Diagnostic(ExecutionStatus status,
                                              std::string_view message) const {
-  auto diagnostic = ResolveTrace(current_frame_, status, message);
-  diagnostic.origin = {.context = isolate().scheduler().context(), .captured = true};
-  return diagnostic;
+  return {
+      .message = std::string(message),
+      .stack_trace = CaptureTrace(),
+      .status = status,
+      .origin = {.context = isolate().scheduler().context(), .captured = true},
+  };
 }
 
 FutureDiagnostic NativeExecution::ExceptionDiagnostic() const {
   const auto& exception = ExceptionData::From(*pending_exception_.AsObject());
   return *exception.diagnostic;
+}
+
+Value NativeExecution::ExceptionPayload() const noexcept {
+  return HasException() ? Value::Object(ExceptionData::From(*pending_exception_.AsObject()).payload)
+                        : Value::Null();
+}
+
+FutureDiagnostic NativeExecution::FailureDiagnostic(ExecutionStatus status) const {
+  return HasException()
+             ? ExceptionDiagnostic()
+             : FutureDiagnostic{.message = {}, .stack_trace = {}, .status = status, .origin = {}};
 }
 
 void NativeExecution::AbortWithOutOfMemory() noexcept {
@@ -87,8 +91,7 @@ ExecutionStatus NativeExecution::RestoreFutureError(const FutureResult& completi
     AbortWithOutOfMemory();
     return ExecutionStatus::OutOfMemory;
   }
-  const std::unique_ptr<FutureDiagnostic> previous(std::exchange(
-      ExceptionData::From(*pending_exception_.AsObject()).diagnostic, stored.release()));
+  ExceptionData::From(*pending_exception_.AsObject()).diagnostic = std::move(stored);
   return status;
 }
 
@@ -107,8 +110,8 @@ ExecutionStatus NativeExecution::CreateException(Value payload,
     return ExecutionStatus::OutOfMemory;
   }
   auto& envelope = ExceptionData::From(*exception);
-  diagnostic->origin = envelope.origin;
-  envelope.diagnostic = diagnostic.release();
+  diagnostic->origin.identity = isolate().scheduler().NewErrorIdentity();
+  envelope.diagnostic = std::move(diagnostic);
   pending_exception_ = Value::Object(exception);
   return status;
 }
@@ -155,7 +158,7 @@ Value NativeExecution::TakeException() noexcept {
 }
 
 extern "C" std::uint8_t vela_native_v1_failure(NativeExecution* execution, std::uint8_t status) {
-  return static_cast<std::uint8_t>(execution->HandleFailure(static_cast<ExecutionStatus>(status)));
+  return ToNativeStatus(execution->HandleFailure(static_cast<ExecutionStatus>(status)));
 }
 
 extern "C" std::uint8_t vela_native_v1_has_exception(NativeExecution* execution) noexcept {
@@ -175,12 +178,12 @@ extern "C" void vela_native_v1_exception_value(const NativeValue* exception,
 
 extern "C" std::uint8_t vela_native_v1_throw(NativeExecution* execution,
                                              const NativeValue* payload) {
-  return static_cast<std::uint8_t>(execution->Throw(DecodeNativeValue(*payload)));
+  return ToNativeStatus(execution->Throw(DecodeNativeValue(*payload)));
 }
 
 extern "C" std::uint8_t vela_native_v1_rethrow(NativeExecution* execution,
                                                const NativeValue* exception) noexcept {
-  return static_cast<std::uint8_t>(execution->Rethrow(DecodeNativeValue(*exception)));
+  return ToNativeStatus(execution->Rethrow(DecodeNativeValue(*exception)));
 }
 
 }  // namespace vela::runtime

@@ -35,7 +35,7 @@ TEST(FutureCompletionEndpointTest, PublishesOnOwnerThread) {
   const auto completed = scheduler.PumpUntil(future, FuturePumpMode::WaitForHost);
   host.join();
   EXPECT_TRUE(accepted);
-  EXPECT_TRUE(completed);
+  EXPECT_EQ(completed, FuturePumpResult::Completed);
   const auto value = future.value();
   ASSERT_TRUE(value.has_value());
   EXPECT_EQ(value.value_or(Value::Integer(0)).AsInteger(), kCompletionValue);
@@ -61,9 +61,9 @@ TEST(FutureCompletionEndpointTest, LastHostHandleReleasesProducerAndPendingRefer
   std::thread host([endpoint = std::move(endpoint)] {});
   host.join();
   EXPECT_EQ(released_on, std::thread::id{});
-  ASSERT_TRUE(scheduler.PumpOne(FuturePumpMode::WaitForHost));
+  ASSERT_EQ(scheduler.PumpOne(FuturePumpMode::WaitForHost), FuturePumpStep::Executed);
   EXPECT_EQ(released_on, std::this_thread::get_id());
-  EXPECT_FALSE(scheduler.PumpOne(FuturePumpMode::WaitForHost));
+  EXPECT_EQ(scheduler.PumpOne(FuturePumpMode::WaitForHost), FuturePumpStep::Idle);
 }
 
 TEST(FutureCompletionEndpointTest, EndpointOutlivesIsolateAndRejectsLateCompletion) {
@@ -105,7 +105,7 @@ TEST(FutureCompletionEndpointTest, ShutdownDiscardsQueuedCompletionAndTimers) {
   host.join();
   ASSERT_TRUE(accepted);
   scheduler.Shutdown();
-  EXPECT_FALSE(scheduler.PumpOne(FuturePumpMode::WaitForHost));
+  EXPECT_EQ(scheduler.PumpOne(FuturePumpMode::WaitForHost), FuturePumpStep::Idle);
   EXPECT_FALSE(called);
 }
 
@@ -149,7 +149,7 @@ TEST(FutureCompletionEndpointTest, OldEndpointCannotCompleteNewRun) {
   EXPECT_EQ(stale.error(), FutureCompletionError::Closed);
   EXPECT_EQ(future.state(), FutureState::Pending);
   ASSERT_TRUE(endpoint.Complete(Value::Integer(kCompletionValue)));
-  ASSERT_TRUE(isolate.scheduler().PumpUntil(future));
+  ASSERT_EQ(isolate.scheduler().PumpUntil(future), FuturePumpResult::Completed);
   const auto value = future.value();
   ASSERT_TRUE(value.has_value());
   EXPECT_EQ(value.value_or(Value::Integer(0)).AsInteger(), kCompletionValue);

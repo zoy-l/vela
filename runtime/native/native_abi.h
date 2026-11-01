@@ -3,17 +3,18 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <expected>
 #include <limits>
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include "base/execution_status.h"
-#include "runtime/exceptions/exception.h"
+#include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
 #include "runtime/isolate/external_resources.h"
 #include "runtime/native/native_context.h"
 #include "runtime/value/value.h"
-#include "runtime/value/value_buffer.h"
 
 namespace vela::runtime {
 
@@ -27,6 +28,10 @@ struct NativeControlState;
 
 inline constexpr std::uint32_t kNativeAbiVersion = 11;
 inline constexpr auto kNativeTraceInstructionBits = std::numeric_limits<std::uint32_t>::digits;
+
+[[nodiscard]] constexpr std::uint8_t ToNativeStatus(ExecutionStatus status) noexcept {
+  return static_cast<std::uint8_t>(status);
+}
 
 // 函数与指令编号属于当前执行持有的 NativeImage；异常保存前解析成独立的源码诊断。
 struct TracePosition final {
@@ -101,17 +106,18 @@ class NativeFrame final {
   NativeFrame(NativeFrame&&) = delete;
   NativeFrame& operator=(NativeFrame&&) = delete;
 
-  [[nodiscard]] std::span<Value> roots() noexcept { return allocated_roots_.values(); }
+  [[nodiscard]] std::span<Value> roots() noexcept { return roots_; }
   [[nodiscard]] bool IsAllocated() const noexcept {
-    return allocated_roots_.IsAllocated() && (storage_bytes_ == 0 || storage_ != nullptr);
+    return allocation_ != nullptr || allocation_bytes_ == 0;
   }
   [[nodiscard]] void* storage() const noexcept { return storage_; }
 
  private:
-  ValueBuffer allocated_roots_;
+  std::span<Value> roots_;
   RootRange root_range_{RootOwner::Runtime};
-  std::size_t storage_bytes_;
-  void* storage_;
+  std::size_t allocation_bytes_ = 0;
+  void* allocation_ = nullptr;
+  void* storage_ = nullptr;
 };
 
 // 仅消费由编译器或运行时按 NativeValue 契约构造的值，不验证任意外部位模式。
@@ -128,6 +134,20 @@ class NativeFrame final {
   return result;
 }
 
+namespace internal {
+
+// 只在成功时写入 ABI 输出；失败保留原错误类别及调用方的输出槽。
+inline std::uint8_t StoreNativeResult(NativeValue* output,
+                                      std::expected<Value, ExecutionStatus> result) {
+  if (!result) {
+    return ToNativeStatus(result.error());
+  }
+  *output = EncodeNativeValue(*result);
+  return ToNativeStatus(ExecutionStatus::Returned);
+}
+
+}  // namespace internal
+
 // 每次执行独占；宿主 NativeContext 与执行共用 Isolate 和生命周期。
 // Isolate 必须晚于此对象销毁，所有操作发生在 Isolate 所属线程。
 class NativeExecution final {
@@ -139,14 +159,11 @@ class NativeExecution final {
   NativeExecution(NativeExecution&&) = delete;
   NativeExecution& operator=(NativeExecution&&) = delete;
 
-  [[nodiscard]] ExecutionStatus Enter(NativeTraceFrame& frame, std::uint32_t function) noexcept;
-  [[nodiscard]] ExecutionStatus PrepareEntry() noexcept;
   // 实际入口已经检查深度；延迟登记不得清理被调用方刚产生的异常。
   void MaterializeFrame(NativeTraceFrame& frame, std::uint32_t function) noexcept;
   void Exit() noexcept;
   // 替换当前逻辑帧；物理返回路径继续持有其根。
   [[nodiscard]] std::uint8_t Recover(NativeCheckpoint& checkpoint, void* result) noexcept;
-  [[nodiscard]] std::size_t frame_count() const noexcept { return frame_count_; }
   [[nodiscard]] NativeInstance& instance() const noexcept { return *instance_; }
   [[nodiscard]] Isolate& isolate() const noexcept { return context_.isolate(); }
   [[nodiscard]] NativeContext& context() noexcept { return context_; }
@@ -160,7 +177,11 @@ class NativeExecution final {
                                                   ExecutionStatus status,
                                                   std::span<const Value> roots);
   [[nodiscard]] FutureDiagnostic Diagnostic(ExecutionStatus status, std::string_view message) const;
+  [[nodiscard]] std::vector<FutureTraceFrame> CaptureTrace() const;
   [[nodiscard]] FutureDiagnostic ExceptionDiagnostic() const;
+  // 未发布异常时返回空载荷与给定状态；不捕获第二份原生栈。
+  [[nodiscard]] Value ExceptionPayload() const noexcept;
+  [[nodiscard]] FutureDiagnostic FailureDiagnostic(ExecutionStatus status) const;
   [[nodiscard]] ExecutionStatus RestoreFutureError(const FutureResult& completion);
   void AbortWithOutOfMemory() noexcept;
   [[nodiscard]] ExecutionStatus Throw(Value payload);

@@ -15,7 +15,7 @@
 #include "runtime/collections/array_operations.h"
 #include "runtime/collections/collection_operations.h"
 #include "runtime/heap/heap.h"
-#include "runtime/strings/index_buffer.h"
+#include "runtime/heap/native_buffer.h"
 #include "runtime/strings/string.h"
 #include "runtime/strings/unicode_operations.h"
 #include "runtime/testing/test_inspection.h"
@@ -28,27 +28,21 @@ namespace {
 
 using Result = std::expected<Value, ExecutionStatus>;
 
-Result StringResult(StringObject* string) {
-  if (string == nullptr) {
-    return std::unexpected(ExecutionStatus::OutOfMemory);
-  }
-  return Value::String(string);
-}
-
 Result ScalarToString(Value value, Heap& heap) {
   if (!value.IsInteger() && !value.IsDouble() && !value.IsBoolean()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  return StringResult(heap.AllocateScalarString(value));
+  return AllocatedValue(heap.AllocateScalarString(value));
 }
 
 Result ArrayJoin(std::span<const Value> arguments, Heap& heap) {
-  const auto array = arguments.subspan(0).front();
-  const auto separator = arguments.subspan(1).front();
-  if (!array.IsObject() || array.AsObject() == nullptr || !separator.IsString()) {
+  const auto array = arguments[0];
+  const auto separator = arguments[1];
+  auto* object = array.AsObjectOrNull();
+  if (object == nullptr || !separator.IsString()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto joined = heap.JoinArray(*array.AsObject(), separator.AsString()->value());
+  const auto joined = heap.JoinArray(*object, separator.AsString()->value());
   if (!joined) {
     return std::unexpected(joined.error() == StringJoinError::TypeMismatch
                                ? ExecutionStatus::TypeError
@@ -66,15 +60,15 @@ Result MutableStringOperation(Builtin builtin, std::span<const Value> arguments,
     return Value::Object(builder);
   }
   const auto value = arguments.front();
-  if (!value.IsObject() || value.AsObject() == nullptr ||
-      !Heap::IsMutableString(*value.AsObject())) {
+  auto* object = value.AsObjectOrNull();
+  if (object == nullptr || !Heap::IsMutableString(*object)) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  auto& builder = *value.AsObject();
+  auto& builder = *object;
   if (builtin == Builtin::MutableStringToString) {
-    return StringResult(heap.BuildString(builder));
+    return AllocatedValue(heap.BuildString(builder));
   }
-  const auto text = arguments.subspan(1).front();
+  const auto text = arguments[1];
   if (!text.IsString()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
@@ -88,63 +82,71 @@ Result Slice(Builtin builtin,
              const StringObject& string,
              std::span<const Value> arguments,
              Heap& heap) {
-  if (!arguments.subspan(1).front().IsInteger() ||
-      (builtin == Builtin::StringSlice && !arguments.subspan(2).front().IsInteger())) {
+  if (!arguments[1].IsInteger() || (builtin == Builtin::StringSlice && !arguments[2].IsInteger())) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto start = arguments.subspan(1).front().AsInteger();
+  const auto start = arguments[1].AsInteger();
   if (start < 0 || std::cmp_greater(start, string.length())) {
     return std::unexpected(ExecutionStatus::IndexOutOfBounds);
   }
-  const auto end =
-      builtin == Builtin::StringIndex ? start + 1 : arguments.subspan(2).front().AsInteger();
+  const auto end = builtin == Builtin::StringIndex ? start + 1 : arguments[2].AsInteger();
   if (end < start || std::cmp_greater(end, string.length())) {
     return std::unexpected(ExecutionStatus::IndexOutOfBounds);
   }
   const auto offset = string.ByteOffset(static_cast<std::uint32_t>(start));
-  const auto end_offset = string.ByteOffset(static_cast<std::uint32_t>(end));
-  return StringResult(heap.AllocateString(string.value().substr(offset, end_offset - offset)));
+  const auto text = string.value();
+  const auto end_offset = builtin == Builtin::StringIndex
+                              ? offset + DecodeUtf8Prefix(text.substr(offset)).width
+                              : string.ByteOffset(static_cast<std::uint32_t>(end));
+  return AllocatedValue(heap.AllocateString(text.substr(offset, end_offset - offset)));
 }
 
 std::expected<std::int64_t, ExecutionStatus> Find(std::string_view text_view,
-                                                  std::string_view part_view) {
+                                                  std::string_view part_view,
+                                                  Heap& heap) {
   if (part_view.empty()) {
     return 0;
   }
   if (part_view.size() > text_view.size()) {
     return -1;
   }
+  if (part_view.size() == 1) {
+    const auto found = text_view.find(part_view.front());
+    return found == std::string_view::npos
+               ? -1
+               : static_cast<std::int64_t>(Utf8Length(text_view.substr(0, found)));
+  }
   const auto text = std::span(text_view);
   const auto part = std::span(part_view);
   // KMP 保证重复前缀等最坏输入仍为线性时间；常用短模式无需分配临时堆存储。
-  IndexBuffer storage(part.size());
-  const auto allocated = storage.values();
-  if (!allocated) {
-    return std::unexpected(allocated.error());
+  constexpr std::size_t kInlinePrefix = 64;
+  NativeBuffer<std::size_t, kInlinePrefix> storage(heap, part.size());
+  if (!storage.IsAllocated()) {
+    return std::unexpected(ExecutionStatus::OutOfMemory);
   }
-  const auto prefix = *allocated;
-  prefix.subspan(0).front() = 0;
+  const auto prefix = storage.values();
+  prefix[0] = 0;
   for (std::size_t index = 1, matched = 0; index < part.size(); ++index) {
-    while (matched != 0 && part.subspan(index).front() != part.subspan(matched).front()) {
-      matched = prefix.subspan(matched - 1).front();
+    while (matched != 0 && part[index] != part[matched]) {
+      matched = prefix[matched - 1];
     }
-    if (part.subspan(index).front() == part.subspan(matched).front()) {
+    if (part[index] == part[matched]) {
       ++matched;
     }
-    prefix.subspan(index).front() = matched;
+    prefix[index] = matched;
   }
   const auto part_length = Utf8Length(part_view);
   std::size_t points = 0;
   for (std::size_t index = 0, matched = 0; index < text.size(); ++index) {
-    const auto byte = text.subspan(index).front();
+    const auto byte = text[index];
     // 合法 UTF-8 中每个非续字节恰好开始一个码点；不再回扫命中前缀。
-    if ((static_cast<std::uint8_t>(byte) & kContinuationMask) != kContinuationTag) {
+    if (!IsContinuationByte(byte)) {
       ++points;
     }
-    while (matched != 0 && byte != part.subspan(matched).front()) {
-      matched = prefix.subspan(matched - 1).front();
+    while (matched != 0 && byte != part[matched]) {
+      matched = prefix[matched - 1];
     }
-    if (byte == part.subspan(matched).front()) {
+    if (byte == part[matched]) {
       ++matched;
     }
     if (matched == part.size()) {
@@ -154,13 +156,11 @@ std::expected<std::int64_t, ExecutionStatus> Find(std::string_view text_view,
   return -1;
 }
 
-}  // namespace
-
-Result ConvertNumber(NumericConversion conversion, Value value) {
+Result ConvertNumber(Builtin builtin, Value value) {
   if (!value.IsInteger() && !value.IsDouble()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  if (conversion == NumericConversion::ToDouble) {
+  if (builtin == Builtin::NumericToDouble) {
     return value.IsDouble() ? value : Value::Double(static_cast<double>(value.AsInteger()));
   }
   if (value.IsInteger()) {
@@ -176,17 +176,17 @@ Result ConvertNumber(NumericConversion conversion, Value value) {
   return Value::Integer(static_cast<std::int64_t>(truncated));
 }
 
+}  // namespace
+
 Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& heap) {
   switch (builtin) {
     case Builtin::TestInspect:
       return InspectTestValue(arguments, heap);
     case Builtin::TestSame:
-      return Value::Boolean(IsEqualValue(arguments.front(), arguments.subspan(1).front()));
+      return Value::Boolean(IsEqualValue(arguments.front(), arguments[1]));
     case Builtin::NumericToInt:
     case Builtin::NumericToDouble:
-      return ConvertNumber(
-          builtin == Builtin::NumericToInt ? NumericConversion::ToInt : NumericConversion::ToDouble,
-          arguments.front());
+      return ConvertNumber(builtin, arguments.front());
     case Builtin::IntParse:
     case Builtin::IntTryParse:
     case Builtin::DoubleParse:
@@ -271,17 +271,17 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
   if (builtin == Builtin::StringIndex || builtin == Builtin::StringSlice) {
     return Slice(builtin, string, arguments, heap);
   }
-  if (!arguments.subspan(1).front().IsString()) {
+  if (!arguments[1].IsString()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  const auto part = arguments.subspan(1).front().AsString()->value();
+  const auto part = arguments[1].AsString()->value();
   if (builtin == Builtin::StringStartsWith) {
     return Value::Boolean(text.starts_with(part));
   }
   if (builtin == Builtin::StringEndsWith) {
     return Value::Boolean(text.ends_with(part));
   }
-  const auto found = Find(text, part);
+  const auto found = Find(text, part, heap);
   if (!found) {
     return std::unexpected(found.error());
   }

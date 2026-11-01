@@ -13,17 +13,7 @@
 namespace vela::runtime {
 
 LayoutTransaction::LayoutTransaction(Isolate& isolate, LayoutLifetime lifetime) noexcept
-    : isolate_(&isolate),
-      initial_{
-          .classes = isolate.class_layouts_.size(),
-          .arrays = isolate.array_layouts_.size(),
-          .collections = isolate.collection_layouts_.size(),
-          .signatures = isolate.type_signatures_.size(),
-          .interfaces = isolate.interface_types_.size(),
-          .code_identities = isolate.code_identities_.size(),
-          .nominal_types = isolate.nominal_types_.size(),
-      },
-      lifetime_(lifetime) {
+    : isolate_(&isolate), initial_(isolate.PersistentLayoutCounts()), lifetime_(lifetime) {
   ++isolate.layout_transactions_;
   if (lifetime == LayoutLifetime::Reloadable) {
     ++isolate.native_layout_transactions_;
@@ -96,7 +86,15 @@ LayoutTransaction::~LayoutTransaction() {
     }
     isolate_->collection_layouts_.resize(initial_.collections);
     isolate_->array_layouts_.resize(initial_.arrays);
-    isolate_->class_layouts_.resize(initial_.classes);
+    auto& layouts = isolate_->class_layouts_;
+    for (auto index = initial_.classes; index < layouts.size(); ++index) {
+      auto* layout = layouts.at(index).get();
+      auto* nominal = layout->nominal_;
+      if (nominal->fixed_layout_ == layout) {
+        nominal->fixed_layout_ = nullptr;
+      }
+    }
+    layouts.resize(initial_.classes);
     isolate_->nominal_types_.resize(initial_.nominal_types);
     isolate_->type_signatures_.resize(initial_.signatures);
     isolate_->interface_types_.resize(initial_.interfaces);

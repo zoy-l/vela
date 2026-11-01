@@ -1,6 +1,7 @@
 #include "runtime/native/native_debugger.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -17,14 +18,11 @@
 namespace vela::runtime {
 
 NativeDebugFrame::NativeDebugFrame(const NativeTraceFrame& frame) noexcept
-    : image_(frame.image),
-      function_(&image_->functions.values().subspan(frame.position.function).front()),
-      instruction_(frame.position.instruction),
-      checkpoint_(frame.checkpoint),
-      frame_(&frame) {
+    : function_(&frame.image->function(frame.position.function)), frame_(&frame) {
   const auto locations = function_->locations.values();
-  if (instruction_ < locations.size()) {
-    location_ = locations.subspan(instruction_).front();
+  const auto instruction = frame.position.instruction;
+  if (instruction < locations.size()) {
+    location_ = locations.subspan(instruction).front();
   }
 }
 
@@ -41,7 +39,12 @@ std::optional<Value> NativeDebugFrame::ReadRegister(std::size_t index) const noe
 }
 
 NativeCodeTier NativeDebugFrame::tier() const noexcept {
-  return checkpoint_ == nullptr ? NativeCodeTier::Baseline : checkpoint_->tier;
+  const auto* checkpoint = frame_->checkpoint;
+  return checkpoint == nullptr ? NativeCodeTier::Baseline : checkpoint->tier;
+}
+
+std::uint32_t NativeDebugFrame::instruction() const noexcept {
+  return frame_->position.instruction;
 }
 
 FunctionIdentity NativeDebugFrame::identity() const noexcept {
@@ -53,7 +56,7 @@ std::string_view NativeDebugFrame::name() const noexcept {
 }
 
 std::string_view NativeDebugFrame::source_path() const noexcept {
-  const auto paths = image_->source_paths.values();
+  const auto paths = frame_->image->source_paths.values();
   if (!location_ || location_->source_id >= paths.size()) {
     return {};
   }
@@ -61,7 +64,7 @@ std::string_view NativeDebugFrame::source_path() const noexcept {
 }
 
 std::string_view NativeDebugFrame::source_text() const noexcept {
-  const auto sources = image_->source_texts.values();
+  const auto sources = frame_->image->source_texts.values();
   if (!location_ || location_->source_id >= sources.size()) {
     return {};
   }
@@ -69,11 +72,12 @@ std::string_view NativeDebugFrame::source_text() const noexcept {
 }
 
 NativeDebugContext::NativeDebugContext(NativeExecution& execution)
-    : execution_(&execution), first_frame_(execution.current_frame()), top_frame_(*first_frame_) {}
+    : execution_(&execution), top_frame_(*execution.current_frame()) {}
 
 std::span<const NativeDebugFrame> NativeDebugContext::frames() const {
   if (frames_.empty()) {
-    for (const auto* frame = first_frame_; frame != nullptr; frame = frame->previous) {
+    for (const auto* frame = execution_->current_frame(); frame != nullptr;
+         frame = frame->previous) {
       frames_.push_back(NativeDebugFrame(*frame));
     }
   }
