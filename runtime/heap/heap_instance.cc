@@ -51,6 +51,7 @@ InstanceStorage* Heap::AllocateInstanceStorage(std::uint32_t count) noexcept {
   instance_field_bytes_ += bytes;
   auto* storage = std::construct_at(static_cast<InstanceStorage*>(memory));
   storage->count = count;
+  storage->unready = count;
   std::uninitialized_value_construct_n(storage->values().data(), count);
   std::uninitialized_fill_n(storage->states().data(), count, FieldState::Uninitialized);
   return storage;
@@ -118,7 +119,7 @@ bool Heap::SetField(HeapObject& object, std::uint32_t index, Value value) noexce
   }
   *field = value;
   if (object.layout->storage() == ClassStorage::Reloadable) {
-    InstanceFields(object).states().subspan(index).front() = FieldState::Ready;
+    InstanceFields(object).SetFieldState(index, FieldState::Ready);
   }
   if (value.IsReference()) {
     WriteBarrier(object, value);
@@ -159,14 +160,13 @@ std::unique_ptr<InstanceMigration> Heap::PrepareInstanceMigration(
   const auto old_fields = previous.values();
   const auto old_states = previous.states();
   const auto fields = storage->values();
-  const auto states = storage->states();
   const auto declarations = layout.field_declarations();
   const auto old_declarations = object.layout->field_declarations();
   for (std::size_t index = 0; index < old_fields.size(); ++index) {
     const auto field = declarations.subspan(index).front();
     if (field != DeclarationId{} && field == old_declarations.subspan(index).front()) {
       fields.subspan(index).front() = old_fields.subspan(index).front();
-      states.subspan(index).front() = old_states.subspan(index).front();
+      storage->SetFieldState(static_cast<std::uint32_t>(index), old_states.subspan(index).front());
     }
   }
   migration->field_roots_.Attach(*this, fields.data(), fields.size());

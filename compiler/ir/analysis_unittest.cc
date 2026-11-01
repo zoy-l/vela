@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -13,6 +15,38 @@
 
 namespace vela::ir {
 namespace {
+
+TEST(AnalysisTest, LateOptimizationPreservesCanonicalErrorAndHandlerOrigins) {
+  constexpr std::uint32_t kHandlerTarget = 5;
+  constexpr std::int64_t kUnusedConstant = 20;
+  constexpr std::size_t kOriginBase = 100;
+  Function function;
+  function.parameter_count = 2;
+  function.register_count = 4;
+  function.handlers = {{.target = kHandlerTarget}};
+  function.instructions = {
+      {.opcode = Opcode::LoadInt, .dst = 2, .immediate = 0, .location = {}},
+      {.opcode = Opcode::Jump, .index = 2, .location = {}},
+      {.opcode = Opcode::LoadInt, .dst = 2, .immediate = kUnusedConstant, .location = {}},
+      {.opcode = Opcode::AddInt, .dst = 3, .lhs = 0, .rhs = 1, .location = {}, .handler = 0},
+      {.opcode = Opcode::Return, .dst = 3, .location = {}},
+      {.opcode = Opcode::Catch, .dst = 2, .location = {}},
+      {.opcode = Opcode::Return, .dst = 0, .location = {}},
+  };
+  std::vector<std::size_t> origins(function.instructions.size());
+  std::ranges::iota(origins, kOriginBase);
+  Optimize(function, {}, &origins);
+  ASSERT_EQ(origins.size(), function.instructions.size());
+  const auto addition =
+      std::ranges::find(function.instructions, Opcode::AddInt, &Instruction::opcode);
+  ASSERT_NE(addition, function.instructions.end());
+  const auto position = static_cast<std::size_t>(addition - function.instructions.begin());
+  EXPECT_EQ(origins.at(position), kOriginBase + 3);
+  ASSERT_TRUE(addition->handler);
+  const auto target = function.handlers.at(*addition->handler).target;
+  EXPECT_EQ(function.instructions.at(target).opcode, Opcode::Catch);
+  EXPECT_EQ(origins.at(target), kOriginBase + kHandlerTarget);
+}
 
 TEST(AnalysisTest, InvalidIntegerConstantsKeepTheirOperationsAndExceptionEdges) {
   constexpr auto kMinimum = std::numeric_limits<std::int64_t>::min();

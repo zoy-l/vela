@@ -46,6 +46,76 @@ source_set("llvm_jit") {
   public_deps = [ ":zstd" ]
 }
 
+config("efsw_headers") {
+  efsw_include = rebase_path("efsw/include", root_build_dir)
+  if (target_os == "win") {
+    cflags = [ "/external:I$efsw_include" ]
+  } else {
+    cflags = [
+      "-isystem",
+      efsw_include,
+    ]
+  }
+}
+
+static_library("efsw") {
+  configs -= [ "//build/config:vela_warnings" ]
+  public_configs = [ ":efsw_headers" ]
+  include_dirs = [
+    "efsw/include",
+    "efsw/src",
+  ]
+  sources = [
+    "efsw/src/efsw/Debug.cpp",
+    "efsw/src/efsw/DirWatcherGeneric.cpp",
+    "efsw/src/efsw/DirectorySnapshot.cpp",
+    "efsw/src/efsw/DirectorySnapshotDiff.cpp",
+    "efsw/src/efsw/FileActionBatch.cpp",
+    "efsw/src/efsw/FileInfo.cpp",
+    "efsw/src/efsw/FileSystem.cpp",
+    "efsw/src/efsw/FileWatcher.cpp",
+    "efsw/src/efsw/FileWatcherGeneric.cpp",
+    "efsw/src/efsw/FileWatcherImpl.cpp",
+    "efsw/src/efsw/Log.cpp",
+    "efsw/src/efsw/String.cpp",
+    "efsw/src/efsw/System.cpp",
+    "efsw/src/efsw/Watcher.cpp",
+    "efsw/src/efsw/WatcherGeneric.cpp",
+  ]
+  if (target_os == "win") {
+    defines = [ "_SCL_SECURE_NO_WARNINGS" ]
+    sources += [
+      "efsw/src/efsw/FileWatcherWin32.cpp",
+      "efsw/src/efsw/WatcherWin32.cpp",
+      "efsw/src/efsw/platform/win/FileSystemImpl.cpp",
+      "efsw/src/efsw/platform/win/SystemImpl.cpp",
+    ]
+  } else {
+    sources += [
+      "efsw/src/efsw/platform/posix/FileSystemImpl.cpp",
+      "efsw/src/efsw/platform/posix/SystemImpl.cpp",
+    ]
+    if (target_os == "mac") {
+      sources += [
+        "efsw/src/efsw/FileWatcherFSEvents.cpp",
+        "efsw/src/efsw/FileWatcherKqueue.cpp",
+        "efsw/src/efsw/WatcherFSEvents.cpp",
+        "efsw/src/efsw/WatcherKqueue.cpp",
+      ]
+      frameworks = [
+        "CoreFoundation.framework",
+        "CoreServices.framework",
+      ]
+    } else {
+      sources += [
+        "efsw/src/efsw/FileWatcherInotify.cpp",
+        "efsw/src/efsw/WatcherInotify.cpp",
+      ]
+      libs = [ "pthread" ]
+    }
+  }
+}
+
 static_library("zstd") {
   configs -= [ "//build/config:vela_warnings" ]
   defines = [

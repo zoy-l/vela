@@ -11,6 +11,7 @@
 #include "base/source_location.h"
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
+#include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
 #include "compiler/frontend/syntax/ast.h"
@@ -123,7 +124,8 @@ DevelopmentSubmission DevelopmentRepl::Submit(std::string_view input) {
       .added_roots = {path_},
   };
   for (const auto& [path, module] : modules.sources) {
-    if (path != path_ && !snapshot->sources.contains(path)) {
+    if (path != path_ && !path.starts_with(frontend::kSdkSourcePrefix) &&
+        !snapshot->sources.contains(path)) {
       update.changes.push_back({.path = path, .text = module->source->text});
     }
   }

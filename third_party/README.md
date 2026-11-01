@@ -31,6 +31,7 @@ standard library, and linker. See the root README for platform configuration.
 | --- | --- | --- |
 | [LuaJIT 2.1](https://github.com/LuaJIT/LuaJIT) | `a4c064539ea931274d407e1249b4bb575424a0f4` | MIT; [upstream license](https://github.com/LuaJIT/LuaJIT/blob/a4c064539ea931274d407e1249b4bb575424a0f4/COPYRIGHT) |
 | [Abseil](https://github.com/abseil/abseil-cpp) | `76bb24329e8bf5f39704eb10d21b9a80befa7c81` | Apache-2.0; [upstream license](https://github.com/abseil/abseil-cpp/blob/76bb24329e8bf5f39704eb10d21b9a80befa7c81/LICENSE) |
+| [efsw 1.7.3](https://github.com/SpartanJ/efsw) | `fe4253e421bdcbd3d468fae80eb4191f5222cbd2` | MIT; [upstream license](https://github.com/SpartanJ/efsw/blob/fe4253e421bdcbd3d468fae80eb4191f5222cbd2/LICENSE) |
 | [GoogleTest](https://github.com/google/googletest) | `52eb8108c5bdec04579160ae17225d66034bd723` | BSD-3-Clause; [upstream license](https://github.com/google/googletest/blob/52eb8108c5bdec04579160ae17225d66034bd723/LICENSE) |
 | [Google Benchmark 1.9.5](https://github.com/google/benchmark) | `192ef10025eb2c4cdd392bc502f0c852196baa48` | Apache-2.0; [upstream license](https://github.com/google/benchmark/blob/192ef10025eb2c4cdd392bc502f0c852196baa48/LICENSE) |
 | [utf8proc 2.12.0](https://github.com/JuliaStrings/utf8proc) | `79cdd5ab40c79afa559f689ffc13b76812dee1ac` | MIT and Unicode-3.0; [upstream licenses](https://github.com/JuliaStrings/utf8proc/blob/79cdd5ab40c79afa559f689ffc13b76812dee1ac/LICENSE.md) |
@@ -41,6 +42,13 @@ standard library, and linker. See the root README for platform configuration.
 
 GoogleTest, Google Benchmark and LuaJIT are `testonly` GN dependencies. Abseil is a
 production dependency of the compiler and runtime, and Vela builds its own pinned copy.
+
+efsw supplies development-session file notifications through its native Windows, Linux and macOS
+backends, retaining upstream's automatic polling fallback. GN builds the C++ watcher and generic
+backend directly from the pinned sources, without its C wrapper, agent or test applications.
+It is linked into the compiler, excluded from the generated application's runtime closure, and its
+MIT license is included in distribution packages.
+
 PCRE2 builds only its 8-bit Unicode compiler/interpreter closure, listed in
 `BUILD.gn`. It excludes DFA, conversion, substitution, serialization, command-line
 tools and the sljit backend. `pcre2_jit_compile.c` supplies the no-JIT API stubs;

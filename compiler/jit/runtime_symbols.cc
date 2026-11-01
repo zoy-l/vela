@@ -39,8 +39,6 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind("vela_native_v3_safepoint", &runtime::vela_native_v3_safepoint);
   bind("vela_native_v4_can_optimize", &runtime::vela_native_v4_can_optimize);
   bind("vela_native_v4_recover", &runtime::vela_native_v4_recover);
-  bind("vela_native_v3_host_enter", &runtime::vela_native_v3_host_enter);
-  bind("vela_native_v3_host_exit", &runtime::vela_native_v3_host_exit);
   bind("vela_native_v3_initialization_enter", &runtime::vela_native_v3_initialization_enter);
   bind("vela_native_v3_initialization_exit", &runtime::vela_native_v3_initialization_exit);
   bind("vela_native_v1_frame_storage", &runtime::vela_native_v1_frame_storage);
@@ -68,10 +66,15 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind("vela_native_v3_call_declaration", &runtime::vela_native_v3_call_declaration);
   bind("vela_native_v3_call_interface", &runtime::vela_native_v3_call_interface);
   bind("vela_native_v3_capture_receiver", &runtime::vela_native_v3_capture_receiver);
-  bind("vela_native_v3_load_global", &runtime::vela_native_v3_load_global);
+  bind("vela_native_v10_load_global", &runtime::vela_native_v10_load_global);
   bind("vela_native_v3_store_global", &runtime::vela_native_v3_store_global);
   bind("vela_native_v3_load_field", &runtime::vela_native_v3_load_field);
-  bind("vela_native_v9_field_caches", &runtime::vela_native_v9_field_caches);
+  bind("vela_native_v10_field_caches", &runtime::vela_native_v10_field_caches);
+  bind("vela_native_v10_direct_field_layouts", &runtime::vela_native_v10_direct_field_layouts);
+  bind("vela_native_v9_scalar_text_length", &runtime::vela_native_v9_scalar_text_length);
+  bind("vela_native_v10_scalar_to_string", &runtime::vela_native_v10_scalar_to_string);
+  bind("vela_native_v11_map_get", &runtime::vela_native_v11_map_get);
+  bind("vela_native_v11_map_set", &runtime::vela_native_v11_map_set);
   bind("vela_native_v3_store_field", &runtime::vela_native_v3_store_field);
   bind("vela_native_v7_store_materialized_field",
        &runtime::vela_native_v7_store_materialized_field);
@@ -79,11 +82,11 @@ llvm::Error DefineRuntimeSymbols(llvm::orc::LLJIT& jit) {
   bind("vela_native_v1_constant", &runtime::vela_native_v1_constant);
   bind("vela_native_v1_type_test", &runtime::vela_native_v1_type_test);
   bind("vela_native_v2_initialize_global", &runtime::vela_native_v2_initialize_global);
-  bind("vela_native_v1_new_instance", &runtime::vela_native_v1_new_instance);
-  bind("vela_native_v1_new_array", &runtime::vela_native_v1_new_array);
+  bind("vela_native_v10_new_object", &runtime::vela_native_v10_new_object);
+  bind("vela_native_v10_new_callable", &runtime::vela_native_v10_new_callable);
+  bind("vela_native_v10_new_array", &runtime::vela_native_v10_new_array);
   bind("vela_native_v1_new_collection", &runtime::vela_native_v1_new_collection);
   bind("vela_native_v1_write_barrier", &runtime::vela_native_v1_write_barrier);
-  bind("vela_native_v1_array_grow", &runtime::vela_native_v1_array_grow);
   bind("vela_native_v1_builtin", &runtime::vela_native_v1_builtin);
   bind("vela_native_v1_concat", &runtime::vela_native_v1_concat);
   bind("vela_native_v1_interpolate", &runtime::vela_native_v1_interpolate);

@@ -17,6 +17,7 @@
 #include <thread>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -25,7 +26,10 @@
 #include "base/native_program_mode.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/jit/code_inputs.h"
+#include "compiler/jit/code_reuse.h"
 #include "compiler/jit/test_support.h"
+#include "compiler/native/code_generator.h"
 #include "compiler/test_support/test_sources.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
@@ -34,8 +38,10 @@
 #include "runtime/native/native_context.h"
 #include "runtime/native/native_contracts.h"
 #include "runtime/native/native_dispatch.h"
+#include "runtime/native/native_execution.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_image.h"
+#include "runtime/native/native_instance.h"
 #include "runtime/strings/string.h"
 #include "runtime/value/value.h"
 
@@ -45,9 +51,243 @@ namespace {
 using frontend::DiagnosticsText;
 using test::CompileText;
 
+TEST(JitCompilerTest, OptimizedFieldLoopsPreserveInvariantInputsAcrossClonedRecoveryExits) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  const auto compiled = CompileText(**compiler, R"(
+class Point { x: double = 0.0; y: double = 2.0; z: double = 2.0; }
+class Child extends Point { padding: int = 7; }
+func advance(points: Point[], rounds: int): double {
+  for (let round = 0; round < rounds; round++) {
+    for (const point in points) {
+      point.x += point.y;
+      point.z += point.y;
+    }
+  }
+  return points[0].x + points[0].z;
+}
+export func main(): int {
+  const points: Point[] = [Point()];
+  const children: Point[] = [Child()];
+  const first = advance(points, 10);
+  const second = advance(children, 10);
+  return first == 42.0 && second == 42.0 ? 42 : 0;
+}
+)",
+                                    NativeCodeTier::Optimized);
+  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+  const auto main = isolate.native_dispatch().FindEntry("main.vela", "main");
+  ASSERT_TRUE(main);
+  ASSERT_TRUE(test::ReturnsInteger(*main, 42));
+}
+
 double HostSquareRoot(double value) noexcept {
   constexpr double kHostOverrideOffset = 40.0;
   return value + kHostOverrideOffset;
+}
+
+TEST(JitCompilerTest, StringLengthsUseUnicodeScalarsAndUtf8Bytes) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+    const auto compiled = CompileText(**compiler, R"(
+func lengths(text: string): int { return text.length * 100 + text.byteLength; }
+export func main(): int {
+  const text = 'A中😀e\u0301';
+  return lengths(text) + lengths(text.slice(1, 3)) + lengths('');
+}
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate(1);
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
+    ASSERT_TRUE(entry);
+    const auto result = entry->Invoke({});
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->AsInteger(), 718);
+  }
+}
+
+TEST(JitCompilerTest, PrivateIntegerArrayRangesPreserveEscapingWritesAndCheckedArithmetic) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler);
+    const auto compiled = CompileText(**compiler, R"(
+class Box { values: int[]; }
+func alter(values: int[], value: int): void { values[0] = value; }
+func alterBox(box: Box, value: int): void { box.values[0] = value; }
+export func masked(value: int): int {
+  const values = [0]; const alias = values;
+  alias[0] = value & 255;
+  const text = value.toString();
+  return text.length > 0 ? values[0] : 0;
+}
+export func escaped(value: int): int {
+  const values = [0]; alter(values, value); return values[0];
+}
+export func borrowed(value: int): int {
+  const values = [0]; const box = Box(values: values);
+  alterBox(box, value); return values[0];
+}
+export func overflow(value: int): int {
+  const values = [0]; values[0] = (value + 1) & 255; return values[0];
+}
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate(1);
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    const auto masked = isolate.native_dispatch().FindEntry("main.vela", "masked");
+    const auto escaped = isolate.native_dispatch().FindEntry("main.vela", "escaped");
+    const auto borrowed = isolate.native_dispatch().FindEntry("main.vela", "borrowed");
+    const auto overflow = isolate.native_dispatch().FindEntry("main.vela", "overflow");
+    ASSERT_TRUE(masked);
+    ASSERT_TRUE(escaped);
+    ASSERT_TRUE(borrowed);
+    ASSERT_TRUE(overflow);
+    constexpr std::int64_t kWideValue = (std::int64_t{1} << 40) + 42;
+    const std::array wide{runtime::Value::Integer(kWideValue)};
+    const auto bounded = masked->Invoke(wide);
+    ASSERT_TRUE(bounded);
+    EXPECT_EQ(bounded->AsInteger(), 42);
+    const auto unbounded = escaped->Invoke(wide);
+    ASSERT_TRUE(unbounded);
+    EXPECT_EQ(unbounded->AsInteger(), kWideValue);
+    const auto nested = borrowed->Invoke(wide);
+    ASSERT_TRUE(nested);
+    EXPECT_EQ(nested->AsInteger(), kWideValue);
+    const std::array maximum{runtime::Value::Integer(std::numeric_limits<std::int64_t>::max())};
+    const auto failed = overflow->Invoke(maximum);
+    ASSERT_FALSE(failed);
+    EXPECT_EQ(failed.error(), ExecutionStatus::IntegerOverflow);
+    const auto valid = overflow->Invoke(wide);
+    ASSERT_TRUE(valid);
+    EXPECT_EQ(valid->AsInteger(), 43);
+  }
+}
+
+TEST(JitCompilerTest, BoundedLeafCallsRetainFailureFramesAndCallerRoots) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+  const auto compiled = CompileText(**compiler, R"(
+class Box { text: string; }
+func divide(value: int): int { return 84 / value; }
+export func fail(): int { return divide(0); }
+export func caught(): int {
+  const box = Box(text: 42.toString());
+  try { return divide(0); }
+  catch (error: Error) { return error.code == 'DivisionByZero' ? box.text.length + 40 : 0; }
+}
+export func answer(): int { return divide(2); }
+)",
+                                    NativeCodeTier::Optimized);
+  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+  EXPECT_NE(compiled->llvm_ir.find("@vela_native_v2_leaf_failure"), std::string::npos);
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+  auto instance = runtime::NativeInstance::Borrow(isolate.native_dispatch().current_state());
+  const auto target = instance.FindFunction("fail");
+  ASSERT_TRUE(target);
+  const auto failed = runtime::ExecuteNativeFunction(instance, *target);
+  EXPECT_EQ(failed.status, ExecutionStatus::DivisionByZero);
+  ASSERT_EQ(failed.stack_trace.size(), 2U);
+  EXPECT_EQ(failed.stack_trace.front().function, "divide");
+  EXPECT_EQ(failed.stack_trace.back().function, "fail");
+  for (const auto* const name : {"caught", "answer"}) {
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", name);
+    ASSERT_TRUE(entry);
+    ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
+  }
+}
+
+TEST(JitCompilerTest, GuardedReadonlyLeafLoopsPreserveFramesAndLargeInputs) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  const auto compiled = CompileText(**compiler, R"(
+class Box { text: string; }
+func sum(values: int[], count: int): int {
+  let result = 0;
+  for (let index = 0; index < count; index++) { result += values[index]; }
+  return result;
+}
+export func fail(): int { return sum([1], 2); }
+export func caught(): int {
+  const box = Box(text: 42.toString());
+  try { return sum([1], 2); }
+  catch (error: Error) { return error.code == 'IndexOutOfBounds' ? box.text.length + 40 : 0; }
+}
+export func run(count: int): int {
+  const values: int[] = [];
+  values.reserve(count);
+  for (let index = 0; index < count; index++) { values.push(index); }
+  return sum(values, count);
+}
+)",
+                                    NativeCodeTier::Optimized);
+  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+  auto instance = runtime::NativeInstance::Borrow(isolate.native_dispatch().current_state());
+  const auto target = instance.FindFunction("fail");
+  ASSERT_TRUE(target);
+  const auto failed = runtime::ExecuteNativeFunction(instance, *target);
+  EXPECT_EQ(failed.status, ExecutionStatus::IndexOutOfBounds);
+  ASSERT_EQ(failed.stack_trace.size(), 2U);
+  EXPECT_EQ(failed.stack_trace.front().function, "sum");
+  EXPECT_EQ(failed.stack_trace.back().function, "fail");
+  const auto run = isolate.native_dispatch().FindEntry("main.vela", "run");
+  const auto caught = isolate.native_dispatch().FindEntry("main.vela", "caught");
+  ASSERT_TRUE(run);
+  ASSERT_TRUE(caught);
+  ASSERT_TRUE(test::ReturnsInteger(*caught, 42));
+  for (const std::int64_t count : {0, 1, 31, 1024, 4096}) {
+    const std::array arguments{runtime::Value::Integer(count)};
+    ASSERT_TRUE(test::ReturnsInteger(*run, count * (count - 1) / 2, arguments));
+  }
+}
+
+TEST(JitCompilerTest, ScalarTextLengthsPreserveFormattingWithoutAllocatingStrings) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+    const auto compiled = CompileText(**compiler, R"(
+export func length(value: double): int { return value.toString().length; }
+export func text(value: double): string { return value.toString(); }
+export func changed(): int { let value = 42; const text = value.toString(); value = 1000; return text.length; }
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate(1);
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    auto& dispatch = isolate.native_dispatch();
+    const auto length = dispatch.FindEntry("main.vela", "length");
+    const auto text = dispatch.FindEntry("main.vela", "text");
+    const auto changed = dispatch.FindEntry("main.vela", "changed");
+    ASSERT_TRUE(length);
+    ASSERT_TRUE(text);
+    ASSERT_TRUE(changed);
+    ASSERT_TRUE(test::ReturnsInteger(*changed, 2));
+    for (const auto value : {
+             0.0,
+             -0.0,
+             1.5,
+             std::numeric_limits<double>::denorm_min(),
+             std::numeric_limits<double>::max(),
+             std::numeric_limits<double>::infinity(),
+             std::numeric_limits<double>::quiet_NaN(),
+         }) {
+      const std::array arguments{runtime::Value::Double(value)};
+      const auto rendered = text->Invoke(arguments);
+      ASSERT_TRUE(rendered);
+      const auto expected = rendered->AsString()->length();
+      const auto count = isolate.heap().object_count();
+      ASSERT_TRUE(test::ReturnsInteger(*length, expected, arguments));
+      EXPECT_EQ(isolate.heap().object_count(), count);
+    }
+  }
 }
 
 TEST(JitCompilerTest, SquareRootIntrinsicPreservesFloatingPointErrorsAndHostOverrides) {
@@ -122,6 +362,203 @@ TEST(JitCompilerTest, MaterializesTheCompleteImageBeforePublishingNamedEntries) 
   const auto entry = isolate.native_dispatch().FindEntry("main.vela", "answer");
   ASSERT_TRUE(entry);
   ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
+}
+
+TEST(JitCompilerTest, ReusesUnchangedCodeAndInvalidatesTheCompleteDirectCallClosure) {
+  constexpr std::int64_t kEditVersions = 8;
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler);
+    CodeReuseCache reuse;
+    SourceSession source("main.vela");
+    runtime::Isolate isolate(1);
+    runtime::NativeEntry independent = nullptr;
+    for (std::int64_t version = 1; version <= kEditVersions; ++version) {
+      const auto prepared = test::PrepareText(
+          source, "func step(value: int): int { return value + " + std::to_string(version) +
+                      "; } export func answer(): int { return step(40); } "
+                      "export func independent(): int { return 7; }");
+      ASSERT_TRUE(prepared);
+      const auto compiled = (*compiler)->Compile(prepared->snapshot().program,
+                                                 {.tier = tier, .preserve_ir = true}, &reuse);
+      ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+      const auto functions = compiled->image->functions.values();
+      const auto cold = std::ranges::find(
+          functions, "independent", [](const auto& function) { return function.name.text(); });
+      ASSERT_NE(cold, functions.end());
+      if (version == 1) {
+        independent = cold->entry;
+      } else {
+        EXPECT_EQ(cold->entry, independent);
+        EXPECT_EQ(compiled->compiled_functions, tier == NativeCodeTier::Baseline ? 1U : 2U);
+        const auto index = static_cast<std::size_t>(cold - functions.begin());
+        EXPECT_EQ(compiled->llvm_ir.find("@vela_jit_entry_" + std::to_string(index) + '_'),
+                  std::string::npos);
+      }
+      ASSERT_TRUE(test::PublishImage(isolate, compiled->image, source.snapshot()->revision));
+      ASSERT_TRUE(source.Commit(*prepared));
+      const auto answer = isolate.native_dispatch().FindEntry("main.vela", "answer");
+      const auto unchanged = isolate.native_dispatch().FindEntry("main.vela", "independent");
+      ASSERT_TRUE(answer);
+      ASSERT_TRUE(unchanged);
+      ASSERT_TRUE(test::ReturnsInteger(*answer, 40 + version));
+      ASSERT_TRUE(test::ReturnsInteger(*unchanged, 7));
+      isolate.heap().Collect();
+      EXPECT_LE((*compiler)->resource_counts().batches, 2U);
+    }
+  }
+}
+
+TEST(JitCompilerTest, ReusePlanningPinsCodeUntilTheCandidateOwnsItsEntries) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  SourceSession source("main.vela");
+  const auto prepared = test::PrepareText(source, "export func answer(): int { return 42; }");
+  ASSERT_TRUE(prepared);
+  CodeReuseCache reuse;
+  auto compiled = (*compiler)->Compile(prepared->snapshot().program, {}, &reuse);
+  ASSERT_TRUE(compiled);
+  {
+    std::vector<FunctionCodeInputs> inputs;
+    inputs.reserve(reuse.sources.size());
+    for (const auto& function : reuse.sources) {
+      inputs.push_back({.fingerprint = function.fingerprint, .dependencies = {}});
+    }
+    const auto plan = PlanCodeReuse(std::move(inputs), reuse);
+    EXPECT_TRUE(std::ranges::all_of(plan.reused, [](auto reused) { return reused != 0; }));
+    compiled->image.reset();
+    EXPECT_EQ((*compiler)->resource_counts().images, 0U);
+    EXPECT_EQ((*compiler)->resource_counts().batches, 1U);
+  }
+  EXPECT_EQ((*compiler)->resource_counts().batches, 0U);
+}
+
+TEST(JitCompilerTest, LayoutEditsInvalidateTheirUsersWithoutRecompilingIndependentFunctions) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler);
+    CodeReuseCache reuse;
+    runtime::NativeEntry independent = nullptr;
+    std::shared_ptr<const runtime::NativeImage> previous;
+    for (const auto* type : {"int", "bool", "int"}) {
+      SourceSession source("main.vela");
+      const auto integer = std::string_view(type) == "int";
+      const auto* const value = integer ? "40" : "true";
+      const auto* const condition = integer ? "box.value == 40" : "box.value";
+      auto prepared = test::PrepareText(
+          source,
+          "export func independent(): int { return 7; }\nclass Box { value: " + std::string(type) +
+              "; }\nexport func read(): int { const box = Box(value: " + value + "); return " +
+              condition + " ? 42 : 0; }");
+      ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
+      const auto compiled =
+          (*compiler)->Compile(prepared->snapshot().program, {.tier = tier}, &reuse);
+      ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+      const auto functions = compiled->image->functions.values();
+      const auto unchanged = std::ranges::find(
+          functions, "independent", [](const auto& function) { return function.name.text(); });
+      ASSERT_NE(unchanged, functions.end());
+      if (previous) {
+        EXPECT_EQ(unchanged->entry, independent);
+      }
+      independent = unchanged->entry;
+      // 本场景没有跨版本实例或捕获；布局编辑在编译缓存边界执行，运行时独立验证结果。
+      runtime::Isolate current(1);
+      ASSERT_TRUE(test::PublishImage(current, compiled->image, 0));
+      const auto read = current.native_dispatch().FindEntry("main.vela", "read");
+      ASSERT_TRUE(read);
+      ASSERT_TRUE(test::ReturnsInteger(*read, 42));
+      previous = compiled->image;
+    }
+  }
+}
+
+TEST(JitCompilerTest, NullableFieldAccessTracksReorderedClassTablesAcrossCodeReuse) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  CodeReuseCache reuse;
+  std::shared_ptr<const runtime::NativeImage> previous;
+  for (const auto* declaration : {
+           "class Box { value: int; } class Other { flag: bool; }",
+           "class Other { flag: bool; } class Box { padding: int = 7; value: int; }",
+           "class Box { value: int; } class Other { flag: bool; }",
+       }) {
+    SourceSession source("main.vela");
+    auto prepared = test::PrepareText(source, std::string(declaration) + R"(
+export func read(box: Box?): int { return box == null ? 0 : box.value; }
+export func answer(): int { return read(Box(value: 42)); }
+)");
+    ASSERT_TRUE(prepared) << DiagnosticsText(prepared.error().diagnostics);
+    const auto compiled = (*compiler)->Compile(prepared->snapshot().program,
+                                               {.tier = NativeCodeTier::Optimized}, &reuse);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate(1);
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image, 0));
+    const auto answer = isolate.native_dispatch().FindEntry("main.vela", "answer");
+    ASSERT_TRUE(answer);
+    ASSERT_TRUE(test::ReturnsInteger(*answer, 42));
+    const auto read = isolate.native_dispatch().FindEntry("main.vela", "read");
+    ASSERT_TRUE(read);
+    const std::array null{runtime::Value::Null()};
+    const auto absent = read->Invoke(null);
+    ASSERT_TRUE(absent);
+    EXPECT_EQ(absent->AsInteger(), 0);
+    previous = compiled->image;
+  }
+}
+
+TEST(JitCompilerTest, OptimizedFieldGuardsPreservePriorEffectsAndStoreRecoveryInputs) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  const auto compiled = CompileText(**compiler, R"(
+class Base { value: int = 0; text: string = 'initial'; }
+class Child extends Base { padding: int = 7; }
+let effects = 0;
+func store(value: Base, text: string): int {
+  effects++;
+  const answer = effects + 40;
+  value.value = answer;
+  value.text = text;
+  return answer;
+}
+func read(value: Base): int { return value.value + value.text.length; }
+export func main(): int {
+  const value = Child();
+  const text = 2.toString();
+  const answer = store(value, text);
+  return answer == 41 && effects == 1 && read(value) == 42 ? 42 : 0;
+}
+)",
+                                    NativeCodeTier::Optimized);
+  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+  runtime::Isolate isolate(1);
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+  const auto main = isolate.native_dispatch().FindEntry("main.vela", "main");
+  ASSERT_TRUE(main);
+  ASSERT_TRUE(test::ReturnsInteger(*main, 42));
+}
+
+TEST(JitCompilerTest, WarmGlobalBindingsStopUsingSlotsWhenTheDispatchCloses) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler);
+    const auto compiled = CompileText(
+        **compiler, "let value = 40; export func answer(): int { return value + 2; }", tier);
+    ASSERT_TRUE(compiled);
+    runtime::Isolate isolate(1);
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    auto& dispatch = isolate.native_dispatch();
+    const auto entry = dispatch.FindEntry("main.vela", "answer");
+    ASSERT_TRUE(entry);
+    const auto retained = entry->Capture();
+    ASSERT_TRUE(retained);
+    ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
+    ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
+    dispatch.Close();
+    const auto stopped = retained->Invoke({});
+    ASSERT_FALSE(stopped);
+    EXPECT_EQ(stopped.error(), ExecutionStatus::ExecutionStopped);
+  }
 }
 
 TEST(JitCompilerTest, InferredGenericsExecuteInBothNativeTiers) {
@@ -809,6 +1246,274 @@ std::string CopyText(runtime::NativeContext& context, std::string_view text) noe
   return std::string(text);
 }
 
+TEST(JitCompilerTest, TypedMapsKeepNullableValuesAndGrowthBuffersAcrossHostCollection) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler);
+    const auto compiled = CompileText(**compiler, R"(
+external func copy(text: string): string;
+export func main(): int {
+  const values = Map<int, string?>();
+  if (values.get(0) != null) { return -1; }
+  for (let index = 0; index < 300; index++) { values.set(index, index.toString()); }
+  values.set(17, null);
+  values.set(18, '');
+  const copied = copy('keep');
+  if (!values.has(17) || values.get(17) != null || values.get(18) != '' ||
+      values.get(-1) != null) { return -1; }
+  let length = copied.length;
+  for (let index = 0; index < 300; index++) {
+    const text = values.get(index);
+    if (text != null) { length += text.length; }
+  }
+  return length;
+}
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate(1);
+    ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&CopyText>("copy")));
+    static_cast<void>(isolate.FreezeBindings());
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
+    ASSERT_TRUE(entry);
+    ASSERT_TRUE(test::ReturnsInteger(*entry, 790));
+  }
+}
+
+TEST(JitCompilerTest, LargeCheckpointFramesKeepScalarValuesAndRootsAcrossHostCollection) {
+  constexpr std::int64_t kValues = 384;
+  std::string text =
+      "external func copy(text: string): string = 'copy'; "
+      "export func wide(input: int): int { const text = input.toString(); ";
+  for (std::int64_t index = 0; index < kValues; ++index) {
+    text += "const value" + std::to_string(index) + " = input + " + std::to_string(index) + "; ";
+  }
+  text += "let sum = copy(text).length; ";
+  for (std::int64_t index = 0; index < kValues; ++index) {
+    text += "sum += value" + std::to_string(index) + "; ";
+  }
+  text += "return sum; }";
+  SourceSession source("main.vela");
+  const auto prepared = test::PrepareText(source, text);
+  ASSERT_TRUE(prepared);
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    for (const auto optimization : {NativeOptimization::None, NativeOptimization::Release}) {
+      auto compiler = Compiler::Create();
+      ASSERT_TRUE(compiler);
+      const auto compiled = (*compiler)->Compile(prepared->snapshot().program,
+                                                 {.optimization = optimization, .tier = tier});
+      ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+      runtime::Isolate isolate(1);
+      ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<CopyText>("copy")));
+      static_cast<void>(isolate.FreezeBindings());
+      ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+      const auto entry = isolate.native_dispatch().FindEntry("main.vela", "wide");
+      ASSERT_TRUE(entry);
+      constexpr auto kConstantSum = kValues * (kValues - 1) / 2;
+      const std::array positive{runtime::Value::Integer(1)};
+      const std::array negative{runtime::Value::Integer(-100)};
+      ASSERT_TRUE(test::ReturnsInteger(*entry, kConstantSum + kValues + 1, positive));
+      ASSERT_TRUE(test::ReturnsInteger(*entry, kConstantSum - (kValues * 100) + 4, negative));
+      const std::array overflow{runtime::Value::Integer(std::numeric_limits<std::int64_t>::max())};
+      const auto failed = entry->Invoke(overflow);
+      ASSERT_FALSE(failed);
+      EXPECT_EQ(failed.error(), ExecutionStatus::IntegerOverflow);
+    }
+  }
+}
+
+TEST(JitCompilerTest, BoundedPureLoopsPreserveRangeFailuresAndObservablePrefixes) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+    const auto compiled = CompileText(**compiler, R"(
+let size = 1000;
+export func arithmetic(): int {
+  const bound = size;
+  let result = 0;
+  for (let index = 0; index < bound; index++) { result += index; }
+  return result;
+}
+export func sum(start: int, bound: int): int {
+  let result = 0;
+  for (let index = start; index < bound; index++) { result += index; }
+  return result;
+}
+export func descending(start: int, bound: int): int {
+  let result = 0;
+  for (let index = start; index > bound; index--) { result += index; }
+  return result;
+}
+export func prefix(initial: int, bound: int): int {
+  let result = initial;
+  try { for (let index = 0; index < bound; index++) { result += 1; } }
+  catch (error: Error) { return result; }
+  return result;
+}
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    EXPECT_NE(compiled->llvm_ir.find(".bounded"), std::string::npos) << compiled->llvm_ir;
+    runtime::Isolate isolate;
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    auto& dispatch = isolate.native_dispatch();
+    const auto sum = dispatch.FindEntry("main.vela", "sum");
+    const auto descending = dispatch.FindEntry("main.vela", "descending");
+    const auto prefix = dispatch.FindEntry("main.vela", "prefix");
+    const auto arithmetic = dispatch.FindEntry("main.vela", "arithmetic");
+    ASSERT_TRUE(sum);
+    ASSERT_TRUE(descending);
+    ASSERT_TRUE(prefix);
+    ASSERT_TRUE(arithmetic);
+    ASSERT_TRUE(test::ReturnsInteger(*arithmetic, 499500));
+    for (const std::int64_t count : {0, 1, 31, 1024, 1025, 4096}) {
+      SCOPED_TRACE(count);
+      const std::array ascending_arguments{
+          runtime::Value::Integer(0),
+          runtime::Value::Integer(count),
+      };
+      ASSERT_TRUE(test::ReturnsInteger(*sum, count * (count - 1) / 2, ascending_arguments));
+      const std::array descending_arguments{
+          runtime::Value::Integer(count),
+          runtime::Value::Integer(0),
+      };
+      ASSERT_TRUE(test::ReturnsInteger(*descending, count * (count + 1) / 2, descending_arguments));
+    }
+    constexpr auto kMaximum = std::numeric_limits<std::int64_t>::max();
+    const std::array overflow{runtime::Value::Integer(kMaximum - 3), runtime::Value::Integer(32)};
+    ASSERT_TRUE(test::ReturnsInteger(*prefix, kMaximum, overflow));
+    const std::array empty{runtime::Value::Integer(kMaximum), runtime::Value::Integer(-1)};
+    ASSERT_TRUE(test::ReturnsInteger(*sum, 0, empty));
+  }
+}
+
+TEST(JitCompilerTest, BoundedLoopsThroughInlinedCallsPreserveResultsAndOverflowPrefixes) {
+  auto compiler = Compiler::Create();
+  ASSERT_TRUE(compiler);
+  const auto compiled = CompileText(**compiler, R"(
+func mix(value: int): int { return (value ^ 4660) & 65535; }
+func increment(value: int): int { return value + 1; }
+export func value(seed: int): int {
+  let result = seed;
+  for (let index = 0; index < 64; index++) { result ^= mix(index); }
+  return result;
+}
+export func prefix(initial: int): int {
+  let result = initial;
+  try { for (let index = 0; index < 64; index++) { result = increment(result); } }
+  catch (error: Error) { return result; }
+  return result;
+}
+)",
+                                    NativeCodeTier::Optimized);
+  ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+  EXPECT_NE(compiled->llvm_ir.find(".bounded"), std::string::npos);
+  runtime::Isolate isolate;
+  ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+  const auto value = isolate.native_dispatch().FindEntry("main.vela", "value");
+  const auto prefix = isolate.native_dispatch().FindEntry("main.vela", "prefix");
+  ASSERT_TRUE(value);
+  ASSERT_TRUE(prefix);
+  constexpr std::int64_t kSeed = 123;
+  constexpr std::int64_t kIterations = 64;
+  constexpr std::int64_t kMixKey = 4660;
+  constexpr std::int64_t kMixMask = 65535;
+  std::int64_t expected = kSeed;
+  for (std::int64_t index = 0; index < kIterations; ++index) {
+    expected ^= (index ^ kMixKey) & kMixMask;
+  }
+  const std::array seed{runtime::Value::Integer(kSeed)};
+  ASSERT_TRUE(test::ReturnsInteger(*value, expected, seed));
+  constexpr auto kMaximum = std::numeric_limits<std::int64_t>::max();
+  const std::array overflow{runtime::Value::Integer(kMaximum - 3)};
+  ASSERT_TRUE(test::ReturnsInteger(*prefix, kMaximum, overflow));
+}
+
+TEST(JitCompilerTest, ChunkedPureLoopsPreserveMemoryAndEarlyExitPrefixes) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler);
+    const auto compiled = CompileText(**compiler, R"(
+export func run(count: int, cutoff: int): int {
+  const values = [0];
+  let iterations = 0;
+  for (let index = 0; index < count; index++) {
+    values[0] = index;
+    iterations++;
+    if (index == cutoff) { return values[0] + iterations; }
+  }
+  return values[0] + iterations;
+}
+export func fail(count: int, cutoff: int): int {
+  const values = [0];
+  let iterations = 0;
+  try {
+    for (let index = 0; index < count; index++) {
+      values[0] = index;
+      iterations++;
+      if (index == cutoff) { values[1] = index; }
+    }
+  } catch (error: Error) { return values[0] + iterations; }
+  return -1;
+}
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    EXPECT_NE(compiled->llvm_ir.find("poll.chunk"), std::string::npos);
+    runtime::Isolate isolate;
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    const auto run = isolate.native_dispatch().FindEntry("main.vela", "run");
+    const auto fail = isolate.native_dispatch().FindEntry("main.vela", "fail");
+    ASSERT_TRUE(run);
+    ASSERT_TRUE(fail);
+    for (const std::int64_t count : {0, 1, 1024, 1025, 4096}) {
+      const std::array arguments{runtime::Value::Integer(count), runtime::Value::Integer(-1)};
+      ASSERT_TRUE(test::ReturnsInteger(*run, count == 0 ? 0 : (2 * count) - 1, arguments));
+    }
+    const std::array cutoff{runtime::Value::Integer(4096), runtime::Value::Integer(1025)};
+    ASSERT_TRUE(test::ReturnsInteger(*run, 2051, cutoff));
+    ASSERT_TRUE(test::ReturnsInteger(*fail, 2051, cutoff));
+  }
+}
+
+TEST(JitCompilerTest, StableSortKeepsReferenceRunsAliveAcrossUnevenMerges) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    auto compiler = Compiler::Create();
+    ASSERT_TRUE(compiler) << DiagnosticsText(compiler.error());
+    const auto compiled = CompileText(**compiler, R"(
+external func copy(text: string): string;
+class Item { key: int; order: int; text: string; }
+export func main(count: int): int {
+  const values: Item[] = [];
+  for (let i = 0; i < count; i++) {
+    values.push(Item(key: (count - i) & 3, order: i, text: i.toString()));
+  }
+  values.sort((left, right) => { copy(left.text); return left.key - right.key; });
+  for (let i = 1; i < count; i++) {
+    const previous = values[i - 1]; const current = values[i];
+    if (previous.key > current.key ||
+        (previous.key == current.key && previous.order > current.order)) { return 0; }
+  }
+  return values.length == count ? 42 : 0;
+}
+)",
+                                      tier);
+    ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
+    runtime::Isolate isolate(1);
+    ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<CopyText>("copy")));
+    static_cast<void>(isolate.FreezeBindings());
+    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+    const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
+    ASSERT_TRUE(entry);
+    for (const auto count : {0, 1, 2, 3, 7, 16, 31, 32, 33, 129}) {
+      SCOPED_TRACE(count);
+      const std::array arguments{runtime::Value::Integer(count)};
+      ASSERT_TRUE(test::ReturnsInteger(*entry, 42, arguments));
+    }
+  }
+}
+
 std::expected<void, runtime::NativeError> Reject() noexcept {
   return std::unexpected(runtime::NativeError{.message = "rejected"});
 }
@@ -890,29 +1595,38 @@ TEST(JitCompilerTest, CrossThreadStopExitsANonAllocatingLoopWithoutRunningFinall
 external func entered(): void;
 external func finalized(): void;
 export func main(): void { entered(); try { while (true) {} } finally { finalized(); } }
+export func counted(): void {
+  const values = [0];
+  entered();
+  try {
+    for (let index = 0; index < 9223372036854775807; index++) { values[0] = index; }
+  } finally { finalized(); }
+}
 )",
                                       tier);
     ASSERT_TRUE(compiled) << DiagnosticsText(compiled.error());
-    runtime::Isolate isolate;
-    ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Entered>("entered")));
-    ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Finalized>("finalized")));
-    static_cast<void>(isolate.FreezeBindings());
-    ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
-    const auto entry = isolate.native_dispatch().FindEntry("main.vela", "main");
-    ASSERT_TRUE(entry);
-    std::jthread request([&] {
-      constexpr auto kEntryTimeout = std::chrono::seconds(10);
-      const auto entered = StopSignal().try_acquire_for(kEntryTimeout);
-      EXPECT_TRUE(entered);
-      if (entered) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-      }
-      isolate.native_control().RequestStop();
-    });
-    const auto result = entry->Invoke({});
-    ASSERT_FALSE(result);
-    EXPECT_EQ(result.error(), ExecutionStatus::ExecutionStopped);
-    EXPECT_FALSE(isolate.native_control().HasHostBorrow());
+    for (const auto* name : {"main", "counted"}) {
+      runtime::Isolate isolate;
+      ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Entered>("entered")));
+      ASSERT_TRUE(isolate.RegisterNative(runtime::NativeFunction::Bind<&Finalized>("finalized")));
+      static_cast<void>(isolate.FreezeBindings());
+      ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
+      const auto entry = isolate.native_dispatch().FindEntry("main.vela", name);
+      ASSERT_TRUE(entry);
+      std::jthread request([&] {
+        constexpr auto kEntryTimeout = std::chrono::seconds(10);
+        const auto entered = StopSignal().try_acquire_for(kEntryTimeout);
+        EXPECT_TRUE(entered);
+        if (entered) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        isolate.native_control().RequestStop();
+      });
+      const auto result = entry->Invoke({});
+      ASSERT_FALSE(result);
+      EXPECT_EQ(result.error(), ExecutionStatus::ExecutionStopped);
+      EXPECT_FALSE(isolate.native_control().HasHostBorrow());
+    }
   }
 }
 

@@ -19,6 +19,7 @@
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/jit/code_cache.h"
 #include "compiler/jit/code_resources.h"
+#include "compiler/jit/code_reuse.h"
 #include "compiler/jit/compiler.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
@@ -196,8 +197,8 @@ class DevelopmentSession final {
   void FinishReload();
   void Notify();
   void Report(const DevelopmentResult& result) const;
-  std::expected<runtime::Value, ExecutionStatus> InvokeDeclaration(
-      DeclarationId declaration,
+  std::expected<runtime::Value, ExecutionStatus> InvokeTarget(
+      const runtime::NativeResolvedDeclaration& target,
       std::span<const runtime::Value> arguments,
       Invocation invocation);
   [[nodiscard]] std::vector<runtime::ExternalResourceInfo> HostBlockers() const;
@@ -212,6 +213,7 @@ class DevelopmentSession final {
   runtime::NativeBindings bindings_;
   DevelopmentOptions options_;
   std::unique_ptr<jit::Compiler> compiler_;
+  jit::CodeReuseCache code_reuse_;
   std::shared_ptr<SourceSession> sources_;
   std::unique_ptr<runtime::Isolate> isolate_;
   runtime::NativeSafepointEndpoint endpoint_;

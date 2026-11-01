@@ -18,6 +18,7 @@ namespace llvm {
 class LLVMContext;
 class Module;
 class TargetMachine;
+class Function;
 }  // namespace llvm
 
 namespace vela::compiler {
@@ -27,7 +28,17 @@ enum class NativeCodePlacement : std::uint8_t { Linked, Dynamic };
 
 namespace native {
 
+class NativeImageData;
+
 void InitializeTarget();
+
+struct CpuProfile final {
+  std::string name;
+  std::string features;
+};
+
+// 动态代码使用宿主已启用的指令集；离线产物保留通用 CPU 目标。
+[[nodiscard]] CpuProfile TargetCpu(NativeCodePlacement placement);
 
 // context 最后释放；AOT 目标文件与 ORC 交付共用同一份完整 LLVM 语义 lowering。
 struct NativeModule final {
@@ -41,7 +52,10 @@ struct NativeModule final {
   std::unique_ptr<llvm::TargetMachine> machine;
   std::unique_ptr<llvm::Module> module;
   std::string image_symbol;
+  std::shared_ptr<NativeImageData> image_data;
+  std::vector<llvm::Function*> entry_functions;
   std::vector<NativeFunctionMetrics> function_metrics;
+  std::vector<std::vector<std::string>> function_symbols;
 };
 
 [[nodiscard]] std::expected<NativeModule, frontend::Diagnostics> Generate(
@@ -51,7 +65,8 @@ struct NativeModule final {
     NativeDebugging debugging = NativeDebugging::Safepoints,
     NativeCodeTier tier = NativeCodeTier::Baseline,
     EscapeOptimization escape = EscapeOptimization::Enabled,
-    NativeCodePlacement placement = NativeCodePlacement::Linked);
+    NativeCodePlacement placement = NativeCodePlacement::Linked,
+    std::span<const std::uint8_t> reused = {});
 
 // 调用者可在优化前添加 AOT 的公开包装和 main；JIT 直接交付映像入口。
 [[nodiscard]] std::expected<void, std::string> Finalize(NativeModule& generated,

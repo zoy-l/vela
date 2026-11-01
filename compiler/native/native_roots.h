@@ -13,8 +13,15 @@ namespace vela::compiler::native {
 
 enum class NativeDebugging : std::uint8_t { Safepoints, SourceLines, Instructions };
 
+inline constexpr std::uint8_t kNativeSafepointBoundary = 1U << 0;
+inline constexpr std::uint8_t kNativeSafepointBeforeRuntime = 1U << 1;
+inline constexpr std::uint8_t kNativeSafepointAfterRuntime = 1U << 2;
+// 仅供假设失败时恢复，不要求在成功路径轮询。
+inline constexpr std::uint8_t kNativeSafepointRecovery = 1U << 3;
+
 struct NativeRootPlan final {
   bool debug_values = false;
+  bool bounded_polls = false;
   std::size_t count = 0;
   std::vector<std::optional<std::size_t>> slots;
   std::vector<std::vector<ir::RegisterId>> stores;

@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <memory>
@@ -16,6 +17,7 @@
 #include "compiler/ir/ir.h"
 #include "compiler/jit/code_cache.h"
 #include "compiler/jit/code_resources.h"
+#include "compiler/jit/code_reuse.h"
 #include "compiler/native/code_generator.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
@@ -47,6 +49,7 @@ struct CompiledImage final {
   std::vector<native::NativeFunctionMetrics> function_metrics;
   CodeCacheStatus cache = CodeCacheStatus::Disabled;
   CompileTimings timings;
+  std::size_t compiled_functions = 0;
 };
 
 // 编译不访问 Isolate；未发布结果可以丢弃。映像最后引用在 Isolate 线程释放时退休 ORC
@@ -56,7 +59,8 @@ class Compiler final {
   [[nodiscard]] static std::expected<std::unique_ptr<Compiler>, frontend::Diagnostics> Create();
   [[nodiscard]] std::expected<CompiledImage, frontend::Diagnostics> Compile(
       const ir::Program& program,
-      const CompileOptions& options = {});
+      const CompileOptions& options = {},
+      CodeReuseCache* reuse = nullptr);
   [[nodiscard]] CodeResourceCounts resource_counts() const noexcept;
 
  private:

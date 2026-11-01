@@ -7,6 +7,8 @@
 
 namespace vela::runtime {
 
+class StringObject;
+
 // 全部指针与编号来自已实例化的映像；借用参数在整个 helper 调用期间由调用帧保根。
 extern "C" void vela_native_v1_constant(NativeExecution* execution,
                                         std::uint32_t index,
@@ -22,26 +24,35 @@ extern "C" std::uint8_t vela_native_v2_initialize_global(NativeExecution* execut
                                                          std::uint64_t position,
                                                          NativeGlobalFrame frame_kind,
                                                          NativeValue* result);
-extern "C" std::uint8_t vela_native_v1_new_instance(NativeExecution* execution,
-                                                    std::uint32_t index,
-                                                    NativeValue* result) noexcept;
-extern "C" std::uint8_t vela_native_v1_new_array(NativeExecution* execution,
+extern "C" HeapObject* vela_native_v10_new_object(NativeExecution* execution,
+                                                  std::uint32_t index) noexcept;
+extern "C" std::uint8_t vela_native_v10_new_callable(NativeExecution* execution,
+                                                     std::uint32_t index,
+                                                     NativeValue* result) noexcept;
+extern "C" HeapObject* vela_native_v10_new_array(NativeExecution* execution,
                                                  std::uint32_t index,
-                                                 NativeValue* result,
-                                                 std::int64_t length) noexcept;
+                                                 std::uint64_t length) noexcept;
 extern "C" std::uint8_t vela_native_v1_new_collection(NativeExecution* execution,
                                                       std::uint32_t index,
                                                       NativeValue* result) noexcept;
 extern "C" void vela_native_v1_write_barrier(NativeExecution* execution,
                                              HeapObject* object,
                                              const NativeValue* value) noexcept;
-extern "C" std::uint8_t vela_native_v1_array_grow(NativeExecution* execution,
-                                                  HeapObject* array,
-                                                  const NativeValue* value) noexcept;
 extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,
                                                std::uint32_t operation,
                                                const NativeValue* arguments,
                                                NativeValue* result);
+extern "C" std::uint64_t vela_native_v9_scalar_text_length(const NativeValue* value);
+extern "C" StringObject* vela_native_v10_scalar_to_string(NativeExecution* execution,
+                                                          const NativeValue* value) noexcept;
+// 类型检查与绑定保证 Map 及键/值的固定布局；动态调用继续在通用 builtin 边界校验。
+extern "C" void vela_native_v11_map_get(const HeapObject* map,
+                                        const NativeValue* key,
+                                        NativeValue* result) noexcept;
+extern "C" std::uint8_t vela_native_v11_map_set(NativeExecution* execution,
+                                                HeapObject* map,
+                                                const NativeValue* key,
+                                                const NativeValue* value) noexcept;
 extern "C" std::uint8_t vela_native_v1_concat(NativeExecution* execution,
                                               const NativeValue* left,
                                               const NativeValue* right,

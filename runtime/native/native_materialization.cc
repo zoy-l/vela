@@ -159,7 +159,7 @@ ExecutionStatus NativeMaterialization::BuildGraph() noexcept {
                     : objects_.subspan(field.object).front();
       }
       static_cast<void>(heap_->SetField(object, slot, value));
-      Heap::InstanceFields(object).states().subspan(slot).front() = field.state;
+      Heap::InstanceFields(object).SetFieldState(slot, field.state);
     }
   }
   return ExecutionStatus::Returned;

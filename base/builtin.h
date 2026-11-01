@@ -141,6 +141,7 @@ enum class Builtin : std::uint8_t {
   TestSame,
   TestControl,
   MockInspect,
+  ScalarTextLength,
   Count,
 };
 
@@ -149,6 +150,7 @@ enum class Builtin : std::uint8_t {
     case Builtin::NewMutableString:
       return 0;
     case Builtin::ScalarToString:
+    case Builtin::ScalarTextLength:
     case Builtin::DynamicArrayCallback:
     case Builtin::DynamicArrayOutput:
     case Builtin::JsonParse:

@@ -1,8 +1,11 @@
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/integer_loop_optimizer.h"
 
+#include <llvm/IR/Attributes.h>
+#include <llvm/IR/Function.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Support/ModRef.h>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -58,7 +61,7 @@ void FunctionEmitter::StoreRoots(std::size_t index) {
     if (!slot) {
       std::unreachable();
     }
-    WriteHeapValue(RootAddress(*slot), reg);
+    WriteHeapValue(RootAddress(*slot), reg, MemoryRegion::Roots);
   }
 }
 
@@ -80,14 +83,36 @@ llvm::Value* FunctionEmitter::RootAddress(std::size_t slot) {
 }
 
 void FunctionEmitter::ClearRoot(std::size_t slot) {
-  auto* clear =
-      builder_.CreateStore(builder_.getInt8(NativeKind(Kind::Null)),
-                           ByteAddress(RootAddress(slot), runtime::NativeMemoryLayout::kValueKind));
+  auto* clear = StoreMemory(builder_.getInt8(NativeKind(Kind::Null)),
+                            ByteAddress(RootAddress(slot), runtime::NativeMemoryLayout::kValueKind),
+                            MemoryRegion::Roots);
   clear->setMetadata(kNativeRootClearMetadata, llvm::MDNode::get(module_.getContext(), {}));
 }
 
 std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruction& instruction) {
   const auto builtin = static_cast<Builtin>(instruction.index);
+  if (builtin == Builtin::ScalarToString) {
+    const auto& type = source_.value_types.at(instruction.lhs);
+    if (type.nullable ||
+        (type.kind != Kind::Int && type.kind != Kind::Double && type.kind != Kind::Bool)) {
+      return std::unexpected("native scalar formatting requires a non-null scalar operand");
+    }
+    auto format =
+        module_.getOrInsertFunction("vela_native_v10_scalar_to_string", builder_.getPtrTy(),
+                                    builder_.getPtrTy(), builder_.getPtrTy());
+    auto* string =
+        builder_.CreateCall(format, {body_->getArg(0), Pack(Encode(instruction.lhs), 0)});
+    Check(builder_.CreateIsNotNull(string), ExecutionStatus::OutOfMemory);
+    Store(instruction.dst, string, {.kind = Kind::String, .name = frontend::kStringTypeName});
+    return {};
+  }
+  if (builtin == Builtin::ScalarTextLength) {
+    auto length = module_.getOrInsertFunction("vela_native_v9_scalar_text_length",
+                                              builder_.getInt64Ty(), builder_.getPtrTy());
+    Store(instruction.dst, builder_.CreateCall(length, {Pack(Encode(instruction.lhs), 0)}),
+          {.kind = Kind::Int, .name = frontend::kIntTypeName});
+    return {};
+  }
   if (builtin == Builtin::NumericToInt || builtin == Builtin::NumericToDouble) {
     const auto& type = source_.value_types.at(instruction.lhs);
     if (type.nullable || (type.kind != Kind::Int && type.kind != Kind::Double)) {
@@ -100,6 +125,68 @@ std::expected<void, std::string> FunctionEmitter::EmitBuiltin(const ir::Instruct
       builtin == Builtin::ArrayMutation || builtin == Builtin::ArrayCheckMutation ||
       builtin == Builtin::ArrayPush) {
     EmitArrayBuiltin(instruction, builtin);
+    return {};
+  }
+  if (builtin == Builtin::StringLength || builtin == Builtin::StringByteLength) {
+    auto* string = Reference(instruction.lhs);
+    Check(builder_.CreateIsNotNull(string), ExecutionStatus::TypeError);
+    const auto offset = builtin == Builtin::StringLength
+                            ? runtime::NativeMemoryLayout::kStringLength
+                            : runtime::NativeMemoryLayout::kObjectLength;
+    auto* length = builder_.CreateLoad(builder_.getInt32Ty(), ByteAddress(string, offset));
+    Store(instruction.dst, builder_.CreateZExt(length, builder_.getInt64Ty()),
+          {.kind = Kind::Int, .name = frontend::kIntTypeName});
+    return {};
+  }
+  if (builtin == Builtin::MapGet || builtin == Builtin::MapSet) {
+    auto* map = Reference(instruction.lhs);
+    Check(builder_.CreateIsNotNull(map), ExecutionStatus::TypeError);
+    auto* key = Pack(Encode(instruction.lhs + 1), 0);
+    auto* pointer = builder_.getPtrTy();
+    if (builtin == Builtin::MapGet) {
+      auto get = module_.getOrInsertFunction("vela_native_v11_map_get", builder_.getVoidTy(),
+                                             pointer, pointer, pointer);
+      auto& function = *module_.getFunction("vela_native_v11_map_get");
+      function.setMemoryEffects(llvm::MemoryEffects::readOnly().getWithModRef(
+          llvm::MemoryEffects::Location::ArgMem, llvm::ModRefInfo::ModRef));
+      function.addParamAttr(1, llvm::Attribute::ReadOnly);
+      function.addParamAttr(2, llvm::Attribute::WriteOnly);
+      function.addParamAttr(2, llvm::Attribute::NoAlias);
+      builder_.CreateCall(get, {map, key, result_});
+      Unpack(instruction.dst);
+    } else {
+      auto set = module_.getOrInsertFunction("vela_native_v11_map_set", builder_.getInt8Ty(),
+                                             pointer, pointer, pointer, pointer);
+      auto* value = Pack(Encode(instruction.lhs + 2), 1);
+      CheckStatus(builder_.CreateCall(set, {body_->getArg(0), map, key, value}));
+      Store(instruction.dst, builder_.getFalse(),
+            {.kind = Kind::Null, .name = frontend::kNullTypeName});
+    }
+    return {};
+  }
+  if (builtin == Builtin::ArrayReserve) {
+    using runtime::NativeMemoryLayout;
+    auto* array = Reference(instruction.lhs);
+    Check(builder_.CreateIsNotNull(array), ExecutionStatus::TypeError);
+    auto* length_address = ByteAddress(array, NativeMemoryLayout::kObjectLength);
+    auto* length = LoadMemory(builder_.getInt32Ty(), length_address, MemoryRegion::HeapHeader);
+    auto* requested = Payload(instruction.lhs + 1);
+    PackArguments(instruction.lhs, BuiltinArity(builtin));
+    auto reserve = module_.getOrInsertFunction("vela_native_v1_builtin", builder_.getInt8Ty(),
+                                               builder_.getPtrTy(), builder_.getInt32Ty(),
+                                               builder_.getPtrTy(), builder_.getPtrTy());
+    CompleteCall(
+        builder_.CreateCall(
+            reserve, {body_->getArg(0), builder_.getInt32(instruction.index), arguments_, result_}),
+        instruction.dst);
+    // reserve 的成功契约保留长度并满足容量；将运行时保证交给 LLVM 消除后续扩容分支。
+    auto* after = LoadMemory(builder_.getInt32Ty(), length_address, MemoryRegion::HeapHeader);
+    auto* capacity =
+        LoadMemory(builder_.getInt32Ty(), ByteAddress(array, NativeMemoryLayout::kArrayCapacity),
+                   MemoryRegion::HeapHeader);
+    builder_.CreateAssumption(builder_.CreateICmpEQ(after, length));
+    builder_.CreateAssumption(
+        builder_.CreateICmpUGE(builder_.CreateZExt(capacity, builder_.getInt64Ty()), requested));
     return {};
   }
   PackArguments(instruction.lhs, BuiltinArity(builtin));
@@ -129,20 +216,50 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       return {};
     }
     case Opcode::NewInstance: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_new_instance", status_type, pointer,
-                                                word, pointer);
+      if (!program_.classes.at(instruction.index).callable) {
+        auto helper =
+            module_.getOrInsertFunction("vela_native_v10_new_object", pointer, pointer, word);
+        auto& allocation = *module_.getFunction("vela_native_v10_new_object");
+        // 普通实例一定是新分配的对象；可调用值的版本绑定和潜在身份复用单独处理。
+        allocation.addRetAttr(llvm::Attribute::NoAlias);
+        allocation.addRetAttr(llvm::Attribute::getWithDereferenceableOrNullBytes(
+            module_.getContext(), sizeof(runtime::HeapObject)));
+        auto* object = builder_.CreateCall(helper, {context, index});
+        Check(builder_.CreateIsNotNull(object), ExecutionStatus::OutOfMemory);
+        const auto& type = source_.value_types.at(instruction.dst);
+        auto* record = EncodeValue(builder_, object, {.kind = Kind::Class, .name = {}});
+        Store(instruction.dst, DecodeValue(builder_, record, type), type);
+        return {};
+      }
+      auto helper = module_.getOrInsertFunction("vela_native_v10_new_callable", status_type,
+                                                pointer, word, pointer);
       status = builder_.CreateCall(helper, {context, index, result_});
       break;
     }
     case Opcode::NewArray:
     case Opcode::NewDynamicArray: {
-      auto helper = module_.getOrInsertFunction("vela_native_v1_new_array", status_type, pointer,
-                                                word, pointer, builder_.getInt64Ty());
       auto* length = instruction.opcode == Opcode::NewArray
                          ? builder_.getInt64(std::bit_cast<std::uint64_t>(instruction.immediate))
                          : Payload(instruction.lhs);
-      status = builder_.CreateCall(helper, {context, index, result_, length});
-      break;
+      Check(builder_.CreateICmpSGE(length, builder_.getInt64(0)),
+            ExecutionStatus::IndexOutOfBounds);
+      auto helper = module_.getOrInsertFunction("vela_native_v10_new_array", pointer, pointer, word,
+                                                builder_.getInt64Ty());
+      auto& allocation = *module_.getFunction("vela_native_v10_new_array");
+      allocation.addRetAttr(llvm::Attribute::NoAlias);
+      allocation.addRetAttr(llvm::Attribute::getWithDereferenceableOrNullBytes(
+          module_.getContext(), sizeof(runtime::HeapObject)));
+      auto* array = builder_.CreateCall(helper, {context, index, length});
+      Check(builder_.CreateIsNotNull(array), ExecutionStatus::OutOfMemory);
+      const auto& type = source_.value_types.at(instruction.dst);
+      auto* record = EncodeValue(builder_, array, {.kind = Kind::Array, .name = {}});
+      Store(instruction.dst, DecodeValue(builder_, record, type), type);
+      auto* actual = LoadMemory(builder_.getInt32Ty(),
+                                ByteAddress(array, runtime::NativeMemoryLayout::kObjectLength),
+                                MemoryRegion::HeapHeader);
+      builder_.CreateAssumption(
+          builder_.CreateICmpEQ(builder_.CreateZExt(actual, builder_.getInt64Ty()), length));
+      return {};
     }
     case Opcode::NewCollection: {
       auto helper = module_.getOrInsertFunction("vela_native_v1_new_collection", status_type,
@@ -151,6 +268,10 @@ std::expected<void, std::string> FunctionEmitter::EmitReference(
       break;
     }
     case Opcode::CallIndirect: {
+      if (const auto target = CallTarget(instruction_index_)) {
+        EmitCall(instruction, *target);
+        return {};
+      }
       const auto count = instruction.index;
       PackArguments(instruction.lhs, count, ArgumentPrefix::Implicit);
       auto* callable = Pack(Encode(instruction.rhs), static_cast<std::size_t>(count) + 1);

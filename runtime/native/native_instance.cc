@@ -138,8 +138,24 @@ void PrepareFieldCaches(NativeProgramState& state) {
   const auto& image = *state.image;
   state.field_caches.reserve(image.functions.size);
   for (const auto& function : image.functions.values()) {
-    state.field_caches.emplace_back(
-        function.dependencies == nullptr ? 0 : function.dependencies->fields.size);
+    const auto fields = function.dependencies == nullptr ? std::span<const DeclarationId>{}
+                                                         : function.dependencies->fields.values();
+    // 源位置依赖保留每次访问；物理槽缓存按稳定字段身份合并读写和重复访问。
+    const absl::flat_hash_set<DeclarationId> unique(fields.begin(), fields.end());
+    state.field_caches.emplace_back(unique.size());
+  }
+}
+
+void PrepareDirectFieldLayouts(NativeProgramState& state) {
+  const auto classes = state.image->classes.values();
+  state.direct_field_layouts.reserve(classes.size());
+  for (std::size_t index = 0; index < classes.size(); ++index) {
+    const auto& description = classes.subspan(index).front();
+    const auto* layout = state.layouts.classes.at(index);
+    const auto canonical =
+        std::ranges::equal(description.fields.values(), layout->field_declarations(), {},
+                           &NativeFieldDescription::declaration);
+    state.direct_field_layouts.push_back(canonical ? layout : nullptr);
   }
 }
 
@@ -417,6 +433,16 @@ std::expected<void, NativeInstantiationError> NativeInstance::InitializeConstant
           .message = "out of memory creating native program state",
       });
     }
+  } else {
+    std::unique_ptr<NativeGlobalCache[]> caches(
+        new (std::nothrow) NativeGlobalCache[image.global_initializers.size]{});
+    data_->global_caches = caches.release();
+    if (data_->global_caches == nullptr) {
+      return std::unexpected(NativeInstantiationError{
+          .status = NativeInstantiationStatus::OutOfMemory,
+          .message = "out of memory creating reloadable global bindings",
+      });
+    }
   }
   const auto strings = image.strings.values();
   for (std::size_t index = 0; index < strings.size(); ++index) {
@@ -505,6 +531,9 @@ NativeInstance::Instantiate(Isolate& isolate,
     class_options = ReloadableClassOptions(image, description, isolate, *identities, cache);
   }
   state.layouts = InstantiateLayouts(description, isolate, cache, class_options);
+  if (!closed) {
+    PrepareDirectFieldLayouts(state);
+  }
   state.code_identity = cache.code_identity;
   auto members = DescribeMembers(image, state.layouts);
   state.members = MemberTable(state.layouts.types, std::move(members));

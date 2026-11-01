@@ -1,6 +1,7 @@
 vars = {
   "luajit_revision": "a4c064539ea931274d407e1249b4bb575424a0f4",
   "abseil_revision": "76bb24329e8bf5f39704eb10d21b9a80befa7c81",
+  "efsw_revision": "fe4253e421bdcbd3d468fae80eb4191f5222cbd2",
   "benchmark_revision": "192ef10025eb2c4cdd392bc502f0c852196baa48",
   "googletest_revision": "52eb8108c5bdec04579160ae17225d66034bd723",
   "utf8proc_revision": "79cdd5ab40c79afa559f689ffc13b76812dee1ac",
@@ -28,6 +29,7 @@ vars = {
 deps = {
   "third_party/luajit": "https://github.com/LuaJIT/LuaJIT.git@" + Var("luajit_revision"),
   "third_party/abseil-cpp": "https://github.com/abseil/abseil-cpp.git@" + Var("abseil_revision"),
+  "third_party/efsw": "https://github.com/SpartanJ/efsw.git@" + Var("efsw_revision"),
   "third_party/benchmark": "https://github.com/google/benchmark.git@" + Var("benchmark_revision"),
   "third_party/googletest": "https://github.com/google/googletest.git@" + Var("googletest_revision"),
   "third_party/utf8proc": "https://github.com/JuliaStrings/utf8proc.git@" + Var("utf8proc_revision"),

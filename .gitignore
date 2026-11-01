@@ -2,6 +2,7 @@
 /compile_commands.json
 /third_party/build_tools/
 /third_party/abseil-cpp/
+/third_party/efsw/
 /third_party/benchmark/
 /third_party/googletest/
 /third_party/utf8proc/

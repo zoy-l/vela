@@ -171,7 +171,7 @@ void FunctionEmitter::EmitResumeDispatch() {
                                         ByteAddress(saved_values, slot * sizeof(runtime::Value)));
       Store(reg, DecodeValue(builder_, value, type), type);
       if (const auto root_slot = roots_.slots.at(reg)) {
-        WriteHeapValue(RootAddress(*root_slot), reg);
+        WriteHeapValue(RootAddress(*root_slot), reg, MemoryRegion::Roots);
       }
     }
     // 活动引用先进入当前帧根，再清空挂起快照；错误恢复也可能触发 GC。

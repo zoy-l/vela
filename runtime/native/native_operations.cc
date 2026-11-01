@@ -118,34 +118,36 @@ extern "C" std::uint8_t vela_native_v2_initialize_global(NativeExecution* execut
   return status;
 }
 
-extern "C" std::uint8_t vela_native_v1_new_instance(NativeExecution* execution,
-                                                    std::uint32_t index,
-                                                    NativeValue* result) noexcept {
-  const auto* type = execution->instance().layouts().classes.at(index);
+namespace {
+
+const ClassLayout& AllocationLayout(NativeExecution& execution, std::uint32_t index) noexcept {
+  const auto* type = execution.instance().layouts().classes.at(index);
   if (type->storage() == ClassStorage::Reloadable) {
-    auto* dispatch =
-        Heap::NativeProgram(*execution->instance().state().front().AsObject()).dispatch;
+    auto* dispatch = Heap::NativeProgram(*execution.instance().state().front().AsObject()).dispatch;
     type = &dispatch->CurrentLayout(type->nominal_type());
   }
-  if (type->callable() != nullptr) {
-    const auto object = AllocateNativeCallable(*execution, *type);
-    return object ? StoreObject(result, *object) : Status(object.error());
-  }
-  auto& heap = execution->isolate().heap();
-  auto* object = heap.AllocateInstance(*type);
-  return StoreObject(result, object);
+  return *type;
 }
 
-extern "C" std::uint8_t vela_native_v1_new_array(NativeExecution* execution,
+}  // namespace
+
+extern "C" HeapObject* vela_native_v10_new_object(NativeExecution* execution,
+                                                  std::uint32_t index) noexcept {
+  return execution->isolate().heap().AllocateInstance(AllocationLayout(*execution, index));
+}
+
+extern "C" std::uint8_t vela_native_v10_new_callable(NativeExecution* execution,
+                                                     std::uint32_t index,
+                                                     NativeValue* result) noexcept {
+  const auto object = AllocateNativeCallable(*execution, AllocationLayout(*execution, index));
+  return object ? StoreObject(result, *object) : Status(object.error());
+}
+
+extern "C" HeapObject* vela_native_v10_new_array(NativeExecution* execution,
                                                  std::uint32_t index,
-                                                 NativeValue* result,
-                                                 std::int64_t length) noexcept {
-  if (length < 0) {
-    return Status(ExecutionStatus::IndexOutOfBounds);
-  }
+                                                 std::uint64_t length) noexcept {
   const auto* type = execution->instance().layouts().arrays.at(index);
-  return StoreObject(
-      result, execution->isolate().heap().AllocateArray(*type, static_cast<std::size_t>(length)));
+  return execution->isolate().heap().AllocateArray(*type, static_cast<std::size_t>(length));
 }
 
 extern "C" std::uint8_t vela_native_v1_new_collection(NativeExecution* execution,
@@ -164,11 +166,28 @@ extern "C" void vela_native_v1_write_barrier(NativeExecution* execution,
   }
 }
 
-extern "C" std::uint8_t vela_native_v1_array_grow(NativeExecution* execution,
-                                                  HeapObject* array,
-                                                  const NativeValue* value) noexcept {
-  const auto grown = execution->isolate().heap().GrowArray(*array, DecodeNativeValue(*value));
-  return Status(grown ? ExecutionStatus::Returned : ExecutionStatus::OutOfMemory);
+extern "C" std::uint64_t vela_native_v9_scalar_text_length(const NativeValue* value) {
+  return ScalarTextLength(DecodeNativeValue(*value));
+}
+
+extern "C" StringObject* vela_native_v10_scalar_to_string(NativeExecution* execution,
+                                                          const NativeValue* value) noexcept {
+  return execution->isolate().heap().AllocateScalarString(DecodeNativeValue(*value));
+}
+
+extern "C" void vela_native_v11_map_get(const HeapObject* map,
+                                        const NativeValue* key,
+                                        NativeValue* result) noexcept {
+  *result = EncodeNativeValue(Heap::LoadMapValue(*map, DecodeNativeValue(*key)));
+}
+
+extern "C" std::uint8_t vela_native_v11_map_set(NativeExecution* execution,
+                                                HeapObject* map,
+                                                const NativeValue* key,
+                                                const NativeValue* value) noexcept {
+  const auto inserted = execution->isolate().heap().StoreMapValue(*map, DecodeNativeValue(*key),
+                                                                  DecodeNativeValue(*value));
+  return Status(inserted ? ExecutionStatus::Returned : inserted.error());
 }
 
 extern "C" std::uint8_t vela_native_v1_builtin(NativeExecution* execution,

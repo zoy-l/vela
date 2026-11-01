@@ -46,7 +46,8 @@ std::expected<void, NativeSafepointError> NativeSafepointEndpoint::Post(
   return {};
 }
 
-NativeControl::NativeControl() : queue_(std::make_shared<NativeSafepointQueue>()) {}
+NativeControl::NativeControl()
+    : queue_(std::make_shared<NativeSafepointQueue>()), state_{.requests = &queue_->requests} {}
 
 NativeControl::~NativeControl() {
   // 关闭后的端点可独立存活；携带所有权的动作仍在所属线程释放。
@@ -64,10 +65,6 @@ NativeSafepointEndpoint NativeControl::endpoint() const {
   return NativeSafepointEndpoint(queue_);
 }
 
-const std::atomic<std::uint8_t>& NativeControl::safepoint_requests() const noexcept {
-  return queue_->requests;
-}
-
 void NativeControl::SetDebugger(NativeDebugger* debugger) noexcept {
   debugger_ = debugger;
   if (debugger != nullptr) {
@@ -82,16 +79,8 @@ void NativeControl::RequestStop() const noexcept {
   endpoint().RequestStop();
 }
 
-void NativeControl::EnterHost() noexcept {
-  ++host_borrows_;
-}
-
-void NativeControl::ExitHost() noexcept {
-  --host_borrows_;
-}
-
 bool NativeControl::HasHostBorrow() const noexcept {
-  return host_borrows_ != 0;
+  return state_.host_borrows != 0;
 }
 
 void NativeControl::EnterInitialization() noexcept {
@@ -191,14 +180,6 @@ ExecutionStatus NativeControl::Poll() const noexcept {
 extern "C" std::uint8_t vela_native_v3_safepoint(NativeExecution* execution) noexcept {
   return static_cast<std::uint8_t>(
       execution->isolate().native_control().ProcessSafepoint(execution));
-}
-
-extern "C" void vela_native_v3_host_enter(NativeExecution* execution) noexcept {
-  execution->isolate().native_control().EnterHost();
-}
-
-extern "C" void vela_native_v3_host_exit(NativeExecution* execution) noexcept {
-  execution->isolate().native_control().ExitHost();
 }
 
 extern "C" void vela_native_v3_initialization_enter(NativeExecution* execution) noexcept {

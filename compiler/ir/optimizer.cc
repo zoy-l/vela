@@ -11,7 +11,10 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "base/builtin.h"
 #include "base/integer_arithmetic.h"
+#include "compiler/frontend/typing/type_checker.h"
+#include "compiler/frontend/typing/type_names.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 
@@ -82,7 +85,7 @@ void PropagateCopies(Function& function,
   }
 }
 
-void ThreadJumps(Function& function) {
+void ThreadJumps(Function& function, std::vector<std::size_t>* origins) {
   const auto count = function.instructions.size();
   std::vector<std::uint8_t> states(count, 0);
   std::vector<std::uint32_t> resolved(count);
@@ -122,7 +125,7 @@ void ThreadJumps(Function& function) {
       keep.at(index) = 0;
     }
   }
-  CompactInstructions(function, keep);
+  CompactInstructions(function, keep, origins);
 }
 
 std::optional<Constant> EvaluateIntegers(Opcode opcode, std::int64_t left, std::int64_t right) {
@@ -283,7 +286,7 @@ void FoldConstants(Function& function,
   }
 }
 
-FlowGraph RemoveUnreachable(Function& function) {
+FlowGraph RemoveUnreachable(Function& function, std::vector<std::size_t>* origins) {
   auto graph = BuildFlowGraph(function);
   if (graph.blocks.empty()) {
     return graph;
@@ -308,15 +311,16 @@ FlowGraph RemoveUnreachable(Function& function) {
   for (std::size_t index = 0; index < keep.size(); ++index) {
     keep.at(index) = reached.at(graph.instruction_blocks.at(index));
   }
-  CompactInstructions(function, keep);
+  CompactInstructions(function, keep, origins);
   return BuildFlowGraph(function);
 }
 
 void RemoveUnusedValues(Function& function,
                         std::span<const Function> functions,
-                        const FlowGraph& graph) {
+                        const FlowGraph& graph,
+                        std::vector<std::size_t>* origins) {
   const auto liveness = AnalyzeNecessaryLiveness(function, graph, functions);
-  CompactInstructions(function, liveness.keep);
+  CompactInstructions(function, liveness.keep, origins);
 }
 
 void RemoveUnusedHandlers(Function& function) {
@@ -341,20 +345,84 @@ void RemoveUnusedHandlers(Function& function) {
   function.handlers = std::move(handlers);
 }
 
+bool CanMeasureScalarText(const frontend::TypeDescriptor& input) {
+  using Kind = frontend::TypeDescriptor::Kind;
+  return !input.nullable &&
+         (input.kind == Kind::Int || input.kind == Kind::Double || input.kind == Kind::Bool);
+}
+
+void FuseScalarTextLengths(Function& function, std::span<const Function> functions) {
+  std::vector<std::size_t> definitions(function.register_count);
+  std::vector<std::size_t> uses(function.register_count);
+  std::vector<std::size_t> consumers(function.register_count);
+  for (std::size_t reg = 0; reg < function.parameter_count; ++reg) {
+    definitions.at(reg) = 1;
+  }
+  auto& code = function.instructions;
+  for (std::size_t index = 0; index < code.size(); ++index) {
+    const auto& instruction = code.at(index);
+    const auto access = AnalyzeRegisters(instruction, functions);
+    if (access.defines_value) {
+      ++definitions.at(instruction.dst);
+    }
+    ForEachUse(instruction, access, [&](RegisterId reg) {
+      ++uses.at(reg);
+      consumers.at(reg) = index;
+    });
+  }
+  using Kind = frontend::TypeDescriptor::Kind;
+  for (auto& producer : code) {
+    if (producer.opcode != Opcode::BuiltinCall ||
+        producer.index != static_cast<std::uint32_t>(Builtin::ScalarToString)) {
+      continue;
+    }
+    const auto& input = function.value_types.at(producer.lhs);
+    if (!CanMeasureScalarText(input)) {
+      continue;
+    }
+    std::vector<RegisterId> path;
+    auto reg = producer.dst;
+    while (definitions.at(reg) == 1 && uses.at(reg) == 1) {
+      path.push_back(reg);
+      auto& consumer = code.at(consumers.at(reg));
+      if (consumer.opcode == Opcode::Move) {
+        reg = consumer.dst;
+        continue;
+      }
+      if (consumer.opcode == Opcode::BuiltinCall &&
+          (consumer.index == static_cast<std::uint32_t>(Builtin::StringLength) ||
+           consumer.index == static_cast<std::uint32_t>(Builtin::StringByteLength))) {
+        // 标量文本只含 ASCII；唯一消费是长度时，不产生可逃逸的字符串身份。
+        // 在格式化的原位置计算长度，并保留 Move 链，避免跨越输入改写或控制流。
+        producer.index = static_cast<std::uint32_t>(Builtin::ScalarTextLength);
+        consumer.opcode = Opcode::Move;
+        consumer.index = 0;
+        for (const auto value : path) {
+          function.value_types.at(value) = {.kind = Kind::Int, .name = frontend::kIntTypeName};
+        }
+      }
+      break;
+    }
+  }
+}
+
 }  // namespace
 
-void Optimize(Function& function, std::span<const Function> functions) {
+void Optimize(Function& function,
+              std::span<const Function> functions,
+              std::vector<std::size_t>* origins) {
   {
     // 局部传播只依赖原始基本块边界；两个 pass 完成后统一压缩，保持指令编号稳定。
     const auto graph = BuildFlowGraph(function);
     std::vector<std::uint8_t> keep(function.instructions.size(), 1);
     PropagateCopies(function, functions, graph, keep);
     FoldConstants(function, functions, graph, keep);
-    CompactInstructions(function, keep);
+    CompactInstructions(function, keep, origins);
   }
-  ThreadJumps(function);
-  const auto graph = RemoveUnreachable(function);
-  RemoveUnusedValues(function, functions, graph);
+  ThreadJumps(function, origins);
+  const auto graph = RemoveUnreachable(function, origins);
+  RemoveUnusedValues(function, functions, graph, origins);
+  FuseScalarTextLengths(function, functions);
   RemoveUnusedHandlers(function);
 }
 

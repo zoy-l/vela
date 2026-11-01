@@ -213,11 +213,11 @@ TEST(NativeDispatchTest, BusyPublicationKeepsItsCandidateUntilHostAndInitializat
     EXPECT_EQ(busy.error().status, NativePublicationStatus::Busy);
     EXPECT_EQ(dispatch.revision(), 0U);
   }
-  isolate.native_control().EnterHost();
+  ++isolate.native_control().state().host_borrows;
   const auto busy = dispatch.Publish(std::move(*prepared));
   ASSERT_FALSE(busy);
   EXPECT_EQ(busy.error().status, NativePublicationStatus::Busy);
-  isolate.native_control().ExitHost();
+  --isolate.native_control().state().host_borrows;
   ASSERT_TRUE(dispatch.Publish(std::move(*prepared)));
   EXPECT_EQ(dispatch.revision(), 1U);
 }

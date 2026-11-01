@@ -117,6 +117,47 @@ TEST_P(JitCallableTest, OldFactoriesCaptureCurrentNamedVersionsAndTheirOwnLambda
   EXPECT_EQ(compiler_->resource_counts().batches, 1U);
 }
 
+TEST_P(JitCallableTest, LocalDirectCallsPreserveCapturesReassignmentAndVersionSelection) {
+  const std::string source = R"(
+func step(value: int): int { return value + 1; }
+export func named(): int { const operation = step; return operation(40); }
+export func captured(): int {
+  const offset = 2;
+  const operation = (value: int): int => value + offset;
+  return operation(40);
+}
+export func reassigned(): int {
+  let operation: (int) => int = step;
+  operation = (value: int): int => value + 2;
+  return operation(40);
+}
+)";
+  const auto initial = Publish(source);
+  ASSERT_TRUE(initial) << initial.error();
+  auto& dispatch = isolate_.native_dispatch();
+  const auto named = dispatch.FindEntry("main.vela", "named");
+  ASSERT_TRUE(named);
+  ASSERT_TRUE(test::ReturnsInteger(*named, 41));
+  const auto old_named = named->Capture();
+  ASSERT_TRUE(old_named);
+  for (const auto* const name : {"captured", "reassigned"}) {
+    const auto entry = dispatch.FindEntry("main.vela", name);
+    ASSERT_TRUE(entry);
+    ASSERT_TRUE(test::ReturnsInteger(*entry, 42));
+  }
+  auto changed = source;
+  const auto previous = changed.find("return value + 1;");
+  ASSERT_NE(previous, std::string::npos);
+  changed.replace(previous, std::string_view("return value + 1;").size(), "return value + 2;");
+  const auto updated = Publish(std::move(changed));
+  ASSERT_TRUE(updated) << updated.error();
+  isolate_.heap().Collect();
+  ASSERT_TRUE(test::ReturnsInteger(*named, 42));
+  const auto result = old_named->Invoke({});
+  ASSERT_TRUE(result);
+  EXPECT_EQ(result->AsInteger(), 42);
+}
+
 TEST_P(JitCallableTest, DynamicArrayCallbacksUseTheCapturedStateAndFunctionIndexTogether) {
   const std::string declarations =
       "export func factory(): (int) => int { return increment; } "

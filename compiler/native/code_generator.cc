@@ -1,6 +1,7 @@
 #include "compiler/native/code_generator.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -15,8 +16,11 @@
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/Attributes.h>
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
@@ -25,23 +29,29 @@
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Passes/OptimizationLevel.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/Support/Casting.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
+#include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/Scalar/LoopPassManager.h>
 #include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
+#include <llvm/Transforms/Utils/PromoteMemToReg.h>
 
+#include "base/builtin.h"
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/analysis.h"
 #include "compiler/ir/ir.h"
 #include "compiler/native/borrow_analysis.h"
+#include "compiler/native/call_targets.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/integer_loop_optimizer.h"
+#include "compiler/native/native_image_data.h"
 #include "compiler/native/native_image_emitter.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
@@ -52,7 +62,7 @@ namespace {
 
 bool CanInlineSmallFunction(const ir::Function& function) {
   // 以源操作限制展开规模；安全点、溢出失败和恢复分支不应让几个标量操作失去内联。
-  constexpr std::size_t kMaximumInlineInstructions = 16;
+  constexpr std::size_t kMaximumInlineInstructions = 64;
   if (function.is_async || !function.handlers.empty() ||
       function.parameter_count > kMaximumInlineInstructions ||
       function.instructions.size() > kMaximumInlineInstructions) {
@@ -61,6 +71,84 @@ bool CanInlineSmallFunction(const ir::Function& function) {
   return std::ranges::all_of(function.instructions, [](const ir::Instruction& instruction) {
     return instruction.opcode == Opcode::Return ||
            !ir::AnalyzeEffects(instruction).MayCollectOnSuccess();
+  });
+}
+
+bool CanUseBoundedLeaf(const ir::Function& function) {
+  if (!function.native_symbol.empty() || !CanInlineSmallFunction(function) ||
+      !IsScalar(function.return_type)) {
+    return false;
+  }
+  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
+    const auto& instruction = function.instructions.at(index);
+    if (instruction.opcode == Opcode::Return) {
+      continue;
+    }
+    const auto effects = ir::AnalyzeEffects(instruction);
+    const auto access = ir::AnalyzeRegisters(instruction, {});
+    bool scalar = !access.defines_value || IsScalar(function.value_types.at(instruction.dst));
+    ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) {
+      scalar = scalar && IsScalar(function.value_types.at(reg));
+    });
+    if (!scalar || effects.reads_state || effects.writes_state ||
+        ((instruction.opcode == Opcode::Jump || instruction.opcode == Opcode::JumpIfFalse ||
+          instruction.opcode == Opcode::JumpIfNull) &&
+         instruction.index <= index)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool IsReadonlyKernelInstruction(const ir::Instruction& instruction, const ir::Function& function) {
+  if (instruction.opcode == Opcode::Return) {
+    return true;
+  }
+  const auto effects = ir::AnalyzeEffects(instruction);
+  const auto array_length = instruction.opcode == Opcode::BuiltinCall &&
+                            instruction.index == static_cast<std::uint32_t>(Builtin::ArrayLength);
+  if (effects.MayCollectOnSuccess() || effects.writes_state ||
+      (effects.reads_state && instruction.opcode != Opcode::GetIndex && !array_length)) {
+    return false;
+  }
+  const auto access = ir::AnalyzeRegisters(instruction, {});
+  bool valid = true;
+  ir::ForEachUse(instruction, access, [&](ir::RegisterId reg) {
+    const auto& type = function.value_types.at(reg);
+    valid = valid && (IsScalar(type) || instruction.opcode == Opcode::Move ||
+                      (reg == instruction.lhs && type.kind == Kind::Array &&
+                       (instruction.opcode == Opcode::GetIndex || array_length)));
+  });
+  return valid;
+}
+
+bool CanUseGuardedLeaf(const ir::Function& function) {
+  constexpr std::size_t kMaximumKernelInstructions = 128;
+  if (!function.native_symbol.empty() || function.is_async || !function.handlers.empty() ||
+      !IsScalar(function.return_type) || function.parameter_count > kMaximumKernelInstructions ||
+      function.instructions.size() > kMaximumKernelInstructions) {
+    return false;
+  }
+  return std::ranges::all_of(function.instructions, [&](const auto& instruction) {
+    return IsReadonlyKernelInstruction(instruction, function);
+  });
+}
+
+bool HasVersionAssumptions(const ir::Function& function, const ir::Program& program) {
+  return std::ranges::any_of(function.instructions, [&](const auto& instruction) {
+    switch (instruction.opcode) {
+      case Opcode::NewInstance:
+      case Opcode::CallIndirect:
+      case Opcode::CallInterface:
+        return true;
+      case Opcode::GetField:
+      case Opcode::SetField:
+        return instruction.field_declaration.has_value();
+      case Opcode::Call:
+        return program.functions.at(instruction.index).native_symbol.empty();
+      default:
+        return false;
+    }
   });
 }
 
@@ -76,8 +164,9 @@ std::expected<std::unique_ptr<llvm::TargetMachine>, std::string> CreateTarget(
     return std::unexpected(std::move(error));
   }
   llvm::TargetOptions options;
+  const auto cpu = TargetCpu(placement);
   std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
-      llvm::Triple(triple), "generic", "", options, llvm::Reloc::PIC_, std::nullopt,
+      llvm::Triple(triple), cpu.name, cpu.features, options, llvm::Reloc::PIC_, std::nullopt,
       llvm::CodeGenOptLevel::Default, placement == NativeCodePlacement::Dynamic));
   if (machine == nullptr) {
     return std::unexpected("unable to create native target machine");
@@ -96,6 +185,11 @@ void Optimize(llvm::Module& module, llvm::TargetMachine& machine) {
   passes.registerLateLoopOptimizationsEPCallback(
       [](llvm::LoopPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
         pipeline.addPass(llvm::SimpleLoopUnswitchPass(true));
+      });
+  passes.registerScalarOptimizerLateEPCallback(
+      [](llvm::FunctionPassManager& pipeline, llvm::OptimizationLevel /*unused*/) {
+        // 内联和范围化简后才能识别含小型纯函数调用的有界循环。
+        AddIntegerLoopPasses(pipeline);
       });
   passes.registerModuleAnalyses(modules);
   passes.registerCGSCCAnalyses(calls);
@@ -201,12 +295,78 @@ struct FunctionDeclarations final {
   std::vector<std::optional<ir::ClassId>> borrowable;
 };
 
+void SetTypedArguments(std::span<llvm::Function* const> entries, const ir::Function& source) {
+  for (auto* entry : entries) {
+    if (entry == nullptr) {
+      continue;
+    }
+    for (std::size_t parameter = 0; parameter < source.parameter_count; ++parameter) {
+      const auto& type = source.value_types.at(parameter);
+      if (IsReferenceKind(type.kind) && !type.nullable) {
+        // 非空契约已在装箱入口和受查转换处验证；内部调用保留此事实供内联与 GVN 使用。
+        entry->addParamAttr(static_cast<unsigned>(parameter + 1), llvm::Attribute::NonNull);
+      }
+    }
+  }
+}
+
+void AddLeafEntry(llvm::Module& module,
+                  const std::string& prefix,
+                  const ir::Function& source,
+                  GeneratedFunction& function) {
+  const auto bounded = CanUseBoundedLeaf(source);
+  if (!bounded && !CanUseGuardedLeaf(source)) {
+    return;
+  }
+  // 直接调用已确认当前版本；守卫限制不轮询的工作量，失败交还调用者建立逻辑帧。
+  auto* type = function.body->getFunctionType();
+  function.leaf =
+      llvm::Function::Create(type, llvm::GlobalValue::InternalLinkage, prefix + "_leaf", module);
+  function.leaf->addFnAttr(llvm::Attribute::AlwaysInline);
+  if (!bounded) {
+    auto* guard_type =
+        llvm::FunctionType::get(llvm::Type::getInt1Ty(module.getContext()), type->params(), false);
+    function.leaf_guard = llvm::Function::Create(guard_type, llvm::GlobalValue::InternalLinkage,
+                                                 prefix + "_leaf_guard", module);
+    function.leaf_guard->addFnAttr(llvm::Attribute::AlwaysInline);
+  }
+}
+
+std::vector<std::uint8_t> NeededFunctions(const ir::Program& program,
+                                          NativeCodeTier tier,
+                                          std::span<const std::uint8_t> reused) {
+  const auto count = program.functions.size();
+  std::vector<std::uint8_t> needed(count, reused.empty() ? 1 : 0);
+  for (std::size_t index = 0; index < reused.size(); ++index) {
+    if (reused.subspan(index).front() != 0) {
+      continue;
+    }
+    needed.at(index) = 1;
+    const auto& function = program.functions.at(index);
+    for (const auto& instruction : function.instructions) {
+      if (instruction.opcode == Opcode::Call) {
+        needed.at(instruction.index) = 1;
+      }
+    }
+    if (tier == NativeCodeTier::Optimized) {
+      for (const auto& target : FindDirectCalls(function, program)) {
+        if (target) {
+          needed.at(target->function) = 1;
+        }
+      }
+    }
+  }
+  return needed;
+}
+
 std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
     llvm::Module& module,
     const ir::Program& program,
     const std::string& module_name,
     NativeCodeTier tier,
-    std::span<const std::optional<BorrowedFunction>> borrows) {
+    NativeDebugging debugging,
+    std::span<const std::optional<BorrowedFunction>> borrows,
+    std::span<const std::uint8_t> needed) {
   FunctionDeclarations declarations;
   auto& generated = declarations.baseline;
   auto& optimized = declarations.optimized;
@@ -217,6 +377,11 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
   borrowable.resize(count);
   auto& context = module.getContext();
   for (std::size_t index = 0; index < count; ++index) {
+    if (needed.subspan(index).front() == 0) {
+      generated.emplace_back();
+      optimized.emplace_back();
+      continue;
+    }
     const auto& function = program.functions.at(index);
     const auto body_type = BodySignature(module, function);
     if (!body_type) {
@@ -236,9 +401,20 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
     GeneratedFunction baseline{.body = body, .entry = entry, .resume = resume};
     auto current = baseline;
     if (tier == NativeCodeTier::Optimized && function.native_symbol.empty()) {
-      current = AddRecoveryEntries(module, module_name + '_' + std::to_string(index), baseline);
+      // 直接调用、虚拟对象和字段布局假设失败后，从当前规范指令进入基线恢复。
+      if (HasVersionAssumptions(function, program)) {
+        current = AddRecoveryEntries(module, module_name + '_' + std::to_string(index), baseline);
+      }
     }
-    if (CanInlineSmallFunction(function)) {
+    if (function.native_symbol.empty() && debugging == NativeDebugging::Safepoints &&
+        (tier == NativeCodeTier::Optimized || program.native_mode == NativeProgramMode::Closed)) {
+      AddLeafEntry(module, module_name + '_' + std::to_string(index), function, current);
+      if (program.native_mode == NativeProgramMode::Closed) {
+        baseline.leaf = current.leaf;
+        baseline.leaf_guard = current.leaf_guard;
+      }
+    }
+    if (CanInlineSmallFunction(function) || CanUseGuardedLeaf(function)) {
       body->addFnAttr(llvm::Attribute::AlwaysInline);
       current.body->addFnAttr(llvm::Attribute::AlwaysInline);
     }
@@ -249,10 +425,78 @@ std::expected<FunctionDeclarations, frontend::Diagnostics> DeclareFunctions(
       borrowable.at(index) = borrow->type;
       current.borrowed = baseline.borrowed;
     }
+    const std::array typed_entries{body, current.body, current.leaf, baseline.borrowed};
+    SetTypedArguments(typed_entries, function);
     generated.push_back(baseline);
     optimized.push_back(current);
   }
   return declarations;
+}
+
+std::vector<std::string> FunctionSymbols(const GeneratedFunction& baseline,
+                                         const GeneratedFunction& optimized) {
+  std::vector<std::string> symbols;
+  const std::array functions{
+      baseline.body,        baseline.entry,           baseline.resume,
+      baseline.recovery,    baseline.resume_recovery, baseline.borrowed,
+      optimized.body,       optimized.resume,         optimized.leaf,
+      optimized.leaf_guard,
+  };
+  for (const auto* function : functions) {
+    if (function == nullptr) {
+      continue;
+    }
+    const auto name = function->getName().str();
+    if (std::ranges::find(symbols, name) == symbols.end()) {
+      symbols.push_back(name);
+    }
+  }
+  return symbols;
+}
+
+std::expected<NativeFunctionMetrics, std::string> EmitDeclaredFunction(
+    llvm::Module& module,
+    const ir::Program& program,
+    llvm::Constant* image,
+    std::size_t index,
+    const FunctionDeclarations& declarations,
+    NativeDebugging debugging,
+    NativeCodeTier tier,
+    EscapeOptimization escape,
+    std::span<const std::optional<BorrowedFunction>> borrows) {
+  const auto& generated = declarations.baseline;
+  const auto& optimized = declarations.optimized;
+  const auto& function = program.functions.at(index);
+  const auto& target = optimized.at(index);
+  const auto emission_entries = tier == NativeCodeTier::Optimized && target.baseline_body == nullptr
+                                    ? std::span<const GeneratedFunction>(optimized)
+                                    : std::span<const GeneratedFunction>(generated);
+  const auto emission_tier = target.baseline_body == nullptr ? tier : NativeCodeTier::Baseline;
+  auto emitted = EmitFunction(module, program, image, index, emission_entries, debugging,
+                              emission_tier, escape, declarations.borrowable);
+  if (!emitted) {
+    return emitted;
+  }
+  if (const auto& borrow = borrows.subspan(index).front()) {
+    const auto borrowed =
+        EmitBorrowedFunction(module, program, image, index, borrow->plan, generated, debugging);
+    if (!borrowed) {
+      return std::unexpected(borrowed.error());
+    }
+    emitted->borrowed_frame_bytes = borrowed->frame_bytes;
+    emitted->borrowed_shadow_slots = borrowed->shadow_slots;
+    emitted->borrowed_root_stores = borrowed->root_stores;
+  }
+  if (target.baseline_body != nullptr) {
+    auto optimized_metrics = EmitFunction(module, program, image, index, optimized, debugging,
+                                          NativeCodeTier::Optimized, escape);
+    if (!optimized_metrics) {
+      return optimized_metrics;
+    }
+    emitted = std::move(optimized_metrics);
+  }
+  EmitWrapper(module, function, static_cast<std::uint32_t>(index), target, image);
+  return emitted;
 }
 
 }  // namespace
@@ -266,6 +510,25 @@ void InitializeTarget() {
   static_cast<void>(initialized);
 }
 
+CpuProfile TargetCpu(NativeCodePlacement placement) {
+  if (placement == NativeCodePlacement::Linked) {
+    return {.name = "generic", .features = {}};
+  }
+  std::vector<std::string> features;
+  for (const auto& feature : llvm::sys::getHostCPUFeatures()) {
+    features.push_back(std::string(feature.getValue() ? "+" : "-") + feature.getKey().str());
+  }
+  std::ranges::sort(features);
+  std::string joined;
+  for (const auto& feature : features) {
+    if (!joined.empty()) {
+      joined += ',';
+    }
+    joined += feature;
+  }
+  return {.name = llvm::sys::getHostCPUName().str(), .features = std::move(joined)};
+}
+
 NativeModule::NativeModule() = default;
 NativeModule::~NativeModule() = default;
 NativeModule::NativeModule(NativeModule&&) noexcept = default;
@@ -276,7 +539,8 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
                                                             NativeDebugging debugging,
                                                             NativeCodeTier tier,
                                                             EscapeOptimization escape,
-                                                            NativeCodePlacement placement) {
+                                                            NativeCodePlacement placement,
+                                                            std::span<const std::uint8_t> reused) {
   if (debugging == NativeDebugging::Instructions) {
     // 逐指令检查需要真实对象与规范 IR 值，不让标量替换隐藏可观察的对象字段。
     escape = EscapeOptimization::Disabled;
@@ -299,7 +563,8 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   const auto borrows = escape == EscapeOptimization::Enabled
                            ? PlanBorrows(program)
                            : std::vector<std::optional<BorrowedFunction>>(program.functions.size());
-  const auto declarations = DeclareFunctions(module, program, module_name, tier, borrows);
+  const auto declarations = DeclareFunctions(module, program, module_name, tier, debugging, borrows,
+                                             NeededFunctions(program, tier, reused));
   if (!declarations) {
     return std::unexpected(declarations.error());
   }
@@ -310,42 +575,49 @@ std::expected<NativeModule, frontend::Diagnostics> Generate(const ir::Program& p
   for (const auto& function : generated) {
     entries.push_back(function.entry);
   }
-  const auto image = EmitNativeImage(module, program, entries, exports, module_name);
-  if (!image) {
-    return diagnostic(image.error());
+  auto description = DescribeNativeImage(program, exports);
+  llvm::Constant* image =
+      llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(*output.context));
+  if (placement == NativeCodePlacement::Dynamic &&
+      program.native_mode == NativeProgramMode::Reloadable) {
+    output.image_data = std::move(description);
+    output.entry_functions = entries;
+    for (auto* entry : entries) {
+      if (entry != nullptr) {
+        entry->setLinkage(llvm::GlobalValue::ExternalLinkage);
+      }
+    }
+  } else {
+    const auto emitted = EmitNativeImage(module, *description->image(), entries, module_name);
+    if (!emitted) {
+      return diagnostic(emitted.error());
+    }
+    output.image_symbol = emitted->symbol;
+    image = emitted->data;
   }
   std::vector<NativeFunctionMetrics> metrics;
   for (std::size_t index = 0; index < program.functions.size(); ++index) {
+    output.function_symbols.push_back(FunctionSymbols(generated.at(index), optimized.at(index)));
+    if (!reused.empty() && reused.subspan(index).front() != 0) {
+      metrics.emplace_back();
+      continue;
+    }
     const auto& function = program.functions.at(index);
-    auto emitted = EmitFunction(module, program, image->data, index, generated, debugging,
-                                NativeCodeTier::Baseline, escape, declarations->borrowable);
+    auto emitted = EmitDeclaredFunction(module, program, image, index, *declarations, debugging,
+                                        tier, escape, borrows);
     if (!emitted) {
       return diagnostic(emitted.error(), &function);
     }
-    if (const auto& borrow = borrows.at(index)) {
-      const auto borrowed = EmitBorrowedFunction(module, program, image->data, index, borrow->plan,
-                                                 generated, debugging);
-      if (!borrowed) {
-        return diagnostic(borrowed.error(), &function);
-      }
-      emitted->borrowed_frame_bytes = borrowed->frame_bytes;
-      emitted->borrowed_shadow_slots = borrowed->shadow_slots;
-      emitted->borrowed_root_stores = borrowed->root_stores;
-    }
-    if (optimized.at(index).baseline_body != nullptr) {
-      auto optimized_metrics = EmitFunction(module, program, image->data, index, optimized,
-                                            debugging, NativeCodeTier::Optimized, escape);
-      if (!optimized_metrics) {
-        return diagnostic(optimized_metrics.error(), &function);
-      }
-      emitted = std::move(optimized_metrics);
-    }
     metrics.push_back(*emitted);
-    EmitWrapper(module, function, static_cast<std::uint32_t>(index), optimized.at(index),
-                image->data);
   }
-  output.image_symbol = image->symbol;
   output.function_metrics = std::move(metrics);
+  for (auto& function : module) {
+    if (!function.isDeclaration()) {
+      // 标准 LLVM 目标属性同时参与机器码生成和对象缓存身份，避免跨 CPU 误用产物。
+      function.addFnAttr("target-cpu", output.machine->getTargetCPU());
+      function.addFnAttr("target-features", output.machine->getTargetFeatureString());
+    }
+  }
   return output;
 }
 
@@ -359,6 +631,23 @@ std::expected<void, std::string> Finalize(NativeModule& generated,
   }
   if (optimization == NativeOptimization::Release) {
     Optimize(module, *generated.machine);
+  } else {
+    // 局部 SSA 是帧存储契约的一部分。即使关闭优化，也不能把大量从不借用地址的
+    // 临时值全部留在物理栈上，绕过大帧的有界外部存储。
+    for (auto& function : module) {
+      if (function.isDeclaration()) {
+        continue;
+      }
+      llvm::SmallVector<llvm::AllocaInst*, 0> locals;
+      for (auto& instruction : function.getEntryBlock()) {
+        auto* local = llvm::dyn_cast<llvm::AllocaInst>(&instruction);
+        if (local != nullptr && llvm::isAllocaPromotable(local)) {
+          locals.push_back(local);
+        }
+      }
+      llvm::DominatorTree dominators(function);
+      llvm::PromoteMemToReg(locals, dominators);
+    }
   }
   if (llvm::verifyModule(module, &verifier)) {
     return std::unexpected(verification);

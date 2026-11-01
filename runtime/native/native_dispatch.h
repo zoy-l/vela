@@ -163,8 +163,10 @@ class NativeDispatch final {
   [[nodiscard]] std::expected<NativeResolvedDeclaration, ExecutionStatus> ResolveInterface(
       const NominalType& receiver,
       DeclarationId selector) const noexcept;
-  [[nodiscard]] std::expected<Value, ExecutionStatus> LoadGlobal(NativeExecution& execution,
-                                                                 DeclarationId declaration);
+  [[nodiscard]] std::expected<Value, ExecutionStatus> LoadGlobal(
+      NativeExecution& execution,
+      DeclarationId declaration,
+      NativeGlobalCache* cache = nullptr);
   [[nodiscard]] std::expected<void, ExecutionStatus> StoreGlobal(DeclarationId declaration,
                                                                  Value value) noexcept;
   [[nodiscard]] const ClassLayout& CurrentLayout(const NominalType& type) const noexcept;
@@ -209,17 +211,20 @@ class NativeDispatch final {
                                                     Value value) noexcept;
   Isolate* isolate_;
   bool closed_ = false;
+  std::uint64_t global_epoch_ = 0;
   std::unique_ptr<NativeDispatchSnapshot> current_;
   NativeExecution* executions_ = nullptr;
   std::uint64_t deoptimized_frames_ = 0;
 };
 
-extern "C" std::uint8_t vela_native_v3_load_global(NativeExecution* execution,
-                                                   std::uint64_t declaration,
-                                                   NativeValue* result);
+extern "C" std::uint8_t vela_native_v10_load_global(NativeExecution* execution,
+                                                    std::uint32_t index,
+                                                    NativeValue* result);
 // 缓存数组由当前函数版本持有，借用期覆盖本次调用及恢复；提交只更新缓存内容。
-extern "C" NativeFieldCache* vela_native_v9_field_caches(NativeExecution* execution,
-                                                         std::uint32_t function) noexcept;
+extern "C" NativeFieldCache* vela_native_v10_field_caches(NativeExecution* execution,
+                                                          std::uint32_t function) noexcept;
+extern "C" const ClassLayout* const* vela_native_v10_direct_field_layouts(
+    NativeExecution* execution) noexcept;
 extern "C" std::uint8_t vela_native_v3_store_global(NativeExecution* execution,
                                                     std::uint64_t declaration,
                                                     const NativeValue* value) noexcept;

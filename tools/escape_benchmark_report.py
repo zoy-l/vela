@@ -31,7 +31,7 @@ def aggregate_escape_results(report: dict, expected_cases: list[str], repetition
                     raise ValueError(f"{name}: checksum mismatch")
         else:
             for entry in entries:
-                if (entry["released_code_batches"] != 1 or entry["released_saved_state_bytes"] != 0 or
+                if (entry["released_code_images"] != 1 or entry["released_saved_state_bytes"] != 0 or
                         entry["released_suspended_frames"] != 0 or
                         entry["materialized_objects"] != (1 if reload[1] == "optimized" else 0)):
                     raise ValueError(f"{name}: incomplete materialization or code retirement")
@@ -87,5 +87,6 @@ def escape_comparison_report(report: dict, expected_cases: list[str], repetition
                          f'提交暂停 {counters["pause_ns"] / 1000:.3f} us，'
                          f'物化 {counters["materialized_objects"]:.0f} 个对象，'
                          f'物化准备 {counters["materialization_ns"] / 1000:.3f} us，'
-                         f'释放后代码批次 {counters["released_code_batches"]:.0f}。')
+                         f'释放后映像 {counters["released_code_images"]:.0f}，'
+                         f'共享代码批次 {counters["released_code_batches"]:.0f}。')
     return "\n".join(lines) + "\n"

@@ -315,7 +315,6 @@ class Lowerer final {
     RegisterId callback = 0;
     RegisterId length = 0;
     RegisterId guard = 0;
-    RegisterId positions = 0;
     std::size_t callback_arity = 0;
     enum class Comparison : std::uint8_t { Integer, Double };
     Comparison comparison = Comparison::Integer;
@@ -340,10 +339,13 @@ class Lowerer final {
   RegisterId EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
                            std::pair<RegisterId, RegisterId> indices,
                            frontend::SourceLocation location);
-  void LowerArraySort(const ArrayAlgorithmRegisters& inputs, frontend::SourceLocation location);
-  void LowerArraySiftDown(RegisterId root,
-                          const ArrayAlgorithmRegisters& inputs,
-                          frontend::SourceLocation location);
+  void LowerArraySort(const ArrayAlgorithmRegisters& inputs,
+                      RegisterId scratch,
+                      frontend::SourceLocation location);
+  void LowerArrayMergePass(RegisterId output,
+                           const ArrayAlgorithmRegisters& inputs,
+                           RegisterId width,
+                           frontend::SourceLocation location);
   RegisterId EmitTemporary(Instruction instruction);
   std::uint32_t RegisterArrayType(const frontend::TypeDescriptor& type);
 

@@ -1,12 +1,11 @@
 #pragma once
 
-#include <cstdint>
 #include <expected>
 #include <span>
 #include <string>
 #include <string_view>
 
-#include "compiler/ir/ir.h"
+#include "runtime/native/native_image.h"
 
 namespace llvm {
 class Function;
@@ -24,9 +23,8 @@ struct EmittedNativeImage final {
 
 std::expected<EmittedNativeImage, std::string> EmitNativeImage(
     llvm::Module& module,
-    const ir::Program& program,
+    const runtime::NativeImage& description,
     std::span<llvm::Function* const> entries,
-    std::span<const std::uint8_t> exports,
     std::string_view module_name);
 
 }  // namespace vela::compiler::native

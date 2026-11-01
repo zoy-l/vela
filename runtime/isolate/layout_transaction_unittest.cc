@@ -1,3 +1,5 @@
+#include <cstdint>
+
 #include "gtest/gtest.h"
 
 #include "runtime/heap/heap.h"
@@ -60,6 +62,20 @@ TEST(LayoutTransactionTest, CommittedMetadataCanOwnInstancesAfterTheTransactionE
   auto* object = isolate.heap().AllocateInstance(*layout);
   ASSERT_NE(object, nullptr);
   EXPECT_EQ(Heap::ClassOf(*object), layout);
+}
+
+TEST(LayoutTransactionTest, RolledBackLayoutIdentitiesAreNotReusedByLaterTransactions) {
+  constexpr int kTransactions = 8;
+  Isolate isolate;
+  std::uint64_t previous = 0;
+  for (int iteration = 0; iteration < kTransactions; ++iteration) {
+    LayoutTransaction transaction(isolate);
+    const auto* layout = isolate.CreateClassLayout(1, {});
+    EXPECT_GT(layout->id(), previous);
+    previous = layout->id();
+  }
+  const auto* retained = isolate.CreateClassLayout(1, {});
+  EXPECT_GT(retained->id(), previous);
 }
 
 }  // namespace

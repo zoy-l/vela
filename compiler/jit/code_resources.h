@@ -13,11 +13,14 @@ namespace vela::compiler::jit {
 struct CodeResourceCounts final {
   std::size_t batches = 0;
   std::size_t functions = 0;
+  std::size_t images = 0;
+  // 在编译器堆中重定位的不可变描述数据，与链接块分别统计。
+  std::size_t image_data_bytes = 0;
   // 链接块实际内容，不含分配器页填充和操作系统调试器开销。
   std::size_t executable_bytes = 0;
   std::size_t read_only_bytes = 0;
   std::size_t writable_bytes = 0;
-  // 映像中常量和调试记录的逻辑载荷；属于上述块的组成部分，不能重复相加。
+  // 映像中常量和调试记录的逻辑载荷；与描述数据或链接块重叠，不能重复相加。
   std::size_t constant_payload_bytes = 0;
   std::size_t debug_payload_bytes = 0;
 };
@@ -25,6 +28,8 @@ struct CodeResourceCounts final {
 struct CodeResourceCounters final {
   std::atomic_size_t batches{0};
   std::atomic_size_t functions{0};
+  std::atomic_size_t images{0};
+  std::atomic_size_t image_data_bytes{0};
   std::atomic_size_t executable_bytes{0};
   std::atomic_size_t read_only_bytes{0};
   std::atomic_size_t writable_bytes{0};

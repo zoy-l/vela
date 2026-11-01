@@ -67,6 +67,17 @@ struct GlobalEntry final {
   std::uint32_t index = 0;
 };
 
+NativeGlobalCache CacheGlobalSlot(GlobalSlot& slot,
+                                  const std::uint64_t* epoch,
+                                  std::uint64_t observed) {
+  return {
+      .epoch = epoch,
+      .observed = observed,
+      .state = &slot.state,
+      .value = Heap::ValueSlots(*slot.storage.AsObject()).data(),
+  };
+}
+
 }  // namespace
 
 struct NativeDispatchSnapshot final {
@@ -430,7 +441,14 @@ std::expected<NativePreparedPublication, NativePublicationError> NativeDispatch:
   snapshot->IndexLayouts(description, **created);
   snapshot->state = state;
   snapshot->root.Attach(isolate_->heap(), &snapshot->state, 1);
-  Heap::NativeProgram(*state.AsObject()).dispatch = this;
+  auto& program = Heap::NativeProgram(*state.AsObject());
+  program.dispatch = this;
+  const auto caches = std::span(program.global_caches, description.global_initializers.size);
+  for (const auto& [declaration, entry] : snapshot->globals) {
+    static_cast<void>(declaration);
+    caches.subspan(entry.index).front() =
+        CacheGlobalSlot(*entry.slot, &global_epoch_, global_epoch_ + 1);
+  }
   return NativePreparedPublication(*this, base_revision, std::move(snapshot),
                                    std::chrono::steady_clock::now() - started);
 }
@@ -516,6 +534,7 @@ std::expected<NativePublicationTimings, NativePublicationError> NativeDispatch::
   }
   auto committed = std::move(candidate);
   committed.snapshot_->preparation.Release();
+  ++global_epoch_;
   current_ = std::move(committed.snapshot_);
   timings.commit = Clock::now() - committing;
   return timings;
@@ -622,7 +641,8 @@ std::expected<NativeResolvedDeclaration, ExecutionStatus> NativeDispatch::Resolv
 }
 
 std::expected<Value, ExecutionStatus> NativeDispatch::LoadGlobal(NativeExecution& execution,
-                                                                 DeclarationId declaration) {
+                                                                 DeclarationId declaration,
+                                                                 NativeGlobalCache* cache) {
   if (closed_) {
     return std::unexpected(ExecutionStatus::ExecutionStopped);
   }
@@ -632,6 +652,9 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadGlobal(NativeExecution
   }
   const auto& entry = **found;
   auto& slot = *entry.slot;
+  if (cache != nullptr) {
+    *cache = CacheGlobalSlot(slot, &global_epoch_, global_epoch_);
+  }
   using State = NativeProgramState::GlobalState;
   if (slot.state == State::Ready) {
     return Heap::ValueSlots(*slot.storage.AsObject()).front();
@@ -663,12 +686,18 @@ std::expected<void, ExecutionStatus> NativeDispatch::StoreGlobal(DeclarationId d
   return {};
 }
 
-extern "C" std::uint8_t vela_native_v3_load_global(NativeExecution* execution,
-                                                   std::uint64_t declaration,
-                                                   NativeValue* result) {
-  auto& dispatch = *Heap::NativeProgram(*execution->instance().state().front().AsObject()).dispatch;
-  return internal::StoreNativeResult(result,
-                                     dispatch.LoadGlobal(*execution, DeclarationId{declaration}));
+extern "C" std::uint8_t vela_native_v10_load_global(NativeExecution* execution,
+                                                    std::uint32_t index,
+                                                    NativeValue* result) {
+  auto& program = Heap::NativeProgram(*execution->instance().state().front().AsObject());
+  auto& dispatch = *program.dispatch;
+  auto& cache = std::span(program.global_caches, program.image->global_initializers.size)
+                    .subspan(index)
+                    .front();
+  return internal::StoreNativeResult(
+      result,
+      dispatch.LoadGlobal(
+          *execution, program.image->global_declarations.values().subspan(index).front(), &cache));
 }
 
 extern "C" std::uint8_t vela_native_v3_store_global(NativeExecution* execution,
@@ -681,6 +710,7 @@ extern "C" std::uint8_t vela_native_v3_store_global(NativeExecution* execution,
 
 void NativeDispatch::Close() noexcept {
   closed_ = true;
+  ++global_epoch_;
   current_.reset();
 }
 
@@ -762,7 +792,7 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadFieldAt(NativeExecutio
   const RootRange root(isolate_->heap(), &anchor, 1, RootOwner::Runtime);
   auto instance = NativeInstance::Borrow(*current_->state.AsObject());
   const NativeInstanceScope scope(execution, instance);
-  state = FieldState::Initializing;
+  storage.SetFieldState(slot, FieldState::Initializing);
   NativeValue result;
   const auto status = static_cast<ExecutionStatus>(instance.image()
                                                        .functions.values()
@@ -770,7 +800,7 @@ std::expected<Value, ExecutionStatus> NativeDispatch::LoadFieldAt(NativeExecutio
                                                        .front()
                                                        .entry(&execution, nullptr, 0, &result));
   if (status != ExecutionStatus::Returned) {
-    state = FieldState::Uninitialized;
+    storage.SetFieldState(slot, FieldState::Uninitialized);
     return std::unexpected(status);
   }
   const auto value = DecodeNativeValue(result);
@@ -805,22 +835,26 @@ NativeFieldCache& NativeProgramState::field_cache(std::uint64_t access) {
   return field_caches.at(position.function).at(position.instruction);
 }
 
-extern "C" NativeFieldCache* vela_native_v9_field_caches(NativeExecution* execution,
-                                                         std::uint32_t function) noexcept {
+extern "C" NativeFieldCache* vela_native_v10_field_caches(NativeExecution* execution,
+                                                          std::uint32_t function) noexcept {
   auto& state = Heap::NativeProgram(*execution->instance().state().front().AsObject());
   return state.field_caches.at(function).data();
 }
 
+extern "C" const ClassLayout* const* vela_native_v10_direct_field_layouts(
+    NativeExecution* execution) noexcept {
+  auto& state = Heap::NativeProgram(*execution->instance().state().front().AsObject());
+  return state.direct_field_layouts.data();
+}
+
 std::optional<std::uint32_t> NativeFieldCache::Resolve(const ClassLayout& layout,
                                                        DeclarationId field) noexcept {
-  const auto* nominal = &layout.nominal_type();
-  if (type == nominal && revision == layout.revision()) {
+  if (layout_id == layout.id()) {
     return slot;
   }
   const auto resolved = layout.FieldIndex(field);
   if (resolved) {
-    type = nominal;
-    revision = layout.revision();
+    layout_id = layout.id();
     slot = *resolved;
   }
   return resolved;

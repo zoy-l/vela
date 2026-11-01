@@ -106,6 +106,43 @@ TEST(DevelopmentSessionTest, LoadDoesNotRunEntryAndHotReloadPreservesInitialized
   EXPECT_EQ(result.changes.modules, std::vector<std::string>{"main.vela"});
 }
 
+TEST(DevelopmentSessionTest, EntryLookupPreservesModuleScopeArityAndCurrentRevision) {
+  auto created = DevelopmentSession::Create("main.vela");
+  ASSERT_TRUE(created);
+  auto& session = **created;
+  const std::string source =
+      "func main(): int { return 40; } "
+      "func requires(value: int): int { return value; } "
+      "func generic<T>(): int { return 42; } "
+      "export func echo(value: int): int { return value; }";
+  auto candidate = session.Prepare(
+      {
+          .changes =
+              {
+                  {.path = "main.vela", .text = source},
+                  {.path = "other.vela", .text = "func main(): int { return 42; }"},
+              },
+          .added_roots = {"other.vela"},
+      },
+      DevelopmentOperation::Load);
+  ASSERT_TRUE(candidate) << candidate.error().message;
+  static_cast<void>(session.Submit(std::move(*candidate)));
+  ASSERT_EQ(session.Pump().status, DevelopmentStatus::Accepted);
+  ExpectInteger(session.RunEntry(), kOldAnswer);
+  ExpectInteger(session.InvokeEntry({.module = "./other.vela", .name = "main"}), kAnswer);
+  EXPECT_EQ(session.InvokeEntry({.module = "main.vela", .name = "requires"}).error(),
+            ExecutionStatus::InvalidEntry);
+  EXPECT_EQ(session.InvokeEntry({.module = "main.vela", .name = "generic"}).error(),
+            ExecutionStatus::InvalidEntry);
+  EXPECT_EQ(session.InvokeEntry({.module = "missing.vela", .name = "main"}).error(),
+            ExecutionStatus::InvalidEntry);
+  const std::array arguments{runtime::Value::Integer(kAnswer)};
+  ExpectInteger(session.Invoke("main.vela", "echo", arguments), kAnswer);
+  ASSERT_EQ(Apply(session, "func main(): int { return 42; }").status, DevelopmentStatus::Accepted);
+  ExpectInteger(session.RunEntry(), kAnswer);
+  ExpectInteger(session.InvokeEntry({.module = "other.vela", .name = "main"}), kAnswer);
+}
+
 TEST(DevelopmentSessionTest, GenericParameterChangesRequireReloadWithoutDamagingTheOldRun) {
   auto created = DevelopmentSession::Create("main.vela");
   ASSERT_TRUE(created);
@@ -177,14 +214,14 @@ TEST(DevelopmentSessionTest, WaitingRequestsCanBeCancelledWithoutChangingEitherB
   auto& session = **created;
   ASSERT_EQ(Apply(session, "export func answer(): int { return 42; }").status,
             DevelopmentStatus::Accepted);
-  session.isolate().native_control().EnterHost();
+  ++session.isolate().native_control().state().host_borrows;
   auto candidate = session.Prepare(Edit(session, "export func answer(): int { return 100; }"),
                                    DevelopmentOperation::HotReload);
   ASSERT_TRUE(candidate);
   ASSERT_EQ(session.Submit(std::move(*candidate)).status, DevelopmentStatus::WaitingForSafepoint);
   EXPECT_EQ(session.Pump().status, DevelopmentStatus::WaitingForSafepoint);
   ASSERT_TRUE(session.Cancel());
-  session.isolate().native_control().ExitHost();
+  --session.isolate().native_control().state().host_borrows;
   EXPECT_EQ(session.Pump().status, DevelopmentStatus::Cancelled);
   EXPECT_EQ(session.snapshot()->revision, 1U);
   EXPECT_EQ(session.Invoke("main.vela", "answer")->AsInteger(), 42);

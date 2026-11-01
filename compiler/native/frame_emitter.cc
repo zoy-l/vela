@@ -1,5 +1,6 @@
 #include "compiler/native/function_emitter.h"
 
+#include <absl/container/flat_hash_map.h>
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -15,7 +16,10 @@
 
 #include "base/execution_limits.h"
 #include "base/execution_status.h"
+#include "base/native_program_mode.h"
 #include "base/opcode.h"
+#include "compiler/ir/ir.h"
+#include "compiler/native/field_access.h"
 #include "compiler/native/native_values.h"
 #include "runtime/heap/heap.h"
 #include "runtime/native/native_abi.h"
@@ -35,6 +39,12 @@ void FunctionEmitter::EmitFrameEntry() {
   auto* failed = llvm::BasicBlock::Create(context, "enter.failed", body_);
   Builder failure(failed);
   auto* error = failure.CreatePHI(builder_.getInt8Ty(), 0);
+  if (kind_ == NativeEntryKind::Leaf) {
+    failure.CreateStore(
+        failure.getInt64(runtime::EncodeNativeTracePosition(
+            {.function = static_cast<std::uint32_t>(function_index_), .instruction = 0})),
+        body_->getArg(static_cast<unsigned>(body_->arg_size() - 1)));
+  }
   failure.CreateRet(error);
   auto* valid = llvm::BasicBlock::Create(context, "execution.valid", body_);
   error->addIncoming(Status(builder_, ExecutionStatus::InvalidIsolate), builder_.GetInsertBlock());
@@ -175,28 +185,63 @@ void FunctionEmitter::EmitFrameEntry() {
 }
 
 void FunctionEmitter::CacheImports() {
-  for (const auto& instruction : source_.instructions) {
-    if (instruction.opcode != Opcode::Call ||
-        program_.functions.at(instruction.index).native_symbol.empty() ||
-        imports_.contains(instruction.index)) {
+  for (std::size_t index = 0; index < source_.instructions.size(); ++index) {
+    const auto target = CallTarget(index);
+    if (!target || program_.functions.at(target->function).native_symbol.empty() ||
+        imports_.contains(target->function)) {
       continue;
     }
     // 绑定随实例创建后不可变；闭包临时切换实例会在返回时恢复，作用域内可复用。
-    imports_.emplace(instruction.index,
-                     LoadImport(builder_, module_, body_->getArg(0), instruction.index));
+    imports_.emplace(target->function,
+                     LoadImport(builder_, module_, body_->getArg(0), target->function));
   }
 }
 
 void FunctionEmitter::CacheFields() {
   if (std::ranges::none_of(source_.instructions, [](const auto& instruction) {
-        return instruction.field_declaration.has_value();
+        return (instruction.opcode == Opcode::GetField || instruction.opcode == Opcode::SetField) &&
+               instruction.field_declaration.has_value();
       })) {
     return;
   }
-  auto caches = module_.getOrInsertFunction("vela_native_v9_field_caches", builder_.getPtrTy(),
-                                            builder_.getPtrTy(), builder_.getInt32Ty());
-  field_caches_ = builder_.CreateCall(
-      caches, {body_->getArg(0), builder_.getInt32(static_cast<std::uint32_t>(function_index_))});
+  if (tier_ != NativeCodeTier::Optimized) {
+    auto caches = module_.getOrInsertFunction("vela_native_v10_field_caches", builder_.getPtrTy(),
+                                              builder_.getPtrTy(), builder_.getInt32Ty());
+    field_caches_ = builder_.CreateCall(
+        caches, {body_->getArg(0), builder_.getInt32(static_cast<std::uint32_t>(function_index_))});
+    return;
+  }
+  const auto fields = FindFieldTargets(program_);
+  absl::flat_hash_map<ir::ClassId, llvm::Value*> classes;
+  auto layouts = module_.getOrInsertFunction("vela_native_v10_direct_field_layouts",
+                                             builder_.getPtrTy(), builder_.getPtrTy());
+  auto* table = builder_.CreateCall(layouts, {body_->getArg(0)});
+  for (const auto& instruction : source_.instructions) {
+    if ((instruction.opcode != Opcode::GetField && instruction.opcode != Opcode::SetField) ||
+        !instruction.field_declaration) {
+      continue;
+    }
+    const auto declaration = *instruction.field_declaration;
+    if (field_layouts_.contains(declaration)) {
+      continue;
+    }
+    const auto target = fields.at(declaration);
+    const auto [owner, inserted] = classes.try_emplace(target.owner, nullptr);
+    if (inserted) {
+      auto* address = builder_.CreateConstGEP1_64(builder_.getPtrTy(), table, target.owner);
+      auto* layout = builder_.CreateLoad(builder_.getPtrTy(), address);
+      // 具体函数版本的布局表不可变；对象迁移只改变对象的 layout 和字段块。
+      layout->setMetadata(llvm::LLVMContext::MD_invariant_load,
+                          llvm::MDNode::get(module_.getContext(), {}));
+      owner->second = layout;
+    }
+    field_layouts_.emplace(declaration,
+                           DirectField{
+                               .layout = owner->second,
+                               .slot = target.slot,
+                               .count = program_.layouts.classes.at(target.owner).field_count,
+                           });
+  }
 }
 
 void FunctionEmitter::BeginConstruction() {

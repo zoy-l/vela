@@ -17,6 +17,7 @@
 #include "base/native_program_mode.h"
 #include "compiler/development/development_session.h"
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/native/code_generator.h"
 #include "compiler/test_support/checkpoint_publication.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/heap.h"
@@ -177,6 +178,8 @@ void Memory(benchmark::State& state, DevelopmentSession& session, const char* pr
   state.counters[name + "heap_bytes"] = static_cast<double>(heap.allocated_bytes());
   state.counters[name + "external_field_bytes"] = static_cast<double>(heap.instance_field_bytes());
   state.counters[name + "code_batches"] = static_cast<double>(code.batches);
+  state.counters[name + "code_images"] = static_cast<double>(code.images);
+  state.counters[name + "image_data_bytes"] = static_cast<double>(code.image_data_bytes);
   state.counters[name + "executable_bytes"] = static_cast<double>(code.executable_bytes);
   state.counters[name + "read_only_bytes"] = static_cast<double>(code.read_only_bytes);
   state.counters[name + "writable_bytes"] = static_cast<double>(code.writable_bytes);
@@ -321,9 +324,9 @@ void Reload(benchmark::State& state, NativeCodeTier tier, RetainedState retained
   }
   values.Release();
   Memory(state, session, "released_");
-  if (session.code_resources().batches != 1 ||
+  if (session.code_resources().images != 1 ||
       session.isolate().scheduler().suspended_frame_count() != 0) {
-    state.SkipWithError("old code or suspended frames survived their final reference");
+    state.SkipWithError("old images or suspended frames survived their final reference");
   }
   state.counters["edits"] = static_cast<double>(version);
   state.counters["retained_values"] = static_cast<double>(count);
@@ -389,7 +392,7 @@ void Rebuild(benchmark::State& state, NativeCodeTier tier) {
   }
   AverageTimings(state, state.iterations());
   Memory(state, session, "released_");
-  if (session.code_resources().batches != 1) {
+  if (session.code_resources().images != 1) {
     state.SkipWithError("Reload retained code from the stopped Isolate");
   }
 }
@@ -436,16 +439,20 @@ void VirtualReload(benchmark::State& state, NativeCodeTier tier) {
   std::move(detach_debugger).Invoke();
   AverageTimings(state, state.iterations());
   Memory(state, session, "released_");
-  if (session.code_resources().batches != 1) {
+  if (session.code_resources().images != 1) {
     state.SkipWithError("virtual descriptors retained old code after recovery");
   }
 }
 
 int RegisterReloadBenchmarks() {
+  const auto cpu = compiler::native::TargetCpu(compiler::NativeCodePlacement::Dynamic);
+  benchmark::AddCustomContext("jit_cpu", cpu.name);
+  benchmark::AddCustomContext("jit_cpu_features", cpu.features);
   benchmark::AddCustomContext("jit_baseline",
-                              "LLVM O2; current dispatch; precise roots; safepoints");
+                              "LLVM O2; host CPU; current dispatch; precise roots; safepoints");
   benchmark::AddCustomContext(
-      "jit_optimized", "LLVM O2; version dependencies; direct calls/inlining; baseline recovery");
+      "jit_optimized",
+      "LLVM O2; host CPU; version dependencies; direct calls/inlining; selective recovery");
   for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
     const auto prefix =
         std::string("hot/") + (tier == NativeCodeTier::Baseline ? "baseline/" : "optimized/");

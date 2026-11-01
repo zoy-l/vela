@@ -31,6 +31,8 @@ llvm::Function* FunctionEmitter::SelectBody(const GeneratedFunction& function,
       return function.resume_recovery;
     case NativeEntryKind::Borrowed:
       return function.borrowed;
+    case NativeEntryKind::Leaf:
+      return function.leaf;
   }
   std::unreachable();
 }
@@ -43,6 +45,10 @@ bool FunctionEmitter::IsResuming() const noexcept {
   return kind_ == NativeEntryKind::Resume || kind_ == NativeEntryKind::RecoverResume;
 }
 
+bool FunctionEmitter::HasRecovery() const {
+  return generated_.subspan(function_index_).front().HasRecovery(tier_);
+}
+
 llvm::Value* FunctionEmitter::ResumeState() {
   if (kind_ == NativeEntryKind::Resume) {
     return body_->getArg(1);
@@ -53,7 +59,7 @@ llvm::Value* FunctionEmitter::ResumeState() {
 }
 
 void FunctionEmitter::GuardResume() {
-  if (tier_ != NativeCodeTier::Optimized || kind_ != NativeEntryKind::Resume) {
+  if (!HasRecovery() || kind_ != NativeEntryKind::Resume) {
     return;
   }
   auto helper = module_.getOrInsertFunction("vela_native_v4_can_optimize", builder_.getInt8Ty(),
@@ -72,6 +78,22 @@ void FunctionEmitter::InitializeCheckpoint() {
   if (checkpoint_ == nullptr) {
     return;
   }
+  Builder allocation(&body_->getEntryBlock(), body_->getEntryBlock().begin());
+  checkpoint_initialized_ = allocation.CreateAlloca(builder_.getInt1Ty());
+  builder_.CreateStore(builder_.getFalse(), checkpoint_initialized_);
+  builder_.CreateStore(builder_.getInt8(static_cast<std::uint8_t>(NativeCodeTier::Optimized)),
+                       ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, tier)));
+}
+
+void FunctionEmitter::PrepareCheckpoint() {
+  auto& context = module_.getContext();
+  auto* initialize = llvm::BasicBlock::Create(context, "checkpoint.initialize", body_);
+  auto* ready = llvm::BasicBlock::Create(context, "checkpoint.ready", body_);
+  builder_.CreateCondBr(builder_.CreateLoad(builder_.getInt1Ty(), checkpoint_initialized_), ready,
+                        initialize);
+  builder_.SetInsertPoint(initialize);
+  // 只有会跨可观察边界的路径才需要恢复存储。纯返回分支不发布检查点；后续调用仍复用
+  // 已初始化的数据，不能覆盖被嵌套调用或发布请求修改的 tier。
   using runtime::NativeCheckpoint;
   const auto& function = generated_.subspan(function_index_).front();
   builder_.CreateStore(checkpoint_values_,
@@ -94,8 +116,6 @@ void FunctionEmitter::InitializeCheckpoint() {
                        ByteAddress(checkpoint_, offsetof(NativeCheckpoint, recovery)));
   builder_.CreateStore(builder_.getInt32(0),
                        ByteAddress(checkpoint_, offsetof(NativeCheckpoint, instruction)));
-  builder_.CreateStore(builder_.getInt8(static_cast<std::uint8_t>(NativeCodeTier::Optimized)),
-                       ByteAddress(checkpoint_, offsetof(NativeCheckpoint, tier)));
   builder_.CreateStore(builder_.getInt8(0),
                        ByteAddress(checkpoint_, offsetof(NativeCheckpoint, phase)));
   auto* null_pointer = llvm::ConstantPointerNull::get(builder_.getPtrTy());
@@ -122,12 +142,16 @@ void FunctionEmitter::InitializeCheckpoint() {
   }
   builder_.CreateStore(checkpoint_,
                        ByteAddress(trace_frame_, offsetof(runtime::NativeTraceFrame, checkpoint)));
+  builder_.CreateStore(builder_.getTrue(), checkpoint_initialized_);
+  builder_.CreateBr(ready);
+  builder_.SetInsertPoint(ready);
 }
 
 void FunctionEmitter::StoreCheckpoint() {
   if (checkpoint_ == nullptr) {
     return;
   }
+  PrepareCheckpoint();
   using runtime::NativeCheckpoint;
   const auto origin = origins_.subspan(instruction_index_).front();
   const auto& values = escape_.checkpoints.empty() ? roots_.checkpoints.at(instruction_index_)
@@ -162,12 +186,16 @@ void FunctionEmitter::RecoverIfInvalidated() {
                             builder_.getInt8(static_cast<std::uint8_t>(NativeCodeTier::Baseline))),
       recover, current);
   builder_.SetInsertPoint(recover);
+  Recover();
+  builder_.SetInsertPoint(current);
+}
+
+void FunctionEmitter::Recover() {
   auto helper =
       module_.getOrInsertFunction("vela_native_v4_recover", builder_.getInt8Ty(),
                                   builder_.getPtrTy(), builder_.getPtrTy(), builder_.getPtrTy());
   auto* output = IsResuming() ? llvm::ConstantPointerNull::get(builder_.getPtrTy()) : Output();
   Finish(builder_.CreateCall(helper, {body_->getArg(0), checkpoint_, output}));
-  builder_.SetInsertPoint(current);
 }
 
 void FunctionEmitter::EmitRecoveryDispatch() {

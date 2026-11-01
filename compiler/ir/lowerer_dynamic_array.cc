@@ -104,7 +104,6 @@ void Lowerer::RegisterArrayAlgorithmMember(const frontend::TypeDescriptor& recei
           .callback = 1,
           .length = length,
           .guard = guard,
-          .positions = 0,
           .callback_arity = callback_signature.parameters.size(),
           .comparison = ArrayAlgorithmRegisters::Comparison::Integer,
           .element_type = element,

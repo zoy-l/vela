@@ -16,6 +16,7 @@
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/ir/analysis.h"
+#include "compiler/ir/optimizer.h"
 #include "compiler/ir/register_set.h"
 
 namespace vela::compiler::native {
@@ -600,6 +601,11 @@ EscapePlan PlanEscapes(const ir::Program& program,
     eligible = EligibleCount(plan);
     if (eligible == previous_count) {
       RewriteEscapes(plan, program, live, graph, states, allocations);
+      if (program.native_mode == NativeProgramMode::Closed &&
+          std::ranges::none_of(plan.allocations, &AllocationSite::stack_record)) {
+        // 标量替换暴露了原来经过字段的长度消费；没有借用记录或恢复快照时可消除文本。
+        ir::Optimize(plan.function, program.functions, &plan.origins);
+      }
       plan.borrowable = {};
       return plan;
     }

@@ -309,10 +309,14 @@ source_set("repl_source") {
 
 source_set("native") {
   sources = [
+    "native/array_analysis.cc",
+    "native/array_analysis.h",
     "native/async_emitter.cc",
     "native/borrow_analysis.cc",
     "native/borrow_analysis.h",
     "native/call_emitter.cc",
+    "native/call_targets.cc",
+    "native/call_targets.h",
     "native/code_generator.cc",
     "native/code_generator.h",
     "native/debug_emitter.cc",
@@ -321,6 +325,8 @@ source_set("native") {
     "native/escape_analysis.h",
     "native/escape_dataflow.h",
     "native/escape_rewriter.cc",
+    "native/field_access.cc",
+    "native/field_access.h",
     "native/frame_emitter.cc",
     "native/function_emitter.cc",
     "native/function_emitter.h",
@@ -330,6 +336,8 @@ source_set("native") {
     "native/memory_emitter.cc",
     "native/native_frame_plan.cc",
     "native/native_frame_plan.h",
+    "native/native_image_data.cc",
+    "native/native_image_data.h",
     "native/native_image_emitter.cc",
     "native/native_image_emitter.h",
     "native/native_roots.cc",
@@ -353,8 +361,12 @@ source_set("jit") {
   sources = [
     "jit/code_cache.cc",
     "jit/code_cache.h",
+    "jit/code_inputs.cc",
+    "jit/code_inputs.h",
     "jit/code_resources.cc",
     "jit/code_resources.h",
+    "jit/code_reuse.cc",
+    "jit/code_reuse.h",
     "jit/compiler.cc",
     "jit/compiler.h",
     "jit/engine.cc",
@@ -373,7 +385,6 @@ source_set("jit") {
   ]
   if (target_os == "win") {
     sources += [ "jit/platform_support_win.cc" ]
-    libs = [ "dbghelp.lib" ]
   } else {
     sources += [ "jit/platform_support_posix.cc" ]
   }
@@ -392,6 +403,7 @@ source_set("development") {
     ":jit",
     ":repl_source",
     ":source_session",
+    "//base:directory_watcher",
   ]
 }
 
@@ -493,6 +505,7 @@ executable("vela_aot_tests") {
     "aot/native_compiler_unittest.cc",
     "aot/reachability_unittest.cc",
     "ir/preparation_test_support.h",
+    "native/array_analysis_unittest.cc",
     "native/escape_analysis_unittest.cc",
   ]
   deps = [

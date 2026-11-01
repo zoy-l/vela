@@ -2,8 +2,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
-#include "base/native_program_mode.h"
+#include <vector>
 #include "compiler/ir/ir.h"
 #include "compiler/native/escape_analysis.h"
 #include "compiler/native/native_roots.h"
@@ -14,9 +15,12 @@ class StructType;
 namespace vela::compiler::native {
 inline constexpr unsigned kVirtualReferenceFieldIndex = 5;
 enum class NativeEntryKind : std::uint8_t;
+enum class NativeFrameRecovery : std::uint8_t { None, Required };
 struct NativeFrameLayout final {
   llvm::StructType* type = nullptr;
   std::uint64_t bytes = 0;
+  std::vector<std::optional<unsigned>> local_fields;
+  unsigned temporary_field = 0;
 };
 std::expected<std::size_t, std::string> PlanTemporaryCount(const ir::Function& source,
                                                            const ir::Program& program,
@@ -25,6 +29,6 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
                                                               const ir::Program& program,
                                                               const EscapePlan& escape,
                                                               const NativeRootPlan& roots,
-                                                              NativeCodeTier tier,
+                                                              NativeFrameRecovery recovery,
                                                               NativeEntryKind kind);
 }  // namespace vela::compiler::native

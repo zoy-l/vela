@@ -53,16 +53,22 @@ void PlanSafepoints(NativeRootPlan& plan, const ir::Function& function, NativeDe
     const auto source_line =
         debugging == NativeDebugging::SourceLines &&
         (index == 0 || instruction.location.line != instructions.at(index - 1).location.line);
-    if (debugging == NativeDebugging::Instructions || index == 0 || backward || source_line || instruction.opcode == Opcode::Return ||
-        ir::AnalyzeEffects(instruction).MayCollectOnSuccess()) {
-      plan.safepoints.at(index) = 1;
+    if (debugging == NativeDebugging::Instructions || index == 0 || backward || source_line ||
+        instruction.opcode == Opcode::Return) {
+      plan.safepoints.at(index) |= kNativeSafepointBoundary;
     }
-    if (index + 1 < instructions.size() && ir::AnalyzeEffects(instruction).MayCollectOnSuccess()) {
-      plan.safepoints.at(index + 1) = 1;
+    if (ir::AnalyzeEffects(instruction).MayCollectOnSuccess()) {
+      plan.safepoints.at(index) |= kNativeSafepointBeforeRuntime;
+      if (index + 1 < instructions.size()) {
+        plan.safepoints.at(index + 1) |= kNativeSafepointAfterRuntime;
+      }
+    }
+    if (instruction.opcode == Opcode::SetField && instruction.field_declaration) {
+      plan.safepoints.at(index) |= kNativeSafepointRecovery;
     }
   }
   for (const auto& handler : function.handlers) {
-    plan.safepoints.at(handler.target) = 1;
+    plan.safepoints.at(handler.target) |= kNativeSafepointBoundary;
   }
 }
 
@@ -118,10 +124,13 @@ void PlanRematerialization(NativeRootPlan& plan,
   }
 }
 
-NativeRootPlan InitializeRoots(const ir::Function& function, NativeProgramMode mode,
-                               NativeDebugging debugging, NativeRecoveryRequirements recovery) {
+NativeRootPlan InitializeRoots(const ir::Function& function,
+                               NativeProgramMode mode,
+                               NativeDebugging debugging,
+                               NativeRecoveryRequirements recovery) {
   NativeRootPlan plan;
   plan.debug_values = debugging == NativeDebugging::Instructions;
+  plan.bounded_polls = debugging == NativeDebugging::Safepoints;
   plan.slots.resize(function.register_count);
   plan.stores.resize(function.instructions.size());
   plan.clears.resize(function.instructions.size());

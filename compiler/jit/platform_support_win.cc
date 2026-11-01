@@ -2,8 +2,6 @@
 
 #include <windows.h>  // IWYU pragma: keep
 
-#include <dbghelp.h>
-#include <errhandlingapi.h>
 #include <minwindef.h>
 #include <winnt.h>
 
@@ -14,11 +12,8 @@
 #include <memory>
 #include <mutex>
 #include <span>
-#include <string>
 #include <utility>
 #include <vector>
-
-#include <llvm/Support/thread.h>
 
 #include <absl/container/flat_hash_map.h>
 
@@ -33,30 +28,9 @@
 namespace vela::compiler::jit {
 namespace {
 
-// DbgHelp 的不同符号会话也要求串行访问；此锁只保护该进程级 Windows API。
-std::mutex& DebugHelpMutex() {
-  static std::mutex mutex;
-  return mutex;
-}
-
-llvm::Error PlatformError(const char* operation) {
-  const auto error = GetLastError();
-  return llvm::make_error<llvm::StringError>(
-      std::string(operation) + " failed (Windows error " + std::to_string(error) + ')',
-      llvm::inconvertibleErrorCode());
-}
-
-struct CodeSymbol final {
-  std::string name;
-  std::uint64_t address = 0;
-  std::uint32_t size = 0;
-};
-
 struct Registration final {
   std::uint64_t base = 0;
-  std::uint32_t size = 0;
   std::vector<RUNTIME_FUNCTION> frames;
-  std::vector<CodeSymbol> symbols;
 };
 
 class CoffRegistrationPlugin final : public llvm::orc::ObjectLinkingLayer::Plugin {
@@ -67,20 +41,12 @@ class CoffRegistrationPlugin final : public llvm::orc::ObjectLinkingLayer::Plugi
   CoffRegistrationPlugin(CoffRegistrationPlugin&&) = delete;
   CoffRegistrationPlugin& operator=(CoffRegistrationPlugin&&) = delete;
   ~CoffRegistrationPlugin() override {
-    const std::scoped_lock lock(DebugHelpMutex());
+    const std::scoped_lock lock(mutex_);
     for (auto& [key, registrations] : registered_) {
       for (auto& registration : registrations) {
         Release(*registration);
       }
     }
-    SymCleanup(session());
-  }
-
-  llvm::Error Initialize() {
-    const std::scoped_lock lock(DebugHelpMutex());
-    // 独立的符号会话不接管宿主已有的 DbgHelp 注册或模块集合。
-    return (SymInitialize(session(), nullptr, FALSE) != 0) ? llvm::Error::success()
-                                                           : PlatformError("SymInitialize");
   }
 
   void modifyPassConfig(llvm::orc::MaterializationResponsibility& responsibility,
@@ -126,7 +92,6 @@ class CoffRegistrationPlugin final : public llvm::orc::ObjectLinkingLayer::Plugi
                                                  llvm::inconvertibleErrorCode());
     }
     registration->base = base;
-    registration->size = static_cast<std::uint32_t>(end - base);
     if (const auto* frames = linked.findSectionByName(".pdata")) {
       for (const auto* block : frames->blocks()) {
         const auto contents = block->getContent();
@@ -142,16 +107,7 @@ class CoffRegistrationPlugin final : public llvm::orc::ObjectLinkingLayer::Plugi
       }
       std::ranges::sort(registration->frames, {}, &RUNTIME_FUNCTION::BeginAddress);
     }
-    for (const auto* symbol : linked.defined_symbols()) {
-      if (symbol->hasName() && symbol->isCallable()) {
-        registration->symbols.push_back({
-            .name = (*symbol->getName()).str(),
-            .address = symbol->getAddress().getValue(),
-            .size = static_cast<std::uint32_t>(symbol->getSize()),
-        });
-      }
-    }
-    const std::scoped_lock lock(DebugHelpMutex());
+    const std::scoped_lock lock(mutex_);
     pending_.emplace(&responsibility, std::move(registration));
     return llvm::Error::success();
   }
@@ -167,29 +123,15 @@ class CoffRegistrationPlugin final : public llvm::orc::ObjectLinkingLayer::Plugi
 
   llvm::Error Register(llvm::orc::MaterializationResponsibility& responsibility,
                        llvm::orc::ResourceKey key) {
-    const std::scoped_lock lock(DebugHelpMutex());
+    const std::scoped_lock lock(mutex_);
     const auto found = pending_.find(&responsibility);
     auto& registration = *found->second;
-    const auto name = "vela_jit_" + std::to_string(registration.base);
-    if (SymLoadModuleEx(session(), nullptr, name.c_str(), name.c_str(), registration.base,
-                        registration.size, nullptr, SLMFLAG_VIRTUAL) == 0) {
-      return PlatformError("SymLoadModuleEx");
-    }
-    for (const auto& symbol : registration.symbols) {
-      if (SymAddSymbol(session(), registration.base, symbol.name.c_str(), symbol.address,
-                       symbol.size, 0) == 0) {
-        auto error = PlatformError("SymAddSymbol");
-        SymUnloadModule64(session(), registration.base);
-        return error;
-      }
-    }
     if (!registration.frames.empty() &&
         (RtlAddFunctionTable(registration.frames.data(),
                              static_cast<DWORD>(registration.frames.size()),
                              registration.base) == 0U)) {
       auto error = llvm::make_error<llvm::StringError>(
           "RtlAddFunctionTable rejected the JIT unwind table", llvm::inconvertibleErrorCode());
-      SymUnloadModule64(session(), registration.base);
       return error;
     }
     registered_.try_emplace(key).first->second.push_back(std::move(found->second));
@@ -198,14 +140,14 @@ class CoffRegistrationPlugin final : public llvm::orc::ObjectLinkingLayer::Plugi
   }
 
   llvm::Error notifyFailed(llvm::orc::MaterializationResponsibility& responsibility) override {
-    const std::scoped_lock lock(DebugHelpMutex());
+    const std::scoped_lock lock(mutex_);
     pending_.erase(&responsibility);
     return llvm::Error::success();
   }
 
   llvm::Error notifyRemovingResources(llvm::orc::JITDylib& /*JD*/,
                                       llvm::orc::ResourceKey key) override {
-    const std::scoped_lock lock(DebugHelpMutex());
+    const std::scoped_lock lock(mutex_);
     const auto found = registered_.find(key);
     if (found != registered_.end()) {
       for (auto& registration : found->second) {
@@ -219,7 +161,7 @@ class CoffRegistrationPlugin final : public llvm::orc::ObjectLinkingLayer::Plugi
   void notifyTransferringResources(llvm::orc::JITDylib& /*JD*/,
                                    llvm::orc::ResourceKey destination,
                                    llvm::orc::ResourceKey source) override {
-    const std::scoped_lock lock(DebugHelpMutex());
+    const std::scoped_lock lock(mutex_);
     const auto found = registered_.find(source);
     if (found != registered_.end()) {
       auto registrations = std::move(found->second);
@@ -232,13 +174,12 @@ class CoffRegistrationPlugin final : public llvm::orc::ObjectLinkingLayer::Plugi
   }
 
  private:
-  HANDLE session() noexcept { return static_cast<HANDLE>(this); }
-  void Release(Registration& registration) noexcept {
+  static void Release(Registration& registration) noexcept {
     if (!registration.frames.empty()) {
       RtlDeleteFunctionTable(registration.frames.data());
     }
-    SymUnloadModule64(session(), registration.base);
   }
+  std::mutex mutex_;
   absl::flat_hash_map<llvm::orc::MaterializationResponsibility*, std::unique_ptr<Registration>>
       pending_;
   absl::flat_hash_map<llvm::orc::ResourceKey, std::vector<std::unique_ptr<Registration>>>
@@ -249,9 +190,6 @@ class CoffRegistrationPlugin final : public llvm::orc::ObjectLinkingLayer::Plugi
 
 llvm::Error InstallPlatformSupport(llvm::orc::LLJIT& jit) {
   auto plugin = std::make_shared<CoffRegistrationPlugin>();
-  if (auto error = plugin->Initialize()) {
-    return error;
-  }
   llvm::cast<llvm::orc::ObjectLinkingLayer>(jit.getObjLinkingLayer()).addPlugin(std::move(plugin));
   return llvm::Error::success();
 }

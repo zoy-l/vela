@@ -20,7 +20,9 @@ namespace vela::compiler::jit {
 llvm::Expected<std::unique_ptr<llvm::orc::LLJIT>> CreateEngine(const llvm::Triple& triple) {
   native::InitializeTarget();
   llvm::orc::JITTargetMachineBuilder target(triple);
-  target.setCPU("generic");
+  const auto cpu = native::TargetCpu(NativeCodePlacement::Dynamic);
+  target.setCPU(cpu.name);
+  target.setFeatures(cpu.features);
   llvm::orc::LLJITBuilder builder;
   builder.setJITTargetMachineBuilder(std::move(target));
   builder.setObjectLinkingLayerCreator(

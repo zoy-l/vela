@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -60,6 +61,7 @@ class DeclarationIds final {
  public:
   void BeginUpdate() noexcept;
   [[nodiscard]] DeclarationId Get(DeclarationKey key, DeclarationId definition = {});
+  [[nodiscard]] std::optional<DeclarationId> Find(const DeclarationKey& key) const;
   void FinishUpdate();
   [[nodiscard]] std::span<const DeclarationRecord> records() const noexcept { return records_; }
 

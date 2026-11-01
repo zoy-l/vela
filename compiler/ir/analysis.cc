@@ -424,7 +424,9 @@ void TransferLiveness(const Function& function,
   }
 }
 
-void CompactInstructions(Function& function, std::span<const std::uint8_t> keep) {
+void CompactInstructions(Function& function,
+                         std::span<const std::uint8_t> keep,
+                         std::vector<std::size_t>* origins) {
   if (std::ranges::find(keep, std::uint8_t{0}) == keep.end()) {
     return;
   }
@@ -446,9 +448,15 @@ void CompactInstructions(Function& function, std::span<const std::uint8_t> keep)
         instruction.opcode == Opcode::JumpIfNull) {
       instruction.index = remap.at(instruction.index);
     }
+    if (origins != nullptr) {
+      origins->at(destination) = origins->at(index);
+    }
     code.at(destination++) = instruction;
   }
   code.resize(destination);
+  if (origins != nullptr) {
+    origins->resize(destination);
+  }
   for (auto& handler : function.handlers) {
     handler.target = remap.at(handler.target);
   }
@@ -532,11 +540,17 @@ InstructionEffects AnalyzeEffects(const Instruction& instruction) {
       return {.may_fail = true, .may_allocate = true, .reads_state = true, .writes_state = true};
     case Opcode::BuiltinCall:
       if (instruction.index == static_cast<std::uint32_t>(Builtin::NumericToInt) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::ScalarTextLength) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::NumericToDouble)) {
         // 数值转换不调用用户代码，只有类型或范围错误的失败封套可能分配。
         return {.may_fail = true};
       }
       if (instruction.index == static_cast<std::uint32_t>(Builtin::ArrayLength) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::MapGet) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::CollectionHas) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::CollectionSize) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::StringLength) ||
+          instruction.index == static_cast<std::uint32_t>(Builtin::StringByteLength) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::ArrayCapacity) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::ArrayMutation) ||
           instruction.index == static_cast<std::uint32_t>(Builtin::ArrayCheckMutation)) {

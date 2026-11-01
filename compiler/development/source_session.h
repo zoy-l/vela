@@ -42,8 +42,12 @@ struct SourceTimings final {
   std::chrono::nanoseconds ir{};
 };
 
+struct SourceSessionIdentity final {};
+
 struct CompiledSourceSnapshot final {
+  std::shared_ptr<const SourceSessionIdentity> session;
   std::uint64_t revision = 0;
+  std::vector<std::string> changed_sources;
   absl::flat_hash_map<std::string, std::shared_ptr<const std::string>> sources;
   absl::flat_hash_set<std::string> prepared_sources;
   std::vector<std::string> roots;
@@ -68,18 +72,14 @@ struct SourceCandidateError final {
   DeclarationId declaration;
 };
 
-struct SourceSessionIdentity final {};
-
 class SourceCandidate final {
  public:
   [[nodiscard]] const CompiledSourceSnapshot& snapshot() const noexcept { return *prepared_; }
 
  private:
   friend class SourceSession;
-  SourceCandidate(std::shared_ptr<const SourceSessionIdentity> session,
-                  std::shared_ptr<const CompiledSourceSnapshot> base,
+  SourceCandidate(std::shared_ptr<const CompiledSourceSnapshot> base,
                   std::shared_ptr<const CompiledSourceSnapshot> prepared);
-  std::shared_ptr<const SourceSessionIdentity> session_;
   std::shared_ptr<const CompiledSourceSnapshot> base_;
   std::shared_ptr<const CompiledSourceSnapshot> prepared_;
 };

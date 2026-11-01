@@ -149,11 +149,19 @@ TEST_F(DevelopmentReplTest, RetiredEntryClosuresKeepTheirCaptureLayoutsUnderGcPr
   Execute("let saved: () => int = (): int => 0;");
   Execute("{ let n = 40; saved = (): int => { n = n + 1; return n; }; }");
   constexpr int kSubmissions = 12;
-  for (int index = 0; index < kSubmissions; ++index) {
-    Execute("saved();");
-  }
+  Execute("saved();");
+  Execute("saved();");
   session().isolate().heap().Collect();
-  EXPECT_LE(session().code_resources().batches, 2U);
+  const auto steady = session().code_resources();
+  for (int index = 2; index < kSubmissions; ++index) {
+    Execute("saved();");
+    session().isolate().heap().Collect();
+    const auto current = session().code_resources();
+    // 独立函数机器码可以来自较早批次；必须随编辑保持有界，而不是假定整映像重编译。
+    EXPECT_EQ(current.batches, steady.batches);
+    EXPECT_EQ(current.functions, steady.functions);
+    EXPECT_EQ(current.images, 2U);
+  }
   Execute("saved()");
   EXPECT_EQ(output(), "53\n");
 }

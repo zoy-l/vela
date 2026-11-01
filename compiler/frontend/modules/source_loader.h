@@ -40,6 +40,19 @@ struct ModuleGraph final {
   Diagnostics syntax_diagnostics;
 };
 
+struct CapturedSources final {
+  std::vector<SourceFile> sources;
+  std::vector<FileResolution> file_resolutions;
+  Diagnostics diagnostics;
+};
+
+// 文件捕获保留不可变文本与解析模板，不克隆或绑定 AST。已接纳的依赖构成增量边界；
+// accepted 为空时完整遍历文件依赖，供初次加载、显式重新捕获和事件溢出后的同步使用。
+[[nodiscard]] CapturedSources CaptureSourceFiles(std::span<const std::string> roots,
+                                                 ModuleCache& cache,
+                                                 std::span<const SourceInput> overlays,
+                                                 const ModuleCache* accepted = nullptr);
+
 [[nodiscard]] ModuleGraph LoadModuleGraph(std::string_view path);
 [[nodiscard]] ModuleGraph LoadModuleGraph(std::span<const std::string> roots,
                                           ModuleCache& cache,

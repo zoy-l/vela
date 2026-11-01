@@ -1,7 +1,6 @@
 #include "runtime/library/builtins.h"
 #include "runtime/library/numeric_parse.h"
 
-#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -40,8 +39,7 @@ Result ScalarToString(Value value, Heap& heap) {
   if (!value.IsInteger() && !value.IsDouble() && !value.IsBoolean()) {
     return std::unexpected(ExecutionStatus::TypeError);
   }
-  std::array<char, kScalarTextCapacity> bytes{};
-  return StringResult(heap.AllocateString(FormatScalar(value, bytes)));
+  return StringResult(heap.AllocateScalarString(value));
 }
 
 Result ArrayJoin(std::span<const Value> arguments, Heap& heap) {
@@ -245,6 +243,13 @@ Result ExecuteBuiltin(Builtin builtin, std::span<const Value> arguments, Heap& h
       return ExecuteUnicodeBuiltin(builtin, arguments, heap);
     case Builtin::ScalarToString:
       return ScalarToString(arguments.front(), heap);
+    case Builtin::ScalarTextLength: {
+      const auto value = arguments.front();
+      if (!value.IsInteger() && !value.IsDouble() && !value.IsBoolean()) {
+        return std::unexpected(ExecutionStatus::TypeError);
+      }
+      return Value::Integer(static_cast<std::int64_t>(ScalarTextLength(value)));
+    }
     case Builtin::ArrayJoin:
       return ArrayJoin(arguments, heap);
     case Builtin::NewMutableString:

@@ -109,6 +109,7 @@ class Isolate final {
   std::size_t layout_transactions_ = 0;
   std::size_t native_layout_transactions_ = 0;
   bool metadata_collection_pending_ = false;
+  std::uint64_t next_class_layout_id_ = 0;
   std::vector<std::unique_ptr<ClassLayout>> class_layouts_;
   std::vector<std::unique_ptr<NominalType>> nominal_types_;
   std::vector<std::unique_ptr<ArrayLayout>> array_layouts_;

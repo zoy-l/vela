@@ -23,24 +23,33 @@ constexpr unsigned kIntegerShiftMask = 63;
 constexpr double kIntegerMagnitudeLimit = 0x1p63;
 }  // namespace
 
-void FunctionEmitter::EmitIntrinsicImport() {
+bool FunctionEmitter::CanInlineSquareRoot(const ir::Function& function) const {
   using Intrinsic = runtime::NativeFunction::Intrinsic;
-  const auto standard = runtime::FindStandardNative(source_.native_symbol);
-  if (standard == nullptr || standard->aot_entry().intrinsic != Intrinsic::SquareRoot ||
-      !standard->IsSignatureCompatible(*source_.signature, program_.layouts.types)) {
-    return;
-  }
-  auto* entries = body_->getArg(static_cast<unsigned>(source_.parameter_count + 1));
-  auto* intrinsic = builder_.CreateExtractValue(entries, 2);
-  auto* operand = body_->getArg(1);
+  const auto standard = runtime::FindStandardNative(function.native_symbol);
+  return standard != nullptr && standard->aot_entry().intrinsic == Intrinsic::SquareRoot &&
+         standard->IsSignatureCompatible(*function.signature, program_.layouts.types);
+}
+
+llvm::Value* FunctionEmitter::SquareRootCondition(llvm::Value& entries, llvm::Value* operand) {
+  using Intrinsic = runtime::NativeFunction::Intrinsic;
+  auto* intrinsic = builder_.CreateExtractValue(&entries, 2);
   auto* recognized = builder_.CreateICmpEQ(
       intrinsic, builder_.getInt8(static_cast<std::uint8_t>(Intrinsic::SquareRoot)));
   // 身份来自已冻结的真实绑定，宿主覆盖同名函数仍调用其入口。负参数沿用标准绑定的
   // NativeError 消息和逻辑栈；NaN 与 -0 按 sqrt 的浮点契约直接计算。
   auto* valid = builder_.CreateFCmpUGE(operand, llvm::ConstantFP::get(operand->getType(), 0));
+  return builder_.CreateAnd(recognized, valid);
+}
+
+void FunctionEmitter::EmitIntrinsicImport() {
+  if (!CanInlineSquareRoot(source_)) {
+    return;
+  }
+  auto* entries = body_->getArg(static_cast<unsigned>(source_.parameter_count + 1));
+  auto* operand = body_->getArg(1);
   auto* calculate = llvm::BasicBlock::Create(module_.getContext(), "intrinsic.sqrt", body_);
   auto* host = llvm::BasicBlock::Create(module_.getContext(), "intrinsic.host", body_);
-  builder_.CreateCondBr(builder_.CreateAnd(recognized, valid), calculate, host);
+  builder_.CreateCondBr(SquareRootCondition(*entries, operand), calculate, host);
   builder_.SetInsertPoint(calculate);
   builder_.CreateStore(builder_.CreateUnaryIntrinsic(llvm::Intrinsic::sqrt, operand), Output());
   Finish(Status(builder_, ExecutionStatus::Returned));

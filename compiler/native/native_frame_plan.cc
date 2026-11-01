@@ -5,7 +5,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 #include "base/async_operation.h"
 #include "base/builtin.h"
@@ -17,8 +19,8 @@
 #include "compiler/native/function_emitter.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/native/native_values.h"
-#include "runtime/native/native_deoptimization.h"
 #include "runtime/native/native_abi.h"
+#include "runtime/native/native_deoptimization.h"
 #include "runtime/value/value.h"
 namespace vela::compiler::native {
 namespace {
@@ -101,7 +103,7 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
                                                               const ir::Program& program,
                                                               const EscapePlan& escape,
                                                               const NativeRootPlan& roots,
-                                                              NativeCodeTier tier,
+                                                              NativeFrameRecovery recovery,
                                                               NativeEntryKind kind) {
   auto& context = module.getContext();
   const auto scratch_count = PlanTemporaryCount(escape.function, program, roots);
@@ -111,22 +113,41 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
   std::vector<llvm::Type*> fields;
   constexpr std::size_t kAuxiliaryFields = 6;
   fields.reserve(escape.function.register_count + kAuxiliaryFields);
-  for (const auto& type : escape.function.value_types) {
-    fields.push_back(type.kind == Kind::Invalid ? llvm::Type::getInt8Ty(context)
-                                                : ValueType(context, type));
+  std::vector<std::uint8_t> addressed(escape.function.register_count);
+  for (const auto& allocation : escape.allocations) {
+    if (allocation.stack_record) {
+      for (const auto reg : allocation.fields) {
+        addressed.at(reg) = 1;
+      }
+    }
+    if (!escape.checkpoints.empty() &&
+        allocation.decision == AllocationDecision::ScalarReplacement) {
+      addressed.at(allocation.reference) = 1;
+    }
   }
+  std::vector<std::optional<unsigned>> local_fields(addressed.size());
+  for (std::size_t index = 0; index < addressed.size(); ++index) {
+    if (addressed.at(index) != 0) {
+      local_fields.at(index) = static_cast<unsigned>(fields.size());
+      fields.push_back(ValueType(context, escape.function.value_types.at(index)));
+    }
+  }
+  // 仅借用记录和物化需要稳定局部地址。其余局部值由独立 alloca 提升为 SSA，
+  // 不应因检查点或暂存参数较大而全部退化为堆中的寄存器文件。
+  const auto temporary_field = static_cast<unsigned>(fields.size());
   fields.push_back(llvm::ArrayType::get(NativeRecordType(context), *scratch_count));
   fields.push_back(NativeRecordType(context));
-  auto* debug_storage = llvm::ArrayType::get(
-      llvm::Type::getInt8Ty(context), escape.function.register_count * sizeof(runtime::NativeDebugValue));
+  auto* debug_storage =
+      llvm::ArrayType::get(llvm::Type::getInt8Ty(context),
+                           escape.function.register_count * sizeof(runtime::NativeDebugValue));
   std::vector<llvm::Type*> recovery_fields{
-      fields.at(escape.function.register_count),
-      fields.at(escape.function.register_count + 1),
+      fields.at(temporary_field),
+      fields.at(temporary_field + 1),
   };
   if (roots.debug_values) {
     recovery_fields.push_back(debug_storage);
   }
-  if (tier == NativeCodeTier::Optimized) {
+  if (recovery == NativeFrameRecovery::Required) {
     auto* recovery_storage = llvm::StructType::get(context, recovery_fields);
     fields.push_back(
         llvm::ArrayType::get(llvm::Type::getInt8Ty(context), sizeof(runtime::NativeCheckpoint)));
@@ -142,6 +163,7 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
         .type = type,
         .bytes =
             module.getDataLayout().getTypeAllocSize(type) + (roots.count * sizeof(runtime::Value)),
+        .local_fields = {},
     };
   }
   for (const auto& site : escape.allocations) {
@@ -158,6 +180,8 @@ std::expected<NativeFrameLayout, std::string> PlanNativeFrame(llvm::Module& modu
       .type = type,
       .bytes =
           module.getDataLayout().getTypeAllocSize(type) + (roots.count * sizeof(runtime::Value)),
+      .local_fields = std::move(local_fields),
+      .temporary_field = temporary_field,
   };
 }
 

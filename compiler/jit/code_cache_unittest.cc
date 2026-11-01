@@ -65,6 +65,8 @@ TEST_F(JitCodeCacheTest, RelocatesCachedObjectsIntoIndependentLiveBatchesAndFres
   EXPECT_GT(memory.executable_bytes, 0U);
   EXPECT_GT(memory.read_only_bytes, 0U);
   EXPECT_GT(memory.debug_payload_bytes, 0U);
+  EXPECT_EQ(memory.images, 1U);
+  EXPECT_GT(memory.image_data_bytes, 0U);
   {
     const auto second = Compile(**compiler, {.tier = NativeCodeTier::Optimized});
     ASSERT_TRUE(second);
@@ -73,8 +75,11 @@ TEST_F(JitCodeCacheTest, RelocatesCachedObjectsIntoIndependentLiveBatchesAndFres
     EXPECT_EQ(second->timings.optimization.count(), 0);
     EXPECT_NE(first->image.get(), second->image.get());
     EXPECT_EQ((*compiler)->resource_counts().batches, 2U);
+    EXPECT_EQ((*compiler)->resource_counts().images, 2U);
   }
   EXPECT_EQ((*compiler)->resource_counts().batches, 1U);
+  EXPECT_EQ((*compiler)->resource_counts().images, 1U);
+  EXPECT_EQ((*compiler)->resource_counts().image_data_bytes, memory.image_data_bytes);
   EXPECT_EQ((*compiler)->resource_counts().executable_bytes, memory.executable_bytes);
   EXPECT_EQ((*compiler)->resource_counts().read_only_bytes, memory.read_only_bytes);
   EXPECT_EQ((*compiler)->resource_counts().debug_payload_bytes, memory.debug_payload_bytes);

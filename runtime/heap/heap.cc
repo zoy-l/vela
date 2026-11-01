@@ -130,6 +130,7 @@ HeapObject* Heap::AllocateInstance(const ClassLayout& layout,
     object->native_payload = storage;
     std::ranges::copy(initial_fields, ObjectFields(object));
     std::ranges::fill(storage->states().first(initial_fields.size()), FieldState::Ready);
+    storage->unready -= static_cast<std::uint32_t>(initial_fields.size());
     RegisterInstance(*object, *storage);
     Publish(*object, allocation);
     return object;

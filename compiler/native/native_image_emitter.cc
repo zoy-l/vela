@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <expected>
 #include <initializer_list>
-#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -14,8 +13,6 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
-
-#include <absl/container/flat_hash_map.h>
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/IR/BasicBlock.h>
@@ -30,20 +27,10 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
 
-#include "base/callable.h"
 #include "base/declaration.h"
-#include "base/layout_description.h"
-#include "base/member.h"
-#include "base/native_program_mode.h"
-#include "base/opcode.h"
 #include "base/source_location.h"
-#include "compiler/frontend/syntax/ast.h"
-#include "compiler/ir/analysis.h"
-#include "compiler/ir/ir.h"
 #include "compiler/native/native_values.h"
-#include "runtime/native/native_abi.h"
 #include "runtime/native/native_image.h"
-#include "runtime/native_build_identity.h"
 
 namespace vela::compiler::native {
 namespace {
@@ -67,43 +54,6 @@ using runtime::NativeTable;
 using runtime::NativeText;
 using runtime::NativeTypeDescription;
 
-std::uint32_t FunctionFlags(const ir::Function& function, std::uint8_t exported) {
-  std::uint32_t flags = function.is_async ? runtime::kNativeAsyncFunction : 0;
-  if (function.is_generated_constructor) {
-    flags |= runtime::kNativeGeneratedConstructor;
-  }
-  if (function.visibility == frontend::Visibility::Private) {
-    flags |= runtime::kNativePrivateFunction;
-  }
-  if (exported != 0) {
-    flags |= runtime::kNativeExportedFunction;
-  }
-  if (function.return_type.kind == frontend::TypeDescriptor::Kind::Enum) {
-    flags |= runtime::kNativeEnumResult;
-  }
-  return flags;
-}
-
-std::optional<DeclarationId> BindingTarget(const ir::Program& program,
-                                           const ir::Instruction& instruction) {
-  if (instruction.opcode == Opcode::CallInterface) {
-    return program.selector_declarations.at(instruction.index);
-  }
-  std::optional<FunctionIdentity> function;
-  if (instruction.opcode == Opcode::Call) {
-    function = program.functions.at(instruction.index).identity;
-  } else if (instruction.opcode == Opcode::NewInstance) {
-    const auto& callable = program.classes.at(instruction.index).callable;
-    if (callable) {
-      if (callable->mode == CallableMode::InterfaceMethod) {
-        return program.selector_declarations.at(callable->function);
-      }
-      function = program.functions.at(callable->function).identity;
-    }
-  }
-  return function && function->local == 0 ? std::optional(function->declaration) : std::nullopt;
-}
-
 class ImageEmitter final {
  public:
   explicit ImageEmitter(llvm::Module& module);
@@ -112,9 +62,8 @@ class ImageEmitter final {
   ImageEmitter& operator=(const ImageEmitter&) = delete;
   ImageEmitter(ImageEmitter&&) = delete;
   ImageEmitter& operator=(ImageEmitter&&) = delete;
-  std::expected<llvm::Constant*, std::string> Emit(const ir::Program& program,
-                                                   std::span<llvm::Function* const> entries,
-                                                   std::span<const std::uint8_t> exports);
+  std::expected<llvm::Constant*, std::string> Emit(const NativeImage& image,
+                                                   std::span<llvm::Function* const> entries);
 
  private:
   template <class Record, std::size_t Count>
@@ -139,23 +88,21 @@ class ImageEmitter final {
   llvm::Constant* Wide(std::uint64_t value);
   llvm::Constant* Identity(FunctionIdentity identity);
   llvm::Constant* Identities(std::span<const DeclarationId> values);
-  llvm::Constant* Declarations(std::span<const ir::Declaration> declarations);
+  llvm::Constant* Declarations(std::span<const NativeDeclarationDescription> declarations);
   llvm::Constant* Text(std::string_view value);
   llvm::Constant* Table(llvm::Type* element, llvm::ArrayRef<llvm::Constant*> values);
   llvm::Constant* Numbers(std::span<const std::uint32_t> values);
-  llvm::Constant* Texts(std::span<const std::string> values);
-  llvm::Constant* Type(const layout::Type& type);
-  llvm::Constant* Classes(const ir::Program& program);
-  llvm::Constant* Arrays(std::span<const layout::Array> arrays);
-  llvm::Constant* Collections(std::span<const layout::Collection> collections);
-  llvm::Constant* Signatures(std::span<const layout::Signature> signatures);
-  llvm::Constant* Functions(const ir::Program& program,
-                            std::span<llvm::Function* const> entries,
-                            std::span<const std::uint8_t> exports);
-  llvm::Constant* Dependencies(const ir::Program& program, const ir::Function& function);
-  llvm::Constant* DependencyBlocks(const ir::Function& function);
-  [[nodiscard]] DeclarationId LexicalClass(DeclarationId owner) const;
-  llvm::Constant* Members(std::span<const MemberDefinition> members);
+  llvm::Constant* Texts(std::span<const NativeText> values);
+  llvm::Constant* Type(const NativeTypeDescription& type);
+  llvm::Constant* Classes(std::span<const NativeClassDescription> classes);
+  llvm::Constant* Arrays(std::span<const NativeArrayDescription> arrays);
+  llvm::Constant* Collections(std::span<const NativeCollectionDescription> collections);
+  llvm::Constant* Signatures(std::span<const NativeSignatureDescription> signatures);
+  llvm::Constant* Functions(std::span<const NativeFunctionDescription> functions,
+                            std::span<llvm::Function* const> entries);
+  llvm::Constant* Dependencies(const NativeFunctionDependencies* dependencies);
+  llvm::Constant* DependencyBlocks(std::span<const NativeDependencyBlock> descriptions);
+  llvm::Constant* Members(std::span<const NativeMemberDescription> members);
 
   llvm::Module& module_;
   llvm::LLVMContext& context_;
@@ -183,7 +130,6 @@ class ImageEmitter final {
   llvm::StructType* member_;
   llvm::StructType* image_;
   bool has_compatible_layout_ = true;
-  absl::flat_hash_map<DeclarationId, const ir::Declaration*> declarations_;
 };
 
 ImageEmitter::ImageEmitter(llvm::Module& module)
@@ -440,7 +386,8 @@ llvm::Constant* ImageEmitter::Identities(std::span<const DeclarationId> values) 
   return Table(wide_, constants);
 }
 
-llvm::Constant* ImageEmitter::Declarations(std::span<const ir::Declaration> declarations) {
+llvm::Constant* ImageEmitter::Declarations(
+    std::span<const NativeDeclarationDescription> declarations) {
   std::vector<llvm::Constant*> constants;
   constants.reserve(declarations.size());
   for (const auto& declaration : declarations) {
@@ -448,10 +395,10 @@ llvm::Constant* ImageEmitter::Declarations(std::span<const ir::Declaration> decl
                                                  Wide(declaration.identity.value),
                                                  Wide(declaration.owner.value),
                                                  Word(static_cast<std::uint32_t>(declaration.kind)),
-                                                 Text(declaration.name),
-                                                 Texts(declaration.type_parameters),
-                                                 Texts(declaration.enum_members),
-                                                 Text(declaration.generic_signature),
+                                                 Text(declaration.name.text()),
+                                                 Texts(declaration.type_parameters.values()),
+                                                 Texts(declaration.enum_members.values()),
+                                                 Text(declaration.generic_signature.text()),
                                                  Wide(declaration.definition.value),
                                              }));
   }
@@ -480,16 +427,16 @@ llvm::Constant* ImageEmitter::Numbers(std::span<const std::uint32_t> values) {
   return Table(word_, constants);
 }
 
-llvm::Constant* ImageEmitter::Texts(std::span<const std::string> values) {
+llvm::Constant* ImageEmitter::Texts(std::span<const NativeText> values) {
   std::vector<llvm::Constant*> constants;
   constants.reserve(values.size());
   for (const auto& value : values) {
-    constants.push_back(Text(value));
+    constants.push_back(Text(value.text()));
   }
   return Table(text_, constants);
 }
 
-llvm::Constant* ImageEmitter::Type(const layout::Type& type) {
+llvm::Constant* ImageEmitter::Type(const NativeTypeDescription& type) {
   return Record(type_, {
                            Word(static_cast<std::uint32_t>(type.kind)),
                            Word(static_cast<std::uint32_t>(type.nullable)),
@@ -497,250 +444,168 @@ llvm::Constant* ImageEmitter::Type(const layout::Type& type) {
                        });
 }
 
-llvm::Constant* ImageEmitter::Classes(const ir::Program& program) {
+llvm::Constant* ImageEmitter::Classes(std::span<const NativeClassDescription> classes) {
   std::vector<llvm::Constant*> constants;
-  for (std::size_t index = 0; index < program.classes.size(); ++index) {
-    const auto& type = program.layouts.classes.at(index);
-    const auto& source = program.classes.at(index);
+  for (const auto& type : classes) {
     std::vector<llvm::Constant*> fields;
-    fields.reserve(source.fields.size());
-    for (const auto& field : source.fields) {
+    fields.reserve(type.fields.size);
+    for (const auto& field : type.fields.values()) {
       fields.push_back(Record(field_, {
                                           Wide(field.declaration.value),
                                           Word(field.type),
-                                          Word(field.visibility == frontend::Visibility::Private
-                                                   ? runtime::kNativePrivateField
-                                                   : 0),
+                                          Word(field.flags),
                                           Word(field.initializer),
                                       }));
     }
-    constants.push_back(Record(
-        class_, {
-                    Text(type.name),
-                    Numbers(type.reference_fields),
-                    Numbers(type.interfaces),
-                    Numbers(type.dispatch_targets),
-                    Word(type.field_count),
-                    Word(static_cast<std::uint32_t>(type.kind)),
-                    Word(type.callable ? type.callable->function : runtime::kNoNativeIndex),
-                    Word(type.callable ? static_cast<std::uint32_t>(type.callable->mode) : 0),
-                    Word(type.callable_type.value_or(runtime::kNoNativeIndex)),
-                    Wide(source.declaration.value),
-                    Table(field_, fields),
-                    Wide(source.base_class.value),
-                }));
+    constants.push_back(Record(class_, {
+                                           Text(type.name.text()),
+                                           Numbers(type.reference_fields.values()),
+                                           Numbers(type.interfaces.values()),
+                                           Numbers(type.dispatch_targets.values()),
+                                           Word(type.field_count),
+                                           Word(static_cast<std::uint32_t>(type.kind)),
+                                           Word(type.callable_function),
+                                           Word(type.callable_mode),
+                                           Word(type.callable_type),
+                                           Wide(type.declaration.value),
+                                           Table(field_, fields),
+                                           Wide(type.base_class.value),
+                                       }));
   }
   return Table(class_, constants);
 }
 
-llvm::Constant* ImageEmitter::Arrays(std::span<const layout::Array> arrays) {
+llvm::Constant* ImageEmitter::Arrays(std::span<const NativeArrayDescription> arrays) {
   std::vector<llvm::Constant*> constants;
   for (const auto& type : arrays) {
-    constants.push_back(Record(array_, {Text(type.name), Type(type.element)}));
+    constants.push_back(Record(array_, {Text(type.name.text()), Type(type.element)}));
   }
   return Table(array_, constants);
 }
 
-llvm::Constant* ImageEmitter::Collections(std::span<const layout::Collection> collections) {
+llvm::Constant* ImageEmitter::Collections(
+    std::span<const NativeCollectionDescription> collections) {
   std::vector<llvm::Constant*> constants;
   for (const auto& type : collections) {
-    constants.push_back(
-        Record(collection_, {
-                                Text(type.name),
-                                Type(type.key),
-                                Type(type.value.value_or(layout::Type())),
-                                Word(static_cast<std::uint32_t>(type.value.has_value())),
-                            }));
+    constants.push_back(Record(collection_, {
+                                                Text(type.name.text()),
+                                                Type(type.key),
+                                                Type(type.value),
+                                                Word(type.has_value),
+                                            }));
   }
   return Table(collection_, constants);
 }
 
-llvm::Constant* ImageEmitter::Signatures(std::span<const layout::Signature> signatures) {
+llvm::Constant* ImageEmitter::Signatures(std::span<const NativeSignatureDescription> signatures) {
   std::vector<llvm::Constant*> constants;
   for (const auto& type : signatures) {
     std::vector<llvm::Constant*> parameters;
-    for (const auto& parameter : type.parameters) {
-      const auto flags = (parameter.optional ? runtime::kNativeOptionalParameter : 0U) |
-                         (parameter.rest ? runtime::kNativeRestParameter : 0U);
-      parameters.push_back(Record(signature_parameter_, {Type(parameter.type), Word(flags)}));
+    for (const auto& parameter : type.parameters.values()) {
+      parameters.push_back(
+          Record(signature_parameter_, {Type(parameter.type), Word(parameter.flags)}));
     }
-    constants.push_back(
-        Record(signature_, {
-                               Text(type.name),
-                               Table(signature_parameter_, parameters),
-                               Type(type.result.value_or(layout::Type())),
-                               Word(static_cast<std::uint32_t>(type.result.has_value())),
-                           }));
+    constants.push_back(Record(signature_, {
+                                               Text(type.name.text()),
+                                               Table(signature_parameter_, parameters),
+                                               Type(type.result),
+                                               Word(type.has_result),
+                                           }));
   }
   return Table(signature_, constants);
 }
 
-llvm::Constant* ImageEmitter::Functions(const ir::Program& program,
-                                        std::span<llvm::Function* const> entries,
-                                        std::span<const std::uint8_t> exports) {
+llvm::Constant* ImageEmitter::Functions(std::span<const NativeFunctionDescription> functions,
+                                        std::span<llvm::Function* const> entries) {
   std::vector<llvm::Constant*> constants;
-  const auto functions = std::span(program.functions);
   for (std::size_t index = 0; index < functions.size(); ++index) {
     const auto& function = functions.subspan(index).front();
     auto* entry = entries.subspan(index).front();
     std::vector<llvm::Constant*> parameters;
-    std::uint32_t result = runtime::kNoNativeIndex;
-    std::uint32_t hidden = 0;
-    auto flags = FunctionFlags(function, exports.subspan(index).front());
-    if (function.signature) {
-      const auto& signature = *function.signature;
-      flags |= runtime::kNativeTypedFunction;
-      hidden = signature.hidden_parameters;
-      result = signature.result.value_or(runtime::kNoNativeIndex);
-      for (const auto& parameter : signature.parameters) {
-        const auto parameter_flags = (parameter.optional ? runtime::kNativeOptionalParameter : 0U) |
-                                     (parameter.rest ? runtime::kNativeRestParameter : 0U);
-        parameters.push_back(Record(
-            call_parameter_, {Text(parameter.name), Word(parameter.type), Word(parameter_flags)}));
-      }
+    for (const auto& parameter : function.parameters.values()) {
+      parameters.push_back(Record(call_parameter_, {
+                                                       Text(parameter.name.text()),
+                                                       Word(parameter.type),
+                                                       Word(parameter.flags),
+                                                   }));
     }
     std::vector<llvm::Constant*> locations;
-    if (!function.native_symbol.empty()) {
-      const auto location = function.location;
-      locations.push_back(Record(location_, {
-                                                Word(location.line),
-                                                Word(location.column),
-                                                Word(location.source_id),
-                                            }));
-    }
-    for (const auto& instruction : function.instructions) {
-      const auto& location = instruction.location;
+    for (const auto& location : function.locations.values()) {
       locations.push_back(Record(
           location_, {Word(location.line), Word(location.column), Word(location.source_id)}));
     }
     constants.push_back(Record(function_, {
-                                              Text(function.name),
-                                              Text(function.native_symbol),
+                                              Text(function.name.text()),
+                                              Text(function.native_symbol.text()),
                                               Table(call_parameter_, parameters),
                                               Table(location_, locations),
                                               entry,
                                               Word(function.parameter_count),
-                                              Word(result),
-                                              Word(hidden),
-                                              Word(flags),
+                                              Word(function.result_type),
+                                              Word(function.hidden_parameters),
+                                              Word(function.flags),
                                               Identity(function.identity),
-                                              Dependencies(program, function),
+                                              Dependencies(function.dependencies),
                                           }));
   }
   return Table(function_, constants);
 }
 
-llvm::Constant* ImageEmitter::DependencyBlocks(const ir::Function& function) {
-  const auto graph = ir::BuildFlowGraph(function);
+llvm::Constant* ImageEmitter::DependencyBlocks(
+    std::span<const NativeDependencyBlock> descriptions) {
   std::vector<llvm::Constant*> blocks;
-  blocks.reserve(graph.blocks.size());
-  for (const auto& block : graph.blocks) {
-    std::vector<std::uint32_t> successors;
-    successors.reserve(block.successors.size());
-    for (const auto successor : block.successors) {
-      successors.push_back(static_cast<std::uint32_t>(successor));
-    }
+  blocks.reserve(descriptions.size());
+  for (const auto& block : descriptions) {
     blocks.push_back(Record(dependency_block_, {
                                                    Word(static_cast<std::uint32_t>(block.begin)),
                                                    Word(static_cast<std::uint32_t>(block.end)),
-                                                   Numbers(successors),
+                                                   Numbers(block.successors.values()),
                                                }));
   }
   return Table(dependency_block_, blocks);
 }
 
-DeclarationId ImageEmitter::LexicalClass(DeclarationId owner) const {
-  auto declaration = declarations_.find(owner);
-  while (declaration != declarations_.end()) {
-    if (declaration->second->kind == DeclarationKind::Class) {
-      return owner;
-    }
-    owner = declaration->second->owner;
-    declaration = declarations_.find(owner);
-  }
-  return {};
-}
-
-llvm::Constant* ImageEmitter::Dependencies(const ir::Program& program,
-                                           const ir::Function& function) {
-  if (program.native_mode != NativeProgramMode::Reloadable) {
+llvm::Constant* ImageEmitter::Dependencies(const NativeFunctionDependencies* dependencies) {
+  if (dependencies == nullptr) {
     return llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_));
   }
-  std::vector<DeclarationId> fields;
-  std::vector<DeclarationId> globals;
-  std::vector<std::uint32_t> versions;
   std::vector<llvm::Constant*> constructions;
   std::vector<llvm::Constant*> bindings;
-  std::vector<std::uint32_t> field_positions;
-  std::vector<std::uint32_t> global_positions;
-  std::vector<std::uint32_t> version_positions;
-  std::vector<std::uint32_t> construction_positions;
-  std::vector<std::uint32_t> binding_positions;
-  const auto lexical_class = LexicalClass(function.identity.declaration);
-  for (std::size_t index = 0; index < function.instructions.size(); ++index) {
-    const auto& instruction = function.instructions.at(index);
-    const auto position = static_cast<std::uint32_t>(index);
-    if (instruction.field_declaration) {
-      fields.push_back(*instruction.field_declaration);
-      field_positions.push_back(position);
-    }
-    if (instruction.opcode == Opcode::GetGlobal || instruction.opcode == Opcode::SetGlobal) {
-      globals.push_back(program.global_declarations.at(instruction.index));
-      global_positions.push_back(position);
-    }
-    if (instruction.opcode == Opcode::NewInstance) {
-      const auto callable = program.classes.at(instruction.index).callable;
-      if (callable && callable->mode != CallableMode::InterfaceMethod &&
-          program.functions.at(callable->function).identity.local != 0) {
-        versions.push_back(callable->function);
-        version_positions.push_back(position);
-      }
-    }
-    if (const auto target = BindingTarget(program, instruction)) {
-      bindings.push_back(
-          Record(binding_, {
-                               Wide(target->value),
-                               Wide(instruction.binding_receiver.value_or(DeclarationId{}).value),
-                           }));
-      binding_positions.push_back(position);
-    }
-    if (instruction.construction && instruction.construction->generated) {
-      const auto& construction = *instruction.construction;
-      constructions.push_back(Record(
-          construction_, {Wide(construction.type.value), Identities(construction.supplied)}));
-      construction_positions.push_back(position);
-    }
+  for (const auto& binding : dependencies->bindings.values()) {
+    bindings.push_back(
+        Record(binding_, {Wide(binding.target.value), Wide(binding.receiver.value)}));
   }
-  auto positions = std::move(field_positions);
-  for (const auto* group :
-       {&global_positions, &version_positions, &construction_positions, &binding_positions}) {
-    positions.insert(positions.end(), group->begin(), group->end());
+  for (const auto& construction : dependencies->constructions.values()) {
+    constructions.push_back(Record(construction_, {
+                                                      Wide(construction.type.value),
+                                                      Identities(construction.supplied.values()),
+                                                  }));
   }
   auto* record = Record(dependencies_, {
-                                           Identities(fields),
-                                           Identities(globals),
-                                           Numbers(versions),
+                                           Identities(dependencies->fields.values()),
+                                           Identities(dependencies->globals.values()),
+                                           Numbers(dependencies->versions.values()),
                                            Table(construction_, constructions),
-                                           Wide(lexical_class.value),
+                                           Wide(dependencies->lexical_class.value),
                                            Table(binding_, bindings),
-                                           Identities(function.type_dependencies),
-                                           Numbers(positions),
-                                           DependencyBlocks(function),
+                                           Identities(dependencies->types.values()),
+                                           Numbers(dependencies->positions.values()),
+                                           DependencyBlocks(dependencies->blocks.values()),
                                        });
   auto* storage = new llvm::GlobalVariable(
       module_, dependencies_, true, llvm::GlobalValue::PrivateLinkage, record, "vela.dependencies");
   return storage;
 }
 
-llvm::Constant* ImageEmitter::Members(std::span<const MemberDefinition> members) {
+llvm::Constant* ImageEmitter::Members(std::span<const NativeMemberDescription> members) {
   std::vector<llvm::Constant*> constants;
   for (const auto& member : members) {
     constants.push_back(Record(member_, {
-                                            Text(member.name),
+                                            Text(member.name.text()),
                                             Word(member.receiver_type),
                                             Word(member.target),
-                                            Word(member.type.value_or(runtime::kNoNativeIndex)),
-                                            Word(member.setter.value_or(runtime::kNoNativeIndex)),
+                                            Word(member.type),
+                                            Word(member.setter),
                                             Word(static_cast<std::uint32_t>(member.kind)),
                                         }));
   }
@@ -748,48 +613,43 @@ llvm::Constant* ImageEmitter::Members(std::span<const MemberDefinition> members)
 }
 
 std::expected<llvm::Constant*, std::string> ImageEmitter::Emit(
-    const ir::Program& program,
-    std::span<llvm::Function* const> entries,
-    std::span<const std::uint8_t> exports) {
+    const NativeImage& image,
+    std::span<llvm::Function* const> entries) {
   if (!has_compatible_layout_) {
     return std::unexpected(
         "LLVM target data layout does not match the native runtime descriptor ABI");
   }
-  const auto& layouts = program.layouts;
-  for (const auto& declaration : program.declarations) {
-    declarations_.emplace(declaration.identity, &declaration);
-  }
   std::vector<llvm::Constant*> types;
-  types.reserve(layouts.types.size());
-  for (const auto& type : layouts.types) {
+  types.reserve(image.types.size);
+  for (const auto& type : image.types.values()) {
     types.push_back(Type(type));
   }
   auto* description = Record(image_, {
-                                         Word(runtime::kNativeAbiVersion),
-                                         Word(sizeof(NativeImage)),
-                                         Text(runtime::kNativeBuildIdentity),
-                                         Text(module_.getTargetTriple().str()),
-                                         Texts(layouts.interfaces),
-                                         Classes(program),
-                                         Arrays(layouts.arrays),
-                                         Collections(layouts.collections),
-                                         Signatures(layouts.signatures),
+                                         Word(image.abi_version),
+                                         Word(image.record_bytes),
+                                         Text(image.abi_identity.text()),
+                                         Text(image.target.text()),
+                                         Texts(image.interfaces.values()),
+                                         Classes(image.classes.values()),
+                                         Arrays(image.arrays.values()),
+                                         Collections(image.collections.values()),
+                                         Signatures(image.signatures.values()),
                                          Table(type_, types),
-                                         Numbers(layouts.array_types),
-                                         Numbers(layouts.collection_types),
-                                         Texts(program.strings),
-                                         Texts(program.source_paths),
-                                         Functions(program, entries, exports),
-                                         Members(program.members),
-                                         Numbers(program.global_initializers),
-                                         Wide(program.revision),
-                                         Texts(program.source_texts),
-                                         Declarations(program.declarations),
-                                         Identities(program.interface_declarations),
-                                         Identities(program.global_declarations),
-                                         Identities(program.selector_declarations),
-                                         Word(static_cast<std::uint32_t>(program.native_mode)),
-                                         Numbers(program.global_flags),
+                                         Numbers(image.array_types.values()),
+                                         Numbers(image.collection_types.values()),
+                                         Texts(image.strings.values()),
+                                         Texts(image.source_paths.values()),
+                                         Functions(image.functions.values(), entries),
+                                         Members(image.members.values()),
+                                         Numbers(image.global_initializers.values()),
+                                         Wide(image.revision),
+                                         Texts(image.source_texts.values()),
+                                         Declarations(image.declarations.values()),
+                                         Identities(image.interface_declarations.values()),
+                                         Identities(image.global_declarations.values()),
+                                         Identities(image.selector_declarations.values()),
+                                         Word(image.native_mode),
+                                         Numbers(image.global_flags.values()),
                                      });
   auto* storage = new llvm::GlobalVariable(module_, image_, true, llvm::GlobalValue::PrivateLinkage,
                                            description, "vela.image");
@@ -800,11 +660,10 @@ std::expected<llvm::Constant*, std::string> ImageEmitter::Emit(
 
 std::expected<EmittedNativeImage, std::string> EmitNativeImage(
     llvm::Module& module,
-    const ir::Program& program,
+    const NativeImage& description,
     std::span<llvm::Function* const> entries,
-    std::span<const std::uint8_t> exports,
     std::string_view module_name) {
-  const auto image = ImageEmitter(module).Emit(program, entries, exports);
+  const auto image = ImageEmitter(module).Emit(description, entries);
   if (!image) {
     return std::unexpected(image.error());
   }

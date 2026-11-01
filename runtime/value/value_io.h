@@ -13,6 +13,7 @@ namespace vela::runtime {
 inline constexpr std::size_t kScalarTextCapacity = 32;
 [[nodiscard]] std::string_view FormatScalar(Value value,
                                             std::span<char, kScalarTextCapacity> buffer);
+[[nodiscard]] std::size_t ScalarTextLength(Value value);
 // 输入为有限标量；JSON 的 double 保留 .0 或指数，避免解码后退化为 int。
 [[nodiscard]] std::string_view FormatJsonScalar(Value value,
                                                 std::span<char, kScalarTextCapacity> buffer);

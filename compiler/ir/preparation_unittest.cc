@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 
+#include "base/builtin.h"
 #include "base/layout_description.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/modules/source_loader.h"
@@ -23,6 +24,24 @@ namespace vela::ir {
 namespace {
 
 using test::Prepare;
+
+TEST(PreparationTest, FusesOnlyUnobservedScalarTextUsedForItsLength) {
+  const auto prepared = Prepare(R"(
+func length(value: double): int { const text = value.toString(); return text.length; }
+func bytes(value: int): int { return value.toString().byteLength; }
+func observed(value: int): int { const text = value.toString(); print(text); return text.length; }
+func reassigned(value: int): int { let text = value.toString(); text = 'kept'; return text.length; }
+)");
+  ASSERT_TRUE(prepared.Succeeded()) << frontend::DiagnosticsText(prepared.diagnostics);
+  for (const auto& function : prepared.program.functions) {
+    const auto fused = std::ranges::count_if(function.instructions, [](const auto& instruction) {
+      return instruction.opcode == Opcode::BuiltinCall &&
+             instruction.index == static_cast<std::uint32_t>(Builtin::ScalarTextLength);
+    });
+    EXPECT_EQ(fused, function.name == "length" || function.name == "bytes" ? 1 : 0)
+        << function.name;
+  }
+}
 
 TEST(PreparationTest, PreservesUnboundNativeImportsWithoutRuntimeState) {
   auto result = Prepare(R"(

@@ -1,9 +1,7 @@
 #include "compiler/development/development_session.h"
 
-#include <algorithm>
 #include <cassert>
 #include <chrono>
-#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <functional>
@@ -24,7 +22,6 @@
 #include "base/path.h"
 #include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/ir/ir.h"
 #include "compiler/jit/code_resources.h"
 #include "compiler/jit/compiler.h"
 #include "runtime/isolate/external_resources.h"
@@ -33,6 +30,7 @@
 #include "runtime/native/native_call.h"
 #include "runtime/native/native_control.h"
 #include "runtime/native/native_dispatch.h"
+#include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/value/value.h"
 
@@ -284,7 +282,7 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
     return std::unexpected(std::move(result));
   }
   const auto code_started = Clock::now();
-  auto code = compiler_->Compile(source->snapshot().program, options_.compilation);
+  auto code = compiler_->Compile(source->snapshot().program, options_.compilation, &code_reuse_);
   result.timings.code = Clock::now() - code_started;
   if (!code) {
     result.status = DevelopmentStatus::CodeError;
@@ -296,6 +294,7 @@ std::expected<DevelopmentCandidate, DevelopmentResult> DevelopmentSession::Prepa
   result.timings.frontend = source->snapshot().timings;
   result.cache = code->cache;
   result.changes = Changes(*previous, source->snapshot(), update);
+  result.changes.compiled_functions = code->compiled_functions;
   return DevelopmentCandidate(identity_, std::move(update), std::move(*source), std::move(*code),
                               std::move(replacement), std::move(result));
 }
@@ -572,23 +571,24 @@ std::expected<void, DevelopmentStatus> DevelopmentSession::Cancel() {
   return {};
 }
 
-std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::InvokeDeclaration(
-    DeclarationId declaration,
+std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::InvokeTarget(
+    const runtime::NativeResolvedDeclaration& target,
     std::span<const runtime::Value> arguments,
     Invocation invocation) {
-  const auto target = isolate_->native_dispatch().Resolve(declaration);
-  if (!target) {
-    return std::unexpected(target.error());
-  }
   std::expected<runtime::Value, ExecutionStatus> result;
-  last_diagnostic_.reset();
   const auto entered_generation = generation();
+  const auto function_index = target.function;
+  const auto is_entry = invocation == Invocation::Entry;
   {
-    auto instance = runtime::NativeInstance::Borrow(*target->state);
+    auto instance = runtime::NativeInstance::Borrow(*target.state);
+    const auto& function = instance.image().functions.values().subspan(function_index).front();
+    if (is_entry && function.parameter_count != 0) {
+      return std::unexpected(ExecutionStatus::InvalidEntry);
+    }
+    last_diagnostic_.reset();
     runtime::NativeExecution execution(instance);
-    result = invocation == Invocation::Entry
-                 ? runtime::InvokeNativeTarget(execution, target->function, {})
-                 : runtime::InvokeNativeEntry(execution, target->function, arguments);
+    result = is_entry ? runtime::InvokeNativeTarget(execution, function_index, {})
+                      : runtime::InvokeNativeEntry(execution, function_index, arguments);
     if (!result && result.error() != ExecutionStatus::ExecutionStopped) {
       last_diagnostic_ =
           execution.HasException()
@@ -618,7 +618,11 @@ std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::Invoke(
     }
     declaration = entry->declaration();
   }
-  return InvokeDeclaration(declaration, arguments, Invocation::Exported);
+  const auto target = isolate_->native_dispatch().Resolve(declaration);
+  if (!target) {
+    return std::unexpected(target.error());
+  }
+  return InvokeTarget(*target, arguments, Invocation::Exported);
 }
 
 std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::RunEntry() {
@@ -633,25 +637,32 @@ std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::RunEntry() {
 std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::InvokeEntry(
     DevelopmentEntry requested) {
   const auto source = snapshot();
-  const auto records = source->identities.records();
-  const auto module_uri = PathText(Utf8Path(requested.module).lexically_normal());
-  const auto& functions = source->program.functions;
-  const auto entry = std::ranges::find_if(functions, [&](const ir::Function& function) {
-    const auto identity = function.identity;
-    if (identity.local != 0 || identity.declaration == DeclarationId{} ||
-        function.parameter_count != 0) {
-      return false;
-    }
-    const auto& declaration =
-        records.subspan(static_cast<std::size_t>(identity.declaration.value)).front().key;
-    return declaration.kind == DeclarationKind::Function && declaration.name == requested.name &&
-           records.subspan(static_cast<std::size_t>(declaration.owner.value)).front().key.name ==
-               module_uri;
+  const auto& identities = source->identities;
+  const auto module = identities.Find({
+      .owner = {},
+      .kind = DeclarationKind::Module,
+      .name = PathText(Utf8Path(requested.module).lexically_normal()),
+      .arguments = {},
   });
-  if (entry == functions.end()) {
+  if (!module) {
     return std::unexpected(ExecutionStatus::InvalidEntry);
   }
-  return InvokeDeclaration(entry->identity.declaration, {}, Invocation::Entry);
+  const auto declaration = identities.Find({
+      .owner = *module,
+      .kind = DeclarationKind::Function,
+      .name = std::string(requested.name),
+      .arguments = {},
+  });
+  if (!declaration) {
+    return std::unexpected(ExecutionStatus::InvalidEntry);
+  }
+  const auto target = isolate_->native_dispatch().Resolve(*declaration);
+  if (!target) {
+    const auto error = target.error();
+    return std::unexpected(error == ExecutionStatus::TargetDeleted ? ExecutionStatus::InvalidEntry
+                                                                   : error);
+  }
+  return InvokeTarget(*target, {}, Invocation::Entry);
 }
 
 }  // namespace vela::compiler

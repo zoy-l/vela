@@ -27,6 +27,12 @@ struct NativeSafepointQueue final {
   bool closed = false;
 };
 
+// 请求地址随队列固定；借用深度只由 Isolate 线程读写，生成代码与运行时共用这一状态。
+struct NativeControlState final {
+  const std::atomic<std::uint8_t>* requests = nullptr;
+  std::uint64_t host_borrows = 0;
+};
+
 // 跨线程只拥有队列控制状态；关闭后投递不会访问已退休的 Isolate。
 class NativeSafepointEndpoint final {
  public:
@@ -51,11 +57,9 @@ class NativeControl final {
   NativeControl(NativeControl&&) = delete;
   NativeControl& operator=(NativeControl&&) = delete;
   [[nodiscard]] NativeSafepointEndpoint endpoint() const;
-  [[nodiscard]] const std::atomic<std::uint8_t>& safepoint_requests() const noexcept;
+  [[nodiscard]] NativeControlState& state() noexcept { return state_; }
   void SetDebugger(NativeDebugger* debugger) noexcept;
   void RequestStop() const noexcept;
-  void EnterHost() noexcept;
-  void ExitHost() noexcept;
   void EnterInitialization() noexcept;
   void ExitInitialization() noexcept;
   void ExitInitializations(std::uint32_t count) noexcept;
@@ -72,13 +76,13 @@ class NativeControl final {
   [[nodiscard]] ExecutionStatus ProcessSafepoint(NativeExecution* execution = nullptr);
 
  private:
-  std::size_t host_borrows_ = 0;
+  std::shared_ptr<NativeSafepointQueue> queue_;
+  NativeControlState state_;
   std::size_t initializations_ = 0;
   std::function<void()> pending_;
   bool processing_ = false;
   NativeDebugger* debugger_ = nullptr;
   bool debugging_ = false;
-  std::shared_ptr<NativeSafepointQueue> queue_;
 };
 
 // 初始化可以调用脚本或宿主；该作用域覆盖成功、异常及停止返回，禁止跨版本提交半成品。
@@ -96,8 +100,6 @@ class NativeInitializationScope final {
 };
 
 extern "C" std::uint8_t vela_native_v3_safepoint(NativeExecution* execution) noexcept;
-extern "C" void vela_native_v3_host_enter(NativeExecution* execution) noexcept;
-extern "C" void vela_native_v3_host_exit(NativeExecution* execution) noexcept;
 extern "C" void vela_native_v3_initialization_enter(NativeExecution* execution) noexcept;
 extern "C" void vela_native_v3_initialization_exit(NativeExecution* execution,
                                                    std::uint32_t count) noexcept;

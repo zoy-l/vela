@@ -99,6 +99,8 @@ void TransferLiveness(const Function& function,
                       const RegisterAccess& access,
                       RegisterSet& live,
                       std::span<const RegisterId> required = {});
-void CompactInstructions(Function& function, std::span<const std::uint8_t> keep);
+void CompactInstructions(Function& function,
+                         std::span<const std::uint8_t> keep,
+                         std::vector<std::size_t>* origins = nullptr);
 
 }  // namespace vela::ir

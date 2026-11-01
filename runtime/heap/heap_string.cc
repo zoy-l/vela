@@ -168,6 +168,17 @@ StringObject* Heap::AllocateString(std::string_view first, std::string_view seco
   return string;
 }
 
+StringObject* Heap::AllocateScalarString(Value value) noexcept {
+  std::array<char, kScalarTextCapacity> buffer{};
+  const auto text = FormatScalar(value, buffer);
+  const auto length = text.size();
+  auto* string = AllocateStringStorage({.bytes = length, .code_points = length});
+  if (string != nullptr) {
+    std::ranges::copy(text, StringStorage(*string, length).begin());
+  }
+  return string;
+}
+
 StringObject* Heap::JoinStrings(std::span<StringObject* const> parts,
                                 std::string_view separator) noexcept {
   std::size_t length = 0;

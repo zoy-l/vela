@@ -17,6 +17,8 @@ struct InstanceStorage final {
   InstanceStorage* next = nullptr;
   InstanceStorage* previous = nullptr;
   std::uint32_t count = 0;
+  // Initializing 仍计入未就绪数；零值允许整个字段块跳过逐字段初始化检查。
+  std::uint32_t unready = 0;
 
   [[nodiscard]] std::span<Value> values() noexcept { return {StorageAfter<Value>(*this), count}; }
   [[nodiscard]] std::span<const Value> values() const noexcept {
@@ -25,6 +27,12 @@ struct InstanceStorage final {
   [[nodiscard]] std::span<FieldState> states() noexcept {
     void* storage = values().last(0).data();
     return {static_cast<FieldState*>(storage), count};
+  }
+  void SetFieldState(std::uint32_t index, FieldState state) noexcept {
+    auto& current = states().subspan(index).front();
+    unready += static_cast<std::uint32_t>(state != FieldState::Ready);
+    unready -= static_cast<std::uint32_t>(current != FieldState::Ready);
+    current = state;
   }
 };
 

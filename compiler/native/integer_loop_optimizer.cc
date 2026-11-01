@@ -5,15 +5,20 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <span>
 #include <utility>
+#include <vector>
 
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Analysis/AssumptionCache.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/Analysis.h>
+#include <llvm/IR/Argument.h>
 #include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/CFG.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
@@ -25,12 +30,21 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
 #include <llvm/IR/PatternMatch.h>
+#include <llvm/IR/ValueHandle.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Transforms/Scalar/DCE.h>
 #include <llvm/Transforms/Scalar/EarlyCSE.h>
+#include <llvm/Transforms/Scalar/SimplifyCFG.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include <llvm/Transforms/Utils/Cloning.h>
+#include <llvm/Transforms/Utils/LCSSA.h>
+#include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Transforms/Utils/LoopSimplify.h>
 #include <llvm/Transforms/Utils/Mem2Reg.h>
+#include <llvm/Transforms/Utils/PromoteMemToReg.h>
+#include <llvm/Transforms/Utils/ValueMapper.h>
 
+#include "compiler/native/function_emitter.h"
 #include "runtime/native/native_memory_layout.h"
 #include "runtime/value/value.h"
 
@@ -193,6 +207,298 @@ std::optional<CountedLoop> MatchCountedLoop(llvm::Loop& loop, llvm::DominatorTre
   }
   return std::nullopt;
 }
+
+// 纯计算内核最多延迟一个有界片段的停止请求。入口保留请求检查；包含宿主、分配、
+// 其他脚本调用或调试逐行观测的循环仍执行原安全点。限制同时覆盖迭代数与代码体积。
+constexpr std::uint64_t kMaximumUnpolledIterations = 1024;
+constexpr std::uint64_t kMaximumUnpolledInstructions = 131072;
+
+std::vector<llvm::BranchInst*> BoundedPolls(const llvm::Loop& loop) {
+  std::vector<llvm::BranchInst*> polls;
+  if (!loop.getSubLoops().empty()) {
+    return polls;
+  }
+  for (auto* block : loop.blocks()) {
+    for (auto& instruction : *block) {
+      if (auto* branch = llvm::dyn_cast<llvm::BranchInst>(&instruction);
+          branch != nullptr && branch->getMetadata(kNativeBoundedPollMetadata) != nullptr) {
+        polls.push_back(branch);
+      }
+      const auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+      if (call == nullptr || llvm::isa<llvm::IntrinsicInst>(call)) {
+        continue;
+      }
+      const auto* callee = call->getCalledFunction();
+      if (callee == nullptr || callee->getName() != "vela_native_v3_safepoint") {
+        return {};
+      }
+    }
+  }
+  return polls;
+}
+
+bool CanCopyPollCondition(llvm::Value* value, const llvm::Loop& loop) {
+  const auto* instruction = llvm::dyn_cast<llvm::Instruction>(value);
+  if (instruction == nullptr || !loop.contains(instruction)) {
+    return true;
+  }
+  if (!llvm::isa<llvm::LoadInst, llvm::GetElementPtrInst, llvm::CastInst, llvm::BinaryOperator,
+                 llvm::ICmpInst>(instruction)) {
+    return false;
+  }
+  return std::ranges::all_of(instruction->operands(), [&](const auto& operand) {
+    return CanCopyPollCondition(operand.get(), loop);
+  });
+}
+
+llvm::Value* CopyPollCondition(llvm::Value* value,
+                               const llvm::Loop& loop,
+                               llvm::Instruction* before,
+                               llvm::ValueToValueMapTy& copied) {
+  auto* instruction = llvm::dyn_cast<llvm::Instruction>(value);
+  if (instruction == nullptr || !loop.contains(instruction)) {
+    return value;
+  }
+  if (const auto found = copied.find(value); found != copied.end()) {
+    return found->second;
+  }
+  auto* clone = instruction->clone();
+  for (unsigned index = 0; index < instruction->getNumOperands(); ++index) {
+    clone->setOperand(index,
+                      CopyPollCondition(instruction->getOperand(index), loop, before, copied));
+  }
+  clone->insertBefore(before->getIterator());
+  copied.insert({value, clone});
+  return clone;
+}
+
+void ErasePollCondition(llvm::Value* value) {
+  auto* instruction = llvm::dyn_cast<llvm::Instruction>(value);
+  if (instruction == nullptr || !instruction->use_empty() ||
+      !llvm::isa<llvm::LoadInst, llvm::GetElementPtrInst, llvm::CastInst, llvm::BinaryOperator,
+                 llvm::ICmpInst>(instruction)) {
+    return;
+  }
+  llvm::SmallVector<llvm::WeakTrackingVH> operands(instruction->operand_values());
+  instruction->eraseFromParent();
+  for (const auto& operand : operands) {
+    if (operand != nullptr) {
+      ErasePollCondition(operand);
+    }
+  }
+}
+
+std::uint64_t PollBudget(const llvm::Loop& loop) {
+  std::uint64_t instructions = 0;
+  for (const auto* block : loop.blocks()) {
+    instructions += block->size();
+  }
+  return std::min(kMaximumUnpolledIterations, kMaximumUnpolledInstructions / instructions);
+}
+
+llvm::Value* BoundedTripCount(llvm::Loop& loop,
+                              llvm::ScalarEvolution& evolution,
+                              llvm::DominatorTree& dominators) {
+  auto* preheader = loop.getLoopPreheader();
+  if (preheader == nullptr) {
+    return nullptr;
+  }
+  const auto limit = PollBudget(loop);
+  llvm::IRBuilder<> guard(preheader->getTerminator());
+  const auto maximum = evolution.getSmallConstantMaxTripCount(&loop);
+  if (maximum != 0 && maximum <= limit) {
+    return guard.getTrue();
+  }
+  const auto counted = MatchCountedLoop(loop, dominators);
+  if (!counted) {
+    return nullptr;
+  }
+  auto* start = counted->index->getIncomingValueForBlock(preheader);
+  auto* distance = counted->direction == 1 ? guard.CreateSub(counted->bound, start)
+                                           : guard.CreateSub(start, counted->bound);
+  return guard.CreateICmpULE(distance, guard.getInt64(limit));
+}
+
+void CopyLoop(llvm::Loop& loop, llvm::ValueToValueMapTy& mapped) {
+  auto* function = loop.getHeader()->getParent();
+  llvm::SmallVector<llvm::BasicBlock*> clones;
+  for (auto* block : loop.blocks()) {
+    auto* cloned = llvm::CloneBasicBlock(block, mapped, ".bounded", function);
+    mapped.insert({block, cloned});
+    clones.push_back(cloned);
+  }
+  llvm::remapInstructionsInBlocks(clones, mapped);
+  for (auto* block : loop.blocks()) {
+    llvm::SmallPtrSet<llvm::BasicBlock*, 4> exits;
+    for (auto* successor : llvm::successors(block)) {
+      if (loop.contains(successor) || !exits.insert(successor).second) {
+        continue;
+      }
+      for (auto& phi : successor->phis()) {
+        auto* incoming = phi.getIncomingValueForBlock(block);
+        const auto found = mapped.find(incoming);
+        // 循环外的 SSA 值仍由原定义支配克隆；MapValue 对未映射的局部值返回空。
+        auto* cloned_incoming =
+            found == mapped.end() ? incoming : static_cast<llvm::Value*>(found->second);
+        phi.addIncoming(cloned_incoming, llvm::cast<llvm::BasicBlock>(mapped.lookup(block)));
+      }
+    }
+  }
+}
+
+void RemoveBoundedPolls(std::span<llvm::BranchInst* const> polls,
+                        const llvm::ValueToValueMapTy& mapped) {
+  for (auto* poll : polls) {
+    // 原循环保留安全点，但不再作为下一轮优化的复制候选。
+    poll->setMetadata(kNativeBoundedPollMetadata, nullptr);
+    auto* cloned = llvm::cast<llvm::BranchInst>(mapped.lookup(poll));
+    auto* condition = cloned->getCondition();
+    auto* ready = cloned->getSuccessor(1);
+    // 克隆循环也向共享恢复出口的 PHI 增加了输入；删除轮询边时同步退休该输入。
+    cloned->getSuccessor(0)->removePredecessor(cloned->getParent());
+    llvm::BranchInst::Create(ready, cloned->getIterator());
+    cloned->eraseFromParent();
+    ErasePollCondition(condition);
+  }
+}
+
+llvm::Value* WithoutPendingPolls(llvm::Loop& loop,
+                                 llvm::Value* bounded,
+                                 std::span<llvm::BranchInst* const> polls,
+                                 llvm::Instruction* before) {
+  llvm::IRBuilder<> guard(before);
+  llvm::ValueToValueMapTy conditions;
+  for (auto* poll : polls) {
+    auto* pending = CopyPollCondition(poll->getCondition(), loop, before, conditions);
+    bounded = guard.CreateAnd(bounded, guard.CreateNot(pending));
+  }
+  return bounded;
+}
+
+void VersionBoundedLoop(llvm::Loop& loop,
+                        llvm::Value* bounded,
+                        std::span<llvm::BranchInst* const> polls) {
+  auto* preheader = loop.getLoopPreheader();
+  auto* terminator = preheader->getTerminator();
+  bounded = WithoutPendingPolls(loop, bounded, polls, terminator);
+  llvm::ValueToValueMapTy mapped;
+  CopyLoop(loop, mapped);
+  RemoveBoundedPolls(polls, mapped);
+  auto* fast = llvm::cast<llvm::BasicBlock>(mapped.lookup(loop.getHeader()));
+  llvm::BranchInst::Create(fast, loop.getHeader(), bounded, terminator->getIterator());
+  terminator->eraseFromParent();
+}
+
+bool CanStripMine(const CountedLoop& counted) {
+  const auto* header = counted.loop->getHeader();
+  // 分块边界会重新执行循环条件；条件前不得存在可观察的写入或调用。
+  return PollBudget(*counted.loop) != 0 && counted.condition->getParent() == header &&
+         std::ranges::none_of(*header, [](const auto& instruction) {
+           return !instruction.isTerminator() && instruction.mayHaveSideEffects();
+         });
+}
+
+void StripMineBoundedLoop(const CountedLoop& counted, std::span<llvm::BranchInst* const> polls) {
+  auto& loop = *counted.loop;
+  auto* header = loop.getHeader();
+  auto* preheader = loop.getLoopPreheader();
+  auto* latch = loop.getLoopLatch();
+  auto* function = header->getParent();
+  auto& context = function->getContext();
+  auto* outer = llvm::BasicBlock::Create(context, "poll.chunk", function, header);
+  auto* exit = llvm::BasicBlock::Create(context, "poll.chunk.exit", function);
+  llvm::ValueToValueMapTy mapped;
+  CopyLoop(loop, mapped);
+  auto* fast = llvm::cast<llvm::BasicBlock>(mapped.lookup(header));
+  llvm::IRBuilder<> guard(outer);
+  llvm::Value* start = nullptr;
+  for (auto& phi : header->phis()) {
+    auto* state = guard.CreatePHI(phi.getType(), 3, phi.getName() + ".chunk");
+    state->addIncoming(phi.getIncomingValueForBlock(preheader), preheader);
+    state->addIncoming(phi.getIncomingValueForBlock(latch), latch);
+    auto* cloned = llvm::cast<llvm::PHINode>(mapped.lookup(&phi));
+    state->addIncoming(cloned, exit);
+    const auto initial = static_cast<unsigned>(phi.getBasicBlockIndex(preheader));
+    phi.setIncomingBlock(initial, outer);
+    phi.setIncomingValue(initial, state);
+    phi.removeIncomingValue(latch, false);
+    const auto cloned_initial = static_cast<unsigned>(cloned->getBasicBlockIndex(preheader));
+    cloned->setIncomingBlock(cloned_initial, outer);
+    cloned->setIncomingValue(cloned_initial, state);
+    if (&phi == counted.index) {
+      start = state;
+    }
+  }
+  preheader->getTerminator()->replaceSuccessorWith(header, outer);
+  latch->getTerminator()->replaceSuccessorWith(header, outer);
+  const auto limit = PollBudget(loop);
+  auto* distance = counted.direction == 1 ? guard.CreateSub(counted.bound, start)
+                                          : guard.CreateSub(start, counted.bound);
+  auto* clipped = counted.direction == 1 ? guard.CreateAdd(start, guard.getInt64(limit))
+                                         : guard.CreateSub(start, guard.getInt64(limit));
+  auto* bound = guard.CreateSelect(guard.CreateICmpULE(distance, guard.getInt64(limit)),
+                                   counted.bound, clipped);
+  auto* comparison = llvm::cast<llvm::ICmpInst>(mapped.lookup(counted.comparison));
+  const auto bound_operand = counted.comparison->getOperand(0) == counted.index ? 1U : 0U;
+  comparison->setOperand(bound_operand, bound);
+  auto* condition = llvm::cast<llvm::BranchInst>(mapped.lookup(counted.condition));
+  auto* normal_exit = condition->getSuccessor(counted.exit_edge);
+  normal_exit->removePredecessor(condition->getParent());
+  condition->setSuccessor(counted.exit_edge, exit);
+  llvm::IRBuilder<>(exit).CreateBr(outer);
+  auto* more = counted.direction == 1 ? guard.CreateICmpSLT(start, counted.bound)
+                                      : guard.CreateICmpSGT(start, counted.bound);
+  auto* branch = guard.CreateCondBr(more, fast, header);
+  branch->setCondition(WithoutPendingPolls(loop, more, polls, branch));
+  RemoveBoundedPolls(polls, mapped);
+}
+
+class BoundedPollPass : public llvm::PassInfoMixin<BoundedPollPass> {
+ public:
+  static llvm::PreservedAnalyses run(llvm::Function& function,
+                                     llvm::FunctionAnalysisManager& analyses) {
+    auto& loops = analyses.getResult<llvm::LoopAnalysis>(function);
+    auto& dominators = analyses.getResult<llvm::DominatorTreeAnalysis>(function);
+    auto& evolution = analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
+    struct Plan final {
+      llvm::Loop* loop;
+      llvm::Value* bounded;
+      std::vector<llvm::BranchInst*> polls;
+      std::optional<CountedLoop> counted;
+    };
+    std::vector<Plan> plans;
+    for (auto* loop : loops.getLoopsInPreorder()) {
+      const auto polls = BoundedPolls(*loop);
+      if (polls.empty() || !std::ranges::all_of(polls, [&](const auto* poll) {
+            return CanCopyPollCondition(poll->getCondition(), *loop);
+          })) {
+        continue;
+      }
+      const auto counted = MatchCountedLoop(*loop, dominators);
+      if (counted && CanStripMine(*counted)) {
+        plans.push_back({.loop = loop, .bounded = nullptr, .polls = polls, .counted = counted});
+        continue;
+      }
+      auto* bounded = BoundedTripCount(*loop, evolution, dominators);
+      if (bounded != nullptr) {
+        plans.push_back(
+            {.loop = loop, .bounded = bounded, .polls = polls, .counted = std::nullopt});
+      }
+    }
+    for (const auto& plan : plans) {
+      if (plan.counted) {
+        StripMineBoundedLoop(*plan.counted, plan.polls);
+      } else {
+        VersionBoundedLoop(*plan.loop, plan.bounded, plan.polls);
+      }
+    }
+    if (!plans.empty()) {
+      llvm::removeUnreachableBlocks(function);
+      return llvm::PreservedAnalyses::none();
+    }
+    return llvm::PreservedAnalyses::all();
+  }
+};
 
 struct Reduction {
   llvm::PHINode* accumulator;
@@ -613,8 +919,69 @@ class IntegerLoopPass : public llvm::PassInfoMixin<IntegerLoopPass> {
 
 }  // namespace
 
+void EmitBoundedLeafGuard(const GeneratedFunction& function) {
+  auto& body = *function.leaf;
+  auto& guard = *function.leaf_guard;
+  llvm::DominatorTree dominators(body);
+  llvm::SmallVector<llvm::AllocaInst*> locals;
+  for (auto& instruction : body.getEntryBlock()) {
+    auto* local = llvm::dyn_cast<llvm::AllocaInst>(&instruction);
+    if (local != nullptr && llvm::isAllocaPromotable(local)) {
+      locals.push_back(local);
+    }
+  }
+  llvm::PromoteMemToReg(locals, dominators);
+  llvm::LoopInfo loops(dominators);
+  llvm::AssumptionCache assumptions(body);
+  for (auto* loop : loops) {
+    llvm::simplifyLoop(loop, &dominators, &loops, nullptr, &assumptions, nullptr, false);
+  }
+  llvm::IRBuilder<> builder(llvm::BasicBlock::Create(guard.getContext(), "entry", &guard));
+  const auto nested = loops.getLoopsInPreorder();
+  const auto instructions = static_cast<std::uint64_t>(body.getInstructionCount());
+  if (nested.empty()) {
+    builder.CreateRet(builder.getInt1(instructions <= kMaximumUnpolledInstructions));
+    return;
+  }
+  if (nested.size() != 1) {
+    builder.CreateRet(builder.getFalse());
+    return;
+  }
+  const auto counted = MatchCountedLoop(*nested.front(), dominators);
+  if (!counted) {
+    builder.CreateRet(builder.getFalse());
+    return;
+  }
+  const auto input = [&](llvm::Value* value) -> llvm::Value* {
+    if (llvm::isa<llvm::ConstantInt>(value)) {
+      return value;
+    }
+    const auto* argument = llvm::dyn_cast<llvm::Argument>(value);
+    return argument == nullptr ? nullptr : guard.getArg(argument->getArgNo());
+  };
+  auto* start = input(counted->index->getIncomingValueForBlock(counted->loop->getLoopPreheader()));
+  auto* bound = input(counted->bound);
+  if (start == nullptr || bound == nullptr) {
+    builder.CreateRet(builder.getFalse());
+    return;
+  }
+  auto* distance =
+      counted->direction == 1 ? builder.CreateSub(bound, start) : builder.CreateSub(start, bound);
+  const auto limit =
+      std::min(kMaximumUnpolledIterations, kMaximumUnpolledInstructions / instructions);
+  builder.CreateRet(builder.CreateICmpULE(distance, builder.getInt64(limit)));
+}
+
 void AddIntegerLoopPasses(llvm::FunctionPassManager& passes) {
   passes.addPass(llvm::PromotePass());
+  passes.addPass(llvm::LoopSimplifyPass());
+  passes.addPass(llvm::EarlyCSEPass());
+  passes.addPass(llvm::DCEPass());
+  passes.addPass(llvm::SimplifyCFGPass());
+  passes.addPass(llvm::LoopSimplifyPass());
+  passes.addPass(llvm::LCSSAPass());
+  passes.addPass(BoundedPollPass());
+  passes.addPass(llvm::SimplifyCFGPass());
   passes.addPass(llvm::LoopSimplifyPass());
   passes.addPass(llvm::EarlyCSEPass());
   passes.addPass(llvm::DCEPass());

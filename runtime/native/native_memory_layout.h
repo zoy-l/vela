@@ -8,6 +8,7 @@
 #include "runtime/heap/array_storage.h"
 #include "runtime/heap/instance_storage.h"
 #include "runtime/native/native_abi.h"
+#include "runtime/native/native_control.h"
 #include "runtime/native/native_instance.h"
 #include "runtime/native/native_program_state.h"
 #include "runtime/value/object.h"
@@ -23,10 +24,10 @@ struct NativeMemoryLayout final {
   static constexpr auto kValuePayload = offsetof(Value, payload_);
   static constexpr auto kValueKind = offsetof(Value, kind_);
   static constexpr auto kObjectLength = offsetof(HeapObject, length);
+  static constexpr auto kStringLength = offsetof(HeapObject, string_length);
   static constexpr auto kObjectNativePayload = offsetof(HeapObject, native_payload);
   static constexpr auto kObjectLayout = offsetof(HeapObject, layout);
-  static constexpr auto kClassNominal = offsetof(ClassLayout, nominal_);
-  static constexpr auto kClassRevision = offsetof(ClassLayout, revision_);
+  static constexpr auto kClassId = offsetof(ClassLayout, id_);
   static constexpr auto kArrayData = sizeof(HeapObject) + offsetof(internal::ArrayStorage, data);
   static constexpr auto kArrayCapacity =
       sizeof(HeapObject) + offsetof(internal::ArrayStorage, capacity);
@@ -38,14 +39,15 @@ struct NativeMemoryLayout final {
   static constexpr auto kExecutionStackStatus = offsetof(NativeExecution, stack_status_);
   static constexpr auto kExecutionInstance = offsetof(NativeExecution, instance_);
   static constexpr auto kExecutionContext = offsetof(NativeExecution, context_);
-  static constexpr auto kExecutionSafepointRequests =
-      offsetof(NativeExecution, safepoint_requests_);
+  static constexpr auto kExecutionControlState = offsetof(NativeExecution, control_state_);
   static constexpr auto kExecutionException = offsetof(NativeExecution, pending_exception_);
   static constexpr auto kExecutionExceptionAllocationFailed =
       offsetof(NativeExecution, exception_allocation_failed_);
   static constexpr auto kInstanceData = offsetof(NativeInstance, data_);
+  static constexpr auto kProgramImage = offsetof(NativeProgramState, image);
   static constexpr auto kInstanceAnchor = offsetof(NativeInstance, anchor_);
   static constexpr auto kProgramGlobalStates = offsetof(NativeProgramState, global_states);
+  static constexpr auto kProgramGlobalCaches = offsetof(NativeProgramState, global_caches);
   static constexpr auto kProgramGlobals =
       offsetof(NativeProgramState, values) + (sizeof(Value) * NativeProgramState::kGlobals);
   static constexpr auto kFrameRoots = offsetof(NativeFrameAccess, roots);
@@ -56,6 +58,8 @@ static_assert(std::is_standard_layout_v<HeapObject>);
 static_assert(std::is_standard_layout_v<ClassLayout>);
 static_assert(std::is_standard_layout_v<InstanceStorage>);
 static_assert(std::is_standard_layout_v<NativeFieldCache>);
+static_assert(std::is_standard_layout_v<NativeGlobalCache>);
+static_assert(std::is_standard_layout_v<NativeControlState>);
 static_assert(std::atomic<std::uint8_t>::is_always_lock_free);
 static_assert(sizeof(std::atomic<std::uint8_t>) == sizeof(std::uint8_t));
 static_assert(std::is_standard_layout_v<internal::ArrayStorage>);

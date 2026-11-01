@@ -217,9 +217,12 @@ def create_package(executable: Path, runtime: Path, destination: Path,
             if header.is_file() and header.suffix in {".h", ".inc"}:
                 relative = header.relative_to(ROOT / "third_party/abseil-cpp").as_posix()
                 copy_file(header, package, "include/" + relative, "header", "Abseil", "Apache-2.0")
+        copy_file(ROOT / "third_party/efsw/include/efsw/efsw.hpp", package,
+                  "include/efsw/efsw.hpp", "header", "efsw", "MIT")
         for name, path in {
             "vela": ROOT / "LICENSE", "llvm": sdk_directory() / "LICENSE.TXT",
             "abseil": ROOT / "third_party/abseil-cpp/LICENSE",
+            "efsw": ROOT / "third_party/efsw/LICENSE",
             "pcre2": ROOT / "third_party/pcre2/LICENCE.md",
             "utf8proc": ROOT / "third_party/utf8proc/LICENSE.md",
             "yyjson": ROOT / "third_party/yyjson/LICENSE",

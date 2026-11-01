@@ -82,13 +82,13 @@ class BenchmarkReportTest(unittest.TestCase):
             aggregate_escape_results({"benchmarks": rows}, names, 1)
         rows[-1]["allocation_bytes"] = 0
         lifecycle = dict(name="hot/optimized/virtual/manual_time", real_time=10, time_unit="us",
-                         released_code_batches=2, released_saved_state_bytes=0,
+                         released_code_batches=3, released_code_images=2, released_saved_state_bytes=0,
                          released_suspended_frames=0, materialized_objects=1)
         rows.append(lifecycle)
         names.append(lifecycle["name"])
         with self.assertRaisesRegex(ValueError, "code retirement"):
             aggregate_escape_results({"benchmarks": rows}, names, 1)
-        lifecycle["released_code_batches"] = 1
+        lifecycle["released_code_images"] = 1
         self.assertEqual(len(aggregate_escape_results({"benchmarks": rows}, names, 1)), 4)
 
     def test_reloadable_report_requires_four_checked_backends_and_code_retirement_evidence(self) -> None:
@@ -107,7 +107,8 @@ class BenchmarkReportTest(unittest.TestCase):
                                            "first_execution_ns"), 1000)) for index in range(3)]
         names = sorted({row["name"] for row in rows})
         text = jit_comparison_report({"benchmarks": rows}, names, 3)
-        self.assertIn("| dasprofile.queen | 8 | 10.000 | 20.000 | 40.000 | 30.000 | 2.00x | 1.50x |", text)
+        self.assertIn("| dasprofile.queen | 8 | 10.000 | 20.000 | 40.000 | 30.000 | 2.00x | 1.50x | 2.00x | 3.00x |", text)
+        self.assertIn("AOT ≤ 2× C++: 1/1; optimized JIT ≤ 3× C++: 1/1", text)
         self.assertIn("Geometric mean optimized JIT/AOT over 1 paired workloads: 1.50x.", text)
         missing = [row for row in rows if "/optimized/" not in row["name"]]
         with self.assertRaisesRegex(ValueError, "requires matching"):
@@ -124,21 +125,22 @@ class BenchmarkReportTest(unittest.TestCase):
                              "deoptimization_ns", "commit_ns", "refresh_ns", "entry_ns",
                              "stopping_ns", "new_isolate_preparation_ns", "safepoint_waiting_ns",
                              "materialization_ns"), 1000)
-        row.update(name=name, real_time=20, time_unit="us", released_code_batches=1,
+        row.update(name=name, real_time=20, time_unit="us", released_code_batches=3, released_code_images=1,
                    released_heap_bytes=128, released_external_field_bytes=0,
                    released_executable_bytes=1024, released_read_only_bytes=2048,
                    released_constant_payload_bytes=32, released_debug_payload_bytes=1024,
-                   released_writable_bytes=0, released_suspended_frames=0, released_saved_state_bytes=0,
+                   released_writable_bytes=0, released_image_data_bytes=1024,
+                   released_suspended_frames=0, released_saved_state_bytes=0,
                    materialized_objects=0)
         report = {"benchmarks": [row]}
         text = jit_comparison_report(report, [name], 1)
         self.assertIn("20.000", text)
         self.assertIn("pause_max_ns", text)
         self.assertNotIn("Geometric mean", text)
-        row["released_code_batches"] = 2
+        row["released_code_images"] = 2
         with self.assertRaisesRegex(ValueError, "survived release"):
             jit_comparison_report(report, [name], 1)
-        row["released_code_batches"] = 1
+        row["released_code_images"] = 1
         row["pause_ns"] = float("nan")
         with self.assertRaisesRegex(ValueError, "invalid pause_ns"):
             jit_comparison_report(report, [name], 1)
@@ -151,6 +153,37 @@ class BenchmarkReportTest(unittest.TestCase):
         row["materialized_objects"] = 0
         with self.assertRaisesRegex(ValueError, "incorrect materialized object count"):
             jit_comparison_report(report, [name], 1)
+
+    def test_reload_scaling_report_checks_affected_functions_and_image_retirement(self) -> None:
+        rows = []
+        for tier in ("baseline", "optimized"):
+            for graph, files in (("independent", 256), ("imports", 256), ("fanout", 32)):
+                affected = 1 if tier == "baseline" or graph == "independent" else (
+                    files if graph == "fanout" else 2)
+                rows.append(dict(
+                    name=f"hot/scaling/{tier}/{graph}/{files}/manual_time", real_time=20,
+                    time_unit="us", files=files, affected_functions=affected,
+                    compiled_functions=affected, released_code_images=1,
+                    **dict.fromkeys(("source_ns", "source_loading_ns", "type_checking_ns", "typed_ir_ns",
+                                     "code_ns", "pause_ns", "llvm_lowering_ns",
+                                     "llvm_optimization_ns", "machine_compilation_ns", "linking_ns"), 1000)))
+        names = [row["name"] for row in rows]
+        report = {"benchmarks": rows}
+        text = jit_comparison_report(report, names, 1)
+        self.assertIn("Hot reload scaling", text)
+        self.assertIn("fanout/32/manual_time | 20.000", text)
+        self.assertNotIn("Geometric mean", text)
+        rows[1]["compiled_functions"] = 256
+        with self.assertRaisesRegex(ValueError, "invalid incremental compilation"):
+            jit_comparison_report(report, names, 1)
+        rows[1]["compiled_functions"] = 1
+        rows[1]["released_code_images"] = 2
+        with self.assertRaisesRegex(ValueError, "image retirement"):
+            jit_comparison_report(report, names, 1)
+        rows[1]["released_code_images"] = 1
+        rows[1]["source_ns"] = float("inf")
+        with self.assertRaisesRegex(ValueError, "invalid source_ns"):
+            jit_comparison_report(report, names, 1)
 
     def test_aot_report_rejects_retained_suspended_state(self) -> None:
         rows = ported_aot_samples(3)

@@ -95,7 +95,7 @@ std::string_view StatusName(DevelopmentStatus status) {
 }
 
 bool IsSameChanges(const SourceUpdate& left, const SourceUpdate& right) {
-  return left.added_roots == right.added_roots &&
+  return left.base_revision == right.base_revision && left.added_roots == right.added_roots &&
          std::ranges::equal(left.changes, right.changes, [](const auto& first, const auto& second) {
            return first.path == second.path && first.text == second.text;
          });
@@ -127,6 +127,7 @@ class DevelopmentConsole final {
   void OwnerCommand(const std::string& command);
   void Call(const std::string& command);
   void Submit(const std::string& input);
+  void Reset();
   void Watch();
   void PostDiagnostics(frontend::Diagnostics diagnostics);
   void Post(const std::function<void()>& action);
@@ -150,6 +151,7 @@ class DevelopmentConsole final {
   std::atomic_bool owner_done_{false};
   bool watching_ = true;
   std::optional<SourceUpdate> observed_;
+  std::shared_ptr<const compiler::SourceSessionIdentity> observed_session_;
   std::optional<SourceUpdate> waiting_;
   Clock::time_point saved_;
   std::string last_error_;
@@ -314,8 +316,8 @@ void DevelopmentConsole::OwnerCommand(const std::string& command) {
     const auto code = session_->code_resources();
     const auto layouts = session_->isolate().layout_counts();
     errors << "heap " << session_->isolate().heap().allocated_bytes() << " bytes, " << code.batches
-           << " code batch(es), " << code.functions << " function(s), " << layouts.classes
-           << " class layout(s)\n";
+           << " code batch(es), " << code.images << " source image(s), " << code.functions
+           << " function(s), " << layouts.classes << " class layout(s)\n";
     errors << "external fields " << session_->isolate().heap().instance_field_bytes() << " bytes, "
            << session_->isolate().heap().instance_type_count() << " live instance type(s)\n";
     errors << "code " << code.executable_bytes << " bytes, read-only image " << code.read_only_bytes
@@ -361,21 +363,25 @@ void DevelopmentConsole::Call(const std::string& command) {
   }
 }
 
+void DevelopmentConsole::Reset() {
+  auto update = files_.Capture(*session_->snapshot());
+  if (!update) {
+    Diagnostics(update.error());
+    return;
+  }
+  const auto result = repl_->Reset(std::move(*update));
+  if (result.request != printed_request_ || result.status != printed_status_) {
+    Print(result);
+  }
+  if (result.status == DevelopmentStatus::Accepted ||
+      result.status == DevelopmentStatus::EntryFailed) {
+    input_.clear();
+  }
+}
+
 void DevelopmentConsole::Submit(const std::string& input) {
   if (input == ".reset") {
-    auto update = files_.Capture(*session_->snapshot());
-    if (!update) {
-      Diagnostics(update.error());
-      return;
-    }
-    const auto result = repl_->Reset(std::move(*update));
-    if (result.request != printed_request_ || result.status != printed_status_) {
-      Print(result);
-    }
-    if (result.status == DevelopmentStatus::Accepted ||
-        result.status == DevelopmentStatus::EntryFailed) {
-      input_.clear();
-    }
+    Reset();
     return;
   }
   input_ += input;
@@ -413,6 +419,13 @@ void DevelopmentConsole::Command(const std::string& command) {
       PostDiagnostics(std::move(update.error()));
       return;
     }
+    if (command.starts_with(kLoadCommand)) {
+      const auto watched = files_.WatchSources(update->changes);
+      if (!watched) {
+        PostDiagnostics(watched.error());
+        return;
+      }
+    }
     auto operation = DevelopmentOperation::Load;
     if (command == ".reload") {
       operation = DevelopmentOperation::Reload;
@@ -426,31 +439,38 @@ void DevelopmentConsole::Command(const std::string& command) {
 }
 
 void DevelopmentConsole::Watch() {
-  auto update = files_.Capture(*session_->snapshot());
-  if (!update) {
+  auto polled = files_.Poll();
+  if (!polled) {
     std::ostringstream signature;
-    for (const auto& diagnostic : update.error()) {
+    for (const auto& diagnostic : polled.error()) {
       signature << diagnostic.source_path << ':' << diagnostic.location.line << ':'
                 << diagnostic.message;
     }
     const auto error = signature.str();
     if (error != last_error_) {
       last_error_ = error;
-      PostDiagnostics(std::move(update.error()));
+      PostDiagnostics(std::move(polled.error()));
     }
     waiting_.reset();
     return;
   }
-  last_error_.clear();
-  if (update->changes.empty() && update->added_roots.empty()) {
-    waiting_.reset();
-    return;
+  if (*polled) {
+    auto update = std::move(**polled);
+    last_error_.clear();
+    if (update.changes.empty() && update.added_roots.empty()) {
+      observed_.reset();
+      waiting_.reset();
+      return;
+    }
+    const auto session = session_->snapshot()->session;
+    if (!observed_ || observed_session_ != session || !IsSameChanges(*observed_, update)) {
+      observed_session_ = session;
+      observed_ = update;
+      waiting_ = std::move(update);
+      saved_ = Clock::now();
+    }
   }
-  if (!observed_ || !IsSameChanges(*observed_, *update)) {
-    observed_ = *update;
-    waiting_ = std::move(*update);
-    saved_ = Clock::now();
-  } else if (waiting_ && Clock::now() - saved_ >= kSaveQuietPeriod) {
+  if (waiting_ && Clock::now() - saved_ >= kSaveQuietPeriod) {
     auto ready = std::move(*waiting_);
     waiting_.reset();
     Prepare(std::move(ready), DevelopmentOperation::HotReload);
@@ -478,6 +498,11 @@ void DevelopmentConsole::CompileRequests() {
 
 int DevelopmentConsole::Run() {
   const compiler::CompiledSourceSnapshot empty;
+  const auto watched = files_.StartWatching();
+  if (!watched) {
+    Diagnostics(watched.error());
+    return kSourceErrorExitCode;
+  }
   auto update = files_.Capture(empty);
   if (!update) {
     Diagnostics(update.error());
@@ -494,6 +519,14 @@ int DevelopmentConsole::Run() {
   options.compilation = compilation_;
   options.compilation.debugging = compiler::native::NativeDebugging::SourceLines;
   options.progress = [this](const DevelopmentResult& result) {
+    if (result.status == DevelopmentStatus::Accepted ||
+        result.status == DevelopmentStatus::RefreshFailed ||
+        result.status == DevelopmentStatus::EntryFailed) {
+      const auto accepted = files_.Accept(session_->snapshot());
+      if (!accepted) {
+        Diagnostics(accepted.error());
+      }
+    }
     Print(result);
     const auto& current = session_->result();
     printed_request_ = current.request;

@@ -284,6 +284,9 @@ TEST_P(StringConversionTest, ExplicitConversionMatchesConsoleFormatting) {
   std::ostringstream output;
   WriteValue(output, value);
   EXPECT_EQ(converted->AsString()->value(), output.str());
+  const auto length = ExecuteBuiltin(Builtin::ScalarTextLength, arguments, heap);
+  ASSERT_TRUE(length);
+  EXPECT_EQ(length->AsInteger(), output.str().size());
   const auto joined = heap.JoinValues(arguments);
   ASSERT_TRUE(joined.has_value());
   EXPECT_EQ((*joined)->value(), output.str());

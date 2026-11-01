@@ -87,6 +87,7 @@ class ClassLayout final {
   ~ClassLayout() = default;
 
   [[nodiscard]] std::uint32_t field_count() const noexcept { return field_count_; }
+  [[nodiscard]] std::uint64_t id() const noexcept { return id_; }
   [[nodiscard]] const CallableTarget* callable() const noexcept {
     return callable_ ? &*callable_ : nullptr;
   }
@@ -122,6 +123,7 @@ class ClassLayout final {
   ClassLayout(std::uint32_t field_count, std::vector<std::uint32_t> reference_fields);
 
   std::uint32_t field_count_;
+  std::uint64_t id_ = 0;
   std::vector<std::uint32_t> reference_fields_;
   std::optional<CallableTarget> callable_;
   NominalType* nominal_ = nullptr;

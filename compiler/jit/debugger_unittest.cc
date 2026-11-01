@@ -13,11 +13,14 @@
 
 #include <gtest/gtest.h>
 
+#include "base/builtin.h"
 #include "base/declaration.h"
 #include "base/execution_status.h"
 #include "base/native_program_mode.h"
+#include "base/opcode.h"
 #include "compiler/development/development_session.h"
 #include "compiler/development/source_session.h"
+#include "compiler/ir/ir.h"
 #include "compiler/jit/test_support.h"
 #include "compiler/native/native_roots.h"
 #include "compiler/test_support/checkpoint_publication.h"
@@ -78,7 +81,7 @@ struct JitDebuggerTest : public testing::TestWithParam<NativeCodeTier>,
     EXPECT_EQ(result.timings.publication.materialized_objects,
               GetParam() == NativeCodeTier::Optimized ? objects : 0U);
     session_->isolate().heap().Collect();
-    EXPECT_EQ(session_->code_resources().batches, 1U);
+    EXPECT_EQ(session_->code_resources().images, 1U);
   }
 
   void ExpectRejected(const DevelopmentResult& result, DevelopmentStatus status) const {
@@ -86,7 +89,7 @@ struct JitDebuggerTest : public testing::TestWithParam<NativeCodeTier>,
     EXPECT_EQ(session_->snapshot()->revision, 1U);
     EXPECT_EQ(session_->isolate().native_dispatch().deoptimized_frames(), 0U);
     session_->isolate().heap().Collect();
-    EXPECT_EQ(session_->code_resources().batches, 1U);
+    EXPECT_EQ(session_->code_resources().images, 1U);
   }
 
   void AtSafepoint(const runtime::NativeDebugContext& context) noexcept override {
@@ -179,7 +182,7 @@ TEST_P(JitDebuggerTest, PublishingWhilePausedPreservesOldFrameSourcesAndCallsThe
   EXPECT_EQ(read->frames.back().source, old_source);
   EXPECT_EQ(read->frames.back().identity.revision, 1U);
   session_->isolate().heap().Collect();
-  EXPECT_EQ(session_->code_resources().batches, 1U);
+  EXPECT_EQ(session_->code_resources().images, 1U);
 }
 
 TEST_P(JitDebuggerTest, InitializationCanPauseButPublicationWaitsUntilItsStateIsComplete) {
@@ -209,6 +212,61 @@ TEST_P(JitDebuggerTest, InitializationCanPauseButPublicationWaitsUntilItsStateIs
   const auto current = session_->Invoke("main.vela", "read");
   ASSERT_TRUE(current);
   EXPECT_EQ(current->AsInteger(), 43);
+}
+
+TEST_P(JitDebuggerTest, ArrayGrowthReloadsStorageAndResumesAfterTheCompletedAppend) {
+  const std::string common =
+      "export func make(): int[] { return []; } "
+      "export func run(values: int[]): int { return values.push(2) + read(); } ";
+  Load(common + "func read(): int { return 40; }");
+  const auto created = session_->Invoke("main.vela", "make");
+  ASSERT_TRUE(created);
+  const runtime::RootedValue array(session_->isolate(), *created);
+  const auto capacity = runtime::Heap::ArrayCapacity(*array.value().AsObject());
+  ASSERT_TRUE(capacity);
+  for (std::uint32_t index = 0; index < *capacity; ++index) {
+    ASSERT_TRUE(session_->isolate().heap().PushArray(*array.value().AsObject(),
+                                                     runtime::Value::Integer(0)));
+  }
+  const auto& functions = session_->snapshot()->program.functions;
+  const auto function = std::ranges::find(functions, "run", &ir::Function::name);
+  ASSERT_NE(function, functions.end());
+  const auto& code = function->instructions;
+  const auto push = std::ranges::find_if(code, [](const auto& instruction) {
+    return instruction.opcode == Opcode::BuiltinCall &&
+           instruction.index == static_cast<std::uint32_t>(Builtin::ArrayPush);
+  });
+  ASSERT_NE(push, code.end());
+  const auto position = static_cast<std::uint32_t>(push - code.begin());
+  auto candidate = Prepare(common + "func read(): int { return 41; }");
+  ASSERT_TRUE(candidate);
+  compiler::test::CheckpointPublication publication(*session_);
+  publication.Stage(std::move(*candidate));
+  bool grew = false;
+  paused_ = [&](const runtime::NativeDebugContext& context) {
+    const auto& frame = context.top_frame();
+    if (frame.name() != "run") {
+      return;
+    }
+    if (frame.instruction() == position && !grew) {
+      grew = true;
+      EXPECT_TRUE(session_->isolate().heap().PushArray(*array.value().AsObject(),
+                                                       runtime::Value::Integer(40)));
+    } else if (frame.instruction() == position + 1) {
+      publication.PublishPending();
+    }
+  };
+  const std::array arguments{array.value()};
+  const auto result = session_->Invoke("main.vela", "run", arguments);
+  ASSERT_TRUE(result);
+  EXPECT_TRUE(grew);
+  EXPECT_EQ(publication.result().status, DevelopmentStatus::Accepted);
+  EXPECT_EQ(result->AsInteger(), *capacity + 43);
+  const auto length = runtime::Heap::ArrayLength(*array.value().AsObject());
+  ASSERT_TRUE(length);
+  ASSERT_EQ(*length, *capacity + 2);
+  EXPECT_EQ(runtime::Heap::GetElement(*array.value().AsObject(), *capacity)->AsInteger(), 40);
+  EXPECT_EQ(runtime::Heap::GetElement(*array.value().AsObject(), *capacity + 1)->AsInteger(), 2);
 }
 
 TEST_P(JitDebuggerTest, PausedInitializerConsumesControlCommandsBeforeItCanPublish) {
@@ -421,7 +479,7 @@ TEST_P(JitDebuggerTest, ResumedAsyncFrameCanDeoptimizeAndSuspendAgainInItsOrigin
   }
   EXPECT_EQ(publication.result().status, DevelopmentStatus::Accepted);
   session_->isolate().heap().Collect();
-  EXPECT_EQ(session_->code_resources().batches, 1U);
+  EXPECT_EQ(session_->code_resources().images, 1U);
 }
 
 TEST_P(JitDebuggerTest, SuspendedContinuationAndCapturedEntrySelectTheirOriginalBaseline) {
@@ -462,7 +520,7 @@ TEST_P(JitDebuggerTest, SuspendedContinuationAndCapturedEntrySelectTheirOriginal
     EXPECT_EQ(latest_value->AsInteger(), 100);
   }
   session_->isolate().heap().Collect();
-  EXPECT_EQ(session_->code_resources().batches, 1U);
+  EXPECT_EQ(session_->code_resources().images, 1U);
 }
 
 TEST_P(JitDebuggerTest, LargeFramesRestoreFromStorageReservedBeforePublication) {
@@ -500,14 +558,15 @@ TEST_P(JitDebuggerTest, LargeFramesRestoreFromStorageReservedBeforePublication) 
 
 TEST_P(JitDebuggerTest, RejectedPublicationLeavesOptimizationAndLogicalFramesUnchanged) {
   Load(
-      "class Box { value: int = 42; } func checkpoint(): void {} "
+      "class Box { value: int = 42; } func stay(): void {} "
+      "func checkpoint(): void { stay(); } "
       "export func make(): Box { return Box(); } "
       "export func caller(box: Box): int { checkpoint(); return box.value; }");
   const auto made = session_->Invoke("main.vela", "make");
   ASSERT_TRUE(made);
   const runtime::RootedValue root(session_->isolate(), *made);
   auto candidate = Prepare(
-      "class Box {} func checkpoint(): void {} "
+      "class Box {} func stay(): void {} func checkpoint(): void { stay(); } "
       "export func make(): Box { return Box(); } "
       "export func caller(box: Box): int { return 0; }");
   ASSERT_TRUE(candidate);

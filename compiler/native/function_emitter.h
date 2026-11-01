@@ -4,6 +4,7 @@
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constant.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +14,8 @@
 #include <string>
 #include <vector>
 #include "base/builtin.h"
+#include "base/callable.h"
+#include "base/declaration.h"
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "base/native_program_mode.h"
@@ -37,6 +40,11 @@ struct GeneratedFunction final {
   llvm::Function* recovery = nullptr;
   llvm::Function* resume_recovery = nullptr;
   llvm::Function* borrowed = nullptr;
+  llvm::Function* leaf = nullptr;
+  llvm::Function* leaf_guard = nullptr;
+  [[nodiscard]] bool HasRecovery(NativeCodeTier tier) const noexcept {
+    return tier == NativeCodeTier::Optimized && recovery != nullptr;
+  }
 };
 
 enum class NativeEntryKind : std::uint8_t {
@@ -45,6 +53,7 @@ enum class NativeEntryKind : std::uint8_t {
   RecoverInitial,
   RecoverResume,
   Borrowed,
+  Leaf,
 };
 
 class FunctionEmitter final {
@@ -76,6 +85,21 @@ class FunctionEmitter final {
   [[nodiscard]] std::uint64_t frame_bytes() const noexcept { return frame_bytes_; }
 
  private:
+  // 这些存储区由不同运行时所有者分配，不能互相覆盖；托管 Value 保持同一别名域。
+  enum class MemoryRegion : std::uint8_t {
+    HeapHeader,
+    ClassLayout,
+    FieldCache,
+    InstanceHeader,
+    FieldStates,
+    Values,
+    Elements,
+    GlobalCache,
+    Roots,
+  };
+  llvm::MDNode* MemoryTag(MemoryRegion region);
+  llvm::LoadInst* LoadMemory(llvm::Type* type, llvm::Value* address, MemoryRegion region);
+  llvm::StoreInst* StoreMemory(llvm::Value* value, llvm::Value* address, MemoryRegion region);
   llvm::Value* Load(ir::RegisterId reg);
   llvm::Value* Payload(ir::RegisterId reg);
   llvm::Value* Reference(ir::RegisterId reg);
@@ -85,17 +109,29 @@ class FunctionEmitter final {
   void Fail(llvm::Value* status);
   void SetPosition();
   void PrepareRuntimeCall();
+  void PrepareObservableCall();
+  void PrepareCallCheckpoint();
+  llvm::Value* ControlState();
+  llvm::Value* LoadSafepointRequests();
+  enum class HostBorrow : std::uint8_t { Enter, Exit };
+  void EmitHostBoundary(HostBorrow change);
   std::uint64_t TracePosition() const;
   void Poll();
+  bool NeedsBoundaryPoll(std::size_t index) const;
+  bool HasInlineRuntimePath(std::size_t index) const;
+  void PollAfterRuntimeCall();
   static llvm::Function* SelectBody(const GeneratedFunction& function, NativeEntryKind kind);
   [[nodiscard]] bool IsRecovering() const noexcept;
   [[nodiscard]] bool IsResuming() const noexcept;
   llvm::Value* ResumeState();
   void InitializeCheckpoint();
+  void PrepareCheckpoint();
+  bool HasRecovery() const;
   void StoreCheckpoint();
   void InitializeDebugValues();
   void StoreDebugValues();
   llvm::Constant* VirtualGraph(std::size_t instruction);
+  void Recover();
   void RecoverIfInvalidated();
   void EmitRecoveryDispatch();
   void GuardResume();
@@ -107,18 +143,24 @@ class FunctionEmitter final {
   void EmitInteger(const ir::Instruction& instruction);
   void EmitDouble(const ir::Instruction& instruction);
   void EmitNumericConversion(const ir::Instruction& instruction, Builtin builtin);
+  bool CanInlineSquareRoot(const ir::Function& function) const;
+  llvm::Value* SquareRootCondition(llvm::Value& entries, llvm::Value* operand);
   void EmitIntrinsicImport();
   void EmitComparison(const ir::Instruction& instruction);
   void EmitValueEquality(const ir::Instruction& instruction);
   llvm::Value* ByteAddress(llvm::Value* object, std::uint64_t offset);
   llvm::Value* ProgramData();
   llvm::Value* ReadHeapValue(llvm::Value* address, const SourceType& type);
-  void WriteHeapValue(llvm::Value* address, ir::RegisterId reg);
+  void WriteHeapValue(llvm::Value* address,
+                      ir::RegisterId reg,
+                      MemoryRegion region = MemoryRegion::Values);
   void EmitWriteBarrier(llvm::Value* object, ir::RegisterId reg);
   void EmitField(const ir::Instruction& instruction);
   void EmitReloadableField(const ir::Instruction& instruction, llvm::Value* object);
+  void EmitOptimizedField(const ir::Instruction& instruction, llvm::Value* object);
   void EmitGlobal(const ir::Instruction& instruction);
   void EmitGlobalLoad(const ir::Instruction& instruction);
+  void EmitReloadableGlobalLoad(const ir::Instruction& instruction);
   void EmitGlobalStore(const ir::Instruction& instruction);
   const layout::Type& ArrayElement(const ir::Instruction& instruction) const;
   llvm::Type* ElementStorage(const layout::Type& element);
@@ -140,7 +182,12 @@ class FunctionEmitter final {
   llvm::Value* RootAddress(std::size_t slot);
   void ClearRoot(std::size_t slot);
   std::expected<void, std::string> EmitInstruction(const ir::Instruction& instruction);
-  void EmitCall(const ir::Instruction& instruction);
+  std::optional<CallableTarget> CallTarget(std::size_t index) const;
+  void EmitCall(const ir::Instruction& instruction, CallableTarget selected);
+  llvm::BasicBlock* EmitSquareRootCall(const ir::Instruction& instruction, std::uint32_t target);
+  std::vector<llvm::Value*> CallArguments(const ir::Instruction& instruction,
+                                          CallableTarget selected,
+                                          std::optional<std::size_t> borrowed);
   void BindArguments();
   void InitializeRecords();
   void EmitConstant(const ir::Instruction& instruction);
@@ -162,13 +209,14 @@ class FunctionEmitter final {
 
   llvm::Module& module_;
   const ir::Program& program_;
-  llvm::Constant* image_;
+  llvm::Value* image_;
   const EscapePlan& escape_;
   const ir::Function& source_;
   std::span<const std::size_t> origins_;
   std::size_t function_index_;
   std::size_t instruction_index_ = 0;
   std::vector<std::optional<std::uint32_t>> field_accesses_;
+  std::vector<std::optional<CallableTarget>> direct_calls_;
   std::span<const GeneratedFunction> generated_;
   llvm::Function* body_;
   NativeEntryKind kind_;
@@ -186,17 +234,27 @@ class FunctionEmitter final {
   llvm::Value* frame_storage_ = nullptr;
   llvm::Value* construction_depth_ = nullptr;
   llvm::Value* checkpoint_ = nullptr;
+  llvm::Value* checkpoint_initialized_ = nullptr;
   llvm::Value* checkpoint_values_ = nullptr;
   llvm::Value* recovery_storage_ = nullptr;
   llvm::Value* virtual_references_ = nullptr;
   llvm::Value* trace_frame_ = nullptr;
   llvm::Value* debug_values_ = nullptr;
   llvm::Value* field_caches_ = nullptr;
+  struct DirectField final {
+    llvm::Value* layout;
+    ir::FieldId slot;
+    std::uint32_t count;
+  };
+  absl::flat_hash_map<DeclarationId, DirectField> field_layouts_;
   bool leaf_entry_ = false;
   llvm::StructType* frame_type_ = nullptr;
+  std::vector<std::optional<unsigned>> frame_locals_;
+  unsigned temporary_field_ = 0;
   std::uint64_t frame_bytes_ = 0;
   std::uint64_t storage_bytes_ = 0;
   absl::flat_hash_map<std::uint32_t, llvm::Value*> imports_;
+  std::vector<std::uint64_t> array_element_bits_;
   const NativeRootPlan& roots_;
 };
 

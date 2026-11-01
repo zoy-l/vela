@@ -108,7 +108,6 @@ Lowerer::LoweredValue Lowerer::LowerArrayAlgorithm(const frontend::Expression& e
           .callback = callback,
           .length = length,
           .guard = guard,
-          .positions = 0,
           .callback_arity = callback_arity,
           .comparison = comparison,
           .element_type = model_.array_elements.at(receiver.type.name),
@@ -129,37 +128,20 @@ Lowerer::LoweredValue Lowerer::LowerArraySortTraversal(const ArrayAlgorithmRegis
   const auto work = AllocateTemporary(location);
   EmitBuiltinCall(Builtin::ArraySlice, work, arguments, location);
   RecordValueType(work, result_type);
-  const auto positions = EmitTemporary({
+  const auto scratch = EmitTemporary({
       .opcode = Opcode::NewDynamicArray,
       .lhs = length,
-      .index = RegisterArrayType(frontend::MakeArrayType(
-          {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName})),
+      .index = RegisterArrayType(result_type),
       .location = location,
   });
+  RecordValueType(scratch, result_type);
   const auto zero = EmitTemporary({.opcode = Opcode::LoadInt, .location = location});
   const auto one = EmitTemporary({.opcode = Opcode::LoadInt, .immediate = 1, .location = location});
   const auto index = EmitTemporary({.opcode = Opcode::Move, .lhs = zero, .location = location});
-  const auto initialize = static_cast<std::uint32_t>(current_function_->instructions.size());
-  const auto within =
-      EmitTemporary({.opcode = Opcode::LessInt, .lhs = index, .rhs = length, .location = location});
-  const auto initialized = current_function_->instructions.size();
-  Emit({.opcode = Opcode::JumpIfFalse, .lhs = within, .location = location});
-  Emit({
-      .opcode = Opcode::SetIndex,
-      .dst = positions,
-      .lhs = index,
-      .rhs = index,
-      .location = location,
-  });
-  Emit({.opcode = Opcode::AddInt, .dst = index, .lhs = index, .rhs = one, .location = location});
-  Emit({.opcode = Opcode::Jump, .index = initialize, .location = location});
-  current_function_->instructions.at(initialized).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
   auto sorting = inputs;
   sorting.array = work;
-  sorting.positions = positions;
-  LowerArraySort(sorting, location);
-  // 比较器读取快照；全部比较完成后写回原数组，等值元素按原始位置保持稳定。
+  LowerArraySort(sorting, scratch, location);
+  // 比较器读取快照；全部比较成功后才写回原数组。
   Emit({.opcode = Opcode::Move, .dst = index, .lhs = zero, .location = location});
   const auto write = static_cast<std::uint32_t>(current_function_->instructions.size());
   const auto more =
@@ -359,190 +341,118 @@ RegisterId Lowerer::EmitArrayLess(const ArrayAlgorithmRegisters& inputs,
       .rhs = zero,
       .location = location,
   });
-  const auto greater = EmitTemporary({
-      .opcode = floating ? Opcode::GreaterDouble : Opcode::GreaterInt,
-      .lhs = comparison,
-      .rhs = zero,
-      .location = location,
-  });
-  const auto tie = current_function_->instructions.size();
-  Emit({.opcode = Opcode::JumpIfFalse, .lhs = less, .location = location});
-  const auto less_done = current_function_->instructions.size();
-  Emit({.opcode = Opcode::Jump, .location = location});
-  current_function_->instructions.at(tie).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
-  const auto equal = current_function_->instructions.size();
-  Emit({.opcode = Opcode::JumpIfFalse, .lhs = greater, .location = location});
-  const auto greater_done = current_function_->instructions.size();
-  Emit({.opcode = Opcode::Jump, .location = location});
-  current_function_->instructions.at(equal).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
-  const auto left_position = EmitTemporary(
-      {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = left, .location = location});
-  const auto right_position = EmitTemporary(
-      {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = right, .location = location});
-  RecordValueType(left_position,
-                  {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
-  RecordValueType(right_position,
-                  {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
-  Emit({
-      .opcode = Opcode::LessInt,
-      .dst = less,
-      .lhs = left_position,
-      .rhs = right_position,
-      .location = location,
-  });
-  const auto end = static_cast<std::uint32_t>(current_function_->instructions.size());
-  current_function_->instructions.at(less_done).index = end;
-  current_function_->instructions.at(greater_done).index = end;
   return less;
 }
 
-void Lowerer::LowerArraySiftDown(RegisterId root,
-                                 const ArrayAlgorithmRegisters& inputs,
-                                 frontend::SourceLocation location) {
-  const auto array = inputs.array;
+void Lowerer::LowerArrayMergePass(RegisterId output,
+                                  const ArrayAlgorithmRegisters& inputs,
+                                  RegisterId width,
+                                  frontend::SourceLocation location) {
   const auto length = inputs.length;
   const auto one = EmitTemporary({.opcode = Opcode::LoadInt, .immediate = 1, .location = location});
-  const auto two = EmitTemporary({.opcode = Opcode::LoadInt, .immediate = 2, .location = location});
-  const auto half =
-      EmitTemporary({.opcode = Opcode::DivInt, .lhs = length, .rhs = two, .location = location});
-  const auto loop = static_cast<std::uint32_t>(current_function_->instructions.size());
-  const auto within =
-      EmitTemporary({.opcode = Opcode::LessInt, .lhs = root, .rhs = half, .location = location});
-  const auto exit = current_function_->instructions.size();
-  Emit({.opcode = Opcode::JumpIfFalse, .lhs = within, .location = location});
-  const auto child =
-      EmitTemporary({.opcode = Opcode::MulInt, .lhs = root, .rhs = two, .location = location});
-  Emit({.opcode = Opcode::AddInt, .dst = child, .lhs = child, .rhs = one, .location = location});
-  const auto right =
-      EmitTemporary({.opcode = Opcode::AddInt, .lhs = child, .rhs = one, .location = location});
+  const auto begin = EmitTemporary({.opcode = Opcode::LoadInt, .location = location});
+  const auto pair = static_cast<std::uint32_t>(current_function_->instructions.size());
+  const auto more =
+      EmitTemporary({.opcode = Opcode::LessInt, .lhs = begin, .rhs = length, .location = location});
+  const auto done = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = more, .location = location});
+  const auto boundary = [&](RegisterId start) {
+    const auto end =
+        EmitTemporary({.opcode = Opcode::AddInt, .lhs = start, .rhs = width, .location = location});
+    const auto exceeds = EmitTemporary(
+        {.opcode = Opcode::GreaterInt, .lhs = end, .rhs = length, .location = location});
+    const auto bounded = current_function_->instructions.size();
+    Emit({.opcode = Opcode::JumpIfFalse, .lhs = exceeds, .location = location});
+    Emit({.opcode = Opcode::Move, .dst = end, .lhs = length, .location = location});
+    current_function_->instructions.at(bounded).index =
+        static_cast<std::uint32_t>(current_function_->instructions.size());
+    return end;
+  };
+  const auto middle = boundary(begin);
+  const auto end = boundary(middle);
+  const auto left = EmitTemporary({.opcode = Opcode::Move, .lhs = begin, .location = location});
+  const auto right = EmitTemporary({.opcode = Opcode::Move, .lhs = middle, .location = location});
+  const auto destination =
+      EmitTemporary({.opcode = Opcode::Move, .lhs = begin, .location = location});
+  const auto merge = static_cast<std::uint32_t>(current_function_->instructions.size());
+  const auto remaining = EmitTemporary(
+      {.opcode = Opcode::LessInt, .lhs = destination, .rhs = end, .location = location});
+  const auto merged = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = remaining, .location = location});
+  const auto has_left =
+      EmitTemporary({.opcode = Opcode::LessInt, .lhs = left, .rhs = middle, .location = location});
+  const auto exhausted_left = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = has_left, .location = location});
   const auto has_right =
-      EmitTemporary({.opcode = Opcode::LessInt, .lhs = right, .rhs = length, .location = location});
-  const auto no_right = current_function_->instructions.size();
+      EmitTemporary({.opcode = Opcode::LessInt, .lhs = right, .rhs = end, .location = location});
+  const auto exhausted_right = current_function_->instructions.size();
   Emit({.opcode = Opcode::JumpIfFalse, .lhs = has_right, .location = location});
-  const auto less = EmitArrayLess(inputs, {child, right}, location);
-  const auto keep_left = current_function_->instructions.size();
-  Emit({.opcode = Opcode::JumpIfFalse, .lhs = less, .location = location});
-  Emit({.opcode = Opcode::Move, .dst = child, .lhs = right, .location = location});
-  const auto selected = static_cast<std::uint32_t>(current_function_->instructions.size());
-  current_function_->instructions.at(no_right).index = selected;
-  current_function_->instructions.at(keep_left).index = selected;
-  const auto needs_swap = EmitArrayLess(inputs, {root, child}, location);
-  const auto root_value =
-      EmitTemporary({.opcode = Opcode::GetIndex, .lhs = array, .rhs = root, .location = location});
-  const auto child_value =
-      EmitTemporary({.opcode = Opcode::GetIndex, .lhs = array, .rhs = child, .location = location});
-  RecordValueType(root_value, inputs.element_type);
-  RecordValueType(child_value, inputs.element_type);
-  const auto ordered = current_function_->instructions.size();
-  Emit({.opcode = Opcode::JumpIfFalse, .lhs = needs_swap, .location = location});
-  const auto root_position = EmitTemporary(
-      {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = root, .location = location});
-  const auto child_position = EmitTemporary(
-      {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = child, .location = location});
-  RecordValueType(root_position,
-                  {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
-  RecordValueType(child_position,
-                  {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
+  // 右值严格小于左值时才取右侧；相等或 NaN 都先取左侧，天然保持稳定性。
+  const auto right_first = EmitArrayLess(inputs, {right, left}, location);
+  const auto ordered_left = current_function_->instructions.size();
+  Emit({.opcode = Opcode::JumpIfFalse, .lhs = right_first, .location = location});
+  current_function_->instructions.at(exhausted_left).index =
+      static_cast<std::uint32_t>(current_function_->instructions.size());
+  const auto value = EmitTemporary(
+      {.opcode = Opcode::GetIndex, .lhs = inputs.array, .rhs = right, .location = location});
+  RecordValueType(value, inputs.element_type);
+  Emit({.opcode = Opcode::AddInt, .dst = right, .lhs = right, .rhs = one, .location = location});
+  const auto selected_right = current_function_->instructions.size();
+  Emit({.opcode = Opcode::Jump, .location = location});
+  const auto take_left = static_cast<std::uint32_t>(current_function_->instructions.size());
+  current_function_->instructions.at(exhausted_right).index = take_left;
+  current_function_->instructions.at(ordered_left).index = take_left;
+  Emit({
+      .opcode = Opcode::GetIndex,
+      .dst = value,
+      .lhs = inputs.array,
+      .rhs = left,
+      .location = location,
+  });
+  Emit({.opcode = Opcode::AddInt, .dst = left, .lhs = left, .rhs = one, .location = location});
+  current_function_->instructions.at(selected_right).index =
+      static_cast<std::uint32_t>(current_function_->instructions.size());
   Emit({
       .opcode = Opcode::SetIndex,
-      .dst = inputs.positions,
-      .lhs = root,
-      .rhs = child_position,
+      .dst = output,
+      .lhs = destination,
+      .rhs = value,
       .location = location,
   });
   Emit({
-      .opcode = Opcode::SetIndex,
-      .dst = inputs.positions,
-      .lhs = child,
-      .rhs = root_position,
+      .opcode = Opcode::AddInt,
+      .dst = destination,
+      .lhs = destination,
+      .rhs = one,
       .location = location,
   });
-  Emit({
-      .opcode = Opcode::SetIndex,
-      .dst = array,
-      .lhs = root,
-      .rhs = child_value,
-      .location = location,
-  });
-  Emit({
-      .opcode = Opcode::SetIndex,
-      .dst = array,
-      .lhs = child,
-      .rhs = root_value,
-      .location = location,
-  });
-  Emit({.opcode = Opcode::Move, .dst = root, .lhs = child, .location = location});
-  Emit({.opcode = Opcode::Jump, .index = loop, .location = location});
-  const auto end = static_cast<std::uint32_t>(current_function_->instructions.size());
-  current_function_->instructions.at(exit).index = end;
-  current_function_->instructions.at(ordered).index = end;
+  Emit({.opcode = Opcode::Jump, .index = merge, .location = location});
+  current_function_->instructions.at(merged).index =
+      static_cast<std::uint32_t>(current_function_->instructions.size());
+  Emit({.opcode = Opcode::Move, .dst = begin, .lhs = end, .location = location});
+  Emit({.opcode = Opcode::Jump, .index = pair, .location = location});
+  current_function_->instructions.at(done).index =
+      static_cast<std::uint32_t>(current_function_->instructions.size());
 }
 
 void Lowerer::LowerArraySort(const ArrayAlgorithmRegisters& inputs,
+                             RegisterId scratch,
                              frontend::SourceLocation location) {
   const auto array = inputs.array;
-  const auto length = inputs.length;
-  const auto zero = EmitTemporary({.opcode = Opcode::LoadInt, .location = location});
-  const auto one = EmitTemporary({.opcode = Opcode::LoadInt, .immediate = 1, .location = location});
-  const auto two = EmitTemporary({.opcode = Opcode::LoadInt, .immediate = 2, .location = location});
-  const auto root =
-      EmitTemporary({.opcode = Opcode::DivInt, .lhs = length, .rhs = two, .location = location});
-  const auto build = static_cast<std::uint32_t>(current_function_->instructions.size());
-  const auto remaining =
-      EmitTemporary({.opcode = Opcode::GreaterInt, .lhs = root, .rhs = zero, .location = location});
-  const auto built = current_function_->instructions.size();
-  Emit({.opcode = Opcode::JumpIfFalse, .lhs = remaining, .location = location});
-  Emit({.opcode = Opcode::SubInt, .dst = root, .lhs = root, .rhs = one, .location = location});
-  const auto sift_root = EmitTemporary({.opcode = Opcode::Move, .lhs = root, .location = location});
-  LowerArraySiftDown(sift_root, inputs, location);
-  Emit({.opcode = Opcode::Jump, .index = build, .location = location});
-  current_function_->instructions.at(built).index =
-      static_cast<std::uint32_t>(current_function_->instructions.size());
-  const auto end =
-      EmitTemporary({.opcode = Opcode::SubInt, .lhs = length, .rhs = one, .location = location});
-  const auto sort = static_cast<std::uint32_t>(current_function_->instructions.size());
-  const auto more =
-      EmitTemporary({.opcode = Opcode::GreaterInt, .lhs = end, .rhs = zero, .location = location});
+  const auto width =
+      EmitTemporary({.opcode = Opcode::LoadInt, .immediate = 1, .location = location});
+  const auto loop = static_cast<std::uint32_t>(current_function_->instructions.size());
+  const auto more = EmitTemporary(
+      {.opcode = Opcode::LessInt, .lhs = width, .rhs = inputs.length, .location = location});
   const auto done = current_function_->instructions.size();
   Emit({.opcode = Opcode::JumpIfFalse, .lhs = more, .location = location});
-  const auto first_position = EmitTemporary(
-      {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = zero, .location = location});
-  const auto last_position = EmitTemporary(
-      {.opcode = Opcode::GetIndex, .lhs = inputs.positions, .rhs = end, .location = location});
-  RecordValueType(first_position,
-                  {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
-  RecordValueType(last_position,
-                  {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
-  Emit({
-      .opcode = Opcode::SetIndex,
-      .dst = inputs.positions,
-      .lhs = zero,
-      .rhs = last_position,
-      .location = location,
-  });
-  Emit({
-      .opcode = Opcode::SetIndex,
-      .dst = inputs.positions,
-      .lhs = end,
-      .rhs = first_position,
-      .location = location,
-  });
-  const auto first =
-      EmitTemporary({.opcode = Opcode::GetIndex, .lhs = array, .rhs = zero, .location = location});
-  const auto last =
-      EmitTemporary({.opcode = Opcode::GetIndex, .lhs = array, .rhs = end, .location = location});
-  RecordValueType(first, inputs.element_type);
-  RecordValueType(last, inputs.element_type);
-  Emit({.opcode = Opcode::SetIndex, .dst = array, .lhs = zero, .rhs = last, .location = location});
-  Emit({.opcode = Opcode::SetIndex, .dst = array, .lhs = end, .rhs = first, .location = location});
-  const auto start = EmitTemporary({.opcode = Opcode::Move, .lhs = zero, .location = location});
-  auto remaining_inputs = inputs;
-  remaining_inputs.length = end;
-  LowerArraySiftDown(start, remaining_inputs, location);
-  Emit({.opcode = Opcode::SubInt, .dst = end, .lhs = end, .rhs = one, .location = location});
-  Emit({.opcode = Opcode::Jump, .index = sort, .location = location});
+  LowerArrayMergePass(scratch, inputs, width, location);
+  const auto previous = EmitTemporary({.opcode = Opcode::Move, .lhs = array, .location = location});
+  Emit({.opcode = Opcode::Move, .dst = array, .lhs = scratch, .location = location});
+  Emit({.opcode = Opcode::Move, .dst = scratch, .lhs = previous, .location = location});
+  // 数组长度最多 uint32；最后一轮的加倍仍在 int64 范围内。
+  Emit({.opcode = Opcode::AddInt, .dst = width, .lhs = width, .rhs = width, .location = location});
+  Emit({.opcode = Opcode::Jump, .index = loop, .location = location});
   current_function_->instructions.at(done).index =
       static_cast<std::uint32_t>(current_function_->instructions.size());
 }

@@ -259,20 +259,41 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
     pattern = re.compile(r"^(?:aot/(native|cpp)|hot/steady/(baseline|optimized))/([^/]+)/(\d+)/real_time$")
     lifecycle_pattern = re.compile(
         r"^hot/(baseline|optimized)/(edits|closures|instances|continuations|rebuild|active|virtual)(?:/(\d+))?/manual_time$")
+    scaling_pattern = re.compile(
+        r"^hot/scaling/(baseline|optimized)/(independent|imports|fanout)/(\d+)/manual_time$")
     rows = iteration_rows(report, expected_cases, repetitions)
     lifecycle = {}
+    scaling = {}
     samples = {}
     counters = {}
     checksums = defaultdict(set)
     for name, entries in rows.items():
         match = pattern.fullmatch(name)
         if match is None:
+            scaling_match = scaling_pattern.fullmatch(name)
+            if scaling_match is not None:
+                tier, graph, count = scaling_match.groups()
+                files = int(count)
+                affected = 1 if tier == "baseline" or graph == "independent" else (
+                    files if graph == "fanout" else 2)
+                for entry in entries:
+                    if (entry["files"] != files or entry["affected_functions"] != affected or
+                            entry["compiled_functions"] != affected or
+                            entry["released_code_images"] != 1):
+                        raise ValueError(f"{name}: invalid incremental compilation or image retirement")
+                    for field in ("source_ns", "source_loading_ns", "type_checking_ns", "typed_ir_ns",
+                                  "code_ns", "pause_ns", "llvm_lowering_ns",
+                                  "llvm_optimization_ns", "machine_compilation_ns", "linking_ns"):
+                        if not math.isfinite(entry[field]) or entry[field] < 0:
+                            raise ValueError(f"{name}: invalid {field}")
+                scaling[name] = entries
+                continue
             lifecycle_match = lifecycle_pattern.fullmatch(name)
             if lifecycle_match is None:
                 raise ValueError(f"Unsupported JIT comparison case: {name}")
             for entry in entries:
-                if entry["released_code_batches"] != 1 or entry["released_suspended_frames"] != 0:
-                    raise ValueError(f"{name}: old code or suspended frames survived release")
+                if entry["released_code_images"] != 1 or entry["released_suspended_frames"] != 0:
+                    raise ValueError(f"{name}: old images or suspended frames survived release")
                 if (lifecycle_match[2] == "virtual" and
                         entry["materialized_objects"] != (1 if lifecycle_match[1] == "optimized" else 0)):
                     raise ValueError(f"{name}: incorrect materialized object count")
@@ -323,19 +344,28 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
              "safepoints, external fields and ordinary GC remain enabled. Optimized code retains "
              "old-version baseline recovery; the closed AOT comparison uses its normal layout and call policy.",
              "Arithmetic that C++ simplifies as a whole is a separate case; its ratio does not predict JIT gains.", "",
-             "| Workload | Size | C++ us | AOT us | Baseline us | Optimized us | Baseline/AOT | Optimized/AOT | CV C++/AOT/baseline/optimized |",
-             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
+             "| Workload | Size | C++ us | AOT us | Baseline us | Optimized us | Baseline/AOT | Optimized/AOT | AOT/C++ | Optimized/C++ | CV C++/AOT/baseline/optimized |",
+             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
     ratios = {backend: [] for backend in ("baseline", "optimized")}
+    qualified = {"native": 0, "optimized": 0}
     for key in keys:
         values = {backend: samples[backend, *key] for backend in backends}
         medians = {backend: median(elapsed) for backend, elapsed in values.items()}
         for backend in ("baseline", "optimized"):
             ratios[backend].append(medians[backend] / medians["native"])
+        qualified["native"] += medians["native"] <= 2 * medians["cpp"]
+        qualified["optimized"] += medians["optimized"] <= 3 * medians["cpp"]
         lines.append("| " + " | ".join([key[0], str(key[1]),
                                         *[f"{medians[backend]:.3f}" for backend in backends],
                                         f'{medians["baseline"] / medians["native"]:.2f}x',
                                         f'{medians["optimized"] / medians["native"]:.2f}x',
+                                        f'{medians["native"] / medians["cpp"]:.2f}x',
+                                        f'{medians["optimized"] / medians["cpp"]:.2f}x',
                                         "/".join(variation(values[backend]) for backend in backends)]) + " |")
+    if keys:
+        lines.append(f'AOT ≤ 2× C++: {qualified["native"]}/{len(keys)}; '
+                     f'optimized JIT ≤ 3× C++: {qualified["optimized"]}/{len(keys)}. '
+                     'All selected workloads, including arithmetic and fields, count toward these totals.')
     for backend, values in ratios.items():
         if values:
             ratio = math.exp(mean(math.log(value) for value in values))
@@ -365,19 +395,20 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
             lines.append("| " + " | ".join([key[0], backend, *numbers]) + " |")
     lines.extend(["", "Memory is reported separately from timing. Linked code/image counters count block "
                   "contents, excluding allocator page padding and OS debugger overhead. Read-only image "
-                  "contents include constants, source versions, location maps and unwind information. "
+                  "contents include linked constants and unwind information. Owned image data is stored "
+                  "separately from ORC blocks and contains source versions and location maps. "
                   "Constant/debug payload counters describe logical image contents, including source "
-                  "text and locations; they overlap the linked blocks and exclude allocator, string "
+                  "text and locations; they overlap image data or linked blocks and exclude allocator, string "
                   "deduplication and OS registration overhead. Process resident memory includes the "
                   "compiler and incremental source state. Resident samples share a process and may "
                   "include LLVM initialized by earlier cases; they are not independent backend footprints. "
                   "Compilation peak is the process lifetime "
                   "resident high-water mark sampled after compilation; run one case in a fresh process "
                   "to attribute it to that workload.", "",
-                  "| Workload | Size | Backend | Heap after GC | External fields | Executable | Read-only image | Writable image | Code batches | Resident | Constant payload | Debug payload | Compilation process peak |",
-                  "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"])
+                  "| Workload | Size | Backend | Heap after GC | External fields | Executable | Read-only linked | Writable linked | Code batches | Image data | Images | Resident | Constant payload | Debug payload | Compilation process peak |",
+                  "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"])
     fields = ("retained_bytes", "external_field_bytes", "code_executable_bytes", "code_read_only_bytes",
-              "code_writable_bytes", "code_batches", "process_resident_bytes", "constant_payload_bytes",
+              "code_writable_bytes", "code_batches", "image_data_bytes", "code_images", "process_resident_bytes", "constant_payload_bytes",
               "debug_payload_bytes", "compilation_peak_resident_bytes")
     for key in keys:
         for backend in backends:
@@ -403,11 +434,12 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
             lines.append("| " + " | ".join([name, f"{median(times):.3f}", variation(times),
                                             f"{materialized:.3f}", *numbers]) + " |")
         fields = ("heap_bytes", "external_field_bytes", "executable_bytes", "read_only_bytes",
-                  "writable_bytes", "constant_payload_bytes", "debug_payload_bytes", "code_batches",
+                  "writable_bytes", "image_data_bytes", "constant_payload_bytes", "debug_payload_bytes", "code_batches", "code_images",
                   "suspended_frames", "saved_state_bytes")
         lines.extend(["", "Lifecycle memory snapshots after full GC, in bytes/counts. "
                       "Retained includes deliberately live old closures or continuations; released "
-                      "drops them and verifies exactly one current code batch remains.", "",
+                      "drops them and verifies exactly one current image remains. Unchanged machine code "
+                      "can be shared from earlier batches without retaining their source images.", "",
                       "| Case | State | " + " | ".join(fields) + " |",
                       "| --- | --- | " + " | ".join("---:" for _ in fields) + " |"])
         for name, entries in sorted(lifecycle.items()):
@@ -416,6 +448,23 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                     continue
                 numbers = [f"{median(entry[phase + '_' + field] for entry in entries):.0f}" for field in fields]
                 lines.append("| " + " | ".join([name, phase, *numbers]) + " |")
+    if scaling:
+        fields = ("source_ns", "source_loading_ns", "type_checking_ns", "typed_ir_ns",
+                  "code_ns", "llvm_lowering_ns", "llvm_optimization_ns",
+                  "machine_compilation_ns", "linking_ns", "pause_ns")
+        lines.extend(["", "Hot reload scaling: one changed module per update. Independent modules and "
+                      "imports keep the affected graph fixed as unrelated files grow; fanout grows the "
+                      "actual direct-call dependency graph. Each update checks the result, exact compiled "
+                      "function count and image retirement.", "",
+                      "| Case | Total us | CV | Compiled functions | " + " | ".join(
+                          field.removesuffix("_ns") + " us" for field in fields) + " |",
+                      "| --- | ---: | --- | ---: | " + " | ".join("---:" for _ in fields) + " |"])
+        for name, entries in sorted(scaling.items()):
+            times = [entry["real_time"] * MICROSECONDS[entry["time_unit"]] for entry in entries]
+            numbers = [f"{median(entry[field] for entry in entries) / 1000:.3f}" for field in fields]
+            compiled = median(entry["compiled_functions"] for entry in entries)
+            lines.append("| " + " | ".join([name, f"{median(times):.3f}", variation(times),
+                                            f"{compiled:.0f}", *numbers]) + " |")
     return "\n".join(lines) + "\n"
 
 

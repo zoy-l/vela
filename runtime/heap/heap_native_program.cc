@@ -20,6 +20,7 @@ namespace vela::runtime {
 
 NativeProgramState::~NativeProgramState() {
   delete[] global_states;
+  delete[] global_caches;
 }
 
 HeapObject* Heap::AllocateNativeProgram(std::unique_ptr<NativeProgramState> state) noexcept {

@@ -197,6 +197,12 @@ class Heap final {
   // 扩容可能触发 GC；原生调用者须在调用期间保根 object、key 和 value。
   [[nodiscard]] std::expected<CollectionInsert, ExecutionStatus>
   InsertCollection(HeapObject& object, Value key, Value value = Value::Null()) noexcept;
+  // Typed IR 已保证对象是 Map 且键和值符合其固定布局。写入仍可能因扩容失败，
+  // object、key 和 value 的保根要求与 InsertCollection 相同；动态输入使用受查接口。
+  [[nodiscard]] std::expected<void, ExecutionStatus> StoreMapValue(HeapObject& object,
+                                                                   Value key,
+                                                                   Value value) noexcept;
+  [[nodiscard]] static Value LoadMapValue(const HeapObject& object, Value key) noexcept;
   [[nodiscard]] static std::expected<bool, ExecutionStatus> HasCollectionKey(
       const HeapObject& object,
       Value key) noexcept;
@@ -219,6 +225,8 @@ class Heap final {
   // 输入必须是合法 UTF-8；堆字符串须由调用者保根，分配可触发 GC。
   [[nodiscard]] StringObject* AllocateString(std::string_view first,
                                              std::string_view second = {}) noexcept;
+  // 输入为 int/double/bool；格式化器产生 ASCII，直接使用其字节数作为字符数。
+  [[nodiscard]] StringObject* AllocateScalarString(Value value) noexcept;
   // text 须为合法 UTF-8；输入及目标须保根，string 数组长度须等于 grapheme 数量。
   [[nodiscard]] std::expected<void, ExecutionStatus> FillGraphemes(HeapObject& array,
                                                                    std::string_view text);
@@ -309,9 +317,6 @@ class Heap final {
   [[nodiscard]] bool SetField(HeapObject& object, std::uint32_t index, Value value) noexcept;
   // 原生代码已完成类型化存储；引用写入仍须经过同一个增量 GC 屏障。
   void WriteBarrier(HeapObject& source, Value value) noexcept;
-  // receiver 为本 Heap 的数组，value 已按元素类型验证；两者在可能扩容的 GC 中保根。
-  [[nodiscard]] std::expected<void, ArrayAccessError> GrowArray(HeapObject& array,
-                                                                Value value) noexcept;
   [[nodiscard]] static std::expected<Value, ArrayAccessError> GetElement(
       const HeapObject& array,
       std::uint32_t index) noexcept;
@@ -417,6 +422,9 @@ class Heap final {
     std::size_t code_points;
   };
   [[nodiscard]] StringObject* AllocateStringStorage(StringSize size) noexcept;
+  // receiver 为本 Heap 的数组，value 已按元素类型验证；两者在可能扩容的 GC 中保根。
+  [[nodiscard]] std::expected<void, ArrayAccessError> GrowArray(HeapObject& array,
+                                                                Value value) noexcept;
   void ReleaseMutableString(HeapObject& object) noexcept;
   void MarkArray(HeapObject& array) noexcept;
   void ReleaseArray(HeapObject& array) noexcept;
@@ -430,6 +438,7 @@ class Heap final {
   void MarkCollection(HeapObject& object) noexcept;
   void ReleaseCollection(HeapObject& object) noexcept;
   std::expected<void, ExecutionStatus> GrowCollection(HeapObject& object) noexcept;
+  void StoreCollectionEntry(HeapObject& object, std::uint32_t entry, Value value) noexcept;
   std::expected<CollectionInsert, ExecutionStatus> InsertCollectionHashed(HeapObject& object,
                                                                           Value key,
                                                                           std::size_t hash,

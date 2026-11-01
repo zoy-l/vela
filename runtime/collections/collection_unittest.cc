@@ -104,6 +104,46 @@ TEST_F(OrderedCollectionTest, IteratorSeesValueUpdates) {
   EXPECT_EQ(current->value.AsInteger(), 42);
 }
 
+TEST_F(OrderedCollectionTest, TypedUpdatesUseCurrentKeysAfterDeletionClearGrowthAndGc) {
+  InsertEntries(EntryPass::Initial);
+  ASSERT_FALSE(HasFatalFailure());
+  const auto first = Value::Integer(1);
+  const auto second = Value::Integer(2);
+  EXPECT_EQ(Heap::LoadMapValue(map(), first).AsInteger(), 1001);
+  ASSERT_TRUE(heap().StoreMapValue(map(), second, Value::Integer(42)));
+  EXPECT_EQ(Heap::GetCollectionValue(map(), first)->AsInteger(), 1001);
+  EXPECT_EQ(Heap::GetCollectionValue(map(), second)->AsInteger(), 42);
+
+  EXPECT_EQ(Heap::LoadMapValue(map(), first).AsInteger(), 1001);
+  ASSERT_EQ(Heap::RemoveCollection(map(), first), CollectionRemove::Removed);
+  ASSERT_TRUE(heap().StoreMapValue(map(), first, Value::Integer(50)));
+  EXPECT_EQ(Heap::GetCollectionValue(map(), first)->AsInteger(), 50);
+  EXPECT_EQ(Heap::GetCollectionValue(map(), second)->AsInteger(), 42);
+
+  EXPECT_EQ(Heap::LoadMapValue(map(), second).AsInteger(), 42);
+  ASSERT_TRUE(Heap::ClearCollection(map()));
+  ASSERT_TRUE(heap().StoreMapValue(map(), second, Value::Integer(60)));
+  EXPECT_TRUE(Heap::GetCollectionValue(map(), first)->IsNull());
+  EXPECT_EQ(Heap::GetCollectionValue(map(), second)->AsInteger(), 60);
+
+  EXPECT_EQ(Heap::LoadMapValue(map(), second).AsInteger(), 60);
+  for (std::uint32_t index = 0; index < kEntryCount * 2; ++index) {
+    ASSERT_TRUE(
+        heap().InsertCollection(map(), Value::Integer(index + 1000), Value::Integer(index)));
+  }
+  ASSERT_TRUE(heap().StoreMapValue(map(), second, Value::Integer(70)));
+  EXPECT_EQ(Heap::GetCollectionValue(map(), second)->AsInteger(), 70);
+  EXPECT_EQ(Heap::GetCollectionValue(map(), Value::Integer(1000))->AsInteger(), 0);
+
+  EXPECT_EQ(Heap::LoadMapValue(map(), second).AsInteger(), 70);
+  heap().Collect();
+  ASSERT_TRUE(heap().StoreMapValue(map(), second, Value::Integer(80)));
+  EXPECT_EQ(Heap::GetCollectionValue(map(), second)->AsInteger(), 80);
+  EXPECT_TRUE(Heap::LoadMapValue(map(), first).IsNull());
+  ASSERT_TRUE(heap().StoreMapValue(map(), first, Value::Integer(90)));
+  EXPECT_EQ(Heap::GetCollectionValue(map(), first)->AsInteger(), 90);
+}
+
 TEST_F(OrderedCollectionTest, IteratorRejectsStructuralChangesAfterEnd) {
   auto iterator = Heap::IterateCollection(map());
   ASSERT_TRUE(iterator);

@@ -13,7 +13,7 @@ namespace {
 
 TEST(NativeControlTest, SafepointRequestsPreserveIndependentSourcesUntilEachIsConsumed) {
   NativeControl control;
-  const auto& requests = control.safepoint_requests();
+  const auto& requests = *control.state().requests;
   EXPECT_EQ(requests.load(), 0);
   int calls = 0;
   ASSERT_TRUE(control.ScheduleSafepoint([&] { ++calls; }));
@@ -46,7 +46,7 @@ TEST(NativeControlTest, DetachingDebuggerDoesNotClearQueuedOrScheduledWork) {
     void AtSafepoint(const NativeDebugContext& /*context*/) noexcept override {}
   } debugger;
   NativeControl control;
-  const auto& requests = control.safepoint_requests();
+  const auto& requests = *control.state().requests;
   control.SetDebugger(&debugger);
   EXPECT_NE(requests.load(), 0);
   EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
@@ -65,13 +65,13 @@ TEST(NativeControlTest, DetachingDebuggerDoesNotClearQueuedOrScheduledWork) {
 
 TEST(NativeControlTest, StopWaitsForTheOutermostHostBorrowToReturn) {
   NativeControl control;
-  control.EnterHost();
-  control.EnterHost();
+  ++control.state().host_borrows;
+  ++control.state().host_borrows;
   control.RequestStop();
   EXPECT_EQ(control.Poll(), ExecutionStatus::Returned);
-  control.ExitHost();
+  --control.state().host_borrows;
   EXPECT_EQ(control.Poll(), ExecutionStatus::Returned);
-  control.ExitHost();
+  --control.state().host_borrows;
   EXPECT_EQ(control.Poll(), ExecutionStatus::ExecutionStopped);
 }
 
@@ -92,10 +92,10 @@ TEST(NativeControlTest, PublicationWaitsForNestedInitializationsAndHostReentry) 
     EXPECT_FALSE(control.CanPublish());
     {
       const NativeInitializationScope inner(control);
-      control.EnterHost();
+      ++control.state().host_borrows;
       EXPECT_FALSE(control.CanPublish());
     }
-    control.ExitHost();
+    --control.state().host_borrows;
     EXPECT_FALSE(control.CanPublish());
   }
   EXPECT_TRUE(control.CanPublish());
@@ -105,11 +105,11 @@ TEST(NativeControlTest, PendingPublicationWaitsForHostAndInitializationAndRunsOn
   NativeControl control;
   int calls = 0;
   ASSERT_TRUE(control.ScheduleSafepoint([&] { ++calls; }));
-  control.EnterHost();
+  ++control.state().host_borrows;
   control.EnterInitialization();
   EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
   EXPECT_EQ(calls, 0);
-  control.ExitHost();
+  --control.state().host_borrows;
   EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
   EXPECT_EQ(calls, 0);
   control.ExitInitialization();
@@ -160,7 +160,7 @@ TEST(NativeControlTest, CrossThreadActionsWaitForOwnerSafepointsAndOldEndpointsC
   {
     NativeControl control;
     endpoint = control.endpoint();
-    control.EnterHost();
+    ++control.state().host_borrows;
     std::thread producer([&] {
       const auto queued = endpoint->Post([&] { executed = std::this_thread::get_id(); });
       EXPECT_TRUE(queued.has_value());
@@ -168,7 +168,7 @@ TEST(NativeControlTest, CrossThreadActionsWaitForOwnerSafepointsAndOldEndpointsC
     producer.join();
     EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
     EXPECT_EQ(executed, std::thread::id{});
-    control.ExitHost();
+    --control.state().host_borrows;
     EXPECT_EQ(control.ProcessSafepoint(), ExecutionStatus::Returned);
     EXPECT_EQ(executed, owner);
   }

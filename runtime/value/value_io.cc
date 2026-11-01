@@ -124,6 +124,11 @@ std::string_view FormatScalar(Value value, std::span<char, kScalarTextCapacity> 
   return {buffer.data(), static_cast<std::size_t>(converted.ptr - buffer.data())};
 }
 
+std::size_t ScalarTextLength(Value value) {
+  std::array<char, kScalarTextCapacity> buffer{};
+  return FormatScalar(value, buffer).size();
+}
+
 void WriteValue(std::ostream& output, Value value) {
   if (value.IsInteger() || value.IsDouble() || value.IsBoolean()) {
     std::array<char, kScalarTextCapacity> buffer{};

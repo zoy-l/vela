@@ -105,6 +105,8 @@ void ReportJitMemory(benchmark::State& state, compiler::DevelopmentSession& sess
   const auto& heap = isolate.heap();
   const auto layouts = isolate.layout_counts();
   state.counters["code_batches"] = static_cast<double>(code.batches);
+  state.counters["code_images"] = static_cast<double>(code.images);
+  state.counters["image_data_bytes"] = static_cast<double>(code.image_data_bytes);
   state.counters["code_functions"] = static_cast<double>(code.functions);
   state.counters["code_executable_bytes"] = static_cast<double>(code.executable_bytes);
   state.counters["code_read_only_bytes"] = static_cast<double>(code.read_only_bytes);

@@ -23,6 +23,7 @@
 #include "compiler/ir/ir.h"
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_function.h"
+#include "runtime/native/native_memory_layout.h"
 
 namespace vela::compiler::native {
 
@@ -265,6 +266,26 @@ void EmitWrapper(llvm::Module& module,
   Builder invalid_builder(invalid);
   invalid_builder.CreateRet(Status(invalid_builder, ExecutionStatus::InvalidEntry));
   builder.SetInsertPoint(unpack);
+  llvm::Value* current_image = image;
+  if (function.baseline_body != nullptr) {
+    using runtime::NativeMemoryLayout;
+    auto* execution = entry->getArg(0);
+    auto* valid_execution = llvm::BasicBlock::Create(context, "image.execution", entry);
+    auto* invalid_execution = llvm::BasicBlock::Create(context, "image.invalid", entry);
+    builder.CreateCondBr(builder.CreateIsNotNull(execution), valid_execution, invalid_execution);
+    builder.SetInsertPoint(invalid_execution);
+    builder.CreateRet(Status(builder, ExecutionStatus::InvalidIsolate));
+    builder.SetInsertPoint(valid_execution);
+    auto* instance_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), execution,
+                                                        NativeMemoryLayout::kExecutionInstance);
+    auto* instance = builder.CreateLoad(builder.getPtrTy(), instance_address);
+    auto* data_address = builder.CreateConstGEP1_64(builder.getInt8Ty(), instance,
+                                                    NativeMemoryLayout::kInstanceData);
+    auto* data = builder.CreateLoad(builder.getPtrTy(), data_address);
+    auto* image_address =
+        builder.CreateConstGEP1_64(builder.getInt8Ty(), data, NativeMemoryLayout::kProgramImage);
+    current_image = builder.CreateLoad(builder.getPtrTy(), image_address);
+  }
   std::vector<llvm::Value*> arguments{entry->getArg(0)};
   for (std::size_t index = 0; index < source.parameter_count; ++index) {
     const auto& type = source.value_types.at(index);
@@ -321,7 +342,7 @@ void EmitWrapper(llvm::Module& module,
     auto* optimized = llvm::BasicBlock::Create(context, "optimized", entry);
     auto* baseline = llvm::BasicBlock::Create(context, "baseline", entry);
     auto* merge = llvm::BasicBlock::Create(context, "called", entry);
-    auto* current = builder.CreateCall(helper, {entry->getArg(0), image});
+    auto* current = builder.CreateCall(helper, {entry->getArg(0), current_image});
     builder.CreateCondBr(builder.CreateICmpNE(current, builder.getInt8(0)), optimized, baseline);
     builder.SetInsertPoint(optimized);
     auto* fast = builder.CreateCall(body, arguments);

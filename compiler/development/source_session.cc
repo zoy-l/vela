@@ -20,6 +20,7 @@
 #include "base/declaration.h"
 #include "base/native_program_mode.h"
 #include "base/path.h"
+#include "compiler/frontend/builtins/sdk_modules.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/frontend/generics/specialization.h"
 #include "compiler/frontend/modules/declaration_ids.h"
@@ -159,6 +160,7 @@ std::expected<void, SourceCandidateError> ApplyChanges(CompiledSourceSnapshot& c
           },
       }));
     }
+    candidate.changed_sources.push_back(path);
     const auto& syntax = change.syntax;
     if (syntax && (!syntax->source || !syntax->diagnostics.empty() || !change.text ||
                    syntax->source->text != *change.text)) {
@@ -235,14 +237,14 @@ std::expected<std::vector<std::string>, frontend::Diagnostics> RetainedRoots(
 
 }  // namespace
 
-SourceCandidate::SourceCandidate(std::shared_ptr<const SourceSessionIdentity> session,
-                                 std::shared_ptr<const CompiledSourceSnapshot> base,
+SourceCandidate::SourceCandidate(std::shared_ptr<const CompiledSourceSnapshot> base,
                                  std::shared_ptr<const CompiledSourceSnapshot> prepared)
-    : session_(std::move(session)), base_(std::move(base)), prepared_(std::move(prepared)) {}
+    : base_(std::move(base)), prepared_(std::move(prepared)) {}
 
 SourceSession::SourceSession(const std::string& entry, frontend::DiagnosticOptions options)
     : identity_(std::make_shared<const SourceSessionIdentity>()), options_(options) {
   auto initial = std::make_shared<CompiledSourceSnapshot>();
+  initial->session = identity_;
   initial->roots.push_back(Normalize(entry));
   current_ = std::move(initial);
 }
@@ -266,6 +268,7 @@ std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
     });
   }
   auto candidate = std::make_shared<CompiledSourceSnapshot>();
+  candidate->session = identity_;
   candidate->revision = base->revision + 1;
   candidate->sources = base->sources;
   candidate->prepared_sources = base->prepared_sources;
@@ -285,7 +288,9 @@ std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
   }
   // 已装入的模块持续属于开发会话；删除导入不会隐式删除其声明，显式源码删除才移除根。
   for (const auto& [path, syntax] : base->modules.sources) {
-    if (candidate->sources.contains(path) && roots.insert(path).second) {
+    const auto retained_sdk =
+        path.starts_with(frontend::kSdkSourcePrefix) && candidate->modules.sources.contains(path);
+    if ((candidate->sources.contains(path) || retained_sdk) && roots.insert(path).second) {
       candidate->roots.push_back(path);
     }
   }
@@ -338,11 +343,11 @@ std::expected<SourceCandidate, SourceCandidateError> SourceSession::Prepare(
   candidate->program = std::move(prepared.program);
   candidate->diagnostics = std::move(checked.diagnostics);
   candidate->timings.ir = Clock::now() - lowering;
-  return SourceCandidate(identity_, std::move(base), std::move(candidate));
+  return SourceCandidate(std::move(base), std::move(candidate));
 }
 
 std::expected<void, SourceCandidateStatus> SourceSession::Commit(const SourceCandidate& candidate) {
-  if (candidate.session_ != identity_) {
+  if (candidate.prepared_->session != identity_) {
     return std::unexpected(SourceCandidateStatus::DifferentSession);
   }
   const std::scoped_lock lock(mutex_);

@@ -25,9 +25,9 @@ class DevelopmentCommandTest(CommandTestCase):
     def write(self, source: str) -> None:
         self.entry.write_text(source, encoding="utf-8", newline="\n")
 
-    def start(self, *options: str) -> None:
+    def start(self, *options: str, entry: str | None = None) -> None:
         self.process = subprocess.Popen(
-            [str(self.executable), "dev", str(self.entry), *options], cwd=self.directory,
+            [str(self.executable), "dev", entry or str(self.entry), *options], cwd=self.directory,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", bufsize=1)
         self.readers = []
@@ -101,6 +101,14 @@ class DevelopmentCommandTest(CommandTestCase):
         self.send(".quit")
         self.assertEqual(self.process.wait(timeout=5), 0)
 
+    def test_relative_entry_observes_saves_in_the_process_working_directory(self) -> None:
+        self.write("func main(): void {} export func read(): int { return 42; }")
+        self.start(entry="main.vela")
+        self.write("func main(): void {} export func read(): int { return 43; }")
+        self.wait("err", r"accepted \(run 1, revision 2\)")
+        self.send(".call read")
+        self.wait("out", "^43$")
+
     def test_reload_exits_an_old_infinite_frame_and_starts_the_new_entry(self) -> None:
         self.write("func main(): void { while (true) {} }")
         self.start()
@@ -158,13 +166,13 @@ class DevelopmentCommandTest(CommandTestCase):
         self.send(".gc")
         self.wait("err", "collection completed")
         self.send(".status")
-        self.wait("err", "1 code batch")
+        self.wait("err", "1 source image")
 
     def test_optimized_paused_frame_deoptimizes_and_cached_code_remains_reloadable(self) -> None:
-        self.write("func main(): void {}\n"
+        self.write("func main(): void {} func value(): int { return 42; }\n"
                    "export func caller(): int {\n"
                    "  print('old optimized frame');\n"
-                   "  return 42;\n}\n")
+                   "  return value();\n}\n")
         cache = self.directory / "objects"
         self.start("--optimized", f"--code-cache={cache}")
         self.send(".watch off")
@@ -172,10 +180,10 @@ class DevelopmentCommandTest(CommandTestCase):
         self.wait("err", "breakpoint .*:3")
         self.send(".call caller")
         self.wait("err", r"paused #0 caller revision 1.*\[optimized\]")
-        self.write("func main(): void {}\n"
+        self.write("func main(): void {} func value(): int { return 42; }\n"
                    "export func caller(): int {\n"
                    "  print('new optimized frame');\n"
-                   "  return 100;\n}\n")
+                   "  return value() + 58;\n}\n")
         self.send(".hot")
         self.wait("err", r"accepted \(run 1, revision 2\)")
         self.send(".stack")
@@ -191,7 +199,7 @@ class DevelopmentCommandTest(CommandTestCase):
         self.send(".gc")
         self.wait("err", "collection completed")
         self.send(".status")
-        self.wait("err", "1 code batch")
+        self.wait("err", "1 source image")
         self.wait("err", r"code [1-9][0-9]* bytes")
         self.wait("err", "optimized, 1 deoptimized frame")
         self.assertGreaterEqual(len(list(cache.glob("*.vlobj"))), 2)
@@ -263,6 +271,17 @@ class DevelopmentCommandTest(CommandTestCase):
         self.send(".status")
         self.wait("err", r"accepted \(run 1, revision 3\)")
         self.assertFalse(any("another request is pending" in line for _, line in self.history))
+
+    def test_reset_after_a_queued_update_captures_the_latest_revision(self) -> None:
+        self.write("func main(): void {} export func read(): int { return 42; }")
+        self.start()
+        self.send(".watch off")
+        self.write("func main(): void {} export func read(): int { return 43; }")
+        self.send(".hot")
+        self.send(".reset")
+        self.wait("err", r"accepted \(run 2, revision 1\)")
+        self.send(".call read")
+        self.wait("out", "^43$")
 
 
 if __name__ == "__main__":

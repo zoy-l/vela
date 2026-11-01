@@ -41,6 +41,18 @@ source_set("base") {
   }
 }
 
+source_set("directory_watcher") {
+  sources = [
+    "directory_watcher.cc",
+    "directory_watcher.h",
+  ]
+  deps = [ ":base" ]
+  public_deps = [
+    "//third_party:abseil",
+    "//third_party:efsw",
+  ]
+}
+
 source_set("json") {
   sources = [
     "json.cc",
@@ -81,6 +93,7 @@ executable("base_tests") {
   testonly = true
   sources = [
     "binary_unittest.cc",
+    "directory_watcher_unittest.cc",
     "file_unittest.cc",
     "fingerprint_unittest.cc",
     "integer_arithmetic_unittest.cc",
@@ -89,6 +102,7 @@ executable("base_tests") {
   ]
   deps = [
     ":base",
+    ":directory_watcher",
     ":json",
     ":test_directory",
     "//third_party:gtest_main",

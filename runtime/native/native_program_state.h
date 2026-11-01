@@ -21,11 +21,11 @@ namespace vela::runtime {
 class Isolate;
 class NativeDispatch;
 class NativeFunctionRoot;
+struct NativeGlobalCache;
 
 // 缓存属于 Isolate 内的具体函数版本；共享机器码不会跨线程写同一缓存。
 struct NativeFieldCache final {
-  const NominalType* type = nullptr;
-  std::uint64_t revision = 0;
+  std::uint64_t layout_id = 0;
   std::uint32_t slot = 0;
   [[nodiscard]] std::optional<std::uint32_t> Resolve(const ClassLayout& layout,
                                                      DeclarationId field) noexcept;
@@ -57,8 +57,11 @@ struct NativeProgramState final {
   std::vector<std::shared_ptr<const NativeFunction>> imports;
   NativeFunctionRoot* function_roots = nullptr;
   std::vector<std::vector<NativeFieldCache>> field_caches;
+  // 仅在稳定槽序与源描述完全一致时允许常量偏移访问；槽序演化的版本继续按声明解析。
+  std::vector<const ClassLayout*> direct_field_layouts;
   // 数量由不可变 image 确定；独占定长存储供生成代码直接读取，不依赖 vector 布局。
   GlobalState* global_states = nullptr;
+  NativeGlobalCache* global_caches = nullptr;
   std::array<Value, kStateSlots> values;
   // 动态映像使用别名 shared_ptr 保活其代码、重定位及借用元数据；静态 AOT 映像无需所有者。
   std::shared_ptr<const NativeImage> image_owner;
@@ -67,6 +70,15 @@ struct NativeProgramState final {
   std::vector<std::unique_ptr<CodeIdentity>> owned_code_identities;
   // 清扫阶段先销毁对象载荷，再统一销毁版本元数据，避免死亡对象仍借用扫描描述。
   NativeProgramState* retired_next = nullptr;
+};
+
+// 槽由当前分派快照保活；读取者先验证 epoch，才能解引用 state/value。
+// 发布或关闭分派先使代数失效，因此弱缓存不会保活已删除全局值或读取退休槽。
+struct NativeGlobalCache final {
+  const std::uint64_t* epoch = nullptr;
+  std::uint64_t observed = 0;
+  const NativeProgramState::GlobalState* state = nullptr;
+  const Value* value = nullptr;
 };
 
 }  // namespace vela::runtime

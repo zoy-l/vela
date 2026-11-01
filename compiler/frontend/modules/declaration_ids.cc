@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -90,6 +91,11 @@ DeclarationId DeclarationIds::Get(DeclarationKey key, DeclarationId definition) 
   active_.emplace(key, identity);
   records_.push_back({.key = std::move(key), .definition = definition, .seen = update_});
   return identity;
+}
+
+std::optional<DeclarationId> DeclarationIds::Find(const DeclarationKey& key) const {
+  const auto found = active_.find(key);
+  return found == active_.end() ? std::nullopt : std::optional(found->second);
 }
 
 void DeclarationIds::FinishUpdate() {

@@ -133,6 +133,8 @@ ClassLayout* Isolate::CreateClassLayout(std::uint32_t field_count,
 
   std::unique_ptr<ClassLayout> layout(new ClassLayout(field_count, std::move(references)));
   ClassLayout* result = layout.get();
+  // 布局地址可被 GC 或回滚后的新分配复用；编号在本 Isolate 内单调递增。
+  result->id_ = ++next_class_layout_id_;
   result->callable_ = options.callable;
   auto* nominal = options.nominal;
   if (nominal == nullptr) {

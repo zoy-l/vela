@@ -55,8 +55,24 @@ export func sum(x: int, choose: bool): int {
   }
   const auto compiled = aot::Compile(program.program, {.exports = {"sum"}, .preserve_ir = true});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
-  EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v1_new_instance"), std::string_view::npos);
+  EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v10_new_object"), std::string_view::npos);
   EXPECT_EQ(compiled->function_metrics.front().eliminated_allocations, 1U);
+}
+
+TEST(EscapeAnalysisTest, ScalarTextLengthsThroughEliminatedFieldsDoNotAllocateStrings) {
+  const auto program = Prepare(R"(
+class Box { text: string; }
+export func sum(value: int): int {
+  const box = Box(text: value.toString());
+  return box.text.length;
+}
+)");
+  ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
+  const auto compiled = aot::Compile(program.program, {.exports = {"sum"}, .preserve_ir = true});
+  ASSERT_TRUE(compiled) << compiled.error().front().message;
+  EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v10_scalar_to_string"), std::string_view::npos);
+  EXPECT_NE(compiled->llvm_ir.find("@vela_native_v9_scalar_text_length"), std::string_view::npos);
+  EXPECT_EQ(compiled->function_metrics.front().shadow_slots, 0U);
 }
 
 TEST(EscapeAnalysisTest, RepeatedAllocationDoesNotConflateLiveIterationInstances) {
@@ -130,7 +146,10 @@ export func size(text: string): int {
   const auto roots = PlanNativeRoots(plan.function, program.program.functions,
                                      program.program.native_mode, NativeDebugging::Safepoints);
   ASSERT_EQ(allocation.fields.size(), 1U);
-  const auto field = allocation.fields.front();
+  const auto text =
+      std::ranges::find(plan.function.instructions, Opcode::StringConcat, &ir::Instruction::opcode);
+  ASSERT_NE(text, plan.function.instructions.end());
+  const auto field = text->dst;
   EXPECT_TRUE(roots.slots.at(field));
   bool rooted = false;
   for (std::size_t index = 0; index < plan.function.instructions.size(); ++index) {
@@ -172,7 +191,7 @@ export func same(): bool {
   const auto compiled = aot::Compile(program.program, {.exports = {"same"}, .preserve_ir = true});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
   EXPECT_EQ(compiled->function_metrics.front().eliminated_allocations, 2U);
-  EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v1_new_instance"), std::string_view::npos);
+  EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v10_new_object"), std::string_view::npos);
 }
 
 TEST(EscapeAnalysisTest, SinksPublicationAndReconcilesHeapAndVirtualBranches) {
@@ -234,7 +253,7 @@ export func read(): int {
   ASSERT_TRUE(program.Succeeded()) << program.diagnostics.front().message;
   const auto compiled = aot::Compile(program.program, {.exports = {"read"}, .preserve_ir = true});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
-  EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v1_new_instance"), std::string_view::npos);
+  EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v10_new_object"), std::string_view::npos);
   EXPECT_EQ(compiled->llvm_ir.find("@vela_native_v1_type_test"), std::string_view::npos);
 }
 
@@ -248,7 +267,7 @@ export func read(): int { return Point(x: 42).x; }
       program.program,
       {.exports = {"read"}, .preserve_ir = true, .escape = EscapeOptimization::Disabled});
   ASSERT_TRUE(compiled) << compiled.error().front().message;
-  EXPECT_NE(compiled->llvm_ir.find("@vela_native_v1_new_instance"), std::string_view::npos);
+  EXPECT_NE(compiled->llvm_ir.find("@vela_native_v10_new_object"), std::string_view::npos);
   EXPECT_EQ(compiled->function_metrics.front().eliminated_allocations, 0U);
   EXPECT_EQ(compiled->function_metrics.front().retained_allocations, 1U);
 }
