@@ -33,6 +33,8 @@ struct NativeVirtualState final {
 // 生成代码持有此存储直到物理帧返回，只物化 instruction 处的活跃值。
 // 恢复直接将这些槽用作基线局部存储；精确托管根仍位于该帧的影子槽。
 // AwaitingResult 表示基线续延正在等待已进入的调用完成。
+// 链接后 tier、phase 与 materialization 始终有效；无物化状态时，其余字段和槽值只在本帧
+// 调用 vela_native_v4_recover 前写入，其他帧的安全点不得读取它们。
 // 无物化状态的非空标量槽只初始化 payload；类型化恢复不读取其标签。
 struct NativeCheckpoint final {
   NativeValue* values = nullptr;

@@ -1,1901 +1,6 @@
 {
   "schema_version": 1,
   "previous": {
-    "run_date": "2026-11-01T14:06:14+08:00",
-    "machine": {
-      "os": "Windows",
-      "release": "11",
-      "architecture": "AMD64",
-      "host": "DESKTOP-E7S678P",
-      "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
-      "logical_cpus": 24
-    },
-    "toolchain": {
-      "cxx": "Fuchsia clang 23.0.0git (80743bd43fd5b38fedc503308e7a652e23d3ec93)",
-      "llvm_sdk": "21.1.8"
-    },
-    "source": {
-      "revision": "c74dfa0b6d03d36b91be2c18db4261bd151c757d",
-      "working_tree_clean": false,
-      "status": "M benchmarks/results/rolling_summary.json\n M compiler/BUILD.gn\n M compiler/aot/native_compiler_unittest.cc\n M compiler/development/development_session.cc\n M compiler/development/development_session.h\n M compiler/development/development_session_unittest.cc\n M compiler/jit/compiler_unittest.cc\n M compiler/jit/debugger_unittest.cc\n M compiler/jit/runtime_symbols.cc\n M compiler/jit/state_evolution_unittest.cc\n M compiler/native/call_emitter.cc\n M compiler/native/code_generator.cc\n M compiler/native/code_generator.h\n M compiler/native/deoptimization_emitter.cc\n M compiler/native/frame_emitter.cc\n M compiler/native/function_emitter.cc\n M compiler/native/function_emitter.h\n M compiler/native/integer_loop_optimizer.cc\n M compiler/native/memory_emitter.cc\n M compiler/native/native_frame_plan.cc\n M compiler/native/native_frame_plan.h\n M compiler/native/native_values.cc\n M compiler/native/native_values.h\n M runtime/heap/heap.cc\n M runtime/heap/heap.h\n M runtime/heap/heap_array.cc\n M runtime/native/native_abi.cc\n M runtime/native/native_abi.h\n M runtime/native/native_deoptimization.h\n M runtime/native/native_dispatch.cc\n M runtime/native/native_dispatch.h\n M runtime/native/native_materialization.cc\n M runtime/native/native_materialization_unittest.cc\n M runtime/native/native_memory_layout.h\n M runtime/native/native_program_state.h\n?? compiler/jit/gc_barrier_unittest.cc\n?? compiler/jit/recursion_unittest.cc\n?? compiler/native/integer_loop_optimizer_unittest.cc",
-      "compiler_build_identity": "50462f25abf37110cd5c0dac05b072febc911b78933bc2042dfe285c633fe9e3",
-      "changed_file_sha256": {
-        "compiler/BUILD.gn": "3db55d0c2b6f70da59b3f5e6c8d3cf78c226efedacfda41d9bd1449ebea370f6",
-        "compiler/aot/native_compiler_unittest.cc": "98778ce74ad1570716b95e2c3944f1ceff646374f9e648dd6a550ad99830a29e",
-        "compiler/development/development_session.cc": "ebf952f3ac1f8b9efeb7b3f191e82c88d65011d191189146e45d01f85e63a323",
-        "compiler/development/development_session.h": "2d7a9cb0104b8069dc3d4bdcf757ad74892fc1b4c8e7d5e017f72fdf50722c93",
-        "compiler/development/development_session_unittest.cc": "17903b65a0105b345e8e5cb5ddebf8c36ba902d66fad8054c99b8c3f747a8d86",
-        "compiler/jit/compiler_unittest.cc": "8f942891a1f4f01593a18a1292372288858b3c1139ec41463ada944ccd0e5685",
-        "compiler/jit/debugger_unittest.cc": "5120330049ed8c6f7cfee77e01ac8d1b63bb9b181ed8299e250b1bd1fa72c367",
-        "compiler/jit/gc_barrier_unittest.cc": "4aacae98e22783b0a755a5b31c15ea645989f3943e19bb9af5f653ec1a5ca81e",
-        "compiler/jit/recursion_unittest.cc": "eda8141ed9fdfb849ceb1656bd2e6bf2b8453bf1a052c36daa4d6b908748c5ec",
-        "compiler/jit/runtime_symbols.cc": "a57a77b15ec321f9948f5588bcae7023ed35c8a259d1fa116ad1f89f0e2a287c",
-        "compiler/jit/state_evolution_unittest.cc": "ba6bc004ee9d2eeaa6e3ec6bef2404f6cf0f09a3b9bd0a09895481df73d0acca",
-        "compiler/native/call_emitter.cc": "9351bdd189987a8dc3fe918401622d80f3f86fdf2c54e6c98ab2acccc8049f48",
-        "compiler/native/code_generator.cc": "7a6d716b5e71905acad549bb87d4076e51fd0772f946754496f6f8a6f5a5a3fd",
-        "compiler/native/code_generator.h": "46979ddf79599bd1a98c82b940c05eb1c5681daeee0e793e4460bdb40c1c4de4",
-        "compiler/native/deoptimization_emitter.cc": "db5ed6efb7a8dc6bd21bd43c66f1ed5a4d56a28e47e970f5dca9da97244d9252",
-        "compiler/native/frame_emitter.cc": "c60db4a2f5e251b2b43cdedca206c14bd6b4d45c6a826e3e1d0c96b7de71333f",
-        "compiler/native/function_emitter.cc": "b14a806d6c8b284fa4774244be6fc0a20041f3a136df025585834ddffb97123a",
-        "compiler/native/function_emitter.h": "c3eb19837aa8ca3a2b0cd103b7d454a928f72efbd8fe31a3ad7891e03191a626",
-        "compiler/native/integer_loop_optimizer.cc": "5bdda7e76c2101076015a89a9c1c36fe2a185696a5e06e048c3e6777a422ceb9",
-        "compiler/native/integer_loop_optimizer_unittest.cc": "7722ca7f018de71b746d9689e0cbe60a55a7b8aa846ab1e5aebb9851929b7a12",
-        "compiler/native/memory_emitter.cc": "19f9ec12fd38d0054c349b528a11918233219bed064f6111cebd1d3d98dc7cde",
-        "compiler/native/native_frame_plan.cc": "ad83363c93221c465963b71598314a0c5f3e1e2b97c16e4a74223fe4e7bd0db9",
-        "compiler/native/native_frame_plan.h": "8674d7790892d3a847f405b4c39d9d8ce7ddd7bb46aeb964b599ee31d7343d04",
-        "compiler/native/native_values.cc": "f7a088d37ad132aed4b75331809360bc73e74751af9fcf1deb1258bd3a396ba5",
-        "compiler/native/native_values.h": "69d50b42b80cf577c9242249253d3f32a28e5f204cdd16d0563250a6c61a7e48",
-        "runtime/heap/heap.cc": "03aa01537024fa112fee84930d290ec97f4ac93e8f6f6f3383ecbcf0408db308",
-        "runtime/heap/heap.h": "23e2ac306f1f1e1d481adbdb9dd67ee6fff4bfc96b71f7cbe153716a8453a93d",
-        "runtime/heap/heap_array.cc": "a3cf672e1feef35e66f5d2f83905e0f6ba0ee77c72369b46223aed6fa81c280d",
-        "runtime/native/native_abi.cc": "0c441f455b7c28a715c72183b5fb95034fb547686e0c225df53bea760e65090c",
-        "runtime/native/native_abi.h": "127f891b136ddc67277492306fefacef26ce6839041dd4182f917261e761042a",
-        "runtime/native/native_deoptimization.h": "feaf7d531b088bfd0d0b7189f21cf785fe22d0934e41b61b6941f68f902dffc6",
-        "runtime/native/native_dispatch.cc": "75c6948af105ca8a399506c9e593b5c154bf3d6985636e948e7126eaa90435f2",
-        "runtime/native/native_dispatch.h": "c7abde51146f91dca319a90f18b8e6bea1dc3146680fcec28249315fa2ea5f2d",
-        "runtime/native/native_materialization.cc": "3d88761cd2423ce79adb40b41ff107fce34d82871d6574485fac49d24f088311",
-        "runtime/native/native_materialization_unittest.cc": "0f17f839c5f8c393483b57313a74207bf299de628b6afeb63dd16d129d704b8c",
-        "runtime/native/native_memory_layout.h": "d13de5b6fe1f810c5dd2963c12cb6119264a113a20e96fe29f1cc52953ab1ec3",
-        "runtime/native/native_program_state.h": "32ab58afd6f046ba9854b373243cb4f4d2ab6d2cb47e4ae1779d161c45d9ff4c"
-      },
-      "excluded_from_identity": [
-        "benchmarks/results/rolling_summary.json"
-      ]
-    },
-    "build": {
-      "configuration": "release",
-      "aot_codegen": "LLVM O2; generic CPU; PIC; checked arithmetic; explicit roots",
-      "runtime_abi": "50462f25abf37110cd5c0dac05b072febc911b78933bc2042dfe285c633fe9e3/release",
-      "jit_cpu": "znver4",
-      "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
-      "jit_baseline": "LLVM O2; host CPU; current dispatch; precise roots; safepoints",
-      "jit_optimized": "LLVM O2; host CPU; version dependencies; direct calls/inlining; selective recovery"
-    },
-    "suite": {
-      "identity": "jit-comparison/all-steady/24-workloads",
-      "command": [
-        "python",
-        "-m",
-        "tools.vl",
-        "bench",
-        "--jit-compare",
-        "--report",
-        "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-all-current.json",
-        "--",
-        "--benchmark_filter=^(aot/(native|cpp)/|hot/steady/)",
-        "--benchmark_min_time=0.3s",
-        "--benchmark_repetitions=5"
-      ],
-      "expected_cases": [
-        "aot/cpp/arithmetic/1000/real_time",
-        "aot/cpp/arrays/1000/real_time",
-        "aot/cpp/asyncWork/64/real_time",
-        "aot/cpp/calls/1000/real_time",
-        "aot/cpp/dasprofile.dictionary/500000/real_time",
-        "aot/cpp/dasprofile.expLoop/1000000/real_time",
-        "aot/cpp/dasprofile.fibonacciLoop/6511134/real_time",
-        "aot/cpp/dasprofile.fibonacciRecursive/31/real_time",
-        "aot/cpp/dasprofile.float2string/10000/real_time",
-        "aot/cpp/dasprofile.interop/1000000/real_time",
-        "aot/cpp/dasprofile.mandelbrot/64/real_time",
-        "aot/cpp/dasprofile.nbodies/33000/real_time",
-        "aot/cpp/dasprofile.particles/50000/real_time",
-        "aot/cpp/dasprofile.primes/14000/real_time",
-        "aot/cpp/dasprofile.queen/8/real_time",
-        "aot/cpp/dasprofile.sha256/32/real_time",
-        "aot/cpp/dasprofile.sort/100000/real_time",
-        "aot/cpp/dasprofile.spectralNorm/500/real_time",
-        "aot/cpp/dasprofile.string2float/10000/real_time",
-        "aot/cpp/dasprofile.tree/20000/real_time",
-        "aot/cpp/fields/1000/real_time",
-        "aot/cpp/gc/1000/real_time",
-        "aot/cpp/host/1000/real_time",
-        "aot/cpp/spectralNorm/500/real_time",
-        "aot/native/arithmetic/1000/real_time",
-        "aot/native/arrays/1000/real_time",
-        "aot/native/asyncWork/64/real_time",
-        "aot/native/calls/1000/real_time",
-        "aot/native/dasprofile.dictionary/500000/real_time",
-        "aot/native/dasprofile.expLoop/1000000/real_time",
-        "aot/native/dasprofile.fibonacciLoop/6511134/real_time",
-        "aot/native/dasprofile.fibonacciRecursive/31/real_time",
-        "aot/native/dasprofile.float2string/10000/real_time",
-        "aot/native/dasprofile.interop/1000000/real_time",
-        "aot/native/dasprofile.mandelbrot/64/real_time",
-        "aot/native/dasprofile.nbodies/33000/real_time",
-        "aot/native/dasprofile.particles/50000/real_time",
-        "aot/native/dasprofile.primes/14000/real_time",
-        "aot/native/dasprofile.queen/8/real_time",
-        "aot/native/dasprofile.sha256/32/real_time",
-        "aot/native/dasprofile.sort/100000/real_time",
-        "aot/native/dasprofile.spectralNorm/500/real_time",
-        "aot/native/dasprofile.string2float/10000/real_time",
-        "aot/native/dasprofile.tree/20000/real_time",
-        "aot/native/fields/1000/real_time",
-        "aot/native/gc/1000/real_time",
-        "aot/native/host/1000/real_time",
-        "aot/native/spectralNorm/500/real_time",
-        "hot/steady/baseline/arithmetic/1000/real_time",
-        "hot/steady/baseline/arrays/1000/real_time",
-        "hot/steady/baseline/asyncWork/64/real_time",
-        "hot/steady/baseline/calls/1000/real_time",
-        "hot/steady/baseline/dasprofile.dictionary/500000/real_time",
-        "hot/steady/baseline/dasprofile.expLoop/1000000/real_time",
-        "hot/steady/baseline/dasprofile.fibonacciLoop/6511134/real_time",
-        "hot/steady/baseline/dasprofile.fibonacciRecursive/31/real_time",
-        "hot/steady/baseline/dasprofile.float2string/10000/real_time",
-        "hot/steady/baseline/dasprofile.interop/1000000/real_time",
-        "hot/steady/baseline/dasprofile.mandelbrot/64/real_time",
-        "hot/steady/baseline/dasprofile.nbodies/33000/real_time",
-        "hot/steady/baseline/dasprofile.particles/50000/real_time",
-        "hot/steady/baseline/dasprofile.primes/14000/real_time",
-        "hot/steady/baseline/dasprofile.queen/8/real_time",
-        "hot/steady/baseline/dasprofile.sha256/32/real_time",
-        "hot/steady/baseline/dasprofile.sort/100000/real_time",
-        "hot/steady/baseline/dasprofile.spectralNorm/500/real_time",
-        "hot/steady/baseline/dasprofile.string2float/10000/real_time",
-        "hot/steady/baseline/dasprofile.tree/20000/real_time",
-        "hot/steady/baseline/fields/1000/real_time",
-        "hot/steady/baseline/gc/1000/real_time",
-        "hot/steady/baseline/host/1000/real_time",
-        "hot/steady/baseline/spectralNorm/500/real_time",
-        "hot/steady/optimized/arithmetic/1000/real_time",
-        "hot/steady/optimized/arrays/1000/real_time",
-        "hot/steady/optimized/asyncWork/64/real_time",
-        "hot/steady/optimized/calls/1000/real_time",
-        "hot/steady/optimized/dasprofile.dictionary/500000/real_time",
-        "hot/steady/optimized/dasprofile.expLoop/1000000/real_time",
-        "hot/steady/optimized/dasprofile.fibonacciLoop/6511134/real_time",
-        "hot/steady/optimized/dasprofile.fibonacciRecursive/31/real_time",
-        "hot/steady/optimized/dasprofile.float2string/10000/real_time",
-        "hot/steady/optimized/dasprofile.interop/1000000/real_time",
-        "hot/steady/optimized/dasprofile.mandelbrot/64/real_time",
-        "hot/steady/optimized/dasprofile.nbodies/33000/real_time",
-        "hot/steady/optimized/dasprofile.particles/50000/real_time",
-        "hot/steady/optimized/dasprofile.primes/14000/real_time",
-        "hot/steady/optimized/dasprofile.queen/8/real_time",
-        "hot/steady/optimized/dasprofile.sha256/32/real_time",
-        "hot/steady/optimized/dasprofile.sort/100000/real_time",
-        "hot/steady/optimized/dasprofile.spectralNorm/500/real_time",
-        "hot/steady/optimized/dasprofile.string2float/10000/real_time",
-        "hot/steady/optimized/dasprofile.tree/20000/real_time",
-        "hot/steady/optimized/fields/1000/real_time",
-        "hot/steady/optimized/gc/1000/real_time",
-        "hot/steady/optimized/host/1000/real_time",
-        "hot/steady/optimized/spectralNorm/500/real_time"
-      ],
-      "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2"
-    },
-    "measurement": {
-      "clock": "wall",
-      "unit": "ns",
-      "minimum_time_seconds": 0.3,
-      "repetitions": 5,
-      "random_interleaving": true,
-      "summary": "median with sample standard deviation and coefficient of variation",
-      "qualification": "Isolated measurement; no concurrent builds or tests."
-    },
-    "validation": {
-      "all_expected_cases_passed": true,
-      "all_correctness_checks_passed": true,
-      "checked_measurement_samples": 480,
-      "workload_count": 24,
-      "release_cpp_tests_passed": 2203,
-      "tooling_tests_passed": 187,
-      "lint_run": false
-    },
-    "workloads": {
-      "aot/cpp/arithmetic/1000/real_time": {
-        "median_ns": 1.3223477521993048,
-        "standard_deviation_ns": 0.1771442575102869,
-        "coefficient_of_variation": 0.12703491122805693,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/arrays/1000/real_time": {
-        "median_ns": 620.7641926074913,
-        "standard_deviation_ns": 5.507993638358622,
-        "coefficient_of_variation": 0.008852708359005658,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/asyncWork/64/real_time": {
-        "median_ns": 15173.17499461922,
-        "standard_deviation_ns": 114.47037289121553,
-        "coefficient_of_variation": 0.007560815032677122,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/calls/1000/real_time": {
-        "median_ns": 1108.3482628210393,
-        "standard_deviation_ns": 6.5227718979069325,
-        "coefficient_of_variation": 0.005890758683691402,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.dictionary/500000/real_time": {
-        "median_ns": 19599204.54696244,
-        "standard_deviation_ns": 460004.0053237915,
-        "coefficient_of_variation": 0.023422001773970066,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.expLoop/1000000/real_time": {
-        "median_ns": 2885237.93108119,
-        "standard_deviation_ns": 21892.705394382774,
-        "coefficient_of_variation": 0.007577086669115556,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.fibonacciLoop/6511134/real_time": {
-        "median_ns": 1187651.6948825032,
-        "standard_deviation_ns": 5113.309769506433,
-        "coefficient_of_variation": 0.0042961236933459265,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.fibonacciRecursive/31/real_time": {
-        "median_ns": 2417108.5715559972,
-        "standard_deviation_ns": 7614.348499236585,
-        "coefficient_of_variation": 0.0031450371730311734,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.float2string/10000/real_time": {
-        "median_ns": 946486.8302789651,
-        "standard_deviation_ns": 8642.776498173156,
-        "coefficient_of_variation": 0.009122674376705255,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.interop/1000000/real_time": {
-        "median_ns": 919067.6085974859,
-        "standard_deviation_ns": 4212.143001648371,
-        "coefficient_of_variation": 0.004581764285519543,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.mandelbrot/64/real_time": {
-        "median_ns": 217478.05641272158,
-        "standard_deviation_ns": 2635.7529727377782,
-        "coefficient_of_variation": 0.01204196786521697,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.nbodies/33000/real_time": {
-        "median_ns": 881958.4906310139,
-        "standard_deviation_ns": 6280.460958850299,
-        "coefficient_of_variation": 0.007124258425411092,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.particles/50000/real_time": {
-        "median_ns": 254273.43748910623,
-        "standard_deviation_ns": 2508.3309142506732,
-        "coefficient_of_variation": 0.00986951439204245,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.primes/14000/real_time": {
-        "median_ns": 12069382.857797401,
-        "standard_deviation_ns": 91972.77820426894,
-        "coefficient_of_variation": 0.00763424147555624,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.queen/8/real_time": {
-        "median_ns": 28133.91124917432,
-        "standard_deviation_ns": 492.7745931453017,
-        "coefficient_of_variation": 0.017380079186852564,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.sha256/32/real_time": {
-        "median_ns": 91984.94840178516,
-        "standard_deviation_ns": 438.44397455258877,
-        "coefficient_of_variation": 0.004781289334478964,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.sort/100000/real_time": {
-        "median_ns": 3466127.868779919,
-        "standard_deviation_ns": 24840.11991630354,
-        "coefficient_of_variation": 0.007164415240059644,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.spectralNorm/500/real_time": {
-        "median_ns": 1792467.6594780162,
-        "standard_deviation_ns": 20871.243571810664,
-        "coefficient_of_variation": 0.011614997788062945,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.string2float/10000/real_time": {
-        "median_ns": 1549846.7625986463,
-        "standard_deviation_ns": 15547.521483913713,
-        "coefficient_of_variation": 0.010084714871919155,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/dasprofile.tree/20000/real_time": {
-        "median_ns": 3381443.5483955382,
-        "standard_deviation_ns": 16559.00834777134,
-        "coefficient_of_variation": 0.004889362069571476,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/fields/1000/real_time": {
-        "median_ns": 6.340630081589586,
-        "standard_deviation_ns": 0.023338194217517868,
-        "coefficient_of_variation": 0.00367794465774414,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/gc/1000/real_time": {
-        "median_ns": 9719.989952304379,
-        "standard_deviation_ns": 316.5593576405514,
-        "coefficient_of_variation": 0.0320858444642064,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/host/1000/real_time": {
-        "median_ns": 922.9041466537826,
-        "standard_deviation_ns": 3.6566053306632815,
-        "coefficient_of_variation": 0.0039664202528449394,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/cpp/spectralNorm/500/real_time": {
-        "median_ns": 1800442.016644388,
-        "standard_deviation_ns": 12376.003716380137,
-        "coefficient_of_variation": 0.006879673540822948,
-        "repetitions": 5,
-        "counters": {}
-      },
-      "aot/native/arithmetic/1000/real_time": {
-        "median_ns": 7.954178147263053,
-        "standard_deviation_ns": 0.08330986466348841,
-        "coefficient_of_variation": 0.010463250910220998,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 320.0,
-          "baseline_bytes": 320.0,
-          "committed_bytes": 320.0,
-          "entry_frame_bytes": 16.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 320.0
-        }
-      },
-      "aot/native/arrays/1000/real_time": {
-        "median_ns": 1105.38890736603,
-        "standard_deviation_ns": 13.425397616394894,
-        "coefficient_of_variation": 0.012083129306509415,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 8448.0,
-          "baseline_bytes": 320.0,
-          "committed_bytes": 9472.0,
-          "entry_frame_bytes": 96.0,
-          "entry_shadow_slots": 3.0,
-          "entry_static_root_stores": 8.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 320.0
-        }
-      },
-      "aot/native/asyncWork/64/real_time": {
-        "median_ns": 34567.55331923243,
-        "standard_deviation_ns": 319.3462575503919,
-        "coefficient_of_variation": 0.0092066433989457,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 48576.0,
-          "baseline_bytes": 320.0,
-          "committed_bytes": 65536.0,
-          "entry_frame_bytes": 80.0,
-          "entry_shadow_slots": 1.0,
-          "entry_static_root_stores": 1.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 320.0
-        }
-      },
-      "aot/native/calls/1000/real_time": {
-        "median_ns": 318.49634442719264,
-        "standard_deviation_ns": 2.7294560135731976,
-        "coefficient_of_variation": 0.00858240757527415,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 320.0,
-          "baseline_bytes": 320.0,
-          "committed_bytes": 320.0,
-          "entry_frame_bytes": 16.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 320.0
-        }
-      },
-      "aot/native/dasprofile.dictionary/500000/real_time": {
-        "median_ns": 37504033.33106078,
-        "standard_deviation_ns": 1897896.038084646,
-        "coefficient_of_variation": 0.05044366869973901,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 140861024.0,
-          "baseline_bytes": 36000864.0,
-          "committed_bytes": 140861024.0,
-          "entry_frame_bytes": 176.0,
-          "entry_shadow_slots": 7.0,
-          "entry_static_root_stores": 19.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 36000864.0
-        }
-      },
-      "aot/native/dasprofile.expLoop/1000000/real_time": {
-        "median_ns": 3750313.27429038,
-        "standard_deviation_ns": 44810.20894807529,
-        "coefficient_of_variation": 0.011876342887985876,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 736.0,
-          "baseline_bytes": 736.0,
-          "committed_bytes": 736.0,
-          "entry_frame_bytes": 32.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 736.0
-        }
-      },
-      "aot/native/dasprofile.fibonacciLoop/6511134/real_time": {
-        "median_ns": 1194763.559345577,
-        "standard_deviation_ns": 9911.560311827805,
-        "coefficient_of_variation": 0.008279718928039314,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 736.0,
-          "baseline_bytes": 736.0,
-          "committed_bytes": 736.0,
-          "entry_frame_bytes": 16.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 736.0
-        }
-      },
-      "aot/native/dasprofile.fibonacciRecursive/31/real_time": {
-        "median_ns": 6264325.372923387,
-        "standard_deviation_ns": 49748.92499463938,
-        "coefficient_of_variation": 0.007924101325189985,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 736.0,
-          "baseline_bytes": 736.0,
-          "committed_bytes": 736.0,
-          "entry_frame_bytes": 16.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 736.0
-        }
-      },
-      "aot/native/dasprofile.float2string/10000/real_time": {
-        "median_ns": 1095137.4318066456,
-        "standard_deviation_ns": 11381.914623618424,
-        "coefficient_of_variation": 0.010368498694231143,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1319392.0,
-          "baseline_bytes": 1319392.0,
-          "committed_bytes": 1319392.0,
-          "entry_frame_bytes": 48.0,
-          "entry_shadow_slots": 1.0,
-          "entry_static_root_stores": 5.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1319392.0
-        }
-      },
-      "aot/native/dasprofile.interop/1000000/real_time": {
-        "median_ns": 2020702.5905723628,
-        "standard_deviation_ns": 24026.556401491624,
-        "coefficient_of_variation": 0.011805930580750702,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 736.0,
-          "baseline_bytes": 736.0,
-          "committed_bytes": 736.0,
-          "entry_frame_bytes": 16.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 736.0
-        }
-      },
-      "aot/native/dasprofile.mandelbrot/64/real_time": {
-        "median_ns": 245906.34460218373,
-        "standard_deviation_ns": 1784.0353763470862,
-        "coefficient_of_variation": 0.007249591279211847,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 736.0,
-          "baseline_bytes": 736.0,
-          "committed_bytes": 736.0,
-          "entry_frame_bytes": 16.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 736.0
-        }
-      },
-      "aot/native/dasprofile.nbodies/33000/real_time": {
-        "median_ns": 1562812.1772220845,
-        "standard_deviation_ns": 5422.700666534842,
-        "coefficient_of_variation": 0.003467953326570094,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 10872.0,
-          "baseline_bytes": 736.0,
-          "committed_bytes": 63864.0,
-          "entry_frame_bytes": 384.0,
-          "entry_shadow_slots": 22.0,
-          "entry_static_root_stores": 458.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 736.0
-        }
-      },
-      "aot/native/dasprofile.particles/50000/real_time": {
-        "median_ns": 1042399.0244772739,
-        "standard_deviation_ns": 14024.611842221531,
-        "coefficient_of_variation": 0.01336214846029104,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 13200864.0,
-          "baseline_bytes": 13200864.0,
-          "committed_bytes": 13200864.0,
-          "entry_frame_bytes": 160.0,
-          "entry_shadow_slots": 8.0,
-          "entry_static_root_stores": 33.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 13200864.0
-        }
-      },
-      "aot/native/dasprofile.primes/14000/real_time": {
-        "median_ns": 11983111.427564705,
-        "standard_deviation_ns": 38888.75305350016,
-        "coefficient_of_variation": 0.00324577598458544,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 736.0,
-          "baseline_bytes": 736.0,
-          "committed_bytes": 736.0,
-          "entry_frame_bytes": 16.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 736.0
-        }
-      },
-      "aot/native/dasprofile.queen/8/real_time": {
-        "median_ns": 76729.2559866303,
-        "standard_deviation_ns": 592.7948594550579,
-        "coefficient_of_variation": 0.007759585737784122,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 31264.0,
-          "baseline_bytes": 736.0,
-          "committed_bytes": 54048.0,
-          "entry_frame_bytes": 64.0,
-          "entry_shadow_slots": 2.0,
-          "entry_static_root_stores": 9.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 736.0
-        }
-      },
-      "aot/native/dasprofile.sha256/32/real_time": {
-        "median_ns": 308948.91144498286,
-        "standard_deviation_ns": 3395.808480657176,
-        "coefficient_of_variation": 0.010965262661322263,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 44384.0,
-          "baseline_bytes": 3552.0,
-          "committed_bytes": 63456.0,
-          "entry_frame_bytes": 64.0,
-          "entry_shadow_slots": 1.0,
-          "entry_static_root_stores": 1.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 3552.0
-        }
-      },
-      "aot/native/dasprofile.sort/100000/real_time": {
-        "median_ns": 6473616.666908405,
-        "standard_deviation_ns": 26747.343116062635,
-        "coefficient_of_variation": 0.00412448506147876,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 3201312.0,
-          "baseline_bytes": 800864.0,
-          "committed_bytes": 3201312.0,
-          "entry_frame_bytes": 224.0,
-          "entry_shadow_slots": 10.0,
-          "entry_static_root_stores": 117.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 800864.0
-        }
-      },
-      "aot/native/dasprofile.spectralNorm/500/real_time": {
-        "median_ns": 1803360.5149363528,
-        "standard_deviation_ns": 14537.51876449229,
-        "coefficient_of_variation": 0.00806502635704782,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 37888.0,
-          "baseline_bytes": 736.0,
-          "committed_bytes": 39040.0,
-          "entry_frame_bytes": 16.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 736.0
-        }
-      },
-      "aot/native/dasprofile.string2float/10000/real_time": {
-        "median_ns": 1816423.8936795269,
-        "standard_deviation_ns": 9379.249291412503,
-        "coefficient_of_variation": 0.0051705997863060555,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1319392.0,
-          "baseline_bytes": 1319392.0,
-          "committed_bytes": 1319392.0,
-          "entry_frame_bytes": 64.0,
-          "entry_shadow_slots": 2.0,
-          "entry_static_root_stores": 6.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1319392.0
-        }
-      },
-      "aot/native/dasprofile.tree/20000/real_time": {
-        "median_ns": 12106925.714761019,
-        "standard_deviation_ns": 87125.86080978144,
-        "coefficient_of_variation": 0.007231443823037655,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 765152.0,
-          "baseline_bytes": 736.0,
-          "committed_bytes": 1090144.0,
-          "entry_frame_bytes": 336.0,
-          "entry_shadow_slots": 18.0,
-          "entry_static_root_stores": 49.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 736.0
-        }
-      },
-      "aot/native/fields/1000/real_time": {
-        "median_ns": 7.211408504015452,
-        "standard_deviation_ns": 0.04253631289725497,
-        "coefficient_of_variation": 0.005902233271049835,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 320.0,
-          "baseline_bytes": 320.0,
-          "committed_bytes": 320.0,
-          "entry_frame_bytes": 16.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 320.0
-        }
-      },
-      "aot/native/gc/1000/real_time": {
-        "median_ns": 6959.974584449202,
-        "standard_deviation_ns": 67.80394427880532,
-        "coefficient_of_variation": 0.009695463941804337,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 320.0,
-          "baseline_bytes": 320.0,
-          "committed_bytes": 320.0,
-          "entry_frame_bytes": 32.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 320.0
-        }
-      },
-      "aot/native/host/1000/real_time": {
-        "median_ns": 1685.5761348844237,
-        "standard_deviation_ns": 22.832539972798763,
-        "coefficient_of_variation": 0.013438186935408889,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 320.0,
-          "baseline_bytes": 320.0,
-          "committed_bytes": 320.0,
-          "entry_frame_bytes": 16.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 320.0
-        }
-      },
-      "aot/native/spectralNorm/500/real_time": {
-        "median_ns": 1810942.9183979656,
-        "standard_deviation_ns": 12399.538371829842,
-        "coefficient_of_variation": 0.00686433099484146,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 37472.0,
-          "baseline_bytes": 320.0,
-          "committed_bytes": 38624.0,
-          "entry_frame_bytes": 32.0,
-          "entry_shadow_slots": 0.0,
-          "entry_static_root_stores": 0.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 320.0
-        }
-      },
-      "hot/steady/baseline/arithmetic/1000/real_time": {
-        "median_ns": 72.91140472924872,
-        "standard_deviation_ns": 6.120068486887655,
-        "coefficient_of_variation": 0.08119745693936145,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 752.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 64063.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 3136.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 752.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/baseline/arrays/1000/real_time": {
-        "median_ns": 1251.0068271238906,
-        "standard_deviation_ns": 9.952024425142522,
-        "coefficient_of_variation": 0.007932899422940032,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 41392.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 64063.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 3136.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 41776.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/baseline/asyncWork/64/real_time": {
-        "median_ns": 36898.22570911417,
-        "standard_deviation_ns": 773.9384111094631,
-        "coefficient_of_variation": 0.020787926350346896,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 26864.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 64063.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 3136.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 65520.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/baseline/calls/1000/real_time": {
-        "median_ns": 15909.948182944272,
-        "standard_deviation_ns": 144.83014000891066,
-        "coefficient_of_variation": 0.009082670043155994,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 752.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 64063.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 3136.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 752.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.dictionary/500000/real_time": {
-        "median_ns": 36277050.00205121,
-        "standard_deviation_ns": 158426.1438525451,
-        "coefficient_of_variation": 0.004366423514212247,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 140861664.0,
-          "baseline_bytes": 36001504.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 140861664.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 36001504.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.expLoop/1000000/real_time": {
-        "median_ns": 4334854.545316311,
-        "standard_deviation_ns": 85939.5380489549,
-        "coefficient_of_variation": 0.01970129083271652,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1376.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1376.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.fibonacciLoop/6511134/real_time": {
-        "median_ns": 1222646.2963160793,
-        "standard_deviation_ns": 10118.990875459029,
-        "coefficient_of_variation": 0.008261625074968292,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1376.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1376.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.fibonacciRecursive/31/real_time": {
-        "median_ns": 87925759.99395922,
-        "standard_deviation_ns": 325611.9870539004,
-        "coefficient_of_variation": 0.0036999957848513434,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1376.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1376.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.float2string/10000/real_time": {
-        "median_ns": 1092830.2871394055,
-        "standard_deviation_ns": 7065.9521460620435,
-        "coefficient_of_variation": 0.006466075266266744,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1320032.0,
-          "baseline_bytes": 1320032.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1320032.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1320032.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.interop/1000000/real_time": {
-        "median_ns": 2632675.969038274,
-        "standard_deviation_ns": 35907.51427995427,
-        "coefficient_of_variation": 0.013578375992682346,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1376.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1376.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.mandelbrot/64/real_time": {
-        "median_ns": 303800.86206406855,
-        "standard_deviation_ns": 1872.0774793242763,
-        "coefficient_of_variation": 0.0061567653898493765,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1376.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1376.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.nbodies/33000/real_time": {
-        "median_ns": 5155521.686923836,
-        "standard_deviation_ns": 38318.00841877246,
-        "coefficient_of_variation": 0.007434526891233383,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 43715.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 51459.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.particles/50000/real_time": {
-        "median_ns": 3249345.038029301,
-        "standard_deviation_ns": 58716.574962562634,
-        "coefficient_of_variation": 0.018062776855752742,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 10701504.0,
-          "baseline_bytes": 10701504.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 10701504.0,
-          "external_field_bytes": 6700000.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 10701504.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.primes/14000/real_time": {
-        "median_ns": 180575999.98428485,
-        "standard_deviation_ns": 1496092.6758459853,
-        "coefficient_of_variation": 0.008270823706279682,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1376.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1376.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.queen/8/real_time": {
-        "median_ns": 560799.2115720578,
-        "standard_deviation_ns": 5362.104553397721,
-        "coefficient_of_variation": 0.009546699383663058,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 19232.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 50080.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.sha256/32/real_time": {
-        "median_ns": 5251512.195483396,
-        "standard_deviation_ns": 43208.42514577715,
-        "coefficient_of_variation": 0.008263211019149857,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 14688.0,
-          "baseline_bytes": 4192.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 59680.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 4192.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.sort/100000/real_time": {
-        "median_ns": 44291133.332687125,
-        "standard_deviation_ns": 298089.75530794135,
-        "coefficient_of_variation": 0.006733192761530379,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 3201952.0,
-          "baseline_bytes": 801504.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 3202720.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 801504.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.spectralNorm/500/real_time": {
-        "median_ns": 1864328.194001386,
-        "standard_deviation_ns": 12197.890905692484,
-        "coefficient_of_variation": 0.006559485794386533,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 26144.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 27680.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.string2float/10000/real_time": {
-        "median_ns": 2567362.0483462126,
-        "standard_deviation_ns": 12307.200124745388,
-        "coefficient_of_variation": 0.0047964709647893185,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1320032.0,
-          "baseline_bytes": 1320032.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1320032.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1320032.0
-        }
-      },
-      "hot/steady/baseline/dasprofile.tree/20000/real_time": {
-        "median_ns": 36477541.66740924,
-        "standard_deviation_ns": 641157.5235512892,
-        "coefficient_of_variation": 0.017487799466404025,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 954084.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 207045.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5340.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1143716.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/baseline/fields/1000/real_time": {
-        "median_ns": 1323.717785830078,
-        "standard_deviation_ns": 4.443650371663161,
-        "coefficient_of_variation": 0.0033559263535979373,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 22556.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 64063.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 3136.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 42460.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/baseline/gc/1000/real_time": {
-        "median_ns": 74854.5163600695,
-        "standard_deviation_ns": 1388.0838224003742,
-        "coefficient_of_variation": 0.01842229663071357,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 16912.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 64063.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 3136.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 47760.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/baseline/host/1000/real_time": {
-        "median_ns": 2551.151020346788,
-        "standard_deviation_ns": 34.095599945858886,
-        "coefficient_of_variation": 0.013329873870873844,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 752.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 64063.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 3136.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 752.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/baseline/spectralNorm/500/real_time": {
-        "median_ns": 1865475.8771350444,
-        "standard_deviation_ns": 22073.84800237474,
-        "coefficient_of_variation": 0.01181112124152574,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 37904.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 64063.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 3136.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 39056.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/optimized/arithmetic/1000/real_time": {
-        "median_ns": 72.6573622549386,
-        "standard_deviation_ns": 0.29118355129932144,
-        "coefficient_of_variation": 0.004003532767602588,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 752.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 155071.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5468.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 752.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/optimized/arrays/1000/real_time": {
-        "median_ns": 1249.9710671053067,
-        "standard_deviation_ns": 8.235130596320868,
-        "coefficient_of_variation": 0.006599501178380835,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 57648.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 155071.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5468.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 57776.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/optimized/asyncWork/64/real_time": {
-        "median_ns": 36389.29898837498,
-        "standard_deviation_ns": 411.76159475718924,
-        "coefficient_of_variation": 0.011281773845494917,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 58544.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 155071.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5468.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 65520.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/optimized/calls/1000/real_time": {
-        "median_ns": 719.3940434031716,
-        "standard_deviation_ns": 7.974168658873415,
-        "coefficient_of_variation": 0.011027371732059239,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 752.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 155071.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5468.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 752.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.dictionary/500000/real_time": {
-        "median_ns": 36091024.99710085,
-        "standard_deviation_ns": 744072.0241859527,
-        "coefficient_of_variation": 0.020664924690617512,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 140861664.0,
-          "baseline_bytes": 36001504.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 140861664.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 36001504.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.expLoop/1000000/real_time": {
-        "median_ns": 4306696.938607385,
-        "standard_deviation_ns": 17364.69711523294,
-        "coefficient_of_variation": 0.004039439484515973,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1376.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1376.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.fibonacciLoop/6511134/real_time": {
-        "median_ns": 1222340.4624251747,
-        "standard_deviation_ns": 7529.045716498491,
-        "coefficient_of_variation": 0.006157854534220788,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1376.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1376.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.fibonacciRecursive/31/real_time": {
-        "median_ns": 14517768.964588901,
-        "standard_deviation_ns": 469647.7548901712,
-        "coefficient_of_variation": 0.032089930723945205,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1376.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1376.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.float2string/10000/real_time": {
-        "median_ns": 1097831.2668079296,
-        "standard_deviation_ns": 12515.939539771893,
-        "coefficient_of_variation": 0.011369801629664764,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1320032.0,
-          "baseline_bytes": 1320032.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1320032.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1320032.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.interop/1000000/real_time": {
-        "median_ns": 2631831.8748963065,
-        "standard_deviation_ns": 24785.477439728194,
-        "coefficient_of_variation": 0.009416970238979762,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1376.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1376.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.mandelbrot/64/real_time": {
-        "median_ns": 240426.90785863917,
-        "standard_deviation_ns": 3808.305695376485,
-        "coefficient_of_variation": 0.01582714902987964,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1376.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1376.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.nbodies/33000/real_time": {
-        "median_ns": 2171931.979494632,
-        "standard_deviation_ns": 17333.16387043523,
-        "coefficient_of_variation": 0.007983012015175265,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 61677.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 63149.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.particles/50000/real_time": {
-        "median_ns": 1278503.9633432995,
-        "standard_deviation_ns": 18860.826767873063,
-        "coefficient_of_variation": 0.014841422857074201,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 10701504.0,
-          "baseline_bytes": 10701504.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 10701504.0,
-          "external_field_bytes": 6700000.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 10701504.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.primes/14000/real_time": {
-        "median_ns": 12142561.764716554,
-        "standard_deviation_ns": 98051.82451185315,
-        "coefficient_of_variation": 0.008052374686413382,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1376.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1376.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.queen/8/real_time": {
-        "median_ns": 86994.34002454461,
-        "standard_deviation_ns": 1626.2852919424158,
-        "coefficient_of_variation": 0.018879820848884586,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 22880.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 51296.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.sha256/32/real_time": {
-        "median_ns": 376430.9333637357,
-        "standard_deviation_ns": 4577.096977548379,
-        "coefficient_of_variation": 0.012128283708041341,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 30432.0,
-          "baseline_bytes": 4192.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 61600.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 4192.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.sort/100000/real_time": {
-        "median_ns": 8087088.6790162,
-        "standard_deviation_ns": 72043.07800870555,
-        "coefficient_of_variation": 0.008869444614193273,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 3201952.0,
-          "baseline_bytes": 801504.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 3202720.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 801504.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.spectralNorm/500/real_time": {
-        "median_ns": 1784396.491099247,
-        "standard_deviation_ns": 17729.14380693121,
-        "coefficient_of_variation": 0.009919494965516385,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 38528.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 39680.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.string2float/10000/real_time": {
-        "median_ns": 1918116.7419232868,
-        "standard_deviation_ns": 32597.280203203227,
-        "coefficient_of_variation": 0.0169153405040842,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 1320032.0,
-          "baseline_bytes": 1320032.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1320032.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1320032.0
-        }
-      },
-      "hot/steady/optimized/dasprofile.tree/20000/real_time": {
-        "median_ns": 18705909.522915523,
-        "standard_deviation_ns": 350781.8331505689,
-        "coefficient_of_variation": 0.018768084838423148,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 743212.0,
-          "baseline_bytes": 1376.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 720152.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 19012.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 1011308.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 85886.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 1376.0
-        }
-      },
-      "hot/steady/optimized/fields/1000/real_time": {
-        "median_ns": 89.28621840287215,
-        "standard_deviation_ns": 15.767411637883125,
-        "coefficient_of_variation": 0.16475955821860092,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 752.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 155071.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5468.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 752.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/optimized/gc/1000/real_time": {
-        "median_ns": 27314.6373332578,
-        "standard_deviation_ns": 260.44276838127814,
-        "coefficient_of_variation": 0.009523018286447412,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 25072.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 155071.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5468.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 65520.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/optimized/host/1000/real_time": {
-        "median_ns": 2535.8137618370874,
-        "standard_deviation_ns": 37.28969569876356,
-        "coefficient_of_variation": 0.01463745426628827,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 752.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 155071.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5468.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 752.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      },
-      "hot/steady/optimized/spectralNorm/500/real_time": {
-        "median_ns": 1773709.7872242804,
-        "standard_deviation_ns": 16510.925244081733,
-        "coefficient_of_variation": 0.009272848372769133,
-        "repetitions": 5,
-        "counters": {
-          "allocated_bytes": 62672.0,
-          "baseline_bytes": 752.0,
-          "code_batches": 1.0,
-          "code_executable_bytes": 155071.0,
-          "code_images": 1.0,
-          "code_read_only_bytes": 5468.0,
-          "code_writable_bytes": 0.0,
-          "committed_bytes": 63056.0,
-          "external_field_bytes": 0.0,
-          "image_data_bytes": 33644.0,
-          "remaining_saved_bytes": 0.0,
-          "remaining_suspended_frames": 0.0,
-          "retained_bytes": 752.0
-        }
-      }
-    },
-    "ratios_to_cpp": {
-      "aot/native/arithmetic/1000/real_time": 6.015193911007001,
-      "hot/steady/baseline/arithmetic/1000/real_time": 55.13784449512905,
-      "hot/steady/optimized/arithmetic/1000/real_time": 54.94572977047543,
-      "aot/native/arrays/1000/real_time": 1.7806905110343028,
-      "hot/steady/baseline/arrays/1000/real_time": 2.0152689894516858,
-      "hot/steady/optimized/arrays/1000/real_time": 2.013600465347173,
-      "aot/native/asyncWork/64/real_time": 2.2782017166144155,
-      "hot/steady/baseline/asyncWork/64/real_time": 2.431806508670676,
-      "hot/steady/optimized/asyncWork/64/real_time": 2.398265293933506,
-      "aot/native/calls/1000/real_time": 0.2873612519737571,
-      "hot/steady/baseline/calls/1000/real_time": 14.354647105639204,
-      "hot/steady/optimized/calls/1000/real_time": 0.6490685893007344,
-      "aot/native/dasprofile.dictionary/500000/real_time": 1.9135487484298592,
-      "hot/steady/baseline/dasprofile.dictionary/500000/real_time": 1.8509450174432496,
-      "hot/steady/optimized/dasprofile.dictionary/500000/real_time": 1.8414535605576083,
-      "aot/native/dasprofile.expLoop/1000000/real_time": 1.2998280779169638,
-      "hot/steady/baseline/dasprofile.expLoop/1000000/real_time": 1.5024253281225592,
-      "hot/steady/optimized/dasprofile.expLoop/1000000/real_time": 1.4926661306554811,
-      "aot/native/dasprofile.fibonacciLoop/6511134/real_time": 1.0059881735476135,
-      "hot/steady/baseline/dasprofile.fibonacciLoop/6511134/real_time": 1.0294653740523128,
-      "hot/steady/optimized/dasprofile.fibonacciLoop/6511134/real_time": 1.029207862618428,
-      "aot/native/dasprofile.fibonacciRecursive/31/real_time": 2.5916607332581547,
-      "hot/steady/baseline/dasprofile.fibonacciRecursive/31/real_time": 36.37642141054409,
-      "hot/steady/optimized/dasprofile.fibonacciRecursive/31/real_time": 6.006254388168913,
-      "aot/native/dasprofile.float2string/10000/real_time": 1.1570551187530709,
-      "hot/steady/baseline/dasprofile.float2string/10000/real_time": 1.1546175310408784,
-      "hot/steady/optimized/dasprofile.float2string/10000/real_time": 1.1599012597823022,
-      "aot/native/dasprofile.interop/1000000/real_time": 2.1986441167870034,
-      "hot/steady/baseline/dasprofile.interop/1000000/real_time": 2.864507403384378,
-      "hot/steady/optimized/dasprofile.interop/1000000/real_time": 2.8635889789571958,
-      "aot/native/dasprofile.mandelbrot/64/real_time": 1.1307179614273912,
-      "hot/steady/baseline/dasprofile.mandelbrot/64/real_time": 1.3969265087026843,
-      "hot/steady/optimized/dasprofile.mandelbrot/64/real_time": 1.1055226068526478,
-      "aot/native/dasprofile.nbodies/33000/real_time": 1.771979286807411,
-      "hot/steady/baseline/dasprofile.nbodies/33000/real_time": 5.845537790826437,
-      "hot/steady/optimized/dasprofile.nbodies/33000/real_time": 2.462623811173565,
-      "aot/native/dasprofile.particles/50000/real_time": 4.099519929296323,
-      "hot/steady/baseline/dasprofile.particles/50000/real_time": 12.778940144577673,
-      "hot/steady/optimized/dasprofile.particles/50000/real_time": 5.028067327709266,
-      "aot/native/dasprofile.primes/14000/real_time": 0.9928520429545442,
-      "hot/steady/baseline/dasprofile.primes/14000/real_time": 14.961494064099895,
-      "hot/steady/optimized/dasprofile.primes/14000/real_time": 1.0060631854819218,
-      "aot/native/dasprofile.queen/8/real_time": 2.727287198251973,
-      "hot/steady/baseline/dasprofile.queen/8/real_time": 19.933211795729832,
-      "hot/steady/optimized/dasprofile.queen/8/real_time": 3.0921523585561794,
-      "aot/native/dasprofile.sha256/32/real_time": 3.3586898379886145,
-      "hot/steady/baseline/dasprofile.sha256/32/real_time": 57.090994632568375,
-      "hot/steady/optimized/dasprofile.sha256/32/real_time": 4.092310099686159,
-      "aot/native/dasprofile.sort/100000/real_time": 1.8676797025342071,
-      "hot/steady/baseline/dasprofile.sort/100000/real_time": 12.778274492301883,
-      "hot/steady/optimized/dasprofile.sort/100000/real_time": 2.33317667009869,
-      "aot/native/dasprofile.spectralNorm/500/real_time": 1.0060770164531219,
-      "hot/steady/baseline/dasprofile.spectralNorm/500/real_time": 1.0400902823230274,
-      "hot/steady/optimized/dasprofile.spectralNorm/500/real_time": 0.995497174894012,
-      "aot/native/dasprofile.string2float/10000/real_time": 1.1720022504895307,
-      "hot/steady/baseline/dasprofile.string2float/10000/real_time": 1.65652638073811,
-      "hot/steady/optimized/dasprofile.string2float/10000/real_time": 1.2376170265421325,
-      "aot/native/dasprofile.tree/20000/real_time": 3.5804015478849665,
-      "hot/steady/baseline/dasprofile.tree/20000/real_time": 10.787564880306068,
-      "hot/steady/optimized/dasprofile.tree/20000/real_time": 5.531930152077001,
-      "aot/native/fields/1000/real_time": 1.1373331058934073,
-      "hot/steady/baseline/fields/1000/real_time": 208.76754656821487,
-      "hot/steady/optimized/fields/1000/real_time": 14.081600291131988,
-      "aot/native/gc/1000/real_time": 0.7160475081354541,
-      "hot/steady/baseline/gc/1000/real_time": 7.701089890769205,
-      "hot/steady/optimized/gc/1000/real_time": 2.8101507786828677,
-      "aot/native/host/1000/real_time": 1.8263826649776114,
-      "hot/steady/baseline/host/1000/real_time": 2.7642643383894385,
-      "hot/steady/optimized/host/1000/real_time": 2.747645864450071,
-      "aot/native/spectralNorm/500/real_time": 1.00583240207488,
-      "hot/steady/baseline/spectralNorm/500/real_time": 1.0361210524357038,
-      "hot/steady/optimized/spectralNorm/500/real_time": 0.9851524074793976
-    },
-    "comparison_to_previous": {
-      "comparable": false,
-      "reason": "The previous exploratory scan briefly overlapped diagnostic builds and tests."
-    },
-    "target_audit": {
-      "aot_maximum_ratio": 2,
-      "optimized_jit_maximum_ratio": 3,
-      "achieved": false,
-      "exceeding_workloads": {
-        "aot": [
-          "arithmetic/1000/real_time",
-          "asyncWork/64/real_time",
-          "dasprofile.fibonacciRecursive/31/real_time",
-          "dasprofile.interop/1000000/real_time",
-          "dasprofile.particles/50000/real_time",
-          "dasprofile.queen/8/real_time",
-          "dasprofile.sha256/32/real_time",
-          "dasprofile.tree/20000/real_time"
-        ],
-        "optimized_jit": [
-          "arithmetic/1000/real_time",
-          "dasprofile.fibonacciRecursive/31/real_time",
-          "dasprofile.particles/50000/real_time",
-          "dasprofile.queen/8/real_time",
-          "dasprofile.sha256/32/real_time",
-          "dasprofile.tree/20000/real_time",
-          "fields/1000/real_time"
-        ]
-      }
-    }
-  },
-  "latest": {
     "run_date": "2026-11-01T15:44:30+08:00",
     "machine": {
       "os": "Windows",
@@ -3784,6 +1889,1871 @@
     "comparison_to_previous": {
       "comparable": true,
       "reason": "Same machine, toolchain, Release flags, suite and isolated measurement settings."
+    },
+    "target_audit": {
+      "aot_maximum_ratio": 2,
+      "optimized_jit_maximum_ratio": 3,
+      "achieved": false,
+      "exceeding_workloads": {
+        "aot": [
+          "arithmetic/1000/real_time",
+          "asyncWork/64/real_time",
+          "dasprofile.fibonacciRecursive/31/real_time",
+          "dasprofile.interop/1000000/real_time",
+          "dasprofile.particles/50000/real_time",
+          "dasprofile.queen/8/real_time",
+          "dasprofile.sha256/32/real_time",
+          "dasprofile.tree/20000/real_time"
+        ],
+        "optimized_jit": [
+          "arithmetic/1000/real_time",
+          "dasprofile.fibonacciRecursive/31/real_time",
+          "dasprofile.particles/50000/real_time",
+          "dasprofile.queen/8/real_time",
+          "dasprofile.sha256/32/real_time",
+          "dasprofile.tree/20000/real_time",
+          "fields/1000/real_time"
+        ]
+      }
+    }
+  },
+  "latest": {
+    "run_date": "2026-11-01T17:31:23+08:00",
+    "machine": {
+      "os": "Windows",
+      "release": "11",
+      "architecture": "AMD64",
+      "host": "DESKTOP-E7S678P",
+      "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+      "logical_cpus": 24
+    },
+    "toolchain": {
+      "cxx": "Fuchsia clang 23.0.0git (80743bd43fd5b38fedc503308e7a652e23d3ec93)",
+      "llvm_sdk": "21.1.8"
+    },
+    "source": {
+      "revision": "8f8c9de0f45430e407396e39855655fc1e2c350d",
+      "working_tree_clean": false,
+      "status": " M compiler/jit/debugger_unittest.cc\n M compiler/native/deoptimization_emitter.cc\n M compiler/native/function_emitter.cc\n M compiler/native/function_emitter.h\n M runtime/native/native_deoptimization.h",
+      "compiler_build_identity": "e78a2d2e536a0c3ac553d454a469aa1518c3a23ee6b9c0560d150d8ba04c0a3f",
+      "changed_file_sha256": {
+        "compiler/jit/debugger_unittest.cc": "7dc5ab475dbc96003dd7c1d5df8326ef39703675d832250ecfcf0bb9e774e337",
+        "compiler/native/deoptimization_emitter.cc": "d2ef76bc5c26878d5a9262d86570feedd9cd5da343511f4f62276512f7e1082c",
+        "compiler/native/function_emitter.cc": "77a85ca8e65e989bc03ac9229d074c33d1213bea551718e43a9328e0c543832c",
+        "compiler/native/function_emitter.h": "3f63466bd0feb3e50af24257e3b154e1a822ddb12456fb789646f28c27cc127a",
+        "runtime/native/native_deoptimization.h": "dfd00471dc71505e10594d91e265a0e7b360d8f57a86b7fe5b02545afc248242"
+      },
+      "excluded_from_identity": [
+        "benchmarks/results/rolling_summary.json"
+      ]
+    },
+    "build": {
+      "configuration": "release",
+      "aot_codegen": "LLVM O2; generic CPU; PIC; checked arithmetic; explicit roots",
+      "runtime_abi": "e78a2d2e536a0c3ac553d454a469aa1518c3a23ee6b9c0560d150d8ba04c0a3f/release",
+      "jit_cpu": "znver4",
+      "jit_cpu_features": "+64bit,+adx,+aes,+avx,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512f,+avx512ifma,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vpopcntdq,+bmi,+bmi2,+clflushopt,+clwb,+clzero,+cmov,+crc32,+cx16,+cx8,+evex512,+f16c,+fma,+fsgsbase,+fxsr,+gfni,+invpcid,+lzcnt,+mmx,+movbe,+mwaitx,+pclmul,+popcnt,+prfchw,+rdpid,+rdpru,+rdrnd,+rdseed,+sahf,+sha,+shstk,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3,+vaes,+vpclmulqdq,+wbnoinvd,+xsave,+xsavec,+xsaveopt,+xsaves,-amx-avx512,-amx-bf16,-amx-complex,-amx-fp16,-amx-fp8,-amx-int8,-amx-movrs,-amx-tf32,-amx-tile,-amx-transpose,-avx10.1-256,-avx10.1-512,-avx10.2-256,-avx10.2-512,-avx512fp16,-avx512vp2intersect,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,-ccmp,-cf,-cldemote,-cmpccxadd,-egpr,-enqcmd,-fma4,-hreset,-kl,-lwp,-movdir64b,-movdiri,-movrs,-ndd,-nf,-pconfig,-pku,-ppx,-prefetchi,-ptwrite,-push2pop2,-raoint,-rtm,-serialize,-sgx,-sha512,-sm3,-sm4,-tbm,-tsxldtrk,-uintr,-usermsr,-waitpkg,-widekl,-xop,-zu",
+      "jit_baseline": "LLVM O2; host CPU; current dispatch; precise roots; safepoints",
+      "jit_optimized": "LLVM O2; host CPU; version dependencies; direct calls/inlining; selective recovery"
+    },
+    "suite": {
+      "identity": "jit-comparison/all-steady/24-workloads",
+      "command": [
+        "python",
+        "-m",
+        "tools.vl",
+        "bench",
+        "--jit-compare",
+        "--report",
+        "C:\\Users\\zoy\\AppData\\Local\\Temp\\vela_probe\\jit-compare-lazy-checkpoint.json",
+        "--",
+        "--benchmark_filter=^(aot/(native|cpp)/|hot/steady/)",
+        "--benchmark_min_time=0.3s",
+        "--benchmark_repetitions=5"
+      ],
+      "expected_cases": [
+        "aot/cpp/arithmetic/1000/real_time",
+        "aot/cpp/arrays/1000/real_time",
+        "aot/cpp/asyncWork/64/real_time",
+        "aot/cpp/calls/1000/real_time",
+        "aot/cpp/dasprofile.dictionary/500000/real_time",
+        "aot/cpp/dasprofile.expLoop/1000000/real_time",
+        "aot/cpp/dasprofile.fibonacciLoop/6511134/real_time",
+        "aot/cpp/dasprofile.fibonacciRecursive/31/real_time",
+        "aot/cpp/dasprofile.float2string/10000/real_time",
+        "aot/cpp/dasprofile.interop/1000000/real_time",
+        "aot/cpp/dasprofile.mandelbrot/64/real_time",
+        "aot/cpp/dasprofile.nbodies/33000/real_time",
+        "aot/cpp/dasprofile.particles/50000/real_time",
+        "aot/cpp/dasprofile.primes/14000/real_time",
+        "aot/cpp/dasprofile.queen/8/real_time",
+        "aot/cpp/dasprofile.sha256/32/real_time",
+        "aot/cpp/dasprofile.sort/100000/real_time",
+        "aot/cpp/dasprofile.spectralNorm/500/real_time",
+        "aot/cpp/dasprofile.string2float/10000/real_time",
+        "aot/cpp/dasprofile.tree/20000/real_time",
+        "aot/cpp/fields/1000/real_time",
+        "aot/cpp/gc/1000/real_time",
+        "aot/cpp/host/1000/real_time",
+        "aot/cpp/spectralNorm/500/real_time",
+        "aot/native/arithmetic/1000/real_time",
+        "aot/native/arrays/1000/real_time",
+        "aot/native/asyncWork/64/real_time",
+        "aot/native/calls/1000/real_time",
+        "aot/native/dasprofile.dictionary/500000/real_time",
+        "aot/native/dasprofile.expLoop/1000000/real_time",
+        "aot/native/dasprofile.fibonacciLoop/6511134/real_time",
+        "aot/native/dasprofile.fibonacciRecursive/31/real_time",
+        "aot/native/dasprofile.float2string/10000/real_time",
+        "aot/native/dasprofile.interop/1000000/real_time",
+        "aot/native/dasprofile.mandelbrot/64/real_time",
+        "aot/native/dasprofile.nbodies/33000/real_time",
+        "aot/native/dasprofile.particles/50000/real_time",
+        "aot/native/dasprofile.primes/14000/real_time",
+        "aot/native/dasprofile.queen/8/real_time",
+        "aot/native/dasprofile.sha256/32/real_time",
+        "aot/native/dasprofile.sort/100000/real_time",
+        "aot/native/dasprofile.spectralNorm/500/real_time",
+        "aot/native/dasprofile.string2float/10000/real_time",
+        "aot/native/dasprofile.tree/20000/real_time",
+        "aot/native/fields/1000/real_time",
+        "aot/native/gc/1000/real_time",
+        "aot/native/host/1000/real_time",
+        "aot/native/spectralNorm/500/real_time",
+        "hot/steady/baseline/arithmetic/1000/real_time",
+        "hot/steady/baseline/arrays/1000/real_time",
+        "hot/steady/baseline/asyncWork/64/real_time",
+        "hot/steady/baseline/calls/1000/real_time",
+        "hot/steady/baseline/dasprofile.dictionary/500000/real_time",
+        "hot/steady/baseline/dasprofile.expLoop/1000000/real_time",
+        "hot/steady/baseline/dasprofile.fibonacciLoop/6511134/real_time",
+        "hot/steady/baseline/dasprofile.fibonacciRecursive/31/real_time",
+        "hot/steady/baseline/dasprofile.float2string/10000/real_time",
+        "hot/steady/baseline/dasprofile.interop/1000000/real_time",
+        "hot/steady/baseline/dasprofile.mandelbrot/64/real_time",
+        "hot/steady/baseline/dasprofile.nbodies/33000/real_time",
+        "hot/steady/baseline/dasprofile.particles/50000/real_time",
+        "hot/steady/baseline/dasprofile.primes/14000/real_time",
+        "hot/steady/baseline/dasprofile.queen/8/real_time",
+        "hot/steady/baseline/dasprofile.sha256/32/real_time",
+        "hot/steady/baseline/dasprofile.sort/100000/real_time",
+        "hot/steady/baseline/dasprofile.spectralNorm/500/real_time",
+        "hot/steady/baseline/dasprofile.string2float/10000/real_time",
+        "hot/steady/baseline/dasprofile.tree/20000/real_time",
+        "hot/steady/baseline/fields/1000/real_time",
+        "hot/steady/baseline/gc/1000/real_time",
+        "hot/steady/baseline/host/1000/real_time",
+        "hot/steady/baseline/spectralNorm/500/real_time",
+        "hot/steady/optimized/arithmetic/1000/real_time",
+        "hot/steady/optimized/arrays/1000/real_time",
+        "hot/steady/optimized/asyncWork/64/real_time",
+        "hot/steady/optimized/calls/1000/real_time",
+        "hot/steady/optimized/dasprofile.dictionary/500000/real_time",
+        "hot/steady/optimized/dasprofile.expLoop/1000000/real_time",
+        "hot/steady/optimized/dasprofile.fibonacciLoop/6511134/real_time",
+        "hot/steady/optimized/dasprofile.fibonacciRecursive/31/real_time",
+        "hot/steady/optimized/dasprofile.float2string/10000/real_time",
+        "hot/steady/optimized/dasprofile.interop/1000000/real_time",
+        "hot/steady/optimized/dasprofile.mandelbrot/64/real_time",
+        "hot/steady/optimized/dasprofile.nbodies/33000/real_time",
+        "hot/steady/optimized/dasprofile.particles/50000/real_time",
+        "hot/steady/optimized/dasprofile.primes/14000/real_time",
+        "hot/steady/optimized/dasprofile.queen/8/real_time",
+        "hot/steady/optimized/dasprofile.sha256/32/real_time",
+        "hot/steady/optimized/dasprofile.sort/100000/real_time",
+        "hot/steady/optimized/dasprofile.spectralNorm/500/real_time",
+        "hot/steady/optimized/dasprofile.string2float/10000/real_time",
+        "hot/steady/optimized/dasprofile.tree/20000/real_time",
+        "hot/steady/optimized/fields/1000/real_time",
+        "hot/steady/optimized/gc/1000/real_time",
+        "hot/steady/optimized/host/1000/real_time",
+        "hot/steady/optimized/spectralNorm/500/real_time"
+      ],
+      "dasprofile_revision": "436d58d2840ff839550d44d32f98e10a15b57bf2"
+    },
+    "measurement": {
+      "clock": "wall",
+      "unit": "ns",
+      "minimum_time_seconds": 0.3,
+      "repetitions": 5,
+      "random_interleaving": true,
+      "summary": "median with sample standard deviation and coefficient of variation",
+      "qualification": "Isolated measurement; no concurrent builds or tests."
+    },
+    "validation": {
+      "all_expected_cases_passed": true,
+      "all_correctness_checks_passed": true,
+      "checked_measurement_samples": 480,
+      "workload_count": 24,
+      "release_cpp_tests_passed": 2211,
+      "tooling_tests_passed": 187,
+      "lint_run": true,
+      "lint_passed": false,
+      "lint_failed_files": 21
+    },
+    "workloads": {
+      "aot/cpp/arithmetic/1000/real_time": {
+        "median_ns": 1.3870977629478065,
+        "standard_deviation_ns": 0.055015067819147646,
+        "coefficient_of_variation": 0.040436474182659554,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/arrays/1000/real_time": {
+        "median_ns": 626.4802159210029,
+        "standard_deviation_ns": 3.1006607481549566,
+        "coefficient_of_variation": 0.004944561187918095,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/asyncWork/64/real_time": {
+        "median_ns": 14774.402871746075,
+        "standard_deviation_ns": 713.9348803565192,
+        "coefficient_of_variation": 0.04748614269399474,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/calls/1000/real_time": {
+        "median_ns": 1113.4901696902073,
+        "standard_deviation_ns": 28.89136824378455,
+        "coefficient_of_variation": 0.025540536478912194,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.dictionary/500000/real_time": {
+        "median_ns": 19011017.39064831,
+        "standard_deviation_ns": 1101528.061998475,
+        "coefficient_of_variation": 0.05655266114478073,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.expLoop/1000000/real_time": {
+        "median_ns": 2943688.000086695,
+        "standard_deviation_ns": 116150.61943304152,
+        "coefficient_of_variation": 0.03904634096277582,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.fibonacciLoop/6511134/real_time": {
+        "median_ns": 1196037.9206162482,
+        "standard_deviation_ns": 16550.385148748428,
+        "coefficient_of_variation": 0.01378088705591847,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.fibonacciRecursive/31/real_time": {
+        "median_ns": 2443668.674831896,
+        "standard_deviation_ns": 760047.0392334644,
+        "coefficient_of_variation": 0.2711705484419115,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.float2string/10000/real_time": {
+        "median_ns": 1010749.6486970201,
+        "standard_deviation_ns": 47016.63592675288,
+        "coefficient_of_variation": 0.046844260021843144,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.interop/1000000/real_time": {
+        "median_ns": 926590.9296916608,
+        "standard_deviation_ns": 39443.06695276797,
+        "coefficient_of_variation": 0.041402281101272004,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.mandelbrot/64/real_time": {
+        "median_ns": 225949.16108309166,
+        "standard_deviation_ns": 10255.118324427567,
+        "coefficient_of_variation": 0.04517793707862857,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.nbodies/33000/real_time": {
+        "median_ns": 905583.4051305909,
+        "standard_deviation_ns": 24882.131684552827,
+        "coefficient_of_variation": 0.027475374803117198,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.particles/50000/real_time": {
+        "median_ns": 256591.0899427568,
+        "standard_deviation_ns": 5983.591620750472,
+        "coefficient_of_variation": 0.02332530169348424,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.primes/14000/real_time": {
+        "median_ns": 12389273.529954474,
+        "standard_deviation_ns": 316244.00147388974,
+        "coefficient_of_variation": 0.02551912146379021,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.queen/8/real_time": {
+        "median_ns": 28852.527821270545,
+        "standard_deviation_ns": 2181.4639204884143,
+        "coefficient_of_variation": 0.0738342877409425,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.sha256/32/real_time": {
+        "median_ns": 92024.78874276996,
+        "standard_deviation_ns": 2848.3466828890914,
+        "coefficient_of_variation": 0.030561310104675905,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.sort/100000/real_time": {
+        "median_ns": 3466313.9348162613,
+        "standard_deviation_ns": 80866.19336991312,
+        "coefficient_of_variation": 0.023000385910505596,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.spectralNorm/500/real_time": {
+        "median_ns": 1818683.829673744,
+        "standard_deviation_ns": 43318.66485616779,
+        "coefficient_of_variation": 0.023786014698138833,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.string2float/10000/real_time": {
+        "median_ns": 1567554.1817803276,
+        "standard_deviation_ns": 308987.59181899513,
+        "coefficient_of_variation": 0.181885937081512,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/dasprofile.tree/20000/real_time": {
+        "median_ns": 3439515.07977816,
+        "standard_deviation_ns": 132975.86138363823,
+        "coefficient_of_variation": 0.03806501246171194,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/fields/1000/real_time": {
+        "median_ns": 6.807947699213149,
+        "standard_deviation_ns": 0.3028903245646303,
+        "coefficient_of_variation": 0.04516043864403603,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/gc/1000/real_time": {
+        "median_ns": 10220.353038114683,
+        "standard_deviation_ns": 342.0836065808891,
+        "coefficient_of_variation": 0.03410941836855363,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/host/1000/real_time": {
+        "median_ns": 971.2531556646636,
+        "standard_deviation_ns": 10.873747627600654,
+        "coefficient_of_variation": 0.011215359234513613,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/cpp/spectralNorm/500/real_time": {
+        "median_ns": 1786535.0001860254,
+        "standard_deviation_ns": 25749.4002122832,
+        "coefficient_of_variation": 0.014380700378364693,
+        "repetitions": 5,
+        "counters": {}
+      },
+      "aot/native/arithmetic/1000/real_time": {
+        "median_ns": 7.939698212191075,
+        "standard_deviation_ns": 0.23177758993632375,
+        "coefficient_of_variation": 0.02870826181672357,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 320.0,
+          "baseline_bytes": 320.0,
+          "committed_bytes": 320.0,
+          "entry_frame_bytes": 16.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 320.0
+        }
+      },
+      "aot/native/arrays/1000/real_time": {
+        "median_ns": 1177.6512557332155,
+        "standard_deviation_ns": 176.422330304073,
+        "coefficient_of_variation": 0.1411112306683116,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 49088.0,
+          "baseline_bytes": 320.0,
+          "committed_bytes": 49472.0,
+          "entry_frame_bytes": 96.0,
+          "entry_shadow_slots": 3.0,
+          "entry_static_root_stores": 8.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 320.0
+        }
+      },
+      "aot/native/asyncWork/64/real_time": {
+        "median_ns": 34323.387164646934,
+        "standard_deviation_ns": 1655.1366900323767,
+        "coefficient_of_variation": 0.046784225225228813,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 47424.0,
+          "baseline_bytes": 320.0,
+          "committed_bytes": 65536.0,
+          "entry_frame_bytes": 80.0,
+          "entry_shadow_slots": 1.0,
+          "entry_static_root_stores": 1.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 320.0
+        }
+      },
+      "aot/native/calls/1000/real_time": {
+        "median_ns": 336.2742688911149,
+        "standard_deviation_ns": 9.102057612101577,
+        "coefficient_of_variation": 0.026843988316267636,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 320.0,
+          "baseline_bytes": 320.0,
+          "committed_bytes": 320.0,
+          "entry_frame_bytes": 16.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 320.0
+        }
+      },
+      "aot/native/dasprofile.dictionary/500000/real_time": {
+        "median_ns": 35736336.36750112,
+        "standard_deviation_ns": 1844654.9228793196,
+        "coefficient_of_variation": 0.050541419042896836,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 130375008.0,
+          "baseline_bytes": 36000864.0,
+          "committed_bytes": 130375008.0,
+          "entry_frame_bytes": 176.0,
+          "entry_shadow_slots": 7.0,
+          "entry_static_root_stores": 19.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 36000864.0
+        }
+      },
+      "aot/native/dasprofile.expLoop/1000000/real_time": {
+        "median_ns": 4013413.4835804277,
+        "standard_deviation_ns": 42390.49738111451,
+        "coefficient_of_variation": 0.01055395587024396,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 736.0,
+          "baseline_bytes": 736.0,
+          "committed_bytes": 736.0,
+          "entry_frame_bytes": 32.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 736.0
+        }
+      },
+      "aot/native/dasprofile.fibonacciLoop/6511134/real_time": {
+        "median_ns": 1233020.6395005048,
+        "standard_deviation_ns": 25503.94158877609,
+        "coefficient_of_variation": 0.02088481241495346,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 736.0,
+          "baseline_bytes": 736.0,
+          "committed_bytes": 736.0,
+          "entry_frame_bytes": 16.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 736.0
+        }
+      },
+      "aot/native/dasprofile.fibonacciRecursive/31/real_time": {
+        "median_ns": 6212069.355364469,
+        "standard_deviation_ns": 334148.1382915656,
+        "coefficient_of_variation": 0.05245815444060259,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 736.0,
+          "baseline_bytes": 736.0,
+          "committed_bytes": 736.0,
+          "entry_frame_bytes": 16.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 736.0
+        }
+      },
+      "aot/native/dasprofile.float2string/10000/real_time": {
+        "median_ns": 1137497.527352125,
+        "standard_deviation_ns": 35623.52121449061,
+        "coefficient_of_variation": 0.031185227625083245,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1319392.0,
+          "baseline_bytes": 1319392.0,
+          "committed_bytes": 1319392.0,
+          "entry_frame_bytes": 48.0,
+          "entry_shadow_slots": 1.0,
+          "entry_static_root_stores": 5.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1319392.0
+        }
+      },
+      "aot/native/dasprofile.interop/1000000/real_time": {
+        "median_ns": 2178825.888319442,
+        "standard_deviation_ns": 84687.83887835054,
+        "coefficient_of_variation": 0.03988604230449702,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 736.0,
+          "baseline_bytes": 736.0,
+          "committed_bytes": 736.0,
+          "entry_frame_bytes": 16.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 736.0
+        }
+      },
+      "aot/native/dasprofile.mandelbrot/64/real_time": {
+        "median_ns": 249646.3878296259,
+        "standard_deviation_ns": 3595.0657477551185,
+        "coefficient_of_variation": 0.014393888476013422,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 736.0,
+          "baseline_bytes": 736.0,
+          "committed_bytes": 736.0,
+          "entry_frame_bytes": 16.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 736.0
+        }
+      },
+      "aot/native/dasprofile.nbodies/33000/real_time": {
+        "median_ns": 1582655.2629924233,
+        "standard_deviation_ns": 554562.4152521777,
+        "coefficient_of_variation": 0.3034770249768577,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 58912.0,
+          "baseline_bytes": 736.0,
+          "committed_bytes": 65184.0,
+          "entry_frame_bytes": 384.0,
+          "entry_shadow_slots": 22.0,
+          "entry_static_root_stores": 458.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 736.0
+        }
+      },
+      "aot/native/dasprofile.particles/50000/real_time": {
+        "median_ns": 760974.73908033,
+        "standard_deviation_ns": 56349.13942947353,
+        "coefficient_of_variation": 0.07216667300327438,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 6800864.0,
+          "baseline_bytes": 6800864.0,
+          "committed_bytes": 6800864.0,
+          "entry_frame_bytes": 160.0,
+          "entry_shadow_slots": 8.0,
+          "entry_static_root_stores": 33.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 6800864.0
+        }
+      },
+      "aot/native/dasprofile.primes/14000/real_time": {
+        "median_ns": 12434908.82402779,
+        "standard_deviation_ns": 236947.271735882,
+        "coefficient_of_variation": 0.01922243077573439,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 736.0,
+          "baseline_bytes": 736.0,
+          "committed_bytes": 736.0,
+          "entry_frame_bytes": 16.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 736.0
+        }
+      },
+      "aot/native/dasprofile.queen/8/real_time": {
+        "median_ns": 76738.48927794672,
+        "standard_deviation_ns": 2588.0271169910156,
+        "coefficient_of_variation": 0.03356001756230104,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 53152.0,
+          "baseline_bytes": 736.0,
+          "committed_bytes": 61344.0,
+          "entry_frame_bytes": 64.0,
+          "entry_shadow_slots": 2.0,
+          "entry_static_root_stores": 9.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 736.0
+        }
+      },
+      "aot/native/dasprofile.sha256/32/real_time": {
+        "median_ns": 311386.1864637899,
+        "standard_deviation_ns": 16957.787757811333,
+        "coefficient_of_variation": 0.05268458611869417,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 39136.0,
+          "baseline_bytes": 3552.0,
+          "committed_bytes": 62816.0,
+          "entry_frame_bytes": 64.0,
+          "entry_shadow_slots": 1.0,
+          "entry_static_root_stores": 1.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 3552.0
+        }
+      },
+      "aot/native/dasprofile.sort/100000/real_time": {
+        "median_ns": 6736300.000551319,
+        "standard_deviation_ns": 136671.91301635528,
+        "coefficient_of_variation": 0.020132944632171693,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 3201312.0,
+          "baseline_bytes": 800864.0,
+          "committed_bytes": 3201312.0,
+          "entry_frame_bytes": 224.0,
+          "entry_shadow_slots": 10.0,
+          "entry_static_root_stores": 117.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 800864.0
+        }
+      },
+      "aot/native/dasprofile.spectralNorm/500/real_time": {
+        "median_ns": 1855969.4914166988,
+        "standard_deviation_ns": 62047.2947398142,
+        "coefficient_of_variation": 0.03338032672647697,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 13120.0,
+          "baseline_bytes": 736.0,
+          "committed_bytes": 15040.0,
+          "entry_frame_bytes": 16.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 736.0
+        }
+      },
+      "aot/native/dasprofile.string2float/10000/real_time": {
+        "median_ns": 1816040.6926453307,
+        "standard_deviation_ns": 401971.3724242929,
+        "coefficient_of_variation": 0.20101355835662454,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1319392.0,
+          "baseline_bytes": 1319392.0,
+          "committed_bytes": 1319392.0,
+          "entry_frame_bytes": 64.0,
+          "entry_shadow_slots": 2.0,
+          "entry_static_root_stores": 6.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1319392.0
+        }
+      },
+      "aot/native/dasprofile.tree/20000/real_time": {
+        "median_ns": 12015224.2421737,
+        "standard_deviation_ns": 723296.73340275,
+        "coefficient_of_variation": 0.05816095312865993,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 722144.0,
+          "baseline_bytes": 736.0,
+          "committed_bytes": 1085920.0,
+          "entry_frame_bytes": 336.0,
+          "entry_shadow_slots": 18.0,
+          "entry_static_root_stores": 49.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 736.0
+        }
+      },
+      "aot/native/fields/1000/real_time": {
+        "median_ns": 7.15440711761278,
+        "standard_deviation_ns": 0.28119856661419623,
+        "coefficient_of_variation": 0.03825053029526539,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 320.0,
+          "baseline_bytes": 320.0,
+          "committed_bytes": 320.0,
+          "entry_frame_bytes": 16.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 320.0
+        }
+      },
+      "aot/native/gc/1000/real_time": {
+        "median_ns": 7005.788595383473,
+        "standard_deviation_ns": 329.4799548281875,
+        "coefficient_of_variation": 0.045736419956800126,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 320.0,
+          "baseline_bytes": 320.0,
+          "committed_bytes": 320.0,
+          "entry_frame_bytes": 32.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 320.0
+        }
+      },
+      "aot/native/host/1000/real_time": {
+        "median_ns": 1707.0459918042648,
+        "standard_deviation_ns": 27.710855399547075,
+        "coefficient_of_variation": 0.01611359453119015,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 320.0,
+          "baseline_bytes": 320.0,
+          "committed_bytes": 320.0,
+          "entry_frame_bytes": 16.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 320.0
+        }
+      },
+      "aot/native/spectralNorm/500/real_time": {
+        "median_ns": 1812567.3820456497,
+        "standard_deviation_ns": 64165.44973314788,
+        "coefficient_of_variation": 0.03497061147001538,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 37472.0,
+          "baseline_bytes": 320.0,
+          "committed_bytes": 38624.0,
+          "entry_frame_bytes": 32.0,
+          "entry_shadow_slots": 0.0,
+          "entry_static_root_stores": 0.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 320.0
+        }
+      },
+      "hot/steady/baseline/arithmetic/1000/real_time": {
+        "median_ns": 77.52485664631739,
+        "standard_deviation_ns": 9.590511763901116,
+        "coefficient_of_variation": 0.11944218662366338,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 752.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 64095.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 3136.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 752.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/baseline/arrays/1000/real_time": {
+        "median_ns": 1329.2643274241984,
+        "standard_deviation_ns": 133.2178255661683,
+        "coefficient_of_variation": 0.0968191664810054,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 49520.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 64095.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 3136.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 49776.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/baseline/asyncWork/64/real_time": {
+        "median_ns": 40866.111002823294,
+        "standard_deviation_ns": 9300.249304062863,
+        "coefficient_of_variation": 0.2109907786893761,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 54448.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 64095.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 3136.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 65520.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/baseline/calls/1000/real_time": {
+        "median_ns": 16067.491854177371,
+        "standard_deviation_ns": 601.3799290161372,
+        "coefficient_of_variation": 0.03669760708567617,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 752.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 64095.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 3136.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 752.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.dictionary/500000/real_time": {
+        "median_ns": 36555208.33369034,
+        "standard_deviation_ns": 581711.6810127011,
+        "coefficient_of_variation": 0.01595048405078809,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 140861664.0,
+          "baseline_bytes": 36001504.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 140861664.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 36001504.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.expLoop/1000000/real_time": {
+        "median_ns": 4311994.444449536,
+        "standard_deviation_ns": 7785132.518348443,
+        "coefficient_of_variation": 0.992631076340045,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1376.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1376.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.fibonacciLoop/6511134/real_time": {
+        "median_ns": 1260644.396473975,
+        "standard_deviation_ns": 40783.69068719097,
+        "coefficient_of_variation": 0.032160695655825106,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1376.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1376.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.fibonacciRecursive/31/real_time": {
+        "median_ns": 91237359.99455675,
+        "standard_deviation_ns": 7898839.598010406,
+        "coefficient_of_variation": 0.08499626884636523,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1376.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1376.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.float2string/10000/real_time": {
+        "median_ns": 1125626.9754382607,
+        "standard_deviation_ns": 41423.702466405186,
+        "coefficient_of_variation": 0.03635524795582069,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1320032.0,
+          "baseline_bytes": 1320032.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1320032.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1320032.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.interop/1000000/real_time": {
+        "median_ns": 2832296.575110227,
+        "standard_deviation_ns": 487466.32944353577,
+        "coefficient_of_variation": 0.16542441784850975,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1376.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1376.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.mandelbrot/64/real_time": {
+        "median_ns": 309250.72462020884,
+        "standard_deviation_ns": 9336.192468585868,
+        "coefficient_of_variation": 0.02977000381461123,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1376.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1376.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.nbodies/33000/real_time": {
+        "median_ns": 5707391.2503256,
+        "standard_deviation_ns": 638367.7747667534,
+        "coefficient_of_variation": 0.10870919278566152,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 21098.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 40362.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.particles/50000/real_time": {
+        "median_ns": 3467803.149517098,
+        "standard_deviation_ns": 153852.15952617378,
+        "coefficient_of_variation": 0.04473455503192432,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 8601504.0,
+          "baseline_bytes": 8601504.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 8601504.0,
+          "external_field_bytes": 4600000.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 8601504.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.primes/14000/real_time": {
+        "median_ns": 180039450.00236854,
+        "standard_deviation_ns": 6538130.512689767,
+        "coefficient_of_variation": 0.035831066375669775,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1376.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1376.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.queen/8/real_time": {
+        "median_ns": 586184.6456643966,
+        "standard_deviation_ns": 27820.274795344616,
+        "coefficient_of_variation": 0.04695282937060835,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 19424.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 50144.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.sha256/32/real_time": {
+        "median_ns": 5529358.441784203,
+        "standard_deviation_ns": 1277531.6438740112,
+        "coefficient_of_variation": 0.21590686710201099,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 19936.0,
+          "baseline_bytes": 4192.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 60320.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 4192.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.sort/100000/real_time": {
+        "median_ns": 47568388.88473188,
+        "standard_deviation_ns": 2357495.4581390223,
+        "coefficient_of_variation": 0.04921173657174696,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 3201952.0,
+          "baseline_bytes": 801504.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 3202720.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 801504.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.spectralNorm/500/real_time": {
+        "median_ns": 2017649.9999508043,
+        "standard_deviation_ns": 69008.24266714713,
+        "coefficient_of_variation": 0.03442862904274771,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 13760.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 15680.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.string2float/10000/real_time": {
+        "median_ns": 2627148.3660036447,
+        "standard_deviation_ns": 96682.8116227787,
+        "coefficient_of_variation": 0.036653318840155845,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1320032.0,
+          "baseline_bytes": 1320032.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1320032.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1320032.0
+        }
+      },
+      "hot/steady/baseline/dasprofile.tree/20000/real_time": {
+        "median_ns": 37855090.90680121,
+        "standard_deviation_ns": 1353255.3654171221,
+        "coefficient_of_variation": 0.03612251893493993,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 959264.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 205973.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5340.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1064032.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/baseline/fields/1000/real_time": {
+        "median_ns": 1469.1256982935959,
+        "standard_deviation_ns": 57.72285366263471,
+        "coefficient_of_variation": 0.04016640204988437,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 56056.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 64095.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 3136.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 60920.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/baseline/gc/1000/real_time": {
+        "median_ns": 73917.4354258698,
+        "standard_deviation_ns": 2880.605819826743,
+        "coefficient_of_variation": 0.03823800548353884,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 53392.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 64095.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 3136.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 61648.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/baseline/host/1000/real_time": {
+        "median_ns": 2879.888330080654,
+        "standard_deviation_ns": 60.35997893819179,
+        "coefficient_of_variation": 0.021200063578791478,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 752.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 64095.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 3136.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 752.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/baseline/spectralNorm/500/real_time": {
+        "median_ns": 1856106.1404302325,
+        "standard_deviation_ns": 77184.4667455927,
+        "coefficient_of_variation": 0.04083900180570114,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 37904.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 64095.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 3136.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 39056.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/optimized/arithmetic/1000/real_time": {
+        "median_ns": 77.61763642234109,
+        "standard_deviation_ns": 2.8242921672196992,
+        "coefficient_of_variation": 0.03719441196946364,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 752.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 155391.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5468.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 752.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/optimized/arrays/1000/real_time": {
+        "median_ns": 1308.8980705415809,
+        "standard_deviation_ns": 157.00130278222105,
+        "coefficient_of_variation": 0.11395619936670238,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 17008.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 155391.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5468.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 17776.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/optimized/asyncWork/64/real_time": {
+        "median_ns": 36160.51575148768,
+        "standard_deviation_ns": 1537.607435775358,
+        "coefficient_of_variation": 0.04169871373799853,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 46832.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 155391.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5468.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 65520.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/optimized/calls/1000/real_time": {
+        "median_ns": 732.2722277095404,
+        "standard_deviation_ns": 19.472060614159584,
+        "coefficient_of_variation": 0.02626238147338741,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 752.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 155391.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5468.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 752.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.dictionary/500000/real_time": {
+        "median_ns": 36001449.99897263,
+        "standard_deviation_ns": 1658554.056966187,
+        "coefficient_of_variation": 0.04555972582717584,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 140861664.0,
+          "baseline_bytes": 36001504.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 140861664.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 36001504.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.expLoop/1000000/real_time": {
+        "median_ns": 4344730.303420525,
+        "standard_deviation_ns": 111801.20924399239,
+        "coefficient_of_variation": 0.025577187552224073,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1376.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1376.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.fibonacciLoop/6511134/real_time": {
+        "median_ns": 1238321.3018400583,
+        "standard_deviation_ns": 41622.70008141476,
+        "coefficient_of_variation": 0.03303891911183632,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1376.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1376.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.fibonacciRecursive/31/real_time": {
+        "median_ns": 10774533.333864788,
+        "standard_deviation_ns": 283956.5025482065,
+        "coefficient_of_variation": 0.026626892362090274,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1376.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1376.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.float2string/10000/real_time": {
+        "median_ns": 1102531.6883241395,
+        "standard_deviation_ns": 56269.75993290603,
+        "coefficient_of_variation": 0.04961115439085702,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1320032.0,
+          "baseline_bytes": 1320032.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1320032.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1320032.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.interop/1000000/real_time": {
+        "median_ns": 2757551.973397647,
+        "standard_deviation_ns": 94830.45490265267,
+        "coefficient_of_variation": 0.03494953866710008,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1376.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1376.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.mandelbrot/64/real_time": {
+        "median_ns": 235082.77618149482,
+        "standard_deviation_ns": 6163.401836932043,
+        "coefficient_of_variation": 0.02587246088550798,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1376.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1376.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.nbodies/33000/real_time": {
+        "median_ns": 2119859.8982950645,
+        "standard_deviation_ns": 166852.04830032118,
+        "coefficient_of_variation": 0.07617242565177772,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 15908.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 37412.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.particles/50000/real_time": {
+        "median_ns": 1184372.9728564352,
+        "standard_deviation_ns": 52280.071396112406,
+        "coefficient_of_variation": 0.0433562811124962,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 8601504.0,
+          "baseline_bytes": 8601504.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 8601504.0,
+          "external_field_bytes": 4600000.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 8601504.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.primes/14000/real_time": {
+        "median_ns": 12120026.470203063,
+        "standard_deviation_ns": 339410.51706989197,
+        "coefficient_of_variation": 0.02781463329957668,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1376.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1376.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.queen/8/real_time": {
+        "median_ns": 90396.1349401866,
+        "standard_deviation_ns": 3817.5421996673767,
+        "coefficient_of_variation": 0.04272738746554119,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 27104.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 52704.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.sha256/32/real_time": {
+        "median_ns": 391473.19194250955,
+        "standard_deviation_ns": 14150.132649801508,
+        "coefficient_of_variation": 0.03641981468050399,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 38368.0,
+          "baseline_bytes": 4192.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 62880.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 4192.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.sort/100000/real_time": {
+        "median_ns": 8099527.450908413,
+        "standard_deviation_ns": 1137137.43623697,
+        "coefficient_of_variation": 0.13151048512149882,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 3201952.0,
+          "baseline_bytes": 801504.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 3202720.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 801504.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.spectralNorm/500/real_time": {
+        "median_ns": 1782493.2734999855,
+        "standard_deviation_ns": 73138.22943799196,
+        "coefficient_of_variation": 0.04009399540429903,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 38528.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 39680.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.string2float/10000/real_time": {
+        "median_ns": 1930149.2889120434,
+        "standard_deviation_ns": 75322.98842550119,
+        "coefficient_of_variation": 0.038468560976958874,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 1320032.0,
+          "baseline_bytes": 1320032.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1320032.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1320032.0
+        }
+      },
+      "hot/steady/optimized/dasprofile.tree/20000/real_time": {
+        "median_ns": 17256847.825711187,
+        "standard_deviation_ns": 543231.3789661779,
+        "coefficient_of_variation": 0.03129656657543451,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 961280.0,
+          "baseline_bytes": 1376.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 723752.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 19016.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 1068032.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 85886.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 1376.0
+        }
+      },
+      "hot/steady/optimized/fields/1000/real_time": {
+        "median_ns": 94.42995469221421,
+        "standard_deviation_ns": 4.467896116712186,
+        "coefficient_of_variation": 0.04617374863158372,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 752.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 155391.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5468.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 752.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/optimized/gc/1000/real_time": {
+        "median_ns": 27349.468086384226,
+        "standard_deviation_ns": 726.2317138832649,
+        "coefficient_of_variation": 0.026315334826572674,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 43504.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 155391.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5468.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 65520.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/optimized/host/1000/real_time": {
+        "median_ns": 2684.036700849204,
+        "standard_deviation_ns": 222.54438551161311,
+        "coefficient_of_variation": 0.08105617138006647,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 752.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 155391.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5468.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 752.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      },
+      "hot/steady/optimized/spectralNorm/500/real_time": {
+        "median_ns": 1836592.7659807368,
+        "standard_deviation_ns": 41008.50523523139,
+        "coefficient_of_variation": 0.02209547468042428,
+        "repetitions": 5,
+        "counters": {
+          "allocated_bytes": 62672.0,
+          "baseline_bytes": 752.0,
+          "code_batches": 1.0,
+          "code_executable_bytes": 155391.0,
+          "code_images": 1.0,
+          "code_read_only_bytes": 5468.0,
+          "code_writable_bytes": 0.0,
+          "committed_bytes": 63056.0,
+          "external_field_bytes": 0.0,
+          "image_data_bytes": 33644.0,
+          "remaining_saved_bytes": 0.0,
+          "remaining_suspended_frames": 0.0,
+          "retained_bytes": 752.0
+        }
+      }
+    },
+    "ratios_to_cpp": {
+      "aot/native/arithmetic/1000/real_time": 5.7239643983838135,
+      "hot/steady/baseline/arithmetic/1000/real_time": 55.889973091416834,
+      "hot/steady/optimized/arithmetic/1000/real_time": 55.956860789243215,
+      "aot/native/arrays/1000/real_time": 1.8797900169950672,
+      "hot/steady/baseline/arrays/1000/real_time": 2.1217977737254103,
+      "hot/steady/optimized/arrays/1000/real_time": 2.089288755299862,
+      "aot/native/asyncWork/64/real_time": 2.32316577953113,
+      "hot/steady/baseline/asyncWork/64/real_time": 2.766007625321621,
+      "hot/steady/optimized/asyncWork/64/real_time": 2.4475111492078963,
+      "aot/native/calls/1000/real_time": 0.30200021342323335,
+      "hot/steady/baseline/calls/1000/real_time": 14.429846164378471,
+      "hot/steady/optimized/calls/1000/real_time": 0.6576369038922647,
+      "aot/native/dasprofile.dictionary/500000/real_time": 1.8797698004884338,
+      "hot/steady/baseline/dasprofile.dictionary/500000/real_time": 1.9228433482824636,
+      "hot/steady/optimized/dasprofile.dictionary/500000/real_time": 1.8937150631760544,
+      "aot/native/dasprofile.expLoop/1000000/real_time": 1.363396352963435,
+      "hot/steady/baseline/dasprofile.expLoop/1000000/real_time": 1.4648272657708774,
+      "hot/steady/optimized/dasprofile.expLoop/1000000/real_time": 1.4759479616360727,
+      "aot/native/dasprofile.fibonacciLoop/6511134/real_time": 1.0309210253678258,
+      "hot/steady/baseline/dasprofile.fibonacciLoop/6511134/real_time": 1.0540170798467985,
+      "hot/steady/optimized/dasprofile.fibonacciLoop/6511134/real_time": 1.0353528767733584,
+      "aot/native/dasprofile.fibonacciRecursive/31/real_time": 2.5421078640261277,
+      "hot/steady/baseline/dasprofile.fibonacciRecursive/31/real_time": 37.33622357819565,
+      "hot/steady/optimized/dasprofile.fibonacciRecursive/31/real_time": 4.409162929833761,
+      "aot/native/dasprofile.float2string/10000/real_time": 1.1253998740622846,
+      "hot/steady/baseline/dasprofile.float2string/10000/real_time": 1.1136555692988184,
+      "hot/steady/optimized/dasprofile.float2string/10000/real_time": 1.09080590801633,
+      "aot/native/dasprofile.interop/1000000/real_time": 2.3514431433561347,
+      "hot/steady/baseline/dasprofile.interop/1000000/real_time": 3.05668497753666,
+      "hot/steady/optimized/dasprofile.interop/1000000/real_time": 2.976018742505142,
+      "aot/native/dasprofile.mandelbrot/64/real_time": 1.104878578140946,
+      "hot/steady/baseline/dasprofile.mandelbrot/64/real_time": 1.3686739226550324,
+      "hot/steady/optimized/dasprofile.mandelbrot/64/real_time": 1.040423319363617,
+      "aot/native/dasprofile.nbodies/33000/real_time": 1.7476637204545442,
+      "hot/steady/baseline/dasprofile.nbodies/33000/real_time": 6.302446818250338,
+      "hot/steady/optimized/dasprofile.nbodies/33000/real_time": 2.3408775892810967,
+      "aot/native/dasprofile.particles/50000/real_time": 2.9657099131933875,
+      "hot/steady/baseline/dasprofile.particles/50000/real_time": 13.514900888767158,
+      "hot/steady/optimized/dasprofile.particles/50000/real_time": 4.615799298099783,
+      "aot/native/dasprofile.primes/14000/real_time": 1.0036834519766618,
+      "hot/steady/baseline/dasprofile.primes/14000/real_time": 14.531881112082454,
+      "hot/steady/optimized/dasprofile.primes/14000/real_time": 0.9782677282004927,
+      "aot/native/dasprofile.queen/8/real_time": 2.6596799335333756,
+      "hot/steady/baseline/dasprofile.queen/8/real_time": 20.31657847435648,
+      "hot/steady/optimized/dasprofile.queen/8/real_time": 3.1330403873155657,
+      "aot/native/dasprofile.sha256/32/real_time": 3.3837207421815934,
+      "hot/steady/baseline/dasprofile.sha256/32/real_time": 60.08553257579332,
+      "hot/steady/optimized/dasprofile.sha256/32/real_time": 4.253997181528614,
+      "aot/native/dasprofile.sort/100000/real_time": 1.9433611978680718,
+      "hot/steady/baseline/dasprofile.sort/100000/real_time": 13.723046953983797,
+      "hot/steady/optimized/dasprofile.sort/100000/real_time": 2.3366399014109334,
+      "aot/native/dasprofile.spectralNorm/500/real_time": 1.0205014533777668,
+      "hot/steady/baseline/dasprofile.spectralNorm/500/real_time": 1.109401187293095,
+      "hot/steady/optimized/dasprofile.spectralNorm/500/real_time": 0.980100688430132,
+      "aot/native/dasprofile.string2float/10000/real_time": 1.1585186105546847,
+      "hot/steady/baseline/dasprofile.string2float/10000/real_time": 1.6759537861842184,
+      "hot/steady/optimized/dasprofile.string2float/10000/real_time": 1.231312647017983,
+      "aot/native/dasprofile.tree/20000/real_time": 3.4932901770992237,
+      "hot/steady/baseline/dasprofile.tree/20000/real_time": 11.005938345600383,
+      "hot/steady/optimized/dasprofile.tree/20000/real_time": 5.017232785856607,
+      "aot/native/fields/1000/real_time": 1.0508904347839914,
+      "hot/steady/baseline/fields/1000/real_time": 215.79567928575523,
+      "hot/steady/optimized/fields/1000/real_time": 13.870546435473978,
+      "aot/native/gc/1000/real_time": 0.6854742266981229,
+      "hot/steady/baseline/gc/1000/real_time": 7.232375941438626,
+      "hot/steady/optimized/gc/1000/real_time": 2.6759807596068423,
+      "aot/native/host/1000/real_time": 1.7575706002582525,
+      "hot/steady/baseline/host/1000/real_time": 2.965126355867377,
+      "hot/steady/optimized/host/1000/real_time": 2.763477971932478,
+      "aot/native/spectralNorm/500/real_time": 1.014571436807515,
+      "hot/steady/baseline/spectralNorm/500/real_time": 1.0389419408166998,
+      "hot/steady/optimized/spectralNorm/500/real_time": 1.0280194710932051
+    },
+    "comparison_to_previous": {
+      "comparable": true,
+      "reason": "Same machine, toolchain, Release flags, suite and isolated measurement settings; source differs only in optimized checkpoint emission."
     },
     "target_audit": {
       "aot_maximum_ratio": 2,

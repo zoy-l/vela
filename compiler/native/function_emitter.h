@@ -130,6 +130,7 @@ class FunctionEmitter final {
   llvm::Value* ResumeState();
   void InitializeCheckpoint();
   void PrepareCheckpoint();
+  void StoreRecoveryDescription();
   bool HasRecovery() const;
   void StoreCheckpoint();
   void InitializeDebugValues();

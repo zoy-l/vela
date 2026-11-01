@@ -97,17 +97,8 @@ void FunctionEmitter::InitializeCheckpoint() {
                        ByteAddress(checkpoint_, offsetof(runtime::NativeCheckpoint, tier)));
 }
 
-void FunctionEmitter::PrepareCheckpoint() {
-  auto& context = module_.getContext();
-  auto* initialize = llvm::BasicBlock::Create(context, "checkpoint.initialize", body_);
-  auto* ready = llvm::BasicBlock::Create(context, "checkpoint.ready", body_);
-  builder_.CreateCondBr(builder_.CreateLoad(builder_.getInt1Ty(), checkpoint_initialized_), ready,
-                        initialize);
-  builder_.SetInsertPoint(initialize);
-  // 只有会跨可观察边界的路径才需要恢复存储。纯返回分支不发布检查点；后续调用仍复用
-  // 已初始化的数据，不能覆盖被嵌套调用或发布请求修改的 tier。
+void FunctionEmitter::StoreRecoveryDescription() {
   using runtime::NativeCheckpoint;
-  using runtime::NativeVirtualState;
   builder_.CreateStore(checkpoint_values_,
                        ByteAddress(checkpoint_, offsetof(NativeCheckpoint, values)));
   auto* roots =
@@ -120,14 +111,25 @@ void FunctionEmitter::PrepareCheckpoint() {
   builder_.CreateStore(resume, ByteAddress(checkpoint_, offsetof(NativeCheckpoint, resume)));
   builder_.CreateStore(checkpoint_layout_,
                        ByteAddress(checkpoint_, offsetof(NativeCheckpoint, layout)));
-  builder_.CreateStore(builder_.getInt32(0),
-                       ByteAddress(checkpoint_, offsetof(NativeCheckpoint, instruction)));
-  builder_.CreateStore(builder_.getInt8(0),
-                       ByteAddress(checkpoint_, offsetof(NativeCheckpoint, phase)));
+}
+
+void FunctionEmitter::PrepareCheckpoint() {
+  auto& context = module_.getContext();
+  auto* initialize = llvm::BasicBlock::Create(context, "checkpoint.initialize", body_);
+  auto* ready = llvm::BasicBlock::Create(context, "checkpoint.ready", body_);
+  builder_.CreateCondBr(builder_.CreateLoad(builder_.getInt1Ty(), checkpoint_initialized_), ready,
+                        initialize);
+  builder_.SetInsertPoint(initialize);
+  // 只有会跨可观察边界的路径才需要链接检查点。纯返回分支不发布检查点；后续调用仍复用
+  // 已初始化的数据，不能覆盖被嵌套调用或发布请求修改的 tier。
+  using runtime::NativeCheckpoint;
+  using runtime::NativeVirtualState;
   auto* null_pointer = llvm::ConstantPointerNull::get(builder_.getPtrTy());
   builder_.CreateStore(virtual_state_ == nullptr ? null_pointer : virtual_state_,
                        ByteAddress(checkpoint_, offsetof(NativeCheckpoint, materialization)));
   if (virtual_state_ != nullptr) {
+    // 被调用方安全点会物化本帧的虚拟对象，因此恢复描述须在首次链接时就完整。
+    StoreRecoveryDescription();
     builder_.CreateStore(null_pointer,
                          ByteAddress(virtual_state_, offsetof(NativeVirtualState, graph)));
     builder_.CreateStore(virtual_references_,
@@ -161,6 +163,9 @@ void FunctionEmitter::StoreCheckpoint() {
     return;
   }
   PrepareCheckpoint();
+  if (virtual_state_ == nullptr) {
+    StoreRecoveryDescription();
+  }
   using runtime::NativeCheckpoint;
   const auto origin = origins_.subspan(instruction_index_).front();
   const auto& values = escape_.checkpoints.empty() ? roots_.checkpoints.at(instruction_index_)

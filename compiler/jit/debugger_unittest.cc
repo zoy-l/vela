@@ -215,6 +215,40 @@ TEST_P(JitDebuggerTest, RecursiveFramesRecoverWithoutReplayingCompletedCalls) {
   EXPECT_EQ(session_->code_resources().images, 1U);
 }
 
+TEST_P(JitDebuggerTest, RecoveredCallersKeepScalarValuesComputedBeforeTheEnteredCall) {
+  Load(
+      "let calls = 0; "
+      "func descend(depth: int): int { calls += 1; if (depth == 0) { return 1; } "
+      "const scale = depth + 2; const offset = depth * 7; "
+      "return descend(depth - 1) * scale + offset; } "
+      "export func run(): int { return descend(3); } "
+      "export func count(): int { return calls; }");
+  auto candidate = Prepare(
+      "let calls = 0; func descend(depth: int): int { calls += 100; return 1000; } "
+      "export func run(): int { return 0; } export func count(): int { return calls; }");
+  ASSERT_TRUE(candidate);
+  // run 与 descend(3..0) 均在栈上时发布；三层调用方各自保留调用前的 scale 与 offset。
+  constexpr std::size_t kDeepestFrames = 5;
+  constexpr std::int64_t kOldResult = 291;
+  compiler::test::CheckpointPublication publication(*session_);
+  publication.Stage(std::move(*candidate));
+  paused_ = [&](const runtime::NativeDebugContext& context) {
+    if (context.frames().size() == kDeepestFrames && context.top_frame().name() == "descend") {
+      publication.PublishPending();
+    }
+  };
+  const auto result = session_->Invoke("main.vela", "run");
+  ASSERT_TRUE(result) << ExecutionStatusName(result.error());
+  EXPECT_EQ(result->AsInteger(), kOldResult);
+  EXPECT_FALSE(publication.HasPending());
+  EXPECT_EQ(publication.result().status, DevelopmentStatus::Accepted);
+  const auto calls = session_->Invoke("main.vela", "count");
+  ASSERT_TRUE(calls);
+  EXPECT_EQ(calls->AsInteger(), 4);
+  EXPECT_EQ(session_->isolate().native_dispatch().deoptimized_frames() != 0,
+            GetParam() == NativeCodeTier::Optimized);
+}
+
 TEST_P(JitDebuggerTest, InitializationCanPauseButPublicationWaitsUntilItsStateIsComplete) {
   Load(
       "let value = initial(); func initial(): int { return 42; } "

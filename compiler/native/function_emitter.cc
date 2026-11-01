@@ -120,7 +120,13 @@ void FunctionEmitter::PrepareObservableCall() {
 }
 
 void FunctionEmitter::PrepareCallCheckpoint() {
-  StoreCheckpoint();
+  // 调用期间的安全点只读写 tier、phase 和物化状态；恢复只发生在本帧此后的安全点，
+  // 那里会重新保存规范值。只有虚拟对象可能在被调用方安全点按此处的值物化。
+  if (virtual_state_ != nullptr) {
+    StoreCheckpoint();
+  } else if (checkpoint_ != nullptr) {
+    PrepareCheckpoint();
+  }
   StoreDebugValues();
   if (checkpoint_ != nullptr) {
     builder_.CreateStore(
