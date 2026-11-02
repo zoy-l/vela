@@ -239,4 +239,34 @@ TEST(NativeAbiTest, LeafFailureRetainsBorrowedRootsDuringExceptionAllocationAndR
   EXPECT_EQ(heap.object_count(), baseline);
 }
 
+TEST(NativeAbiTest, ExceptionRootsFollowPublicationTransferAndRethrow) {
+  Isolate isolate(1);
+  auto& heap = isolate.heap();
+  const auto image = EmptyImage();
+  const auto instance = NativeInstance::Instantiate(isolate, image);
+  ASSERT_TRUE(instance);
+  NativeExecution execution(**instance);
+  heap.Collect();
+  const auto baseline = heap.object_count();
+  ASSERT_EQ(execution.HandleFailure(ExecutionStatus::DivisionByZero),
+            ExecutionStatus::DivisionByZero);
+  heap.Collect();
+  ASSERT_TRUE(execution.HasException());
+  EXPECT_EQ(execution.ExceptionDiagnostic().status, ExecutionStatus::DivisionByZero);
+  const auto exception = execution.TakeException();
+  {
+    const RootRange retained(heap, &exception, 1, RootOwner::Runtime);
+    heap.Collect();
+    EXPECT_FALSE(execution.HasException());
+    EXPECT_EQ(execution.Rethrow(exception), ExecutionStatus::DivisionByZero);
+  }
+  heap.Collect();
+  ASSERT_TRUE(execution.HasException());
+  EXPECT_EQ(execution.ExceptionDiagnostic().status, ExecutionStatus::DivisionByZero);
+  execution.AbortWithOutOfMemory();
+  heap.Collect();
+  EXPECT_FALSE(execution.HasException());
+  EXPECT_EQ(heap.object_count(), baseline);
+}
+
 }  // namespace vela::runtime

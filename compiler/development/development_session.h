@@ -91,6 +91,7 @@ struct DevelopmentSessionIdentity final {};
 class DevelopmentSession;
 
 struct DevelopmentEntry final {
+  // 空模块表示会话的入口模块；调用不需要借用源码快照来取得这个稳定路径。
   std::string_view module;
   std::string_view name;
 };
@@ -176,7 +177,9 @@ class DevelopmentSession final {
   struct EntryLookup final {
     std::string module;
     std::string name;
-    DeclarationId declaration;
+    Invocation invocation;
+    std::uint64_t revision;
+    runtime::NativeResolvedDeclaration target;
   };
   struct CompilationBase final {
     std::shared_ptr<SourceSession> sources;
@@ -204,7 +207,9 @@ class DevelopmentSession final {
       const runtime::NativeResolvedDeclaration& target,
       std::span<const runtime::Value> arguments,
       Invocation invocation);
-  std::expected<DeclarationId, ExecutionStatus> ResolveEntry(DevelopmentEntry requested);
+  std::expected<runtime::NativeResolvedDeclaration, ExecutionStatus> ResolveEntry(
+      DevelopmentEntry requested,
+      Invocation invocation);
   [[nodiscard]] std::vector<runtime::ExternalResourceInfo> HostBlockers() const;
   [[nodiscard]] CompilationBase BeginCompilation();
   std::expected<DevelopmentCandidate, DevelopmentResult> Prepare(

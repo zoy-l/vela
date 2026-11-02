@@ -119,6 +119,16 @@ entry boundary and must be identified separately when comparing small workloads.
 Listing benchmarks does not compile suites, and filters prepare only matching
 suite/tier pairs. Process memory includes every prepared image in the process.
 
+The `entry/` component benchmarks in `vela_aot_benchmarks` measure native stack-bound
+queries, execution construction/destruction, and instance borrow/release separately.
+Those components use a closed image and exclude instance preparation. The
+`entry/baseline_arithmetic` and `entry/optimized_arithmetic` cases measure generated
+reloadable entries with one retained version and execution context; they exclude
+the development-session lookup and activation lifetime. Run them after building
+Release benchmarks with `out/release/vela_aot_benchmarks --benchmark_filter='^entry/'`.
+These independent measurements help locate fixed costs; their times are not additive
+and do not replace the complete reloadable invocation measured by `hot/steady/`.
+
 ```powershell
 python -m tools.vl bench --jit-compare -- --benchmark_filter='^(aot/(native|cpp)/|hot/steady/)'
 ```

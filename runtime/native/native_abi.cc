@@ -56,7 +56,6 @@ NativeExecution::NativeExecution(NativeInstance& instance) noexcept
       context_(instance.isolate()),
       control_state_(&isolate().native_control().state()),
       barrier_state_(&isolate().heap().barrier_state()),
-      exception_root_(isolate().heap(), &pending_exception_, 1, RootOwner::Runtime),
       execution_resource_(isolate().external_resources(), ExternalResourceKind::Execution) {
   const auto bounds = CurrentNativeStackBounds();
   if (!bounds) {

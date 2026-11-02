@@ -66,6 +66,7 @@ FutureDiagnostic NativeExecution::FailureDiagnostic(ExecutionStatus status) cons
 }
 
 void NativeExecution::AbortWithOutOfMemory() noexcept {
+  exception_root_.Detach();
   pending_exception_ = Value::Null();
   exception_allocation_failed_ = true;
 }
@@ -112,8 +113,14 @@ ExecutionStatus NativeExecution::CreateException(Value payload,
   auto& envelope = ExceptionData::From(*exception);
   diagnostic->origin.identity = isolate().scheduler().NewErrorIdentity();
   envelope.diagnostic = std::move(diagnostic);
-  pending_exception_ = Value::Object(exception);
+  SetException(Value::Object(exception));
   return status;
+}
+
+void NativeExecution::SetException(Value exception) noexcept {
+  pending_exception_ = exception;
+  // 新异常在下一次托管分配前发布为根；增量 GC 由 Attach 追踪当前封套。
+  exception_root_.Attach(isolate().heap(), &pending_exception_, 1);
 }
 
 ExecutionStatus NativeExecution::HandleFailure(ExecutionStatus status, std::string_view message) {
@@ -147,12 +154,13 @@ ExecutionStatus NativeExecution::Throw(Value payload) {
 }
 
 ExecutionStatus NativeExecution::Rethrow(Value exception) noexcept {
-  pending_exception_ = exception;
+  SetException(exception);
   return ExceptionData::From(*exception.AsObject()).status;
 }
 
 Value NativeExecution::TakeException() noexcept {
   const auto exception = pending_exception_;
+  exception_root_.Detach();
   pending_exception_ = Value::Null();
   return exception;
 }

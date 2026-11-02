@@ -26,9 +26,11 @@
 #include "runtime/native/native_abi.h"
 #include "runtime/native/native_call.h"
 #include "runtime/native/native_context.h"
+#include "runtime/native/native_dispatch.h"
 #include "runtime/native/native_function.h"
 #include "runtime/native/native_image.h"
 #include "runtime/native/native_instance.h"
+#include "runtime/native/native_stack.h"
 #include "runtime/value/value.h"
 
 namespace vela::benchmarks {
@@ -339,6 +341,77 @@ void NativeFirst(benchmark::State& state, AotBenchmarkCase problem) {
   }
 }
 
+enum class EntryOperation : std::uint8_t { StackBounds, Execution, InstanceBorrow };
+
+template <EntryOperation Operation>
+void NativeEntryCost(benchmark::State& state) {
+  runtime::Isolate isolate;
+  if (const auto registered = RegisterHost(isolate); !registered) {
+    state.SkipWithError(registered.error());
+    return;
+  }
+  const auto instance = runtime::NativeInstance::Instantiate(isolate, *kAotBenchmarkImage);
+  if (!instance) {
+    state.SkipWithError(instance.error().message);
+    return;
+  }
+  auto& source = **instance;
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    if constexpr (Operation == EntryOperation::StackBounds) {
+      auto bounds = runtime::CurrentNativeStackBounds();
+      benchmark::DoNotOptimize(bounds);
+      if (!bounds) {
+        state.SkipWithError("cannot query native stack bounds");
+        return;
+      }
+    } else if constexpr (Operation == EntryOperation::Execution) {
+      runtime::NativeExecution execution(source);
+      benchmark::DoNotOptimize(execution);
+    } else {
+      auto borrowed = runtime::NativeInstance::Borrow(*source.state().front().AsObject());
+      benchmark::DoNotOptimize(borrowed);
+    }
+  }
+}
+
+void JitEntryCost(benchmark::State& state, const std::shared_ptr<JitWorkload>& workload) {
+  runtime::Isolate registrations;
+  if (const auto registered = RegisterHost(registrations); !registered) {
+    state.SkipWithError(registered.error());
+    return;
+  }
+  auto setup = LoadJitWorkload(*workload, registrations.FreezeBindings());
+  if (!setup) {
+    state.SkipWithError(setup.error());
+    return;
+  }
+  auto instance =
+      runtime::NativeInstance::Borrow(setup->isolate->native_dispatch().current_state());
+  const auto function = instance.FindFunction("arithmetic");
+  if (!function) {
+    state.SkipWithError("arithmetic entry is missing");
+    return;
+  }
+  runtime::NativeExecution execution(instance);
+  const auto& problem = kAotBenchmarkCases.front();
+  const auto warm = runtime::InvokeNativeTarget(execution, *function, {});
+  if (!warm || !warm->IsInteger() || warm->AsInteger() != problem.expected) {
+    state.SkipWithError("arithmetic warm-up checksum mismatch");
+    return;
+  }
+  // 诊断生成代码本身的入口成本；此版本及激活在整个测量期间保活。
+  for (auto iteration : state) {
+    benchmark::DoNotOptimize(iteration);
+    auto result = runtime::InvokeNativeTarget(execution, *function, {});
+    benchmark::DoNotOptimize(result);
+    if (!result || !result->IsInteger() || result->AsInteger() != problem.expected) {
+      state.SkipWithError("arithmetic checksum mismatch");
+      return;
+    }
+  }
+}
+
 int RegisterAotBenchmarks() {
   benchmark::AddCustomContext("jit_steady_setup", "shared-image/fresh-isolate/v1");
   const auto baseline =
@@ -348,6 +421,19 @@ int RegisterAotBenchmarks() {
   benchmark::AddCustomContext("aot_runtime_abi", std::string(runtime::NativeRuntimeAbiIdentity()));
   benchmark::AddCustomContext("aot_codegen",
                               "LLVM O2; generic CPU; PIC; checked arithmetic; explicit roots");
+  benchmark::RegisterBenchmark("entry/stack_bounds", NativeEntryCost<EntryOperation::StackBounds>)
+      ->UseRealTime();
+  benchmark::RegisterBenchmark("entry/execution", NativeEntryCost<EntryOperation::Execution>)
+      ->UseRealTime();
+  benchmark::RegisterBenchmark("entry/instance_borrow",
+                               NativeEntryCost<EntryOperation::InstanceBorrow>)
+      ->UseRealTime();
+  const std::string baseline_entry = "entry/baseline_arithmetic";
+  const std::string optimized_entry = "entry/optimized_arithmetic";
+  RegisterJitPreparation(baseline_entry, baseline);
+  RegisterJitPreparation(optimized_entry, optimized);
+  benchmark::RegisterBenchmark(baseline_entry, JitEntryCost, baseline)->UseRealTime();
+  benchmark::RegisterBenchmark(optimized_entry, JitEntryCost, optimized)->UseRealTime();
   for (const auto& problem : kAotBenchmarkCases) {
     const auto suffix = std::string(problem.name) + "/" + std::to_string(problem.size);
     benchmark::RegisterBenchmark("aot/native/" + suffix, NativeSteady, problem)->UseRealTime();

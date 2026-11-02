@@ -17,6 +17,7 @@
 
 #include "base/declaration.h"
 #include "base/execution_status.h"
+#include "base/native_program_mode.h"
 #include "compiler/development/source_session.h"
 #include "runtime/async/future.h"
 #include "runtime/heap/rooted_value.h"
@@ -172,6 +173,52 @@ TEST(DevelopmentSessionTest, RepeatedEntryLookupFollowsDeletionReintroductionAnd
             DevelopmentStatus::Accepted);
   ExpectInteger(session.InvokeEntry(entry), kOldAnswer);
   ExpectInteger(session.InvokeEntry(entry), kOldAnswer);
+}
+
+TEST(DevelopmentSessionTest, CachedTargetsFollowPublicationAndKeepExportedAccessDistinct) {
+  for (const auto tier : {NativeCodeTier::Baseline, NativeCodeTier::Optimized}) {
+    DevelopmentOptions options;
+    options.compilation.tier = tier;
+    auto created = DevelopmentSession::Create("main.vela", {}, options);
+    ASSERT_TRUE(created);
+    auto& session = **created;
+    ASSERT_EQ(Apply(session, "func main(): void {} export func value(): int { return 40; }").status,
+              DevelopmentStatus::Accepted);
+    ExpectInteger(session.InvokeEntry({.module = {}, .name = "value"}), kOldAnswer);
+    ExpectInteger(session.InvokeEntry({.module = {}, .name = "value"}), kOldAnswer);
+    ExpectInteger(session.Invoke("main.vela", "value"), kOldAnswer);
+    ExpectInteger(session.Invoke("main.vela", "value"), kOldAnswer);
+    ASSERT_EQ(Apply(session,
+                    "func extra(): int { return 1; } func main(): void {} "
+                    "export func value(): int { return 42; }")
+                  .status,
+              DevelopmentStatus::Accepted);
+    ExpectInteger(session.Invoke("main.vela", "value"), kAnswer);
+    ExpectInteger(session.Invoke("main.vela", "value"), kAnswer);
+    ASSERT_EQ(Apply(session, "func main(): void {} func value(): int { return 40; }").status,
+              DevelopmentStatus::Accepted);
+    ExpectInteger(session.InvokeEntry({.module = {}, .name = "value"}), kOldAnswer);
+    EXPECT_EQ(session.Invoke("main.vela", "value").error(), ExecutionStatus::InvalidEntry);
+    ASSERT_EQ(Apply(session, "func main(): void {} export func value(): int { return 42; }",
+                    DevelopmentOperation::Reload)
+                  .status,
+              DevelopmentStatus::Accepted);
+    ExpectInteger(session.InvokeEntry({.module = {}, .name = "value"}), kAnswer);
+    ExpectInteger(session.Invoke("main.vela", "value"), kAnswer);
+  }
+}
+
+TEST(DevelopmentSessionTest, CachedTargetDoesNotRetainOrAccessStoppedProgramState) {
+  auto created = DevelopmentSession::Create("main.vela");
+  ASSERT_TRUE(created);
+  auto& session = **created;
+  ASSERT_EQ(Apply(session, "func main(): void {} export func value(): int { return 42; }").status,
+            DevelopmentStatus::Accepted);
+  ExpectInteger(session.InvokeEntry({.module = {}, .name = "value"}), kAnswer);
+  ASSERT_TRUE(session.isolate().TryStop());
+  EXPECT_EQ(session.InvokeEntry({.module = {}, .name = "value"}).error(),
+            ExecutionStatus::ExecutionStopped);
+  EXPECT_EQ(session.Invoke("main.vela", "value").error(), ExecutionStatus::ExecutionStopped);
 }
 
 TEST(DevelopmentSessionTest, GenericParameterChangesRequireReloadWithoutDamagingTheOldRun) {

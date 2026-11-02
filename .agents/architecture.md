@@ -102,6 +102,13 @@ Dynamic callable boundaries validate their arguments before entering typed nativ
 
 Each `NativeExecution` owns its `NativeContext`; it borrows the same Isolate for the execution's
 lifetime. Host calls borrow that context and their managed arguments for the duration of the call.
+The execution registers its exception root when it publishes an exception envelope, and releases
+that root when ownership transfers to a catch handler, execution aborts, or the execution ends.
+
+Development-session entry lookup caches a borrowed target from the current publication and validates
+its revision before reuse. Publication and stopping clear that cache before old state can retire;
+the cache owns no GC root or code version. Public exported calls and trusted internal entry calls
+retain distinct access checks. An omitted internal-entry module selects the session's entry module.
 
 ### Source-test mocks
 

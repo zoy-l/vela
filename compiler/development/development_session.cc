@@ -379,6 +379,7 @@ void DevelopmentSession::AtSafepoint() {
 void DevelopmentSession::Publish() {
   const auto started = Clock::now();
   auto& dispatch = isolate_->native_dispatch();
+  entry_lookup_.reset();
   const auto published =
       PublishCode(dispatch, snapshot()->revision, pending_->candidate.code_.image);
   if (!published) {
@@ -417,7 +418,6 @@ void DevelopmentSession::Publish() {
   [[maybe_unused]] const auto committed = sources_->Commit(pending_->candidate.source_);
   // 源码提交只由本会话执行；发布临界区没有用户回调，不可能改变其基线。
   assert(committed.has_value());
-  entry_lookup_.reset();
   result_.revision = snapshot()->revision;
   result_.status = DevelopmentStatus::Accepted;
   if (result_.operation == DevelopmentOperation::HotReload) {
@@ -451,6 +451,7 @@ void DevelopmentSession::BeginReload() {
   pending_->stopping = Clock::now();
   result_.status = DevelopmentStatus::Stopping;
   result_.message.clear();
+  entry_lookup_.reset();
   entry_root_.Detach();
   entry_value_ = runtime::Value::Null();
   // 请求只在最外层宿主借用和初始化结束后到达这里；专用停止状态逐层退出旧原生帧。
@@ -568,10 +569,6 @@ std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::InvokeTarget(
   const auto is_entry = invocation == Invocation::Entry;
   {
     auto instance = runtime::NativeInstance::Borrow(*target.state);
-    const auto& function = instance.image().functions.values().subspan(function_index).front();
-    if (is_entry && function.parameter_count != 0) {
-      return std::unexpected(ExecutionStatus::InvalidEntry);
-    }
     last_diagnostic_.reset();
     runtime::NativeExecution execution(instance);
     result = is_entry ? runtime::InvokeNativeTarget(execution, function_index, {})
@@ -596,16 +593,7 @@ std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::Invoke(
     std::string_view module,
     std::string_view name,
     std::span<const runtime::Value> arguments) {
-  // 命名入口的临时句柄必须在进入脚本前释放，不能让会话自身的解析借用阻止 Reload。
-  DeclarationId declaration;
-  {
-    auto entry = isolate_->native_dispatch().FindEntry(module, name);
-    if (!entry) {
-      return std::unexpected(entry.error());
-    }
-    declaration = entry->declaration();
-  }
-  const auto target = isolate_->native_dispatch().Resolve(declaration);
+  const auto target = ResolveEntry({.module = module, .name = name}, Invocation::Exported);
   if (!target) {
     return std::unexpected(target.error());
   }
@@ -613,7 +601,7 @@ std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::Invoke(
 }
 
 std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::RunEntry() {
-  const auto value = InvokeEntry({.module = entry_, .name = options_.entry});
+  const auto value = InvokeEntry({.module = {}, .name = options_.entry});
   if (value) {
     entry_value_ = *value;
     entry_root_.Attach(isolate_->heap(), &entry_value_, 1);
@@ -621,53 +609,82 @@ std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::RunEntry() {
   return value;
 }
 
-std::expected<DeclarationId, ExecutionStatus> DevelopmentSession::ResolveEntry(
-    DevelopmentEntry requested) {
-  // 仅缓存一个成功的名称解析，避免重复路径规范化与源码锁；不保留快照、代码或外部根。
-  // 发布及完整 Reload 在通知宿主前清除此项，运行时目标仍在每次进入时重新解析。
+std::expected<runtime::NativeResolvedDeclaration, ExecutionStatus> DevelopmentSession::ResolveEntry(
+    DevelopmentEntry requested,
+    Invocation invocation) {
+  // 目标只借用当前发布快照；提交及停止旧运行前清空，不保留旧代码或外部根。
+  // 所属线程在任何可提交操作前由 InvokeTarget 建立实例根，后台编译不修改此缓存。
+  auto& dispatch = isolate_->native_dispatch();
+  const auto revision = dispatch.revision();
   if (entry_lookup_ && entry_lookup_->module == requested.module &&
-      entry_lookup_->name == requested.name) {
-    return entry_lookup_->declaration;
+      entry_lookup_->name == requested.name && entry_lookup_->invocation == invocation &&
+      entry_lookup_->revision == revision) {
+    return entry_lookup_->target;
   }
-  const auto source = snapshot();
-  const auto& identities = source->identities;
-  const auto module = identities.Find({
-      .owner = {},
-      .kind = DeclarationKind::Module,
-      .name = PathText(Utf8Path(requested.module).lexically_normal()),
-      .arguments = {},
-  });
-  if (!module) {
-    return std::unexpected(ExecutionStatus::InvalidEntry);
+  DeclarationId declaration;
+  if (invocation == Invocation::Exported) {
+    // 临时句柄在进入脚本前释放，不能阻止脚本请求完整 Reload。
+    auto entry = dispatch.FindEntry(requested.module, requested.name);
+    if (!entry) {
+      return std::unexpected(entry.error());
+    }
+    declaration = entry->declaration();
+  } else {
+    const auto source = snapshot();
+    const auto& identities = source->identities;
+    const auto module = identities.Find({
+        .owner = {},
+        .kind = DeclarationKind::Module,
+        .name = PathText(Utf8Path(requested.module).lexically_normal()),
+        .arguments = {},
+    });
+    if (!module) {
+      return std::unexpected(ExecutionStatus::InvalidEntry);
+    }
+    const auto identity = identities.Find({
+        .owner = *module,
+        .kind = DeclarationKind::Function,
+        .name = std::string(requested.name),
+        .arguments = {},
+    });
+    if (!identity) {
+      return std::unexpected(ExecutionStatus::InvalidEntry);
+    }
+    declaration = *identity;
   }
-  const auto declaration = identities.Find({
-      .owner = *module,
-      .kind = DeclarationKind::Function,
-      .name = std::string(requested.name),
-      .arguments = {},
-  });
-  if (!declaration) {
-    return std::unexpected(ExecutionStatus::InvalidEntry);
+  const auto target = dispatch.Resolve(declaration);
+  if (!target) {
+    const auto error = target.error();
+    return std::unexpected(invocation == Invocation::Entry &&
+                                   error == ExecutionStatus::TargetDeleted
+                               ? ExecutionStatus::InvalidEntry
+                               : error);
+  }
+  if (invocation == Invocation::Entry) {
+    const auto& program = runtime::Heap::NativeProgram(*target->state);
+    const auto& function = program.image->functions.values()[target->function];
+    if (function.parameter_count != 0) {
+      return std::unexpected(ExecutionStatus::InvalidEntry);
+    }
   }
   entry_lookup_ = EntryLookup{
       .module = std::string(requested.module),
       .name = std::string(requested.name),
-      .declaration = *declaration,
+      .invocation = invocation,
+      .revision = revision,
+      .target = *target,
   };
-  return *declaration;
+  return *target;
 }
 
 std::expected<runtime::Value, ExecutionStatus> DevelopmentSession::InvokeEntry(
     DevelopmentEntry requested) {
-  const auto declaration = ResolveEntry(requested);
-  if (!declaration) {
-    return std::unexpected(declaration.error());
+  if (requested.module.empty()) {
+    requested.module = entry_;
   }
-  const auto target = isolate_->native_dispatch().Resolve(*declaration);
+  const auto target = ResolveEntry(requested, Invocation::Entry);
   if (!target) {
-    const auto error = target.error();
-    return std::unexpected(error == ExecutionStatus::TargetDeleted ? ExecutionStatus::InvalidEntry
-                                                                   : error);
+    return std::unexpected(target.error());
   }
   return InvokeTarget(*target, {}, Invocation::Entry);
 }

@@ -34,9 +34,10 @@ std::string_view ExternalResourceKindName(ExternalResourceKind kind) noexcept {
   std::unreachable();
 }
 
-ExternalResource::ExternalResource(ExternalResources& owner, ExternalResourceKind kind) noexcept {
+ExternalResource::ExternalResource(ExternalResources& owner, ExternalResourceKind kind) noexcept
+    : references_(1) {
+  // 构造尚未向其他线程发布句柄；初始引用不需要共享复制使用的原子读改写。
   Attach(owner, kind);
-  Retain();
 }
 
 ExternalResource::~ExternalResource() {

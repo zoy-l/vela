@@ -205,7 +205,8 @@ class NativeExecution final {
   std::uintptr_t stack_limit_ = 0;
   ExecutionStatus stack_status_ = ExecutionStatus::NativeFailure;
   Value pending_exception_;
-  RootRange exception_root_;
+  // 成功执行没有异常根；仅在异常封套发布后登记，到移交或执行结束时释放。
+  RootRange exception_root_{RootOwner::Runtime};
   bool exception_allocation_failed_ = false;
   ExternalResource execution_resource_;
   NativeExecution* version_next_ = nullptr;
@@ -214,6 +215,7 @@ class NativeExecution final {
   [[nodiscard]] ExecutionStatus CreateException(Value payload,
                                                 ExecutionStatus status,
                                                 std::string_view message);
+  void SetException(Value exception) noexcept;
 };
 
 // 切换到闭包创建时的实例；调用深度、根和异常仍属于同一次逻辑执行。

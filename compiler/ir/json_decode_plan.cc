@@ -1,6 +1,5 @@
 #include "compiler/ir/ir.h"
 
-#include <cstddef>
 #include <cstdint>
 #include <vector>
 
