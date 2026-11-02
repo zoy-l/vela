@@ -206,7 +206,7 @@ Background contracts: [JSON and dynamic values](json.md), [generics](generics.md
 
 ## 10. Release measurements
 
-Measurements ran on 2026-11-02 using an Apple M1 Pro, macOS arm64, Release, Clang 23, and LLVM 21.1.8. Each case ran in a separate process with seven repetitions and a Google Benchmark minimum time of 0.3 seconds; compilation and input preparation are excluded. Exact commands, source identity, coefficients of variation, and memory counters are in `latest` in the [rolling benchmark summary](../../benchmarks/results/rolling_summary.json). The implementation is in [typed_json_benchmark.cc](../../benchmarks/typed_json_benchmark.cc).
+Measurements ran on 2026-11-02 using an Apple M1 Pro, macOS arm64, Release, Clang 23, and LLVM 21.1.8. Each case ran in a separate process with seven repetitions and a Google Benchmark minimum time of 0.3 seconds; compilation and input preparation are excluded. Exact commands, source identity, coefficients of variation, and memory counters are in the [rolling benchmark summary](../../benchmarks/results/rolling_summary.json) entry whose `suite.identity` is `typed-json/7-workloads/typed-and-handwritten`. The implementation is in [typed_json_benchmark.cc](../../benchmarks/typed_json_benchmark.cc).
 
 | Case | Typed median (µs) | Handwritten median (µs) | Typed / handwritten |
 | --- | ---: | ---: | ---: |

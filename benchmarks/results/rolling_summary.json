@@ -1,751 +1,6 @@
 {
   "schema_version": 1,
   "previous": {
-    "run_date": "2026-11-01T17:15:04.465520+00:00",
-    "machine": {
-      "os": "Windows",
-      "release": "11",
-      "architecture": "AMD64",
-      "host": "DESKTOP-E7S678P",
-      "cpu": "AMD Ryzen 9 7900X 12-Core Processor"
-    },
-    "toolchain": {
-      "cxx": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)",
-      "llvm_sdk": "21.1.8"
-    },
-    "source": {
-      "revision": "cfc9b42ccf85a23ffdeceabf5413bb91a51c97e6",
-      "status": " M BUILD.gn\n M base/BUILD.gn\n M base/builtin.h\n M base/directory_watcher.cc\n M base/directory_watcher.h\n M base/mock_operation.h\n M base/opcode.h\n M benchmarks/liveness_benchmark.cc\n M compiler/BUILD.gn\n M compiler/aot/artifact_publication.cc\n M compiler/aot/native_compiler.cc\n M compiler/aot/native_compiler_unittest.cc\n M compiler/aot/reachability.cc\n M compiler/aot/reachability_unittest.cc\n M compiler/aot/target_support.cc\n M compiler/aot/target_support.h\n D compiler/build_info.cc\n M compiler/cli/development_debugger.cc\n M compiler/cli/development_debugger.h\n M compiler/development/development_files.cc\n M compiler/development/development_files.h\n M compiler/development/development_repl.cc\n M compiler/development/development_session.cc\n M compiler/development/development_session.h\n M compiler/development/source_session.cc\n M compiler/development/source_session.h\n M compiler/development/source_session_unittest.cc\n M compiler/frontend/builtins/builtins.cc\n M compiler/frontend/builtins/builtins.h\n M compiler/frontend/builtins/byte_builtins.cc\n M compiler/frontend/builtins/byte_builtins.h\n M compiler/frontend/builtins/regexp_builtins.cc\n M compiler/frontend/builtins/regexp_builtins.h\n M compiler/frontend/builtins/sdk_modules.cc\n M compiler/frontend/builtins/sdk_modules.h\n M compiler/frontend/builtins/standard_environment.cc\n M compiler/frontend/builtins/standard_environment.h\n M compiler/frontend/diagnostic_unittest.cc\n M compiler/frontend/flow/capture_analysis.cc\n M compiler/frontend/flow/control_flow_unittest.cc\n M compiler/frontend/flow/initialization.cc\n M compiler/frontend/flow/initialization.h\n M compiler/frontend/frontend_unittest.cc\n M compiler/frontend/generics/specialization.cc\n M compiler/frontend/generics/specialization_contracts.cc\n M compiler/frontend/modules/declaration_ids.cc\n M compiler/frontend/modules/module_binding.cc\n M compiler/frontend/modules/source_loader.cc\n M compiler/frontend/modules/source_loader.h\n M compiler/frontend/syntax/ast.cc\n M compiler/frontend/syntax/ast.h\n M compiler/frontend/syntax/ast_clone.cc\n M compiler/frontend/syntax/lexer.cc\n M compiler/frontend/syntax/lexer.h\n M compiler/frontend/syntax/parser.cc\n M compiler/frontend/syntax/parser.h\n M compiler/frontend/syntax/parser_declarations.cc\n M compiler/frontend/syntax/parser_types.cc\n M compiler/frontend/syntax/parser_unittest.cc\n M compiler/frontend/syntax/token.h\n M compiler/frontend/typing/checker.cc\n D compiler/frontend/typing/checker_test_support.h\n M compiler/frontend/typing/declarations_unittest.cc\n M compiler/frontend/typing/generic_contract_unittest.cc\n M compiler/frontend/typing/generic_inference_unittest.cc\n M compiler/frontend/typing/map_literal_unittest.cc\n M compiler/frontend/typing/refinement_unittest.cc\n M compiler/frontend/typing/type_checker.cc\n M compiler/frontend/typing/type_checker.h\n M compiler/frontend/typing/type_checker_array.cc\n M compiler/frontend/typing/type_checker_async.cc\n M compiler/frontend/typing/type_checker_builtin_values.cc\n M compiler/frontend/typing/type_checker_cast.cc\n M compiler/frontend/typing/type_checker_classes.cc\n M compiler/frontend/typing/type_checker_collections.cc\n M compiler/frontend/typing/type_checker_constant.cc\n M compiler/frontend/typing/type_checker_exception.cc\n M compiler/frontend/typing/type_checker_flow.cc\n M compiler/frontend/typing/type_checker_functions.cc\n M compiler/frontend/typing/type_checker_generics.cc\n M compiler/frontend/typing/type_checker_globals.cc\n M compiler/frontend/typing/type_checker_inference.cc\n M compiler/frontend/typing/type_checker_inference_types.cc\n M compiler/frontend/typing/type_checker_interfaces.cc\n M compiler/frontend/typing/type_checker_match.cc\n M compiler/frontend/typing/type_checker_methods.cc\n M compiler/frontend/typing/type_checker_null.cc\n M compiler/frontend/typing/type_checker_refinements.cc\n M compiler/frontend/typing/type_checker_switch.cc\n M compiler/frontend/typing/type_checker_types.cc\n M compiler/frontend/typing/type_inference.cc\n M compiler/frontend/typing/type_inference_constraints.cc\n M compiler/frontend/typing/type_name.cc\n M compiler/frontend/typing/type_names.h\n M compiler/ir/analysis.cc\n M compiler/ir/analysis.h\n M compiler/ir/analysis_unittest.cc\n M compiler/ir/declaration_bindings.cc\n M compiler/ir/declaration_bindings.h\n M compiler/ir/ir.h\n M compiler/ir/layout_description.cc\n M compiler/ir/layout_description.h\n M compiler/ir/layout_instantiation_unittest.cc\n M compiler/ir/lowerer.cc\n M compiler/ir/lowerer.h\n M compiler/ir/lowerer_array.cc\n M compiler/ir/lowerer_array_algorithms.cc\n M compiler/ir/lowerer_async.cc\n M compiler/ir/lowerer_builtin.cc\n M compiler/ir/lowerer_builtin_members.cc\n M compiler/ir/lowerer_bytes.cc\n M compiler/ir/lowerer_class.cc\n M compiler/ir/lowerer_collections.cc\n M compiler/ir/lowerer_double.cc\n M compiler/ir/lowerer_dynamic.cc\n M compiler/ir/lowerer_dynamic_array.cc\n M compiler/ir/lowerer_exception.cc\n M compiler/ir/lowerer_flow.cc\n M compiler/ir/lowerer_functions.cc\n M compiler/ir/lowerer_match.cc\n M compiler/ir/lowerer_string.cc\n M compiler/ir/lowerer_switch.cc\n M compiler/ir/lowerer_types.cc\n M compiler/ir/optimizer.cc\n M compiler/ir/preparation.cc\n M compiler/ir/preparation.h\n D compiler/ir/preparation_test_support.h\n M compiler/ir/preparation_unittest.cc\n M compiler/ir/register_set.h\n M compiler/jit/code_cache.cc\n M compiler/jit/code_cache.h\n M compiler/jit/code_cache_unittest.cc\n M compiler/jit/code_inputs.cc\n M compiler/jit/compiler.cc\n M compiler/jit/compiler.h\n D compiler/jit/platform_support_posix.cc\n M compiler/jit/runtime_symbols.cc\n M compiler/language/async_contract_unittest.cc\n M compiler/language/control_flow_unittest.cc\n M compiler/language/debugger_unittest.cc\n M compiler/language/double_unittest.cc\n M compiler/language/dynamic_array_unittest.cc\n M compiler/language/exception_unittest.cc\n M compiler/language/generic_unittest.cc\n M compiler/language/import_unittest.cc\n M compiler/language/json_unittest.cc\n M compiler/language/lambda_inference_unittest.cc\n M compiler/language/language_basics_unittest.cc\n M compiler/language/module_unittest.cc\n M compiler/language/native_binding_unittest.cc\n D compiler/language/native_limits_unittest.cc\n M compiler/language/optimized_execution_unittest.cc\n M compiler/language/regexp_unittest.cc\n M compiler/language/sdk_modules_unittest.cc\n M compiler/language/standard_library_unittest.cc\n M compiler/language/string_unittest.cc\n M compiler/native/array_analysis_unittest.cc\n M compiler/native/async_emitter.cc\n M compiler/native/borrow_analysis.cc\n M compiler/native/call_emitter.cc\n M compiler/native/call_targets.cc\n M compiler/native/call_targets.h\n M compiler/native/code_generator.cc\n M compiler/native/code_generator.h\n M compiler/native/deoptimization_emitter.cc\n M compiler/native/escape_analysis.cc\n M compiler/native/escape_analysis.h\n M compiler/native/escape_analysis_unittest.cc\n M compiler/native/escape_rewriter.cc\n M compiler/native/frame_emitter.cc\n M compiler/native/function_emitter.cc\n M compiler/native/function_emitter.h\n M compiler/native/integer_loop_optimizer.cc\n M compiler/native/materialization_emitter.cc\n M compiler/native/memory_emitter.cc\n M compiler/native/native_frame_plan.cc\n M compiler/native/native_image_data.cc\n M compiler/native/native_values.cc\n M compiler/native/native_values.h\n M compiler/native/reference_emitter.cc\n M compiler/native/scalar_emitter.cc\n M compiler/repl/repl_source.cc\n M compiler/testing/command.cc\n M compiler/testing/mock_report.cc\n M compiler/testing/report.cc\n M compiler/testing/suite.cc\n M compiler/testing/suite.h\n M compiler/tooling/documentation/builtin_documentation.cc\n M compiler/tooling/documentation/builtin_documentation.h\n M compiler/tooling/documentation/documentation.cc\n M compiler/tooling/documentation/documentation.h\n M compiler/tooling/documentation/documentation_unittest.cc\n M compiler/tooling/format/formatter.cc\n M compiler/tooling/lsp/language_server_diagnostics.cc\n M compiler/tooling/lsp/language_server_documents.cc\n M compiler/tooling/lsp/language_server_internal.h\n M compiler/tooling/lsp/language_server_queries.cc\n M compiler/tooling/mock/mock_command.cc\n M compiler/tooling/mock/mock_generator.cc\n M compiler/tooling/semantic/semantic_arguments.cc\n M compiler/tooling/semantic/semantic_completion.cc\n M compiler/tooling/semantic/semantic_declarations.cc\n M compiler/tooling/semantic/semantic_generics.cc\n M compiler/tooling/semantic/semantic_hover.cc\n M compiler/tooling/semantic/semantic_index.cc\n M compiler/tooling/semantic/semantic_index.h\n M compiler/tooling/semantic/semantic_rename.cc\n M compiler/tooling/semantic/semantic_tokens.cc\n M compiler/tooling/source_text.cc\n M compiler/tooling/source_text.h\n M compiler/tooling/source_text_unittest.cc\n M runtime/BUILD.gn\n M runtime/native/native_abi_unittest.cc\n M tools/aot_async_fixture.py\n M tools/aot_binding_fixture.py\n M tools/aot_callback_fixture.py\n M tools/aot_class_fixture.py\n M tools/aot_field_loop_fixture.py\n M tools/aot_global_fixture.py\n M tools/aot_integer_loop_fixture.py\n M tools/aot_numeric_fixture.py\n M tools/aot_unittest.py\n M tools/test.py\n M tools/tooling_unittest.py\n?? base/source_lines.cc\n?? base/source_lines.h\n?? base/test_protocol.h\n?? compiler/development/development_watch.cc\n?? compiler/development/development_watch_win.cc\n?? compiler/frontend/builtins/async_builtins.cc\n?? compiler/frontend/builtins/async_builtins.h\n?? compiler/frontend/syntax/names.h\n?? compiler/frontend/typing/semantic_model.cc\n?? compiler/frontend/typing/semantic_model.h\n?? compiler/jit/platform_support_eh_frame.cc\n?? compiler/language/native_scale_unittest.cc\n?? compiler/test_support/checker_test_support.h\n?? compiler/test_support/execution_expectations.cc\n?? compiler/test_support/execution_expectations.h\n?? compiler/test_support/preparation_test_support.h\n?? runtime/native/native_symbols.h\n",
-      "compiler_build_identity": "2ed39eaedbd02a0b9a8fc52d4df440aa2a1444ab16eb5e423589993b979c3146",
-      "working_tree_clean": false,
-      "changed_file_sha256": {
-        "BUILD.gn": "f4c1a29ce8b945de3b1edcd606ce4c09801c9529f176c569b4d6f0cecb28bb0f",
-        "base/BUILD.gn": "76459eb6be088451eff4a532645d2750162c2e5ecfc5b25b213b901d9abd8708",
-        "base/builtin.h": "67cf4cd04ceebf5724f3f08878a9a8a6382a516c10091486116a6cac7cd07b20",
-        "base/directory_watcher.cc": "f24ef5c5f48919234d1a7e15fd04bed3f48abd71f014a8c7ff85c53623add1d4",
-        "base/directory_watcher.h": "2663e05e7bdb33941205745e91dc6cc04095a9f098118ab1b0c4db1b4d76c5c9",
-        "base/mock_operation.h": "be8a9b8f6bc14618b83a2afbfcf13442f4e3bc9661a99046bfb4e24d3fcab2ac",
-        "base/opcode.h": "c0fe77b2a9d258b7d8d0697e53e1ba5a979982c030349d9a685430aa7886b23b",
-        "benchmarks/liveness_benchmark.cc": "9174dc9e88ce3cbde8e5817dd5aff6131586ccf2d11a196c3272560c6d725ceb",
-        "compiler/BUILD.gn": "cf44e319fe94469434c0acc020f4b690c6fa26d30d9d5ce3a1c6a5ebc407de89",
-        "compiler/aot/artifact_publication.cc": "bf13633de211f0826bea2dc94753be9a809125216fe7f97708eb2d0ccd68e5b3",
-        "compiler/aot/native_compiler.cc": "5165d2e8a1fc23abb64b53c3128f25704f851a3418ba31ff1a66dcd3b63e87b2",
-        "compiler/aot/native_compiler_unittest.cc": "83bfbacad62a349f82aaa98158379282ba5aea0d321f6a3d458bf92ec0293a1a",
-        "compiler/aot/reachability.cc": "6cede114fa7c508cb01aca43835369ff26780a55c59b33a9921bc69762dcf384",
-        "compiler/aot/reachability_unittest.cc": "ca6702c720683be991ab073eae392f7a44ed46b9daa1d96c6d9e9b4b8de37334",
-        "compiler/aot/target_support.cc": "4f7945f0efa1ad70d605a3732332678e201da0b5efc6ad123eb51c4b8968aff3",
-        "compiler/aot/target_support.h": "9c3ba69c817d7d18f58aa14f2e31e52c947b343d2937686a894e7052c69714ff",
-        "compiler/cli/development_debugger.cc": "f08a5b4dfbb2efa48f1cfd08ed4ba65d9b7f020ab5e72cbfd6bec48bf536c06f",
-        "compiler/cli/development_debugger.h": "5a14874712eef535fe39b4155271473c237918bdef013dff7847f8f2f6f2ca92",
-        "compiler/development/development_files.cc": "6d27baceef0b9da69eb40fe901866ed96d260fb3bd5dc6413c21eafebc5ef05e",
-        "compiler/development/development_files.h": "294b904971e614cc7e1f3de90c07a9cdfebfc731e0ba00546ebfb0d2e1491d82",
-        "compiler/development/development_repl.cc": "33fb90b90f2dc73b193817ae124ee1b71e27b13dd4a57e76e01ea711fb166cb9",
-        "compiler/development/development_session.cc": "e106b3c09d32124ad79d12c516edd018f75ae74d45467e438303f9d29747b5f7",
-        "compiler/development/development_session.h": "608d1ab6061ed50b53e91f1d3077630abeb60965c78f734e69a60e6b4432a243",
-        "compiler/development/source_session.cc": "e9db25bff02b41457033adc7595b9e0f3b1ffd92c77255762f2508020b319755",
-        "compiler/development/source_session.h": "5204a34c4c0cc7e23e9ee7e5c08ece6484f3e16d640f6348cbbb1e1f4ba27885",
-        "compiler/development/source_session_unittest.cc": "cf435192fb8f4f502dd5c42950ad16e4a3c8d20178bac5ce95acd479102bba71",
-        "compiler/frontend/builtins/builtins.cc": "a0beebce4ec6c1f4a2c8d470e42b603762f91e9b541f3633d05cbb13712cd06f",
-        "compiler/frontend/builtins/builtins.h": "ff2ce3e8dcd9973751c150276aa37bacef28555999970183a12bc7eeb456133d",
-        "compiler/frontend/builtins/byte_builtins.cc": "0f830706171761c8cdedd4c6a6a7430f4d5ecb4cc1ac89f975dd5092ccdfd259",
-        "compiler/frontend/builtins/byte_builtins.h": "ac0414ea7e6af3c0dc4d7e2fa3ebdf6e25ec78de9fa082cd28314282f65af096",
-        "compiler/frontend/builtins/regexp_builtins.cc": "70a33d1e0252f211a99b7b2648396198f22e41c5780da78115a2aa7c055bd91f",
-        "compiler/frontend/builtins/regexp_builtins.h": "004731957cb60698cd35704a327a7d7e7922592764a2a8b20fcee2a4cbec9f37",
-        "compiler/frontend/builtins/sdk_modules.cc": "0749bdce458cb77dd4a7a6d391b2364be3bd58706f678b3a1b333379288a8581",
-        "compiler/frontend/builtins/sdk_modules.h": "65fb194382d7fe97e231e16d8a3dcf3609997abdfff9dd0ec8cb56e56d92a1ef",
-        "compiler/frontend/builtins/standard_environment.cc": "8160909dd90029a3698786ee5af79e333d9e1d52317e1397535bd50638732e67",
-        "compiler/frontend/builtins/standard_environment.h": "e80e7e238ec74f4067e68a0ab341f5f821f8a14e487fdfa88d6177858b074a0d",
-        "compiler/frontend/diagnostic_unittest.cc": "0b2fb79f70d0052863b723fdde5773d09a44b8d3cda699adf4bc477c015d4940",
-        "compiler/frontend/flow/capture_analysis.cc": "de098625a0327d98a3dd3f308666c50ee45e1b2ea519c62f57b1deed23304b35",
-        "compiler/frontend/flow/control_flow_unittest.cc": "aad943c5ed6baf037f4bcf4682a3f3fc6591aad1119c1cceb97f1c6f9d4cdb7f",
-        "compiler/frontend/flow/initialization.cc": "bd338e606aba2c3bf9b8f1bcef58cdca7c7628725f8b90b71044207a5eb99ef4",
-        "compiler/frontend/flow/initialization.h": "97022f9c6886b36ec086c2be4116a96b8eb66ccc77852f23927de0cf3b73bde3",
-        "compiler/frontend/frontend_unittest.cc": "95cf6f585534a169567ae3f96a8b3680aabbf665967ee34acff393c88deb6278",
-        "compiler/frontend/generics/specialization.cc": "d5774f26a811e184d2cebc67cd6f81d39e4ee5a397bcfbbf76675c3026b71817",
-        "compiler/frontend/generics/specialization_contracts.cc": "087636355be13daa97e3d78bf17be97b11aa963f88f9317f0e45edaa031f7a76",
-        "compiler/frontend/modules/declaration_ids.cc": "a4910637833680e50476477b42d1d4cb646613275976f16dc08e3c5d74bb94d0",
-        "compiler/frontend/modules/module_binding.cc": "786702d5cfb1df2ab232461e496185731c91e2690f67fff6c95273afccdc61f4",
-        "compiler/frontend/modules/source_loader.cc": "af7708ef48298be40f6216aceb1c53e75a8270a923c33277b0d9e2e7e3d1f2af",
-        "compiler/frontend/modules/source_loader.h": "800ec9d5960ffb328f5c8f8e854bcece844c9ce40aab19f94701f8011c83e089",
-        "compiler/frontend/syntax/ast.cc": "2c5dbee6bf91ac1cdf16d8fa4bae2eaca4fa2f51c7b3727e421eb12cf4f81338",
-        "compiler/frontend/syntax/ast.h": "439541cce446c3db7bb7a18df19a658c3cf89a85d8340374cb3cbac6c06497de",
-        "compiler/frontend/syntax/ast_clone.cc": "1c25d6993ca907828ccd0a3be4a9ea2ffaf25940bd4fd28d807f50f6d8345c70",
-        "compiler/frontend/syntax/lexer.cc": "17821634136298f43dbd6a93249d05944ddd299564b330571a2a3840ff94e45b",
-        "compiler/frontend/syntax/lexer.h": "0a73a761212bad0410fdfc141c65ffd69cc8e96e22d9d18d0f58e37cf49f912b",
-        "compiler/frontend/syntax/parser.cc": "711440baff80f5bc3ad27bc64bc45725b3ef237747004bc997c120910a5b6ec1",
-        "compiler/frontend/syntax/parser.h": "b2e8b52963289b0746cee89a28b6c28f81fcb63d0c6f554042a5813b9ae24179",
-        "compiler/frontend/syntax/parser_declarations.cc": "b6e7670d24176978b793df5022955a3d67b4c5b6425347005dfc04134c9c336c",
-        "compiler/frontend/syntax/parser_types.cc": "01bfd7bab0ac1b83cb21a051b8f7e8c537f2cba026878458b3c8f737d8fa2244",
-        "compiler/frontend/syntax/parser_unittest.cc": "05ab515283f4a985ab42789f30df4f6af2aad420a65eec86cc26170dc05121b4",
-        "compiler/frontend/syntax/token.h": "eeca17bc51493bb2091fd5685a73caa7033b591d5fe62f5a033c8abe0988cf11",
-        "compiler/frontend/typing/checker.cc": "d7a3eb005924e9703fe8440a6569a4778a7ee6f25d83ee235a885aa511556fba",
-        "compiler/frontend/typing/declarations_unittest.cc": "ef472f6a50479129394a3d1975870b3d7cc22306692668a077f67112fdb3b6ab",
-        "compiler/frontend/typing/generic_contract_unittest.cc": "97eb6caf98b0cdf3452b6e605e22d3853f7657a742c0e49eabad0ed761bfce06",
-        "compiler/frontend/typing/generic_inference_unittest.cc": "729357a3e4e57b044b860f1eda37525354aea451d1e056bc7ed9aa7ae36d1d77",
-        "compiler/frontend/typing/map_literal_unittest.cc": "bed3a09f97eb76ccd06ece2cfd9edef3105b625a09ae4132f0a24c984f3470be",
-        "compiler/frontend/typing/refinement_unittest.cc": "7739b431c3e954cbe2011198d2c9c5f05c1840b14a5894d90858452f41813984",
-        "compiler/frontend/typing/type_checker.cc": "85cb02847b45ba0900e07f9d365e90cd689b2b77f068d8d44204a29d88ba306d",
-        "compiler/frontend/typing/type_checker.h": "3cfce4b431660a0ffae57f7bfe49f689dfa22aea8b1f17d514700bb9907fb836",
-        "compiler/frontend/typing/type_checker_array.cc": "5a419d79d5823b28ac14b3aef23269c034087e91a2869c5eb0358ae9b4699384",
-        "compiler/frontend/typing/type_checker_async.cc": "7c9444cf17613668fc8078d4bb1a3398047e57eb03eeb640b07f856e5397ef43",
-        "compiler/frontend/typing/type_checker_builtin_values.cc": "eed46c09edbb953368ba94c6f820ffd2688e70dd355aba4275e3545ab8b78f6c",
-        "compiler/frontend/typing/type_checker_cast.cc": "eecc205bee719800b5691c3443db883d170b3ea4853c98aebc3a49c7348e3965",
-        "compiler/frontend/typing/type_checker_classes.cc": "b37f734185ec757d05de5141dbfbfba0b53273bf173474c7062c95933e432f01",
-        "compiler/frontend/typing/type_checker_collections.cc": "d1179294b43d3b26c52af53dc63f24cbcc7a961060dded36f8bfb7b8e09d7527",
-        "compiler/frontend/typing/type_checker_constant.cc": "6386fd7e6bf4c67708ae91ea4a2709ffca577f59323ed9a1e49ac225f7f95f90",
-        "compiler/frontend/typing/type_checker_exception.cc": "fc67d258acbe7d4736ee862658191ac4e5340d2bf0797799bdddeb966f0c9ebd",
-        "compiler/frontend/typing/type_checker_flow.cc": "f27cb2c09eb0c4a7ebda70bb9390c304ec6f00fdf76e3bf7cb457714f50ce92e",
-        "compiler/frontend/typing/type_checker_functions.cc": "bd6c5728b00d2c8f60fd372127620cb91bfc0581cd9c426e61e62ad6f814ab11",
-        "compiler/frontend/typing/type_checker_generics.cc": "c435f4044281f0a4c299db73dd49def4e1fd057b9f8120bf6b8aaac1e81e404d",
-        "compiler/frontend/typing/type_checker_globals.cc": "cd912a323581458156243bc7fdc68211e127c3acd2652b2982c35b76f41f2fe5",
-        "compiler/frontend/typing/type_checker_inference.cc": "70f1e9843fc24d71e6e630c0ebd17579cb81703804b385da667f6e06dbc0b683",
-        "compiler/frontend/typing/type_checker_inference_types.cc": "0940b096f64cc233585ba389c4870f3bdada60378a84b113031183b809c780a0",
-        "compiler/frontend/typing/type_checker_interfaces.cc": "f584925f14283272c71a7c8961779ba0b855b42f6d273796dd748faec03ee3fe",
-        "compiler/frontend/typing/type_checker_match.cc": "fc59e9d8dbb20f74c779d4f24f4238f600107d646b17f020c6f34b509b397c50",
-        "compiler/frontend/typing/type_checker_methods.cc": "cac89601ea9e15f9e084b6e605ed939f77d116910e77d776ce58e22cb6f45f83",
-        "compiler/frontend/typing/type_checker_null.cc": "b857314d48b7a3b347a0a2ce0cd59292c8ded4ba0e8e7f7f1d5a1e7da3745f83",
-        "compiler/frontend/typing/type_checker_refinements.cc": "d4d46c23ac6ca8bab812bc90038656cf89b6739adea4efa89b67fb3708b4fa1d",
-        "compiler/frontend/typing/type_checker_switch.cc": "e8799dc6324e1e75423e2cf702f0c83d159748f02f0ff351df4d16f31926a63b",
-        "compiler/frontend/typing/type_checker_types.cc": "d107ab78acd7da18055539a94f49ceb0b51a0c2706c871efcea1e6ebf8518b98",
-        "compiler/frontend/typing/type_inference.cc": "35817790f56654a7445df4a6436a41eef6eb1b60c4ece903095c09bcb23ee790",
-        "compiler/frontend/typing/type_inference_constraints.cc": "04b9782524e6d669aa7e1a0c70fc5414a09454cd8f003638a5c102930d13d067",
-        "compiler/frontend/typing/type_name.cc": "07aaa1574de6bb42f6835d24e490a5304ad16ffc737940ceb607c77e05adf3f3",
-        "compiler/frontend/typing/type_names.h": "b86b30bb4f69b1586f39b592f1ac11f0d0348b7149c060b74476e17f77bd80e8",
-        "compiler/ir/analysis.cc": "f700821d14361b10f4c43bc34f02dc034967200aef2678b80f91670c649aef95",
-        "compiler/ir/analysis.h": "77162855d39fe022a3c9c769d1fd7a321ec10286ed81f15b0a8027e055a6f6bc",
-        "compiler/ir/analysis_unittest.cc": "4d122ab6486a9aae7e7ac388ae98856d02effc81664d63bb9ef69053b7d16ca4",
-        "compiler/ir/declaration_bindings.cc": "992092a95cf4ec060adbb5f444cdde087f5911c378528e10a7365cb5dc4f3e32",
-        "compiler/ir/declaration_bindings.h": "96843a946d5c8810fc578190f9164622bcedc30c8fb65e01910caff3f9b26180",
-        "compiler/ir/ir.h": "85da2c18f3cfe398916f918fbb9a3e6a82726bea89eeede8bb253b1a8d69f48b",
-        "compiler/ir/layout_description.cc": "0bad4368d71f544f14eb9b6806552c97adab8b5f3ba515dfc66739ea026a8539",
-        "compiler/ir/layout_description.h": "93b02ddb004fc3a712599ebe2b779631ce087ed4bdee3605fc3b29ca3545de72",
-        "compiler/ir/layout_instantiation_unittest.cc": "62fcf37ca8571c19e0f1e8a348225ed66ace57bcee2643fb66411c64de30c83a",
-        "compiler/ir/lowerer.cc": "aae982b14519fcca52701a5216004f024d8083711d21b613603ee3d413a7ea1e",
-        "compiler/ir/lowerer.h": "31812342aaf787e11caaa879579fa0945fce9173efd475945d476ab744efc844",
-        "compiler/ir/lowerer_array.cc": "c74c9ad33645b82e3fb65657f813fc6be70152184c6bc4de20df2a6c29774611",
-        "compiler/ir/lowerer_array_algorithms.cc": "41fc186f04be6137941cab142716b3e75e7574e85747af047be3bf1c94ccb0bc",
-        "compiler/ir/lowerer_async.cc": "f0cfe692d1564d7595c0b40ff45ba275227fbe8ebab75b5a5bf9e5f9efd1fa7f",
-        "compiler/ir/lowerer_builtin.cc": "3195cc8b79f95d7f0d635711504a0a7c8eb9220267e2340d8e84a75572036c78",
-        "compiler/ir/lowerer_builtin_members.cc": "27e6581bfa29e8116a7cedee1191c237850fcdd60d8897ff82552a8d949d9d99",
-        "compiler/ir/lowerer_bytes.cc": "cccadaec7b973c78ccf016c48e157c69dc2823c4a6e1b354d9bb92c04cee3585",
-        "compiler/ir/lowerer_class.cc": "da68c804902f3308398306748e24baf896d73bf357a11ef28fc6740c1e7c45f7",
-        "compiler/ir/lowerer_collections.cc": "7445bef470e0752fe38d16836dc837a9f4de593876da1e80267f604ba325a16a",
-        "compiler/ir/lowerer_double.cc": "6b339f493bc750612cd22805c6c4e06a7e921256794465c5a90af2b9741e04dc",
-        "compiler/ir/lowerer_dynamic.cc": "983a4f20d2ce2f559c93b39836d09e30217c0f97b152d53229cf9a0781950938",
-        "compiler/ir/lowerer_dynamic_array.cc": "54224c351d885d484e1b50c23def120988f2411a32881145f98a99c634b15f51",
-        "compiler/ir/lowerer_exception.cc": "9eb3e175d940730eb3f2f4d77b5f78d6c5379a34f8ae41981b47e67c67678545",
-        "compiler/ir/lowerer_flow.cc": "10cdeee884afea3ef7ebee4e4c4a0fe6d44a4d8aadad06168193589a78e00b43",
-        "compiler/ir/lowerer_functions.cc": "749c0fb1229a568a815a7f783c57395ed56c13095bf8d8a723a5218a113d53ba",
-        "compiler/ir/lowerer_match.cc": "306a58a6702d1305336f9370b2a2a76c3b27b4cf980e45255de605f1280b38a1",
-        "compiler/ir/lowerer_string.cc": "a8e9e6a5b4e9b4e47610a0ac07417e754ca6d7b712621f56fa7b29cf674ef40a",
-        "compiler/ir/lowerer_switch.cc": "33b3148af92e5cbe9fa8c07a2225f70075aa879d1478e9d697e5603459a91630",
-        "compiler/ir/lowerer_types.cc": "2569cfef58a24e48129b9f11849ccb997cd02f3aeab6e070a7bb5330eed98940",
-        "compiler/ir/optimizer.cc": "751a31d7f303078dcd4b2191e71710d990155670a695fa7628b014e0918e6e6b",
-        "compiler/ir/preparation.cc": "4b4f86f390bd2faef6012cfd47ca252ce9364936ca0f077fe5850e3589d9540a",
-        "compiler/ir/preparation.h": "6b135a8ba90920c602c6e606481897c30053eb2daea60da61446e470426d468a",
-        "compiler/ir/preparation_unittest.cc": "b607e4d873fe37a296354de4507d2b8d5e138bdad6cc793410a3a5dcd53e0be3",
-        "compiler/ir/register_set.h": "450e0288ad9c1b805a550466e757aaebdf8db12acacae4e701e8208956d17d13",
-        "compiler/jit/code_cache.cc": "fa120dae32577b84affa5b82f028f4e863e443382750e45d85a9add0a01e1d7a",
-        "compiler/jit/code_cache.h": "e490f2408a35120da4869757ce5e502e64a0acb16b8888da81caf0b2361818a5",
-        "compiler/jit/code_cache_unittest.cc": "65f17fe1fd4ef4b5881346bb79f089a2a3c36f9513da5c08fcfd315de216c0c9",
-        "compiler/jit/code_inputs.cc": "d65f84b0cc772c03f9a065fe0544d1a95b4b60ffcacdeb41489a5a76afc308ad",
-        "compiler/jit/compiler.cc": "baf20bbc89864d80873ee5766311003ff6f8d0b8424064a20034f100143f4d85",
-        "compiler/jit/compiler.h": "6ba39441f583b614556ce562b19d04e09542dba5da04b83d5d77d4912efebf54",
-        "compiler/jit/runtime_symbols.cc": "ff0021ed8a132a8fb6247743612afc0558ef4ece65223e42516362408d3e0f55",
-        "compiler/language/async_contract_unittest.cc": "e3908ad21869f7f12f3cc9f5d3580775bd065ee8168d079dc401494876a4d71c",
-        "compiler/language/control_flow_unittest.cc": "1526faa06a21ba411749f8b3f68e51810861d2aba0549f3830657020be05a78a",
-        "compiler/language/debugger_unittest.cc": "e61ddae16ab79475e228599902327f563a9c1744e8a5d44fd931f95414ea6608",
-        "compiler/language/double_unittest.cc": "7cc6f121226af24e1973e0c58b45a49b209307845aeae1be49af2517def7a805",
-        "compiler/language/dynamic_array_unittest.cc": "46ad385571bdf283bc0cc1a59dde3d2b42f9220c35ebb4de50362fe177700bfc",
-        "compiler/language/exception_unittest.cc": "16e5ee8d1d419084fe9ef661a7e81dfae20745f18eebbc75b53a3a589a5123ee",
-        "compiler/language/generic_unittest.cc": "3d792223067ea5f54a3f05476b46a027c8aec0fd76efec45da00a5a967a5b507",
-        "compiler/language/import_unittest.cc": "c943a83725664a976c3f6aab703713b8c2b8934d986fd635ef44db950cda45d7",
-        "compiler/language/json_unittest.cc": "b159cc5f0d938e453e01a64adf0c4909f8ae47ba1c05c8b22c486ca84922f8ae",
-        "compiler/language/lambda_inference_unittest.cc": "1a0e64bd2a1bdc6fa8681dd2025059e35b08b7992de2a756cf8d0ad2b1443af3",
-        "compiler/language/language_basics_unittest.cc": "2042302893831c48b20f77a627e4f18caf9139f5955cbe79e76e7eafc5ded9e8",
-        "compiler/language/module_unittest.cc": "9e6142f5a48417038ebadf2781da858e777a4ba8bc60e960932558b4d89886e8",
-        "compiler/language/native_binding_unittest.cc": "987616cdd2ef3d94f19265781bdb1907230f98b6262e3603c5d28789e07a271d",
-        "compiler/language/optimized_execution_unittest.cc": "cc4599187c5eec9ecc528b6053772a8922b698ba66051d8d95fc4560838a7e5d",
-        "compiler/language/regexp_unittest.cc": "292069187b7cedcf26781b2830f1e60cfc9178d8445eb0a9af57b664029cf7fc",
-        "compiler/language/sdk_modules_unittest.cc": "4345e71f911751116be9884a6633f14aa63fe1bd13405e0744c9bd69dd80538a",
-        "compiler/language/standard_library_unittest.cc": "33e185f34ee6b0c9536fbba6a221e983b44c681160df3f47b059e03967ad7e7e",
-        "compiler/language/string_unittest.cc": "d1bbcd3c8a61177d41a9801874f2d3fec86614a502d99f443483bf24157f51e2",
-        "compiler/native/array_analysis_unittest.cc": "8d30584b80184d36bc8df2735089d04405f6154f7b95f0669c1deaaf2d5fb348",
-        "compiler/native/async_emitter.cc": "160b3e771e294be639c788e429b4d2de23f7f10eda82d18b0ddbcaee1e5acf6c",
-        "compiler/native/borrow_analysis.cc": "20488b99831ecbecad772130a4fdf5e23782e3663f7f9d71505bb32dca25a42b",
-        "compiler/native/call_emitter.cc": "f1a1d1b43bb0c2cfe4d68d2793877b765f5eaaf7aa912a70c2de44def0435872",
-        "compiler/native/call_targets.cc": "e26ecfc47d1497aa2dbac5550bee2ebea49d071b3d5f13c80bcdbdb8b634e61e",
-        "compiler/native/call_targets.h": "879fd2e437f294440fa9cbbd31e0dcec496422ce306a25868c83da85f1f51091",
-        "compiler/native/code_generator.cc": "daed76a0f8486a1c4bfe0f6f8227ccf8c9c2259d3a9a3da995191f6d3b3355d6",
-        "compiler/native/code_generator.h": "23d4b7e454d40a7d3ff2592a4a920d0f6f6c831658b6400ba54ec456fc32873e",
-        "compiler/native/deoptimization_emitter.cc": "338d9fd5b86dc3162df8efe12369fffb8246d146f4fc12e4446eba0c9485bf48",
-        "compiler/native/escape_analysis.cc": "2d9a8913682cb470cee7c4ee2ca9ff4c59b650b4e3e5b63dc080077ec2af793a",
-        "compiler/native/escape_analysis.h": "4e543eb8861d7ce7d2b242c350f97ae98bb8c7bec509892001e2aba9c789dfd6",
-        "compiler/native/escape_analysis_unittest.cc": "d17fd9759c2f1ef29a39b3709d907f9da51a089c5679e6828d117ff8b7db61ed",
-        "compiler/native/escape_rewriter.cc": "2f16c6569062e78448c5839e043546c67e677afcc5c9950b6a415b2bf8f17a4e",
-        "compiler/native/frame_emitter.cc": "16de0ca153c5b4cfa68b05eb7a619d8ce412aacef9c2f6c1eba66d61cb36be56",
-        "compiler/native/function_emitter.cc": "9f678e79c207174a40c4430a6b35f08faac86f71cf3dfe9cdb841579d4afe03f",
-        "compiler/native/function_emitter.h": "0ee21a6fd437189ce6280aa6eff69fdd319e9aa8078ff39b187f9953ecfb3308",
-        "compiler/native/integer_loop_optimizer.cc": "26cb599681a4a5cc6abcf384fa8391ae082ca880ce79ebbe3d837bfa6706de87",
-        "compiler/native/materialization_emitter.cc": "71ee6f060ab5ab3cb76b061cb36219f080e934966ec95eaf1c2e4472d0dc836c",
-        "compiler/native/memory_emitter.cc": "8acb2bdb33031a9937ff599fb486473e7bf64ab894039a64f4a98ea64eb48373",
-        "compiler/native/native_frame_plan.cc": "cb1cee09147c9339c52f441a417d2249291d35fac8d88f38b59f06afaea6aca3",
-        "compiler/native/native_image_data.cc": "5c4199b4f9f78bf0f94e7154299a9c808f09721b83c7a4101614d727d5cfb48d",
-        "compiler/native/native_values.cc": "b30bd09c1a412f5e88326266e36e83cc3e28cb5c67e10b9a6403baad7e25c8e7",
-        "compiler/native/native_values.h": "23487ad19958c8a09f82771120b2694217f0103e4723caa329b0be8a919b3b27",
-        "compiler/native/reference_emitter.cc": "7f39c91af8819a534c7f98f0e6a8ff34ee238bbde10365569c0e5a84729c05dc",
-        "compiler/native/scalar_emitter.cc": "bb138afddd2b263b3df37b96a8cdf4d14c36febe608d01ea79d81b633b4fa4aa",
-        "compiler/repl/repl_source.cc": "998961efbcc3d61b728e3fa09da51a72478596b126f5c72ad9bef936582d1413",
-        "compiler/testing/command.cc": "add236b49e2ec8b56346fdf25770896fc41394239665b1cb5d340582cce3518b",
-        "compiler/testing/mock_report.cc": "44b180c363ff44e710ec7a153b4cf0156d403f4611884727d2e34ad55a1c4c78",
-        "compiler/testing/report.cc": "d045bf2116415d6bb3a5afba2d16ee0c8cc42b6a3adba622631996c3394bccb1",
-        "compiler/testing/suite.cc": "01409d82a1c8e044fe8e0443057e082ae776b3c51c104b1526fd0844a0b590b1",
-        "compiler/testing/suite.h": "3711c4179de98619e7ff779f859f5625209490b93f5cd82936a8cd3829c1e8d9",
-        "compiler/tooling/documentation/builtin_documentation.cc": "964f5015dd22e8938f5451be0bd797c8c972e66918032a4233349359f60d539b",
-        "compiler/tooling/documentation/builtin_documentation.h": "5361aecd87ed7f86105245c47eb128da6081c929e515baeeca9d86afbdfde998",
-        "compiler/tooling/documentation/documentation.cc": "d28c8009acc4be3b1e99bf0eb1b1db1c875e4336b45439cb930d75dffc8a71ca",
-        "compiler/tooling/documentation/documentation.h": "e0e60caae15bf81c95564056b970809ec649faafa1c8962272097d1db31c8510",
-        "compiler/tooling/documentation/documentation_unittest.cc": "d56398ce43a4255bd6e9992d81d563ae2f92f15e82aecfefb0a60b73ae4be5e2",
-        "compiler/tooling/format/formatter.cc": "2048a3e487a5d0ab94f485693d388f54590150f30bc8f271143aa5557e3fd3bc",
-        "compiler/tooling/lsp/language_server_diagnostics.cc": "6b4b932fb99a7ec058cf6054d5d062dfcff1341aeac190390e92eec896d4ab31",
-        "compiler/tooling/lsp/language_server_documents.cc": "95a6f70b33d65774bd646a28d070ca722b31c9c590985a5ee966b862c6f37de4",
-        "compiler/tooling/lsp/language_server_internal.h": "a2b30a3d4eb25774148fe3d3decc6611e7b31d8e9830b4c3c46f83195554b742",
-        "compiler/tooling/lsp/language_server_queries.cc": "d0fb713eb80d426c03119639ce990cea19c458ebc99371851d52fe4ff5187f8e",
-        "compiler/tooling/mock/mock_command.cc": "b99650a85de9e22325bf13712cf1c2e7b627b24a15fbb7ba5c623455e780b581",
-        "compiler/tooling/mock/mock_generator.cc": "fe9ffa52435e8778718ceb545a627964009b3303c5d33f22f6f03b77595a0e67",
-        "compiler/tooling/semantic/semantic_arguments.cc": "1b60854278e9444d4e5c7bc3368ee7674dc11f17b340626775c7aad2b5589350",
-        "compiler/tooling/semantic/semantic_completion.cc": "2609d98d4d17ef543adf3d1c8511ac175905ade7d1836fd9a83203bd1bb118a6",
-        "compiler/tooling/semantic/semantic_declarations.cc": "825d61948611e561268412c174e590eecfa1910c146b360303c9a2a38df2d1bb",
-        "compiler/tooling/semantic/semantic_generics.cc": "2af63afd2c8b813a672b47031f41f752d133444942784e9427b60edbd798c3dd",
-        "compiler/tooling/semantic/semantic_hover.cc": "64bbd10a716ebd8ae873f1b0b0acbb9b5ff398a3663e38634009d583d6f4a18a",
-        "compiler/tooling/semantic/semantic_index.cc": "0e0821632668ea0ce2e7e2c31fcb62150c92081d871e85af15111845254e2340",
-        "compiler/tooling/semantic/semantic_index.h": "14222e8071bd1a767a342d447fb523fcae9a475c7522764e7196d843dd095328",
-        "compiler/tooling/semantic/semantic_rename.cc": "bd41e5e62f49f5891b646f301b899abb44946214ad128ea4845a057d80ab065c",
-        "compiler/tooling/semantic/semantic_tokens.cc": "3ac30d4c75365cdb96fab178e16f8896d29cb68751d92d0e1f328941480b7146",
-        "compiler/tooling/source_text.cc": "19edb547f18c41d8ddc11768cfd3b7832163afb97116cc5ae1d7f227355e7a2c",
-        "compiler/tooling/source_text.h": "3c67bef572228387be3466cebb8dd67a2f31f7d44a764fe55cb2b2546824524c",
-        "compiler/tooling/source_text_unittest.cc": "81aa348eaada48514e851b019602675597d7f5d2159338bb2482b73d063cfb03",
-        "runtime/BUILD.gn": "fa8c1360099795a9b6537c3be06c8bfcc1506126f4f16ee5833b235492c1d16f",
-        "runtime/native/native_abi_unittest.cc": "ccfb5c6ab3da10991c2dc2ca5319a08d4bdefc1344568827872d515bb89b26ab",
-        "tools/aot_async_fixture.py": "a60c13e33224282a36e58db1c3b8aa4f3223550f9dbe1cb8f242634c40baf1fa",
-        "tools/aot_binding_fixture.py": "d32441a07ac8c45a6497d264e61e1395664cdaa97c533fdacf5ccf600d13e180",
-        "tools/aot_callback_fixture.py": "889a02d703c006405ba5c3b9290ae6341a6cb34833726cc030dc8e31ccff7a4d",
-        "tools/aot_class_fixture.py": "f0114c45a33c042ad9f3acf138b8a60c85b481e81c1b1e72184ce65b0e0da915",
-        "tools/aot_field_loop_fixture.py": "6651ce37289d3bebb8fdff3641d1c80413a90381482db84b3524b8009174bdcc",
-        "tools/aot_global_fixture.py": "02c2e82597f46175db0dff6876c754cc921736f31d0705c2bb6023091cd6d26f",
-        "tools/aot_integer_loop_fixture.py": "60d66d8e04fed08cd7f375b8967cf3aeffb22631d807d8ef8345bda547af8490",
-        "tools/aot_numeric_fixture.py": "eea5328e76f5b8b0f3f44c7206dd7cb7a5b5d2e7533802ae691ff5ec8894691f",
-        "tools/aot_unittest.py": "0568fd638176372d2f45bd8d1bc07081152ea3908cfdc77422e42130d67a4f51",
-        "tools/test.py": "f52e40d70034eba7aa6a4a5cd37ca591c00dadf54c756a832bb6f545ef28e1ee",
-        "tools/tooling_unittest.py": "11138cc54ff0cbb6ea0f9599688c017a32dff75def1c85002af45c3e4b47711c",
-        "base/source_lines.cc": "f29412ec8a4b39997dd5933bf1d15886ffcb3da69b1d25e894f2492e3a21fdf4",
-        "base/source_lines.h": "34217c353457fe0edac715ecbbe293f0c9087322590ba6cc115ca2e1230c15fc",
-        "base/test_protocol.h": "7fd0579c06c6ddf7a35df55aa5522c7881a4ee1b28794cb56aedfc3d5ba94540",
-        "compiler/development/development_watch.cc": "25c54ddcff815c73e99e0a0a0315ca4810e5132475aba6dbbfb43f353eb72560",
-        "compiler/development/development_watch_win.cc": "8c57799753429966d15c92eb16a759f4a478f813c60313f5f22861dbd30d3103",
-        "compiler/frontend/builtins/async_builtins.cc": "01ba353221bd8acf7583bd863c8fcd037f94596a884653edbb0ca3a5a80e50f6",
-        "compiler/frontend/builtins/async_builtins.h": "27d7a8368f69d6b9e06b891b7bd0ae26e9a6b71769d3c9b131a3045d3756dfab",
-        "compiler/frontend/syntax/names.h": "3a7085a6c998bdc8518e8f373d2a00ea25fe46148e69a764104f39ea9344e41e",
-        "compiler/frontend/typing/semantic_model.cc": "e1959095e95caf5818685f5693a8ade00d4339d1f47a0eb93233b18bfce4d342",
-        "compiler/frontend/typing/semantic_model.h": "79dfae95659046d15b9c55a37bd207d5c9594b9676a30e589b7e7bbe3ebe3d55",
-        "compiler/jit/platform_support_eh_frame.cc": "9ea18b989b5a31a8d414097a4b51a66cb2a1a5971816033a3a663c6a9cae769c",
-        "compiler/language/native_scale_unittest.cc": "440caa656f896d147ab91b27b2e455f626d5b0df6c9e42897287a8798d7d3321",
-        "compiler/test_support/checker_test_support.h": "14e2d2ee380403abd912b12ad8e8e914d2319e9e7aaa51de91421ec6d8952266",
-        "compiler/test_support/execution_expectations.cc": "d449aaaffa6ed96bcc8779cda6a6449cf3097acd4afd445326e0646ed0320de4",
-        "compiler/test_support/execution_expectations.h": "5690b668f49025c9d8696c930dff21901a11206a204f213b1638df9fac3c91d0",
-        "compiler/test_support/preparation_test_support.h": "10b09500d78b893700039b463d3a93cab6b5fb665b7fabfb9841dbfe28a59399",
-        "runtime/native/native_symbols.h": "b26c046a1f72a5601d54461cae3a8afc860564febf818f4dd2efe4e5e31d8c01"
-      }
-    },
-    "build": {
-      "configuration": "release",
-      "compiler_build_identity": "2ed39eaedbd02a0b9a8fc52d4df440aa2a1444ab16eb5e423589993b979c3146",
-      "native_optimization": "LLVM O2"
-    },
-    "suite": {
-      "identity": "review-cleanup/compiler-tooling-ir-filecapture/35-cases",
-      "command": [
-        "python",
-        "-m",
-        "tools.vl",
-        "bench",
-        "--",
-        "--benchmark_filter=^(parse/comparisons|tooling/completion|analysis/liveness|cache/|repl/submission/(0|32|128)/|files/capture/(idle|edit)/(2|32|256)/|jit/(string_growth|string_parts_concat|array_allocation|allocation_gc)$)",
-        "--benchmark_min_time=0.1s",
-        "--benchmark_repetitions=5",
-        "--benchmark_report_aggregates_only=true",
-        "--benchmark_out=C:\\Users\\zoy\\AppData\\Local\\Temp\\vela-review-release-final.json",
-        "--benchmark_out_format=json"
-      ],
-      "expected_cases": [
-        "cache/native_instantiate",
-        "cache/content_hit",
-        "cache/uncached_file_compile",
-        "cache/unicode_content_hit",
-        "cache/unicode_file_compile",
-        "cache/library_content_hit",
-        "cache/library_file_compile",
-        "tooling/completion/fresh/8",
-        "tooling/completion/fresh/32",
-        "tooling/completion/shared_parse/8",
-        "tooling/completion/shared_parse/32",
-        "tooling/completion/reuse_index/8",
-        "tooling/completion/reuse_index/32",
-        "jit/allocation_gc",
-        "jit/array_allocation",
-        "jit/string_growth",
-        "jit/string_parts_concat",
-        "files/capture/idle/2/real_time",
-        "files/capture/idle/32/real_time",
-        "files/capture/idle/256/real_time",
-        "files/capture/edit/2/manual_time",
-        "files/capture/edit/32/manual_time",
-        "files/capture/edit/256/manual_time",
-        "analysis/liveness/all/8/16",
-        "analysis/liveness/all/32/64",
-        "analysis/liveness/all/64/256",
-        "analysis/liveness/necessary/8/16",
-        "analysis/liveness/necessary/32/64",
-        "analysis/liveness/necessary/64/256",
-        "repl/submission/0/iterations:8",
-        "repl/submission/32/iterations:8",
-        "repl/submission/128/iterations:8",
-        "parse/comparisons/128",
-        "parse/comparisons/512",
-        "parse/comparisons/2048"
-      ]
-    },
-    "measurement": {
-      "minimum_time": "0.1s",
-      "repetitions": 5,
-      "aggregates_only": true,
-      "isolated_from_tests_and_lint": true
-    },
-    "validation": {
-      "all_expected_cases_passed": true,
-      "all_correctness_checks_passed": true,
-      "case_count": 35,
-      "debug_cpp_tests_passed": 2243,
-      "tooling_tests_passed": 188,
-      "aot_host_tests_passed": 57,
-      "lint_files_checked": 654,
-      "lint_passed": true,
-      "gn_debug_passed": true,
-      "gn_release_passed": true
-    },
-    "workloads": {
-      "analysis/liveness/all/32/64": {
-        "time_unit": "ns",
-        "real_time_median": 7711.22072639123,
-        "real_time_stddev": 159.8613615415358,
-        "real_time_cv": 0.020646774675730038,
-        "cpu_time_median": 7785.251619332337,
-        "cpu_time_cv": 0.0,
-        "counters": {
-          "blocks": 33.0,
-          "instructions": 2081.0
-        }
-      },
-      "analysis/liveness/all/64/256": {
-        "time_unit": "ns",
-        "real_time_median": 50716.96427226665,
-        "real_time_stddev": 2322.783907252403,
-        "real_time_cv": 0.04551536325404848,
-        "cpu_time_median": 48828.125,
-        "cpu_time_cv": 0.0,
-        "counters": {
-          "blocks": 65.0,
-          "instructions": 16449.0
-        }
-      },
-      "analysis/liveness/all/8/16": {
-        "time_unit": "ns",
-        "real_time_median": 1757.4609377593983,
-        "real_time_stddev": 95.78721235139825,
-        "real_time_cv": 0.05513263144528443,
-        "cpu_time_median": 1743.8616071428569,
-        "cpu_time_cv": 0.04563404035713605,
-        "counters": {
-          "blocks": 9.0,
-          "instructions": 137.0
-        }
-      },
-      "analysis/liveness/necessary/32/64": {
-        "time_unit": "ns",
-        "real_time_median": 29948.816973046632,
-        "real_time_stddev": 2263.1339215641083,
-        "real_time_cv": 0.07551396310151144,
-        "cpu_time_median": 27901.78571428571,
-        "cpu_time_cv": 0.0545382433536504,
-        "counters": {
-          "blocks": 33.0,
-          "instructions": 2081.0
-        }
-      },
-      "analysis/liveness/necessary/64/256": {
-        "time_unit": "ns",
-        "real_time_median": 203774.28994078314,
-        "real_time_stddev": 3301.287866057815,
-        "real_time_cv": 0.01621249635276689,
-        "cpu_time_median": 210201.7937219731,
-        "cpu_time_cv": 0.06368866947734611,
-        "counters": {
-          "blocks": 65.0,
-          "instructions": 16449.0
-        }
-      },
-      "analysis/liveness/necessary/8/16": {
-        "time_unit": "ns",
-        "real_time_median": 5148.200739123854,
-        "real_time_stddev": 475.0046426123207,
-        "real_time_cv": 0.0874128490863223,
-        "cpu_time_median": 5254.848473524906,
-        "cpu_time_cv": 0.1360827634879545,
-        "counters": {
-          "blocks": 9.0,
-          "instructions": 137.0
-        }
-      },
-      "cache/content_hit": {
-        "time_unit": "ns",
-        "real_time_median": 1320821.1115044025,
-        "real_time_stddev": 66545.28538564157,
-        "real_time_cv": 0.0497277643509878,
-        "cpu_time_median": 1388888.8888888888,
-        "cpu_time_cv": 0.10726410596590664,
-        "counters": {}
-      },
-      "cache/library_content_hit": {
-        "time_unit": "ns",
-        "real_time_median": 4437951.515710941,
-        "real_time_stddev": 358767.99954054726,
-        "real_time_cv": 0.077030356741564,
-        "cpu_time_median": 4261363.636363637,
-        "cpu_time_cv": 0.04861017342390794,
-        "counters": {}
-      },
-      "cache/library_file_compile": {
-        "time_unit": "ns",
-        "real_time_median": 93155200.0110969,
-        "real_time_stddev": 2835746.299204015,
-        "real_time_cv": 0.030403288083294934,
-        "cpu_time_median": 93750000.0,
-        "cpu_time_cv": 0.11785113019775771,
-        "counters": {}
-      },
-      "cache/native_instantiate": {
-        "time_unit": "ns",
-        "real_time_median": 827.7550221334552,
-        "real_time_stddev": 47.521557274594755,
-        "real_time_cv": 0.05770807608989363,
-        "cpu_time_median": 784.7377232142856,
-        "cpu_time_cv": 0.09094130723196375,
-        "counters": {}
-      },
-      "cache/uncached_file_compile": {
-        "time_unit": "ns",
-        "real_time_median": 14942511.107720848,
-        "real_time_stddev": 575093.4682798906,
-        "real_time_cv": 0.03763022095218755,
-        "cpu_time_median": 15625000.0,
-        "cpu_time_cv": 0.050819726761358305,
-        "counters": {}
-      },
-      "cache/unicode_content_hit": {
-        "time_unit": "ns",
-        "real_time_median": 1210822.2225732687,
-        "real_time_stddev": 222943.56727215965,
-        "real_time_cv": 0.17235257205568516,
-        "cpu_time_median": 1215277.7777777775,
-        "cpu_time_cv": 0.17653168243419376,
-        "counters": {}
-      },
-      "cache/unicode_file_compile": {
-        "time_unit": "ns",
-        "real_time_median": 12281366.66921071,
-        "real_time_stddev": 501238.70803823246,
-        "real_time_cv": 0.04001003607768319,
-        "cpu_time_median": 12152777.77777778,
-        "cpu_time_cv": 0.06211299937499349,
-        "counters": {}
-      },
-      "files/capture/edit/2/manual_time": {
-        "time_unit": "ns",
-        "real_time_median": 632963.9344262293,
-        "real_time_stddev": 84604.32509796493,
-        "real_time_cv": 0.12959415896798696,
-        "cpu_time_median": 832479.5081967212,
-        "cpu_time_cv": 0.14390989949130573,
-        "counters": {
-          "changed_files": 1.0,
-          "files": 2.0
-        }
-      },
-      "files/capture/edit/256/manual_time": {
-        "time_unit": "ns",
-        "real_time_median": 660897.4683544303,
-        "real_time_stddev": 1097647.4407123572,
-        "real_time_cv": 0.9327044447815711,
-        "cpu_time_median": 3362341.7721518986,
-        "cpu_time_cv": 0.18269278602143016,
-        "counters": {
-          "changed_files": 1.0,
-          "files": 256.0
-        }
-      },
-      "files/capture/edit/32/manual_time": {
-        "time_unit": "ns",
-        "real_time_median": 557863.4831460677,
-        "real_time_stddev": 78474.02655006741,
-        "real_time_cv": 0.14755325449156975,
-        "cpu_time_median": 1404494.3820224719,
-        "cpu_time_cv": 0.09721635184681408,
-        "counters": {
-          "changed_files": 1.0,
-          "files": 32.0
-        }
-      },
-      "files/capture/idle/2/real_time": {
-        "time_unit": "ns",
-        "real_time_median": 29.297258365392747,
-        "real_time_stddev": 0.9774671463039407,
-        "real_time_cv": 0.032750650803988576,
-        "cpu_time_median": 29.42668345740146,
-        "cpu_time_cv": 0.07856742013183918,
-        "counters": {
-          "changed_files": 0.0,
-          "files": 2.0
-        }
-      },
-      "files/capture/idle/256/real_time": {
-        "time_unit": "ns",
-        "real_time_median": 30.036530168691296,
-        "real_time_stddev": 1.2354428271377058,
-        "real_time_cv": 0.04025329081188314,
-        "cpu_time_median": 29.675090206998657,
-        "cpu_time_cv": 0.07856742013183918,
-        "counters": {
-          "changed_files": 0.0,
-          "files": 256.0
-        }
-      },
-      "files/capture/idle/32/real_time": {
-        "time_unit": "ns",
-        "real_time_median": 29.815869114196698,
-        "real_time_stddev": 0.33487086629077306,
-        "real_time_cv": 0.011231864946180076,
-        "cpu_time_median": 29.390925963081862,
-        "cpu_time_cv": 0.05826835718140003,
-        "counters": {
-          "changed_files": 0.0,
-          "files": 32.0
-        }
-      },
-      "jit/allocation_gc": {
-        "time_unit": "ns",
-        "real_time_median": 33.92229909877642,
-        "real_time_stddev": 0.8173100170332445,
-        "real_time_cv": 0.024021233112417644,
-        "cpu_time_median": 31.389508928571434,
-        "cpu_time_cv": 0.09316949906249022,
-        "counters": {
-          "allocated_bytes": 192.0,
-          "committed_bytes": 192.0,
-          "first_allocated_bytes": 192.0,
-          "first_committed_bytes": 192.0,
-          "heap_objects": 3.0,
-          "result": 1000.0,
-          "retained_bytes": 192.0,
-          "retained_objects": 3.0
-        }
-      },
-      "jit/array_allocation": {
-        "time_unit": "ns",
-        "real_time_median": 29928.883928472973,
-        "real_time_stddev": 1065.4809302713627,
-        "real_time_cv": 0.03502096896329323,
-        "cpu_time_median": 27901.78571428571,
-        "cpu_time_cv": 0.10203171055293365,
-        "counters": {
-          "allocated_bytes": 36032.0,
-          "committed_bytes": 50752.0,
-          "first_allocated_bytes": 60352.0,
-          "first_committed_bytes": 62912.0,
-          "heap_objects": 143.0,
-          "result": 499500.0,
-          "retained_bytes": 192.0,
-          "retained_objects": 3.0
-        }
-      },
-      "jit/string_growth": {
-        "time_unit": "ns",
-        "real_time_median": 52124.20489558602,
-        "real_time_stddev": 1337.784796859362,
-        "real_time_cv": 0.025445959112903555,
-        "cpu_time_median": 52310.01004352192,
-        "cpu_time_cv": 0.0,
-        "counters": {
-          "allocated_bytes": 51552.0,
-          "committed_bytes": 166048.0,
-          "first_allocated_bytes": 42336.0,
-          "first_committed_bytes": 148640.0,
-          "heap_objects": 55.0,
-          "result": 512.0,
-          "retained_bytes": 352.0,
-          "retained_objects": 5.0
-        }
-      },
-      "jit/string_parts_concat": {
-        "time_unit": "ns",
-        "real_time_median": 154481.36160297767,
-        "real_time_stddev": 2914.961047041906,
-        "real_time_cv": 0.018728314895801845,
-        "cpu_time_median": 156947.54464285716,
-        "cpu_time_cv": 0.0,
-        "counters": {
-          "allocated_bytes": 6832.0,
-          "committed_bytes": 65648.0,
-          "first_allocated_bytes": 59568.0,
-          "first_committed_bytes": 65648.0,
-          "heap_objects": 62.0,
-          "result": 1000.0,
-          "retained_bytes": 816.0,
-          "retained_objects": 10.0
-        }
-      },
-      "parse/comparisons/128": {
-        "time_unit": "ns",
-        "real_time_median": 35674.59820520265,
-        "real_time_stddev": 511.6508103812429,
-        "real_time_cv": 0.014283705456634821,
-        "cpu_time_median": 34877.23214285714,
-        "cpu_time_cv": 0.043844470147052284,
-        "counters": {}
-      },
-      "parse/comparisons/2048": {
-        "time_unit": "ns",
-        "real_time_median": 576301.785778404,
-        "real_time_stddev": 17534.308199585364,
-        "real_time_cv": 0.030118353121929998,
-        "cpu_time_median": 558035.7142857143,
-        "cpu_time_cv": 0.0545382433536504,
-        "counters": {}
-      },
-      "parse/comparisons/512": {
-        "time_unit": "ns",
-        "real_time_median": 138920.111154827,
-        "real_time_stddev": 2411.2622828823355,
-        "real_time_cv": 0.01726855659808754,
-        "cpu_time_median": 138888.8888888889,
-        "cpu_time_cv": 0.0545382433536504,
-        "counters": {}
-      },
-      "repl/submission/0/iterations:8": {
-        "time_unit": "ns",
-        "real_time_median": 7206887.501524761,
-        "real_time_stddev": 308953.2033293614,
-        "real_time_cv": 0.042290436038621704,
-        "cpu_time_median": 7812500.0,
-        "cpu_time_cv": 0.2201736911931775,
-        "counters": {
-          "class_layouts": 2.0,
-          "functions": 3.0,
-          "heap_committed_bytes": 336.0,
-          "heap_live_bytes": 208.0,
-          "source_bytes": 34.0
-        }
-      },
-      "repl/submission/128/iterations:8": {
-        "time_unit": "ns",
-        "real_time_median": 9935437.46881187,
-        "real_time_stddev": 1587581.7914188565,
-        "real_time_cv": 0.17476932114785584,
-        "cpu_time_median": 9765625.0,
-        "cpu_time_cv": 0.0,
-        "counters": {
-          "class_layouts": 2.0,
-          "functions": 3.0,
-          "heap_committed_bytes": 464.0,
-          "heap_live_bytes": 208.0,
-          "source_bytes": 2466.0
-        }
-      },
-      "repl/submission/32/iterations:8": {
-        "time_unit": "ns",
-        "real_time_median": 7477324.987121391,
-        "real_time_stddev": 397126.4347557762,
-        "real_time_cv": 0.05362303535343119,
-        "cpu_time_median": 7812500.0,
-        "cpu_time_cv": 0.39528470752104744,
-        "counters": {
-          "class_layouts": 2.0,
-          "functions": 3.0,
-          "heap_committed_bytes": 464.0,
-          "heap_live_bytes": 208.0,
-          "source_bytes": 642.0
-        }
-      },
-      "tooling/completion/fresh/32": {
-        "time_unit": "ns",
-        "real_time_median": 9695761.541549403,
-        "real_time_stddev": 736260.5573234834,
-        "real_time_cv": 0.07353660129287018,
-        "cpu_time_median": 9615384.615384616,
-        "cpu_time_cv": 0.08838834764831907,
-        "counters": {}
-      },
-      "tooling/completion/fresh/8": {
-        "time_unit": "ns",
-        "real_time_median": 2717054.444494554,
-        "real_time_stddev": 297442.51275284967,
-        "real_time_cv": 0.10781103967874499,
-        "cpu_time_median": 2777777.7777777775,
-        "cpu_time_cv": 0.1372119201815112,
-        "counters": {}
-      },
-      "tooling/completion/reuse_index/32": {
-        "time_unit": "ns",
-        "real_time_median": 272.2620930006391,
-        "real_time_stddev": 3.8731754311520525,
-        "real_time_cv": 0.014265185111835176,
-        "cpu_time_median": 260.6616886540014,
-        "cpu_time_cv": 0.0,
-        "counters": {}
-      },
-      "tooling/completion/reuse_index/8": {
-        "time_unit": "ns",
-        "real_time_median": 269.5531249108691,
-        "real_time_stddev": 6.412553488042339,
-        "real_time_cv": 0.023621486779191826,
-        "cpu_time_median": 279.01785714285717,
-        "cpu_time_cv": 0.0,
-        "counters": {}
-      },
-      "tooling/completion/shared_parse/32": {
-        "time_unit": "ns",
-        "real_time_median": 4114803.7028809385,
-        "real_time_stddev": 223720.02830586577,
-        "real_time_cv": 0.05310164622559525,
-        "cpu_time_median": 4050925.9259259263,
-        "cpu_time_cv": 0.07401656182502166,
-        "counters": {}
-      },
-      "tooling/completion/shared_parse/8": {
-        "time_unit": "ns",
-        "real_time_median": 1042957.4628430071,
-        "real_time_stddev": 25109.615611615915,
-        "real_time_cv": 0.02415902989875916,
-        "cpu_time_median": 1049440.2985074627,
-        "cpu_time_cv": 0.07856742013183918,
-        "counters": {}
-      }
-    },
-    "comparison_to_previous": {
-      "comparable": false,
-      "reason": "The previous retained run uses a different benchmark suite and measurement settings."
-    }
-  },
-  "latest": {
     "run_date": "2026-11-02T10:04:12.742910+00:00",
     "machine": {
       "os": "Darwin",
@@ -1352,6 +607,1028 @@
     "comparison_to_previous": {
       "comparable": false,
       "reason": "Different machine, toolchain, benchmark suite and measurement settings."
+    }
+  },
+  "latest": {
+    "run_date": "2026-11-02T12:09:44.218784+00:00",
+    "machine": {
+      "os": "Darwin",
+      "release": "27.0.0",
+      "architecture": "arm64",
+      "logical_cpus": 8,
+      "cpu": "Apple M1 Pro"
+    },
+    "toolchain": {
+      "cxx": "Fuchsia clang version 23.0.0git (https://llvm.googlesource.com/llvm-project 80743bd43fd5b38fedc503308e7a652e23d3ec93)",
+      "llvm_sdk": "21.1.8"
+    },
+    "source": {
+      "revision": "41006a928d2a022f512528f43e8e22f2d9991dad",
+      "status": "",
+      "working_tree_clean": true,
+      "compiler_build_identity": "65c516df3b1f4dc2950209e15c928e0a6ecc1d5aea62e69f09a2c84a3f8feaea",
+      "changed_file_sha256": {}
+    },
+    "build": {
+      "configuration": "release",
+      "host_flags": "GN Release -O3 -DNDEBUG",
+      "jit_mode": "closed",
+      "benchmark_context": {
+        "date": "2026-11-02T20:06:34+08:00",
+        "host_name": "zoydeMacBook-Pro.local",
+        "executable": "/Users/zoy/vela/out/release/vela_benchmarks",
+        "num_cpus": 8,
+        "mhz_per_cpu": 24,
+        "cpu_scaling_enabled": false,
+        "caches": [
+          {
+            "type": "Data",
+            "level": 1,
+            "size": 65536,
+            "num_sharing": 0
+          },
+          {
+            "type": "Instruction",
+            "level": 1,
+            "size": 131072,
+            "num_sharing": 0
+          },
+          {
+            "type": "Unified",
+            "level": 2,
+            "size": 4194304,
+            "num_sharing": 1
+          }
+        ],
+        "load_avg": [
+          14.1333,
+          22.8047,
+          23.6909
+        ],
+        "library_version": "1.9.5",
+        "library_build_type": "release",
+        "json_schema_version": 1,
+        "luajit_arch": "arm64",
+        "luajit_build": "upstream amalgamation; default allocator; no FFI workloads",
+        "luajit_dualnum": "1",
+        "luajit_gc64": "1",
+        "luajit_maximum_warmup": "1024",
+        "luajit_minimum_warmup": "128",
+        "luajit_revision": "a4c064539ea931274d407e1249b4bb575424a0f4",
+        "luajit_trace_limit": "1000",
+        "luajit_version": "LuaJIT 2.1.1792588164"
+      }
+    },
+    "suite": {
+      "identity": "representative/18-workloads/36-sizes/jit-vs-cpp",
+      "command": [
+        "python3",
+        "-m",
+        "tools.vl",
+        "bench",
+        "--compare",
+        "--report",
+        "/tmp/vela-cpp-comparison.json",
+        "--",
+        "--benchmark_filter=^compare/(cpp|jit)/",
+        "--benchmark_min_time=0.2s",
+        "--benchmark_repetitions=7"
+      ],
+      "expected_cases": [
+        "compare/cpp/sieve/10000/real_time",
+        "compare/jit/sieve/10000/real_time",
+        "compare/cpp/sieve/100000/real_time",
+        "compare/jit/sieve/100000/real_time",
+        "compare/cpp/mandelbrot/64/real_time",
+        "compare/jit/mandelbrot/64/real_time",
+        "compare/cpp/mandelbrot/128/real_time",
+        "compare/jit/mandelbrot/128/real_time",
+        "compare/cpp/quicksort/1024/real_time",
+        "compare/jit/quicksort/1024/real_time",
+        "compare/cpp/quicksort/8192/real_time",
+        "compare/jit/quicksort/8192/real_time",
+        "compare/cpp/binary_trees/6/real_time",
+        "compare/jit/binary_trees/6/real_time",
+        "compare/cpp/binary_trees/9/real_time",
+        "compare/jit/binary_trees/9/real_time",
+        "compare/cpp/particles/128/real_time",
+        "compare/jit/particles/128/real_time",
+        "compare/cpp/particles/1024/real_time",
+        "compare/jit/particles/1024/real_time",
+        "compare/cpp/word_count/256/real_time",
+        "compare/jit/word_count/256/real_time",
+        "compare/cpp/word_count/2048/real_time",
+        "compare/jit/word_count/2048/real_time",
+        "compare/cpp/closure_pipeline/1024/real_time",
+        "compare/jit/closure_pipeline/1024/real_time",
+        "compare/cpp/closure_pipeline/8192/real_time",
+        "compare/jit/closure_pipeline/8192/real_time",
+        "compare/cpp/array_growth/1024/real_time",
+        "compare/jit/array_growth/1024/real_time",
+        "compare/cpp/array_growth/65536/real_time",
+        "compare/jit/array_growth/65536/real_time",
+        "compare/cpp/array_growth_reserved/1024/real_time",
+        "compare/jit/array_growth_reserved/1024/real_time",
+        "compare/cpp/array_growth_reserved/65536/real_time",
+        "compare/jit/array_growth_reserved/65536/real_time",
+        "compare/cpp/dynamic_values/256/real_time",
+        "compare/jit/dynamic_values/256/real_time",
+        "compare/cpp/dynamic_values/2048/real_time",
+        "compare/jit/dynamic_values/2048/real_time",
+        "compare/cpp/dynamic_dispatch/256/real_time",
+        "compare/jit/dynamic_dispatch/256/real_time",
+        "compare/cpp/dynamic_dispatch/2048/real_time",
+        "compare/jit/dynamic_dispatch/2048/real_time",
+        "compare/cpp/json_roundtrip/64/real_time",
+        "compare/jit/json_roundtrip/64/real_time",
+        "compare/cpp/json_roundtrip/1024/real_time",
+        "compare/jit/json_roundtrip/1024/real_time",
+        "compare/cpp/byte_data_little/128/real_time",
+        "compare/jit/byte_data_little/128/real_time",
+        "compare/cpp/byte_data_little/2048/real_time",
+        "compare/jit/byte_data_little/2048/real_time",
+        "compare/cpp/byte_data_big/128/real_time",
+        "compare/jit/byte_data_big/128/real_time",
+        "compare/cpp/byte_data_big/2048/real_time",
+        "compare/jit/byte_data_big/2048/real_time",
+        "compare/cpp/regexp_records/32/real_time",
+        "compare/jit/regexp_records/32/real_time",
+        "compare/cpp/regexp_records/1024/real_time",
+        "compare/jit/regexp_records/1024/real_time",
+        "compare/cpp/numeric_parse/256/real_time",
+        "compare/jit/numeric_parse/256/real_time",
+        "compare/cpp/numeric_parse/2048/real_time",
+        "compare/jit/numeric_parse/2048/real_time",
+        "compare/cpp/ascii_case/64/real_time",
+        "compare/jit/ascii_case/64/real_time",
+        "compare/cpp/ascii_case/1024/real_time",
+        "compare/jit/ascii_case/1024/real_time",
+        "compare/cpp/utc_roundtrip/64/real_time",
+        "compare/jit/utc_roundtrip/64/real_time",
+        "compare/cpp/utc_roundtrip/1024/real_time",
+        "compare/jit/utc_roundtrip/1024/real_time"
+      ],
+      "passed_cases": 72,
+      "paired_workloads": 36,
+      "all_correctness_checks_passed": true,
+      "baseline_contracts": {
+        "dynamic_values": "Mixed arrays: C++ std::variant<int64_t, string, bool>; Vela dynamic[] with is checks and typed reads.",
+        "dynamic_dispatch": "Bound calls: C++ std::function with a statically typed signature; Vela resolves a public method on a dynamic receiver and checks the int result. C++ has no runtime member-name lookup.",
+        "json_roundtrip": "Construct, encode, decode and validate ordered records containing Unicode and mixed arrays. C++ uses pinned yyjson DOM arenas; Vela uses native Map/dynamic[] graphs, runtime checks and GC. The ratio includes these representation and contract differences, not only generated-code execution.",
+        "byte_data_little": "Zeroed byte buffer, unaligned 64-bit stores/loads and an owner-alias check; C++ vector<byte>/memcpy with explicit little endian.",
+        "byte_data_big": "Zeroed byte buffer, unaligned 64-bit stores/loads and an owner-alias check; C++ vector<byte>/memcpy with explicit big endian.",
+        "regexp_records": "Both compile pinned PCRE2 with UTF/UCP, matching newline/BSR settings, interpreter budgets and no JIT. Build Unicode input, collect nonempty matches, convert coordinates to code points, copy captures and parse numbers inside timing.",
+        "numeric_parse": "Format integers, parse decimal int/double values, verify the fraction and accumulate. C++ uses from_chars and pinned Abseil SimpleAtod; inputs are valid decimal strings.",
+        "ascii_case": "Construct ASCII strings and verify upper/lower round trips. C++ uses ASCII character mapping; this workload makes no Unicode-casing comparison.",
+        "utc_roundtrip": "Construct UTC timestamps, format canonical milliseconds, parse and inspect calendar fields. C++ uses pinned Abseil Time; inputs are valid canonical UTC strings, not the complete Vela error/range contract."
+      }
+    },
+    "measurement": {
+      "clock": "wall time",
+      "repetitions": 7,
+      "minimum_time_seconds": 0.2,
+      "random_interleaving": true,
+      "compilation_input_preparation_warmup": "excluded",
+      "ordinary_gc": "included",
+      "summary": "median, sample standard deviation and coefficient of variation",
+      "memory_scope": "Vela heap snapshots; retained bytes include persistent baseline, not process RSS"
+    },
+    "results": {
+      "compare/cpp/mandelbrot/128/real_time": {
+        "wall_time_median_us": 774.7919001202616,
+        "wall_time_stddev_us": 12.60610026967172,
+        "wall_time_cv": 0.01614952946088255,
+        "checksum": 399752.0,
+        "counters": {
+          "result": 399752.0
+        }
+      },
+      "compare/cpp/numeric_parse/256/real_time": {
+        "wall_time_median_us": 11.507350167829399,
+        "wall_time_stddev_us": 0.16470495088964301,
+        "wall_time_cv": 0.014390903169663894,
+        "checksum": 65280.0,
+        "counters": {
+          "result": 65280.0
+        }
+      },
+      "compare/cpp/byte_data_little/2048/real_time": {
+        "wall_time_median_us": 0.6779315554414962,
+        "wall_time_stddev_us": 0.006894081299385552,
+        "wall_time_cv": 0.010136423476639008,
+        "checksum": 2096383.0,
+        "counters": {
+          "result": 2096383.0
+        }
+      },
+      "compare/cpp/dynamic_dispatch/256/real_time": {
+        "wall_time_median_us": 0.5394492125810176,
+        "wall_time_stddev_us": 0.00193540298783547,
+        "wall_time_cv": 0.003581885794360707,
+        "checksum": 2796160.0,
+        "counters": {
+          "result": 2796160.0
+        }
+      },
+      "compare/cpp/byte_data_little/128/real_time": {
+        "wall_time_median_us": 0.055831389688292585,
+        "wall_time_stddev_us": 0.0004435367201734588,
+        "wall_time_cv": 0.007921197225044252,
+        "checksum": 8255.0,
+        "counters": {
+          "result": 8255.0
+        }
+      },
+      "compare/jit/sieve/100000/real_time": {
+        "wall_time_median_us": 5612.178323790431,
+        "wall_time_stddev_us": 24.91082555002787,
+        "wall_time_cv": 0.004437893787655161,
+        "checksum": 9592.0,
+        "counters": {
+          "allocated_bytes": 1600528.0,
+          "baseline_bytes": 800336.0,
+          "committed_bytes": 1600592.0,
+          "result": 9592.0,
+          "retained_bytes": 800336.0
+        }
+      },
+      "compare/cpp/byte_data_big/128/real_time": {
+        "wall_time_median_us": 0.05902213208498016,
+        "wall_time_stddev_us": 0.00020048353387773813,
+        "wall_time_cv": 0.003391153927504156,
+        "checksum": 8128.0,
+        "counters": {
+          "result": 8128.0
+        }
+      },
+      "compare/cpp/sieve/100000/real_time": {
+        "wall_time_median_us": 112.88505631977765,
+        "wall_time_stddev_us": 0.7115892952781226,
+        "wall_time_cv": 0.006288100753196505,
+        "checksum": 9592.0,
+        "counters": {
+          "result": 9592.0
+        }
+      },
+      "compare/cpp/array_growth/65536/real_time": {
+        "wall_time_median_us": 111.91935894032328,
+        "wall_time_stddev_us": 1.5348169770248807,
+        "wall_time_cv": 0.013663552992584602,
+        "checksum": 4294901760.0,
+        "counters": {
+          "result": 4294901760.0
+        }
+      },
+      "compare/jit/mandelbrot/64/real_time": {
+        "wall_time_median_us": 228.9795448923662,
+        "wall_time_stddev_us": 1.438062421397936,
+        "wall_time_cv": 0.0062792014165120895,
+        "checksum": 99673.0,
+        "counters": {
+          "allocated_bytes": 848.0,
+          "baseline_bytes": 848.0,
+          "committed_bytes": 848.0,
+          "result": 99673.0,
+          "retained_bytes": 848.0
+        }
+      },
+      "compare/cpp/ascii_case/64/real_time": {
+        "wall_time_median_us": 3.077230604975523,
+        "wall_time_stddev_us": 0.026800612244700598,
+        "wall_time_cv": 0.008691695128541512,
+        "checksum": 438.0,
+        "counters": {
+          "result": 438.0
+        }
+      },
+      "compare/cpp/utc_roundtrip/1024/real_time": {
+        "wall_time_median_us": 425.67548201712845,
+        "wall_time_stddev_us": 3.9345259273939104,
+        "wall_time_cv": 0.009272030056656205,
+        "checksum": 524854188.0,
+        "counters": {
+          "result": 524854188.0
+        }
+      },
+      "compare/jit/array_growth/65536/real_time": {
+        "wall_time_median_us": 1170.1171547486192,
+        "wall_time_stddev_us": 11.057201380503226,
+        "wall_time_cv": 0.009415776333342602,
+        "checksum": 4294901760.0,
+        "counters": {
+          "allocated_bytes": 1049040.0,
+          "baseline_bytes": 524624.0,
+          "committed_bytes": 1049168.0,
+          "result": 4294901760.0,
+          "retained_bytes": 524624.0
+        }
+      },
+      "compare/jit/dynamic_dispatch/2048/real_time": {
+        "wall_time_median_us": 509.43239287128387,
+        "wall_time_stddev_us": 4.646051436408213,
+        "wall_time_cv": 0.009146916512877148,
+        "checksum": 1431655424.0,
+        "counters": {
+          "allocated_bytes": 51568.0,
+          "baseline_bytes": 16880.0,
+          "committed_bytes": 64560.0,
+          "result": 1431655424.0,
+          "retained_bytes": 16880.0
+        }
+      },
+      "compare/cpp/numeric_parse/2048/real_time": {
+        "wall_time_median_us": 94.14869908556521,
+        "wall_time_stddev_us": 0.8318758180301712,
+        "wall_time_cv": 0.008816737310107221,
+        "checksum": 4192256.0,
+        "counters": {
+          "result": 4192256.0
+        }
+      },
+      "compare/jit/json_roundtrip/1024/real_time": {
+        "wall_time_median_us": 2004.6808291226625,
+        "wall_time_stddev_us": 32.63759356024238,
+        "wall_time_cv": 0.01619464553930792,
+        "checksum": 587179.0,
+        "counters": {
+          "allocated_bytes": 2370128.0,
+          "baseline_bytes": 9008.0,
+          "committed_bytes": 2522320.0,
+          "result": 587179.0,
+          "retained_bytes": 9008.0
+        }
+      },
+      "compare/jit/word_count/256/real_time": {
+        "wall_time_median_us": 46.6719093743623,
+        "wall_time_stddev_us": 1.4579424253768534,
+        "wall_time_cv": 0.030920907882350936,
+        "checksum": 1088.0,
+        "counters": {
+          "allocated_bytes": 46080.0,
+          "baseline_bytes": 2624.0,
+          "committed_bytes": 65792.0,
+          "result": 1088.0,
+          "retained_bytes": 2624.0
+        }
+      },
+      "compare/cpp/word_count/256/real_time": {
+        "wall_time_median_us": 8.72736425609479,
+        "wall_time_stddev_us": 0.02558205904864053,
+        "wall_time_cv": 0.0029326091294970174,
+        "checksum": 1088.0,
+        "counters": {
+          "result": 1088.0
+        }
+      },
+      "compare/jit/quicksort/1024/real_time": {
+        "wall_time_median_us": 50.89620641688905,
+        "wall_time_stddev_us": 0.7043215852902199,
+        "wall_time_cv": 0.013748792667579631,
+        "checksum": 21409011239.0,
+        "counters": {
+          "allocated_bytes": 33680.0,
+          "baseline_bytes": 8528.0,
+          "committed_bytes": 34320.0,
+          "result": 21409011239.0,
+          "retained_bytes": 8528.0
+        }
+      },
+      "compare/cpp/regexp_records/1024/real_time": {
+        "wall_time_median_us": 128.17176581960018,
+        "wall_time_stddev_us": 1.7886747276440833,
+        "wall_time_cv": 0.01387354264507552,
+        "checksum": 6296576.0,
+        "counters": {
+          "result": 6296576.0
+        }
+      },
+      "compare/jit/binary_trees/9/real_time": {
+        "wall_time_median_us": 1024.1015330091495,
+        "wall_time_stddev_us": 540.8894718379881,
+        "wall_time_cv": 0.43984978704604794,
+        "checksum": 17391.0,
+        "counters": {
+          "allocated_bytes": 393240.0,
+          "baseline_bytes": 408.0,
+          "committed_bytes": 655512.0,
+          "result": 17391.0,
+          "retained_bytes": 408.0
+        }
+      },
+      "compare/jit/dynamic_values/256/real_time": {
+        "wall_time_median_us": 3.2215600444908192,
+        "wall_time_stddev_us": 0.02086686143873378,
+        "wall_time_cv": 0.0064663852292873416,
+        "checksum": 11390.0,
+        "counters": {
+          "allocated_bytes": 28576.0,
+          "baseline_bytes": 2464.0,
+          "committed_bytes": 30880.0,
+          "result": 11390.0,
+          "retained_bytes": 2464.0
+        }
+      },
+      "compare/jit/byte_data_big/128/real_time": {
+        "wall_time_median_us": 4.099710469077886,
+        "wall_time_stddev_us": 0.23478564849803432,
+        "wall_time_cv": 0.05626635741860183,
+        "checksum": 8128.0,
+        "counters": {
+          "allocated_bytes": 60112.0,
+          "baseline_bytes": 1360.0,
+          "committed_bytes": 64464.0,
+          "result": 8128.0,
+          "retained_bytes": 1360.0
+        }
+      },
+      "compare/cpp/array_growth_reserved/1024/real_time": {
+        "wall_time_median_us": 1.5083963513715999,
+        "wall_time_stddev_us": 0.02040879872551065,
+        "wall_time_cv": 0.013437485820561403,
+        "checksum": 1047552.0,
+        "counters": {
+          "result": 1047552.0
+        }
+      },
+      "compare/cpp/utc_roundtrip/64/real_time": {
+        "wall_time_median_us": 26.373970261079698,
+        "wall_time_stddev_us": 0.22540850519729702,
+        "wall_time_cv": 0.008523857596978192,
+        "checksum": 2023344.0,
+        "counters": {
+          "result": 2023344.0
+        }
+      },
+      "compare/jit/json_roundtrip/64/real_time": {
+        "wall_time_median_us": 126.39411542532733,
+        "wall_time_stddev_us": 1.1170442634769475,
+        "wall_time_cv": 0.008783950048116398,
+        "checksum": 5911.0,
+        "counters": {
+          "allocated_bytes": 134288.0,
+          "baseline_bytes": 1328.0,
+          "committed_bytes": 178768.0,
+          "result": 5911.0,
+          "retained_bytes": 1328.0
+        }
+      },
+      "compare/cpp/closure_pipeline/8192/real_time": {
+        "wall_time_median_us": 30.118788638795507,
+        "wall_time_stddev_us": 0.29032271764125295,
+        "wall_time_cv": 0.009602062195159997,
+        "checksum": 264132249.0,
+        "counters": {
+          "result": 264132249.0
+        }
+      },
+      "compare/jit/array_growth_reserved/1024/real_time": {
+        "wall_time_median_us": 18.187803024037247,
+        "wall_time_stddev_us": 0.28951438950395847,
+        "wall_time_cv": 0.015840381396295934,
+        "checksum": 1047552.0,
+        "counters": {
+          "allocated_bytes": 33488.0,
+          "baseline_bytes": 8528.0,
+          "committed_bytes": 34000.0,
+          "result": 1047552.0,
+          "retained_bytes": 8528.0
+        }
+      },
+      "compare/jit/mandelbrot/128/real_time": {
+        "wall_time_median_us": 957.1068609754244,
+        "wall_time_stddev_us": 13.365096315016034,
+        "wall_time_cv": 0.013902436205888581,
+        "checksum": 399752.0,
+        "counters": {
+          "allocated_bytes": 1360.0,
+          "baseline_bytes": 1360.0,
+          "committed_bytes": 1360.0,
+          "result": 399752.0,
+          "retained_bytes": 1360.0
+        }
+      },
+      "compare/jit/numeric_parse/256/real_time": {
+        "wall_time_median_us": 45.55910544005047,
+        "wall_time_stddev_us": 0.3866110028893305,
+        "wall_time_cv": 0.008452029556327517,
+        "checksum": 65280.0,
+        "counters": {
+          "allocated_bytes": 17824.0,
+          "baseline_bytes": 2464.0,
+          "committed_bytes": 65504.0,
+          "result": 65280.0,
+          "retained_bytes": 2464.0
+        }
+      },
+      "compare/cpp/sieve/10000/real_time": {
+        "wall_time_median_us": 7.94143515362396,
+        "wall_time_stddev_us": 0.051299643786671636,
+        "wall_time_cv": 0.006449575627772132,
+        "checksum": 1229.0,
+        "counters": {
+          "result": 1229.0
+        }
+      },
+      "compare/cpp/array_growth/1024/real_time": {
+        "wall_time_median_us": 1.9659105974850333,
+        "wall_time_stddev_us": 0.01316712822898097,
+        "wall_time_cv": 0.006696919122533705,
+        "checksum": 1047552.0,
+        "counters": {
+          "result": 1047552.0
+        }
+      },
+      "compare/cpp/byte_data_big/2048/real_time": {
+        "wall_time_median_us": 0.704093277679389,
+        "wall_time_stddev_us": 0.11187520831960239,
+        "wall_time_cv": 0.15017178567491563,
+        "checksum": 2096128.0,
+        "counters": {
+          "result": 2096128.0
+        }
+      },
+      "compare/cpp/ascii_case/1024/real_time": {
+        "wall_time_median_us": 45.975350181056974,
+        "wall_time_stddev_us": 0.1235353994612642,
+        "wall_time_cv": 0.0026869082168511273,
+        "checksum": 8106.0,
+        "counters": {
+          "result": 8106.0
+        }
+      },
+      "compare/jit/array_growth_reserved/65536/real_time": {
+        "wall_time_median_us": 1167.523934436608,
+        "wall_time_stddev_us": 298.20878957168446,
+        "wall_time_cv": 0.23208496977044854,
+        "checksum": 4294901760.0,
+        "counters": {
+          "allocated_bytes": 1049040.0,
+          "baseline_bytes": 524624.0,
+          "committed_bytes": 1049168.0,
+          "result": 4294901760.0,
+          "retained_bytes": 524624.0
+        }
+      },
+      "compare/jit/regexp_records/1024/real_time": {
+        "wall_time_median_us": 402.3531744791488,
+        "wall_time_stddev_us": 2.7067179497811447,
+        "wall_time_cv": 0.006733045214100142,
+        "checksum": 6296576.0,
+        "counters": {
+          "allocated_bytes": 422189.0,
+          "baseline_bytes": 8976.0,
+          "committed_bytes": 671661.0,
+          "result": 6296576.0,
+          "retained_bytes": 8976.0
+        }
+      },
+      "compare/jit/ascii_case/1024/real_time": {
+        "wall_time_median_us": 853.672287958257,
+        "wall_time_stddev_us": 13.942217004305363,
+        "wall_time_cv": 0.01620036091173642,
+        "checksum": 8106.0,
+        "counters": {
+          "allocated_bytes": 62960.0,
+          "baseline_bytes": 8688.0,
+          "committed_bytes": 77808.0,
+          "result": 8106.0,
+          "retained_bytes": 8688.0
+        }
+      },
+      "compare/jit/numeric_parse/2048/real_time": {
+        "wall_time_median_us": 375.3020697360205,
+        "wall_time_stddev_us": 4.356895811424475,
+        "wall_time_cv": 0.011611041688587304,
+        "checksum": 4192256.0,
+        "counters": {
+          "allocated_bytes": 35744.0,
+          "baseline_bytes": 16800.0,
+          "committed_bytes": 65504.0,
+          "result": 4192256.0,
+          "retained_bytes": 16800.0
+        }
+      },
+      "compare/jit/quicksort/8192/real_time": {
+        "wall_time_median_us": 499.5514481832477,
+        "wall_time_stddev_us": 2.7418008276253114,
+        "wall_time_cv": 0.005478219395456919,
+        "checksum": 1455713821118.0,
+        "counters": {
+          "allocated_bytes": 131600.0,
+          "baseline_bytes": 65872.0,
+          "committed_bytes": 131664.0,
+          "result": 1455713821118.0,
+          "retained_bytes": 65872.0
+        }
+      },
+      "compare/cpp/array_growth_reserved/65536/real_time": {
+        "wall_time_median_us": 99.90123944794537,
+        "wall_time_stddev_us": 0.5356633730936144,
+        "wall_time_cv": 0.005356630368564224,
+        "checksum": 4294901760.0,
+        "counters": {
+          "result": 4294901760.0
+        }
+      },
+      "compare/cpp/mandelbrot/64/real_time": {
+        "wall_time_median_us": 185.01530080789428,
+        "wall_time_stddev_us": 10.779521248469166,
+        "wall_time_cv": 0.05703962224534069,
+        "checksum": 99673.0,
+        "counters": {
+          "result": 99673.0
+        }
+      },
+      "compare/cpp/dynamic_values/256/real_time": {
+        "wall_time_median_us": 1.427193640326392,
+        "wall_time_stddev_us": 0.017154822215870932,
+        "wall_time_cv": 0.011971260166654092,
+        "checksum": 11390.0,
+        "counters": {
+          "result": 11390.0
+        }
+      },
+      "compare/jit/utc_roundtrip/1024/real_time": {
+        "wall_time_median_us": 438.24366600395746,
+        "wall_time_stddev_us": 6.617071044673551,
+        "wall_time_cv": 0.015012618270288701,
+        "checksum": 524854188.0,
+        "counters": {
+          "allocated_bytes": 56656.0,
+          "baseline_bytes": 8528.0,
+          "committed_bytes": 65488.0,
+          "result": 524854188.0,
+          "retained_bytes": 8528.0
+        }
+      },
+      "compare/cpp/dynamic_dispatch/2048/real_time": {
+        "wall_time_median_us": 4.331687372954407,
+        "wall_time_stddev_us": 0.027538046601146615,
+        "wall_time_cv": 0.006349209062995665,
+        "checksum": 1431655424.0,
+        "counters": {
+          "result": 1431655424.0
+        }
+      },
+      "compare/jit/regexp_records/32/real_time": {
+        "wall_time_median_us": 11.69548060083205,
+        "wall_time_stddev_us": 1.0386692524003716,
+        "wall_time_cv": 0.08589454655028635,
+        "checksum": 6304.0,
+        "counters": {
+          "allocated_bytes": 28762.0,
+          "baseline_bytes": 1040.0,
+          "committed_bytes": 43738.0,
+          "result": 6304.0,
+          "retained_bytes": 1040.0
+        }
+      },
+      "compare/jit/dynamic_dispatch/256/real_time": {
+        "wall_time_median_us": 63.36037236052519,
+        "wall_time_stddev_us": 0.8969036329710324,
+        "wall_time_cv": 0.01409405712167791,
+        "checksum": 2796160.0,
+        "counters": {
+          "allocated_bytes": 57872.0,
+          "baseline_bytes": 2544.0,
+          "committed_bytes": 65040.0,
+          "result": 2796160.0,
+          "retained_bytes": 2544.0
+        }
+      },
+      "compare/jit/byte_data_little/2048/real_time": {
+        "wall_time_median_us": 62.19564763502644,
+        "wall_time_stddev_us": 14.516026481179141,
+        "wall_time_cv": 0.21456136538552822,
+        "checksum": 2096383.0,
+        "counters": {
+          "allocated_bytes": 33289.0,
+          "baseline_bytes": 16720.0,
+          "committed_bytes": 33417.0,
+          "result": 2096383.0,
+          "retained_bytes": 16720.0
+        }
+      },
+      "compare/jit/ascii_case/64/real_time": {
+        "wall_time_median_us": 47.60550577976017,
+        "wall_time_stddev_us": 0.4618160380540691,
+        "wall_time_cv": 0.009664737858677205,
+        "checksum": 438.0,
+        "counters": {
+          "allocated_bytes": 18416.0,
+          "baseline_bytes": 1008.0,
+          "committed_bytes": 65520.0,
+          "result": 438.0,
+          "retained_bytes": 1008.0
+        }
+      },
+      "compare/jit/particles/128/real_time": {
+        "wall_time_median_us": 20.17683707336506,
+        "wall_time_stddev_us": 0.08847867507526842,
+        "wall_time_cv": 0.004379781397498904,
+        "checksum": 8411000.0,
+        "counters": {
+          "allocated_bytes": 36560.0,
+          "baseline_bytes": 1360.0,
+          "committed_bytes": 64848.0,
+          "result": 8411000.0,
+          "retained_bytes": 1360.0
+        }
+      },
+      "compare/cpp/particles/1024/real_time": {
+        "wall_time_median_us": 110.64786650166828,
+        "wall_time_stddev_us": 9.696891137849367,
+        "wall_time_cv": 0.08471574639718754,
+        "checksum": 74921000.0,
+        "counters": {
+          "result": 74921000.0
+        }
+      },
+      "compare/cpp/json_roundtrip/1024/real_time": {
+        "wall_time_median_us": 130.72036048033218,
+        "wall_time_stddev_us": 0.5452952389629139,
+        "wall_time_cv": 0.004174217312324442,
+        "checksum": 587179.0,
+        "counters": {
+          "result": 587179.0
+        }
+      },
+      "compare/jit/byte_data_big/2048/real_time": {
+        "wall_time_median_us": 62.86296673502222,
+        "wall_time_stddev_us": 0.2918795320437014,
+        "wall_time_cv": 0.004638754702573906,
+        "checksum": 2096128.0,
+        "counters": {
+          "allocated_bytes": 33289.0,
+          "baseline_bytes": 16720.0,
+          "committed_bytes": 33417.0,
+          "result": 2096128.0,
+          "retained_bytes": 16720.0
+        }
+      },
+      "compare/jit/closure_pipeline/8192/real_time": {
+        "wall_time_median_us": 738.5313869095767,
+        "wall_time_stddev_us": 3.8956521084014257,
+        "wall_time_cv": 0.005260683531837083,
+        "checksum": 264132249.0,
+        "counters": {
+          "allocated_bytes": 198096.0,
+          "baseline_bytes": 65872.0,
+          "committed_bytes": 198480.0,
+          "result": 264132249.0,
+          "retained_bytes": 65872.0
+        }
+      },
+      "compare/jit/utc_roundtrip/64/real_time": {
+        "wall_time_median_us": 27.8162822639533,
+        "wall_time_stddev_us": 0.08300000790684947,
+        "wall_time_cv": 0.002981813384249029,
+        "checksum": 2023344.0,
+        "counters": {
+          "allocated_bytes": 23376.0,
+          "baseline_bytes": 848.0,
+          "committed_bytes": 65488.0,
+          "result": 2023344.0,
+          "retained_bytes": 848.0
+        }
+      },
+      "compare/cpp/quicksort/8192/real_time": {
+        "wall_time_median_us": 252.29125502694873,
+        "wall_time_stddev_us": 42.496275825262664,
+        "wall_time_cv": 0.15987938849257308,
+        "checksum": 1455713821118.0,
+        "counters": {
+          "result": 1455713821118.0
+        }
+      },
+      "compare/jit/byte_data_little/128/real_time": {
+        "wall_time_median_us": 4.023005311481416,
+        "wall_time_stddev_us": 0.09763768377191408,
+        "wall_time_cv": 0.02406635134054151,
+        "checksum": 8255.0,
+        "counters": {
+          "allocated_bytes": 51408.0,
+          "baseline_bytes": 1360.0,
+          "committed_bytes": 64464.0,
+          "result": 8255.0,
+          "retained_bytes": 1360.0
+        }
+      },
+      "compare/cpp/binary_trees/9/real_time": {
+        "wall_time_median_us": 384.93585737381613,
+        "wall_time_stddev_us": 2.263441444848718,
+        "wall_time_cv": 0.005868749784086219,
+        "checksum": 17391.0,
+        "counters": {
+          "result": 17391.0
+        }
+      },
+      "compare/cpp/closure_pipeline/1024/real_time": {
+        "wall_time_median_us": 3.7627330252351108,
+        "wall_time_stddev_us": 0.07459446628489978,
+        "wall_time_cv": 0.01965378851828542,
+        "checksum": 28986399.0,
+        "counters": {
+          "result": 28986399.0
+        }
+      },
+      "compare/jit/particles/1024/real_time": {
+        "wall_time_median_us": 229.41328190921075,
+        "wall_time_stddev_us": 2.055546782507213,
+        "wall_time_cv": 0.008932556751801539,
+        "checksum": 74921000.0,
+        "counters": {
+          "allocated_bytes": 147984.0,
+          "baseline_bytes": 8528.0,
+          "committed_bytes": 333712.0,
+          "result": 74921000.0,
+          "retained_bytes": 8528.0
+        }
+      },
+      "compare/jit/array_growth/1024/real_time": {
+        "wall_time_median_us": 18.891484591007686,
+        "wall_time_stddev_us": 0.2678625658634722,
+        "wall_time_cv": 0.014138163072807701,
+        "checksum": 1047552.0,
+        "counters": {
+          "allocated_bytes": 16848.0,
+          "baseline_bytes": 8528.0,
+          "committed_bytes": 17616.0,
+          "result": 1047552.0,
+          "retained_bytes": 8528.0
+        }
+      },
+      "compare/jit/binary_trees/6/real_time": {
+        "wall_time_median_us": 88.85696236859333,
+        "wall_time_stddev_us": 1.1782918194398595,
+        "wall_time_cv": 0.013196563364382543,
+        "checksum": 2159.0,
+        "counters": {
+          "allocated_bytes": 32896.0,
+          "baseline_bytes": 384.0,
+          "committed_bytes": 66688.0,
+          "result": 2159.0,
+          "retained_bytes": 384.0
+        }
+      },
+      "compare/cpp/regexp_records/32/real_time": {
+        "wall_time_median_us": 4.881333129356689,
+        "wall_time_stddev_us": 0.04703341156500107,
+        "wall_time_cv": 0.009598303842733528,
+        "checksum": 6304.0,
+        "counters": {
+          "result": 6304.0
+        }
+      },
+      "compare/jit/word_count/2048/real_time": {
+        "wall_time_median_us": 361.80150888254013,
+        "wall_time_stddev_us": 4.264557689975954,
+        "wall_time_cv": 0.011728341069092188,
+        "checksum": 65600.0,
+        "counters": {
+          "allocated_bytes": 56192.0,
+          "baseline_bytes": 16960.0,
+          "committed_bytes": 68992.0,
+          "result": 65600.0,
+          "retained_bytes": 16960.0
+        }
+      },
+      "compare/jit/closure_pipeline/1024/real_time": {
+        "wall_time_median_us": 90.67918015254656,
+        "wall_time_stddev_us": 0.5116282330989569,
+        "wall_time_cv": 0.005637205876739402,
+        "checksum": 28986399.0,
+        "counters": {
+          "allocated_bytes": 26064.0,
+          "baseline_bytes": 8528.0,
+          "committed_bytes": 28752.0,
+          "result": 28986399.0,
+          "retained_bytes": 8528.0
+        }
+      },
+      "compare/cpp/word_count/2048/real_time": {
+        "wall_time_median_us": 54.103840926949346,
+        "wall_time_stddev_us": 0.37474988480013227,
+        "wall_time_cv": 0.0069101624537234296,
+        "checksum": 65600.0,
+        "counters": {
+          "result": 65600.0
+        }
+      },
+      "compare/cpp/particles/128/real_time": {
+        "wall_time_median_us": 14.204829396962772,
+        "wall_time_stddev_us": 0.3490588373194005,
+        "wall_time_cv": 0.024393822732547907,
+        "checksum": 8411000.0,
+        "counters": {
+          "result": 8411000.0
+        }
+      },
+      "compare/jit/dynamic_values/2048/real_time": {
+        "wall_time_median_us": 24.809927702893788,
+        "wall_time_stddev_us": 5.8177219040856105,
+        "wall_time_cv": 0.21516985307049816,
+        "checksum": 702123.0,
+        "counters": {
+          "allocated_bytes": 49824.0,
+          "baseline_bytes": 16800.0,
+          "committed_bytes": 50080.0,
+          "result": 702123.0,
+          "retained_bytes": 16800.0
+        }
+      },
+      "compare/cpp/quicksort/1024/real_time": {
+        "wall_time_median_us": 17.044950229031507,
+        "wall_time_stddev_us": 0.3616858943417462,
+        "wall_time_cv": 0.021067004386585507,
+        "checksum": 21409011239.0,
+        "counters": {
+          "result": 21409011239.0
+        }
+      },
+      "compare/jit/sieve/10000/real_time": {
+        "wall_time_median_us": 563.401492758536,
+        "wall_time_stddev_us": 12.295754718606357,
+        "wall_time_cv": 0.021736784166428127,
+        "checksum": 1229.0,
+        "counters": {
+          "allocated_bytes": 160528.0,
+          "baseline_bytes": 80336.0,
+          "committed_bytes": 160592.0,
+          "result": 1229.0,
+          "retained_bytes": 80336.0
+        }
+      },
+      "compare/cpp/json_roundtrip/64/real_time": {
+        "wall_time_median_us": 8.4407570291503,
+        "wall_time_stddev_us": 0.05041396342215674,
+        "wall_time_cv": 0.005976572999843511,
+        "checksum": 5911.0,
+        "counters": {
+          "result": 5911.0
+        }
+      },
+      "compare/cpp/binary_trees/6/real_time": {
+        "wall_time_median_us": 47.30812932774125,
+        "wall_time_stddev_us": 0.8936029979581065,
+        "wall_time_cv": 0.0187919486338562,
+        "checksum": 2159.0,
+        "counters": {
+          "result": 2159.0
+        }
+      },
+      "compare/cpp/dynamic_values/2048/real_time": {
+        "wall_time_median_us": 11.262855907608865,
+        "wall_time_stddev_us": 0.1662185900070838,
+        "wall_time_cv": 0.014695821730907147,
+        "checksum": 702123.0,
+        "counters": {
+          "result": 702123.0
+        }
+      }
+    },
+    "ratios": {
+      "array_growth/1024": 9.609533930574129,
+      "array_growth/65536": 10.455002296542276,
+      "array_growth_reserved/1024": 12.057708179616649,
+      "array_growth_reserved/65536": 11.686781274069768,
+      "ascii_case/64": 15.470243179951355,
+      "ascii_case/1024": 18.56804319263221,
+      "binary_trees/6": 1.8782599022888875,
+      "binary_trees/9": 2.6604472235867376,
+      "byte_data_big/128": 69.46056206805807,
+      "byte_data_big/2048": 89.28215724798761,
+      "byte_data_little/128": 72.05633486721197,
+      "byte_data_little/2048": 91.74325510563104,
+      "closure_pipeline/1024": 24.099286222115257,
+      "closure_pipeline/8192": 24.520620525829738,
+      "dynamic_dispatch/256": 117.45382305291503,
+      "dynamic_dispatch/2048": 117.6059925404607,
+      "dynamic_values/256": 2.257269058285647,
+      "dynamic_values/2048": 2.2028096520468585,
+      "json_roundtrip/64": 14.974262970587008,
+      "json_roundtrip/1024": 15.335643366928148,
+      "mandelbrot/64": 1.2376249093588265,
+      "mandelbrot/128": 1.2353082948167944,
+      "numeric_parse/256": 3.959130883790961,
+      "numeric_parse/2048": 3.9862693099448405,
+      "particles/128": 1.4204209363949984,
+      "particles/1024": 2.0733638086528474,
+      "quicksort/1024": 2.985999121910077,
+      "quicksort/8192": 1.9800585166136164,
+      "regexp_records/32": 2.3959603433936087,
+      "regexp_records/1024": 3.139171656926805,
+      "sieve/10000": 70.94454363219674,
+      "sieve/100000": 49.715865914903816,
+      "utc_roundtrip/64": 1.054686950375539,
+      "utc_roundtrip/1024": 1.0295252710521938,
+      "word_count/256": 5.347766863491321,
+      "word_count/2048": 6.687168649838413
+    },
+    "geometric_mean_jit_over_cpp": 8.53669100778815,
+    "comparison_to_previous": {
+      "comparable": false,
+      "reason": "Previous suite compares typed JSON with handwritten Vela decoding; this suite compares representative Vela JIT workloads with C++."
     }
   }
 }
