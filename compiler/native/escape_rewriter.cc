@@ -295,7 +295,7 @@ class ScalarRewriter final {
       plan_->allocations.at(*object).stack_record = true;
       Emit({.opcode = Opcode::LoadNull, .dst = instruction.lhs, .location = {}});
       const auto call = Emit(instruction);
-      plan_->borrowed_calls.at(call) = *object;
+      plan_->borrowed_calls.at(call) = object;
       return;
     }
     if (instruction.opcode == Opcode::GetField || instruction.opcode == Opcode::SetField) {

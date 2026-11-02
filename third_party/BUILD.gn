@@ -310,10 +310,7 @@ config("abseil_link") {
         "rt",
       ]
     } else if (target_os == "mac") {
-      ldflags += [
-        "-framework",
-        "CoreFoundation",
-      ]
+      frameworks = [ "CoreFoundation.framework" ]
     }
   }
 }

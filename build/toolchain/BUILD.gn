@@ -84,6 +84,8 @@ toolchain("clang") {
     if (target_os == "win") {
       command = "\"$cxx\" /nologo -fuse-ld=lld @{{output}}.rsp /Fe{{output}}"
     } else if (target_os == "mac") {
+      framework_switch = "-framework "
+
       # Xcode 链接器及配套 LTO 匹配当前 SDK。
       linker_directory = get_path_info(vela_linker, "dir")
       lto_library = "$linker_directory/../lib/libLTO.dylib"
@@ -94,7 +96,8 @@ toolchain("clang") {
     }
     description = "LINK {{output}}"
     rspfile = "{{output}}.rsp"
-    rspfile_content = "{{inputs}} {{solibs}} {{ldflags}} {{libs}}"
+    rspfile_content =
+        "{{inputs}} {{solibs}} {{ldflags}} {{libs}} {{frameworks}}"
     outputs = [ "{{output_dir}}/{{target_output_name}}{{output_extension}}" ]
     default_output_dir = "{{root_out_dir}}"
     default_output_extension = executable_extension

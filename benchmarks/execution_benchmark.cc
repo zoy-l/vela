@@ -53,7 +53,12 @@ void FirstExecution(benchmark::State& state, std::string_view filename, std::int
       if (!instance) {
         return;
       }
-      const auto entry_index = *instance->FindFunction("main");
+      const auto entry = instance->FindFunction("main");
+      if (!entry) {
+        state.SkipWithError("Missing main entry");
+        return;
+      }
+      const auto entry_index = *entry;
       state.ResumeTiming();
       auto result = runtime::ExecuteNativeFunction(*instance, entry_index);
       benchmark::DoNotOptimize(result);
@@ -77,7 +82,12 @@ void SteadyExecution(benchmark::State& state, std::string_view filename, std::in
   if (!instance) {
     return;
   }
-  const auto entry_index = *instance->FindFunction("main");
+  const auto entry = instance->FindFunction("main");
+  if (!entry) {
+    state.SkipWithError("Missing main entry");
+    return;
+  }
+  const auto entry_index = *entry;
   const auto first = runtime::ExecuteNativeFunction(*instance, entry_index);
   if (!IsExpectedResult(first, expected)) {
     state.SkipWithError("Warm-up execution failed or returned an unexpected result");

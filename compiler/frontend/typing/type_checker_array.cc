@@ -104,21 +104,28 @@ TypeChecker::Type TypeChecker::CheckArrayAlgorithm(const Expression& expression,
   method.return_type = inferred->signature.return_type;
   for (std::size_t index = 0; index < inferred->arguments.size(); ++index) {
     const auto& argument = expression.arguments.at(index);
-    if ((argument.name.empty() && index == 0) || argument.name == source.parameters.front().name) {
-      const auto actual = *inferred->arguments.at(index);
-      if (actual.kind != Type::Kind::Function) {
-        return InvalidType();
-      }
-      CheckCallbackContract(*argument.value, actual,
-                            function_types_.at(inferred->signature.parameters.front().type.name),
-                            CallbackArity::Prefix, CallbackParameters::Assignable);
-      const auto result = function_types_.at(actual.name).return_type;
-      if (algorithm == ArrayAlgorithm::Reduce) {
-        DiagnoseDynamicConversion(*argument.value, method.return_type, result);
-      }
-      method.return_type = CheckArrayAlgorithmResult(algorithm, result, method, argument.location);
-      inferred->signature.parameters.front().type = actual;
+    const bool is_callback =
+        (argument.name.empty() && index == 0) || argument.name == source.parameters.front().name;
+    if (!is_callback) {
+      continue;
     }
+    const auto& actual_type = inferred->arguments.at(index);
+    if (!actual_type) {
+      std::unreachable();
+    }
+    const auto& actual = *actual_type;
+    if (actual.kind != Type::Kind::Function) {
+      return InvalidType();
+    }
+    CheckCallbackContract(*argument.value, actual,
+                          function_types_.at(inferred->signature.parameters.front().type.name),
+                          CallbackArity::Prefix, CallbackParameters::Assignable);
+    const auto result = function_types_.at(actual.name).return_type;
+    if (algorithm == ArrayAlgorithm::Reduce) {
+      DiagnoseDynamicConversion(*argument.value, method.return_type, result);
+    }
+    method.return_type = CheckArrayAlgorithmResult(algorithm, result, method, argument.location);
+    inferred->signature.parameters.front().type = actual;
   }
   if (algorithm == ArrayAlgorithm::Sort && expression.arguments.empty() &&
       !CanFormatString(ParameterCapability(element, expression.location))) {

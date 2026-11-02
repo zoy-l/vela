@@ -3,18 +3,14 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <fstream>
 #include <limits>
 #include <string_view>
 
 #include <gtest/gtest.h>
 
 #include "base/opcode.h"
-#include "compiler/aot/native_compiler.h"
 #include "compiler/frontend/diagnostic.h"
-#include "compiler/frontend/modules/source_loader.h"
 #include "compiler/ir/ir.h"
-#include "compiler/ir/preparation.h"
 #include "compiler/test_support/preparation_test_support.h"
 
 namespace vela::compiler::native {
@@ -105,27 +101,6 @@ export func sum(value: int): int {
     }
     EXPECT_GT(reads, 0U);
   }
-}
-
-TEST(ArrayAnalysisTest, InspectShaRanges) {
-  const auto prepared = ir::PrepareParsed(
-      frontend::LoadProgram("C:/Users/zoy/Documents/Vela/benchmarks/dasprofile/workloads.vela"));
-  ASSERT_TRUE(prepared.Succeeded());
-  const auto& program = prepared.program;
-  const auto found = std::ranges::find(program.functions, "shaDigest", &ir::Function::name);
-  ASSERT_NE(found, program.functions.end());
-  const auto bits = FindPrivateArrayElementBits(*found, program);
-  std::ofstream facts("C:/Users/zoy/AppData/Local/Temp/vela-sha-array-facts.txt");
-  for (const auto& instruction : found->instructions) {
-    if (instruction.opcode == Opcode::GetIndex) {
-      facts << instruction.lhs << ' ' << bits.at(instruction.lhs) << '\n';
-    }
-  }
-  const auto compiled =
-      aot::Compile(program, {.exports = {"prepare", "sha256"}, .preserve_ir = true});
-  ASSERT_TRUE(compiled);
-  std::ofstream output("C:/Users/zoy/AppData/Local/Temp/vela-sha-private-array.ll");
-  output << compiled->llvm_ir;
 }
 
 }  // namespace

@@ -247,7 +247,11 @@ std::optional<frontend::TypeName> MockGenerator::NameGenericAlias(const frontend
     naming_aliases_.insert(alias.name);
     bool complete = true;
     for (const auto& parameter : alias.parameters) {
-      auto argument = FindTypeName(*arguments.at(parameter));
+      const auto& bound = arguments.at(parameter);
+      if (!bound) {
+        std::unreachable();
+      }
+      auto argument = FindTypeName(*bound);
       if (!argument) {
         complete = false;
         break;
@@ -369,7 +373,7 @@ std::optional<frontend::TypeName> MockGenerator::FindTypeName(const frontend::Ty
     };
   }
   if (auto named = NameGenericAlias(expanded)) {
-    return *named;
+    return named;
   }
   auto result = expanded;
   if (result.kind == frontend::TypeName::Kind::Named ||
@@ -521,7 +525,11 @@ std::string MockGenerator::Fingerprint(std::span<const frontend::Interface* cons
   for (const auto* declaration : selected) {
     content << declaration->name << '\n';
   }
-  content << *frontend::SdkModuleSource(frontend::kMockModuleName);
+  const auto mock_source = frontend::SdkModuleSource(frontend::kMockModuleName);
+  if (!mock_source) {
+    std::unreachable();
+  }
+  content << *mock_source;
   return ContentFingerprint(content.str()).Hex();
 }
 

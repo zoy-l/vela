@@ -129,7 +129,7 @@ TEST_P(DateTimestampTest, DecompositionRoundTripsAndUsesFloorBasedMilliseconds) 
   heap.Collect();
   std::array<Value, kDatePartsFieldCount> fields;
   for (std::uint32_t index = 0; index < fields.size(); ++index) {
-    fields.at(index) = *Heap::GetField(*parts->AsObject(), index);
+    fields.at(index) = Heap::LoadField(*parts->AsObject(), index);
   }
   if (timestamp == -1) {
     EXPECT_EQ(fields.back().AsInteger(), 999);

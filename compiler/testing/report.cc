@@ -270,9 +270,8 @@ void WriteMockFailure(std::ostream& output, const TestError::MockDetails& mock) 
   }
 }
 
-void WriteFailure(std::ostream& output, const ReportEvent& event) {
-  const auto& error = *event.error;
-  output << event.file << " [" << PhaseName(error.phase) << "]: " << error.message << '\n';
+void WriteFailure(std::ostream& output, std::string_view file, const TestError& error) {
+  output << file << " [" << PhaseName(error.phase) << "]: " << error.message << '\n';
   if (const auto* location = UserLocation(error.trace)) {
     output << "  at " << location->source_path << ':' << location->line << ':' << location->column
            << '\n';
@@ -367,12 +366,16 @@ void SessionReporter::WriteHuman(const ReportEvent& event) {
   if (event.type == ReportEventType::Test && event.listed) {
     WriteListedTest(*output_, event);
   } else if (event.type == ReportEventType::TestDone) {
+    const auto status = event.status;
+    if (!status) {
+      std::unreachable();
+    }
     ++completed_;
     if (progress) {
       *output_ << "\r\033[K[" << completed_ << "] ";
       progress_visible_ = true;
     }
-    *output_ << event.file << " :: " << event.name << " [" << StatusName(*event.status) << ']';
+    *output_ << event.file << " :: " << event.name << " [" << StatusName(*status) << ']';
     if (!event.skip_reason.empty()) {
       *output_ << ' ' << event.skip_reason;
     }
@@ -384,7 +387,7 @@ void SessionReporter::WriteHuman(const ReportEvent& event) {
   } else if (event.type == ReportEventType::Print) {
     *output_ << event.file << ": " << event.text << '\n';
   } else if (event.error) {
-    WriteFailure(*output_, event);
+    WriteFailure(*output_, event.file, *event.error);
   } else if (event.type == ReportEventType::Done) {
     if (event.listed) {
       *output_ << "Listed " << event.selected << " test(s)";

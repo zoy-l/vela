@@ -496,7 +496,9 @@ func main(): string {
                                             isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto nested = compiled.instance->FindFunction("nested");
-  ASSERT_TRUE(nested);
+  if (!nested) {
+    FAIL() << "missing nested entry";
+  }
   Reentry reentry{.instance = compiled.instance.get(), .nested = *nested};
   ActiveReentry() = &reentry;
   const auto result = test::Execute(*compiled.instance, "main");
@@ -557,7 +559,9 @@ TEST(NativeBindingTest, RegistrationRejectsDuplicatesAndHostCallsKeepArgumentsRo
   const auto compiled = test::CompileSource("external func copy(text: string): string;", isolate);
   ASSERT_TRUE(compiled.Succeeded());
   const auto entry = compiled.instance->FindFunction("copy");
-  ASSERT_TRUE(entry);
+  if (!entry) {
+    FAIL() << "missing copy entry";
+  }
   auto* string = isolate.heap().AllocateString("retained argument");
   std::array input{runtime::Value::String(string)};
   const auto result = runtime::ExecuteNativeFunction(*compiled.instance, *entry, input);

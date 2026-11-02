@@ -152,7 +152,12 @@ void Jit(benchmark::State& state, ScriptPath path) {
   if (!instance) {
     return;
   }
-  const auto function = *instance->FindFunction("main");
+  const auto entry = instance->FindFunction("main");
+  if (!entry) {
+    state.SkipWithError("Missing main entry");
+    return;
+  }
+  const auto function = *entry;
   const auto expected = Expected<Case>(count);
   if (!IsExpected<Case>(runtime::ExecuteNativeFunction(*instance, function), expected)) {
     state.SkipWithError("Native JIT warm-up failed or checksum mismatched");

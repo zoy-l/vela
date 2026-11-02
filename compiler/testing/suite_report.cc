@@ -39,7 +39,11 @@ void Suite::Emit(ReportEvent event) const {
 }
 
 void Suite::EmitTest(const Node& node, ReportEventType type) const {
-  const auto& result = result_.tests.at(*node.result);
+  const auto result_index = node.result;
+  if (!result_index) {
+    std::unreachable();
+  }
+  const auto& result = result_.tests.at(*result_index);
   ReportEvent event(type);
   event.test = node.id;
   event.scope = node.id;

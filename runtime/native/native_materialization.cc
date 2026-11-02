@@ -122,7 +122,6 @@ ExecutionStatus NativeMaterialization::BuildGraph() noexcept {
   const auto& graph = *materialization.graph;
   const auto descriptions = graph.objects.values();
   const std::span references(materialization.references, checkpoint_layout.reference_count);
-  const std::span values(checkpoint.values, checkpoint_layout.value_count);
   for (const auto& alias : graph.aliases.values()) {
     Enqueue(alias.object);
   }
@@ -143,6 +142,16 @@ ExecutionStatus NativeMaterialization::BuildGraph() noexcept {
   if (const auto status = AllocateGraph(); status != ExecutionStatus::Returned) {
     return status;
   }
+  return InitializeGraph();
+}
+
+ExecutionStatus NativeMaterialization::InitializeGraph() noexcept {
+  const auto& checkpoint = *checkpoint_;
+  const auto& checkpoint_layout = *checkpoint.layout;
+  const auto& materialization = *checkpoint.materialization;
+  const auto descriptions = materialization.graph->objects.values();
+  const std::span references(materialization.references, checkpoint_layout.reference_count);
+  const std::span values(checkpoint.values, checkpoint_layout.value_count);
   for (std::size_t position = 0; position < queued_; ++position) {
     const auto node = work_.subspan(position).front().node;
     const auto& description = descriptions.subspan(node).front();
@@ -152,17 +161,20 @@ ExecutionStatus NativeMaterialization::BuildGraph() noexcept {
     auto& object = *objects_.subspan(node).front().AsObject();
     const auto& layout = *Heap::ClassOf(object);
     for (const auto& field : description.fields.values()) {
-      const auto slot = *layout.FieldIndex(field.declaration);
+      const auto slot = layout.FieldIndex(field.declaration);
+      if (!slot) {
+        std::unreachable();
+      }
       auto value = Value::Null();
       if (field.state != FieldState::Uninitialized) {
         value = field.object == kNoNativeIndex
                     ? DecodeNativeValue(values.subspan(field.value).front())
                     : objects_.subspan(field.object).front();
       }
-      if (const auto stored = heap_->SetField(object, slot, value); !stored) {
+      if (const auto stored = heap_->SetField(object, *slot, value); !stored) {
         return stored.error();
       }
-      Heap::InstanceFields(object).SetFieldState(slot, field.state);
+      Heap::InstanceFields(object).SetFieldState(*slot, field.state);
     }
   }
   return ExecutionStatus::Returned;

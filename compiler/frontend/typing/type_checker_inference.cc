@@ -394,7 +394,7 @@ std::vector<std::optional<TypeChecker::Type>> TypeChecker::CheckInferenceArgumen
     TypeInference& inference,
     CallbackArity arity) {
   std::vector<std::optional<Type>> result(expressions.size());
-  std::vector<std::optional<Refinements>> snapshots(expressions.size());
+  std::vector<Refinements> snapshots(expressions.size());
   for (std::size_t index = 0; index < expressions.size(); ++index) {
     const auto& expression = *expressions.subspan(index).front();
     const auto& pattern = patterns.subspan(index).front();
@@ -428,7 +428,7 @@ std::vector<std::optional<TypeChecker::Type>> TypeChecker::CheckInferenceArgumen
         continue;
       }
       auto current = std::move(refinements_);
-      refinements_ = std::move(*snapshots.at(index));
+      refinements_ = std::move(snapshots.at(index));
       result.at(index) = CheckInferenceArgument(expression, pattern, context, inference, arity);
       refinements_ = std::move(current);
       progress = true;

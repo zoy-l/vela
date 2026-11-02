@@ -398,12 +398,18 @@ void Jit(benchmark::State& state, Workload workload, Problem problem) {
     return;
   }
   auto& instance = **loaded;
-  const auto setup = runtime::ExecuteNativeFunction(instance, *instance.FindFunction(kSetupEntry));
+  const auto setup_entry = instance.FindFunction(kSetupEntry);
+  const auto workload_entry = instance.FindFunction(kWorkloadEntry);
+  if (!setup_entry || !workload_entry) {
+    state.SkipWithError("Missing workload entry");
+    return;
+  }
+  const auto setup = runtime::ExecuteNativeFunction(instance, *setup_entry);
   if (!setup.Succeeded()) {
     state.SkipWithError("Input preparation failed: " + setup.message);
     return;
   }
-  const auto entry = *instance.FindFunction(kWorkloadEntry);
+  const auto entry = *workload_entry;
   const auto warm = runtime::ExecuteNativeFunction(instance, entry);
   if (!IsExpected(warm, problem)) {
     state.SkipWithError("Warm-up failed or checksum mismatched: " + warm.message);
@@ -604,14 +610,19 @@ void FirstJit(benchmark::State& state, Workload workload, Problem problem) {
         return;
       }
       auto& instance = **loaded;
-      const auto setup =
-          runtime::ExecuteNativeFunction(instance, *instance.FindFunction(kSetupEntry));
+      const auto setup_entry = instance.FindFunction(kSetupEntry);
+      const auto workload_entry = instance.FindFunction(kWorkloadEntry);
+      if (!setup_entry || !workload_entry) {
+        state.SkipWithError("Missing workload entry");
+        return;
+      }
+      const auto setup = runtime::ExecuteNativeFunction(instance, *setup_entry);
       if (!setup.Succeeded()) {
         state.ResumeTiming();
         state.SkipWithError("Input preparation failed: " + setup.message);
         return;
       }
-      const auto entry = *instance.FindFunction(kWorkloadEntry);
+      const auto entry = *workload_entry;
       state.ResumeTiming();
       auto result = runtime::ExecuteNativeFunction(instance, entry);
       benchmark::DoNotOptimize(result);

@@ -256,7 +256,9 @@ TEST(DebuggerTest, ValidatesEntriesBeforeCallingTheObserver) {
   EXPECT_EQ(runtime::ExecuteNativeFunction(*compiled.instance, kInvalidFunctionTarget).status,
             ExecutionStatus::InvalidEntry);
   const auto required = compiled.instance->FindFunction("required");
-  ASSERT_TRUE(required);
+  if (!required) {
+    FAIL() << "missing required entry";
+  }
   EXPECT_EQ(runtime::ExecuteNativeFunction(*compiled.instance, *required).status,
             ExecutionStatus::TypeError);
   EXPECT_EQ(instructions, 0U);

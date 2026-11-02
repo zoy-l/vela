@@ -63,7 +63,9 @@ class NativeSourceCacheTest : public ::vela::test::DirectoryTest {
   }
   static void ExpectEntry(runtime::NativeInstance& instance, std::int64_t expected) {
     const auto main = instance.FindFunction("main");
-    ASSERT_TRUE(main);
+    if (!main) {
+      FAIL() << "missing main entry";
+    }
     const auto executed = runtime::ExecuteNativeFunction(instance, *main);
     ASSERT_TRUE(executed.Succeeded()) << executed.message;
     EXPECT_EQ(executed.value.AsInteger(), expected);

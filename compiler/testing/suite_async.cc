@@ -307,7 +307,7 @@ std::expected<Suite::CallbackExpectation*, std::string> Suite::FindCallback(
 
 std::expected<runtime::Value, std::string> Suite::ExitCallback(runtime::Value ticket) {
   if (!ticket.IsInteger() || ticket.AsInteger() <= 0 ||
-      static_cast<std::uint64_t>(ticket.AsInteger()) != callback_contexts_.size()) {
+      std::cmp_not_equal(ticket.AsInteger(), callback_contexts_.size())) {
     return std::unexpected("callback execution scopes must close in stack order");
   }
   isolate_->scheduler().SetExecutionContext(callback_contexts_.back());

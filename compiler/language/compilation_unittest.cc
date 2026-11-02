@@ -142,7 +142,9 @@ async func main(): Future<int> {
   const auto entry = test::CompileCleanSource(source, isolate);
   ASSERT_TRUE(entry) << entry.error();
   const auto main = (*entry)->FindFunction("main");
-  ASSERT_TRUE(main);
+  if (!main) {
+    FAIL() << "missing main entry";
+  }
   EXPECT_NE((*entry)->image().functions.values().subspan(*main).front().flags &
                 runtime::kNativeAsyncFunction,
             0U);

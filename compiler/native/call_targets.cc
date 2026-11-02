@@ -27,7 +27,7 @@ class CallableDefinitions final {
         counts_(function.register_count),
         definitions_(function.register_count),
         states_(function.register_count),
-        classes_(function.register_count) {
+        targets_(function.register_count) {
     for (std::size_t reg = 0; reg < function.parameter_count; ++reg) {
       counts_.at(reg) = 1;
     }
@@ -40,11 +40,11 @@ class CallableDefinitions final {
     }
   }
 
-  std::optional<ir::ClassId> Resolve(ir::RegisterId reg) {
+  std::optional<CallableTarget> Resolve(ir::RegisterId reg) {
     const auto& function = *function_;
     const auto& program = *program_;
     std::vector<ir::RegisterId> path;
-    std::optional<ir::ClassId> result;
+    std::optional<CallableTarget> result;
     while (states_.at(reg) == 0) {
       states_.at(reg) = 1;
       path.push_back(reg);
@@ -57,17 +57,16 @@ class CallableDefinitions final {
         reg = instruction.lhs;
         continue;
       }
-      if (instruction.opcode == Opcode::NewInstance &&
-          program.classes.at(instruction.index).callable) {
-        result = instruction.index;
+      if (instruction.opcode == Opcode::NewInstance) {
+        result = program.classes.at(instruction.index).callable;
       }
       break;
     }
     if (states_.at(reg) == 2) {
-      result = classes_.at(reg);
+      result = targets_.at(reg);
     }
     for (const auto item : path) {
-      classes_.at(item) = result;
+      targets_.at(item) = result;
       states_.at(item) = 2;
     }
     return result;
@@ -79,7 +78,7 @@ class CallableDefinitions final {
   std::vector<std::size_t> counts_;
   std::vector<std::optional<std::size_t>> definitions_;
   std::vector<std::uint8_t> states_;
-  std::vector<std::optional<ir::ClassId>> classes_;
+  std::vector<std::optional<CallableTarget>> targets_;
 };
 
 bool IsSameType(const frontend::TypeDescriptor& left, const frontend::TypeDescriptor& right) {
@@ -236,13 +235,12 @@ std::vector<std::optional<CallableTarget>> FindDirectCalls(const ir::Function& f
     if (instruction.opcode != Opcode::CallIndirect) {
       continue;
     }
-    const auto type = definitions.Resolve(instruction.rhs);
-    if (!type) {
+    const auto target = definitions.Resolve(instruction.rhs);
+    if (!target) {
       continue;
     }
-    const auto target = *program.classes.at(*type).callable;
-    const auto& callee = program.functions.at(target.function);
-    if (CanCallDirectly(instruction, function, callee, target.mode)) {
+    const auto& callee = program.functions.at(target->function);
+    if (CanCallDirectly(instruction, function, callee, target->mode)) {
       targets.at(index) = target;
     }
   }

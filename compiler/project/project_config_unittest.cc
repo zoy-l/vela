@@ -59,8 +59,11 @@ TEST(ProjectConfigurationTest, PreservesTagSourceOrderAndExplicitFalseSkip) {
     "tags":{"unit":{"timeout":"10s","skip":true},"unit && !slow":{"skip":false}}
   }})");
   ASSERT_TRUE(config) << config.error().message;
-  ASSERT_TRUE(config->test.has_value());
-  const auto& settings = *config->test;
+  const auto& configured_settings = config->test;
+  if (!configured_settings) {
+    FAIL() << "missing test configuration";
+  }
+  const auto& settings = *configured_settings;
   EXPECT_EQ(settings.paths.size(), 2U);
   EXPECT_EQ(settings.filename, "*_spec.vela");
   EXPECT_EQ(settings.concurrency, 3U);

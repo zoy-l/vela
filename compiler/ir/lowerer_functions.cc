@@ -131,7 +131,11 @@ Lowerer::LoweredValue Lowerer::LowerFunctionValue(const frontend::Expression& ex
     const auto& type = receiver->type;
     auto name = std::string(type.name);
     if (model_.super_members.contains(&expression)) {
-      name = *model_.classes.at(name).base_class;
+      const auto& parent = model_.classes.at(name).base_class;
+      if (!parent) {
+        std::unreachable();
+      }
+      name = *parent;
     } else if (type.nullable) {
       name.resize(name.size() - 1);
     }

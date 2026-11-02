@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <utility>
 
 #include <llvm/ADT/APInt.h>
 #include <llvm/IR/BasicBlock.h>
@@ -347,7 +348,11 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
   using runtime::NativeFieldCache;
   using runtime::NativeMemoryLayout;
   const auto reading = instruction.opcode == Opcode::GetField;
-  const auto field = *instruction.field_declaration;
+  const auto declaration = instruction.field_declaration;
+  if (!declaration) {
+    std::unreachable();
+  }
+  const auto field = *declaration;
   const auto origin = origins_.subspan(instruction_index_).front();
   const auto& canonical = program_.functions.at(function_index_).instructions.at(origin);
   if (!reading &&
@@ -367,7 +372,11 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
     EmitOptimizedField(instruction, object);
     return;
   }
-  const auto access_index = *field_accesses_.at(origin);
+  const auto cached_access = field_accesses_.at(origin);
+  if (!cached_access) {
+    std::unreachable();
+  }
+  const auto access_index = *cached_access;
   auto* cache = ByteAddress(field_caches_, access_index * sizeof(NativeFieldCache));
   auto* layout =
       LoadMemory(builder_.getPtrTy(), ByteAddress(object, NativeMemoryLayout::kObjectLayout),
@@ -440,7 +449,11 @@ void FunctionEmitter::EmitReloadableField(const ir::Instruction& instruction, ll
 void FunctionEmitter::EmitOptimizedField(const ir::Instruction& instruction, llvm::Value* object) {
   using runtime::InstanceStorage;
   using runtime::NativeMemoryLayout;
-  const auto& direct = field_layouts_.at(*instruction.field_declaration);
+  const auto declaration = instruction.field_declaration;
+  if (!declaration) {
+    std::unreachable();
+  }
+  const auto& direct = field_layouts_.at(*declaration);
   auto& context = module_.getContext();
   auto* layout =
       LoadMemory(builder_.getPtrTy(), ByteAddress(object, NativeMemoryLayout::kObjectLayout),

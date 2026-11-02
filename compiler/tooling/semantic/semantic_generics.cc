@@ -57,10 +57,14 @@ std::vector<std::string_view> SemanticIndex::MemberOwners(frontend::TypeDescript
   while (visited.insert(name).second) {
     owners.push_back(name);
     const auto owner = model_.classes.find(name);
-    if (owner == model_.classes.end() || !owner->second.base_class) {
+    if (owner == model_.classes.end()) {
       break;
     }
-    name = *owner->second.base_class;
+    const auto& parent = owner->second.base_class;
+    if (!parent) {
+      break;
+    }
+    name = *parent;
   }
   return owners;
 }

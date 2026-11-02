@@ -45,7 +45,7 @@ class MockProject final {
   MockProject& operator=(MockProject&&) = delete;
 
   std::expected<void, std::string> Prepare();
-  std::expected<void, std::string> Generate(Generation mode) const;
+  [[nodiscard]] std::expected<void, std::string> Generate(Generation mode) const;
   [[nodiscard]] std::string source() const { return PathText(directory_ / "mock_workload.vela"); }
   [[nodiscard]] std::filesystem::path cache() const { return directory_ / "cache"; }
 
@@ -217,8 +217,12 @@ void ExecutionTime(benchmark::State& state, std::string_view name, std::int64_t 
   }
   state.counters["allocated_bytes"] = static_cast<double>(heap.allocated_bytes());
   state.counters["committed_bytes"] = static_cast<double>(heap.committed_bytes());
-  const auto comparisons =
-      runtime::ExecuteNativeFunction(**instance, *(*instance)->FindFunction("comparisonCount"));
+  const auto comparison_entry = (*instance)->FindFunction("comparisonCount");
+  if (!comparison_entry) {
+    state.SkipWithError("Missing comparisonCount entry");
+    return;
+  }
+  const auto comparisons = runtime::ExecuteNativeFunction(**instance, *comparison_entry);
   if (!comparisons.Succeeded() || !comparisons.value.IsInteger()) {
     state.SkipWithError("missing matcher comparison evidence");
     return;

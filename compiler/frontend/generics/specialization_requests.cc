@@ -31,7 +31,7 @@ class SpecializationRequests final {
  private:
   [[nodiscard]] const std::string* Name(DeclarationId declaration) const;
   [[nodiscard]] std::optional<TypeName> Type(const TypeIdentity& identity) const;
-  std::expected<std::optional<GenericSpecialization>, Diagnostic> Request(
+  [[nodiscard]] std::expected<std::optional<GenericSpecialization>, Diagnostic> Request(
       const DeclarationRecord& record) const;
   std::span<const DeclarationRecord> records_;
   absl::flat_hash_map<OriginKey, std::string> names_;

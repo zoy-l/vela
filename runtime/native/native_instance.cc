@@ -290,7 +290,11 @@ std::vector<MemberDefinition> DescribeMembers(const NativeImage& image,
       const auto* layout = layouts.classes[receiver.index];
       if (layout->storage() == ClassStorage::Reloadable) {
         const auto fields = image.classes.values()[receiver.index].fields.values();
-        target = *layout->FieldIndex(fields[target].declaration);
+        const auto field = layout->FieldIndex(fields[target].declaration);
+        if (!field) {
+          std::unreachable();
+        }
+        target = *field;
       }
     }
     members.push_back({

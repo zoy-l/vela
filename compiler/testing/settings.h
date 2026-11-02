@@ -65,7 +65,11 @@ struct Settings final {
   Timeout timeout;
   Timeout suite_load_timeout{.kind = TimeoutKind::None};
   std::uint32_t concurrency = 1;
+#ifdef _WIN32
   Reporter reporter = Reporter::Expanded;
+#else
+  Reporter reporter = Reporter::Compact;
+#endif
   std::optional<TagSelector> include_tags;
   std::optional<TagSelector> exclude_tags;
   std::vector<TagConfiguration> tags;

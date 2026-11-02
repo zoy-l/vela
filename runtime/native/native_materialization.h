@@ -67,6 +67,7 @@ class NativeMaterialization final {
   [[nodiscard]] ExecutionStatus PrepareStorage() noexcept;
   [[nodiscard]] ExecutionStatus BuildGraph() noexcept;
   [[nodiscard]] ExecutionStatus AllocateGraph() noexcept;
+  [[nodiscard]] ExecutionStatus InitializeGraph() noexcept;
   void Enqueue(std::uint32_t node) noexcept;
   Heap* heap_;
   NativeCheckpoint* checkpoint_;

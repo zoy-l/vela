@@ -267,7 +267,7 @@ func main(): Store {
   runtime::RootRange root(isolate.heap(), &value, 1);
   compiled = test::InstanceResult();
   isolate.heap().Collect();
-  const auto builder = *runtime::Heap::GetField(*value.AsObject(), 0);
+  const auto builder = runtime::Heap::LoadField(*value.AsObject(), 0);
   auto* snapshot = isolate.heap().BuildString(*builder.AsObject());
   ASSERT_NE(snapshot, nullptr);
   EXPECT_TRUE(snapshot->value().starts_with("0中1中"));

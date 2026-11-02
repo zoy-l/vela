@@ -308,7 +308,11 @@ void TypeChecker::RegisterMethodApplications() {
 void TypeChecker::QueueInterfaceBinding(const ClassInfo& owner,
                                         const std::string& interface,
                                         const Function& method) {
-  const auto& application = *method.application;
+  const auto& specialized = method.application;
+  if (!specialized) {
+    std::unreachable();
+  }
+  const auto& application = *specialized;
   if (!owner.interface_method_templates.contains({interface, application.name}) ||
       !queued_interface_bindings_.emplace(owner.type.name, interface, method.name).second) {
     return;
@@ -327,7 +331,11 @@ void TypeChecker::DrainInterfaceBindings() {
     interface_bindings_.pop_back();
     auto& owner = classes_.at(binding.owner);
     const auto& method = *interfaces_.at(binding.interface).method_applications.at(binding.method);
-    const auto& application = *method.application;
+    const auto& specialized = method.application;
+    if (!specialized) {
+      std::unreachable();
+    }
+    const auto& application = *specialized;
     const auto implementation =
         owner.interface_method_templates.at({binding.interface, application.name});
     const auto target = MaterializeMethod(implementation, application.arguments, binding.location);

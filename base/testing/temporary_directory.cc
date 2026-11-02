@@ -13,7 +13,11 @@ namespace vela::test {
 std::expected<std::filesystem::path, std::string> CreateTemporaryDirectory() {
   static std::atomic<std::uint64_t> sequence{0};
   std::error_code error;
-  const auto temporary = std::filesystem::temp_directory_path(error);
+  auto temporary = std::filesystem::temp_directory_path(error);
+  if (error) {
+    return std::unexpected(error.message());
+  }
+  temporary = std::filesystem::canonical(temporary, error);
   if (error) {
     return std::unexpected(error.message());
   }

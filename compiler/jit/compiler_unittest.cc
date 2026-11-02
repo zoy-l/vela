@@ -190,7 +190,9 @@ export func answer(): int { return divide(2); }
   ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   auto instance = runtime::NativeInstance::Borrow(isolate.native_dispatch().current_state());
   const auto target = instance.FindFunction("fail");
-  ASSERT_TRUE(target);
+  if (!target) {
+    FAIL() << "missing fail entry";
+  }
   const auto failed = runtime::ExecuteNativeFunction(instance, *target);
   EXPECT_EQ(failed.status, ExecutionStatus::DivisionByZero);
   ASSERT_EQ(failed.stack_trace.size(), 2U);
@@ -232,7 +234,9 @@ export func run(count: int): int {
   ASSERT_TRUE(test::PublishImage(isolate, compiled->image));
   auto instance = runtime::NativeInstance::Borrow(isolate.native_dispatch().current_state());
   const auto target = instance.FindFunction("fail");
-  ASSERT_TRUE(target);
+  if (!target) {
+    FAIL() << "missing fail entry";
+  }
   const auto failed = runtime::ExecuteNativeFunction(instance, *target);
   EXPECT_EQ(failed.status, ExecutionStatus::IndexOutOfBounds);
   ASSERT_EQ(failed.stack_trace.size(), 2U);
@@ -1126,7 +1130,11 @@ TEST_P(JitLanguageTest, ExecutesNativeProductionPathsWithPreciseRoots) {
     ASSERT_EQ(isolate.scheduler().PumpUntil(*future, runtime::FuturePumpMode::WaitForHost),
               runtime::FuturePumpResult::Completed);
     ASSERT_EQ(future->state(), runtime::FutureState::Succeeded);
-    value = *future->value();
+    const auto completed = future->value();
+    if (!completed) {
+      FAIL() << "Future completed without a value";
+    }
+    value = *completed;
   }
   ASSERT_TRUE(value.IsInteger());
   EXPECT_EQ(value.AsInteger(), 42);

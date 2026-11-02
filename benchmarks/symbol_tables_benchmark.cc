@@ -47,7 +47,12 @@ void CompileSymbolTables(benchmark::State& state) {
       state.SkipWithError("Symbol workload did not compile");
       return;
     }
-    const auto result = runtime::ExecuteNativeFunction(*instance, *instance->FindFunction("main"));
+    const auto entry = instance->FindFunction("main");
+    if (!entry) {
+      state.SkipWithError("Missing main entry");
+      return;
+    }
+    const auto result = runtime::ExecuteNativeFunction(*instance, *entry);
     constexpr std::int64_t kExpectedResult = 11;
     if (!result.Succeeded() || !result.value.IsInteger() ||
         result.value.AsInteger() != kExpectedResult) {

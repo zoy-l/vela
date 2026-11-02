@@ -200,9 +200,12 @@ std::expected<CollectionLookup, ExecutionStatus> FindEntry(const HeapObject& obj
 }
 
 Value ReadMapEntry(const CollectionLayout& layout, const CollectionLookup& entry) noexcept {
+  const auto& values = layout.values;
+  if (!values) {
+    std::unreachable();
+  }
   const auto& slot = entry.slot;
-  return slot.found ? LoadElementStorage(*layout.values, entry.table->values, slot.entry)
-                    : Value::Null();
+  return slot.found ? LoadElementStorage(*values, entry.table->values, slot.entry) : Value::Null();
 }
 
 void LinkTail(CollectionStorage& storage, const Table& table, std::uint32_t entry) noexcept {
@@ -323,8 +326,11 @@ Value Heap::LoadMapValue(HeapObject& object, Value key) noexcept {
 
 void Heap::StoreCollectionEntry(HeapObject& object, std::uint32_t entry, Value value) noexcept {
   const auto& layout = *object.collection_layout();
-  StoreElementStorage(*layout.values, StorageAfter<CollectionStorage>(object)->table.values, entry,
-                      value);
+  const auto& values = layout.values;
+  if (!values) {
+    std::unreachable();
+  }
+  StoreElementStorage(*values, StorageAfter<CollectionStorage>(object)->table.values, entry, value);
   if (value.IsReference()) {
     WriteBarrier(object, value);
   }

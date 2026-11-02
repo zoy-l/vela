@@ -1,6 +1,5 @@
 #include "compiler/development/development_repl.h"
 
-#include <filesystem>
 #include <memory>
 #include <span>
 #include <sstream>

@@ -173,7 +173,11 @@ OperationResult InitializeOutput(Isolate& isolate,
                                  const TypeConstraint& accumulator) {
   auto& heap = isolate.heap();
   if (algorithm == ArrayAlgorithm::Map) {
-    const auto output = AllocateOutput(isolate, *signature.result, length);
+    const auto result = signature.result;
+    if (!result) {
+      std::unreachable();
+    }
+    const auto output = AllocateOutput(isolate, *result, length);
     if (!output) {
       return std::unexpected(output.error());
     }

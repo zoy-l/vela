@@ -340,7 +340,7 @@ void RemoveUnusedHandlers(Function& function) {
       target = static_cast<std::uint32_t>(handlers.size());
       handlers.push_back(function.handlers.at(*previous));
     }
-    instruction.handler = *target;
+    instruction.handler = target;
   }
   function.handlers = std::move(handlers);
 }

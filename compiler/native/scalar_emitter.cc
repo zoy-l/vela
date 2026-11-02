@@ -27,8 +27,9 @@ constexpr double kIntegerMagnitudeLimit = 0x1p63;
 bool FunctionEmitter::CanInlineSquareRoot(const ir::Function& function) const {
   using Intrinsic = runtime::NativeFunction::Intrinsic;
   const auto standard = runtime::FindStandardNative(function.native_symbol);
+  const auto& signature = function.signature;
   return standard != nullptr && standard->aot_entry().intrinsic == Intrinsic::SquareRoot &&
-         standard->IsSignatureCompatible(*function.signature, program_.layouts.types);
+         signature && standard->IsSignatureCompatible(*signature, program_.layouts.types);
 }
 
 llvm::Value* FunctionEmitter::SquareRootCondition(llvm::Value& entries, llvm::Value* operand) {

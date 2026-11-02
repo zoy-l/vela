@@ -191,7 +191,11 @@ SuiteResult CompileSuite(const std::filesystem::path& path,
   event.file = file;
   reporter.Emit(event);
   SuiteOptions options;
-  options.settings = *configuration.test;
+  const auto& settings = configuration.test;
+  if (!settings) {
+    std::unreachable();
+  }
+  options.settings = *settings;
   options.list = command.list;
   options.suite = identity;
   options.file = file;
@@ -393,7 +397,11 @@ int TestCommand(std::span<const std::string_view> arguments, CommandStreams stre
     PrintConfigurationError(errors, paths.error());
     return paths.error().exit_code;
   }
-  const auto& settings = *configuration->test;
+  const auto& configured_settings = configuration->test;
+  if (!configured_settings) {
+    std::unreachable();
+  }
+  const auto& settings = *configured_settings;
   const CancellationScope cancellation;
   if (!cancellation.IsInstalled()) {
     errors << "vela test: cannot install cancellation handler\n";

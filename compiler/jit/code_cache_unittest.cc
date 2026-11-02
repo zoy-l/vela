@@ -63,7 +63,6 @@ TEST_F(JitCodeCacheTest, RelocatesCachedObjectsIntoIndependentLiveBatchesAndFres
   EXPECT_EQ(first->cache, CodeCacheStatus::Miss);
   const auto memory = (*compiler)->resource_counts();
   EXPECT_GT(memory.executable_bytes, 0U);
-  EXPECT_GT(memory.read_only_bytes, 0U);
   EXPECT_GT(memory.debug_payload_bytes, 0U);
   EXPECT_EQ(memory.images, 1U);
   EXPECT_GT(memory.image_data_bytes, 0U);

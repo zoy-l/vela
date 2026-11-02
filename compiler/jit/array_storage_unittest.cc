@@ -51,11 +51,9 @@ export func fail(values: Item[]): int { return values[2].value; }
     const auto sum = instance.FindFunction("sum");
     const auto nullable = instance.FindFunction("nullable");
     const auto fail = instance.FindFunction("fail");
-    ASSERT_TRUE(make);
-    ASSERT_TRUE(make_nullable);
-    ASSERT_TRUE(sum);
-    ASSERT_TRUE(nullable);
-    ASSERT_TRUE(fail);
+    if (!make || !make_nullable || !sum || !nullable || !fail) {
+      FAIL() << "missing array storage entry";
+    }
     const auto made = runtime::ExecuteNativeFunction(instance, *make);
     ASSERT_TRUE(made.Succeeded());
     const runtime::RootedValue values(isolate, made.value);

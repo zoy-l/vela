@@ -476,11 +476,11 @@ void Lowerer::LowerFunctionParameters(const frontend::Function& source,
   }
 }
 
-void Lowerer::RegisterFunctionSignature(Function& function,
-                                        const frontend::Function& source,
-                                        const frontend::FunctionDescriptor& function_info) {
-  function.signature.emplace();
-  auto& signature = *function.signature;
+CallSignature& Lowerer::RegisterFunctionSignature(
+    Function& function,
+    const frontend::Function& source,
+    const frontend::FunctionDescriptor& function_info) {
+  auto& signature = function.signature.emplace();
   signature.hidden_parameters =
       static_cast<std::uint8_t>(function.parameter_count - source.parameters.size());
   for (const auto& parameter : source.parameters) {
@@ -496,6 +496,7 @@ void Lowerer::RegisterFunctionSignature(Function& function,
   if (function.return_type.kind != frontend::TypeDescriptor::Kind::Void) {
     signature.result = RegisterRuntimeType(function.return_type);
   }
+  return signature;
 }
 
 Function Lowerer::PrepareFunction(const frontend::Function& source,
@@ -541,9 +542,8 @@ Function Lowerer::PrepareFunction(const frontend::Function& source,
                          : 0;
   function.parameter_count = static_cast<std::uint32_t>(
       source.parameters.size() + ((has_receiver || lambda != nullptr) ? 1 : 0) + masks);
-  RegisterFunctionSignature(function, source, function_info);
+  auto& signature = RegisterFunctionSignature(function, source, function_info);
   if (masks != 0) {
-    auto& signature = *function.signature;
     signature.hidden_parameters = 1;
     const auto integer = RegisterRuntimeType(
         {.kind = frontend::TypeDescriptor::Kind::Int, .name = frontend::kIntTypeName});
@@ -1184,7 +1184,11 @@ Lowerer::LoweredValue Lowerer::LowerCall(const frontend::Expression& expression)
   if (expression.callee->kind == frontend::Expression::Kind::Name &&
       expression.callee->text == frontend::kSuperName) {
     const auto& owner = model_.classes.at(current_owner_->name);
-    const auto& base = model_.classes.at(*owner.base_class);
+    const auto& parent = owner.base_class;
+    if (!parent) {
+      std::unreachable();
+    }
+    const auto& base = model_.classes.at(*parent);
     const auto* receiver = FindLocal(frontend::kReceiverName);
     return LowerConstructorCall(expression.arguments, model_.argument_order.at(&expression),
                                 expression.location, base, receiver->reg);
@@ -1377,8 +1381,11 @@ Lowerer::LoweredValue Lowerer::LowerInvocation(const frontend::Expression& expre
     const auto super = model_.super_members.find(member);
     if (super != model_.super_members.end()) {
       const auto& self = FindLocal(frontend::kReceiverName)->type;
-      const auto& parent = *model_.classes.at(self.name).base_class;
-      binding_receiver = declarations_->classes.at(parent).declaration;
+      const auto& parent = model_.classes.at(self.name).base_class;
+      if (!parent) {
+        std::unreachable();
+      }
+      binding_receiver = declarations_->classes.at(*parent).declaration;
     }
   }
   const RegisterId result = AllocateTemporary(expression.location);

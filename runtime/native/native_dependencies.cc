@@ -108,23 +108,25 @@ struct MemberName final {
 class RetainedContracts final {
  public:
   RetainedContracts(const NativeImage* previous, const NativeImage& candidate);
-  std::expected<void, NativeContractViolation> Check(const NativeFunctionDescription& function,
-                                                     const DeclarationIndex& source,
-                                                     const DependencySelection& selection) const;
+  [[nodiscard]] std::expected<void, NativeContractViolation> Check(
+      const NativeFunctionDescription& function,
+      const DeclarationIndex& source,
+      const DependencySelection& selection) const;
 
  private:
   static NativeContractViolation Violation(const NativeFunctionDescription& function,
                                            DeclarationId declaration,
                                            std::string message);
-  std::expected<void, NativeContractViolation> CheckField(const NativeFunctionDescription& function,
-                                                          DeclarationId field) const;
-  std::expected<void, NativeContractViolation> CheckGlobal(
+  [[nodiscard]] std::expected<void, NativeContractViolation> CheckField(
+      const NativeFunctionDescription& function,
+      DeclarationId field) const;
+  [[nodiscard]] std::expected<void, NativeContractViolation> CheckGlobal(
       const NativeFunctionDescription& function,
       DeclarationId global) const;
-  std::expected<void, NativeContractViolation> CheckConstruction(
+  [[nodiscard]] std::expected<void, NativeContractViolation> CheckConstruction(
       const NativeFunctionDescription& function,
       const NativeConstructionDescription& construction) const;
-  std::expected<void, NativeContractViolation> CheckBinding(
+  [[nodiscard]] std::expected<void, NativeContractViolation> CheckBinding(
       const NativeFunctionDescription& function,
       const NativeBindingDependency& binding,
       const DeclarationIndex& source) const;

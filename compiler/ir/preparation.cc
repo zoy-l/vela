@@ -302,6 +302,9 @@ LoweringResult PrepareProgram(const frontend::Program& source,
     }
   }
   if (options.native_mode == NativeProgramMode::Reloadable) {
+    if (!declarations) {
+      std::unreachable();
+    }
     BindTypeDependencies(program, model, *declarations);
     BindReloadableAccesses(program);
   }

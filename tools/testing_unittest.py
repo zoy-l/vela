@@ -75,9 +75,10 @@ class SourceTestingTest(CommandTestCase):
         self.write("unit/a_test.vela", "import 'sdk:test'; func main(): void {"
                    "test('wait', async (): Future<void> => { await sleep(20); }); }")
         self.suite("unit/b_test.vela")
+        # 首行握手后改用 communicate；无缓冲管道避免文本预读缓存截留后续事件。
         process = subprocess.Popen([str(self.executable), "test", "--reporter=json"],
                                    cwd=self.directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   text=True, encoding="utf-8")
+                                   bufsize=0)
         self.addCleanup(lambda: process.kill() if process.poll() is None else None)
         start = json.loads(process.stdout.readline())
         self.assertEqual(start["type"], "start")

@@ -19,7 +19,6 @@
 #include "base/native_program_mode.h"
 #include "base/opcode.h"
 #include "compiler/development/development_session.h"
-#include "compiler/development/source_session.h"
 #include "compiler/ir/ir.h"
 #include "compiler/jit/test_support.h"
 #include "compiler/native/native_roots.h"
@@ -58,7 +57,8 @@ struct JitDebuggerTest : public testing::TestWithParam<NativeCodeTier>,
     session_->SetDebugger(this);
   }
 
-  std::expected<DevelopmentCandidate, DevelopmentResult> Prepare(std::string source) const {
+  [[nodiscard]] std::expected<DevelopmentCandidate, DevelopmentResult> Prepare(
+      std::string source) const {
     return session_->Prepare(
         {
             .base_revision = session_->snapshot()->revision,

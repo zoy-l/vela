@@ -30,8 +30,8 @@ void Lowerer::RegisterAsyncMember(const frontend::TypeDescriptor& receiver, std:
   const auto operation = member->operation;
   const frontend::TypeDescriptor dynamic{.kind = Kind::Dynamic, .name = frontend::kDynamicTypeName};
   const std::array parameters{dynamic, dynamic};
-  const auto count = std::ranges::count_if(
-      member->parameters, [](std::string_view parameter) { return !parameter.empty(); });
+  const auto count = static_cast<std::size_t>(std::ranges::count_if(
+      member->parameters, [](std::string_view parameter) { return !parameter.empty(); }));
   auto signature =
       frontend::MakeAsyncSignature(*member, dynamic, std::span(parameters).first(count));
   if (operation == AsyncOperation::CompleterComplete &&

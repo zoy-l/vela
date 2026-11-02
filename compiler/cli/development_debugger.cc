@@ -5,7 +5,6 @@
 #include <functional>
 #include <optional>
 #include <ostream>
-#include <string>
 #include <string_view>
 #include <utility>
 
@@ -13,7 +12,6 @@
 #include "base/path.h"
 #include "compiler/cli/console_input.h"
 #include "compiler/development/development_session.h"
-#include "compiler/development/source_session.h"
 #include "runtime/native/native_control.h"
 #include "runtime/native/native_debugger.h"
 

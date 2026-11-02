@@ -316,11 +316,13 @@ TEST_F(DevelopmentFilesTest, RemovedModulesAreNotReintroducedByLaterFileEvents) 
   ASSERT_TRUE(initial);
   ASSERT_TRUE(sources.Commit(*initial));
   ASSERT_TRUE(files.Accept(sources.snapshot()));
+  constexpr std::string_view kRemainingSource = "export func read(): int { return 42; }";
+  Write("main.vela", kRemainingSource);
   const auto removed = sources.Prepare({
       .base_revision = sources.snapshot()->revision,
       .changes =
           {
-              {.path = Path("main.vela"), .text = "export func read(): int { return 42; }"},
+              {.path = Path("main.vela"), .text = std::string(kRemainingSource)},
               {.path = Path("nested/library.vela"), .text = std::nullopt},
           },
       .added_roots = {},
@@ -357,8 +359,11 @@ TEST_F(DevelopmentFilesTest, AcceptingAnOlderCaptureKeepsTheNewerPendingText) {
   ASSERT_TRUE(files.Accept(sources.snapshot()));
   const auto retained = files.Poll();
   ASSERT_TRUE(retained);
-  ASSERT_TRUE(*retained);
-  const auto& update = **retained;
+  const auto& retained_update = *retained;
+  if (!retained_update) {
+    FAIL() << "missing retained update";
+  }
+  const auto& update = *retained_update;
   ASSERT_EQ(update.changes.size(), 1U);
   EXPECT_EQ(update.base_revision, sources.snapshot()->revision);
   EXPECT_EQ(update.changes.front().text, newer->changes.front().text);

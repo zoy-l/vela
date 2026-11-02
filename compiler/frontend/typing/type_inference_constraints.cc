@@ -60,8 +60,11 @@ void TypeInference::Bind(const TypeParameter& parameter,
           .arguments = {},
           .parameter = {},
       };
-      nullable.push_back(
-          {.type = *CommonType(candidate.type, null), .from_bound = candidate.from_bound});
+      const auto common = CommonType(candidate.type, null);
+      if (!common) {
+        std::unreachable();
+      }
+      nullable.push_back({.type = *common, .from_bound = candidate.from_bound});
     }
   }
   for (const auto& candidate : nullable) {

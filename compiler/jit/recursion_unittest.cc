@@ -87,10 +87,9 @@ export func overflow(depth: int): int {
   const auto caught = instance.FindFunction("caught");
   const auto fibonacci = instance.FindFunction("fibonacci");
   const auto overflow = instance.FindFunction("overflow");
-  ASSERT_TRUE(fail);
-  ASSERT_TRUE(caught);
-  ASSERT_TRUE(fibonacci);
-  ASSERT_TRUE(overflow);
+  if (!fail || !caught || !fibonacci || !overflow) {
+    FAIL() << "missing recursion entry";
+  }
   const auto failed = runtime::ExecuteNativeFunction(instance, *fail);
   EXPECT_EQ(failed.status, ExecutionStatus::DivisionByZero);
   ASSERT_EQ(failed.stack_trace.size(), 5U);
@@ -133,8 +132,9 @@ export func throughLeaf(): int { return leaf(41); }
   auto instance = BorrowInstance();
   const auto descend = instance.FindFunction("descend");
   const auto through_leaf = instance.FindFunction("throughLeaf");
-  ASSERT_TRUE(descend);
-  ASSERT_TRUE(through_leaf);
+  if (!descend || !through_leaf) {
+    FAIL() << "missing stack depth entry";
+  }
   runtime::NativeExecution execution(instance);
   std::vector<runtime::NativeTraceFrame> outer(kMaxCallFrames - 1);
   for (auto& frame : outer) {
@@ -168,7 +168,9 @@ TEST_P(RecursiveCallTest, RawEntryValidatesExecutionAndPreservesNestedExceptions
   ASSERT_NO_FATAL_FAILURE(Load("export func identity(value: int): int { return value; }"));
   auto instance = BorrowInstance();
   const auto identity = instance.FindFunction("identity");
-  ASSERT_TRUE(identity);
+  if (!identity) {
+    FAIL() << "missing identity entry";
+  }
   const auto entry = instance.image().functions.values().subspan(*identity).front().entry;
   const std::array arguments{runtime::EncodeNativeValue(runtime::Value::Integer(42))};
   runtime::NativeValue result;
@@ -218,8 +220,9 @@ export func fail(depth: int): int { return 8 / (walk(depth) - 2); }
   auto instance = BorrowInstance();
   const auto walk = instance.FindFunction("walk");
   const auto fail = instance.FindFunction("fail");
-  ASSERT_TRUE(walk);
-  ASSERT_TRUE(fail);
+  if (!walk || !fail) {
+    FAIL() << "missing walk entry";
+  }
   auto& heap = isolate().heap();
   heap.FinishCollection();
   heap.Collect();

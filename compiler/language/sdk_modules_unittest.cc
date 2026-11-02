@@ -130,7 +130,9 @@ TEST(SdkModulesTest, MockFailureNamesAndNumbersReachTheirHostCategories) {
 
 TEST(SdkModulesTest, StructuredFailureFieldsMatchTheHostReader) {
   const auto source = frontend::SdkModuleSource(frontend::kTestModuleName);
-  ASSERT_TRUE(source);
+  if (!source) {
+    FAIL() << "missing SDK source";
+  }
   const auto parsed = frontend::ParseSource(*source);
   ASSERT_TRUE(parsed.diagnostics.empty()) << frontend::DiagnosticsText(parsed.diagnostics);
   for (const auto& [name, fields] :

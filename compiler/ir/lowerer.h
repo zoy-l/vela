@@ -128,9 +128,9 @@ class Lowerer final {
   [[nodiscard]] bool HasInstanceInitialization(const frontend::ClassDescriptor& owner) const;
   [[nodiscard]] std::uint32_t ConstructorMaskCount(const frontend::ClassDescriptor& owner) const;
   void LowerConstructorInitializers(const frontend::ClassDescriptor& owner);
-  void RegisterFunctionSignature(Function& function,
-                                 const frontend::Function& source,
-                                 const frontend::FunctionDescriptor& function_info);
+  CallSignature& RegisterFunctionSignature(Function& function,
+                                           const frontend::Function& source,
+                                           const frontend::FunctionDescriptor& function_info);
   std::optional<LoweredValue> LowerSuperGetter(const frontend::Expression& expression);
   void LowerCaptures(const frontend::Function& source, const frontend::LambdaDescriptor& lambda);
   void LowerStatement(const frontend::Statement& statement);

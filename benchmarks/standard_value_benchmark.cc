@@ -22,7 +22,12 @@ void SteadyValue(benchmark::State& state,
   if (!instance) {
     return;
   }
-  const auto function = *instance->FindFunction("main");
+  const auto entry = instance->FindFunction("main");
+  if (!entry) {
+    state.SkipWithError("Missing main entry");
+    return;
+  }
+  const auto function = *entry;
   auto& heap = isolate.heap();
   heap.Collect();
   auto baseline = heap.allocated_bytes();

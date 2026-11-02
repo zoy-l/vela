@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <llvm/IR/Constants.h>
@@ -44,6 +45,10 @@ llvm::Constant* FunctionEmitter::VirtualGraph(std::size_t instruction) {
   objects.reserve(checkpoint.objects.size());
   for (const auto& object : checkpoint.objects) {
     const auto& allocation = escape_.allocations.at(object.allocation);
+    const auto root = roots_.slots.at(allocation.reference);
+    if (!root) {
+      std::unreachable();
+    }
     std::vector<llvm::Constant*> fields;
     fields.reserve(object.fields.size());
     for (const auto& field : object.fields) {
@@ -60,13 +65,12 @@ llvm::Constant* FunctionEmitter::VirtualGraph(std::size_t instruction) {
     }
     const auto fields_name = prefix + "_fields_" + std::to_string(object.allocation);
     objects.push_back(llvm::ConstantStruct::get(
-        object_type,
-        {
-            builder_.getInt32(allocation.type),
-            builder_.getInt32(static_cast<std::uint32_t>(object.allocation)),
-            builder_.getInt32(static_cast<std::uint32_t>(*roots_.slots.at(allocation.reference))),
-            EmitConstantTable(module_, table, field_type, fields, fields_name),
-        }));
+        object_type, {
+                         builder_.getInt32(allocation.type),
+                         builder_.getInt32(static_cast<std::uint32_t>(object.allocation)),
+                         builder_.getInt32(static_cast<std::uint32_t>(*root)),
+                         EmitConstantTable(module_, table, field_type, fields, fields_name),
+                     }));
   }
   std::vector<llvm::Constant*> aliases;
   aliases.reserve(checkpoint.aliases.size());

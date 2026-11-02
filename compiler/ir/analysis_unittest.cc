@@ -42,8 +42,11 @@ TEST(AnalysisTest, LateOptimizationPreservesCanonicalErrorAndHandlerOrigins) {
   ASSERT_NE(addition, function.instructions.end());
   const auto position = static_cast<std::size_t>(addition - function.instructions.begin());
   EXPECT_EQ(origins.at(position), kOriginBase + 3);
-  ASSERT_TRUE(addition->handler);
-  const auto target = function.handlers.at(*addition->handler).target;
+  const auto handler = addition->handler;
+  if (!handler) {
+    FAIL() << "missing exception handler";
+  }
+  const auto target = function.handlers.at(*handler).target;
   EXPECT_EQ(function.instructions.at(target).opcode, Opcode::Catch);
   EXPECT_EQ(origins.at(target), kOriginBase + kHandlerTarget);
 }

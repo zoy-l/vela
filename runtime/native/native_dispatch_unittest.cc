@@ -14,6 +14,7 @@
 #include "base/execution_status.h"
 #include "base/layout_description.h"
 #include "base/native_program_mode.h"
+#include "base/source_location.h"
 #include "runtime/heap/heap.h"
 #include "runtime/heap/rooted_value.h"
 #include "runtime/isolate/external_resources.h"

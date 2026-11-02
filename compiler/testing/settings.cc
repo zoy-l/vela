@@ -306,10 +306,6 @@ std::vector<std::string_view> TagSelector::Tags() const {
   return tags;
 }
 
-Settings::Settings() : concurrency(std::max(1U, std::thread::hardware_concurrency() / 2U)) {
-#ifndef _WIN32
-  reporter = Reporter::Compact;
-#endif
-}
+Settings::Settings() : concurrency(std::max(1U, std::thread::hardware_concurrency() / 2U)) {}
 
 }  // namespace vela::testing

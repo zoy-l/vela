@@ -247,7 +247,7 @@ std::span<const AsyncMember> AsyncMembers() noexcept {
 const AsyncMember* FindAsyncMember(Kind receiver,
                                    MemberStorage storage,
                                    std::string_view name) noexcept {
-  const auto found = std::ranges::find_if(kMembers, [&](const auto& member) {
+  const auto* const found = std::ranges::find_if(kMembers, [&](const auto& member) {
     return member.receiver == receiver && member.storage == storage && member.name == name;
   });
   return found == kMembers.end() ? nullptr : &*found;

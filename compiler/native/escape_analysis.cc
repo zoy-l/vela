@@ -279,7 +279,7 @@ std::vector<BlockState> Solve(const ir::Function& function,
     queued.at(index) = 0;
     auto values = states.at(index).values;
     const auto& block = graph.blocks.at(index);
-    std::optional<State> exceptional;
+    State exceptional;
     std::optional<std::size_t> handler;
     for (auto position = block.begin; position < block.end; ++position) {
       const auto& instruction = function.instructions.at(position);
@@ -310,7 +310,7 @@ std::vector<BlockState> Solve(const ir::Function& function,
       propagate(index + 1, values);
     }
     if (handler) {
-      propagate(*handler, *exceptional);
+      propagate(*handler, exceptional);
     }
   }
   return states;

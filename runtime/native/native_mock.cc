@@ -101,10 +101,14 @@ bool IsResponseCompatible(const NativeInstance& instance,
                           Value value) {
   const auto response = InspectNativeCallable(instance, value);
   const auto result = contract.signature->result;
-  if (!response || !result || !response->signature->result) {
+  if (!response || !result) {
     return false;
   }
-  const auto& returned = response->types.subspan(*response->signature->result).front();
+  const auto response_result = response->signature->result;
+  if (!response_result) {
+    return false;
+  }
+  const auto& returned = response->types.subspan(*response_result).front();
   return returned.dynamic || returned.IsSubtypeOf(contract.types.subspan(*result).front());
 }
 

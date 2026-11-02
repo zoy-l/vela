@@ -543,7 +543,11 @@ void Suite::RunTest(Node& test,
     }
   }
   if (errors.empty() && !test.cancelled) {
-    Invoke(*test.body, TestPhase::Body, test, errors);
+    const auto& body = test.body;
+    if (!body) {
+      std::unreachable();
+    }
+    Invoke(*body, TestPhase::Body, test, errors);
   }
   RunCleanup(test, errors);
   while (entered != 0) {

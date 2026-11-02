@@ -62,7 +62,12 @@ void SteadyExecution(benchmark::State& state,
   if (!instance) {
     return;
   }
-  const auto entry_index = *instance->FindFunction("main");
+  const auto entry = instance->FindFunction("main");
+  if (!entry) {
+    state.SkipWithError("Missing main entry");
+    return;
+  }
+  const auto entry_index = *entry;
   auto& scheduler = isolate.scheduler();
   auto& heap = isolate.heap();
   const auto before = heap.allocated_bytes();
@@ -122,7 +127,12 @@ void FirstExecution(benchmark::State& state) {
       if (!instance) {
         return;
       }
-      const auto entry_index = *instance->FindFunction("main");
+      const auto entry = instance->FindFunction("main");
+      if (!entry) {
+        state.SkipWithError("Missing main entry");
+        return;
+      }
+      const auto entry_index = *entry;
       state.ResumeTiming();
       auto result = StartFuture(state, *instance, entry_index);
       if (!result) {

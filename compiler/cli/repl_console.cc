@@ -13,7 +13,6 @@
 #include "base/process_exit.h"
 #include "compiler/development/development_repl.h"
 #include "compiler/development/development_session.h"
-#include "compiler/development/source_session.h"
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/project/project_config.h"
 #include "compiler/repl/repl_source.h"

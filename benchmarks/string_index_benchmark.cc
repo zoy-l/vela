@@ -74,7 +74,12 @@ void StringIndex(benchmark::State& state) {
     for (std::uint32_t step = 0; step < count; ++step) {
       const auto index = Method == IndexMethod::Reverse ? count - step - 1 : step;
       if constexpr (Method == IndexMethod::FromStart) {
-        sum += *Utf8Offset(string->value(), index);
+        const auto offset = Utf8Offset(string->value(), index);
+        if (!offset) {
+          state.SkipWithError("Missing code point offset");
+          return;
+        }
+        sum += *offset;
       } else {
         sum += string->ByteOffset(index);
       }
