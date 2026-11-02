@@ -2,6 +2,8 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -9,10 +11,98 @@
 #include <gtest/gtest.h>
 
 #include "compiler/frontend/syntax/ast.h"
+#include "compiler/frontend/syntax/lexer.h"
 #include "compiler/frontend/syntax/token.h"
 
 namespace vela::frontend {
 namespace {
+
+TEST(ParserTest, ParsesRadixIntegersWithSignedBoundsAndPreservesSpelling) {
+  constexpr auto kLiterals = std::to_array<std::pair<std::string_view, std::int64_t>>({
+      {"0x2a", 42},
+      {"0X2A", 42},
+      {"0x1e2", 482},
+      {"0b101010", 42},
+      {"0B101010", 42},
+      {"0o52", 42},
+      {"0O52", 42},
+      {"-0x2a", -42},
+      {"-0b101010", -42},
+      {"-0o52", -42},
+      {"0x0000", 0},
+      {"-0b0", 0},
+      {"0o000", 0},
+      {"052", 52},
+      {"0x7fffffffffffffff", std::numeric_limits<std::int64_t>::max()},
+      {"-0x8000000000000000", std::numeric_limits<std::int64_t>::min()},
+      {"0o777777777777777777777", std::numeric_limits<std::int64_t>::max()},
+      {"-0o1000000000000000000000", std::numeric_limits<std::int64_t>::min()},
+      {
+          "0b111111111111111111111111111111111111111111111111111111111111111",
+          std::numeric_limits<std::int64_t>::max(),
+      },
+      {
+          "-0b1000000000000000000000000000000000000000000000000000000000000000",
+          std::numeric_limits<std::int64_t>::min(),
+      },
+  });
+  for (const auto& [literal, expected] : kLiterals) {
+    SCOPED_TRACE(literal);
+    const auto parsed = ParseSource("func f(): int { return " + std::string(literal) + "; }");
+    ASSERT_TRUE(parsed.diagnostics.empty());
+    const auto& expression = *parsed.program.functions.front().body->statements.front()->expression;
+    EXPECT_EQ(expression.kind, Expression::Kind::IntegerLiteral);
+    EXPECT_EQ(expression.text, literal);
+    EXPECT_EQ(expression.IntegerValue(), expected);
+  }
+}
+
+TEST(LexerTest, DiagnosesMalformedRadixIntegersAndRecoversAtNextToken) {
+  for (const std::string_view literal : {
+           "0x",
+           "0X",
+           "0b",
+           "0B",
+           "0o",
+           "0O",
+           "0xg",
+           "0x12g",
+           "0b2",
+           "0b102",
+           "0o8",
+           "0o789",
+           "0x_1",
+           "0b1_0",
+           "0o7_0",
+           "0x1p2",
+           "0b1e2",
+           "0o7foo",
+       }) {
+    SCOPED_TRACE(literal);
+    const auto lexed = Lexer("\n " + std::string(literal) + "; 42").Tokenize();
+    ASSERT_EQ(lexed.diagnostics.size(), 1U);
+    const auto& diagnostic = lexed.diagnostics.front();
+    EXPECT_EQ(diagnostic.location.line, 2U);
+    EXPECT_EQ(diagnostic.location.column, 2U);
+    EXPECT_EQ(diagnostic.message, literal.size() == 2 ? "integer radix prefix requires digits"
+                                                      : "invalid digit in integer literal");
+    ASSERT_EQ(lexed.tokens.size(), 3U);
+    EXPECT_EQ(lexed.tokens.front().kind, TokenKind::Semicolon);
+    EXPECT_EQ(lexed.tokens.at(1).lexeme, "42");
+  }
+}
+
+TEST(LexerTest, SeparatesRadixIntegersFromOperatorsAndMemberAccess) {
+  const auto lexed = Lexer("0xFe+0b10-0o7;0x2a.toString();1.5e+2").Tokenize();
+  ASSERT_TRUE(lexed.diagnostics.empty());
+  ASSERT_EQ(lexed.tokens.size(), 14U);
+  EXPECT_EQ(lexed.tokens.front().lexeme, "0xFe");
+  EXPECT_EQ(lexed.tokens.at(2).lexeme, "0b10");
+  EXPECT_EQ(lexed.tokens.at(4).lexeme, "0o7");
+  EXPECT_EQ(lexed.tokens.at(6).lexeme, "0x2a");
+  EXPECT_EQ(lexed.tokens.at(7).kind, TokenKind::Dot);
+  EXPECT_EQ(lexed.tokens.at(12).kind, TokenKind::DoubleLiteral);
+}
 
 TEST(ParserTest, PreservesBinaryPrecedenceAndLeftAssociativity) {
   constexpr auto kOperators = std::to_array<std::pair<std::string_view, TokenKind>>({

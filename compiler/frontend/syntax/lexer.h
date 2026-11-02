@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/syntax/integer_literal.h"
 #include "compiler/frontend/syntax/token.h"
 
 namespace vela::frontend {
@@ -58,6 +59,7 @@ class Lexer final {
   void ScanBitwise(PunctuationContext context);
   void ScanIdentifier();
   void ScanNumber();
+  void ScanRadixInteger(std::size_t start, IntegerRadix radix);
   void ScanString(char quote);
   void ScanStringRun(std::string& value, char quote);
   bool ScanInterpolation();

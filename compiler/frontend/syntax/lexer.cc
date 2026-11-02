@@ -9,6 +9,7 @@
 #include <string_view>
 #include <utility>
 #include "base/utf8.h"
+#include "compiler/frontend/syntax/integer_literal.h"
 #include "compiler/frontend/syntax/token.h"
 #include "compiler/frontend/typing/type_names.h"
 
@@ -390,6 +391,12 @@ void Lexer::ScanIdentifier() {
 
 void Lexer::ScanNumber() {
   const std::size_t start = current_ - 1;
+  const auto radix = IntegerLiteralRadix(source_.substr(start, 2));
+  if (radix != IntegerRadix::Decimal) {
+    Advance();
+    ScanRadixInteger(start, radix);
+    return;
+  }
   while (IsDigit(Peek())) {
     Advance();
   }
@@ -417,6 +424,31 @@ void Lexer::ScanNumber() {
     }
   }
   AddToken(kind, start);
+}
+
+void Lexer::ScanRadixInteger(std::size_t start, IntegerRadix radix) {
+  const auto digits_start = current_;
+  const auto base = static_cast<int>(radix);
+  bool valid = true;
+  while (IsIdentifierPart(Peek())) {
+    const char character = Advance();
+    int digit = base;
+    if (character >= '0' && character <= '9') {
+      digit = character - '0';
+    } else if (character >= 'a' && character <= 'f') {
+      digit = character - 'a' + static_cast<int>(kHexLetterOffset);
+    } else if (character >= 'A' && character <= 'F') {
+      digit = character - 'A' + static_cast<int>(kHexLetterOffset);
+    }
+    valid = valid && digit < base;
+  }
+  if (current_ == digits_start) {
+    AddDiagnostic(token_location_, "integer radix prefix requires digits");
+  } else if (!valid) {
+    AddDiagnostic(token_location_, "invalid digit in integer literal");
+  } else {
+    AddToken(TokenKind::IntegerLiteral, start);
+  }
 }
 
 void Lexer::ScanString(char quote) {

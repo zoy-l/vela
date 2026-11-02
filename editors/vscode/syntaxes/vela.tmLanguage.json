@@ -19,7 +19,7 @@
     { "name": "support.variable.vela", "match": "\\bperformance\\b" },
     { "name": "constant.language.vela", "match": "\\b(?:true|false|null)\\b" },
     { "name": "variable.language.vela", "match": "\\bthis\\b" },
-    { "name": "constant.numeric.vela", "match": "\\b[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\\b" },
+    { "name": "constant.numeric.vela", "match": "\\b(?:0[xX][0-9A-Fa-f]+|0[bB][01]+|0[oO][0-7]+|[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)\\b" },
     { "name": "entity.name.function.vela", "match": "\\b[A-Za-z_][A-Za-z_0-9]*(?=\\s*\\()" },
     { "name": "variable.other.property.vela", "match": "(?<=\\.)[A-Za-z_][A-Za-z_0-9]*\\b" },
     { "name": "variable.other.readwrite.vela", "match": "\\b[A-Za-z_][A-Za-z_0-9]*\\b" },

@@ -17,6 +17,22 @@ keep their declared type arguments when erased to dynamic; `int[]` does not beco
 `dynamic[]`. See [JSON and dynamic values](json.md) for the complete contract and
 [`examples/json.vela`](../../examples/json.vela) for parsing and model serialization.
 
+## Integer literals
+
+Integer literals use decimal digits by default. The prefixes `0x` / `0X`,
+`0b` / `0B`, and `0o` / `0O` select hexadecimal, binary, and octal respectively:
+`0x2a`, `0b101010`, and `0o52` all have type `int` and value 42. Hexadecimal
+digits are case-insensitive. A leading zero alone does not select octal: `052`
+is decimal 52.
+
+Every prefix requires at least one digit valid for its radix. Digit separators,
+suffixes, and non-decimal floating-point literals are not supported. All forms
+use the same signed 64-bit range, `[-2^63, 2^63 - 1]`; for example,
+`-0x8000000000000000` is valid, while positive `0x8000000000000000` is out of
+range. Non-decimal literals do not reinterpret an unsigned bit pattern as a
+negative integer. Formatting preserves the original prefix and digit spelling;
+ordinary integer string output remains decimal.
+
 ## Functions, function values, and closures
 
 ```typescript

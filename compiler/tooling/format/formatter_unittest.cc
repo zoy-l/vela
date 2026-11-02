@@ -184,6 +184,8 @@ INSTANTIATE_TEST_SUITE_P(
         "",
         "// comment only",
         "/* block only */",
+        "func main():int{const a=[0x2a,0XFF,0b1010,0B01,0o52,0O07,-0x8000000000000000];"
+        "return a[0]+0x2a.toString().length;}",
         "enum Mode{light,dark,}",
         "import \"math.vela\" as math; export func root(value:double):double{return "
         "math.sqrt(value);}",

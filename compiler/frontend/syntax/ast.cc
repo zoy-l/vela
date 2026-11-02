@@ -1,18 +1,51 @@
 #include "compiler/frontend/syntax/ast.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 #include <absl/container/flat_hash_map.h>
 
 #include "compiler/frontend/diagnostic.h"
+#include "compiler/frontend/syntax/integer_literal.h"
 #include "compiler/frontend/typing/type_names.h"
 
 namespace vela::frontend {
+
+std::optional<std::int64_t> Expression::IntegerValue() const noexcept {
+  std::string_view digits = text;
+  const bool negative = digits.starts_with('-');
+  if (negative) {
+    digits.remove_prefix(1);
+  }
+  const auto radix = IntegerLiteralRadix(digits);
+  if (radix != IntegerRadix::Decimal) {
+    digits.remove_prefix(2);
+  }
+  std::uint64_t magnitude = 0;
+  const auto parsed =
+      std::from_chars(std::to_address(digits.begin()), std::to_address(digits.end()), magnitude,
+                      static_cast<int>(radix));
+  constexpr auto kMaximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  constexpr auto kMinimumMagnitude = kMaximum + 1;
+  const auto limit = negative ? kMinimumMagnitude : kMaximum;
+  if (parsed.ec != std::errc() || magnitude > limit) {
+    return std::nullopt;
+  }
+  if (negative && magnitude == kMinimumMagnitude) {
+    return std::numeric_limits<std::int64_t>::min();
+  }
+  const auto value = static_cast<std::int64_t>(magnitude);
+  return negative ? -value : value;
+}
 
 TypeName SubstituteTypeName(TypeName type, const TypeSubstitutions& substitutions) {
   if (type.kind == TypeName::Kind::Parameter) {

@@ -1,12 +1,10 @@
 #pragma once
 
 #include <array>
-#include <charconv>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
-#include <system_error>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
@@ -171,11 +169,7 @@ struct Expression final {
   std::vector<MatchArm> arms;
 
   // 文本语法由 lexer/parser 保证，各阶段共用有符号范围检查。
-  [[nodiscard]] std::optional<std::int64_t> IntegerValue() const noexcept {
-    std::int64_t value = 0;
-    const auto parsed = std::from_chars(text.data(), std::to_address(text.end()), value);
-    return parsed.ec == std::errc() ? std::optional(value) : std::nullopt;
-  }
+  [[nodiscard]] std::optional<std::int64_t> IntegerValue() const noexcept;
 };
 
 // 仅枚举六个可选操作数；元素、Map 条目、lambda、match 的遍历和作用域由访问者处理。

@@ -73,6 +73,7 @@ source_set("frontend") {
     "frontend/syntax/ast.h",
     "frontend/syntax/ast_clone.cc",
     "frontend/syntax/ast_clone.h",
+    "frontend/syntax/integer_literal.h",
     "frontend/syntax/lexer.cc",
     "frontend/syntax/lexer.h",
     "frontend/syntax/names.h",

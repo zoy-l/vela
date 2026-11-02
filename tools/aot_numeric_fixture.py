@@ -31,6 +31,14 @@ export func calculate(operation: int, integer: int, decimal: double): dynamic {
     if (integer <= 0) { value = null; }
     return value != null ? value.length : 0;
   }
+  if (operation == 9) {
+    const values = [0x2a, 0B101010, 0O52,
+                    0x7fffffffffffffff, -0x8000000000000000,
+                    0o777777777777777777777, -0o1000000000000000000000,
+                    0b111111111111111111111111111111111111111111111111111111111111111,
+                    -0b1000000000000000000000000000000000000000000000000000000000000000];
+    return values[integer];
+  }
   let sum = 0.0;
   for (let index = 0; index < integer; index++) { sum += index.toDouble(); }
   return sum.toInt();
@@ -39,6 +47,25 @@ export func calculate(operation: int, integer: int, decimal: double): dynamic {
 
 HOST_TESTS = r'''
 extern "C" const NativeImage* NUMERIC_IMAGE() noexcept;
+
+TEST(NativeNumericTest, RadixLiteralsPreserveValuesAndSignedEndpoints) {
+  Isolate isolate;
+  const auto instance = NativeInstance::Instantiate(isolate, *NUMERIC_IMAGE());
+  ASSERT_TRUE(instance.has_value());
+  NativeExecution execution(**instance);
+  constexpr auto kMaximum = std::numeric_limits<std::int64_t>::max();
+  constexpr auto kMinimum = std::numeric_limits<std::int64_t>::min();
+  const std::array<std::int64_t, 9> expected{
+      42, 42, 42, kMaximum, kMinimum, kMaximum, kMinimum, kMaximum, kMinimum};
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    SCOPED_TRACE(index);
+    const std::array arguments{Integer(9), Integer(static_cast<std::int64_t>(index)), Double(0.0)};
+    NativeValue result;
+    ASSERT_EQ(Execute(NUMERIC_ENTRY, execution, arguments, result), ExecutionStatus::Returned);
+    EXPECT_EQ(result.kind, NativeValueKind::Integer);
+    EXPECT_EQ(std::bit_cast<std::int64_t>(result.payload), expected[index]);
+  }
+}
 
 TEST(NativeNumericTest, IntegerConversionsRoundToBinary64AndPreserveIntegerIdentity) {
   Isolate isolate;

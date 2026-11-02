@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -13,6 +14,20 @@ from tools.editor import CONTENT_NAMESPACE, MANIFEST_NAMESPACE, package_extensio
 
 
 class EditorPackagingTest(unittest.TestCase):
+    def test_numeric_highlighting_covers_complete_radix_literals(self) -> None:
+        grammar_path = Path(__file__).resolve().parents[1] / "editors/vscode/syntaxes/vela.tmLanguage.json"
+        grammar = json.loads(grammar_path.read_text(encoding="utf-8"))
+        pattern = next(item["match"] for item in grammar["patterns"]
+                       if item.get("name") == "constant.numeric.vela")
+        for literal in ("0x2a", "0XFF", "0b101010", "0B01", "0o52", "0O07",
+                        "42", "1.5e+2"):
+            with self.subTest(literal=literal):
+                self.assertIsNotNone(re.fullmatch(pattern, literal))
+                self.assertEqual(re.findall(pattern, f"[{literal},"), [literal])
+        for literal in ("0x", "0b102", "0o8", "0x1g", "0b1_0"):
+            with self.subTest(literal=literal):
+                self.assertIsNone(re.search(pattern, literal))
+
     def test_package_has_valid_manifest_assets_and_language_contributions(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela-vsix-") as temporary:
             destination = Path(temporary) / "vela.vsix"
