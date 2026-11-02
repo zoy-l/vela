@@ -70,7 +70,7 @@ def run(parsed: argparse.Namespace) -> None:
             filename, filter_pattern = "aot_comparison.json", "^aot/"
         elif parsed.jit_compare:
             filename = "jit_comparison.json"
-            filter_pattern = "^(aot/(native|cpp)/|hot/)"
+            filter_pattern = "^(aot/(native|cpp)/|hot/steady/)"
         elif parsed.escape_compare:
             filename = "escape_comparison.json"
             filter_pattern = "^(escape/|hot/(baseline|optimized)/virtual/)"

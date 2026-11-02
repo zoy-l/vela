@@ -206,7 +206,7 @@ SDK 迁移范围包括 `sdk:test`、`sdk:mock`、mock 生成器、原生绑定�
 
 ## 10. Release 测量
 
-2026-11-02 在 Apple M1 Pro、macOS arm64 上使用 Release、Clang 23 和 LLVM 21.1.8 测量。每个用例在独立进程中运行 7 次，Google Benchmark 的最短测量时间为 0.3 秒；编译和输入准备不计入耗时。完整命令、源码身份、变异系数及内存计数见[滚动基准摘要](../../benchmarks/results/rolling_summary.json)中 `suite.identity` 为 `typed-json/7-workloads/typed-and-handwritten` 的记录，基准实现见 [typed_json_benchmark.cc](../../benchmarks/typed_json_benchmark.cc)。
+2026-11-02 在 Apple M1 Pro、macOS arm64 上使用 Release、Clang 23 和 LLVM 21.1.8 测量。每个用例在独立进程中运行 7 次，Google Benchmark 的最短测量时间为 0.3 秒；编译和输入准备不计入耗时。本节保留该次测量的聚合结果；[滚动基准摘要](../../benchmarks/results/rolling_summary.json)随后续基准运行更新，仅保留最近两次完整运行。基准实现见 [typed_json_benchmark.cc](../../benchmarks/typed_json_benchmark.cc)。
 
 | 用例 | 强类型中位耗时（µs） | 手写中位耗时（µs） | 强类型 / 手写 |
 | --- | ---: | ---: | ---: |

@@ -1535,7 +1535,10 @@ void Lowerer::LowerVariableDeclaration(const frontend::Statement& statement) {
 
 Lowerer::LoweredValue Lowerer::LowerIntegerLiteral(const frontend::Expression& expression) {
   const auto value = expression.IntegerValue();
-  assert(value);
+  // checker 已验证有符号范围；无效字面量不会进入 lowering。
+  if (!value) {
+    std::unreachable();
+  }
   const RegisterId reg = AllocateTemporary(expression.location);
   Emit({
       .opcode = Opcode::LoadInt,

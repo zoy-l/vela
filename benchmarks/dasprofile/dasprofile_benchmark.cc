@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -64,7 +65,7 @@ void Cpp(benchmark::State& state, Case problem) {
   ReportAotResident(state);
 }
 
-void Jit(benchmark::State& state, Case problem, NativeCodeTier tier) {
+void Jit(benchmark::State& state, Case problem, const std::shared_ptr<JitWorkload>& workload) {
   runtime::NativeBindings bindings;
   {
     runtime::Isolate isolate;
@@ -74,34 +75,35 @@ void Jit(benchmark::State& state, Case problem, NativeCodeTier tier) {
     }
     bindings = isolate.FreezeBindings();
   }
-  auto setup =
-      LoadJitWorkload(VELA_DASPROFILE_BENCHMARK_SOURCE, std::move(bindings), {.tier = tier});
+  auto setup = LoadJitWorkload(*workload, std::move(bindings));
   if (!setup) {
     state.SkipWithError(setup.error());
     return;
   }
-  auto& session = *setup->session;
-  const auto snapshot = session.snapshot();
+  auto& isolate = *setup->isolate;
   const auto input =
       std::to_array({runtime::Value::Integer(static_cast<std::int64_t>(problem.workload))});
-  if (!session.Invoke(snapshot->roots.front(), "prepare", input)) {
-    state.SkipWithError("JIT input preparation failed");
-    return;
+  {
+    const auto prepare = isolate.native_dispatch().FindEntry(setup->program->entry, "prepare");
+    if (!prepare || !prepare->Invoke(input)) {
+      state.SkipWithError("JIT input preparation failed");
+      return;
+    }
   }
   const auto first_started = std::chrono::steady_clock::now();
-  const auto warm = InvokeJitWorkload(session, problem.name);
+  const auto warm = InvokeJitWorkload(*setup, problem.name);
   ReportJitFirstExecution(state, first_started);
   if (!warm || !IsExpected(Number(*warm), problem.expected)) {
     state.SkipWithError("JIT warm-up checksum mismatch");
     return;
   }
-  CollectHeapBaseline(state, session.isolate().heap());
+  CollectHeapBaseline(state, isolate.heap());
   state.counters["result"] = problem.expected;
   state.counters["expected_result"] = problem.expected;
   auto expected = problem.expected;
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
-    const auto result = InvokeJitWorkload(session, problem.name);
+    const auto result = InvokeJitWorkload(*setup, problem.name);
     if (!result) {
       state.SkipWithError("JIT execution failed");
       return;
@@ -115,7 +117,7 @@ void Jit(benchmark::State& state, Case problem, NativeCodeTier tier) {
     }
   }
   ReportJitSetup(state, *setup);
-  ReportJitMemory(state, session);
+  ReportJitMemory(state, *setup);
 }
 
 void Native(benchmark::State& state, Case problem) {
@@ -178,6 +180,10 @@ void Native(benchmark::State& state, Case problem) {
 }
 
 int Register() {
+  const auto baseline =
+      std::make_shared<JitWorkload>(VELA_DASPROFILE_BENCHMARK_SOURCE, NativeCodeTier::Baseline);
+  const auto optimized =
+      std::make_shared<JitWorkload>(VELA_DASPROFILE_BENCHMARK_SOURCE, NativeCodeTier::Optimized);
   benchmark::AddCustomContext("dasprofile_upstream", "https://github.com/borisbat/dasProfile");
   benchmark::AddCustomContext("dasprofile_revision", "436d58d2840ff839550d44d32f98e10a15b57bf2");
   benchmark::AddCustomContext("dasprofile_cpp",
@@ -187,12 +193,12 @@ int Register() {
         "dasprofile." + std::string(problem.name) + "/" + std::to_string(problem.size);
     benchmark::RegisterBenchmark("aot/native/" + suffix, Native, problem)->UseRealTime();
     benchmark::RegisterBenchmark("aot/cpp/" + suffix, Cpp, problem)->UseRealTime();
-    benchmark::RegisterBenchmark("hot/steady/baseline/" + suffix, Jit, problem,
-                                 NativeCodeTier::Baseline)
-        ->UseRealTime();
-    benchmark::RegisterBenchmark("hot/steady/optimized/" + suffix, Jit, problem,
-                                 NativeCodeTier::Optimized)
-        ->UseRealTime();
+    const auto baseline_name = "hot/steady/baseline/" + suffix;
+    const auto optimized_name = "hot/steady/optimized/" + suffix;
+    RegisterJitPreparation(baseline_name, baseline);
+    RegisterJitPreparation(optimized_name, optimized);
+    benchmark::RegisterBenchmark(baseline_name, Jit, problem, baseline)->UseRealTime();
+    benchmark::RegisterBenchmark(optimized_name, Jit, problem, optimized)->UseRealTime();
   }
   return 0;
 }

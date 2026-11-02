@@ -137,7 +137,9 @@ void NativeSteady(benchmark::State& state, AotBenchmarkCase problem) {
   ReportAotHeap(state, isolate);
 }
 
-void JitSteady(benchmark::State& state, AotBenchmarkCase problem, NativeCodeTier tier) {
+void JitSteady(benchmark::State& state,
+               AotBenchmarkCase problem,
+               const std::shared_ptr<JitWorkload>& workload) {
   runtime::NativeBindings bindings;
   {
     runtime::Isolate isolate;
@@ -147,18 +149,18 @@ void JitSteady(benchmark::State& state, AotBenchmarkCase problem, NativeCodeTier
     }
     bindings = isolate.FreezeBindings();
   }
-  auto setup = LoadJitWorkload(VELA_AOT_BENCHMARK_SOURCE, std::move(bindings), {.tier = tier});
+  auto setup = LoadJitWorkload(*workload, std::move(bindings));
   if (!setup) {
     state.SkipWithError(setup.error());
     return;
   }
-  auto& session = *setup->session;
+  auto& isolate = *setup->isolate;
   const auto run = [&]() -> std::expected<Sample, std::string> {
-    const auto value = InvokeJitWorkload(session, problem.name);
+    const auto value = InvokeJitWorkload(*setup, problem.name);
     if (!value) {
       return std::unexpected("JIT benchmark execution failed");
     }
-    return ResolveResult(session.isolate(), *value, problem.completion);
+    return ResolveResult(isolate, *value, problem.completion);
   };
   const auto first_started = std::chrono::steady_clock::now();
   const auto warm = run();
@@ -167,7 +169,7 @@ void JitSteady(benchmark::State& state, AotBenchmarkCase problem, NativeCodeTier
     state.SkipWithError(warm ? "JIT warm-up checksum mismatch" : warm.error());
     return;
   }
-  CollectHeapBaseline(state, session.isolate().heap());
+  CollectHeapBaseline(state, isolate.heap());
   ReportSample(state, *warm);
   for (auto iteration : state) {
     benchmark::DoNotOptimize(iteration);
@@ -179,7 +181,7 @@ void JitSteady(benchmark::State& state, AotBenchmarkCase problem, NativeCodeTier
     benchmark::DoNotOptimize(result->value);
   }
   ReportJitSetup(state, *setup);
-  ReportJitMemory(state, session);
+  ReportJitMemory(state, *setup);
 }
 
 std::expected<Sample, std::string> CppAsync(runtime::Isolate& isolate, std::int64_t size) {
@@ -338,6 +340,11 @@ void NativeFirst(benchmark::State& state, AotBenchmarkCase problem) {
 }
 
 int RegisterAotBenchmarks() {
+  benchmark::AddCustomContext("jit_steady_setup", "shared-image/fresh-isolate/v1");
+  const auto baseline =
+      std::make_shared<JitWorkload>(VELA_AOT_BENCHMARK_SOURCE, NativeCodeTier::Baseline);
+  const auto optimized =
+      std::make_shared<JitWorkload>(VELA_AOT_BENCHMARK_SOURCE, NativeCodeTier::Optimized);
   benchmark::AddCustomContext("aot_runtime_abi", std::string(runtime::NativeRuntimeAbiIdentity()));
   benchmark::AddCustomContext("aot_codegen",
                               "LLVM O2; generic CPU; PIC; checked arithmetic; explicit roots");
@@ -346,12 +353,12 @@ int RegisterAotBenchmarks() {
     benchmark::RegisterBenchmark("aot/native/" + suffix, NativeSteady, problem)->UseRealTime();
     benchmark::RegisterBenchmark("aot/cpp/" + suffix, CppSteady, problem)->UseRealTime();
     benchmark::RegisterBenchmark("aot/first_native/" + suffix, NativeFirst, problem)->UseRealTime();
-    benchmark::RegisterBenchmark("hot/steady/baseline/" + suffix, JitSteady, problem,
-                                 NativeCodeTier::Baseline)
-        ->UseRealTime();
-    benchmark::RegisterBenchmark("hot/steady/optimized/" + suffix, JitSteady, problem,
-                                 NativeCodeTier::Optimized)
-        ->UseRealTime();
+    const auto baseline_name = "hot/steady/baseline/" + suffix;
+    const auto optimized_name = "hot/steady/optimized/" + suffix;
+    RegisterJitPreparation(baseline_name, baseline);
+    RegisterJitPreparation(optimized_name, optimized);
+    benchmark::RegisterBenchmark(baseline_name, JitSteady, problem, baseline)->UseRealTime();
+    benchmark::RegisterBenchmark(optimized_name, JitSteady, problem, optimized)->UseRealTime();
   }
   return 0;
 }

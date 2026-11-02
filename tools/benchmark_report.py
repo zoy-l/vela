@@ -325,11 +325,11 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                     entry["remaining_suspended_frames"] != 0 or entry["remaining_saved_bytes"] != 0):
                 raise ValueError(f"{name}: retained temporary state")
             if backend in {"baseline", "optimized"}:
-                for field in ("code_batches", "code_executable_bytes", "code_read_only_bytes"):
+                for field in ("code_batches", "code_executable_bytes"):
                     value = entry[field]
                     if not math.isfinite(value) or value <= 0:
                         raise ValueError(f"{name}: invalid {field}")
-                for field in ("code_writable_bytes", "external_field_bytes"):
+                for field in ("code_read_only_bytes", "code_writable_bytes", "external_field_bytes"):
                     value = entry[field]
                     if not math.isfinite(value) or value < 0:
                         raise ValueError(f"{name}: invalid {field}")
@@ -376,14 +376,36 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                 ratio = math.exp(mean(math.log(value) for value in selected))
                 lines.append(f"Geometric mean {backend} JIT/AOT excluding arithmetic and fields "
                              f"over {len(selected)} paired workloads: {ratio:.2f}x.")
-    startup_fields = ("load_ns", "file_capture_ns", "engine_creation_ns", "source_total_ns", "code_total_ns",
-                      "source_loading_ns",
-                      "type_checking_ns", "typed_ir_ns", "llvm_lowering_ns", "llvm_optimization_ns",
-                      "machine_compilation_ns", "linking_ns", "instantiation_ns",
-                      "initial_publication_pause_ns", "first_execution_ns")
-    lines.extend(["", "Fresh-session setup and first workload execution, median microseconds. "
-                  "The process and OS file cache may already be warm; code caching is disabled. "
-                  "Each JIT case compiles the entire source suite, outside steady timing. "
+    suite_fields = ("suite_preparation_ns", "file_capture_ns", "engine_creation_ns", "source_total_ns",
+                    "code_total_ns", "source_loading_ns", "type_checking_ns", "typed_ir_ns",
+                    "llvm_lowering_ns", "llvm_optimization_ns", "machine_compilation_ns", "linking_ns")
+    suites = {}
+    for key in keys:
+        suite = "dasprofile" if key[0].startswith("dasprofile.") else "aot"
+        for backend in ("baseline", "optimized"):
+            for entry in counters[backend, *key]:
+                values = tuple(entry[field] for field in suite_fields)
+                if any(not math.isfinite(value) or value < 0 for value in values):
+                    raise ValueError(f"{suite}/{backend}: invalid suite preparation timings")
+                previous = suites.setdefault((suite, backend), values)
+                if previous != values:
+                    raise ValueError(f"{suite}/{backend}: suite was compiled more than once")
+    if suites:
+        context = report.get("context", {})
+        if (context.get("jit_steady_setup") != "shared-image/fresh-isolate/v1" or
+                context.get("jit_prepared_suites") != str(len(suites))):
+            raise ValueError("Invalid shared-image JIT preparation context")
+        lines.extend(["", "Suite preparation before all calibration and sampling, microseconds. "
+                      "Each selected source suite/tier is compiled once with the object cache disabled. "
+                      "These are single setup observations, not repeated cold-start measurements. "
+                      "Other workloads and repetitions share the same image.", "",
+                      "| Suite | Backend | " + " | ".join(field.removesuffix("_ns") + " us" for field in suite_fields) + " |",
+                      "| --- | --- | " + " | ".join("---:" for _ in suite_fields) + " |"])
+        for (suite, backend), values in sorted(suites.items()):
+            lines.append("| " + " | ".join([suite, backend, *[f"{value / 1000:.3f}" for value in values]]) + " |")
+    startup_fields = ("load_ns", "instantiation_ns", "initial_publication_pause_ns", "first_execution_ns")
+    lines.extend(["", "Fresh-Isolate setup and first workload execution from a shared image, median microseconds. "
+                  "load_ns includes Isolate creation and initial publication, and excludes suite compilation. "
                   "dasProfile input preparation runs after loading and before first_execution_ns; "
                   "it is excluded from both first-workload and steady timing.", "",
                   "| Workload | Backend | " + " | ".join(field.removesuffix("_ns") + " us" for field in startup_fields) + " |",
@@ -399,8 +421,9 @@ def jit_comparison_report(report: dict, expected_cases: list[str], repetitions: 
                   "separately from ORC blocks and contains source versions and location maps. "
                   "Constant/debug payload counters describe logical image contents, including source "
                   "text and locations; they overlap image data or linked blocks and exclude allocator, string "
-                  "deduplication and OS registration overhead. Process resident memory includes the "
-                  "compiler and incremental source state. Resident samples share a process and may "
+                  "deduplication and OS registration overhead. Process resident memory includes LLVM and "
+                  "all prepared shared images; frontend snapshots are released after compilation. "
+                  "Resident samples share a process and may "
                   "include LLVM initialized by earlier cases; they are not independent backend footprints. "
                   "Compilation peak is the process lifetime "
                   "resident high-water mark sampled after compilation; run one case in a fresh process "

@@ -126,31 +126,16 @@ action("map_literal_native_inputs") {
   deps = [ "//compiler:vela" ]
 }
 
-executable("vela_aot_benchmarks") {
+source_set("jit_benchmark_support") {
   testonly = true
   sources = [
-    "aot_benchmark.cc",
     "aot_benchmark_memory.cc",
     "aot_benchmark_memory.h",
-    "aot_benchmark_types.h",
-    "dasprofile/dasprofile_benchmark.cc",
-    "dasprofile/host_kernel.cc",
-    "dasprofile/workloads.cc",
-    "dasprofile/workloads.h",
-    "escape_benchmark.cc",
-    "generics_benchmark.cc",
     "heap_metrics.cc",
     "heap_metrics.h",
     "jit_benchmark.cc",
     "jit_benchmark.h",
-    "map_literal_benchmark.cc",
-    "map_literal_benchmark.h",
     "process_memory.h",
-    "reload_benchmark.cc",
-    "reload_scaling_benchmark.cc",
-    aot_object,
-    dasprofile_object,
-    map_literal_object,
   ]
   if (target_os == "win") {
     sources += [ "process_memory_win.cc" ]
@@ -159,6 +144,40 @@ executable("vela_aot_benchmarks") {
   } else {
     sources += [ "process_memory_linux.cc" ]
   }
+  public_deps = [ "//compiler:development" ]
+  deps = [ "//third_party:benchmark" ]
+}
+
+executable("vela_benchmark_tests") {
+  testonly = true
+  sources = [ "jit_benchmark_unittest.cc" ]
+  deps = [
+    ":jit_benchmark_support",
+    "//base:test_directory",
+    "//third_party:gtest_main",
+  ]
+}
+
+executable("vela_aot_benchmarks") {
+  testonly = true
+  sources = [
+    "aot_benchmark.cc",
+    "aot_benchmark_main.cc",
+    "aot_benchmark_types.h",
+    "dasprofile/dasprofile_benchmark.cc",
+    "dasprofile/host_kernel.cc",
+    "dasprofile/workloads.cc",
+    "dasprofile/workloads.h",
+    "escape_benchmark.cc",
+    "generics_benchmark.cc",
+    "map_literal_benchmark.cc",
+    "map_literal_benchmark.h",
+    "reload_benchmark.cc",
+    "reload_scaling_benchmark.cc",
+    aot_object,
+    dasprofile_object,
+    map_literal_object,
+  ]
   include_dirs = [ root_gen_dir ]
   benchmark_source = rebase_path("aot_workloads.vela", "")
   dasprofile_source = rebase_path("dasprofile/workloads.vela", "")
@@ -169,12 +188,13 @@ executable("vela_aot_benchmarks") {
   deps = [
     ":aot_native_inputs",
     ":dasprofile_native_inputs",
+    ":jit_benchmark_support",
     ":map_literal_native_inputs",
     "//compiler:aot",
     "//compiler:checkpoint_publication",
     "//compiler:development",
     "//runtime",
-    "//third_party:benchmark_main",
+    "//third_party:benchmark",
   ]
 }
 

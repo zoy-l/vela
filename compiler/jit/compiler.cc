@@ -32,7 +32,9 @@
 #include <llvm/TargetParser/Triple.h>
 
 #include "base/declaration.h"
+#ifndef NDEBUG
 #include "base/native_program_mode.h"
+#endif
 #include "compiler/frontend/diagnostic.h"
 #include "compiler/ir/ir.h"
 #include "compiler/jit/code_cache.h"

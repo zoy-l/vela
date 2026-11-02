@@ -63,6 +63,24 @@ def ported_aot_samples(repetitions: int = 1) -> list[dict]:
             for index in range(repetitions)]
 
 
+def reloadable_samples(repetitions: int = 3) -> dict:
+    rows = ported_aot_samples(repetitions)
+    template = rows[0]
+    for backend, elapsed in (("baseline", 40), ("optimized", 30)):
+        rows += [dict(template, name=f"hot/steady/{backend}/dasprofile.queen/8/real_time",
+                      repetition_index=index, real_time=elapsed,
+                      code_batches=1, code_executable_bytes=1024, code_read_only_bytes=0,
+                      code_writable_bytes=0, external_field_bytes=128,
+                      **dict.fromkeys(("load_ns", "source_total_ns", "code_total_ns",
+                                       "file_capture_ns", "engine_creation_ns", "source_loading_ns",
+                                       "type_checking_ns", "typed_ir_ns", "suite_preparation_ns",
+                                       "llvm_lowering_ns", "llvm_optimization_ns", "machine_compilation_ns",
+                                       "linking_ns", "instantiation_ns", "initial_publication_pause_ns",
+                                       "first_execution_ns"), 1000)) for index in range(repetitions)]
+    return {"benchmarks": rows, "context": {"jit_steady_setup": "shared-image/fresh-isolate/v1",
+                                            "jit_prepared_suites": "2"}}
+
+
 class BenchmarkReportTest(unittest.TestCase):
     def test_escape_report_requires_complete_modes_checksums_and_virtual_code_retirement(self) -> None:
         rows = [dict(name=f"escape/{mode}/numeric/real_time", real_time=time, time_unit="ns",
@@ -92,30 +110,43 @@ class BenchmarkReportTest(unittest.TestCase):
         self.assertEqual(len(aggregate_escape_results({"benchmarks": rows}, names, 1)), 4)
 
     def test_reloadable_report_requires_four_checked_backends_and_code_retirement_evidence(self) -> None:
-        rows = ported_aot_samples(3)
-        template = rows[0]
-        for backend, elapsed in (("baseline", 40), ("optimized", 30)):
-            rows += [dict(template, name=f"hot/steady/{backend}/dasprofile.queen/8/real_time",
-                          repetition_index=index, real_time=elapsed,
-                          code_batches=1, code_executable_bytes=1024, code_read_only_bytes=2048,
-                          code_writable_bytes=0, external_field_bytes=128,
-                          **dict.fromkeys(("load_ns", "source_total_ns", "code_total_ns",
-                                           "file_capture_ns", "engine_creation_ns", "source_loading_ns",
-                                           "type_checking_ns", "typed_ir_ns",
-                                           "llvm_lowering_ns", "llvm_optimization_ns", "machine_compilation_ns",
-                                           "linking_ns", "instantiation_ns", "initial_publication_pause_ns",
-                                           "first_execution_ns"), 1000)) for index in range(3)]
+        report = reloadable_samples()
+        rows = report["benchmarks"]
         names = sorted({row["name"] for row in rows})
-        text = jit_comparison_report({"benchmarks": rows}, names, 3)
+        text = jit_comparison_report(report, names, 3)
         self.assertIn("| dasprofile.queen | 8 | 10.000 | 20.000 | 40.000 | 30.000 | 2.00x | 1.50x | 2.00x | 3.00x |", text)
         self.assertIn("AOT ≤ 2× C++: 1/1; optimized JIT ≤ 3× C++: 1/1", text)
         self.assertIn("Geometric mean optimized JIT/AOT over 1 paired workloads: 1.50x.", text)
+        for field, invalid in (("code_read_only_bytes", -1), ("code_read_only_bytes", float("nan")),
+                               ("code_executable_bytes", 0), ("code_batches", 0)):
+            with self.subTest(field=field, invalid=invalid):
+                original = rows[-1][field]
+                rows[-1][field] = invalid
+                with self.assertRaisesRegex(ValueError, "invalid " + field):
+                    jit_comparison_report(report, names, 3)
+                rows[-1][field] = original
         missing = [row for row in rows if "/optimized/" not in row["name"]]
         with self.assertRaisesRegex(ValueError, "requires matching"):
             jit_comparison_report({"benchmarks": missing}, sorted({row["name"] for row in missing}), 3)
         rows[-1]["remaining_suspended_frames"] = 1
         with self.assertRaisesRegex(ValueError, "retained temporary state"):
-            jit_comparison_report({"benchmarks": rows}, names, 3)
+            jit_comparison_report(report, names, 3)
+
+    def test_reloadable_report_separates_shared_preparation_and_rejects_recompilation(self) -> None:
+        report = reloadable_samples()
+        rows = report["benchmarks"]
+        names = sorted({row["name"] for row in rows})
+        text = jit_comparison_report(report, names, 3)
+        self.assertIn("single setup observations", text)
+        self.assertIn("Fresh-Isolate setup", text)
+        self.assertEqual(text.count("| dasprofile | optimized |"), 1)
+        rows[-1]["suite_preparation_ns"] += 1
+        with self.assertRaisesRegex(ValueError, "compiled more than once"):
+            jit_comparison_report(report, names, 3)
+        rows[-1]["suite_preparation_ns"] -= 1
+        report["context"]["jit_prepared_suites"] = "3"
+        with self.assertRaisesRegex(ValueError, "preparation context"):
+            jit_comparison_report(report, names, 3)
 
     def test_reload_lifecycle_report_rejects_incomplete_retirement_and_invalid_pause_measurements(self) -> None:
         name = "hot/optimized/active/manual_time"
@@ -372,6 +403,28 @@ class BenchmarkReportTest(unittest.TestCase):
                 with redirect_stdout(io.StringIO()):
                     run(parsed)
             self.assertIn("JIT native ns", report.with_suffix(".md").read_text(encoding="utf-8"))
+
+    def test_jit_runner_defaults_to_steady_fourway_with_full_sampling(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela-jit-bench-") as temporary:
+            report = Path(temporary) / "jit.json"
+            parsed = parse_arguments(["--jit-compare", "--report", str(report)])
+
+            def execute(command: list[str], **ignored_kwargs: object) -> subprocess.CompletedProcess:
+                self.assertIn("--benchmark_filter=^(aot/(native|cpp)/|hot/steady/)", command)
+                samples = reloadable_samples(7)
+                if "--benchmark_list_tests=true" in command:
+                    names = sorted({row["name"] for row in samples["benchmarks"]})
+                    return subprocess.CompletedProcess(command, 0, stdout="\n".join(names))
+                self.assertIn("--benchmark_repetitions=7", command)
+                self.assertIn("--benchmark_min_time=0.2s", command)
+                self.assertIn("--benchmark_enable_random_interleaving=true", command)
+                report.write_text(json.dumps(samples), encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0)
+
+            with patch("tools.bench.build"), patch("tools.bench.subprocess.run", side_effect=execute):
+                with redirect_stdout(io.StringIO()):
+                    run(parsed)
+            self.assertIn("Fresh-Isolate setup", report.with_suffix(".md").read_text(encoding="utf-8"))
 
     def test_runner_rejects_benchmark_error_even_when_process_succeeds(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela-bench-") as temporary:

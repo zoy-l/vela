@@ -96,6 +96,28 @@ is required.
 Both JIT tiers use LLVM Release optimization, checked operations, precise roots,
 native dispatch and normal GC. The optimized tier also retains recovery state.
 The report requires all four backends for each selected steady workload.
+Its default filter selects these steady workloads. Reload lifecycle and scaling
+measurements use `--benchmark_filter='^hot/(baseline|optimized|scaling)/'`.
+Use `--benchmark_filter='^(aot/(native|cpp)/|hot/)'` to include both groups.
+
+Each selected source suite/tier compiles once before any calibration or sampling.
+Registrations, calibration attempts and repetitions share the immutable linked
+image. Every sample still creates a fresh Isolate, publishes the image, prepares
+its own input, checks a warm-up and collects the heap baseline. Globals, bindings,
+GC state and suspended tasks belong to that Isolate. Timed calls resolve the
+current declaration through native dispatch and invoke the production native
+target; development-session source lookup and reload coordination are excluded.
+Normal allocation, GC, checksum checks and the default repetition/interleaving
+settings remain enabled.
+
+The report separates one-time suite preparation from fresh-Isolate publication
+and first workload execution. Suite preparation values are single observations,
+not repeated cold-start samples. `load_ns` measures Isolate creation and initial
+publication from an already prepared image. The `jit_steady_setup` context marks
+this measurement contract; older fresh-session results include a different host
+entry boundary and must be identified separately when comparing small workloads.
+Listing benchmarks does not compile suites, and filters prepare only matching
+suite/tier pairs. Process memory includes every prepared image in the process.
 
 ```powershell
 python -m tools.vl bench --jit-compare -- --benchmark_filter='^(aot/(native|cpp)/|hot/steady/)'
